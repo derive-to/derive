@@ -1,0 +1,18 @@
+# Default: zero external dependencies — sqlite + local blobs in one volume.
+# Uncomment DATABASE_URL / OBJECT_STORE_URL to use Postgres + S3/R2 instead.
+services:
+  dock:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    ports:
+      - "8080:8080"
+    volumes:
+      - dock-data:/data
+    environment:
+      BASE_URL: http://localhost:8080
+      # DATABASE_URL: postgres://...
+      # OBJECT_STORE_URL: s3://...
+
+volumes:
+  dock-data:
