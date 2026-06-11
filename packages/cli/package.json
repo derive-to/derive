@@ -1,0 +1,14 @@
+{
+  "name": "@dock/cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": { "dock": "./bin/dock.js" },
+  "scripts": {
+    "typecheck": "echo 'plain js cli'",
+    "test": "echo 'covered by api integration tests'"
+  },
+  "dependencies": {
+    "fflate": "^0.8.2"
+  }
+}
