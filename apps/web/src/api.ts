@@ -4,6 +4,14 @@ export interface Me {
   name: string | null
   role: string
 }
+export interface VersionSession {
+  n: number
+  from_n: number
+  count: number
+  author: string
+  name: string | null
+  created_at: string
+}
 export interface Artifact {
   short_id: string
   url: string
@@ -11,7 +19,9 @@ export interface Artifact {
   kind: "file" | "bundle"
   visibility: string
   current_version: number
-  versions: { n: number; author: string; message: string | null; created_at: string }[]
+  versions: { n: number; author: string; message: string | null; name: string | null; created_at: string }[]
+  /** Time-grouped view of versions for display; newest-first. */
+  sessions?: VersionSession[]
   views?: number
 }
 export interface Analytics {
@@ -105,6 +115,8 @@ export const api = {
     f(`/v1/artifacts/${id}/content${v ? `?v=${v}` : ""}`, { credentials: "include" }).then((r) => r.text()),
   diff: (id: string, from: number, to: number): Promise<Diff> =>
     f(`/v1/artifacts/${id}/diff?from=${from}&to=${to}&format=json`, opts()).then(j),
+  restore: (id: string, version: number): Promise<Artifact> =>
+    f(`/v1/artifacts/${id}/restore`, opts({ version })).then(j),
   heartbeat: (id: string, name: string): Promise<{ viewers: string[] }> =>
     f(`/v1/artifacts/${id}/presence`, opts({ name })).then(j),
 

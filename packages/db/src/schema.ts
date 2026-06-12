@@ -42,6 +42,7 @@ export const version = sqliteTable(
     content_type: text("content_type").notNull(),
     author: text("author").notNull(),
     message: text("message"),
+    name: text("name"),
     created_at: text("created_at").notNull().default(now),
   },
   (t) => [uniqueIndex("artifact_version").on(t.artifact_id, t.n)],
@@ -118,6 +119,7 @@ export const SCHEMA_STATEMENTS: string[] = [
     content_type TEXT NOT NULL,
     author TEXT NOT NULL,
     message TEXT,
+    name TEXT,
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
     UNIQUE (artifact_id, n)
   )`,

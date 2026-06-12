@@ -33,6 +33,8 @@ export interface VersionRecord {
   content_type: string
   author: string
   message: string | null
+  /** A named checkpoint (Docs-style). Null = an ordinary auto-saved revision. */
+  name: string | null
   created_at: string
 }
 
@@ -53,6 +55,7 @@ export interface NewVersion {
   content_type: string
   author: string
   message: string | null
+  name?: string | null
 }
 
 export interface MetaStore {

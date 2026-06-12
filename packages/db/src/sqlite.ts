@@ -33,6 +33,14 @@ export class SqliteMetaStore implements MetaStore {
     this.raw = new Database(path)
     this.raw.pragma("journal_mode = WAL")
     for (const stmt of SCHEMA_STATEMENTS) this.raw.exec(stmt)
+    // Additive column migrations (SQLite lacks ADD COLUMN IF NOT EXISTS).
+    for (const alter of ["ALTER TABLE version ADD COLUMN name TEXT"]) {
+      try {
+        this.raw.exec(alter)
+      } catch {
+        /* column already present */
+      }
+    }
     this.db = drizzle(this.raw, { schema })
   }
 

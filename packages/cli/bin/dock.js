@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // dock — publish HTML, Markdown, or any static build output to a Dock server.
 //   dock publish <file|dir> [--id <short_id>] [--title t] [--slug s] [--spa]
-//                [--message m] [--visibility public|link|org|password]
+//                [--message m] [--name "checkpoint"] [--visibility public|link|org|password]
 //                [--server http://localhost:8080] [--token t]
 import { readFileSync, readdirSync, statSync } from "node:fs"
 import { join, basename, relative } from "node:path"
@@ -53,7 +53,7 @@ if (st.isDirectory()) {
 
 const form = new FormData()
 form.append("file", new Blob([bytes]), filename)
-for (const k of ["title", "slug", "spa", "message", "visibility"]) if (opts[k]) form.append(k, opts[k])
+for (const k of ["title", "slug", "spa", "message", "visibility", "name"]) if (opts[k]) form.append(k, opts[k])
 
 const url = opts.id
   ? `${server}/v1/artifacts/${opts.id}/versions`
