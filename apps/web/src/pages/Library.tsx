@@ -1,8 +1,47 @@
 import { useEffect, useRef, useState } from "react"
 import { useNavigate } from "@tanstack/react-router"
-import { api, type Artifact } from "../api"
+import { api, API_BASE, type Artifact } from "../api"
 import { Header, useToast } from "../components"
 import { useAuth } from "../ctx"
+
+// A live, scaled-down render of the artifact's current version. Sandboxed and
+// non-interactive (clicks fall through to the card); lazy so off-screen cards
+// don't fetch. The gradient shows through until the frame paints.
+function Thumb({ id, v }: { id: string; v: number }) {
+  return (
+    <div
+      style={{
+        height: 116,
+        borderRadius: 8,
+        overflow: "hidden",
+        border: "1px solid var(--line-soft)",
+        background: "linear-gradient(135deg,var(--ac-soft),var(--card-2))",
+        position: "relative",
+      }}
+    >
+      <iframe
+        title=""
+        aria-hidden
+        tabIndex={-1}
+        loading="lazy"
+        src={`${API_BASE}/raw/${id}/v/${v}/index.html`}
+        sandbox="allow-scripts"
+        style={{
+          position: "absolute",
+          top: 0,
+          left: 0,
+          width: "250%",
+          height: "250%",
+          transform: "scale(.4)",
+          transformOrigin: "top left",
+          border: 0,
+          background: "#fff",
+          pointerEvents: "none",
+        }}
+      />
+    </div>
+  )
+}
 
 export function Library() {
   const { me, loading } = useAuth()
@@ -74,7 +113,7 @@ export function Library() {
                 className="card"
                 style={{ textAlign: "left", padding: 15, cursor: "pointer", display: "flex", flexDirection: "column", gap: 8 }}
               >
-                <div style={{ height: 64, borderRadius: 8, background: "linear-gradient(135deg,var(--ac-soft),var(--card-2))", border: "1px solid var(--line-soft)" }} />
+                <Thumb id={a.short_id} v={a.current_version} />
                 <div className="display" style={{ fontWeight: 600, fontSize: 15 }}>
                   {a.title ?? a.short_id}
                 </div>

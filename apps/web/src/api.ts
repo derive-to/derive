@@ -25,6 +25,15 @@ export interface Comment {
   created_at: string
   anchored?: boolean
 }
+export interface DiffOp {
+  t: "ctx" | "add" | "del"
+  line: string
+}
+export interface Diff {
+  from: number
+  to: number
+  ops: DiffOp[]
+}
 
 // Same-origin by default (dev proxy / embedded self-host). Set VITE_DOCK_API to
 // the API origin when the SPA is served from a CDN separate from the container.
@@ -68,6 +77,8 @@ export const api = {
   getArtifact: (id: string): Promise<Artifact> => f(`/v1/artifacts/${id}`, opts()).then(j),
   getContent: (id: string, v?: number): Promise<string> =>
     f(`/v1/artifacts/${id}/content${v ? `?v=${v}` : ""}`, { credentials: "include" }).then((r) => r.text()),
+  diff: (id: string, from: number, to: number): Promise<Diff> =>
+    f(`/v1/artifacts/${id}/diff?from=${from}&to=${to}&format=json`, opts()).then(j),
   listComments: (id: string): Promise<{ comments: Comment[] }> =>
     f(`/v1/artifacts/${id}/comments`, opts()).then(j),
   comment: (id: string, body: { body_md: string; thread_id?: string; anchor?: unknown }): Promise<Comment> =>
