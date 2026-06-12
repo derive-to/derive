@@ -56,13 +56,19 @@ One Node container is the whole product; storage is pluggable behind interfaces.
 
 ```
 apps/api          HTTP API, sandboxed artifact serving, viewer
-apps/web          web UI (TanStack Start) — coming later
+apps/web          web UI (React + TanStack Router SPA)
 packages/core     domain: ports, publish, markdown render, viewer shell
 packages/db       MetaStore: sqlite (default) · postgres · d1
 packages/storage  BlobStore: fs (default) · s3/r2
 packages/cli      dock publish <file|dir>
-packages/mcp      MCP server — publish / read-back tools for agents
+packages/mcp      MCP server: publish / read-back tools for agents
 ```
+
+## Deploy
+
+Single container (SQLite + local disk) or a hosted split (CDN web + API container +
+Postgres + S3/R2). Both run the same image; everything is env driven. See
+[DEPLOY.md](DEPLOY.md).
 
 ## MCP
 
