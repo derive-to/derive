@@ -48,7 +48,7 @@ export function Artifact() {
 
   // Comments UI state.
   const [panel, setPanel] = useState<Panel>(loadPanel)
-  const [sel, setSel] = useState<{ selector: Sel; top: number } | null>(null)
+  const [sel, setSel] = useState<{ selector: Sel; top: number; vTop: number; vBottom: number } | null>(null)
   const [composer, setComposer] = useState<{ anchor: Sel | null; top: number | null } | null>(null)
   const [activeThread, setActiveThread] = useState<string | null>(null)
   const [hoverThread, setHoverThread] = useState<string | null>(null)
@@ -68,8 +68,12 @@ export function Artifact() {
     const onMsg = (e: MessageEvent) => {
       const d = e.data
       if (!d || d.source !== "dock") return
-      if (d.type === "select") setSel(d.selector && d.rect ? { selector: d.selector, top: d.rect.top } : null)
-      else if (d.type === "anchors-resolved") setInDoc(d.resolved ?? {})
+      if (d.type === "select") {
+        if (d.selector && d.rect) {
+          const ft = frame.current?.getBoundingClientRect().top ?? 0
+          setSel({ selector: d.selector, top: d.rect.top, vTop: ft + d.rect.top, vBottom: ft + d.rect.bottom })
+        } else setSel(null)
+      } else if (d.type === "anchors-resolved") setInDoc(d.resolved ?? {})
       else if (d.type === "anchor-rects") {
         setAnchorTops(d.tops ?? {})
         if (typeof d.scrollY === "number") setScrollY(d.scrollY)
@@ -415,9 +419,7 @@ export function Artifact() {
               activeThread={activeThread}
               hoverThread={hoverThread}
               inDoc={inDoc}
-              sel={sel}
               composer={composer}
-              docLive={docLive}
               onMinimize={() => setPanel("rail")}
               onHide={() => setPanel("hidden")}
               onActivate={activate}
@@ -425,7 +427,6 @@ export function Artifact() {
               onResolve={toggleResolve}
               onReply={reply}
               onJump={jumpTo}
-              onStartSelComment={startSelComment}
               onNewGeneral={() => { setComposer({ anchor: null, top: null }); setActiveThread(null) }}
               onSubmitNew={submitNew}
               onCancelNew={() => { setComposer(null); setSel(null) }}
@@ -433,6 +434,25 @@ export function Artifact() {
           )}
         </aside>
       </div>
+      {/* The "comment on selection" affordance floats beside the selection in
+          every panel state — minimized or hidden included. Clicking it opens
+          the panel if needed and starts a composer pinned to the selection. */}
+      {docLive && sel && !composer && (
+        <button
+          className="cmt-bubble"
+          title="Comment on the selection"
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => { if (panel !== "open") setPanel("open"); startSelComment() }}
+          style={{
+            position: "fixed",
+            top: clamp((sel.vTop + sel.vBottom) / 2 - 15, 64, window.innerHeight - 46),
+            right: asideWidth + 12,
+            zIndex: 50,
+          }}
+        >
+          💬 Comment
+        </button>
+      )}
       {toast}
     </div>
   )
@@ -452,9 +472,7 @@ function OpenPanel(props: {
   activeThread: string | null
   hoverThread: string | null
   inDoc: Record<string, boolean>
-  sel: { selector: Sel; top: number } | null
   composer: { anchor: Sel | null; top: number | null } | null
-  docLive: boolean
   onMinimize: () => void
   onHide: () => void
   onActivate: (id: string) => void
@@ -462,14 +480,13 @@ function OpenPanel(props: {
   onResolve: (c: Comment) => void
   onReply: (text: string, threadId: string) => void
   onJump: (id: string) => void
-  onStartSelComment: () => void
   onNewGeneral: () => void
   onSubmitNew: (text: string) => void
   onCancelNew: () => void
 }) {
   const {
-    openCount, pinned, general, resolved, activeThread, hoverThread, inDoc, sel, composer, docLive,
-    onMinimize, onHide, onActivate, onHover, onResolve, onReply, onJump, onStartSelComment,
+    openCount, pinned, general, resolved, activeThread, hoverThread, inDoc, composer,
+    onMinimize, onHide, onActivate, onHover, onResolve, onReply, onJump,
     onNewGeneral, onSubmitNew, onCancelNew,
   } = props
   const anchoredComposer = composer && composer.anchor && composer.top != null
@@ -502,17 +519,6 @@ function OpenPanel(props: {
           onReply={onReply}
           onJump={onJump}
         />
-
-        {/* Floating "comment on selection" button, beside the selection. */}
-        {docLive && sel && !anchoredComposer && (
-          <button
-            className="cmt-bubble"
-            onClick={onStartSelComment}
-            style={{ position: "absolute", right: 12, top: clamp(sel.top - 14, 6, 4000), zIndex: 8 }}
-          >
-            💬 Comment
-          </button>
-        )}
 
         {/* Anchored composer, pinned at the selection. */}
         {anchoredComposer && (
