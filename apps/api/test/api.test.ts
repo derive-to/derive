@@ -249,3 +249,49 @@ describe("comments + the loop", () => {
     expect((await app.request("/v1/artifacts/zzzzzzzz/comments")).status).toBe(404)
   })
 })
+
+describe("auth: token write-gating + per-artifact read-gating", () => {
+  const authApp = createApp({
+    meta,
+    blobs: new FsBlobStore(join(dir, "blobs")),
+    baseUrl: "http://dock.test",
+    token: "s3cret",
+  })
+  const authed = (extra: RequestInit = {}) => ({
+    ...extra,
+    headers: { authorization: "Bearer s3cret", ...(extra.headers ?? {}) },
+  })
+  const pub = (visibility?: string, headers?: HeadersInit) => {
+    const form = new FormData()
+    form.append("file", new Blob([new TextEncoder().encode("<h1>secret</h1>")]), "s.html")
+    if (visibility) form.append("visibility", visibility)
+    return authApp.request("/v1/artifacts", { method: "POST", body: form, headers })
+  }
+
+  it("rejects writes without the token, accepts with it", async () => {
+    expect((await pub("link")).status).toBe(401)
+    const ok = await pub("link", { authorization: "Bearer s3cret" })
+    expect(ok.status).toBe(201)
+  })
+
+  it("serves public/link artifacts to anyone", async () => {
+    const { short_id } = await (await pub("link", { authorization: "Bearer s3cret" })).json()
+    expect((await authApp.request(`/a/${short_id}`)).status).toBe(200)
+    expect((await authApp.request(`/v1/artifacts/${short_id}/content`)).status).toBe(200)
+  })
+
+  it("hides gated artifacts without the token (404), reveals with it", async () => {
+    const { short_id } = await (await pub("org", { authorization: "Bearer s3cret" })).json()
+    expect((await authApp.request(`/a/${short_id}`)).status).toBe(404)
+    expect((await authApp.request(`/v1/artifacts/${short_id}`)).status).toBe(404)
+    expect((await authApp.request(`/v1/artifacts/${short_id}/content`)).status).toBe(404)
+    expect((await authApp.request(`/a/${short_id}`, authed())).status).toBe(200)
+    expect((await authApp.request(`/v1/artifacts/${short_id}`, authed())).status).toBe(200)
+  })
+
+  it("leaves a no-token instance fully open (the default app)", async () => {
+    const form = new FormData()
+    form.append("file", new Blob([new TextEncoder().encode("# x")]), "x.md")
+    expect((await app.request("/v1/artifacts", { method: "POST", body: form })).status).toBe(201)
+  })
+})

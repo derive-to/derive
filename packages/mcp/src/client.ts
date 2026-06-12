@@ -7,6 +7,7 @@ export interface PublishArgs {
   slug?: string
   spa?: boolean
   message?: string
+  visibility?: "public" | "link" | "org" | "password"
   /** When set, publishes a new version of this artifact instead of a new one. */
   id?: string
   /** Comment ids whose threads to resolve as part of this (re)publish. */
@@ -81,6 +82,7 @@ export function createClient(opts: ClientOptions): DockClient {
       if (args.title) form.append("title", args.title)
       if (args.slug) form.append("slug", args.slug)
       if (args.message) form.append("message", args.message)
+      if (args.visibility) form.append("visibility", args.visibility)
       if (args.spa) form.append("spa", "true")
       if (args.resolves?.length) form.append("resolves", args.resolves.join(","))
       const url = args.id ? `${base}/v1/artifacts/${args.id}/versions` : `${base}/v1/artifacts`

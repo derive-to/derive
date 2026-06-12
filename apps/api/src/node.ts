@@ -15,6 +15,7 @@ const app = createApp({
   meta: new SqliteMetaStore(join(DATA_DIR, "dock.db")),
   blobs: new FsBlobStore(join(DATA_DIR, "blobs")),
   baseUrl: BASE_URL,
+  token: process.env.DOCK_TOKEN,
 })
 
 serve({ fetch: app.fetch, port: PORT }, () => {

@@ -8,6 +8,7 @@ import {
   type BundleManifest,
   type MetaStore,
   type VersionRecord,
+  type Visibility,
 } from "./ports"
 
 export interface PublishInput {
@@ -19,6 +20,7 @@ export interface PublishInput {
   spa?: boolean
   message?: string
   author?: string
+  visibility?: Visibility
 }
 
 export interface PublishResult {
@@ -122,7 +124,7 @@ export async function publish(
     org_id: "local",
     slug: input.slug ? slugify(input.slug) : slugify(title) || null,
     title,
-    visibility: "link",
+    visibility: input.visibility ?? "link",
     kind,
     spa: input.spa ? 1 : 0,
   })
