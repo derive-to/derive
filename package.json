@@ -2,7 +2,10 @@
   "name": "dock.build",
   "private": true,
   "pnpm": {
-    "onlyBuiltDependencies": ["better-sqlite3"]
+    "onlyBuiltDependencies": ["better-sqlite3"],
+    "overrides": {
+      "esbuild": ">=0.25.0"
+    }
   },
   "scripts": {
     "dev": "pnpm --filter @dock/server dev",
