@@ -13,6 +13,8 @@ import {
   SELECTION_SCRIPT,
   diffLines,
   formatDiff,
+  groupSessions,
+  DEFAULT_VERSION_WINDOW_MS,
   isAnchored,
   mimeFor,
   newId,
@@ -50,6 +52,8 @@ export interface AppDeps {
   webOrigins?: string[]
   /** Record + serve view analytics. Default on; set false to disable entirely. */
   analytics?: boolean
+  /** Revisions within this window (ms) collapse into one displayed version. */
+  versionWindowMs?: number
 }
 
 const VISIBILITIES = ["public", "link", "org", "password"] as const
@@ -91,6 +95,7 @@ export function createApp(deps: AppDeps): Hono {
   // cookies, so the request's Origin is echoed back only when it's allow-listed;
   // OPTIONS preflights are answered here. Same-origin/self-host = no-op.
   const analyticsOn = deps.analytics !== false
+  const versionWindowMs = deps.versionWindowMs ?? DEFAULT_VERSION_WINDOW_MS
   const allowOrigins = new Set(deps.webOrigins ?? [])
 
   // Fan an event to subscribed webhooks (enqueues to the outbox; the worker
@@ -187,6 +192,7 @@ export function createApp(deps: AppDeps): Hono {
           spa: body["spa"] === "true" || body["spa"] === "1",
           message: str(body["message"]),
           author: str(body["author"]),
+          name: str(body["name"]),
           visibility: visibilityOf(body["visibility"]),
         },
         shortId,
@@ -226,7 +232,39 @@ export function createApp(deps: AppDeps): Hono {
   app.get("/v1/artifacts/:shortId", async (c) => {
     const artifact = await meta.getByShortId(c.req.param("shortId"))
     if (!artifact || !(await readOk(c, artifact))) return c.json({ error: "not found" }, 404)
-    return c.json(toJson(deps.baseUrl, artifact, await meta.listVersions(artifact.id)))
+    const versions = await meta.listVersions(artifact.id)
+    // `versions` stays at revision granularity (machines/agents); `sessions` is
+    // the time-grouped view the UI shows by default.
+    return c.json({
+      ...toJson(deps.baseUrl, artifact, versions),
+      sessions: groupSessions(versions, versionWindowMs),
+    })
+  })
+
+  // Restore a past version: re-point a new revision at its stored blob (no
+  // re-upload, works for files and bundles). History is never rewritten.
+  app.post("/v1/artifacts/:shortId/restore", async (c) => {
+    if (!(await writeOk(c))) return c.json({ error: "unauthorized" }, 401)
+    const artifact = await meta.getByShortId(c.req.param("shortId"))
+    if (!artifact) return c.json({ error: "not found" }, 404)
+    const body = (await c.req.json().catch(() => ({}))) as { version?: number }
+    if (!Number.isInteger(body.version)) return c.json({ error: "version required" }, 400)
+    const src = await meta.getVersion(artifact.id, body.version as number)
+    if (!src) return c.json({ error: `no version ${body.version}` }, 404)
+    const me = await currentUser(c)
+    const version = await meta.addVersion(artifact.id, {
+      id: newId("v"),
+      blob_key: src.blob_key,
+      content_type: src.content_type,
+      author: me ? (me.name ?? me.email) : "anonymous",
+      message: `Restored v${src.n}`,
+      name: null,
+    })
+    await notify(artifact, "version.published", { version: version.n, message: version.message, author: version.author })
+    bus.publish(artifact.id, { type: "version.published", n: version.n, message: version.message })
+    const fresh = (await meta.getByShortId(artifact.short_id)) as ArtifactRecord
+    const versions = await meta.listVersions(artifact.id)
+    return c.json({ ...toJson(deps.baseUrl, fresh, versions), sessions: groupSessions(versions, versionWindowMs), published: version.n }, 201)
   })
 
   /** Source text of a version (entry document for bundles); null if missing. */

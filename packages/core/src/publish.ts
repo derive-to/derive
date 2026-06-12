@@ -21,6 +21,8 @@ export interface PublishInput {
   message?: string
   author?: string
   visibility?: Visibility
+  /** Names this publish a pinned checkpoint (Docs-style). */
+  name?: string
 }
 
 export interface PublishResult {
@@ -113,6 +115,7 @@ export async function publish(
       content_type: contentType,
       author,
       message: input.message ?? null,
+      name: input.name ?? null,
     })
     return { artifact: (await meta.getByShortId(shortId)) as ArtifactRecord, version }
   }
@@ -134,6 +137,7 @@ export async function publish(
     content_type: contentType,
     author,
     message: input.message ?? "first publish",
+    name: input.name ?? null,
   })
   return { artifact: (await meta.getByShortId(artifact.short_id)) as ArtifactRecord, version }
 }
@@ -156,6 +160,7 @@ export const toJson = (baseUrl: string, a: ArtifactRecord, versions: VersionReco
     content_type: v.content_type,
     author: v.author,
     message: v.message,
+    name: v.name,
     created_at: v.created_at,
   })),
 })
