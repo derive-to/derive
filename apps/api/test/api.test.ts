@@ -346,3 +346,24 @@ describe("live stream (SSE)", () => {
     expect((await res.json()).viewers).toEqual(["Jess"])
   })
 })
+
+describe("anchored comments", () => {
+  it("flags comments anchored vs orphaned against the current version", async () => {
+    const sid = (await (await upload("a.md", "alpha beta gamma", { title: "A" })).json()).short_id
+    // anchor a comment to "beta"
+    const anchor = { type: "TextQuoteSelector", exact: "beta", prefix: "alpha ", suffix: " gamma" }
+    await app.request(`/v1/artifacts/${sid}/comments`, json({ body_md: "on beta", anchor }))
+
+    let list = await (await app.request(`/v1/artifacts/${sid}/comments`)).json()
+    expect(list.comments[0].anchored).toBe(true)
+
+    // republish without "beta" → comment becomes orphaned
+    const fd = new FormData()
+    fd.append("file", new Blob([new TextEncoder().encode("alpha gamma delta")]), "a.md")
+    fd.append("message", "v2")
+    await app.request(`/v1/artifacts/${sid}/versions`, { method: "POST", body: fd })
+
+    list = await (await app.request(`/v1/artifacts/${sid}/comments`)).json()
+    expect(list.comments[0].anchored).toBe(false)
+  })
+})

@@ -1,4 +1,5 @@
 import { marked } from "marked"
+import { SELECTION_SCRIPT } from "./anchor"
 // xss is CJS; named ESM imports fail at runtime under Node's interop.
 import xssPkg from "xss"
 const { FilterXSS, whiteList } = xssPkg as unknown as typeof import("xss")
@@ -58,7 +59,7 @@ export async function renderMarkdown(source: string, title: string | null): Prom
 <title>${escapeHtml(title ?? "Document")}</title>
 <style>${PAGE_CSS}</style>
 </head>
-<body><main>${body}</main></body>
+<body><main>${body}</main>${SELECTION_SCRIPT}</body>
 </html>`
 }
 
