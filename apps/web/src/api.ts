@@ -79,6 +79,8 @@ export const api = {
     f(`/v1/artifacts/${id}/content${v ? `?v=${v}` : ""}`, { credentials: "include" }).then((r) => r.text()),
   diff: (id: string, from: number, to: number): Promise<Diff> =>
     f(`/v1/artifacts/${id}/diff?from=${from}&to=${to}&format=json`, opts()).then(j),
+  heartbeat: (id: string, name: string): Promise<{ viewers: string[] }> =>
+    f(`/v1/artifacts/${id}/presence`, opts({ name })).then(j),
   listComments: (id: string): Promise<{ comments: Comment[] }> =>
     f(`/v1/artifacts/${id}/comments`, opts()).then(j),
   comment: (id: string, body: { body_md: string; thread_id?: string; anchor?: unknown }): Promise<Comment> =>

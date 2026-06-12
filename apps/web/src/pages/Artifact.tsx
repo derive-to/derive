@@ -30,6 +30,7 @@ export function Artifact() {
   const [editing, setEditing] = useState(false)
   const [view, setView] = useState<"preview" | "diff">("preview")
   const [diff, setDiff] = useState<Diff | null>(null)
+  const [viewers, setViewers] = useState<string[]>([])
   const [src, setSrc] = useState("")
   const [body, setBody] = useState("")
   const [anchor, setAnchor] = useState<{ type?: string; exact: string; prefix?: string; suffix?: string } | null>(null)
@@ -63,8 +64,25 @@ export function Artifact() {
     ev.addEventListener("comment.created", refresh)
     ev.addEventListener("comment.resolved", refresh)
     ev.addEventListener("version.published", load)
+    ev.addEventListener("presence", (e) => {
+      try {
+        setViewers((JSON.parse((e as MessageEvent).data).viewers as string[]) ?? [])
+      } catch {
+        /* ignore malformed frames */
+      }
+    })
     return () => ev.close()
   }, [shortId, load])
+
+  // Announce we're viewing, and keep the heartbeat alive (TTL is 45s server-side).
+  useEffect(() => {
+    if (!me) return
+    const name = me.name ?? me.email
+    const beat = () => api.heartbeat(shortId, name).then((r) => setViewers(r.viewers)).catch(() => {})
+    beat()
+    const t = setInterval(beat, 20_000)
+    return () => clearInterval(t)
+  }, [shortId, me])
 
   // Switching versions returns to the rendered preview.
   useEffect(() => setView("preview"), [version, shortId])
@@ -137,6 +155,7 @@ export function Artifact() {
       <Header
         right={
           <>
+            <Presence viewers={viewers} self={me?.name ?? me?.email ?? ""} />
             <VersionMenu
               art={art}
               shown={shown}
@@ -267,6 +286,47 @@ function Thread({ thread, onReply, onResolve }: { thread: Comment[]; onReply: (t
           onKeyDown={(e) => { if (e.key === "Enter") { onReply(reply, root.thread_id); setReply("") } }} />
         <button className="btn sm" onClick={() => { onReply(reply, root.thread_id); setReply("") }}>Reply</button>
       </div>
+    </div>
+  )
+}
+
+// Who is viewing right now. Live over the presence SSE channel; self listed
+// first as "you". Hidden when you're the only one here.
+function Presence({ viewers, self }: { viewers: string[]; self: string }) {
+  const others = viewers.filter((v) => v !== self)
+  if (others.length === 0) return null
+  const ordered = [self, ...others].filter(Boolean)
+  const shown = ordered.slice(0, 4)
+  const extra = ordered.length - shown.length
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 7 }} title={`${ordered.length} viewing: ${ordered.join(", ")}`}>
+      <div style={{ display: "flex" }}>
+        {shown.map((name, i) => (
+          <span
+            key={name}
+            style={{
+              width: 22,
+              height: 22,
+              borderRadius: "50%",
+              background: name === self ? "var(--ac)" : "var(--cmt-bg)",
+              color: name === self ? "var(--ac-fg)" : "var(--cmt-tx)",
+              border: "2px solid var(--card)",
+              marginLeft: i === 0 ? 0 : -7,
+              display: "grid",
+              placeItems: "center",
+              fontSize: 9,
+              fontWeight: 700,
+              fontFamily: "ui-monospace,Menlo,monospace",
+            }}
+          >
+            {(name || "?").slice(0, 2).toUpperCase()}
+          </span>
+        ))}
+      </div>
+      <span className="mono muted" style={{ fontSize: 11, display: "flex", alignItems: "center", gap: 4 }}>
+        <span style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--good)" }} />
+        {ordered.length} viewing{extra > 0 ? ` (+${extra})` : ""}
+      </span>
     </div>
   )
 }
