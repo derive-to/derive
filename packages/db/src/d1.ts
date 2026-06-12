@@ -1,3 +1,6 @@
+import type { D1Database } from "@cloudflare/workers-types"
+import { and, asc, eq } from "drizzle-orm"
+import { drizzle, type DrizzleD1Database } from "drizzle-orm/d1"
 import type {
   ArtifactRecord,
   MetaStore,
@@ -5,78 +8,61 @@ import type {
   NewVersion,
   VersionRecord,
 } from "@dock/core"
+import { artifact, version } from "./schema"
 
-/** Minimal structural type for a Cloudflare D1 binding (avoids a hard dep on workers-types). */
-export interface D1Like {
-  prepare(sql: string): {
-    bind(...params: unknown[]): {
-      first<T = unknown>(): Promise<T | null>
-      run(): Promise<unknown>
-      all<T = unknown>(): Promise<{ results: T[] }>
-    }
-  }
-}
+const schema = { artifact, version }
 
 /**
- * Hosted driver: Cloudflare D1 — same SQL as the SQLite driver.
- * Apply deploy/d1-schema.sql once via `wrangler d1 migrations` before first use.
- * NOTE: addVersion is read-then-write without a transaction (D1 has no interactive
- * transactions); the UNIQUE(artifact_id, n) constraint turns races into clean 500s.
+ * Cloudflare D1 driver. Same schema as the SQLite driver; apply
+ * deploy/d1-schema.sql once before first use. D1 has no interactive
+ * transactions, so addVersion is read-then-write — the UNIQUE(artifact_id, n)
+ * constraint turns a race into a clean error rather than a duplicate.
  */
 export class D1MetaStore implements MetaStore {
-  constructor(private db: D1Like) {}
+  private db: DrizzleD1Database<typeof schema>
+
+  constructor(d1: D1Database) {
+    this.db = drizzle(d1, { schema })
+  }
 
   async createArtifact(a: NewArtifact): Promise<ArtifactRecord> {
-    await this.db
-      .prepare(
-        `INSERT INTO artifact (id, short_id, org_id, slug, title, visibility, kind, spa)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .bind(a.id, a.short_id, a.org_id, a.slug, a.title, a.visibility, a.kind, a.spa)
-      .run()
+    await this.db.insert(artifact).values(a).run()
     return (await this.getByShortId(a.short_id)) as ArtifactRecord
   }
 
   async getByShortId(shortId: string): Promise<ArtifactRecord | null> {
-    return this.db
-      .prepare(`SELECT * FROM artifact WHERE short_id = ?`)
-      .bind(shortId)
-      .first<ArtifactRecord>()
+    return (await this.db.select().from(artifact).where(eq(artifact.short_id, shortId)).get()) ?? null
   }
 
   async addVersion(artifactId: string, v: NewVersion): Promise<VersionRecord> {
     const row = await this.db
-      .prepare(`SELECT current_version FROM artifact WHERE id = ?`)
-      .bind(artifactId)
-      .first<{ current_version: number }>()
+      .select({ cv: artifact.current_version })
+      .from(artifact)
+      .where(eq(artifact.id, artifactId))
+      .get()
     if (!row) throw new Error(`artifact not found: ${artifactId}`)
-    const n = row.current_version + 1
-    await this.db
-      .prepare(
-        `INSERT INTO version (id, artifact_id, n, blob_key, content_type, author, message)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .bind(v.id, artifactId, n, v.blob_key, v.content_type, v.author, v.message)
-      .run()
-    await this.db
-      .prepare(`UPDATE artifact SET current_version = ? WHERE id = ?`)
-      .bind(n, artifactId)
-      .run()
+    const n = row.cv + 1
+    await this.db.insert(version).values({ ...v, artifact_id: artifactId, n }).run()
+    await this.db.update(artifact).set({ current_version: n }).where(eq(artifact.id, artifactId)).run()
     return (await this.getVersion(artifactId, n)) as VersionRecord
   }
 
   async listVersions(artifactId: string): Promise<VersionRecord[]> {
-    const { results } = await this.db
-      .prepare(`SELECT * FROM version WHERE artifact_id = ? ORDER BY n ASC`)
-      .bind(artifactId)
-      .all<VersionRecord>()
-    return results
+    return this.db
+      .select()
+      .from(version)
+      .where(eq(version.artifact_id, artifactId))
+      .orderBy(asc(version.n))
+      .all()
   }
 
   async getVersion(artifactId: string, n: number): Promise<VersionRecord | null> {
-    return this.db
-      .prepare(`SELECT * FROM version WHERE artifact_id = ? AND n = ?`)
-      .bind(artifactId, n)
-      .first<VersionRecord>()
+    return (
+      (await this.db
+        .select()
+        .from(version)
+        .where(and(eq(version.artifact_id, artifactId), eq(version.n, n)))
+        .get()) ?? null
+    )
   }
 }
