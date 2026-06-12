@@ -129,21 +129,35 @@ export function createApp(deps: AppDeps): Hono {
 
   // ---- Auth + app shell -------------------------------------------------
 
+  const wantsJson = (c: Context): boolean =>
+    (c.req.header("accept") ?? "").includes("application/json") ||
+    (c.req.header("content-type") ?? "").includes("application/json")
+  const readFields = async (c: Context): Promise<Record<string, unknown>> =>
+    (c.req.header("content-type") ?? "").includes("application/json")
+      ? ((await c.req.json().catch(() => ({}))) as Record<string, unknown>)
+      : ((await c.req.parseBody()) as Record<string, unknown>)
+  const publicUser = (u: UserRecord) => ({ id: u.id, email: u.email, name: u.name, role: u.role })
+
   app.get("/login", async (c) => {
     if (await currentUser(c)) return c.redirect("/app")
     return c.html(renderLogin({ firstUser: (await meta.countUsers()) === 0 }))
   })
-
   app.get("/signup", (c) => c.html(renderSignup()))
 
+  app.get("/v1/me", async (c) => {
+    const u = await currentUser(c)
+    return u ? c.json({ user: publicUser(u) }) : c.json({ error: "unauthenticated" }, 401)
+  })
+
   app.post("/auth/signup", async (c) => {
-    const body = await c.req.parseBody()
+    const body = await readFields(c)
     const email = String(body.email ?? "").trim().toLowerCase()
     const password = String(body.password ?? "")
+    const fail = (msg: string) =>
+      wantsJson(c) ? c.json({ error: msg }, 400) : c.html(renderSignup(msg), 400)
     if (!email || password.length < 8)
-      return c.html(renderSignup("Enter an email and a password of at least 8 characters."), 400)
-    if (await meta.getUserByEmail(email))
-      return c.html(renderSignup("That email is already registered."), 400)
+      return fail("Enter an email and a password of at least 8 characters.")
+    if (await meta.getUserByEmail(email)) return fail("That email is already registered.")
     const first = (await meta.countUsers()) === 0
     const u = await meta.createUser({
       id: newId("u"),
@@ -153,27 +167,35 @@ export function createApp(deps: AppDeps): Hono {
       role: first ? "admin" : "member",
     })
     await startSession(c, u.id)
-    return c.redirect("/app")
+    return wantsJson(c) ? c.json({ user: publicUser(u) }) : c.redirect("/app")
   })
 
   app.post("/auth/login", async (c) => {
-    const body = await c.req.parseBody()
+    const body = await readFields(c)
     const email = String(body.email ?? "").trim().toLowerCase()
     const u = await meta.getUserByEmail(email)
-    if (!u || !verifyPassword(String(body.password ?? ""), u.password_hash))
-      return c.html(
-        renderLogin({ error: "Wrong email or password.", firstUser: (await meta.countUsers()) === 0 }),
-        401,
-      )
+    if (!u || !verifyPassword(String(body.password ?? ""), u.password_hash)) {
+      const msg = "Wrong email or password."
+      return wantsJson(c)
+        ? c.json({ error: msg }, 401)
+        : c.html(renderLogin({ error: msg, firstUser: (await meta.countUsers()) === 0 }), 401)
+    }
     await startSession(c, u.id)
-    return c.redirect("/app")
+    return wantsJson(c) ? c.json({ user: publicUser(u) }) : c.redirect("/app")
   })
 
   app.post("/auth/logout", async (c) => {
     const tok = getCookie(c, SESSION_COOKIE)
     if (tok) await meta.deleteSession(tok)
     deleteCookie(c, SESSION_COOKIE, { path: "/" })
-    return c.redirect("/login")
+    return wantsJson(c) ? c.json({ ok: true }) : c.redirect("/login")
+  })
+
+  app.get("/v1/artifacts", async (c) => {
+    if (!(await currentUser(c)) && deps.token && bearer(c) !== deps.token)
+      return c.json({ error: "unauthenticated" }, 401)
+    const artifacts = await meta.listArtifacts({ limit: 200 })
+    return c.json({ artifacts: artifacts.map((a) => toJson(deps.baseUrl, a, [])) })
   })
 
   app.get("/app", async (c) => {
