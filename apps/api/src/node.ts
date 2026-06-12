@@ -3,7 +3,9 @@ import { mkdirSync } from "node:fs"
 import { join } from "node:path"
 import Database from "better-sqlite3"
 import { SqliteMetaStore } from "@dock/db/sqlite"
+import type { BlobStore } from "@dock/core"
 import { FsBlobStore } from "@dock/storage/fs"
+import { s3FromUrl } from "@dock/storage/s3"
 import { createApp } from "./app"
 import { makeAuth, migrateAuth } from "./auth-config"
 
@@ -22,18 +24,26 @@ const webOrigins = (process.env.DOCK_WEB_ORIGIN ?? "")
   .map((s) => s.trim())
   .filter(Boolean)
 
+// Blobs: S3/R2 when OBJECT_STORE_URL is set, else local disk (zero-config).
+const blobs: BlobStore = process.env.OBJECT_STORE_URL
+  ? s3FromUrl(process.env.OBJECT_STORE_URL)
+  : new FsBlobStore(join(DATA_DIR, "blobs"))
+
 const app = createApp({
   meta,
-  blobs: new FsBlobStore(join(DATA_DIR, "blobs")),
+  blobs,
   baseUrl: BASE_URL,
   token: process.env.DOCK_TOKEN,
   auth,
   webOrigins,
 })
 
+const blobDesc = process.env.OBJECT_STORE_URL ? "S3/R2" : `local disk (${DATA_DIR})`
+
 serve({ fetch: app.fetch, port: PORT }, () => {
   console.log(`dock api listening on :${PORT}`)
-  console.log(`  storage: sqlite + local blobs (${DATA_DIR})`)
+  console.log(`  meta:    sqlite (${DATA_DIR})`)
+  console.log(`  blobs:   ${blobDesc}`)
   console.log(`  auth:    /api/auth/* (Better Auth)`)
   console.log(`  publish: dock publish <file|dir> --server ${BASE_URL}`)
 })
