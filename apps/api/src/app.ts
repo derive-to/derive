@@ -3,6 +3,8 @@ import {
   BUNDLE_CONTENT_TYPE,
   PublishError,
   artifactUrl,
+  diffLines,
+  formatDiff,
   mimeFor,
   publish,
   renderMarkdown,
@@ -11,6 +13,7 @@ import {
   type BlobStore,
   type BundleManifest,
   type MetaStore,
+  type VersionRecord,
 } from "@dock/core"
 
 export interface AppDeps {
@@ -111,6 +114,20 @@ export function createApp(deps: AppDeps): Hono {
     return c.json(toJson(deps.baseUrl, artifact, await meta.listVersions(artifact.id)))
   })
 
+  /** Source text of a version (entry document for bundles); null if missing. */
+  const sourceText = async (version: VersionRecord): Promise<string | null> => {
+    let data: Uint8Array | null
+    if (version.content_type === BUNDLE_CONTENT_TYPE) {
+      const manifestBytes = await blobs.get(version.blob_key)
+      if (!manifestBytes) return null
+      const manifest = JSON.parse(new TextDecoder().decode(manifestBytes)) as BundleManifest
+      data = await blobs.get(manifest.files[manifest.entry].key)
+    } else {
+      data = await blobs.get(version.blob_key)
+    }
+    return data ? new TextDecoder().decode(data) : null
+  }
+
   // Source read-back for machines: returns an artifact's text content for any
   // version, as plain text (?v=N selects a version; defaults to current).
   app.get("/v1/artifacts/:shortId/content", async (c) => {
@@ -120,23 +137,37 @@ export function createApp(deps: AppDeps): Hono {
     if (!Number.isInteger(v)) return c.json({ error: "bad version" }, 400)
     const version = await meta.getVersion(artifact.id, v)
     if (!version) return c.json({ error: `no version ${v}` }, 404)
-
-    let data: Uint8Array | null
-    if (version.content_type === BUNDLE_CONTENT_TYPE) {
-      const manifestBytes = await blobs.get(version.blob_key)
-      if (!manifestBytes) return c.json({ error: "blob missing" }, 500)
-      const manifest = JSON.parse(new TextDecoder().decode(manifestBytes)) as BundleManifest
-      data = await blobs.get(manifest.files[manifest.entry].key)
-    } else {
-      data = await blobs.get(version.blob_key)
-    }
-    if (!data) return c.json({ error: "blob missing" }, 500)
+    const src = await sourceText(version)
+    if (src === null) return c.json({ error: "blob missing" }, 500)
     c.header("Content-Type", "text/plain; charset=utf-8")
     c.header("X-Content-Type-Options", "nosniff")
     c.header("Access-Control-Allow-Origin", "*")
     c.header("X-Dock-Version", String(v))
     c.header("X-Dock-Kind", artifact.kind)
-    return c.body(toBody(data))
+    return c.body(src)
+  })
+
+  // Line diff between two versions. Defaults to (current-1 → current).
+  // ?format=json returns the structured ops; otherwise unified-style text.
+  app.get("/v1/artifacts/:shortId/diff", async (c) => {
+    const artifact = await meta.getByShortId(c.req.param("shortId"))
+    if (!artifact || artifact.current_version === 0) return c.json({ error: "not found" }, 404)
+    const cur = artifact.current_version
+    const from = c.req.query("from") ? Number(c.req.query("from")) : Math.max(1, cur - 1)
+    const to = c.req.query("to") ? Number(c.req.query("to")) : cur
+    if (!Number.isInteger(from) || !Number.isInteger(to)) return c.json({ error: "bad version" }, 400)
+    const [vf, vt] = [await meta.getVersion(artifact.id, from), await meta.getVersion(artifact.id, to)]
+    if (!vf || !vt) return c.json({ error: "version not found" }, 404)
+    const [a, b] = [await sourceText(vf), await sourceText(vt)]
+    if (a === null || b === null) return c.json({ error: "blob missing" }, 500)
+    const ops = diffLines(a, b)
+
+    c.header("Access-Control-Allow-Origin", "*")
+    c.header("X-Dock-From", String(from))
+    c.header("X-Dock-To", String(to))
+    if (c.req.query("format") === "json") return c.json({ from, to, ops })
+    c.header("Content-Type", "text/plain; charset=utf-8")
+    return c.body(formatDiff(ops))
   })
 
   // ---- Viewer ------------------------------------------------------------

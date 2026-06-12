@@ -158,6 +158,26 @@ describe("api surface", () => {
     expect(await content.text()).toBe("<h1>Entry</h1>")
   })
 
+  it("diffs two versions as text and json", async () => {
+    const res = await upload("d.md", "# title\nalpha", { title: "D" })
+    const { short_id } = await res.json()
+    await upload("d.md", "# title\nbeta", { message: "v2" }, short_id)
+
+    const txt = await app.request(`/v1/artifacts/${short_id}/diff`)
+    expect(txt.status).toBe(200)
+    expect(txt.headers.get("x-dock-from")).toBe("1")
+    expect(txt.headers.get("x-dock-to")).toBe("2")
+    const body = await txt.text()
+    expect(body).toContain("  # title")
+    expect(body).toContain("- alpha")
+    expect(body).toContain("+ beta")
+
+    const json = await (await app.request(`/v1/artifacts/${short_id}/diff?format=json`)).json()
+    expect(json.from).toBe(1)
+    expect(json.to).toBe(2)
+    expect(json.ops).toContainEqual({ t: "add", line: "beta" })
+  })
+
   it("404s on unknown artifacts and rejects empty zips", async () => {
     expect((await app.request("/v1/artifacts/zzzzzzzz")).status).toBe(404)
     expect((await app.request("/a/zzzzzzzz")).status).toBe(404)
