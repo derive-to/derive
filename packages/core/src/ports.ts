@@ -77,6 +77,73 @@ export interface MetaStore {
   viewStats(artifactId: string): Promise<ViewStats>
   /** Total view counts for many artifacts at once (no N+1). */
   viewCounts(artifactIds: string[]): Promise<Record<string, number>>
+
+  // ---- Webhooks + outbox -------------------------------------------------
+  createWebhook(w: NewWebhook): Promise<WebhookRecord>
+  listWebhooks(): Promise<WebhookRecord[]>
+  getWebhook(id: string): Promise<WebhookRecord | null>
+  deleteWebhook(id: string): Promise<void>
+  /** Active webhooks that fire for this artifact (incl. global, artifact_id null). */
+  activeWebhooks(artifactId: string): Promise<WebhookRecord[]>
+  /** Enqueue a delivery into the outbox (target is denormalized for durability). */
+  enqueueDelivery(d: NewDelivery): Promise<void>
+  /** Pending deliveries whose next_attempt_at has passed, oldest first. */
+  claimDueDeliveries(now: string, limit: number): Promise<DeliveryRecord[]>
+  updateDelivery(
+    id: string,
+    fields: { status: DeliveryStatus; attempts: number; last_error: string | null; next_attempt_at: string },
+  ): Promise<void>
+  /** Recent deliveries for a webhook (for the settings log). */
+  recentDeliveries(webhookId: string, limit: number): Promise<DeliveryRecord[]>
+}
+
+export type WebhookKind = "generic" | "slack"
+export type DeliveryStatus = "pending" | "delivered" | "dead"
+
+export interface WebhookRecord {
+  id: string
+  artifact_id: string | null
+  url: string
+  secret: string
+  kind: WebhookKind
+  /** Comma-separated event types this hook fires on, or "*" for all. */
+  events: string
+  label: string | null
+  active: 0 | 1
+  created_at: string
+}
+export interface NewWebhook {
+  id: string
+  artifact_id?: string | null
+  url: string
+  secret: string
+  kind: WebhookKind
+  events: string
+  label?: string | null
+}
+
+export interface DeliveryRecord {
+  id: string
+  webhook_id: string
+  url: string
+  secret: string
+  kind: WebhookKind
+  event_type: string
+  payload: string
+  status: DeliveryStatus
+  attempts: number
+  last_error: string | null
+  next_attempt_at: string
+  created_at: string
+}
+export interface NewDelivery {
+  id: string
+  webhook_id: string
+  url: string
+  secret: string
+  kind: WebhookKind
+  event_type: string
+  payload: string
 }
 
 export interface NewView {

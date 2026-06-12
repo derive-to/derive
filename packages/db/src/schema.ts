@@ -1,6 +1,17 @@
 import { sql } from "drizzle-orm"
 import { integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core"
-import type { ArtifactKind, CommentState, Visibility } from "@dock/core"
+import type {
+  ArtifactKind,
+  ArtifactRecord,
+  CommentRecord,
+  CommentState,
+  DeliveryRecord,
+  DeliveryStatus,
+  VersionRecord,
+  Visibility,
+  WebhookKind,
+  WebhookRecord,
+} from "@dock/core"
 
 const now = sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`
 
@@ -48,6 +59,33 @@ export const comment = sqliteTable("comment", {
   body_md: text("body_md").notNull(),
   author: text("author").notNull(),
   state: text("state").$type<CommentState>().notNull().default("open"),
+  created_at: text("created_at").notNull().default(now),
+})
+
+export const webhook = sqliteTable("webhook", {
+  id: text("id").primaryKey(),
+  artifact_id: text("artifact_id").references(() => artifact.id),
+  url: text("url").notNull(),
+  secret: text("secret").notNull(),
+  kind: text("kind").$type<WebhookKind>().notNull().default("generic"),
+  events: text("events").notNull().default("*"),
+  label: text("label"),
+  active: integer("active").$type<0 | 1>().notNull().default(1),
+  created_at: text("created_at").notNull().default(now),
+})
+
+export const webhookDelivery = sqliteTable("webhook_delivery", {
+  id: text("id").primaryKey(),
+  webhook_id: text("webhook_id").notNull(),
+  url: text("url").notNull(),
+  secret: text("secret").notNull(),
+  kind: text("kind").$type<WebhookKind>().notNull(),
+  event_type: text("event_type").notNull(),
+  payload: text("payload").notNull(),
+  status: text("status").$type<DeliveryStatus>().notNull().default("pending"),
+  attempts: integer("attempts").notNull().default(0),
+  last_error: text("last_error"),
+  next_attempt_at: text("next_attempt_at").notNull().default(now),
   created_at: text("created_at").notNull().default(now),
 })
 
@@ -117,5 +155,43 @@ export const SCHEMA_STATEMENTS: string[] = [
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
   )`,
   `CREATE INDEX IF NOT EXISTS view_artifact_time ON view (artifact_id, created_at)`,
+  `CREATE TABLE IF NOT EXISTS webhook (
+    id TEXT PRIMARY KEY,
+    artifact_id TEXT REFERENCES artifact(id),
+    url TEXT NOT NULL,
+    secret TEXT NOT NULL,
+    kind TEXT NOT NULL DEFAULT 'generic',
+    events TEXT NOT NULL DEFAULT '*',
+    label TEXT,
+    active INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+  )`,
+  `CREATE TABLE IF NOT EXISTS webhook_delivery (
+    id TEXT PRIMARY KEY,
+    webhook_id TEXT NOT NULL,
+    url TEXT NOT NULL,
+    secret TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    event_type TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    attempts INTEGER NOT NULL DEFAULT 0,
+    last_error TEXT,
+    next_attempt_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+  )`,
+  `CREATE INDEX IF NOT EXISTS delivery_due ON webhook_delivery (status, next_attempt_at)`,
   // user/session/account/verification are owned and migrated by Better Auth.
 ]
+
+// Compile-time guard: the drizzle table defs must exactly match the core record
+// shapes. A non-`true` element here is schema drift — fix the table or the type.
+type Exact<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false
+const _schemaParity: [
+  Exact<typeof artifact.$inferSelect, ArtifactRecord>,
+  Exact<typeof version.$inferSelect, VersionRecord>,
+  Exact<typeof comment.$inferSelect, CommentRecord>,
+  Exact<typeof webhook.$inferSelect, WebhookRecord>,
+  Exact<typeof webhookDelivery.$inferSelect, DeliveryRecord>,
+] = [true, true, true, true, true]
+void _schemaParity
