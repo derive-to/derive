@@ -68,6 +68,43 @@ export interface MetaStore {
   getComment(id: string): Promise<CommentRecord | null>
   /** Flips every comment in a thread to a state; returns the count updated. */
   setThreadState(artifactId: string, threadId: string, state: CommentState): Promise<number>
+
+  createUser(u: NewUser): Promise<UserRecord>
+  getUserByEmail(email: string): Promise<UserRecord | null>
+  getUserById(id: string): Promise<UserRecord | null>
+  countUsers(): Promise<number>
+  listArtifacts(opts?: { limit?: number }): Promise<ArtifactRecord[]>
+  createSession(s: NewSession): Promise<SessionRecord>
+  getSession(token: string): Promise<SessionRecord | null>
+  deleteSession(token: string): Promise<void>
+}
+
+export interface UserRecord {
+  id: string
+  email: string
+  name: string | null
+  password_hash: string
+  role: string
+  created_at: string
+}
+export interface NewUser {
+  id: string
+  email: string
+  name?: string | null
+  password_hash: string
+  role?: string
+}
+
+export interface SessionRecord {
+  token: string
+  user_id: string
+  expires_at: string
+  created_at: string
+}
+export interface NewSession {
+  token: string
+  user_id: string
+  expires_at: string
 }
 
 export type CommentState = "open" | "resolved"

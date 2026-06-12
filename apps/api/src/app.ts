@@ -1,6 +1,9 @@
 import { Hono, type Context } from "hono"
 import { streamSSE } from "hono/streaming"
+import { deleteCookie, getCookie, setCookie } from "hono/cookie"
 import { Presence, createBus } from "./bus"
+import { SESSION_DAYS, hashPassword, newSessionToken, sessionExpiry, verifyPassword } from "./auth"
+import { renderHome, renderLogin, renderSignup } from "./pages"
 import {
   BUNDLE_CONTENT_TYPE,
   PublishError,
@@ -17,6 +20,7 @@ import {
   type BlobStore,
   type BundleManifest,
   type MetaStore,
+  type UserRecord,
   type VersionRecord,
   type Visibility,
 } from "@dock/core"
@@ -68,14 +72,47 @@ export function createApp(deps: AppDeps): Hono {
   const bus = createBus()
   const presence = new Presence()
 
+  const SESSION_COOKIE = "dock_session"
+
   const bearer = (c: Context): string => {
     const h = c.req.header("authorization") ?? ""
     return h.startsWith("Bearer ") ? h.slice(7) : ""
   }
-  // Open when no token is configured; otherwise the bearer must match.
-  const writeOk = (c: Context): boolean => !deps.token || bearer(c) === deps.token
-  const readOk = (c: Context, a: ArtifactRecord): boolean =>
-    a.visibility === "public" || a.visibility === "link" || !deps.token || bearer(c) === deps.token
+
+  const currentUser = async (c: Context): Promise<UserRecord | null> => {
+    const tok = getCookie(c, SESSION_COOKIE)
+    if (!tok) return null
+    const s = await meta.getSession(tok)
+    if (!s) return null
+    if (new Date(s.expires_at).getTime() < Date.now()) {
+      await meta.deleteSession(tok)
+      return null
+    }
+    return meta.getUserById(s.user_id)
+  }
+
+  const startSession = async (c: Context, userId: string): Promise<void> => {
+    const token = newSessionToken()
+    await meta.createSession({ token, user_id: userId, expires_at: sessionExpiry(Date.now()) })
+    setCookie(c, SESSION_COOKIE, token, {
+      httpOnly: true,
+      sameSite: "Lax",
+      secure: deps.baseUrl.startsWith("https"),
+      path: "/",
+      maxAge: SESSION_DAYS * 86_400,
+    })
+  }
+
+  // A static token (if configured) or a valid login session authorizes writes;
+  // gated reads need one too. No token + no session = open dev instance.
+  const writeOk = async (c: Context): Promise<boolean> =>
+    !deps.token || bearer(c) === deps.token || (await currentUser(c)) !== null
+  const readOk = async (c: Context, a: ArtifactRecord): Promise<boolean> =>
+    a.visibility === "public" ||
+    a.visibility === "link" ||
+    !deps.token ||
+    bearer(c) === deps.token ||
+    (await currentUser(c)) !== null
 
   app.get("/healthz", (c) => c.json({ ok: true }))
 
@@ -85,14 +122,70 @@ export function createApp(deps: AppDeps): Hono {
 <body style="font:16px/1.6 system-ui;background:#f6f0e3;color:#2a2540;display:grid;place-items:center;height:100vh;margin:0">
 <div style="text-align:center"><h1 style="letter-spacing:-.02em">Dock</h1>
 <p>An open home for AI-generated artifacts.<br>
-<code style="background:#eee7d6;padding:2px 8px;border-radius:6px">dock publish ./your-thing</code></p></div>`,
+<code style="background:#eee7d6;padding:2px 8px;border-radius:6px">dock publish ./your-thing</code></p>
+<p style="margin-top:18px"><a href="/app" style="color:#4f447e">Open the app →</a></p></div>`,
     ),
   )
+
+  // ---- Auth + app shell -------------------------------------------------
+
+  app.get("/login", async (c) => {
+    if (await currentUser(c)) return c.redirect("/app")
+    return c.html(renderLogin({ firstUser: (await meta.countUsers()) === 0 }))
+  })
+
+  app.get("/signup", (c) => c.html(renderSignup()))
+
+  app.post("/auth/signup", async (c) => {
+    const body = await c.req.parseBody()
+    const email = String(body.email ?? "").trim().toLowerCase()
+    const password = String(body.password ?? "")
+    if (!email || password.length < 8)
+      return c.html(renderSignup("Enter an email and a password of at least 8 characters."), 400)
+    if (await meta.getUserByEmail(email))
+      return c.html(renderSignup("That email is already registered."), 400)
+    const first = (await meta.countUsers()) === 0
+    const u = await meta.createUser({
+      id: newId("u"),
+      email,
+      name: str(body.name) ?? null,
+      password_hash: hashPassword(password),
+      role: first ? "admin" : "member",
+    })
+    await startSession(c, u.id)
+    return c.redirect("/app")
+  })
+
+  app.post("/auth/login", async (c) => {
+    const body = await c.req.parseBody()
+    const email = String(body.email ?? "").trim().toLowerCase()
+    const u = await meta.getUserByEmail(email)
+    if (!u || !verifyPassword(String(body.password ?? ""), u.password_hash))
+      return c.html(
+        renderLogin({ error: "Wrong email or password.", firstUser: (await meta.countUsers()) === 0 }),
+        401,
+      )
+    await startSession(c, u.id)
+    return c.redirect("/app")
+  })
+
+  app.post("/auth/logout", async (c) => {
+    const tok = getCookie(c, SESSION_COOKIE)
+    if (tok) await meta.deleteSession(tok)
+    deleteCookie(c, SESSION_COOKIE, { path: "/" })
+    return c.redirect("/login")
+  })
+
+  app.get("/app", async (c) => {
+    const user = await currentUser(c)
+    if (!user) return c.redirect("/login")
+    return c.html(renderHome(user, await meta.listArtifacts({ limit: 100 }), deps.baseUrl))
+  })
 
   // ---- Publish ----------------------------------------------------------
 
   const handlePublish = async (c: Context, shortId?: string) => {
-    if (!writeOk(c)) return c.json({ error: "unauthorized" }, 401)
+    if (!(await writeOk(c))) return c.json({ error: "unauthorized" }, 401)
     const len = Number(c.req.header("content-length") ?? 0)
     if (len > MAX_UPLOAD_BYTES) return c.json({ error: "upload too large" }, 413)
 
@@ -152,7 +245,7 @@ export function createApp(deps: AppDeps): Hono {
 
   app.get("/v1/artifacts/:shortId", async (c) => {
     const artifact = await meta.getByShortId(c.req.param("shortId"))
-    if (!artifact || !readOk(c, artifact)) return c.json({ error: "not found" }, 404)
+    if (!artifact || !(await readOk(c, artifact))) return c.json({ error: "not found" }, 404)
     return c.json(toJson(deps.baseUrl, artifact, await meta.listVersions(artifact.id)))
   })
 
@@ -174,7 +267,7 @@ export function createApp(deps: AppDeps): Hono {
   // version, as plain text (?v=N selects a version; defaults to current).
   app.get("/v1/artifacts/:shortId/content", async (c) => {
     const artifact = await meta.getByShortId(c.req.param("shortId"))
-    if (!artifact || artifact.current_version === 0 || !readOk(c, artifact))
+    if (!artifact || artifact.current_version === 0 || !(await readOk(c, artifact)))
       return c.json({ error: "not found" }, 404)
     const v = c.req.query("v") ? Number(c.req.query("v")) : artifact.current_version
     if (!Number.isInteger(v)) return c.json({ error: "bad version" }, 400)
@@ -194,7 +287,7 @@ export function createApp(deps: AppDeps): Hono {
   // ?format=json returns the structured ops; otherwise unified-style text.
   app.get("/v1/artifacts/:shortId/diff", async (c) => {
     const artifact = await meta.getByShortId(c.req.param("shortId"))
-    if (!artifact || artifact.current_version === 0 || !readOk(c, artifact))
+    if (!artifact || artifact.current_version === 0 || !(await readOk(c, artifact)))
       return c.json({ error: "not found" }, 404)
     const cur = artifact.current_version
     const from = c.req.query("from") ? Number(c.req.query("from")) : Math.max(1, cur - 1)
@@ -218,7 +311,7 @@ export function createApp(deps: AppDeps): Hono {
 
   // Create a comment (new thread) or a reply (pass thread_id).
   app.post("/v1/artifacts/:shortId/comments", async (c) => {
-    if (!writeOk(c)) return c.json({ error: "unauthorized" }, 401)
+    if (!(await writeOk(c))) return c.json({ error: "unauthorized" }, 401)
     const artifact = await meta.getByShortId(c.req.param("shortId"))
     if (!artifact || artifact.current_version === 0) return c.json({ error: "not found" }, 404)
     const body = (await c.req.json().catch(() => ({}))) as Record<string, unknown>
@@ -237,6 +330,12 @@ export function createApp(deps: AppDeps): Hono {
           ? body.anchor
           : null
 
+    const me = await currentUser(c)
+    const author = me
+      ? (me.name ?? me.email)
+      : typeof body.author === "string" && body.author
+        ? body.author
+        : "anonymous"
     const created = await meta.createComment({
       id,
       artifact_id: artifact.id,
@@ -245,7 +344,7 @@ export function createApp(deps: AppDeps): Hono {
       path: typeof body.path === "string" ? body.path : null,
       anchor,
       body_md: body.body_md,
-      author: typeof body.author === "string" && body.author ? body.author : "anonymous",
+      author,
     })
     bus.publish(artifact.id, { type: "comment.created", comment: created })
     return c.json(created, 201)
@@ -253,7 +352,7 @@ export function createApp(deps: AppDeps): Hono {
 
   app.get("/v1/artifacts/:shortId/comments", async (c) => {
     const artifact = await meta.getByShortId(c.req.param("shortId"))
-    if (!artifact || !readOk(c, artifact)) return c.json({ error: "not found" }, 404)
+    if (!artifact || !(await readOk(c, artifact))) return c.json({ error: "not found" }, 404)
     const q = c.req.query("state")
     const state = q === "open" || q === "resolved" ? q : undefined
     return c.json({ comments: await meta.listComments(artifact.id, state ? { state } : undefined) })
@@ -261,7 +360,7 @@ export function createApp(deps: AppDeps): Hono {
 
   // Resolve (or reopen, with {state:"open"}) the thread a comment belongs to.
   app.post("/v1/artifacts/:shortId/comments/:commentId/resolve", async (c) => {
-    if (!writeOk(c)) return c.json({ error: "unauthorized" }, 401)
+    if (!(await writeOk(c))) return c.json({ error: "unauthorized" }, 401)
     const artifact = await meta.getByShortId(c.req.param("shortId"))
     if (!artifact) return c.json({ error: "not found" }, 404)
     const cm = await meta.getComment(c.req.param("commentId"))
@@ -277,7 +376,7 @@ export function createApp(deps: AppDeps): Hono {
 
   app.get("/v1/artifacts/:shortId/events", async (c) => {
     const artifact = await meta.getByShortId(c.req.param("shortId"))
-    if (!artifact || !readOk(c, artifact)) return c.text("not found", 404)
+    if (!artifact || !(await readOk(c, artifact))) return c.text("not found", 404)
     c.header("Access-Control-Allow-Origin", "*")
     return streamSSE(c, async (stream) => {
       const unsub = bus.subscribe(artifact.id, (e) => {
@@ -294,7 +393,7 @@ export function createApp(deps: AppDeps): Hono {
 
   app.post("/v1/artifacts/:shortId/presence", async (c) => {
     const artifact = await meta.getByShortId(c.req.param("shortId"))
-    if (!artifact || !readOk(c, artifact)) return c.json({ error: "not found" }, 404)
+    if (!artifact || !(await readOk(c, artifact))) return c.json({ error: "not found" }, 404)
     const body = (await c.req.json().catch(() => ({}))) as { name?: string }
     const name = typeof body.name === "string" && body.name ? body.name : "anonymous"
     const viewers = presence.heartbeat(artifact.id, name, Date.now())
@@ -308,7 +407,7 @@ export function createApp(deps: AppDeps): Hono {
     const m = REF_RE.exec(c.req.param("ref"))
     if (!m) return c.text("not found", 404)
     const artifact = await meta.getByShortId(m[1])
-    if (!artifact || artifact.current_version === 0 || !readOk(c, artifact))
+    if (!artifact || artifact.current_version === 0 || !(await readOk(c, artifact)))
       return c.text("not found", 404)
     const n = m[2] ? Number(m[2]) : artifact.current_version
     const version = await meta.getVersion(artifact.id, n)
@@ -324,7 +423,7 @@ export function createApp(deps: AppDeps): Hono {
     const shortId = c.req.param("shortId")
     const n = Number(c.req.param("n"))
     const artifact = await meta.getByShortId(shortId)
-    if (!artifact || !Number.isInteger(n) || !readOk(c, artifact)) return c.text("not found", 404)
+    if (!artifact || !Number.isInteger(n) || !(await readOk(c, artifact))) return c.text("not found", 404)
     const version = await meta.getVersion(artifact.id, n)
     if (!version) return c.text("not found", 404)
 

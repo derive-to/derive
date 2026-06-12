@@ -33,12 +33,17 @@ Optional env vars (nothing is required):
 `DATABASE_URL` → Postgres · `OBJECT_STORE_URL` → S3/R2 · `DOCK_TOKEN` → require a
 bearer token for publishing and for reading gated artifacts · `BASE_URL`, `PORT`, `DATA_DIR`.
 
-### Access
+### The app & accounts
 
-Publish with `--visibility public|link|org|password` (default `link`). When
-`DOCK_TOKEN` is set, writes require `Authorization: Bearer <token>`, and reading
-anything other than `public`/`link` requires it too — gated artifacts 404 without
-it. (Per-user accounts and SSO come later; this is the zero-dependency gate.)
+Open **`/app`** in a browser (or `/login`). The first account you create is the
+admin. Once signed in you get a library, in-browser publishing, and the comment
+loop — comments are authored as you, and Markdown/HTML artifacts can be edited
+inline to publish a new version.
+
+Writes are authorized by a login session **or** a static `DOCK_TOKEN` (for
+CI/agents). Publish with `--visibility public|link|org|password` (default `link`);
+when `DOCK_TOKEN` is set, gated artifacts 404 for anyone without a session or the
+token. (OAuth/SSO/orgs via Better Auth come next; this is the zero-dependency base.)
 
 ## Architecture
 
