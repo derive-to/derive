@@ -6,6 +6,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./fs": "./src/fs.ts",
+    "./s3": "./src/s3.ts",
     "./r2": "./src/r2.ts"
   },
   "scripts": {

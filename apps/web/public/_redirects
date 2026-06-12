@@ -1,0 +1,2 @@
+# Cloudflare Pages SPA fallback — every route renders the client app.
+/*  /index.html  200

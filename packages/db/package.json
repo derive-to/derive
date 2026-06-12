@@ -6,6 +6,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./sqlite": "./src/sqlite.ts",
+    "./pg": "./src/pg.ts",
     "./d1": "./src/d1.ts",
     "./schema": "./src/schema.ts"
   },
@@ -16,12 +17,14 @@
   "dependencies": {
     "@dock/core": "workspace:*",
     "better-sqlite3": "^11.10.0",
-    "drizzle-orm": "^0.45.2"
+    "drizzle-orm": "^0.45.2",
+    "pg": "^8.13.1"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20241127.0",
     "@types/better-sqlite3": "^7.6.11",
     "@types/node": "^22.0.0",
+    "@types/pg": "^8.11.10",
     "drizzle-kit": "^0.31.0",
     "typescript": "^5.6.0",
     "vitest": "^3.0.0"
