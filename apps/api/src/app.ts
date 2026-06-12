@@ -1,9 +1,7 @@
 import { Hono, type Context } from "hono"
 import { streamSSE } from "hono/streaming"
-import { deleteCookie, getCookie, setCookie } from "hono/cookie"
 import { Presence, createBus } from "./bus"
-import { SESSION_DAYS, hashPassword, newSessionToken, sessionExpiry, verifyPassword } from "./auth"
-import { renderHome, renderLogin, renderSignup } from "./pages"
+import type { Auth } from "./auth-config"
 import {
   BUNDLE_CONTENT_TYPE,
   PublishError,
@@ -22,21 +20,24 @@ import {
   type BlobStore,
   type BundleManifest,
   type MetaStore,
-  type UserRecord,
   type VersionRecord,
   type Visibility,
 } from "@dock/core"
+
+interface SessionUser {
+  id: string
+  email: string
+  name: string | null
+}
 
 export interface AppDeps {
   meta: MetaStore
   blobs: BlobStore
   baseUrl: string
-  /**
-   * When set, writes require `Authorization: Bearer <token>`, and reads of
-   * non-public/link artifacts require it too. When unset (zero-config dev),
-   * the instance is open. Full user/SSO auth replaces this later.
-   */
+  /** A static token (CI/agents) authorizes writes + gated reads, alongside a login session. */
   token?: string
+  /** Better Auth instance — mounts /api/auth/* and provides the session. */
+  auth?: Auth
 }
 
 const VISIBILITIES = ["public", "link", "org", "password"] as const
@@ -74,38 +75,18 @@ export function createApp(deps: AppDeps): Hono {
   const bus = createBus()
   const presence = new Presence()
 
-  const SESSION_COOKIE = "dock_session"
-
   const bearer = (c: Context): string => {
     const h = c.req.header("authorization") ?? ""
     return h.startsWith("Bearer ") ? h.slice(7) : ""
   }
 
-  const currentUser = async (c: Context): Promise<UserRecord | null> => {
-    const tok = getCookie(c, SESSION_COOKIE)
-    if (!tok) return null
-    const s = await meta.getSession(tok)
-    if (!s) return null
-    if (new Date(s.expires_at).getTime() < Date.now()) {
-      await meta.deleteSession(tok)
-      return null
-    }
-    return meta.getUserById(s.user_id)
+  const currentUser = async (c: Context): Promise<SessionUser | null> => {
+    if (!deps.auth) return null
+    const s = await deps.auth.api.getSession({ headers: c.req.raw.headers })
+    return s?.user ? { id: s.user.id, email: s.user.email, name: s.user.name ?? null } : null
   }
 
-  const startSession = async (c: Context, userId: string): Promise<void> => {
-    const token = newSessionToken()
-    await meta.createSession({ token, user_id: userId, expires_at: sessionExpiry(Date.now()) })
-    setCookie(c, SESSION_COOKIE, token, {
-      httpOnly: true,
-      sameSite: "Lax",
-      secure: deps.baseUrl.startsWith("https"),
-      path: "/",
-      maxAge: SESSION_DAYS * 86_400,
-    })
-  }
-
-  // A static token (if configured) or a valid login session authorizes writes;
+  // A static token (CI/agents) or a valid login session authorizes writes;
   // gated reads need one too. No token + no session = open dev instance.
   const writeOk = async (c: Context): Promise<boolean> =>
     !deps.token || bearer(c) === deps.token || (await currentUser(c)) !== null
@@ -116,6 +97,12 @@ export function createApp(deps: AppDeps): Hono {
     bearer(c) === deps.token ||
     (await currentUser(c)) !== null
 
+  // Better Auth owns /api/auth/* (sign-up/in/out, OAuth, OIDC/SSO, session).
+  if (deps.auth) {
+    const auth = deps.auth
+    app.on(["GET", "POST"], "/api/auth/*", (c) => auth.handler(c.req.raw))
+  }
+
   app.get("/healthz", (c) => c.json({ ok: true }))
 
   app.get("/", (c) =>
@@ -124,73 +111,13 @@ export function createApp(deps: AppDeps): Hono {
 <body style="font:16px/1.6 system-ui;background:#f6f0e3;color:#2a2540;display:grid;place-items:center;height:100vh;margin:0">
 <div style="text-align:center"><h1 style="letter-spacing:-.02em">Dock</h1>
 <p>An open home for AI-generated artifacts.<br>
-<code style="background:#eee7d6;padding:2px 8px;border-radius:6px">dock publish ./your-thing</code></p>
-<p style="margin-top:18px"><a href="/app" style="color:#4f447e">Open the app →</a></p></div>`,
+<code style="background:#eee7d6;padding:2px 8px;border-radius:6px">dock publish ./your-thing</code></p></div>`,
     ),
   )
 
-  // ---- Auth + app shell -------------------------------------------------
-
-  const wantsJson = (c: Context): boolean =>
-    (c.req.header("accept") ?? "").includes("application/json") ||
-    (c.req.header("content-type") ?? "").includes("application/json")
-  const readFields = async (c: Context): Promise<Record<string, unknown>> =>
-    (c.req.header("content-type") ?? "").includes("application/json")
-      ? ((await c.req.json().catch(() => ({}))) as Record<string, unknown>)
-      : ((await c.req.parseBody()) as Record<string, unknown>)
-  const publicUser = (u: UserRecord) => ({ id: u.id, email: u.email, name: u.name, role: u.role })
-
-  app.get("/login", async (c) => {
-    if (await currentUser(c)) return c.redirect("/app")
-    return c.html(renderLogin({ firstUser: (await meta.countUsers()) === 0 }))
-  })
-  app.get("/signup", (c) => c.html(renderSignup()))
-
   app.get("/v1/me", async (c) => {
     const u = await currentUser(c)
-    return u ? c.json({ user: publicUser(u) }) : c.json({ error: "unauthenticated" }, 401)
-  })
-
-  app.post("/auth/signup", async (c) => {
-    const body = await readFields(c)
-    const email = String(body.email ?? "").trim().toLowerCase()
-    const password = String(body.password ?? "")
-    const fail = (msg: string) =>
-      wantsJson(c) ? c.json({ error: msg }, 400) : c.html(renderSignup(msg), 400)
-    if (!email || password.length < 8)
-      return fail("Enter an email and a password of at least 8 characters.")
-    if (await meta.getUserByEmail(email)) return fail("That email is already registered.")
-    const first = (await meta.countUsers()) === 0
-    const u = await meta.createUser({
-      id: newId("u"),
-      email,
-      name: str(body.name) ?? null,
-      password_hash: hashPassword(password),
-      role: first ? "admin" : "member",
-    })
-    await startSession(c, u.id)
-    return wantsJson(c) ? c.json({ user: publicUser(u) }) : c.redirect("/app")
-  })
-
-  app.post("/auth/login", async (c) => {
-    const body = await readFields(c)
-    const email = String(body.email ?? "").trim().toLowerCase()
-    const u = await meta.getUserByEmail(email)
-    if (!u || !verifyPassword(String(body.password ?? ""), u.password_hash)) {
-      const msg = "Wrong email or password."
-      return wantsJson(c)
-        ? c.json({ error: msg }, 401)
-        : c.html(renderLogin({ error: msg, firstUser: (await meta.countUsers()) === 0 }), 401)
-    }
-    await startSession(c, u.id)
-    return wantsJson(c) ? c.json({ user: publicUser(u) }) : c.redirect("/app")
-  })
-
-  app.post("/auth/logout", async (c) => {
-    const tok = getCookie(c, SESSION_COOKIE)
-    if (tok) await meta.deleteSession(tok)
-    deleteCookie(c, SESSION_COOKIE, { path: "/" })
-    return wantsJson(c) ? c.json({ ok: true }) : c.redirect("/login")
+    return u ? c.json({ user: u }) : c.json({ error: "unauthenticated" }, 401)
   })
 
   app.get("/v1/artifacts", async (c) => {
@@ -198,12 +125,6 @@ export function createApp(deps: AppDeps): Hono {
       return c.json({ error: "unauthenticated" }, 401)
     const artifacts = await meta.listArtifacts({ limit: 200 })
     return c.json({ artifacts: artifacts.map((a) => toJson(deps.baseUrl, a, [])) })
-  })
-
-  app.get("/app", async (c) => {
-    const user = await currentUser(c)
-    if (!user) return c.redirect("/login")
-    return c.html(renderHome(user, await meta.listArtifacts({ limit: 100 }), deps.baseUrl))
   })
 
   // ---- Publish ----------------------------------------------------------

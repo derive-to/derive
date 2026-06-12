@@ -23,8 +23,10 @@ export function Login() {
     setErr("")
     setBusy(true)
     try {
-      const r = mode === "signup" ? await api.signup(email, password, name) : await api.login(email, password)
-      setMe(r.user)
+      if (mode === "signup") await api.signup(email, password, name)
+      else await api.login(email, password)
+      const { user } = await api.me()
+      setMe(user)
       nav({ to: "/" })
     } catch (e) {
       setErr((e as Error).message)

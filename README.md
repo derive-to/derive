@@ -35,15 +35,20 @@ bearer token for publishing and for reading gated artifacts · `BASE_URL`, `PORT
 
 ### The app & accounts
 
-Open **`/app`** in a browser (or `/login`). The first account you create is the
-admin. Once signed in you get a library, in-browser publishing, and the comment
-loop — comments are authored as you, and Markdown/HTML artifacts can be edited
-inline to publish a new version.
+Open the web app and sign in at **`/login`**. Once signed in you get a library,
+in-browser publishing, and the comment loop — comments are authored as you, and
+Markdown/HTML artifacts can be edited inline to publish a new version.
+
+Accounts are handled by [Better Auth](https://better-auth.com): email + password
+works with zero config; set `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET` for Google
+sign-in, or `OIDC_ISSUER`/`OIDC_CLIENT_ID`/`OIDC_CLIENT_SECRET` to wire enterprise
+SSO (Okta, Entra, Auth0, Keycloak — anything OIDC). The user/session tables are
+created automatically on first boot. See `.env.example` for the full list.
 
 Writes are authorized by a login session **or** a static `DOCK_TOKEN` (for
 CI/agents). Publish with `--visibility public|link|org|password` (default `link`);
 when `DOCK_TOKEN` is set, gated artifacts 404 for anyone without a session or the
-token. (OAuth/SSO/orgs via Better Auth come next; this is the zero-dependency base.)
+token.
 
 ## Architecture
 

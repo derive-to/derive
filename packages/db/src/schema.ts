@@ -51,23 +51,8 @@ export const comment = sqliteTable("comment", {
   created_at: text("created_at").notNull().default(now),
 })
 
-export const user = sqliteTable("user", {
-  id: text("id").primaryKey(),
-  email: text("email").notNull().unique(),
-  name: text("name"),
-  password_hash: text("password_hash").notNull(),
-  role: text("role").notNull().default("member"),
-  created_at: text("created_at").notNull().default(now),
-})
-
-export const session = sqliteTable("session", {
-  token: text("token").primaryKey(),
-  user_id: text("user_id")
-    .notNull()
-    .references(() => user.id),
-  expires_at: text("expires_at").notNull(),
-  created_at: text("created_at").notNull().default(now),
-})
+// user/session/account/verification tables are owned and migrated by Better Auth
+// (see apps/api/src/auth-config.ts) — not declared here.
 
 /**
  * Raw DDL run at boot for the self-host SQLite default (zero-config), and used
@@ -123,18 +108,5 @@ export const SCHEMA_STATEMENTS: string[] = [
     password_hash TEXT,
     org_gate TEXT
   )`,
-  `CREATE TABLE IF NOT EXISTS user (
-    id TEXT PRIMARY KEY,
-    email TEXT NOT NULL UNIQUE,
-    name TEXT,
-    password_hash TEXT NOT NULL,
-    role TEXT NOT NULL DEFAULT 'member',
-    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
-  )`,
-  `CREATE TABLE IF NOT EXISTS session (
-    token TEXT PRIMARY KEY,
-    user_id TEXT NOT NULL REFERENCES user(id),
-    expires_at TEXT NOT NULL,
-    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
-  )`,
+  // user/session/account/verification are owned and migrated by Better Auth.
 ]

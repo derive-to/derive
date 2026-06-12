@@ -8,16 +8,12 @@ import type {
   MetaStore,
   NewArtifact,
   NewComment,
-  NewSession,
-  NewUser,
   NewVersion,
-  SessionRecord,
-  UserRecord,
   VersionRecord,
 } from "@dock/core"
-import { artifact, comment, session, user, version } from "./schema"
+import { artifact, comment, version } from "./schema"
 
-const schema = { artifact, version, comment, user, session }
+const schema = { artifact, version, comment }
 
 /**
  * Cloudflare D1 driver. Same schema as the SQLite driver; apply
@@ -105,37 +101,8 @@ export class D1MetaStore implements MetaStore {
     return res.meta.changes ?? 0
   }
 
-  async createUser(u: NewUser): Promise<UserRecord> {
-    await this.db.insert(user).values(u).run()
-    return (await this.db.select().from(user).where(eq(user.id, u.id)).get()) as UserRecord
-  }
-  async getUserByEmail(email: string): Promise<UserRecord | null> {
-    return (await this.db.select().from(user).where(eq(user.email, email)).get()) ?? null
-  }
-  async getUserById(id: string): Promise<UserRecord | null> {
-    return (await this.db.select().from(user).where(eq(user.id, id)).get()) ?? null
-  }
-  async countUsers(): Promise<number> {
-    return (await this.db.select().from(user).all()).length
-  }
-
   async listArtifacts(opts?: { limit?: number }): Promise<ArtifactRecord[]> {
     const q = this.db.select().from(artifact).orderBy(desc(artifact.created_at))
     return (opts?.limit ? q.limit(opts.limit) : q).all()
-  }
-
-  async createSession(s: NewSession): Promise<SessionRecord> {
-    await this.db.insert(session).values(s).run()
-    return (await this.db
-      .select()
-      .from(session)
-      .where(eq(session.token, s.token))
-      .get()) as SessionRecord
-  }
-  async getSession(token: string): Promise<SessionRecord | null> {
-    return (await this.db.select().from(session).where(eq(session.token, token)).get()) ?? null
-  }
-  async deleteSession(token: string): Promise<void> {
-    await this.db.delete(session).where(eq(session.token, token)).run()
   }
 }

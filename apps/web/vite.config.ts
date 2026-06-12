@@ -13,7 +13,7 @@ export default defineConfig({
     port: 3000,
     // NOTE: /a is the SPA's own route — only proxy API + raw artifact bytes.
     proxy: Object.fromEntries(
-      ["/v1", "/auth", "/raw", "/healthz"].map((p) => [p, { target: API, changeOrigin: true }]),
+      ["/v1", "/api", "/raw", "/healthz"].map((p) => [p, { target: API, changeOrigin: true }]),
     ),
   },
 })
