@@ -38,6 +38,12 @@ export interface AppDeps {
   token?: string
   /** Better Auth instance — mounts /api/auth/* and provides the session. */
   auth?: Auth
+  /**
+   * Web origins allowed to make credentialed (cookie) calls to /api + /v1.
+   * Needed only for the hosted split where the SPA (CDN) and API (container)
+   * are on different origins; empty for same-origin self-host or dev proxy.
+   */
+  webOrigins?: string[]
 }
 
 const VISIBILITIES = ["public", "link", "org", "password"] as const
@@ -74,6 +80,15 @@ export function createApp(deps: AppDeps): Hono {
   const app = new Hono()
   const bus = createBus()
   const presence = new Presence()
+
+  // Credentialed CORS for the cross-origin SPA. A wildcard ACAO can't carry
+  // cookies, so the request's Origin is echoed back only when it's allow-listed;
+  // OPTIONS preflights are answered here. Same-origin/self-host = no-op.
+  const allowOrigins = new Set(deps.webOrigins ?? [])
+  if (allowOrigins.size) {
+    app.use("/api/*", corsFor(allowOrigins))
+    app.use("/v1/*", corsFor(allowOrigins))
+  }
 
   const bearer = (c: Context): string => {
     const h = c.req.header("authorization") ?? ""
@@ -430,6 +445,31 @@ export function createApp(deps: AppDeps): Hono {
   })
 
   return app
+}
+
+/**
+ * Echo-origin CORS middleware so the cross-origin SPA can send cookies. Headers
+ * are written onto the final response after next() — the Better Auth handler
+ * returns its own Response, so setting them beforehand would be discarded.
+ */
+const corsFor = (allowed: Set<string>) => async (c: Context, next: () => Promise<void>) => {
+  const origin = c.req.header("origin")
+  const ok = !!origin && allowed.has(origin)
+  if (ok && c.req.method === "OPTIONS")
+    return c.body(null, 204, {
+      "Access-Control-Allow-Origin": origin,
+      "Access-Control-Allow-Credentials": "true",
+      "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
+      "Access-Control-Allow-Headers": "content-type,authorization",
+      "Access-Control-Max-Age": "86400",
+      Vary: "Origin",
+    })
+  await next()
+  if (ok) {
+    c.res.headers.set("Access-Control-Allow-Origin", origin)
+    c.res.headers.set("Access-Control-Allow-Credentials", "true")
+    c.res.headers.append("Vary", "Origin")
+  }
 }
 
 const str = (v: unknown): string | undefined => (typeof v === "string" && v !== "" ? v : undefined)

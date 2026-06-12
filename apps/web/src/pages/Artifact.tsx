@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react"
 import { useNavigate, useParams } from "@tanstack/react-router"
-import { api, type Artifact as Art, type Comment } from "../api"
+import { api, API_BASE, type Artifact as Art, type Comment } from "../api"
 import { Header, useToast } from "../components"
 import { useAuth } from "../ctx"
 
@@ -46,7 +46,9 @@ export function Artifact() {
 
   // live updates
   useEffect(() => {
-    const ev = new EventSource(`/v1/artifacts/${shortId}/events`)
+    const ev = new EventSource(`${API_BASE}/v1/artifacts/${shortId}/events`, {
+      withCredentials: true,
+    })
     const refresh = () => api.listComments(shortId).then((r) => setComments(r.comments)).catch(() => {})
     ev.addEventListener("comment.created", refresh)
     ev.addEventListener("comment.resolved", refresh)
@@ -68,7 +70,7 @@ export function Artifact() {
 
   const shown = version ?? art.current_version
   const editable = art.kind === "file" && shown === art.current_version
-  const rawSrc = `/raw/${shortId}/v/${shown}/index.html`
+  const rawSrc = `${API_BASE}/raw/${shortId}/v/${shown}/index.html`
   const threads = groupThreads(comments)
   const openCount = threads.filter((t) => t[0].state === "open").length
 
