@@ -40,15 +40,104 @@ export function reanchor(sel: QuoteSelector, text: string): Reanchor {
 }
 
 /**
- * Injected into served artifacts. On text selection it posts a quote selector
- * to the parent window — the only way to anchor across a sandboxed iframe.
+ * The comment-anchor client that runs inside the sandboxed artifact iframe.
+ * The frame has an opaque origin, so everything rides postMessage:
+ *
+ *  frame → host:  select            (user selected text — a quote selector)
+ *                 anchors-resolved  (which anchor ids matched this document)
+ *                 anchor-click      (user clicked a highlight)
+ *  host → frame:  anchors           (paint highlights for these anchors)
+ *                 focus-anchor      (scroll to + flash one anchor)
+ *
+ * Served at /raw/dock-client.js with a SHORT cache and referenced by URL from
+ * artifact HTML — the HTML itself is cached immutable, so baking the client
+ * inline would freeze old behavior into every previously-viewed artifact.
  */
-export const SELECTION_SCRIPT = `<script>(function(){document.addEventListener("mouseup",function(){
-var s=window.getSelection(),t=s?s.toString().trim():"";
-if(!t||t.length<2){parent.postMessage({source:"dock",type:"select",selector:null},"*");return}
-var ctx=(s.anchorNode&&s.anchorNode.textContent)||t,i=ctx.indexOf(t);
-parent.postMessage({source:"dock",type:"select",selector:{type:"TextQuoteSelector",exact:t,
-prefix:i>=0?ctx.slice(Math.max(0,i-24),i):"",suffix:i>=0?ctx.slice(i+t.length,i+t.length+24):""}},"*")})})();</script>`
+export const ANCHOR_CLIENT_JS = `(function(){
+function post(m){m.source="dock";parent.postMessage(m,"*")}
+
+/* -- selection capture: a text selection becomes a TextQuoteSelector -- */
+document.addEventListener("mouseup",function(){
+  var s=window.getSelection(),t=s?s.toString().trim():"";
+  if(!t||t.length<2){post({type:"select",selector:null});return}
+  var ctx=(s.anchorNode&&s.anchorNode.textContent)||t,i=ctx.indexOf(t);
+  post({type:"select",selector:{type:"TextQuoteSelector",exact:t,
+    prefix:i>=0?ctx.slice(Math.max(0,i-24),i):"",
+    suffix:i>=0?ctx.slice(i+t.length,i+t.length+24):""}})
+});
+
+/* -- highlight styles (mark's default yellow is overridden) -- */
+var st=document.createElement("style");
+st.textContent="mark.dock-hl{background:rgba(124,108,189,.26);color:inherit;border-bottom:2px solid rgba(124,108,189,.7);border-radius:2px;cursor:pointer;transition:background .15s}"+
+"mark.dock-hl:hover{background:rgba(124,108,189,.45)}"+
+"mark.dock-hl-flash{animation:dockflash 1s ease 2}"+
+"@keyframes dockflash{50%{background:rgba(124,108,189,.75)}}";
+(document.head||document.documentElement).appendChild(st);
+
+function textNodes(){
+  var w=document.createTreeWalker(document.body,NodeFilter.SHOW_TEXT,{acceptNode:function(n){
+    var p=n.parentNode?n.parentNode.nodeName:"";
+    return p==="SCRIPT"||p==="STYLE"||p==="NOSCRIPT"?NodeFilter.FILTER_REJECT:NodeFilter.FILTER_ACCEPT}});
+  var out=[],n;while((n=w.nextNode()))out.push(n);return out}
+function clearMarks(){
+  var ms=document.querySelectorAll("mark[data-dock-id]");
+  for(var i=0;i<ms.length;i++){var m=ms[i],p=m.parentNode;
+    while(m.firstChild)p.insertBefore(m.firstChild,m);
+    p.removeChild(m);p.normalize()}}
+/* same resolution order as the server: context match first, then exact */
+function find(full,a){
+  var pre=a.prefix||"",suf=a.suffix||"",ctx=pre+a.exact+suf;
+  if(ctx!==a.exact){var i=full.indexOf(ctx);if(i>=0)return i+pre.length}
+  return full.indexOf(a.exact)}
+/* wrap [s,e) of the concatenated text in marks; reverse order keeps offsets valid */
+function wrap(id,s,e){
+  var nodes=textNodes(),offs=[],full="";
+  for(var i=0;i<nodes.length;i++){offs.push(full.length);full+=nodes[i].nodeValue}
+  var segs=[];
+  for(var i=0;i<nodes.length;i++){
+    var ns=offs[i],ne=ns+nodes[i].nodeValue.length;
+    if(ne<=s||ns>=e)continue;
+    segs.push({n:nodes[i],a:Math.max(0,s-ns),b:Math.min(nodes[i].nodeValue.length,e-ns)})}
+  for(var q=segs.length-1;q>=0;q--){
+    var g=segs[q],t=g.n;
+    if(g.b<t.nodeValue.length)t.splitText(g.b);
+    var mid=g.a>0?t.splitText(g.a):t;
+    var mk=document.createElement("mark");
+    mk.setAttribute("data-dock-id",id);mk.className="dock-hl";mk.title="View comment";
+    t.parentNode.insertBefore(mk,mid);mk.appendChild(mid)}}
+function applyAnchors(anchors){
+  clearMarks();
+  var res={};
+  for(var k=0;k<anchors.length;k++){
+    var a=anchors[k];
+    /* recompute the text walk per anchor — earlier wraps split text nodes */
+    var nodes=textNodes(),full="";
+    for(var i=0;i<nodes.length;i++)full+=nodes[i].nodeValue;
+    var s=find(full,a);
+    res[a.id]=s>=0;
+    if(s>=0)wrap(a.id,s,s+a.exact.length)}
+  post({type:"anchors-resolved",resolved:res})}
+
+/* clicking a highlight focuses its thread in the host */
+document.addEventListener("click",function(e){
+  var el=e.target,m=el&&el.closest?el.closest("mark[data-dock-id]"):null;
+  if(m)post({type:"anchor-click",id:m.getAttribute("data-dock-id")})
+},true);
+
+window.addEventListener("message",function(e){
+  var d=e.data;
+  if(!d||d.source!=="dock-host")return;
+  if(d.type==="anchors")applyAnchors(d.anchors||[]);
+  else if(d.type==="focus-anchor"){
+    var ms=document.querySelectorAll('mark[data-dock-id="'+d.id+'"]');
+    if(!ms.length)return;
+    ms[0].scrollIntoView({behavior:"smooth",block:"center"});
+    for(var i=0;i<ms.length;i++){ms[i].classList.remove("dock-hl-flash");void ms[i].offsetWidth;ms[i].classList.add("dock-hl-flash")}}
+});
+})();`
+
+/** The tag appended to served artifact HTML; resolves on any host. */
+export const SELECTION_SCRIPT = `<script src="/raw/dock-client.js"></script>`
 
 /** True if the comment's stored anchor still resolves in `text`. */
 export function isAnchored(anchorJson: string | null, text: string): boolean {
