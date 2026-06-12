@@ -1,21 +1,26 @@
 import type { D1Database } from "@cloudflare/workers-types"
-import { and, asc, desc, eq, sql } from "drizzle-orm"
+import { and, asc, desc, eq, isNull, lte, or, sql } from "drizzle-orm"
 import { drizzle, type DrizzleD1Database } from "drizzle-orm/d1"
 import type {
   ArtifactRecord,
   CommentRecord,
   CommentState,
+  DeliveryRecord,
+  DeliveryStatus,
   MetaStore,
   NewArtifact,
   NewComment,
+  NewDelivery,
   NewVersion,
   NewView,
+  NewWebhook,
   VersionRecord,
   ViewStats,
+  WebhookRecord,
 } from "@dock/core"
-import { artifact, comment, version } from "./schema"
+import { artifact, comment, version, webhook, webhookDelivery } from "./schema"
 
-const schema = { artifact, version, comment }
+const schema = { artifact, version, comment, webhook, webhookDelivery }
 const VIEW_WINDOW_MS = 30 * 86400_000
 
 /**
@@ -147,5 +152,53 @@ export class D1MetaStore implements MetaStore {
     const out: Record<string, number> = {}
     for (const r of rows) out[r.artifact_id] = r.c
     return out
+  }
+
+  // ---- Webhooks + outbox -------------------------------------------------
+  async createWebhook(w: NewWebhook): Promise<WebhookRecord> {
+    return this.db.insert(webhook).values(w).returning().get()
+  }
+  listWebhooks(): Promise<WebhookRecord[]> {
+    return this.db.select().from(webhook).orderBy(desc(webhook.created_at)).all()
+  }
+  async getWebhook(id: string): Promise<WebhookRecord | null> {
+    return (await this.db.select().from(webhook).where(eq(webhook.id, id)).get()) ?? null
+  }
+  async deleteWebhook(id: string): Promise<void> {
+    await this.db.delete(webhook).where(eq(webhook.id, id)).run()
+  }
+  activeWebhooks(artifactId: string): Promise<WebhookRecord[]> {
+    return this.db
+      .select()
+      .from(webhook)
+      .where(and(eq(webhook.active, 1), or(isNull(webhook.artifact_id), eq(webhook.artifact_id, artifactId))))
+      .all()
+  }
+  async enqueueDelivery(d: NewDelivery): Promise<void> {
+    await this.db.insert(webhookDelivery).values(d).run()
+  }
+  claimDueDeliveries(now: string, limit: number): Promise<DeliveryRecord[]> {
+    return this.db
+      .select()
+      .from(webhookDelivery)
+      .where(and(eq(webhookDelivery.status, "pending"), lte(webhookDelivery.next_attempt_at, now)))
+      .orderBy(asc(webhookDelivery.next_attempt_at))
+      .limit(limit)
+      .all()
+  }
+  async updateDelivery(
+    id: string,
+    f: { status: DeliveryStatus; attempts: number; last_error: string | null; next_attempt_at: string },
+  ): Promise<void> {
+    await this.db.update(webhookDelivery).set(f).where(eq(webhookDelivery.id, id)).run()
+  }
+  recentDeliveries(webhookId: string, limit: number): Promise<DeliveryRecord[]> {
+    return this.db
+      .select()
+      .from(webhookDelivery)
+      .where(eq(webhookDelivery.webhook_id, webhookId))
+      .orderBy(desc(webhookDelivery.created_at))
+      .limit(limit)
+      .all()
   }
 }
