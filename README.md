@@ -43,7 +43,18 @@ packages/core     domain: ports, publish, markdown render, viewer shell
 packages/db       MetaStore: sqlite (default) · postgres · d1
 packages/storage  BlobStore: fs (default) · s3/r2
 packages/cli      dock publish <file|dir>
+packages/mcp      MCP server — publish / read-back tools for agents
 ```
+
+## MCP
+
+Point an agent at a Dock server over MCP (stdio):
+
+```bash
+DOCK_SERVER=http://localhost:8080 pnpm --filter @dock/mcp start
+```
+
+Tools: `publish_artifact`, `publish_version`, `get_artifact` (source read-back), `list_versions`.
 
 Every artifact is served with `Content-Security-Policy: sandbox` on an opaque
 origin and rendered inside a sandboxed iframe — scripts run, but cannot reach
