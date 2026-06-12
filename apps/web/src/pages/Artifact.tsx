@@ -489,7 +489,6 @@ function OpenPanel(props: {
     onMinimize, onHide, onActivate, onHover, onResolve, onReply, onJump,
     onNewGeneral, onSubmitNew, onCancelNew,
   } = props
-  const anchoredComposer = composer && composer.anchor && composer.top != null
   const generalComposer = composer && !composer.anchor
   const empty = openCount === 0 && resolved.length === 0 && !composer
 
@@ -507,9 +506,11 @@ function OpenPanel(props: {
       </div>
 
       <div style={{ flex: 1, minHeight: 0, position: "relative", overflow: "hidden" }}>
-        {/* Pinned margin — cards float beside their highlighted text. */}
+        {/* Pinned margin — cards (and a new-comment composer) float beside their
+            highlighted text, sharing one overlap-free layout. */}
         <PinnedZone
           pins={pinned}
+          composer={composer}
           activeThread={activeThread}
           hoverThread={hoverThread}
           inDoc={inDoc}
@@ -518,18 +519,9 @@ function OpenPanel(props: {
           onResolve={onResolve}
           onReply={onReply}
           onJump={onJump}
+          onSubmitNew={onSubmitNew}
+          onCancelNew={onCancelNew}
         />
-
-        {/* Anchored composer, pinned at the selection. */}
-        {anchoredComposer && (
-          <div style={{ position: "absolute", left: 10, right: 10, top: clamp((composer.top ?? 0) - 6, 6, 4000), zIndex: 9 }}>
-            <Composer
-              quote={composer.anchor?.exact ?? null}
-              onSubmit={onSubmitNew}
-              onCancel={onCancelNew}
-            />
-          </div>
-        )}
 
         {/* Empty state. */}
         {empty && (
@@ -591,10 +583,14 @@ function OpenPanel(props: {
 // Pinned margin: absolutely positions each thread card next to its highlight,
 // measuring heights and relaxing overlaps so cards never stack on top of each
 // other. The active card snaps to its true anchor; neighbours flow around it.
+const COMPOSER_ID = "__composer__"
+
 function PinnedZone({
-  pins, activeThread, hoverThread, inDoc, onActivate, onHover, onResolve, onReply, onJump,
+  pins, composer, activeThread, hoverThread, inDoc,
+  onActivate, onHover, onResolve, onReply, onJump, onSubmitNew, onCancelNew,
 }: {
   pins: PinItem[]
+  composer: { anchor: Sel | null; top: number | null } | null
   activeThread: string | null
   hoverThread: string | null
   inDoc: Record<string, boolean>
@@ -603,6 +599,8 @@ function PinnedZone({
   onResolve: (c: Comment) => void
   onReply: (text: string, threadId: string) => void
   onJump: (id: string) => void
+  onSubmitNew: (text: string) => void
+  onCancelNew: () => void
 }) {
   const [heights, setHeights] = useState<Record<string, number>>({})
   const obs = useRef<ResizeObserver | null>(null)
@@ -629,14 +627,20 @@ function PinnedZone({
     if (el) obs.current?.observe(el)
   }, [])
 
+  // A composer for a new anchored comment joins the same layout as a pinned
+  // item that owns priority, so neighbouring cards flow around it instead of
+  // colliding with it.
+  const composing = !!(composer && composer.anchor && composer.top != null)
   const items = pins.map((p) => ({ id: p.thread[0].thread_id, desiredY: p.desiredY }))
-  const pos = layoutPins(items, heights, activeThread, 12)
+  if (composing) items.push({ id: COMPOSER_ID, desiredY: composer!.top! })
+  const activeId = composing ? COMPOSER_ID : activeThread
+  const pos = layoutPins(items, heights, activeId, 12)
 
   return (
     <div style={{ position: "absolute", inset: 0, overflow: "hidden" }}>
       {pins.map((p) => {
         const id = p.thread[0].thread_id
-        const active = activeThread === id
+        const active = !composing && activeThread === id
         const y = pos[id] ?? p.desiredY
         return (
           <div
@@ -668,6 +672,23 @@ function PinnedZone({
           </div>
         )
       })}
+      {composing && (
+        <div
+          ref={measure}
+          data-pin={COMPOSER_ID}
+          style={{
+            position: "absolute",
+            left: 10,
+            right: 10,
+            top: 0,
+            transform: `translateY(${Math.round(pos[COMPOSER_ID] ?? composer!.top!)}px)`,
+            transition: "transform .18s cubic-bezier(.4,0,.2,1)",
+            zIndex: 10,
+          }}
+        >
+          <Composer quote={composer!.anchor?.exact ?? null} onSubmit={onSubmitNew} onCancel={onCancelNew} />
+        </div>
+      )}
     </div>
   )
 }
