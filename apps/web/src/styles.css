@@ -56,3 +56,21 @@ a{color:var(--ac);text-decoration:none}
   font-size:12.5px;padding:9px 15px;border-radius:10px;opacity:0;transition:.25s;pointer-events:none;z-index:90}
 .toast.show{opacity:1}
 .center{height:100%;display:grid;place-items:center}
+
+/* -- Comments margin (Google-Docs-style) -- */
+.cmt-card{animation:cmtin .22s cubic-bezier(.2,.8,.2,1)}
+@keyframes cmtin{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+/* The quoted text a comment is attached to. */
+.cmt-quote{display:block;width:100%;text-align:left;border:0;font:italic 11.5px/1.4 Inter,sans-serif;
+  padding:6px 10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* Compact-card body: clamp to two lines. */
+.cmt-clamp{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+/* Floating "comment on selection" button. */
+.cmt-bubble{display:inline-flex;align-items:center;gap:6px;font-weight:600;font-size:12px;padding:6px 11px;
+  border-radius:999px;border:1px solid var(--ac);background:var(--card);color:var(--ac);cursor:pointer;
+  box-shadow:var(--shadow);white-space:nowrap;animation:cmtin .15s ease;transition:filter .12s}
+.cmt-bubble:hover{background:var(--ac);color:var(--ac-fg)}
+/* Collapsed-rail top/bottom buttons. */
+.rail-top{display:flex;align-items:center;justify-content:center;gap:5px;height:38px;width:100%;border:0;
+  background:transparent;color:var(--fg);cursor:pointer;flex:0 0 auto;transition:background .12s}
+.rail-top:hover{background:var(--hover)}
