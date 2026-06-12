@@ -1,4 +1,46 @@
-/** One SQL schema, run verbatim by every driver (SQLite, D1, and Postgres). */
+import { sql } from "drizzle-orm"
+import { integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core"
+import type { ArtifactKind, Visibility } from "@dock/core"
+
+const now = sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`
+
+// Drizzle tables for the queried entities. One SQLite-dialect schema, shared by
+// the better-sqlite3 driver (self-host) and the D1 driver (edge).
+export const artifact = sqliteTable("artifact", {
+  id: text("id").primaryKey(),
+  short_id: text("short_id").notNull().unique(),
+  org_id: text("org_id").notNull().default("local"),
+  slug: text("slug"),
+  title: text("title"),
+  visibility: text("visibility").$type<Visibility>().notNull().default("link"),
+  kind: text("kind").$type<ArtifactKind>().notNull(),
+  spa: integer("spa").$type<0 | 1>().notNull().default(0),
+  current_version: integer("current_version").notNull().default(0),
+  created_at: text("created_at").notNull().default(now),
+})
+
+export const version = sqliteTable(
+  "version",
+  {
+    id: text("id").primaryKey(),
+    artifact_id: text("artifact_id")
+      .notNull()
+      .references(() => artifact.id),
+    n: integer("n").notNull(),
+    blob_key: text("blob_key").notNull(),
+    content_type: text("content_type").notNull(),
+    author: text("author").notNull(),
+    message: text("message"),
+    created_at: text("created_at").notNull().default(now),
+  },
+  (t) => [uniqueIndex("artifact_version").on(t.artifact_id, t.n)],
+)
+
+/**
+ * Raw DDL run at boot for the self-host SQLite default (zero-config), and used
+ * to seed D1 (deploy/d1-schema.sql). Tables not yet queried (comment, principal,
+ * acl) are created here up front so migrations stay forward-only.
+ */
 export const SCHEMA_STATEMENTS: string[] = [
   `CREATE TABLE IF NOT EXISTS artifact (
     id TEXT PRIMARY KEY,
@@ -23,7 +65,6 @@ export const SCHEMA_STATEMENTS: string[] = [
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
     UNIQUE (artifact_id, n)
   )`,
-  // Created up front so migrations stay forward-only.
   `CREATE TABLE IF NOT EXISTS comment (
     id TEXT PRIMARY KEY,
     artifact_id TEXT NOT NULL REFERENCES artifact(id),
