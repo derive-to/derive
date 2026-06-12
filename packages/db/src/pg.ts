@@ -1,145 +1,121 @@
+import { and, asc, desc, eq, isNull, lte, or } from "drizzle-orm"
+import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres"
 import { Pool } from "pg"
 import type {
   ArtifactRecord,
   CommentRecord,
   CommentState,
+  DeliveryRecord,
+  DeliveryStatus,
   MetaStore,
   NewArtifact,
   NewComment,
+  NewDelivery,
   NewVersion,
   NewView,
+  NewWebhook,
   VersionRecord,
   ViewStats,
+  WebhookRecord,
 } from "@dock/core"
-import { PG_SCHEMA_STATEMENTS } from "./pg-schema"
+import { PG_SCHEMA_STATEMENTS, artifact, comment, version, webhook, webhookDelivery } from "./pg-schema"
 
+const schema = { artifact, version, comment, webhook, webhookDelivery }
 const VIEW_WINDOW_MS = 30 * 86400_000
 
 /**
  * Postgres metadata store (Neon, RDS, self-hosted) for horizontal scale — the
- * container is stateless and many instances share one database. Same interface
- * and record shapes as the SQLite driver. Raw parameterized SQL via node-postgres
- * keeps it dialect-explicit and free of the query-builder version skew.
+ * container is stateless and many instances share one database. CRUD goes
+ * through the drizzle query builder against the pg-dialect schema (one table
+ * definition, dialect-correct SQL generated for us); the analytics aggregations
+ * stay raw `pool.query` where GROUP BY / DISTINCT read clearer.
  */
 export class PgMetaStore implements MetaStore {
-  private constructor(private pool: Pool) {}
+  private constructor(
+    private pool: Pool,
+    private db: NodePgDatabase<typeof schema>,
+  ) {}
 
   /** Connect and apply the schema (idempotent) before first use. */
   static async create(connectionString: string): Promise<PgMetaStore> {
     const pool = new Pool({ connectionString })
     for (const stmt of PG_SCHEMA_STATEMENTS) await pool.query(stmt)
-    return new PgMetaStore(pool)
-  }
-
-  private async one<T>(text: string, params: unknown[]): Promise<T | null> {
-    const { rows } = await this.pool.query(text, params)
-    return (rows[0] as T) ?? null
+    return new PgMetaStore(pool, drizzle(pool, { schema }))
   }
 
   async createArtifact(a: NewArtifact): Promise<ArtifactRecord> {
-    await this.pool.query(
-      `INSERT INTO artifact (id, short_id, org_id, slug, title, visibility, kind, spa)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-      [a.id, a.short_id, a.org_id, a.slug, a.title, a.visibility, a.kind, a.spa],
-    )
+    await this.db.insert(artifact).values(a)
     return (await this.getByShortId(a.short_id)) as ArtifactRecord
   }
 
-  getByShortId(shortId: string): Promise<ArtifactRecord | null> {
-    return this.one<ArtifactRecord>(`SELECT * FROM artifact WHERE short_id = $1`, [shortId])
+  async getByShortId(shortId: string): Promise<ArtifactRecord | null> {
+    const rows = await this.db.select().from(artifact).where(eq(artifact.short_id, shortId))
+    return rows[0] ?? null
   }
 
   async addVersion(artifactId: string, v: NewVersion): Promise<VersionRecord> {
-    const client = await this.pool.connect()
-    try {
-      await client.query("BEGIN")
-      const cur = await client.query(
-        `SELECT current_version FROM artifact WHERE id = $1 FOR UPDATE`,
-        [artifactId],
-      )
-      if (!cur.rows[0]) throw new Error(`artifact not found: ${artifactId}`)
-      const next = (cur.rows[0].current_version as number) + 1
-      await client.query(
-        `INSERT INTO version (id, artifact_id, n, blob_key, content_type, author, message)
-         VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-        [v.id, artifactId, next, v.blob_key, v.content_type, v.author, v.message],
-      )
-      await client.query(`UPDATE artifact SET current_version = $1 WHERE id = $2`, [
-        next,
-        artifactId,
-      ])
-      await client.query("COMMIT")
-      return (await this.getVersion(artifactId, next)) as VersionRecord
-    } catch (err) {
-      await client.query("ROLLBACK")
-      throw err
-    } finally {
-      client.release()
-    }
+    return this.db.transaction(async (tx) => {
+      const cur = await tx
+        .select({ cv: artifact.current_version })
+        .from(artifact)
+        .where(eq(artifact.id, artifactId))
+        .for("update")
+      if (!cur[0]) throw new Error(`artifact not found: ${artifactId}`)
+      const n = cur[0].cv + 1
+      await tx.insert(version).values({ ...v, artifact_id: artifactId, n })
+      await tx.update(artifact).set({ current_version: n }).where(eq(artifact.id, artifactId))
+      const rows = await tx
+        .select()
+        .from(version)
+        .where(and(eq(version.artifact_id, artifactId), eq(version.n, n)))
+      return rows[0]
+    })
   }
 
-  async listVersions(artifactId: string): Promise<VersionRecord[]> {
-    const { rows } = await this.pool.query(
-      `SELECT * FROM version WHERE artifact_id = $1 ORDER BY n ASC`,
-      [artifactId],
-    )
-    return rows as VersionRecord[]
+  listVersions(artifactId: string): Promise<VersionRecord[]> {
+    return this.db.select().from(version).where(eq(version.artifact_id, artifactId)).orderBy(asc(version.n))
   }
 
-  getVersion(artifactId: string, n: number): Promise<VersionRecord | null> {
-    return this.one<VersionRecord>(`SELECT * FROM version WHERE artifact_id = $1 AND n = $2`, [
-      artifactId,
-      n,
-    ])
+  async getVersion(artifactId: string, n: number): Promise<VersionRecord | null> {
+    const rows = await this.db
+      .select()
+      .from(version)
+      .where(and(eq(version.artifact_id, artifactId), eq(version.n, n)))
+    return rows[0] ?? null
   }
 
   async createComment(c: NewComment): Promise<CommentRecord> {
-    const { rows } = await this.pool.query(
-      `INSERT INTO comment (id, artifact_id, thread_id, base_version, path, anchor, body_md, author)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
-      [c.id, c.artifact_id, c.thread_id, c.base_version, c.path, c.anchor, c.body_md, c.author],
-    )
-    return rows[0] as CommentRecord
+    const rows = await this.db.insert(comment).values(c).returning()
+    return rows[0]
   }
 
-  getComment(id: string): Promise<CommentRecord | null> {
-    return this.one<CommentRecord>(`SELECT * FROM comment WHERE id = $1`, [id])
+  async getComment(id: string): Promise<CommentRecord | null> {
+    const rows = await this.db.select().from(comment).where(eq(comment.id, id))
+    return rows[0] ?? null
   }
 
-  async listComments(artifactId: string, opts?: { state?: CommentState }): Promise<CommentRecord[]> {
-    const { rows } = opts?.state
-      ? await this.pool.query(
-          `SELECT * FROM comment WHERE artifact_id = $1 AND state = $2 ORDER BY created_at ASC`,
-          [artifactId, opts.state],
-        )
-      : await this.pool.query(
-          `SELECT * FROM comment WHERE artifact_id = $1 ORDER BY created_at ASC`,
-          [artifactId],
-        )
-    return rows as CommentRecord[]
+  listComments(artifactId: string, opts?: { state?: CommentState }): Promise<CommentRecord[]> {
+    const where = opts?.state
+      ? and(eq(comment.artifact_id, artifactId), eq(comment.state, opts.state))
+      : eq(comment.artifact_id, artifactId)
+    return this.db.select().from(comment).where(where).orderBy(asc(comment.created_at))
   }
 
-  async setThreadState(
-    artifactId: string,
-    threadId: string,
-    state: CommentState,
-  ): Promise<number> {
-    const res = await this.pool.query(
-      `UPDATE comment SET state = $1 WHERE artifact_id = $2 AND thread_id = $3`,
-      [state, artifactId, threadId],
-    )
-    return res.rowCount ?? 0
+  async setThreadState(artifactId: string, threadId: string, state: CommentState): Promise<number> {
+    const rows = await this.db
+      .update(comment)
+      .set({ state })
+      .where(and(eq(comment.artifact_id, artifactId), eq(comment.thread_id, threadId)))
+      .returning({ id: comment.id })
+    return rows.length
   }
 
-  async listArtifacts(opts?: { limit?: number }): Promise<ArtifactRecord[]> {
-    const { rows } = opts?.limit
-      ? await this.pool.query(`SELECT * FROM artifact ORDER BY created_at DESC LIMIT $1`, [
-          opts.limit,
-        ])
-      : await this.pool.query(`SELECT * FROM artifact ORDER BY created_at DESC`)
-    return rows as ArtifactRecord[]
+  listArtifacts(opts?: { limit?: number }): Promise<ArtifactRecord[]> {
+    const q = this.db.select().from(artifact).orderBy(desc(artifact.created_at))
+    return opts?.limit ? q.limit(opts.limit) : q
   }
 
+  // ---- View analytics (raw: aggregation-heavy) ---------------------------
   async recordView(v: NewView): Promise<void> {
     await this.pool.query(
       `INSERT INTO view (id, artifact_id, version, viewer, viewer_kind) VALUES ($1,$2,$3,$4,$5)`,
@@ -184,6 +160,53 @@ export class PgMetaStore implements MetaStore {
     const out: Record<string, number> = {}
     for (const r of rows) out[r.artifact_id] = r.c
     return out
+  }
+
+  // ---- Webhooks + outbox -------------------------------------------------
+  async createWebhook(w: NewWebhook): Promise<WebhookRecord> {
+    const rows = await this.db.insert(webhook).values(w).returning()
+    return rows[0]
+  }
+  listWebhooks(): Promise<WebhookRecord[]> {
+    return this.db.select().from(webhook).orderBy(desc(webhook.created_at))
+  }
+  async getWebhook(id: string): Promise<WebhookRecord | null> {
+    const rows = await this.db.select().from(webhook).where(eq(webhook.id, id))
+    return rows[0] ?? null
+  }
+  async deleteWebhook(id: string): Promise<void> {
+    await this.db.delete(webhook).where(eq(webhook.id, id))
+  }
+  activeWebhooks(artifactId: string): Promise<WebhookRecord[]> {
+    return this.db
+      .select()
+      .from(webhook)
+      .where(and(eq(webhook.active, 1), or(isNull(webhook.artifact_id), eq(webhook.artifact_id, artifactId))))
+  }
+  async enqueueDelivery(d: NewDelivery): Promise<void> {
+    await this.db.insert(webhookDelivery).values(d)
+  }
+  claimDueDeliveries(now: string, limit: number): Promise<DeliveryRecord[]> {
+    return this.db
+      .select()
+      .from(webhookDelivery)
+      .where(and(eq(webhookDelivery.status, "pending"), lte(webhookDelivery.next_attempt_at, now)))
+      .orderBy(asc(webhookDelivery.next_attempt_at))
+      .limit(limit)
+  }
+  async updateDelivery(
+    id: string,
+    f: { status: DeliveryStatus; attempts: number; last_error: string | null; next_attempt_at: string },
+  ): Promise<void> {
+    await this.db.update(webhookDelivery).set(f).where(eq(webhookDelivery.id, id))
+  }
+  recentDeliveries(webhookId: string, limit: number): Promise<DeliveryRecord[]> {
+    return this.db
+      .select()
+      .from(webhookDelivery)
+      .where(eq(webhookDelivery.webhook_id, webhookId))
+      .orderBy(desc(webhookDelivery.created_at))
+      .limit(limit)
   }
 
   async close(): Promise<void> {
