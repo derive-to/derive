@@ -35,15 +35,52 @@ export function Artifact() {
   const [body, setBody] = useState("")
   const [anchor, setAnchor] = useState<{ type?: string; exact: string; prefix?: string; suffix?: string } | null>(null)
 
-  // Selections inside the sandboxed artifact post a quote selector to us.
+  // The anchor channel with the sandboxed iframe (see SELECTION_SCRIPT).
+  const frame = useRef<HTMLIFrameElement>(null)
+  const [frameReady, setFrameReady] = useState(0)
+  const [inDoc, setInDoc] = useState<Record<string, boolean>>({})
+  const [activeThread, setActiveThread] = useState<string | null>(null)
+  const threadEls = useRef(new Map<string, HTMLDivElement>())
+
   useEffect(() => {
     const onMsg = (e: MessageEvent) => {
       const d = e.data
-      if (d && d.source === "dock" && d.type === "select") setAnchor(d.selector ?? null)
+      if (!d || d.source !== "dock") return
+      if (d.type === "select") setAnchor(d.selector ?? null)
+      // which threads' text exists in the shown version (truth for highlights + badges)
+      else if (d.type === "anchors-resolved") setInDoc(d.resolved ?? {})
+      // clicking a highlight in the document focuses its thread
+      else if (d.type === "anchor-click") {
+        setActiveThread(d.id)
+        threadEls.current.get(d.id)?.scrollIntoView({ behavior: "smooth", block: "center" })
+      }
     }
     window.addEventListener("message", onMsg)
     return () => window.removeEventListener("message", onMsg)
   }, [])
+
+  // Paint highlights for open, anchored threads whenever the doc or comments change.
+  const sendAnchors = useCallback(() => {
+    const w = frame.current?.contentWindow
+    if (!w) return
+    const anchors = groupThreads(comments)
+      .filter((t) => t[0].state === "open")
+      .map((t) => ({ id: t[0].thread_id, sel: parseAnchor(t[0].anchor) }))
+      .filter((x): x is { id: string; sel: NonNullable<ReturnType<typeof parseAnchor>> } => !!x.sel)
+      .map((x) => ({ id: x.id, exact: x.sel.exact, prefix: x.sel.prefix, suffix: x.sel.suffix }))
+    w.postMessage({ source: "dock-host", type: "anchors", anchors }, "*")
+  }, [comments])
+  useEffect(() => {
+    sendAnchors()
+  }, [sendAnchors, frameReady])
+
+  useEffect(() => setActiveThread(null), [shortId, version])
+
+  // Clicking a thread's quote scrolls the document to its highlight.
+  const jumpTo = (threadId: string) => {
+    setActiveThread(threadId)
+    frame.current?.contentWindow?.postMessage({ source: "dock-host", type: "focus-anchor", id: threadId }, "*")
+  }
 
   useEffect(() => {
     if (!loading && !me) nav({ to: "/login" })
@@ -214,6 +251,8 @@ export function Artifact() {
                 <DiffView diff={diff} />
               ) : (
                 <iframe
+                  ref={frame}
+                  onLoad={() => setFrameReady((n) => n + 1)}
                   title={art.title ?? shortId}
                   src={rawSrc}
                   sandbox="allow-scripts allow-forms allow-popups allow-modals allow-downloads"
@@ -233,7 +272,21 @@ export function Artifact() {
             {threads.length === 0 ? (
               <div className="muted" style={{ textAlign: "center", fontSize: 12, padding: "26px 12px" }}>No comments yet.</div>
             ) : (
-              threads.map((t) => <Thread key={t[0].thread_id} thread={t} onReply={addComment} onResolve={toggleResolve} />)
+              threads.map((t) => (
+                <Thread
+                  key={t[0].thread_id}
+                  thread={t}
+                  onReply={addComment}
+                  onResolve={toggleResolve}
+                  active={activeThread === t[0].thread_id}
+                  inDoc={inDoc[t[0].thread_id]}
+                  onJump={() => jumpTo(t[0].thread_id)}
+                  refEl={(el) => {
+                    if (el) threadEls.current.set(t[0].thread_id, el)
+                    else threadEls.current.delete(t[0].thread_id)
+                  }}
+                />
+              ))
             )}
           </div>
           <div style={{ borderTop: "1px solid var(--line-soft)", padding: 11 }}>
@@ -253,12 +306,62 @@ export function Artifact() {
   )
 }
 
-function Thread({ thread, onReply, onResolve }: { thread: Comment[]; onReply: (t: string, tid: string) => void; onResolve: (c: Comment) => void }) {
+function Thread({
+  thread,
+  onReply,
+  onResolve,
+  active,
+  inDoc,
+  onJump,
+  refEl,
+}: {
+  thread: Comment[]
+  onReply: (t: string, tid: string) => void
+  onResolve: (c: Comment) => void
+  active?: boolean
+  /** Whether the anchored text exists in the version being shown (from the iframe). */
+  inDoc?: boolean
+  onJump?: () => void
+  refEl?: (el: HTMLDivElement | null) => void
+}) {
   const [reply, setReply] = useState("")
   const root = thread[0]
   const resolved = root.state === "resolved"
+  const quote = anchorExact(root.anchor)
+  // The iframe's answer is the truth for the shown version; the server flag
+  // (computed against the latest version) is the fallback before it arrives.
+  const textPresent = inDoc !== undefined ? inDoc : root.anchored !== false
   return (
-    <div className="card" style={{ marginBottom: 11, overflow: "hidden", opacity: resolved ? 0.62 : 1 }}>
+    <div
+      ref={refEl}
+      className="card"
+      style={{
+        marginBottom: 11,
+        overflow: "hidden",
+        opacity: resolved ? 0.62 : 1,
+        scrollMarginTop: 12,
+        outline: active ? "2px solid var(--ac)" : undefined,
+        outlineOffset: 1,
+        transition: "outline-color .2s",
+      }}
+    >
+      {quote &&
+        (textPresent && !resolved ? (
+          <button
+            onClick={onJump}
+            title="Jump to the highlighted text"
+            style={{ display: "block", width: "100%", textAlign: "left", border: 0, borderLeft: "3px solid var(--ac)", background: "var(--ac-soft)", color: "var(--fg)", padding: "6px 10px", fontSize: 11.5, lineHeight: 1.4, cursor: "pointer", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontStyle: "italic" }}
+          >
+            “{quote}”
+          </button>
+        ) : (
+          <div
+            title="The text this comment was attached to was edited or removed in this version"
+            style={{ borderLeft: "3px solid var(--line)", background: "var(--card-2)", color: "var(--fg-mut)", padding: "6px 10px", fontSize: 11.5, lineHeight: 1.4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontStyle: "italic" }}
+          >
+            “{quote}”
+          </div>
+        ))}
       {thread.map((c) => (
         <div key={c.id} style={{ padding: "10px 12px", borderBottom: "1px solid var(--line-soft)" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 11, fontWeight: 700, color: "var(--cmt-tx)", marginBottom: 4 }}>
@@ -266,13 +369,8 @@ function Thread({ thread, onReply, onResolve }: { thread: Comment[]; onReply: (t
               {(c.author || "?").slice(0, 2).toUpperCase()}
             </span>
             {c.author}
-            <span className="mono muted" style={{ marginLeft: "auto", fontWeight: 400, fontSize: 9 }}>base v{c.base_version}</span>
+            <span className="mono muted" style={{ marginLeft: "auto", fontWeight: 400, fontSize: 9 }}>on v{c.base_version}</span>
           </div>
-          {anchorExact(c.anchor) && (
-            <div className="mono" style={{ fontSize: 9.5, color: "var(--cmt-tx)", background: "var(--card-2)", borderRadius: 5, padding: "2px 6px", display: "inline-block", marginBottom: 5, maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-              “{anchorExact(c.anchor)}”
-            </div>
-          )}
           <p style={{ margin: 0, fontSize: 12.5, lineHeight: 1.45, whiteSpace: "pre-wrap" }}>{c.body_md}</p>
         </div>
       ))}
@@ -280,9 +378,9 @@ function Thread({ thread, onReply, onResolve }: { thread: Comment[]; onReply: (t
         <span className="mono" style={{ fontSize: 9.5, fontWeight: 700, padding: "2px 8px", borderRadius: 999, background: resolved ? "var(--good-bg)" : "var(--ac-soft)", color: resolved ? "var(--good)" : "var(--ac)" }}>
           {resolved ? "resolved" : "open"}
         </span>
-        {root.anchored === false && (
-          <span className="mono" title="The anchored text changed in a newer version" style={{ fontSize: 9.5, fontWeight: 700, padding: "2px 8px", borderRadius: 999, background: "var(--cmt-bg)", color: "var(--cmt-tx)" }}>
-            orphaned
+        {quote && !textPresent && !resolved && (
+          <span className="mono" title="The text this comment was attached to was edited or removed in this version" style={{ fontSize: 9.5, fontWeight: 700, padding: "2px 8px", borderRadius: 999, background: "var(--cmt-bg)", color: "var(--cmt-tx)" }}>
+            text changed
           </span>
         )}
         <button className="btn sm" style={{ marginLeft: "auto" }} onClick={() => onResolve(root)}>
@@ -519,14 +617,17 @@ function DiffView({ diff }: { diff: Diff | null }) {
   )
 }
 
-function anchorExact(a: string | null): string | null {
+function parseAnchor(a: string | null): { exact: string; prefix?: string; suffix?: string } | null {
   if (!a) return null
   try {
-    return (JSON.parse(a) as { exact?: string }).exact ?? null
+    const s = JSON.parse(a) as { exact?: string; prefix?: string; suffix?: string }
+    return s.exact ? { exact: s.exact, prefix: s.prefix, suffix: s.suffix } : null
   } catch {
     return null
   }
 }
+
+const anchorExact = (a: string | null): string | null => parseAnchor(a)?.exact ?? null
 
 function groupThreads(comments: Comment[]): Comment[][] {
   const map = new Map<string, Comment[]>()

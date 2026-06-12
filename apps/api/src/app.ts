@@ -4,6 +4,7 @@ import { streamSSE } from "hono/streaming"
 import { Presence, createBus } from "./bus"
 import type { Auth } from "./auth-config"
 import {
+  ANCHOR_CLIENT_JS,
   BUNDLE_CONTENT_TYPE,
   PublishError,
   artifactUrl,
@@ -432,6 +433,16 @@ export function createApp(deps: AppDeps): Hono {
 
   // ---- Raw content (the sandbox) ----------------------------------------
 
+  // The comment-anchor client, referenced by URL from artifact HTML. Artifact
+  // pages are cached immutable; this is cached short so the client can evolve
+  // without stranding old behavior in already-viewed artifacts.
+  app.get("/raw/dock-client.js", (c) =>
+    c.body(ANCHOR_CLIENT_JS, 200, {
+      "Content-Type": "text/javascript; charset=utf-8",
+      "Cache-Control": "public, max-age=300",
+    }),
+  )
+
   app.get("/raw/:shortId/v/:n/*", async (c) => {
     const shortId = c.req.param("shortId")
     const n = Number(c.req.param("n"))
@@ -464,7 +475,9 @@ export function createApp(deps: AppDeps): Hono {
           new TextDecoder().decode(data),
           prefix.slice(0, -1),
         )
-        return c.body(rewritten, 200, { ...RAW_HEADERS, "Content-Type": entry.type })
+        // Bundle pages get the anchor client too — comments stick everywhere.
+        const out = entry.type.startsWith("text/html") ? rewritten + SELECTION_SCRIPT : rewritten
+        return c.body(out, 200, { ...RAW_HEADERS, "Content-Type": entry.type })
       }
       return c.body(toBody(data), 200, { ...RAW_HEADERS, "Content-Type": entry.type })
     }
