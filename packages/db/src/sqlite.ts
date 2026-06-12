@@ -3,14 +3,17 @@ import { and, asc, eq } from "drizzle-orm"
 import { drizzle, type BetterSQLite3Database } from "drizzle-orm/better-sqlite3"
 import type {
   ArtifactRecord,
+  CommentRecord,
+  CommentState,
   MetaStore,
   NewArtifact,
+  NewComment,
   NewVersion,
   VersionRecord,
 } from "@dock/core"
-import { SCHEMA_STATEMENTS, artifact, version } from "./schema"
+import { SCHEMA_STATEMENTS, artifact, comment, version } from "./schema"
 
-const schema = { artifact, version }
+const schema = { artifact, version, comment }
 
 /** Embedded SQLite (WAL). The zero-dependency default; no external services. */
 export class SqliteMetaStore implements MetaStore {
@@ -66,6 +69,38 @@ export class SqliteMetaStore implements MetaStore {
         .where(and(eq(version.artifact_id, artifactId), eq(version.n, n)))
         .get() ?? null
     )
+  }
+
+  async createComment(c: NewComment): Promise<CommentRecord> {
+    this.db.insert(comment).values(c).run()
+    return this.db.select().from(comment).where(eq(comment.id, c.id)).get() as CommentRecord
+  }
+
+  async getComment(id: string): Promise<CommentRecord | null> {
+    return this.db.select().from(comment).where(eq(comment.id, id)).get() ?? null
+  }
+
+  async listComments(
+    artifactId: string,
+    opts?: { state?: CommentState },
+  ): Promise<CommentRecord[]> {
+    const where = opts?.state
+      ? and(eq(comment.artifact_id, artifactId), eq(comment.state, opts.state))
+      : eq(comment.artifact_id, artifactId)
+    return this.db.select().from(comment).where(where).orderBy(asc(comment.created_at)).all()
+  }
+
+  async setThreadState(
+    artifactId: string,
+    threadId: string,
+    state: CommentState,
+  ): Promise<number> {
+    const res = this.db
+      .update(comment)
+      .set({ state })
+      .where(and(eq(comment.artifact_id, artifactId), eq(comment.thread_id, threadId)))
+      .run()
+    return res.changes
   }
 
   close(): void {

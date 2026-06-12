@@ -1,6 +1,6 @@
 import { sql } from "drizzle-orm"
 import { integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core"
-import type { ArtifactKind, Visibility } from "@dock/core"
+import type { ArtifactKind, CommentState, Visibility } from "@dock/core"
 
 const now = sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`
 
@@ -35,6 +35,21 @@ export const version = sqliteTable(
   },
   (t) => [uniqueIndex("artifact_version").on(t.artifact_id, t.n)],
 )
+
+export const comment = sqliteTable("comment", {
+  id: text("id").primaryKey(),
+  artifact_id: text("artifact_id")
+    .notNull()
+    .references(() => artifact.id),
+  thread_id: text("thread_id").notNull(),
+  base_version: integer("base_version").notNull(),
+  path: text("path"),
+  anchor: text("anchor"),
+  body_md: text("body_md").notNull(),
+  author: text("author").notNull(),
+  state: text("state").$type<CommentState>().notNull().default("open"),
+  created_at: text("created_at").notNull().default(now),
+})
 
 /**
  * Raw DDL run at boot for the self-host SQLite default (zero-config), and used

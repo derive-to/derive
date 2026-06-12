@@ -6,6 +6,7 @@ import {
   diffLines,
   formatDiff,
   mimeFor,
+  newId,
   publish,
   renderMarkdown,
   renderShell,
@@ -97,6 +98,16 @@ export function createApp(deps: AppDeps): Hono {
         },
         shortId,
       )
+      // Republish can resolve comment threads in the same call.
+      const resolves = body["resolves"]
+      if (shortId && typeof resolves === "string" && resolves) {
+        for (const cid of resolves.split(",").map((s) => s.trim()).filter(Boolean)) {
+          const cm = await meta.getComment(cid)
+          if (cm && cm.artifact_id === artifact.id) {
+            await meta.setThreadState(artifact.id, cm.thread_id, "resolved")
+          }
+        }
+      }
       const versions = await meta.listVersions(artifact.id)
       return c.json({ ...toJson(deps.baseUrl, artifact, versions), published: version.n }, 201)
     } catch (err) {
@@ -168,6 +179,61 @@ export function createApp(deps: AppDeps): Hono {
     if (c.req.query("format") === "json") return c.json({ from, to, ops })
     c.header("Content-Type", "text/plain; charset=utf-8")
     return c.body(formatDiff(ops))
+  })
+
+  // ---- Comments ----------------------------------------------------------
+
+  // Create a comment (new thread) or a reply (pass thread_id).
+  app.post("/v1/artifacts/:shortId/comments", async (c) => {
+    const artifact = await meta.getByShortId(c.req.param("shortId"))
+    if (!artifact || artifact.current_version === 0) return c.json({ error: "not found" }, 404)
+    const body = (await c.req.json().catch(() => ({}))) as Record<string, unknown>
+    if (typeof body.body_md !== "string" || body.body_md.trim() === "")
+      return c.json({ error: "body_md required" }, 400)
+
+    const id = newId("c")
+    const threadId = typeof body.thread_id === "string" && body.thread_id ? body.thread_id : id
+    const baseVersion = Number.isInteger(body.base_version)
+      ? (body.base_version as number)
+      : artifact.current_version
+    const anchor =
+      body.anchor && typeof body.anchor === "object"
+        ? JSON.stringify(body.anchor)
+        : typeof body.anchor === "string"
+          ? body.anchor
+          : null
+
+    const created = await meta.createComment({
+      id,
+      artifact_id: artifact.id,
+      thread_id: threadId,
+      base_version: baseVersion,
+      path: typeof body.path === "string" ? body.path : null,
+      anchor,
+      body_md: body.body_md,
+      author: typeof body.author === "string" && body.author ? body.author : "anonymous",
+    })
+    return c.json(created, 201)
+  })
+
+  app.get("/v1/artifacts/:shortId/comments", async (c) => {
+    const artifact = await meta.getByShortId(c.req.param("shortId"))
+    if (!artifact) return c.json({ error: "not found" }, 404)
+    const q = c.req.query("state")
+    const state = q === "open" || q === "resolved" ? q : undefined
+    return c.json({ comments: await meta.listComments(artifact.id, state ? { state } : undefined) })
+  })
+
+  // Resolve (or reopen, with {state:"open"}) the thread a comment belongs to.
+  app.post("/v1/artifacts/:shortId/comments/:commentId/resolve", async (c) => {
+    const artifact = await meta.getByShortId(c.req.param("shortId"))
+    if (!artifact) return c.json({ error: "not found" }, 404)
+    const cm = await meta.getComment(c.req.param("commentId"))
+    if (!cm || cm.artifact_id !== artifact.id) return c.json({ error: "not found" }, 404)
+    const body = (await c.req.json().catch(() => ({}))) as { state?: string }
+    const state = body.state === "open" ? "open" : "resolved"
+    const updated = await meta.setThreadState(artifact.id, cm.thread_id, state)
+    return c.json({ thread_id: cm.thread_id, state, updated })
   })
 
   // ---- Viewer ------------------------------------------------------------
