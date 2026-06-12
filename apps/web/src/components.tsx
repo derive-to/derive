@@ -98,6 +98,9 @@ export function UserMenu() {
             </button>
           ))}
           <div style={{ height: 1, background: "var(--line-soft)", margin: "5px 2px" }} />
+          <button onClick={() => { setOpen(false); nav({ to: "/settings" }) }} style={menuRow}>
+            Settings
+          </button>
           <button
             onClick={async () => {
               await api.logout().catch(() => {})
