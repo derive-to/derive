@@ -56,7 +56,7 @@ One Node container is the whole product; storage is pluggable behind interfaces.
 
 ```
 apps/api          HTTP API, sandboxed artifact serving, viewer
-apps/web          web UI (React + TanStack Router SPA)
+apps/web          web UI (TanStack Start, SPA mode — static bundle)
 packages/core     domain: ports, publish, markdown render, viewer shell
 packages/db       MetaStore: sqlite (default) · postgres · d1
 packages/storage  BlobStore: fs (default) · s3/r2
