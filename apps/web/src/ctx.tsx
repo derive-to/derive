@@ -38,7 +38,10 @@ const ThemeCtx = createContext<{ theme: string; setTheme: (t: string) => void }>
 export const useTheme = () => useContext(ThemeCtx)
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
-  const [theme, setTheme] = useState(() => localStorage.getItem("dock_theme") ?? "paper")
+  // Guard for the prerendered shell (no window/localStorage at build time).
+  const [theme, setTheme] = useState(() =>
+    typeof localStorage === "undefined" ? "paper" : (localStorage.getItem("dock_theme") ?? "paper"),
+  )
   useEffect(() => {
     document.documentElement.dataset.theme = theme
     localStorage.setItem("dock_theme", theme)

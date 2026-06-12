@@ -59,7 +59,7 @@ Connect the repo in the Cloudflare dashboard, or use Wrangler:
 
 ```bash
 pnpm --filter @dock/web build      # VITE_DOCK_API is baked in at build time
-npx wrangler pages deploy apps/web/dist --project-name dock
+npx wrangler pages deploy apps/web/dist/client --project-name dock
 ```
 
 Build settings (dashboard):
@@ -67,7 +67,7 @@ Build settings (dashboard):
 | Setting | Value |
 |---|---|
 | Build command | `pnpm --filter @dock/web build` |
-| Output directory | `apps/web/dist` |
+| Output directory | `apps/web/dist/client` |
 | Environment variable | `VITE_DOCK_API = https://api.example.com` |
 
 `apps/web/public/_redirects` already ships the SPA fallback (`/* /index.html 200`).
