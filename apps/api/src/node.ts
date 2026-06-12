@@ -49,6 +49,7 @@ const app = createApp({
   token: process.env.DOCK_TOKEN,
   auth,
   webOrigins,
+  analytics: process.env.DOCK_ANALYTICS !== "false",
 })
 
 const blobDesc = process.env.OBJECT_STORE_URL ? "S3/R2" : `local disk (${DATA_DIR})`

@@ -46,6 +46,10 @@ a{color:var(--ac);text-decoration:none}
 .chip{font-family:ui-monospace,Menlo,monospace;font-size:10.5px;color:var(--fg-mut);border:1px solid var(--line);
   border-radius:6px;padding:2px 8px;background:var(--card);text-decoration:none}
 .chip.on{background:var(--ac);border-color:var(--ac);color:var(--ac-fg);font-weight:700}
+.seg-b{font-family:ui-monospace,Menlo,monospace;font-size:11px;color:var(--fg-mut);border:0;background:transparent;
+  border-radius:5px;padding:3px 11px;cursor:pointer}
+.seg-b.on{background:var(--card);color:var(--fg);font-weight:700;box-shadow:0 1px 2px rgba(0,0,0,.08)}
+.seg-b:disabled{opacity:.4;cursor:not-allowed}
 .spin{width:22px;height:22px;border:2px solid var(--line);border-top-color:var(--ac);border-radius:50%;animation:sp .7s linear infinite}
 @keyframes sp{to{transform:rotate(360deg)}}
 .toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:var(--fg);color:var(--bg);

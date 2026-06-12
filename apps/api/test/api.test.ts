@@ -107,6 +107,58 @@ describe("publish static bundle (astro-style dist)", () => {
   })
 })
 
+describe("view analytics", () => {
+  it("records views and aggregates counts, uniques, per-version, and recent viewers", async () => {
+    const { short_id } = await (await upload("a.md", "# A")).json()
+    await upload("a.md", "# A v2", { message: "v2" }, short_id) // now at v2
+
+    // Three views from one anonymous viewer (cookie reused), one from another.
+    let cookie = ""
+    for (let i = 0; i < 3; i++) {
+      const r = await app.request(`/v1/artifacts/${short_id}/view`, {
+        method: "POST",
+        headers: { "content-type": "application/json", ...(cookie ? { cookie } : {}) },
+        body: JSON.stringify({ version: 1 }),
+      })
+      cookie ||= (r.headers.get("set-cookie") ?? "").split(";")[0]
+    }
+    await app.request(`/v1/artifacts/${short_id}/view`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({}),
+    })
+
+    const a = await (await app.request(`/v1/artifacts/${short_id}/analytics`)).json()
+    expect(a.total).toBe(4)
+    expect(a.unique).toBe(2) // one reused cookie + one fresh
+    expect(a.perVersion).toEqual([
+      { version: 1, count: 3 },
+      { version: 2, count: 1 },
+    ])
+    expect(a.daily.reduce((s: number, d: { count: number }) => s + d.count, 0)).toBe(4)
+    expect(a.recent.length).toBe(2)
+    expect(a.recent.every((r: { kind: string }) => r.kind === "anon")).toBe(true)
+
+    // Batch counts surface on the library listing.
+    const list = await (await app.request("/v1/artifacts")).json()
+    const row = list.artifacts.find((x: { short_id: string }) => x.short_id === short_id)
+    expect(row.views).toBe(4)
+  })
+
+  it("no-ops when analytics is disabled", async () => {
+    const off = createApp({ meta, blobs: new FsBlobStore(join(dir, "blobs2")), baseUrl: "http://dock.test", analytics: false })
+    const { short_id } = await (async () => {
+      const form = new FormData()
+      form.append("file", new Blob([new TextEncoder().encode("# B")]), "b.md")
+      return (await off.request("/v1/artifacts", { method: "POST", body: form })).json()
+    })()
+    const v = await off.request(`/v1/artifacts/${short_id}/view`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })
+    expect(v.status).toBe(204)
+    const a = await off.request(`/v1/artifacts/${short_id}/analytics`)
+    expect(a.status).toBe(404)
+  })
+})
+
 describe("publish markdown", () => {
   it("renders sanitized html and serves raw source", async () => {
     const md = "# Notes\n\nSome *text*.\n\n<script>alert(1)</script>"

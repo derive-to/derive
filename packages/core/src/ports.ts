@@ -70,6 +70,31 @@ export interface MetaStore {
   setThreadState(artifactId: string, threadId: string, state: CommentState): Promise<number>
 
   listArtifacts(opts?: { limit?: number }): Promise<ArtifactRecord[]>
+
+  /** Append a view event. */
+  recordView(v: NewView): Promise<void>
+  /** Aggregated view analytics for one artifact. */
+  viewStats(artifactId: string): Promise<ViewStats>
+  /** Total view counts for many artifacts at once (no N+1). */
+  viewCounts(artifactIds: string[]): Promise<Record<string, number>>
+}
+
+export interface NewView {
+  id: string
+  artifact_id: string
+  version: number
+  viewer: string
+  viewer_kind: "user" | "anon"
+}
+
+export interface ViewStats {
+  total: number
+  unique: number
+  perVersion: { version: number; count: number }[]
+  /** Daily counts over the trailing window, oldest first. */
+  daily: { day: string; count: number }[]
+  /** Most-recent distinct viewers, newest first. */
+  recent: { viewer: string; kind: "user" | "anon"; at: string }[]
 }
 
 export type CommentState = "open" | "resolved"

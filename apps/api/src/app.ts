@@ -1,4 +1,5 @@
 import { Hono, type Context } from "hono"
+import { getCookie, setCookie } from "hono/cookie"
 import { streamSSE } from "hono/streaming"
 import { Presence, createBus } from "./bus"
 import type { Auth } from "./auth-config"
@@ -44,6 +45,8 @@ export interface AppDeps {
    * are on different origins; empty for same-origin self-host or dev proxy.
    */
   webOrigins?: string[]
+  /** Record + serve view analytics. Default on; set false to disable entirely. */
+  analytics?: boolean
 }
 
 const VISIBILITIES = ["public", "link", "org", "password"] as const
@@ -84,6 +87,7 @@ export function createApp(deps: AppDeps): Hono {
   // Credentialed CORS for the cross-origin SPA. A wildcard ACAO can't carry
   // cookies, so the request's Origin is echoed back only when it's allow-listed;
   // OPTIONS preflights are answered here. Same-origin/self-host = no-op.
+  const analyticsOn = deps.analytics !== false
   const allowOrigins = new Set(deps.webOrigins ?? [])
   if (allowOrigins.size) {
     app.use("/api/*", corsFor(allowOrigins))
@@ -139,7 +143,10 @@ export function createApp(deps: AppDeps): Hono {
     if (!(await currentUser(c)) && deps.token && bearer(c) !== deps.token)
       return c.json({ error: "unauthenticated" }, 401)
     const artifacts = await meta.listArtifacts({ limit: 200 })
-    return c.json({ artifacts: artifacts.map((a) => toJson(deps.baseUrl, a, [])) })
+    const counts = analyticsOn ? await meta.viewCounts(artifacts.map((a) => a.id)) : {}
+    return c.json({
+      artifacts: artifacts.map((a) => ({ ...toJson(deps.baseUrl, a, []), views: counts[a.id] ?? 0 })),
+    })
   })
 
   // ---- Publish ----------------------------------------------------------
@@ -368,6 +375,43 @@ export function createApp(deps: AppDeps): Hono {
     const viewers = presence.heartbeat(artifact.id, name, Date.now())
     bus.publish(artifact.id, { type: "presence", viewers })
     return c.json({ viewers })
+  })
+
+  // ---- View analytics ----------------------------------------------------
+
+  // Record a view. The viewer is the logged-in user, or a stable anonymous id
+  // kept in a cookie (so unique-viewer counts work for public/link artifacts).
+  app.post("/v1/artifacts/:shortId/view", async (c) => {
+    if (!analyticsOn) return c.body(null, 204)
+    const artifact = await meta.getByShortId(c.req.param("shortId"))
+    if (!artifact || artifact.current_version === 0 || !(await readOk(c, artifact)))
+      return c.json({ error: "not found" }, 404)
+    const me = await currentUser(c)
+    let viewer: string
+    let kind: "user" | "anon"
+    if (me) {
+      viewer = me.name ?? me.email
+      kind = "user"
+    } else {
+      let vid = getCookie(c, "dock_vid")
+      if (!vid) {
+        vid = newId("v")
+        setCookie(c, "dock_vid", vid, { path: "/", maxAge: 60 * 60 * 24 * 365, httpOnly: true, sameSite: "Lax" })
+      }
+      viewer = vid
+      kind = "anon"
+    }
+    const body = (await c.req.json().catch(() => ({}))) as { version?: number }
+    const version = Number.isInteger(body.version) ? (body.version as number) : artifact.current_version
+    await meta.recordView({ id: newId("v"), artifact_id: artifact.id, version, viewer, viewer_kind: kind })
+    return c.body(null, 204)
+  })
+
+  app.get("/v1/artifacts/:shortId/analytics", async (c) => {
+    if (!analyticsOn) return c.json({ error: "analytics disabled" }, 404)
+    const artifact = await meta.getByShortId(c.req.param("shortId"))
+    if (!artifact || !(await readOk(c, artifact))) return c.json({ error: "not found" }, 404)
+    return c.json(await meta.viewStats(artifact.id))
   })
 
   // ---- Viewer ------------------------------------------------------------

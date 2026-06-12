@@ -1,8 +1,16 @@
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { useNavigate, useParams } from "@tanstack/react-router"
-import { api, API_BASE, type Artifact as Art, type Comment } from "../api"
+import { api, API_BASE, type Analytics, type Artifact as Art, type Comment, type Diff } from "../api"
 import { Header, useToast } from "../components"
 import { useAuth } from "../ctx"
+
+const ago = (iso: string): string => {
+  const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000)
+  if (s < 60) return "just now"
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`
+  if (s < 86400) return `${Math.floor(s / 3600)}h ago`
+  return `${Math.floor(s / 86400)}d ago`
+}
 
 const parseRef = (ref: string) => {
   const m = ref.match(/^([0-9a-z]{6,12})(?:-[a-z0-9-]*?)?(?:@v(\d+))?$/)
@@ -20,6 +28,9 @@ export function Artifact() {
   const [failed, setFailed] = useState(false)
   const [comments, setComments] = useState<Comment[]>([])
   const [editing, setEditing] = useState(false)
+  const [view, setView] = useState<"preview" | "diff">("preview")
+  const [diff, setDiff] = useState<Diff | null>(null)
+  const [viewers, setViewers] = useState<string[]>([])
   const [src, setSrc] = useState("")
   const [body, setBody] = useState("")
   const [anchor, setAnchor] = useState<{ type?: string; exact: string; prefix?: string; suffix?: string } | null>(null)
@@ -53,8 +64,51 @@ export function Artifact() {
     ev.addEventListener("comment.created", refresh)
     ev.addEventListener("comment.resolved", refresh)
     ev.addEventListener("version.published", load)
+    ev.addEventListener("presence", (e) => {
+      try {
+        setViewers((JSON.parse((e as MessageEvent).data).viewers as string[]) ?? [])
+      } catch {
+        /* ignore malformed frames */
+      }
+    })
     return () => ev.close()
   }, [shortId, load])
+
+  // Announce we're viewing, and keep the heartbeat alive (TTL is 45s server-side).
+  useEffect(() => {
+    if (!me) return
+    const name = me.name ?? me.email
+    const beat = () => api.heartbeat(shortId, name).then((r) => setViewers(r.viewers)).catch(() => {})
+    beat()
+    const t = setInterval(beat, 20_000)
+    return () => clearInterval(t)
+  }, [shortId, me])
+
+  // Record one view per artifact open.
+  const recorded = useRef("")
+  useEffect(() => {
+    if (recorded.current === shortId) return
+    recorded.current = shortId
+    api.recordView(shortId).catch(() => {})
+  }, [shortId])
+
+  // Switching versions returns to the rendered preview.
+  useEffect(() => setView("preview"), [version, shortId])
+
+  // The diff view compares the shown version to the one before it.
+  useEffect(() => {
+    if (view !== "diff" || !art) return
+    const cur = version ?? art.current_version
+    if (cur <= 1) {
+      setDiff(null)
+      return
+    }
+    let alive = true
+    api.diff(shortId, cur - 1, cur).then((d) => alive && setDiff(d)).catch(() => {})
+    return () => {
+      alive = false
+    }
+  }, [view, version, art, shortId])
 
   if (failed)
     return (
@@ -109,24 +163,19 @@ export function Artifact() {
       <Header
         right={
           <>
-            <div style={{ display: "flex", gap: 5 }}>
-              {art.versions.map((v) => (
-                <button
-                  key={v.n}
-                  className={`chip${v.n === shown ? " on" : ""}`}
-                  onClick={() => nav({ to: "/a/$ref", params: { ref: `${shortId}@v${v.n}` } })}
-                  title={v.message ?? ""}
-                >
-                  v{v.n}
-                </button>
-              ))}
-            </div>
+            <Presence viewers={viewers} self={me?.name ?? me?.email ?? ""} />
+            <Insights shortId={shortId} />
+            <VersionMenu
+              art={art}
+              shown={shown}
+              goTo={(n) => nav({ to: "/a/$ref", params: { ref: `${shortId}@v${n}` } })}
+            />
             {editable && !editing && <button className="btn sm" onClick={startEdit}>Edit</button>}
           </>
         }
       />
       <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
-        <div style={{ flex: 1, display: "flex", minWidth: 0 }}>
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
           {editing ? (
             <div style={{ flex: 1, display: "flex", flexDirection: "column", background: "var(--card)" }}>
               <div style={{ display: "flex", gap: 8, padding: "8px 12px", borderBottom: "1px solid var(--line-soft)", alignItems: "center" }}>
@@ -144,12 +193,34 @@ export function Artifact() {
               />
             </div>
           ) : (
-            <iframe
-              title={art.title ?? shortId}
-              src={rawSrc}
-              sandbox="allow-scripts allow-forms allow-popups allow-modals allow-downloads"
-              style={{ flex: 1, border: 0, background: "#fff" }}
-            />
+            <>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 12px", borderBottom: "1px solid var(--line-soft)", background: "var(--card)" }}>
+                <div className="seg" style={{ display: "flex", gap: 2, background: "var(--card-2)", borderRadius: 7, padding: 2 }}>
+                  <button className={`seg-b${view === "preview" ? " on" : ""}`} onClick={() => setView("preview")}>Preview</button>
+                  <button
+                    className={`seg-b${view === "diff" ? " on" : ""}`}
+                    onClick={() => setView("diff")}
+                    disabled={shown <= 1}
+                    title={shown <= 1 ? "No earlier version to compare" : `Changes from v${shown - 1} to v${shown}`}
+                  >
+                    Diff
+                  </button>
+                </div>
+                {view === "diff" && shown > 1 && (
+                  <span className="mono muted" style={{ fontSize: 11 }}>v{shown - 1} → v{shown}</span>
+                )}
+              </div>
+              {view === "diff" ? (
+                <DiffView diff={diff} />
+              ) : (
+                <iframe
+                  title={art.title ?? shortId}
+                  src={rawSrc}
+                  sandbox="allow-scripts allow-forms allow-popups allow-modals allow-downloads"
+                  style={{ flex: 1, border: 0, background: "#fff" }}
+                />
+              )}
+            </>
           )}
         </div>
 
@@ -224,6 +295,226 @@ function Thread({ thread, onReply, onResolve }: { thread: Comment[]; onReply: (t
           onKeyDown={(e) => { if (e.key === "Enter") { onReply(reply, root.thread_id); setReply("") } }} />
         <button className="btn sm" onClick={() => { onReply(reply, root.thread_id); setReply("") }}>Reply</button>
       </div>
+    </div>
+  )
+}
+
+// Who is viewing right now. Live over the presence SSE channel; self listed
+// first as "you". Hidden when you're the only one here.
+function Presence({ viewers, self }: { viewers: string[]; self: string }) {
+  const others = viewers.filter((v) => v !== self)
+  if (others.length === 0) return null
+  const ordered = [self, ...others].filter(Boolean)
+  const shown = ordered.slice(0, 4)
+  const extra = ordered.length - shown.length
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 7 }} title={`${ordered.length} viewing: ${ordered.join(", ")}`}>
+      <div style={{ display: "flex" }}>
+        {shown.map((name, i) => (
+          <span
+            key={name}
+            style={{
+              width: 22,
+              height: 22,
+              borderRadius: "50%",
+              background: name === self ? "var(--ac)" : "var(--cmt-bg)",
+              color: name === self ? "var(--ac-fg)" : "var(--cmt-tx)",
+              border: "2px solid var(--card)",
+              marginLeft: i === 0 ? 0 : -7,
+              display: "grid",
+              placeItems: "center",
+              fontSize: 9,
+              fontWeight: 700,
+              fontFamily: "ui-monospace,Menlo,monospace",
+            }}
+          >
+            {(name || "?").slice(0, 2).toUpperCase()}
+          </span>
+        ))}
+      </div>
+      <span className="mono muted" style={{ fontSize: 11, display: "flex", alignItems: "center", gap: 4 }}>
+        <span style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--good)" }} />
+        {ordered.length} viewing{extra > 0 ? ` (+${extra})` : ""}
+      </span>
+    </div>
+  )
+}
+
+// View analytics popover: totals, a 30-day sparkline, per-version split, and the
+// most-recent viewers. Lazy — fetched when opened. Hidden if analytics is off.
+function Insights({ shortId }: { shortId: string }) {
+  const [open, setOpen] = useState(false)
+  const [data, setData] = useState<Analytics | null>(null)
+  const [off, setOff] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const h = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener("click", h)
+    return () => document.removeEventListener("click", h)
+  }, [])
+  useEffect(() => {
+    if (open && !data && !off) api.analytics(shortId).then(setData).catch(() => setOff(true))
+  }, [open, data, off, shortId])
+  if (off) return null
+  const max = data ? Math.max(1, ...data.daily.map((d) => d.count)) : 1
+  const maxV = data ? Math.max(1, ...data.perVersion.map((v) => v.count)) : 1
+  return (
+    <div ref={ref} style={{ position: "relative" }}>
+      <button className="btn sm" onClick={(e) => { e.stopPropagation(); setOpen((o) => !o) }} style={{ gap: 6 }} title="View analytics">
+        <span style={{ fontSize: 12 }}>👁</span>
+        {data ? data.total.toLocaleString() : "Insights"}
+      </button>
+      {open && (
+        <div className="card" style={{ position: "absolute", right: 0, top: "calc(100% + 7px)", width: 300, padding: 14, boxShadow: "var(--shadow)", zIndex: 30 }}>
+          {!data ? (
+            <div className="center" style={{ height: 80 }}><div className="spin" /></div>
+          ) : (
+            <>
+              <div style={{ display: "flex", gap: 18, marginBottom: 12 }}>
+                <div>
+                  <div className="display" style={{ fontSize: 22, fontWeight: 700, lineHeight: 1 }}>{data.total.toLocaleString()}</div>
+                  <div className="mono muted" style={{ fontSize: 10 }}>views</div>
+                </div>
+                <div>
+                  <div className="display" style={{ fontSize: 22, fontWeight: 700, lineHeight: 1 }}>{data.unique.toLocaleString()}</div>
+                  <div className="mono muted" style={{ fontSize: 10 }}>unique</div>
+                </div>
+              </div>
+              <div className="mono muted" style={{ fontSize: 9.5, letterSpacing: ".06em", textTransform: "uppercase", marginBottom: 5 }}>Last 30 days</div>
+              <div style={{ display: "flex", alignItems: "flex-end", gap: 2, height: 40, marginBottom: 12 }}>
+                {data.daily.length === 0 ? (
+                  <span className="muted" style={{ fontSize: 11 }}>No views yet.</span>
+                ) : (
+                  data.daily.map((d) => (
+                    <div key={d.day} title={`${d.day}: ${d.count}`} style={{ flex: 1, minWidth: 2, height: `${(d.count / max) * 100}%`, background: "var(--ac)", borderRadius: 2, opacity: 0.85 }} />
+                  ))
+                )}
+              </div>
+              {data.perVersion.length > 0 && (
+                <>
+                  <div className="mono muted" style={{ fontSize: 9.5, letterSpacing: ".06em", textTransform: "uppercase", marginBottom: 5 }}>By version</div>
+                  <div style={{ marginBottom: 12 }}>
+                    {data.perVersion.map((v) => (
+                      <div key={v.version} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 3 }}>
+                        <span className="mono" style={{ fontSize: 10.5, width: 22, color: "var(--fg-mut)" }}>v{v.version}</span>
+                        <div style={{ flex: 1, height: 6, background: "var(--card-2)", borderRadius: 999, overflow: "hidden" }}>
+                          <div style={{ width: `${(v.count / maxV) * 100}%`, height: "100%", background: "var(--ac)", borderRadius: 999 }} />
+                        </div>
+                        <span className="mono muted" style={{ fontSize: 10, width: 30, textAlign: "right" }}>{v.count}</span>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+              {data.recent.length > 0 && (
+                <>
+                  <div className="mono muted" style={{ fontSize: 9.5, letterSpacing: ".06em", textTransform: "uppercase", marginBottom: 5 }}>Recent viewers</div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                    {data.recent.map((r) => (
+                      <div key={r.viewer} style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 11.5 }}>
+                        <span style={{ width: 17, height: 17, borderRadius: "50%", background: r.kind === "user" ? "var(--ac-soft)" : "var(--card-2)", color: "var(--fg-mut)", display: "grid", placeItems: "center", fontSize: 8, fontWeight: 700, fontFamily: "ui-monospace,Menlo,monospace" }}>
+                          {r.kind === "user" ? (r.viewer || "?").slice(0, 2).toUpperCase() : "·"}
+                        </span>
+                        <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {r.kind === "user" ? r.viewer : "Anonymous"}
+                        </span>
+                        <span className="mono muted" style={{ fontSize: 9.5 }}>{ago(r.at)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function VersionMenu({ art, shown, goTo }: { art: Art; shown: number; goTo: (n: number) => void }) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const h = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener("click", h)
+    return () => document.removeEventListener("click", h)
+  }, [])
+  const versions = [...art.versions].sort((a, b) => b.n - a.n)
+  return (
+    <div ref={ref} style={{ position: "relative" }}>
+      <button className="btn sm" onClick={(e) => { e.stopPropagation(); setOpen((o) => !o) }} style={{ gap: 6 }}>
+        v{shown}
+        {shown !== art.current_version && <span className="mono muted" style={{ fontSize: 9.5 }}>of {art.current_version}</span>}
+        <span style={{ fontSize: 9, opacity: 0.7 }}>▾</span>
+      </button>
+      {open && (
+        <div className="card" style={{ position: "absolute", right: 0, top: "calc(100% + 7px)", width: 268, padding: 6, boxShadow: "var(--shadow)", zIndex: 30, maxHeight: 360, overflow: "auto" }}>
+          <div className="mono" style={{ fontSize: 9.5, letterSpacing: ".06em", textTransform: "uppercase", color: "var(--fg-mut)", padding: "6px 8px 4px" }}>
+            Version history
+          </div>
+          {versions.map((v) => {
+            const cur = v.n === shown
+            return (
+              <button
+                key={v.n}
+                onClick={() => { goTo(v.n); setOpen(false) }}
+                style={{ display: "block", width: "100%", textAlign: "left", border: 0, background: cur ? "var(--ac-soft)" : "transparent", borderRadius: 7, padding: "8px 9px", cursor: "pointer", marginBottom: 1 }}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+                  <span className="mono" style={{ fontSize: 11.5, fontWeight: 700, color: cur ? "var(--ac)" : "var(--fg)" }}>v{v.n}</span>
+                  {v.n === art.current_version && (
+                    <span className="mono" style={{ fontSize: 8.5, fontWeight: 700, padding: "1px 6px", borderRadius: 999, background: "var(--good-bg)", color: "var(--good)" }}>latest</span>
+                  )}
+                  <span className="mono muted" style={{ marginLeft: "auto", fontSize: 9.5 }}>{ago(v.created_at)}</span>
+                </div>
+                <div style={{ fontSize: 11.5, color: "var(--fg-mut)", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {v.message || <span className="muted">no message</span>}
+                </div>
+                <div className="mono muted" style={{ fontSize: 9.5, marginTop: 1 }}>{v.author}</div>
+              </button>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function DiffView({ diff }: { diff: Diff | null }) {
+  if (!diff) return <div className="center" style={{ flex: 1 }}><div className="spin" /></div>
+  const adds = diff.ops.filter((o) => o.t === "add").length
+  const dels = diff.ops.filter((o) => o.t === "del").length
+  return (
+    <div style={{ flex: 1, overflow: "auto", background: "var(--card)" }}>
+      <div style={{ display: "flex", gap: 12, padding: "8px 16px", borderBottom: "1px solid var(--line-soft)", fontSize: 12 }}>
+        <span className="mono" style={{ color: "var(--good)" }}>+{adds}</span>
+        <span className="mono" style={{ color: "var(--bad)" }}>−{dels}</span>
+        <span className="mono muted">{diff.ops.length} lines</span>
+      </div>
+      <pre className="mono" style={{ margin: 0, padding: "10px 0", fontSize: 12.5, lineHeight: 1.6 }}>
+        {diff.ops.map((o, i) => (
+          <div
+            key={i}
+            style={{
+              padding: "0 16px",
+              whiteSpace: "pre-wrap",
+              wordBreak: "break-word",
+              background: o.t === "add" ? "var(--good-bg)" : o.t === "del" ? "var(--cmt-bg)" : "transparent",
+              color: o.t === "ctx" ? "var(--fg-mut)" : "var(--fg)",
+            }}
+          >
+            <span style={{ userSelect: "none", color: o.t === "add" ? "var(--good)" : o.t === "del" ? "var(--bad)" : "var(--line)", marginRight: 10 }}>
+              {o.t === "add" ? "+" : o.t === "del" ? "−" : " "}
+            </span>
+            {o.line || "​"}
+          </div>
+        ))}
+      </pre>
     </div>
   )
 }

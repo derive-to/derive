@@ -12,6 +12,14 @@ export interface Artifact {
   visibility: string
   current_version: number
   versions: { n: number; author: string; message: string | null; created_at: string }[]
+  views?: number
+}
+export interface Analytics {
+  total: number
+  unique: number
+  perVersion: { version: number; count: number }[]
+  daily: { day: string; count: number }[]
+  recent: { viewer: string; kind: "user" | "anon"; at: string }[]
 }
 export interface Comment {
   id: string
@@ -24,6 +32,15 @@ export interface Comment {
   state: "open" | "resolved"
   created_at: string
   anchored?: boolean
+}
+export interface DiffOp {
+  t: "ctx" | "add" | "del"
+  line: string
+}
+export interface Diff {
+  from: number
+  to: number
+  ops: DiffOp[]
 }
 
 // Same-origin by default (dev proxy / embedded self-host). Set VITE_DOCK_API to
@@ -68,6 +85,13 @@ export const api = {
   getArtifact: (id: string): Promise<Artifact> => f(`/v1/artifacts/${id}`, opts()).then(j),
   getContent: (id: string, v?: number): Promise<string> =>
     f(`/v1/artifacts/${id}/content${v ? `?v=${v}` : ""}`, { credentials: "include" }).then((r) => r.text()),
+  diff: (id: string, from: number, to: number): Promise<Diff> =>
+    f(`/v1/artifacts/${id}/diff?from=${from}&to=${to}&format=json`, opts()).then(j),
+  heartbeat: (id: string, name: string): Promise<{ viewers: string[] }> =>
+    f(`/v1/artifacts/${id}/presence`, opts({ name })).then(j),
+  recordView: (id: string, version?: number): Promise<void> =>
+    f(`/v1/artifacts/${id}/view`, opts({ version })).then(() => undefined),
+  analytics: (id: string): Promise<Analytics> => f(`/v1/artifacts/${id}/analytics`, opts()).then(j),
   listComments: (id: string): Promise<{ comments: Comment[] }> =>
     f(`/v1/artifacts/${id}/comments`, opts()).then(j),
   comment: (id: string, body: { body_md: string; thread_id?: string; anchor?: unknown }): Promise<Comment> =>

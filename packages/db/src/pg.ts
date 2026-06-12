@@ -7,9 +7,13 @@ import type {
   NewArtifact,
   NewComment,
   NewVersion,
+  NewView,
   VersionRecord,
+  ViewStats,
 } from "@dock/core"
 import { PG_SCHEMA_STATEMENTS } from "./pg-schema"
+
+const VIEW_WINDOW_MS = 30 * 86400_000
 
 /**
  * Postgres metadata store (Neon, RDS, self-hosted) for horizontal scale — the
@@ -134,6 +138,52 @@ export class PgMetaStore implements MetaStore {
         ])
       : await this.pool.query(`SELECT * FROM artifact ORDER BY created_at DESC`)
     return rows as ArtifactRecord[]
+  }
+
+  async recordView(v: NewView): Promise<void> {
+    await this.pool.query(
+      `INSERT INTO view (id, artifact_id, version, viewer, viewer_kind) VALUES ($1,$2,$3,$4,$5)`,
+      [v.id, v.artifact_id, v.version, v.viewer, v.viewer_kind],
+    )
+  }
+
+  async viewStats(artifactId: string): Promise<ViewStats> {
+    const cutoff = new Date(Date.now() - VIEW_WINDOW_MS).toISOString()
+    const [tot, uni, perV, daily, recent] = await Promise.all([
+      this.pool.query(`SELECT count(*)::int n FROM view WHERE artifact_id=$1`, [artifactId]),
+      this.pool.query(`SELECT count(DISTINCT viewer)::int n FROM view WHERE artifact_id=$1`, [artifactId]),
+      this.pool.query(
+        `SELECT version, count(*)::int c FROM view WHERE artifact_id=$1 GROUP BY version ORDER BY version`,
+        [artifactId],
+      ),
+      this.pool.query(
+        `SELECT substr(created_at,1,10) AS "day", count(*)::int c FROM view WHERE artifact_id=$1 AND created_at>=$2 GROUP BY 1 ORDER BY 1`,
+        [artifactId, cutoff],
+      ),
+      this.pool.query(
+        `SELECT viewer, viewer_kind, max(created_at) "at" FROM view WHERE artifact_id=$1 GROUP BY viewer, viewer_kind ORDER BY 3 DESC LIMIT 8`,
+        [artifactId],
+      ),
+    ])
+    return {
+      total: tot.rows[0].n,
+      unique: uni.rows[0].n,
+      perVersion: perV.rows.map((r) => ({ version: r.version, count: r.c })),
+      daily: daily.rows.map((r) => ({ day: r.day, count: r.c })),
+      recent: recent.rows.map((r) => ({ viewer: r.viewer, kind: r.viewer_kind, at: r.at })),
+    }
+  }
+
+  async viewCounts(artifactIds: string[]): Promise<Record<string, number>> {
+    if (artifactIds.length === 0) return {}
+    const ph = artifactIds.map((_, i) => `$${i + 1}`).join(",")
+    const { rows } = await this.pool.query(
+      `SELECT artifact_id, count(*)::int c FROM view WHERE artifact_id IN (${ph}) GROUP BY artifact_id`,
+      artifactIds,
+    )
+    const out: Record<string, number> = {}
+    for (const r of rows) out[r.artifact_id] = r.c
+    return out
   }
 
   async close(): Promise<void> {
