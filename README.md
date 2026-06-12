@@ -54,7 +54,7 @@ Point an agent at a Dock server over MCP (stdio):
 DOCK_SERVER=http://localhost:8080 pnpm --filter @dock/mcp start
 ```
 
-Tools: `publish_artifact`, `publish_version`, `get_artifact` (source read-back), `list_versions`.
+Tools: `publish_artifact`, `publish_version` (with `resolves`), `get_artifact` (source read-back), `list_versions`, `list_comments`, `reply_comment`.
 
 Every artifact is served with `Content-Security-Policy: sandbox` on an opaque
 origin and rendered inside a sandboxed iframe — scripts run, but cannot reach

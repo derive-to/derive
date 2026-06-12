@@ -63,6 +63,32 @@ describe("dock client (the MCP server's backend) over real HTTP", () => {
     expect(a.versions[1].message).toBe("update")
   })
 
+  it("runs the comment loop: comment, read back, resolve on republish", async () => {
+    const a = await client.publish({ content: "# spec", filename: "spec.md", title: "Spec" })
+    const c1 = await client.createComment(a.short_id, {
+      body_md: "tighten the intro",
+      author: "jess",
+      anchor: { type: "TextQuoteSelector", exact: "spec" },
+    })
+    expect(c1.state).toBe("open")
+
+    // agent reads the open feedback
+    const open = await client.listComments(a.short_id, "open")
+    expect(open).toHaveLength(1)
+    expect(open[0].body_md).toBe("tighten the intro")
+
+    // agent republishes, resolving the thread in the same call
+    const v2 = await client.publish({
+      id: a.short_id,
+      content: "# spec v2",
+      filename: "spec.md",
+      message: "address",
+      resolves: [c1.id],
+    })
+    expect(v2.current_version).toBe(2)
+    expect(await client.listComments(a.short_id, "open")).toHaveLength(0)
+  })
+
   it("surfaces server errors as thrown messages", async () => {
     await expect(client.get("nope0000")).rejects.toThrow(/dock 404/)
   })

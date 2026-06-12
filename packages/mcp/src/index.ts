@@ -38,11 +38,16 @@ server.registerTool(
       content: z.string(),
       filename: z.string(),
       message: z.string().optional().describe("What changed in this version."),
+      resolves: z
+        .array(z.string())
+        .optional()
+        .describe("Comment ids whose threads this version resolves."),
     },
   },
-  async ({ short_id, content, filename, message }) => {
-    const a = await client.publish({ id: short_id, content, filename, message })
-    return text(`${a.url} is now v${a.current_version}`)
+  async ({ short_id, content, filename, message, resolves }) => {
+    const a = await client.publish({ id: short_id, content, filename, message, resolves })
+    const note = resolves?.length ? ` · resolved ${resolves.length} thread(s)` : ""
+    return text(`${a.url} is now v${a.current_version}${note}`)
   },
 )
 
@@ -70,6 +75,37 @@ server.registerTool(
       .map((v) => `v${v.n} · ${v.author} · ${v.message ?? ""} · ${v.created_at}`)
       .join("\n")
     return text(`${a.title} (${a.versions.length} versions)\n${lines}`)
+  },
+)
+
+server.registerTool(
+  "list_comments",
+  {
+    description: "List comment threads on an artifact (the feedback queue). Filter by state.",
+    inputSchema: { short_id: z.string(), state: z.enum(["open", "resolved"]).optional() },
+  },
+  async ({ short_id, state }) => {
+    const comments = await client.listComments(short_id, state)
+    if (comments.length === 0) return text(`No ${state ?? ""} comments.`)
+    const lines = comments.map(
+      (c) =>
+        `[${c.id}] thread ${c.thread_id} · ${c.state} · ${c.author} · base v${c.base_version}` +
+        (c.anchor ? ` · @${c.anchor}` : "") +
+        `\n  ${c.body_md}`,
+    )
+    return text(lines.join("\n"))
+  },
+)
+
+server.registerTool(
+  "reply_comment",
+  {
+    description: "Reply in an existing comment thread (agents can discuss, not just resolve).",
+    inputSchema: { short_id: z.string(), thread_id: z.string(), body_md: z.string() },
+  },
+  async ({ short_id, thread_id, body_md }) => {
+    const c = await client.createComment(short_id, { thread_id, body_md, author: "agent" })
+    return text(`Replied in thread ${c.thread_id} (comment ${c.id}).`)
   },
 )
 
