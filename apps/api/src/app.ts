@@ -1,4 +1,6 @@
 import { Hono, type Context } from "hono"
+import { streamSSE } from "hono/streaming"
+import { Presence, createBus } from "./bus"
 import {
   BUNDLE_CONTENT_TYPE,
   PublishError,
@@ -63,6 +65,8 @@ const rewriteAbsoluteUrls = (text: string, prefix: string): string =>
 export function createApp(deps: AppDeps): Hono {
   const { meta, blobs } = deps
   const app = new Hono()
+  const bus = createBus()
+  const presence = new Presence()
 
   const bearer = (c: Context): string => {
     const h = c.req.header("authorization") ?? ""
@@ -119,6 +123,11 @@ export function createApp(deps: AppDeps): Hono {
         },
         shortId,
       )
+      bus.publish(artifact.id, {
+        type: "version.published",
+        n: version.n,
+        message: version.message,
+      })
       // Republish can resolve comment threads in the same call.
       const resolves = body["resolves"]
       if (shortId && typeof resolves === "string" && resolves) {
@@ -126,6 +135,7 @@ export function createApp(deps: AppDeps): Hono {
           const cm = await meta.getComment(cid)
           if (cm && cm.artifact_id === artifact.id) {
             await meta.setThreadState(artifact.id, cm.thread_id, "resolved")
+            bus.publish(artifact.id, { type: "comment.resolved", thread_id: cm.thread_id })
           }
         }
       }
@@ -237,6 +247,7 @@ export function createApp(deps: AppDeps): Hono {
       body_md: body.body_md,
       author: typeof body.author === "string" && body.author ? body.author : "anonymous",
     })
+    bus.publish(artifact.id, { type: "comment.created", comment: created })
     return c.json(created, 201)
   })
 
@@ -258,7 +269,37 @@ export function createApp(deps: AppDeps): Hono {
     const body = (await c.req.json().catch(() => ({}))) as { state?: string }
     const state = body.state === "open" ? "open" : "resolved"
     const updated = await meta.setThreadState(artifact.id, cm.thread_id, state)
+    bus.publish(artifact.id, { type: "comment.resolved", thread_id: cm.thread_id, state })
     return c.json({ thread_id: cm.thread_id, state, updated })
+  })
+
+  // ---- Live stream (SSE) + presence -------------------------------------
+
+  app.get("/v1/artifacts/:shortId/events", async (c) => {
+    const artifact = await meta.getByShortId(c.req.param("shortId"))
+    if (!artifact || !readOk(c, artifact)) return c.text("not found", 404)
+    c.header("Access-Control-Allow-Origin", "*")
+    return streamSSE(c, async (stream) => {
+      const unsub = bus.subscribe(artifact.id, (e) => {
+        void stream.writeSSE({ event: e.type, data: JSON.stringify(e) })
+      })
+      stream.onAbort(unsub)
+      await stream.writeSSE({ event: "ready", data: JSON.stringify({ short_id: artifact.short_id }) })
+      while (!stream.aborted) {
+        await stream.sleep(15000)
+        await stream.writeSSE({ event: "ping", data: "{}" })
+      }
+    })
+  })
+
+  app.post("/v1/artifacts/:shortId/presence", async (c) => {
+    const artifact = await meta.getByShortId(c.req.param("shortId"))
+    if (!artifact || !readOk(c, artifact)) return c.json({ error: "not found" }, 404)
+    const body = (await c.req.json().catch(() => ({}))) as { name?: string }
+    const name = typeof body.name === "string" && body.name ? body.name : "anonymous"
+    const viewers = presence.heartbeat(artifact.id, name, Date.now())
+    bus.publish(artifact.id, { type: "presence", viewers })
+    return c.json({ viewers })
   })
 
   // ---- Viewer ------------------------------------------------------------

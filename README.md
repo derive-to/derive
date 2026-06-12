@@ -64,6 +64,13 @@ DOCK_SERVER=http://localhost:8080 pnpm --filter @dock/mcp start
 
 Tools: `publish_artifact`, `publish_version` (with `resolves`), `get_artifact` (source read-back), `list_versions`, `list_comments`, `reply_comment`.
 
+## Live updates
+
+`GET /v1/artifacts/:id/events` is a Server-Sent Events stream emitting
+`comment.created`, `comment.resolved`, `version.published`, and `presence`.
+`POST /v1/artifacts/:id/presence {name}` records a heartbeat. Plain HTTP — no
+WebSockets, no sticky sessions.
+
 Every artifact is served with `Content-Security-Policy: sandbox` on an opaque
 origin and rendered inside a sandboxed iframe — scripts run, but cannot reach
 cookies, storage, or other artifacts.
