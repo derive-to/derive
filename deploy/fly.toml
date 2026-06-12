@@ -1,0 +1,31 @@
+# Fly.io config for the Dock API container. `fly launch --no-deploy` to create
+# the app, set secrets (see DEPLOY.md), then `fly deploy`.
+app = "dock-api"
+primary_region = "iad"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  PORT = "8080"
+  # BASE_URL, DOCK_WEB_ORIGIN, DOCK_CROSS_SITE are set per-deploy (see DEPLOY.md).
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    method = "GET"
+    path = "/healthz"
+    interval = "15s"
+    timeout = "2s"
+
+# With DATABASE_URL + OBJECT_STORE_URL set, the container is stateless — scale it
+# horizontally and drop this volume. Without them, it falls back to SQLite + local
+# blobs and needs one persistent volume mounted at /data.
+[mounts]
+  source = "dock_data"
+  destination = "/data"
