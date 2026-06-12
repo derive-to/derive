@@ -8,8 +8,10 @@ import {
   BUNDLE_CONTENT_TYPE,
   PublishError,
   artifactUrl,
+  SELECTION_SCRIPT,
   diffLines,
   formatDiff,
+  isAnchored,
   mimeFor,
   newId,
   publish,
@@ -377,7 +379,16 @@ export function createApp(deps: AppDeps): Hono {
     if (!artifact || !(await readOk(c, artifact))) return c.json({ error: "not found" }, 404)
     const q = c.req.query("state")
     const state = q === "open" || q === "resolved" ? q : undefined
-    return c.json({ comments: await meta.listComments(artifact.id, state ? { state } : undefined) })
+    const comments = await meta.listComments(artifact.id, state ? { state } : undefined)
+    // Flag whether each anchor still resolves against the current version.
+    const cur = await meta.getVersion(artifact.id, artifact.current_version)
+    const src = cur ? await sourceText(cur) : null
+    return c.json({
+      comments: comments.map((cm) => ({
+        ...cm,
+        anchored: src === null ? true : isAnchored(cm.anchor, src),
+      })),
+    })
   })
 
   // Resolve (or reopen, with {state:"open"}) the thread a comment belongs to.
@@ -488,8 +499,13 @@ export function createApp(deps: AppDeps): Hono {
       return c.body(html, 200, { ...RAW_HEADERS, "Content-Type": "text/html; charset=utf-8" })
     }
 
-    // html file artifact — any path serves the document
-    return c.body(toBody(data), 200, { ...RAW_HEADERS, "Content-Type": mimeFor(path || "index.html") })
+    // html file artifact — any path serves the document (+ selection capture)
+    const ct = mimeFor(path || "index.html")
+    if (ct.startsWith("text/html")) {
+      const html = new TextDecoder().decode(data) + SELECTION_SCRIPT
+      return c.body(html, 200, { ...RAW_HEADERS, "Content-Type": ct })
+    }
+    return c.body(toBody(data), 200, { ...RAW_HEADERS, "Content-Type": ct })
   })
 
   return app

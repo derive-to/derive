@@ -23,6 +23,7 @@ export interface Comment {
   author: string
   state: "open" | "resolved"
   created_at: string
+  anchored?: boolean
 }
 
 const j = async (r: Response) => {

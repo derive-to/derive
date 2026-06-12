@@ -22,6 +22,17 @@ export function Artifact() {
   const [editing, setEditing] = useState(false)
   const [src, setSrc] = useState("")
   const [body, setBody] = useState("")
+  const [anchor, setAnchor] = useState<{ type?: string; exact: string; prefix?: string; suffix?: string } | null>(null)
+
+  // Selections inside the sandboxed artifact post a quote selector to us.
+  useEffect(() => {
+    const onMsg = (e: MessageEvent) => {
+      const d = e.data
+      if (d && d.source === "dock" && d.type === "select") setAnchor(d.selector ?? null)
+    }
+    window.addEventListener("message", onMsg)
+    return () => window.removeEventListener("message", onMsg)
+  }, [])
 
   useEffect(() => {
     if (!loading && !me) nav({ to: "/login" })
@@ -77,8 +88,13 @@ export function Artifact() {
   }
   const addComment = async (text: string, threadId?: string) => {
     if (!text.trim()) return
-    await api.comment(shortId, { body_md: text, thread_id: threadId }).catch((e) => show((e as Error).message))
-    if (!threadId) setBody("")
+    await api
+      .comment(shortId, { body_md: text, thread_id: threadId, anchor: !threadId ? anchor ?? undefined : undefined })
+      .catch((e) => show((e as Error).message))
+    if (!threadId) {
+      setBody("")
+      setAnchor(null)
+    }
     api.listComments(shortId).then((r) => setComments(r.comments))
   }
   const toggleResolve = async (root: Comment) => {
@@ -148,7 +164,13 @@ export function Artifact() {
             )}
           </div>
           <div style={{ borderTop: "1px solid var(--line-soft)", padding: 11 }}>
-            <textarea className="input" value={body} onChange={(e) => setBody(e.target.value)} placeholder="Add a comment…" style={{ minHeight: 50, resize: "vertical" }} />
+            {anchor && (
+              <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 7, fontSize: 11, color: "var(--cmt-tx)", background: "var(--cmt-bg)", border: "1px solid var(--cmt-bd)", borderRadius: 7, padding: "5px 9px" }}>
+                <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>“{anchor.exact}”</span>
+                <button onClick={() => setAnchor(null)} style={{ border: 0, background: "transparent", color: "var(--cmt-tx)", cursor: "pointer" }}>✕</button>
+              </div>
+            )}
+            <textarea className="input" value={body} onChange={(e) => setBody(e.target.value)} placeholder={anchor ? "Comment on the selection…" : "Add a comment…"} style={{ minHeight: 50, resize: "vertical" }} />
             <button className="btn pri sm" onClick={() => addComment(body)} style={{ marginTop: 7, width: "100%", justifyContent: "center" }}>Comment</button>
           </div>
         </aside>
@@ -173,6 +195,11 @@ function Thread({ thread, onReply, onResolve }: { thread: Comment[]; onReply: (t
             {c.author}
             <span className="mono muted" style={{ marginLeft: "auto", fontWeight: 400, fontSize: 9 }}>base v{c.base_version}</span>
           </div>
+          {anchorExact(c.anchor) && (
+            <div className="mono" style={{ fontSize: 9.5, color: "var(--cmt-tx)", background: "var(--card-2)", borderRadius: 5, padding: "2px 6px", display: "inline-block", marginBottom: 5, maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              “{anchorExact(c.anchor)}”
+            </div>
+          )}
           <p style={{ margin: 0, fontSize: 12.5, lineHeight: 1.45, whiteSpace: "pre-wrap" }}>{c.body_md}</p>
         </div>
       ))}
@@ -180,6 +207,11 @@ function Thread({ thread, onReply, onResolve }: { thread: Comment[]; onReply: (t
         <span className="mono" style={{ fontSize: 9.5, fontWeight: 700, padding: "2px 8px", borderRadius: 999, background: resolved ? "var(--good-bg)" : "var(--ac-soft)", color: resolved ? "var(--good)" : "var(--ac)" }}>
           {resolved ? "resolved" : "open"}
         </span>
+        {root.anchored === false && (
+          <span className="mono" title="The anchored text changed in a newer version" style={{ fontSize: 9.5, fontWeight: 700, padding: "2px 8px", borderRadius: 999, background: "var(--cmt-bg)", color: "var(--cmt-tx)" }}>
+            orphaned
+          </span>
+        )}
         <button className="btn sm" style={{ marginLeft: "auto" }} onClick={() => onResolve(root)}>
           {resolved ? "Reopen" : "Resolve"}
         </button>
@@ -192,6 +224,15 @@ function Thread({ thread, onReply, onResolve }: { thread: Comment[]; onReply: (t
       </div>
     </div>
   )
+}
+
+function anchorExact(a: string | null): string | null {
+  if (!a) return null
+  try {
+    return (JSON.parse(a) as { exact?: string }).exact ?? null
+  } catch {
+    return null
+  }
 }
 
 function groupThreads(comments: Comment[]): Comment[][] {
