@@ -30,7 +30,15 @@ docker compose -f deploy/compose.yml up -d
 ```
 
 Optional env vars (nothing is required):
-`DATABASE_URL` → Postgres · `OBJECT_STORE_URL` → S3/R2 · `BASE_URL`, `PORT`, `DATA_DIR`.
+`DATABASE_URL` → Postgres · `OBJECT_STORE_URL` → S3/R2 · `DOCK_TOKEN` → require a
+bearer token for publishing and for reading gated artifacts · `BASE_URL`, `PORT`, `DATA_DIR`.
+
+### Access
+
+Publish with `--visibility public|link|org|password` (default `link`). When
+`DOCK_TOKEN` is set, writes require `Authorization: Bearer <token>`, and reading
+anything other than `public`/`link` requires it too — gated artifacts 404 without
+it. (Per-user accounts and SSO come later; this is the zero-dependency gate.)
 
 ## Architecture
 

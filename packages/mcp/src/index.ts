@@ -21,6 +21,7 @@ server.registerTool(
       filename: z.string().describe("Filename, e.g. report.html or notes.md."),
       title: z.string().optional(),
       slug: z.string().optional(),
+      visibility: z.enum(["public", "link", "org", "password"]).optional(),
     },
   },
   async (args) => {

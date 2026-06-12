@@ -11,17 +11,27 @@ import {
   renderMarkdown,
   renderShell,
   toJson,
+  type ArtifactRecord,
   type BlobStore,
   type BundleManifest,
   type MetaStore,
   type VersionRecord,
+  type Visibility,
 } from "@dock/core"
 
 export interface AppDeps {
   meta: MetaStore
   blobs: BlobStore
   baseUrl: string
+  /**
+   * When set, writes require `Authorization: Bearer <token>`, and reads of
+   * non-public/link artifacts require it too. When unset (zero-config dev),
+   * the instance is open. Full user/SSO auth replaces this later.
+   */
+  token?: string
 }
+
+const VISIBILITIES = ["public", "link", "org", "password"] as const
 
 const MAX_UPLOAD_BYTES = 100 * 1024 * 1024
 
@@ -54,6 +64,15 @@ export function createApp(deps: AppDeps): Hono {
   const { meta, blobs } = deps
   const app = new Hono()
 
+  const bearer = (c: Context): string => {
+    const h = c.req.header("authorization") ?? ""
+    return h.startsWith("Bearer ") ? h.slice(7) : ""
+  }
+  // Open when no token is configured; otherwise the bearer must match.
+  const writeOk = (c: Context): boolean => !deps.token || bearer(c) === deps.token
+  const readOk = (c: Context, a: ArtifactRecord): boolean =>
+    a.visibility === "public" || a.visibility === "link" || !deps.token || bearer(c) === deps.token
+
   app.get("/healthz", (c) => c.json({ ok: true }))
 
   app.get("/", (c) =>
@@ -69,6 +88,7 @@ export function createApp(deps: AppDeps): Hono {
   // ---- Publish ----------------------------------------------------------
 
   const handlePublish = async (c: Context, shortId?: string) => {
+    if (!writeOk(c)) return c.json({ error: "unauthorized" }, 401)
     const len = Number(c.req.header("content-length") ?? 0)
     if (len > MAX_UPLOAD_BYTES) return c.json({ error: "upload too large" }, 413)
 
@@ -95,6 +115,7 @@ export function createApp(deps: AppDeps): Hono {
           spa: body["spa"] === "true" || body["spa"] === "1",
           message: str(body["message"]),
           author: str(body["author"]),
+          visibility: visibilityOf(body["visibility"]),
         },
         shortId,
       )
@@ -121,7 +142,7 @@ export function createApp(deps: AppDeps): Hono {
 
   app.get("/v1/artifacts/:shortId", async (c) => {
     const artifact = await meta.getByShortId(c.req.param("shortId"))
-    if (!artifact) return c.json({ error: "not found" }, 404)
+    if (!artifact || !readOk(c, artifact)) return c.json({ error: "not found" }, 404)
     return c.json(toJson(deps.baseUrl, artifact, await meta.listVersions(artifact.id)))
   })
 
@@ -143,7 +164,8 @@ export function createApp(deps: AppDeps): Hono {
   // version, as plain text (?v=N selects a version; defaults to current).
   app.get("/v1/artifacts/:shortId/content", async (c) => {
     const artifact = await meta.getByShortId(c.req.param("shortId"))
-    if (!artifact || artifact.current_version === 0) return c.json({ error: "not found" }, 404)
+    if (!artifact || artifact.current_version === 0 || !readOk(c, artifact))
+      return c.json({ error: "not found" }, 404)
     const v = c.req.query("v") ? Number(c.req.query("v")) : artifact.current_version
     if (!Number.isInteger(v)) return c.json({ error: "bad version" }, 400)
     const version = await meta.getVersion(artifact.id, v)
@@ -162,7 +184,8 @@ export function createApp(deps: AppDeps): Hono {
   // ?format=json returns the structured ops; otherwise unified-style text.
   app.get("/v1/artifacts/:shortId/diff", async (c) => {
     const artifact = await meta.getByShortId(c.req.param("shortId"))
-    if (!artifact || artifact.current_version === 0) return c.json({ error: "not found" }, 404)
+    if (!artifact || artifact.current_version === 0 || !readOk(c, artifact))
+      return c.json({ error: "not found" }, 404)
     const cur = artifact.current_version
     const from = c.req.query("from") ? Number(c.req.query("from")) : Math.max(1, cur - 1)
     const to = c.req.query("to") ? Number(c.req.query("to")) : cur
@@ -185,6 +208,7 @@ export function createApp(deps: AppDeps): Hono {
 
   // Create a comment (new thread) or a reply (pass thread_id).
   app.post("/v1/artifacts/:shortId/comments", async (c) => {
+    if (!writeOk(c)) return c.json({ error: "unauthorized" }, 401)
     const artifact = await meta.getByShortId(c.req.param("shortId"))
     if (!artifact || artifact.current_version === 0) return c.json({ error: "not found" }, 404)
     const body = (await c.req.json().catch(() => ({}))) as Record<string, unknown>
@@ -218,7 +242,7 @@ export function createApp(deps: AppDeps): Hono {
 
   app.get("/v1/artifacts/:shortId/comments", async (c) => {
     const artifact = await meta.getByShortId(c.req.param("shortId"))
-    if (!artifact) return c.json({ error: "not found" }, 404)
+    if (!artifact || !readOk(c, artifact)) return c.json({ error: "not found" }, 404)
     const q = c.req.query("state")
     const state = q === "open" || q === "resolved" ? q : undefined
     return c.json({ comments: await meta.listComments(artifact.id, state ? { state } : undefined) })
@@ -226,6 +250,7 @@ export function createApp(deps: AppDeps): Hono {
 
   // Resolve (or reopen, with {state:"open"}) the thread a comment belongs to.
   app.post("/v1/artifacts/:shortId/comments/:commentId/resolve", async (c) => {
+    if (!writeOk(c)) return c.json({ error: "unauthorized" }, 401)
     const artifact = await meta.getByShortId(c.req.param("shortId"))
     if (!artifact) return c.json({ error: "not found" }, 404)
     const cm = await meta.getComment(c.req.param("commentId"))
@@ -242,7 +267,8 @@ export function createApp(deps: AppDeps): Hono {
     const m = REF_RE.exec(c.req.param("ref"))
     if (!m) return c.text("not found", 404)
     const artifact = await meta.getByShortId(m[1])
-    if (!artifact || artifact.current_version === 0) return c.text("not found", 404)
+    if (!artifact || artifact.current_version === 0 || !readOk(c, artifact))
+      return c.text("not found", 404)
     const n = m[2] ? Number(m[2]) : artifact.current_version
     const version = await meta.getVersion(artifact.id, n)
     if (!version) return c.text(`no version ${n}`, 404)
@@ -257,7 +283,7 @@ export function createApp(deps: AppDeps): Hono {
     const shortId = c.req.param("shortId")
     const n = Number(c.req.param("n"))
     const artifact = await meta.getByShortId(shortId)
-    if (!artifact || !Number.isInteger(n)) return c.text("not found", 404)
+    if (!artifact || !Number.isInteger(n) || !readOk(c, artifact)) return c.text("not found", 404)
     const version = await meta.getVersion(artifact.id, n)
     if (!version) return c.text("not found", 404)
 
@@ -308,5 +334,10 @@ export function createApp(deps: AppDeps): Hono {
 }
 
 const str = (v: unknown): string | undefined => (typeof v === "string" && v !== "" ? v : undefined)
+
+const visibilityOf = (v: unknown): Visibility | undefined =>
+  typeof v === "string" && (VISIBILITIES as readonly string[]).includes(v)
+    ? (v as Visibility)
+    : undefined
 
 export { artifactUrl }
