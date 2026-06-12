@@ -1,5 +1,5 @@
 import type { D1Database } from "@cloudflare/workers-types"
-import { and, asc, desc, eq } from "drizzle-orm"
+import { and, asc, desc, eq, sql } from "drizzle-orm"
 import { drizzle, type DrizzleD1Database } from "drizzle-orm/d1"
 import type {
   ArtifactRecord,
@@ -9,11 +9,14 @@ import type {
   NewArtifact,
   NewComment,
   NewVersion,
+  NewView,
   VersionRecord,
+  ViewStats,
 } from "@dock/core"
 import { artifact, comment, version } from "./schema"
 
 const schema = { artifact, version, comment }
+const VIEW_WINDOW_MS = 30 * 86400_000
 
 /**
  * Cloudflare D1 driver. Same schema as the SQLite driver; apply
@@ -104,5 +107,45 @@ export class D1MetaStore implements MetaStore {
   async listArtifacts(opts?: { limit?: number }): Promise<ArtifactRecord[]> {
     const q = this.db.select().from(artifact).orderBy(desc(artifact.created_at))
     return (opts?.limit ? q.limit(opts.limit) : q).all()
+  }
+
+  async recordView(v: NewView): Promise<void> {
+    await this.db.run(
+      sql`INSERT INTO view (id, artifact_id, version, viewer, viewer_kind) VALUES (${v.id}, ${v.artifact_id}, ${v.version}, ${v.viewer}, ${v.viewer_kind})`,
+    )
+  }
+
+  async viewStats(artifactId: string): Promise<ViewStats> {
+    const cutoff = new Date(Date.now() - VIEW_WINDOW_MS).toISOString()
+    const tot = (await this.db.get(
+      sql`SELECT count(*) n FROM view WHERE artifact_id=${artifactId}`,
+    )) as { n: number }
+    const uni = (await this.db.get(
+      sql`SELECT count(DISTINCT viewer) n FROM view WHERE artifact_id=${artifactId}`,
+    )) as { n: number }
+    const perVersion = (await this.db.all(
+      sql`SELECT version, count(*) count FROM view WHERE artifact_id=${artifactId} GROUP BY version ORDER BY version`,
+    )) as { version: number; count: number }[]
+    const daily = (await this.db.all(
+      sql`SELECT substr(created_at,1,10) day, count(*) count FROM view WHERE artifact_id=${artifactId} AND created_at>=${cutoff} GROUP BY day ORDER BY day`,
+    )) as { day: string; count: number }[]
+    const recent = (await this.db.all(
+      sql`SELECT viewer, viewer_kind kind, max(created_at) at FROM view WHERE artifact_id=${artifactId} GROUP BY viewer, viewer_kind ORDER BY at DESC LIMIT 8`,
+    )) as { viewer: string; kind: "user" | "anon"; at: string }[]
+    return { total: tot.n, unique: uni.n, perVersion, daily, recent }
+  }
+
+  async viewCounts(artifactIds: string[]): Promise<Record<string, number>> {
+    if (artifactIds.length === 0) return {}
+    const ids = sql.join(
+      artifactIds.map((id) => sql`${id}`),
+      sql`, `,
+    )
+    const rows = (await this.db.all(
+      sql`SELECT artifact_id, count(*) c FROM view WHERE artifact_id IN (${ids}) GROUP BY artifact_id`,
+    )) as { artifact_id: string; c: number }[]
+    const out: Record<string, number> = {}
+    for (const r of rows) out[r.artifact_id] = r.c
+    return out
   }
 }

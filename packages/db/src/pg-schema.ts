@@ -52,4 +52,13 @@ export const PG_SCHEMA_STATEMENTS: string[] = [
     password_hash TEXT,
     org_gate TEXT
   )`,
+  `CREATE TABLE IF NOT EXISTS view (
+    id TEXT PRIMARY KEY,
+    artifact_id TEXT NOT NULL REFERENCES artifact(id),
+    version INTEGER NOT NULL,
+    viewer TEXT NOT NULL,
+    viewer_kind TEXT NOT NULL DEFAULT 'anon',
+    created_at TEXT NOT NULL DEFAULT ${isoDefault}
+  )`,
+  `CREATE INDEX IF NOT EXISTS view_artifact_time ON view (artifact_id, created_at)`,
 ]

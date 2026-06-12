@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { useNavigate, useParams } from "@tanstack/react-router"
-import { api, API_BASE, type Artifact as Art, type Comment, type Diff } from "../api"
+import { api, API_BASE, type Analytics, type Artifact as Art, type Comment, type Diff } from "../api"
 import { Header, useToast } from "../components"
 import { useAuth } from "../ctx"
 
@@ -84,6 +84,14 @@ export function Artifact() {
     return () => clearInterval(t)
   }, [shortId, me])
 
+  // Record one view per artifact open.
+  const recorded = useRef("")
+  useEffect(() => {
+    if (recorded.current === shortId) return
+    recorded.current = shortId
+    api.recordView(shortId).catch(() => {})
+  }, [shortId])
+
   // Switching versions returns to the rendered preview.
   useEffect(() => setView("preview"), [version, shortId])
 
@@ -156,6 +164,7 @@ export function Artifact() {
         right={
           <>
             <Presence viewers={viewers} self={me?.name ?? me?.email ?? ""} />
+            <Insights shortId={shortId} />
             <VersionMenu
               art={art}
               shown={shown}
@@ -327,6 +336,100 @@ function Presence({ viewers, self }: { viewers: string[]; self: string }) {
         <span style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--good)" }} />
         {ordered.length} viewing{extra > 0 ? ` (+${extra})` : ""}
       </span>
+    </div>
+  )
+}
+
+// View analytics popover: totals, a 30-day sparkline, per-version split, and the
+// most-recent viewers. Lazy — fetched when opened. Hidden if analytics is off.
+function Insights({ shortId }: { shortId: string }) {
+  const [open, setOpen] = useState(false)
+  const [data, setData] = useState<Analytics | null>(null)
+  const [off, setOff] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const h = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener("click", h)
+    return () => document.removeEventListener("click", h)
+  }, [])
+  useEffect(() => {
+    if (open && !data && !off) api.analytics(shortId).then(setData).catch(() => setOff(true))
+  }, [open, data, off, shortId])
+  if (off) return null
+  const max = data ? Math.max(1, ...data.daily.map((d) => d.count)) : 1
+  const maxV = data ? Math.max(1, ...data.perVersion.map((v) => v.count)) : 1
+  return (
+    <div ref={ref} style={{ position: "relative" }}>
+      <button className="btn sm" onClick={(e) => { e.stopPropagation(); setOpen((o) => !o) }} style={{ gap: 6 }} title="View analytics">
+        <span style={{ fontSize: 12 }}>👁</span>
+        {data ? data.total.toLocaleString() : "Insights"}
+      </button>
+      {open && (
+        <div className="card" style={{ position: "absolute", right: 0, top: "calc(100% + 7px)", width: 300, padding: 14, boxShadow: "var(--shadow)", zIndex: 30 }}>
+          {!data ? (
+            <div className="center" style={{ height: 80 }}><div className="spin" /></div>
+          ) : (
+            <>
+              <div style={{ display: "flex", gap: 18, marginBottom: 12 }}>
+                <div>
+                  <div className="display" style={{ fontSize: 22, fontWeight: 700, lineHeight: 1 }}>{data.total.toLocaleString()}</div>
+                  <div className="mono muted" style={{ fontSize: 10 }}>views</div>
+                </div>
+                <div>
+                  <div className="display" style={{ fontSize: 22, fontWeight: 700, lineHeight: 1 }}>{data.unique.toLocaleString()}</div>
+                  <div className="mono muted" style={{ fontSize: 10 }}>unique</div>
+                </div>
+              </div>
+              <div className="mono muted" style={{ fontSize: 9.5, letterSpacing: ".06em", textTransform: "uppercase", marginBottom: 5 }}>Last 30 days</div>
+              <div style={{ display: "flex", alignItems: "flex-end", gap: 2, height: 40, marginBottom: 12 }}>
+                {data.daily.length === 0 ? (
+                  <span className="muted" style={{ fontSize: 11 }}>No views yet.</span>
+                ) : (
+                  data.daily.map((d) => (
+                    <div key={d.day} title={`${d.day}: ${d.count}`} style={{ flex: 1, minWidth: 2, height: `${(d.count / max) * 100}%`, background: "var(--ac)", borderRadius: 2, opacity: 0.85 }} />
+                  ))
+                )}
+              </div>
+              {data.perVersion.length > 0 && (
+                <>
+                  <div className="mono muted" style={{ fontSize: 9.5, letterSpacing: ".06em", textTransform: "uppercase", marginBottom: 5 }}>By version</div>
+                  <div style={{ marginBottom: 12 }}>
+                    {data.perVersion.map((v) => (
+                      <div key={v.version} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 3 }}>
+                        <span className="mono" style={{ fontSize: 10.5, width: 22, color: "var(--fg-mut)" }}>v{v.version}</span>
+                        <div style={{ flex: 1, height: 6, background: "var(--card-2)", borderRadius: 999, overflow: "hidden" }}>
+                          <div style={{ width: `${(v.count / maxV) * 100}%`, height: "100%", background: "var(--ac)", borderRadius: 999 }} />
+                        </div>
+                        <span className="mono muted" style={{ fontSize: 10, width: 30, textAlign: "right" }}>{v.count}</span>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+              {data.recent.length > 0 && (
+                <>
+                  <div className="mono muted" style={{ fontSize: 9.5, letterSpacing: ".06em", textTransform: "uppercase", marginBottom: 5 }}>Recent viewers</div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                    {data.recent.map((r) => (
+                      <div key={r.viewer} style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 11.5 }}>
+                        <span style={{ width: 17, height: 17, borderRadius: "50%", background: r.kind === "user" ? "var(--ac-soft)" : "var(--card-2)", color: "var(--fg-mut)", display: "grid", placeItems: "center", fontSize: 8, fontWeight: 700, fontFamily: "ui-monospace,Menlo,monospace" }}>
+                          {r.kind === "user" ? (r.viewer || "?").slice(0, 2).toUpperCase() : "·"}
+                        </span>
+                        <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {r.kind === "user" ? r.viewer : "Anonymous"}
+                        </span>
+                        <span className="mono muted" style={{ fontSize: 9.5 }}>{ago(r.at)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+            </>
+          )}
+        </div>
+      )}
     </div>
   )
 }

@@ -12,6 +12,14 @@ export interface Artifact {
   visibility: string
   current_version: number
   versions: { n: number; author: string; message: string | null; created_at: string }[]
+  views?: number
+}
+export interface Analytics {
+  total: number
+  unique: number
+  perVersion: { version: number; count: number }[]
+  daily: { day: string; count: number }[]
+  recent: { viewer: string; kind: "user" | "anon"; at: string }[]
 }
 export interface Comment {
   id: string
@@ -81,6 +89,9 @@ export const api = {
     f(`/v1/artifacts/${id}/diff?from=${from}&to=${to}&format=json`, opts()).then(j),
   heartbeat: (id: string, name: string): Promise<{ viewers: string[] }> =>
     f(`/v1/artifacts/${id}/presence`, opts({ name })).then(j),
+  recordView: (id: string, version?: number): Promise<void> =>
+    f(`/v1/artifacts/${id}/view`, opts({ version })).then(() => undefined),
+  analytics: (id: string): Promise<Analytics> => f(`/v1/artifacts/${id}/analytics`, opts()).then(j),
   listComments: (id: string): Promise<{ comments: Comment[] }> =>
     f(`/v1/artifacts/${id}/comments`, opts()).then(j),
   comment: (id: string, body: { body_md: string; thread_id?: string; anchor?: unknown }): Promise<Comment> =>

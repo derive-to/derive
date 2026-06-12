@@ -117,10 +117,13 @@ export function Library() {
                 <div className="display" style={{ fontWeight: 600, fontSize: 15 }}>
                   {a.title ?? a.short_id}
                 </div>
-                <div className="mono muted" style={{ fontSize: 11, display: "flex", gap: 8 }}>
+                <div className="mono muted" style={{ fontSize: 11, display: "flex", gap: 8, alignItems: "center" }}>
                   <span style={{ background: "var(--card-2)", border: "1px solid var(--line-soft)", borderRadius: 5, padding: "1px 6px" }}>{a.kind}</span>
                   <span>v{a.current_version}</span>
                   <span>{a.visibility}</span>
+                  {a.views !== undefined && a.views > 0 && (
+                    <span style={{ marginLeft: "auto" }} title={`${a.views} views`}>👁 {a.views > 999 ? `${(a.views / 1000).toFixed(1)}k` : a.views}</span>
+                  )}
                 </div>
               </button>
             ))}

@@ -9,9 +9,13 @@ import type {
   NewArtifact,
   NewComment,
   NewVersion,
+  NewView,
   VersionRecord,
+  ViewStats,
 } from "@dock/core"
 import { SCHEMA_STATEMENTS, artifact, comment, version } from "./schema"
+
+const VIEW_WINDOW_MS = 30 * 86400_000
 
 const schema = { artifact, version, comment }
 
@@ -106,6 +110,42 @@ export class SqliteMetaStore implements MetaStore {
   async listArtifacts(opts?: { limit?: number }): Promise<ArtifactRecord[]> {
     const q = this.db.select().from(artifact).orderBy(desc(artifact.created_at))
     return opts?.limit ? q.limit(opts.limit).all() : q.all()
+  }
+
+  async recordView(v: NewView): Promise<void> {
+    this.raw
+      .prepare(`INSERT INTO view (id, artifact_id, version, viewer, viewer_kind) VALUES (?,?,?,?,?)`)
+      .run(v.id, v.artifact_id, v.version, v.viewer, v.viewer_kind)
+  }
+
+  async viewStats(artifactId: string): Promise<ViewStats> {
+    const cutoff = new Date(Date.now() - VIEW_WINDOW_MS).toISOString()
+    const n = (q: string, ...p: unknown[]) =>
+      (this.raw.prepare(q).get(...p) as { n: number }).n
+    return {
+      total: n(`SELECT count(*) n FROM view WHERE artifact_id=?`, artifactId),
+      unique: n(`SELECT count(DISTINCT viewer) n FROM view WHERE artifact_id=?`, artifactId),
+      perVersion: this.raw
+        .prepare(`SELECT version, count(*) count FROM view WHERE artifact_id=? GROUP BY version ORDER BY version`)
+        .all(artifactId) as { version: number; count: number }[],
+      daily: this.raw
+        .prepare(`SELECT substr(created_at,1,10) day, count(*) count FROM view WHERE artifact_id=? AND created_at>=? GROUP BY day ORDER BY day`)
+        .all(artifactId, cutoff) as { day: string; count: number }[],
+      recent: this.raw
+        .prepare(`SELECT viewer, viewer_kind kind, max(created_at) at FROM view WHERE artifact_id=? GROUP BY viewer, viewer_kind ORDER BY at DESC LIMIT 8`)
+        .all(artifactId) as { viewer: string; kind: "user" | "anon"; at: string }[],
+    }
+  }
+
+  async viewCounts(artifactIds: string[]): Promise<Record<string, number>> {
+    if (artifactIds.length === 0) return {}
+    const ph = artifactIds.map(() => "?").join(",")
+    const rows = this.raw
+      .prepare(`SELECT artifact_id, count(*) c FROM view WHERE artifact_id IN (${ph}) GROUP BY artifact_id`)
+      .all(...artifactIds) as { artifact_id: string; c: number }[]
+    const out: Record<string, number> = {}
+    for (const r of rows) out[r.artifact_id] = r.c
+    return out
   }
 
   close(): void {
