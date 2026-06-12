@@ -17,12 +17,18 @@ const meta = new SqliteMetaStore(join(DATA_DIR, "dock.db"))
 const auth = makeAuth(new Database(join(DATA_DIR, "dock.db")), BASE_URL)
 await migrateAuth(auth)
 
+const webOrigins = (process.env.DOCK_WEB_ORIGIN ?? "")
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean)
+
 const app = createApp({
   meta,
   blobs: new FsBlobStore(join(DATA_DIR, "blobs")),
   baseUrl: BASE_URL,
   token: process.env.DOCK_TOKEN,
   auth,
+  webOrigins,
 })
 
 serve({ fetch: app.fetch, port: PORT }, () => {

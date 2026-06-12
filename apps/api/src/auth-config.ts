@@ -44,6 +44,10 @@ export function makeAuth(db: Database.Database, baseUrl: string) {
       scopes: ["openid", "email", "profile"],
     })
 
+  // When the SPA and API are on different sites (CDN web + container API), the
+  // session cookie must be SameSite=None; Secure to ride cross-site fetches.
+  const crossSite = env("DOCK_CROSS_SITE") === "true" || env("DOCK_CROSS_SITE") === "1"
+
   return betterAuth({
     database: db,
     baseURL: baseUrl,
@@ -52,6 +56,9 @@ export function makeAuth(db: Database.Database, baseUrl: string) {
     socialProviders,
     trustedOrigins: trusted,
     plugins: oidc.length ? [genericOAuth({ config: oidc })] : [],
+    ...(crossSite
+      ? { advanced: { defaultCookieAttributes: { sameSite: "none" as const, secure: true } } }
+      : {}),
   })
 }
 
