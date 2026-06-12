@@ -262,8 +262,9 @@ export function createApp(deps: AppDeps): Hono {
     })
     await notify(artifact, "version.published", { version: version.n, message: version.message, author: version.author })
     bus.publish(artifact.id, { type: "version.published", n: version.n, message: version.message })
+    const fresh = (await meta.getByShortId(artifact.short_id)) as ArtifactRecord
     const versions = await meta.listVersions(artifact.id)
-    return c.json({ ...toJson(deps.baseUrl, artifact, versions), sessions: groupSessions(versions, versionWindowMs), published: version.n }, 201)
+    return c.json({ ...toJson(deps.baseUrl, fresh, versions), sessions: groupSessions(versions, versionWindowMs), published: version.n }, 201)
   })
 
   /** Source text of a version (entry document for bundles); null if missing. */
