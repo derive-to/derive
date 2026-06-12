@@ -295,3 +295,54 @@ describe("auth: token write-gating + per-artifact read-gating", () => {
     expect((await app.request("/v1/artifacts", { method: "POST", body: form })).status).toBe(201)
   })
 })
+
+describe("live stream (SSE)", () => {
+  async function readUntil(
+    reader: ReadableStreamDefaultReader<Uint8Array>,
+    needle: string,
+    timeoutMs = 2500,
+  ): Promise<string> {
+    const dec = new TextDecoder()
+    let buf = ""
+    const start = Date.now()
+    while (Date.now() - start < timeoutMs) {
+      const res = await Promise.race([
+        reader.read(),
+        new Promise<{ value?: Uint8Array; done: boolean }>((r) =>
+          setTimeout(() => r({ value: undefined, done: false }), 150),
+        ),
+      ])
+      if (res.value) buf += dec.decode(res.value, { stream: true })
+      if (buf.includes(needle)) return buf
+      if (res.done) break
+    }
+    throw new Error(`SSE timeout waiting for "${needle}"; got:\n${buf}`)
+  }
+
+  it("emits ready, then comment.created and version.published", async () => {
+    const { short_id } = await (await upload("live.md", "# live", {})).json()
+    const res = await app.request(`/v1/artifacts/${short_id}/events`)
+    expect(res.headers.get("content-type")).toContain("text/event-stream")
+    const reader = res.body!.getReader()
+    try {
+      await readUntil(reader, "event: ready")
+
+      await app.request(`/v1/artifacts/${short_id}/comments`, json({ body_md: "live note" }))
+      expect(await readUntil(reader, "event: comment.created")).toContain("live note")
+
+      const form = new FormData()
+      form.append("file", new Blob([new TextEncoder().encode("# live v2")]), "live.md")
+      form.append("message", "v2")
+      await app.request(`/v1/artifacts/${short_id}/versions`, { method: "POST", body: form })
+      expect(await readUntil(reader, "event: version.published")).toContain('"n":2')
+    } finally {
+      await reader.cancel()
+    }
+  })
+
+  it("reports presence on heartbeat", async () => {
+    const { short_id } = await (await upload("p.md", "# p", {})).json()
+    const res = await app.request(`/v1/artifacts/${short_id}/presence`, json({ name: "Jess" }))
+    expect((await res.json()).viewers).toEqual(["Jess"])
+  })
+})
