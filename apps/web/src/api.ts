@@ -33,6 +33,24 @@ export interface Comment {
   created_at: string
   anchored?: boolean
 }
+export interface Webhook {
+  id: string
+  artifact_id: string | null
+  url: string
+  kind: "generic" | "slack"
+  events: string
+  label: string | null
+  active: 0 | 1
+  created_at: string
+}
+export interface Delivery {
+  id: string
+  event_type: string
+  status: "pending" | "delivered" | "dead"
+  attempts: number
+  last_error: string | null
+  created_at: string
+}
 export interface DiffOp {
   t: "ctx" | "add" | "del"
   line: string
@@ -89,6 +107,20 @@ export const api = {
     f(`/v1/artifacts/${id}/diff?from=${from}&to=${to}&format=json`, opts()).then(j),
   heartbeat: (id: string, name: string): Promise<{ viewers: string[] }> =>
     f(`/v1/artifacts/${id}/presence`, opts({ name })).then(j),
+
+  listWebhooks: (): Promise<{ webhooks: Webhook[] }> => f("/v1/webhooks", opts()).then(j),
+  createWebhook: (body: {
+    url: string
+    kind: "generic" | "slack"
+    events?: string[]
+    label?: string
+    artifact?: string
+  }): Promise<Webhook> => f("/v1/webhooks", opts(body)).then(j),
+  deleteWebhook: (id: string): Promise<void> =>
+    f(`/v1/webhooks/${id}`, { method: "DELETE", credentials: "include" }).then(() => undefined),
+  testWebhook: (id: string): Promise<unknown> => f(`/v1/webhooks/${id}/test`, opts({})).then(j),
+  webhookDeliveries: (id: string): Promise<{ deliveries: Delivery[] }> =>
+    f(`/v1/webhooks/${id}/deliveries`, opts()).then(j),
   recordView: (id: string, version?: number): Promise<void> =>
     f(`/v1/artifacts/${id}/view`, opts({ version })).then(() => undefined),
   analytics: (id: string): Promise<Analytics> => f(`/v1/artifacts/${id}/analytics`, opts()).then(j),

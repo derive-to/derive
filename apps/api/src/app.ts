@@ -1,7 +1,9 @@
+import { randomUUID } from "node:crypto"
 import { Hono, type Context } from "hono"
 import { getCookie, setCookie } from "hono/cookie"
 import { streamSSE } from "hono/streaming"
 import { Presence, createBus } from "./bus"
+import { WEBHOOK_EVENTS, type WebhookEvent, enqueueForEvent } from "./webhooks"
 import type { Auth } from "./auth-config"
 import {
   ANCHOR_CLIENT_JS,
@@ -90,6 +92,11 @@ export function createApp(deps: AppDeps): Hono {
   // OPTIONS preflights are answered here. Same-origin/self-host = no-op.
   const analyticsOn = deps.analytics !== false
   const allowOrigins = new Set(deps.webOrigins ?? [])
+
+  // Fan an event to subscribed webhooks (enqueues to the outbox; the worker
+  // delivers). Awaited so the row is durable before we respond, but never fatal.
+  const notify = (a: ArtifactRecord, event: WebhookEvent, data: Record<string, unknown>) =>
+    enqueueForEvent(meta, deps.baseUrl, a, event, data).catch(() => {})
   if (allowOrigins.size) {
     app.use("/api/*", corsFor(allowOrigins))
     app.use("/v1/*", corsFor(allowOrigins))
@@ -188,6 +195,11 @@ export function createApp(deps: AppDeps): Hono {
         type: "version.published",
         n: version.n,
         message: version.message,
+      })
+      await notify(artifact, "version.published", {
+        version: version.n,
+        message: version.message,
+        author: version.author,
       })
       // Republish can resolve comment threads in the same call.
       const resolves = body["resolves"]
@@ -315,6 +327,12 @@ export function createApp(deps: AppDeps): Hono {
       author,
     })
     bus.publish(artifact.id, { type: "comment.created", comment: created })
+    await notify(artifact, "comment.created", {
+      author: created.author,
+      body: created.body_md,
+      quote: quoteOf(created.anchor),
+      thread_id: created.thread_id,
+    })
     return c.json(created, 201)
   })
 
@@ -346,6 +364,7 @@ export function createApp(deps: AppDeps): Hono {
     const state = body.state === "open" ? "open" : "resolved"
     const updated = await meta.setThreadState(artifact.id, cm.thread_id, state)
     bus.publish(artifact.id, { type: "comment.resolved", thread_id: cm.thread_id, state })
+    await notify(artifact, "comment.resolved", { state, thread_id: cm.thread_id })
     return c.json({ thread_id: cm.thread_id, state, updated })
   })
 
@@ -413,6 +432,89 @@ export function createApp(deps: AppDeps): Hono {
     const artifact = await meta.getByShortId(c.req.param("shortId"))
     if (!artifact || !(await readOk(c, artifact))) return c.json({ error: "not found" }, 404)
     return c.json(await meta.viewStats(artifact.id))
+  })
+
+  // ---- Webhooks (notifications: Slack + arbitrary endpoints) -------------
+
+  const publicWebhook = (w: { secret: string }) => ({ ...w, secret: undefined })
+
+  app.get("/v1/webhooks", async (c) => {
+    if (!(await writeOk(c))) return c.json({ error: "unauthorized" }, 401)
+    const hooks = await meta.listWebhooks()
+    return c.json({ webhooks: hooks.map(publicWebhook) })
+  })
+
+  app.post("/v1/webhooks", async (c) => {
+    if (!(await writeOk(c))) return c.json({ error: "unauthorized" }, 401)
+    const b = (await c.req.json().catch(() => ({}))) as Record<string, unknown>
+    if (typeof b.url !== "string" || !/^https?:\/\//.test(b.url))
+      return c.json({ error: "a valid http(s) url is required" }, 400)
+    const kind = b.kind === "slack" ? "slack" : "generic"
+    // events: array or "*"; validate against the known set
+    const events =
+      Array.isArray(b.events) && b.events.length
+        ? b.events.filter((e): e is WebhookEvent => (WEBHOOK_EVENTS as readonly string[]).includes(e as string)).join(",")
+        : "*"
+    let artifactRef: string | null = null
+    if (typeof b.artifact === "string" && b.artifact) {
+      const a = await meta.getByShortId(b.artifact)
+      if (!a) return c.json({ error: "artifact not found" }, 404)
+      artifactRef = a.id
+    }
+    const created = await meta.createWebhook({
+      id: `wh_${randomUUID().slice(0, 12)}`,
+      artifact_id: artifactRef,
+      url: b.url,
+      secret: typeof b.secret === "string" && b.secret ? b.secret : randomUUID().replace(/-/g, ""),
+      kind,
+      events,
+      label: typeof b.label === "string" ? b.label : null,
+    })
+    return c.json(publicWebhook(created), 201)
+  })
+
+  app.delete("/v1/webhooks/:id", async (c) => {
+    if (!(await writeOk(c))) return c.json({ error: "unauthorized" }, 401)
+    await meta.deleteWebhook(c.req.param("id"))
+    return c.body(null, 204)
+  })
+
+  app.get("/v1/webhooks/:id/deliveries", async (c) => {
+    if (!(await writeOk(c))) return c.json({ error: "unauthorized" }, 401)
+    const rows = await meta.recentDeliveries(c.req.param("id"), 20)
+    return c.json({
+      deliveries: rows.map((d) => ({
+        id: d.id,
+        event_type: d.event_type,
+        status: d.status,
+        attempts: d.attempts,
+        last_error: d.last_error,
+        created_at: d.created_at,
+      })),
+    })
+  })
+
+  // Send a sample event to a webhook so you can confirm it lands.
+  app.post("/v1/webhooks/:id/test", async (c) => {
+    if (!(await writeOk(c))) return c.json({ error: "unauthorized" }, 401)
+    const w = await meta.getWebhook(c.req.param("id"))
+    if (!w) return c.json({ error: "not found" }, 404)
+    const sample = JSON.stringify({
+      event: "version.published",
+      at: new Date().toISOString(),
+      artifact: { short_id: "sample00", title: "Test artifact", url: `${deps.baseUrl}/a/sample00` },
+      data: { version: 1, message: "test delivery from Dock", author: "dock" },
+    })
+    await meta.enqueueDelivery({
+      id: `wd_${randomUUID().slice(0, 12)}`,
+      webhook_id: w.id,
+      url: w.url,
+      secret: w.secret,
+      kind: w.kind,
+      event_type: "version.published",
+      payload: sample,
+    })
+    return c.json({ queued: true })
   })
 
   // ---- Viewer ------------------------------------------------------------
@@ -526,6 +628,16 @@ const corsFor = (allowed: Set<string>) => async (c: Context, next: () => Promise
     c.res.headers.set("Access-Control-Allow-Origin", origin)
     c.res.headers.set("Access-Control-Allow-Credentials", "true")
     c.res.headers.append("Vary", "Origin")
+  }
+}
+
+/** The quoted text from a comment anchor, for webhook payloads. */
+const quoteOf = (anchor: string | null): string | null => {
+  if (!anchor) return null
+  try {
+    return (JSON.parse(anchor) as { exact?: string }).exact ?? null
+  } catch {
+    return null
   }
 }
 

@@ -10,6 +10,7 @@ import { FsBlobStore } from "@dock/storage/fs"
 import { s3FromUrl } from "@dock/storage/s3"
 import { createApp } from "./app"
 import { makeAuth, migrateAuth, type AuthDb } from "./auth-config"
+import { startWebhookWorker } from "./webhooks"
 
 const PORT = Number(process.env.PORT ?? 8080)
 const DATA_DIR = process.env.DATA_DIR ?? "./data"
@@ -51,6 +52,9 @@ const app = createApp({
   webOrigins,
   analytics: process.env.DOCK_ANALYTICS !== "false",
 })
+
+// The webhook outbox worker delivers queued events with retries + backoff.
+startWebhookWorker(meta)
 
 const blobDesc = process.env.OBJECT_STORE_URL ? "S3/R2" : `local disk (${DATA_DIR})`
 const metaDesc = DATABASE_URL ? "postgres" : `sqlite (${DATA_DIR})`
