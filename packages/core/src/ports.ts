@@ -62,6 +62,38 @@ export interface MetaStore {
   addVersion(artifactId: string, v: NewVersion): Promise<VersionRecord>
   listVersions(artifactId: string): Promise<VersionRecord[]>
   getVersion(artifactId: string, n: number): Promise<VersionRecord | null>
+
+  createComment(c: NewComment): Promise<CommentRecord>
+  listComments(artifactId: string, opts?: { state?: CommentState }): Promise<CommentRecord[]>
+  getComment(id: string): Promise<CommentRecord | null>
+  /** Flips every comment in a thread to a state; returns the count updated. */
+  setThreadState(artifactId: string, threadId: string, state: CommentState): Promise<number>
+}
+
+export type CommentState = "open" | "resolved"
+
+export interface CommentRecord {
+  id: string
+  artifact_id: string
+  thread_id: string
+  base_version: number
+  path: string | null
+  anchor: string | null
+  body_md: string
+  author: string
+  state: CommentState
+  created_at: string
+}
+
+export interface NewComment {
+  id: string
+  artifact_id: string
+  thread_id: string
+  base_version: number
+  path?: string | null
+  anchor?: string | null
+  body_md: string
+  author: string
 }
 
 /** A bundle version's blob is this manifest; file versions point at content directly. */

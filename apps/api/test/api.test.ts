@@ -185,3 +185,67 @@ describe("api surface", () => {
     expect(bad.status).toBe(400)
   })
 })
+
+const json = (obj: unknown) => ({
+  method: "POST" as const,
+  headers: { "content-type": "application/json" },
+  body: JSON.stringify(obj),
+})
+
+describe("comments + the loop", () => {
+  let shortId: string
+  let threadId: string
+  let rootId: string
+
+  it("creates a comment as a new thread", async () => {
+    shortId = (await (await upload("c.md", "# doc with mean sentiment", { title: "C" })).json()).short_id
+    const res = await app.request(
+      `/v1/artifacts/${shortId}/comments`,
+      json({ body_md: "use median", author: "jess", anchor: { type: "TextQuoteSelector", exact: "mean" } }),
+    )
+    expect(res.status).toBe(201)
+    const cm = await res.json()
+    expect(cm.state).toBe("open")
+    expect(cm.thread_id).toBe(cm.id)
+    expect(cm.base_version).toBe(1)
+    expect(cm.anchor).toContain("TextQuoteSelector")
+    threadId = cm.thread_id
+    rootId = cm.id
+  })
+
+  it("replies in the same thread", async () => {
+    const cm = await (
+      await app.request(`/v1/artifacts/${shortId}/comments`, json({ body_md: "agreed", thread_id: threadId }))
+    ).json()
+    expect(cm.thread_id).toBe(threadId)
+    const list = await (await app.request(`/v1/artifacts/${shortId}/comments`)).json()
+    expect(list.comments).toHaveLength(2)
+  })
+
+  it("resolves and reopens a thread, with state filtering", async () => {
+    await app.request(`/v1/artifacts/${shortId}/comments/${rootId}/resolve`, { method: "POST" })
+    expect((await (await app.request(`/v1/artifacts/${shortId}/comments?state=open`)).json()).comments).toHaveLength(0)
+    expect((await (await app.request(`/v1/artifacts/${shortId}/comments?state=resolved`)).json()).comments).toHaveLength(2)
+
+    await app.request(`/v1/artifacts/${shortId}/comments/${rootId}/resolve`, json({ state: "open" }))
+    expect((await (await app.request(`/v1/artifacts/${shortId}/comments?state=open`)).json()).comments).toHaveLength(2)
+  })
+
+  it("resolves threads on republish via the resolves field", async () => {
+    const sid = (await (await upload("r.md", "# r", {})).json()).short_id
+    const cm = await (await app.request(`/v1/artifacts/${sid}/comments`, json({ body_md: "fix this" }))).json()
+
+    const form = new FormData()
+    form.append("file", new Blob([new TextEncoder().encode("# r2")]), "r.md")
+    form.append("message", "address review")
+    form.append("resolves", cm.id)
+    await app.request(`/v1/artifacts/${sid}/versions`, { method: "POST", body: form })
+
+    expect((await (await app.request(`/v1/artifacts/${sid}/comments?state=open`)).json()).comments).toHaveLength(0)
+  })
+
+  it("validates body and 404s unknown artifacts", async () => {
+    expect((await app.request(`/v1/artifacts/${shortId}/comments`, json({}))).status).toBe(400)
+    expect((await app.request("/v1/artifacts/zzzzzzzz/comments")).status).toBe(404)
+  })
+})
