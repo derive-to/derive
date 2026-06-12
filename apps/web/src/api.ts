@@ -36,13 +36,27 @@ const opts = (body?: unknown): RequestInit => ({
   ...(body ? { method: "POST", body: JSON.stringify(body) } : {}),
 })
 
+// Better Auth lives under /api/auth; get-session returns { user } | null.
+const authJson = async (r: Response) => {
+  const data = await r.json().catch(() => null)
+  if (!r.ok) throw new Error(data?.message ?? data?.error?.message ?? `HTTP ${r.status}`)
+  return data
+}
+
 export const api = {
-  me: (): Promise<{ user: Me }> => fetch("/v1/me", opts()).then(j),
-  login: (email: string, password: string): Promise<{ user: Me }> =>
-    fetch("/auth/login", opts({ email, password })).then(j),
-  signup: (email: string, password: string, name: string): Promise<{ user: Me }> =>
-    fetch("/auth/signup", opts({ email, password, name })).then(j),
-  logout: () => fetch("/auth/logout", opts({})).then(j),
+  async me(): Promise<{ user: Me }> {
+    const s = await fetch("/api/auth/get-session", { credentials: "include" }).then((r) =>
+      r.ok ? r.json() : null,
+    )
+    if (!s?.user) throw new Error("unauthenticated")
+    return { user: { id: s.user.id, email: s.user.email, name: s.user.name ?? null, role: "member" } }
+  },
+  login: (email: string, password: string): Promise<unknown> =>
+    fetch("/api/auth/sign-in/email", opts({ email, password })).then(authJson),
+  signup: (email: string, password: string, name: string): Promise<unknown> =>
+    fetch("/api/auth/sign-up/email", opts({ email, password, name: name || email })).then(authJson),
+  logout: () => fetch("/api/auth/sign-out", opts({})).then((r) => r.json().catch(() => ({}))),
+  googleUrl: "/api/auth/sign-in/social?provider=google",
 
   listArtifacts: (): Promise<{ artifacts: Artifact[] }> => fetch("/v1/artifacts", opts()).then(j),
   getArtifact: (id: string): Promise<Artifact> => fetch(`/v1/artifacts/${id}`, opts()).then(j),
