@@ -136,6 +136,28 @@ describe("api surface", () => {
     expect(meta.versions[1].message).toBe("tweak")
   })
 
+  it("reads back source content for any version", async () => {
+    const res = await upload("read.md", "# one", { title: "Read" })
+    const { short_id } = await res.json()
+    await upload("read.md", "# two", { message: "v2" }, short_id)
+
+    const cur = await app.request(`/v1/artifacts/${short_id}/content`)
+    expect(cur.status).toBe(200)
+    expect(cur.headers.get("x-dock-version")).toBe("2")
+    expect(await cur.text()).toBe("# two")
+
+    const v1 = await app.request(`/v1/artifacts/${short_id}/content?v=1`)
+    expect(await v1.text()).toBe("# one")
+  })
+
+  it("reads back a bundle's entry document", async () => {
+    const zip = zipSync({ "index.html": new TextEncoder().encode("<h1>Entry</h1>") })
+    const { short_id } = await (await upload("site.zip", zip)).json()
+    const content = await app.request(`/v1/artifacts/${short_id}/content`)
+    expect(content.headers.get("x-dock-kind")).toBe("bundle")
+    expect(await content.text()).toBe("<h1>Entry</h1>")
+  })
+
   it("404s on unknown artifacts and rejects empty zips", async () => {
     expect((await app.request("/v1/artifacts/zzzzzzzz")).status).toBe(404)
     expect((await app.request("/a/zzzzzzzz")).status).toBe(404)
