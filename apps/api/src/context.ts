@@ -21,6 +21,7 @@ import { createBus, Presence } from "./bus"
 import { safeEqual, sha256 } from "./lib/crypto"
 import { WS_COOKIE } from "./lib/http"
 import { makeKeyedLimiter } from "./lib/rate-limit"
+import { log } from "./log"
 import { enqueueForEvent, type WebhookEvent } from "./webhooks"
 
 export interface SessionUser {
@@ -136,7 +137,15 @@ export function buildContext(deps: AppDeps) {
   // Fan an event to subscribed webhooks (enqueues to the outbox; the worker
   // delivers). Awaited so the row is durable before we respond, but never fatal.
   const notify = (a: ArtifactRecord, event: WebhookEvent, data: Record<string, unknown>) =>
-    enqueueForEvent(meta, deps.baseUrl, a, event, data).catch(() => {})
+    enqueueForEvent(meta, deps.baseUrl, a, event, data).catch((err) =>
+      // Non-fatal (the request still succeeds), but a dropped enqueue means the
+      // webhook silently never fires — log it rather than swallow.
+      log.error("webhook enqueue failed", {
+        event,
+        artifact: a.short_id,
+        error: err instanceof Error ? err.message : String(err),
+      }),
+    )
 
   const bearer = (c: Context): string => {
     const h = c.req.header("authorization") ?? ""

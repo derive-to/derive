@@ -1,17 +1,11 @@
 import { createHmac, randomUUID } from "node:crypto"
 import type { ArtifactRecord, DeliveryRecord, MetaStore } from "@dock/core"
+import type { WebhookEvent } from "./events"
+import { log } from "./log"
 
-/** Event names webhooks can subscribe to. */
-export const WEBHOOK_EVENTS = [
-  "comment.created",
-  "comment.mention",
-  "comment.resolved",
-  "version.published",
-  "proposal.created",
-  "proposal.approved",
-  "proposal.changes_requested",
-] as const
-export type WebhookEvent = (typeof WEBHOOK_EVENTS)[number]
+// Event names live in one place (./events) so the webhook list and the bus list
+// can't drift apart. Re-exported here for existing importers.
+export { WEBHOOK_EVENTS, type WebhookEvent } from "./events"
 
 const MAX_ATTEMPTS = 6
 const BASE_BACKOFF_MS = 3_000
@@ -173,8 +167,12 @@ export function startWebhookWorker(meta: MetaStore, intervalMs = 1500): () => vo
           })
         }
       }
-    } catch {
-      /* a bad tick shouldn't kill the loop */
+    } catch (err) {
+      // A bad tick must not kill the loop, but it must not vanish either —
+      // otherwise a persistently failing outbox is invisible.
+      log.error("webhook delivery tick failed", {
+        error: err instanceof Error ? err.message : String(err),
+      })
     }
   }
   const timer = setInterval(tick, intervalMs)

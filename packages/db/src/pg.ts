@@ -44,6 +44,7 @@ import type {
 import { and, asc, count, desc, eq, inArray, isNull, like, lt, lte, or, sql } from "drizzle-orm"
 import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres"
 import { Pool } from "pg"
+import type { Exhaustive, Shapes } from "./parity"
 import {
   agent,
   agentMention,
@@ -88,6 +89,32 @@ const schema = {
   report,
   auditLog,
 }
+
+// Compile-time schema parity (see ./parity), same classification as the sqlite
+// dialect but checking the pg `$inferSelect` shapes. New table not classified, or
+// a pg column that drifts from its core Record → compile error here.
+const _schemaExhaustive: Exhaustive<typeof schema> = true
+const _schemaShapes: Shapes<typeof schema> = {
+  artifact: true,
+  version: true,
+  comment: true,
+  webhook: true,
+  webhookDelivery: true,
+  membership: true,
+  workspace: true,
+  artifactMember: true,
+  notification: true,
+  proposal: true,
+  agent: true,
+  agentMention: true,
+  collection: true,
+  collectionMember: true,
+  report: true,
+  auditLog: true,
+}
+void _schemaExhaustive
+void _schemaShapes
+
 const VIEW_WINDOW_MS = 30 * 86400_000
 
 /**

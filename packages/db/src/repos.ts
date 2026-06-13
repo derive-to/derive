@@ -39,6 +39,7 @@ import type {
 } from "@dock/core"
 import { and, asc, count, desc, eq, inArray, isNull, like, lt, lte, or, sql } from "drizzle-orm"
 import type { BaseSQLiteDatabase } from "drizzle-orm/sqlite-core"
+import type { Exhaustive, Shapes } from "./parity"
 import {
   agent,
   agentMention,
@@ -83,6 +84,31 @@ export const schema = {
   report,
   auditLog,
 }
+
+// Compile-time schema parity (see ./parity): every table must be classified, and
+// every typed table's row shape must match its @dock/core Record exactly. A new
+// table that isn't classified, or a column that drifts, fails to compile here.
+const _schemaExhaustive: Exhaustive<typeof schema> = true
+const _schemaShapes: Shapes<typeof schema> = {
+  artifact: true,
+  version: true,
+  comment: true,
+  webhook: true,
+  webhookDelivery: true,
+  membership: true,
+  workspace: true,
+  artifactMember: true,
+  notification: true,
+  proposal: true,
+  agent: true,
+  agentMention: true,
+  collection: true,
+  collectionMember: true,
+  report: true,
+  auditLog: true,
+}
+void _schemaExhaustive
+void _schemaShapes
 
 /**
  * A drizzle SQLite database of either result kind. better-sqlite3 is synchronous

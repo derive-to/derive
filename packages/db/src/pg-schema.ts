@@ -1,28 +1,15 @@
 import type {
-  AgentMentionRecord,
   AgentMentionState,
-  AgentRecord,
   ArtifactKind,
-  ArtifactMemberRecord,
-  ArtifactRecord,
   AuditAction,
-  AuditLogRecord,
-  CommentRecord,
   CommentState,
-  DeliveryRecord,
   DeliveryStatus,
-  MembershipRecord,
   NotificationKind,
-  NotificationRecord,
-  ProposalRecord,
   ProposalState,
-  ReportRecord,
   ReportState,
   Role,
-  VersionRecord,
   Visibility,
   WebhookKind,
-  WebhookRecord,
 } from "@dock/core"
 import { integer, pgTable, text, uniqueIndex } from "drizzle-orm/pg-core"
 
@@ -280,25 +267,10 @@ export const auditLog = pgTable("audit_log", {
   created_at: text("created_at").notNull().$defaultFn(isoNow),
 })
 
-// Compile-time guard: the pg table defs must match the core record shapes (and
-// therefore the sqlite defs). Drift here means SQLite and Postgres disagree.
-type Exact<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false
-const _pgParity: [
-  Exact<typeof artifact.$inferSelect, ArtifactRecord>,
-  Exact<typeof version.$inferSelect, VersionRecord>,
-  Exact<typeof comment.$inferSelect, CommentRecord>,
-  Exact<typeof webhook.$inferSelect, WebhookRecord>,
-  Exact<typeof webhookDelivery.$inferSelect, DeliveryRecord>,
-  Exact<typeof membership.$inferSelect, MembershipRecord>,
-  Exact<typeof artifactMember.$inferSelect, ArtifactMemberRecord>,
-  Exact<typeof notification.$inferSelect, NotificationRecord>,
-  Exact<typeof proposal.$inferSelect, ProposalRecord>,
-  Exact<typeof agent.$inferSelect, AgentRecord>,
-  Exact<typeof agentMention.$inferSelect, AgentMentionRecord>,
-  Exact<typeof report.$inferSelect, ReportRecord>,
-  Exact<typeof auditLog.$inferSelect, AuditLogRecord>,
-] = [true, true, true, true, true, true, true, true, true, true, true, true, true]
-void _pgParity
+// Schema parity is enforced in pg.ts, where the pg `schema` object lives — it
+// checks these table defs (via `Exhaustive`/`Shapes` in ./parity) against the
+// same core Record types the sqlite dialect uses, so the two dialects can't
+// disagree. See ./parity.
 
 // Boot DDL (idempotent). created_at uses a SQL default as a server-side backstop.
 const isoDefault = `to_char((now() at time zone 'utc'), 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')`

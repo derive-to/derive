@@ -1,15 +1,10 @@
+import type { DomainEvent } from "./events"
+
 export interface DockEvent {
-  type:
-    | "comment.created"
-    | "comment.resolved"
-    | "comment.reacted"
-    | "comment.updated"
-    | "version.published"
-    | "proposal.created"
-    | "proposal.approved"
-    | "proposal.changes_requested"
-    | "presence"
-    | "notification"
+  // The event name is constrained to the shared DOMAIN_EVENTS union, so a typo
+  // (`bus.publish(id, { type: "comment.reslved" })`) is a compile error. The
+  // per-event payload stays open via the index signature.
+  type: DomainEvent
   [k: string]: unknown
 }
 
