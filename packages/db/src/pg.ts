@@ -1,4 +1,6 @@
 import type {
+  AgentMentionRecord,
+  AgentRecord,
   ArtifactMemberRecord,
   ArtifactRecord,
   CommentRecord,
@@ -8,6 +10,8 @@ import type {
   ListArtifactsOpts,
   MembershipRecord,
   MetaStore,
+  NewAgent,
+  NewAgentMention,
   NewArtifact,
   NewArtifactMember,
   NewComment,
@@ -30,6 +34,8 @@ import { and, asc, count, desc, eq, inArray, isNull, like, lt, lte, or, sql } fr
 import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres"
 import { Pool } from "pg"
 import {
+  agent,
+  agentMention,
   artifact,
   artifactFavorite,
   artifactMember,
@@ -56,6 +62,8 @@ const schema = {
   artifactFavorite,
   artifactTag,
   proposal,
+  agent,
+  agentMention,
 }
 const VIEW_WINDOW_MS = 30 * 86400_000
 
@@ -499,6 +507,41 @@ export class PgMetaStore implements MetaStore {
           : null
     if (!where) return
     await this.db.update(notification).set({ read: 1 }).where(where)
+  }
+
+  // ---- Agents + their pull inbox -----------------------------------------
+  async createAgent(a: NewAgent): Promise<AgentRecord> {
+    const rows = await this.db.insert(agent).values(a).returning()
+    return rows[0]
+  }
+  listAgents(orgId: string): Promise<AgentRecord[]> {
+    return this.db.select().from(agent).where(eq(agent.org_id, orgId))
+  }
+  async getAgentByToken(token: string): Promise<AgentRecord | null> {
+    const rows = await this.db.select().from(agent).where(eq(agent.token, token))
+    return rows[0] ?? null
+  }
+  async deleteAgent(id: string): Promise<void> {
+    await this.db.delete(agent).where(eq(agent.id, id))
+  }
+  async createAgentMention(m: NewAgentMention): Promise<void> {
+    await this.db.insert(agentMention).values(m)
+  }
+  listPendingAgentMentions(agentId: string, limit: number): Promise<AgentMentionRecord[]> {
+    return this.db
+      .select()
+      .from(agentMention)
+      .where(and(eq(agentMention.agent_id, agentId), eq(agentMention.state, "pending")))
+      .orderBy(asc(agentMention.created_at))
+      .limit(limit)
+  }
+  async ackAgentMention(agentId: string, id: string): Promise<boolean> {
+    const rows = await this.db
+      .update(agentMention)
+      .set({ state: "done" })
+      .where(and(eq(agentMention.id, id), eq(agentMention.agent_id, agentId)))
+      .returning({ id: agentMention.id })
+    return rows.length > 0
   }
 
   async close(): Promise<void> {

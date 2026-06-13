@@ -1,4 +1,7 @@
 import type {
+  AgentMentionRecord,
+  AgentMentionState,
+  AgentRecord,
   ArtifactKind,
   ArtifactMemberRecord,
   ArtifactRecord,
@@ -136,6 +139,35 @@ export const notification = pgTable("notification", {
   created_at: text("created_at").notNull().$defaultFn(isoNow),
 })
 
+export const agent = pgTable(
+  "agent",
+  {
+    id: text("id").primaryKey(),
+    org_id: text("org_id").notNull(),
+    name: text("name").notNull(),
+    token: text("token").notNull(),
+    role: text("role").$type<Role>().notNull().default("commenter"),
+    created_at: text("created_at").notNull().$defaultFn(isoNow),
+  },
+  (t) => [
+    uniqueIndex("agent_token").on(t.token),
+    uniqueIndex("agent_org_name").on(t.org_id, t.name),
+  ],
+)
+
+export const agentMention = pgTable("agent_mention", {
+  id: text("id").primaryKey(),
+  agent_id: text("agent_id").notNull(),
+  artifact_id: text("artifact_id").notNull(),
+  artifact_short_id: text("artifact_short_id").notNull(),
+  comment_id: text("comment_id").notNull(),
+  thread_id: text("thread_id").notNull(),
+  body: text("body").notNull(),
+  author: text("author").notNull(),
+  state: text("state").$type<AgentMentionState>().notNull().default("pending"),
+  created_at: text("created_at").notNull().$defaultFn(isoNow),
+})
+
 export const artifactFavorite = pgTable(
   "artifact_favorite",
   {
@@ -194,7 +226,9 @@ const _pgParity: [
   Exact<typeof artifactMember.$inferSelect, ArtifactMemberRecord>,
   Exact<typeof notification.$inferSelect, NotificationRecord>,
   Exact<typeof proposal.$inferSelect, ProposalRecord>,
-] = [true, true, true, true, true, true, true, true, true]
+  Exact<typeof agent.$inferSelect, AgentRecord>,
+  Exact<typeof agentMention.$inferSelect, AgentMentionRecord>,
+] = [true, true, true, true, true, true, true, true, true, true, true]
 void _pgParity
 
 // Boot DDL (idempotent). created_at uses a SQL default as a server-side backstop.
@@ -319,6 +353,29 @@ export const PG_SCHEMA_STATEMENTS: string[] = [
     created_at TEXT NOT NULL DEFAULT ${isoDefault}
   )`,
   `CREATE INDEX IF NOT EXISTS notification_user_time ON notification (user_id, created_at)`,
+  `CREATE TABLE IF NOT EXISTS agent (
+    id TEXT PRIMARY KEY,
+    org_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    token TEXT NOT NULL,
+    role TEXT NOT NULL DEFAULT 'commenter',
+    created_at TEXT NOT NULL DEFAULT ${isoDefault},
+    UNIQUE (token),
+    UNIQUE (org_id, name)
+  )`,
+  `CREATE TABLE IF NOT EXISTS agent_mention (
+    id TEXT PRIMARY KEY,
+    agent_id TEXT NOT NULL,
+    artifact_id TEXT NOT NULL,
+    artifact_short_id TEXT NOT NULL,
+    comment_id TEXT NOT NULL,
+    thread_id TEXT NOT NULL,
+    body TEXT NOT NULL,
+    author TEXT NOT NULL,
+    state TEXT NOT NULL DEFAULT 'pending',
+    created_at TEXT NOT NULL DEFAULT ${isoDefault}
+  )`,
+  `CREATE INDEX IF NOT EXISTS agent_mention_inbox ON agent_mention (agent_id, state, created_at)`,
   `CREATE TABLE IF NOT EXISTS artifact_favorite (
     id TEXT PRIMARY KEY,
     artifact_id TEXT NOT NULL REFERENCES artifact(id),

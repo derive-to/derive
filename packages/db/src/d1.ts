@@ -1,5 +1,7 @@
 import type { D1Database } from "@cloudflare/workers-types"
 import type {
+  AgentMentionRecord,
+  AgentRecord,
   ArtifactMemberRecord,
   ArtifactRecord,
   CommentRecord,
@@ -9,6 +11,8 @@ import type {
   ListArtifactsOpts,
   MembershipRecord,
   MetaStore,
+  NewAgent,
+  NewAgentMention,
   NewArtifact,
   NewArtifactMember,
   NewComment,
@@ -30,6 +34,8 @@ import type {
 import { and, asc, count, desc, eq, inArray, isNull, like, lt, lte, or, sql } from "drizzle-orm"
 import { type DrizzleD1Database, drizzle } from "drizzle-orm/d1"
 import {
+  agent,
+  agentMention,
   artifact,
   artifactFavorite,
   artifactMember,
@@ -55,6 +61,8 @@ const schema = {
   artifactFavorite,
   artifactTag,
   proposal,
+  agent,
+  agentMention,
 }
 const VIEW_WINDOW_MS = 30 * 86400_000
 
@@ -510,5 +518,39 @@ export class D1MetaStore implements MetaStore {
           : null
     if (!where) return
     await this.db.update(notification).set({ read: 1 }).where(where).run()
+  }
+
+  // ---- Agents + their pull inbox -----------------------------------------
+  createAgent(a: NewAgent): Promise<AgentRecord> {
+    return this.db.insert(agent).values(a).returning().get()
+  }
+  listAgents(orgId: string): Promise<AgentRecord[]> {
+    return this.db.select().from(agent).where(eq(agent.org_id, orgId)).all()
+  }
+  async getAgentByToken(token: string): Promise<AgentRecord | null> {
+    return (await this.db.select().from(agent).where(eq(agent.token, token)).get()) ?? null
+  }
+  async deleteAgent(id: string): Promise<void> {
+    await this.db.delete(agent).where(eq(agent.id, id)).run()
+  }
+  async createAgentMention(m: NewAgentMention): Promise<void> {
+    await this.db.insert(agentMention).values(m).run()
+  }
+  listPendingAgentMentions(agentId: string, limit: number): Promise<AgentMentionRecord[]> {
+    return this.db
+      .select()
+      .from(agentMention)
+      .where(and(eq(agentMention.agent_id, agentId), eq(agentMention.state, "pending")))
+      .orderBy(asc(agentMention.created_at))
+      .limit(limit)
+      .all()
+  }
+  async ackAgentMention(agentId: string, id: string): Promise<boolean> {
+    const res = await this.db
+      .update(agentMention)
+      .set({ state: "done" })
+      .where(and(eq(agentMention.id, id), eq(agentMention.agent_id, agentId)))
+      .run()
+    return (res.meta.changes ?? 0) > 0
   }
 }

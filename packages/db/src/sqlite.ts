@@ -1,4 +1,6 @@
 import type {
+  AgentMentionRecord,
+  AgentRecord,
   ArtifactMemberRecord,
   ArtifactRecord,
   CommentRecord,
@@ -8,6 +10,8 @@ import type {
   ListArtifactsOpts,
   MembershipRecord,
   MetaStore,
+  NewAgent,
+  NewAgentMention,
   NewArtifact,
   NewArtifactMember,
   NewComment,
@@ -30,6 +34,8 @@ import Database from "better-sqlite3"
 import { and, asc, count, desc, eq, inArray, isNull, like, lt, lte, or, sql } from "drizzle-orm"
 import { type BetterSQLite3Database, drizzle } from "drizzle-orm/better-sqlite3"
 import {
+  agent,
+  agentMention,
   artifact,
   artifactFavorite,
   artifactMember,
@@ -59,6 +65,8 @@ const schema = {
   artifactFavorite,
   artifactTag,
   proposal,
+  agent,
+  agentMention,
 }
 
 /** Embedded SQLite (WAL). The zero-dependency default; no external services. */
@@ -534,6 +542,42 @@ export class SqliteMetaStore implements MetaStore {
           : null
     if (!where) return
     this.db.update(notification).set({ read: 1 }).where(where).run()
+  }
+
+  // ---- Agents + their pull inbox -----------------------------------------
+  createAgent(a: NewAgent): Promise<AgentRecord> {
+    return Promise.resolve(this.db.insert(agent).values(a).returning().get())
+  }
+  listAgents(orgId: string): Promise<AgentRecord[]> {
+    return Promise.resolve(this.db.select().from(agent).where(eq(agent.org_id, orgId)).all())
+  }
+  async getAgentByToken(token: string): Promise<AgentRecord | null> {
+    return this.db.select().from(agent).where(eq(agent.token, token)).get() ?? null
+  }
+  async deleteAgent(id: string): Promise<void> {
+    this.db.delete(agent).where(eq(agent.id, id)).run()
+  }
+  async createAgentMention(m: NewAgentMention): Promise<void> {
+    this.db.insert(agentMention).values(m).run()
+  }
+  listPendingAgentMentions(agentId: string, limit: number): Promise<AgentMentionRecord[]> {
+    return Promise.resolve(
+      this.db
+        .select()
+        .from(agentMention)
+        .where(and(eq(agentMention.agent_id, agentId), eq(agentMention.state, "pending")))
+        .orderBy(asc(agentMention.created_at))
+        .limit(limit)
+        .all(),
+    )
+  }
+  async ackAgentMention(agentId: string, id: string): Promise<boolean> {
+    const res = this.db
+      .update(agentMention)
+      .set({ state: "done" })
+      .where(and(eq(agentMention.id, id), eq(agentMention.agent_id, agentId)))
+      .run()
+    return res.changes > 0
   }
 
   close(): void {
