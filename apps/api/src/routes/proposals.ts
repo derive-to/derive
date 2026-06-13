@@ -22,6 +22,7 @@ export const proposalRoutes = (ctx: AppContext) => {
     notify,
     currentUser,
     actingUser,
+    anonLocked,
     authorize,
     limited,
     overStorage,
@@ -52,6 +53,8 @@ export const proposalRoutes = (ctx: AppContext) => {
     const artifact = await meta.getByShortId(c.req.param("shortId") ?? "")
     if (!artifact || !(await authorize(c, "read", artifact)))
       return { error: fail(c, 404, "not found") as Response }
+    // Proposals are in-review work, not public content: hidden from anonymous.
+    if (await anonLocked(c, artifact)) return { error: fail(c, 404, "not found") as Response }
     const proposal = await meta.getProposal(c.req.param("proposalId") ?? "")
     if (!proposal || proposal.artifact_id !== artifact.id)
       return { error: fail(c, 404, "not found") as Response }
@@ -113,6 +116,7 @@ export const proposalRoutes = (ctx: AppContext) => {
   app.get("/v1/artifacts/:shortId/proposals", async (c) => {
     const artifact = await meta.getByShortId(c.req.param("shortId"))
     if (!artifact || !(await authorize(c, "read", artifact))) return fail(c, 404, "not found")
+    if (await anonLocked(c, artifact)) return fail(c, 404, "not found")
     const stateQ = c.req.query("state")
     const state =
       stateQ === "open" ||

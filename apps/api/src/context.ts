@@ -324,6 +324,18 @@ export function buildContext(deps: AppDeps) {
   const authorize = (c: Context, action: Action, a: ArtifactRecord): Promise<boolean> =>
     actorFor(c, a).then((actor) => can(actor, action, a.visibility))
 
+  /**
+   * True when the caller is an anonymous visitor on a SECURE instance — they may
+   * view public content but nothing collaborative (comments, member list, proposals,
+   * analytics). On an open / zero-config instance, anonymous is the trusted owner,
+   * so this is false. Use as a post-`read` gate to hide collaboration from public
+   * link-visitors without touching the role model.
+   */
+  const anonLocked = async (c: Context, a: ArtifactRecord): Promise<boolean> => {
+    const actor = await actorFor(c, a)
+    return actor.kind === "anon" && !actor.open
+  }
+
   /** The caller's role in their active workspace (creating artifacts, settings). */
   const workspaceRole = async (c: Context): Promise<Role | null> => {
     if (deps.token && safeEqual(bearer(c), deps.token)) return "owner"
@@ -388,6 +400,7 @@ export function buildContext(deps: AppDeps) {
     setWsCookie,
     actorFor,
     authorize,
+    anonLocked,
     isSuperAdmin,
     workspaceRole,
     workspaceCan,

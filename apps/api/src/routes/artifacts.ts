@@ -37,6 +37,7 @@ export const artifactRoutes = (ctx: AppContext) => {
     notify,
     bearer,
     currentUser,
+    actingUser,
     activeWorkspace,
     actorFor,
     authorize,
@@ -174,7 +175,10 @@ export const artifactRoutes = (ctx: AppContext) => {
           slug: str(body["slug"]),
           spa: body["spa"] === "true" || body["spa"] === "1",
           message: str(body["message"]),
-          author: str(body["author"]),
+          // Author is the authenticated identity (signed-in user or agent), never a
+          // client-supplied field — a logged-in publish must be attributed to that
+          // person, not "anonymous". Anonymous can't publish at all (open mode off).
+          author: (await actingUser(c))?.name ?? str(body["author"]),
           name: str(body["name"]),
           orgId: org,
           visibility: visibilityOf(body["visibility"]),
