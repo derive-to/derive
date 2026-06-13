@@ -96,6 +96,12 @@ export interface AppDeps {
    */
   serveWeb?: boolean
   /**
+   * gzip the responses. On for the Node/Fly entry (Fly's proxy gives HTTP/2 but
+   * doesn't compress); left off for the Cloudflare Worker entry, where the edge
+   * already compresses (gzip/brotli) and doubling it up wastes CPU.
+   */
+  compress?: boolean
+  /**
    * A separate origin that serves artifact bytes (`/raw/*`), keeping user HTML
    * off the app's cookie origin — the real isolation wall (CSP sandbox is
    * defense-in-depth). When set, the app origin redirects `/raw/*` here, and
