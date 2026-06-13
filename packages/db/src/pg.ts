@@ -12,15 +12,17 @@ import type {
   NewComment,
   NewDelivery,
   NewMembership,
+  NewNotification,
   NewVersion,
   NewView,
   NewWebhook,
+  NotificationRecord,
   UserDir,
   VersionRecord,
   ViewStats,
   WebhookRecord,
 } from "@dock/core"
-import { and, asc, count, desc, eq, isNull, lte, or } from "drizzle-orm"
+import { and, asc, count, desc, eq, inArray, isNull, lte, or } from "drizzle-orm"
 import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres"
 import { Pool } from "pg"
 import {
@@ -28,13 +30,23 @@ import {
   artifactMember,
   comment,
   membership,
+  notification,
   PG_SCHEMA_STATEMENTS,
   version,
   webhook,
   webhookDelivery,
 } from "./pg-schema"
 
-const schema = { artifact, version, comment, webhook, webhookDelivery, membership, artifactMember }
+const schema = {
+  artifact,
+  version,
+  comment,
+  webhook,
+  webhookDelivery,
+  membership,
+  artifactMember,
+  notification,
+}
 const VIEW_WINDOW_MS = 30 * 86400_000
 
 /**
@@ -331,6 +343,36 @@ export class PgMetaStore implements MetaStore {
     } catch {
       return []
     }
+  }
+
+  // ---- Notifications (in-app, one row per recipient) ---------------------
+  async createNotification(n: NewNotification): Promise<void> {
+    await this.db.insert(notification).values(n)
+  }
+  listNotifications(userId: string, limit: number): Promise<NotificationRecord[]> {
+    return this.db
+      .select()
+      .from(notification)
+      .where(eq(notification.user_id, userId))
+      .orderBy(desc(notification.created_at))
+      .limit(limit)
+  }
+  async unreadNotificationCount(userId: string): Promise<number> {
+    const rows = await this.db
+      .select({ n: count() })
+      .from(notification)
+      .where(and(eq(notification.user_id, userId), eq(notification.read, 0)))
+    return rows[0]?.n ?? 0
+  }
+  async markNotificationsRead(userId: string, ids: string[] | "all"): Promise<void> {
+    const where =
+      ids === "all"
+        ? eq(notification.user_id, userId)
+        : ids.length > 0
+          ? and(eq(notification.user_id, userId), inArray(notification.id, ids))
+          : null
+    if (!where) return
+    await this.db.update(notification).set({ read: 1 }).where(where)
   }
 
   async close(): Promise<void> {

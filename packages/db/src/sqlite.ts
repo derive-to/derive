@@ -12,16 +12,18 @@ import type {
   NewComment,
   NewDelivery,
   NewMembership,
+  NewNotification,
   NewVersion,
   NewView,
   NewWebhook,
+  NotificationRecord,
   UserDir,
   VersionRecord,
   ViewStats,
   WebhookRecord,
 } from "@dock/core"
 import Database from "better-sqlite3"
-import { and, asc, count, desc, eq, isNull, lte, or } from "drizzle-orm"
+import { and, asc, count, desc, eq, inArray, isNull, lte, or } from "drizzle-orm"
 import { type BetterSQLite3Database, drizzle } from "drizzle-orm/better-sqlite3"
 import {
   artifact,
@@ -29,6 +31,7 @@ import {
   comment,
   MIGRATION_STATEMENTS,
   membership,
+  notification,
   SCHEMA_STATEMENTS,
   version,
   webhook,
@@ -37,7 +40,16 @@ import {
 
 const VIEW_WINDOW_MS = 30 * 86400_000
 
-const schema = { artifact, version, comment, webhook, webhookDelivery, membership, artifactMember }
+const schema = {
+  artifact,
+  version,
+  comment,
+  webhook,
+  webhookDelivery,
+  membership,
+  artifactMember,
+  notification,
+}
 
 /** Embedded SQLite (WAL). The zero-dependency default; no external services. */
 export class SqliteMetaStore implements MetaStore {
@@ -352,6 +364,41 @@ export class SqliteMetaStore implements MetaStore {
     } catch {
       return []
     }
+  }
+
+  // ---- Notifications (in-app, one row per recipient) ---------------------
+  async createNotification(n: NewNotification): Promise<void> {
+    this.db.insert(notification).values(n).run()
+  }
+  listNotifications(userId: string, limit: number): Promise<NotificationRecord[]> {
+    return Promise.resolve(
+      this.db
+        .select()
+        .from(notification)
+        .where(eq(notification.user_id, userId))
+        .orderBy(desc(notification.created_at))
+        .limit(limit)
+        .all(),
+    )
+  }
+  async unreadNotificationCount(userId: string): Promise<number> {
+    return (
+      this.db
+        .select({ n: count() })
+        .from(notification)
+        .where(and(eq(notification.user_id, userId), eq(notification.read, 0)))
+        .get()?.n ?? 0
+    )
+  }
+  async markNotificationsRead(userId: string, ids: string[] | "all"): Promise<void> {
+    const where =
+      ids === "all"
+        ? eq(notification.user_id, userId)
+        : ids.length > 0
+          ? and(eq(notification.user_id, userId), inArray(notification.id, ids))
+          : null
+    if (!where) return
+    this.db.update(notification).set({ read: 1 }).where(where).run()
   }
 
   close(): void {

@@ -6,6 +6,7 @@ export interface DockEvent {
     | "comment.updated"
     | "version.published"
     | "presence"
+    | "notification"
   [k: string]: unknown
 }
 
