@@ -152,10 +152,16 @@ export function buildContext(deps: AppDeps) {
     return h.startsWith("Bearer ") ? h.slice(7) : ""
   }
 
+  // The signed-in user for this request, memoized like agentFor below: several
+  // handlers (actingUser, activeWorkspace, the route itself) resolve the caller
+  // more than once, and the session lookup shouldn't run again each time.
+  const userCache = new WeakMap<Context, SessionUser | null>()
   const currentUser = async (c: Context): Promise<SessionUser | null> => {
-    if (!deps.auth) return null
-    const s = await deps.auth.api.getSession({ headers: c.req.raw.headers })
-    return s?.user ? { id: s.user.id, email: s.user.email, name: s.user.name ?? null } : null
+    if (userCache.has(c)) return userCache.get(c) ?? null
+    const s = deps.auth ? await deps.auth.api.getSession({ headers: c.req.raw.headers }) : null
+    const u = s?.user ? { id: s.user.id, email: s.user.email, name: s.user.name ?? null } : null
+    userCache.set(c, u)
+    return u
   }
 
   // A registered agent acting via its bearer token (memoized per request). An

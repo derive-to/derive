@@ -116,11 +116,13 @@ if (cfg.retentionDays > 0) {
 }
 
 // One-time cleanup of pre-existing owner self-views (the route no longer records
-// them). Owners are workspace members with the `owner` role; match their id, name
-// and email so rows from before the id-based identity change are caught too.
+// them). Pre-multi-workspace rows were rekeyed from "local" onto defaultOrg above,
+// so the legacy owners live under defaultOrg now (not the "local" sentinel). Match
+// their id, name and email so rows from before the id-based identity change are
+// caught too.
 void (async () => {
   try {
-    const owners = (await meta.listMemberships("local")).filter((m) => m.role === "owner")
+    const owners = (await meta.listMemberships(defaultOrg)).filter((m) => m.role === "owner")
     if (owners.length === 0) return
     const users = await meta.getUsers(owners.map((m) => m.user_id))
     const viewers = [
