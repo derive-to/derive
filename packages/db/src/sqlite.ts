@@ -34,6 +34,7 @@ import type {
   VersionRecord,
   ViewStats,
   WebhookRecord,
+  WorkspaceRecord,
 } from "@dock/core"
 import Database from "better-sqlite3"
 import { and, asc, count, desc, eq, inArray, isNull, like, lt, lte, or, sql } from "drizzle-orm"
@@ -57,6 +58,7 @@ import {
   version,
   webhook,
   webhookDelivery,
+  workspace,
 } from "./schema"
 
 const VIEW_WINDOW_MS = 30 * 86400_000
@@ -68,6 +70,7 @@ const schema = {
   webhook,
   webhookDelivery,
   membership,
+  workspace,
   artifactMember,
   notification,
   artifactFavorite,
@@ -363,6 +366,25 @@ export class SqliteMetaStore implements MetaStore {
           target: [membership.org_id, membership.user_id],
           set: { role: m.role },
         })
+        .returning()
+        .get(),
+    )
+  }
+  async removeMembership(orgId: string, userId: string): Promise<void> {
+    this.db
+      .delete(membership)
+      .where(and(eq(membership.org_id, orgId), eq(membership.user_id, userId)))
+      .run()
+  }
+  async getWorkspace(orgId: string): Promise<WorkspaceRecord | null> {
+    return this.db.select().from(workspace).where(eq(workspace.id, orgId)).get() ?? null
+  }
+  setWorkspace(orgId: string, name: string): Promise<WorkspaceRecord> {
+    return Promise.resolve(
+      this.db
+        .insert(workspace)
+        .values({ id: orgId, name })
+        .onConflictDoUpdate({ target: workspace.id, set: { name } })
         .returning()
         .get(),
     )

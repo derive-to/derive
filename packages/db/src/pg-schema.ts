@@ -110,6 +110,13 @@ export const membership = pgTable(
   (t) => [uniqueIndex("membership_org_user").on(t.org_id, t.user_id)],
 )
 
+// The workspace itself — just a display name for now (one row per org_id).
+export const workspace = pgTable("workspace", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  created_at: text("created_at").notNull().$defaultFn(isoNow),
+})
+
 export const artifactMember = pgTable(
   "artifact_member",
   {
@@ -363,6 +370,11 @@ export const PG_SCHEMA_STATEMENTS: string[] = [
     role TEXT NOT NULL,
     created_at TEXT NOT NULL DEFAULT ${isoDefault},
     UNIQUE (org_id, user_id)
+  )`,
+  `CREATE TABLE IF NOT EXISTS workspace (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT ${isoDefault}
   )`,
   `CREATE TABLE IF NOT EXISTS artifact_member (
     id TEXT PRIMARY KEY,

@@ -1350,3 +1350,83 @@ describe("collections", () => {
     expect(await meta.getByShortId(short_id)).not.toBeNull()
   })
 })
+
+describe("workspace: name + members (Admin / Creator / Viewer)", () => {
+  const admin: TestUser = { id: "u_ws_admin", email: "wsadmin@dock.test", name: "Ada" }
+  const creator: TestUser = { id: "u_ws_creator", email: "wscreator@dock.test", name: "Cara" }
+  const viewer: TestUser = { id: "u_ws_viewer", email: "wsviewer@dock.test", name: "Vic" }
+  const { app } = makeAuthedApp("workspace", [admin, creator, viewer], "commenter")
+
+  const ws = async (headers: Record<string, string>) =>
+    (await app.request("/v1/workspace", { headers })).json()
+  const patchWs = (headers: Record<string, string>, body: unknown) =>
+    app.request("/v1/workspace", { ...jsonAs(headers, body), method: "PATCH" })
+  const putMember = (headers: Record<string, string>, body: unknown) =>
+    app.request("/v1/workspace/members", { ...jsonAs(headers, body), method: "PUT" })
+  const patchMember = (headers: Record<string, string>, userId: string, body: unknown) =>
+    app.request(`/v1/workspace/members/${userId}`, { ...jsonAs(headers, body), method: "PATCH" })
+
+  it("defaults the name and makes the first user the Admin (owner)", async () => {
+    // The first /v1/me claims ownership; the others provision as Viewers.
+    const me = await (await app.request("/v1/me", { headers: as(admin.email) })).json()
+    expect(me.user.role).toBe("owner")
+    await app.request("/v1/me", { headers: as(creator.email) })
+    await app.request("/v1/me", { headers: as(viewer.email) })
+    const w = await ws(as(admin.email))
+    expect(w.name).toBe("My Workspace")
+    expect(w.role).toBe("owner")
+    expect(w.members).toHaveLength(3)
+  })
+
+  it("an Admin renames the workspace; a Viewer cannot; the name shows in browse", async () => {
+    const ok = await patchWs(as(admin.email), { name: "Acme HQ" })
+    expect(ok.status).toBe(200)
+    expect((await ok.json()).name).toBe("Acme HQ")
+    expect((await ws(as(viewer.email))).name).toBe("Acme HQ")
+    expect((await patchWs(as(viewer.email), { name: "Hijacked" })).status).toBe(403)
+    const summary = await (await app.request("/v1/tags", { headers: as(admin.email) })).json()
+    expect(summary.workspace).toBe("Acme HQ")
+  })
+
+  it("an Admin promotes a member to Creator (editor); a Viewer cannot add anyone", async () => {
+    expect(
+      (await putMember(as(admin.email), { email: creator.email, role: "editor" })).status,
+    ).toBe(201)
+    const me = await (await app.request("/v1/me", { headers: as(creator.email) })).json()
+    expect(me.user.role).toBe("editor")
+    expect((await putMember(as(viewer.email), { email: viewer.email, role: "owner" })).status).toBe(
+      403,
+    )
+  })
+
+  it("rejects an unknown email and an invalid role", async () => {
+    expect(
+      (await putMember(as(admin.email), { email: "ghost@dock.test", role: "editor" })).status,
+    ).toBe(404)
+    expect(
+      (await putMember(as(admin.email), { email: creator.email, role: "wizard" })).status,
+    ).toBe(400)
+  })
+
+  it("changes a member's role and removes a member", async () => {
+    expect((await patchMember(as(admin.email), creator.id, { role: "owner" })).status).toBe(200)
+    const del = await app.request(`/v1/workspace/members/${viewer.id}`, {
+      method: "DELETE",
+      headers: as(admin.email),
+    })
+    expect(del.status).toBe(204)
+    const w = await ws(as(admin.email))
+    expect(w.members.find((m: { user_id: string }) => m.user_id === viewer.id)).toBeUndefined()
+  })
+
+  it("won't strip or remove the last Admin", async () => {
+    // creator is currently an Admin too; demote it so `admin` is the only one.
+    expect((await patchMember(as(admin.email), creator.id, { role: "editor" })).status).toBe(200)
+    expect((await patchMember(as(admin.email), admin.id, { role: "editor" })).status).toBe(409)
+    const remove = await app.request(`/v1/workspace/members/${admin.id}`, {
+      method: "DELETE",
+      headers: as(admin.email),
+    })
+    expect(remove.status).toBe(409)
+  })
+})

@@ -1,10 +1,29 @@
 import { useNavigate } from "@tanstack/react-router"
 import { useEffect, useState } from "react"
-import { type Agent, api, type Delivery, type Role, type Webhook } from "../api"
+import {
+  type Agent,
+  type ArtifactMember,
+  api,
+  type Delivery,
+  type Role,
+  type Webhook,
+  type Workspace,
+} from "../api"
 import { Header, useToast } from "../components"
 import { useAuth } from "../ctx"
 
 const ALL_EVENTS = ["comment.created", "comment.resolved", "version.published"] as const
+
+// Workspace membership, presented as three simple roles. The values are the
+// canonical Role vocabulary; the labels are what people see.
+const WS_ROLES: { value: Role; label: string; hint: string }[] = [
+  { value: "owner", label: "Admin", hint: "Add people, manage settings" },
+  { value: "editor", label: "Creator", hint: "Create & publish" },
+  { value: "commenter", label: "Viewer", hint: "Read & comment" },
+]
+const roleLabel = (r: Role): string => WS_ROLES.find((x) => x.value === r)?.label ?? "Viewer"
+// A historical bare "viewer" maps onto the Viewer (commenter) option.
+const roleValue = (r: Role): Role => (r === "viewer" ? "commenter" : r)
 
 export function Settings() {
   const { me, loading } = useAuth()
@@ -48,10 +67,12 @@ export function Settings() {
           Settings
         </h2>
         <p className="muted" style={{ margin: "0 0 26px", fontSize: 14 }}>
-          Notifications and integrations for this workspace.
+          Your workspace, members, and integrations.
         </p>
 
-        <section>
+        <WorkspaceSection meId={me.id} show={show} />
+
+        <section style={{ marginTop: 38 }}>
           <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 4 }}>
             <h3 className="display" style={{ fontSize: 16, margin: 0 }}>
               Webhooks &amp; Slack
@@ -166,6 +187,235 @@ export function Settings() {
       </main>
       {toast}
     </div>
+  )
+}
+
+function WorkspaceSection({ meId, show }: { meId: string; show: (m: string) => void }) {
+  const [ws, setWs] = useState<Workspace | null>(null)
+  const [name, setName] = useState("")
+  const [savingName, setSavingName] = useState(false)
+  const [email, setEmail] = useState("")
+  const [addRole, setAddRole] = useState<Role>("commenter")
+  const [adding, setAdding] = useState(false)
+
+  const load = () =>
+    api
+      .getWorkspace()
+      .then((w) => {
+        setWs(w)
+        setName(w.name)
+      })
+      .catch(() => setWs(null))
+  useEffect(() => {
+    load()
+  }, [])
+
+  const isAdmin = ws?.role === "owner"
+
+  const saveName = async () => {
+    const n = name.trim()
+    if (!n || n === ws?.name) return
+    setSavingName(true)
+    try {
+      const r = await api.renameWorkspace(n)
+      setWs((w) => (w ? { ...w, name: r.name } : w))
+      show("Workspace renamed")
+    } catch (e) {
+      show((e as Error).message)
+    } finally {
+      setSavingName(false)
+    }
+  }
+
+  const addMember = async () => {
+    const em = email.trim()
+    if (!em) return
+    setAdding(true)
+    try {
+      await api.addWorkspaceMember(em, addRole)
+      setEmail("")
+      show("Member added")
+      load()
+    } catch (e) {
+      show((e as Error).message)
+    } finally {
+      setAdding(false)
+    }
+  }
+
+  const changeRole = async (userId: string, role: Role) => {
+    try {
+      await api.setWorkspaceMemberRole(userId, role)
+      setWs((w) =>
+        w
+          ? { ...w, members: w.members.map((m) => (m.user_id === userId ? { ...m, role } : m)) }
+          : w,
+      )
+      show("Role updated")
+    } catch (e) {
+      show((e as Error).message)
+      load()
+    }
+  }
+
+  const removeMember = async (m: ArtifactMember) => {
+    if (!confirm(`Remove ${m.name ?? m.email ?? "this member"} from the workspace?`)) return
+    try {
+      await api.removeWorkspaceMember(m.user_id)
+      setWs((w) => (w ? { ...w, members: w.members.filter((x) => x.user_id !== m.user_id) } : w))
+      show("Member removed")
+    } catch (e) {
+      show((e as Error).message)
+    }
+  }
+
+  return (
+    <section>
+      <h3 className="display" style={{ fontSize: 16, margin: "0 0 4px" }}>
+        Workspace
+      </h3>
+      <p className="muted" style={{ fontSize: 13, margin: "0 0 16px" }}>
+        Name your workspace and choose who's in it. <strong>Admins</strong> add people,{" "}
+        <strong>Creators</strong> publish artifacts, <strong>Viewers</strong> read and comment.
+      </p>
+
+      <div className="card" style={{ padding: 16 }}>
+        <div className="muted" style={{ fontSize: 12, fontWeight: 600 }}>
+          Workspace name
+        </div>
+        <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
+          <input
+            className="input"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            disabled={!isAdmin || ws === null}
+            maxLength={80}
+            placeholder="My Workspace"
+            style={{ flex: 1 }}
+          />
+          {isAdmin && (
+            <button
+              className="btn pri"
+              onClick={saveName}
+              disabled={savingName || !name.trim() || name.trim() === ws?.name}
+            >
+              {savingName ? "Saving…" : "Save"}
+            </button>
+          )}
+        </div>
+      </div>
+
+      <div style={{ display: "flex", alignItems: "baseline", gap: 10, margin: "22px 0 4px" }}>
+        <h4 className="display" style={{ fontSize: 14, margin: 0 }}>
+          Members
+        </h4>
+        <span className="muted" style={{ fontSize: 13 }}>
+          · {ws?.members.length ?? 0}
+        </span>
+      </div>
+
+      {isAdmin && (
+        <div className="card" style={{ padding: 16, marginBottom: 14 }}>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <input
+              className="input"
+              placeholder="Email of a Dock user"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && addMember()}
+              style={{ flex: 1, minWidth: 200 }}
+            />
+            <select
+              className="input"
+              value={addRole}
+              onChange={(e) => setAddRole(e.target.value as Role)}
+              style={{ width: 130 }}
+            >
+              {WS_ROLES.map((r) => (
+                <option key={r.value} value={r.value}>
+                  {r.label}
+                </option>
+              ))}
+            </select>
+            <button className="btn pri" onClick={addMember} disabled={adding || !email.trim()}>
+              {adding ? "Adding…" : "Add"}
+            </button>
+          </div>
+        </div>
+      )}
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 11 }}>
+        {ws === null ? (
+          <div className="center" style={{ height: 80 }}>
+            <div className="spin" />
+          </div>
+        ) : (
+          ws.members.map((m) => (
+            <div
+              key={m.user_id}
+              className="card"
+              style={{ padding: "12px 15px", display: "flex", alignItems: "center", gap: 12 }}
+            >
+              <span style={{ fontSize: 16 }}>👤</span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 14, fontWeight: 600 }}>
+                  {m.name ?? m.email ?? m.user_id}
+                  {m.user_id === meId && (
+                    <span className="muted" style={{ fontWeight: 400 }}>
+                      {" "}
+                      (you)
+                    </span>
+                  )}
+                </div>
+                {m.email && m.name && (
+                  <div className="muted" style={{ fontSize: 11.5 }}>
+                    {m.email}
+                  </div>
+                )}
+              </div>
+              {isAdmin ? (
+                <select
+                  className="input"
+                  value={roleValue(m.role)}
+                  onChange={(e) => changeRole(m.user_id, e.target.value as Role)}
+                  style={{ width: 120 }}
+                >
+                  {WS_ROLES.map((r) => (
+                    <option key={r.value} value={r.value}>
+                      {r.label}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <span
+                  className="mono"
+                  style={{
+                    fontSize: 10,
+                    fontWeight: 700,
+                    color: "var(--ac)",
+                    background: "var(--ac-soft)",
+                    borderRadius: 999,
+                    padding: "1px 7px",
+                  }}
+                >
+                  {roleLabel(m.role)}
+                </span>
+              )}
+              {isAdmin && (
+                <button
+                  className="btn sm"
+                  onClick={() => removeMember(m)}
+                  style={{ color: "var(--bad)" }}
+                  title="Remove member"
+                >
+                  Remove
+                </button>
+              )}
+            </div>
+          ))
+        )}
+      </div>
+    </section>
   )
 }
 

@@ -75,6 +75,12 @@ export interface ArtifactMember {
   name: string | null
   role: Role
 }
+/** The workspace: its name, the caller's role, and the member directory. */
+export interface Workspace {
+  name: string
+  role: Role
+  members: ArtifactMember[]
+}
 export interface Analytics {
   total: number
   unique: number
@@ -220,6 +226,7 @@ export const api = {
     total: number
     favorites: number
     tags: { tag: string; count: number }[]
+    workspace: string
   }> => f("/v1/tags", opts()).then(j),
   getArtifact: (id: string): Promise<Artifact> => f(`/v1/artifacts/${id}`, opts()).then(j),
   getContent: (id: string, v?: number): Promise<string> =>
@@ -278,6 +285,19 @@ export const api = {
     f("/v1/agents", opts({ name, role })).then(j),
   deleteAgent: (id: string): Promise<void> =>
     f(`/v1/agents/${id}`, { method: "DELETE", credentials: "include" }).then(() => undefined),
+
+  // Workspace name + members (Admin / Creator / Viewer = owner / editor / commenter)
+  getWorkspace: (): Promise<Workspace> => f("/v1/workspace", opts()).then(j),
+  renameWorkspace: (name: string): Promise<{ name: string }> =>
+    f("/v1/workspace", { ...opts({ name }), method: "PATCH" }).then(j),
+  addWorkspaceMember: (email: string, role: Role): Promise<ArtifactMember> =>
+    f("/v1/workspace/members", { ...opts({ email, role }), method: "PUT" }).then(j),
+  setWorkspaceMemberRole: (userId: string, role: Role): Promise<{ user_id: string; role: Role }> =>
+    f(`/v1/workspace/members/${userId}`, { ...opts({ role }), method: "PATCH" }).then(j),
+  removeWorkspaceMember: (userId: string): Promise<void> =>
+    f(`/v1/workspace/members/${userId}`, { method: "DELETE", credentials: "include" }).then(
+      () => undefined,
+    ),
 
   // Collections (shareable groups; sharing grants the role on every item)
   listCollections: (): Promise<{ collections: Collection[] }> =>
