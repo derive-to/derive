@@ -219,6 +219,12 @@ export class PgMetaStore implements MetaStore {
     const rows = await this.db.select({ c: count() }).from(artifact)
     return Number(rows[0]?.c ?? 0)
   }
+  async storageBytes(): Promise<number> {
+    const rows = await this.db
+      .select({ s: sql<number>`coalesce(sum(${version.size_bytes}), 0)` })
+      .from(version)
+    return Number(rows[0]?.s ?? 0)
+  }
   async tagCounts(): Promise<{ tag: string; count: number }[]> {
     const rows = await this.db
       .select({ tag: artifactTag.tag, count: count() })

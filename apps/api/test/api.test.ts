@@ -1714,3 +1714,124 @@ describe("workspace: open + token modes", () => {
     expect((await r.json()).name).toBe("Tokenspace")
   })
 })
+
+// ---------------------------------------------------------------------------
+// C4b — launch-gate prevention: storage quotas + per-actor rate limits.
+// ---------------------------------------------------------------------------
+
+// A fresh app with custom deps. Without `users` it's an open instance (anonymous
+// = owner) — handy for quota/anonymous-flood tests; with `users` it's secured
+// and the session is picked by an `x-test-user` header, for per-actor tests.
+const quotaApp = (name: string, extra: Partial<AppDeps>, users?: TestUser[]) => {
+  const path = join(dir, `${name}.db`)
+  const m = new SqliteMetaStore(path)
+  let auth: AppDeps["auth"]
+  if (users) {
+    const raw = new Database(path)
+    raw.exec(`CREATE TABLE IF NOT EXISTS user (id TEXT PRIMARY KEY, email TEXT, name TEXT)`)
+    const ins = raw.prepare(`INSERT OR IGNORE INTO user (id, email, name) VALUES (?,?,?)`)
+    for (const u of users) ins.run(u.id, u.email, u.name)
+    raw.close()
+    auth = {
+      handler: async () => new Response(null, { status: 404 }),
+      api: {
+        getSession: async ({ headers }: { headers: Headers }) => {
+          const u = users.find((x) => x.email === headers.get("x-test-user"))
+          return u ? { user: u } : null
+        },
+      },
+    } as unknown as AppDeps["auth"]
+  }
+  const app = createApp({
+    meta: m,
+    blobs: new FsBlobStore(join(dir, `blobs-${name}`)),
+    baseUrl: "http://dock.test",
+    ...(users ? { token: "tok", auth } : {}),
+    ...extra,
+  })
+  return { app, meta: m }
+}
+
+// Publish a string payload, optionally as a new version (shortId) and/or as a
+// given session (headers). Byte length = the string's UTF-8 length.
+const pub = (
+  app: ReturnType<typeof createApp>,
+  content: string,
+  fields: Record<string, string> = {},
+  shortId?: string,
+  headers: Record<string, string> = {},
+) => {
+  const form = new FormData()
+  form.append("file", new Blob([new TextEncoder().encode(content)]), "f.html")
+  for (const [k, v] of Object.entries(fields)) form.append(k, v)
+  const url = shortId ? `/v1/artifacts/${shortId}/versions` : "/v1/artifacts"
+  return app.request(url, { method: "POST", body: form, headers })
+}
+
+describe("quotas: per-workspace storage caps (C4b)", () => {
+  it("persists each version's byte size and meters the workspace total", async () => {
+    const { app, meta: m } = quotaApp("quota-meter", {})
+    const a = await (await pub(app, "hello")).json() // 5 bytes
+    await pub(app, "worldwide", {}, a.short_id) // +9 bytes on v2
+    expect(await m.storageBytes()).toBe(14)
+    m.close()
+  })
+
+  it("rejects an upload that would exceed maxBytes with 413, keeps the under-limit one", async () => {
+    const { app, meta: m } = quotaApp("quota-bytes", { maxBytes: 20 })
+    expect((await pub(app, "0123456789")).status).toBe(201) // 10 ≤ 20
+    const over = await pub(app, "0123456789AB") // total 22 > 20
+    expect(over.status).toBe(413)
+    expect((await over.json()).error).toMatch(/storage quota/)
+    expect(await m.storageBytes()).toBe(10) // the rejected upload stored nothing
+    m.close()
+  })
+
+  it("caps the number of artifacts (409), but still allows new versions of existing ones", async () => {
+    const { app } = quotaApp("quota-count", { maxArtifacts: 2 })
+    const a1 = await (await pub(app, "one")).json()
+    expect((await pub(app, "two")).status).toBe(201)
+    const third = await pub(app, "three")
+    expect(third.status).toBe(409)
+    expect((await third.json()).error).toMatch(/artifact quota/)
+    // Republishing an existing artifact doesn't create a new one — still allowed.
+    expect((await pub(app, "one-v2", {}, a1.short_id)).status).toBe(201)
+  })
+})
+
+describe("rate limits: per-actor write throttles (C4b)", () => {
+  it("throttles a flood of publishes from one caller with 429 + Retry-After", async () => {
+    const { app } = quotaApp("rl-publish", { rateLimit: true, publishRate: 2 })
+    expect((await pub(app, "a")).status).toBe(201)
+    expect((await pub(app, "b")).status).toBe(201)
+    const blocked = await pub(app, "c")
+    expect(blocked.status).toBe(429)
+    expect(blocked.headers.get("Retry-After")).toBeTruthy()
+  })
+
+  it("throttles comments independently of publishes", async () => {
+    const { app } = quotaApp("rl-comment", { rateLimit: true, commentRate: 2 })
+    const a = await (await pub(app, "doc")).json()
+    const comment = () =>
+      app.request(`/v1/artifacts/${a.short_id}/comments`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ body_md: "hi", author: "x" }),
+      })
+    expect((await comment()).status).toBe(201)
+    expect((await comment()).status).toBe(201)
+    expect((await comment()).status).toBe(429)
+  })
+
+  it("keys the limit by identity — one user hitting the cap doesn't block another", async () => {
+    const amy: TestUser = { id: "u_amy", email: "amy@dock.test", name: "Amy" }
+    const ben: TestUser = { id: "u_ben", email: "ben@dock.test", name: "Ben" }
+    const { app } = quotaApp("rl-actor", { rateLimit: true, publishRate: 1 }, [amy, ben])
+    // Amy provisions as owner (first member); Ben joins as the default editor.
+    await app.request("/v1/me", { headers: as(amy.email) })
+    await app.request("/v1/me", { headers: as(ben.email) })
+    expect((await pub(app, "a1", {}, undefined, as(amy.email))).status).toBe(201)
+    expect((await pub(app, "a2", {}, undefined, as(amy.email))).status).toBe(429) // Amy capped
+    expect((await pub(app, "b1", {}, undefined, as(ben.email))).status).toBe(201) // Ben unaffected
+  })
+})

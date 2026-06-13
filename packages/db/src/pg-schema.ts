@@ -54,6 +54,7 @@ export const version = pgTable("version", {
   n: integer("n").notNull(),
   blob_key: text("blob_key").notNull(),
   content_type: text("content_type").notNull(),
+  size_bytes: integer("size_bytes").notNull().default(0),
   author: text("author").notNull(),
   message: text("message"),
   name: text("name"),
@@ -323,6 +324,7 @@ export const PG_SCHEMA_STATEMENTS: string[] = [
     n INTEGER NOT NULL,
     blob_key TEXT NOT NULL,
     content_type TEXT NOT NULL,
+    size_bytes INTEGER NOT NULL DEFAULT 0,
     author TEXT NOT NULL,
     message TEXT,
     name TEXT,
@@ -330,6 +332,7 @@ export const PG_SCHEMA_STATEMENTS: string[] = [
     UNIQUE (artifact_id, n)
   )`,
   `ALTER TABLE version ADD COLUMN IF NOT EXISTS name TEXT`,
+  `ALTER TABLE version ADD COLUMN IF NOT EXISTS size_bytes INTEGER NOT NULL DEFAULT 0`,
   `CREATE TABLE IF NOT EXISTS comment (
     id TEXT PRIMARY KEY,
     artifact_id TEXT NOT NULL REFERENCES artifact(id),
