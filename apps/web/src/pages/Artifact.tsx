@@ -2847,14 +2847,6 @@ const dayLabel = (iso: string): string => {
 
 function HistoryMenu({ art, shown, goTo }: { art: Art; shown: number; goTo: (n: number) => void }) {
   const [open, setOpen] = useState(false)
-  const ref = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    const h = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
-    }
-    document.addEventListener("click", h)
-    return () => document.removeEventListener("click", h)
-  }, [])
   const sessions =
     art.sessions ??
     [...art.versions]
@@ -2870,133 +2862,81 @@ function HistoryMenu({ art, shown, goTo }: { art: Art; shown: number; goTo: (n: 
   const latest = sessions[0]
   let lastDay = ""
   return (
-    <div ref={ref} style={{ position: "relative" }}>
-      <button
-        className="btn sm"
-        onClick={(e) => {
-          e.stopPropagation()
-          setOpen((o) => !o)
-        }}
-        style={{ gap: 6 }}
-        title="Version history"
-      >
-        {latest ? `Edited ${ago(latest.created_at)}` : "History"}
-        <span style={{ fontSize: 9, opacity: 0.7 }}>▾</span>
-      </button>
-      {open && (
-        <div
-          className="card"
-          style={{
-            position: "absolute",
-            right: 0,
-            top: "calc(100% + 7px)",
-            width: 286,
-            padding: 6,
-            boxShadow: "var(--shadow)",
-            zIndex: 30,
-            maxHeight: 400,
-            overflow: "auto",
-          }}
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button
+          variant="outline"
+          size="sm"
+          className="gap-1.5"
+          title="Version history"
+          data-testid="artifact-history"
         >
-          <div
-            className="mono"
-            style={{
-              fontSize: 9.5,
-              letterSpacing: ".06em",
-              textTransform: "uppercase",
-              color: "var(--fg-mut)",
-              padding: "6px 8px 4px",
-            }}
-          >
-            Version history
-          </div>
-          {sessions.map((s) => {
-            const cur = s.n === shown
-            const day = dayLabel(s.created_at)
-            const header = day !== lastDay ? day : null
-            if (header !== null) lastDay = day
-            return (
-              <div key={s.n}>
-                {header && (
-                  <div
-                    className="mono muted"
-                    style={{
-                      fontSize: 9,
-                      letterSpacing: ".05em",
-                      textTransform: "uppercase",
-                      padding: "8px 9px 3px",
-                    }}
-                  >
-                    {header}
-                  </div>
-                )}
-                <button
-                  onClick={() => {
-                    goTo(s.n)
-                    setOpen(false)
-                  }}
-                  style={{
-                    display: "block",
-                    width: "100%",
-                    textAlign: "left",
-                    border: 0,
-                    background: cur ? "var(--ac-soft)" : "transparent",
-                    borderRadius: 7,
-                    padding: "7px 9px",
-                    cursor: "pointer",
-                    marginBottom: 1,
-                  }}
-                >
-                  <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
-                    <span style={{ color: s.name ? "var(--ac)" : "var(--fg-mut)", fontSize: 11 }}>
-                      {s.name ? "★" : "●"}
-                    </span>
-                    <span
-                      style={{
-                        fontSize: 12.5,
-                        fontWeight: 600,
-                        color: cur ? "var(--ac)" : "var(--fg)",
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        whiteSpace: "nowrap",
-                      }}
-                    >
-                      {s.name ?? clock(s.created_at)}
-                    </span>
-                    {s.n === art.current_version && (
-                      <span
-                        className="mono"
-                        style={{
-                          fontSize: 8.5,
-                          fontWeight: 700,
-                          padding: "1px 6px",
-                          borderRadius: 999,
-                          background: "var(--good-bg)",
-                          color: "var(--good)",
-                        }}
-                      >
-                        current
-                      </span>
-                    )}
-                    {s.count > 1 && (
-                      <span className="mono muted" style={{ marginLeft: "auto", fontSize: 9.5 }}>
-                        {s.count} edits
-                      </span>
-                    )}
-                  </div>
-                  <div
-                    className="mono muted"
-                    style={{ fontSize: 9.5, marginTop: 2, paddingLeft: 18 }}
-                  >
-                    {s.author}
-                  </div>
-                </button>
-              </div>
-            )
-          })}
+          {latest ? `Edited ${ago(latest.created_at)}` : "History"}
+          <span className="text-2xs opacity-70">▾</span>
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="end" className="max-h-[400px] w-[286px] overflow-auto p-1.5">
+        <div className="px-2 pb-1 pt-1.5 font-mono text-2xs uppercase tracking-[0.06em] text-muted-foreground">
+          Version history
         </div>
-      )}
-    </div>
+        {sessions.map((s) => {
+          const cur = s.n === shown
+          const day = dayLabel(s.created_at)
+          const header = day !== lastDay ? day : null
+          if (header !== null) lastDay = day
+          return (
+            <div key={s.n}>
+              {header && (
+                <div className="px-2 pb-1 pt-2 font-mono text-2xs uppercase tracking-[0.05em] text-muted-foreground">
+                  {header}
+                </div>
+              )}
+              <button
+                type="button"
+                data-testid={`history-version-${s.n}`}
+                onClick={() => {
+                  goTo(s.n)
+                  setOpen(false)
+                }}
+                className={cn(
+                  "mb-px block w-full rounded-md px-2 py-1.5 text-left transition-colors hover:bg-hover",
+                  cur && "bg-accent",
+                )}
+              >
+                <div className="flex items-center gap-1.5">
+                  <span
+                    className={cn("text-xs", s.name ? "text-primary" : "text-muted-foreground")}
+                  >
+                    {s.name ? "★" : "●"}
+                  </span>
+                  <span
+                    className={cn(
+                      "truncate text-sm font-semibold",
+                      cur ? "text-primary" : "text-foreground",
+                    )}
+                  >
+                    {s.name ?? clock(s.created_at)}
+                  </span>
+                  {s.n === art.current_version && (
+                    <span className="rounded-full bg-success/15 px-1.5 py-px font-mono text-2xs font-bold text-success">
+                      current
+                    </span>
+                  )}
+                  {s.count > 1 && (
+                    <span className="ml-auto font-mono text-2xs text-muted-foreground">
+                      {s.count} edits
+                    </span>
+                  )}
+                </div>
+                <div className="mt-0.5 pl-[18px] font-mono text-2xs text-muted-foreground">
+                  {s.author}
+                </div>
+              </button>
+            </div>
+          )
+        })}
+      </PopoverContent>
+    </Popover>
   )
 }
 
