@@ -14,6 +14,13 @@ describe("roleAllows", () => {
     expect(roleAllows("commenter", "publish")).toBe(false)
     expect(roleAllows("commenter", "approve")).toBe(false)
   })
+  it("a commenter proposes a candidate, but only an editor approves it", () => {
+    expect(roleAllows("commenter", "propose")).toBe(true)
+    expect(roleAllows("commenter", "approve")).toBe(false)
+    expect(roleAllows("viewer", "propose")).toBe(false)
+    expect(roleAllows("editor", "propose")).toBe(true)
+    expect(roleAllows("editor", "approve")).toBe(true)
+  })
   it("viewers only read", () => {
     expect(roleAllows("viewer", "read")).toBe(true)
     expect(roleAllows("viewer", "comment")).toBe(false)

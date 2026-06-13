@@ -2,11 +2,13 @@ import { unzipSync } from "fflate"
 import { newId, newShortId, slugify } from "./ids"
 import { mimeFor } from "./mime"
 import {
+  type ArtifactKind,
   type ArtifactRecord,
   type BlobStore,
   BUNDLE_CONTENT_TYPE,
   type BundleManifest,
   type MetaStore,
+  type ProposalRecord,
   type VersionRecord,
   type Visibility,
 } from "./ports"
@@ -54,25 +56,29 @@ const cleanPath = (raw: string): string | null => {
   return `/${p}`
 }
 
-/**
- * Stores content and creates a new artifact (shortId undefined)
- * or the next version of an existing one.
- */
-export async function publish(
-  meta: MetaStore,
-  blobs: BlobStore,
-  input: PublishInput,
-  shortId?: string,
-): Promise<PublishResult> {
-  let blobKey: string
-  let contentType: string
-  let kind: "file" | "bundle"
+/** A piece of stored content, ready to become a version or a proposal. */
+interface StoredContent {
+  blobKey: string
+  contentType: string
+  kind: ArtifactKind
+}
 
-  if (input.isBundle) {
-    kind = "bundle"
+/**
+ * Stores raw bytes (a file) or a zip (a bundle) into the blob store and returns
+ * the content-addressed key, content type, and kind. Shared by publish() and
+ * propose() so a candidate version is processed exactly like a published one.
+ */
+async function storeContent(
+  blobs: BlobStore,
+  bytes: Uint8Array,
+  filename: string,
+  isBundle: boolean,
+  spa: boolean,
+): Promise<StoredContent> {
+  if (isBundle) {
     let unzipped: Record<string, Uint8Array>
     try {
-      unzipped = unzipSync(input.bytes)
+      unzipped = unzipSync(bytes)
     } catch {
       throw new PublishError(400, "not a valid zip")
     }
@@ -96,14 +102,37 @@ export async function publish(
             .sort((a, b) => a.split("/").length - b.split("/").length)[0]
     if (!entry) throw new PublishError(400, "bundle has no html entry point")
 
-    const manifest: BundleManifest = { entry, spa: !!input.spa, files }
-    blobKey = await blobs.put(new TextEncoder().encode(JSON.stringify(manifest)))
-    contentType = BUNDLE_CONTENT_TYPE
-  } else {
-    kind = "file"
-    contentType = /\.(md|markdown)$/i.test(input.filename) ? "text/markdown" : "text/html"
-    blobKey = await blobs.put(input.bytes)
+    const manifest: BundleManifest = { entry, spa, files }
+    return {
+      blobKey: await blobs.put(new TextEncoder().encode(JSON.stringify(manifest))),
+      contentType: BUNDLE_CONTENT_TYPE,
+      kind: "bundle",
+    }
   }
+  return {
+    blobKey: await blobs.put(bytes),
+    contentType: /\.(md|markdown)$/i.test(filename) ? "text/markdown" : "text/html",
+    kind: "file",
+  }
+}
+
+/**
+ * Stores content and creates a new artifact (shortId undefined)
+ * or the next version of an existing one.
+ */
+export async function publish(
+  meta: MetaStore,
+  blobs: BlobStore,
+  input: PublishInput,
+  shortId?: string,
+): Promise<PublishResult> {
+  const { blobKey, contentType, kind } = await storeContent(
+    blobs,
+    input.bytes,
+    input.filename,
+    input.isBundle,
+    !!input.spa,
+  )
 
   const author = input.author ?? "anonymous"
 
@@ -143,6 +172,87 @@ export async function publish(
     name: input.name ?? null,
   })
   return { artifact: (await meta.getByShortId(artifact.short_id)) as ArtifactRecord, version }
+}
+
+export interface ProposeInput {
+  bytes: Uint8Array
+  filename: string
+  isBundle: boolean
+  spa?: boolean
+  /** What the proposer is changing, in their words. */
+  message?: string
+  author?: string
+}
+
+export interface ProposeResult {
+  artifact: ArtifactRecord
+  proposal: ProposalRecord
+}
+
+/**
+ * Stores a candidate version for review WITHOUT making it current. A commenter
+ * (or an agent) proposes; an editor approves. The content is processed exactly
+ * like a publish, so the proposal renders identically to how it will once live.
+ */
+export async function propose(
+  meta: MetaStore,
+  blobs: BlobStore,
+  shortId: string,
+  input: ProposeInput,
+): Promise<ProposeResult> {
+  const artifact = await meta.getByShortId(shortId)
+  if (!artifact) throw new PublishError(404, `no artifact with short_id ${shortId}`)
+
+  const { blobKey, contentType, kind } = await storeContent(
+    blobs,
+    input.bytes,
+    input.filename,
+    input.isBundle,
+    !!input.spa,
+  )
+  if (artifact.kind !== kind)
+    throw new PublishError(409, `artifact is a ${artifact.kind}; propose the same kind`)
+
+  const proposal = await meta.createProposal({
+    id: newId("p"),
+    artifact_id: artifact.id,
+    blob_key: blobKey,
+    content_type: contentType,
+    kind,
+    title: null,
+    message: input.message ?? null,
+    author: input.author ?? "anonymous",
+    base_version: artifact.current_version,
+  })
+  return { artifact, proposal }
+}
+
+/**
+ * Approving a proposal appends its stored content as the new current version
+ * (the experience goes live) and stamps the proposal decided. History is never
+ * rewritten: the proposal row stays as the audit trail of who approved what.
+ */
+export async function approveProposal(
+  meta: MetaStore,
+  proposal: ProposalRecord,
+  approver: string | null,
+): Promise<VersionRecord> {
+  if (proposal.state !== "open")
+    throw new PublishError(409, `proposal is ${proposal.state}, not open`)
+  const version = await meta.addVersion(proposal.artifact_id, {
+    id: newId("v"),
+    blob_key: proposal.blob_key,
+    content_type: proposal.content_type,
+    author: proposal.author,
+    message: proposal.message ?? "Approved proposal",
+    name: null,
+  })
+  await meta.decideProposal(proposal.id, {
+    state: "approved",
+    decided_by: approver,
+    decided_version: version.n,
+  })
+  return version
 }
 
 export const artifactUrl = (baseUrl: string, a: ArtifactRecord): string =>

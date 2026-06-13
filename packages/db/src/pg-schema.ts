@@ -7,6 +7,8 @@ import type {
   DeliveryRecord,
   DeliveryStatus,
   MembershipRecord,
+  ProposalRecord,
+  ProposalState,
   Role,
   VersionRecord,
   Visibility,
@@ -142,6 +144,24 @@ export const artifactTag = pgTable(
   },
   (t) => [uniqueIndex("artifact_tag_uniq").on(t.artifact_id, t.tag)],
 )
+export const proposal = pgTable("proposal", {
+  id: text("id").primaryKey(),
+  artifact_id: text("artifact_id")
+    .notNull()
+    .references(() => artifact.id),
+  blob_key: text("blob_key").notNull(),
+  content_type: text("content_type").notNull(),
+  kind: text("kind").$type<ArtifactKind>().notNull(),
+  title: text("title"),
+  message: text("message"),
+  author: text("author").notNull(),
+  base_version: integer("base_version").notNull(),
+  state: text("state").$type<ProposalState>().notNull().default("open"),
+  decided_by: text("decided_by"),
+  decided_version: integer("decided_version"),
+  decided_at: text("decided_at"),
+  created_at: text("created_at").notNull().$defaultFn(isoNow),
+})
 
 // Compile-time guard: the pg table defs must match the core record shapes (and
 // therefore the sqlite defs). Drift here means SQLite and Postgres disagree.
@@ -154,7 +174,8 @@ const _pgParity: [
   Exact<typeof webhookDelivery.$inferSelect, DeliveryRecord>,
   Exact<typeof membership.$inferSelect, MembershipRecord>,
   Exact<typeof artifactMember.$inferSelect, ArtifactMemberRecord>,
-] = [true, true, true, true, true, true, true]
+  Exact<typeof proposal.$inferSelect, ProposalRecord>,
+] = [true, true, true, true, true, true, true, true]
 void _pgParity
 
 // Boot DDL (idempotent). created_at uses a SQL default as a server-side backstop.
@@ -280,4 +301,21 @@ export const PG_SCHEMA_STATEMENTS: string[] = [
     UNIQUE (artifact_id, tag)
   )`,
   `CREATE INDEX IF NOT EXISTS tag_name ON artifact_tag (tag)`,
+  `CREATE TABLE IF NOT EXISTS proposal (
+    id TEXT PRIMARY KEY,
+    artifact_id TEXT NOT NULL REFERENCES artifact(id),
+    blob_key TEXT NOT NULL,
+    content_type TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    title TEXT,
+    message TEXT,
+    author TEXT NOT NULL,
+    base_version INTEGER NOT NULL,
+    state TEXT NOT NULL DEFAULT 'open',
+    decided_by TEXT,
+    decided_version INTEGER,
+    decided_at TEXT,
+    created_at TEXT NOT NULL DEFAULT ${isoDefault}
+  )`,
+  `CREATE INDEX IF NOT EXISTS proposal_artifact_state ON proposal (artifact_id, state)`,
 ]

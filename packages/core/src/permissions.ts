@@ -4,19 +4,23 @@ import type { Visibility } from "./ports"
  * The role vocabulary, in increasing power. A higher role can do everything a
  * lower one can.
  *  - viewer:    read
- *  - commenter: + comment (creates content to be reviewed; cannot publish/approve)
- *  - editor:    + publish versions directly, and approve others' proposed changes
+ *  - commenter: + comment, and propose a candidate version for review
+ *               (creates content to be reviewed; cannot publish/approve)
+ *  - editor:    + publish versions directly, and approve others' proposals
  *  - owner:     + manage (roles, settings, delete)
  */
 export type Role = "viewer" | "commenter" | "editor" | "owner"
 
 /** What an actor wants to do. Kept coarse on purpose; `can()` is the only gate. */
-export type Action = "read" | "comment" | "publish" | "approve" | "manage"
+export type Action = "read" | "comment" | "propose" | "publish" | "approve" | "manage"
 
 const RANK: Record<Role, number> = { viewer: 0, commenter: 1, editor: 2, owner: 3 }
 const NEEDS: Record<Action, Role> = {
   read: "viewer",
   comment: "commenter",
+  // A commenter can propose a candidate version, but an editor must approve it
+  // before it goes live. This is the review gate: propose ≠ publish.
+  propose: "commenter",
   publish: "editor",
   approve: "editor",
   manage: "owner",
