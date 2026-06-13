@@ -137,11 +137,17 @@ export interface MetaStore {
   recentDeliveries(webhookId: string, limit: number): Promise<DeliveryRecord[]>
 
   // ---- Permissions: workspace membership + per-artifact shares -----------
+  /** The workspace's display name + metadata (one row per org_id). */
+  getWorkspace(orgId: string): Promise<WorkspaceRecord | null>
+  /** Insert or rename the workspace. */
+  setWorkspace(orgId: string, name: string): Promise<WorkspaceRecord>
   getMembership(orgId: string, userId: string): Promise<MembershipRecord | null>
   listMemberships(orgId: string): Promise<MembershipRecord[]>
   countMemberships(orgId: string): Promise<number>
   /** Insert or update a member's workspace role. */
   setMembership(m: NewMembership): Promise<MembershipRecord>
+  /** Remove a member from the workspace. */
+  removeMembership(orgId: string, userId: string): Promise<void>
 
   getArtifactMember(artifactId: string, userId: string): Promise<ArtifactMemberRecord | null>
   listArtifactMembers(artifactId: string): Promise<ArtifactMemberRecord[]>
@@ -349,6 +355,13 @@ export interface NewNotification {
   thread_id: string
   comment_id: string
   preview: string
+}
+
+/** The workspace itself — a display name keyed by org_id (one row). */
+export interface WorkspaceRecord {
+  id: string
+  name: string
+  created_at: string
 }
 
 export interface MembershipRecord {

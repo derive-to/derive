@@ -34,6 +34,7 @@ import type {
   VersionRecord,
   ViewStats,
   WebhookRecord,
+  WorkspaceRecord,
 } from "@dock/core"
 import { and, asc, count, desc, eq, inArray, isNull, like, lt, lte, or, sql } from "drizzle-orm"
 import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres"
@@ -56,6 +57,7 @@ import {
   version,
   webhook,
   webhookDelivery,
+  workspace,
 } from "./pg-schema"
 
 const schema = {
@@ -65,6 +67,7 @@ const schema = {
   webhook,
   webhookDelivery,
   membership,
+  workspace,
   artifactMember,
   notification,
   artifactFavorite,
@@ -348,6 +351,23 @@ export class PgMetaStore implements MetaStore {
         target: [membership.org_id, membership.user_id],
         set: { role: m.role },
       })
+      .returning()
+    return rows[0]
+  }
+  async removeMembership(orgId: string, userId: string): Promise<void> {
+    await this.db
+      .delete(membership)
+      .where(and(eq(membership.org_id, orgId), eq(membership.user_id, userId)))
+  }
+  async getWorkspace(orgId: string): Promise<WorkspaceRecord | null> {
+    const rows = await this.db.select().from(workspace).where(eq(workspace.id, orgId))
+    return rows[0] ?? null
+  }
+  async setWorkspace(orgId: string, name: string): Promise<WorkspaceRecord> {
+    const rows = await this.db
+      .insert(workspace)
+      .values({ id: orgId, name })
+      .onConflictDoUpdate({ target: workspace.id, set: { name } })
       .returning()
     return rows[0]
   }

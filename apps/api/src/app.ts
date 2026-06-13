@@ -143,6 +143,17 @@ export interface AppDeps {
 
 /** The single workspace (multi-workspace is a later layer). */
 const WORKSPACE = "local"
+const DEFAULT_WORKSPACE_NAME = "My Workspace"
+
+// Workspace membership is three simple roles, presented to people as
+// Admin / Creator / Viewer:
+//   - owner     → Admin:   manage members + settings (and everything below)
+//   - editor    → Creator: create + publish artifacts
+//   - commenter → Viewer:  read + comment
+// The canonical Role vocabulary is unchanged; a bare read-only "viewer" isn't
+// offered as a workspace role (a Viewer can always comment).
+const isWorkspaceRole = (v: unknown): v is Role =>
+  v === "owner" || v === "editor" || v === "commenter"
 
 const VISIBILITIES = ["public", "link", "org", "password"] as const
 
@@ -484,6 +495,99 @@ export function createApp(deps: AppDeps): Hono {
     return c.json({ users: all })
   })
 
+  // ---- Workspace: name + members (Admin-managed) -------------------------
+  // The workspace must always keep at least one Admin, so it stays manageable:
+  // demoting or removing the last owner is refused.
+  const isLastOwner = async (userId: string): Promise<boolean> => {
+    const owners = (await meta.listMemberships(WORKSPACE)).filter((m) => m.role === "owner")
+    return owners.length <= 1 && owners.some((m) => m.user_id === userId)
+  }
+
+  const memberJson = (
+    m: { user_id: string; role: Role },
+    dir: Map<string, { email: string; name: string | null }>,
+  ) => ({
+    user_id: m.user_id,
+    email: dir.get(m.user_id)?.email ?? null,
+    name: dir.get(m.user_id)?.name ?? null,
+    role: m.role,
+  })
+
+  // The workspace name, the caller's role, and the full member directory.
+  app.get("/v1/workspace", async (c) => {
+    const role = await workspaceRole(c)
+    if (role === null) return c.json({ error: "unauthenticated" }, 401)
+    const [ws, members] = await Promise.all([
+      meta.getWorkspace(WORKSPACE),
+      meta.listMemberships(WORKSPACE),
+    ])
+    const users = await meta.getUsers(members.map((m) => m.user_id))
+    const dir = new Map(users.map((u) => [u.id, u]))
+    return c.json({
+      name: ws?.name ?? DEFAULT_WORKSPACE_NAME,
+      role,
+      members: members.map((m) => memberJson(m, dir)),
+    })
+  })
+
+  // Rename the workspace (Admin only).
+  app.patch("/v1/workspace", async (c) => {
+    if (!(await workspaceCan(c, "manage"))) return c.json({ error: "forbidden" }, 403)
+    const b = (await c.req.json().catch(() => ({}))) as { name?: unknown }
+    const name = typeof b.name === "string" ? b.name.trim().slice(0, 80) : ""
+    if (!name) return c.json({ error: "name required" }, 400)
+    const ws = await meta.setWorkspace(WORKSPACE, name)
+    return c.json({ name: ws.name })
+  })
+
+  // Add a member by email, or update their role (Admin only).
+  app.put("/v1/workspace/members", async (c) => {
+    if (!(await workspaceCan(c, "manage"))) return c.json({ error: "forbidden" }, 403)
+    const b = (await c.req.json().catch(() => ({}))) as { email?: string; role?: unknown }
+    if (!b.email || !isWorkspaceRole(b.role))
+      return c.json({ error: "email and a valid role are required" }, 400)
+    const user = await meta.findUserByEmail(b.email.trim())
+    if (!user) return c.json({ error: "no Dock user with that email" }, 404)
+    // This route both adds and re-roles, so it must honor the same last-Admin
+    // guard as PATCH — otherwise an Admin could demote the sole Admin via PUT.
+    const existing = await meta.getMembership(WORKSPACE, user.id)
+    if (existing?.role === "owner" && b.role !== "owner" && (await isLastOwner(user.id)))
+      return c.json({ error: "the workspace needs at least one admin" }, 409)
+    await meta.setMembership({
+      id: existing?.id ?? newId("m"),
+      org_id: WORKSPACE,
+      user_id: user.id,
+      role: b.role,
+    })
+    return c.json({ user_id: user.id, email: user.email, name: user.name, role: b.role }, 201)
+  })
+
+  // Change a member's role (Admin only; can't strip the last Admin).
+  app.patch("/v1/workspace/members/:userId", async (c) => {
+    if (!(await workspaceCan(c, "manage"))) return c.json({ error: "forbidden" }, 403)
+    const userId = c.req.param("userId")
+    const b = (await c.req.json().catch(() => ({}))) as { role?: unknown }
+    if (!isWorkspaceRole(b.role)) return c.json({ error: "a valid role is required" }, 400)
+    const existing = await meta.getMembership(WORKSPACE, userId)
+    if (!existing) return c.json({ error: "not a member" }, 404)
+    if (existing.role === "owner" && b.role !== "owner" && (await isLastOwner(userId)))
+      return c.json({ error: "the workspace needs at least one admin" }, 409)
+    await meta.setMembership({ id: existing.id, org_id: WORKSPACE, user_id: userId, role: b.role })
+    return c.json({ user_id: userId, role: b.role })
+  })
+
+  // Remove a member (Admin only; can't remove the last Admin).
+  app.delete("/v1/workspace/members/:userId", async (c) => {
+    if (!(await workspaceCan(c, "manage"))) return c.json({ error: "forbidden" }, 403)
+    const userId = c.req.param("userId")
+    const existing = await meta.getMembership(WORKSPACE, userId)
+    if (!existing) return c.body(null, 204)
+    if (existing.role === "owner" && (await isLastOwner(userId)))
+      return c.json({ error: "the workspace needs at least one admin" }, 409)
+    await meta.removeMembership(WORKSPACE, userId)
+    return c.body(null, 204)
+  })
+
   // ---- Agents: registry (owner-managed) + the pull inbox -----------------
   const agentJson = (a: AgentRecord) => ({
     id: a.id,
@@ -618,13 +722,19 @@ export function createApp(deps: AppDeps): Hono {
     const me = await currentUser(c)
     if (!me && deps.token && bearer(c) !== deps.token)
       return c.json({ error: "unauthenticated" }, 401)
-    const [total, tags, favIds] = await Promise.all([
+    const [total, tags, favIds, ws] = await Promise.all([
       meta.countArtifacts(),
       meta.tagCounts(),
       me ? meta.listUserFavoriteIds(me.id) : Promise.resolve([]),
+      meta.getWorkspace(WORKSPACE),
     ])
     tags.sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag))
-    return c.json({ total, favorites: favIds.length, tags })
+    return c.json({
+      total,
+      favorites: favIds.length,
+      tags,
+      workspace: ws?.name ?? DEFAULT_WORKSPACE_NAME,
+    })
   })
 
   // ---- Collections (shareable groups; a member's role propagates to items) -
