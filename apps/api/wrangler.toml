@@ -22,6 +22,17 @@ class_name = "ArtifactRoom"
 tag = "v1"
 new_sqlite_classes = ["ArtifactRoom"]
 
+# The web SPA (apps/web) ships from this same Worker via Static Assets, so the whole
+# app — login, library, settings — lives same-origin with the API (no CORS, first-party
+# cookies). Prepare the build first: `pnpm --filter @dock/api build:web` (builds apps/web
+# and preps dist/client for Workers: _shell.html -> index.html, drops the Pages _redirects).
+# API + viewer paths run the Worker first; every other path serves a static asset, and
+# non-asset routes fall back to the SPA shell (index.html) for client-side routing.
+[assets]
+directory = "../web/dist/client"
+run_worker_first = ["/v1/*", "/api/*", "/raw/*", "/a/*", "/healthz"]
+not_found_handling = "single-page-application"
+
 # baseUrl falls back to the request origin when unset. Secured by Better Auth; set
 # DOCK_AUTH_SECRET via `wrangler secret put`. Cross-instance realtime fan-out uses
 # the ArtifactRoom Durable Object (one room per channel).

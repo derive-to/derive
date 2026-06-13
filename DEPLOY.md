@@ -168,12 +168,13 @@ cross-origin SPA→API request; `DOCK_WEB_ORIGIN` allow-lists the SPA for CORS.
 ## Cloudflare Workers + D1 (experimental)
 
 Dock has a Cloudflare Workers entry (`apps/api/src/worker.ts`) that runs the whole app
-on the edge: D1 for metadata, R2 for blobs, Better Auth on a Kysely D1 dialect. It reuses
-the same runtime-agnostic `createApp` as the Node entry, so the app logic is identical.
+on the edge: D1 for metadata, R2 for blobs, Better Auth on a Kysely D1 dialect, the
+ArtifactRoom Durable Object for cross-instance realtime fan-out, and the web SPA served
+same-origin via Workers Static Assets. It reuses the same runtime-agnostic `createApp`
+as the Node entry, so the app logic is identical.
 
-Treat it as **experimental**: realtime runs in-process (cross-instance fan-out on the
-edge is a follow-up, a Durable Object behind the `Backplane` port in `bus.ts`), and there
-is no automated edge integration test in CI yet (the entry is typecheck-covered).
+Treat it as **experimental**: there is no automated edge integration test in CI yet (the
+entry is typecheck-covered).
 
 ```bash
 cd apps/api
@@ -182,7 +183,8 @@ wrangler d1 execute dock --remote --file=../../deploy/d1-schema.sql       # app 
 node --experimental-strip-types gen-auth-schema.ts > /tmp/auth-schema.sql # Better Auth tables
 wrangler d1 execute dock --remote --file=/tmp/auth-schema.sql
 wrangler r2 bucket create dock-blobs
-wrangler deploy
+pnpm build:web                              # build the SPA + prep dist/client for Workers
+wrangler deploy                             # or `pnpm deploy` to do build:web + deploy
 wrangler secret put DOCK_AUTH_SECRET        # a strong random secret
 ```
 
@@ -190,3 +192,11 @@ D1 forbids the `sqlite_master` introspection Better Auth's migrator runs (`SQLIT
 so the auth tables are generated offline (`gen-auth-schema.ts`) and applied with
 `wrangler d1 execute`, never at boot. `deploy/d1-schema.sql` is generated from the shared
 schema; regenerate with `pnpm --filter @dock/db gen:d1-schema`.
+
+The worker serves the SPA (login, library, settings) same-origin with the API, so there
+is no CORS or cross-site cookie config. `[assets]` in `wrangler.toml` points at
+`apps/web/dist/client` with `not_found_handling = "single-page-application"`, and
+`run_worker_first` routes `/v1`, `/api`, `/raw`, `/a/*`, and `/healthz` to the worker
+while every other path serves a static file or the SPA shell. `pnpm build:web` builds
+apps/web and preps the output (writes `index.html`, drops the Pages-only `_redirects`
+catch-all that otherwise hijacks `/assets/*`); see `scripts/prep-edge-assets.mjs`.
