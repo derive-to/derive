@@ -1,12 +1,12 @@
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { SqliteMetaStore } from "@dock/db/sqlite"
+import { FsBlobStore } from "@dock/storage/fs"
 import Database from "better-sqlite3"
 import { zipSync } from "fflate"
 import { afterAll, describe, expect, it } from "vitest"
-import { SqliteMetaStore } from "@dock/db/sqlite"
-import { FsBlobStore } from "@dock/storage/fs"
-import { createApp, type AppDeps } from "../src/app"
+import { type AppDeps, createApp } from "../src/app"
 
 const dir = mkdtempSync(join(tmpdir(), "dock-test-"))
 const meta = new SqliteMetaStore(join(dir, "dock.db"))
@@ -21,7 +21,12 @@ afterAll(() => {
   rmSync(dir, { recursive: true, force: true })
 })
 
-const upload = (name: string, content: Uint8Array | string, fields: Record<string, string> = {}, shortId?: string) => {
+const upload = (
+  name: string,
+  content: Uint8Array | string,
+  fields: Record<string, string> = {},
+  shortId?: string,
+) => {
   const form = new FormData()
   const bytes = typeof content === "string" ? new TextEncoder().encode(content) : content
   form.append("file", new Blob([bytes as BlobPart]), name)
@@ -85,11 +90,19 @@ describe("version sessions", () => {
 
   it("honors the configured window (each revision its own session)", async () => {
     const m2 = new SqliteMetaStore(join(dir, "win.db"))
-    const app2 = createApp({ meta: m2, blobs: new FsBlobStore(join(dir, "blobs")), baseUrl: "http://dock.test", versionWindowMs: -1 })
+    const app2 = createApp({
+      meta: m2,
+      blobs: new FsBlobStore(join(dir, "blobs")),
+      baseUrl: "http://dock.test",
+      versionWindowMs: -1,
+    })
     const mk = (c: string, id?: string) => {
       const fd = new FormData()
       fd.append("file", new Blob([new TextEncoder().encode(c)]), "w.md")
-      return app2.request(id ? `/v1/artifacts/${id}/versions` : "/v1/artifacts", { method: "POST", body: fd })
+      return app2.request(id ? `/v1/artifacts/${id}/versions` : "/v1/artifacts", {
+        method: "POST",
+        body: fd,
+      })
     }
     const { short_id } = await (await mk("v1")).json()
     await mk("v2", short_id)
@@ -142,9 +155,13 @@ describe("publish html file", () => {
   let shortId: string
 
   it("publishes and returns a stable url", async () => {
-    const res = await upload("q1-review.html", "<h1>Q1 Review</h1><script>document.title='hi'</script>", {
-      title: "Q1 Review",
-    })
+    const res = await upload(
+      "q1-review.html",
+      "<h1>Q1 Review</h1><script>document.title='hi'</script>",
+      {
+        title: "Q1 Review",
+      },
+    )
     expect(res.status).toBe(201)
     const json = await res.json()
     shortId = json.short_id
@@ -166,12 +183,21 @@ describe("publish html file", () => {
   })
 
   it("republishes as v2 while @v1 stays immutable", async () => {
-    const res = await upload("q1-review.html", "<h1>Q1 Review v2</h1>", { message: "address review" }, shortId)
+    const res = await upload(
+      "q1-review.html",
+      "<h1>Q1 Review v2</h1>",
+      { message: "address review" },
+      shortId,
+    )
     expect(res.status).toBe(201)
     expect((await res.json()).current_version).toBe(2)
 
-    expect(await (await app.request(`/raw/${shortId}/v/1/index.html`)).text()).toContain("Q1 Review</h1>")
-    expect(await (await app.request(`/raw/${shortId}/v/2/index.html`)).text()).toContain("Q1 Review v2")
+    expect(await (await app.request(`/raw/${shortId}/v/1/index.html`)).text()).toContain(
+      "Q1 Review</h1>",
+    )
+    expect(await (await app.request(`/raw/${shortId}/v/2/index.html`)).text()).toContain(
+      "Q1 Review v2",
+    )
 
     const oldViewer = await app.request(`/a/${shortId}@v1`)
     expect(await oldViewer.text()).toContain("jump to current (v2)")
@@ -255,13 +281,22 @@ describe("view analytics", () => {
   })
 
   it("no-ops when analytics is disabled", async () => {
-    const off = createApp({ meta, blobs: new FsBlobStore(join(dir, "blobs2")), baseUrl: "http://dock.test", analytics: false })
+    const off = createApp({
+      meta,
+      blobs: new FsBlobStore(join(dir, "blobs2")),
+      baseUrl: "http://dock.test",
+      analytics: false,
+    })
     const { short_id } = await (async () => {
       const form = new FormData()
       form.append("file", new Blob([new TextEncoder().encode("# B")]), "b.md")
       return (await off.request("/v1/artifacts", { method: "POST", body: form })).json()
     })()
-    const v = await off.request(`/v1/artifacts/${short_id}/view`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })
+    const v = await off.request(`/v1/artifacts/${short_id}/view`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    })
     expect(v.status).toBe(204)
     const a = await off.request(`/v1/artifacts/${short_id}/analytics`)
     expect(a.status).toBe(404)
@@ -359,10 +394,15 @@ describe("comments + the loop", () => {
   let rootId: string
 
   it("creates a comment as a new thread", async () => {
-    shortId = (await (await upload("c.md", "# doc with mean sentiment", { title: "C" })).json()).short_id
+    shortId = (await (await upload("c.md", "# doc with mean sentiment", { title: "C" })).json())
+      .short_id
     const res = await app.request(
       `/v1/artifacts/${shortId}/comments`,
-      json({ body_md: "use median", author: "jess", anchor: { type: "TextQuoteSelector", exact: "mean" } }),
+      json({
+        body_md: "use median",
+        author: "jess",
+        anchor: { type: "TextQuoteSelector", exact: "mean" },
+      }),
     )
     expect(res.status).toBe(201)
     const cm = await res.json()
@@ -376,7 +416,10 @@ describe("comments + the loop", () => {
 
   it("replies in the same thread", async () => {
     const cm = await (
-      await app.request(`/v1/artifacts/${shortId}/comments`, json({ body_md: "agreed", thread_id: threadId }))
+      await app.request(
+        `/v1/artifacts/${shortId}/comments`,
+        json({ body_md: "agreed", thread_id: threadId }),
+      )
     ).json()
     expect(cm.thread_id).toBe(threadId)
     const list = await (await app.request(`/v1/artifacts/${shortId}/comments`)).json()
@@ -385,16 +428,28 @@ describe("comments + the loop", () => {
 
   it("resolves and reopens a thread, with state filtering", async () => {
     await app.request(`/v1/artifacts/${shortId}/comments/${rootId}/resolve`, { method: "POST" })
-    expect((await (await app.request(`/v1/artifacts/${shortId}/comments?state=open`)).json()).comments).toHaveLength(0)
-    expect((await (await app.request(`/v1/artifacts/${shortId}/comments?state=resolved`)).json()).comments).toHaveLength(2)
+    expect(
+      (await (await app.request(`/v1/artifacts/${shortId}/comments?state=open`)).json()).comments,
+    ).toHaveLength(0)
+    expect(
+      (await (await app.request(`/v1/artifacts/${shortId}/comments?state=resolved`)).json())
+        .comments,
+    ).toHaveLength(2)
 
-    await app.request(`/v1/artifacts/${shortId}/comments/${rootId}/resolve`, json({ state: "open" }))
-    expect((await (await app.request(`/v1/artifacts/${shortId}/comments?state=open`)).json()).comments).toHaveLength(2)
+    await app.request(
+      `/v1/artifacts/${shortId}/comments/${rootId}/resolve`,
+      json({ state: "open" }),
+    )
+    expect(
+      (await (await app.request(`/v1/artifacts/${shortId}/comments?state=open`)).json()).comments,
+    ).toHaveLength(2)
   })
 
   it("resolves threads on republish via the resolves field", async () => {
     const sid = (await (await upload("r.md", "# r", {})).json()).short_id
-    const cm = await (await app.request(`/v1/artifacts/${sid}/comments`, json({ body_md: "fix this" }))).json()
+    const cm = await (
+      await app.request(`/v1/artifacts/${sid}/comments`, json({ body_md: "fix this" }))
+    ).json()
 
     const form = new FormData()
     form.append("file", new Blob([new TextEncoder().encode("# r2")]), "r.md")
@@ -402,7 +457,9 @@ describe("comments + the loop", () => {
     form.append("resolves", cm.id)
     await app.request(`/v1/artifacts/${sid}/versions`, { method: "POST", body: form })
 
-    expect((await (await app.request(`/v1/artifacts/${sid}/comments?state=open`)).json()).comments).toHaveLength(0)
+    expect(
+      (await (await app.request(`/v1/artifacts/${sid}/comments?state=open`)).json()).comments,
+    ).toHaveLength(0)
   })
 
   it("validates body and 404s unknown artifacts", async () => {
@@ -585,9 +642,15 @@ describe("permissions: workspace roles gate writes", () => {
   })
 
   it("lets a commenter comment, but not an unauthenticated caller", async () => {
-    const ok = await app.request(`/v1/artifacts/${shortId}/comments`, jsonAs(as(bob.email), { body_md: "nice" }))
+    const ok = await app.request(
+      `/v1/artifacts/${shortId}/comments`,
+      jsonAs(as(bob.email), { body_md: "nice" }),
+    )
     expect(ok.status).toBe(201)
-    const anon = await app.request(`/v1/artifacts/${shortId}/comments`, jsonAs({}, { body_md: "x" }))
+    const anon = await app.request(
+      `/v1/artifacts/${shortId}/comments`,
+      jsonAs({}, { body_md: "x" }),
+    )
     expect(anon.status).toBe(403)
   })
 })
@@ -599,8 +662,12 @@ describe("permissions: a per-artifact share overrides the workspace role", () =>
   let shortId: string
 
   it("a workspace viewer can read an org artifact but not republish it", async () => {
-    shortId = (await (await publishAs(app, "<h1>secret</h1>", { visibility: "org" }, as(owner.email))).json()).short_id
-    expect((await app.request(`/v1/artifacts/${shortId}`, { headers: as(carol.email) })).status).toBe(200)
+    shortId = (
+      await (await publishAs(app, "<h1>secret</h1>", { visibility: "org" }, as(owner.email))).json()
+    ).short_id
+    expect(
+      (await app.request(`/v1/artifacts/${shortId}`, { headers: as(carol.email) })).status,
+    ).toBe(200)
     expect((await publishAs(app, "<h1>edit</h1>", {}, as(carol.email), shortId)).status).toBe(403)
   })
 
@@ -612,7 +679,9 @@ describe("permissions: a per-artifact share overrides the workspace role", () =>
     })
     expect(share.status).toBe(201)
     expect((await publishAs(app, "<h1>edit</h1>", {}, as(carol.email), shortId)).status).toBe(201)
-    const meta = await (await app.request(`/v1/artifacts/${shortId}`, { headers: as(carol.email) })).json()
+    const meta = await (
+      await app.request(`/v1/artifacts/${shortId}`, { headers: as(carol.email) })
+    ).json()
     expect(meta.my_role).toBe("editor")
   })
 
@@ -626,9 +695,13 @@ describe("permissions: a per-artifact share overrides the workspace role", () =>
   })
 
   it("the owner sees the share in the member list", async () => {
-    const list = await (await app.request(`/v1/artifacts/${shortId}/members`, { headers: as(owner.email) })).json()
+    const list = await (
+      await app.request(`/v1/artifacts/${shortId}/members`, { headers: as(owner.email) })
+    ).json()
     expect(list.default_role).toBe("viewer")
-    expect(list.members).toContainEqual(expect.objectContaining({ email: carol.email, role: "editor" }))
+    expect(list.members).toContainEqual(
+      expect.objectContaining({ email: carol.email, role: "editor" }),
+    )
   })
 })
 
@@ -650,5 +723,57 @@ describe("anchored comments", () => {
 
     list = await (await app.request(`/v1/artifacts/${sid}/comments`)).json()
     expect(list.comments[0].anchored).toBe(false)
+  })
+})
+
+describe("security: webhook SSRF guard", () => {
+  const owner: TestUser = { id: "u_wh", email: "wh@dock.test", name: "Wh" }
+  const { app } = makeAuthedApp("ssrf", [owner])
+  const create = (url: string) =>
+    app.request("/v1/webhooks", {
+      method: "POST",
+      headers: { ...as(owner.email), "content-type": "application/json" },
+      body: JSON.stringify({ url }),
+    })
+
+  it("rejects private, loopback, and metadata targets", async () => {
+    const blocked = [
+      "http://127.0.0.1/x",
+      "http://localhost/x",
+      "http://169.254.169.254/latest/meta-data",
+      "http://10.0.0.5/hook",
+      "http://192.168.1.10/hook",
+      "http://[::1]/x",
+      "ftp://example.com/x",
+    ]
+    for (const url of blocked) {
+      const r = await create(url)
+      expect(r.status, `should block ${url}`).toBe(400)
+    }
+  })
+
+  it("accepts a public https url", async () => {
+    expect((await create("https://hooks.example.com/abc")).status).toBe(201)
+  })
+})
+
+describe("security: rate limiting", () => {
+  const limited = createApp({
+    meta,
+    blobs: new FsBlobStore(join(dir, "blobs")),
+    baseUrl: "http://dock.test",
+    rateLimit: true,
+  })
+
+  it("429s once the auth window cap is exceeded", async () => {
+    let status = 0
+    for (let i = 0; i < 22; i++) {
+      status = (
+        await limited.request("/api/auth/get-session", {
+          headers: { "x-forwarded-for": "203.0.113.7" },
+        })
+      ).status
+    }
+    expect(status).toBe(429)
   })
 })

@@ -1,15 +1,16 @@
-import { serve } from "@hono/node-server"
-import { mkdirSync } from "node:fs"
+import { randomBytes } from "node:crypto"
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
-import Database from "better-sqlite3"
-import { Pool } from "pg"
-import { SqliteMetaStore } from "@dock/db/sqlite"
-import { PgMetaStore } from "@dock/db/pg"
 import type { BlobStore, MetaStore } from "@dock/core"
+import { PgMetaStore } from "@dock/db/pg"
+import { SqliteMetaStore } from "@dock/db/sqlite"
 import { FsBlobStore } from "@dock/storage/fs"
 import { s3FromUrl } from "@dock/storage/s3"
+import { serve } from "@hono/node-server"
+import Database from "better-sqlite3"
+import { Pool } from "pg"
 import { createApp } from "./app"
-import { makeAuth, migrateAuth, type AuthDb } from "./auth-config"
+import { type AuthDb, makeAuth, migrateAuth } from "./auth-config"
 import { startWebhookWorker } from "./webhooks"
 
 const PORT = Number(process.env.PORT ?? 8080)
@@ -30,7 +31,33 @@ if (DATABASE_URL) {
   meta = new SqliteMetaStore(join(DATA_DIR, "dock.db"))
   authDb = new Database(join(DATA_DIR, "dock.db"))
 }
-const auth = makeAuth(authDb, BASE_URL)
+// A stable session-signing secret: an explicit DOCK_AUTH_SECRET wins; otherwise
+// generate one and persist it beside the data so zero-config self-host stays
+// secure across restarts. (Multi-instance Postgres deployments must set the env
+// so every instance shares the same secret.)
+const AUTH_SECRET = ((): string => {
+  const fromEnv = process.env.DOCK_AUTH_SECRET
+  if (fromEnv && fromEnv.length >= 16) return fromEnv
+  const file = join(DATA_DIR, ".auth-secret")
+  try {
+    if (existsSync(file)) return readFileSync(file, "utf8").trim()
+  } catch {
+    /* fall through and generate */
+  }
+  const generated = randomBytes(32).toString("hex")
+  try {
+    writeFileSync(file, generated, { mode: 0o600 })
+    console.warn(
+      `DOCK_AUTH_SECRET not set; generated one at ${file}. Set DOCK_AUTH_SECRET to control it (required for multi-instance deployments).`,
+    )
+  } catch {
+    throw new Error(
+      "DOCK_AUTH_SECRET is unset and no secret could be persisted; set DOCK_AUTH_SECRET",
+    )
+  }
+  return generated
+})()
+const auth = makeAuth(authDb, BASE_URL, AUTH_SECRET)
 await migrateAuth(auth)
 
 const webOrigins = (process.env.DOCK_WEB_ORIGIN ?? "")
@@ -51,6 +78,7 @@ const app = createApp({
   auth,
   webOrigins,
   analytics: process.env.DOCK_ANALYTICS !== "false",
+  rateLimit: process.env.DOCK_RATE_LIMIT !== "false",
   versionWindowMs: process.env.DOCK_VERSION_WINDOW
     ? Number(process.env.DOCK_VERSION_WINDOW) * 60_000
     : undefined,

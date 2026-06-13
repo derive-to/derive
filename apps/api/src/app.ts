@@ -1,42 +1,42 @@
 import { randomUUID } from "node:crypto"
-import { Hono, type Context } from "hono"
-import { getCookie, setCookie } from "hono/cookie"
-import { streamSSE } from "hono/streaming"
-import { Presence, createBus } from "./bus"
-import { WEBHOOK_EVENTS, type WebhookEvent, enqueueForEvent } from "./webhooks"
-import type { Auth } from "./auth-config"
 import {
+  type Action,
+  type Actor,
   ANCHOR_CLIENT_JS,
-  BUNDLE_CONTENT_TYPE,
-  PublishError,
+  type ArtifactRecord,
   artifactUrl,
-  SELECTION_SCRIPT,
+  type BlobStore,
+  BUNDLE_CONTENT_TYPE,
+  type BundleManifest,
+  type CommentRecord,
   can,
-  effectiveRole,
+  DEFAULT_VERSION_WINDOW_MS,
   diffLines,
+  effectiveRole,
   formatDiff,
   groupSessions,
-  DEFAULT_VERSION_WINDOW_MS,
   isAnchored,
   isRole,
+  type MetaStore,
   mimeFor,
   newId,
+  PublishError,
   publish,
+  type Role,
   renderMarkdown,
   renderShell,
   roleAllows,
+  SELECTION_SCRIPT,
   toJson,
-  type Action,
-  type Actor,
-  type ArtifactRecord,
-  type BlobStore,
-  type BundleManifest,
-  type CommentRecord,
-  type MetaStore,
-  type Role,
   type VersionRecord,
   type Visibility,
 } from "@dock/core"
+import { type Context, Hono, type Next } from "hono"
+import { getCookie, setCookie } from "hono/cookie"
+import { streamSSE } from "hono/streaming"
+import type { Auth } from "./auth-config"
+import { createBus, Presence } from "./bus"
+import { enqueueForEvent, WEBHOOK_EVENTS, type WebhookEvent } from "./webhooks"
 
 /** The fixed reaction set; arbitrary emoji are rejected to keep data clean. */
 const REACTIONS = ["👍", "❤️", "🎉", "😄", "👀", "🙏", "🚀", "👎"]
@@ -93,6 +93,8 @@ export interface AppDeps {
   versionWindowMs?: number
   /** Workspace role granted to a member who isn't the first user. Default "editor". */
   defaultRole?: Role
+  /** In-memory per-IP rate limiting on auth + mutating routes. Off by default. */
+  rateLimit?: boolean
 }
 
 /** The single workspace (multi-workspace is a later layer). */
@@ -105,7 +107,8 @@ const MAX_UPLOAD_BYTES = 100 * 1024 * 1024
 /** Headers for everything inside the artifact sandbox. */
 const RAW_HEADERS: Record<string, string> = {
   // Opaque origin: scripts run, but can touch no cookies, storage, or APIs.
-  "Content-Security-Policy": "sandbox allow-scripts allow-forms allow-popups allow-modals allow-downloads",
+  "Content-Security-Policy":
+    "sandbox allow-scripts allow-forms allow-popups allow-modals allow-downloads",
   "Access-Control-Allow-Origin": "*",
   "X-Content-Type-Options": "nosniff",
   // Versioned paths are immutable by construction.
@@ -127,6 +130,70 @@ const rewriteAbsoluteUrls = (text: string, prefix: string): string =>
     .replace(/(\b(?:href|src|action|srcset|poster)=["'])\/(?!\/)/g, `$1${prefix}/`)
     .replace(/(url\(\s*['"]?)\/(?!\/)/g, `$1${prefix}/`)
 
+/** Fixed-window per-IP limiter. In-memory (per instance); good enough as a
+ *  brute-force / abuse backstop on a single container. */
+function makeRateLimiter(windowMs: number, max: number) {
+  const hits = new Map<string, { count: number; reset: number }>()
+  return async (c: Context, next: Next) => {
+    const now = Date.now()
+    if (hits.size > 10_000) for (const [k, v] of hits) if (v.reset < now) hits.delete(k)
+    const ip = (
+      c.req.header("x-forwarded-for")?.split(",")[0] ??
+      c.req.header("x-real-ip") ??
+      "global"
+    ).trim()
+    let b = hits.get(ip)
+    if (!b || b.reset < now) {
+      b = { count: 0, reset: now + windowMs }
+      hits.set(ip, b)
+    }
+    b.count++
+    if (b.count > max) {
+      c.header("Retry-After", String(Math.ceil((b.reset - now) / 1000)))
+      return c.json({ error: "rate limit exceeded" }, 429)
+    }
+    return next()
+  }
+}
+
+/**
+ * Reject webhook URLs aimed at private, loopback, or link-local addresses
+ * (incl. the cloud metadata endpoint) to blunt SSRF. Literal IPs + localhost are
+ * blocked here; hostnames that resolve into private space (DNS rebinding) are
+ * out of scope for this static check.
+ */
+export function isPublicHttpUrl(raw: string): boolean {
+  let u: URL
+  try {
+    u = new URL(raw)
+  } catch {
+    return false
+  }
+  if (u.protocol !== "http:" && u.protocol !== "https:") return false
+  const host = u.hostname.toLowerCase().replace(/^\[|\]$/g, "")
+  if (host === "" || host === "0.0.0.0" || host === "localhost" || host.endsWith(".localhost"))
+    return false
+  const v4 = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/)
+  if (v4) {
+    const o = v4.slice(1).map(Number)
+    if (o.some((n) => n > 255)) return false
+    const [a, b] = o
+    if (a === 0 || a === 10 || a === 127) return false
+    if (a === 169 && b === 254) return false // link-local + cloud metadata
+    if (a === 172 && b >= 16 && b <= 31) return false
+    if (a === 192 && b === 168) return false
+    if (a === 100 && b >= 64 && b <= 127) return false // CGNAT
+    return true
+  }
+  if (host.includes(":")) {
+    if (host === "::1" || host === "::") return false
+    if (/^f[cd]/.test(host)) return false // unique-local fc00::/7
+    if (/^fe80/.test(host)) return false // link-local
+    return true
+  }
+  return true
+}
+
 export function createApp(deps: AppDeps): Hono {
   const { meta, blobs } = deps
   const app = new Hono()
@@ -147,6 +214,14 @@ export function createApp(deps: AppDeps): Hono {
   if (allowOrigins.size) {
     app.use("/api/*", corsFor(allowOrigins))
     app.use("/v1/*", corsFor(allowOrigins))
+  }
+  if (deps.rateLimit) {
+    // Strict on auth (credential brute-force); lenient on mutating API calls.
+    app.use("/api/auth/*", makeRateLimiter(60_000, 20))
+    const writeLimiter = makeRateLimiter(60_000, 120)
+    app.use("/v1/*", (c, next) =>
+      c.req.method === "GET" || c.req.method === "HEAD" ? next() : writeLimiter(c, next),
+    )
   }
 
   const bearer = (c: Context): string => {
@@ -232,7 +307,10 @@ export function createApp(deps: AppDeps): Hono {
     const artifacts = await meta.listArtifacts({ limit: 200 })
     const counts = analyticsOn ? await meta.viewCounts(artifacts.map((a) => a.id)) : {}
     return c.json({
-      artifacts: artifacts.map((a) => ({ ...toJson(deps.baseUrl, a, []), views: counts[a.id] ?? 0 })),
+      artifacts: artifacts.map((a) => ({
+        ...toJson(deps.baseUrl, a, []),
+        views: counts[a.id] ?? 0,
+      })),
     })
   })
 
@@ -292,7 +370,10 @@ export function createApp(deps: AppDeps): Hono {
       // Republish can resolve comment threads in the same call.
       const resolves = body["resolves"]
       if (shortId && typeof resolves === "string" && resolves) {
-        for (const cid of resolves.split(",").map((s) => s.trim()).filter(Boolean)) {
+        for (const cid of resolves
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean)) {
           const cm = await meta.getComment(cid)
           if (cm && cm.artifact_id === artifact.id) {
             await meta.setThreadState(artifact.id, cm.thread_id, "resolved")
@@ -313,8 +394,12 @@ export function createApp(deps: AppDeps): Hono {
 
   app.get("/v1/artifacts/:shortId", async (c) => {
     const artifact = await meta.getByShortId(c.req.param("shortId"))
-    const actor = await actorFor(c, artifact ?? ({ id: "", visibility: "password" } as ArtifactRecord))
-    if (!artifact || !can(actor, "read", artifact.visibility)) return c.json({ error: "not found" }, 404)
+    const actor = await actorFor(
+      c,
+      artifact ?? ({ id: "", visibility: "password" } as ArtifactRecord),
+    )
+    if (!artifact || !can(actor, "read", artifact.visibility))
+      return c.json({ error: "not found" }, 404)
     const versions = await meta.listVersions(artifact.id)
     // `versions` stays at revision granularity (machines/agents); `sessions` is
     // the time-grouped view the UI shows by default. `my_role` tells the client
@@ -329,7 +414,8 @@ export function createApp(deps: AppDeps): Hono {
   // ---- Sharing: per-artifact role overrides -----------------------------
   app.get("/v1/artifacts/:shortId/members", async (c) => {
     const artifact = await meta.getByShortId(c.req.param("shortId"))
-    if (!artifact || !(await authorize(c, "read", artifact))) return c.json({ error: "not found" }, 404)
+    if (!artifact || !(await authorize(c, "read", artifact)))
+      return c.json({ error: "not found" }, 404)
     const rows = await meta.listArtifactMembers(artifact.id)
     const users = await meta.getUsers(rows.map((r) => r.user_id))
     const byId = new Map(users.map((u) => [u.id, u]))
@@ -349,10 +435,16 @@ export function createApp(deps: AppDeps): Hono {
     if (!artifact) return c.json({ error: "not found" }, 404)
     if (!(await authorize(c, "manage", artifact))) return c.json({ error: "forbidden" }, 403)
     const b = (await c.req.json().catch(() => ({}))) as { email?: string; role?: string }
-    if (!b.email || !isRole(b.role)) return c.json({ error: "email and a valid role are required" }, 400)
+    if (!b.email || !isRole(b.role))
+      return c.json({ error: "email and a valid role are required" }, 400)
     const user = await meta.findUserByEmail(b.email.trim())
     if (!user) return c.json({ error: "no Dock user with that email" }, 404)
-    await meta.setArtifactMember({ id: newId("am"), artifact_id: artifact.id, user_id: user.id, role: b.role })
+    await meta.setArtifactMember({
+      id: newId("am"),
+      artifact_id: artifact.id,
+      user_id: user.id,
+      role: b.role,
+    })
     return c.json({ user_id: user.id, email: user.email, name: user.name, role: b.role }, 201)
   })
 
@@ -383,11 +475,22 @@ export function createApp(deps: AppDeps): Hono {
       message: `Restored v${src.n}`,
       name: null,
     })
-    await notify(artifact, "version.published", { version: version.n, message: version.message, author: version.author })
+    await notify(artifact, "version.published", {
+      version: version.n,
+      message: version.message,
+      author: version.author,
+    })
     bus.publish(artifact.id, { type: "version.published", n: version.n, message: version.message })
     const fresh = (await meta.getByShortId(artifact.short_id)) as ArtifactRecord
     const versions = await meta.listVersions(artifact.id)
-    return c.json({ ...toJson(deps.baseUrl, fresh, versions), sessions: groupSessions(versions, versionWindowMs), published: version.n }, 201)
+    return c.json(
+      {
+        ...toJson(deps.baseUrl, fresh, versions),
+        sessions: groupSessions(versions, versionWindowMs),
+        published: version.n,
+      },
+      201,
+    )
   })
 
   /** Source text of a version (entry document for bundles); null if missing. */
@@ -433,8 +536,12 @@ export function createApp(deps: AppDeps): Hono {
     const cur = artifact.current_version
     const from = c.req.query("from") ? Number(c.req.query("from")) : Math.max(1, cur - 1)
     const to = c.req.query("to") ? Number(c.req.query("to")) : cur
-    if (!Number.isInteger(from) || !Number.isInteger(to)) return c.json({ error: "bad version" }, 400)
-    const [vf, vt] = [await meta.getVersion(artifact.id, from), await meta.getVersion(artifact.id, to)]
+    if (!Number.isInteger(from) || !Number.isInteger(to))
+      return c.json({ error: "bad version" }, 400)
+    const [vf, vt] = [
+      await meta.getVersion(artifact.id, from),
+      await meta.getVersion(artifact.id, to),
+    ]
     if (!vf || !vt) return c.json({ error: "version not found" }, 404)
     const [a, b] = [await sourceText(vf), await sourceText(vt)]
     if (a === null || b === null) return c.json({ error: "blob missing" }, 500)
@@ -499,7 +606,8 @@ export function createApp(deps: AppDeps): Hono {
 
   app.get("/v1/artifacts/:shortId/comments", async (c) => {
     const artifact = await meta.getByShortId(c.req.param("shortId"))
-    if (!artifact || !(await authorize(c, "read", artifact))) return c.json({ error: "not found" }, 404)
+    if (!artifact || !(await authorize(c, "read", artifact)))
+      return c.json({ error: "not found" }, 404)
     const q = c.req.query("state")
     const state = q === "open" || q === "resolved" ? q : undefined
     const comments = await meta.listComments(artifact.id, state ? { state } : undefined)
@@ -507,7 +615,9 @@ export function createApp(deps: AppDeps): Hono {
     const cur = await meta.getVersion(artifact.id, artifact.current_version)
     const src = cur ? await sourceText(cur) : null
     return c.json({
-      comments: comments.map((cm) => commentJson(cm, src === null ? true : isAnchored(cm.anchor, src))),
+      comments: comments.map((cm) =>
+        commentJson(cm, src === null ? true : isAnchored(cm.anchor, src)),
+      ),
     })
   })
 
@@ -549,7 +659,8 @@ export function createApp(deps: AppDeps): Hono {
     const { artifact, cm } = r
     if (!(await authorize(c, "comment", artifact))) return c.json({ error: "forbidden" }, 403)
     const body = (await c.req.json().catch(() => ({}))) as { emoji?: string }
-    if (!body.emoji || !REACTIONS.includes(body.emoji)) return c.json({ error: "unknown reaction" }, 400)
+    if (!body.emoji || !REACTIONS.includes(body.emoji))
+      return c.json({ error: "unknown reaction" }, 400)
     const actor = (await actorName(c)) ?? "anonymous"
     const md = parseMeta(cm.meta)
     const reactions = md.reactions ?? {}
@@ -578,7 +689,10 @@ export function createApp(deps: AppDeps): Hono {
       return c.json({ error: "body_md required" }, 400)
     const md = parseMeta(cm.meta)
     md.edited_at = new Date().toISOString()
-    const updated = await meta.updateComment(cm.id, { body_md: body.body_md, meta: JSON.stringify(md) })
+    const updated = await meta.updateComment(cm.id, {
+      body_md: body.body_md,
+      meta: JSON.stringify(md),
+    })
     bus.publish(artifact.id, { type: "comment.updated", thread_id: cm.thread_id })
     return c.json(commentJson(updated ?? cm))
   })
@@ -610,7 +724,10 @@ export function createApp(deps: AppDeps): Hono {
         void stream.writeSSE({ event: e.type, data: JSON.stringify(e) })
       })
       stream.onAbort(unsub)
-      await stream.writeSSE({ event: "ready", data: JSON.stringify({ short_id: artifact.short_id }) })
+      await stream.writeSSE({
+        event: "ready",
+        data: JSON.stringify({ short_id: artifact.short_id }),
+      })
       while (!stream.aborted) {
         await stream.sleep(15000)
         await stream.writeSSE({ event: "ping", data: "{}" })
@@ -620,7 +737,8 @@ export function createApp(deps: AppDeps): Hono {
 
   app.post("/v1/artifacts/:shortId/presence", async (c) => {
     const artifact = await meta.getByShortId(c.req.param("shortId"))
-    if (!artifact || !(await authorize(c, "read", artifact))) return c.json({ error: "not found" }, 404)
+    if (!artifact || !(await authorize(c, "read", artifact)))
+      return c.json({ error: "not found" }, 404)
     const body = (await c.req.json().catch(() => ({}))) as { name?: string }
     const name = typeof body.name === "string" && body.name ? body.name : "anonymous"
     const viewers = presence.heartbeat(artifact.id, name, Date.now())
@@ -647,21 +765,35 @@ export function createApp(deps: AppDeps): Hono {
       let vid = getCookie(c, "dock_vid")
       if (!vid) {
         vid = newId("v")
-        setCookie(c, "dock_vid", vid, { path: "/", maxAge: 60 * 60 * 24 * 365, httpOnly: true, sameSite: "Lax" })
+        setCookie(c, "dock_vid", vid, {
+          path: "/",
+          maxAge: 60 * 60 * 24 * 365,
+          httpOnly: true,
+          sameSite: "Lax",
+        })
       }
       viewer = vid
       kind = "anon"
     }
     const body = (await c.req.json().catch(() => ({}))) as { version?: number }
-    const version = Number.isInteger(body.version) ? (body.version as number) : artifact.current_version
-    await meta.recordView({ id: newId("v"), artifact_id: artifact.id, version, viewer, viewer_kind: kind })
+    const version = Number.isInteger(body.version)
+      ? (body.version as number)
+      : artifact.current_version
+    await meta.recordView({
+      id: newId("v"),
+      artifact_id: artifact.id,
+      version,
+      viewer,
+      viewer_kind: kind,
+    })
     return c.body(null, 204)
   })
 
   app.get("/v1/artifacts/:shortId/analytics", async (c) => {
     if (!analyticsOn) return c.json({ error: "analytics disabled" }, 404)
     const artifact = await meta.getByShortId(c.req.param("shortId"))
-    if (!artifact || !(await authorize(c, "read", artifact))) return c.json({ error: "not found" }, 404)
+    if (!artifact || !(await authorize(c, "read", artifact)))
+      return c.json({ error: "not found" }, 404)
     return c.json(await meta.viewStats(artifact.id))
   })
 
@@ -678,13 +810,17 @@ export function createApp(deps: AppDeps): Hono {
   app.post("/v1/webhooks", async (c) => {
     if (!(await workspaceCan(c, "manage"))) return c.json({ error: "forbidden" }, 403)
     const b = (await c.req.json().catch(() => ({}))) as Record<string, unknown>
-    if (typeof b.url !== "string" || !/^https?:\/\//.test(b.url))
-      return c.json({ error: "a valid http(s) url is required" }, 400)
+    if (typeof b.url !== "string" || !isPublicHttpUrl(b.url))
+      return c.json({ error: "a valid public http(s) url is required" }, 400)
     const kind = b.kind === "slack" ? "slack" : "generic"
     // events: array or "*"; validate against the known set
     const events =
       Array.isArray(b.events) && b.events.length
-        ? b.events.filter((e): e is WebhookEvent => (WEBHOOK_EVENTS as readonly string[]).includes(e as string)).join(",")
+        ? b.events
+            .filter((e): e is WebhookEvent =>
+              (WEBHOOK_EVENTS as readonly string[]).includes(e as string),
+            )
+            .join(",")
         : "*"
     let artifactRef: string | null = null
     if (typeof b.artifact === "string" && b.artifact) {
@@ -780,7 +916,8 @@ export function createApp(deps: AppDeps): Hono {
     const shortId = c.req.param("shortId")
     const n = Number(c.req.param("n"))
     const artifact = await meta.getByShortId(shortId)
-    if (!artifact || !Number.isInteger(n) || !(await authorize(c, "read", artifact))) return c.text("not found", 404)
+    if (!artifact || !Number.isInteger(n) || !(await authorize(c, "read", artifact)))
+      return c.text("not found", 404)
     const version = await meta.getVersion(artifact.id, n)
     if (!version) return c.text("not found", 404)
 
@@ -804,10 +941,7 @@ export function createApp(deps: AppDeps): Hono {
       const data = await blobs.get(entry.key)
       if (!data) return c.text("blob missing", 500)
       if (entry.type.startsWith("text/html") || entry.type.startsWith("text/css")) {
-        const rewritten = rewriteAbsoluteUrls(
-          new TextDecoder().decode(data),
-          prefix.slice(0, -1),
-        )
+        const rewritten = rewriteAbsoluteUrls(new TextDecoder().decode(data), prefix.slice(0, -1))
         // Bundle pages get the anchor client too — comments stick everywhere.
         const out = entry.type.startsWith("text/html") ? rewritten + SELECTION_SCRIPT : rewritten
         return c.body(out, 200, { ...RAW_HEADERS, "Content-Type": entry.type })
@@ -820,7 +954,10 @@ export function createApp(deps: AppDeps): Hono {
 
     if (version.content_type === "text/markdown") {
       if (path === "raw.md")
-        return c.body(toBody(data), 200, { ...RAW_HEADERS, "Content-Type": "text/markdown; charset=utf-8" })
+        return c.body(toBody(data), 200, {
+          ...RAW_HEADERS,
+          "Content-Type": "text/markdown; charset=utf-8",
+        })
       const html = await renderMarkdown(new TextDecoder().decode(data), artifact.title)
       return c.body(html, 200, { ...RAW_HEADERS, "Content-Type": "text/html; charset=utf-8" })
     }
