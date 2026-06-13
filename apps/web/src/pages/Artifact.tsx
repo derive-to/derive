@@ -12,7 +12,7 @@ import {
 } from "react"
 import { ColoredAvatar } from "@/components/shared/colored-avatar"
 import { Button } from "@/components/ui/button"
-import { Textarea } from "@/components/ui/input"
+import { Input, Textarea } from "@/components/ui/input"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { ago } from "@/lib/time"
 import { cn } from "@/lib/utils"
@@ -1056,14 +1056,6 @@ function CollectionsMenu({
   const [open, setOpen] = useState(false)
   const [all, setAll] = useState<Collection[]>([])
   const [draft, setDraft] = useState("")
-  const ref = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    const h = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
-    }
-    document.addEventListener("click", h)
-    return () => document.removeEventListener("click", h)
-  }, [])
   useEffect(() => {
     if (open)
       api
@@ -1096,105 +1088,68 @@ function CollectionsMenu({
     }
   }
   return (
-    <div ref={ref} style={{ position: "relative" }}>
-      <button
-        className="btn sm"
-        onClick={(e) => {
-          e.stopPropagation()
-          setOpen((o) => !o)
-        }}
-        style={{ gap: 6 }}
-        title="Collections"
-      >
-        📁 {inCollections.length > 0 && <b style={{ fontWeight: 700 }}>{inCollections.length}</b>}
-      </button>
-      {open && (
-        <div
-          className="card"
-          style={{
-            position: "absolute",
-            right: 0,
-            top: "calc(100% + 7px)",
-            width: 248,
-            padding: 12,
-            boxShadow: "var(--shadow)",
-            zIndex: 30,
-            maxHeight: 340,
-            overflow: "auto",
-          }}
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button
+          variant="outline"
+          size="sm"
+          className="gap-1.5"
+          title="Collections"
+          data-testid="artifact-collections"
         >
-          <div
-            className="mono muted"
-            style={{
-              fontSize: 9.5,
-              letterSpacing: ".06em",
-              textTransform: "uppercase",
-              marginBottom: 8,
-            }}
-          >
-            Add to collection
-          </div>
-          {all.length === 0 && (
-            <div className="muted" style={{ fontSize: 12, marginBottom: 9 }}>
-              No collections yet — create one below.
-            </div>
-          )}
-          {all.length > 0 && (
-            <div style={{ display: "flex", flexDirection: "column", gap: 1, marginBottom: 10 }}>
-              {all.map((col) => (
-                <button
-                  key={col.id}
-                  onClick={() => toggle(col)}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 8,
-                    width: "100%",
-                    border: 0,
-                    background: inSet.has(col.id) ? "var(--ac-soft)" : "transparent",
-                    color: "var(--fg)",
-                    padding: "6px 8px",
-                    borderRadius: 7,
-                    cursor: "pointer",
-                    textAlign: "left",
-                    font: "500 12.5px Inter,sans-serif",
-                  }}
-                >
-                  <span style={{ width: 14, color: "var(--ac)" }}>
-                    {inSet.has(col.id) ? "✓" : ""}
-                  </span>
-                  <span
-                    style={{
-                      flex: 1,
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
-                    }}
-                  >
-                    {col.title}
-                  </span>
-                </button>
-              ))}
-            </div>
-          )}
-          <div style={{ display: "flex", gap: 6 }}>
-            <input
-              className="input"
-              value={draft}
-              placeholder="New collection…"
-              onChange={(e) => setDraft(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") create()
-              }}
-              style={{ padding: "6px 9px", fontSize: 12.5 }}
-            />
-            <button className="btn sm" onClick={create} disabled={!draft.trim()}>
-              Add
-            </button>
-          </div>
+          📁 {inCollections.length > 0 && <b className="font-bold">{inCollections.length}</b>}
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="end" className="max-h-[340px] w-[248px] overflow-auto">
+        <div className="mb-2 font-mono text-2xs uppercase tracking-[0.06em] text-muted-foreground">
+          Add to collection
         </div>
-      )}
-    </div>
+        {all.length === 0 && (
+          <div className="mb-2 text-sm text-muted-foreground">
+            No collections yet — create one below.
+          </div>
+        )}
+        {all.length > 0 && (
+          <div className="mb-2.5 flex flex-col gap-px">
+            {all.map((col) => (
+              <button
+                key={col.id}
+                type="button"
+                onClick={() => toggle(col)}
+                className={cn(
+                  "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm font-medium text-foreground transition-colors hover:bg-hover",
+                  inSet.has(col.id) && "bg-accent",
+                )}
+              >
+                <span className="w-3.5 text-primary">{inSet.has(col.id) ? "✓" : ""}</span>
+                <span className="flex-1 truncate">{col.title}</span>
+              </button>
+            ))}
+          </div>
+        )}
+        <div className="flex gap-1.5">
+          <Input
+            value={draft}
+            placeholder="New collection…"
+            data-testid="collection-new-input"
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") create()
+            }}
+            className="h-8 text-sm"
+          />
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={create}
+            disabled={!draft.trim()}
+            data-testid="collection-add"
+          >
+            Add
+          </Button>
+        </div>
+      </PopoverContent>
+    </Popover>
   )
 }
 
@@ -1213,14 +1168,6 @@ function TagsMenu({
 }) {
   const [open, setOpen] = useState(false)
   const [draft, setDraft] = useState("")
-  const ref = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    const h = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
-    }
-    document.addEventListener("click", h)
-    return () => document.removeEventListener("click", h)
-  }, [])
   const save = async (next: string[]) => {
     onChange(next)
     try {
@@ -1236,96 +1183,74 @@ function TagsMenu({
     if (v && !tags.includes(v)) save([...tags, v])
   }
   return (
-    <div ref={ref} style={{ position: "relative" }}>
-      <button
-        className="btn sm"
-        onClick={(e) => {
-          e.stopPropagation()
-          setOpen((o) => !o)
-        }}
-        style={{ gap: 6 }}
-        title="Tags"
-      >
-        🏷 {tags.length > 0 && <b style={{ fontWeight: 700 }}>{tags.length}</b>}
-      </button>
-      {open && (
-        <div
-          className="card"
-          style={{
-            position: "absolute",
-            right: 0,
-            top: "calc(100% + 7px)",
-            width: 244,
-            padding: 12,
-            boxShadow: "var(--shadow)",
-            zIndex: 30,
-          }}
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button
+          variant="outline"
+          size="sm"
+          className="gap-1.5"
+          title="Tags"
+          data-testid="artifact-tags"
         >
-          <div
-            className="mono muted"
-            style={{
-              fontSize: 9.5,
-              letterSpacing: ".06em",
-              textTransform: "uppercase",
-              marginBottom: 8,
-            }}
-          >
-            Tags
-          </div>
-          {tags.length === 0 && (
-            <div className="muted" style={{ fontSize: 12, marginBottom: canEdit ? 9 : 0 }}>
-              {canEdit ? "No tags yet — add one below." : "No tags."}
-            </div>
-          )}
-          {tags.length > 0 && (
-            <div
-              style={{ display: "flex", flexWrap: "wrap", gap: 5, marginBottom: canEdit ? 10 : 0 }}
-            >
-              {tags.map((t) => (
-                <span key={t} className="tagchip" style={{ cursor: "default" }}>
-                  #{t}
-                  {canEdit && (
-                    <button
-                      onClick={() => save(tags.filter((x) => x !== t))}
-                      aria-label={`Remove ${t}`}
-                      style={{
-                        border: 0,
-                        background: "transparent",
-                        color: "inherit",
-                        cursor: "pointer",
-                        padding: 0,
-                        marginLeft: 2,
-                        fontSize: 13,
-                        lineHeight: 1,
-                      }}
-                    >
-                      ×
-                    </button>
-                  )}
-                </span>
-              ))}
-            </div>
-          )}
-          {canEdit && (
-            <div style={{ display: "flex", gap: 6 }}>
-              <input
-                className="input"
-                value={draft}
-                placeholder="Add a tag…"
-                onChange={(e) => setDraft(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") add()
-                }}
-                style={{ padding: "6px 9px", fontSize: 12.5 }}
-              />
-              <button className="btn sm" onClick={add} disabled={!draft.trim()}>
-                Add
-              </button>
-            </div>
-          )}
+          🏷 {tags.length > 0 && <b className="font-bold">{tags.length}</b>}
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="end" className="w-[244px]">
+        <div className="mb-2 font-mono text-2xs uppercase tracking-[0.06em] text-muted-foreground">
+          Tags
         </div>
-      )}
-    </div>
+        {tags.length === 0 && (
+          <div className={cn("text-sm text-muted-foreground", canEdit && "mb-2")}>
+            {canEdit ? "No tags yet — add one below." : "No tags."}
+          </div>
+        )}
+        {tags.length > 0 && (
+          <div className={cn("flex flex-wrap gap-1.5", canEdit && "mb-2.5")}>
+            {tags.map((t) => (
+              <span
+                key={t}
+                className="inline-flex items-center gap-1 rounded-full bg-accent px-2 py-0.5 font-mono text-2xs text-primary"
+              >
+                #{t}
+                {canEdit && (
+                  <button
+                    type="button"
+                    onClick={() => save(tags.filter((x) => x !== t))}
+                    aria-label={`Remove ${t}`}
+                    className="leading-none text-primary"
+                  >
+                    ×
+                  </button>
+                )}
+              </span>
+            ))}
+          </div>
+        )}
+        {canEdit && (
+          <div className="flex gap-1.5">
+            <Input
+              value={draft}
+              placeholder="Add a tag…"
+              data-testid="tag-new-input"
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") add()
+              }}
+              className="h-8 text-sm"
+            />
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={add}
+              disabled={!draft.trim()}
+              data-testid="tag-add"
+            >
+              Add
+            </Button>
+          </div>
+        )}
+      </PopoverContent>
+    </Popover>
   )
 }
 

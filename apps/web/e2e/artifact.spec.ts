@@ -93,3 +93,10 @@ test("star and report from the header", async ({ page }) => {
   await page.getByTestId("report-submit").click()
   await expect(page.getByText(/flagged for review/i)).toBeVisible()
 })
+
+test("add a tag from the header", async ({ page }) => {
+  await page.getByTestId("artifact-tags").click()
+  await page.getByTestId("tag-new-input").fill("design")
+  await page.getByTestId("tag-add").click()
+  await expect(page.getByText("#design")).toBeVisible()
+})
