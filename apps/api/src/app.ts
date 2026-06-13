@@ -288,6 +288,51 @@ function makeKeyedLimiter(windowMs: number, max: number) {
  * blocked here; hostnames that resolve into private space (DNS rebinding) are
  * out of scope for this static check.
  */
+/** Is a dotted-decimal octet quad in a private / loopback / link-local range? */
+function isPrivateV4([a, b]: number[]): boolean {
+  return (
+    a === 0 ||
+    a === 10 ||
+    a === 127 ||
+    (a === 169 && b === 254) || // link-local + cloud metadata
+    (a === 172 && b >= 16 && b <= 31) ||
+    (a === 192 && b === 168) ||
+    (a === 100 && b >= 64 && b <= 127) // CGNAT
+  )
+}
+
+/**
+ * Parse any inet_aton IPv4 form to its four octets, or null if not an IPv4.
+ * Covers dotted-decimal AND the bypass forms `curl`/browsers accept: a bare
+ * integer (`2130706433`), hex (`0x7f000001`), octal (`0177.0.0.1`), and short
+ * dotted forms (`127.1`). Without this, those all read as "not an IP" and slip
+ * past the private-range check while still resolving to loopback.
+ */
+function ipv4Octets(host: string): number[] | null {
+  const parts = host.split(".")
+  if (parts.length === 0 || parts.length > 4) return null
+  const vals: number[] = []
+  for (const p of parts) {
+    let n: number
+    if (/^0x[0-9a-f]+$/i.test(p)) n = Number.parseInt(p.slice(2), 16)
+    else if (/^0[0-7]+$/.test(p)) n = Number.parseInt(p, 8)
+    else if (p === "0" || /^[1-9][0-9]*$/.test(p)) n = Number.parseInt(p, 10)
+    else return null
+    if (!Number.isInteger(n) || n < 0) return null
+    vals.push(n)
+  }
+  const k = vals.length
+  // The last value fills the remaining low bytes; each leading value is one byte.
+  if (vals[k - 1] > 2 ** ((5 - k) * 8) - 1) return null
+  let value = vals[k - 1]
+  for (let i = 0; i < k - 1; i++) {
+    if (vals[i] > 255) return null
+    value += vals[i] * 2 ** (24 - i * 8)
+  }
+  if (value > 0xffffffff) return null
+  return [(value >>> 24) & 255, (value >>> 16) & 255, (value >>> 8) & 255, value & 255]
+}
+
 export function isPublicHttpUrl(raw: string): boolean {
   let u: URL
   try {
@@ -297,24 +342,32 @@ export function isPublicHttpUrl(raw: string): boolean {
   }
   if (u.protocol !== "http:" && u.protocol !== "https:") return false
   const host = u.hostname.toLowerCase().replace(/^\[|\]$/g, "")
-  if (host === "" || host === "0.0.0.0" || host === "localhost" || host.endsWith(".localhost"))
-    return false
-  const v4 = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/)
-  if (v4) {
-    const o = v4.slice(1).map(Number)
-    if (o.some((n) => n > 255)) return false
-    const [a, b] = o
-    if (a === 0 || a === 10 || a === 127) return false
-    if (a === 169 && b === 254) return false // link-local + cloud metadata
-    if (a === 172 && b >= 16 && b <= 31) return false
-    if (a === 192 && b === 168) return false
-    if (a === 100 && b >= 64 && b <= 127) return false // CGNAT
-    return true
-  }
+  if (host === "" || host === "localhost" || host.endsWith(".localhost")) return false
+  const v4 = ipv4Octets(host)
+  if (v4) return !isPrivateV4(v4)
   if (host.includes(":")) {
     if (host === "::1" || host === "::") return false
     if (/^f[cd]/.test(host)) return false // unique-local fc00::/7
     if (/^fe80/.test(host)) return false // link-local
+    // IPv4-mapped (::ffff:a.b.c.d). The URL parser rewrites the dotted tail to
+    // hex hextets (::ffff:7f00:1), so handle both: decode the embedded v4 and
+    // run the private-range check on it.
+    const m = host.match(/^::ffff:(.+)$/i)
+    if (m) {
+      const suf = m[1]
+      let oct: number[] | null = null
+      if (suf.includes(".")) {
+        oct = ipv4Octets(suf)
+      } else {
+        const g = suf.split(":").map((x) => Number.parseInt(x, 16))
+        if (g.every((x) => Number.isInteger(x) && x >= 0 && x <= 0xffff)) {
+          const lo = g[g.length - 1]
+          const hi = g.length >= 2 ? g[g.length - 2] : 0
+          oct = [(hi >> 8) & 255, hi & 255, (lo >> 8) & 255, lo & 255]
+        }
+      }
+      if (oct && isPrivateV4(oct)) return false
+    }
     return true
   }
   return true
@@ -491,9 +544,9 @@ export function createApp(deps: AppDeps): Hono {
     c.header("Retry-After", String(r.retryAfter))
     return c.json({ error: "rate limit exceeded" }, 429)
   }
-  // Would storing `incoming` more bytes push the workspace over its storage cap?
-  const overStorage = async (incoming: number): Promise<boolean> =>
-    !!deps.maxBytes && (await meta.storageBytes()) + incoming > deps.maxBytes
+  // Would storing `incoming` more bytes push THIS workspace over its storage cap?
+  const overStorage = async (orgId: string, incoming: number): Promise<boolean> =>
+    !!deps.maxBytes && (await meta.storageBytes(orgId)) + incoming > deps.maxBytes
 
   // ---- Authorization ----------------------------------------------------
   // One choke point: every gate resolves an Actor and asks can(). An unsecured
@@ -1075,17 +1128,21 @@ export function createApp(deps: AppDeps): Hono {
   const handlePublish = async (c: Context, shortId?: string) => {
     // Republishing a version needs publish rights on that artifact; creating a
     // new one needs publish rights at the workspace level.
+    let existing: ArtifactRecord | null = null
     if (shortId) {
-      const existing = await meta.getByShortId(shortId)
+      existing = await meta.getByShortId(shortId)
       if (!existing) return c.json({ error: "not found" }, 404)
       if (!(await authorize(c, "publish", existing))) return c.json({ error: "forbidden" }, 403)
     } else if (!(await workspaceCan(c, "publish"))) {
       return c.json({ error: "forbidden" }, 403)
     }
+    // Quotas are per-workspace: a republish counts against the artifact's own
+    // org, a new artifact against the caller's active workspace.
+    const org = existing ? existing.org_id : await activeWorkspace(c)
     const rl = await limited(c, publishLimiter)
     if (rl) return rl
     // A new artifact counts against the artifact cap; republishes don't.
-    if (!shortId && deps.maxArtifacts && (await meta.countArtifacts()) >= deps.maxArtifacts)
+    if (!shortId && deps.maxArtifacts && (await meta.countArtifacts(org)) >= deps.maxArtifacts)
       return c.json({ error: "artifact quota reached" }, 409)
     const len = Number(c.req.header("content-length") ?? 0)
     if (len > MAX_UPLOAD_BYTES) return c.json({ error: "upload too large" }, 413)
@@ -1095,7 +1152,8 @@ export function createApp(deps: AppDeps): Hono {
     if (!(file instanceof File)) return c.json({ error: "multipart field 'file' required" }, 400)
 
     const bytes = new Uint8Array(await file.arrayBuffer())
-    if (await overStorage(bytes.length)) return c.json({ error: "storage quota exceeded" }, 413)
+    if (await overStorage(org, bytes.length))
+      return c.json({ error: "storage quota exceeded" }, 413)
     const isBundle =
       /\.zip$/i.test(file.name) ||
       body["kind"] === "bundle" ||
@@ -1115,7 +1173,7 @@ export function createApp(deps: AppDeps): Hono {
           message: str(body["message"]),
           author: str(body["author"]),
           name: str(body["name"]),
-          orgId: await activeWorkspace(c),
+          orgId: org,
           visibility: visibilityOf(body["visibility"]),
         },
         shortId,
@@ -1395,6 +1453,9 @@ export function createApp(deps: AppDeps): Hono {
       id: newId("v"),
       blob_key: src.blob_key,
       content_type: src.content_type,
+      // Same blob as the restored version — carry its size so the storage meter
+      // stays consistent (and dedup'd, since it reuses the same blob_key).
+      size_bytes: src.size_bytes,
       author: me ? (me.name ?? me.email) : "anonymous",
       message: `Restored v${src.n}`,
       name: null,
@@ -1531,8 +1592,10 @@ export function createApp(deps: AppDeps): Hono {
     const file = body.file
     if (!(file instanceof File)) return c.json({ error: "multipart field 'file' required" }, 400)
     const bytes = new Uint8Array(await file.arrayBuffer())
-    // Proposals store a blob immediately, so they count toward the storage cap.
-    if (await overStorage(bytes.length)) return c.json({ error: "storage quota exceeded" }, 413)
+    // Proposals store a blob immediately, so they count toward the artifact's
+    // own workspace storage cap.
+    if (await overStorage(artifact.org_id, bytes.length))
+      return c.json({ error: "storage quota exceeded" }, 413)
     const isBundle =
       /\.zip$/i.test(file.name) ||
       body.kind === "bundle" ||
