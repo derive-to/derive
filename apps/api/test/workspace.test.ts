@@ -259,3 +259,34 @@ describe("multi-workspace: isolation, switch, create, provision", () => {
 
 // (single-mode create/switch-disabled tests removed — multi-workspace is now the
 // only mode; create + switch are always available, /me reports multi:true.)
+
+describe("workspace: delete (guarded)", () => {
+  const me: TestUser = { id: "u_wsdel", email: "wsdel@dock.test", name: "Del" }
+  const { app } = makeAuthedApp("ws-del", [me], undefined, { isolated: true })
+  const H = as(me.email)
+  const del = (id: string) => app.request(`/v1/workspaces/${id}`, { method: "DELETE", headers: H })
+  const create = (name: string) =>
+    app.request("/v1/workspaces", jsonAs(H, { name })).then((r) => r.json())
+  const listWs = async () =>
+    (await (await app.request("/v1/workspaces", { headers: H })).json()).workspaces as {
+      id: string
+    }[]
+
+  it("blocks your last workspace, non-owners, and non-empty; deletes an empty one", async () => {
+    await app.request("/v1/me", { headers: H }) // provision the personal workspace (active)
+    const mine = await listWs()
+    const personal = mine[0].id
+    // can't delete your only workspace
+    expect((await del(personal)).status).toBe(409)
+    // not a member / unknown id → forbidden
+    expect((await del("ws_not_mine")).status).toBe(403)
+    // publish into the active (personal) workspace, then add a second so it isn't "last"
+    expect((await publishAs(app, "<h1>x</h1>", {}, H)).status).toBe(201)
+    const empty = await create("Empty One")
+    // the personal workspace now has an artifact → must be emptied first
+    expect((await del(personal)).status).toBe(409)
+    // the empty second workspace deletes cleanly
+    expect((await del(empty.id)).status).toBe(200)
+    expect((await listWs()).some((w) => w.id === empty.id)).toBe(false)
+  })
+})

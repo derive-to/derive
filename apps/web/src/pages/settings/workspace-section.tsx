@@ -2,19 +2,31 @@ import { User } from "lucide-react"
 import { useCallback, useEffect, useState } from "react"
 import { type ArtifactMember, api, type Role, type Workspace } from "@/api"
 import { Spinner } from "@/components/shared/spinner"
+import { useShell } from "@/components/shell-context"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { roleLabel, roleValue, selectClass, WS_ROLES } from "./roles"
 
 export function WorkspaceSection({ meId, show }: { meId: string; show: (m: string) => void }) {
+  const { refreshWorkspaces } = useShell()
   const [ws, setWs] = useState<Workspace | null>(null)
   const [name, setName] = useState("")
   const [savingName, setSavingName] = useState(false)
   const [email, setEmail] = useState("")
   const [addRole, setAddRole] = useState<Role>("commenter")
   const [adding, setAdding] = useState(false)
+  const [delName, setDelName] = useState("")
+  const [deleting, setDeleting] = useState(false)
 
   const load = useCallback(
     () =>
@@ -40,11 +52,28 @@ export function WorkspaceSection({ meId, show }: { meId: string; show: (m: strin
     try {
       const r = await api.renameWorkspace(n)
       setWs((w) => (w ? { ...w, name: r.name } : w))
+      // Refresh the shell so the switcher + sidebar pick up the new name immediately.
+      refreshWorkspaces()
       show("Workspace renamed")
     } catch (e) {
       show((e as Error).message)
     } finally {
       setSavingName(false)
+    }
+  }
+
+  // Delete the active workspace. The server enforces the guards (Admin, not your
+  // last, must be empty); we surface those errors and reload on success (the active
+  // workspace may have changed).
+  const onDelete = async () => {
+    if (!ws) return
+    setDeleting(true)
+    try {
+      await api.deleteWorkspace(ws.id)
+      window.location.reload()
+    } catch (e) {
+      show((e as Error).message)
+      setDeleting(false)
     }
   }
 
@@ -225,6 +254,56 @@ export function WorkspaceSection({ meId, show }: { meId: string; show: (m: strin
           ))
         )}
       </div>
+
+      {isAdmin && ws && (
+        <Card className="mt-6 border-destructive/40 p-4">
+          <div className="text-xs font-semibold uppercase tracking-wide text-destructive">
+            Danger zone
+          </div>
+          <div className="mt-2 flex flex-wrap items-center justify-between gap-3">
+            <p className="max-w-md text-sm text-muted-foreground">
+              Delete this workspace permanently. It must be empty (no artifacts), and this can't be
+              undone.
+            </p>
+            <Dialog onOpenChange={(o) => !o && setDelName("")}>
+              <DialogTrigger asChild>
+                <Button
+                  data-testid="workspace-delete"
+                  variant="outline"
+                  className="shrink-0 border-destructive/50 text-destructive hover:bg-destructive/10"
+                >
+                  Delete workspace
+                </Button>
+              </DialogTrigger>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Delete "{ws.name}"?</DialogTitle>
+                  <DialogDescription>
+                    This permanently deletes the workspace and removes everyone from it. To confirm,
+                    type <b className="text-foreground">{ws.name}</b> below.
+                  </DialogDescription>
+                </DialogHeader>
+                <Input
+                  data-testid="workspace-delete-confirm"
+                  aria-label="Type the workspace name to confirm"
+                  value={delName}
+                  onChange={(e) => setDelName(e.target.value)}
+                  placeholder={ws.name}
+                  autoComplete="off"
+                />
+                <Button
+                  data-testid="workspace-delete-go"
+                  onClick={onDelete}
+                  disabled={deleting || delName.trim() !== ws.name}
+                  className="mt-2 w-full bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                >
+                  {deleting ? "Deleting…" : "Delete this workspace"}
+                </Button>
+              </DialogContent>
+            </Dialog>
+          </div>
+        </Card>
+      )}
     </section>
   )
 }

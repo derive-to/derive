@@ -131,6 +131,12 @@ export function AppShell({ children }: { children: ReactNode }) {
       /* surfaced elsewhere */
     }
   }, [])
+  // Deleting may swap the active workspace (the server switches the cookie when you
+  // delete the one you're in), so reload to pick up the new active context.
+  const deleteWorkspace = useCallback(async (id: string) => {
+    await api.deleteWorkspace(id)
+    window.location.reload()
+  }, [])
 
   const toggleCollapsed = useCallback(() => setCollapsed((c) => !c), [])
 
@@ -151,8 +157,10 @@ export function AppShell({ children }: { children: ReactNode }) {
       workspaces,
       refreshSummary,
       refreshCollections,
+      refreshWorkspaces,
       switchWorkspace,
       createWorkspace,
+      deleteWorkspace,
     }),
     // setDrawerOpen / setPaletteOpen are stable useState setters — intentionally
     // not listed (React guarantees their identity).
@@ -166,8 +174,10 @@ export function AppShell({ children }: { children: ReactNode }) {
       workspaces,
       refreshSummary,
       refreshCollections,
+      refreshWorkspaces,
       switchWorkspace,
       createWorkspace,
+      deleteWorkspace,
     ],
   )
 
