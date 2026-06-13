@@ -73,6 +73,7 @@ CREATE INDEX IF NOT EXISTS view_artifact_time ON view (artifact_id, created_at);
 
 CREATE TABLE IF NOT EXISTS webhook (
     id TEXT PRIMARY KEY,
+    org_id TEXT NOT NULL DEFAULT 'default',
     artifact_id TEXT REFERENCES artifact(id),
     url TEXT NOT NULL,
     secret TEXT NOT NULL,
@@ -238,6 +239,7 @@ CREATE INDEX IF NOT EXISTS proposal_artifact_state ON proposal (artifact_id, sta
 
 CREATE TABLE IF NOT EXISTS report (
     id TEXT PRIMARY KEY,
+    org_id TEXT NOT NULL DEFAULT 'default',
     artifact_id TEXT NOT NULL,
     artifact_short_id TEXT NOT NULL,
     reason TEXT NOT NULL,
@@ -251,6 +253,7 @@ CREATE INDEX IF NOT EXISTS report_state ON report (state, created_at);
 
 CREATE TABLE IF NOT EXISTS audit_log (
     id TEXT PRIMARY KEY,
+    org_id TEXT NOT NULL DEFAULT 'default',
     action TEXT NOT NULL,
     artifact_id TEXT,
     actor TEXT NOT NULL,

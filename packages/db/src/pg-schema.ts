@@ -66,6 +66,7 @@ export const comment = pgTable("comment", {
 
 export const webhook = pgTable("webhook", {
   id: text("id").primaryKey(),
+  org_id: text("org_id").notNull().default("default"),
   artifact_id: text("artifact_id").references(() => artifact.id),
   url: text("url").notNull(),
   secret: text("secret").notNull(),
@@ -249,6 +250,7 @@ export const proposal = pgTable("proposal", {
 
 export const report = pgTable("report", {
   id: text("id").primaryKey(),
+  org_id: text("org_id").notNull().default("default"),
   artifact_id: text("artifact_id").notNull(),
   artifact_short_id: text("artifact_short_id").notNull(),
   reason: text("reason").notNull(),
@@ -260,6 +262,7 @@ export const report = pgTable("report", {
 
 export const auditLog = pgTable("audit_log", {
   id: text("id").primaryKey(),
+  org_id: text("org_id").notNull().default("default"),
   action: text("action").$type<AuditAction>().notNull(),
   artifact_id: text("artifact_id"),
   actor: text("actor").notNull(),
@@ -343,6 +346,7 @@ export const PG_SCHEMA_STATEMENTS: string[] = [
   `CREATE INDEX IF NOT EXISTS view_artifact_time ON view (artifact_id, created_at)`,
   `CREATE TABLE IF NOT EXISTS webhook (
     id TEXT PRIMARY KEY,
+    org_id TEXT NOT NULL DEFAULT 'default',
     artifact_id TEXT REFERENCES artifact(id),
     url TEXT NOT NULL,
     secret TEXT NOT NULL,
@@ -487,6 +491,7 @@ export const PG_SCHEMA_STATEMENTS: string[] = [
   `CREATE INDEX IF NOT EXISTS proposal_artifact_state ON proposal (artifact_id, state)`,
   `CREATE TABLE IF NOT EXISTS report (
     id TEXT PRIMARY KEY,
+    org_id TEXT NOT NULL DEFAULT 'default',
     artifact_id TEXT NOT NULL,
     artifact_short_id TEXT NOT NULL,
     reason TEXT NOT NULL,
@@ -498,6 +503,7 @@ export const PG_SCHEMA_STATEMENTS: string[] = [
   `CREATE INDEX IF NOT EXISTS report_state ON report (state, created_at)`,
   `CREATE TABLE IF NOT EXISTS audit_log (
     id TEXT PRIMARY KEY,
+    org_id TEXT NOT NULL DEFAULT 'default',
     action TEXT NOT NULL,
     artifact_id TEXT,
     actor TEXT NOT NULL,
@@ -505,4 +511,7 @@ export const PG_SCHEMA_STATEMENTS: string[] = [
     created_at TEXT NOT NULL DEFAULT ${isoDefault}
   )`,
   `CREATE INDEX IF NOT EXISTS audit_artifact ON audit_log (artifact_id, created_at)`,
+  `ALTER TABLE webhook ADD COLUMN IF NOT EXISTS org_id TEXT NOT NULL DEFAULT 'default'`,
+  `ALTER TABLE report ADD COLUMN IF NOT EXISTS org_id TEXT NOT NULL DEFAULT 'default'`,
+  `ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS org_id TEXT NOT NULL DEFAULT 'default'`,
 ]

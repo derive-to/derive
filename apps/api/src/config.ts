@@ -17,6 +17,10 @@ export interface Config {
   baseUrl: string
   databaseUrl?: string
   token?: string
+  /** Operator (instance super-admin) emails: these accounts get global powers
+   *  (cross-workspace takedown, the global reports/audit queue) on top of the
+   *  DOCK_TOKEN bearer. The people who run + host the deployment. */
+  superAdmins: string[]
   analytics: boolean
   rateLimit: boolean
   multiWorkspace: boolean
@@ -78,6 +82,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     baseUrl,
     databaseUrl: env.DATABASE_URL,
     token: env.DOCK_TOKEN,
+    // Comma-separated operator emails (case-insensitive). More than one person
+    // can run + host a deployment, so this is a list, not a single owner.
+    superAdmins: (env.DOCK_SUPERADMIN_EMAILS ?? "")
+      .split(",")
+      .map((s) => s.trim().toLowerCase())
+      .filter(Boolean),
     analytics: env.DOCK_ANALYTICS !== "false",
     rateLimit: env.DOCK_RATE_LIMIT !== "false",
     multiWorkspace: env.DOCK_MULTI_WORKSPACE === "true",

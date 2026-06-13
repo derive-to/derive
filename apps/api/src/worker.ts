@@ -36,6 +36,7 @@ export interface Env {
   BASE_URL?: string
   DOCK_AUTH_SECRET?: string
   DOCK_MULTI_WORKSPACE?: string
+  DOCK_SUPERADMIN_EMAILS?: string
 }
 
 let app: ReturnType<typeof createApp> | null = null
@@ -43,11 +44,18 @@ let app: ReturnType<typeof createApp> | null = null
 export default {
   fetch(req: Request, env: Env, ctx: ExecutionContext): Response | Promise<Response> {
     if (!app) {
+      // No insecure default on the edge: a hardcoded, public session-signing key
+      // would let anyone forge a valid session. The Node path generates+persists
+      // one when unset, but a stateless Worker can't, so it must be bound. Fail
+      // closed (a 500 on every request) rather than boot with a forgeable secret.
+      const secret = env.DOCK_AUTH_SECRET
+      if (!secret || secret.length < 16)
+        throw new Error("DOCK_AUTH_SECRET (>= 16 chars) is required on the edge")
       const baseUrl = env.BASE_URL ?? new URL(req.url).origin
       const auth = makeAuth(
         { dialect: new D1Dialect({ database: env.DB }), type: "sqlite" },
         baseUrl,
-        env.DOCK_AUTH_SECRET ?? "dev-insecure-secret",
+        secret,
       )
       app = createApp({
         meta: createD1Store(env.DB),
@@ -55,6 +63,10 @@ export default {
         backplane: createDoBackplane(env.ROOMS),
         baseUrl,
         auth,
+        superAdmins: (env.DOCK_SUPERADMIN_EMAILS ?? "")
+          .split(",")
+          .map((s) => s.trim().toLowerCase())
+          .filter(Boolean),
         multiWorkspace: env.DOCK_MULTI_WORKSPACE === "true",
         defaultOrgId: "default",
       })

@@ -39,6 +39,8 @@ export interface AppDeps {
   baseUrl: string
   /** A static token (CI/agents) authorizes writes + gated reads, alongside a login session. */
   token?: string
+  /** Operator (instance super-admin) emails: global moderation powers, on top of `token`. */
+  superAdmins?: string[]
   /** Better Auth instance — mounts /api/auth/* and provides the session. */
   auth?: Auth
   /**
@@ -169,6 +171,18 @@ export function buildContext(deps: AppDeps) {
     const u = s?.user ? { id: s.user.id, email: s.user.email, name: s.user.name ?? null } : null
     userCache.set(c, u)
     return u
+  }
+
+  // Instance super-admins: the people who run + host the deployment. The static
+  // DOCK_TOKEN (automation) or any signed-in user whose email is in the operator
+  // allow-list. Super-admins get global moderation (cross-workspace takedown +
+  // the global reports/audit queue); a workspace Admin stays scoped to their own.
+  const superAdminEmails = new Set((deps.superAdmins ?? []).map((e) => e.toLowerCase()))
+  const isSuperAdmin = async (c: Context): Promise<boolean> => {
+    if (deps.token && safeEqual(bearer(c), deps.token)) return true
+    if (superAdminEmails.size === 0) return false
+    const me = await currentUser(c)
+    return !!me && superAdminEmails.has(me.email.toLowerCase())
   }
 
   // A registered agent acting via its bearer token (memoized per request). An
@@ -366,6 +380,7 @@ export function buildContext(deps: AppDeps) {
     setWsCookie,
     actorFor,
     authorize,
+    isSuperAdmin,
     workspaceRole,
     workspaceCan,
     sourceText,

@@ -15,7 +15,7 @@ import { fail, readJson } from "../lib/http"
 /** Collections: shareable groups of artifacts. A member's role on a collection
  *  propagates to every artifact inside it (see collectionRolesForArtifact). */
 export const collectionRoutes = (ctx: AppContext) => {
-  const { meta, deps, open, bearer, currentUser, activeWorkspace, workspaceCan } = ctx
+  const { meta, deps, open, bearer, currentUser, activeWorkspace, workspaceCan, authorize } = ctx
   const app = new Hono()
 
   // A user's role on a collection: creator/member role, token/open → owner.
@@ -81,7 +81,13 @@ export const collectionRoutes = (ctx: AppContext) => {
     if (!col) return fail(c, 404, "not found")
     if (!(await canManageCollection(c, col, "publish"))) return fail(c, 403, "forbidden")
     const art = await meta.getByShortId(c.req.param("shortId"))
-    if (!art) return fail(c, 404, "artifact not found")
+    // Same-workspace + owns-the-artifact: adding to a collection re-shares the
+    // artifact (the collection's members inherit a role on it), so it must be a
+    // manage action on the artifact itself, not just on the collection. Without
+    // this, anyone could fold any artifact by short_id into their own collection
+    // and inherit a role on it (cross-workspace privilege escalation).
+    if (!art || art.org_id !== col.org_id) return fail(c, 404, "artifact not found")
+    if (!(await authorize(c, "manage", art))) return fail(c, 403, "forbidden")
     await meta.addCollectionItem(col.id, art.id)
     return c.json({ ok: true })
   })
@@ -90,7 +96,8 @@ export const collectionRoutes = (ctx: AppContext) => {
     if (!col) return fail(c, 404, "not found")
     if (!(await canManageCollection(c, col, "publish"))) return fail(c, 403, "forbidden")
     const art = await meta.getByShortId(c.req.param("shortId"))
-    if (!art) return fail(c, 404, "artifact not found")
+    // Curation of your own collection; same-workspace guard mirrors the add path.
+    if (!art || art.org_id !== col.org_id) return fail(c, 404, "artifact not found")
     await meta.removeCollectionItem(col.id, art.id)
     return c.body(null, 204)
   })
