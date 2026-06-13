@@ -1,9 +1,10 @@
 import type { ReactNode } from "react"
 import { useState } from "react"
-import type { Collection } from "@/api"
+import type { Collection, Workspaces } from "@/api"
 import { Input } from "@/components/ui/input"
 import { cn } from "@/lib/utils"
 import type { Filter, TagCount } from "./types"
+import { WorkspaceSwitcher } from "./workspace-switcher"
 
 // A navigation row: icon + label + optional count. In rail (collapsed) mode the
 // label and count are dropped and the icon centers.
@@ -66,6 +67,7 @@ export function Sidebar({
   drawer,
   open,
   workspace,
+  workspaces,
   total,
   favCount,
   tags,
@@ -73,6 +75,8 @@ export function Sidebar({
   filter,
   onPick,
   onCreateCollection,
+  onSwitchWorkspace,
+  onCreateWorkspace,
   onToggleRail,
   onClose,
   onSettings,
@@ -81,6 +85,7 @@ export function Sidebar({
   drawer: boolean
   open: boolean
   workspace: string
+  workspaces: Workspaces | null
   total: number
   favCount: number
   tags: TagCount[]
@@ -88,6 +93,8 @@ export function Sidebar({
   filter: Filter
   onPick: (f: Filter) => void
   onCreateCollection: (title: string) => void
+  onSwitchWorkspace: (id: string) => void
+  onCreateWorkspace: (name: string) => void
   onToggleRail: () => void
   onClose: () => void
   onSettings: () => void
@@ -117,7 +124,13 @@ export function Sidebar({
       )}
     >
       {!rail && workspace && (
-        <SideItem icon="◆" label={workspace} title="Workspace settings" onClick={onSettings} />
+        <WorkspaceSwitcher
+          label={workspace}
+          workspaces={workspaces}
+          onSwitch={onSwitchWorkspace}
+          onCreate={onCreateWorkspace}
+          onSettings={onSettings}
+        />
       )}
 
       {!rail && <SideLabel>Library</SideLabel>}

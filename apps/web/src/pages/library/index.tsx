@@ -1,7 +1,7 @@
 import { useNavigate } from "@tanstack/react-router"
 import { Menu, Plus, X } from "lucide-react"
 import { useCallback, useEffect, useRef, useState } from "react"
-import { type Artifact, api, type Collection } from "@/api"
+import { type Artifact, api, type Collection, type Workspaces } from "@/api"
 import { Header, useIsMobile, useToast } from "@/components"
 import { EmptyState } from "@/components/shared/empty-state"
 import { CenteredSpinner, Spinner } from "@/components/shared/spinner"
@@ -34,6 +34,7 @@ export function Library() {
   const [summary, setSummary] = useState<Summary | null>(null)
   const [collections, setCollections] = useState<Collection[]>([])
   const [shareCol, setShareCol] = useState<Collection | null>(null)
+  const [workspaces, setWorkspaces] = useState<Workspaces | null>(null)
 
   const [query, setQuery] = useState("")
   const [debouncedQ, setDebouncedQ] = useState("")
@@ -106,12 +107,39 @@ export function Library() {
       .then((r) => setCollections(r.collections))
       .catch(() => {})
   }, [])
+  const refreshWorkspaces = useCallback(() => {
+    api
+      .listWorkspaces()
+      .then(setWorkspaces)
+      .catch(() => {})
+  }, [])
   useEffect(() => {
     if (me) {
       refreshSummary()
       refreshCollections()
+      refreshWorkspaces()
     }
-  }, [me, refreshSummary, refreshCollections])
+  }, [me, refreshSummary, refreshCollections, refreshWorkspaces])
+
+  // Switching or creating a workspace swaps the whole content context, so reload
+  // the page rather than re-thread every list — a deliberate, infrequent action.
+  const switchWorkspace = async (id: string) => {
+    if (id === workspaces?.active) return
+    try {
+      await api.switchWorkspace(id)
+      window.location.reload()
+    } catch (e) {
+      show((e as Error).message)
+    }
+  }
+  const createWorkspace = async (name: string) => {
+    try {
+      await api.createWorkspace(name)
+      window.location.reload()
+    } catch (e) {
+      show((e as Error).message)
+    }
+  }
 
   const publish = async () => {
     const f = file.current?.files?.[0]
@@ -238,6 +266,7 @@ export function Library() {
           drawer={isMobile}
           open={drawer}
           workspace={summary?.workspace ?? ""}
+          workspaces={workspaces}
           total={summary?.total ?? 0}
           favCount={summary?.favorites ?? 0}
           tags={summary?.tags ?? []}
@@ -245,6 +274,8 @@ export function Library() {
           filter={filter}
           onPick={pick}
           onCreateCollection={createCollection}
+          onSwitchWorkspace={switchWorkspace}
+          onCreateWorkspace={createWorkspace}
           onToggleRail={() => setRail((r) => !r)}
           onClose={() => setDrawer(false)}
           onSettings={() => {

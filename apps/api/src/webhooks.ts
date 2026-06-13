@@ -96,8 +96,13 @@ export async function deliverOnce(d: DeliveryRecord): Promise<{ ok: boolean; sta
       "x-dock-event": d.event_type,
     }
     if (!isSlack) headers["x-dock-signature"] = sign(d.secret, body)
-    const res = await fetch(d.url, { method: "POST", headers, body })
+    // Do NOT follow redirects: the URL was SSRF-checked at registration, but a
+    // 302 to 169.254.169.254 / localhost would bypass that. A redirect is a
+    // delivery failure here.
+    const res = await fetch(d.url, { method: "POST", headers, body, redirect: "manual" })
     if (res.ok) return { ok: true, status: String(res.status) }
+    if (res.status >= 300 && res.status < 400)
+      return { ok: false, status: `HTTP ${res.status} (redirect not followed)` }
     return { ok: false, status: `HTTP ${res.status}` }
   } catch (err) {
     return { ok: false, status: (err as Error).message.slice(0, 200) }
