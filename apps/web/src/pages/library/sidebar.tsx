@@ -16,6 +16,7 @@ function SideItem({
   rail,
   title,
   onClick,
+  testId,
 }: {
   icon: ReactNode
   label: string
@@ -24,10 +25,12 @@ function SideItem({
   rail?: boolean
   title?: string
   onClick: () => void
+  testId?: string
 }) {
   return (
     <button
       type="button"
+      data-testid={testId}
       onClick={onClick}
       title={title ?? label}
       aria-current={active ? "page" : undefined}
@@ -140,6 +143,7 @@ export function Sidebar({
         count={total}
         rail={rail}
         active={filter.kind === "all"}
+        testId="sidebar-all"
         onClick={() => onPick({ kind: "all" })}
       />
       <SideItem
@@ -148,6 +152,7 @@ export function Sidebar({
         count={favCount}
         rail={rail}
         active={filter.kind === "favorites"}
+        testId="sidebar-favorites"
         onClick={() => onPick({ kind: "favorites" })}
       />
 
@@ -156,6 +161,7 @@ export function Sidebar({
           action={
             <button
               type="button"
+              data-testid="sidebar-new-collection"
               onClick={() => setCreating((v) => !v)}
               title="New collection"
               aria-label="New collection"
@@ -172,6 +178,7 @@ export function Sidebar({
         <Input
           value={name}
           autoFocus
+          data-testid="sidebar-new-collection-input"
           placeholder="Collection name…"
           aria-label="Collection name"
           onChange={(e) => setName(e.target.value)}
@@ -194,6 +201,7 @@ export function Sidebar({
           count={col.count}
           rail={rail}
           active={filter.kind === "collection" && filter.id === col.id}
+          testId={`sidebar-collection-${col.id}`}
           onClick={() => onPick({ kind: "collection", id: col.id, title: col.title })}
         />
       ))}
@@ -209,6 +217,7 @@ export function Sidebar({
               count={count}
               rail={rail}
               active={filter.kind === "tag" && filter.tag === tag}
+              testId={`sidebar-tag-${tag}`}
               onClick={() => onPick({ kind: "tag", tag })}
             />
           ))}
@@ -216,15 +225,22 @@ export function Sidebar({
       )}
 
       <div className="mt-auto flex flex-col gap-px pt-2">
-        <SideItem icon="⚙" label="Settings" rail={rail} onClick={onSettings} />
+        <SideItem
+          icon="⚙"
+          label="Settings"
+          rail={rail}
+          testId="sidebar-settings"
+          onClick={onSettings}
+        />
         {drawer ? (
-          <SideItem icon="✕" label="Close" onClick={onClose} />
+          <SideItem icon="✕" label="Close" testId="sidebar-close" onClick={onClose} />
         ) : (
           <SideItem
             icon={rail ? "»" : "«"}
             label="Collapse"
             rail={rail}
             title={rail ? "Expand sidebar" : "Collapse sidebar"}
+            testId="sidebar-collapse"
             onClick={onToggleRail}
           />
         )}

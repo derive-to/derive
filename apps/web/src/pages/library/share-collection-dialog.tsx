@@ -77,14 +77,25 @@ export function ShareCollectionDialog({
         <form onSubmit={add} className="mb-3 flex gap-1.5">
           <Input
             type="email"
+            data-testid="collection-share-email"
             placeholder="teammate@email.com"
             aria-label="Email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             className="flex-1"
           />
-          <RoleSelect value={role} onChange={setRole} className="w-[104px]" />
-          <Button variant="primary" type="submit" disabled={busy}>
+          <RoleSelect
+            value={role}
+            onChange={setRole}
+            data-testid="collection-share-role"
+            className="w-[104px]"
+          />
+          <Button
+            variant="primary"
+            type="submit"
+            data-testid="collection-share-add"
+            disabled={busy}
+          >
             {busy ? "…" : "Add"}
           </Button>
         </form>
@@ -107,6 +118,7 @@ export function ShareCollectionDialog({
                 <Button
                   variant="ghost"
                   size="icon"
+                  data-testid={`collection-share-remove-${m.user_id}`}
                   className="size-7 text-muted-foreground hover:text-foreground"
                   onClick={() => remove(m)}
                   title="Remove"

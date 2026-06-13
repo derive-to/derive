@@ -312,7 +312,11 @@ export function Artifact() {
         <Header />
         <div className="grid h-[60vh] place-items-center gap-2.5">
           <div className="text-muted-foreground">Artifact not found, or you don't have access.</div>
-          <Button variant="outline" onClick={() => nav({ to: "/" })}>
+          <Button
+            variant="outline"
+            data-testid="artifact-notfound-back"
+            onClick={() => nav({ to: "/" })}
+          >
             Back to library
           </Button>
         </div>
@@ -344,6 +348,7 @@ export function Artifact() {
             {art.my_role === "owner" && (
               <Button
                 variant="outline"
+                data-testid="artifact-reinstate"
                 onClick={async () => {
                   try {
                     await api.reinstate(shortId)
@@ -357,7 +362,11 @@ export function Artifact() {
                 Reinstate
               </Button>
             )}
-            <Button variant="outline" onClick={() => nav({ to: "/" })}>
+            <Button
+              variant="outline"
+              data-testid="artifact-removed-back"
+              onClick={() => nav({ to: "/" })}
+            >
               Back to library
             </Button>
           </div>
@@ -581,6 +590,7 @@ export function Artifact() {
                   <Button
                     variant="outline"
                     size="sm"
+                    data-testid="artifact-proposals"
                     onClick={() => setReviewing(true)}
                     title="See proposals and review feedback"
                   >
@@ -600,6 +610,7 @@ export function Artifact() {
                   variant="outline"
                   size="sm"
                   className="gap-1.5"
+                  data-testid="artifact-show-comments"
                   onClick={() => setPanel("open")}
                   title="Show comments (c)"
                 >
@@ -630,27 +641,44 @@ export function Artifact() {
                   {!canPublish && (
                     <Input
                       value={proposeMsg}
+                      data-testid="artifact-propose-message"
                       onChange={(e) => setProposeMsg(e.target.value)}
                       placeholder="What are you changing, and why?"
                       className="h-8 max-w-[420px] flex-1 text-sm"
                     />
                   )}
                   <span className="flex-1" />
-                  <Button variant="outline" size="sm" onClick={() => setEditing(false)}>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    data-testid="artifact-edit-cancel"
+                    onClick={() => setEditing(false)}
+                  >
                     Cancel
                   </Button>
                   {canPublish ? (
-                    <Button variant="primary" size="sm" onClick={publishEdit}>
+                    <Button
+                      variant="primary"
+                      size="sm"
+                      data-testid="artifact-publish-version"
+                      onClick={publishEdit}
+                    >
                       Publish new version
                     </Button>
                   ) : (
-                    <Button variant="primary" size="sm" onClick={proposeEdit}>
+                    <Button
+                      variant="primary"
+                      size="sm"
+                      data-testid="artifact-propose-submit"
+                      onClick={proposeEdit}
+                    >
                       Propose change
                     </Button>
                   )}
                 </div>
                 <textarea
                   value={src}
+                  data-testid="artifact-source-editor"
                   onChange={(e) => setSrc(e.target.value)}
                   spellCheck={false}
                   className="flex-1 resize-none border-0 bg-card px-5 py-4 font-mono text-sm leading-relaxed text-foreground outline-none"
@@ -666,6 +694,7 @@ export function Artifact() {
                     <span className="text-muted-foreground">·</span>
                     <button
                       type="button"
+                      data-testid="artifact-toggle-diff"
                       className="text-primary underline underline-offset-2 hover:opacity-80"
                       onClick={() => setView(view === "diff" ? "preview" : "diff")}
                     >
@@ -675,6 +704,7 @@ export function Artifact() {
                     <Button
                       variant="outline"
                       size="sm"
+                      data-testid="artifact-restore"
                       onClick={() => restore(shown)}
                       disabled={restoring}
                     >
@@ -683,6 +713,7 @@ export function Artifact() {
                     <Button
                       variant="primary"
                       size="sm"
+                      data-testid="artifact-back-to-current"
                       onClick={() => nav({ to: "/a/$ref", params: { ref: shortId } })}
                     >
                       Back to current

@@ -10,7 +10,7 @@ import {
 import { api, type Comment, type DirUser, type Mention } from "@/api"
 import { ColoredAvatar } from "@/components/shared/colored-avatar"
 import { Button } from "@/components/ui/button"
-import { Input, Textarea } from "@/components/ui/input"
+import { Textarea } from "@/components/ui/input"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { ago } from "@/lib/time"
 import { cn } from "@/lib/utils"
@@ -200,6 +200,7 @@ export function CommentRow({ c, compact }: { c: Comment; compact?: boolean }) {
             <Button
               variant="outline"
               size="sm"
+              data-testid="comment-edit-cancel"
               onClick={() => {
                 setEditing(false)
                 setDraft(c.body_md)
@@ -400,6 +401,7 @@ export function CommentCard({
         (textPresent && !resolved ? (
           <button
             type="button"
+            data-testid={`comment-jump-${root.thread_id}`}
             onClick={(e) => {
               e.stopPropagation()
               onJump(root.thread_id)
@@ -780,7 +782,7 @@ export function Composer({
           >
             Comment
           </Button>
-          <Button variant="outline" size="sm" onClick={onCancel}>
+          <Button variant="outline" size="sm" data-testid="composer-cancel" onClick={onCancel}>
             Cancel
           </Button>
         </div>
