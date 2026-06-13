@@ -254,13 +254,27 @@ export class PgMetaStore implements MetaStore {
     return res.rowCount ?? 0
   }
 
+  async pruneViewsByViewers(viewers: string[]): Promise<number> {
+    if (viewers.length === 0) return 0
+    const ph = viewers.map((_, i) => `$${i + 1}`).join(",")
+    const res = await this.pool.query(
+      `DELETE FROM view WHERE viewer_kind='user' AND viewer IN (${ph})`,
+      viewers,
+    )
+    return res.rowCount ?? 0
+  }
+
   async viewStats(artifactId: string): Promise<ViewStats> {
     const cutoff = new Date(Date.now() - VIEW_WINDOW_MS).toISOString()
-    const [tot, uni, perV, daily, recent] = await Promise.all([
+    const [tot, uni, anon, perV, daily, recent] = await Promise.all([
       this.pool.query(`SELECT count(*)::int n FROM view WHERE artifact_id=$1`, [artifactId]),
       this.pool.query(`SELECT count(DISTINCT viewer)::int n FROM view WHERE artifact_id=$1`, [
         artifactId,
       ]),
+      this.pool.query(
+        `SELECT count(DISTINCT viewer)::int n FROM view WHERE artifact_id=$1 AND viewer_kind='anon'`,
+        [artifactId],
+      ),
       this.pool.query(
         `SELECT version, count(*)::int c FROM view WHERE artifact_id=$1 GROUP BY version ORDER BY version`,
         [artifactId],
@@ -277,6 +291,7 @@ export class PgMetaStore implements MetaStore {
     return {
       total: tot.rows[0].n,
       unique: uni.rows[0].n,
+      anonViewers: anon.rows[0].n,
       perVersion: perV.rows.map((r) => ({ version: r.version, count: r.c })),
       daily: daily.rows.map((r) => ({ day: r.day, count: r.c })),
       recent: recent.rows.map((r) => ({ viewer: r.viewer, kind: r.viewer_kind, at: r.at })),
@@ -630,7 +645,7 @@ export class PgMetaStore implements MetaStore {
   async findUserByEmail(email: string): Promise<UserDir | null> {
     try {
       const { rows } = await this.pool.query(
-        `SELECT id, email, name FROM "user" WHERE email = $1`,
+        `SELECT id, email, name, image FROM "user" WHERE email = $1`,
         [email],
       )
       return (rows[0] as UserDir) ?? null
@@ -643,7 +658,7 @@ export class PgMetaStore implements MetaStore {
     try {
       const ph = ids.map((_, i) => `$${i + 1}`).join(",")
       const { rows } = await this.pool.query(
-        `SELECT id, email, name FROM "user" WHERE id IN (${ph})`,
+        `SELECT id, email, name, image FROM "user" WHERE id IN (${ph})`,
         ids,
       )
       return rows as UserDir[]

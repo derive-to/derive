@@ -96,9 +96,10 @@ export interface Workspace {
 export interface Analytics {
   total: number
   unique: number
+  anonViewers: number
   perVersion: { version: number; count: number }[]
   daily: { day: string; count: number }[]
-  recent: { viewer: string; kind: "user" | "anon"; at: string }[]
+  recent: { viewer: string; kind: "user" | "anon"; at: string; avatar?: string | null }[]
 }
 /** A resolved @mention: the picked user's id + the display name shown inline. */
 export interface Mention {

@@ -119,6 +119,8 @@ export interface MetaStore {
   ): Promise<boolean>
   /** Delete view rows older than `cutoffIso`; returns the count removed (retention). */
   pruneViews(cutoffIso: string): Promise<number>
+  /** Delete user-kind view rows whose viewer is in the set (owner self-view cleanup). */
+  pruneViewsByViewers(viewers: string[]): Promise<number>
   /** Aggregated view analytics for one artifact. */
   viewStats(artifactId: string): Promise<ViewStats>
   /** Total view counts for many artifacts at once (no N+1). */
@@ -390,6 +392,8 @@ export interface UserDir {
   id: string
   email: string
   name: string | null
+  /** Profile picture URL (set by OAuth providers; null for password signups). */
+  image: string | null
 }
 
 export type NotificationKind = "mention" | "comment"
@@ -542,11 +546,13 @@ export interface NewView {
 export interface ViewStats {
   total: number
   unique: number
+  /** Distinct anonymous viewers (the rest of `unique` are named users). */
+  anonViewers: number
   perVersion: { version: number; count: number }[]
   /** Daily counts over the trailing window, oldest first. */
   daily: { day: string; count: number }[]
-  /** Most-recent distinct viewers, newest first. */
-  recent: { viewer: string; kind: "user" | "anon"; at: string }[]
+  /** Most-recent distinct viewers, newest first. `avatar` is set for users. */
+  recent: { viewer: string; kind: "user" | "anon"; at: string; avatar?: string | null }[]
 }
 
 export type CommentState = "open" | "resolved"

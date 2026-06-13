@@ -1674,6 +1674,11 @@ export function createApp(deps: AppDeps): Hono {
     const artifact = await meta.getByShortId(c.req.param("shortId"))
     if (!artifact || artifact.current_version === 0 || !(await authorize(c, "read", artifact)))
       return c.json({ error: "not found" }, 404)
+    // The owner's own opens aren't audience — don't count them (Notion/Docs do
+    // the same). `manage` requires the owner role, so this is exactly "is owner";
+    // editors/commenters/viewers and anonymous openers still count.
+    const actor = await actorFor(c, artifact)
+    if (actor.kind !== "anon" && can(actor, "manage", artifact.visibility)) return c.body(null, 204)
     const me = await currentUser(c)
     let viewer: string
     let kind: "user" | "anon"
@@ -1723,13 +1728,15 @@ export function createApp(deps: AppDeps): Hono {
     if (!artifact || !(await authorize(c, "read", artifact)))
       return c.json({ error: "not found" }, 404)
     const stats = await meta.viewStats(artifact.id)
-    // Recent user-viewers are stored by id (stable); resolve to display names.
+    // Recent user-viewers are stored by id (stable); resolve to name + avatar.
     const userIds = stats.recent.filter((r) => r.kind === "user").map((r) => r.viewer)
     if (userIds.length) {
-      const byId = new Map((await meta.getUsers(userIds)).map((u) => [u.id, u.name ?? u.email]))
-      stats.recent = stats.recent.map((r) =>
-        r.kind === "user" ? { ...r, viewer: byId.get(r.viewer) ?? "Someone" } : r,
-      )
+      const byId = new Map((await meta.getUsers(userIds)).map((u) => [u.id, u]))
+      stats.recent = stats.recent.map((r) => {
+        if (r.kind !== "user") return r
+        const u = byId.get(r.viewer)
+        return { ...r, viewer: u ? (u.name ?? u.email) : "Someone", avatar: u?.image ?? null }
+      })
     }
     return c.json(stats)
   })

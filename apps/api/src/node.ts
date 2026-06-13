@@ -144,6 +144,24 @@ if (RETENTION_DAYS > 0) {
   setInterval(prune, 24 * 3600_000).unref?.()
 }
 
+// One-time cleanup of pre-existing owner self-views (the route no longer records
+// them). Owners are workspace members with the `owner` role; match their id, name
+// and email so rows from before the id-based identity change are caught too.
+void (async () => {
+  try {
+    const owners = (await meta.listMemberships("local")).filter((m) => m.role === "owner")
+    if (owners.length === 0) return
+    const users = await meta.getUsers(owners.map((m) => m.user_id))
+    const viewers = [
+      ...new Set(users.flatMap((u) => [u.id, u.name, u.email].filter((v): v is string => !!v))),
+    ]
+    const removed = await meta.pruneViewsByViewers(viewers)
+    if (removed > 0) console.log(`analytics: removed ${removed} owner self-view(s)`)
+  } catch {
+    /* best-effort; never blocks boot */
+  }
+})()
+
 const blobDesc = process.env.OBJECT_STORE_URL ? "S3/R2" : `local disk (${DATA_DIR})`
 const metaDesc = DATABASE_URL ? "postgres" : `sqlite (${DATA_DIR})`
 

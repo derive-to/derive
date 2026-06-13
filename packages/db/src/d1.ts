@@ -251,6 +251,18 @@ export class D1MetaStore implements MetaStore {
     return res.meta.changes ?? 0
   }
 
+  async pruneViewsByViewers(viewers: string[]): Promise<number> {
+    if (viewers.length === 0) return 0
+    const list = sql.join(
+      viewers.map((v) => sql`${v}`),
+      sql`, `,
+    )
+    const res = await this.db.run(
+      sql`DELETE FROM view WHERE viewer_kind='user' AND viewer IN (${list})`,
+    )
+    return res.meta.changes ?? 0
+  }
+
   async viewStats(artifactId: string): Promise<ViewStats> {
     const cutoff = new Date(Date.now() - VIEW_WINDOW_MS).toISOString()
     const tot = (await this.db.get(
@@ -258,6 +270,9 @@ export class D1MetaStore implements MetaStore {
     )) as { n: number }
     const uni = (await this.db.get(
       sql`SELECT count(DISTINCT viewer) n FROM view WHERE artifact_id=${artifactId}`,
+    )) as { n: number }
+    const anon = (await this.db.get(
+      sql`SELECT count(DISTINCT viewer) n FROM view WHERE artifact_id=${artifactId} AND viewer_kind='anon'`,
     )) as { n: number }
     const perVersion = (await this.db.all(
       sql`SELECT version, count(*) count FROM view WHERE artifact_id=${artifactId} GROUP BY version ORDER BY version`,
@@ -268,7 +283,7 @@ export class D1MetaStore implements MetaStore {
     const recent = (await this.db.all(
       sql`SELECT viewer, viewer_kind kind, max(created_at) at FROM view WHERE artifact_id=${artifactId} GROUP BY viewer, viewer_kind ORDER BY at DESC LIMIT 8`,
     )) as { viewer: string; kind: "user" | "anon"; at: string }[]
-    return { total: tot.n, unique: uni.n, perVersion, daily, recent }
+    return { total: tot.n, unique: uni.n, anonViewers: anon.n, perVersion, daily, recent }
   }
 
   async viewCounts(artifactIds: string[]): Promise<Record<string, number>> {
@@ -649,7 +664,7 @@ export class D1MetaStore implements MetaStore {
     try {
       return (
         ((await this.db.get(
-          sql`SELECT id, email, name FROM user WHERE email = ${email}`,
+          sql`SELECT id, email, name, image FROM user WHERE email = ${email}`,
         )) as UserDir) ?? null
       )
     } catch {
@@ -664,7 +679,7 @@ export class D1MetaStore implements MetaStore {
         sql`, `,
       )
       return (await this.db.all(
-        sql`SELECT id, email, name FROM user WHERE id IN (${list})`,
+        sql`SELECT id, email, name, image FROM user WHERE id IN (${list})`,
       )) as UserDir[]
     } catch {
       return []
