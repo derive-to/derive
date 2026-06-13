@@ -230,6 +230,24 @@ export class SqliteMetaStore implements MetaStore {
       .run(v.id, v.artifact_id, v.version, v.viewer, v.viewer_kind)
   }
 
+  async viewedSince(
+    artifactId: string,
+    viewer: string,
+    version: number,
+    sinceIso: string,
+  ): Promise<boolean> {
+    const row = this.raw
+      .prepare(
+        `SELECT 1 FROM view WHERE artifact_id=? AND viewer=? AND version=? AND created_at>=? LIMIT 1`,
+      )
+      .get(artifactId, viewer, version, sinceIso)
+    return !!row
+  }
+
+  async pruneViews(cutoffIso: string): Promise<number> {
+    return this.raw.prepare(`DELETE FROM view WHERE created_at < ?`).run(cutoffIso).changes
+  }
+
   async viewStats(artifactId: string): Promise<ViewStats> {
     const cutoff = new Date(Date.now() - VIEW_WINDOW_MS).toISOString()
     const n = (q: string, ...p: unknown[]) => (this.raw.prepare(q).get(...p) as { n: number }).n

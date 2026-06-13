@@ -108,6 +108,15 @@ export interface MetaStore {
 
   /** Append a view event. */
   recordView(v: NewView): Promise<void>
+  /** Has this viewer already seen this version since `sinceIso`? (open de-dup) */
+  viewedSince(
+    artifactId: string,
+    viewer: string,
+    version: number,
+    sinceIso: string,
+  ): Promise<boolean>
+  /** Delete view rows older than `cutoffIso`; returns the count removed (retention). */
+  pruneViews(cutoffIso: string): Promise<number>
   /** Aggregated view analytics for one artifact. */
   viewStats(artifactId: string): Promise<ViewStats>
   /** Total view counts for many artifacts at once (no N+1). */

@@ -107,6 +107,7 @@ const app = createApp({
   // Origin isolation: serve artifact bytes from a separate registrable domain
   // pointed at this same container. Keeps user HTML off the app's cookie origin.
   sandboxOrigin: process.env.DOCK_SANDBOX_URL,
+  crossSite: process.env.DOCK_CROSS_SITE === "true",
   versionWindowMs: process.env.DOCK_VERSION_WINDOW
     ? Number(process.env.DOCK_VERSION_WINDOW) * 60_000
     : undefined,
@@ -132,6 +133,16 @@ if (SERVE_WEB) {
 
 // The webhook outbox worker delivers queued events with retries + backoff.
 startWebhookWorker(meta)
+
+// Analytics retention: views are a rolling window (default 365 days). A daily
+// prune keeps the append-only view table bounded. 0 disables pruning entirely.
+const RETENTION_DAYS = Number(process.env.DOCK_ANALYTICS_RETENTION_DAYS ?? 365)
+if (RETENTION_DAYS > 0) {
+  const prune = () =>
+    meta.pruneViews(new Date(Date.now() - RETENTION_DAYS * 86400_000).toISOString()).catch(() => 0)
+  void prune()
+  setInterval(prune, 24 * 3600_000).unref?.()
+}
 
 const blobDesc = process.env.OBJECT_STORE_URL ? "S3/R2" : `local disk (${DATA_DIR})`
 const metaDesc = DATABASE_URL ? "postgres" : `sqlite (${DATA_DIR})`
