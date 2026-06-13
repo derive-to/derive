@@ -164,8 +164,14 @@ export function Artifact() {
 
   // Drive the deck from the host bar; fullscreen wraps the iframe + bar so the
   // controls stay reachable while presenting.
-  const deckCmd = (action: "next" | "prev" | "goto", n?: number) =>
-    frame.current?.contentWindow?.postMessage({ source: "dock-host", type: "deck", action, n }, "*")
+  const deckCmd = useCallback(
+    (action: "next" | "prev" | "goto", n?: number) =>
+      frame.current?.contentWindow?.postMessage(
+        { source: "dock-host", type: "deck", action, n },
+        "*",
+      ),
+    [],
+  )
   const toggleFullscreen = () => {
     const el = presentWrap.current
     if (!el) return
@@ -173,6 +179,7 @@ export function Artifact() {
     else el.requestFullscreen?.()
   }
   // Reset deck state when the artifact/version changes (re-announced on load).
+  // biome-ignore lint/correctness/useExhaustiveDependencies: keyed to the artifact/version change, not to anything the callback reads.
   useEffect(() => setDeck(null), [shortId, version])
   // Arrow keys drive the deck from the host (when not typing in a field).
   useEffect(() => {
@@ -185,7 +192,7 @@ export function Artifact() {
     }
     window.addEventListener("keydown", onKey)
     return () => window.removeEventListener("keydown", onKey)
-  }, [deck])
+  }, [deck, deckCmd])
 
   // Paint highlights for open, anchored threads whenever the doc or comments change.
   const sendAnchors = useCallback(() => {
@@ -198,10 +205,12 @@ export function Artifact() {
       .map((x) => ({ id: x.id, exact: x.sel.exact, prefix: x.sel.prefix, suffix: x.sel.suffix }))
     w.postMessage({ source: "dock-host", type: "anchors", anchors }, "*")
   }, [comments])
+  // biome-ignore lint/correctness/useExhaustiveDependencies: frameReady is an intentional repaint trigger (re-send anchors when the iframe reloads).
   useEffect(() => {
     sendAnchors()
   }, [sendAnchors, frameReady])
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: clears transient selection when the artifact/version changes.
   useEffect(() => {
     setActiveThread(null)
     setComposer(null)
@@ -295,6 +304,7 @@ export function Artifact() {
   }, [shortId])
 
   // Switching versions returns to the rendered preview.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: resets the view on a version/artifact change.
   useEffect(() => setView("preview"), [version, shortId])
 
   // In history mode, "show changes" diffs the version being viewed against the

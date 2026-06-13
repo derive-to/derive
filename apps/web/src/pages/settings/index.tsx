@@ -1,5 +1,5 @@
 import { useNavigate } from "@tanstack/react-router"
-import { useEffect, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import { api, type Report } from "@/api"
 import { useToast } from "@/components"
 import { AppShell } from "@/components/app-shell"
@@ -22,14 +22,17 @@ export function Settings() {
     if (!loading && !me) nav({ to: "/login" })
   }, [loading, me, nav])
 
-  const loadReports = () =>
-    api
-      .listReports()
-      .then((r) => setReports(r.reports))
-      .catch(() => setReports([]))
+  const loadReports = useCallback(
+    () =>
+      api
+        .listReports()
+        .then((r) => setReports(r.reports))
+        .catch(() => setReports([])),
+    [],
+  )
   useEffect(() => {
     if (me) loadReports()
-  }, [me])
+  }, [me, loadReports])
 
   if (!me) return <CenteredSpinner />
 
