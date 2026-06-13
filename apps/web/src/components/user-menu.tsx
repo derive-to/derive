@@ -27,7 +27,7 @@ export function UserMenu() {
       <DropdownMenuTrigger asChild>
         <Button variant="outline" size="sm" className="gap-2" data-testid="user-menu-trigger">
           <Avatar className="size-5">
-            <AvatarFallback className="bg-primary text-[9px] text-primary-foreground">
+            <AvatarFallback className="bg-primary text-xs text-primary-foreground">
               {initials}
             </AvatarFallback>
           </Avatar>
