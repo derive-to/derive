@@ -1,11 +1,12 @@
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import Database from "better-sqlite3"
 import { zipSync } from "fflate"
 import { afterAll, describe, expect, it } from "vitest"
 import { SqliteMetaStore } from "@dock/db/sqlite"
 import { FsBlobStore } from "@dock/storage/fs"
-import { createApp } from "../src/app"
+import { createApp, type AppDeps } from "../src/app"
 
 const dir = mkdtempSync(join(tmpdir(), "dock-test-"))
 const meta = new SqliteMetaStore(join(dir, "dock.db"))
@@ -429,7 +430,7 @@ describe("auth: token write-gating + per-artifact read-gating", () => {
   }
 
   it("rejects writes without the token, accepts with it", async () => {
-    expect((await pub("link")).status).toBe(401)
+    expect((await pub("link")).status).toBe(403) // permission-gated: forbidden
     const ok = await pub("link", { authorization: "Bearer s3cret" })
     expect(ok.status).toBe(201)
   })
@@ -504,6 +505,130 @@ describe("live stream (SSE)", () => {
     const { short_id } = await (await upload("p.md", "# p", {})).json()
     const res = await app.request(`/v1/artifacts/${short_id}/presence`, json({ name: "Jess" }))
     expect((await res.json()).viewers).toEqual(["Jess"])
+  })
+})
+
+// A faithful role test needs real sessions. We seed Better Auth's `user` table
+// (so the share route can resolve email→id) and stand in a fake `auth` whose
+// session is chosen by an `x-test-user` header (the user's email). A static
+// token keeps the instance secured, so an unauthenticated caller is NOT owner.
+type TestUser = { id: string; email: string; name: string | null }
+
+const makeAuthedApp = (name: string, users: TestUser[], defaultRole?: AppDeps["defaultRole"]) => {
+  const path = join(dir, `${name}.db`)
+  const m = new SqliteMetaStore(path)
+  const raw = new Database(path)
+  raw.exec(`CREATE TABLE IF NOT EXISTS user (id TEXT PRIMARY KEY, email TEXT, name TEXT)`)
+  const ins = raw.prepare(`INSERT OR IGNORE INTO user (id, email, name) VALUES (?,?,?)`)
+  for (const u of users) ins.run(u.id, u.email, u.name)
+  raw.close()
+  const auth = {
+    handler: async () => new Response(null, { status: 404 }),
+    api: {
+      getSession: async ({ headers }: { headers: Headers }) => {
+        const u = users.find((x) => x.email === headers.get("x-test-user"))
+        return u ? { user: u } : null
+      },
+    },
+  } as unknown as AppDeps["auth"]
+  const app = createApp({
+    meta: m,
+    blobs: new FsBlobStore(join(dir, "blobs")),
+    baseUrl: "http://dock.test",
+    token: "tok",
+    auth,
+    defaultRole,
+  })
+  return { app, meta: m }
+}
+
+const as = (email: string) => ({ "x-test-user": email })
+const publishAs = (
+  app: ReturnType<typeof createApp>,
+  content: string,
+  fields: Record<string, string> = {},
+  headers: Record<string, string> = {},
+  shortId?: string,
+) => {
+  const form = new FormData()
+  form.append("file", new Blob([new TextEncoder().encode(content)]), "f.html")
+  for (const [k, v] of Object.entries(fields)) form.append(k, v)
+  const url = shortId ? `/v1/artifacts/${shortId}/versions` : "/v1/artifacts"
+  return app.request(url, { method: "POST", body: form, headers })
+}
+const jsonAs = (headers: Record<string, string>, body: unknown) => ({
+  method: "POST" as const,
+  headers: { "content-type": "application/json", ...headers },
+  body: JSON.stringify(body),
+})
+
+describe("permissions: workspace roles gate writes", () => {
+  const alice: TestUser = { id: "u_alice", email: "alice@dock.test", name: "Alice" }
+  const bob: TestUser = { id: "u_bob", email: "bob@dock.test", name: "Bob" }
+  const { app } = makeAuthedApp("perm-roles", [alice, bob], "commenter")
+  let shortId: string
+
+  it("makes the first member the owner, who can create artifacts", async () => {
+    const res = await publishAs(app, "<h1>a</h1>", {}, as(alice.email))
+    expect(res.status).toBe(201)
+    shortId = (await res.json()).short_id
+  })
+
+  it("provisions later members at the default role (commenter)", async () => {
+    const me = await (await app.request("/v1/me", { headers: as(bob.email) })).json()
+    expect(me.user.role).toBe("commenter")
+  })
+
+  it("blocks a commenter from creating or republishing", async () => {
+    expect((await publishAs(app, "<h1>b</h1>", {}, as(bob.email))).status).toBe(403)
+    expect((await publishAs(app, "<h1>a2</h1>", {}, as(bob.email), shortId)).status).toBe(403)
+  })
+
+  it("lets a commenter comment, but not an unauthenticated caller", async () => {
+    const ok = await app.request(`/v1/artifacts/${shortId}/comments`, jsonAs(as(bob.email), { body_md: "nice" }))
+    expect(ok.status).toBe(201)
+    const anon = await app.request(`/v1/artifacts/${shortId}/comments`, jsonAs({}, { body_md: "x" }))
+    expect(anon.status).toBe(403)
+  })
+})
+
+describe("permissions: a per-artifact share overrides the workspace role", () => {
+  const owner: TestUser = { id: "u_own", email: "own@dock.test", name: "Own" }
+  const carol: TestUser = { id: "u_carol", email: "carol@dock.test", name: "Carol" }
+  const { app } = makeAuthedApp("perm-share", [owner, carol], "viewer")
+  let shortId: string
+
+  it("a workspace viewer can read an org artifact but not republish it", async () => {
+    shortId = (await (await publishAs(app, "<h1>secret</h1>", { visibility: "org" }, as(owner.email))).json()).short_id
+    expect((await app.request(`/v1/artifacts/${shortId}`, { headers: as(carol.email) })).status).toBe(200)
+    expect((await publishAs(app, "<h1>edit</h1>", {}, as(carol.email), shortId)).status).toBe(403)
+  })
+
+  it("sharing the artifact as editor lets the viewer republish, and my_role reflects it", async () => {
+    const share = await app.request(`/v1/artifacts/${shortId}/members`, {
+      method: "PUT",
+      headers: { "content-type": "application/json", ...as(owner.email) },
+      body: JSON.stringify({ email: carol.email, role: "editor" }),
+    })
+    expect(share.status).toBe(201)
+    expect((await publishAs(app, "<h1>edit</h1>", {}, as(carol.email), shortId)).status).toBe(201)
+    const meta = await (await app.request(`/v1/artifacts/${shortId}`, { headers: as(carol.email) })).json()
+    expect(meta.my_role).toBe("editor")
+  })
+
+  it("only an owner can manage shares (an editor cannot)", async () => {
+    const byEditor = await app.request(`/v1/artifacts/${shortId}/members`, {
+      method: "PUT",
+      headers: { "content-type": "application/json", ...as(carol.email) },
+      body: JSON.stringify({ email: owner.email, role: "viewer" }),
+    })
+    expect(byEditor.status).toBe(403)
+  })
+
+  it("the owner sees the share in the member list", async () => {
+    const list = await (await app.request(`/v1/artifacts/${shortId}/members`, { headers: as(owner.email) })).json()
+    expect(list.default_role).toBe("viewer")
+    expect(list.members).toContainEqual(expect.objectContaining({ email: carol.email, role: "editor" }))
   })
 })
 
