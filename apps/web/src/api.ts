@@ -157,7 +157,27 @@ export const api = {
   logout: () => f("/api/auth/sign-out", opts({})).then((r) => r.json().catch(() => ({}))),
   googleUrl: u("/api/auth/sign-in/social?provider=google"),
 
-  listArtifacts: (): Promise<{ artifacts: Artifact[] }> => f("/v1/artifacts", opts()).then(j),
+  listArtifacts: (params?: {
+    q?: string
+    tag?: string
+    favorite?: boolean
+    cursor?: string
+    limit?: number
+  }): Promise<{ artifacts: Artifact[]; next_cursor: string | null }> => {
+    const qs = new URLSearchParams()
+    if (params?.q) qs.set("q", params.q)
+    if (params?.tag) qs.set("tag", params.tag)
+    if (params?.favorite) qs.set("favorite", "true")
+    if (params?.cursor) qs.set("cursor", params.cursor)
+    if (params?.limit) qs.set("limit", String(params.limit))
+    const s = qs.toString()
+    return f(`/v1/artifacts${s ? `?${s}` : ""}`, opts()).then(j)
+  },
+  browseSummary: (): Promise<{
+    total: number
+    favorites: number
+    tags: { tag: string; count: number }[]
+  }> => f("/v1/tags", opts()).then(j),
   getArtifact: (id: string): Promise<Artifact> => f(`/v1/artifacts/${id}`, opts()).then(j),
   getContent: (id: string, v?: number): Promise<string> =>
     f(`/v1/artifacts/${id}/content${v ? `?v=${v}` : ""}`, { credentials: "include" }).then((r) =>

@@ -26,6 +26,16 @@ export interface ArtifactRecord {
   created_at: string
 }
 
+export interface ListArtifactsOpts {
+  limit?: number
+  /** Keyset cursor: return artifacts created strictly before this ISO timestamp. */
+  cursor?: string
+  /** Case-insensitive title search. */
+  q?: string
+  /** Restrict to these artifact ids (tag / favorite filters resolve to ids). Empty ⇒ none. */
+  ids?: string[]
+}
+
 export interface VersionRecord {
   id: string
   artifact_id: string
@@ -78,7 +88,19 @@ export interface MetaStore {
   /** Flips every comment in a thread to a state; returns the count updated. */
   setThreadState(artifactId: string, threadId: string, state: CommentState): Promise<number>
 
-  listArtifacts(opts?: { limit?: number }): Promise<ArtifactRecord[]>
+  /**
+   * Newest-first artifact page. `cursor` is keyset pagination on created_at
+   * (rows strictly older than it); `q` is a case-insensitive title search;
+   * `ids` restricts to a set (tag / favorite filters resolve to ids) — an empty
+   * `ids` array matches nothing.
+   */
+  listArtifacts(opts?: ListArtifactsOpts): Promise<ArtifactRecord[]>
+  /** Artifact ids carrying a tag (server-side tag filtering). */
+  artifactIdsByTag(tag: string): Promise<string[]>
+  /** Total artifact count (browse summary). */
+  countArtifacts(): Promise<number>
+  /** Tag → usage count across the workspace (browse sidebar). */
+  tagCounts(): Promise<{ tag: string; count: number }[]>
 
   /** Append a view event. */
   recordView(v: NewView): Promise<void>

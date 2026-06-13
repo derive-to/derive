@@ -303,23 +303,58 @@ export function createApp(deps: AppDeps): Hono {
     return c.json({ user: { ...u, role } })
   })
 
+  // Newest-first, keyset-paginated (?cursor=<created_at>&limit=N), with optional
+  // server-side ?q= (title search), ?tag=, and ?favorite=true. Returns
+  // { artifacts, next_cursor }. tag/favorite resolve to an id set first.
   app.get("/v1/artifacts", async (c) => {
     const me = await currentUser(c)
     if (!me && deps.token && bearer(c) !== deps.token)
       return c.json({ error: "unauthenticated" }, 401)
-    const artifacts = await meta.listArtifacts({ limit: 200 })
-    const ids = artifacts.map((a) => a.id)
-    const counts = analyticsOn ? await meta.viewCounts(ids) : {}
-    const tags = await meta.tagsForArtifacts(ids)
-    const favorites = me ? new Set(await meta.listUserFavoriteIds(me.id)) : new Set<string>()
+    const limit = Math.min(100, Math.max(1, Number(c.req.query("limit")) || 30))
+    const cursor = c.req.query("cursor") || undefined
+    const q = c.req.query("q")?.trim() || undefined
+    const tag = c.req.query("tag")?.trim() || undefined
+    const favOnly = c.req.query("favorite") === "true"
+
+    const favIds = me ? await meta.listUserFavoriteIds(me.id) : []
+    const favorites = new Set(favIds)
+    let ids: string[] | undefined
+    if (tag) ids = await meta.artifactIdsByTag(tag)
+    if (favOnly) ids = ids ? ids.filter((id) => favorites.has(id)) : favIds
+    if (ids && ids.length === 0) return c.json({ artifacts: [], next_cursor: null })
+
+    const rows = await meta.listArtifacts({ limit: limit + 1, cursor, q, ids })
+    const hasMore = rows.length > limit
+    const page = hasMore ? rows.slice(0, limit) : rows
+    const next_cursor = hasMore ? page[page.length - 1].created_at : null
+
+    const pageIds = page.map((a) => a.id)
+    const counts = analyticsOn ? await meta.viewCounts(pageIds) : {}
+    const tags = await meta.tagsForArtifacts(pageIds)
     return c.json({
-      artifacts: artifacts.map((a) => ({
+      artifacts: page.map((a) => ({
         ...toJson(deps.baseUrl, a, []),
         views: counts[a.id] ?? 0,
         tags: tags[a.id] ?? [],
         favorite: favorites.has(a.id),
       })),
+      next_cursor,
     })
+  })
+
+  // Browse summary for the sidebar: total artifacts, this user's favorite count,
+  // and tag → count (so counts stay accurate independent of the current page).
+  app.get("/v1/tags", async (c) => {
+    const me = await currentUser(c)
+    if (!me && deps.token && bearer(c) !== deps.token)
+      return c.json({ error: "unauthenticated" }, 401)
+    const [total, tags, favIds] = await Promise.all([
+      meta.countArtifacts(),
+      meta.tagCounts(),
+      me ? meta.listUserFavoriteIds(me.id) : Promise.resolve([]),
+    ])
+    tags.sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag))
+    return c.json({ total, favorites: favIds.length, tags })
   })
 
   // ---- Publish ----------------------------------------------------------
