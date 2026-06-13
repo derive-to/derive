@@ -327,22 +327,22 @@ export function Artifact() {
 
   if (failed)
     return (
-      <div style={{ minHeight: "100%" }}>
+      <div className="min-h-full">
         <Header />
-        <div className="center" style={{ height: "60vh", flexDirection: "column", gap: 10 }}>
-          <div className="muted">Artifact not found, or you don't have access.</div>
-          <button className="btn" onClick={() => nav({ to: "/" })}>
+        <div className="grid h-[60vh] place-items-center gap-2.5">
+          <div className="text-muted-foreground">Artifact not found, or you don't have access.</div>
+          <Button variant="outline" onClick={() => nav({ to: "/" })}>
             Back to library
-          </button>
+          </Button>
         </div>
       </div>
     )
   if (!art)
     return (
-      <div style={{ minHeight: "100%" }}>
+      <div className="min-h-full">
         <Header />
-        <div className="center" style={{ height: "60vh" }}>
-          <div className="spin" />
+        <div className="grid h-[60vh] place-items-center">
+          <Spinner />
         </div>
       </div>
     )
@@ -351,21 +351,18 @@ export function Artifact() {
   // gone (the server 410s the raw routes), but an owner can still reinstate.
   if (art.removed)
     return (
-      <div style={{ minHeight: "100%" }}>
+      <div className="min-h-full">
         <Header />
-        <div
-          className="center"
-          style={{ height: "60vh", flexDirection: "column", gap: 12, textAlign: "center" }}
-        >
-          <div style={{ fontSize: 30, opacity: 0.55 }}>🚫</div>
-          <div style={{ fontWeight: 600, fontSize: 16 }}>This artifact was removed</div>
-          <div className="muted" style={{ fontSize: 13, maxWidth: 360, lineHeight: 1.5 }}>
+        <div className="grid h-[60vh] place-items-center gap-3 text-center">
+          <div className="text-3xl opacity-55">🚫</div>
+          <div className="text-lg font-semibold">This artifact was removed</div>
+          <div className="max-w-[360px] text-sm leading-relaxed text-muted-foreground">
             It was taken down by a moderator and is no longer available.
           </div>
-          <div style={{ display: "flex", gap: 8 }}>
+          <div className="flex gap-2">
             {art.my_role === "owner" && (
-              <button
-                className="btn"
+              <Button
+                variant="outline"
                 onClick={async () => {
                   try {
                     await api.reinstate(shortId)
@@ -377,11 +374,11 @@ export function Artifact() {
                 }}
               >
                 Reinstate
-              </button>
+              </Button>
             )}
-            <button className="btn" onClick={() => nav({ to: "/" })}>
+            <Button variant="outline" onClick={() => nav({ to: "/" })}>
               Back to library
-            </button>
+            </Button>
           </div>
         </div>
       </div>
@@ -542,7 +539,7 @@ export function Artifact() {
 
   return (
     <ActionsCtx.Provider value={actions}>
-      <div style={{ height: "100%", display: "flex", flexDirection: "column" }}>
+      <div className="flex h-full flex-col">
         {reviewing && (
           <ReviewOverlay
             shortId={shortId}
@@ -587,123 +584,95 @@ export function Artifact() {
                 }
               />
               {art.open_proposals && art.open_proposals > 0 ? (
-                <button
-                  className="btn sm"
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="border-primary text-primary"
                   onClick={() => setReviewing(true)}
-                  style={{ gap: 6, borderColor: "var(--ac)", color: "var(--ac)" }}
                   title="Review proposed changes"
+                  data-testid="artifact-review"
                 >
-                  Review <b style={{ fontWeight: 700 }}>{art.open_proposals}</b>
-                </button>
+                  Review <b className="font-bold">{art.open_proposals}</b>
+                </Button>
               ) : (
                 !!art.proposals_total &&
                 art.proposals_total > 0 && (
-                  <button
-                    className="btn sm"
+                  <Button
+                    variant="outline"
+                    size="sm"
                     onClick={() => setReviewing(true)}
                     title="See proposals and review feedback"
                   >
                     Proposals
-                  </button>
+                  </Button>
                 )
               )}
               {editable && canPropose && !editing && (
-                <button className="btn sm" onClick={startEdit}>
+                <Button variant="outline" size="sm" onClick={startEdit} data-testid="artifact-edit">
                   {canPublish ? "Edit" : "Propose"}
-                </button>
+                </Button>
               )}
               {/* On phones the bottom-right FAB opens comments, so the header
                 button would just be a redundant extra wrap-row. */}
               {!isMobile && panel !== "open" && (
-                <button
-                  className="btn sm"
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="gap-1.5"
                   onClick={() => setPanel("open")}
-                  style={{ gap: 6 }}
                   title="Show comments (c)"
                 >
-                  💬 {openCount > 0 && <b style={{ fontWeight: 700 }}>{openCount}</b>}
-                </button>
+                  💬 {openCount > 0 && <b className="font-bold">{openCount}</b>}
+                </Button>
               )}
             </>
           }
         />
-        <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
+        <div className="flex min-h-0 flex-1">
           <div
-            style={{
-              flex: 1,
-              display: "flex",
-              flexDirection: "column",
-              minWidth: 0,
-              position: "relative",
+            className={cn(
               // On phones, the comments sheet sits in the bottom half — reserve
               // that space so the document stays visible above it (and a
               // jumped-to highlight lands in view, not behind the sheet).
-              paddingBottom: isMobile && panel === "open" ? "50vh" : undefined,
-              transition: "padding-bottom .26s cubic-bezier(.4,0,.2,1)",
-            }}
+              "relative flex min-w-0 flex-1 flex-col transition-[padding] duration-[260ms]",
+              isMobile && panel === "open" && "pb-[50vh]",
+            )}
           >
             {editing ? (
-              <div
-                style={{
-                  flex: 1,
-                  display: "flex",
-                  flexDirection: "column",
-                  background: "var(--card)",
-                }}
-              >
-                <div
-                  style={{
-                    display: "flex",
-                    gap: 8,
-                    padding: "8px 12px",
-                    borderBottom: "1px solid var(--line-soft)",
-                    alignItems: "center",
-                  }}
-                >
-                  <span className="mono muted" style={{ fontSize: 11 }}>
+              <div className="flex flex-1 flex-col bg-card">
+                <div className="flex items-center gap-2 border-b border-border-soft px-3 py-2">
+                  <span className="font-mono text-xs text-muted-foreground">
                     {canPublish ? "editing source" : "proposing a change"}
                   </span>
                   {/* The proposer's "why" — shown to the reviewer. Editors who
                       publish directly don't need it. */}
                   {!canPublish && (
-                    <input
-                      className="input"
+                    <Input
                       value={proposeMsg}
                       onChange={(e) => setProposeMsg(e.target.value)}
                       placeholder="What are you changing, and why?"
-                      style={{ flex: 1, maxWidth: 420, padding: "5px 9px", fontSize: 12.5 }}
+                      className="h-8 max-w-[420px] flex-1 text-sm"
                     />
                   )}
-                  <span style={{ flex: 1 }} />
-                  <button className="btn sm" onClick={() => setEditing(false)}>
+                  <span className="flex-1" />
+                  <Button variant="outline" size="sm" onClick={() => setEditing(false)}>
                     Cancel
-                  </button>
+                  </Button>
                   {canPublish ? (
-                    <button className="btn pri sm" onClick={publishEdit}>
+                    <Button variant="primary" size="sm" onClick={publishEdit}>
                       Publish new version
-                    </button>
+                    </Button>
                   ) : (
-                    <button className="btn pri sm" onClick={proposeEdit}>
+                    <Button variant="primary" size="sm" onClick={proposeEdit}>
                       Propose change
-                    </button>
+                    </Button>
                   )}
                 </div>
                 <textarea
-                  className="mono"
                   value={src}
                   onChange={(e) => setSrc(e.target.value)}
                   spellCheck={false}
-                  style={{
-                    flex: 1,
-                    border: 0,
-                    resize: "none",
-                    padding: "16px 20px",
-                    fontSize: 13,
-                    lineHeight: 1.6,
-                    color: "var(--fg)",
-                    background: "var(--card)",
-                    outline: "none",
-                  }}
+                  className="flex-1 resize-none border-0 bg-card px-5 py-4 font-mono text-sm leading-relaxed text-foreground outline-none"
                 />
               </div>
             ) : (
@@ -711,55 +680,38 @@ export function Artifact() {
                 {/* History-viewing banner: only when looking at a past version.
                   The current version just shows the artifact, no version chrome. */}
                 {shown !== art.current_version && (
-                  <div
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      flexWrap: "wrap",
-                      rowGap: 6,
-                      gap: 10,
-                      padding: "8px 14px",
-                      borderBottom: "1px solid var(--line-soft)",
-                      background: "var(--ac-soft)",
-                      fontSize: 12.5,
-                    }}
-                  >
-                    <span style={{ color: "var(--ac)", fontWeight: 600 }}>
-                      Viewing an earlier version
-                    </span>
-                    <span className="muted">·</span>
+                  <div className="flex flex-wrap items-center gap-2.5 gap-y-1.5 border-b border-border-soft bg-accent px-3.5 py-2 text-sm">
+                    <span className="font-semibold text-primary">Viewing an earlier version</span>
+                    <span className="text-muted-foreground">·</span>
                     <button
-                      className="lnk"
+                      type="button"
+                      className="text-primary underline underline-offset-2 hover:opacity-80"
                       onClick={() => setView(view === "diff" ? "preview" : "diff")}
                     >
                       {view === "diff" ? "Hide changes" : "Show changes since this"}
                     </button>
-                    <span style={{ flex: 1 }} />
-                    <button className="btn sm" onClick={() => restore(shown)} disabled={restoring}>
+                    <span className="flex-1" />
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => restore(shown)}
+                      disabled={restoring}
+                    >
                       {restoring ? "Restoring…" : "Restore this version"}
-                    </button>
-                    <button
-                      className="btn pri sm"
+                    </Button>
+                    <Button
+                      variant="primary"
+                      size="sm"
                       onClick={() => nav({ to: "/a/$ref", params: { ref: shortId } })}
                     >
                       Back to current
-                    </button>
+                    </Button>
                   </div>
                 )}
                 {view === "diff" && shown !== art.current_version ? (
                   <DiffView diff={diff} fromLabel={`v${shown}`} toLabel="current" />
                 ) : (
-                  <div
-                    ref={presentWrap}
-                    style={{
-                      flex: 1,
-                      display: "flex",
-                      flexDirection: "column",
-                      minHeight: 0,
-                      position: "relative",
-                      background: "#fff",
-                    }}
-                  >
+                  <div ref={presentWrap} className="relative flex min-h-0 flex-1 flex-col bg-white">
                     <iframe
                       ref={frame}
                       onLoad={() => setFrameReady((n) => n + 1)}
@@ -767,7 +719,7 @@ export function Artifact() {
                       src={rawSrc}
                       allow="fullscreen"
                       sandbox="allow-scripts allow-forms allow-popups allow-modals allow-downloads"
-                      style={{ flex: 1, border: 0, background: "#fff" }}
+                      className="flex-1 border-0 bg-white"
                     />
                     {deck && (
                       <DeckBar
@@ -783,28 +735,13 @@ export function Artifact() {
             )}
             {panel === "hidden" && (
               <button
+                type="button"
                 onClick={() => setPanel("open")}
                 title="Show comments (c)"
-                style={{
-                  position: "absolute",
-                  right: 18,
-                  bottom: 18,
-                  height: 44,
-                  borderRadius: 999,
-                  border: "1px solid var(--line)",
-                  background: "var(--card)",
-                  color: "var(--fg)",
-                  cursor: "pointer",
-                  boxShadow: "var(--shadow)",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 8,
-                  padding: "0 16px",
-                  fontWeight: 600,
-                  fontSize: 13,
-                }}
+                data-testid="artifact-comments-fab"
+                className="absolute bottom-[18px] right-[18px] flex h-11 items-center gap-2 rounded-full border border-border bg-card px-4 text-sm font-semibold text-foreground shadow-[var(--shadow)]"
               >
-                <span style={{ fontSize: 15 }}>💬</span>
+                <span className="text-base">💬</span>
                 {openCount > 0 ? `${openCount} comment${openCount === 1 ? "" : "s"}` : "Comments"}
               </button>
             )}
@@ -812,18 +749,11 @@ export function Artifact() {
 
           {!isMobile && (
             <aside
-              style={{
-                width: asideWidth,
-                flex: `0 0 ${asideWidth}px`,
-                borderLeft: panel === "hidden" ? "none" : "1px solid var(--line)",
-                background: "var(--card)",
-                display: "flex",
-                flexDirection: "column",
-                minHeight: 0,
-                overflow: "hidden",
-                transition:
-                  "width .22s cubic-bezier(.4,0,.2,1), flex-basis .22s cubic-bezier(.4,0,.2,1)",
-              }}
+              className={cn(
+                "flex min-h-0 shrink-0 grow-0 flex-col overflow-hidden bg-card transition-[width,flex-basis] duration-200",
+                panel !== "hidden" && "border-l border-border",
+              )}
+              style={{ width: asideWidth, flexBasis: asideWidth }}
             >
               {panel === "rail" ? (
                 <Rail
@@ -906,18 +836,18 @@ export function Artifact() {
           the panel if needed and starts a composer pinned to the selection. */}
         {docLive && sel && !composer && (
           <button
-            className="cmt-bubble"
+            type="button"
+            className="fixed z-50 inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border border-primary bg-card px-2.5 py-1.5 text-xs font-semibold text-primary shadow-[var(--shadow)] transition-colors hover:bg-primary hover:text-primary-foreground"
             title="Comment on the selection"
+            data-testid="comment-on-selection"
             onMouseDown={(e) => e.preventDefault()}
             onClick={() => {
               if (panel !== "open") setPanel("open")
               startSelComment()
             }}
             style={{
-              position: "fixed",
               top: clamp((sel.vTop + sel.vBottom) / 2 - 15, 64, window.innerHeight - 46),
               right: asideWidth + 12,
-              zIndex: 50,
             }}
           >
             💬 Comment
@@ -1629,7 +1559,7 @@ function PinnedZone({
   const pos = layoutPins(items, heights, activeId, 12)
 
   return (
-    <div style={{ position: "absolute", inset: 0, overflow: "hidden" }}>
+    <div className="absolute inset-0 overflow-hidden">
       {pins.map((p) => {
         const id = p.thread[0].thread_id
         const active = !composing && activeThread === id
@@ -1639,13 +1569,9 @@ function PinnedZone({
             key={id}
             ref={measure}
             data-pin={id}
+            className="absolute inset-x-2.5 top-0 transition-transform duration-[180ms]"
             style={{
-              position: "absolute",
-              left: 10,
-              right: 10,
-              top: 0,
               transform: `translateY(${Math.round(y)}px)`,
-              transition: "transform .18s cubic-bezier(.4,0,.2,1)",
               zIndex: active ? 6 : hoverThread === id ? 4 : 2,
               opacity: p.located ? 1 : 0,
             }}
@@ -1668,15 +1594,8 @@ function PinnedZone({
         <div
           ref={measure}
           data-pin={COMPOSER_ID}
-          style={{
-            position: "absolute",
-            left: 10,
-            right: 10,
-            top: 0,
-            transform: `translateY(${Math.round(pos[COMPOSER_ID] ?? composer!.top!)}px)`,
-            transition: "transform .18s cubic-bezier(.4,0,.2,1)",
-            zIndex: 10,
-          }}
+          className="absolute inset-x-2.5 top-0 z-10 transition-transform duration-[180ms]"
+          style={{ transform: `translateY(${Math.round(pos[COMPOSER_ID] ?? composer!.top!)}px)` }}
         >
           <Composer
             quote={composer!.anchor?.exact ?? null}
