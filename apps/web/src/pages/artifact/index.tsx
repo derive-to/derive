@@ -1,11 +1,19 @@
 import { useNavigate, useParams } from "@tanstack/react-router"
 import { useCallback, useEffect, useRef, useState } from "react"
 import { API_BASE, type Artifact as Art, api, type Comment, type Diff, type Mention } from "@/api"
-import { Header, useIsMobile, useToast } from "@/components"
+import { useIsMobile, useToast } from "@/components"
+import { AppShell } from "@/components/app-shell"
+import { Icon } from "@/components/icons"
 import { ReviewOverlay } from "@/components/review"
 import { ShareButton } from "@/components/ShareDialog"
 import { Spinner } from "@/components/shared/spinner"
 import { Button } from "@/components/ui/button"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import { Input } from "@/components/ui/input"
 import { useAuth } from "@/ctx"
 import { STORAGE_KEYS } from "@/lib/storage-keys"
@@ -14,15 +22,16 @@ import { ActionsCtx, type CommentActions } from "./comment-actions"
 import { MobileComments, OpenPanel } from "./comment-panels"
 import { DiffView } from "./diff-view"
 import { CollectionsMenu, ReportButton, StarButton, TagsMenu } from "./header-actions"
-import { HistoryMenu, Insights } from "./insights-history"
+import { HistoryDrawer, Insights } from "./insights-history"
 import { clamp, groupThreads, parseAnchor } from "./lib/layout"
 import { toggleReaction } from "./lib/reactions"
 import { DeckBar, Presence, Rail } from "./rail-deck"
 import type { Panel, PinItem, Sel } from "./types"
 
+const PANEL_KEY = STORAGE_KEYS.commentsPanel
 const loadPanel = (): Panel => {
   try {
-    const v = localStorage.getItem(STORAGE_KEYS.commentsPanel)
+    const v = localStorage.getItem(PANEL_KEY)
     return v === "rail" || v === "hidden" ? v : "open"
   } catch {
     return "open"
@@ -47,6 +56,8 @@ export function Artifact() {
   const [comments, setComments] = useState<Comment[]>([])
   const [editing, setEditing] = useState(false)
   const [reviewing, setReviewing] = useState(false)
+  // Which "⋯ More" surface is open (large dialog / drawer).
+  const [surface, setSurface] = useState<null | "insights" | "history">(null)
   const [proposeMsg, setProposeMsg] = useState("")
   const [view, setView] = useState<"preview" | "diff">("preview")
   const [diff, setDiff] = useState<Diff | null>(null)
@@ -124,7 +135,7 @@ export function Artifact() {
   // Persist the collapse state.
   useEffect(() => {
     try {
-      localStorage.setItem(STORAGE_KEYS.commentsPanel, panel)
+      localStorage.setItem(PANEL_KEY, panel)
     } catch {
       /* private mode — ignore */
     }
@@ -308,9 +319,8 @@ export function Artifact() {
 
   if (failed)
     return (
-      <div className="min-h-full">
-        <Header />
-        <div className="grid h-[60vh] place-items-center gap-2.5">
+      <AppShell>
+        <div className="grid h-full place-items-center gap-2.5">
           <div className="text-muted-foreground">Artifact not found, or you don't have access.</div>
           <Button
             variant="outline"
@@ -320,26 +330,24 @@ export function Artifact() {
             Back to library
           </Button>
         </div>
-      </div>
+      </AppShell>
     )
   if (!art)
     return (
-      <div className="min-h-full">
-        <Header />
-        <div className="grid h-[60vh] place-items-center">
+      <AppShell>
+        <div className="grid h-full place-items-center">
           <Spinner />
         </div>
-      </div>
+      </AppShell>
     )
 
   // Removed artifacts show a tombstone instead of the document — content is
   // gone (the server 410s the raw routes), but an owner can still reinstate.
   if (art.removed)
     return (
-      <div className="min-h-full">
-        <Header />
-        <div className="grid h-[60vh] place-items-center gap-3 text-center">
-          <div className="text-3xl opacity-55">🚫</div>
+      <AppShell>
+        <div className="grid h-full place-items-center gap-3 text-center">
+          <Icon name="removed" size={40} className="opacity-55" />
           <div className="text-lg font-semibold">This artifact was removed</div>
           <div className="max-w-[360px] text-sm leading-relaxed text-muted-foreground">
             It was taken down by a moderator and is no longer available.
@@ -371,7 +379,7 @@ export function Artifact() {
             </Button>
           </div>
         </div>
-      </div>
+      </AppShell>
     )
 
   const shown = version ?? art.current_version
@@ -528,8 +536,90 @@ export function Artifact() {
   const asideWidth = isMobile ? 0 : panel === "open" ? 340 : panel === "rail" ? 50 : 0
 
   return (
-    <ActionsCtx.Provider value={actions}>
-      <div className="flex h-full flex-col">
+    <AppShell
+      topBarActions={
+        <>
+          {!isMobile && <Presence viewers={viewers} self={me?.name ?? me?.email ?? ""} />}
+          <StarButton
+            shortId={shortId}
+            favorite={!!art.favorite}
+            onChange={(fav) => setArt((a) => (a ? { ...a, favorite: fav } : a))}
+          />
+          <TagsMenu
+            shortId={shortId}
+            tags={art.tags ?? []}
+            canEdit={art.my_role === "editor" || art.my_role === "owner"}
+            onChange={(tags) => setArt((a) => (a ? { ...a, tags } : a))}
+          />
+          <CollectionsMenu
+            shortId={shortId}
+            inCollections={art.collections ?? []}
+            onChange={(collections) => setArt((a) => (a ? { ...a, collections } : a))}
+          />
+          <ShareButton shortId={shortId} myRole={art.my_role} />
+          <ReportButton shortId={shortId} onDone={show} />
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="outline"
+                size="icon"
+                title="More"
+                data-testid="artifact-more"
+                className={cn(
+                  art.open_proposals && art.open_proposals > 0 && "border-primary text-primary",
+                )}
+              >
+                <Icon name="more" size={18} />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent>
+              <DropdownMenuItem
+                data-testid="artifact-insights"
+                onSelect={() => setSurface("insights")}
+              >
+                <Icon name="insights" size={16} /> Insights
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                data-testid="artifact-history"
+                onSelect={() => setSurface("history")}
+              >
+                <Icon name="history" size={16} /> Version history
+              </DropdownMenuItem>
+              {!!art.proposals_total && art.proposals_total > 0 && (
+                <DropdownMenuItem data-testid="artifact-review" onSelect={() => setReviewing(true)}>
+                  <Icon name="review" size={16} />
+                  {art.open_proposals && art.open_proposals > 0
+                    ? `Review proposals (${art.open_proposals})`
+                    : "Proposals"}
+                </DropdownMenuItem>
+              )}
+              {editable && canPropose && !editing && (
+                <DropdownMenuItem data-testid="artifact-edit" onSelect={startEdit}>
+                  <Icon name="edit" size={16} />
+                  {canPublish ? "Edit source (dev)" : "Propose change (dev)"}
+                </DropdownMenuItem>
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
+          {/* On phones the bottom-right FAB opens comments, so the header
+                button would just be a redundant extra wrap-row. */}
+          {!isMobile && panel !== "open" && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-1.5"
+              data-testid="artifact-show-comments"
+              onClick={() => setPanel("open")}
+              title="Show comments (c)"
+            >
+              <Icon name="comments" size={16} />
+              {openCount > 0 && <b className="font-bold">{openCount}</b>}
+            </Button>
+          )}
+        </>
+      }
+    >
+      <ActionsCtx.Provider value={actions}>
         {reviewing && (
           <ReviewOverlay
             shortId={shortId}
@@ -540,85 +630,23 @@ export function Artifact() {
             onApplied={load}
           />
         )}
-        <Header
-          right={
-            <>
-              {!isMobile && <Presence viewers={viewers} self={me?.name ?? me?.email ?? ""} />}
-              <StarButton
-                shortId={shortId}
-                favorite={!!art.favorite}
-                onChange={(fav) => setArt((a) => (a ? { ...a, favorite: fav } : a))}
-              />
-              <TagsMenu
-                shortId={shortId}
-                tags={art.tags ?? []}
-                canEdit={art.my_role === "editor" || art.my_role === "owner"}
-                onChange={(tags) => setArt((a) => (a ? { ...a, tags } : a))}
-              />
-              <CollectionsMenu
-                shortId={shortId}
-                inCollections={art.collections ?? []}
-                onChange={(collections) => setArt((a) => (a ? { ...a, collections } : a))}
-              />
-              <ShareButton shortId={shortId} myRole={art.my_role} />
-              <ReportButton shortId={shortId} onDone={show} />
-              <Insights shortId={shortId} />
-              <HistoryMenu
-                art={art}
-                shown={shown}
-                goTo={(n) =>
-                  nav({
-                    to: "/a/$ref",
-                    params: { ref: n === art.current_version ? shortId : `${shortId}@v${n}` },
-                  })
-                }
-              />
-              {art.open_proposals && art.open_proposals > 0 ? (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="border-primary text-primary"
-                  onClick={() => setReviewing(true)}
-                  title="Review proposed changes"
-                  data-testid="artifact-review"
-                >
-                  Review <b className="font-bold">{art.open_proposals}</b>
-                </Button>
-              ) : (
-                !!art.proposals_total &&
-                art.proposals_total > 0 && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    data-testid="artifact-proposals"
-                    onClick={() => setReviewing(true)}
-                    title="See proposals and review feedback"
-                  >
-                    Proposals
-                  </Button>
-                )
-              )}
-              {editable && canPropose && !editing && (
-                <Button variant="outline" size="sm" onClick={startEdit} data-testid="artifact-edit">
-                  {canPublish ? "Edit" : "Propose"}
-                </Button>
-              )}
-              {/* On phones the bottom-right FAB opens comments, so the header
-                button would just be a redundant extra wrap-row. */}
-              {!isMobile && panel !== "open" && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="gap-1.5"
-                  data-testid="artifact-show-comments"
-                  onClick={() => setPanel("open")}
-                  title="Show comments (c)"
-                >
-                  💬 {openCount > 0 && <b className="font-bold">{openCount}</b>}
-                </Button>
-              )}
-            </>
+        <Insights
+          shortId={shortId}
+          title={art.title}
+          open={surface === "insights"}
+          onOpenChange={(o) => setSurface(o ? "insights" : null)}
+        />
+        <HistoryDrawer
+          art={art}
+          shown={shown}
+          goTo={(n) =>
+            nav({
+              to: "/a/$ref",
+              params: { ref: n === art.current_version ? shortId : `${shortId}@v${n}` },
+            })
           }
+          open={surface === "history"}
+          onOpenChange={(o) => setSurface(o ? "history" : null)}
         />
         <div className="flex min-h-0 flex-1">
           <div
@@ -631,19 +659,20 @@ export function Artifact() {
             )}
           >
             {editing ? (
-              <div className="flex flex-1 flex-col bg-card">
-                <div className="flex items-center gap-2 border-b border-border-soft px-3 py-2">
+              <div className="fixed inset-0 z-[70] flex flex-col bg-card">
+                <div className="flex items-center gap-2 border-b border-border-soft px-4 py-2.5">
+                  <Icon name="edit" size={16} />
                   <span className="font-mono text-xs text-muted-foreground">
-                    {canPublish ? "editing source" : "proposing a change"}
+                    {canPublish ? `Editing source · ${art.title ?? shortId}` : "Proposing a change"}
                   </span>
                   {/* The proposer's "why" — shown to the reviewer. Editors who
                       publish directly don't need it. */}
                   {!canPublish && (
                     <Input
                       value={proposeMsg}
-                      data-testid="artifact-propose-message"
                       onChange={(e) => setProposeMsg(e.target.value)}
                       placeholder="What are you changing, and why?"
+                      data-testid="artifact-propose-message"
                       className="h-8 max-w-[420px] flex-1 text-sm"
                     />
                   )}
@@ -678,9 +707,9 @@ export function Artifact() {
                 </div>
                 <textarea
                   value={src}
-                  data-testid="artifact-source-editor"
                   onChange={(e) => setSrc(e.target.value)}
                   spellCheck={false}
+                  data-testid="artifact-source-editor"
                   className="flex-1 resize-none border-0 bg-card px-5 py-4 font-mono text-sm leading-relaxed text-foreground outline-none"
                 />
               </div>
@@ -753,8 +782,10 @@ export function Artifact() {
                 data-testid="artifact-comments-fab"
                 className="absolute bottom-[18px] right-[18px] flex h-11 items-center gap-2 rounded-full border border-border bg-card px-4 text-sm font-semibold text-foreground shadow-[var(--shadow)]"
               >
-                <span className="text-base">💬</span>
-                {openCount > 0 ? `${openCount} comment${openCount === 1 ? "" : "s"}` : "Comments"}
+                <Icon name="comments" size={18} />
+                {openCount > 0
+                  ? `${openCount} comment${openCount === 1 ? "" : "s"}`
+                  : "Show comments"}
               </button>
             )}
           </div>
@@ -862,12 +893,12 @@ export function Artifact() {
               right: asideWidth + 12,
             }}
           >
-            💬 Comment
+            <Icon name="comments" size={14} /> Comment
           </button>
         )}
         {toast}
-      </div>
-    </ActionsCtx.Provider>
+      </ActionsCtx.Provider>
+    </AppShell>
   )
 }
 

@@ -12,7 +12,8 @@ test("owner reviews proposals: toggles views, approves one, requests changes on 
   await proposeEdit(secondUser.page.request, id, "Fix the footer", "# Doc\n\nbody\n\nfixed footer")
 
   await owner.goto(`/a/${id}`)
-  // The artifact header surfaces a Review button while proposals are open.
+  // Review lives in the artifact's "⋯ More" menu while proposals are open.
+  await owner.getByTestId("artifact-more").click()
   await owner.getByTestId("artifact-review").click()
 
   // Overlay is up: identity, view toggle, and both proposals in the rail.
