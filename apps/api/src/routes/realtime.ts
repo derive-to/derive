@@ -44,5 +44,34 @@ export const realtimeRoutes = (ctx: AppContext) => {
     return c.json({ viewers })
   })
 
+  // Live cursor: a viewer's pointer position (viewport-normalized 0..1) fanned out
+  // to everyone else on the artifact. Ephemeral — never stored, never webhooked;
+  // it rides the same backplane as presence, so the DO relays it across isolates.
+  app.post("/v1/artifacts/:shortId/cursor", async (c) => {
+    const artifact = await meta.getByShortId(c.req.param("shortId"))
+    if (!artifact || !(await authorize(c, "read", artifact))) return fail(c, 404, "not found")
+    const body = await readJson(
+      c,
+      z.object({
+        id: z.string().min(1).max(64),
+        name: z.string().max(80).optional(),
+        color: z.string().max(32).optional(),
+        x: z.number(),
+        y: z.number(),
+      }),
+    )
+    if (body instanceof Response) return body
+    const clamp = (n: number) => (n < 0 ? 0 : n > 1 ? 1 : n)
+    bus.publish(artifact.id, {
+      type: "cursor",
+      id: body.id,
+      name: body.name ?? "anonymous",
+      color: body.color ?? "#655999",
+      x: clamp(body.x),
+      y: clamp(body.y),
+    })
+    return c.body(null, 204)
+  })
+
   return app
 }
