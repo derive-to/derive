@@ -9,6 +9,7 @@ import {
   type BlobStore,
   BUNDLE_CONTENT_TYPE,
   type BundleManifest,
+  type CollectionRecord,
   type CommentRecord,
   can,
   DEFAULT_VERSION_WINDOW_MS,
@@ -19,6 +20,7 @@ import {
   isAnchored,
   isRole,
   type MetaStore,
+  maxRole,
   mimeFor,
   newId,
   type ProposalRecord,
@@ -321,7 +323,11 @@ export function createApp(deps: AppDeps): Hono {
     if (!me) return { kind: "anon", open }
     const orgRole = await ensureMembership(me.id)
     const am = await meta.getArtifactMember(a.id, me.id)
-    return { kind: "user", userId: me.id, artifactRole: am?.role ?? null, orgRole, open }
+    // A collection share grants its role on every artifact in the collection,
+    // folded in alongside any per-artifact share (the higher wins).
+    const cRoles = await meta.collectionRolesForArtifact(a.id, me.id)
+    const artifactRole = maxRole(am?.role ?? null, ...cRoles)
+    return { kind: "user", userId: me.id, artifactRole, orgRole, open }
   }
 
   /** Authorize an action against a specific artifact. */
@@ -392,22 +398,36 @@ export function createApp(deps: AppDeps): Hono {
     if (!me && deps.token && bearer(c) !== deps.token)
       return c.json({ error: "unauthenticated" }, 401)
     const limit = Math.min(100, Math.max(1, Number(c.req.query("limit")) || 30))
-    const cursor = c.req.query("cursor") || undefined
+    // Opaque compound cursor "<created_at>|<id>" — the id tiebreak keeps paging
+    // correct when many artifacts share a created_at.
+    const rawCursor = c.req.query("cursor")
+    const sep = rawCursor?.indexOf("|") ?? -1
+    const cursor =
+      rawCursor && sep > 0
+        ? { created_at: rawCursor.slice(0, sep), id: rawCursor.slice(sep + 1) }
+        : undefined
     const q = c.req.query("q")?.trim() || undefined
     const tag = c.req.query("tag")?.trim() || undefined
+    const collectionId = c.req.query("collection")?.trim() || undefined
     const favOnly = c.req.query("favorite") === "true"
 
     const favIds = me ? await meta.listUserFavoriteIds(me.id) : []
     const favorites = new Set(favIds)
+    // tag / collection / favorite each narrow to an id set; intersect when combined.
     let ids: string[] | undefined
-    if (tag) ids = await meta.artifactIdsByTag(tag)
-    if (favOnly) ids = ids ? ids.filter((id) => favorites.has(id)) : favIds
+    const narrow = (next: string[]) => {
+      ids = ids ? ids.filter((id) => next.includes(id)) : next
+    }
+    if (tag) narrow(await meta.artifactIdsByTag(tag))
+    if (collectionId) narrow(await meta.collectionArtifactIds(collectionId))
+    if (favOnly) narrow(favIds)
     if (ids && ids.length === 0) return c.json({ artifacts: [], next_cursor: null })
 
     const rows = await meta.listArtifacts({ limit: limit + 1, cursor, q, ids })
     const hasMore = rows.length > limit
     const page = hasMore ? rows.slice(0, limit) : rows
-    const next_cursor = hasMore ? page[page.length - 1].created_at : null
+    const last = page[page.length - 1]
+    const next_cursor = hasMore && last ? `${last.created_at}|${last.id}` : null
 
     const pageIds = page.map((a) => a.id)
     const counts = analyticsOn ? await meta.viewCounts(pageIds) : {}
@@ -436,6 +456,120 @@ export function createApp(deps: AppDeps): Hono {
     ])
     tags.sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag))
     return c.json({ total, favorites: favIds.length, tags })
+  })
+
+  // ---- Collections (shareable groups; a member's role propagates to items) -
+  // A user's role on a collection: creator/member role, token/open → owner.
+  const collectionRole = async (c: Context, col: CollectionRecord): Promise<Role | null> => {
+    if (deps.token && bearer(c) === deps.token) return "owner"
+    const me = await currentUser(c)
+    if (!me) return open ? "owner" : null
+    if (col.created_by === me.id) return "owner"
+    const m = await meta.getCollectionMember(col.id, me.id)
+    return m?.role ?? (open ? "owner" : null)
+  }
+  const canManageCollection = async (c: Context, col: CollectionRecord, action: Action) =>
+    roleAllows((await collectionRole(c, col)) ?? "viewer", action)
+
+  app.get("/v1/collections", async (c) => {
+    if (!(await currentUser(c)) && deps.token && bearer(c) !== deps.token)
+      return c.json({ error: "unauthenticated" }, 401)
+    return c.json({ collections: await meta.listCollections() })
+  })
+  app.post("/v1/collections", async (c) => {
+    if (!(await workspaceCan(c, "comment"))) return c.json({ error: "forbidden" }, 403)
+    const me = await currentUser(c)
+    const body = (await c.req.json().catch(() => ({}))) as { title?: string }
+    const title = (body.title ?? "").trim().slice(0, 120)
+    if (!title) return c.json({ error: "title required" }, 400)
+    const createdBy = me?.id ?? "local"
+    const col = await meta.createCollection({
+      id: newId("col"),
+      org_id: WORKSPACE,
+      title,
+      created_by: createdBy,
+    })
+    // The creator joins as owner: they manage it, and (like any member) their
+    // role propagates to the collection's artifacts.
+    await meta.setCollectionMember({
+      id: newId("cm"),
+      collection_id: col.id,
+      user_id: createdBy,
+      role: "owner",
+    })
+    return c.json(col, 201)
+  })
+  app.patch("/v1/collections/:id", async (c) => {
+    const col = await meta.getCollection(c.req.param("id"))
+    if (!col) return c.json({ error: "not found" }, 404)
+    if (!(await canManageCollection(c, col, "publish"))) return c.json({ error: "forbidden" }, 403)
+    const body = (await c.req.json().catch(() => ({}))) as { title?: string }
+    return c.json(await meta.updateCollection(col.id, { title: body.title?.trim().slice(0, 120) }))
+  })
+  app.delete("/v1/collections/:id", async (c) => {
+    const col = await meta.getCollection(c.req.param("id"))
+    if (!col) return c.json({ error: "not found" }, 404)
+    if (!(await canManageCollection(c, col, "manage"))) return c.json({ error: "forbidden" }, 403)
+    await meta.deleteCollection(col.id)
+    return c.body(null, 204)
+  })
+  app.put("/v1/collections/:id/items/:shortId", async (c) => {
+    const col = await meta.getCollection(c.req.param("id"))
+    if (!col) return c.json({ error: "not found" }, 404)
+    if (!(await canManageCollection(c, col, "publish"))) return c.json({ error: "forbidden" }, 403)
+    const art = await meta.getByShortId(c.req.param("shortId"))
+    if (!art) return c.json({ error: "artifact not found" }, 404)
+    await meta.addCollectionItem(col.id, art.id)
+    return c.json({ ok: true })
+  })
+  app.delete("/v1/collections/:id/items/:shortId", async (c) => {
+    const col = await meta.getCollection(c.req.param("id"))
+    if (!col) return c.json({ error: "not found" }, 404)
+    if (!(await canManageCollection(c, col, "publish"))) return c.json({ error: "forbidden" }, 403)
+    const art = await meta.getByShortId(c.req.param("shortId"))
+    if (!art) return c.json({ error: "artifact not found" }, 404)
+    await meta.removeCollectionItem(col.id, art.id)
+    return c.body(null, 204)
+  })
+  app.get("/v1/collections/:id/members", async (c) => {
+    const col = await meta.getCollection(c.req.param("id"))
+    if (!col || (await collectionRole(c, col)) === null) return c.json({ error: "not found" }, 404)
+    const rows = await meta.listCollectionMembers(col.id)
+    const users = await meta.getUsers(rows.map((r) => r.user_id))
+    const byId = new Map(users.map((u) => [u.id, u]))
+    return c.json({
+      created_by: col.created_by,
+      members: rows.map((r) => ({
+        user_id: r.user_id,
+        email: byId.get(r.user_id)?.email ?? null,
+        name: byId.get(r.user_id)?.name ?? null,
+        role: r.role,
+      })),
+    })
+  })
+  app.put("/v1/collections/:id/members", async (c) => {
+    const col = await meta.getCollection(c.req.param("id"))
+    if (!col) return c.json({ error: "not found" }, 404)
+    if (!(await canManageCollection(c, col, "manage"))) return c.json({ error: "forbidden" }, 403)
+    const b = (await c.req.json().catch(() => ({}))) as { email?: string; role?: string }
+    if (!b.email || !isRole(b.role))
+      return c.json({ error: "email and a valid role are required" }, 400)
+    const user = await meta.findUserByEmail(b.email.trim())
+    if (!user) return c.json({ error: "no Dock user with that email" }, 404)
+    await meta.setCollectionMember({
+      id: newId("cm"),
+      collection_id: col.id,
+      user_id: user.id,
+      role: b.role,
+    })
+    return c.json({ user_id: user.id, email: user.email, name: user.name, role: b.role }, 201)
+  })
+  app.delete("/v1/collections/:id/members/:userId", async (c) => {
+    const col = await meta.getCollection(c.req.param("id"))
+    if (!col) return c.json({ error: "not found" }, 404)
+    if (!(await canManageCollection(c, col, "manage"))) return c.json({ error: "forbidden" }, 403)
+    await meta.removeCollectionMember(col.id, c.req.param("userId"))
+    return c.body(null, 204)
   })
 
   // ---- Publish ----------------------------------------------------------
@@ -528,6 +662,7 @@ export function createApp(deps: AppDeps): Hono {
     const me = actor.kind === "user" ? actor.userId : null
     const tags = (await meta.tagsForArtifacts([artifact.id]))[artifact.id] ?? []
     const favorite = me ? (await meta.listUserFavoriteIds(me)).includes(artifact.id) : false
+    const collections = await meta.collectionIdsForArtifact(artifact.id)
     const proposals = await meta.listProposals(artifact.id)
     // `versions` stays at revision granularity (machines/agents); `sessions` is
     // the time-grouped view the UI shows by default. `my_role` tells the client
@@ -540,6 +675,7 @@ export function createApp(deps: AppDeps): Hono {
       my_role: effectiveRole(actor, artifact.visibility),
       tags,
       favorite,
+      collections,
       open_proposals: proposals.filter((p) => p.state === "open").length,
       proposals_total: proposals.filter((p) => p.state !== "withdrawn").length,
     })

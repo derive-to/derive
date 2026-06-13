@@ -2,6 +2,8 @@ import type { D1Database } from "@cloudflare/workers-types"
 import type {
   ArtifactMemberRecord,
   ArtifactRecord,
+  CollectionMemberRecord,
+  CollectionRecord,
   CommentRecord,
   CommentState,
   DeliveryRecord,
@@ -11,6 +13,8 @@ import type {
   MetaStore,
   NewArtifact,
   NewArtifactMember,
+  NewCollection,
+  NewCollectionMember,
   NewComment,
   NewDelivery,
   NewMembership,
@@ -22,6 +26,7 @@ import type {
   NotificationRecord,
   ProposalRecord,
   ProposalState,
+  Role,
   UserDir,
   VersionRecord,
   ViewStats,
@@ -34,6 +39,9 @@ import {
   artifactFavorite,
   artifactMember,
   artifactTag,
+  collection,
+  collectionItem,
+  collectionMember,
   comment,
   membership,
   notification,
@@ -55,6 +63,9 @@ const schema = {
   artifactFavorite,
   artifactTag,
   proposal,
+  collection,
+  collectionItem,
+  collectionMember,
 }
 const VIEW_WINDOW_MS = 30 * 86400_000
 
@@ -161,13 +172,19 @@ export class D1MetaStore implements MetaStore {
     if (opts?.ids && opts.ids.length === 0) return []
     const conds = []
     if (opts?.q) conds.push(like(sql`lower(${artifact.title})`, `%${opts.q.toLowerCase()}%`))
-    if (opts?.cursor) conds.push(lt(artifact.created_at, opts.cursor))
+    if (opts?.cursor)
+      conds.push(
+        or(
+          lt(artifact.created_at, opts.cursor.created_at),
+          and(eq(artifact.created_at, opts.cursor.created_at), lt(artifact.id, opts.cursor.id)),
+        ),
+      )
     if (opts?.ids) conds.push(inArray(artifact.id, opts.ids))
     const q = this.db
       .select()
       .from(artifact)
       .where(conds.length ? and(...conds) : undefined)
-      .orderBy(desc(artifact.created_at))
+      .orderBy(desc(artifact.created_at), desc(artifact.id))
     return (opts?.limit ? q.limit(opts.limit) : q).all()
   }
   async artifactIdsByTag(tag: string): Promise<string[]> {
@@ -406,6 +423,126 @@ export class D1MetaStore implements MetaStore {
         .insert(artifactTag)
         .values(tags.map((tag) => ({ id: crypto.randomUUID(), artifact_id: artifactId, tag })))
         .run()
+  }
+
+  // ---- Collections (no interactive transactions on D1; sequential writes) -
+  async createCollection(c: NewCollection): Promise<CollectionRecord> {
+    return this.db.insert(collection).values(c).returning().get()
+  }
+  async getCollection(id: string): Promise<CollectionRecord | null> {
+    return (await this.db.select().from(collection).where(eq(collection.id, id)).get()) ?? null
+  }
+  async updateCollection(id: string, fields: { title?: string }): Promise<CollectionRecord | null> {
+    if (fields.title === undefined) return this.getCollection(id)
+    return (
+      (await this.db
+        .update(collection)
+        .set({ title: fields.title })
+        .where(eq(collection.id, id))
+        .returning()
+        .get()) ?? null
+    )
+  }
+  async deleteCollection(id: string): Promise<void> {
+    await this.db.delete(collectionItem).where(eq(collectionItem.collection_id, id)).run()
+    await this.db.delete(collectionMember).where(eq(collectionMember.collection_id, id)).run()
+    await this.db.delete(collection).where(eq(collection.id, id)).run()
+  }
+  async listCollections(): Promise<(CollectionRecord & { count: number })[]> {
+    const rows = await this.db.select().from(collection).orderBy(desc(collection.created_at)).all()
+    const counts = await this.db
+      .select({ id: collectionItem.collection_id, c: count() })
+      .from(collectionItem)
+      .groupBy(collectionItem.collection_id)
+      .all()
+    const cmap = new Map(counts.map((r) => [r.id, r.c]))
+    return rows.map((r) => ({ ...r, count: cmap.get(r.id) ?? 0 }))
+  }
+  async collectionArtifactIds(collectionId: string): Promise<string[]> {
+    const rows = await this.db
+      .select({ id: collectionItem.artifact_id })
+      .from(collectionItem)
+      .where(eq(collectionItem.collection_id, collectionId))
+      .all()
+    return rows.map((r) => r.id)
+  }
+  async collectionIdsForArtifact(artifactId: string): Promise<string[]> {
+    const rows = await this.db
+      .select({ id: collectionItem.collection_id })
+      .from(collectionItem)
+      .where(eq(collectionItem.artifact_id, artifactId))
+      .all()
+    return rows.map((r) => r.id)
+  }
+  async addCollectionItem(collectionId: string, artifactId: string): Promise<void> {
+    await this.db
+      .insert(collectionItem)
+      .values({ id: crypto.randomUUID(), collection_id: collectionId, artifact_id: artifactId })
+      .onConflictDoNothing({ target: [collectionItem.collection_id, collectionItem.artifact_id] })
+      .run()
+  }
+  async removeCollectionItem(collectionId: string, artifactId: string): Promise<void> {
+    await this.db
+      .delete(collectionItem)
+      .where(
+        and(
+          eq(collectionItem.collection_id, collectionId),
+          eq(collectionItem.artifact_id, artifactId),
+        ),
+      )
+      .run()
+  }
+  async getCollectionMember(
+    collectionId: string,
+    userId: string,
+  ): Promise<CollectionMemberRecord | null> {
+    return (
+      (await this.db
+        .select()
+        .from(collectionMember)
+        .where(
+          and(
+            eq(collectionMember.collection_id, collectionId),
+            eq(collectionMember.user_id, userId),
+          ),
+        )
+        .get()) ?? null
+    )
+  }
+  listCollectionMembers(collectionId: string): Promise<CollectionMemberRecord[]> {
+    return this.db
+      .select()
+      .from(collectionMember)
+      .where(eq(collectionMember.collection_id, collectionId))
+      .all()
+  }
+  setCollectionMember(m: NewCollectionMember): Promise<CollectionMemberRecord> {
+    return this.db
+      .insert(collectionMember)
+      .values(m)
+      .onConflictDoUpdate({
+        target: [collectionMember.collection_id, collectionMember.user_id],
+        set: { role: m.role },
+      })
+      .returning()
+      .get()
+  }
+  async removeCollectionMember(collectionId: string, userId: string): Promise<void> {
+    await this.db
+      .delete(collectionMember)
+      .where(
+        and(eq(collectionMember.collection_id, collectionId), eq(collectionMember.user_id, userId)),
+      )
+      .run()
+  }
+  async collectionRolesForArtifact(artifactId: string, userId: string): Promise<Role[]> {
+    const rows = await this.db
+      .select({ role: collectionMember.role })
+      .from(collectionMember)
+      .innerJoin(collectionItem, eq(collectionItem.collection_id, collectionMember.collection_id))
+      .where(and(eq(collectionItem.artifact_id, artifactId), eq(collectionMember.user_id, userId)))
+      .all()
+    return rows.map((r) => r.role)
   }
 
   // ---- Reviews: proposed versions ----------------------------------------
