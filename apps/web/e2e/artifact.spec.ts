@@ -79,3 +79,17 @@ test("insights panel reports the owner's own view is excluded", async ({ page })
   await page.getByRole("button", { name: /Insights/ }).click()
   await expect(page.getByText(/viewers?/i).first()).toBeVisible()
 })
+
+test("star and report from the header", async ({ page }) => {
+  // Star toggles favorite state optimistically.
+  const star = page.getByTestId("artifact-star")
+  await expect(star).toHaveAttribute("aria-pressed", "false")
+  await star.click()
+  await expect(star).toHaveAttribute("aria-pressed", "true")
+
+  // Report opens a popover, takes a reason, and confirms.
+  await page.getByTestId("artifact-report").click()
+  await page.getByTestId("report-reason").fill("spam content")
+  await page.getByTestId("report-submit").click()
+  await expect(page.getByText(/flagged for review/i)).toBeVisible()
+})

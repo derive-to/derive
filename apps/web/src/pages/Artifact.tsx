@@ -952,19 +952,19 @@ function StarButton({
     }
   }
   return (
-    <button
-      className="btn sm"
+    <Button
+      variant="outline"
+      size="sm"
       onClick={toggle}
       disabled={busy}
       title={favorite ? "Remove from favorites" : "Add to favorites"}
       aria-label="Toggle favorite"
-      style={{
-        color: favorite ? "#e0a93a" : undefined,
-        borderColor: favorite ? "#e0a93a" : undefined,
-      }}
+      aria-pressed={favorite}
+      data-testid="artifact-star"
+      className={cn(favorite && "border-gold text-gold hover:text-gold")}
     >
       {favorite ? "★" : "☆"}
-    </button>
+    </Button>
   )
 }
 
@@ -975,14 +975,6 @@ function ReportButton({ shortId, onDone }: { shortId: string; onDone: (msg: stri
   const [reason, setReason] = useState("")
   const [sent, setSent] = useState(false)
   const [busy, setBusy] = useState(false)
-  const ref = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    const h = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
-    }
-    document.addEventListener("click", h)
-    return () => document.removeEventListener("click", h)
-  }, [])
   const submit = async () => {
     const r = reason.trim()
     if (!r || busy) return
@@ -998,69 +990,54 @@ function ReportButton({ shortId, onDone }: { shortId: string; onDone: (msg: stri
     }
   }
   return (
-    <div ref={ref} style={{ position: "relative" }}>
-      <button
-        className="btn sm"
-        onClick={(e) => {
-          e.stopPropagation()
-          setOpen((o) => !o)
-        }}
-        title="Report this artifact"
-        aria-label="Report"
-      >
-        ⚐
-      </button>
-      {open && (
-        <div
-          className="card"
-          style={{
-            position: "absolute",
-            right: 0,
-            top: "calc(100% + 7px)",
-            width: 256,
-            padding: 12,
-            boxShadow: "var(--shadow)",
-            zIndex: 30,
-          }}
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button
+          variant="outline"
+          size="sm"
+          title="Report this artifact"
+          aria-label="Report"
+          data-testid="artifact-report"
         >
-          {sent ? (
-            <div className="muted" style={{ fontSize: 12.5, lineHeight: 1.5 }}>
-              Thanks — this has been flagged for review.
+          ⚐
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="end" className="w-64">
+        {sent ? (
+          <div className="text-sm leading-relaxed text-muted-foreground">
+            Thanks — this has been flagged for review.
+          </div>
+        ) : (
+          <>
+            <div className="mb-2 font-mono text-2xs uppercase tracking-[0.06em] text-muted-foreground">
+              Report artifact
             </div>
-          ) : (
-            <>
-              <div
-                className="mono muted"
-                style={{
-                  fontSize: 9.5,
-                  letterSpacing: ".06em",
-                  textTransform: "uppercase",
-                  marginBottom: 8,
-                }}
+            <Textarea
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              placeholder="What's wrong with this? (required)"
+              rows={3}
+              data-testid="report-reason"
+              className="resize-none text-sm"
+            />
+            <div className="mt-2 flex justify-end gap-1.5">
+              <Button variant="outline" size="sm" onClick={() => setOpen(false)}>
+                Cancel
+              </Button>
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={submit}
+                disabled={!reason.trim() || busy}
+                data-testid="report-submit"
               >
-                Report artifact
-              </div>
-              <textarea
-                className="input"
-                value={reason}
-                onChange={(e) => setReason(e.target.value)}
-                placeholder="What's wrong with this? (required)"
-                rows={3}
-                style={{ width: "100%", padding: "6px 9px", fontSize: 12.5, resize: "none" }}
-              />
-              <div style={{ display: "flex", justifyContent: "flex-end", gap: 6, marginTop: 8 }}>
-                <button className="btn sm" onClick={() => setOpen(false)}>
-                  Cancel
-                </button>
-                <button className="btn pri sm" onClick={submit} disabled={!reason.trim() || busy}>
-                  {busy ? "Sending…" : "Report"}
-                </button>
-              </div>
-            </>
-          )}
-        </div>
-      )}
-    </div>
+                {busy ? "Sending…" : "Report"}
+              </Button>
+            </div>
+          </>
+        )}
+      </PopoverContent>
+    </Popover>
   )
 }
 
