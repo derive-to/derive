@@ -13,7 +13,12 @@ const VIEW_WINDOW_MS = 30 * 86400_000
  * transactions, so the repos' sequential writes are used as-is — addVersion
  * relies on UNIQUE(artifact_id, n) to turn a race into a clean error.
  *
- * Apply deploy/d1-schema.sql once before first use.
+ * Apply deploy/d1-schema.sql once before first use (generated from the shared
+ * SCHEMA_STATEMENTS; see src/d1-schema.ts).
+ *
+ * Experimental: the shared query logic rides on the SQLite suite and the schema on
+ * schema-conformance, but the D1-specific runtime path has no integration test yet
+ * and Dock ships no Worker entrypoint. Treat as unverified. See DEPLOY.md.
  */
 export function createD1Store(d1: D1Database): MetaStore {
   const db = drizzle(d1, { schema })

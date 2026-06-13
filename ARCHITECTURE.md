@@ -65,8 +65,12 @@ All three drivers implement the single `MetaStore` interface from `core/ports.ts
 - **pg** (`node-postgres`, async) is a different dialect (its own `pgTable` schema,
   `::int` casts, `for("update")` locks) and keeps a parallel repository set.
 
-`Exact<>` compile-time guards in `schema.ts`/`pg-schema.ts` assert every drizzle row
-type matches its `core` record type, so the two schemas can't drift from the port.
+Per-table parity guards (`packages/db/src/parity.ts`) force every drizzle table to be
+classified and assert each typed table's row shape matches its `core` Record, so the
+schemas can't drift from the port. Type guards only catch type drift, so the pg adapter
+is also run against the full `apps/api` suite (`pnpm test:pg`, a real Postgres in
+Docker): behavioral drift in the parallel pg implementation fails CI, not just
+signature drift.
 Adapters are selected by env in `node.ts` (`DATABASE_URL` ⇒ Postgres, else SQLite);
 the Workers entry can only reach `./d1` + `./schema`.
 

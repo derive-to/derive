@@ -18,7 +18,8 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "vitest run --passWithNoTests"
+    "test": "vitest run --passWithNoTests",
+    "gen:d1-schema": "vitest run test/d1-schema.test.ts -u"
   },
   "dependencies": {
     "@dock/core": "workspace:*",

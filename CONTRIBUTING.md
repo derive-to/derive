@@ -78,6 +78,9 @@ shipping. If something below surprises you, that's the guardrail doing its job:
   raw `SCHEMA_STATEMENTS`/`MIGRATION_STATEMENTS` and asserts every drizzle column exists
   in the table that's actually created — so a column in the type but missing from the
   DDL goes red.
+- **Postgres behavioral drift.** The full `apps/api` suite also runs against a real
+  Postgres in CI (`pnpm test:pg`), so a pg driver bug (a wrong query, a missing org
+  scope) fails a test, not just a typecheck.
 - **Event names.** Bus and webhook event names come from one list
   (`apps/api/src/events.ts`); a typo or a webhook event the bus doesn't know about is a
   compile error.
@@ -94,4 +97,14 @@ shipping. If something below surprises you, that's the guardrail doing its job:
 
 API behavior is covered by `apps/api/test/*` (vitest against `app.request()`, no
 network). New routes get tests; bug fixes get a regression test. Hit a real
-in-memory SQLite store rather than mocking the DB layer.
+SQLite store rather than mocking the DB layer.
+
+```bash
+pnpm test       # the suite on embedded SQLite (zero-config), the first CI job
+pnpm test:pg    # the SAME suite on a real Postgres (ephemeral Docker container)
+```
+
+`pnpm test:pg` ([scripts/test-pg.sh](scripts/test-pg.sh)) points the harness at
+Postgres with `DOCK_TEST_DB=pg` + `TEST_DATABASE_URL` (each test app gets an isolated
+schema), so the hosted-tier driver is verified by the full behavioral suite, not just
+typecheck. CI runs both jobs. Requires Docker.

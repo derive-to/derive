@@ -33,3 +33,23 @@ jobs:
 
       - name: Test
         run: pnpm test
+
+  # Runs the SAME apps/api suite against a real Postgres (ephemeral Docker
+  # container, via scripts/test-pg.sh) so the hosted-tier driver is covered by
+  # the full behavioral suite, not just typecheck + parity guards.
+  pg:
+    runs-on: ubicloud-standard-2
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Test against Postgres
+        run: pnpm test:pg

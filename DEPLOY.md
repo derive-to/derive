@@ -164,3 +164,23 @@ fly secrets set DOCK_WEB_ORIGIN='https://app.example.com' DOCK_CROSS_SITE='true'
 `DOCK_CROSS_SITE=true` makes the session cookie `SameSite=None; Secure` so it rides the
 cross-origin SPA→API request; `DOCK_WEB_ORIGIN` allow-lists the SPA for CORS.
 `apps/web/public/_redirects` already ships the SPA fallback.
+
+## Cloudflare Workers + D1 (experimental)
+
+`packages/db` ships a Cloudflare D1 driver (`@dock/db/d1`) for an edge deployment, but
+this path is **experimental and unverified**. It reuses the same SQLite repositories and
+schema as the default driver, so the query logic and DDL are covered by the test suite,
+but the D1-specific runtime has no integration test yet and Dock ships no Worker
+entrypoint. Don't expect production parity with the SQLite or Postgres tiers.
+
+To experiment, the bootstrap schema is generated for you from the shared source of truth:
+
+```bash
+wrangler d1 create dock
+wrangler d1 execute dock --file=deploy/d1-schema.sql
+# d1-schema.sql is generated; after a schema change run: pnpm --filter @dock/db gen:d1-schema
+```
+
+Then wire `createD1Store(env.DB)` from `@dock/db/d1` into your Worker's fetch handler.
+Closing the gap to "supported" means a Miniflare-backed smoke test of the driver; the
+shared half is already covered by the SQLite suite.
