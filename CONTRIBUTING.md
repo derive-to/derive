@@ -107,6 +107,10 @@ shipping. If something below surprises you, that's the guardrail doing its job:
 - **Ad-hoc error responses.** A route that returns `c.json({ error }, status)` directly
   fails `pnpm lint:api`. Return `fail(c, status, message)` (`apps/api/src/lib/http.ts`) so
   the error shape stays one thing.
+- **Unvalidated request bodies.** A route that reads `c.req.json()` directly fails
+  `pnpm lint:api`. Parse + validate with `readJson(c, schema)` (`apps/api/src/lib/http.ts`,
+  zod) so a new or renamed field can't slip past validation; it returns the typed data or a
+  400 you return as-is (`if (body instanceof Response) return body`).
 
 The custom checks (`lint:tokens`, `lint:frontend`, `lint:testids`, `lint:api`) and Biome all
 run inside `pnpm run ci`, so the one gate command covers them; `pnpm typecheck` and

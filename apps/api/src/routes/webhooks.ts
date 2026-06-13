@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto"
 import { Hono } from "hono"
+import { z } from "zod"
 import type { AppContext } from "../context"
-import { fail } from "../lib/http"
+import { fail, readJson } from "../lib/http"
 import { isPublicHttpUrl } from "../lib/net"
 import { WEBHOOK_EVENTS, type WebhookEvent } from "../webhooks"
 
@@ -21,7 +22,8 @@ export const webhookRoutes = (ctx: AppContext) => {
 
   app.post("/v1/webhooks", async (c) => {
     if (!(await workspaceCan(c, "manage"))) return fail(c, 403, "forbidden")
-    const b = (await c.req.json().catch(() => ({}))) as Record<string, unknown>
+    const b = await readJson(c, z.object({}).catchall(z.unknown()))
+    if (b instanceof Response) return b
     if (typeof b.url !== "string" || !isPublicHttpUrl(b.url))
       return fail(c, 400, "a valid public http(s) url is required")
     const kind = b.kind === "slack" ? "slack" : "generic"

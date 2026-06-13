@@ -1,9 +1,10 @@
 import { randomUUID } from "node:crypto"
 import { type AgentRecord, newId, type Role } from "@dock/core"
 import { Hono } from "hono"
+import { z } from "zod"
 import type { AppContext } from "../context"
 import { sha256 } from "../lib/crypto"
-import { fail } from "../lib/http"
+import { fail, readJson } from "../lib/http"
 
 /** Agent registry (Admin-managed) + the agent's pull inbox of @mentions. */
 export const agentRoutes = (ctx: AppContext) => {
@@ -30,9 +31,15 @@ export const agentRoutes = (ctx: AppContext) => {
   // opt-in. Owner is never allowed for an agent.
   app.post("/v1/agents", async (c) => {
     if (!(await workspaceCan(c, "manage"))) return fail(c, 403, "forbidden")
-    const b = (await c.req.json().catch(() => ({}))) as { name?: unknown; role?: unknown }
-    const name = typeof b.name === "string" ? b.name.trim() : ""
-    if (!name) return fail(c, 400, "name required")
+    const b = await readJson(
+      c,
+      z.object({
+        name: z.string().refine((s) => s.trim() !== "", "name required"),
+        role: z.unknown(),
+      }),
+    )
+    if (b instanceof Response) return b
+    const name = b.name.trim()
     const role: Role =
       b.role === "viewer" || b.role === "commenter" || b.role === "editor" ? b.role : "commenter"
     const token = `dk_agt_${randomUUID().replace(/-/g, "")}${randomUUID().replace(/-/g, "")}`

@@ -1,6 +1,7 @@
 import type { Role, Visibility } from "@dock/core"
 import type { Context } from "hono"
 import type { ContentfulStatusCode } from "hono/utils/http-status"
+import type { z } from "zod"
 
 /**
  * The one error-response shape. Routes return `fail(c, status, message)` rather
@@ -9,6 +10,25 @@ import type { ContentfulStatusCode } from "hono/utils/http-status"
  */
 export const fail = (c: Context, status: ContentfulStatusCode, message: string) =>
   c.json({ error: message }, status)
+
+/**
+ * Parse + validate a JSON request body against a zod schema. Returns the typed,
+ * validated data, or a 400 `Response` the caller returns directly:
+ *
+ *   const body = await readJson(c, z.object({ title: z.string().min(1) }))
+ *   if (body instanceof Response) return body
+ *
+ * Replaces the unchecked `(await c.req.json().catch(() => ({}))) as T` cast, so a
+ * new or renamed field can't slip past validation. Enforced by the
+ * no-raw-json-cast guard (scripts/check-api.mjs).
+ */
+export const readJson = async <T>(c: Context, schema: z.ZodType<T>): Promise<T | Response> => {
+  const raw = await c.req.json().catch(() => ({}))
+  const parsed = schema.safeParse(raw)
+  if (!parsed.success)
+    return fail(c, 400, parsed.error.issues[0]?.message ?? "invalid request body")
+  return parsed.data
+}
 
 export const DEFAULT_WORKSPACE_NAME = "My Workspace"
 /** Cookie holding the active workspace id (multi-workspace mode). */

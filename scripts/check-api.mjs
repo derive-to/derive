@@ -13,6 +13,10 @@ const RULES = [
     re: /c\.json\(\{\s*error/,
     msg: "return errors via fail(c, status, message) (lib/http.ts), not a bare c.json({ error })",
   },
+  {
+    re: /c\.req\.json\(/,
+    msg: "validate the body with readJson(c, schema) (lib/http.ts), not a raw c.req.json() cast",
+  },
 ]
 
 const stripIgnorable = (line) => line.replace(/\/\/.*$/, "").replace(/\/\*.*?\*\//g, "")

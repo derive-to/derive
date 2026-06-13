@@ -1,7 +1,8 @@
 import { newId } from "@dock/core"
 import { Hono } from "hono"
+import { z } from "zod"
 import type { AppContext } from "../context"
-import { fail, str } from "../lib/http"
+import { fail, readJson, str } from "../lib/http"
 
 /** Abuse reports (public) + takedown / reinstate / audit (Admin). A taken-down
  *  artifact keeps its record but serves no content (410). */
@@ -15,9 +16,15 @@ export const moderationRoutes = (ctx: AppContext) => {
   app.post("/v1/artifacts/:shortId/report", async (c) => {
     const artifact = await meta.getByShortId(c.req.param("shortId"))
     if (!artifact) return fail(c, 404, "not found")
-    const b = (await c.req.json().catch(() => ({}))) as { reason?: unknown; detail?: unknown }
-    const reason = typeof b.reason === "string" && b.reason.trim() ? b.reason.trim() : ""
-    if (!reason) return fail(c, 400, "reason required")
+    const b = await readJson(
+      c,
+      z.object({
+        reason: z.string().refine((s) => s.trim() !== "", "reason required"),
+        detail: z.unknown(),
+      }),
+    )
+    if (b instanceof Response) return b
+    const reason = b.reason.trim()
     const ip = (
       c.req.header("x-forwarded-for")?.split(",")[0] ??
       c.req.header("x-real-ip") ??
@@ -61,7 +68,8 @@ export const moderationRoutes = (ctx: AppContext) => {
     const artifact = await meta.getByShortId(c.req.param("shortId"))
     if (!artifact) return fail(c, 404, "not found")
     const who = (await actingUser(c))?.name ?? "owner"
-    const b = (await c.req.json().catch(() => ({}))) as { note?: unknown }
+    const b = await readJson(c, z.object({ note: z.unknown() }))
+    if (b instanceof Response) return b
     await meta.setArtifactRemoved(artifact.id, new Date().toISOString())
     for (const r of await meta.listReports({ state: "open" }))
       if (r.artifact_id === artifact.id) await meta.setReportState(r.id, "actioned")

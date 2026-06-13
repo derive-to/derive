@@ -1,6 +1,7 @@
 import { Hono } from "hono"
+import { z } from "zod"
 import type { AppContext } from "../context"
-import { fail } from "../lib/http"
+import { fail, readJson } from "../lib/http"
 
 /** Favorites (personal stars) + tags (workspace browse metadata). */
 export const favoriteRoutes = (ctx: AppContext) => {
@@ -47,7 +48,8 @@ export const favoriteRoutes = (ctx: AppContext) => {
     const artifact = await meta.getByShortId(c.req.param("shortId"))
     if (!artifact || !(await authorize(c, "read", artifact))) return fail(c, 404, "not found")
     if (!(await authorize(c, "publish", artifact))) return fail(c, 403, "forbidden")
-    const body = (await c.req.json().catch(() => ({}))) as { tags?: unknown }
+    const body = await readJson(c, z.object({ tags: z.unknown() }))
+    if (body instanceof Response) return body
     const tags = normalizeTags(body.tags)
     await meta.setArtifactTags(artifact.id, tags)
     return c.json({ tags })

@@ -11,12 +11,14 @@ import {
   toJson,
 } from "@dock/core"
 import { type Context, Hono } from "hono"
+import { z } from "zod"
 import type { AppContext } from "../context"
 import { safeEqual } from "../lib/crypto"
 import {
   DEFAULT_WORKSPACE_NAME,
   fail,
   MAX_UPLOAD_BYTES,
+  readJson,
   str,
   TOMBSTONE,
   visibilityOf,
@@ -249,9 +251,9 @@ export const artifactRoutes = (ctx: AppContext) => {
     const artifact = await meta.getByShortId(c.req.param("shortId"))
     if (!artifact) return fail(c, 404, "not found")
     if (!(await authorize(c, "publish", artifact))) return fail(c, 403, "forbidden")
-    const body = (await c.req.json().catch(() => ({}))) as { version?: number }
-    if (!Number.isInteger(body.version)) return fail(c, 400, "version required")
-    const src = await meta.getVersion(artifact.id, body.version as number)
+    const body = await readJson(c, z.object({ version: z.number().int("version required") }))
+    if (body instanceof Response) return body
+    const src = await meta.getVersion(artifact.id, body.version)
     if (!src) return fail(c, 404, `no version ${body.version}`)
     const me = await currentUser(c)
     const version = await meta.addVersion(artifact.id, {

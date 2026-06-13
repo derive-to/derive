@@ -1,7 +1,8 @@
 import { newId, type Role } from "@dock/core"
 import { Hono } from "hono"
+import { z } from "zod"
 import type { AppContext } from "../context"
-import { DEFAULT_WORKSPACE_NAME, fail, isWorkspaceRole } from "../lib/http"
+import { DEFAULT_WORKSPACE_NAME, fail, isWorkspaceRole, readJson } from "../lib/http"
 
 /** The workspace itself: name + members (Admin-managed), plus multi-workspace
  *  list / create / switch. A workspace always keeps at least one Admin. */
@@ -47,9 +48,12 @@ export const workspaceRoutes = (ctx: AppContext) => {
   // Rename the workspace (Admin only).
   app.patch("/v1/workspace", async (c) => {
     if (!(await workspaceCan(c, "manage"))) return fail(c, 403, "forbidden")
-    const b = (await c.req.json().catch(() => ({}))) as { name?: unknown }
-    const name = typeof b.name === "string" ? b.name.trim().slice(0, 80) : ""
-    if (!name) return fail(c, 400, "name required")
+    const b = await readJson(
+      c,
+      z.object({ name: z.string().refine((s) => s.trim() !== "", "name required") }),
+    )
+    if (b instanceof Response) return b
+    const name = b.name.trim().slice(0, 80)
     const ws = await meta.setWorkspace(await activeWorkspace(c), name)
     return c.json({ name: ws.name })
   })
@@ -57,9 +61,14 @@ export const workspaceRoutes = (ctx: AppContext) => {
   // Add a member by email, or update their role (Admin only).
   app.put("/v1/workspace/members", async (c) => {
     if (!(await workspaceCan(c, "manage"))) return fail(c, 403, "forbidden")
-    const b = (await c.req.json().catch(() => ({}))) as { email?: string; role?: unknown }
-    if (!b.email || !isWorkspaceRole(b.role))
-      return fail(c, 400, "email and a valid role are required")
+    const b = await readJson(
+      c,
+      z.object({
+        email: z.string().min(1, "an email is required"),
+        role: z.custom<Role>(isWorkspaceRole, "a valid role is required"),
+      }),
+    )
+    if (b instanceof Response) return b
     const user = await meta.findUserByEmail(b.email.trim())
     if (!user) return fail(c, 404, "no Dock user with that email")
     const org = await activeWorkspace(c)
@@ -81,8 +90,11 @@ export const workspaceRoutes = (ctx: AppContext) => {
   app.patch("/v1/workspace/members/:userId", async (c) => {
     if (!(await workspaceCan(c, "manage"))) return fail(c, 403, "forbidden")
     const userId = c.req.param("userId")
-    const b = (await c.req.json().catch(() => ({}))) as { role?: unknown }
-    if (!isWorkspaceRole(b.role)) return fail(c, 400, "a valid role is required")
+    const b = await readJson(
+      c,
+      z.object({ role: z.custom<Role>(isWorkspaceRole, "a valid role is required") }),
+    )
+    if (b instanceof Response) return b
     const org = await activeWorkspace(c)
     const existing = await meta.getMembership(org, userId)
     if (!existing) return fail(c, 404, "not a member")
@@ -134,9 +146,12 @@ export const workspaceRoutes = (ctx: AppContext) => {
     if (!multi) return fail(c, 403, "multi-workspace is disabled")
     const me = await currentUser(c)
     if (!me) return fail(c, 401, "unauthenticated")
-    const b = (await c.req.json().catch(() => ({}))) as { name?: unknown }
-    const name = typeof b.name === "string" ? b.name.trim().slice(0, 80) : ""
-    if (!name) return fail(c, 400, "name required")
+    const b = await readJson(
+      c,
+      z.object({ name: z.string().refine((s) => s.trim() !== "", "name required") }),
+    )
+    if (b instanceof Response) return b
+    const name = b.name.trim().slice(0, 80)
     const id = newId("ws")
     await meta.setWorkspace(id, name)
     await meta.setMembership({ id: newId("m"), org_id: id, user_id: me.id, role: "owner" })
@@ -149,7 +164,8 @@ export const workspaceRoutes = (ctx: AppContext) => {
     if (!multi) return fail(c, 403, "multi-workspace is disabled")
     const me = await currentUser(c)
     if (!me) return fail(c, 401, "unauthenticated")
-    const b = (await c.req.json().catch(() => ({}))) as { id?: unknown }
+    const b = await readJson(c, z.object({}).catchall(z.unknown()))
+    if (b instanceof Response) return b
     const id = typeof b.id === "string" ? b.id : ""
     if (!id || !(await meta.getMembership(id, me.id)))
       return fail(c, 403, "not a member of that workspace")
