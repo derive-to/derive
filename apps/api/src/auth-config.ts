@@ -1,8 +1,8 @@
-import type Database from "better-sqlite3"
-import type { Pool } from "pg"
 import { betterAuth } from "better-auth"
 import { getMigrations } from "better-auth/db/migration"
 import { genericOAuth } from "better-auth/plugins"
+import type Database from "better-sqlite3"
+import type { Pool } from "pg"
 
 const env = (k: string) => process.env[k]
 
@@ -14,12 +14,15 @@ export type AuthDb = Database.Database | Pool
  * an enterprise OIDC provider (Okta/Entra/etc.) via the generic-OAuth plugin
  * when OIDC_* is set. Owns its own user/session/account tables.
  */
-export function makeAuth(db: AuthDb, baseUrl: string) {
+export function makeAuth(db: AuthDb, baseUrl: string, secret: string) {
   // The browser sends its own Origin (the web app), which differs from the API's
   // baseURL whenever the SPA and API are on separate origins (dev proxy, or the
   // hosted split of static-web + API container). DOCK_WEB_ORIGIN lists those in
   // production; localhost dev ports are trusted automatically.
-  const webOrigins = (env("DOCK_WEB_ORIGIN") ?? "").split(",").map((s) => s.trim()).filter(Boolean)
+  const webOrigins = (env("DOCK_WEB_ORIGIN") ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean)
   const devOrigins = /^https?:\/\/(localhost|127\.0\.0\.1)(:|$)/.test(baseUrl)
     ? ["http://localhost:3000", "http://localhost:5173"]
     : []
@@ -55,7 +58,7 @@ export function makeAuth(db: AuthDb, baseUrl: string) {
   return betterAuth({
     database: db,
     baseURL: baseUrl,
-    secret: env("DOCK_AUTH_SECRET") ?? "dock-dev-insecure-secret-change-me-please-32",
+    secret,
     emailAndPassword: { enabled: true },
     socialProviders,
     trustedOrigins: trusted,
