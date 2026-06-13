@@ -21,7 +21,7 @@ import { ActionsCtx, type CommentActions } from "./comment-actions"
 import { MobileComments, OpenPanel } from "./comment-panels"
 import { DiffView } from "./diff-view"
 import { CollectionsMenu, ReportButton, StarButton, TagsMenu } from "./header-actions"
-import { HistoryMenu, Insights } from "./insights-history"
+import { HistoryDrawer, Insights } from "./insights-history"
 import { clamp, groupThreads, parseAnchor } from "./lib/layout"
 import { toggleReaction } from "./lib/reactions"
 import { DeckBar, Presence, Rail } from "./rail-deck"
@@ -55,6 +55,8 @@ export function Artifact() {
   const [comments, setComments] = useState<Comment[]>([])
   const [editing, setEditing] = useState(false)
   const [reviewing, setReviewing] = useState(false)
+  // Which "⋯ More" surface is open (large dialog / drawer).
+  const [surface, setSurface] = useState<null | "insights" | "history">(null)
   const [proposeMsg, setProposeMsg] = useState("")
   const [view, setView] = useState<"preview" | "diff">("preview")
   const [diff, setDiff] = useState<Diff | null>(null)
@@ -546,54 +548,49 @@ export function Artifact() {
           />
           <ShareButton shortId={shortId} myRole={art.my_role} />
           <ReportButton shortId={shortId} onDone={show} />
-          <Insights shortId={shortId} />
-          <HistoryMenu
-            art={art}
-            shown={shown}
-            goTo={(n) =>
-              nav({
-                to: "/a/$ref",
-                params: { ref: n === art.current_version ? shortId : `${shortId}@v${n}` },
-              })
-            }
-          />
-          {((editable && canPropose && !editing) ||
-            (art.proposals_total && art.proposals_total > 0)) && (
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  variant="outline"
-                  size="icon"
-                  title="More actions"
-                  data-testid="artifact-more"
-                  className={cn(
-                    art.open_proposals && art.open_proposals > 0 && "border-primary text-primary",
-                  )}
-                >
-                  <Icon name="more" size={18} />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent>
-                {!!art.proposals_total && art.proposals_total > 0 && (
-                  <DropdownMenuItem
-                    data-testid="artifact-review"
-                    onSelect={() => setReviewing(true)}
-                  >
-                    <Icon name="review" size={16} />
-                    {art.open_proposals && art.open_proposals > 0
-                      ? `Review proposals (${art.open_proposals})`
-                      : "Proposals"}
-                  </DropdownMenuItem>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="outline"
+                size="icon"
+                title="More"
+                data-testid="artifact-more"
+                className={cn(
+                  art.open_proposals && art.open_proposals > 0 && "border-primary text-primary",
                 )}
-                {editable && canPropose && !editing && (
-                  <DropdownMenuItem data-testid="artifact-edit" onSelect={startEdit}>
-                    <Icon name="edit" size={16} />
-                    {canPublish ? "Edit source (dev)" : "Propose change (dev)"}
-                  </DropdownMenuItem>
-                )}
-              </DropdownMenuContent>
-            </DropdownMenu>
-          )}
+              >
+                <Icon name="more" size={18} />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent>
+              <DropdownMenuItem
+                data-testid="artifact-insights"
+                onSelect={() => setSurface("insights")}
+              >
+                <Icon name="insights" size={16} /> Insights
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                data-testid="artifact-history"
+                onSelect={() => setSurface("history")}
+              >
+                <Icon name="history" size={16} /> Version history
+              </DropdownMenuItem>
+              {!!art.proposals_total && art.proposals_total > 0 && (
+                <DropdownMenuItem data-testid="artifact-review" onSelect={() => setReviewing(true)}>
+                  <Icon name="review" size={16} />
+                  {art.open_proposals && art.open_proposals > 0
+                    ? `Review proposals (${art.open_proposals})`
+                    : "Proposals"}
+                </DropdownMenuItem>
+              )}
+              {editable && canPropose && !editing && (
+                <DropdownMenuItem data-testid="artifact-edit" onSelect={startEdit}>
+                  <Icon name="edit" size={16} />
+                  {canPublish ? "Edit source (dev)" : "Propose change (dev)"}
+                </DropdownMenuItem>
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
           {/* On phones the bottom-right FAB opens comments, so the header
                 button would just be a redundant extra wrap-row. */}
           {!isMobile && panel !== "open" && (
@@ -622,6 +619,24 @@ export function Artifact() {
             onApplied={load}
           />
         )}
+        <Insights
+          shortId={shortId}
+          title={art.title}
+          open={surface === "insights"}
+          onOpenChange={(o) => setSurface(o ? "insights" : null)}
+        />
+        <HistoryDrawer
+          art={art}
+          shown={shown}
+          goTo={(n) =>
+            nav({
+              to: "/a/$ref",
+              params: { ref: n === art.current_version ? shortId : `${shortId}@v${n}` },
+            })
+          }
+          open={surface === "history"}
+          onOpenChange={(o) => setSurface(o ? "history" : null)}
+        />
         <div className="flex min-h-0 flex-1">
           <div
             className={cn(
@@ -633,10 +648,11 @@ export function Artifact() {
             )}
           >
             {editing ? (
-              <div className="flex flex-1 flex-col bg-card">
-                <div className="flex items-center gap-2 border-b border-border-soft px-3 py-2">
+              <div className="fixed inset-0 z-[70] flex flex-col bg-card">
+                <div className="flex items-center gap-2 border-b border-border-soft px-4 py-2.5">
+                  <Icon name="edit" size={16} />
                   <span className="font-mono text-xs text-muted-foreground">
-                    {canPublish ? "editing source" : "proposing a change"}
+                    {canPublish ? `Editing source · ${art.title ?? shortId}` : "Proposing a change"}
                   </span>
                   {/* The proposer's "why" — shown to the reviewer. Editors who
                       publish directly don't need it. */}
