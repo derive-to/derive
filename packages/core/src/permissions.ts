@@ -56,8 +56,9 @@ export interface Actor {
   /** Baseline role from membership in the artifact's workspace, if any. */
   orgRole?: Role | null
   /**
-   * Unsecured instance (no static token configured): anonymous callers are
-   * trusted as owners, preserving the zero-config self-host / CI experience.
+   * "Open" instance: anonymous (and non-member) callers are trusted as owners,
+   * for zero-config self-host / CI. Set per deployment (the `open` dep / DOCK_OPEN);
+   * a real multi-user instance leaves it off so normal permissions apply.
    */
   open?: boolean
 }

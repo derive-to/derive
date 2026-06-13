@@ -91,6 +91,7 @@ the default role. Sign up at `/login`.
 | `DOCK_WEB_ORIGIN` | (none) | Comma-separated web origins for CORS (split deploy only) |
 | `DOCK_CROSS_SITE` | `false` | `true` for `SameSite=None; Secure` cookies (split deploy only) |
 | `DOCK_TOKEN` | (none) | Static bearer token for CI/agents |
+| `DOCK_OPEN` | `!DOCK_TOKEN` (Node) · `false` (Worker) | `true` trusts anonymous callers as owners (zero-config single-user). Leave off for a real multi-user instance so permissions apply (anon → viewer on public links, else no access). |
 | `DOCK_WEB_DIR` | (auto) | Override the bundled SPA path |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | (none) | Google sign-in |
 | `OIDC_ISSUER` / `OIDC_CLIENT_ID` / `OIDC_CLIENT_SECRET` / `OIDC_PROVIDER_ID` | (none) | Enterprise SSO |
