@@ -38,15 +38,24 @@ export function Artifact() {
 
   // The anchor channel with the sandboxed iframe (see SELECTION_SCRIPT).
   const frame = useRef<HTMLIFrameElement>(null)
+  const presentWrap = useRef<HTMLDivElement>(null)
   const [frameReady, setFrameReady] = useState(0)
   const [inDoc, setInDoc] = useState<Record<string, boolean>>({})
   const [activeThread, setActiveThread] = useState<string | null>(null)
+  // Set when the artifact announces itself as a deck (dock-deck protocol).
+  const [deck, setDeck] = useState<{ i: number; total: number } | null>(null)
   const threadEls = useRef(new Map<string, HTMLDivElement>())
 
   useEffect(() => {
     const onMsg = (e: MessageEvent) => {
       const d = e.data
-      if (!d || d.source !== "dock") return
+      if (!d) return
+      // A slide deck reporting its position (any HTML that speaks the protocol).
+      if (d.source === "dock-deck" && d.type === "state") {
+        setDeck({ i: d.i ?? 0, total: d.total ?? 1 })
+        return
+      }
+      if (d.source !== "dock") return
       if (d.type === "select") setAnchor(d.selector ?? null)
       // which threads' text exists in the shown version (truth for highlights + badges)
       else if (d.type === "anchors-resolved") setInDoc(d.resolved ?? {})
@@ -59,6 +68,31 @@ export function Artifact() {
     window.addEventListener("message", onMsg)
     return () => window.removeEventListener("message", onMsg)
   }, [])
+
+  // Drive the deck from the host bar; fullscreen wraps the iframe + bar so the
+  // controls stay reachable while presenting.
+  const deckCmd = (action: "next" | "prev" | "goto", n?: number) =>
+    frame.current?.contentWindow?.postMessage({ source: "dock-host", type: "deck", action, n }, "*")
+  const toggleFullscreen = () => {
+    const el = presentWrap.current
+    if (!el) return
+    if (document.fullscreenElement) document.exitFullscreen()
+    else el.requestFullscreen?.()
+  }
+  // Reset deck state when the artifact/version changes (re-announced on load).
+  useEffect(() => setDeck(null), [shortId, version])
+  // Arrow keys drive the deck from the host (when not typing in a field).
+  useEffect(() => {
+    if (!deck) return
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA")) return
+      if (e.key === "ArrowRight") deckCmd("next")
+      else if (e.key === "ArrowLeft") deckCmd("prev")
+    }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [deck])
 
   // Paint highlights for open, anchored threads whenever the doc or comments change.
   const sendAnchors = useCallback(() => {
@@ -268,14 +302,25 @@ export function Artifact() {
               {view === "diff" && shown !== art.current_version ? (
                 <DiffView diff={diff} fromLabel={`v${shown}`} toLabel="current" />
               ) : (
-                <iframe
-                  ref={frame}
-                  onLoad={() => setFrameReady((n) => n + 1)}
-                  title={art.title ?? shortId}
-                  src={rawSrc}
-                  sandbox="allow-scripts allow-forms allow-popups allow-modals allow-downloads"
-                  style={{ flex: 1, border: 0, background: "#fff" }}
-                />
+                <div ref={presentWrap} style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0, position: "relative", background: "#fff" }}>
+                  <iframe
+                    ref={frame}
+                    onLoad={() => setFrameReady((n) => n + 1)}
+                    title={art.title ?? shortId}
+                    src={rawSrc}
+                    allow="fullscreen"
+                    sandbox="allow-scripts allow-forms allow-popups allow-modals allow-downloads"
+                    style={{ flex: 1, border: 0, background: "#fff" }}
+                  />
+                  {deck && (
+                    <DeckBar
+                      deck={deck}
+                      onPrev={() => deckCmd("prev")}
+                      onNext={() => deckCmd("next")}
+                      onFullscreen={toggleFullscreen}
+                    />
+                  )}
+                </div>
               )}
             </>
           )}
@@ -417,6 +462,59 @@ function Thread({
 
 // Who is viewing right now. Live over the presence SSE channel; self listed
 // first as "you". Hidden when you're the only one here.
+// Host presentation bar — shown when the artifact is a slide deck. Drives the
+// deck over postMessage and fullscreens the wrapper (controls stay reachable).
+function DeckBar({
+  deck,
+  onPrev,
+  onNext,
+  onFullscreen,
+}: {
+  deck: { i: number; total: number }
+  onPrev: () => void
+  onNext: () => void
+  onFullscreen: () => void
+}) {
+  const btn: React.CSSProperties = {
+    width: 30,
+    height: 30,
+    borderRadius: 8,
+    border: "1px solid var(--line)",
+    background: "var(--card)",
+    color: "var(--fg)",
+    cursor: "pointer",
+    display: "grid",
+    placeItems: "center",
+    fontSize: 15,
+  }
+  return (
+    <div
+      style={{
+        position: "absolute",
+        bottom: 14,
+        left: "50%",
+        transform: "translateX(-50%)",
+        display: "flex",
+        alignItems: "center",
+        gap: 6,
+        padding: 6,
+        borderRadius: 999,
+        background: "var(--card)",
+        border: "1px solid var(--line)",
+        boxShadow: "var(--shadow)",
+        zIndex: 5,
+      }}
+    >
+      <button style={btn} onClick={onPrev} disabled={deck.i <= 0} aria-label="Previous slide">‹</button>
+      <span className="mono" style={{ fontSize: 12, color: "var(--fg-mut)", minWidth: 52, textAlign: "center" }}>
+        {deck.i + 1} / {deck.total}
+      </span>
+      <button style={btn} onClick={onNext} disabled={deck.i >= deck.total - 1} aria-label="Next slide">›</button>
+      <button style={{ ...btn, marginLeft: 4 }} onClick={onFullscreen} title="Present (fullscreen)" aria-label="Present fullscreen">⛶</button>
+    </div>
+  )
+}
+
 function Presence({ viewers, self }: { viewers: string[]; self: string }) {
   const others = viewers.filter((v) => v !== self)
   if (others.length === 0) return null
