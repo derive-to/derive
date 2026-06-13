@@ -7,7 +7,7 @@ import { useIsMobile, useToast } from "@/components"
 import { Icon } from "@/components/icons"
 import { ShareButton } from "@/components/ShareDialog"
 import { Spinner } from "@/components/shared/spinner"
-import { useShell } from "@/components/shell-context"
+import { useTopBarSlot } from "@/components/shell-context"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -59,7 +59,8 @@ export function Artifact() {
   const isMobile = useIsMobile()
   // The persistent shell exposes its top-bar region; this page's header actions
   // are portaled into it (the shell is mounted once, above the route Outlet).
-  const { topBarSlot } = useShell()
+  // Its own context, so the artifact page doesn't re-render on shell-state churn.
+  const topBarSlot = useTopBarSlot()
 
   // Artifact metadata + comments come from React Query, so the route loader's
   // intent preload (ensureQueryData) warms exactly what we render here — the

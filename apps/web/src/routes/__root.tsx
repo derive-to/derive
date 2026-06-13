@@ -34,15 +34,14 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
 })
 
 function RootComponent() {
-  // Dev-only perf instrumentation. web-vitals logs to the console for before/
-  // after numbers (dev only — no prod console noise; Tier 5 adds a real beacon).
-  // react-scan (flags wasted re-renders) is further gated behind VITE_REACT_SCAN
-  // because its overlay intercepts pointer events. Both dynamic/dev-gated, so
-  // they're dead-code-eliminated from the prod build.
+  // Perf instrumentation. web-vitals self-gates its sinks: console in dev (no
+  // prod noise), and a field beacon when VITE_VITALS_URL is set — so it runs in
+  // prod to collect real LCP/INP/CLS. react-scan (flags wasted re-renders) is
+  // dev-only + behind VITE_REACT_SCAN (its overlay intercepts pointer events);
+  // that dynamic import is dead-code-eliminated from the prod build.
   useEffect(() => {
-    if (!import.meta.env.DEV) return
     reportWebVitals()
-    if (import.meta.env.VITE_REACT_SCAN) {
+    if (import.meta.env.DEV && import.meta.env.VITE_REACT_SCAN) {
       import("react-scan").then(({ scan }) => scan({ enabled: true })).catch(() => {})
     }
   }, [])

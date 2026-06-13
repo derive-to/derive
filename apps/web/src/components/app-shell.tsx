@@ -1,5 +1,5 @@
 import { Link, useNavigate, useRouterState } from "@tanstack/react-router"
-import { lazy, type ReactNode, Suspense, useCallback, useEffect, useState } from "react"
+import { lazy, type ReactNode, Suspense, useCallback, useEffect, useMemo, useState } from "react"
 import { api, type Collection, type Workspaces } from "@/api"
 import { Button } from "@/components/ui/button"
 import { useAuth } from "@/ctx"
@@ -10,7 +10,7 @@ import { Icon } from "./icons"
 import { NavRail } from "./nav-rail"
 import { Logo } from "./shared/logo"
 import { CenteredSpinner } from "./shared/spinner"
-import { ShellCtx, type ShellValue, type Summary } from "./shell-context"
+import { ShellCtx, type ShellValue, type Summary, TopBarSlotCtx } from "./shell-context"
 
 // The ⌘K palette pulls in cmdk; it's only needed once the user opens it, so keep
 // it (and cmdk) out of the shared bundle every route pays for. Loads on first open.
@@ -42,7 +42,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const [summary, setSummary] = useState<Summary | null>(null)
   const [collections, setCollections] = useState<Collection[]>([])
   const [workspaces, setWorkspaces] = useState<Workspaces | null>(null)
-  // The top bar's right region; a page portals its actions here (see useShell).
+  // The top bar's right region; a page portals its actions here (see useTopBarSlot).
   const [topBarSlot, setTopBarSlot] = useState<HTMLElement | null>(null)
 
   // Auth gate for the whole authed app (this shell wraps every non-login route):
@@ -134,22 +134,42 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   const toggleCollapsed = useCallback(() => setCollapsed((c) => !c), [])
 
-  const value: ShellValue = {
-    collapsed,
-    toggleCollapsed,
-    drawerOpen,
-    setDrawerOpen,
-    paletteOpen,
-    setPaletteOpen,
-    summary,
-    collections,
-    workspaces,
-    refreshSummary,
-    refreshCollections,
-    switchWorkspace,
-    createWorkspace,
-    topBarSlot,
-  }
+  // Memoized so the provider gets a stable value object — consumers re-render
+  // only when shell state actually changes, not on every AppShell render. The
+  // action fns are already stable (useCallback / setState), so the volatile
+  // deps are just the state. topBarSlot lives in its own context (below).
+  const value = useMemo<ShellValue>(
+    () => ({
+      collapsed,
+      toggleCollapsed,
+      drawerOpen,
+      setDrawerOpen,
+      paletteOpen,
+      setPaletteOpen,
+      summary,
+      collections,
+      workspaces,
+      refreshSummary,
+      refreshCollections,
+      switchWorkspace,
+      createWorkspace,
+    }),
+    // setDrawerOpen / setPaletteOpen are stable useState setters — intentionally
+    // not listed (React guarantees their identity).
+    [
+      collapsed,
+      toggleCollapsed,
+      drawerOpen,
+      paletteOpen,
+      summary,
+      collections,
+      workspaces,
+      refreshSummary,
+      refreshCollections,
+      switchWorkspace,
+      createWorkspace,
+    ],
+  )
 
   // Until the session resolves, hold the frame rather than flashing the rail
   // (and the redirect above handles the signed-out case).
@@ -157,48 +177,50 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   return (
     <ShellCtx.Provider value={value}>
-      <div className="flex h-full flex-col">
-        <header className="flex items-center gap-2.5 border-b border-border bg-card px-5.5 py-3 max-sm:px-3.5 max-sm:py-2.5">
-          <Button
-            variant="outline"
-            size="icon"
-            data-testid="library-menu"
-            aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-            title="Toggle sidebar"
-            onClick={() => (isMobile ? setDrawerOpen(true) : toggleCollapsed())}
-          >
-            <Icon name="sidebar" size={18} />
-          </Button>
-          <Link to="/" className="mr-auto flex items-center gap-2.5 text-foreground">
-            <Logo />
-            <span className="font-display text-lg font-semibold">Dock</span>
-          </Link>
-          <div ref={setTopBarSlot} className="ml-auto flex items-center gap-2" />
-        </header>
+      <TopBarSlotCtx.Provider value={topBarSlot}>
+        <div className="flex h-full flex-col">
+          <header className="flex items-center gap-2.5 border-b border-border bg-card px-5.5 py-3 max-sm:px-3.5 max-sm:py-2.5">
+            <Button
+              variant="outline"
+              size="icon"
+              data-testid="library-menu"
+              aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+              title="Toggle sidebar"
+              onClick={() => (isMobile ? setDrawerOpen(true) : toggleCollapsed())}
+            >
+              <Icon name="sidebar" size={18} />
+            </Button>
+            <Link to="/" className="mr-auto flex items-center gap-2.5 text-foreground">
+              <Logo />
+              <span className="font-display text-lg font-semibold">Dock</span>
+            </Link>
+            <div ref={setTopBarSlot} className="ml-auto flex items-center gap-2" />
+          </header>
 
-        <div className="flex min-h-0 flex-1">
-          {isMobile && (
-            <button
-              type="button"
-              data-testid="library-menu-backdrop"
-              aria-label="Close menu"
-              tabIndex={drawerOpen ? 0 : -1}
-              onClick={() => setDrawerOpen(false)}
-              className={cn(
-                "fixed inset-0 z-[60] bg-black/35 transition-opacity",
-                drawerOpen ? "opacity-100" : "pointer-events-none opacity-0",
-              )}
-            />
-          )}
-          <NavRail />
-          <main className="flex min-w-0 flex-1 flex-col overflow-hidden">{children}</main>
+          <div className="flex min-h-0 flex-1">
+            {isMobile && (
+              <button
+                type="button"
+                data-testid="library-menu-backdrop"
+                aria-label="Close menu"
+                tabIndex={drawerOpen ? 0 : -1}
+                onClick={() => setDrawerOpen(false)}
+                className={cn(
+                  "fixed inset-0 z-[60] bg-black/35 transition-opacity",
+                  drawerOpen ? "opacity-100" : "pointer-events-none opacity-0",
+                )}
+              />
+            )}
+            <NavRail />
+            <main className="flex min-w-0 flex-1 flex-col overflow-hidden">{children}</main>
+          </div>
         </div>
-      </div>
-      {paletteOpen && (
-        <Suspense fallback={null}>
-          <CommandPalette />
-        </Suspense>
-      )}
+        {paletteOpen && (
+          <Suspense fallback={null}>
+            <CommandPalette />
+          </Suspense>
+        )}
+      </TopBarSlotCtx.Provider>
     </ShellCtx.Provider>
   )
 }
