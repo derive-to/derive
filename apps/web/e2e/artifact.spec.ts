@@ -47,30 +47,30 @@ test("comment, reply, resolve, and reopen a thread", async ({ page }) => {
 test("react to a comment with an emoji", async ({ page }) => {
   await addComment(page, "Worth a reaction.")
 
-  const row = page.locator(".cmt-row", { hasText: "Worth a reaction." }).first()
+  const row = page.getByTestId("comment-row").filter({ hasText: "Worth a reaction." }).first()
   await row.hover()
-  await row.getByTitle("React").click()
-  await page.getByRole("button", { name: "👍", exact: true }).click()
+  await row.getByTestId("comment-react").click()
+  await page.getByTestId("react-emoji-👍").click()
 
   // A reaction pill with a count of 1 appears on the comment.
-  await expect(row.locator(".cmt-pill", { hasText: "👍" })).toContainText("1")
+  await expect(row.getByTestId("reaction-pill-👍")).toContainText("1")
 })
 
 test("edit and delete an own comment", async ({ page }) => {
   await addComment(page, "Typo here.")
 
-  const row = page.locator(".cmt-row", { hasText: "Typo here." }).first()
+  const row = page.getByTestId("comment-row").filter({ hasText: "Typo here." }).first()
   await row.hover()
-  await row.getByTitle("More").click()
-  await page.getByText("✎ Edit").click()
-  await page.getByRole("textbox").last().fill("Fixed now.")
-  await page.getByRole("button", { name: "Save" }).click()
+  await row.getByTestId("comment-more").click()
+  await page.getByTestId("comment-edit").click()
+  await page.getByTestId("comment-edit-input").fill("Fixed now.")
+  await page.getByTestId("comment-edit-save").click()
   await expect(page.getByText("Fixed now.")).toBeVisible()
 
-  const fixed = page.locator(".cmt-row", { hasText: "Fixed now." }).first()
+  const fixed = page.getByTestId("comment-row").filter({ hasText: "Fixed now." }).first()
   await fixed.hover()
-  await fixed.getByTitle("More").click()
-  await page.getByText("🗑 Delete").click()
+  await fixed.getByTestId("comment-more").click()
+  await page.getByTestId("comment-delete").click()
   await expect(page.getByText("Comment deleted")).toBeVisible()
 })
 

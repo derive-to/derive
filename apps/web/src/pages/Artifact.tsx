@@ -11,7 +11,11 @@ import {
   useState,
 } from "react"
 import { ColoredAvatar } from "@/components/shared/colored-avatar"
+import { Button } from "@/components/ui/button"
+import { Textarea } from "@/components/ui/input"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { ago } from "@/lib/time"
+import { cn } from "@/lib/utils"
 import {
   type Analytics,
   API_BASE,
@@ -1881,35 +1885,10 @@ const ActionsCtx = createContext<CommentActions | null>(null)
 const useActions = (): CommentActions => useContext(ActionsCtx) ?? NOOP_ACTIONS
 
 // Small popover that closes on an outside click.
-function Popover({
-  children,
-  onClose,
-  style,
-}: {
-  children: React.ReactNode
-  onClose: () => void
-  style?: React.CSSProperties
-}) {
-  const ref = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    const h = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) onClose()
-    }
-    const t = setTimeout(() => document.addEventListener("mousedown", h), 0)
-    return () => {
-      clearTimeout(t)
-      document.removeEventListener("mousedown", h)
-    }
-  }, [onClose])
-  return (
-    <div ref={ref} className="cmt-pop" style={style} onClick={(e) => e.stopPropagation()}>
-      {children}
-    </div>
-  )
-}
-
 // One comment: avatar, author, markdown body (or an inline editor), reaction
-// pills, and a hover toolbar (react · more → edit/delete/copy-link).
+// pills, and a hover toolbar (react · more → edit/delete/copy-link). The toolbar
+// popovers are Radix Popovers; the rendered markdown keeps the .cmt-body child
+// styles (code/links/mentions) from the legacy layer.
 function CommentRow({ c, compact }: { c: Comment; compact?: boolean }) {
   const A = useActions()
   const [editing, setEditing] = useState(false)
@@ -1917,34 +1896,23 @@ function CommentRow({ c, compact }: { c: Comment; compact?: boolean }) {
   const [open, setOpen] = useState<null | "react" | "menu">(null)
   const mine = !!A.meName && c.author === A.meName
   const reactions = c.reactions ?? {}
-  const close = () => setOpen(null)
 
   if (c.deleted)
     return (
-      <div
-        style={{
-          padding: "9px 12px",
-          borderBottom: compact ? "none" : "1px solid var(--line-soft)",
-        }}
-      >
-        <span className="muted" style={{ fontSize: 12, fontStyle: "italic" }}>
-          Comment deleted
-        </span>
+      <div className={cn("px-3 py-2.5", !compact && "border-b border-border-soft")}>
+        <span className="text-sm italic text-muted-foreground">Comment deleted</span>
       </div>
     )
 
   return (
     <div
-      className="cmt-row"
-      style={{
-        padding: "10px 12px",
-        borderBottom: compact ? "none" : "1px solid var(--line-soft)",
-      }}
+      data-testid="comment-row"
+      className={cn("group relative px-3 py-2.5", !compact && "border-b border-border-soft")}
     >
-      <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 4 }}>
+      <div className="mb-1 flex items-center gap-1.5">
         <ColoredAvatar name={c.author} />
-        <span style={{ fontSize: 11.5, fontWeight: 700, color: "var(--cmt-tx)" }}>{c.author}</span>
-        <span className="mono muted" style={{ marginLeft: "auto", fontSize: 9 }}>
+        <span className="text-xs font-bold text-foreground">{c.author}</span>
+        <span className="ml-auto font-mono text-2xs text-muted-foreground">
           {ago(c.created_at)}
           {c.edited ? " · edited" : ""}
         </span>
@@ -1952,12 +1920,12 @@ function CommentRow({ c, compact }: { c: Comment; compact?: boolean }) {
 
       {editing ? (
         <div onClick={(e) => e.stopPropagation()}>
-          <textarea
-            className="input"
+          <Textarea
             value={draft}
             autoFocus
+            data-testid="comment-edit-input"
             onChange={(e) => setDraft(e.target.value)}
-            style={{ minHeight: 52, fontSize: 12.5, resize: "vertical" }}
+            className="min-h-[52px] resize-y text-sm"
             onKeyDown={(e) => {
               if (e.key === "Escape") {
                 setEditing(false)
@@ -1969,123 +1937,159 @@ function CommentRow({ c, compact }: { c: Comment; compact?: boolean }) {
               }
             }}
           />
-          <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
-            <button
-              className="btn pri sm"
+          <div className="mt-1.5 flex gap-1.5">
+            <Button
+              variant="primary"
+              size="sm"
               disabled={!draft.trim()}
+              data-testid="comment-edit-save"
               onClick={async () => {
                 await A.edit(c.id, draft)
                 setEditing(false)
               }}
             >
               Save
-            </button>
-            <button
-              className="btn sm"
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
               onClick={() => {
                 setEditing(false)
                 setDraft(c.body_md)
               }}
             >
               Cancel
-            </button>
+            </Button>
           </div>
         </div>
       ) : (
         <div
-          className={`cmt-body${compact ? " cmt-clamp" : ""}`}
+          className={cn(
+            "cmt-body text-sm leading-relaxed [word-break:break-word]",
+            compact && "line-clamp-2",
+          )}
           // biome-ignore lint/security/noDangerouslySetInnerHtml: input is escaped first in mdToHtml.
           dangerouslySetInnerHTML={{ __html: mdToHtml(c.body_md, c.mentions) }}
         />
       )}
 
       {Object.keys(reactions).length > 0 && (
-        <div className="cmt-pills">
+        <div className="mt-1.5 flex flex-wrap gap-1">
           {Object.entries(reactions).map(([emoji, who]) => (
             <button
               key={emoji}
-              className={`cmt-pill${who.includes(A.meName) ? " on" : ""}`}
+              type="button"
+              data-testid={`reaction-pill-${emoji}`}
               title={who.join(", ")}
               onClick={(e) => {
                 e.stopPropagation()
                 A.react(c.id, emoji)
               }}
+              className={cn(
+                "inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-xs transition-colors",
+                who.includes(A.meName)
+                  ? "border-primary bg-accent font-bold text-primary"
+                  : "border-border bg-card text-muted-foreground hover:border-primary",
+              )}
             >
               <span>{emoji}</span>
-              <span className="n">{who.length}</span>
+              <span className="font-mono text-2xs">{who.length}</span>
             </button>
           ))}
         </div>
       )}
 
       {!editing && (
-        <div className={`cmt-actions${open ? " pin" : ""}`} onClick={(e) => e.stopPropagation()}>
-          <button
-            className="cmt-act"
-            title="React"
-            onClick={() => setOpen(open === "react" ? null : "react")}
-          >
-            😊
-          </button>
-          <button
-            className="cmt-act"
-            title="More"
-            onClick={() => setOpen(open === "menu" ? null : "menu")}
-          >
-            ⋯
-          </button>
-          {open === "react" && (
-            <Popover onClose={close} style={{ top: 30, right: 0 }}>
-              <div className="cmt-emoji">
+        <div
+          className={cn(
+            "absolute right-2 top-1.5 z-[6] flex gap-px rounded-[9px] border border-border bg-card p-0.5 shadow-[var(--shadow)] transition-opacity",
+            open
+              ? "opacity-100"
+              : "pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100",
+          )}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <Popover open={open === "react"} onOpenChange={(o) => setOpen(o ? "react" : null)}>
+            <PopoverTrigger asChild>
+              <button
+                type="button"
+                title="React"
+                data-testid="comment-react"
+                className="grid size-6 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-hover hover:text-foreground"
+              >
+                😊
+              </button>
+            </PopoverTrigger>
+            <PopoverContent align="end" className="w-auto p-1">
+              <div className="grid grid-cols-4 gap-px">
                 {REACTION_EMOJI.map((em) => (
                   <button
                     key={em}
+                    type="button"
+                    data-testid={`react-emoji-${em}`}
                     onClick={() => {
                       A.react(c.id, em)
-                      close()
+                      setOpen(null)
                     }}
+                    className="grid size-[30px] place-items-center rounded-md text-lg hover:bg-hover"
                   >
                     {em}
                   </button>
                 ))}
               </div>
-            </Popover>
-          )}
-          {open === "menu" && (
-            <Popover onClose={close} style={{ top: 30, right: 0, minWidth: 132 }}>
-              <div className="cmt-menu">
-                {mine && (
-                  <button
-                    onClick={() => {
-                      setEditing(true)
-                      close()
-                    }}
-                  >
-                    ✎ Edit
-                  </button>
-                )}
+            </PopoverContent>
+          </Popover>
+          <Popover open={open === "menu"} onOpenChange={(o) => setOpen(o ? "menu" : null)}>
+            <PopoverTrigger asChild>
+              <button
+                type="button"
+                title="More"
+                data-testid="comment-more"
+                className="grid size-6 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-hover hover:text-foreground"
+              >
+                ⋯
+              </button>
+            </PopoverTrigger>
+            <PopoverContent align="end" className="w-auto min-w-[132px] p-1">
+              {mine && (
                 <button
+                  type="button"
+                  data-testid="comment-edit"
                   onClick={() => {
-                    A.copyLink(c.thread_id)
-                    close()
+                    setEditing(true)
+                    setOpen(null)
                   }}
+                  className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-sm font-medium text-foreground transition-colors hover:bg-hover"
                 >
-                  🔗 Copy link
+                  ✎ Edit
                 </button>
-                {mine && (
-                  <button
-                    className="danger"
-                    onClick={() => {
-                      A.remove(c.id)
-                      close()
-                    }}
-                  >
-                    🗑 Delete
-                  </button>
-                )}
-              </div>
-            </Popover>
-          )}
+              )}
+              <button
+                type="button"
+                data-testid="comment-copy-link"
+                onClick={() => {
+                  A.copyLink(c.thread_id)
+                  setOpen(null)
+                }}
+                className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-sm font-medium text-foreground transition-colors hover:bg-hover"
+              >
+                🔗 Copy link
+              </button>
+              {mine && (
+                <button
+                  type="button"
+                  data-testid="comment-delete"
+                  onClick={() => {
+                    A.remove(c.id)
+                    setOpen(null)
+                  }}
+                  className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-sm font-medium text-foreground transition-colors hover:bg-hover hover:text-destructive"
+                >
+                  🗑 Delete
+                </button>
+              )}
+            </PopoverContent>
+          </Popover>
         </div>
       )}
     </div>
