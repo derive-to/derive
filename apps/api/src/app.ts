@@ -412,17 +412,20 @@ export function createApp(deps: AppDeps): Hono {
     const me = actor.kind === "user" ? actor.userId : null
     const tags = (await meta.tagsForArtifacts([artifact.id]))[artifact.id] ?? []
     const favorite = me ? (await meta.listUserFavoriteIds(me)).includes(artifact.id) : false
-    const openProposals = await meta.listProposals(artifact.id, { state: "open" })
+    const proposals = await meta.listProposals(artifact.id)
     // `versions` stays at revision granularity (machines/agents); `sessions` is
     // the time-grouped view the UI shows by default. `my_role` tells the client
-    // which actions to surface; `open_proposals` badges the review queue.
+    // which actions to surface; `open_proposals` badges the review queue while
+    // `proposals_total` (everything but withdrawn) gates the Proposals entry so a
+    // proposer can return to read feedback after their candidate leaves the queue.
     return c.json({
       ...toJson(deps.baseUrl, artifact, versions),
       sessions: groupSessions(versions, versionWindowMs),
       my_role: effectiveRole(actor, artifact.visibility),
       tags,
       favorite,
-      open_proposals: openProposals.length,
+      open_proposals: proposals.filter((p) => p.state === "open").length,
+      proposals_total: proposals.filter((p) => p.state !== "withdrawn").length,
     })
   })
 
@@ -636,6 +639,7 @@ export function createApp(deps: AppDeps): Hono {
     kind: p.kind,
     decided_by: p.decided_by,
     decided_version: p.decided_version,
+    decision_note: p.decision_note,
     decided_at: p.decided_at,
     created_at: p.created_at,
     // The proposed experience, rendered exactly like a live version.
@@ -737,8 +741,9 @@ export function createApp(deps: AppDeps): Hono {
     if (proposal.state !== "open") return c.json({ error: `proposal is ${proposal.state}` }, 409)
     const me = await currentUser(c)
     const approver = me ? (me.name ?? me.email) : null
+    const body = (await c.req.json().catch(() => ({}))) as { note?: unknown }
     try {
-      const version = await approveProposal(meta, proposal, approver)
+      const version = await approveProposal(meta, proposal, approver, str(body.note) ?? null)
       bus.publish(artifact.id, {
         type: "proposal.approved",
         proposal_id: proposal.id,
@@ -771,10 +776,12 @@ export function createApp(deps: AppDeps): Hono {
     if (proposal.state !== "open") return c.json({ error: `proposal is ${proposal.state}` }, 409)
     const me = await currentUser(c)
     const reviewer = me ? (me.name ?? me.email) : null
+    const body = (await c.req.json().catch(() => ({}))) as { note?: unknown }
     await meta.decideProposal(proposal.id, {
       state: "changes_requested",
       decided_by: reviewer,
       decided_version: null,
+      decision_note: str(body.note) ?? null,
     })
     bus.publish(artifact.id, { type: "proposal.changes_requested", proposal_id: proposal.id })
     await notify(artifact, "proposal.changes_requested", { proposal_id: proposal.id, reviewer })

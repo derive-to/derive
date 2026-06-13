@@ -236,6 +236,7 @@ export async function approveProposal(
   meta: MetaStore,
   proposal: ProposalRecord,
   approver: string | null,
+  note?: string | null,
 ): Promise<VersionRecord> {
   if (proposal.state !== "open")
     throw new PublishError(409, `proposal is ${proposal.state}, not open`)
@@ -251,6 +252,7 @@ export async function approveProposal(
     state: "approved",
     decided_by: approver,
     decided_version: version.n,
+    decision_note: note ?? null,
   })
   return version
 }

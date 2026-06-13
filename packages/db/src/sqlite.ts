@@ -427,7 +427,12 @@ export class SqliteMetaStore implements MetaStore {
   }
   async decideProposal(
     id: string,
-    fields: { state: ProposalState; decided_by: string | null; decided_version: number | null },
+    fields: {
+      state: ProposalState
+      decided_by: string | null
+      decided_version: number | null
+      decision_note?: string | null
+    },
   ): Promise<ProposalRecord | null> {
     return (
       this.db

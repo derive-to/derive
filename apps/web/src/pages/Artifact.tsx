@@ -60,6 +60,7 @@ export function Artifact() {
   const [comments, setComments] = useState<Comment[]>([])
   const [editing, setEditing] = useState(false)
   const [reviewing, setReviewing] = useState(false)
+  const [proposeMsg, setProposeMsg] = useState("")
   const [view, setView] = useState<"preview" | "diff">("preview")
   const [diff, setDiff] = useState<Diff | null>(null)
   const [restoring, setRestoring] = useState(false)
@@ -388,17 +389,19 @@ export function Artifact() {
       show((e as Error).message)
     }
   }
-  // A commenter can't publish; their edit becomes a proposal for review.
+  // A commenter can't publish; their edit becomes a proposal for review. The
+  // message is the "why" the reviewer reads, so we ask for it before sending.
   const proposeEdit = async () => {
     try {
       await api.propose(
         shortId,
         src,
         art.title ? `${art.short_id}.md` : "edit.md",
-        "proposed change",
+        proposeMsg.trim() || "Proposed change",
       )
       show("Proposed — sent for review")
       setEditing(false)
+      setProposeMsg("")
       load()
     } catch (e) {
       show((e as Error).message)
@@ -526,7 +529,7 @@ export function Artifact() {
                   })
                 }
               />
-              {!!art.open_proposals && art.open_proposals > 0 && (
+              {art.open_proposals && art.open_proposals > 0 ? (
                 <button
                   className="btn sm"
                   onClick={() => setReviewing(true)}
@@ -535,6 +538,17 @@ export function Artifact() {
                 >
                   Review <b style={{ fontWeight: 700 }}>{art.open_proposals}</b>
                 </button>
+              ) : (
+                !!art.proposals_total &&
+                art.proposals_total > 0 && (
+                  <button
+                    className="btn sm"
+                    onClick={() => setReviewing(true)}
+                    title="See proposals and review feedback"
+                  >
+                    Proposals
+                  </button>
+                )
               )}
               {editable && canPropose && !editing && (
                 <button className="btn sm" onClick={startEdit}>
@@ -590,8 +604,19 @@ export function Artifact() {
                   }}
                 >
                   <span className="mono muted" style={{ fontSize: 11 }}>
-                    editing source
+                    {canPublish ? "editing source" : "proposing a change"}
                   </span>
+                  {/* The proposer's "why" — shown to the reviewer. Editors who
+                      publish directly don't need it. */}
+                  {!canPublish && (
+                    <input
+                      className="input"
+                      value={proposeMsg}
+                      onChange={(e) => setProposeMsg(e.target.value)}
+                      placeholder="What are you changing, and why?"
+                      style={{ flex: 1, maxWidth: 420, padding: "5px 9px", fontSize: 12.5 }}
+                    />
+                  )}
                   <span style={{ flex: 1 }} />
                   <button className="btn sm" onClick={() => setEditing(false)}>
                     Cancel

@@ -798,20 +798,26 @@ describe("reviews: request changes and withdraw keep content live-unchanged", ()
   const { app } = makeAuthedApp("reviews-rc", [owner, dana], "commenter")
   let shortId: string
 
-  it("request-changes leaves the proposal pending and the artifact at its current version", async () => {
+  it("request-changes carries the reviewer's note back to the proposer, content unchanged", async () => {
     shortId = (await (await publishAs(app, "<h1>base</h1>", {}, as(owner.email))).json()).short_id
     const pid = (await (await proposeAs(app, shortId, "<h1>try</h1>", as(dana.email))).json()).id
     const res = await app.request(`/v1/artifacts/${shortId}/proposals/${pid}/request-changes`, {
       method: "POST",
-      headers: as(owner.email),
+      headers: { "content-type": "application/json", ...as(owner.email) },
+      body: JSON.stringify({ note: "Tighten the intro paragraph first" }),
     })
     expect(res.status).toBe(200)
-    expect((await res.json()).state).toBe("changes_requested")
+    const decided = await res.json()
+    expect(decided.state).toBe("changes_requested")
+    expect(decided.decision_note).toBe("Tighten the intro paragraph first")
     const art = await (
       await app.request(`/v1/artifacts/${shortId}`, { headers: as(owner.email) })
     ).json()
     expect(art.current_version).toBe(1)
     expect(art.open_proposals).toBe(0)
+    // The decided proposal still counts toward the Proposals entry (not withdrawn),
+    // so the proposer can return to read the feedback.
+    expect(art.proposals_total).toBe(1)
   })
 
   it("a proposer can withdraw their own open proposal", async () => {

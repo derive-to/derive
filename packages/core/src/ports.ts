@@ -143,7 +143,12 @@ export interface MetaStore {
   /** Record a reviewer's decision (approve / request changes / withdraw). */
   decideProposal(
     id: string,
-    fields: { state: ProposalState; decided_by: string | null; decided_version: number | null },
+    fields: {
+      state: ProposalState
+      decided_by: string | null
+      decided_version: number | null
+      decision_note?: string | null
+    },
   ): Promise<ProposalRecord | null>
 
   // ---- User directory (reads Better Auth's `user` table) ----------------
@@ -177,6 +182,8 @@ export interface ProposalRecord {
   decided_by: string | null
   /** The version number it became on approval; null otherwise. */
   decided_version: number | null
+  /** The reviewer's note when approving or requesting changes; the feedback. */
+  decision_note: string | null
   decided_at: string | null
   created_at: string
 }

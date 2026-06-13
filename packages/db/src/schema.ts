@@ -165,6 +165,7 @@ export const proposal = sqliteTable("proposal", {
   state: text("state").$type<ProposalState>().notNull().default("open"),
   decided_by: text("decided_by"),
   decided_version: integer("decided_version"),
+  decision_note: text("decision_note"),
   decided_at: text("decided_at"),
   created_at: text("created_at").notNull().default(now),
 })
@@ -308,6 +309,7 @@ export const SCHEMA_STATEMENTS: string[] = [
     state TEXT NOT NULL DEFAULT 'open',
     decided_by TEXT,
     decided_version INTEGER,
+    decision_note TEXT,
     decided_at TEXT,
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
   )`,
@@ -323,6 +325,7 @@ export const SCHEMA_STATEMENTS: string[] = [
 export const MIGRATION_STATEMENTS: string[] = [
   `ALTER TABLE comment ADD COLUMN meta TEXT`,
   `ALTER TABLE version ADD COLUMN name TEXT`,
+  `ALTER TABLE proposal ADD COLUMN decision_note TEXT`,
 ]
 
 // Compile-time guard: the drizzle table defs must exactly match the core record

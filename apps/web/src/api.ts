@@ -38,6 +38,8 @@ export interface Artifact {
   favorite?: boolean
   /** Count of proposals awaiting review. */
   open_proposals?: number
+  /** Count of non-withdrawn proposals (open + decided) — gates the Proposals entry. */
+  proposals_total?: number
 }
 export type ProposalState = "open" | "approved" | "changes_requested" | "withdrawn"
 export interface Proposal {
@@ -49,6 +51,8 @@ export interface Proposal {
   kind: "file" | "bundle"
   decided_by: string | null
   decided_version: number | null
+  /** The reviewer's feedback when approving or requesting changes. */
+  decision_note: string | null
   decided_at: string | null
   created_at: string
   /** The proposed experience, rendered exactly like a live version. */
@@ -179,10 +183,14 @@ export const api = {
       headers: { accept: "application/json" },
     }).then(j)
   },
-  approveProposal: (id: string, proposalId: string): Promise<Proposal & { published: number }> =>
-    f(`/v1/artifacts/${id}/proposals/${proposalId}/approve`, opts({})).then(j),
-  requestChanges: (id: string, proposalId: string): Promise<Proposal> =>
-    f(`/v1/artifacts/${id}/proposals/${proposalId}/request-changes`, opts({})).then(j),
+  approveProposal: (
+    id: string,
+    proposalId: string,
+    note?: string,
+  ): Promise<Proposal & { published: number }> =>
+    f(`/v1/artifacts/${id}/proposals/${proposalId}/approve`, opts({ note })).then(j),
+  requestChanges: (id: string, proposalId: string, note?: string): Promise<Proposal> =>
+    f(`/v1/artifacts/${id}/proposals/${proposalId}/request-changes`, opts({ note })).then(j),
   withdrawProposal: (id: string, proposalId: string): Promise<Proposal> =>
     f(`/v1/artifacts/${id}/proposals/${proposalId}/withdraw`, opts({})).then(j),
 
