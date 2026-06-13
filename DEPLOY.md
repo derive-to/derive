@@ -167,20 +167,26 @@ cross-origin SPA→API request; `DOCK_WEB_ORIGIN` allow-lists the SPA for CORS.
 
 ## Cloudflare Workers + D1 (experimental)
 
-`packages/db` ships a Cloudflare D1 driver (`@dock/db/d1`) for an edge deployment, but
-this path is **experimental and unverified**. It reuses the same SQLite repositories and
-schema as the default driver, so the query logic and DDL are covered by the test suite,
-but the D1-specific runtime has no integration test yet and Dock ships no Worker
-entrypoint. Don't expect production parity with the SQLite or Postgres tiers.
+Dock has a Cloudflare Workers entry (`apps/api/src/worker.ts`) that runs the whole app
+on the edge: D1 for metadata, R2 for blobs, Better Auth on a Kysely D1 dialect. It reuses
+the same runtime-agnostic `createApp` as the Node entry, so the app logic is identical.
 
-To experiment, the bootstrap schema is generated for you from the shared source of truth:
+Treat it as **experimental**: realtime runs in-process (cross-instance fan-out on the
+edge is a follow-up, a Durable Object behind the `Backplane` port in `bus.ts`), and there
+is no automated edge integration test in CI yet (the entry is typecheck-covered).
 
 ```bash
-wrangler d1 create dock
-wrangler d1 execute dock --file=deploy/d1-schema.sql
-# d1-schema.sql is generated; after a schema change run: pnpm --filter @dock/db gen:d1-schema
+cd apps/api
+wrangler d1 create dock                     # copy the database_id into wrangler.toml
+wrangler d1 execute dock --remote --file=../../deploy/d1-schema.sql       # app schema
+node --experimental-strip-types gen-auth-schema.ts > /tmp/auth-schema.sql # Better Auth tables
+wrangler d1 execute dock --remote --file=/tmp/auth-schema.sql
+wrangler r2 bucket create dock-blobs
+wrangler deploy
+wrangler secret put DOCK_AUTH_SECRET        # a strong random secret
 ```
 
-Then wire `createD1Store(env.DB)` from `@dock/db/d1` into your Worker's fetch handler.
-Closing the gap to "supported" means a Miniflare-backed smoke test of the driver; the
-shared half is already covered by the SQLite suite.
+D1 forbids the `sqlite_master` introspection Better Auth's migrator runs (`SQLITE_AUTH`),
+so the auth tables are generated offline (`gen-auth-schema.ts`) and applied with
+`wrangler d1 execute`, never at boot. `deploy/d1-schema.sql` is generated from the shared
+schema; regenerate with `pnpm --filter @dock/db gen:d1-schema`.

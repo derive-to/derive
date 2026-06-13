@@ -56,7 +56,9 @@
         "useExhaustiveDependencies": "warn"
       },
       "suspicious": {
-        "noArrayIndexKey": "warn"
+        "noArrayIndexKey": "warn",
+        "noExplicitAny": "error",
+        "noFocusedTests": "error"
       },
       "a11y": {
         "useButtonType": "warn",

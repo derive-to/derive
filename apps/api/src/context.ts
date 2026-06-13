@@ -17,7 +17,7 @@ import {
 import type { Context } from "hono"
 import { getCookie, setCookie } from "hono/cookie"
 import type { Auth } from "./auth-config"
-import { createBus, Presence } from "./bus"
+import { type Backplane, createInProcessBackplane } from "./bus"
 import { safeEqual, sha256 } from "./lib/crypto"
 import { WS_COOKIE } from "./lib/http"
 import { makeKeyedLimiter } from "./lib/rate-limit"
@@ -33,6 +33,9 @@ export interface SessionUser {
 export interface AppDeps {
   meta: MetaStore
   blobs: BlobStore
+  /** Realtime relay + presence. In-process when unset (self-host); the Cloudflare
+   *  edge entry injects a Durable Object backplane. */
+  backplane?: Backplane
   baseUrl: string
   /** A static token (CI/agents) authorizes writes + gated reads, alongside a login session. */
   token?: string
@@ -115,8 +118,12 @@ export type AppContext = ReturnType<typeof buildContext>
 
 export function buildContext(deps: AppDeps) {
   const { meta, blobs } = deps
-  const bus = createBus()
-  const presence = new Presence()
+  // Realtime relay + presence. In-process by default (self-host stays zero-config);
+  // the edge entry injects a Durable Object backplane. `bus`/`presence` are facades
+  // over it, so the publish + heartbeat call sites are unchanged.
+  const backplane = deps.backplane ?? createInProcessBackplane()
+  const bus = backplane
+  const presence = backplane.presence
 
   const analyticsOn = deps.analytics !== false
   const versionWindowMs = deps.versionWindowMs ?? DEFAULT_VERSION_WINDOW_MS
@@ -336,6 +343,7 @@ export function buildContext(deps: AppDeps) {
     blobs,
     bus,
     presence,
+    backplane,
     analyticsOn,
     versionWindowMs,
     allowOrigins,

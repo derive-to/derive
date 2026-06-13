@@ -1,0 +1,25 @@
+{
+  "$schema": "https://unpkg.com/knip@5/schema.json",
+  "workspaces": {
+    "apps/api": {
+      "entry": ["src/worker.ts", "gen-auth-schema.ts"]
+    },
+    "apps/web": {
+      "entry": ["src/components/ui/**"]
+    }
+  },
+  "rules": {
+    "files": "error",
+    "dependencies": "error",
+    "unlisted": "error",
+    "exports": "off",
+    "types": "off",
+    "nsExports": "off",
+    "nsTypes": "off",
+    "enumMembers": "off",
+    "classMembers": "off",
+    "duplicates": "off",
+    "binaries": "off",
+    "unresolved": "off"
+  }
+}

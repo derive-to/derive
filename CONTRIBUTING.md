@@ -111,6 +111,11 @@ shipping. If something below surprises you, that's the guardrail doing its job:
   `pnpm lint:api`. Parse + validate with `readJson(c, schema)` (`apps/api/src/lib/http.ts`,
   zod) so a new or renamed field can't slip past validation; it returns the typed data or a
   400 you return as-is (`if (body instanceof Response) return body`).
+- **Dead code + unused dependencies.** `pnpm lint:deadcode` (knip) fails on an unused file
+  or a dependency in a `package.json` that nothing imports. Entry points (the Workers entry,
+  codegen scripts) and the `ui/` primitive library are declared in `knip.json`; it checks
+  files + dependencies only (not every unused export, to leave the design-system surface
+  alone).
 
 The custom checks (`lint:tokens`, `lint:frontend`, `lint:testids`, `lint:api`) and Biome all
 run inside `pnpm run ci`, so the one gate command covers them; `pnpm typecheck` and
