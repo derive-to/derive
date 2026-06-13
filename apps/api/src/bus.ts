@@ -5,6 +5,9 @@ export interface DockEvent {
     | "comment.reacted"
     | "comment.updated"
     | "version.published"
+    | "proposal.created"
+    | "proposal.approved"
+    | "proposal.changes_requested"
     | "presence"
     | "notification"
   [k: string]: unknown

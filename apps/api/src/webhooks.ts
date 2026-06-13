@@ -7,6 +7,9 @@ export const WEBHOOK_EVENTS = [
   "comment.mention",
   "comment.resolved",
   "version.published",
+  "proposal.created",
+  "proposal.approved",
+  "proposal.changes_requested",
 ] as const
 export type WebhookEvent = (typeof WEBHOOK_EVENTS)[number]
 

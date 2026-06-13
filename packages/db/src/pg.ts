@@ -13,10 +13,13 @@ import type {
   NewDelivery,
   NewMembership,
   NewNotification,
+  NewProposal,
   NewVersion,
   NewView,
   NewWebhook,
   NotificationRecord,
+  ProposalRecord,
+  ProposalState,
   UserDir,
   VersionRecord,
   ViewStats,
@@ -27,11 +30,14 @@ import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres"
 import { Pool } from "pg"
 import {
   artifact,
+  artifactFavorite,
   artifactMember,
+  artifactTag,
   comment,
   membership,
   notification,
   PG_SCHEMA_STATEMENTS,
+  proposal,
   version,
   webhook,
   webhookDelivery,
@@ -46,6 +52,9 @@ const schema = {
   membership,
   artifactMember,
   notification,
+  artifactFavorite,
+  artifactTag,
+  proposal,
 }
 const VIEW_WINDOW_MS = 30 * 86400_000
 
@@ -317,6 +326,94 @@ export class PgMetaStore implements MetaStore {
     await this.db
       .delete(artifactMember)
       .where(and(eq(artifactMember.artifact_id, artifactId), eq(artifactMember.user_id, userId)))
+  }
+
+  // ---- Favorites + tags --------------------------------------------------
+  async listUserFavoriteIds(userId: string): Promise<string[]> {
+    const rows = await this.db
+      .select({ id: artifactFavorite.artifact_id })
+      .from(artifactFavorite)
+      .where(eq(artifactFavorite.user_id, userId))
+    return rows.map((r) => r.id)
+  }
+  async setFavorite(artifactId: string, userId: string): Promise<void> {
+    await this.db
+      .insert(artifactFavorite)
+      .values({ id: crypto.randomUUID(), artifact_id: artifactId, user_id: userId })
+      .onConflictDoNothing({ target: [artifactFavorite.artifact_id, artifactFavorite.user_id] })
+  }
+  async removeFavorite(artifactId: string, userId: string): Promise<void> {
+    await this.db
+      .delete(artifactFavorite)
+      .where(
+        and(eq(artifactFavorite.artifact_id, artifactId), eq(artifactFavorite.user_id, userId)),
+      )
+  }
+  async tagsForArtifacts(artifactIds: string[]): Promise<Record<string, string[]>> {
+    if (artifactIds.length === 0) return {}
+    const rows = await this.db
+      .select({ artifact_id: artifactTag.artifact_id, tag: artifactTag.tag })
+      .from(artifactTag)
+      .where(inArray(artifactTag.artifact_id, artifactIds))
+    const out: Record<string, string[]> = {}
+    for (const r of rows) {
+      if (!out[r.artifact_id]) out[r.artifact_id] = []
+      out[r.artifact_id].push(r.tag)
+    }
+    for (const k in out) out[k].sort()
+    return out
+  }
+  async setArtifactTags(artifactId: string, tags: string[]): Promise<void> {
+    await this.db.transaction(async (tx) => {
+      await tx.delete(artifactTag).where(eq(artifactTag.artifact_id, artifactId))
+      if (tags.length)
+        await tx
+          .insert(artifactTag)
+          .values(tags.map((tag) => ({ id: crypto.randomUUID(), artifact_id: artifactId, tag })))
+    })
+  }
+
+  // ---- Reviews: proposed versions ----------------------------------------
+  async createProposal(p: NewProposal): Promise<ProposalRecord> {
+    const rows = await this.db.insert(proposal).values(p).returning()
+    return rows[0]
+  }
+  async getProposal(id: string): Promise<ProposalRecord | null> {
+    const rows = await this.db.select().from(proposal).where(eq(proposal.id, id))
+    return rows[0] ?? null
+  }
+  listProposals(artifactId: string, opts?: { state?: ProposalState }): Promise<ProposalRecord[]> {
+    const where = opts?.state
+      ? and(eq(proposal.artifact_id, artifactId), eq(proposal.state, opts.state))
+      : eq(proposal.artifact_id, artifactId)
+    return this.db.select().from(proposal).where(where).orderBy(desc(proposal.created_at))
+  }
+  async openProposalCounts(artifactIds: string[]): Promise<Record<string, number>> {
+    if (artifactIds.length === 0) return {}
+    const ph = artifactIds.map((_, i) => `$${i + 1}`).join(",")
+    const { rows } = await this.pool.query(
+      `SELECT artifact_id, count(*)::int c FROM proposal WHERE state='open' AND artifact_id IN (${ph}) GROUP BY artifact_id`,
+      artifactIds,
+    )
+    const out: Record<string, number> = {}
+    for (const r of rows) out[r.artifact_id] = r.c
+    return out
+  }
+  async decideProposal(
+    id: string,
+    fields: {
+      state: ProposalState
+      decided_by: string | null
+      decided_version: number | null
+      decision_note?: string | null
+    },
+  ): Promise<ProposalRecord | null> {
+    const rows = await this.db
+      .update(proposal)
+      .set({ ...fields, decided_at: new Date().toISOString() })
+      .where(eq(proposal.id, id))
+      .returning()
+    return rows[0] ?? null
   }
 
   // ---- User directory (Better Auth's "user" table; raw, may be absent) ---

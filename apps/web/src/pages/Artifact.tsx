@@ -21,6 +21,7 @@ import {
   type Mention,
 } from "../api"
 import { Header, useIsMobile, useToast } from "../components"
+import { ReviewOverlay } from "../components/ReviewOverlay"
 import { ShareButton } from "../components/ShareDialog"
 import { useAuth } from "../ctx"
 
@@ -62,6 +63,8 @@ export function Artifact() {
   const [failed, setFailed] = useState(false)
   const [comments, setComments] = useState<Comment[]>([])
   const [editing, setEditing] = useState(false)
+  const [reviewing, setReviewing] = useState(false)
+  const [proposeMsg, setProposeMsg] = useState("")
   const [view, setView] = useState<"preview" | "diff">("preview")
   const [diff, setDiff] = useState<Diff | null>(null)
   const [restoring, setRestoring] = useState(false)
@@ -345,6 +348,9 @@ export function Artifact() {
   const shown = version ?? art.current_version
   const editable = art.kind === "file" && shown === art.current_version
   const rawSrc = `${API_BASE}/raw/${shortId}/v/${shown}/index.html`
+  // Editors publish directly; commenters propose a candidate for review.
+  const canPublish = art.my_role === "editor" || art.my_role === "owner"
+  const canPropose = canPublish || art.my_role === "commenter"
 
   // Sort threads into pinned (anchored & present in this live doc), general
   // (unanchored or orphaned), and resolved. Pins drive both the margin cards
@@ -382,6 +388,24 @@ export function Artifact() {
       )
       show(`Published v${a.current_version}`)
       setEditing(false)
+      load()
+    } catch (e) {
+      show((e as Error).message)
+    }
+  }
+  // A commenter can't publish; their edit becomes a proposal for review. The
+  // message is the "why" the reviewer reads, so we ask for it before sending.
+  const proposeEdit = async () => {
+    try {
+      await api.propose(
+        shortId,
+        src,
+        art.title ? `${art.short_id}.md` : "edit.md",
+        proposeMsg.trim() || "Proposed change",
+      )
+      show("Proposed — sent for review")
+      setEditing(false)
+      setProposeMsg("")
       load()
     } catch (e) {
       show((e as Error).message)
@@ -477,10 +501,31 @@ export function Artifact() {
   return (
     <ActionsCtx.Provider value={actions}>
       <div style={{ height: "100%", display: "flex", flexDirection: "column" }}>
+        {reviewing && (
+          <ReviewOverlay
+            shortId={shortId}
+            currentVersion={art.current_version}
+            myRole={art.my_role}
+            meName={me?.name ?? me?.email ?? null}
+            onClose={() => setReviewing(false)}
+            onApplied={load}
+          />
+        )}
         <Header
           right={
             <>
               {!isMobile && <Presence viewers={viewers} self={me?.name ?? me?.email ?? ""} />}
+              <StarButton
+                shortId={shortId}
+                favorite={!!art.favorite}
+                onChange={(fav) => setArt((a) => (a ? { ...a, favorite: fav } : a))}
+              />
+              <TagsMenu
+                shortId={shortId}
+                tags={art.tags ?? []}
+                canEdit={art.my_role === "editor" || art.my_role === "owner"}
+                onChange={(tags) => setArt((a) => (a ? { ...a, tags } : a))}
+              />
               <ShareButton shortId={shortId} myRole={art.my_role} />
               <Insights shortId={shortId} />
               <HistoryMenu
@@ -493,9 +538,30 @@ export function Artifact() {
                   })
                 }
               />
-              {editable && !editing && (
+              {art.open_proposals && art.open_proposals > 0 ? (
+                <button
+                  className="btn sm"
+                  onClick={() => setReviewing(true)}
+                  style={{ gap: 6, borderColor: "var(--ac)", color: "var(--ac)" }}
+                  title="Review proposed changes"
+                >
+                  Review <b style={{ fontWeight: 700 }}>{art.open_proposals}</b>
+                </button>
+              ) : (
+                !!art.proposals_total &&
+                art.proposals_total > 0 && (
+                  <button
+                    className="btn sm"
+                    onClick={() => setReviewing(true)}
+                    title="See proposals and review feedback"
+                  >
+                    Proposals
+                  </button>
+                )
+              )}
+              {editable && canPropose && !editing && (
                 <button className="btn sm" onClick={startEdit}>
-                  Edit
+                  {canPublish ? "Edit" : "Propose"}
                 </button>
               )}
               {/* On phones the bottom-right FAB opens comments, so the header
@@ -547,15 +613,32 @@ export function Artifact() {
                   }}
                 >
                   <span className="mono muted" style={{ fontSize: 11 }}>
-                    editing source
+                    {canPublish ? "editing source" : "proposing a change"}
                   </span>
+                  {/* The proposer's "why" — shown to the reviewer. Editors who
+                      publish directly don't need it. */}
+                  {!canPublish && (
+                    <input
+                      className="input"
+                      value={proposeMsg}
+                      onChange={(e) => setProposeMsg(e.target.value)}
+                      placeholder="What are you changing, and why?"
+                      style={{ flex: 1, maxWidth: 420, padding: "5px 9px", fontSize: 12.5 }}
+                    />
+                  )}
                   <span style={{ flex: 1 }} />
                   <button className="btn sm" onClick={() => setEditing(false)}>
                     Cancel
                   </button>
-                  <button className="btn pri sm" onClick={publishEdit}>
-                    Publish new version
-                  </button>
+                  {canPublish ? (
+                    <button className="btn pri sm" onClick={publishEdit}>
+                      Publish new version
+                    </button>
+                  ) : (
+                    <button className="btn pri sm" onClick={proposeEdit}>
+                      Propose change
+                    </button>
+                  )}
                 </div>
                 <textarea
                   className="mono"
@@ -795,6 +878,177 @@ export function Artifact() {
         {toast}
       </div>
     </ActionsCtx.Provider>
+  )
+}
+
+// Header star: toggle this artifact as a personal favorite. Optimistic.
+function StarButton({
+  shortId,
+  favorite,
+  onChange,
+}: {
+  shortId: string
+  favorite: boolean
+  onChange: (f: boolean) => void
+}) {
+  const [busy, setBusy] = useState(false)
+  const toggle = async () => {
+    const next = !favorite
+    onChange(next)
+    setBusy(true)
+    try {
+      await api.favorite(shortId, next)
+    } catch {
+      onChange(!next)
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <button
+      className="btn sm"
+      onClick={toggle}
+      disabled={busy}
+      title={favorite ? "Remove from favorites" : "Add to favorites"}
+      aria-label="Toggle favorite"
+      style={{
+        color: favorite ? "#e0a93a" : undefined,
+        borderColor: favorite ? "#e0a93a" : undefined,
+      }}
+    >
+      {favorite ? "★" : "☆"}
+    </button>
+  )
+}
+
+// Header tags popover: view tags; editors add/remove. Writes replace the full
+// set (the server normalizes: trim, lowercase, dedupe, cap).
+function TagsMenu({
+  shortId,
+  tags,
+  canEdit,
+  onChange,
+}: {
+  shortId: string
+  tags: string[]
+  canEdit: boolean
+  onChange: (t: string[]) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const [draft, setDraft] = useState("")
+  const ref = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const h = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener("click", h)
+    return () => document.removeEventListener("click", h)
+  }, [])
+  const save = async (next: string[]) => {
+    onChange(next)
+    try {
+      const r = await api.setTags(shortId, next)
+      onChange(r.tags)
+    } catch {
+      /* keep the optimistic value */
+    }
+  }
+  const add = () => {
+    const v = draft.trim().toLowerCase()
+    setDraft("")
+    if (v && !tags.includes(v)) save([...tags, v])
+  }
+  return (
+    <div ref={ref} style={{ position: "relative" }}>
+      <button
+        className="btn sm"
+        onClick={(e) => {
+          e.stopPropagation()
+          setOpen((o) => !o)
+        }}
+        style={{ gap: 6 }}
+        title="Tags"
+      >
+        🏷 {tags.length > 0 && <b style={{ fontWeight: 700 }}>{tags.length}</b>}
+      </button>
+      {open && (
+        <div
+          className="card"
+          style={{
+            position: "absolute",
+            right: 0,
+            top: "calc(100% + 7px)",
+            width: 244,
+            padding: 12,
+            boxShadow: "var(--shadow)",
+            zIndex: 30,
+          }}
+        >
+          <div
+            className="mono muted"
+            style={{
+              fontSize: 9.5,
+              letterSpacing: ".06em",
+              textTransform: "uppercase",
+              marginBottom: 8,
+            }}
+          >
+            Tags
+          </div>
+          {tags.length === 0 && (
+            <div className="muted" style={{ fontSize: 12, marginBottom: canEdit ? 9 : 0 }}>
+              {canEdit ? "No tags yet — add one below." : "No tags."}
+            </div>
+          )}
+          {tags.length > 0 && (
+            <div
+              style={{ display: "flex", flexWrap: "wrap", gap: 5, marginBottom: canEdit ? 10 : 0 }}
+            >
+              {tags.map((t) => (
+                <span key={t} className="tagchip" style={{ cursor: "default" }}>
+                  #{t}
+                  {canEdit && (
+                    <button
+                      onClick={() => save(tags.filter((x) => x !== t))}
+                      aria-label={`Remove ${t}`}
+                      style={{
+                        border: 0,
+                        background: "transparent",
+                        color: "inherit",
+                        cursor: "pointer",
+                        padding: 0,
+                        marginLeft: 2,
+                        fontSize: 13,
+                        lineHeight: 1,
+                      }}
+                    >
+                      ×
+                    </button>
+                  )}
+                </span>
+              ))}
+            </div>
+          )}
+          {canEdit && (
+            <div style={{ display: "flex", gap: 6 }}>
+              <input
+                className="input"
+                value={draft}
+                placeholder="Add a tag…"
+                onChange={(e) => setDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") add()
+                }}
+                style={{ padding: "6px 9px", fontSize: 12.5 }}
+              />
+              <button className="btn sm" onClick={add} disabled={!draft.trim()}>
+                Add
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
   )
 }
 

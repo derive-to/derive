@@ -9,6 +9,8 @@ import type {
   MembershipRecord,
   NotificationKind,
   NotificationRecord,
+  ProposalRecord,
+  ProposalState,
   Role,
   VersionRecord,
   Visibility,
@@ -137,6 +139,54 @@ export const notification = sqliteTable("notification", {
   created_at: text("created_at").notNull().default(now),
 })
 
+// Per-user stars. One row per (artifact, user); favorites are personal, never shared.
+export const artifactFavorite = sqliteTable(
+  "artifact_favorite",
+  {
+    id: text("id").primaryKey(),
+    artifact_id: text("artifact_id")
+      .notNull()
+      .references(() => artifact.id),
+    user_id: text("user_id").notNull(),
+    created_at: text("created_at").notNull().default(now),
+  },
+  (t) => [uniqueIndex("artifact_favorite_user").on(t.artifact_id, t.user_id)],
+)
+
+// Browse tags. One row per (artifact, tag); workspace-wide, not per-user.
+export const artifactTag = sqliteTable(
+  "artifact_tag",
+  {
+    id: text("id").primaryKey(),
+    artifact_id: text("artifact_id")
+      .notNull()
+      .references(() => artifact.id),
+    tag: text("tag").notNull(),
+    created_at: text("created_at").notNull().default(now),
+  },
+  (t) => [uniqueIndex("artifact_tag_uniq").on(t.artifact_id, t.tag)],
+)
+
+export const proposal = sqliteTable("proposal", {
+  id: text("id").primaryKey(),
+  artifact_id: text("artifact_id")
+    .notNull()
+    .references(() => artifact.id),
+  blob_key: text("blob_key").notNull(),
+  content_type: text("content_type").notNull(),
+  kind: text("kind").$type<ArtifactKind>().notNull(),
+  title: text("title"),
+  message: text("message"),
+  author: text("author").notNull(),
+  base_version: integer("base_version").notNull(),
+  state: text("state").$type<ProposalState>().notNull().default("open"),
+  decided_by: text("decided_by"),
+  decided_version: integer("decided_version"),
+  decision_note: text("decision_note"),
+  decided_at: text("decided_at"),
+  created_at: text("created_at").notNull().default(now),
+})
+
 // user/session/account/verification tables are owned and migrated by Better Auth
 // (see apps/api/src/auth-config.ts) — not declared here.
 
@@ -262,6 +312,40 @@ export const SCHEMA_STATEMENTS: string[] = [
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
   )`,
   `CREATE INDEX IF NOT EXISTS notification_user_time ON notification (user_id, created_at)`,
+  `CREATE TABLE IF NOT EXISTS artifact_favorite (
+    id TEXT PRIMARY KEY,
+    artifact_id TEXT NOT NULL REFERENCES artifact(id),
+    user_id TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    UNIQUE (artifact_id, user_id)
+  )`,
+  `CREATE INDEX IF NOT EXISTS favorite_user ON artifact_favorite (user_id)`,
+  `CREATE TABLE IF NOT EXISTS artifact_tag (
+    id TEXT PRIMARY KEY,
+    artifact_id TEXT NOT NULL REFERENCES artifact(id),
+    tag TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    UNIQUE (artifact_id, tag)
+  )`,
+  `CREATE INDEX IF NOT EXISTS tag_name ON artifact_tag (tag)`,
+  `CREATE TABLE IF NOT EXISTS proposal (
+    id TEXT PRIMARY KEY,
+    artifact_id TEXT NOT NULL REFERENCES artifact(id),
+    blob_key TEXT NOT NULL,
+    content_type TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    title TEXT,
+    message TEXT,
+    author TEXT NOT NULL,
+    base_version INTEGER NOT NULL,
+    state TEXT NOT NULL DEFAULT 'open',
+    decided_by TEXT,
+    decided_version INTEGER,
+    decision_note TEXT,
+    decided_at TEXT,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+  )`,
+  `CREATE INDEX IF NOT EXISTS proposal_artifact_state ON proposal (artifact_id, state)`,
   // user/session/account/verification are owned and migrated by Better Auth.
 ]
 
@@ -273,6 +357,7 @@ export const SCHEMA_STATEMENTS: string[] = [
 export const MIGRATION_STATEMENTS: string[] = [
   `ALTER TABLE comment ADD COLUMN meta TEXT`,
   `ALTER TABLE version ADD COLUMN name TEXT`,
+  `ALTER TABLE proposal ADD COLUMN decision_note TEXT`,
 ]
 
 // Compile-time guard: the drizzle table defs must exactly match the core record
@@ -287,5 +372,6 @@ const _schemaParity: [
   Exact<typeof membership.$inferSelect, MembershipRecord>,
   Exact<typeof artifactMember.$inferSelect, ArtifactMemberRecord>,
   Exact<typeof notification.$inferSelect, NotificationRecord>,
-] = [true, true, true, true, true, true, true, true]
+  Exact<typeof proposal.$inferSelect, ProposalRecord>,
+] = [true, true, true, true, true, true, true, true, true]
 void _schemaParity

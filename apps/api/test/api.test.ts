@@ -705,6 +705,137 @@ describe("permissions: a per-artifact share overrides the workspace role", () =>
   })
 })
 
+const proposeAs = (
+  app: ReturnType<typeof createApp>,
+  shortId: string,
+  content: string,
+  headers: Record<string, string> = {},
+  fields: Record<string, string> = {},
+) => {
+  const form = new FormData()
+  form.append("file", new Blob([new TextEncoder().encode(content)]), "f.html")
+  for (const [k, v] of Object.entries(fields)) form.append(k, v)
+  return app.request(`/v1/artifacts/${shortId}/proposals`, { method: "POST", body: form, headers })
+}
+
+describe("reviews: propose → approve goes live; commenter can't approve", () => {
+  const owner: TestUser = { id: "u_ro", email: "ro@dock.test", name: "Ro" }
+  const cassie: TestUser = { id: "u_cassie", email: "cassie@dock.test", name: "Cassie" }
+  const { app } = makeAuthedApp("reviews", [owner, cassie], "commenter")
+  let shortId: string
+  let proposalId: string
+
+  it("owner publishes v1; a commenter proposes a candidate that does NOT go live", async () => {
+    shortId = (await (await publishAs(app, "<h1>v1 live</h1>", {}, as(owner.email))).json())
+      .short_id
+    const res = await proposeAs(app, shortId, "<h1>candidate</h1>", as(cassie.email), {
+      message: "tighten the headline",
+    })
+    expect(res.status).toBe(201)
+    const p = await res.json()
+    proposalId = p.id
+    expect(p.state).toBe("open")
+    expect(p.base_version).toBe(1)
+
+    // The artifact is untouched: still v1, but the review queue shows 1.
+    const art = await (
+      await app.request(`/v1/artifacts/${shortId}`, { headers: as(owner.email) })
+    ).json()
+    expect(art.current_version).toBe(1)
+    expect(art.open_proposals).toBe(1)
+  })
+
+  it("renders the proposed experience at its preview URL, distinct from current", async () => {
+    const proposed = await app.request(`/raw/${shortId}/p/${proposalId}/index.html`, {
+      headers: as(owner.email),
+    })
+    expect(proposed.status).toBe(200)
+    expect(await proposed.text()).toContain("<h1>candidate</h1>")
+    // The live content is still v1.
+    const live = await app.request(`/v1/artifacts/${shortId}/content`, { headers: as(owner.email) })
+    expect(await live.text()).toContain("v1 live")
+  })
+
+  it("a commenter cannot approve their own proposal", async () => {
+    const res = await app.request(`/v1/artifacts/${shortId}/proposals/${proposalId}/approve`, {
+      method: "POST",
+      headers: as(cassie.email),
+    })
+    expect(res.status).toBe(403)
+  })
+
+  it("an editor/owner approves: the proposed content becomes the new current version", async () => {
+    const res = await app.request(`/v1/artifacts/${shortId}/proposals/${proposalId}/approve`, {
+      method: "POST",
+      headers: as(owner.email),
+    })
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.state).toBe("approved")
+    expect(body.published).toBe(2)
+
+    const art = await (
+      await app.request(`/v1/artifacts/${shortId}`, { headers: as(owner.email) })
+    ).json()
+    expect(art.current_version).toBe(2)
+    expect(art.open_proposals).toBe(0)
+    const live = await app.request(`/v1/artifacts/${shortId}/content`, { headers: as(owner.email) })
+    expect(await live.text()).toContain("candidate")
+  })
+
+  it("approving an already-decided proposal is a conflict", async () => {
+    const res = await app.request(`/v1/artifacts/${shortId}/proposals/${proposalId}/approve`, {
+      method: "POST",
+      headers: as(owner.email),
+    })
+    expect(res.status).toBe(409)
+  })
+})
+
+describe("reviews: request changes and withdraw keep content live-unchanged", () => {
+  const owner: TestUser = { id: "u_rc", email: "rc@dock.test", name: "Rc" }
+  const dana: TestUser = { id: "u_dana", email: "dana@dock.test", name: "Dana" }
+  const { app } = makeAuthedApp("reviews-rc", [owner, dana], "commenter")
+  let shortId: string
+
+  it("request-changes carries the reviewer's note back to the proposer, content unchanged", async () => {
+    shortId = (await (await publishAs(app, "<h1>base</h1>", {}, as(owner.email))).json()).short_id
+    const pid = (await (await proposeAs(app, shortId, "<h1>try</h1>", as(dana.email))).json()).id
+    const res = await app.request(`/v1/artifacts/${shortId}/proposals/${pid}/request-changes`, {
+      method: "POST",
+      headers: { "content-type": "application/json", ...as(owner.email) },
+      body: JSON.stringify({ note: "Tighten the intro paragraph first" }),
+    })
+    expect(res.status).toBe(200)
+    const decided = await res.json()
+    expect(decided.state).toBe("changes_requested")
+    expect(decided.decision_note).toBe("Tighten the intro paragraph first")
+    const art = await (
+      await app.request(`/v1/artifacts/${shortId}`, { headers: as(owner.email) })
+    ).json()
+    expect(art.current_version).toBe(1)
+    expect(art.open_proposals).toBe(0)
+    // The decided proposal still counts toward the Proposals entry (not withdrawn),
+    // so the proposer can return to read the feedback.
+    expect(art.proposals_total).toBe(1)
+  })
+
+  it("a proposer can withdraw their own open proposal", async () => {
+    const pid = (await (await proposeAs(app, shortId, "<h1>wip</h1>", as(dana.email))).json()).id
+    const res = await app.request(`/v1/artifacts/${shortId}/proposals/${pid}/withdraw`, {
+      method: "POST",
+      headers: as(dana.email),
+    })
+    expect(res.status).toBe(200)
+    expect((await res.json()).state).toBe("withdrawn")
+  })
+
+  it("an unauthenticated caller on a secured instance cannot propose", async () => {
+    const res = await proposeAs(app, shortId, "<h1>nope</h1>", {})
+    expect(res.status).toBe(403)
+  })
+})
+
 describe("anchored comments", () => {
   it("flags comments anchored vs orphaned against the current version", async () => {
     const sid = (await (await upload("a.md", "alpha beta gamma", { title: "A" })).json()).short_id
@@ -919,5 +1050,66 @@ describe("@mentions + in-app notifications", () => {
     } finally {
       await reader.cancel()
     }
+  })
+})
+
+describe("favorites + tags (browse)", () => {
+  const idOf = async (shortId: string) => {
+    const a = await meta.getByShortId(shortId)
+    if (!a) throw new Error(`no artifact ${shortId}`)
+    return a.id
+  }
+  const putTags = (shortId: string, tags: string[]) =>
+    app.request(`/v1/artifacts/${shortId}/tags`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ tags }),
+    })
+
+  it("favorites are per-user at the store layer (set, idempotent, remove)", async () => {
+    const { short_id } = await (await upload("fav.md", "# Fav")).json()
+    const id = await idOf(short_id)
+    expect(await meta.listUserFavoriteIds("u1")).not.toContain(id)
+    await meta.setFavorite(id, "u1")
+    await meta.setFavorite(id, "u1") // idempotent — no duplicate row
+    expect(await meta.listUserFavoriteIds("u1")).toContain(id)
+    expect(await meta.listUserFavoriteIds("u2")).not.toContain(id) // personal
+    await meta.removeFavorite(id, "u1")
+    expect(await meta.listUserFavoriteIds("u1")).not.toContain(id)
+  })
+
+  it("normalizes tags and surfaces them on list + detail", async () => {
+    const { short_id } = await (await upload("t.md", "# Tagged")).json()
+    const res = await putTags(short_id, ["React", "react", "  Demo  ", ""])
+    expect(res.status).toBe(200)
+    expect((await res.json()).tags).toEqual(["demo", "react"]) // trimmed, lowercased, deduped, sorted
+
+    const detail = await (await app.request(`/v1/artifacts/${short_id}`)).json()
+    expect(detail.tags).toEqual(["demo", "react"])
+    expect(detail.favorite).toBe(false)
+
+    const list = await (await app.request("/v1/artifacts")).json()
+    const row = list.artifacts.find((x: { short_id: string }) => x.short_id === short_id)
+    expect(row.tags).toEqual(["demo", "react"])
+    expect(row).toHaveProperty("favorite")
+  })
+
+  it("replaces the full tag set (old tags drop)", async () => {
+    const { short_id } = await (await upload("r.md", "# R")).json()
+    await putTags(short_id, ["one", "two"])
+    expect((await (await putTags(short_id, ["three"])).json()).tags).toEqual(["three"])
+    const detail = await (await app.request(`/v1/artifacts/${short_id}`)).json()
+    expect(detail.tags).toEqual(["three"])
+  })
+
+  it("batches tags across artifacts without N+1", async () => {
+    const a1 = await (await upload("b1.md", "# 1")).json()
+    const a2 = await (await upload("b2.md", "# 2")).json()
+    await putTags(a1.short_id, ["solo"])
+    const id1 = await idOf(a1.short_id)
+    const id2 = await idOf(a2.short_id)
+    const map = await meta.tagsForArtifacts([id1, id2])
+    expect(map[id1]).toEqual(["solo"])
+    expect(map[id2]).toBeUndefined() // untagged ids simply have no entry
   })
 })
