@@ -4,8 +4,8 @@ import { z } from "zod"
 import type { AppContext } from "../context"
 import { fail, readJson } from "../lib/http"
 
-/** Per-artifact role overrides (a share). Managing shares requires `manage` on
- *  the artifact; the share's role beats the caller's workspace baseline. */
+/** Per-artifact role overrides (a share). Managing shares requires `share`
+ *  (editor+, GDocs model); the share's role beats the caller's workspace baseline. */
 export const sharingRoutes = (ctx: AppContext) => {
   const { meta, defaultRole, authorize } = ctx
   const app = new Hono()
@@ -30,7 +30,7 @@ export const sharingRoutes = (ctx: AppContext) => {
   app.put("/v1/artifacts/:shortId/members", async (c) => {
     const artifact = await meta.getByShortId(c.req.param("shortId"))
     if (!artifact) return fail(c, 404, "not found")
-    if (!(await authorize(c, "manage", artifact))) return fail(c, 403, "forbidden")
+    if (!(await authorize(c, "share", artifact))) return fail(c, 403, "forbidden")
     const b = await readJson(
       c,
       z.object({
@@ -53,7 +53,7 @@ export const sharingRoutes = (ctx: AppContext) => {
   app.delete("/v1/artifacts/:shortId/members/:userId", async (c) => {
     const artifact = await meta.getByShortId(c.req.param("shortId"))
     if (!artifact) return fail(c, 404, "not found")
-    if (!(await authorize(c, "manage", artifact))) return fail(c, 403, "forbidden")
+    if (!(await authorize(c, "share", artifact))) return fail(c, 403, "forbidden")
     await meta.removeArtifactMember(artifact.id, c.req.param("userId"))
     return c.body(null, 204)
   })
