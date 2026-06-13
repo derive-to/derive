@@ -14,6 +14,7 @@ import {
   ClockCounterClockwiseIcon,
   CodeIcon,
   DotsThreeIcon,
+  EyeIcon,
   FlagIcon,
   FolderSimpleIcon,
   FoldersIcon,
@@ -24,6 +25,7 @@ import {
   MagnifyingGlassIcon,
   type Icon as PhIcon,
   PlusIcon,
+  ProhibitIcon,
   PushPinIcon,
   ShareNetworkIcon,
   SidebarSimpleIcon,
@@ -72,6 +74,8 @@ const REG = {
   edit: [CodeIcon, "text-muted-foreground"],
   review: [GitPullRequestIcon, "text-review"],
   pin: [PushPinIcon, "text-gold"],
+  views: [EyeIcon, "text-muted-foreground"],
+  removed: [ProhibitIcon, "text-muted-foreground"],
 } as const satisfies Record<string, readonly [PhIcon, string]>
 
 export type IconName = keyof typeof REG

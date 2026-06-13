@@ -340,7 +340,7 @@ export function Artifact() {
     return (
       <AppShell>
         <div className="grid h-full place-items-center gap-3 text-center">
-          <div className="text-3xl opacity-55">🚫</div>
+          <Icon name="removed" size={40} className="opacity-55" />
           <div className="text-lg font-semibold">This artifact was removed</div>
           <div className="max-w-[360px] text-sm leading-relaxed text-muted-foreground">
             It was taken down by a moderator and is no longer available.

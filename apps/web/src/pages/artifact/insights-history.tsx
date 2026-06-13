@@ -210,11 +210,11 @@ export function HistoryMenu({
                 )}
               >
                 <div className="flex items-center gap-1.5">
-                  <span
-                    className={cn("text-xs", s.name ? "text-primary" : "text-muted-foreground")}
-                  >
-                    {s.name ? "★" : "●"}
-                  </span>
+                  {s.name ? (
+                    <Icon name="pin" size={13} />
+                  ) : (
+                    <span className="size-1.5 shrink-0 rounded-full bg-muted-foreground" />
+                  )}
                   <span
                     className={cn(
                       "truncate text-sm font-semibold",
