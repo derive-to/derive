@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button"
 import { useAuth } from "@/ctx"
 import { useIsMobile } from "@/lib/use-is-mobile"
 import { cn } from "@/lib/utils"
+import { CommandPalette } from "./command-palette"
 import { Icon } from "./icons"
 import { NavRail } from "./nav-rail"
 import { Logo } from "./shared/logo"
@@ -35,6 +36,7 @@ export function AppShell({
     }
   })
   const [drawerOpen, setDrawerOpen] = useState(false)
+  const [paletteOpen, setPaletteOpen] = useState(false)
   const [summary, setSummary] = useState<Summary | null>(null)
   const [collections, setCollections] = useState<Collection[]>([])
   const [workspaces, setWorkspaces] = useState<Workspaces | null>(null)
@@ -46,6 +48,18 @@ export function AppShell({
       /* private mode */
     }
   }, [collapsed])
+
+  // ⌘K / Ctrl+K toggles the command palette from anywhere.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && (e.key === "k" || e.key === "K")) {
+        e.preventDefault()
+        setPaletteOpen((o) => !o)
+      }
+    }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [])
 
   const refreshSummary = useCallback(() => {
     api
@@ -103,6 +117,8 @@ export function AppShell({
     toggleCollapsed,
     drawerOpen,
     setDrawerOpen,
+    paletteOpen,
+    setPaletteOpen,
     summary,
     collections,
     workspaces,
@@ -150,6 +166,7 @@ export function AppShell({
           <main className="flex min-w-0 flex-1 flex-col overflow-hidden">{children}</main>
         </div>
       </div>
+      <CommandPalette />
     </ShellCtx.Provider>
   )
 }

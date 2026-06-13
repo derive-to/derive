@@ -17,6 +17,8 @@ export interface ShellValue {
   toggleCollapsed: () => void
   drawerOpen: boolean
   setDrawerOpen: (o: boolean) => void
+  paletteOpen: boolean
+  setPaletteOpen: (open: boolean) => void
   summary: Summary | null
   collections: Collection[]
   workspaces: Workspaces | null

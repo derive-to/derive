@@ -79,6 +79,7 @@ export function NavRail() {
     workspaces,
     switchWorkspace,
     createWorkspace,
+    setPaletteOpen,
   } = useShell()
   const isMobile = useIsMobile()
   const loc = useLocation()
@@ -106,6 +107,23 @@ export function NavRail() {
       )}
     >
       <div className="flex flex-1 flex-col gap-px">
+        <button
+          type="button"
+          onClick={() => setPaletteOpen(true)}
+          title="Search (⌘K)"
+          data-testid="open-command-palette"
+          className={cn(ROW_BASE, railMode && ROW_RAIL)}
+        >
+          <span className="flex w-[18px] shrink-0 items-center justify-center">
+            <Icon name="search" size={18} />
+          </span>
+          {!railMode && <span className="flex-1 overflow-hidden text-ellipsis">Search</span>}
+          {!railMode && (
+            <kbd className="rounded border border-border-soft bg-muted px-1.5 py-px font-mono text-2xs text-muted-foreground">
+              ⌘K
+            </kbd>
+          )}
+        </button>
         <SideItem
           icon="all"
           label="All artifacts"
