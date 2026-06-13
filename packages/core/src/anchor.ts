@@ -76,6 +76,14 @@ document.addEventListener("mouseup",function(){setTimeout(emitSelection,0)});
 document.addEventListener("selectionchange",function(){
   var s=window.getSelection();if(!s||s.isCollapsed)post({type:"select",selector:null,rect:null})});
 
+/* -- live cursor: throttled pointer position, viewport-normalized 0..1, so the
+      host can fan it out to other viewers as a multiplayer cursor -- */
+var cT=0;
+document.addEventListener("mousemove",function(e){
+  var n=Date.now();if(n-cT<40)return;cT=n;
+  var w=window.innerWidth||1,h=window.innerHeight||1;
+  post({type:"cursor",x:e.clientX/w,y:e.clientY/h})});
+
 /* -- highlight styles (mark's default yellow is overridden) -- */
 var st=document.createElement("style");
 st.textContent="mark.dock-hl{background:rgba(124,108,189,.20);color:inherit;border-bottom:2px solid rgba(124,108,189,.5);border-radius:2px;cursor:pointer;transition:background .15s,border-color .15s}"+

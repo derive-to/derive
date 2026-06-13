@@ -105,6 +105,12 @@ export function renderShell(
   .composer .name{flex:1;border:1px solid var(--line);border-radius:7px;padding:5px 9px;font-size:11px;color:var(--muted);background:var(--paper)}
   .toast{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);background:var(--ink);color:var(--paper);font-size:12px;padding:8px 14px;border-radius:9px;opacity:0;transition:.25s;pointer-events:none;z-index:50}
   .toast.show{opacity:1}
+  /* live multiplayer cursors (overlaid on the artifact stage) */
+  #cursors{position:absolute;inset:0;overflow:hidden;pointer-events:none;z-index:30}
+  .pcur{position:absolute;top:0;left:0;transition:transform .09s linear,opacity .3s;will-change:transform}
+  .pcur svg{display:block;fill:var(--c);filter:drop-shadow(0 1px 1.5px rgba(0,0,0,.35))}
+  .pcur b{position:absolute;left:12px;top:14px;background:var(--c);color:#fff;font:600 10.5px var(--sans);
+    padding:1px 7px;border-radius:5px;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,.25)}
 </style>
 </head>
 <body>
@@ -239,10 +245,39 @@ try {
   ev.addEventListener("comment.resolved", loadComments);
   ev.addEventListener("version.published", () => toast("A new version was published"));
   ev.addEventListener("presence", e => { try{ const d=JSON.parse(e.data); const n=(d.viewers||[]).length; $("#presN").textContent=n; $("#pres").hidden = n<2; }catch{} });
+  ev.addEventListener("cursor", e => { try{ const d=JSON.parse(e.data); if(d.id!==myId) showPeer(d); }catch{} });
 } catch {}
 const myName = () => who || "anonymous";
 function beat(){ fetch(base + "/presence", {method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({name: myName()})}).catch(()=>{}); }
 beat(); setInterval(beat, 25000);
+
+/* ---- live cursors (multiplayer) ---- */
+const stage = $(".stage"); stage.style.position = "relative";
+const clayer = document.createElement("div"); clayer.id = "cursors"; stage.appendChild(clayer);
+const myId = Math.random().toString(36).slice(2, 9);
+let h = 0; for (let i = 0; i < myId.length; i++) h = (h * 31 + myId.charCodeAt(i)) % 360;
+const myColor = "hsl(" + h + " 72% 52%)";
+const peers = {};
+let lastXY = null, lastSent = 0;
+function sendCursor(){ if(!lastXY) return; lastSent = Date.now();
+  fetch(base + "/cursor", {method:"POST",headers:{"content-type":"application/json"},
+    body: JSON.stringify({id: myId, name: myName(), color: myColor, x: lastXY[0], y: lastXY[1]})}).catch(()=>{}); }
+window.addEventListener("message", e => {
+  const m = e.data; if(!m || m.source !== "dock" || m.type !== "cursor") return;
+  lastXY = [m.x, m.y]; if(Date.now() - lastSent >= 45) sendCursor(); });
+setInterval(() => { if(lastXY) sendCursor(); }, 3000);
+const CUR_SVG = '<svg width="20" height="20" viewBox="0 0 16 20"><path d="M1 1 L1 16 L5 12.5 L8 19 L10.5 18 L7.5 11.5 L13 11.5 Z" stroke="#fff" stroke-width="1.3" stroke-linejoin="round"/></svg>';
+function showPeer(d){
+  let el = peers[d.id];
+  if(!el){ el = document.createElement("div"); el.className = "pcur"; el.innerHTML = CUR_SVG + "<b></b>"; clayer.appendChild(el); peers[d.id] = el; }
+  el.style.setProperty("--c", d.color || "#655999");
+  el.querySelector("b").textContent = d.name || "anon";
+  const r = stage.getBoundingClientRect();
+  el.style.transform = "translate(" + (d.x * r.width).toFixed(1) + "px," + (d.y * r.height).toFixed(1) + "px)";
+  el.style.opacity = "1";
+  clearTimeout(el._t);
+  el._t = setTimeout(() => { el.style.opacity = "0"; setTimeout(() => { el.remove(); delete peers[d.id]; }, 400); }, 8000);
+}
 </script>
 </body>
 </html>`

@@ -17,6 +17,7 @@ export const DOMAIN_EVENTS = [
   "proposal.approved",
   "proposal.changes_requested",
   "presence",
+  "cursor",
   "notification",
 ] as const
 export type DomainEvent = (typeof DOMAIN_EVENTS)[number]
