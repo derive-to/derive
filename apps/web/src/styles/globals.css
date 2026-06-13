@@ -7,11 +7,10 @@
 
 @import "tailwindcss";
 @import "tw-animate-css";
-/* Legacy hand-rolled CSS, kept while surfaces migrate to Tailwind + ui/.
-   Defines the per-theme CSS vars ([data-theme] → --fg/--card/--ac/…) that the
-   @theme bridge below references, plus the old utility classes still in use.
-   Imported into the `legacy` layer so utilities outrank it. Delete from here as
-   each surface is converted. */
+/* The per-theme CSS vars ([data-theme] → --fg/--card/--ac/…) the @theme bridge
+   below references, plus the last few comment-thread class rules (animation,
+   markdown body, @mention pill) that have no clean utility equivalent. Imported
+   into the `legacy` layer so utilities outrank it. */
 @import "../styles.css" layer(legacy);
 
 /* Dark variant keys off the theme attribute the app sets on <html>. dusk is a
