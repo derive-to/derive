@@ -16,6 +16,7 @@ export function Settings() {
   const nav = useNavigate()
   const { toast, show } = useToast()
   const [reports, setReports] = useState<Report[] | null>(null)
+  const [tab, setTab] = useState("workspace")
 
   useEffect(() => {
     if (!loading && !me) nav({ to: "/login" })
@@ -29,6 +30,12 @@ export function Settings() {
   useEffect(() => {
     if (me) loadReports()
   }, [me])
+  // The Reports tab only exists while there are open reports. If the last one is
+  // cleared while it's the active tab, fall back to Workspace so the content
+  // panel never strands blank with no tab selected.
+  useEffect(() => {
+    if ((reports?.length ?? 0) === 0 && tab === "reports") setTab("workspace")
+  }, [reports, tab])
 
   if (!me) return <CenteredSpinner />
 
@@ -45,7 +52,7 @@ export function Settings() {
           Your workspace, members, and integrations.
         </p>
 
-        <Tabs defaultValue="workspace" className="mt-6">
+        <Tabs value={tab} onValueChange={setTab} className="mt-6">
           <TabsList className="max-w-full overflow-x-auto">
             <TabsTrigger data-testid="settings-tab-workspace" value="workspace">
               Workspace
