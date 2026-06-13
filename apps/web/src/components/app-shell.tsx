@@ -7,7 +7,6 @@ import { useIsMobile } from "@/lib/use-is-mobile"
 import { cn } from "@/lib/utils"
 import { Icon } from "./icons"
 import { NavRail } from "./nav-rail"
-import { NotificationBell } from "./notification-bell"
 import { Logo } from "./shared/logo"
 import { ShellCtx, type ShellValue, type Summary } from "./shell-context"
 
@@ -131,8 +130,7 @@ export function AppShell({
             <Logo />
             <span className="font-display text-lg font-semibold">Dock</span>
           </Link>
-          {topBarActions && <div className="flex items-center gap-2">{topBarActions}</div>}
-          <NotificationBell />
+          {topBarActions && <div className="ml-auto flex items-center gap-2">{topBarActions}</div>}
         </header>
 
         <div className="flex min-h-0 flex-1">

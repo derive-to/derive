@@ -4,11 +4,19 @@ import { useIsMobile } from "@/lib/use-is-mobile"
 import { cn } from "@/lib/utils"
 import type { LibrarySearch } from "@/pages/library/types"
 import { Icon, type IconName } from "./icons"
+import { NotificationBell } from "./notification-bell"
 import { useShell } from "./shell-context"
 import { UserPod } from "./user-pod"
 
-// One nav row: a Link that sets the library filter via URL search. In collapsed
-// (rail) mode it drops the label + count and centers the icon.
+// Shared nav-row look (also used by NotificationBell + the Settings link so the
+// whole rail reads as one list).
+export const ROW_BASE =
+  "flex w-full items-center gap-2.5 whitespace-nowrap rounded-[9px] px-2.5 py-2 text-left text-sm font-semibold text-foreground transition-colors hover:bg-hover"
+export const ROW_ACTIVE = "bg-accent text-accent-foreground hover:bg-accent"
+export const ROW_RAIL = "justify-center px-0 py-2.5"
+
+// One filter-nav row: a Link that sets the library filter via URL search. In
+// collapsed (rail) mode it drops the label + count and centers the icon.
 function SideItem({
   icon,
   label,
@@ -30,11 +38,7 @@ function SideItem({
       search={search}
       title={label}
       aria-current={active ? "page" : undefined}
-      className={cn(
-        "flex w-full items-center gap-2.5 whitespace-nowrap rounded-[9px] px-2.5 py-2 text-left text-sm font-semibold text-foreground transition-colors hover:bg-hover",
-        active && "bg-accent text-accent-foreground hover:bg-accent",
-        collapsed && "justify-center px-0 py-2.5",
-      )}
+      className={cn(ROW_BASE, active && ROW_ACTIVE, collapsed && ROW_RAIL)}
     >
       <span className="flex w-[18px] shrink-0 items-center justify-center">
         <Icon name={icon} size={18} />
@@ -63,9 +67,9 @@ function SideLabel({ children }: { children: ReactNode }) {
 }
 
 // The persistent left nav: All / Favorites always visible (so you can jump to a
-// favorite from anywhere), collections + tags when expanded, and the account +
-// workspace pod pinned at the foot. Collapses to an icon rail on desktop and
-// becomes an off-canvas drawer on mobile.
+// favorite from anywhere), collections + tags when expanded, then a foot group of
+// Notifications + Settings + the account/workspace pod. Collapses to an icon rail
+// on desktop and becomes an off-canvas drawer on mobile.
 export function NavRail() {
   const {
     collapsed,
@@ -148,7 +152,20 @@ export function NavRail() {
           ))}
       </div>
 
-      <div className="mt-auto border-t border-border-soft pt-2">
+      <div className="mt-auto flex flex-col gap-px border-t border-border-soft pt-2">
+        <NotificationBell collapsed={railMode} />
+        <Link
+          to="/settings"
+          data-testid="menu-settings"
+          title="Settings"
+          aria-current={loc.pathname === "/settings" ? "page" : undefined}
+          className={cn(ROW_BASE, loc.pathname === "/settings" && ROW_ACTIVE, railMode && ROW_RAIL)}
+        >
+          <span className="flex w-[18px] shrink-0 items-center justify-center">
+            <Icon name="settings" size={18} />
+          </span>
+          {!railMode && <span className="overflow-hidden text-ellipsis">Settings</span>}
+        </Link>
         <UserPod
           rail={railMode}
           workspaceLabel={summary?.workspace ?? ""}

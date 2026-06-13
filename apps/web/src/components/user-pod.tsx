@@ -178,9 +178,6 @@ export function UserPod({
         </div>
         <div className="my-1 h-px bg-border-soft" />
 
-        <button type="button" data-testid="menu-settings" onClick={goSettings} className={ROW}>
-          <Icon name="settings" size={16} /> Settings
-        </button>
         <button
           type="button"
           data-testid="menu-signout"
