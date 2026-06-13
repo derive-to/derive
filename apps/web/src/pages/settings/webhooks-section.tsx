@@ -1,0 +1,241 @@
+import { useEffect, useState } from "react"
+import { api, type Delivery, type Webhook } from "@/api"
+import { EmptyState } from "@/components/shared/empty-state"
+import { Spinner } from "@/components/shared/spinner"
+import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
+import { Card } from "@/components/ui/card"
+import { Input } from "@/components/ui/input"
+import { ALL_EVENTS, selectClass } from "./roles"
+
+export function WebhooksSection({ show }: { show: (m: string) => void }) {
+  const [hooks, setHooks] = useState<Webhook[] | null>(null)
+  const load = () =>
+    api
+      .listWebhooks()
+      .then((r) => setHooks(r.webhooks))
+      .catch(() => setHooks([]))
+  useEffect(() => {
+    load()
+  }, [])
+
+  return (
+    <section>
+      <p className="mb-4 text-sm text-muted-foreground">
+        Get a POST (or a Slack message) when a comment is added or resolved, or a new version is
+        published. Generic payloads are signed with{" "}
+        <code className="font-mono">X-Dock-Signature</code>.
+      </p>
+
+      <NewWebhook
+        onCreated={(msg) => {
+          show(msg)
+          load()
+        }}
+      />
+
+      <div className="mt-4 flex flex-col gap-2.5">
+        {hooks === null ? (
+          <div className="flex h-20 items-center justify-center">
+            <Spinner />
+          </div>
+        ) : hooks.length === 0 ? (
+          <EmptyState>No webhooks yet. Add one above.</EmptyState>
+        ) : (
+          hooks.map((w) => (
+            <WebhookRow
+              key={w.id}
+              hook={w}
+              onChanged={(m) => {
+                show(m)
+                load()
+              }}
+              onError={show}
+            />
+          ))
+        )}
+      </div>
+    </section>
+  )
+}
+
+function NewWebhook({ onCreated }: { onCreated: (msg: string) => void }) {
+  const [url, setUrl] = useState("")
+  const [kind, setKind] = useState<"generic" | "slack">("generic")
+  const [events, setEvents] = useState<string[]>([...ALL_EVENTS])
+  const [busy, setBusy] = useState(false)
+  const valid = /^https?:\/\//.test(url)
+  const toggle = (e: string) =>
+    setEvents((cur) => (cur.includes(e) ? cur.filter((x) => x !== e) : [...cur, e]))
+  const add = async () => {
+    if (!valid) return
+    setBusy(true)
+    try {
+      await api.createWebhook({
+        url,
+        kind,
+        events: events.length === ALL_EVENTS.length ? undefined : events,
+      })
+      setUrl("")
+      onCreated("Webhook added")
+    } catch (e) {
+      onCreated((e as Error).message)
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <Card className="p-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <select
+          data-testid="webhook-kind"
+          aria-label="Webhook type"
+          value={kind}
+          onChange={(e) => setKind(e.target.value as "generic" | "slack")}
+          className={`${selectClass} w-[110px]`}
+        >
+          <option value="generic">Webhook</option>
+          <option value="slack">Slack</option>
+        </select>
+        <Input
+          data-testid="webhook-url"
+          aria-label="Endpoint URL"
+          value={url}
+          onChange={(e) => setUrl(e.target.value)}
+          placeholder={
+            kind === "slack"
+              ? "Slack incoming-webhook URL"
+              : "https://your-endpoint.example.com/hook"
+          }
+          className="min-w-[240px] flex-1"
+        />
+        <Button data-testid="webhook-add" variant="primary" onClick={add} disabled={busy || !valid}>
+          {busy ? "Adding…" : "Add"}
+        </Button>
+      </div>
+      <div className="mt-3 flex flex-wrap gap-3.5">
+        {ALL_EVENTS.map((e) => (
+          <label
+            key={e}
+            className="flex cursor-pointer items-center gap-1.5 font-mono text-xs text-muted-foreground"
+          >
+            <input
+              type="checkbox"
+              data-testid={`webhook-event-${e}`}
+              className="accent-primary"
+              checked={events.includes(e)}
+              onChange={() => toggle(e)}
+            />
+            {e}
+          </label>
+        ))}
+      </div>
+    </Card>
+  )
+}
+
+const deliveryBadge = (
+  status: string,
+): { variant: "success" | "outline" | "default"; cls?: string } =>
+  status === "delivered"
+    ? { variant: "success" }
+    : status === "dead"
+      ? { variant: "outline", cls: "text-destructive" }
+      : { variant: "default" }
+
+function WebhookRow({
+  hook,
+  onChanged,
+  onError,
+}: {
+  hook: Webhook
+  onChanged: (m: string) => void
+  onError: (m: string) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const [deliveries, setDeliveries] = useState<Delivery[] | null>(null)
+  const loadLog = () =>
+    api
+      .webhookDeliveries(hook.id)
+      .then((r) => setDeliveries(r.deliveries))
+      .catch(() => setDeliveries([]))
+  const showLog = () => {
+    const next = !open
+    setOpen(next)
+    if (next) loadLog()
+  }
+  const test = async () => {
+    try {
+      await api.testWebhook(hook.id)
+      onChanged("Test event queued")
+      if (open) setTimeout(loadLog, 1500)
+    } catch (e) {
+      onError((e as Error).message)
+    }
+  }
+  const remove = async () => {
+    try {
+      await api.deleteWebhook(hook.id)
+      onChanged("Webhook removed")
+    } catch (e) {
+      onError((e as Error).message)
+    }
+  }
+  return (
+    <Card data-testid={`webhook-row-${hook.id}`} className="overflow-hidden p-0">
+      <div className="flex items-center gap-2.5 px-3.5 py-3">
+        <Badge variant={hook.kind === "slack" ? "accent" : "default"} className="font-mono">
+          {hook.kind === "slack" ? "Slack" : "Webhook"}
+        </Badge>
+        <div className="min-w-0 flex-1">
+          <div className="truncate font-mono text-xs text-foreground">{hook.url}</div>
+          <div className="mt-px font-mono text-2xs text-muted-foreground">
+            {hook.events === "*" ? "all events" : hook.events.split(",").join(" · ")}
+          </div>
+        </div>
+        <Button data-testid={`webhook-log-${hook.id}`} variant="ghost" size="sm" onClick={showLog}>
+          {open ? "Hide" : "Log"}
+        </Button>
+        <Button data-testid={`webhook-test-${hook.id}`} variant="ghost" size="sm" onClick={test}>
+          Test
+        </Button>
+        <Button
+          data-testid={`webhook-remove-${hook.id}`}
+          variant="ghost"
+          size="sm"
+          className="text-destructive hover:text-destructive"
+          onClick={remove}
+        >
+          Remove
+        </Button>
+      </div>
+      {open && (
+        <div className="border-t border-border-soft bg-secondary px-3.5 py-2">
+          {deliveries === null ? (
+            <div className="text-xs text-muted-foreground">Loading…</div>
+          ) : deliveries.length === 0 ? (
+            <div className="text-xs text-muted-foreground">No deliveries yet. Hit Test.</div>
+          ) : (
+            deliveries.map((d) => {
+              const b = deliveryBadge(d.status)
+              return (
+                <div key={d.id} className="flex items-center gap-2 py-0.5 text-xs">
+                  <Badge variant={b.variant} className={`font-mono ${b.cls ?? ""}`}>
+                    {d.status}
+                  </Badge>
+                  <span className="font-mono text-muted-foreground">{d.event_type}</span>
+                  {d.attempts > 1 && (
+                    <span className="font-mono text-muted-foreground">· {d.attempts} tries</span>
+                  )}
+                  {d.last_error && (
+                    <span className="truncate font-mono text-destructive">· {d.last_error}</span>
+                  )}
+                </div>
+              )
+            })
+          )}
+        </div>
+      )}
+    </Card>
+  )
+}
