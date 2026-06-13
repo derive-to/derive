@@ -16,6 +16,16 @@ Playwright end-to-end tests that drive the real web app against a real API.
 `pnpm test:e2e` runs both. `pnpm test:e2e:ui` opens the Playwright UI.
 `pnpm test:e2e:report` shows the last HTML report.
 
+## Running locally
+
+Just run one of the commands above from `apps/web`. Each run boots its own API +
+web servers, runs, and tears them down. No manual setup, and nothing touches your
+`:3000` dev server.
+
+Ports are derived from the worktree path (e.g. API `8769` / web `3769`), so every
+worktree and agent gets its own and runs never collide. Override with
+`PW_API_PORT` / `PW_WEB_PORT` if you ever need to pin them.
+
 ## How it stays stable
 
 - **Isolation**: the API runs with `DOCK_MULTI_WORKSPACE=true`, so every signup
