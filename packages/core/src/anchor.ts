@@ -43,11 +43,15 @@ export function reanchor(sel: QuoteSelector, text: string): Reanchor {
  * The comment-anchor client that runs inside the sandboxed artifact iframe.
  * The frame has an opaque origin, so everything rides postMessage:
  *
- *  frame → host:  select            (user selected text — a quote selector)
+ *  frame → host:  select            (user selected text — a quote selector + screen rect)
  *                 anchors-resolved  (which anchor ids matched this document)
+ *                 anchor-rects      (doc-absolute top of every painted highlight)
+ *                 scroll            (live scroll offset — cards track their text)
  *                 anchor-click      (user clicked a highlight)
+ *                 anchor-hover      (pointer entered/left a highlight)
  *  host → frame:  anchors           (paint highlights for these anchors)
  *                 focus-anchor      (scroll to + flash one anchor)
+ *                 emphasize         (lift one anchor's highlight — host card hover)
  *
  * Served at /raw/dock-client.js with a SHORT cache and referenced by URL from
  * artifact HTML — the HTML itself is cached immutable, so baking the client
@@ -55,23 +59,29 @@ export function reanchor(sel: QuoteSelector, text: string): Reanchor {
  */
 export const ANCHOR_CLIENT_JS = `(function(){
 function post(m){m.source="dock";parent.postMessage(m,"*")}
+function scrollTop(){return window.scrollY||document.documentElement.scrollTop||document.body.scrollTop||0}
 
-/* -- selection capture: a text selection becomes a TextQuoteSelector -- */
-document.addEventListener("mouseup",function(){
+/* -- selection capture: a text selection becomes a TextQuoteSelector + the
+      on-screen rect of the selection, so the host can float a button beside it -- */
+function emitSelection(){
   var s=window.getSelection(),t=s?s.toString().trim():"";
-  if(!t||t.length<2){post({type:"select",selector:null});return}
+  if(!t||t.length<2){post({type:"select",selector:null,rect:null});return}
   var ctx=(s.anchorNode&&s.anchorNode.textContent)||t,i=ctx.indexOf(t);
-  post({type:"select",selector:{type:"TextQuoteSelector",exact:t,
+  var rect=null;try{var r=s.getRangeAt(0).getBoundingClientRect();
+    if(r&&(r.height||r.width))rect={top:r.top,bottom:r.bottom}}catch(_){}
+  post({type:"select",rect:rect,selector:{type:"TextQuoteSelector",exact:t,
     prefix:i>=0?ctx.slice(Math.max(0,i-24),i):"",
-    suffix:i>=0?ctx.slice(i+t.length,i+t.length+24):""}})
-});
+    suffix:i>=0?ctx.slice(i+t.length,i+t.length+24):""}})}
+document.addEventListener("mouseup",function(){setTimeout(emitSelection,0)});
+document.addEventListener("selectionchange",function(){
+  var s=window.getSelection();if(!s||s.isCollapsed)post({type:"select",selector:null,rect:null})});
 
 /* -- highlight styles (mark's default yellow is overridden) -- */
 var st=document.createElement("style");
-st.textContent="mark.dock-hl{background:rgba(124,108,189,.26);color:inherit;border-bottom:2px solid rgba(124,108,189,.7);border-radius:2px;cursor:pointer;transition:background .15s}"+
-"mark.dock-hl:hover{background:rgba(124,108,189,.45)}"+
+st.textContent="mark.dock-hl{background:rgba(124,108,189,.20);color:inherit;border-bottom:2px solid rgba(124,108,189,.5);border-radius:2px;cursor:pointer;transition:background .15s,border-color .15s}"+
+"mark.dock-hl:hover,mark.dock-hl.dock-hl-on{background:rgba(124,108,189,.42);border-bottom-color:rgba(124,108,189,.95)}"+
 "mark.dock-hl-flash{animation:dockflash 1s ease 2}"+
-"@keyframes dockflash{50%{background:rgba(124,108,189,.75)}}";
+"@keyframes dockflash{50%{background:rgba(124,108,189,.7)}}";
 (document.head||document.documentElement).appendChild(st);
 
 function textNodes(){
@@ -105,6 +115,17 @@ function wrap(id,s,e){
     var mk=document.createElement("mark");
     mk.setAttribute("data-dock-id",id);mk.className="dock-hl";mk.title="View comment";
     t.parentNode.insertBefore(mk,mid);mk.appendChild(mid)}}
+
+/* doc-absolute top of each anchor's first highlight — the host pins cards to these */
+function reportRects(){
+  var tops={},seen={},sy=scrollTop();
+  var ms=document.querySelectorAll("mark[data-dock-id]");
+  for(var i=0;i<ms.length;i++){var id=ms[i].getAttribute("data-dock-id");
+    if(seen[id])continue;seen[id]=1;tops[id]=ms[i].getBoundingClientRect().top+sy}
+  post({type:"anchor-rects",tops:tops,scrollY:sy,viewH:window.innerHeight,
+    docH:document.documentElement.scrollHeight})}
+function reportScroll(){post({type:"scroll",scrollY:scrollTop()})}
+
 function applyAnchors(anchors){
   clearMarks();
   var res={};
@@ -116,23 +137,50 @@ function applyAnchors(anchors){
     var s=find(full,a);
     res[a.id]=s>=0;
     if(s>=0)wrap(a.id,s,s+a.exact.length)}
-  post({type:"anchors-resolved",resolved:res})}
+  post({type:"anchors-resolved",resolved:res});
+  reportRects()}
 
+/* live scroll + resize, rAF-throttled so cards glide with the text */
+var sTick=0;
+window.addEventListener("scroll",function(){if(sTick)return;
+  sTick=requestAnimationFrame(function(){sTick=0;reportScroll()})},true);
+var rTick=0;
+function reflow(){if(rTick)return;rTick=requestAnimationFrame(function(){rTick=0;reportRects()})}
+window.addEventListener("resize",reflow);
+/* images/fonts settle after load — re-measure a few times so pins land right */
+window.addEventListener("load",function(){reportRects();setTimeout(reportRects,400);setTimeout(reportRects,1200)});
+
+/* hover a highlight -> emphasize its card in the host */
+document.addEventListener("mouseover",function(e){
+  var m=e.target&&e.target.closest?e.target.closest("mark[data-dock-id]"):null;
+  if(m)post({type:"anchor-hover",id:m.getAttribute("data-dock-id")})});
+document.addEventListener("mouseout",function(e){
+  var m=e.target&&e.target.closest?e.target.closest("mark[data-dock-id]"):null;
+  if(m)post({type:"anchor-hover",id:null})});
 /* clicking a highlight focuses its thread in the host */
 document.addEventListener("click",function(e){
   var el=e.target,m=el&&el.closest?el.closest("mark[data-dock-id]"):null;
   if(m)post({type:"anchor-click",id:m.getAttribute("data-dock-id")})
 },true);
 
+function setOn(id){
+  var on=document.querySelectorAll("mark.dock-hl-on");
+  for(var i=0;i<on.length;i++)on[i].classList.remove("dock-hl-on");
+  if(!id)return;
+  var ms=document.querySelectorAll('mark[data-dock-id="'+id+'"]');
+  for(var j=0;j<ms.length;j++)ms[j].classList.add("dock-hl-on")}
+
 window.addEventListener("message",function(e){
   var d=e.data;
   if(!d||d.source!=="dock-host")return;
   if(d.type==="anchors")applyAnchors(d.anchors||[]);
+  else if(d.type==="emphasize")setOn(d.id);
   else if(d.type==="focus-anchor"){
     var ms=document.querySelectorAll('mark[data-dock-id="'+d.id+'"]');
     if(!ms.length)return;
     ms[0].scrollIntoView({behavior:"smooth",block:"center"});
-    for(var i=0;i<ms.length;i++){ms[i].classList.remove("dock-hl-flash");void ms[i].offsetWidth;ms[i].classList.add("dock-hl-flash")}}
+    for(var i=0;i<ms.length;i++){ms[i].classList.remove("dock-hl-flash");void ms[i].offsetWidth;ms[i].classList.add("dock-hl-flash")}
+    setTimeout(reportScroll,360)}
 });
 })();`
 

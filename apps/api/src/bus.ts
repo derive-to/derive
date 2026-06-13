@@ -1,5 +1,11 @@
 export interface DockEvent {
-  type: "comment.created" | "comment.resolved" | "version.published" | "presence"
+  type:
+    | "comment.created"
+    | "comment.resolved"
+    | "comment.reacted"
+    | "comment.updated"
+    | "version.published"
+    | "presence"
   [k: string]: unknown
 }
 

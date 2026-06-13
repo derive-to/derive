@@ -69,6 +69,8 @@ export interface MetaStore {
   createComment(c: NewComment): Promise<CommentRecord>
   listComments(artifactId: string, opts?: { state?: CommentState }): Promise<CommentRecord[]>
   getComment(id: string): Promise<CommentRecord | null>
+  /** Patch a single comment's body and/or meta (reactions, edited, deleted). */
+  updateComment(id: string, fields: { body_md?: string; meta?: string | null }): Promise<CommentRecord | null>
   /** Flips every comment in a thread to a state; returns the count updated. */
   setThreadState(artifactId: string, threadId: string, state: CommentState): Promise<number>
 
@@ -180,6 +182,8 @@ export interface CommentRecord {
   author: string
   state: CommentState
   created_at: string
+  /** JSON blob: { reactions?: {emoji: author[]}, edited_at?: string, deleted?: boolean }. */
+  meta: string | null
 }
 
 export interface NewComment {

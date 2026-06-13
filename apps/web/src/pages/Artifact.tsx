@@ -1,8 +1,21 @@
-import { useCallback, useEffect, useRef, useState } from "react"
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState } from "react"
 import { useNavigate, useParams } from "@tanstack/react-router"
 import { api, API_BASE, type Analytics, type Artifact as Art, type Comment, type Diff } from "../api"
 import { Header, useToast } from "../components"
 import { useAuth } from "../ctx"
+
+type Sel = { type?: string; exact: string; prefix?: string; suffix?: string }
+type Panel = "open" | "rail" | "hidden"
+
+const PANEL_KEY = "dock.comments.panel"
+const loadPanel = (): Panel => {
+  try {
+    const v = localStorage.getItem(PANEL_KEY)
+    return v === "rail" || v === "hidden" ? v : "open"
+  } catch {
+    return "open"
+  }
+}
 
 const ago = (iso: string): string => {
   const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000)
@@ -33,18 +46,27 @@ export function Artifact() {
   const [restoring, setRestoring] = useState(false)
   const [viewers, setViewers] = useState<string[]>([])
   const [src, setSrc] = useState("")
-  const [body, setBody] = useState("")
-  const [anchor, setAnchor] = useState<{ type?: string; exact: string; prefix?: string; suffix?: string } | null>(null)
 
-  // The anchor channel with the sandboxed iframe (see SELECTION_SCRIPT).
+  // Comments UI state.
+  const [panel, setPanel] = useState<Panel>(loadPanel)
+  const [sel, setSel] = useState<{ selector: Sel; top: number; vTop: number; vBottom: number } | null>(null)
+  const [composer, setComposer] = useState<{ anchor: Sel | null; top: number | null } | null>(null)
+  const [activeThread, setActiveThread] = useState<string | null>(null)
+  const [hoverThread, setHoverThread] = useState<string | null>(null)
+
+  // The anchor channel with the sandboxed iframe (see ANCHOR_CLIENT_JS).
   const frame = useRef<HTMLIFrameElement>(null)
   const presentWrap = useRef<HTMLDivElement>(null)
   const [frameReady, setFrameReady] = useState(0)
   const [inDoc, setInDoc] = useState<Record<string, boolean>>({})
-  const [activeThread, setActiveThread] = useState<string | null>(null)
+  const [anchorTops, setAnchorTops] = useState<Record<string, number>>({})
+  const [scrollY, setScrollY] = useState(0)
   // Set when the artifact announces itself as a deck (dock-deck protocol).
   const [deck, setDeck] = useState<{ i: number; total: number } | null>(null)
-  const threadEls = useRef(new Map<string, HTMLDivElement>())
+
+  const post = useCallback((msg: Record<string, unknown>) => {
+    frame.current?.contentWindow?.postMessage({ source: "dock-host", ...msg }, "*")
+  }, [])
 
   useEffect(() => {
     const onMsg = (e: MessageEvent) => {
@@ -56,18 +78,56 @@ export function Artifact() {
         return
       }
       if (d.source !== "dock") return
-      if (d.type === "select") setAnchor(d.selector ?? null)
-      // which threads' text exists in the shown version (truth for highlights + badges)
-      else if (d.type === "anchors-resolved") setInDoc(d.resolved ?? {})
-      // clicking a highlight in the document focuses its thread
+      if (d.type === "select") {
+        if (d.selector && d.rect) {
+          const ft = frame.current?.getBoundingClientRect().top ?? 0
+          setSel({ selector: d.selector, top: d.rect.top, vTop: ft + d.rect.top, vBottom: ft + d.rect.bottom })
+        } else setSel(null)
+      } else if (d.type === "anchors-resolved") setInDoc(d.resolved ?? {})
+      else if (d.type === "anchor-rects") {
+        setAnchorTops(d.tops ?? {})
+        if (typeof d.scrollY === "number") setScrollY(d.scrollY)
+      } else if (d.type === "scroll") {
+        if (typeof d.scrollY === "number") setScrollY(d.scrollY)
+      } else if (d.type === "anchor-hover") setHoverThread(d.id ?? null)
       else if (d.type === "anchor-click") {
         setActiveThread(d.id)
-        threadEls.current.get(d.id)?.scrollIntoView({ behavior: "smooth", block: "center" })
+        setPanel((p) => (p === "open" ? p : "open"))
       }
     }
     window.addEventListener("message", onMsg)
     return () => window.removeEventListener("message", onMsg)
   }, [])
+
+  // Persist the collapse state.
+  useEffect(() => {
+    try {
+      localStorage.setItem(PANEL_KEY, panel)
+    } catch {
+      /* private mode — ignore */
+    }
+  }, [panel])
+
+  // Keyboard: 'c' toggles the panel open/closed; Escape cancels a composer.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement
+      if (e.key === "Escape") {
+        setComposer(null)
+        return
+      }
+      if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey) return
+      if (el && /^(input|textarea|select)$/i.test(el.tagName)) return
+      if (e.key === "c" || e.key === "C") setPanel((p) => (p === "open" ? "rail" : "open"))
+    }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [])
+
+  // Two-way hover: emphasize the highlight in the doc when a card is hovered.
+  useEffect(() => {
+    post({ type: "emphasize", id: hoverThread })
+  }, [hoverThread, post])
 
   // Drive the deck from the host bar; fullscreen wraps the iframe + bar so the
   // controls stay reachable while presenting.
@@ -109,12 +169,16 @@ export function Artifact() {
     sendAnchors()
   }, [sendAnchors, frameReady])
 
-  useEffect(() => setActiveThread(null), [shortId, version])
+  useEffect(() => {
+    setActiveThread(null)
+    setComposer(null)
+    setSel(null)
+  }, [shortId, version])
 
   // Clicking a thread's quote scrolls the document to its highlight.
   const jumpTo = (threadId: string) => {
     setActiveThread(threadId)
-    frame.current?.contentWindow?.postMessage({ source: "dock-host", type: "focus-anchor", id: threadId }, "*")
+    post({ type: "focus-anchor", id: threadId })
   }
 
   useEffect(() => {
@@ -127,6 +191,20 @@ export function Artifact() {
   }, [shortId])
   useEffect(load, [load])
 
+  // Deep link: ?c=<thread> opens the panel, activates that thread, and jumps to
+  // its text. Runs once, after comments are in.
+  const deepLinked = useRef(false)
+  useEffect(() => {
+    if (deepLinked.current || comments.length === 0) return
+    deepLinked.current = true
+    const cid = new URLSearchParams(window.location.search).get("c")
+    if (cid && comments.some((c) => c.thread_id === cid)) {
+      setPanel("open")
+      setActiveThread(cid)
+      setTimeout(() => post({ type: "focus-anchor", id: cid }), 320)
+    }
+  }, [comments, post])
+
   // live updates
   useEffect(() => {
     const ev = new EventSource(`${API_BASE}/v1/artifacts/${shortId}/events`, {
@@ -135,6 +213,8 @@ export function Artifact() {
     const refresh = () => api.listComments(shortId).then((r) => setComments(r.comments)).catch(() => {})
     ev.addEventListener("comment.created", refresh)
     ev.addEventListener("comment.resolved", refresh)
+    ev.addEventListener("comment.reacted", refresh)
+    ev.addEventListener("comment.updated", refresh)
     ev.addEventListener("version.published", load)
     ev.addEventListener("presence", (e) => {
       try {
@@ -199,8 +279,28 @@ export function Artifact() {
   const shown = version ?? art.current_version
   const editable = art.kind === "file" && shown === art.current_version
   const rawSrc = `${API_BASE}/raw/${shortId}/v/${shown}/index.html`
-  const threads = groupThreads(comments)
-  const openCount = threads.filter((t) => t[0].state === "open").length
+
+  // Sort threads into pinned (anchored & present in this live doc), general
+  // (unanchored or orphaned), and resolved. Pins drive both the margin cards
+  // and the collapsed rail dots.
+  const docLive = !editing && view === "preview"
+  const all = groupThreads(comments)
+  const openThreads = all.filter((t) => t[0].state === "open")
+  const resolvedThreads = all.filter((t) => t[0].state === "resolved")
+  const pinned: PinItem[] = []
+  const general: Comment[][] = []
+  for (const t of openThreads) {
+    const id = t[0].thread_id
+    const hasAnchor = !!parseAnchor(t[0].anchor)
+    const present = inDoc[id] !== false
+    if (docLive && hasAnchor && present) {
+      const top = anchorTops[id]
+      pinned.push({ thread: t, desiredY: top != null ? top - scrollY : 0, located: top != null })
+    } else {
+      general.push(t)
+    }
+  }
+  const openCount = openThreads.length
 
   const startEdit = async () => {
     setEditing(true)
@@ -216,20 +316,55 @@ export function Artifact() {
       show((e as Error).message)
     }
   }
-  const addComment = async (text: string, threadId?: string) => {
+  const addComment = async (text: string, opts?: { threadId?: string; anchor?: Sel | null }) => {
     if (!text.trim()) return
     await api
-      .comment(shortId, { body_md: text, thread_id: threadId, anchor: !threadId ? anchor ?? undefined : undefined })
+      .comment(shortId, {
+        body_md: text,
+        thread_id: opts?.threadId,
+        anchor: opts?.threadId ? undefined : opts?.anchor ?? undefined,
+      })
       .catch((e) => show((e as Error).message))
-    if (!threadId) {
-      setBody("")
-      setAnchor(null)
-    }
     api.listComments(shortId).then((r) => setComments(r.comments))
+  }
+  const reply = (text: string, threadId: string) => addComment(text, { threadId })
+  const submitNew = async (text: string) => {
+    await addComment(text, { anchor: composer?.anchor ?? null })
+    setComposer(null)
+    setSel(null)
   }
   const toggleResolve = async (root: Comment) => {
     await api.resolve(shortId, root.id, root.state === "open" ? "resolved" : "open")
     api.listComments(shortId).then((r) => setComments(r.comments))
+  }
+  const activate = (id: string) => {
+    setActiveThread((cur) => (cur === id ? cur : id))
+    post({ type: "emphasize", id })
+  }
+  const startSelComment = () => {
+    if (!sel) return
+    setComposer({ anchor: sel.selector, top: sel.top })
+    setActiveThread(null)
+  }
+  const refetch = () => api.listComments(shortId).then((r) => setComments(r.comments)).catch(() => {})
+  const actions: CommentActions = {
+    meName: me?.name ?? me?.email ?? "",
+    react: (commentId, emoji) => {
+      // Optimistic: reflect the toggle immediately, reconcile on the response.
+      setComments((cs) => cs.map((c) => (c.id === commentId ? toggleReaction(c, emoji, me?.name ?? me?.email ?? "anonymous") : c)))
+      api.react(shortId, commentId, emoji).then(refetch).catch(refetch)
+    },
+    edit: async (commentId, body) => {
+      await api.editComment(shortId, commentId, body).catch((e) => show((e as Error).message))
+      refetch()
+    },
+    remove: (commentId) => {
+      api.deleteComment(shortId, commentId).then(refetch).catch((e) => show((e as Error).message))
+    },
+    copyLink: (threadId) => {
+      const url = `${window.location.origin}${window.location.pathname}?c=${threadId}`
+      navigator.clipboard?.writeText(url).then(() => show("Link copied")).catch(() => show(url))
+    },
   }
   const restore = async (n: number) => {
     setRestoring(true)
@@ -245,7 +380,10 @@ export function Artifact() {
     }
   }
 
+  const asideWidth = panel === "open" ? 340 : panel === "rail" ? 50 : 0
+
   return (
+    <ActionsCtx.Provider value={actions}>
     <div style={{ height: "100%", display: "flex", flexDirection: "column" }}>
       <Header
         right={
@@ -258,11 +396,16 @@ export function Artifact() {
               goTo={(n) => nav({ to: "/a/$ref", params: { ref: n === art.current_version ? shortId : `${shortId}@v${n}` } })}
             />
             {editable && !editing && <button className="btn sm" onClick={startEdit}>Edit</button>}
+            {panel !== "open" && (
+              <button className="btn sm" onClick={() => setPanel("open")} style={{ gap: 6 }} title="Show comments (c)">
+                💬 {openCount > 0 && <b style={{ fontWeight: 700 }}>{openCount}</b>}
+              </button>
+            )}
           </>
         }
       />
       <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
-        <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, position: "relative" }}>
           {editing ? (
             <div style={{ flex: 1, display: "flex", flexDirection: "column", background: "var(--card)" }}>
               <div style={{ display: "flex", gap: 8, padding: "8px 12px", borderBottom: "1px solid var(--line-soft)", alignItems: "center" }}>
@@ -324,141 +467,819 @@ export function Artifact() {
               )}
             </>
           )}
+          {panel === "hidden" && (
+            <button
+              onClick={() => setPanel("open")}
+              title="Show comments (c)"
+              style={{
+                position: "absolute", right: 18, bottom: 18, height: 44, borderRadius: 999, border: "1px solid var(--line)",
+                background: "var(--card)", color: "var(--fg)", cursor: "pointer", boxShadow: "var(--shadow)",
+                display: "flex", alignItems: "center", gap: 8, padding: "0 16px", fontWeight: 600, fontSize: 13,
+              }}
+            >
+              <span style={{ fontSize: 15 }}>💬</span>
+              {openCount > 0 ? `${openCount} comment${openCount === 1 ? "" : "s"}` : "Comments"}
+            </button>
+          )}
         </div>
 
-        <aside style={{ width: 320, flex: "0 0 320px", borderLeft: "1px solid var(--line)", background: "var(--card)", display: "flex", flexDirection: "column", minHeight: 0 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "11px 14px", borderBottom: "1px solid var(--line-soft)" }}>
-            <b style={{ fontSize: 13 }}>Comments</b>
-            <span className="mono" style={{ fontSize: 10, color: "var(--cmt-tx)", background: "var(--cmt-bg)", borderRadius: 999, padding: "1px 8px", fontWeight: 700 }}>{openCount}</span>
-          </div>
-          <div style={{ flex: 1, overflow: "auto", padding: 12 }}>
-            {threads.length === 0 ? (
-              <div className="muted" style={{ textAlign: "center", fontSize: 12, padding: "26px 12px" }}>No comments yet.</div>
-            ) : (
-              threads.map((t) => (
-                <Thread
-                  key={t[0].thread_id}
-                  thread={t}
-                  onReply={addComment}
-                  onResolve={toggleResolve}
-                  active={activeThread === t[0].thread_id}
-                  inDoc={inDoc[t[0].thread_id]}
-                  onJump={() => jumpTo(t[0].thread_id)}
-                  refEl={(el) => {
-                    if (el) threadEls.current.set(t[0].thread_id, el)
-                    else threadEls.current.delete(t[0].thread_id)
-                  }}
-                />
-              ))
-            )}
-          </div>
-          <div style={{ borderTop: "1px solid var(--line-soft)", padding: 11 }}>
-            {anchor && (
-              <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 7, fontSize: 11, color: "var(--cmt-tx)", background: "var(--cmt-bg)", border: "1px solid var(--cmt-bd)", borderRadius: 7, padding: "5px 9px" }}>
-                <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>“{anchor.exact}”</span>
-                <button onClick={() => setAnchor(null)} style={{ border: 0, background: "transparent", color: "var(--cmt-tx)", cursor: "pointer" }}>✕</button>
-              </div>
-            )}
-            <textarea className="input" value={body} onChange={(e) => setBody(e.target.value)} placeholder={anchor ? "Comment on the selection…" : "Add a comment…"} style={{ minHeight: 50, resize: "vertical" }} />
-            <button className="btn pri sm" onClick={() => addComment(body)} style={{ marginTop: 7, width: "100%", justifyContent: "center" }}>Comment</button>
-          </div>
+        <aside
+          style={{
+            width: asideWidth,
+            flex: `0 0 ${asideWidth}px`,
+            borderLeft: panel === "hidden" ? "none" : "1px solid var(--line)",
+            background: "var(--card)",
+            display: "flex",
+            flexDirection: "column",
+            minHeight: 0,
+            overflow: "hidden",
+            transition: "width .22s cubic-bezier(.4,0,.2,1), flex-basis .22s cubic-bezier(.4,0,.2,1)",
+          }}
+        >
+          {panel === "rail" ? (
+            <Rail
+              pins={pinned}
+              generalCount={general.length}
+              active={activeThread}
+              onExpand={() => setPanel("open")}
+              onHide={() => setPanel("hidden")}
+              onDot={(id) => { setPanel("open"); jumpTo(id) }}
+            />
+          ) : (
+            <OpenPanel
+              openCount={openCount}
+              pinned={pinned}
+              general={general}
+              resolved={resolvedThreads}
+              activeThread={activeThread}
+              hoverThread={hoverThread}
+              inDoc={inDoc}
+              composer={composer}
+              onMinimize={() => setPanel("rail")}
+              onHide={() => setPanel("hidden")}
+              onActivate={activate}
+              onHover={setHoverThread}
+              onResolve={toggleResolve}
+              onReply={reply}
+              onJump={jumpTo}
+              onNewGeneral={() => { setComposer({ anchor: null, top: null }); setActiveThread(null) }}
+              onSubmitNew={submitNew}
+              onCancelNew={() => { setComposer(null); setSel(null) }}
+            />
+          )}
         </aside>
       </div>
+      {/* The "comment on selection" affordance floats beside the selection in
+          every panel state — minimized or hidden included. Clicking it opens
+          the panel if needed and starts a composer pinned to the selection. */}
+      {docLive && sel && !composer && (
+        <button
+          className="cmt-bubble"
+          title="Comment on the selection"
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => { if (panel !== "open") setPanel("open"); startSelComment() }}
+          style={{
+            position: "fixed",
+            top: clamp((sel.vTop + sel.vBottom) / 2 - 15, 64, window.innerHeight - 46),
+            right: asideWidth + 12,
+            zIndex: 50,
+          }}
+        >
+          💬 Comment
+        </button>
+      )}
       {toast}
+    </div>
+    </ActionsCtx.Provider>
+  )
+}
+
+type PinItem = { thread: Comment[]; desiredY: number; located: boolean }
+
+// ---------------------------------------------------------------------------
+// The open comments panel: header, the pinned margin, and the general/resolved
+// lists below it.
+// ---------------------------------------------------------------------------
+function OpenPanel(props: {
+  openCount: number
+  pinned: PinItem[]
+  general: Comment[][]
+  resolved: Comment[][]
+  activeThread: string | null
+  hoverThread: string | null
+  inDoc: Record<string, boolean>
+  composer: { anchor: Sel | null; top: number | null } | null
+  onMinimize: () => void
+  onHide: () => void
+  onActivate: (id: string) => void
+  onHover: (id: string | null) => void
+  onResolve: (c: Comment) => void
+  onReply: (text: string, threadId: string) => void
+  onJump: (id: string) => void
+  onNewGeneral: () => void
+  onSubmitNew: (text: string) => void
+  onCancelNew: () => void
+}) {
+  const {
+    openCount, pinned, general, resolved, activeThread, hoverThread, inDoc, composer,
+    onMinimize, onHide, onActivate, onHover, onResolve, onReply, onJump,
+    onNewGeneral, onSubmitNew, onCancelNew,
+  } = props
+  const generalComposer = composer && !composer.anchor
+  const empty = openCount === 0 && resolved.length === 0 && !composer
+
+  return (
+    <>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 8px 10px 14px", borderBottom: "1px solid var(--line-soft)" }}>
+        <b style={{ fontSize: 13 }}>Comments</b>
+        {openCount > 0 && (
+          <span className="mono" style={{ fontSize: 10, color: "var(--cmt-tx)", background: "var(--cmt-bg)", borderRadius: 999, padding: "1px 8px", fontWeight: 700 }}>{openCount}</span>
+        )}
+        <span style={{ flex: 1 }} />
+        <IconBtn title="New comment" onClick={onNewGeneral}>＋</IconBtn>
+        <IconBtn title="Minimize to rail (c)" onClick={onMinimize}>⟩</IconBtn>
+        <IconBtn title="Hide comments" onClick={onHide}>✕</IconBtn>
+      </div>
+
+      <div style={{ flex: 1, minHeight: 0, position: "relative", overflow: "hidden" }}>
+        {/* Pinned margin — cards (and a new-comment composer) float beside their
+            highlighted text, sharing one overlap-free layout. */}
+        <PinnedZone
+          pins={pinned}
+          composer={composer}
+          activeThread={activeThread}
+          hoverThread={hoverThread}
+          inDoc={inDoc}
+          onActivate={onActivate}
+          onHover={onHover}
+          onResolve={onResolve}
+          onReply={onReply}
+          onJump={onJump}
+          onSubmitNew={onSubmitNew}
+          onCancelNew={onCancelNew}
+        />
+
+        {/* Empty state. */}
+        {empty && (
+          <div className="center" style={{ position: "absolute", inset: 0, flexDirection: "column", gap: 8, padding: 24, textAlign: "center" }}>
+            <div style={{ fontSize: 26, opacity: 0.5 }}>💬</div>
+            <div className="muted" style={{ fontSize: 12.5, lineHeight: 1.5 }}>
+              No comments yet.<br />Select text in the document to start one.
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* General + resolved threads live in a scrollable footer drawer. */}
+      {(generalComposer || general.length > 0 || resolved.length > 0) && (
+        <div style={{ flex: "0 0 auto", maxHeight: "44%", overflow: "auto", borderTop: "1px solid var(--line-soft)", padding: 10 }}>
+          {generalComposer && (
+            <div style={{ marginBottom: 10 }}>
+              <Composer quote={null} onSubmit={onSubmitNew} onCancel={onCancelNew} />
+            </div>
+          )}
+          {general.length > 0 && (
+            <>
+              <SectionLabel>General</SectionLabel>
+              {general.map((t) => (
+                <div key={t[0].thread_id} style={{ marginBottom: 9 }}>
+                  <CommentCard
+                    thread={t}
+                    active={activeThread === t[0].thread_id}
+                    hovered={hoverThread === t[0].thread_id}
+                    present={inDoc[t[0].thread_id]}
+                    onActivate={onActivate}
+                    onHover={onHover}
+                    onResolve={onResolve}
+                    onReply={onReply}
+                    onJump={onJump}
+                  />
+                </div>
+              ))}
+            </>
+          )}
+          {resolved.length > 0 && (
+            <ResolvedSection
+              threads={resolved}
+              activeThread={activeThread}
+              hoverThread={hoverThread}
+              onActivate={onActivate}
+              onHover={onHover}
+              onResolve={onResolve}
+              onReply={onReply}
+              onJump={onJump}
+            />
+          )}
+        </div>
+      )}
+    </>
+  )
+}
+
+// Pinned margin: absolutely positions each thread card next to its highlight,
+// measuring heights and relaxing overlaps so cards never stack on top of each
+// other. The active card snaps to its true anchor; neighbours flow around it.
+const COMPOSER_ID = "__composer__"
+
+function PinnedZone({
+  pins, composer, activeThread, hoverThread, inDoc,
+  onActivate, onHover, onResolve, onReply, onJump, onSubmitNew, onCancelNew,
+}: {
+  pins: PinItem[]
+  composer: { anchor: Sel | null; top: number | null } | null
+  activeThread: string | null
+  hoverThread: string | null
+  inDoc: Record<string, boolean>
+  onActivate: (id: string) => void
+  onHover: (id: string | null) => void
+  onResolve: (c: Comment) => void
+  onReply: (text: string, threadId: string) => void
+  onJump: (id: string) => void
+  onSubmitNew: (text: string) => void
+  onCancelNew: () => void
+}) {
+  const [heights, setHeights] = useState<Record<string, number>>({})
+  const obs = useRef<ResizeObserver | null>(null)
+  useEffect(() => {
+    obs.current = new ResizeObserver((entries) => {
+      setHeights((h) => {
+        let changed = false
+        const next = { ...h }
+        for (const e of entries) {
+          const id = (e.target as HTMLElement).dataset.pin
+          if (!id) continue
+          const hh = Math.round((e.target as HTMLElement).offsetHeight)
+          if (next[id] !== hh) {
+            next[id] = hh
+            changed = true
+          }
+        }
+        return changed ? next : h
+      })
+    })
+    return () => obs.current?.disconnect()
+  }, [])
+  const measure = useCallback((el: HTMLDivElement | null) => {
+    if (el) obs.current?.observe(el)
+  }, [])
+
+  // A composer for a new anchored comment joins the same layout as a pinned
+  // item that owns priority, so neighbouring cards flow around it instead of
+  // colliding with it.
+  const composing = !!(composer && composer.anchor && composer.top != null)
+  const items = pins.map((p) => ({ id: p.thread[0].thread_id, desiredY: p.desiredY }))
+  if (composing) items.push({ id: COMPOSER_ID, desiredY: composer!.top! })
+  const activeId = composing ? COMPOSER_ID : activeThread
+  const pos = layoutPins(items, heights, activeId, 12)
+
+  return (
+    <div style={{ position: "absolute", inset: 0, overflow: "hidden" }}>
+      {pins.map((p) => {
+        const id = p.thread[0].thread_id
+        const active = !composing && activeThread === id
+        const y = pos[id] ?? p.desiredY
+        return (
+          <div
+            key={id}
+            ref={measure}
+            data-pin={id}
+            style={{
+              position: "absolute",
+              left: 10,
+              right: 10,
+              top: 0,
+              transform: `translateY(${Math.round(y)}px)`,
+              transition: "transform .18s cubic-bezier(.4,0,.2,1)",
+              zIndex: active ? 6 : hoverThread === id ? 4 : 2,
+              opacity: p.located ? 1 : 0,
+            }}
+          >
+            <CommentCard
+              thread={p.thread}
+              active={active}
+              hovered={hoverThread === id}
+              present={inDoc[id]}
+              onActivate={onActivate}
+              onHover={onHover}
+              onResolve={onResolve}
+              onReply={onReply}
+              onJump={onJump}
+            />
+          </div>
+        )
+      })}
+      {composing && (
+        <div
+          ref={measure}
+          data-pin={COMPOSER_ID}
+          style={{
+            position: "absolute",
+            left: 10,
+            right: 10,
+            top: 0,
+            transform: `translateY(${Math.round(pos[COMPOSER_ID] ?? composer!.top!)}px)`,
+            transition: "transform .18s cubic-bezier(.4,0,.2,1)",
+            zIndex: 10,
+          }}
+        >
+          <Composer quote={composer!.anchor?.exact ?? null} onSubmit={onSubmitNew} onCancel={onCancelNew} />
+        </div>
+      )}
     </div>
   )
 }
 
-function Thread({
-  thread,
-  onReply,
-  onResolve,
-  active,
-  inDoc,
-  onJump,
-  refEl,
+// Stack a set of cards by desired Y without overlap. The active card is pinned
+// to its exact anchor and its neighbours are pushed up/down to make room.
+function layoutPins(
+  items: { id: string; desiredY: number }[],
+  heights: Record<string, number>,
+  activeId: string | null,
+  gap: number,
+): Record<string, number> {
+  const sorted = [...items].sort((a, b) => a.desiredY - b.desiredY)
+  const h = (id: string) => heights[id] ?? 116
+  const pos: Record<string, number> = {}
+  let prevBottom = -1e9
+  for (const it of sorted) {
+    const y = Math.max(it.desiredY, prevBottom + gap)
+    pos[it.id] = y
+    prevBottom = y + h(it.id)
+  }
+  const idx = activeId ? sorted.findIndex((s) => s.id === activeId) : -1
+  if (idx >= 0) {
+    const act = sorted[idx]
+    pos[act.id] = act.desiredY
+    let limit = act.desiredY
+    for (let i = idx - 1; i >= 0; i--) {
+      const it = sorted[i]
+      if (pos[it.id] + h(it.id) + gap > limit) pos[it.id] = limit - gap - h(it.id)
+      limit = pos[it.id]
+    }
+    let top = act.desiredY + h(act.id)
+    for (let i = idx + 1; i < sorted.length; i++) {
+      const it = sorted[i]
+      if (pos[it.id] < top + gap) pos[it.id] = top + gap
+      top = pos[it.id] + h(it.id)
+    }
+  }
+  return pos
+}
+
+// One comment thread. Compact until activated; the active card shows the full
+// thread, a reply box, and resolve controls.
+// ---- Rich comment actions: reactions, edit, delete, copy-link --------------
+// Threaded through one context so the deep card tree doesn't re-pass them.
+type CommentActions = {
+  meName: string
+  react: (commentId: string, emoji: string) => void
+  edit: (commentId: string, body: string) => Promise<void> | void
+  remove: (commentId: string) => void
+  copyLink: (threadId: string) => void
+}
+const NOOP_ACTIONS: CommentActions = {
+  meName: "",
+  react: () => {},
+  edit: () => {},
+  remove: () => {},
+  copyLink: () => {},
+}
+const ActionsCtx = createContext<CommentActions | null>(null)
+const useActions = (): CommentActions => useContext(ActionsCtx) ?? NOOP_ACTIONS
+
+const REACTION_EMOJI = ["👍", "❤️", "🎉", "😄", "👀", "🙏", "🚀", "👎"]
+
+// Optimistic local toggle that mirrors the server's react logic.
+function toggleReaction(c: Comment, emoji: string, who: string): Comment {
+  const reactions: Record<string, string[]> = { ...(c.reactions ?? {}) }
+  const arr = [...(reactions[emoji] ?? [])]
+  const i = arr.indexOf(who)
+  if (i >= 0) arr.splice(i, 1)
+  else arr.push(who)
+  if (arr.length) reactions[emoji] = arr
+  else delete reactions[emoji]
+  return { ...c, reactions }
+}
+
+// Tiny, XSS-safe inline markdown: escape first, then a few transforms. Covers
+// bold, italic, inline code, links/autolinks, and line breaks.
+const esc = (s: string) =>
+  s.replace(/[&<>"]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[ch] as string)
+function mdToHtml(src: string): string {
+  let h = esc(src)
+  h = h.replace(/`([^`]+)`/g, "<code>$1</code>")
+  h = h.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+  h = h.replace(/(^|[^*])\*([^*\n]+)\*/g, "$1<em>$2</em>")
+  h = h.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>')
+  h = h.replace(/(^|[\s(])(https?:\/\/[^\s<)]+)/g, '$1<a href="$2" target="_blank" rel="noopener noreferrer">$2</a>')
+  return h.replace(/\n/g, "<br/>")
+}
+
+// Stable per-author tint, so people are recognisable across avatars + threads.
+const AUTHOR_TINTS = ["#7c6cbd", "#3c6e2f", "#a04425", "#2f6e6e", "#9a5fb0", "#b08322", "#4a63b8", "#9a4a6b"]
+function colorFor(name: string): string {
+  let h = 0
+  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0
+  return AUTHOR_TINTS[h % AUTHOR_TINTS.length]
+}
+
+function ColoredAvatar({ name, size = 17 }: { name: string; size?: number }) {
+  return (
+    <span style={{ width: size, height: size, borderRadius: "50%", background: colorFor(name), color: "#fff", display: "grid", placeItems: "center", fontSize: Math.round(size * 0.5), fontWeight: 700, fontFamily: "ui-monospace,Menlo,monospace", flex: "0 0 auto" }}>
+      {(name || "?").slice(0, 2).toUpperCase()}
+    </span>
+  )
+}
+
+// Small popover that closes on an outside click.
+function Popover({ children, onClose, style }: { children: React.ReactNode; onClose: () => void; style?: React.CSSProperties }) {
+  const ref = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const h = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) onClose()
+    }
+    const t = setTimeout(() => document.addEventListener("mousedown", h), 0)
+    return () => {
+      clearTimeout(t)
+      document.removeEventListener("mousedown", h)
+    }
+  }, [onClose])
+  return (
+    <div ref={ref} className="cmt-pop" style={style} onClick={(e) => e.stopPropagation()}>
+      {children}
+    </div>
+  )
+}
+
+// One comment: avatar, author, markdown body (or an inline editor), reaction
+// pills, and a hover toolbar (react · more → edit/delete/copy-link).
+function CommentRow({ c, compact }: { c: Comment; compact?: boolean }) {
+  const A = useActions()
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState(c.body_md)
+  const [open, setOpen] = useState<null | "react" | "menu">(null)
+  const mine = !!A.meName && c.author === A.meName
+  const reactions = c.reactions ?? {}
+  const close = () => setOpen(null)
+
+  if (c.deleted)
+    return (
+      <div style={{ padding: "9px 12px", borderBottom: compact ? "none" : "1px solid var(--line-soft)" }}>
+        <span className="muted" style={{ fontSize: 12, fontStyle: "italic" }}>Comment deleted</span>
+      </div>
+    )
+
+  return (
+    <div className="cmt-row" style={{ padding: "10px 12px", borderBottom: compact ? "none" : "1px solid var(--line-soft)" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 4 }}>
+        <ColoredAvatar name={c.author} />
+        <span style={{ fontSize: 11.5, fontWeight: 700, color: "var(--cmt-tx)" }}>{c.author}</span>
+        <span className="mono muted" style={{ marginLeft: "auto", fontSize: 9 }}>
+          {ago(c.created_at)}
+          {c.edited ? " · edited" : ""}
+        </span>
+      </div>
+
+      {editing ? (
+        <div onClick={(e) => e.stopPropagation()}>
+          <textarea
+            className="input"
+            value={draft}
+            autoFocus
+            onChange={(e) => setDraft(e.target.value)}
+            style={{ minHeight: 52, fontSize: 12.5, resize: "vertical" }}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") {
+                setEditing(false)
+                setDraft(c.body_md)
+              }
+              if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && draft.trim()) {
+                void A.edit(c.id, draft)
+                setEditing(false)
+              }
+            }}
+          />
+          <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
+            <button className="btn pri sm" disabled={!draft.trim()} onClick={async () => { await A.edit(c.id, draft); setEditing(false) }}>Save</button>
+            <button className="btn sm" onClick={() => { setEditing(false); setDraft(c.body_md) }}>Cancel</button>
+          </div>
+        </div>
+      ) : (
+        // biome-ignore lint/security/noDangerouslySetInnerHtml: input is escaped first in mdToHtml.
+        <div className={`cmt-body${compact ? " cmt-clamp" : ""}`} dangerouslySetInnerHTML={{ __html: mdToHtml(c.body_md) }} />
+      )}
+
+      {Object.keys(reactions).length > 0 && (
+        <div className="cmt-pills">
+          {Object.entries(reactions).map(([emoji, who]) => (
+            <button
+              key={emoji}
+              className={`cmt-pill${who.includes(A.meName) ? " on" : ""}`}
+              title={who.join(", ")}
+              onClick={(e) => { e.stopPropagation(); A.react(c.id, emoji) }}
+            >
+              <span>{emoji}</span>
+              <span className="n">{who.length}</span>
+            </button>
+          ))}
+        </div>
+      )}
+
+      {!editing && (
+        <div className={`cmt-actions${open ? " pin" : ""}`} onClick={(e) => e.stopPropagation()}>
+          <button className="cmt-act" title="React" onClick={() => setOpen(open === "react" ? null : "react")}>😊</button>
+          <button className="cmt-act" title="More" onClick={() => setOpen(open === "menu" ? null : "menu")}>⋯</button>
+          {open === "react" && (
+            <Popover onClose={close} style={{ top: 30, right: 0 }}>
+              <div className="cmt-emoji">
+                {REACTION_EMOJI.map((em) => (
+                  <button key={em} onClick={() => { A.react(c.id, em); close() }}>{em}</button>
+                ))}
+              </div>
+            </Popover>
+          )}
+          {open === "menu" && (
+            <Popover onClose={close} style={{ top: 30, right: 0, minWidth: 132 }}>
+              <div className="cmt-menu">
+                {mine && <button onClick={() => { setEditing(true); close() }}>✎ Edit</button>}
+                <button onClick={() => { A.copyLink(c.thread_id); close() }}>🔗 Copy link</button>
+                {mine && <button className="danger" onClick={() => { A.remove(c.id); close() }}>🗑 Delete</button>}
+              </div>
+            </Popover>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// One comment thread. Compact until activated; the active card shows the full
+// thread, a reply box, and resolve controls.
+function CommentCard({
+  thread, active, hovered, present, onActivate, onHover, onResolve, onReply, onJump,
 }: {
   thread: Comment[]
-  onReply: (t: string, tid: string) => void
+  active: boolean
+  hovered: boolean
+  present?: boolean
+  onActivate: (id: string) => void
+  onHover: (id: string | null) => void
   onResolve: (c: Comment) => void
-  active?: boolean
-  /** Whether the anchored text exists in the version being shown (from the iframe). */
-  inDoc?: boolean
-  onJump?: () => void
-  refEl?: (el: HTMLDivElement | null) => void
+  onReply: (text: string, threadId: string) => void
+  onJump: (id: string) => void
 }) {
   const [reply, setReply] = useState("")
   const root = thread[0]
   const resolved = root.state === "resolved"
   const quote = anchorExact(root.anchor)
-  // The iframe's answer is the truth for the shown version; the server flag
-  // (computed against the latest version) is the fallback before it arrives.
-  const textPresent = inDoc !== undefined ? inDoc : root.anchored !== false
+  const textPresent = present !== undefined ? present : root.anchored !== false
+  const replies = thread.length - 1
+
   return (
     <div
-      ref={refEl}
-      className="card"
+      onMouseEnter={() => onHover(root.thread_id)}
+      onMouseLeave={() => onHover(null)}
+      onClick={() => !active && onActivate(root.thread_id)}
+      className="card cmt-card"
       style={{
-        marginBottom: 11,
         overflow: "hidden",
-        opacity: resolved ? 0.62 : 1,
-        scrollMarginTop: 12,
-        outline: active ? "2px solid var(--ac)" : undefined,
-        outlineOffset: 1,
-        transition: "outline-color .2s",
+        cursor: active ? "default" : "pointer",
+        opacity: resolved && !active ? 0.62 : 1,
+        borderColor: active ? "var(--ac)" : hovered ? "var(--cmt-bd)" : "var(--line)",
+        boxShadow: active ? "var(--shadow)" : hovered ? "0 4px 14px -8px rgba(0,0,0,.45)" : "none",
+        transition: "box-shadow .15s, border-color .15s",
       }}
     >
       {quote &&
         (textPresent && !resolved ? (
           <button
-            onClick={onJump}
+            onClick={(e) => { e.stopPropagation(); onJump(root.thread_id) }}
             title="Jump to the highlighted text"
-            style={{ display: "block", width: "100%", textAlign: "left", border: 0, borderLeft: "3px solid var(--ac)", background: "var(--ac-soft)", color: "var(--fg)", padding: "6px 10px", fontSize: 11.5, lineHeight: 1.4, cursor: "pointer", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontStyle: "italic" }}
+            className="cmt-quote"
+            style={{ borderLeft: "3px solid var(--ac)", background: "var(--ac-soft)", color: "var(--fg)", cursor: "pointer" }}
           >
             “{quote}”
           </button>
         ) : (
           <div
             title="The text this comment was attached to was edited or removed in this version"
-            style={{ borderLeft: "3px solid var(--line)", background: "var(--card-2)", color: "var(--fg-mut)", padding: "6px 10px", fontSize: 11.5, lineHeight: 1.4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontStyle: "italic" }}
+            className="cmt-quote"
+            style={{ borderLeft: "3px solid var(--line)", background: "var(--card-2)", color: "var(--fg-mut)" }}
           >
             “{quote}”
           </div>
         ))}
-      {thread.map((c) => (
-        <div key={c.id} style={{ padding: "10px 12px", borderBottom: "1px solid var(--line-soft)" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 11, fontWeight: 700, color: "var(--cmt-tx)", marginBottom: 4 }}>
-            <span style={{ width: 17, height: 17, borderRadius: "50%", background: "var(--cmt-bg)", display: "grid", placeItems: "center", fontSize: 9 }}>
-              {(c.author || "?").slice(0, 2).toUpperCase()}
-            </span>
-            {c.author}
-            <span className="mono muted" style={{ marginLeft: "auto", fontWeight: 400, fontSize: 9 }}>on v{c.base_version}</span>
+
+      {!active ? (
+        <>
+          <CommentRow c={root} compact />
+          {replies > 0 && (
+            <div className="mono" style={{ padding: "0 12px 9px", fontSize: 10, color: "var(--ac)", fontWeight: 700 }}>
+              {replies} repl{replies === 1 ? "y" : "ies"}
+            </div>
+          )}
+        </>
+      ) : (
+        <>
+          <div style={{ maxHeight: 360, overflow: "auto" }}>
+            {thread.map((c) => (
+              <CommentRow key={c.id} c={c} />
+            ))}
           </div>
-          <p style={{ margin: 0, fontSize: 12.5, lineHeight: 1.45, whiteSpace: "pre-wrap" }}>{c.body_md}</p>
+          <div style={{ display: "flex", gap: 6, padding: "8px 12px", borderTop: "1px solid var(--line-soft)" }}>
+            <input
+              className="input"
+              style={{ padding: "6px 9px", fontSize: 12 }}
+              value={reply}
+              placeholder="Reply…"
+              autoFocus
+              onClick={(e) => e.stopPropagation()}
+              onChange={(e) => setReply(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter" && reply.trim()) { onReply(reply, root.thread_id); setReply("") } }}
+            />
+            <button className="btn sm" disabled={!reply.trim()} onClick={(e) => { e.stopPropagation(); if (reply.trim()) { onReply(reply, root.thread_id); setReply("") } }}>Reply</button>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 7, padding: "7px 12px", background: "var(--card-2)" }}>
+            <span className="mono" style={{ fontSize: 9.5, fontWeight: 700, padding: "2px 8px", borderRadius: 999, background: resolved ? "var(--good-bg)" : "var(--ac-soft)", color: resolved ? "var(--good)" : "var(--ac)" }}>
+              {resolved ? "resolved" : "open"}
+            </span>
+            {quote && !textPresent && !resolved && (
+              <span className="mono" title="The text this comment was attached to was edited or removed in this version" style={{ fontSize: 9.5, fontWeight: 700, padding: "2px 8px", borderRadius: 999, background: "var(--cmt-bg)", color: "var(--cmt-tx)" }}>
+                text changed
+              </span>
+            )}
+            <button className="btn sm" style={{ marginLeft: "auto" }} onClick={(e) => { e.stopPropagation(); onResolve(root) }}>
+              {resolved ? "Reopen" : "Resolve"}
+            </button>
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
+function ResolvedSection({
+  threads, activeThread, hoverThread, onActivate, onHover, onResolve, onReply, onJump,
+}: {
+  threads: Comment[][]
+  activeThread: string | null
+  hoverThread: string | null
+  onActivate: (id: string) => void
+  onHover: (id: string | null) => void
+  onResolve: (c: Comment) => void
+  onReply: (text: string, threadId: string) => void
+  onJump: (id: string) => void
+}) {
+  const [open, setOpen] = useState(false)
+  return (
+    <div style={{ marginTop: 4 }}>
+      <button
+        onClick={() => setOpen((o) => !o)}
+        style={{ display: "flex", alignItems: "center", gap: 6, width: "100%", border: 0, background: "transparent", cursor: "pointer", color: "var(--fg-mut)", padding: "5px 2px", font: "700 9.5px ui-monospace,Menlo,monospace", letterSpacing: ".06em", textTransform: "uppercase" }}
+      >
+        <span style={{ transition: "transform .15s", transform: open ? "rotate(90deg)" : "none" }}>▸</span>
+        Resolved ({threads.length})
+      </button>
+      {open &&
+        threads.map((t) => (
+          <div key={t[0].thread_id} style={{ marginBottom: 9 }}>
+            <CommentCard
+              thread={t}
+              active={activeThread === t[0].thread_id}
+              hovered={hoverThread === t[0].thread_id}
+              onActivate={onActivate}
+              onHover={onHover}
+              onResolve={onResolve}
+              onReply={onReply}
+              onJump={onJump}
+            />
+          </div>
+        ))}
+    </div>
+  )
+}
+
+// New-comment composer (anchored or general).
+function Composer({ quote, onSubmit, onCancel }: { quote: string | null; onSubmit: (t: string) => void; onCancel: () => void }) {
+  const [text, setText] = useState("")
+  const ref = useRef<HTMLTextAreaElement>(null)
+  useLayoutEffect(() => {
+    ref.current?.focus()
+  }, [])
+  const submit = () => {
+    if (text.trim()) onSubmit(text)
+  }
+  return (
+    <div className="card" style={{ boxShadow: "var(--shadow)", borderColor: "var(--ac)", overflow: "hidden" }}>
+      {quote && (
+        <div className="cmt-quote" style={{ borderLeft: "3px solid var(--ac)", background: "var(--ac-soft)", color: "var(--fg)", fontStyle: "italic" }}>
+          “{quote}”
         </div>
-      ))}
-      <div style={{ display: "flex", alignItems: "center", gap: 7, padding: "7px 12px", background: "var(--card-2)" }}>
-        <span className="mono" style={{ fontSize: 9.5, fontWeight: 700, padding: "2px 8px", borderRadius: 999, background: resolved ? "var(--good-bg)" : "var(--ac-soft)", color: resolved ? "var(--good)" : "var(--ac)" }}>
-          {resolved ? "resolved" : "open"}
-        </span>
-        {quote && !textPresent && !resolved && (
-          <span className="mono" title="The text this comment was attached to was edited or removed in this version" style={{ fontSize: 9.5, fontWeight: 700, padding: "2px 8px", borderRadius: 999, background: "var(--cmt-bg)", color: "var(--cmt-tx)" }}>
-            text changed
-          </span>
-        )}
-        <button className="btn sm" style={{ marginLeft: "auto" }} onClick={() => onResolve(root)}>
-          {resolved ? "Reopen" : "Resolve"}
-        </button>
-      </div>
-      <div style={{ display: "flex", gap: 6, padding: "8px 12px", borderTop: "1px solid var(--line-soft)" }}>
-        <input className="input" style={{ padding: "6px 9px", fontSize: 12 }} value={reply} placeholder="Reply…"
-          onChange={(e) => setReply(e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Enter") { onReply(reply, root.thread_id); setReply("") } }} />
-        <button className="btn sm" onClick={() => { onReply(reply, root.thread_id); setReply("") }}>Reply</button>
+      )}
+      <div style={{ padding: 9 }}>
+        <textarea
+          ref={ref}
+          className="input"
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          placeholder={quote ? "Comment on the selection…" : "Add a comment…"}
+          style={{ minHeight: 56, resize: "vertical", fontSize: 12.5 }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) submit()
+            if (e.key === "Escape") onCancel()
+          }}
+        />
+        <div style={{ display: "flex", gap: 6, marginTop: 7 }}>
+          <button className="btn pri sm" disabled={!text.trim()} onClick={submit} style={{ flex: 1, justifyContent: "center" }}>Comment</button>
+          <button className="btn sm" onClick={onCancel}>Cancel</button>
+        </div>
       </div>
     </div>
   )
 }
+
+// Collapsed rail: a thin column of dots, each beside its comment's text.
+function Rail({
+  pins, generalCount, active, onExpand, onHide, onDot,
+}: {
+  pins: PinItem[]
+  generalCount: number
+  active: string | null
+  onExpand: () => void
+  onHide: () => void
+  onDot: (id: string) => void
+}) {
+  const [h, setH] = useState(600)
+  const ref = useCallback((el: HTMLDivElement | null) => {
+    if (el) setH(el.clientHeight)
+  }, [])
+  const total = pins.length + generalCount
+  return (
+    <>
+      <button onClick={onExpand} title="Expand comments (c)" className="rail-top" style={{ borderBottom: "1px solid var(--line-soft)" }}>
+        <span style={{ fontSize: 13 }}>⟨</span>
+        {total > 0 && <span className="mono" style={{ fontSize: 9.5, fontWeight: 700, color: "var(--cmt-tx)", background: "var(--cmt-bg)", borderRadius: 999, padding: "1px 5px" }}>{total}</span>}
+      </button>
+      <div ref={ref} style={{ flex: 1, position: "relative", overflow: "hidden" }}>
+        {pins.map((p) => {
+          const id = p.thread[0].thread_id
+          const isActive = active === id
+          return (
+            <button
+              key={id}
+              onClick={() => onDot(id)}
+              title={p.thread[0].body_md}
+              style={{
+                position: "absolute",
+                left: "50%",
+                top: clamp(p.desiredY + 6, 10, h - 14),
+                transform: "translateX(-50%)",
+                width: isActive ? 14 : 10,
+                height: isActive ? 14 : 10,
+                borderRadius: "50%",
+                border: "2px solid var(--card)",
+                background: "var(--ac)",
+                cursor: "pointer",
+                padding: 0,
+                boxShadow: isActive ? "0 0 0 3px var(--ac-soft)" : "none",
+                transition: "width .12s, height .12s, transform .18s",
+                opacity: p.located ? 1 : 0.4,
+              }}
+            />
+          )
+        })}
+      </div>
+      <button onClick={onHide} title="Hide comments" className="rail-top" style={{ borderTop: "1px solid var(--line-soft)", color: "var(--fg-mut)" }}>
+        ✕
+      </button>
+    </>
+  )
+}
+
+
+function IconBtn({ title, onClick, children }: { title: string; onClick: () => void; children: React.ReactNode }) {
+  return (
+    <button
+      title={title}
+      onClick={onClick}
+      style={{ width: 26, height: 26, display: "grid", placeItems: "center", border: 0, background: "transparent", color: "var(--fg-mut)", borderRadius: 7, cursor: "pointer", fontSize: 13 }}
+      onMouseEnter={(e) => { e.currentTarget.style.background = "var(--hover)"; e.currentTarget.style.color = "var(--fg)" }}
+      onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "var(--fg-mut)" }}
+    >
+      {children}
+    </button>
+  )
+}
+
+function SectionLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="mono" style={{ fontSize: 9.5, letterSpacing: ".06em", textTransform: "uppercase", color: "var(--fg-mut)", padding: "2px 2px 6px" }}>
+      {children}
+    </div>
+  )
+}
+
+const clamp = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, n))
 
 // Who is viewing right now. Live over the presence SSE channel; self listed
 // first as "you". Hidden when you're the only one here.

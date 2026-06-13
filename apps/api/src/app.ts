@@ -25,10 +25,40 @@ import {
   type ArtifactRecord,
   type BlobStore,
   type BundleManifest,
+  type CommentRecord,
   type MetaStore,
   type VersionRecord,
   type Visibility,
 } from "@dock/core"
+
+/** The fixed reaction set; arbitrary emoji are rejected to keep data clean. */
+const REACTIONS = ["👍", "❤️", "🎉", "😄", "👀", "🙏", "🚀", "👎"]
+
+type CommentMeta = { reactions?: Record<string, string[]>; edited_at?: string; deleted?: boolean }
+const parseMeta = (m: string | null): CommentMeta => {
+  if (!m) return {}
+  try {
+    return JSON.parse(m) as CommentMeta
+  } catch {
+    return {}
+  }
+}
+
+/** Wire shape for a comment: meta unpacked into clean fields; deleted bodies blanked. */
+function commentJson(cm: CommentRecord, anchored?: boolean) {
+  const { meta, ...rest } = cm
+  const md = parseMeta(meta)
+  const deleted = !!md.deleted
+  return {
+    ...rest,
+    body_md: deleted ? "" : cm.body_md,
+    reactions: md.reactions ?? {},
+    edited: !!md.edited_at,
+    edited_at: md.edited_at ?? null,
+    deleted,
+    ...(anchored !== undefined ? { anchored } : {}),
+  }
+}
 
 interface SessionUser {
   id: string
@@ -371,7 +401,7 @@ export function createApp(deps: AppDeps): Hono {
       quote: quoteOf(created.anchor),
       thread_id: created.thread_id,
     })
-    return c.json(created, 201)
+    return c.json(commentJson(created), 201)
   })
 
   app.get("/v1/artifacts/:shortId/comments", async (c) => {
@@ -384,10 +414,7 @@ export function createApp(deps: AppDeps): Hono {
     const cur = await meta.getVersion(artifact.id, artifact.current_version)
     const src = cur ? await sourceText(cur) : null
     return c.json({
-      comments: comments.map((cm) => ({
-        ...cm,
-        anchored: src === null ? true : isAnchored(cm.anchor, src),
-      })),
+      comments: comments.map((cm) => commentJson(cm, src === null ? true : isAnchored(cm.anchor, src))),
     })
   })
 
@@ -404,6 +431,79 @@ export function createApp(deps: AppDeps): Hono {
     bus.publish(artifact.id, { type: "comment.resolved", thread_id: cm.thread_id, state })
     await notify(artifact, "comment.resolved", { state, thread_id: cm.thread_id })
     return c.json({ thread_id: cm.thread_id, state, updated })
+  })
+
+  // Loads (artifact, comment) for a mutation, 404ing on mismatch.
+  const loadComment = async (
+    c: Context,
+  ): Promise<{ artifact: ArtifactRecord; cm: CommentRecord } | { error: Response }> => {
+    const artifact = await meta.getByShortId(c.req.param("shortId") ?? "")
+    if (!artifact) return { error: c.json({ error: "not found" }, 404) }
+    const cm = await meta.getComment(c.req.param("commentId") ?? "")
+    if (!cm || cm.artifact_id !== artifact.id) return { error: c.json({ error: "not found" }, 404) }
+    return { artifact, cm }
+  }
+  // The signed-in actor's display name, or null on an open (no-auth) instance.
+  const actorName = async (c: Context): Promise<string | null> => {
+    const me = await currentUser(c)
+    return me ? (me.name ?? me.email) : null
+  }
+
+  // Toggle the current user's reaction (one of REACTIONS) on a comment.
+  app.post("/v1/artifacts/:shortId/comments/:commentId/react", async (c) => {
+    if (!(await writeOk(c))) return c.json({ error: "unauthorized" }, 401)
+    const r = await loadComment(c)
+    if ("error" in r) return r.error
+    const { artifact, cm } = r
+    const body = (await c.req.json().catch(() => ({}))) as { emoji?: string }
+    if (!body.emoji || !REACTIONS.includes(body.emoji)) return c.json({ error: "unknown reaction" }, 400)
+    const actor = (await actorName(c)) ?? "anonymous"
+    const md = parseMeta(cm.meta)
+    const reactions = md.reactions ?? {}
+    const arr = reactions[body.emoji] ?? []
+    const i = arr.indexOf(actor)
+    if (i >= 0) arr.splice(i, 1)
+    else arr.push(actor)
+    if (arr.length) reactions[body.emoji] = arr
+    else delete reactions[body.emoji]
+    md.reactions = reactions
+    const updated = await meta.updateComment(cm.id, { meta: JSON.stringify(md) })
+    bus.publish(artifact.id, { type: "comment.reacted", thread_id: cm.thread_id })
+    return c.json(commentJson(updated ?? cm))
+  })
+
+  // Edit a comment's body (author only when signed in).
+  app.patch("/v1/artifacts/:shortId/comments/:commentId", async (c) => {
+    if (!(await writeOk(c))) return c.json({ error: "unauthorized" }, 401)
+    const r = await loadComment(c)
+    if ("error" in r) return r.error
+    const { artifact, cm } = r
+    const actor = await actorName(c)
+    if (actor && cm.author !== actor) return c.json({ error: "forbidden" }, 403)
+    const body = (await c.req.json().catch(() => ({}))) as { body_md?: string }
+    if (typeof body.body_md !== "string" || body.body_md.trim() === "")
+      return c.json({ error: "body_md required" }, 400)
+    const md = parseMeta(cm.meta)
+    md.edited_at = new Date().toISOString()
+    const updated = await meta.updateComment(cm.id, { body_md: body.body_md, meta: JSON.stringify(md) })
+    bus.publish(artifact.id, { type: "comment.updated", thread_id: cm.thread_id })
+    return c.json(commentJson(updated ?? cm))
+  })
+
+  // Soft-delete a comment (author only when signed in); the row stays so replies
+  // keep their thread, and the body is tombstoned.
+  app.delete("/v1/artifacts/:shortId/comments/:commentId", async (c) => {
+    if (!(await writeOk(c))) return c.json({ error: "unauthorized" }, 401)
+    const r = await loadComment(c)
+    if ("error" in r) return r.error
+    const { artifact, cm } = r
+    const actor = await actorName(c)
+    if (actor && cm.author !== actor) return c.json({ error: "forbidden" }, 403)
+    const md = parseMeta(cm.meta)
+    md.deleted = true
+    const updated = await meta.updateComment(cm.id, { meta: JSON.stringify(md) })
+    bus.publish(artifact.id, { type: "comment.updated", thread_id: cm.thread_id })
+    return c.json(commentJson(updated ?? cm))
   })
 
   // ---- Live stream (SSE) + presence -------------------------------------
