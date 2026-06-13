@@ -42,6 +42,18 @@ export interface Artifact {
   proposals_total?: number
   /** Collection ids this artifact belongs to (detail endpoint). */
   collections?: string[]
+  /** Taken down by a moderator: the content is gone (410), the record stays. */
+  removed?: boolean
+}
+export interface Report {
+  id: string
+  artifact_id: string
+  artifact_short_id: string
+  reason: string
+  detail: string | null
+  reporter: string | null
+  state: "open" | "actioned" | "dismissed"
+  created_at: string
 }
 export interface Collection {
   id: string
@@ -279,6 +291,16 @@ export const api = {
     f(`/v1/artifacts/${id}/favorite`, { ...opts(), method: on ? "PUT" : "DELETE" }).then(j),
   setTags: (id: string, tags: string[]): Promise<{ tags: string[] }> =>
     f(`/v1/artifacts/${id}/tags`, { ...opts({ tags }), method: "PUT" }).then(j),
+
+  report: (id: string, reason: string, detail?: string): Promise<{ ok: boolean }> =>
+    f(`/v1/artifacts/${id}/report`, opts({ reason, detail })).then(j),
+  listReports: (): Promise<{ reports: Report[]; open: number }> => f("/v1/reports", opts()).then(j),
+  takedown: (id: string, note?: string): Promise<{ removed: boolean }> =>
+    f(`/v1/artifacts/${id}/takedown`, opts({ note })).then(j),
+  reinstate: (id: string): Promise<{ removed: boolean }> =>
+    f(`/v1/artifacts/${id}/reinstate`, opts({})).then(j),
+  dismissReport: (id: string): Promise<{ ok: boolean }> =>
+    f(`/v1/reports/${id}/dismiss`, opts({})).then(j),
 
   listAgents: (): Promise<{ agents: Agent[] }> => f("/v1/agents", opts()).then(j),
   createAgent: (name: string, role?: Role): Promise<Agent & { token: string }> =>
