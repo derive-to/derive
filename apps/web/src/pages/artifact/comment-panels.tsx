@@ -60,6 +60,7 @@ export function MobileComments({
           stays tappable/scrollable, so no dimming layer intercepts it. */}
       <button
         type="button"
+        data-testid="comments-sheet-backdrop"
         aria-label="Close comments"
         tabIndex={open && full ? 0 : -1}
         onClick={onClose}
@@ -94,6 +95,7 @@ export function MobileComments({
           <Button
             variant="outline"
             size="sm"
+            data-testid="comments-sheet-new"
             onClick={() => {
               setFull(true)
               onNewGeneral()
@@ -214,7 +216,7 @@ export function OpenPanel(props: {
           </span>
         )}
         <span className="flex-1" />
-        <IconBtn title="New comment" onClick={onNewGeneral}>
+        <IconBtn title="New comment" testId="comment-new" onClick={onNewGeneral}>
           ＋
         </IconBtn>
         <IconBtn title="Minimize to rail (c)" onClick={onMinimize}>

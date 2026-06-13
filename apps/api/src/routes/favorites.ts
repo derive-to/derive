@@ -1,5 +1,7 @@
 import { Hono } from "hono"
+import { z } from "zod"
 import type { AppContext } from "../context"
+import { fail, readJson } from "../lib/http"
 
 /** Favorites (personal stars) + tags (workspace browse metadata). */
 export const favoriteRoutes = (ctx: AppContext) => {
@@ -9,18 +11,17 @@ export const favoriteRoutes = (ctx: AppContext) => {
   // Favorites are personal: any user who can read the artifact can star it.
   app.put("/v1/artifacts/:shortId/favorite", async (c) => {
     const me = await currentUser(c)
-    if (!me) return c.json({ error: "unauthenticated" }, 401)
+    if (!me) return fail(c, 401, "unauthenticated")
     const artifact = await meta.getByShortId(c.req.param("shortId"))
-    if (!artifact || !(await authorize(c, "read", artifact)))
-      return c.json({ error: "not found" }, 404)
+    if (!artifact || !(await authorize(c, "read", artifact))) return fail(c, 404, "not found")
     await meta.setFavorite(artifact.id, me.id)
     return c.json({ favorite: true })
   })
   app.delete("/v1/artifacts/:shortId/favorite", async (c) => {
     const me = await currentUser(c)
-    if (!me) return c.json({ error: "unauthenticated" }, 401)
+    if (!me) return fail(c, 401, "unauthenticated")
     const artifact = await meta.getByShortId(c.req.param("shortId"))
-    if (!artifact) return c.json({ error: "not found" }, 404)
+    if (!artifact) return fail(c, 404, "not found")
     await meta.removeFavorite(artifact.id, me.id)
     return c.json({ favorite: false })
   })
@@ -45,10 +46,10 @@ export const favoriteRoutes = (ctx: AppContext) => {
   }
   app.put("/v1/artifacts/:shortId/tags", async (c) => {
     const artifact = await meta.getByShortId(c.req.param("shortId"))
-    if (!artifact || !(await authorize(c, "read", artifact)))
-      return c.json({ error: "not found" }, 404)
-    if (!(await authorize(c, "publish", artifact))) return c.json({ error: "forbidden" }, 403)
-    const body = (await c.req.json().catch(() => ({}))) as { tags?: unknown }
+    if (!artifact || !(await authorize(c, "read", artifact))) return fail(c, 404, "not found")
+    if (!(await authorize(c, "publish", artifact))) return fail(c, 403, "forbidden")
+    const body = await readJson(c, z.object({ tags: z.unknown() }))
+    if (body instanceof Response) return body
     const tags = normalizeTags(body.tags)
     await meta.setArtifactTags(artifact.id, tags)
     return c.json({ tags })

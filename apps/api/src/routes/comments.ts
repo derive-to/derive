@@ -1,5 +1,6 @@
 import { type ArtifactRecord, type CommentRecord, isAnchored, newId } from "@dock/core"
 import { type Context, Hono } from "hono"
+import { z } from "zod"
 import type { AppContext } from "../context"
 import {
   commentJson,
@@ -10,6 +11,7 @@ import {
   quoteOf,
   REACTIONS,
 } from "../lib/comments"
+import { fail, readJson } from "../lib/http"
 
 /** Comments: threaded, anchored to text quotes, with reactions, edits, and soft
  *  deletes. @mentions notify people (bell) or land in an agent's pull inbox. */
@@ -77,9 +79,9 @@ export const commentRoutes = (ctx: AppContext) => {
     c: Context,
   ): Promise<{ artifact: ArtifactRecord; cm: CommentRecord } | { error: Response }> => {
     const artifact = await meta.getByShortId(c.req.param("shortId") ?? "")
-    if (!artifact) return { error: c.json({ error: "not found" }, 404) }
+    if (!artifact) return { error: fail(c, 404, "not found") }
     const cm = await meta.getComment(c.req.param("commentId") ?? "")
-    if (!cm || cm.artifact_id !== artifact.id) return { error: c.json({ error: "not found" }, 404) }
+    if (!cm || cm.artifact_id !== artifact.id) return { error: fail(c, 404, "not found") }
     return { artifact, cm }
   }
   // The acting display name (agent or signed-in user); null on an open instance.
@@ -89,13 +91,17 @@ export const commentRoutes = (ctx: AppContext) => {
   // Create a comment (new thread) or a reply (pass thread_id).
   app.post("/v1/artifacts/:shortId/comments", async (c) => {
     const artifact = await meta.getByShortId(c.req.param("shortId"))
-    if (!artifact || artifact.current_version === 0) return c.json({ error: "not found" }, 404)
-    if (!(await authorize(c, "comment", artifact))) return c.json({ error: "forbidden" }, 403)
+    if (!artifact || artifact.current_version === 0) return fail(c, 404, "not found")
+    if (!(await authorize(c, "comment", artifact))) return fail(c, 403, "forbidden")
     const rl = await limited(c, commentLimiter)
     if (rl) return rl
-    const body = (await c.req.json().catch(() => ({}))) as Record<string, unknown>
-    if (typeof body.body_md !== "string" || body.body_md.trim() === "")
-      return c.json({ error: "body_md required" }, 400)
+    const body = await readJson(
+      c,
+      z
+        .object({ body_md: z.string().refine((s) => s.trim() !== "", "body_md required") })
+        .catchall(z.unknown()),
+    )
+    if (body instanceof Response) return body
 
     const id = newId("c")
     const threadId = typeof body.thread_id === "string" && body.thread_id ? body.thread_id : id
@@ -155,8 +161,7 @@ export const commentRoutes = (ctx: AppContext) => {
 
   app.get("/v1/artifacts/:shortId/comments", async (c) => {
     const artifact = await meta.getByShortId(c.req.param("shortId"))
-    if (!artifact || !(await authorize(c, "read", artifact)))
-      return c.json({ error: "not found" }, 404)
+    if (!artifact || !(await authorize(c, "read", artifact))) return fail(c, 404, "not found")
     const q = c.req.query("state")
     const state = q === "open" || q === "resolved" ? q : undefined
     const comments = await meta.listComments(artifact.id, state ? { state } : undefined)
@@ -173,11 +178,12 @@ export const commentRoutes = (ctx: AppContext) => {
   // Resolve (or reopen, with {state:"open"}) the thread a comment belongs to.
   app.post("/v1/artifacts/:shortId/comments/:commentId/resolve", async (c) => {
     const artifact = await meta.getByShortId(c.req.param("shortId"))
-    if (!artifact) return c.json({ error: "not found" }, 404)
-    if (!(await authorize(c, "comment", artifact))) return c.json({ error: "forbidden" }, 403)
+    if (!artifact) return fail(c, 404, "not found")
+    if (!(await authorize(c, "comment", artifact))) return fail(c, 403, "forbidden")
     const cm = await meta.getComment(c.req.param("commentId"))
-    if (!cm || cm.artifact_id !== artifact.id) return c.json({ error: "not found" }, 404)
-    const body = (await c.req.json().catch(() => ({}))) as { state?: string }
+    if (!cm || cm.artifact_id !== artifact.id) return fail(c, 404, "not found")
+    const body = await readJson(c, z.object({ state: z.string().optional() }))
+    if (body instanceof Response) return body
     const state = body.state === "open" ? "open" : "resolved"
     const updated = await meta.setThreadState(artifact.id, cm.thread_id, state)
     bus.publish(artifact.id, { type: "comment.resolved", thread_id: cm.thread_id, state })
@@ -190,10 +196,12 @@ export const commentRoutes = (ctx: AppContext) => {
     const r = await loadComment(c)
     if ("error" in r) return r.error
     const { artifact, cm } = r
-    if (!(await authorize(c, "comment", artifact))) return c.json({ error: "forbidden" }, 403)
-    const body = (await c.req.json().catch(() => ({}))) as { emoji?: string }
-    if (!body.emoji || !REACTIONS.includes(body.emoji))
-      return c.json({ error: "unknown reaction" }, 400)
+    if (!(await authorize(c, "comment", artifact))) return fail(c, 403, "forbidden")
+    const body = await readJson(
+      c,
+      z.object({ emoji: z.string().refine((e) => REACTIONS.includes(e), "unknown reaction") }),
+    )
+    if (body instanceof Response) return body
     const actor = (await actorName(c)) ?? "anonymous"
     const md = parseMeta(cm.meta)
     const reactions = md.reactions ?? {}
@@ -214,12 +222,14 @@ export const commentRoutes = (ctx: AppContext) => {
     const r = await loadComment(c)
     if ("error" in r) return r.error
     const { artifact, cm } = r
-    if (!(await authorize(c, "comment", artifact))) return c.json({ error: "forbidden" }, 403)
+    if (!(await authorize(c, "comment", artifact))) return fail(c, 403, "forbidden")
     const actor = await actorName(c)
-    if (actor && cm.author !== actor) return c.json({ error: "forbidden" }, 403)
-    const body = (await c.req.json().catch(() => ({}))) as { body_md?: string }
-    if (typeof body.body_md !== "string" || body.body_md.trim() === "")
-      return c.json({ error: "body_md required" }, 400)
+    if (actor && cm.author !== actor) return fail(c, 403, "forbidden")
+    const body = await readJson(
+      c,
+      z.object({ body_md: z.string().refine((s) => s.trim() !== "", "body_md required") }),
+    )
+    if (body instanceof Response) return body
     const md = parseMeta(cm.meta)
     md.edited_at = new Date().toISOString()
     const updated = await meta.updateComment(cm.id, {
@@ -236,9 +246,9 @@ export const commentRoutes = (ctx: AppContext) => {
     const r = await loadComment(c)
     if ("error" in r) return r.error
     const { artifact, cm } = r
-    if (!(await authorize(c, "comment", artifact))) return c.json({ error: "forbidden" }, 403)
+    if (!(await authorize(c, "comment", artifact))) return fail(c, 403, "forbidden")
     const actor = await actorName(c)
-    if (actor && cm.author !== actor) return c.json({ error: "forbidden" }, 403)
+    if (actor && cm.author !== actor) return fail(c, 403, "forbidden")
     const md = parseMeta(cm.meta)
     md.deleted = true
     const updated = await meta.updateComment(cm.id, { meta: JSON.stringify(md) })

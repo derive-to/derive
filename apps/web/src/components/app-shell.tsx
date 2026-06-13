@@ -3,6 +3,7 @@ import { type ReactNode, useCallback, useEffect, useState } from "react"
 import { api, type Collection, type Workspaces } from "@/api"
 import { Button } from "@/components/ui/button"
 import { useAuth } from "@/ctx"
+import { STORAGE_KEYS } from "@/lib/storage-keys"
 import { useIsMobile } from "@/lib/use-is-mobile"
 import { cn } from "@/lib/utils"
 import { CommandPalette } from "./command-palette"
@@ -11,7 +12,7 @@ import { NavRail } from "./nav-rail"
 import { Logo } from "./shared/logo"
 import { ShellCtx, type ShellValue, type Summary } from "./shell-context"
 
-const COLLAPSE_KEY = "dock.nav.collapsed"
+const COLLAPSE_KEY = STORAGE_KEYS.navCollapsed
 
 // The persistent app frame: a slim top bar (toggle + brand left, page actions +
 // bell right) over [nav rail | page]. Owns the rail collapse state (collapsed by

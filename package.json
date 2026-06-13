@@ -33,12 +33,16 @@
     "test:pg": "bash scripts/test-pg.sh",
     "lint": "biome lint",
     "lint:tokens": "node scripts/check-design-tokens.mjs",
+    "lint:frontend": "node scripts/check-frontend.mjs",
+    "lint:testids": "node scripts/check-testids.mjs",
+    "lint:api": "node scripts/check-api.mjs",
     "format": "biome format --write",
     "check": "biome check",
     "check:fix": "biome check --write",
-    "ci": "biome ci && pnpm lint:tokens"
+    "ci": "biome ci && pnpm lint:tokens && pnpm lint:frontend && pnpm lint:testids && pnpm lint:api"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.5.0"
+    "@biomejs/biome": "^2.5.0",
+    "typescript": "^5.9.3"
   }
 }

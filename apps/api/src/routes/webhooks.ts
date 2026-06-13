@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto"
 import { Hono } from "hono"
+import { z } from "zod"
 import type { AppContext } from "../context"
+import { fail, readJson } from "../lib/http"
 import { isPublicHttpUrl } from "../lib/net"
 import { WEBHOOK_EVENTS, type WebhookEvent } from "../webhooks"
 
@@ -13,16 +15,17 @@ export const webhookRoutes = (ctx: AppContext) => {
   const publicWebhook = (w: { secret: string }) => ({ ...w, secret: undefined })
 
   app.get("/v1/webhooks", async (c) => {
-    if (!(await workspaceCan(c, "manage"))) return c.json({ error: "forbidden" }, 403)
+    if (!(await workspaceCan(c, "manage"))) return fail(c, 403, "forbidden")
     const hooks = await meta.listWebhooks()
     return c.json({ webhooks: hooks.map(publicWebhook) })
   })
 
   app.post("/v1/webhooks", async (c) => {
-    if (!(await workspaceCan(c, "manage"))) return c.json({ error: "forbidden" }, 403)
-    const b = (await c.req.json().catch(() => ({}))) as Record<string, unknown>
+    if (!(await workspaceCan(c, "manage"))) return fail(c, 403, "forbidden")
+    const b = await readJson(c, z.object({}).catchall(z.unknown()))
+    if (b instanceof Response) return b
     if (typeof b.url !== "string" || !isPublicHttpUrl(b.url))
-      return c.json({ error: "a valid public http(s) url is required" }, 400)
+      return fail(c, 400, "a valid public http(s) url is required")
     const kind = b.kind === "slack" ? "slack" : "generic"
     // events: array or "*"; validate against the known set
     const events =
@@ -36,7 +39,7 @@ export const webhookRoutes = (ctx: AppContext) => {
     let artifactRef: string | null = null
     if (typeof b.artifact === "string" && b.artifact) {
       const a = await meta.getByShortId(b.artifact)
-      if (!a) return c.json({ error: "artifact not found" }, 404)
+      if (!a) return fail(c, 404, "artifact not found")
       artifactRef = a.id
     }
     const created = await meta.createWebhook({
@@ -52,13 +55,13 @@ export const webhookRoutes = (ctx: AppContext) => {
   })
 
   app.delete("/v1/webhooks/:id", async (c) => {
-    if (!(await workspaceCan(c, "manage"))) return c.json({ error: "forbidden" }, 403)
+    if (!(await workspaceCan(c, "manage"))) return fail(c, 403, "forbidden")
     await meta.deleteWebhook(c.req.param("id"))
     return c.body(null, 204)
   })
 
   app.get("/v1/webhooks/:id/deliveries", async (c) => {
-    if (!(await workspaceCan(c, "manage"))) return c.json({ error: "forbidden" }, 403)
+    if (!(await workspaceCan(c, "manage"))) return fail(c, 403, "forbidden")
     const rows = await meta.recentDeliveries(c.req.param("id"), 20)
     return c.json({
       deliveries: rows.map((d) => ({
@@ -74,9 +77,9 @@ export const webhookRoutes = (ctx: AppContext) => {
 
   // Send a sample event to a webhook so you can confirm it lands.
   app.post("/v1/webhooks/:id/test", async (c) => {
-    if (!(await workspaceCan(c, "manage"))) return c.json({ error: "forbidden" }, 403)
+    if (!(await workspaceCan(c, "manage"))) return fail(c, 403, "forbidden")
     const w = await meta.getWebhook(c.req.param("id"))
-    if (!w) return c.json({ error: "not found" }, 404)
+    if (!w) return fail(c, 404, "not found")
     const sample = JSON.stringify({
       event: "version.published",
       at: new Date().toISOString(),

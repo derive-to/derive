@@ -1,6 +1,8 @@
-import { isRole, newId } from "@dock/core"
+import { isRole, newId, type Role } from "@dock/core"
 import { Hono } from "hono"
+import { z } from "zod"
 import type { AppContext } from "../context"
+import { fail, readJson } from "../lib/http"
 
 /** Per-artifact role overrides (a share). Managing shares requires `manage` on
  *  the artifact; the share's role beats the caller's workspace baseline. */
@@ -10,8 +12,7 @@ export const sharingRoutes = (ctx: AppContext) => {
 
   app.get("/v1/artifacts/:shortId/members", async (c) => {
     const artifact = await meta.getByShortId(c.req.param("shortId"))
-    if (!artifact || !(await authorize(c, "read", artifact)))
-      return c.json({ error: "not found" }, 404)
+    if (!artifact || !(await authorize(c, "read", artifact))) return fail(c, 404, "not found")
     const rows = await meta.listArtifactMembers(artifact.id)
     const users = await meta.getUsers(rows.map((r) => r.user_id))
     const byId = new Map(users.map((u) => [u.id, u]))
@@ -28,13 +29,18 @@ export const sharingRoutes = (ctx: AppContext) => {
 
   app.put("/v1/artifacts/:shortId/members", async (c) => {
     const artifact = await meta.getByShortId(c.req.param("shortId"))
-    if (!artifact) return c.json({ error: "not found" }, 404)
-    if (!(await authorize(c, "manage", artifact))) return c.json({ error: "forbidden" }, 403)
-    const b = (await c.req.json().catch(() => ({}))) as { email?: string; role?: string }
-    if (!b.email || !isRole(b.role))
-      return c.json({ error: "email and a valid role are required" }, 400)
+    if (!artifact) return fail(c, 404, "not found")
+    if (!(await authorize(c, "manage", artifact))) return fail(c, 403, "forbidden")
+    const b = await readJson(
+      c,
+      z.object({
+        email: z.string().min(1, "an email is required"),
+        role: z.custom<Role>(isRole, "a valid role is required"),
+      }),
+    )
+    if (b instanceof Response) return b
     const user = await meta.findUserByEmail(b.email.trim())
-    if (!user) return c.json({ error: "no Dock user with that email" }, 404)
+    if (!user) return fail(c, 404, "no Dock user with that email")
     await meta.setArtifactMember({
       id: newId("am"),
       artifact_id: artifact.id,
@@ -46,8 +52,8 @@ export const sharingRoutes = (ctx: AppContext) => {
 
   app.delete("/v1/artifacts/:shortId/members/:userId", async (c) => {
     const artifact = await meta.getByShortId(c.req.param("shortId"))
-    if (!artifact) return c.json({ error: "not found" }, 404)
-    if (!(await authorize(c, "manage", artifact))) return c.json({ error: "forbidden" }, 403)
+    if (!artifact) return fail(c, 404, "not found")
+    if (!(await authorize(c, "manage", artifact))) return fail(c, 403, "forbidden")
     await meta.removeArtifactMember(artifact.id, c.req.param("userId"))
     return c.body(null, 204)
   })

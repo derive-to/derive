@@ -11,9 +11,18 @@ import {
   toJson,
 } from "@dock/core"
 import { type Context, Hono } from "hono"
+import { z } from "zod"
 import type { AppContext } from "../context"
 import { safeEqual } from "../lib/crypto"
-import { DEFAULT_WORKSPACE_NAME, MAX_UPLOAD_BYTES, str, TOMBSTONE, visibilityOf } from "../lib/http"
+import {
+  DEFAULT_WORKSPACE_NAME,
+  fail,
+  MAX_UPLOAD_BYTES,
+  readJson,
+  str,
+  TOMBSTONE,
+  visibilityOf,
+} from "../lib/http"
 
 /** The artifact lifecycle: browse + summary, publish/republish, detail, restore,
  *  source read-back, and version diffs. */
@@ -45,7 +54,7 @@ export const artifactRoutes = (ctx: AppContext) => {
   app.get("/v1/artifacts", async (c) => {
     const me = await currentUser(c)
     if (!me && deps.token && !safeEqual(bearer(c), deps.token))
-      return c.json({ error: "unauthenticated" }, 401)
+      return fail(c, 401, "unauthenticated")
     const limit = Math.min(100, Math.max(1, Number(c.req.query("limit")) || 30))
     // Opaque compound cursor "<created_at>|<id>" — the id tiebreak keeps paging
     // correct when many artifacts share a created_at.
@@ -98,7 +107,7 @@ export const artifactRoutes = (ctx: AppContext) => {
   app.get("/v1/tags", async (c) => {
     const me = await currentUser(c)
     if (!me && deps.token && !safeEqual(bearer(c), deps.token))
-      return c.json({ error: "unauthenticated" }, 401)
+      return fail(c, 401, "unauthenticated")
     const org = await activeWorkspace(c)
     const [total, tags, favIds, ws] = await Promise.all([
       meta.countArtifacts(org),
@@ -123,10 +132,10 @@ export const artifactRoutes = (ctx: AppContext) => {
     let existing: ArtifactRecord | null = null
     if (shortId) {
       existing = await meta.getByShortId(shortId)
-      if (!existing) return c.json({ error: "not found" }, 404)
-      if (!(await authorize(c, "publish", existing))) return c.json({ error: "forbidden" }, 403)
+      if (!existing) return fail(c, 404, "not found")
+      if (!(await authorize(c, "publish", existing))) return fail(c, 403, "forbidden")
     } else if (!(await workspaceCan(c, "publish"))) {
-      return c.json({ error: "forbidden" }, 403)
+      return fail(c, 403, "forbidden")
     }
     // Quotas are per-workspace: a republish counts against the artifact's own
     // org, a new artifact against the caller's active workspace.
@@ -135,17 +144,16 @@ export const artifactRoutes = (ctx: AppContext) => {
     if (rl) return rl
     // A new artifact counts against the artifact cap; republishes don't.
     if (!shortId && deps.maxArtifacts && (await meta.countArtifacts(org)) >= deps.maxArtifacts)
-      return c.json({ error: "artifact quota reached" }, 409)
+      return fail(c, 409, "artifact quota reached")
     const len = Number(c.req.header("content-length") ?? 0)
-    if (len > MAX_UPLOAD_BYTES) return c.json({ error: "upload too large" }, 413)
+    if (len > MAX_UPLOAD_BYTES) return fail(c, 413, "upload too large")
 
     const body = await c.req.parseBody()
     const file = body["file"]
-    if (!(file instanceof File)) return c.json({ error: "multipart field 'file' required" }, 400)
+    if (!(file instanceof File)) return fail(c, 400, "multipart field 'file' required")
 
     const bytes = new Uint8Array(await file.arrayBuffer())
-    if (await overStorage(org, bytes.length))
-      return c.json({ error: "storage quota exceeded" }, 413)
+    if (await overStorage(org, bytes.length)) return fail(c, 413, "storage quota exceeded")
     const isBundle =
       /\.zip$/i.test(file.name) ||
       body["kind"] === "bundle" ||
@@ -197,7 +205,7 @@ export const artifactRoutes = (ctx: AppContext) => {
       const versions = await meta.listVersions(artifact.id)
       return c.json({ ...toJson(deps.baseUrl, artifact, versions), published: version.n }, 201)
     } catch (err) {
-      if (err instanceof PublishError) return c.json({ error: err.message }, err.statusCode as 400)
+      if (err instanceof PublishError) return fail(c, err.statusCode as 400, err.message)
       throw err
     }
   }
@@ -210,8 +218,7 @@ export const artifactRoutes = (ctx: AppContext) => {
     // For a missing artifact, fall back to the most restrictive visibility so
     // an anonymous probe can't learn anything (a non-member gets no access).
     const actor = await actorFor(c, artifact ?? ({ id: "", visibility: "org" } as ArtifactRecord))
-    if (!artifact || !can(actor, "read", artifact.visibility))
-      return c.json({ error: "not found" }, 404)
+    if (!artifact || !can(actor, "read", artifact.visibility)) return fail(c, 404, "not found")
     const versions = await meta.listVersions(artifact.id)
     const me = actor.kind === "user" ? actor.userId : null
     const tags = (await meta.tagsForArtifacts([artifact.id]))[artifact.id] ?? []
@@ -242,12 +249,12 @@ export const artifactRoutes = (ctx: AppContext) => {
   // re-upload, works for files and bundles). History is never rewritten.
   app.post("/v1/artifacts/:shortId/restore", async (c) => {
     const artifact = await meta.getByShortId(c.req.param("shortId"))
-    if (!artifact) return c.json({ error: "not found" }, 404)
-    if (!(await authorize(c, "publish", artifact))) return c.json({ error: "forbidden" }, 403)
-    const body = (await c.req.json().catch(() => ({}))) as { version?: number }
-    if (!Number.isInteger(body.version)) return c.json({ error: "version required" }, 400)
-    const src = await meta.getVersion(artifact.id, body.version as number)
-    if (!src) return c.json({ error: `no version ${body.version}` }, 404)
+    if (!artifact) return fail(c, 404, "not found")
+    if (!(await authorize(c, "publish", artifact))) return fail(c, 403, "forbidden")
+    const body = await readJson(c, z.object({ version: z.number().int("version required") }))
+    if (body instanceof Response) return body
+    const src = await meta.getVersion(artifact.id, body.version)
+    if (!src) return fail(c, 404, `no version ${body.version}`)
     const me = await currentUser(c)
     const version = await meta.addVersion(artifact.id, {
       id: newId("v"),
@@ -283,14 +290,14 @@ export const artifactRoutes = (ctx: AppContext) => {
   app.get("/v1/artifacts/:shortId/content", async (c) => {
     const artifact = await meta.getByShortId(c.req.param("shortId"))
     if (!artifact || artifact.current_version === 0 || !(await authorize(c, "read", artifact)))
-      return c.json({ error: "not found" }, 404)
-    if (artifact.removed_at) return c.json({ error: TOMBSTONE }, 410)
+      return fail(c, 404, "not found")
+    if (artifact.removed_at) return fail(c, 410, TOMBSTONE)
     const v = c.req.query("v") ? Number(c.req.query("v")) : artifact.current_version
-    if (!Number.isInteger(v)) return c.json({ error: "bad version" }, 400)
+    if (!Number.isInteger(v)) return fail(c, 400, "bad version")
     const version = await meta.getVersion(artifact.id, v)
-    if (!version) return c.json({ error: `no version ${v}` }, 404)
+    if (!version) return fail(c, 404, `no version ${v}`)
     const src = await sourceText(version)
-    if (src === null) return c.json({ error: "blob missing" }, 500)
+    if (src === null) return fail(c, 500, "blob missing")
     c.header("Content-Type", "text/plain; charset=utf-8")
     c.header("X-Content-Type-Options", "nosniff")
     c.header("Access-Control-Allow-Origin", "*")
@@ -304,19 +311,18 @@ export const artifactRoutes = (ctx: AppContext) => {
   app.get("/v1/artifacts/:shortId/diff", async (c) => {
     const artifact = await meta.getByShortId(c.req.param("shortId"))
     if (!artifact || artifact.current_version === 0 || !(await authorize(c, "read", artifact)))
-      return c.json({ error: "not found" }, 404)
+      return fail(c, 404, "not found")
     const cur = artifact.current_version
     const from = c.req.query("from") ? Number(c.req.query("from")) : Math.max(1, cur - 1)
     const to = c.req.query("to") ? Number(c.req.query("to")) : cur
-    if (!Number.isInteger(from) || !Number.isInteger(to))
-      return c.json({ error: "bad version" }, 400)
+    if (!Number.isInteger(from) || !Number.isInteger(to)) return fail(c, 400, "bad version")
     const [vf, vt] = [
       await meta.getVersion(artifact.id, from),
       await meta.getVersion(artifact.id, to),
     ]
-    if (!vf || !vt) return c.json({ error: "version not found" }, 404)
+    if (!vf || !vt) return fail(c, 404, "version not found")
     const [a, b] = [await sourceText(vf), await sourceText(vt)]
-    if (a === null || b === null) return c.json({ error: "blob missing" }, 500)
+    if (a === null || b === null) return fail(c, 500, "blob missing")
     const ops = diffLines(a, b)
 
     c.header("Access-Control-Allow-Origin", "*")

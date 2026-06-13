@@ -10,7 +10,7 @@ import {
 import { api, type Comment, type DirUser, type Mention } from "@/api"
 import { ColoredAvatar } from "@/components/shared/colored-avatar"
 import { Button } from "@/components/ui/button"
-import { Input, Textarea } from "@/components/ui/input"
+import { Textarea } from "@/components/ui/input"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { ago } from "@/lib/time"
 import { cn } from "@/lib/utils"
@@ -75,17 +75,22 @@ export function PinnedZone({
   // A composer for a new anchored comment joins the same layout as a pinned
   // item that owns priority, so neighbouring cards flow around it instead of
   // colliding with it.
-  const composing = !!(composer?.anchor && composer?.top != null)
+  // Narrow once so the render below needs no non-null assertions: this is set
+  // exactly when there's an anchored composer with a resolved position.
+  const activeComposer =
+    composer?.anchor && composer.top != null
+      ? { top: composer.top, quote: composer.anchor.exact ?? null }
+      : null
   const items = pins.map((p) => ({ id: p.thread[0].thread_id, desiredY: p.desiredY }))
-  if (composing) items.push({ id: COMPOSER_ID, desiredY: composer!.top! })
-  const activeId = composing ? COMPOSER_ID : activeThread
+  if (activeComposer) items.push({ id: COMPOSER_ID, desiredY: activeComposer.top })
+  const activeId = activeComposer ? COMPOSER_ID : activeThread
   const pos = layoutPins(items, heights, activeId, 12)
 
   return (
     <div className="absolute inset-0 overflow-hidden">
       {pins.map((p) => {
         const id = p.thread[0].thread_id
-        const active = !composing && activeThread === id
+        const active = !activeComposer && activeThread === id
         const y = pos[id] ?? p.desiredY
         return (
           <div
@@ -113,18 +118,16 @@ export function PinnedZone({
           </div>
         )
       })}
-      {composing && (
+      {activeComposer && (
         <div
           ref={measure}
           data-pin={COMPOSER_ID}
           className="absolute inset-x-2.5 top-0 z-10 transition-transform duration-[180ms]"
-          style={{ transform: `translateY(${Math.round(pos[COMPOSER_ID] ?? composer!.top!)}px)` }}
+          style={{
+            transform: `translateY(${Math.round(pos[COMPOSER_ID] ?? activeComposer.top)}px)`,
+          }}
         >
-          <Composer
-            quote={composer!.anchor?.exact ?? null}
-            onSubmit={onSubmitNew}
-            onCancel={onCancelNew}
-          />
+          <Composer quote={activeComposer.quote} onSubmit={onSubmitNew} onCancel={onCancelNew} />
         </div>
       )}
     </div>
@@ -197,6 +200,7 @@ export function CommentRow({ c, compact }: { c: Comment; compact?: boolean }) {
             <Button
               variant="outline"
               size="sm"
+              data-testid="comment-edit-cancel"
               onClick={() => {
                 setEditing(false)
                 setDraft(c.body_md)
@@ -397,6 +401,7 @@ export function CommentCard({
         (textPresent && !resolved ? (
           <button
             type="button"
+            data-testid={`comment-jump-${root.thread_id}`}
             onClick={(e) => {
               e.stopPropagation()
               onJump(root.thread_id)
@@ -777,7 +782,7 @@ export function Composer({
           >
             Comment
           </Button>
-          <Button variant="outline" size="sm" onClick={onCancel}>
+          <Button variant="outline" size="sm" data-testid="composer-cancel" onClick={onCancel}>
             Cancel
           </Button>
         </div>

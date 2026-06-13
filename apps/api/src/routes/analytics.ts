@@ -1,8 +1,9 @@
 import { can, newId } from "@dock/core"
 import { Hono } from "hono"
 import { getCookie, setCookie } from "hono/cookie"
+import { z } from "zod"
 import type { AppContext } from "../context"
-import { VIEW_DEDUP_MS } from "../lib/http"
+import { fail, readJson, VIEW_DEDUP_MS } from "../lib/http"
 
 /** View recording (de-duped, owner self-views excluded) + per-artifact stats. */
 export const analyticsRoutes = (ctx: AppContext) => {
@@ -15,7 +16,7 @@ export const analyticsRoutes = (ctx: AppContext) => {
     if (!analyticsOn) return c.body(null, 204)
     const artifact = await meta.getByShortId(c.req.param("shortId"))
     if (!artifact || artifact.current_version === 0 || !(await authorize(c, "read", artifact)))
-      return c.json({ error: "not found" }, 404)
+      return fail(c, 404, "not found")
     // The owner's own opens aren't audience — don't count them (Notion/Docs do
     // the same). `manage` requires the owner role, so this is exactly "is owner";
     // editors/commenters/viewers and anonymous openers still count.
@@ -47,7 +48,8 @@ export const analyticsRoutes = (ctx: AppContext) => {
       viewer = vid
       kind = "anon"
     }
-    const body = (await c.req.json().catch(() => ({}))) as { version?: number }
+    const body = await readJson(c, z.object({}).catchall(z.unknown()))
+    if (body instanceof Response) return body
     const version = Number.isInteger(body.version)
       ? (body.version as number)
       : artifact.current_version
@@ -65,10 +67,9 @@ export const analyticsRoutes = (ctx: AppContext) => {
   })
 
   app.get("/v1/artifacts/:shortId/analytics", async (c) => {
-    if (!analyticsOn) return c.json({ error: "analytics disabled" }, 404)
+    if (!analyticsOn) return fail(c, 404, "analytics disabled")
     const artifact = await meta.getByShortId(c.req.param("shortId"))
-    if (!artifact || !(await authorize(c, "read", artifact)))
-      return c.json({ error: "not found" }, 404)
+    if (!artifact || !(await authorize(c, "read", artifact))) return fail(c, 404, "not found")
     const stats = await meta.viewStats(artifact.id)
     // Recent user-viewers are stored by id (stable); resolve to name + avatar.
     const userIds = stats.recent.filter((r) => r.kind === "user").map((r) => r.viewer)

@@ -7,8 +7,9 @@ import {
   propose,
 } from "@dock/core"
 import { type Context, Hono } from "hono"
+import { z } from "zod"
 import type { AppContext } from "../context"
-import { MAX_UPLOAD_BYTES, str } from "../lib/http"
+import { fail, MAX_UPLOAD_BYTES, readJson, str } from "../lib/http"
 
 /** Reviews: a proposal is a candidate version awaiting approval. A commenter
  *  proposes; an editor approves (it goes live) or requests changes. */
@@ -50,10 +51,10 @@ export const proposalRoutes = (ctx: AppContext) => {
   const loadProposal = async (c: Context) => {
     const artifact = await meta.getByShortId(c.req.param("shortId") ?? "")
     if (!artifact || !(await authorize(c, "read", artifact)))
-      return { error: c.json({ error: "not found" }, 404) as Response }
+      return { error: fail(c, 404, "not found") as Response }
     const proposal = await meta.getProposal(c.req.param("proposalId") ?? "")
     if (!proposal || proposal.artifact_id !== artifact.id)
-      return { error: c.json({ error: "not found" }, 404) as Response }
+      return { error: fail(c, 404, "not found") as Response }
     return { artifact, proposal }
   }
 
@@ -61,21 +62,21 @@ export const proposalRoutes = (ctx: AppContext) => {
   // approves it. Same multipart shape as publish.
   app.post("/v1/artifacts/:shortId/proposals", async (c) => {
     const artifact = await meta.getByShortId(c.req.param("shortId"))
-    if (!artifact || artifact.current_version === 0) return c.json({ error: "not found" }, 404)
-    if (!(await authorize(c, "propose", artifact))) return c.json({ error: "forbidden" }, 403)
+    if (!artifact || artifact.current_version === 0) return fail(c, 404, "not found")
+    if (!(await authorize(c, "propose", artifact))) return fail(c, 403, "forbidden")
     const rl = await limited(c, publishLimiter)
     if (rl) return rl
     const len = Number(c.req.header("content-length") ?? 0)
-    if (len > MAX_UPLOAD_BYTES) return c.json({ error: "upload too large" }, 413)
+    if (len > MAX_UPLOAD_BYTES) return fail(c, 413, "upload too large")
 
     const body = await c.req.parseBody()
     const file = body.file
-    if (!(file instanceof File)) return c.json({ error: "multipart field 'file' required" }, 400)
+    if (!(file instanceof File)) return fail(c, 400, "multipart field 'file' required")
     const bytes = new Uint8Array(await file.arrayBuffer())
     // Proposals store a blob immediately, so they count toward the storage cap
     // of the artifact's workspace.
     if (await overStorage(artifact.org_id, bytes.length))
-      return c.json({ error: "storage quota exceeded" }, 413)
+      return fail(c, 413, "storage quota exceeded")
     const isBundle =
       /\.zip$/i.test(file.name) ||
       body.kind === "bundle" ||
@@ -101,7 +102,7 @@ export const proposalRoutes = (ctx: AppContext) => {
       })
       return c.json(proposalJson(artifact, proposal), 201)
     } catch (err) {
-      if (err instanceof PublishError) return c.json({ error: err.message }, err.statusCode as 400)
+      if (err instanceof PublishError) return fail(c, err.statusCode as 400, err.message)
       throw err
     }
   })
@@ -109,8 +110,7 @@ export const proposalRoutes = (ctx: AppContext) => {
   // List proposals (read-gated). ?state=open filters to the review queue.
   app.get("/v1/artifacts/:shortId/proposals", async (c) => {
     const artifact = await meta.getByShortId(c.req.param("shortId"))
-    if (!artifact || !(await authorize(c, "read", artifact)))
-      return c.json({ error: "not found" }, 404)
+    if (!artifact || !(await authorize(c, "read", artifact))) return fail(c, 404, "not found")
     const stateQ = c.req.query("state")
     const state =
       stateQ === "open" ||
@@ -142,11 +142,12 @@ export const proposalRoutes = (ctx: AppContext) => {
     const r = await loadProposal(c)
     if ("error" in r) return r.error
     const { artifact, proposal } = r
-    if (!(await authorize(c, "approve", artifact))) return c.json({ error: "forbidden" }, 403)
-    if (proposal.state !== "open") return c.json({ error: `proposal is ${proposal.state}` }, 409)
+    if (!(await authorize(c, "approve", artifact))) return fail(c, 403, "forbidden")
+    if (proposal.state !== "open") return fail(c, 409, `proposal is ${proposal.state}`)
     const me = await currentUser(c)
     const approver = me ? (me.name ?? me.email) : null
-    const body = (await c.req.json().catch(() => ({}))) as { note?: unknown }
+    const body = await readJson(c, z.object({ note: z.unknown() }))
+    if (body instanceof Response) return body
     try {
       const version = await approveProposal(meta, blobs, proposal, approver, str(body.note) ?? null)
       bus.publish(artifact.id, {
@@ -167,7 +168,7 @@ export const proposalRoutes = (ctx: AppContext) => {
       const fresh = (await meta.getProposal(proposal.id)) as ProposalRecord
       return c.json({ ...proposalJson(artifact, fresh), published: version.n })
     } catch (err) {
-      if (err instanceof PublishError) return c.json({ error: err.message }, err.statusCode as 400)
+      if (err instanceof PublishError) return fail(c, err.statusCode as 400, err.message)
       throw err
     }
   })
@@ -177,11 +178,12 @@ export const proposalRoutes = (ctx: AppContext) => {
     const r = await loadProposal(c)
     if ("error" in r) return r.error
     const { artifact, proposal } = r
-    if (!(await authorize(c, "approve", artifact))) return c.json({ error: "forbidden" }, 403)
-    if (proposal.state !== "open") return c.json({ error: `proposal is ${proposal.state}` }, 409)
+    if (!(await authorize(c, "approve", artifact))) return fail(c, 403, "forbidden")
+    if (proposal.state !== "open") return fail(c, 409, `proposal is ${proposal.state}`)
     const me = await currentUser(c)
     const reviewer = me ? (me.name ?? me.email) : null
-    const body = (await c.req.json().catch(() => ({}))) as { note?: unknown }
+    const body = await readJson(c, z.object({ note: z.unknown() }))
+    if (body instanceof Response) return body
     await meta.decideProposal(proposal.id, {
       state: "changes_requested",
       decided_by: reviewer,
@@ -202,9 +204,8 @@ export const proposalRoutes = (ctx: AppContext) => {
     const me = await currentUser(c)
     const who = me ? (me.name ?? me.email) : null
     const isAuthor = who !== null && who === proposal.author
-    if (!isAuthor && !(await authorize(c, "manage", artifact)))
-      return c.json({ error: "forbidden" }, 403)
-    if (proposal.state !== "open") return c.json({ error: `proposal is ${proposal.state}` }, 409)
+    if (!isAuthor && !(await authorize(c, "manage", artifact))) return fail(c, 403, "forbidden")
+    if (proposal.state !== "open") return fail(c, 409, `proposal is ${proposal.state}`)
     await meta.decideProposal(proposal.id, {
       state: "withdrawn",
       decided_by: who,

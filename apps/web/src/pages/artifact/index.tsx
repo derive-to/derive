@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { Input } from "@/components/ui/input"
 import { useAuth } from "@/ctx"
+import { STORAGE_KEYS } from "@/lib/storage-keys"
 import { cn } from "@/lib/utils"
 import { ActionsCtx, type CommentActions } from "./comment-actions"
 import { MobileComments, OpenPanel } from "./comment-panels"
@@ -27,7 +28,7 @@ import { toggleReaction } from "./lib/reactions"
 import { DeckBar, Presence, Rail } from "./rail-deck"
 import type { Panel, PinItem, Sel } from "./types"
 
-const PANEL_KEY = "dock.comments.panel"
+const PANEL_KEY = STORAGE_KEYS.commentsPanel
 const loadPanel = (): Panel => {
   try {
     const v = localStorage.getItem(PANEL_KEY)
@@ -321,7 +322,11 @@ export function Artifact() {
       <AppShell>
         <div className="grid h-full place-items-center gap-2.5">
           <div className="text-muted-foreground">Artifact not found, or you don't have access.</div>
-          <Button variant="outline" onClick={() => nav({ to: "/" })}>
+          <Button
+            variant="outline"
+            data-testid="artifact-notfound-back"
+            onClick={() => nav({ to: "/" })}
+          >
             Back to library
           </Button>
         </div>
@@ -351,6 +356,7 @@ export function Artifact() {
             {art.my_role === "owner" && (
               <Button
                 variant="outline"
+                data-testid="artifact-reinstate"
                 onClick={async () => {
                   try {
                     await api.reinstate(shortId)
@@ -364,7 +370,11 @@ export function Artifact() {
                 Reinstate
               </Button>
             )}
-            <Button variant="outline" onClick={() => nav({ to: "/" })}>
+            <Button
+              variant="outline"
+              data-testid="artifact-removed-back"
+              onClick={() => nav({ to: "/" })}
+            >
               Back to library
             </Button>
           </div>
@@ -598,6 +608,7 @@ export function Artifact() {
               variant="outline"
               size="sm"
               className="gap-1.5"
+              data-testid="artifact-show-comments"
               onClick={() => setPanel("open")}
               title="Show comments (c)"
             >
@@ -661,19 +672,35 @@ export function Artifact() {
                       value={proposeMsg}
                       onChange={(e) => setProposeMsg(e.target.value)}
                       placeholder="What are you changing, and why?"
+                      data-testid="artifact-propose-message"
                       className="h-8 max-w-[420px] flex-1 text-sm"
                     />
                   )}
                   <span className="flex-1" />
-                  <Button variant="outline" size="sm" onClick={() => setEditing(false)}>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    data-testid="artifact-edit-cancel"
+                    onClick={() => setEditing(false)}
+                  >
                     Cancel
                   </Button>
                   {canPublish ? (
-                    <Button variant="primary" size="sm" onClick={publishEdit}>
+                    <Button
+                      variant="primary"
+                      size="sm"
+                      data-testid="artifact-publish-version"
+                      onClick={publishEdit}
+                    >
                       Publish new version
                     </Button>
                   ) : (
-                    <Button variant="primary" size="sm" onClick={proposeEdit}>
+                    <Button
+                      variant="primary"
+                      size="sm"
+                      data-testid="artifact-propose-submit"
+                      onClick={proposeEdit}
+                    >
                       Propose change
                     </Button>
                   )}
@@ -682,6 +709,7 @@ export function Artifact() {
                   value={src}
                   onChange={(e) => setSrc(e.target.value)}
                   spellCheck={false}
+                  data-testid="artifact-source-editor"
                   className="flex-1 resize-none border-0 bg-card px-5 py-4 font-mono text-sm leading-relaxed text-foreground outline-none"
                 />
               </div>
@@ -695,6 +723,7 @@ export function Artifact() {
                     <span className="text-muted-foreground">·</span>
                     <button
                       type="button"
+                      data-testid="artifact-toggle-diff"
                       className="text-primary underline underline-offset-2 hover:opacity-80"
                       onClick={() => setView(view === "diff" ? "preview" : "diff")}
                     >
@@ -704,6 +733,7 @@ export function Artifact() {
                     <Button
                       variant="outline"
                       size="sm"
+                      data-testid="artifact-restore"
                       onClick={() => restore(shown)}
                       disabled={restoring}
                     >
@@ -712,6 +742,7 @@ export function Artifact() {
                     <Button
                       variant="primary"
                       size="sm"
+                      data-testid="artifact-back-to-current"
                       onClick={() => nav({ to: "/a/$ref", params: { ref: shortId } })}
                     >
                       Back to current

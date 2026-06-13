@@ -7,8 +7,10 @@ import {
   roleAllows,
 } from "@dock/core"
 import { type Context, Hono } from "hono"
+import { z } from "zod"
 import type { AppContext } from "../context"
 import { safeEqual } from "../lib/crypto"
+import { fail, readJson } from "../lib/http"
 
 /** Collections: shareable groups of artifacts. A member's role on a collection
  *  propagates to every artifact inside it (see collectionRolesForArtifact). */
@@ -30,15 +32,18 @@ export const collectionRoutes = (ctx: AppContext) => {
 
   app.get("/v1/collections", async (c) => {
     if (!(await currentUser(c)) && deps.token && !safeEqual(bearer(c), deps.token))
-      return c.json({ error: "unauthenticated" }, 401)
+      return fail(c, 401, "unauthenticated")
     return c.json({ collections: await meta.listCollections(await activeWorkspace(c)) })
   })
   app.post("/v1/collections", async (c) => {
-    if (!(await workspaceCan(c, "comment"))) return c.json({ error: "forbidden" }, 403)
+    if (!(await workspaceCan(c, "comment"))) return fail(c, 403, "forbidden")
     const me = await currentUser(c)
-    const body = (await c.req.json().catch(() => ({}))) as { title?: string }
-    const title = (body.title ?? "").trim().slice(0, 120)
-    if (!title) return c.json({ error: "title required" }, 400)
+    const body = await readJson(
+      c,
+      z.object({ title: z.string().refine((s) => s.trim() !== "", "title required") }),
+    )
+    if (body instanceof Response) return body
+    const title = body.title.trim().slice(0, 120)
     const createdBy = me?.id ?? "anon"
     const col = await meta.createCollection({
       id: newId("col"),
@@ -58,39 +63,40 @@ export const collectionRoutes = (ctx: AppContext) => {
   })
   app.patch("/v1/collections/:id", async (c) => {
     const col = await meta.getCollection(c.req.param("id"))
-    if (!col) return c.json({ error: "not found" }, 404)
-    if (!(await canManageCollection(c, col, "publish"))) return c.json({ error: "forbidden" }, 403)
-    const body = (await c.req.json().catch(() => ({}))) as { title?: string }
+    if (!col) return fail(c, 404, "not found")
+    if (!(await canManageCollection(c, col, "publish"))) return fail(c, 403, "forbidden")
+    const body = await readJson(c, z.object({ title: z.string().optional() }))
+    if (body instanceof Response) return body
     return c.json(await meta.updateCollection(col.id, { title: body.title?.trim().slice(0, 120) }))
   })
   app.delete("/v1/collections/:id", async (c) => {
     const col = await meta.getCollection(c.req.param("id"))
-    if (!col) return c.json({ error: "not found" }, 404)
-    if (!(await canManageCollection(c, col, "manage"))) return c.json({ error: "forbidden" }, 403)
+    if (!col) return fail(c, 404, "not found")
+    if (!(await canManageCollection(c, col, "manage"))) return fail(c, 403, "forbidden")
     await meta.deleteCollection(col.id)
     return c.body(null, 204)
   })
   app.put("/v1/collections/:id/items/:shortId", async (c) => {
     const col = await meta.getCollection(c.req.param("id"))
-    if (!col) return c.json({ error: "not found" }, 404)
-    if (!(await canManageCollection(c, col, "publish"))) return c.json({ error: "forbidden" }, 403)
+    if (!col) return fail(c, 404, "not found")
+    if (!(await canManageCollection(c, col, "publish"))) return fail(c, 403, "forbidden")
     const art = await meta.getByShortId(c.req.param("shortId"))
-    if (!art) return c.json({ error: "artifact not found" }, 404)
+    if (!art) return fail(c, 404, "artifact not found")
     await meta.addCollectionItem(col.id, art.id)
     return c.json({ ok: true })
   })
   app.delete("/v1/collections/:id/items/:shortId", async (c) => {
     const col = await meta.getCollection(c.req.param("id"))
-    if (!col) return c.json({ error: "not found" }, 404)
-    if (!(await canManageCollection(c, col, "publish"))) return c.json({ error: "forbidden" }, 403)
+    if (!col) return fail(c, 404, "not found")
+    if (!(await canManageCollection(c, col, "publish"))) return fail(c, 403, "forbidden")
     const art = await meta.getByShortId(c.req.param("shortId"))
-    if (!art) return c.json({ error: "artifact not found" }, 404)
+    if (!art) return fail(c, 404, "artifact not found")
     await meta.removeCollectionItem(col.id, art.id)
     return c.body(null, 204)
   })
   app.get("/v1/collections/:id/members", async (c) => {
     const col = await meta.getCollection(c.req.param("id"))
-    if (!col || (await collectionRole(c, col)) === null) return c.json({ error: "not found" }, 404)
+    if (!col || (await collectionRole(c, col)) === null) return fail(c, 404, "not found")
     const rows = await meta.listCollectionMembers(col.id)
     const users = await meta.getUsers(rows.map((r) => r.user_id))
     const byId = new Map(users.map((u) => [u.id, u]))
@@ -106,13 +112,18 @@ export const collectionRoutes = (ctx: AppContext) => {
   })
   app.put("/v1/collections/:id/members", async (c) => {
     const col = await meta.getCollection(c.req.param("id"))
-    if (!col) return c.json({ error: "not found" }, 404)
-    if (!(await canManageCollection(c, col, "manage"))) return c.json({ error: "forbidden" }, 403)
-    const b = (await c.req.json().catch(() => ({}))) as { email?: string; role?: string }
-    if (!b.email || !isRole(b.role))
-      return c.json({ error: "email and a valid role are required" }, 400)
+    if (!col) return fail(c, 404, "not found")
+    if (!(await canManageCollection(c, col, "manage"))) return fail(c, 403, "forbidden")
+    const b = await readJson(
+      c,
+      z.object({
+        email: z.string().min(1, "an email is required"),
+        role: z.custom<Role>(isRole, "a valid role is required"),
+      }),
+    )
+    if (b instanceof Response) return b
     const user = await meta.findUserByEmail(b.email.trim())
-    if (!user) return c.json({ error: "no Dock user with that email" }, 404)
+    if (!user) return fail(c, 404, "no Dock user with that email")
     await meta.setCollectionMember({
       id: newId("cm"),
       collection_id: col.id,
@@ -123,8 +134,8 @@ export const collectionRoutes = (ctx: AppContext) => {
   })
   app.delete("/v1/collections/:id/members/:userId", async (c) => {
     const col = await meta.getCollection(c.req.param("id"))
-    if (!col) return c.json({ error: "not found" }, 404)
-    if (!(await canManageCollection(c, col, "manage"))) return c.json({ error: "forbidden" }, 403)
+    if (!col) return fail(c, 404, "not found")
+    if (!(await canManageCollection(c, col, "manage"))) return fail(c, 403, "forbidden")
     await meta.removeCollectionMember(col.id, c.req.param("userId"))
     return c.body(null, 204)
   })

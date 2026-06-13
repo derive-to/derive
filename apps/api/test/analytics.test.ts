@@ -111,7 +111,8 @@ describe("live stream (SSE)", () => {
     const { short_id } = await (await upload("live.md", "# live", {})).json()
     const res = await app.request(`/v1/artifacts/${short_id}/events`)
     expect(res.headers.get("content-type")).toContain("text/event-stream")
-    const reader = res.body!.getReader()
+    if (!res.body) throw new Error("expected a streaming response body")
+    const reader = res.body.getReader()
     try {
       await readUntil(reader, "event: ready")
 

@@ -1,8 +1,10 @@
 import { randomUUID } from "node:crypto"
 import { type AgentRecord, newId, type Role } from "@dock/core"
 import { Hono } from "hono"
+import { z } from "zod"
 import type { AppContext } from "../context"
 import { sha256 } from "../lib/crypto"
+import { fail, readJson } from "../lib/http"
 
 /** Agent registry (Admin-managed) + the agent's pull inbox of @mentions. */
 export const agentRoutes = (ctx: AppContext) => {
@@ -17,7 +19,7 @@ export const agentRoutes = (ctx: AppContext) => {
   })
 
   app.get("/v1/agents", async (c) => {
-    if (!(await workspaceCan(c, "manage"))) return c.json({ error: "forbidden" }, 403)
+    if (!(await workspaceCan(c, "manage"))) return fail(c, 403, "forbidden")
     const agents = await meta.listAgents(await activeWorkspace(c))
     return c.json({ agents: agents.map(agentJson) })
   })
@@ -28,10 +30,16 @@ export const agentRoutes = (ctx: AppContext) => {
   // or slow KDF needed). Default role commenter (propose-only); editor is
   // opt-in. Owner is never allowed for an agent.
   app.post("/v1/agents", async (c) => {
-    if (!(await workspaceCan(c, "manage"))) return c.json({ error: "forbidden" }, 403)
-    const b = (await c.req.json().catch(() => ({}))) as { name?: unknown; role?: unknown }
-    const name = typeof b.name === "string" ? b.name.trim() : ""
-    if (!name) return c.json({ error: "name required" }, 400)
+    if (!(await workspaceCan(c, "manage"))) return fail(c, 403, "forbidden")
+    const b = await readJson(
+      c,
+      z.object({
+        name: z.string().refine((s) => s.trim() !== "", "name required"),
+        role: z.unknown(),
+      }),
+    )
+    if (b instanceof Response) return b
+    const name = b.name.trim()
     const role: Role =
       b.role === "viewer" || b.role === "commenter" || b.role === "editor" ? b.role : "commenter"
     const token = `dk_agt_${randomUUID().replace(/-/g, "")}${randomUUID().replace(/-/g, "")}`
@@ -46,12 +54,12 @@ export const agentRoutes = (ctx: AppContext) => {
       // The only place the raw token is ever exposed.
       return c.json({ ...agentJson(agent), token }, 201)
     } catch {
-      return c.json({ error: "an agent with that name already exists" }, 409)
+      return fail(c, 409, "an agent with that name already exists")
     }
   })
 
   app.delete("/v1/agents/:id", async (c) => {
-    if (!(await workspaceCan(c, "manage"))) return c.json({ error: "forbidden" }, 403)
+    if (!(await workspaceCan(c, "manage"))) return fail(c, 403, "forbidden")
     await meta.deleteAgent(c.req.param("id"))
     return c.body(null, 204)
   })
@@ -61,7 +69,7 @@ export const agentRoutes = (ctx: AppContext) => {
   // proposes/replies with this same token, then acks.
   app.get("/v1/agent/inbox", async (c) => {
     const agent = await agentFor(c)
-    if (!agent) return c.json({ error: "agent token required" }, 401)
+    if (!agent) return fail(c, 401, "agent token required")
     const limit = Math.min(50, Math.max(1, Number(c.req.query("limit")) || 20))
     const mentions = await meta.listPendingAgentMentions(agent.id, limit)
     return c.json({
@@ -80,9 +88,9 @@ export const agentRoutes = (ctx: AppContext) => {
 
   app.post("/v1/agent/mentions/:id/ack", async (c) => {
     const agent = await agentFor(c)
-    if (!agent) return c.json({ error: "agent token required" }, 401)
+    if (!agent) return fail(c, 401, "agent token required")
     const ok = await meta.ackAgentMention(agent.id, c.req.param("id"))
-    return ok ? c.json({ ok: true }) : c.json({ error: "not found" }, 404)
+    return ok ? c.json({ ok: true }) : fail(c, 404, "not found")
   })
 
   return app
