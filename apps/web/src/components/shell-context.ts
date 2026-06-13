@@ -24,8 +24,10 @@ export interface ShellValue {
   workspaces: Workspaces | null
   refreshSummary: () => void
   refreshCollections: () => void
+  refreshWorkspaces: () => void
   switchWorkspace: (id: string) => void
   createWorkspace: (name: string) => void
+  deleteWorkspace: (id: string) => void
 }
 
 export const ShellCtx = createContext<ShellValue | null>(null)

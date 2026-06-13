@@ -13,7 +13,10 @@ const ASSETS = join(process.cwd(), "apps/web/dist/client/assets")
 // Total gzipped JS across all chunks (catches broad weight creep), and the
 // single largest chunk (catches a fat eager import landing in the entry/vendor).
 const TOTAL_BUDGET = 260 * 1024
-const CHUNK_BUDGET = 95 * 1024
+// Bumped 95 -> 120 after the React 19 + React Compiler upgrade (#94): the compiler
+// runtime + React 19 land in the entry chunk (~102 kB gzipped), a justified, one-time
+// baseline jump. Still catches a stray fat import (radix/cmdk/phosphor) on top.
+const CHUNK_BUDGET = 120 * 1024
 
 let files
 try {

@@ -166,6 +166,9 @@ export interface MetaStore {
   getWorkspace(orgId: string): Promise<WorkspaceRecord | null>
   /** Insert or rename the workspace. */
   setWorkspace(orgId: string, name: string): Promise<WorkspaceRecord>
+  /** Delete the workspace row + all its memberships. The caller guarantees it is
+   *  empty (no artifacts) — this does not cascade artifacts/blobs. */
+  deleteWorkspace(orgId: string): Promise<void>
   /** Every workspace a user belongs to, with their role, oldest first (the switcher). */
   listWorkspaces(userId: string): Promise<(WorkspaceRecord & { role: Role })[]>
   getMembership(orgId: string, userId: string): Promise<MembershipRecord | null>
