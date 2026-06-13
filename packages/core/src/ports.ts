@@ -24,6 +24,8 @@ export interface ArtifactRecord {
   spa: 0 | 1
   current_version: number
   created_at: string
+  /** A takedown tombstone: when set, the content is gone (410) but the record stays. */
+  removed_at: string | null
 }
 
 export interface ListArtifactsOpts {
@@ -228,6 +230,58 @@ export interface MetaStore {
   listPendingAgentMentions(agentId: string, limit: number): Promise<AgentMentionRecord[]>
   /** Mark a mention handled; false if it isn't this agent's or doesn't exist. */
   ackAgentMention(agentId: string, id: string): Promise<boolean>
+
+  // ---- Moderation: abuse reports, takedown, audit log --------------------
+  createReport(r: NewReport): Promise<ReportRecord>
+  listReports(opts?: { state?: ReportState; limit?: number }): Promise<ReportRecord[]>
+  countOpenReports(): Promise<number>
+  setReportState(id: string, state: ReportState): Promise<void>
+  /** Set or clear an artifact's takedown tombstone (the record is never deleted). */
+  setArtifactRemoved(id: string, removedAt: string | null): Promise<void>
+  createAuditLog(a: NewAuditLog): Promise<void>
+  /** Moderation history, newest first; all of it, or one artifact's. */
+  listAuditLog(opts?: { artifactId?: string; limit?: number }): Promise<AuditLogRecord[]>
+}
+
+export type ReportState = "open" | "actioned" | "dismissed"
+/** An abuse report against a public artifact. Anyone can file one. */
+export interface ReportRecord {
+  id: string
+  artifact_id: string
+  artifact_short_id: string
+  reason: string
+  detail: string | null
+  /** The reporter's IP (best-effort) or null; reports can be anonymous. */
+  reporter: string | null
+  state: ReportState
+  created_at: string
+}
+export interface NewReport {
+  id: string
+  artifact_id: string
+  artifact_short_id: string
+  reason: string
+  detail?: string | null
+  reporter?: string | null
+}
+
+export type AuditAction = "report" | "takedown" | "reinstate" | "dismiss"
+/** An immutable moderation-action record. */
+export interface AuditLogRecord {
+  id: string
+  action: AuditAction
+  artifact_id: string | null
+  /** Who acted: a user/agent display name, or "system" for an anonymous report. */
+  actor: string
+  detail: string | null
+  created_at: string
+}
+export interface NewAuditLog {
+  id: string
+  action: AuditAction
+  artifact_id?: string | null
+  actor: string
+  detail?: string | null
 }
 
 /**

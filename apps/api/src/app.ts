@@ -166,11 +166,17 @@ const RAW_HEADERS: Record<string, string> = {
     "sandbox allow-scripts allow-forms allow-popups allow-modals allow-downloads",
   "Access-Control-Allow-Origin": "*",
   "X-Content-Type-Options": "nosniff",
+  // Raw artifact bytes are never the indexable surface (the viewer is); keeping
+  // them out of search engines also blunts using the host for SEO-spam/phishing.
+  "X-Robots-Tag": "noindex",
   // Versioned paths are immutable by construction.
   "Cache-Control": "public, max-age=31536000, immutable",
 }
 
 const REF_RE = /^([0-9a-z]{6,12})(?:-[a-z0-9-]*)?(?:@v(\d+))?$/
+
+/** A taken-down artifact: content is gone (410), the record is preserved. */
+const TOMBSTONE = "This artifact was removed."
 
 /** Copy into a plain ArrayBuffer — what Hono's body() accepts. */
 const toBody = (u: Uint8Array): ArrayBuffer => new Uint8Array(u).buffer as ArrayBuffer
@@ -957,7 +963,108 @@ export function createApp(deps: AppDeps): Hono {
       collections,
       open_proposals: proposals.filter((p) => p.state === "open").length,
       proposals_total: proposals.filter((p) => p.state !== "withdrawn").length,
+      // A taken-down artifact keeps its record but serves no content (410); the
+      // UI shows a tombstone instead of the iframe.
+      removed: !!artifact.removed_at,
     })
+  })
+
+  // ---- Moderation: report (public) + takedown / audit (owner) -----------
+
+  // Anyone can report a public artifact for abuse. Rate-limited by the global
+  // per-IP limiter on mutating /v1; the reporter's IP is recorded best-effort.
+  app.post("/v1/artifacts/:shortId/report", async (c) => {
+    const artifact = await meta.getByShortId(c.req.param("shortId"))
+    if (!artifact) return c.json({ error: "not found" }, 404)
+    const b = (await c.req.json().catch(() => ({}))) as { reason?: unknown; detail?: unknown }
+    const reason = typeof b.reason === "string" && b.reason.trim() ? b.reason.trim() : ""
+    if (!reason) return c.json({ error: "reason required" }, 400)
+    const ip = (
+      c.req.header("x-forwarded-for")?.split(",")[0] ??
+      c.req.header("x-real-ip") ??
+      ""
+    ).trim()
+    const id = newId("rep")
+    await meta.createReport({
+      id,
+      artifact_id: artifact.id,
+      artifact_short_id: artifact.short_id,
+      reason,
+      detail: str(b.detail) ?? null,
+      reporter: ip || null,
+    })
+    await meta.createAuditLog({
+      id: newId("aud"),
+      action: "report",
+      artifact_id: artifact.id,
+      actor: ip || "anonymous",
+      detail: reason,
+    })
+    return c.json({ ok: true }, 201)
+  })
+
+  // The owner's moderation queue: open reports with their artifacts.
+  app.get("/v1/reports", async (c) => {
+    if (!(await workspaceCan(c, "manage"))) return c.json({ error: "forbidden" }, 403)
+    const reports = await meta.listReports({ state: "open", limit: 200 })
+    return c.json({ reports, open: reports.length })
+  })
+
+  app.get("/v1/audit", async (c) => {
+    if (!(await workspaceCan(c, "manage"))) return c.json({ error: "forbidden" }, 403)
+    return c.json({ audit: await meta.listAuditLog({ limit: 200 }) })
+  })
+
+  // Take an artifact down: its content 410s everywhere, the record stays, and
+  // any open reports against it are marked actioned.
+  app.post("/v1/artifacts/:shortId/takedown", async (c) => {
+    if (!(await workspaceCan(c, "manage"))) return c.json({ error: "forbidden" }, 403)
+    const artifact = await meta.getByShortId(c.req.param("shortId"))
+    if (!artifact) return c.json({ error: "not found" }, 404)
+    const who = (await actingUser(c))?.name ?? "owner"
+    const b = (await c.req.json().catch(() => ({}))) as { note?: unknown }
+    await meta.setArtifactRemoved(artifact.id, new Date().toISOString())
+    for (const r of await meta.listReports({ state: "open" }))
+      if (r.artifact_id === artifact.id) await meta.setReportState(r.id, "actioned")
+    await meta.createAuditLog({
+      id: newId("aud"),
+      action: "takedown",
+      artifact_id: artifact.id,
+      actor: who,
+      detail: str(b.note) ?? null,
+    })
+    return c.json({ ok: true, removed: true })
+  })
+
+  // Reverse a takedown.
+  app.post("/v1/artifacts/:shortId/reinstate", async (c) => {
+    if (!(await workspaceCan(c, "manage"))) return c.json({ error: "forbidden" }, 403)
+    const artifact = await meta.getByShortId(c.req.param("shortId"))
+    if (!artifact) return c.json({ error: "not found" }, 404)
+    const who = (await actingUser(c))?.name ?? "owner"
+    await meta.setArtifactRemoved(artifact.id, null)
+    await meta.createAuditLog({
+      id: newId("aud"),
+      action: "reinstate",
+      artifact_id: artifact.id,
+      actor: who,
+      detail: null,
+    })
+    return c.json({ ok: true, removed: false })
+  })
+
+  // Dismiss a report without taking the artifact down.
+  app.post("/v1/reports/:id/dismiss", async (c) => {
+    if (!(await workspaceCan(c, "manage"))) return c.json({ error: "forbidden" }, 403)
+    await meta.setReportState(c.req.param("id"), "dismissed")
+    await meta.createAuditLog({
+      id: newId("aud"),
+      action: "dismiss",
+      artifact_id: null,
+      actor: (await actingUser(c))?.name ?? "owner",
+      detail: c.req.param("id"),
+    })
+    return c.json({ ok: true })
   })
 
   // ---- Sharing: per-artifact role overrides -----------------------------
@@ -1117,6 +1224,7 @@ export function createApp(deps: AppDeps): Hono {
     const artifact = await meta.getByShortId(c.req.param("shortId"))
     if (!artifact || artifact.current_version === 0 || !(await authorize(c, "read", artifact)))
       return c.json({ error: "not found" }, 404)
+    if (artifact.removed_at) return c.json({ error: TOMBSTONE }, 410)
     const v = c.req.query("v") ? Number(c.req.query("v")) : artifact.current_version
     if (!Number.isInteger(v)) return c.json({ error: "bad version" }, 400)
     const version = await meta.getVersion(artifact.id, v)
@@ -1739,6 +1847,7 @@ export function createApp(deps: AppDeps): Hono {
     const artifact = await meta.getByShortId(m[1])
     if (!artifact || artifact.current_version === 0 || !(await authorize(c, "read", artifact)))
       return c.text("not found", 404)
+    if (artifact.removed_at) return c.text(TOMBSTONE, 410)
     const n = m[2] ? Number(m[2]) : artifact.current_version
     const version = await meta.getVersion(artifact.id, n)
     if (!version) return c.text(`no version ${n}`, 404)
@@ -1825,6 +1934,7 @@ export function createApp(deps: AppDeps): Hono {
     const artifact = await meta.getByShortId(shortId)
     if (!artifact || !Number.isInteger(n) || !(await authorize(c, "read", artifact)))
       return c.text("not found", 404)
+    if (artifact.removed_at) return c.text(TOMBSTONE, 410)
     const version = await meta.getVersion(artifact.id, n)
     if (!version) return c.text("not found", 404)
 
@@ -1839,6 +1949,7 @@ export function createApp(deps: AppDeps): Hono {
     const shortId = c.req.param("shortId")
     const artifact = await meta.getByShortId(shortId)
     if (!artifact || !(await authorize(c, "read", artifact))) return c.text("not found", 404)
+    if (artifact.removed_at) return c.text(TOMBSTONE, 410)
     const proposal = await meta.getProposal(c.req.param("proposalId"))
     if (!proposal || proposal.artifact_id !== artifact.id) return c.text("not found", 404)
 
