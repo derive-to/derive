@@ -130,6 +130,15 @@ export interface AppDeps {
    * owns the app shell; the Node entry wires the static + fallback middleware.
    */
   serveWeb?: boolean
+  /**
+   * A separate origin that serves artifact bytes (`/raw/*`), keeping user HTML
+   * off the app's cookie origin — the real isolation wall (CSP sandbox is
+   * defense-in-depth). When set, the app origin redirects `/raw/*` here, and
+   * this origin serves ONLY raw bytes (never auth, the API, or the app). Use a
+   * different registrable domain so session cookies can never reach it. Unset =
+   * single-origin self-host, where the iframe `sandbox` attribute is the wall.
+   */
+  sandboxOrigin?: string
 }
 
 /** The single workspace (multi-workspace is a later layer). */
@@ -234,6 +243,32 @@ export function createApp(deps: AppDeps): Hono {
   const app = new Hono()
   const bus = createBus()
   const presence = new Presence()
+
+  // ---- Origin isolation (A4) --------------------------------------------
+  // When a sandbox origin is configured, artifact bytes live on a different
+  // registrable domain than the app + auth cookies. This guard, registered
+  // before everything, splits the two:
+  //   · on the sandbox host  → ONLY /raw/* (and /healthz); never auth/API/app,
+  //     so the sandbox can't double as a session front-door.
+  //   · on the app host      → /raw/* 302-redirects to the sandbox, so user
+  //     HTML can never execute on the cookie origin. The redirect IS the wall,
+  //     independent of any client pointing its iframe at the right place.
+  const sandboxHost = deps.sandboxOrigin ? new URL(deps.sandboxOrigin).host : null
+  if (sandboxHost) {
+    const reqHost = (c: Context) => (c.req.header("host") ?? new URL(c.req.url).host).toLowerCase()
+    app.use("*", async (c, next) => {
+      const path = c.req.path
+      if (reqHost(c) === sandboxHost.toLowerCase()) {
+        if (path === "/healthz" || path.startsWith("/raw/")) return next()
+        return c.text("not found", 404)
+      }
+      // App host: bounce raw bytes to the sandbox origin (preserve the path+query).
+      if (path.startsWith("/raw/")) {
+        return c.redirect(`${deps.sandboxOrigin}${path}${new URL(c.req.url).search}`, 302)
+      }
+      return next()
+    })
+  }
 
   // Credentialed CORS for the cross-origin SPA. A wildcard ACAO can't carry
   // cookies, so the request's Origin is echoed back only when it's allow-listed;
@@ -1598,7 +1633,9 @@ export function createApp(deps: AppDeps): Hono {
     const version = await meta.getVersion(artifact.id, n)
     if (!version) return c.text(`no version ${n}`, 404)
     const versions = await meta.listVersions(artifact.id)
-    const rawSrc = `/raw/${artifact.short_id}/v/${n}/index.html`
+    // Point the iframe straight at the sandbox origin when split (skips the
+    // redirect hop); same-origin otherwise.
+    const rawSrc = `${deps.sandboxOrigin ?? ""}/raw/${artifact.short_id}/v/${n}/index.html`
     return c.html(renderShell(artifact, versions, n, rawSrc))
   })
 

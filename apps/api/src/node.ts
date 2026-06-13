@@ -104,6 +104,9 @@ const app = createApp({
   analytics: process.env.DOCK_ANALYTICS !== "false",
   rateLimit: process.env.DOCK_RATE_LIMIT !== "false",
   serveWeb: SERVE_WEB,
+  // Origin isolation: serve artifact bytes from a separate registrable domain
+  // pointed at this same container. Keeps user HTML off the app's cookie origin.
+  sandboxOrigin: process.env.DOCK_SANDBOX_URL,
   versionWindowMs: process.env.DOCK_VERSION_WINDOW
     ? Number(process.env.DOCK_VERSION_WINDOW) * 60_000
     : undefined,
