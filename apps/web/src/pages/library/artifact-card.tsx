@@ -1,5 +1,5 @@
-import { Star } from "lucide-react"
 import type { Artifact } from "@/api"
+import { Icon } from "@/components/icons"
 import { Thumb } from "@/components/shared/thumb"
 import { cn } from "@/lib/utils"
 
@@ -37,7 +37,7 @@ export function ArtifactCard({
             a.favorite ? "border-gold text-gold" : "border-border text-muted-foreground opacity-90",
           )}
         >
-          <Star className={cn("size-3.5", a.favorite && "fill-current")} />
+          <Icon name="star" size={14} className={cn(!a.favorite && "text-muted-foreground")} />
         </button>
       </div>
       <button
@@ -56,8 +56,9 @@ export function ArtifactCard({
           </span>
           <span>v{a.current_version}</span>
           {a.views !== undefined && a.views > 0 && (
-            <span className="ml-auto" title={`${a.views} viewers`}>
-              👁 {a.views > 999 ? `${(a.views / 1000).toFixed(1)}k` : a.views}
+            <span className="ml-auto inline-flex items-center gap-1" title={`${a.views} viewers`}>
+              <Icon name="views" size={13} />{" "}
+              {a.views > 999 ? `${(a.views / 1000).toFixed(1)}k` : a.views}
             </span>
           )}
         </span>

@@ -6,4 +6,5 @@ export const STORAGE_KEYS = {
   theme: "dock_theme",
   libraryRail: "dock.browse.rail",
   commentsPanel: "dock.comments.panel",
+  navCollapsed: "dock.nav.collapsed",
 } as const
