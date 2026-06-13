@@ -1,8 +1,10 @@
 import { defineConfig } from "@playwright/test"
 
 // Dedicated ports so the e2e never clashes with a dev server on the usual ones.
-const API_PORT = 8392
-const WEB_PORT = 3392
+// Overridable via env so parallel worktrees / agents don't reuse each other's
+// server (each running agent should pick a distinct PW_WEB_PORT/PW_API_PORT).
+const API_PORT = Number(process.env.PW_API_PORT ?? 8392)
+const WEB_PORT = Number(process.env.PW_WEB_PORT ?? 3392)
 const WEB = `http://localhost:${WEB_PORT}`
 
 // Boots a throwaway API (fresh SQLite each run) + the web app, then drives the

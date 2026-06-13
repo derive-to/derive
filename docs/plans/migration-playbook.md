@@ -44,7 +44,7 @@ Sign up fresh (first user on a fresh DB = workspace owner). Switch theme with
 
 - `pnpm typecheck` (root or `apps/web`) — clean.
 - `pnpm exec biome check --write <your files>` — clean.
-- **Playwright spec** `e2e/<surface>.spec.ts` using `page.getByTestId(...)` + the `signUp` / `publishArtifact` helpers in `e2e/helpers.ts`. Run `cd apps/web && pnpm exec playwright test e2e/<surface>.spec.ts` — green. (It boots its own throwaway servers on 8392/3392.)
+- **Playwright spec** `e2e/<surface>.spec.ts` using `page.getByTestId(...)` + the `signUp` / `publishArtifact` helpers in `e2e/helpers.ts`. Run `cd apps/web && pnpm exec playwright test e2e/<surface>.spec.ts` — green. (It boots its own throwaway servers.) **Parallel agents: pick distinct e2e ports** — `PW_WEB_PORT=339X PW_API_PORT=839X pnpm exec playwright test …` — otherwise `reuseExistingServer` makes your run hijack another worktree's dev server and fail spuriously.
 - Screenshot the surface in **all 4 themes + mobile (390px)** against your dev stack.
 
 > Playwright drives Radix correctly (real pointer events). `agent-browser` is fine
