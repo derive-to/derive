@@ -1,6 +1,6 @@
 import { Slot } from "@radix-ui/react-slot"
-import { type VariantProps, cva } from "class-variance-authority"
-import type * as React from "react"
+import { cva, type VariantProps } from "class-variance-authority"
+import * as React from "react"
 import { cn } from "@/lib/utils"
 
 const buttonVariants = cva(
@@ -8,7 +8,8 @@ const buttonVariants = cva(
   {
     variants: {
       variant: {
-        default: "border border-border bg-card text-foreground hover:border-primary hover:text-primary",
+        default:
+          "border border-border bg-card text-foreground hover:border-primary hover:text-primary",
         primary: "border border-primary bg-primary text-primary-foreground hover:brightness-105",
         secondary: "bg-secondary text-secondary-foreground hover:bg-hover",
         ghost: "text-foreground hover:bg-hover",
@@ -33,11 +34,17 @@ export interface ButtonProps
   asChild?: boolean
 }
 
-export function Button({ className, variant, size, asChild = false, ...props }: ButtonProps) {
-  const Comp = asChild ? Slot : "button"
-  return (
-    <Comp className={cn(buttonVariants({ variant, size }), className)} {...props} />
-  )
-}
+// forwardRef is required so Radix can attach its positioning ref when Button is
+// used as a Popover/DropdownMenu/Dialog trigger via `asChild`. Without it the
+// floating content can't measure the trigger and renders off-screen.
+export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
+  ({ className, variant, size, asChild = false, ...props }, ref) => {
+    const Comp = asChild ? Slot : "button"
+    return (
+      <Comp ref={ref} className={cn(buttonVariants({ variant, size }), className)} {...props} />
+    )
+  },
+)
+Button.displayName = "Button"
 
 export { buttonVariants }
