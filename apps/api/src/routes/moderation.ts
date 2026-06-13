@@ -33,6 +33,7 @@ export const moderationRoutes = (ctx: AppContext) => {
     const id = newId("rep")
     await meta.createReport({
       id,
+      org_id: artifact.org_id,
       artifact_id: artifact.id,
       artifact_short_id: artifact.short_id,
       reason,
@@ -41,6 +42,7 @@ export const moderationRoutes = (ctx: AppContext) => {
     })
     await meta.createAuditLog({
       id: newId("aud"),
+      org_id: artifact.org_id,
       action: "report",
       artifact_id: artifact.id,
       actor: ip || "anonymous",
@@ -52,13 +54,17 @@ export const moderationRoutes = (ctx: AppContext) => {
   // The owner's moderation queue: open reports with their artifacts.
   app.get("/v1/reports", async (c) => {
     if (!(await workspaceCan(c, "manage"))) return fail(c, 403, "forbidden")
-    const reports = await meta.listReports({ state: "open", limit: 200 })
+    // A super-admin operator sees every workspace's reports (the global queue);
+    // a workspace Admin sees only their own.
+    const scope = (await isSuperAdmin(c)) ? undefined : await activeWorkspace(c)
+    const reports = await meta.listReports(scope, { state: "open", limit: 200 })
     return c.json({ reports, open: reports.length })
   })
 
   app.get("/v1/audit", async (c) => {
     if (!(await workspaceCan(c, "manage"))) return fail(c, 403, "forbidden")
-    return c.json({ audit: await meta.listAuditLog({ limit: 200 }) })
+    const scope = (await isSuperAdmin(c)) ? undefined : await activeWorkspace(c)
+    return c.json({ audit: await meta.listAuditLog(scope, { limit: 200 }) })
   })
 
   // Take an artifact down: its content 410s everywhere, the record stays, and
@@ -74,10 +80,12 @@ export const moderationRoutes = (ctx: AppContext) => {
     const b = await readJson(c, z.object({ note: z.unknown() }))
     if (b instanceof Response) return b
     await meta.setArtifactRemoved(artifact.id, new Date().toISOString())
-    for (const r of await meta.listReports({ state: "open" }))
-      if (r.artifact_id === artifact.id) await meta.setReportState(r.id, "actioned")
+    for (const r of await meta.listReports(artifact.org_id, { state: "open" }))
+      if (r.artifact_id === artifact.id)
+        await meta.setReportState(r.id, "actioned", artifact.org_id)
     await meta.createAuditLog({
       id: newId("aud"),
+      org_id: artifact.org_id,
       action: "takedown",
       artifact_id: artifact.id,
       actor: who,
@@ -96,6 +104,7 @@ export const moderationRoutes = (ctx: AppContext) => {
     await meta.setArtifactRemoved(artifact.id, null)
     await meta.createAuditLog({
       id: newId("aud"),
+      org_id: artifact.org_id,
       action: "reinstate",
       artifact_id: artifact.id,
       actor: who,
@@ -107,13 +116,19 @@ export const moderationRoutes = (ctx: AppContext) => {
   // Dismiss a report without taking the artifact down.
   app.post("/v1/reports/:id/dismiss", async (c) => {
     if (!(await workspaceCan(c, "manage"))) return fail(c, 403, "forbidden")
-    await meta.setReportState(c.req.param("id"), "dismissed")
+    // A workspace Admin can only dismiss their own workspace's reports; a
+    // super-admin operator any. Resolve (and scope) the report before acting.
+    const scope = (await isSuperAdmin(c)) ? undefined : await activeWorkspace(c)
+    const rep = await meta.getReport(c.req.param("id"), scope)
+    if (!rep) return fail(c, 404, "not found")
+    await meta.setReportState(rep.id, "dismissed", scope)
     await meta.createAuditLog({
       id: newId("aud"),
+      org_id: rep.org_id,
       action: "dismiss",
-      artifact_id: null,
+      artifact_id: rep.artifact_id,
       actor: (await actingUser(c))?.name ?? "owner",
-      detail: c.req.param("id"),
+      detail: rep.id,
     })
     return c.json({ ok: true })
   })

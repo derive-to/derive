@@ -139,11 +139,12 @@ export interface MetaStore {
 
   // ---- Webhooks + outbox -------------------------------------------------
   createWebhook(w: NewWebhook): Promise<WebhookRecord>
-  listWebhooks(): Promise<WebhookRecord[]>
-  getWebhook(id: string): Promise<WebhookRecord | null>
-  deleteWebhook(id: string): Promise<void>
-  /** Active webhooks that fire for this artifact (incl. global, artifact_id null). */
-  activeWebhooks(artifactId: string): Promise<WebhookRecord[]>
+  listWebhooks(orgId: string): Promise<WebhookRecord[]>
+  getWebhook(id: string, orgId: string): Promise<WebhookRecord | null>
+  deleteWebhook(id: string, orgId: string): Promise<void>
+  /** Active webhooks for this artifact's workspace (incl. that workspace's global,
+   *  artifact_id null, hooks). Scoped by org so a hook never fires for another tenant. */
+  activeWebhooks(artifactId: string, orgId: string): Promise<WebhookRecord[]>
   /** Enqueue a delivery into the outbox (target is denormalized for durability). */
   enqueueDelivery(d: NewDelivery): Promise<void>
   /** Pending deliveries whose next_attempt_at has passed, oldest first. */
@@ -257,20 +258,32 @@ export interface MetaStore {
 
   // ---- Moderation: abuse reports, takedown, audit log --------------------
   createReport(r: NewReport): Promise<ReportRecord>
-  listReports(opts?: { state?: ReportState; limit?: number }): Promise<ReportRecord[]>
-  countOpenReports(): Promise<number>
-  setReportState(id: string, state: ReportState): Promise<void>
+  /** One report by id, scoped to a workspace (or any, super-admin orgId undefined). */
+  getReport(id: string, orgId?: string): Promise<ReportRecord | null>
+  /** Reports for one workspace, or — for a super-admin operator, orgId undefined
+   *  — every workspace's (the global moderation queue). */
+  listReports(
+    orgId: string | undefined,
+    opts?: { state?: ReportState; limit?: number },
+  ): Promise<ReportRecord[]>
+  countOpenReports(orgId: string | undefined): Promise<number>
+  setReportState(id: string, state: ReportState, orgId?: string): Promise<void>
   /** Set or clear an artifact's takedown tombstone (the record is never deleted). */
   setArtifactRemoved(id: string, removedAt: string | null): Promise<void>
   createAuditLog(a: NewAuditLog): Promise<void>
-  /** Moderation history, newest first; all of it, or one artifact's. */
-  listAuditLog(opts?: { artifactId?: string; limit?: number }): Promise<AuditLogRecord[]>
+  /** Moderation history, newest first. One workspace's, or — super-admin, orgId
+   *  undefined — the whole instance's. Optionally narrowed to one artifact. */
+  listAuditLog(
+    orgId: string | undefined,
+    opts?: { artifactId?: string; limit?: number },
+  ): Promise<AuditLogRecord[]>
 }
 
 export type ReportState = "open" | "actioned" | "dismissed"
 /** An abuse report against a public artifact. Anyone can file one. */
 export interface ReportRecord {
   id: string
+  org_id: string
   artifact_id: string
   artifact_short_id: string
   reason: string
@@ -282,6 +295,7 @@ export interface ReportRecord {
 }
 export interface NewReport {
   id: string
+  org_id: string
   artifact_id: string
   artifact_short_id: string
   reason: string
@@ -293,6 +307,7 @@ export type AuditAction = "report" | "takedown" | "reinstate" | "dismiss"
 /** An immutable moderation-action record. */
 export interface AuditLogRecord {
   id: string
+  org_id: string
   action: AuditAction
   artifact_id: string | null
   /** Who acted: a user/agent display name, or "system" for an anonymous report. */
@@ -302,6 +317,7 @@ export interface AuditLogRecord {
 }
 export interface NewAuditLog {
   id: string
+  org_id: string
   action: AuditAction
   artifact_id?: string | null
   actor: string
@@ -504,6 +520,7 @@ export type DeliveryStatus = "pending" | "delivered" | "dead"
 
 export interface WebhookRecord {
   id: string
+  org_id: string
   artifact_id: string | null
   url: string
   secret: string
@@ -516,6 +533,7 @@ export interface WebhookRecord {
 }
 export interface NewWebhook {
   id: string
+  org_id: string
   artifact_id?: string | null
   url: string
   secret: string

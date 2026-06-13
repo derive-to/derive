@@ -284,20 +284,33 @@ export function makeRepos(db: SqliteDb) {
   // ---- Webhooks + outbox -------------------------------------------------
   const createWebhook = async (w: NewWebhook): Promise<WebhookRecord> =>
     (await db.insert(webhook).values(w).returning().get()) as WebhookRecord
-  const listWebhooks = async (): Promise<WebhookRecord[]> =>
-    db.select().from(webhook).orderBy(desc(webhook.created_at)).all()
-  const getWebhook = async (id: string): Promise<WebhookRecord | null> =>
-    (await db.select().from(webhook).where(eq(webhook.id, id)).get()) ?? null
-  const deleteWebhook = async (id: string): Promise<void> => {
-    await db.delete(webhook).where(eq(webhook.id, id)).run()
+  const listWebhooks = async (orgId: string): Promise<WebhookRecord[]> =>
+    db
+      .select()
+      .from(webhook)
+      .where(eq(webhook.org_id, orgId))
+      .orderBy(desc(webhook.created_at))
+      .all()
+  const getWebhook = async (id: string, orgId: string): Promise<WebhookRecord | null> =>
+    (await db
+      .select()
+      .from(webhook)
+      .where(and(eq(webhook.id, id), eq(webhook.org_id, orgId)))
+      .get()) ?? null
+  const deleteWebhook = async (id: string, orgId: string): Promise<void> => {
+    await db
+      .delete(webhook)
+      .where(and(eq(webhook.id, id), eq(webhook.org_id, orgId)))
+      .run()
   }
-  const activeWebhooks = async (artifactId: string): Promise<WebhookRecord[]> =>
+  const activeWebhooks = async (artifactId: string, orgId: string): Promise<WebhookRecord[]> =>
     db
       .select()
       .from(webhook)
       .where(
         and(
           eq(webhook.active, 1),
+          eq(webhook.org_id, orgId),
           or(isNull(webhook.artifact_id), eq(webhook.artifact_id, artifactId)),
         ),
       )
@@ -679,33 +692,59 @@ export function makeRepos(db: SqliteDb) {
   // ---- Moderation: reports + audit log -----------------------------------
   const createReport = async (r: NewReport): Promise<ReportRecord> =>
     (await db.insert(report).values(r).returning().get()) as ReportRecord
-  const listReports = async (opts?: {
-    state?: ReportState
-    limit?: number
-  }): Promise<ReportRecord[]> => {
+  const getReport = async (id: string, orgId?: string): Promise<ReportRecord | null> =>
+    (await db
+      .select()
+      .from(report)
+      .where(and(eq(report.id, id), orgId ? eq(report.org_id, orgId) : undefined))
+      .get()) ?? null
+  const listReports = async (
+    orgId: string | undefined,
+    opts?: { state?: ReportState; limit?: number },
+  ): Promise<ReportRecord[]> => {
     const q = db
       .select()
       .from(report)
-      .where(opts?.state ? eq(report.state, opts.state) : undefined)
+      .where(
+        and(
+          orgId ? eq(report.org_id, orgId) : undefined,
+          opts?.state ? eq(report.state, opts.state) : undefined,
+        ),
+      )
       .orderBy(desc(report.created_at))
     return (opts?.limit ? q.limit(opts.limit) : q).all()
   }
-  const countOpenReports = async (): Promise<number> =>
-    (await db.select({ n: count() }).from(report).where(eq(report.state, "open")).get())?.n ?? 0
-  const setReportState = async (id: string, state: ReportState): Promise<void> => {
-    await db.update(report).set({ state }).where(eq(report.id, id)).run()
+  const countOpenReports = async (orgId: string | undefined): Promise<number> =>
+    (
+      await db
+        .select({ n: count() })
+        .from(report)
+        .where(and(eq(report.state, "open"), orgId ? eq(report.org_id, orgId) : undefined))
+        .get()
+    )?.n ?? 0
+  const setReportState = async (id: string, state: ReportState, orgId?: string): Promise<void> => {
+    await db
+      .update(report)
+      .set({ state })
+      .where(and(eq(report.id, id), orgId ? eq(report.org_id, orgId) : undefined))
+      .run()
   }
   const createAuditLog = async (a: NewAuditLog): Promise<void> => {
     await db.insert(auditLog).values(a).run()
   }
-  const listAuditLog = async (opts?: {
-    artifactId?: string
-    limit?: number
-  }): Promise<AuditLogRecord[]> => {
+  const listAuditLog = async (
+    orgId: string | undefined,
+    opts?: { artifactId?: string; limit?: number },
+  ): Promise<AuditLogRecord[]> => {
     const q = db
       .select()
       .from(auditLog)
-      .where(opts?.artifactId ? eq(auditLog.artifact_id, opts.artifactId) : undefined)
+      .where(
+        and(
+          orgId ? eq(auditLog.org_id, orgId) : undefined,
+          opts?.artifactId ? eq(auditLog.artifact_id, opts.artifactId) : undefined,
+        ),
+      )
       .orderBy(desc(auditLog.created_at))
     return (opts?.limit ? q.limit(opts.limit) : q).all()
   }
@@ -783,6 +822,7 @@ export function makeRepos(db: SqliteDb) {
     listPendingAgentMentions,
     ackAgentMention,
     createReport,
+    getReport,
     listReports,
     countOpenReports,
     setReportState,

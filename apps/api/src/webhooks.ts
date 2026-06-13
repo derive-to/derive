@@ -111,7 +111,7 @@ export async function enqueueForEvent(
   event: WebhookEvent,
   data: Record<string, unknown>,
 ): Promise<void> {
-  const hooks = await meta.activeWebhooks(artifact.id)
+  const hooks = await meta.activeWebhooks(artifact.id, artifact.org_id)
   if (hooks.length === 0) return
   const subscribed = hooks.filter((h) => h.events === "*" || h.events.split(",").includes(event))
   if (subscribed.length === 0) return
