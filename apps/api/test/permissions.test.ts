@@ -89,7 +89,8 @@ describe("permissions: workspace roles gate writes", () => {
 describe("permissions: a per-artifact share overrides the workspace role", () => {
   const owner: TestUser = { id: "u_own", email: "own@dock.test", name: "Own" }
   const carol: TestUser = { id: "u_carol", email: "carol@dock.test", name: "Carol" }
-  const { app } = makeAuthedApp("perm-share", [owner, carol], "viewer")
+  const dave: TestUser = { id: "u_dave", email: "dave@dock.test", name: "Dave" }
+  const { app } = makeAuthedApp("perm-share", [owner, carol, dave], "viewer")
   let shortId: string
 
   it("a workspace viewer can read an org artifact but not republish it", async () => {
@@ -116,13 +117,22 @@ describe("permissions: a per-artifact share overrides the workspace role", () =>
     expect(meta.my_role).toBe("editor")
   })
 
-  it("only an owner can manage shares (an editor cannot)", async () => {
+  it("an editor can manage shares (GDocs model: editors can invite)", async () => {
     const byEditor = await app.request(`/v1/artifacts/${shortId}/members`, {
       method: "PUT",
       headers: { "content-type": "application/json", ...as(carol.email) },
+      body: JSON.stringify({ email: dave.email, role: "commenter" }),
+    })
+    expect(byEditor.status).toBe(201)
+  })
+
+  it("a commenter/viewer still cannot manage shares", async () => {
+    const byDave = await app.request(`/v1/artifacts/${shortId}/members`, {
+      method: "PUT",
+      headers: { "content-type": "application/json", ...as(dave.email) },
       body: JSON.stringify({ email: owner.email, role: "viewer" }),
     })
-    expect(byEditor.status).toBe(403)
+    expect(byDave.status).toBe(403)
   })
 
   it("the owner sees the share in the member list", async () => {

@@ -1,4 +1,4 @@
-import { Share2, X } from "lucide-react"
+import { Lock, Share2, X } from "lucide-react"
 import { useState } from "react"
 import { type ArtifactMember, api, type Role } from "@/api"
 import { EmptyState } from "@/components/shared/empty-state"
@@ -21,11 +21,19 @@ const BLURB: Record<Role, string> = {
   owner: "Full control, incl. sharing",
 }
 
+const ROLE_LABEL: Record<Role, string> = {
+  viewer: "Viewer",
+  commenter: "Commenter",
+  editor: "Editor",
+  owner: "Owner",
+}
+
 /**
- * Per-artifact sharing, opened from the artifact header. Add people by email at a
- * role, change a member's role, or remove them. Only an owner of this artifact
- * can manage shares; for anyone else the trigger isn't rendered. Built on the
- * shared Dialog primitive (focus trap, Esc, roles for free) and RoleSelect.
+ * Per-artifact sharing, opened from the artifact header. Follows the Google Docs
+ * model: the Share button is ALWAYS visible. Owners and editors can add people by
+ * email, change a member's role, or remove them; everyone else sees a read-only
+ * "view only" panel, so the access state is always legible. Built on the shared
+ * Dialog primitive (focus trap, Esc) and RoleSelect.
  */
 export function ShareButton({ shortId, myRole }: { shortId: string; myRole?: Role | null }) {
   const [members, setMembers] = useState<ArtifactMember[]>([])
@@ -35,8 +43,8 @@ export function ShareButton({ shortId, myRole }: { shortId: string; myRole?: Rol
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
 
-  // Only an owner can manage shares; hide the affordance otherwise.
-  if (myRole !== "owner") return null
+  // GDocs model: owners and editors manage access; everyone else gets view-only.
+  const canManage = myRole === "owner" || myRole === "editor"
 
   const load = () =>
     api
@@ -92,34 +100,52 @@ export function ShareButton({ shortId, myRole }: { shortId: string; myRole?: Rol
         <DialogHeader>
           <DialogTitle>Share this artifact</DialogTitle>
           <DialogDescription>
-            Add people by email. Everyone you don't list is a{" "}
-            <b className="text-foreground">{defaultRole}</b> by default.
+            {canManage ? (
+              <>
+                Add people by email. Everyone you don't list is a{" "}
+                <b className="text-foreground">{defaultRole}</b> by default.
+              </>
+            ) : (
+              "You can view this artifact but can't change who has access."
+            )}
           </DialogDescription>
         </DialogHeader>
 
-        <form onSubmit={add} className="flex gap-1.5">
-          <Input
-            data-testid="share-email"
-            type="email"
-            placeholder="teammate@email.com"
-            aria-label="Email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            className="flex-1"
-          />
-          <div data-testid="share-role" className="w-[104px]">
-            <RoleSelect
-              value={role}
-              onChange={setRole}
-              aria-label="Role for new member"
-              className="w-full"
-            />
+        {canManage ? (
+          <>
+            <form onSubmit={add} className="flex gap-1.5">
+              <Input
+                data-testid="share-email"
+                type="email"
+                placeholder="teammate@email.com"
+                aria-label="Email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                className="flex-1"
+              />
+              <div data-testid="share-role" className="w-[104px]">
+                <RoleSelect
+                  value={role}
+                  onChange={setRole}
+                  aria-label="Role for new member"
+                  className="w-full"
+                />
+              </div>
+              <Button data-testid="share-add" variant="primary" type="submit" disabled={busy}>
+                {busy ? "…" : "Add"}
+              </Button>
+            </form>
+            <p className="mt-1.5 font-mono text-2xs text-muted-foreground">{BLURB[role]}.</p>
+          </>
+        ) : (
+          <div
+            data-testid="share-viewonly"
+            className="flex items-center gap-2 rounded-md border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground"
+          >
+            <Lock className="size-3.5 shrink-0" />
+            View only · ask an owner or editor to change access.
           </div>
-          <Button data-testid="share-add" variant="primary" type="submit" disabled={busy}>
-            {busy ? "…" : "Add"}
-          </Button>
-        </form>
-        <p className="mt-1.5 font-mono text-2xs text-muted-foreground">{BLURB[role]}.</p>
+        )}
         {err && (
           <p data-testid="share-error" role="alert" className="mt-2 text-xs text-destructive">
             {err}
@@ -127,9 +153,14 @@ export function ShareButton({ shortId, myRole }: { shortId: string; myRole?: Rol
         )}
 
         <div className="mt-3.5">
+          <div className="mb-1.5 font-mono text-2xs font-semibold uppercase tracking-wide text-muted-foreground">
+            People with access
+          </div>
           {members.length === 0 ? (
             <div data-testid="share-empty">
-              <EmptyState className="p-6 text-xs">No one shared yet.</EmptyState>
+              <EmptyState className="p-6 text-xs">
+                {canManage ? "No one shared yet." : "Just you and the workspace."}
+              </EmptyState>
             </div>
           ) : (
             <div className="flex flex-col gap-1.5">
@@ -147,24 +178,35 @@ export function ShareButton({ shortId, myRole }: { shortId: string; myRole?: Rol
                       <div className="truncate text-2xs text-muted-foreground">{m.email}</div>
                     )}
                   </div>
-                  <div data-testid={`share-member-role-${m.user_id}`} className="w-[92px]">
-                    <RoleSelect
-                      value={m.role}
-                      onChange={(next) => change(m, next)}
-                      aria-label={`Role for ${m.name ?? m.email ?? "member"}`}
-                      className="w-full"
-                    />
-                  </div>
-                  <Button
-                    data-testid={`share-member-remove-${m.user_id}`}
-                    variant="ghost"
-                    size="icon"
-                    className="size-7 text-muted-foreground hover:text-foreground"
-                    onClick={() => remove(m)}
-                    aria-label={`Remove ${m.name ?? m.email ?? "member"}`}
-                  >
-                    <X />
-                  </Button>
+                  {canManage ? (
+                    <>
+                      <div data-testid={`share-member-role-${m.user_id}`} className="w-[92px]">
+                        <RoleSelect
+                          value={m.role}
+                          onChange={(next) => change(m, next)}
+                          aria-label={`Role for ${m.name ?? m.email ?? "member"}`}
+                          className="w-full"
+                        />
+                      </div>
+                      <Button
+                        data-testid={`share-member-remove-${m.user_id}`}
+                        variant="ghost"
+                        size="icon"
+                        className="size-7 text-muted-foreground hover:text-foreground"
+                        onClick={() => remove(m)}
+                        aria-label={`Remove ${m.name ?? m.email ?? "member"}`}
+                      >
+                        <X />
+                      </Button>
+                    </>
+                  ) : (
+                    <span
+                      data-testid={`share-member-role-${m.user_id}`}
+                      className="text-xs text-muted-foreground"
+                    >
+                      {ROLE_LABEL[m.role]}
+                    </span>
+                  )}
                 </div>
               ))}
             </div>

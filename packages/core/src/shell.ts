@@ -49,9 +49,11 @@ export function renderShell(
   *{box-sizing:border-box}
   body{margin:0;height:100vh;display:flex;flex-direction:column;background:var(--paper);
     font:13px/1.5 var(--sans);color:var(--ink)}
-  header{display:flex;align-items:center;gap:10px;padding:9px 16px;background:var(--panel);
+  header{position:relative;display:flex;align-items:center;gap:10px;padding:9px 16px;background:var(--panel);
     border-bottom:1px solid var(--line);flex:0 0 auto}
-  .t{font-weight:600;font-size:14px;letter-spacing:-.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:42vw}
+  /* Title sits centered at the top, GDocs-style, independent of the side controls. */
+  .t{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);font-weight:600;font-size:14px;
+    letter-spacing:-.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:38%;text-align:center;pointer-events:none}
   .meta{font-family:var(--mono);font-size:10.5px;color:var(--muted);white-space:nowrap}
   .grow{flex:1}
   .chips{display:flex;gap:5px}
@@ -111,19 +113,46 @@ export function renderShell(
   .pcur svg{display:block;fill:var(--c);filter:drop-shadow(0 1px 1.5px rgba(0,0,0,.35))}
   .pcur b{position:absolute;left:12px;top:14px;background:var(--c);color:#fff;font:600 10.5px var(--sans);
     padding:1px 7px;border-radius:5px;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,.25)}
+  /* share dialog (GDocs-style) */
+  .sh-ov{position:fixed;inset:0;background:rgba(20,16,34,.42);display:none;place-items:center;z-index:60}
+  .sh-ov.on{display:grid}
+  .sh{width:min(92vw,460px);background:var(--panel);border:1px solid var(--line);border-radius:16px;
+    box-shadow:0 16px 50px rgba(30,20,55,.28);overflow:hidden}
+  .sh h3{margin:0;padding:15px 18px;font-size:15px;font-weight:600;border-bottom:1px solid var(--line-2);display:flex;align-items:center;gap:8px}
+  .sh h3 .x{margin-left:auto;border:0;background:none;font-size:20px;color:var(--muted);cursor:pointer;line-height:1}
+  .sh .bd{padding:14px 18px;display:flex;flex-direction:column;gap:14px;max-height:66vh;overflow:auto}
+  .sh .invite{display:flex;gap:7px}
+  .sh .invite input{flex:1;border:1px solid var(--cmt-bd);border-radius:8px;padding:7px 10px;font:inherit;color:var(--ink);background:var(--paper)}
+  .sh select{border:1px solid var(--line);border-radius:8px;padding:6px 8px;font:inherit;color:var(--ink);background:var(--paper)}
+  .sh .sec{font-size:10.5px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.03em;margin-bottom:6px}
+  .sh .person{display:flex;align-items:center;gap:9px;padding:6px 2px}
+  .sh .person .av{width:26px;height:26px;border-radius:50%;background:var(--cmt-bg);color:var(--cmt-tx);display:grid;place-items:center;font-size:11px;font-weight:700;flex:0 0 auto}
+  .sh .person .who{display:flex;flex-direction:column;min-width:0}
+  .sh .person .who .nm{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .sh .person .who .em{font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .sh .person .rt{margin-left:auto;display:flex;align-items:center;gap:6px}
+  .sh .person .role{font-size:12px;color:var(--ink-soft);text-transform:capitalize}
+  .sh .person .rm{border:0;background:none;color:var(--muted);cursor:pointer;font-size:13px}
+  .sh .ga{display:flex;align-items:center;gap:10px;border:1px solid var(--line);border-radius:11px;padding:11px 12px;background:var(--paper)}
+  .sh .ga .ic{width:30px;height:30px;border-radius:50%;display:grid;place-items:center;background:var(--accent-soft);font-size:15px;flex:0 0 auto}
+  .sh .ga .gt b{display:block;font-weight:600}
+  .sh .ga .gt span{font-size:11px;color:var(--muted)}
+  .sh .note{background:var(--paper-2);border-radius:9px;padding:10px 12px;color:var(--ink-soft);font-size:12px}
+  .sh .err{color:#a23;font-size:11.5px}
+  .sh .ft{display:flex;align-items:center;gap:8px;padding:13px 18px;border-top:1px solid var(--line-2)}
 </style>
 </head>
 <body>
 <header>
   ${LOGO}
-  <span class="t">${title}</span>
   <span class="meta">v${shownVersion} · ${escapeHtml(version?.author ?? "")}${artifact.kind === "bundle" ? " · bundle" : ""}</span>
+  <span class="t">${title}</span>
   <span class="grow"></span>
   <div class="chips">${chips}</div>
   ${editable ? `<button class="btn" id="editBtn">Edit</button>` : ""}
   ${isMd ? `<a class="btn" href="${rawSrc.replace(/index\.html$/, "raw.md")}">.md</a>` : ""}
-  <button class="btn" id="copyBtn">Copy link</button>
   <button class="btn" id="toggleBtn">Comments</button>
+  <button class="btn pri" id="shareBtn">Share</button>
 </header>
 ${shownVersion !== current ? `<div class="old">Viewing v${shownVersion} — <a href="/a/${artifact.short_id}">jump to current (v${current})</a></div>` : ""}
 <main>
@@ -147,6 +176,13 @@ ${shownVersion !== current ? `<div class="old">Viewing v${shownVersion} — <a h
     </div>
   </aside>
 </main>
+<div class="sh-ov" id="shareOv">
+  <div class="sh" role="dialog" aria-modal="true" aria-label="Share">
+    <h3><span>Share</span><button class="x" id="shClose" aria-label="Close">&times;</button></h3>
+    <div class="bd" id="shBody"><div class="empty">Loading…</div></div>
+    <div class="ft"><button class="btn" id="shCopy">🔗 Copy link</button><span class="grow"></span><button class="btn pri" id="shDone">Done</button></div>
+  </div>
+</div>
 <div class="toast" id="toast"></div>
 <script>
 const CFG = ${cfg};
@@ -159,7 +195,6 @@ $("#who").addEventListener("change", e => { who = e.target.value; localStorage.s
 
 function toast(m){ const t=$("#toast"); t.textContent=m; t.classList.add("show"); setTimeout(()=>t.classList.remove("show"),1800); }
 
-$("#copyBtn").onclick = () => navigator.clipboard.writeText(location.href).then(()=>toast("Link copied"));
 $("#toggleBtn").onclick = () => $("#panel").classList.toggle("hidden");
 
 /* ---- comments ---- */
@@ -278,6 +313,85 @@ function showPeer(d){
   clearTimeout(el._t);
   el._t = setTimeout(() => { el.style.opacity = "0"; setTimeout(() => { el.remove(); delete peers[d.id]; }, 400); }, 8000);
 }
+
+/* ---- share (GDocs-style: always reachable; role decides what you can do) ---- */
+const SH_ROLES = ["viewer", "commenter", "editor"];
+const SH_GA = { org: ["🔒", "Restricted", "Only invited people can open this"],
+                link: ["🌐", "Anyone with the link", "Anyone with the link can view"],
+                public: ["🌐", "Anyone with the link", "Public — listed and shareable"] };
+const shAv = (s) => esc((s || "?").slice(0, 2)).toUpperCase();
+const canShare = (r) => r === "owner" || r === "editor";
+let shState = null;
+function roleOpts(sel){ return SH_ROLES.map(r => '<option value="'+r+'"'+(r===sel?" selected":"")+'>'+r[0].toUpperCase()+r.slice(1)+'</option>').join(""); }
+async function openShare(){
+  $("#shareOv").classList.add("on");
+  $("#shBody").innerHTML = '<div class="empty">Loading…</div>';
+  try {
+    const [a, m] = await Promise.all([fetch(base), fetch(base + "/members")]);
+    const aj = a.ok ? await a.json() : {}; const mj = m.ok ? await m.json() : { members: [] };
+    shState = { role: aj.my_role || "viewer", visibility: aj.visibility || "org", members: mj.members || [] };
+    renderShare();
+  } catch { $("#shBody").innerHTML = '<div class="empty">Could not load sharing.</div>'; }
+}
+function personRow(p, manage){
+  const role = p.role || "viewer";
+  return '<div class="person" data-uid="'+esc(p.user_id)+'" data-email="'+esc(p.email||"")+'">'+
+    '<div class="av">'+shAv(p.name||p.email)+'</div>'+
+    '<div class="who"><span class="nm">'+esc(p.name||p.email||"Someone")+'</span>'+
+    (p.email?'<span class="em">'+esc(p.email)+'</span>':"")+'</div><div class="rt">'+
+    (manage ? '<select class="prole">'+roleOpts(role)+'</select><button class="rm" title="Remove">✕</button>'
+            : '<span class="role">'+esc(role)+'</span>')+'</div></div>';
+}
+function renderShare(){
+  const manage = canShare(shState.role);
+  const ga = SH_GA[shState.visibility] || SH_GA.org;
+  let html = manage
+    ? '<div class="invite"><input id="shEmail" type="email" placeholder="Invite people by email…">'+
+      '<select id="shRole">'+roleOpts("editor")+'</select><button class="btn pri" id="shInvite">Invite</button></div>'+
+      '<div class="err" id="shErr" hidden></div>'
+    : '<div class="note">🔒 View only — you can view this artifact but can’t change who has access. Ask the owner or an editor to share it.</div>';
+  html += '<div><div class="sec">People with access</div>'+
+    (shState.members.length ? shState.members.map(p => personRow(p, manage)).join("")
+      : '<div class="empty" style="padding:8px 2px">Just you and the workspace for now.</div>')+'</div>';
+  html += '<div><div class="sec">General access</div><div class="ga"><div class="ic">'+ga[0]+'</div>'+
+    '<div class="gt"><b>'+ga[1]+'</b><span>'+ga[2]+'</span></div></div></div>';
+  $("#shBody").innerHTML = html;
+  if(manage){
+    $("#shInvite").onclick = doInvite;
+    $("#shEmail").addEventListener("keydown", e => { if(e.key === "Enter") doInvite(); });
+    $("#shBody").querySelectorAll(".person").forEach(row => {
+      const email = row.dataset.email, uid = row.dataset.uid;
+      const sel = row.querySelector(".prole"); if(sel) sel.onchange = async () => { if(!(await putMember(email, sel.value))) refreshMembers(); };
+      const rm = row.querySelector(".rm"); if(rm) rm.onclick = () => delMember(uid);
+    });
+  }
+}
+function shErr(m){ const e = $("#shErr"); if(e){ e.textContent = m; e.hidden = false; } else toast(m); }
+async function putMember(email, role){
+  if(!email) return false;
+  const r = await fetch(base + "/members", {method:"PUT", headers:{"content-type":"application/json"}, body: JSON.stringify({email, role})});
+  if(r.status === 404){ shErr("No Dock user with that email."); return false; }
+  if(!r.ok){ shErr(r.status === 403 ? "You don’t have permission to share." : "Could not update."); return false; }
+  return true;
+}
+async function doInvite(){
+  const email = $("#shEmail").value.trim(); if(!email) return;
+  if(await putMember(email, $("#shRole").value)){ $("#shEmail").value = ""; toast("Shared with " + email); refreshMembers(); }
+}
+async function delMember(uid){
+  const r = await fetch(base + "/members/" + uid, {method:"DELETE"});
+  if(!r.ok){ shErr("Could not remove."); return; }
+  refreshMembers();
+}
+async function refreshMembers(){
+  const m = await fetch(base + "/members"); shState.members = m.ok ? (await m.json()).members || [] : []; renderShare();
+}
+$("#shareBtn").onclick = openShare;
+$("#shClose").onclick = () => $("#shareOv").classList.remove("on");
+$("#shDone").onclick = () => $("#shareOv").classList.remove("on");
+$("#shCopy").onclick = () => navigator.clipboard.writeText(location.href).then(() => toast("Link copied"));
+$("#shareOv").addEventListener("click", e => { if(e.target.id === "shareOv") $("#shareOv").classList.remove("on"); });
+document.addEventListener("keydown", e => { if(e.key === "Escape") $("#shareOv").classList.remove("on"); });
 </script>
 </body>
 </html>`

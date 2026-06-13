@@ -6,13 +6,14 @@ import type { Visibility } from "./ports"
  *  - viewer:    read
  *  - commenter: + comment, and propose a candidate version for review
  *               (creates content to be reviewed; cannot publish/approve)
- *  - editor:    + publish versions directly, and approve others' proposals
- *  - owner:     + manage (roles, settings, delete)
+ *  - editor:    + publish versions directly, approve others' proposals, and
+ *               share (invite collaborators, change general access)
+ *  - owner:     + manage (transfer/settings, delete)
  */
 export type Role = "viewer" | "commenter" | "editor" | "owner"
 
 /** What an actor wants to do. Kept coarse on purpose; `can()` is the only gate. */
-export type Action = "read" | "comment" | "propose" | "publish" | "approve" | "manage"
+export type Action = "read" | "comment" | "propose" | "publish" | "approve" | "share" | "manage"
 
 const RANK: Record<Role, number> = { viewer: 0, commenter: 1, editor: 2, owner: 3 }
 const NEEDS: Record<Action, Role> = {
@@ -23,6 +24,9 @@ const NEEDS: Record<Action, Role> = {
   propose: "commenter",
   publish: "editor",
   approve: "editor",
+  // Editors can share (invite people, change general access) — GDocs model — but
+  // not `manage` (transfer ownership, delete), which stays owner-only.
+  share: "editor",
   manage: "owner",
 }
 
