@@ -89,6 +89,52 @@ describe("dock client (the MCP server's backend) over real HTTP", () => {
     expect(await client.listComments(a.short_id, "open")).toHaveLength(0)
   })
 
+  it("resolves and reopens a thread directly (not just via republish)", async () => {
+    const a = await client.publish({ content: "x", filename: "t.md" })
+    const c = await client.createComment(a.short_id, { body_md: "fix", author: "jess" })
+    await client.setThreadState(a.short_id, c.id, "resolved")
+    expect(await client.listComments(a.short_id, "open")).toHaveLength(0)
+    await client.setThreadState(a.short_id, c.id, "open")
+    expect(await client.listComments(a.short_id, "open")).toHaveLength(1)
+  })
+
+  it("leaves an anchored comment as a new thread", async () => {
+    const a = await client.publish({ content: "alpha beta", filename: "ac.md" })
+    const c = await client.createComment(a.short_id, {
+      body_md: "on beta",
+      author: "agent",
+      anchor: { type: "TextQuoteSelector", exact: "beta" },
+    })
+    expect(c.thread_id).toBe(c.id) // a brand-new thread
+    expect(JSON.parse(c.anchor as string).exact).toBe("beta")
+  })
+
+  it("diffs two versions", async () => {
+    const a = await client.publish({ content: "# title\nalpha", filename: "d.md" })
+    await client.publish({ id: a.short_id, content: "# title\nbeta", filename: "d.md", message: "v2" })
+    const d = await client.diff(a.short_id, 1, 2)
+    expect(d).toMatchObject({ from: 1, to: 2 })
+    expect(d.ops).toContainEqual({ t: "add", line: "beta" })
+    expect(d.ops).toContainEqual({ t: "del", line: "alpha" })
+  })
+
+  it("restores a past version as a new current revision", async () => {
+    const a = await client.publish({ content: "original", filename: "r.md" })
+    await client.publish({ id: a.short_id, content: "changed", filename: "r.md", message: "v2" })
+    const restored = await client.restore(a.short_id, 1)
+    expect(restored.current_version).toBe(3)
+    expect(await client.getContent(a.short_id)).toBe("original")
+    expect(await client.getContent(a.short_id, 1)).toBe("original") // history intact
+  })
+
+  it("includes time-grouped sessions and version names on the detail endpoint", async () => {
+    const a = await client.publish({ content: "v1", filename: "s.md" })
+    await client.publish({ id: a.short_id, content: "v2", filename: "s.md", message: "edit" })
+    const got = await client.get(a.short_id)
+    expect(Array.isArray(got.sessions)).toBe(true)
+    expect(got.versions[0]).toHaveProperty("name")
+  })
+
   it("surfaces server errors as thrown messages", async () => {
     await expect(client.get("nope0000")).rejects.toThrow(/dock 404/)
   })
