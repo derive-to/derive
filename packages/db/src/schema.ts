@@ -1,28 +1,15 @@
 import type {
-  AgentMentionRecord,
   AgentMentionState,
-  AgentRecord,
   ArtifactKind,
-  ArtifactMemberRecord,
-  ArtifactRecord,
   AuditAction,
-  AuditLogRecord,
-  CommentRecord,
   CommentState,
-  DeliveryRecord,
   DeliveryStatus,
-  MembershipRecord,
   NotificationKind,
-  NotificationRecord,
-  ProposalRecord,
   ProposalState,
-  ReportRecord,
   ReportState,
   Role,
-  VersionRecord,
   Visibility,
   WebhookKind,
-  WebhookRecord,
 } from "@dock/core"
 import { sql } from "drizzle-orm"
 import { integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core"
@@ -544,22 +531,6 @@ export const MIGRATION_STATEMENTS: string[] = [
   `ALTER TABLE version ADD COLUMN size_bytes INTEGER NOT NULL DEFAULT 0`,
 ]
 
-// Compile-time guard: the drizzle table defs must exactly match the core record
-// shapes. A non-`true` element here is schema drift — fix the table or the type.
-type Exact<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false
-const _schemaParity: [
-  Exact<typeof artifact.$inferSelect, ArtifactRecord>,
-  Exact<typeof version.$inferSelect, VersionRecord>,
-  Exact<typeof comment.$inferSelect, CommentRecord>,
-  Exact<typeof webhook.$inferSelect, WebhookRecord>,
-  Exact<typeof webhookDelivery.$inferSelect, DeliveryRecord>,
-  Exact<typeof membership.$inferSelect, MembershipRecord>,
-  Exact<typeof artifactMember.$inferSelect, ArtifactMemberRecord>,
-  Exact<typeof notification.$inferSelect, NotificationRecord>,
-  Exact<typeof proposal.$inferSelect, ProposalRecord>,
-  Exact<typeof agent.$inferSelect, AgentRecord>,
-  Exact<typeof agentMention.$inferSelect, AgentMentionRecord>,
-  Exact<typeof report.$inferSelect, ReportRecord>,
-  Exact<typeof auditLog.$inferSelect, AuditLogRecord>,
-] = [true, true, true, true, true, true, true, true, true, true, true, true, true]
-void _schemaParity
+// Schema parity is enforced in repos.ts, where the shared `schema` object lives:
+// `Exhaustive`/`Shapes` (./parity) force every table to be classified and every
+// typed table's row shape to match its @dock/core Record. See ./parity.

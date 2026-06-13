@@ -65,6 +65,47 @@
       }
     }
   },
+  "overrides": [
+    {
+      "includes": ["apps/api/**", "packages/core/**", "packages/db/**", "packages/storage/**"],
+      "linter": {
+        "rules": {
+          "suspicious": { "noConsole": "error" },
+          "nursery": { "noFloatingPromises": "error" }
+        }
+      }
+    },
+    {
+      "includes": ["apps/api/src/log.ts", "apps/api/src/node.ts", "**/*.test.ts"],
+      "linter": { "rules": { "suspicious": { "noConsole": "off" } } }
+    },
+    {
+      "includes": ["apps/api/src/routes/**", "apps/api/src/lib/**"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": [
+                      "drizzle-orm",
+                      "drizzle-orm/**",
+                      "@dock/db/*",
+                      "better-sqlite3",
+                      "pg"
+                    ],
+                    "message": "Routes and lib reach the database through the MetaStore port on the request context (ctx.meta), never a DB driver or query builder. Add a method to the store, don't import a driver here."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
   "assist": {
     "enabled": true,
     "actions": {

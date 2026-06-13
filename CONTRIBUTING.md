@@ -55,8 +55,32 @@ Read [ARCHITECTURE.md](ARCHITECTURE.md) first. Two rules matter most:
   `Actor` and ask it; don't hand-roll role checks in routes.
 
 Adding a `MetaStore` method? Implement it once in the shared sqlite repos
-(`packages/db/src/repos/*`, covers SQLite + D1) and once in the Postgres repos. The
-`Exact<>` guards will fail typecheck if a schema drifts from the port.
+(`packages/db/src/repos.ts`, covers SQLite + D1) and once in the Postgres driver
+(`pg.ts`). The `implements MetaStore` annotation fails typecheck if a driver misses one.
+
+## Guardrails (you don't have to remember these — the tooling does)
+
+The invariants above are machine-enforced, so a mistake fails the gate instead of
+shipping. If something below surprises you, that's the guardrail doing its job:
+
+- **Forgotten `await`.** A floating promise in `apps/api` or the backend packages is a
+  lint error (`noFloatingPromises`). `void` it deliberately or handle it.
+- **`console.*` in the server.** Lint error outside the logger and the process entry —
+  use `log` (`apps/api/src/log.ts`).
+- **DB drivers in routes/lib.** Importing `drizzle-orm`, a driver, or `@dock/db/*` from
+  `routes/*` or `lib/*` is a lint error. Reach the database through `ctx.meta` (the
+  `MetaStore` port); add a store method instead.
+- **Schema parity + exhaustiveness.** Every drizzle table must be classified in
+  `packages/db/src/parity.ts` (typed-and-shape-checked against its core Record, or named
+  a junction). Add a table without classifying it and typecheck fails. A column that
+  drifts from its Record fails too.
+- **DDL drift.** `packages/db/test/schema-conformance.test.ts` boots a real DB from the
+  raw `SCHEMA_STATEMENTS`/`MIGRATION_STATEMENTS` and asserts every drizzle column exists
+  in the table that's actually created — so a column in the type but missing from the
+  DDL goes red.
+- **Event names.** Bus and webhook event names come from one list
+  (`apps/api/src/events.ts`); a typo or a webhook event the bus doesn't know about is a
+  compile error.
 
 ## Commits & PRs
 
