@@ -93,6 +93,18 @@ export interface Workspace {
   role: Role
   members: ArtifactMember[]
 }
+/** One entry in the workspace switcher. */
+export interface WorkspaceSummary {
+  id: string
+  name: string
+  role: Role
+}
+/** The switcher payload: whether multi-workspace is on, the active id, the list. */
+export interface Workspaces {
+  multi: boolean
+  active: string
+  workspaces: WorkspaceSummary[]
+}
 export interface Analytics {
   total: number
   unique: number
@@ -321,6 +333,13 @@ export const api = {
     f(`/v1/workspace/members/${userId}`, { method: "DELETE", credentials: "include" }).then(
       () => undefined,
     ),
+
+  // Multi-workspace: list / create / switch (the switcher; dormant in single mode)
+  listWorkspaces: (): Promise<Workspaces> => f("/v1/workspaces", opts()).then(j),
+  createWorkspace: (name: string): Promise<WorkspaceSummary> =>
+    f("/v1/workspaces", opts({ name })).then(j),
+  switchWorkspace: (id: string): Promise<{ active: string }> =>
+    f("/v1/workspace/switch", opts({ id })).then(j),
 
   // Collections (shareable groups; sharing grants the role on every item)
   listCollections: (): Promise<{ collections: Collection[] }> =>

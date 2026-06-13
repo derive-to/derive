@@ -90,6 +90,49 @@ const AUTH_SECRET = ((): string => {
 const auth = makeAuth(authDb, BASE_URL, AUTH_SECRET)
 await migrateAuth(auth)
 
+// The bootstrap workspace id — a real, persisted value (never a magic literal),
+// so turning on multi-workspace later needs no data change. DOCK_DEFAULT_ORG_ID
+// wins; otherwise generate one and persist it beside the data, like the auth secret.
+const DEFAULT_ORG = ((): string => {
+  const fromEnv = process.env.DOCK_DEFAULT_ORG_ID
+  if (fromEnv) return fromEnv
+  const file = join(DATA_DIR, ".org-id")
+  try {
+    if (existsSync(file)) return readFileSync(file, "utf8").trim()
+  } catch {
+    /* fall through and generate */
+  }
+  const generated = `ws_${randomBytes(12).toString("hex")}`
+  try {
+    writeFileSync(file, generated, { mode: 0o600 })
+  } catch {
+    /* best-effort; a fresh id next boot is harmless on an empty store */
+  }
+  return generated
+})()
+
+// One-time rekey of the pre-multi-workspace "local" sentinel onto the real
+// default org id. Idempotent (no rows remain on 'local' afterward) and a no-op
+// for fresh installs and hosted Postgres that never used 'local'.
+if (DEFAULT_ORG !== "local") {
+  const orgTables = ["membership", "artifact", "collection", "agent"]
+  if (DATABASE_URL) {
+    const pool = authDb as Pool
+    for (const t of orgTables)
+      await pool.query(`UPDATE "${t}" SET org_id = $1 WHERE org_id = 'local'`, [DEFAULT_ORG])
+    await pool.query(`UPDATE workspace SET id = $1 WHERE id = 'local'`, [DEFAULT_ORG])
+  } else {
+    const db = authDb as Database.Database
+    for (const t of orgTables)
+      db.prepare(`UPDATE ${t} SET org_id = ? WHERE org_id = 'local'`).run(DEFAULT_ORG)
+    db.prepare(`UPDATE workspace SET id = ? WHERE id = 'local'`).run(DEFAULT_ORG)
+  }
+}
+
+// Multi-workspace: off by default (self-host is single-workspace); the hosted
+// product sets DOCK_MULTI_WORKSPACE=true to unlock create/switch.
+const MULTI_WORKSPACE = process.env.DOCK_MULTI_WORKSPACE === "true"
+
 const webOrigins = (process.env.DOCK_WEB_ORIGIN ?? "")
   .split(",")
   .map((s) => s.trim())
@@ -110,6 +153,8 @@ const app = createApp({
   analytics: process.env.DOCK_ANALYTICS !== "false",
   rateLimit: process.env.DOCK_RATE_LIMIT !== "false",
   serveWeb: SERVE_WEB,
+  multiWorkspace: MULTI_WORKSPACE,
+  defaultOrgId: DEFAULT_ORG,
   // Origin isolation: serve artifact bytes from a separate registrable domain
   // pointed at this same container. Keeps user HTML off the app's cookie origin.
   sandboxOrigin: process.env.DOCK_SANDBOX_URL,
@@ -183,5 +228,6 @@ serve({ fetch: app.fetch, port: PORT }, () => {
   console.log(`  blobs:   ${blobDesc}`)
   console.log(`  auth:    /api/auth/* (Better Auth)`)
   console.log(`  web:     ${SERVE_WEB ? `bundled SPA at ${BASE_URL}` : "not bundled (API only)"}`)
+  console.log(`  spaces:  ${MULTI_WORKSPACE ? "multi-workspace" : `single (org ${DEFAULT_ORG})`}`)
   console.log(`  publish: dock publish <file|dir> --server ${BASE_URL}`)
 })

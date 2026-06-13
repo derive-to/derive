@@ -579,7 +579,12 @@ describe("live stream (SSE)", () => {
 // token keeps the instance secured, so an unauthenticated caller is NOT owner.
 type TestUser = { id: string; email: string; name: string | null; image?: string | null }
 
-const makeAuthedApp = (name: string, users: TestUser[], defaultRole?: AppDeps["defaultRole"]) => {
+const makeAuthedApp = (
+  name: string,
+  users: TestUser[],
+  defaultRole?: AppDeps["defaultRole"],
+  multiWorkspace?: boolean,
+) => {
   const path = join(dir, `${name}.db`)
   const m = new SqliteMetaStore(path)
   const raw = new Database(path)
@@ -605,6 +610,8 @@ const makeAuthedApp = (name: string, users: TestUser[], defaultRole?: AppDeps["d
     token: "tok",
     auth,
     defaultRole,
+    multiWorkspace,
+    defaultOrgId: "default",
   })
   return { app, meta: m }
 }
@@ -1752,6 +1759,90 @@ describe("workspace: open + token modes", () => {
     })
     expect(r.status).toBe(200)
     expect((await r.json()).name).toBe("Tokenspace")
+  })
+})
+
+describe("multi-workspace: isolation, switch, create, provision", () => {
+  const ada: TestUser = { id: "u_mw_ada", email: "mwada@dock.test", name: "Ada" }
+  const bo: TestUser = { id: "u_mw_bo", email: "mwbo@dock.test", name: "Bo" }
+  const { app } = makeAuthedApp("multiws", [ada, bo], "commenter", true)
+
+  // Pull the dock_ws cookie out of a Set-Cookie header to thread it on later calls.
+  const wsCookie = (res: Response): string => {
+    const m = (res.headers.get("set-cookie") ?? "").match(/dock_ws=([^;]+)/)
+    return m ? `dock_ws=${m[1]}` : ""
+  }
+  const withCookie = (email: string, cookie: string) => ({ ...as(email), cookie })
+
+  it("provisions a personal workspace for each new user on first load", async () => {
+    const a = await (await app.request("/v1/workspaces", { headers: as(ada.email) })).json()
+    expect(a.multi).toBe(true)
+    expect(a.workspaces).toHaveLength(1)
+    expect(a.workspaces[0].role).toBe("owner")
+    const b = await (await app.request("/v1/workspaces", { headers: as(bo.email) })).json()
+    // Bo gets his OWN workspace, distinct from Ada's.
+    expect(b.workspaces[0].id).not.toBe(a.workspaces[0].id)
+  })
+
+  it("isolates artifacts to the active workspace", async () => {
+    expect((await publishAs(app, "<h1>ada</h1>", { title: "Ada doc" }, as(ada.email))).status).toBe(
+      201,
+    )
+    const adaList = await (await app.request("/v1/artifacts", { headers: as(ada.email) })).json()
+    expect(adaList.artifacts.map((x: { title: string }) => x.title)).toContain("Ada doc")
+    const boList = await (await app.request("/v1/artifacts", { headers: as(bo.email) })).json()
+    expect(boList.artifacts).toHaveLength(0)
+  })
+
+  it("creates a workspace, switches into it, and it starts empty", async () => {
+    const create = await app.request("/v1/workspaces", jsonAs(as(ada.email), { name: "Acme" }))
+    expect(create.status).toBe(201)
+    const { id: acmeId, role } = await create.json()
+    expect(role).toBe("owner")
+    const cookie = wsCookie(create)
+    expect(cookie).toContain(acmeId)
+    // In Acme (via the cookie), Ada sees none of her personal-workspace artifacts.
+    const inAcme = await (
+      await app.request("/v1/artifacts", { headers: withCookie(ada.email, cookie) })
+    ).json()
+    expect(inAcme.artifacts).toHaveLength(0)
+    const spaces = await (
+      await app.request("/v1/workspaces", { headers: withCookie(ada.email, cookie) })
+    ).json()
+    expect(spaces.active).toBe(acmeId)
+    expect(spaces.workspaces).toHaveLength(2)
+  })
+
+  it("switches back to a workspace you belong to; rejects one you don't", async () => {
+    const a = await (await app.request("/v1/workspaces", { headers: as(ada.email) })).json()
+    const personal = a.workspaces.find((w: { name: string }) => w.name !== "Acme")
+    const sw = await app.request("/v1/workspace/switch", jsonAs(as(ada.email), { id: personal.id }))
+    expect(sw.status).toBe(200)
+    const back = await (
+      await app.request("/v1/artifacts", { headers: withCookie(ada.email, wsCookie(sw)) })
+    ).json()
+    expect(back.artifacts.map((x: { title: string }) => x.title)).toContain("Ada doc")
+    // Bo is not a member of Ada's personal workspace.
+    expect(
+      (await app.request("/v1/workspace/switch", jsonAs(as(bo.email), { id: personal.id }))).status,
+    ).toBe(403)
+  })
+})
+
+describe("multi-workspace: create/switch are disabled in single mode", () => {
+  const ada: TestUser = { id: "u_sw_ada", email: "swada@dock.test", name: "Ada" }
+  const { app } = makeAuthedApp("singlews", [ada], "commenter") // multi off
+
+  it("403s create and switch, and reports multi:false", async () => {
+    expect((await app.request("/v1/workspaces", jsonAs(as(ada.email), { name: "X" }))).status).toBe(
+      403,
+    )
+    expect(
+      (await app.request("/v1/workspace/switch", jsonAs(as(ada.email), { id: "whatever" }))).status,
+    ).toBe(403)
+    const list = await (await app.request("/v1/workspaces", { headers: as(ada.email) })).json()
+    expect(list.multi).toBe(false)
+    expect(list.workspaces).toHaveLength(1)
   })
 })
 

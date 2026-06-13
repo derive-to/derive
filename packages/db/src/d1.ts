@@ -200,6 +200,7 @@ export class D1MetaStore implements MetaStore {
         ),
       )
     if (opts?.ids) conds.push(inArray(artifact.id, opts.ids))
+    if (opts?.orgId) conds.push(eq(artifact.org_id, opts.orgId))
     const q = this.db
       .select()
       .from(artifact)
@@ -215,8 +216,9 @@ export class D1MetaStore implements MetaStore {
       .all()
     return rows.map((r) => r.id)
   }
-  async countArtifacts(): Promise<number> {
-    const r = await this.db.select({ c: count() }).from(artifact).get()
+  async countArtifacts(orgId?: string): Promise<number> {
+    const q = this.db.select({ c: count() }).from(artifact)
+    const r = await (orgId ? q.where(eq(artifact.org_id, orgId)) : q).get()
     return r?.c ?? 0
   }
   async storageBytes(): Promise<number> {
@@ -226,10 +228,12 @@ export class D1MetaStore implements MetaStore {
       .get()
     return Number(r?.s ?? 0)
   }
-  async tagCounts(): Promise<{ tag: string; count: number }[]> {
-    return this.db
+  async tagCounts(orgId?: string): Promise<{ tag: string; count: number }[]> {
+    const base = this.db
       .select({ tag: artifactTag.tag, count: count() })
       .from(artifactTag)
+      .innerJoin(artifact, eq(artifact.id, artifactTag.artifact_id))
+    return (orgId ? base.where(eq(artifact.org_id, orgId)) : base)
       .groupBy(artifactTag.tag)
       .orderBy(asc(artifactTag.tag))
       .all()
@@ -414,6 +418,20 @@ export class D1MetaStore implements MetaStore {
       .returning()
       .get()
   }
+  listWorkspaces(userId: string): Promise<(WorkspaceRecord & { role: Role })[]> {
+    return this.db
+      .select({
+        id: workspace.id,
+        name: workspace.name,
+        created_at: workspace.created_at,
+        role: membership.role,
+      })
+      .from(membership)
+      .innerJoin(workspace, eq(workspace.id, membership.org_id))
+      .where(eq(membership.user_id, userId))
+      .orderBy(asc(workspace.created_at))
+      .all()
+  }
 
   async getArtifactMember(
     artifactId: string,
@@ -524,8 +542,11 @@ export class D1MetaStore implements MetaStore {
     await this.db.delete(collectionMember).where(eq(collectionMember.collection_id, id)).run()
     await this.db.delete(collection).where(eq(collection.id, id)).run()
   }
-  async listCollections(): Promise<(CollectionRecord & { count: number })[]> {
-    const rows = await this.db.select().from(collection).orderBy(desc(collection.created_at)).all()
+  async listCollections(orgId?: string): Promise<(CollectionRecord & { count: number })[]> {
+    const base = this.db.select().from(collection)
+    const rows = await (orgId ? base.where(eq(collection.org_id, orgId)) : base)
+      .orderBy(desc(collection.created_at))
+      .all()
     const counts = await this.db
       .select({ id: collectionItem.collection_id, c: count() })
       .from(collectionItem)
