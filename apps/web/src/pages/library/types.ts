@@ -14,3 +14,13 @@ export type Summary = {
   tags: TagCount[]
   workspace: string
 }
+
+// The library filter, encoded in the URL so the persistent nav rail can navigate
+// to a view (Favorites / a tag / a collection) from any page and so a filtered
+// library is shareable and survives reload. `q` is the free-text search.
+export type LibrarySearch = {
+  f?: "favorites"
+  tag?: string
+  collection?: string
+  q?: string
+}
