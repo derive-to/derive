@@ -55,6 +55,7 @@ export const version = sqliteTable(
     n: integer("n").notNull(),
     blob_key: text("blob_key").notNull(),
     content_type: text("content_type").notNull(),
+    size_bytes: integer("size_bytes").notNull().default(0),
     author: text("author").notNull(),
     message: text("message"),
     name: text("name"),
@@ -322,6 +323,7 @@ export const SCHEMA_STATEMENTS: string[] = [
     n INTEGER NOT NULL,
     blob_key TEXT NOT NULL,
     content_type TEXT NOT NULL,
+    size_bytes INTEGER NOT NULL DEFAULT 0,
     author TEXT NOT NULL,
     message TEXT,
     name TEXT,
@@ -539,6 +541,7 @@ export const MIGRATION_STATEMENTS: string[] = [
   `ALTER TABLE version ADD COLUMN name TEXT`,
   `ALTER TABLE proposal ADD COLUMN decision_note TEXT`,
   `ALTER TABLE artifact ADD COLUMN removed_at TEXT`,
+  `ALTER TABLE version ADD COLUMN size_bytes INTEGER NOT NULL DEFAULT 0`,
 ]
 
 // Compile-time guard: the drizzle table defs must exactly match the core record
