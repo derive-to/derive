@@ -29,7 +29,7 @@ describe("view analytics", () => {
         headers: { "content-type": "application/json", ...(cookie ? { cookie } : {}) },
         body: JSON.stringify({ version: 1 }),
       })
-      cookie ||= (r.headers.get("set-cookie") ?? "").split(";")[0]
+      cookie ||= (r.headers.get("set-cookie") ?? "").split(";")[0] ?? ""
     }
     // The same viewer on a different version is a distinct view.
     await app.request(`/v1/artifacts/${short_id}/view`, {

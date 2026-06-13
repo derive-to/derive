@@ -16,7 +16,8 @@
     "dev": "tsx watch src/node.ts",
     "start": "tsx src/node.ts",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.worker.json",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
     "@dock/core": "workspace:*",

@@ -63,7 +63,6 @@ export function ReviewDecisionBar({
               )}
             </div>
           )}
-          {/* biome-ignore lint/a11y/noAutofocus: composer is intentionally focused when it opens */}
           <Textarea
             data-testid="review-note"
             autoFocus

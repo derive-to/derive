@@ -4,6 +4,8 @@
     "module": "ESNext",
     "moduleResolution": "Bundler",
     "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
     "skipLibCheck": true,
     "noEmit": true,
     "esModuleInterop": true,

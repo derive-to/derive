@@ -446,10 +446,10 @@ export function makeRepos(db: SqliteDb) {
       .all()
     const out: Record<string, string[]> = {}
     for (const r of rows) {
-      if (!out[r.artifact_id]) out[r.artifact_id] = []
-      out[r.artifact_id].push(r.tag)
+      out[r.artifact_id] ??= []
+      out[r.artifact_id]?.push(r.tag)
     }
-    for (const k in out) out[k].sort()
+    for (const k in out) out[k]?.sort()
     return out
   }
   // Sequential replace (used by D1). better-sqlite3 overrides with a transaction.

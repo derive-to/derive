@@ -83,8 +83,8 @@ describe("webhook outbox", () => {
     const forThis = due.filter((d) => JSON.parse(d.payload).artifact.short_id === short_id)
     expect(forThis.length).toBe(2)
     expect(forThis.every((d) => d.event_type === "version.published")).toBe(true)
-    expect(forThis[0].url).toBe("http://example.com/hook")
-    expect(JSON.parse(forThis[1].payload).data.version).toBe(2)
+    expect(forThis[0]?.url).toBe("http://example.com/hook")
+    expect(JSON.parse(forThis[1]?.payload ?? "{}").data.version).toBe(2)
   })
 
   it("hides the secret in the API response", async () => {

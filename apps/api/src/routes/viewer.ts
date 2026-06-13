@@ -12,7 +12,7 @@ export const viewerRoutes = (ctx: AppContext) => {
   app.get("/a/:ref", async (c) => {
     const m = REF_RE.exec(c.req.param("ref"))
     if (!m) return c.text("not found", 404)
-    const artifact = await meta.getByShortId(m[1])
+    const artifact = await meta.getByShortId(m[1] ?? "")
     if (!artifact || artifact.current_version === 0 || !(await authorize(c, "read", artifact)))
       return c.text("not found", 404)
     if (artifact.removed_at) return c.text(TOMBSTONE, 410)
