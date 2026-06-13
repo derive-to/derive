@@ -1,8 +1,8 @@
 import { describe, expect, test } from "vitest"
 import { as, bearer, jsonAs, makeAuthedApp, publishAs, type TestUser } from "./helpers"
 
-// Cross-tenant isolation regression tests. Each app runs multiWorkspace=true, so
-// Alice and Bob land in separate personal workspaces; "tok" is the instance
+// Cross-tenant isolation regression tests. Each app uses isolated:true, so Alice
+// and Bob each provision their own personal workspace; "tok" is the instance
 // super-admin (operator) credential. These pin the fixes for the cross-tenant
 // findings the authz-coverage guard structurally can't catch (a route gating on
 // the caller's workspace while acting on a globally-keyed resource).
@@ -10,7 +10,7 @@ import { as, bearer, jsonAs, makeAuthedApp, publishAs, type TestUser } from "./h
 const alice: TestUser = { id: "u_alice", email: "alice@a.test", name: "Alice" }
 const bob: TestUser = { id: "u_bob", email: "bob@b.test", name: "Bob" }
 
-const setup = (name: string) => makeAuthedApp(name, [alice, bob], undefined, true)
+const setup = (name: string) => makeAuthedApp(name, [alice, bob], undefined, { isolated: true })
 type App = ReturnType<typeof setup>["app"]
 
 const publish = async (app: App, who: TestUser): Promise<string> => {

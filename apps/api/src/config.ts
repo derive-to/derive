@@ -23,7 +23,6 @@ export interface Config {
   superAdmins: string[]
   analytics: boolean
   rateLimit: boolean
-  multiWorkspace: boolean
   sandboxOrigin?: string
   crossSite: boolean
   versionWindowMs?: number
@@ -90,7 +89,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       .filter(Boolean),
     analytics: env.DOCK_ANALYTICS !== "false",
     rateLimit: env.DOCK_RATE_LIMIT !== "false",
-    multiWorkspace: env.DOCK_MULTI_WORKSPACE === "true",
     sandboxOrigin: env.DOCK_SANDBOX_URL,
     crossSite: env.DOCK_CROSS_SITE === "true",
     versionWindowMs: env.DOCK_VERSION_WINDOW ? Number(env.DOCK_VERSION_WINDOW) * 60_000 : undefined,

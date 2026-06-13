@@ -43,10 +43,11 @@ the bundled SPA when present.
   `DOCK_TOKEN` authorizes CI/agents. `packages/core/src/permissions.ts` is the one
   authorization gate (`can(actor, action, visibility)`); every route resolves an
   `Actor` and asks it.
-- **Workspaces** are keyed by a real `org_id` (never a magic constant). Single-
-  workspace is the self-host default; `DOCK_MULTI_WORKSPACE=true` unlocks
-  create/switch. The active workspace is resolved per request and scopes all
-  workspace data.
+- **Workspaces** are keyed by a real `org_id` (never a magic constant). Every
+  signed-in user owns a personal workspace (provisioned on first login) and can
+  create/switch; the active workspace is resolved per request (cookie → membership
+  → provision) and scopes all workspace data. Collaboration is by per-artifact
+  share or explicit workspace membership.
 - **Realtime** is an in-process pub/sub (`bus.ts`) over SSE, plus ephemeral
   presence. **Webhooks** are an outbox with retries (`webhooks.ts`).
 - **Origin isolation (A4):** artifact bytes (`/raw/*`) can be served from a separate

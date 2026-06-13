@@ -74,7 +74,6 @@ const app = createApp({
   analytics: cfg.analytics,
   rateLimit: cfg.rateLimit,
   serveWeb: cfg.serveWeb,
-  multiWorkspace: cfg.multiWorkspace,
   defaultOrgId: defaultOrg,
   // Origin isolation: serve artifact bytes from a separate registrable domain
   // pointed at this same container. Keeps user HTML off the app's cookie origin.
@@ -158,6 +157,6 @@ serve({ fetch: app.fetch, port: cfg.port }, () => {
     meta: cfg.databaseUrl ? "postgres" : `sqlite (${cfg.dataDir})`,
     blobs: cfg.objectStoreUrl ? "S3/R2" : `local disk (${cfg.dataDir})`,
     web: cfg.serveWeb ? "bundled SPA" : "API only",
-    spaces: cfg.multiWorkspace ? "multi-workspace" : `single (org ${defaultOrg})`,
+    spaces: `multi-workspace (bootstrap org ${defaultOrg})`,
   })
 })

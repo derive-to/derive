@@ -56,15 +56,9 @@ export interface AppDeps {
   /** Workspace role granted to a member who isn't the first user. Default "editor". */
   defaultRole?: Role
   /**
-   * Enable multiple workspaces: users can create/switch workspaces and each is
-   * scoped by org_id. Off by default (self-host is single-workspace); the hosted
-   * product turns it on. Single mode behaves exactly as before, just keyed by a
-   * real `defaultOrgId` instead of a magic constant.
-   */
-  multiWorkspace?: boolean
-  /**
-   * The org_id of the single/bootstrap workspace. A real, persisted id (never a
-   * magic literal) so flipping on multiWorkspace later is a no-op for the data.
+   * The org_id of the bootstrap workspace: the fallback for anonymous requests.
+   * Every signed-in user gets their own personal workspace on first login. A
+   * real, persisted id, never a magic literal.
    * Defaults to "default" when unset (tests); the Node entry generates + persists
    * one and rekeys any legacy rows onto it.
    */
@@ -132,8 +126,7 @@ export function buildContext(deps: AppDeps) {
   const allowOrigins = new Set(deps.webOrigins ?? [])
   const open = !deps.token
   const defaultRole: Role = deps.defaultRole ?? "editor"
-  const multi = !!deps.multiWorkspace
-  // The single/bootstrap workspace id — always a real value, never a magic
+  // The bootstrap workspace id — always a real value, never a magic
   // literal. The Node entry generates + persists one; tests fall back to this.
   const defaultOrg = deps.defaultOrgId ?? "default"
 
@@ -257,7 +250,6 @@ export function buildContext(deps: AppDeps) {
   // membership), else the user's first workspace, provisioning one if they have none.
   const wsCache = new WeakMap<Context, string>()
   const activeWorkspace = async (c: Context): Promise<string> => {
-    if (!multi) return defaultOrg
     const cached = wsCache.get(c)
     if (cached) return cached
     // An agent acts within its own workspace, never a cookie's.
@@ -299,12 +291,10 @@ export function buildContext(deps: AppDeps) {
     }
     const me = await currentUser(c)
     if (!me) return { kind: "anon", open }
-    // Baseline role = membership in the ARTIFACT's workspace. Single mode keeps
-    // its first-user-owner auto-join; multi mode never auto-joins you into
-    // someone else's workspace just because you opened a shared link.
-    const orgRole = multi
-      ? ((await meta.getMembership(a.org_id, me.id))?.role ?? null)
-      : await ensureMembership(a.org_id, me.id)
+    // Baseline role = membership in the ARTIFACT's workspace. Opening a shared
+    // link never auto-joins you into someone else's workspace; you only carry an
+    // org role where you're explicitly a member.
+    const orgRole = (await meta.getMembership(a.org_id, me.id))?.role ?? null
     const am = await meta.getArtifactMember(a.id, me.id)
     // A collection share grants its role on every artifact in the collection,
     // folded in alongside any per-artifact share (the higher wins).
@@ -364,7 +354,6 @@ export function buildContext(deps: AppDeps) {
     versionWindowMs,
     allowOrigins,
     open,
-    multi,
     defaultOrg,
     defaultRole,
     publishLimiter,

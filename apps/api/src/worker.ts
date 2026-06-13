@@ -35,7 +35,6 @@ export interface Env {
   ROOMS: DurableObjectNamespace
   BASE_URL?: string
   DOCK_AUTH_SECRET?: string
-  DOCK_MULTI_WORKSPACE?: string
   DOCK_SUPERADMIN_EMAILS?: string
 }
 
@@ -67,7 +66,6 @@ export default {
           .split(",")
           .map((s) => s.trim().toLowerCase())
           .filter(Boolean),
-        multiWorkspace: env.DOCK_MULTI_WORKSPACE === "true",
         defaultOrgId: "default",
       })
     }

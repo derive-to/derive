@@ -37,4 +37,5 @@ not_found_handling = "single-page-application"
 # DOCK_AUTH_SECRET via `wrangler secret put`. Cross-instance realtime fan-out uses
 # the ArtifactRoom Durable Object (one room per channel).
 [vars]
-DOCK_MULTI_WORKSPACE = "false"
+# DOCK_SUPERADMIN_EMAILS (operator allow-list) is optional; BASE_URL optional;
+# DOCK_AUTH_SECRET is a secret (`wrangler secret put`). Workspaces are always multi.
