@@ -28,8 +28,12 @@ export interface ArtifactRecord {
 
 export interface ListArtifactsOpts {
   limit?: number
-  /** Keyset cursor: return artifacts created strictly before this ISO timestamp. */
-  cursor?: string
+  /**
+   * Keyset cursor — return artifacts strictly older than this (created_at, id)
+   * pair. The `id` tiebreak makes pagination correct even when many artifacts
+   * share a created_at timestamp (sub-millisecond bulk inserts).
+   */
+  cursor?: { created_at: string; id: string }
   /** Case-insensitive title search. */
   q?: string
   /** Restrict to these artifact ids (tag / favorite filters resolve to ids). Empty ⇒ none. */
@@ -154,6 +158,28 @@ export interface MetaStore {
   tagsForArtifacts(artifactIds: string[]): Promise<Record<string, string[]>>
   /** Replace an artifact's full tag set (deduped, trimmed, lowercased upstream). */
   setArtifactTags(artifactId: string, tags: string[]): Promise<void>
+
+  // ---- Collections (shareable groups; a member's role propagates to items) -
+  createCollection(c: NewCollection): Promise<CollectionRecord>
+  getCollection(id: string): Promise<CollectionRecord | null>
+  updateCollection(id: string, fields: { title?: string }): Promise<CollectionRecord | null>
+  /** Remove a collection and its items + member rows. */
+  deleteCollection(id: string): Promise<void>
+  /** All collections (workspace-wide) with their item counts, newest first. */
+  listCollections(): Promise<(CollectionRecord & { count: number })[]>
+  /** Artifact ids in a collection (drives ?collection= browse). */
+  collectionArtifactIds(collectionId: string): Promise<string[]>
+  /** Collection ids containing an artifact (for the artifact's "add to" UI). */
+  collectionIdsForArtifact(artifactId: string): Promise<string[]>
+  addCollectionItem(collectionId: string, artifactId: string): Promise<void>
+  removeCollectionItem(collectionId: string, artifactId: string): Promise<void>
+  getCollectionMember(collectionId: string, userId: string): Promise<CollectionMemberRecord | null>
+  listCollectionMembers(collectionId: string): Promise<CollectionMemberRecord[]>
+  setCollectionMember(m: NewCollectionMember): Promise<CollectionMemberRecord>
+  removeCollectionMember(collectionId: string, userId: string): Promise<void>
+  /** This user's collection-member roles over collections containing the
+   *  artifact — folded into their effective artifact role (collection sharing). */
+  collectionRolesForArtifact(artifactId: string, userId: string): Promise<Role[]>
 
   // ---- Reviews: proposed versions awaiting approval ----------------------
   createProposal(p: NewProposal): Promise<ProposalRecord>
@@ -335,6 +361,33 @@ export interface MembershipRecord {
 export interface NewMembership {
   id: string
   org_id: string
+  user_id: string
+  role: Role
+}
+
+export interface CollectionRecord {
+  id: string
+  org_id: string
+  title: string
+  created_by: string
+  created_at: string
+}
+export interface NewCollection {
+  id: string
+  org_id: string
+  title: string
+  created_by: string
+}
+export interface CollectionMemberRecord {
+  id: string
+  collection_id: string
+  user_id: string
+  role: Role
+  created_at: string
+}
+export interface NewCollectionMember {
+  id: string
+  collection_id: string
   user_id: string
   role: Role
 }
