@@ -1,4 +1,5 @@
 import { createRouter } from "@tanstack/react-router"
+import { RouteSkeleton } from "./components/shared/route-skeleton"
 import { queryClient } from "./lib/query-client"
 import { routeTree } from "./routeTree.gen"
 
@@ -13,6 +14,19 @@ export function getRouter() {
     // means an intent hover always reaches the loader, which dedupes through the
     // query client (so it's a cache read, not a refetch, within staleTime).
     defaultPreloadStaleTime: 0,
+    // Debounce intent so a pointer brushing past a link doesn't fire the loader;
+    // ~65ms is below the time it takes to settle on a target you actually want.
+    defaultPreloadDelay: 65,
+    // Cross-fade route changes. The rail/top bar are mounted once above the
+    // Outlet, so only the content visibly morphs. No-ops where the View
+    // Transitions API is unavailable.
+    defaultViewTransition: true,
+    // Perceived-perf: hold the current page for 150ms before showing a skeleton
+    // (most cache-warm navs resolve first, so nothing flashes), and once shown
+    // keep it at least 300ms so a just-too-slow load doesn't strobe.
+    defaultPendingMs: 150,
+    defaultPendingMinMs: 300,
+    defaultPendingComponent: RouteSkeleton,
     context: { queryClient },
   })
 }

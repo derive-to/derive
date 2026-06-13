@@ -2,16 +2,14 @@ import { useNavigate, useSearch } from "@tanstack/react-router"
 import { Plus, X } from "lucide-react"
 import { useCallback, useEffect, useRef, useState } from "react"
 import { type Artifact, api } from "@/api"
-import { AppShell } from "@/components/app-shell"
 import { Icon } from "@/components/icons"
 import { EmptyState } from "@/components/shared/empty-state"
-import { CenteredSpinner, Spinner } from "@/components/shared/spinner"
+import { Spinner } from "@/components/shared/spinner"
 import { useShell } from "@/components/shell-context"
 import { useToast } from "@/components/toast"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
-import { useAuth } from "@/ctx"
 import { usePrefetchArtifact } from "@/lib/use-prefetch-artifact"
 import { ArtifactCard } from "./artifact-card"
 import { CollectionBar } from "./collection-bar"
@@ -20,21 +18,12 @@ import type { Filter } from "./types"
 
 const PAGE = 30
 
-// Route component for "/". Auth-gates, then renders the library inside the app
-// shell (which owns the nav rail + pod). The filter lives in the URL, so the body
-// reads it from search rather than local state.
+// Route component for "/". The persistent AppShell (mounted once around the
+// router Outlet) owns the rail/pod and the auth gate, so this just renders the
+// library body. The filter lives in the URL, so the body reads it from search
+// rather than local state.
 export function Library() {
-  const { me, loading } = useAuth()
-  const nav = useNavigate()
-  useEffect(() => {
-    if (!loading && !me) nav({ to: "/login" })
-  }, [loading, me, nav])
-  if (!me) return <CenteredSpinner />
-  return (
-    <AppShell>
-      <LibraryBody />
-    </AppShell>
-  )
+  return <LibraryBody />
 }
 
 function LibraryBody() {

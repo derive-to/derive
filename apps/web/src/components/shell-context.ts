@@ -26,6 +26,10 @@ export interface ShellValue {
   refreshCollections: () => void
   switchWorkspace: (id: string) => void
   createWorkspace: (name: string) => void
+  // The top bar's right-side region. AppShell is mounted once around the router
+  // Outlet, so a page can't pass top-bar actions as a prop — it portals them
+  // into this slot instead (null until the bar has mounted).
+  topBarSlot: HTMLElement | null
 }
 
 export const ShellCtx = createContext<ShellValue | null>(null)

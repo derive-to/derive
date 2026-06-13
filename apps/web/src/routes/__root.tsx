@@ -1,7 +1,14 @@
 import type { QueryClient } from "@tanstack/react-query"
 import { QueryClientProvider } from "@tanstack/react-query"
-import { createRootRouteWithContext, HeadContent, Outlet, Scripts } from "@tanstack/react-router"
+import {
+  createRootRouteWithContext,
+  HeadContent,
+  Outlet,
+  Scripts,
+  useRouterState,
+} from "@tanstack/react-router"
 import { type ReactNode, useEffect } from "react"
+import { AppShell } from "../components/app-shell"
 import { AuthProvider, ThemeProvider } from "../ctx"
 import { queryClient } from "../lib/query-client"
 import { reportWebVitals } from "../lib/vitals"
@@ -27,13 +34,15 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
 })
 
 function RootComponent() {
-  // Report web vitals to the console for before/after perf numbers. react-scan
-  // (flags wasted re-renders) is opt-in via VITE_REACT_SCAN — its overlay
-  // intercepts pointer events, so it must stay off by default in dev and under
-  // e2e. Dev-only + dynamic import: dead-code-eliminated from the prod build.
+  // Dev-only perf instrumentation. web-vitals logs to the console for before/
+  // after numbers (dev only — no prod console noise; Tier 5 adds a real beacon).
+  // react-scan (flags wasted re-renders) is further gated behind VITE_REACT_SCAN
+  // because its overlay intercepts pointer events. Both dynamic/dev-gated, so
+  // they're dead-code-eliminated from the prod build.
   useEffect(() => {
+    if (!import.meta.env.DEV) return
     reportWebVitals()
-    if (import.meta.env.DEV && import.meta.env.VITE_REACT_SCAN) {
+    if (import.meta.env.VITE_REACT_SCAN) {
       import("react-scan").then(({ scan }) => scan({ enabled: true })).catch(() => {})
     }
   }, [])
@@ -42,11 +51,25 @@ function RootComponent() {
       <QueryClientProvider client={queryClient}>
         <ThemeProvider>
           <AuthProvider>
-            <Outlet />
+            <AppFrame />
           </AuthProvider>
         </ThemeProvider>
       </QueryClientProvider>
     </RootDocument>
+  )
+}
+
+// AppShell (persistent rail + top bar) wraps every authed route's Outlet and is
+// mounted once here, so navigating between pages morphs only the content — the
+// rail never remounts. /login is the one chrome-less route.
+function AppFrame() {
+  const isLogin = useRouterState({ select: (s) => s.location.pathname === "/login" })
+  return isLogin ? (
+    <Outlet />
+  ) : (
+    <AppShell>
+      <Outlet />
+    </AppShell>
   )
 }
 

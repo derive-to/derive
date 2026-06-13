@@ -1,4 +1,4 @@
-import { Link } from "@tanstack/react-router"
+import { Link, useNavigate } from "@tanstack/react-router"
 import { type ReactNode, useCallback, useEffect, useState } from "react"
 import { api, type Collection, type Workspaces } from "@/api"
 import { Button } from "@/components/ui/button"
@@ -10,6 +10,7 @@ import { CommandPalette } from "./command-palette"
 import { Icon } from "./icons"
 import { NavRail } from "./nav-rail"
 import { Logo } from "./shared/logo"
+import { CenteredSpinner } from "./shared/spinner"
 import { ShellCtx, type ShellValue, type Summary } from "./shell-context"
 
 const COLLAPSE_KEY = STORAGE_KEYS.navCollapsed
@@ -18,14 +19,9 @@ const COLLAPSE_KEY = STORAGE_KEYS.navCollapsed
 // bell right) over [nav rail | page]. Owns the rail collapse state (collapsed by
 // default) and fetches the nav data (summary, collections, workspaces) once, so
 // the rail + pod behave identically on every page.
-export function AppShell({
-  children,
-  topBarActions,
-}: {
-  children: ReactNode
-  topBarActions?: ReactNode
-}) {
-  const { me } = useAuth()
+export function AppShell({ children }: { children: ReactNode }) {
+  const { me, loading } = useAuth()
+  const nav = useNavigate()
   const isMobile = useIsMobile()
 
   const [collapsed, setCollapsed] = useState<boolean>(() => {
@@ -41,6 +37,14 @@ export function AppShell({
   const [summary, setSummary] = useState<Summary | null>(null)
   const [collections, setCollections] = useState<Collection[]>([])
   const [workspaces, setWorkspaces] = useState<Workspaces | null>(null)
+  // The top bar's right region; a page portals its actions here (see useShell).
+  const [topBarSlot, setTopBarSlot] = useState<HTMLElement | null>(null)
+
+  // Auth gate for the whole authed app (this shell wraps every non-login route):
+  // bounce to /login once we know there's no session.
+  useEffect(() => {
+    if (!loading && !me) nav({ to: "/login" })
+  }, [loading, me, nav])
 
   useEffect(() => {
     try {
@@ -127,7 +131,12 @@ export function AppShell({
     refreshCollections,
     switchWorkspace,
     createWorkspace,
+    topBarSlot,
   }
+
+  // Until the session resolves, hold the frame rather than flashing the rail
+  // (and the redirect above handles the signed-out case).
+  if (loading || !me) return <CenteredSpinner />
 
   return (
     <ShellCtx.Provider value={value}>
@@ -147,7 +156,7 @@ export function AppShell({
             <Logo />
             <span className="font-display text-lg font-semibold">Dock</span>
           </Link>
-          {topBarActions && <div className="ml-auto flex items-center gap-2">{topBarActions}</div>}
+          <div ref={setTopBarSlot} className="ml-auto flex items-center gap-2" />
         </header>
 
         <div className="flex min-h-0 flex-1">

@@ -1,13 +1,14 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useNavigate, useParams } from "@tanstack/react-router"
 import { useCallback, useEffect, useRef, useState } from "react"
+import { createPortal } from "react-dom"
 import { API_BASE, api, type Comment, type Diff, type Mention } from "@/api"
 import { useIsMobile, useToast } from "@/components"
-import { AppShell } from "@/components/app-shell"
 import { Icon } from "@/components/icons"
 import { ReviewOverlay } from "@/components/review"
 import { ShareButton } from "@/components/ShareDialog"
 import { Spinner } from "@/components/shared/spinner"
+import { useShell } from "@/components/shell-context"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -48,6 +49,9 @@ export function Artifact() {
   const nav = useNavigate()
   const { toast, show } = useToast()
   const isMobile = useIsMobile()
+  // The persistent shell exposes its top-bar region; this page's header actions
+  // are portaled into it (the shell is mounted once, above the route Outlet).
+  const { topBarSlot } = useShell()
 
   // Artifact metadata + comments come from React Query, so the route loader's
   // intent preload (ensureQueryData) warms exactly what we render here — the
@@ -323,67 +327,61 @@ export function Artifact() {
 
   if (failed)
     return (
-      <AppShell>
-        <div className="grid h-full place-items-center gap-2.5">
-          <div className="text-muted-foreground">Artifact not found, or you don't have access.</div>
-          <Button
-            variant="outline"
-            data-testid="artifact-notfound-back"
-            onClick={() => nav({ to: "/" })}
-          >
-            Back to library
-          </Button>
-        </div>
-      </AppShell>
+      <div className="grid h-full place-items-center gap-2.5">
+        <div className="text-muted-foreground">Artifact not found, or you don't have access.</div>
+        <Button
+          variant="outline"
+          data-testid="artifact-notfound-back"
+          onClick={() => nav({ to: "/" })}
+        >
+          Back to library
+        </Button>
+      </div>
     )
   if (!art)
     return (
-      <AppShell>
-        <div className="grid h-full place-items-center">
-          <Spinner />
-        </div>
-      </AppShell>
+      <div className="grid h-full place-items-center">
+        <Spinner />
+      </div>
     )
 
   // Removed artifacts show a tombstone instead of the document — content is
   // gone (the server 410s the raw routes), but an owner can still reinstate.
   if (art.removed)
     return (
-      <AppShell>
-        <div className="grid h-full place-items-center gap-3 text-center">
-          <Icon name="removed" size={40} className="opacity-55" />
-          <div className="text-lg font-semibold">This artifact was removed</div>
-          <div className="max-w-[360px] text-sm leading-relaxed text-muted-foreground">
-            It was taken down by a moderator and is no longer available.
-          </div>
-          <div className="flex gap-2">
-            {art.my_role === "owner" && (
-              <Button
-                variant="outline"
-                data-testid="artifact-reinstate"
-                onClick={async () => {
-                  try {
-                    await api.reinstate(shortId)
-                    show("Reinstated")
-                    load()
-                  } catch (e) {
-                    show((e as Error).message)
-                  }
-                }}
-              >
-                Reinstate
-              </Button>
-            )}
+      <div className="grid h-full place-items-center gap-3 text-center">
+        <Icon name="removed" size={40} className="opacity-55" />
+        <div className="text-lg font-semibold">This artifact was removed</div>
+        <div className="max-w-[360px] text-sm leading-relaxed text-muted-foreground">
+          It was taken down by a moderator and is no longer available.
+        </div>
+        <div className="flex gap-2">
+          {art.my_role === "owner" && (
             <Button
               variant="outline"
-              data-testid="artifact-removed-back"
-              onClick={() => nav({ to: "/" })}
+              data-testid="artifact-reinstate"
+              onClick={async () => {
+                try {
+                  await api.reinstate(shortId)
+                  show("Reinstated")
+                  load()
+                } catch (e) {
+                  show((e as Error).message)
+                }
+              }}
             >
-              Back to library
+              Reinstate
             </Button>
-          </div>
+          )}
+          <Button
+            variant="outline"
+            data-testid="artifact-removed-back"
+            onClick={() => nav({ to: "/" })}
+          >
+            Back to library
+          </Button>
         </div>
-      </AppShell>
+      </div>
     )
 
   const shown = version ?? art.current_version
@@ -536,99 +534,103 @@ export function Artifact() {
   const asideWidth = isMobile ? 0 : panel === "open" ? 340 : panel === "rail" ? 50 : 0
 
   return (
-    <AppShell
-      topBarActions={
-        <>
-          {!isMobile && <Presence viewers={viewers} self={me?.name ?? me?.email ?? ""} />}
-          <StarButton
-            shortId={shortId}
-            favorite={!!art.favorite}
-            onChange={(fav) =>
-              qc.setQueryData(artifactQuery(shortId).queryKey, (a) =>
-                a ? { ...a, favorite: fav } : a,
-              )
-            }
-          />
-          <TagsMenu
-            shortId={shortId}
-            tags={art.tags ?? []}
-            canEdit={art.my_role === "editor" || art.my_role === "owner"}
-            onChange={(tags) =>
-              qc.setQueryData(artifactQuery(shortId).queryKey, (a) => (a ? { ...a, tags } : a))
-            }
-          />
-          <CollectionsMenu
-            shortId={shortId}
-            inCollections={art.collections ?? []}
-            onChange={(collections) =>
-              qc.setQueryData(artifactQuery(shortId).queryKey, (a) =>
-                a ? { ...a, collections } : a,
-              )
-            }
-          />
-          <ShareButton shortId={shortId} myRole={art.my_role} />
-          <ReportButton shortId={shortId} onDone={show} />
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
+    <>
+      {topBarSlot &&
+        createPortal(
+          <>
+            {!isMobile && <Presence viewers={viewers} self={me?.name ?? me?.email ?? ""} />}
+            <StarButton
+              shortId={shortId}
+              favorite={!!art.favorite}
+              onChange={(fav) =>
+                qc.setQueryData(artifactQuery(shortId).queryKey, (a) =>
+                  a ? { ...a, favorite: fav } : a,
+                )
+              }
+            />
+            <TagsMenu
+              shortId={shortId}
+              tags={art.tags ?? []}
+              canEdit={art.my_role === "editor" || art.my_role === "owner"}
+              onChange={(tags) =>
+                qc.setQueryData(artifactQuery(shortId).queryKey, (a) => (a ? { ...a, tags } : a))
+              }
+            />
+            <CollectionsMenu
+              shortId={shortId}
+              inCollections={art.collections ?? []}
+              onChange={(collections) =>
+                qc.setQueryData(artifactQuery(shortId).queryKey, (a) =>
+                  a ? { ...a, collections } : a,
+                )
+              }
+            />
+            <ShareButton shortId={shortId} myRole={art.my_role} />
+            <ReportButton shortId={shortId} onDone={show} />
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="outline"
+                  size="icon"
+                  title="More"
+                  data-testid="artifact-more"
+                  className={cn(
+                    art.open_proposals && art.open_proposals > 0 && "border-primary text-primary",
+                  )}
+                >
+                  <Icon name="more" size={18} />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent>
+                <DropdownMenuItem
+                  data-testid="artifact-insights"
+                  onSelect={() => setSurface("insights")}
+                >
+                  <Icon name="insights" size={16} /> Insights
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  data-testid="artifact-history"
+                  onSelect={() => setSurface("history")}
+                >
+                  <Icon name="history" size={16} /> Version history
+                </DropdownMenuItem>
+                {!!art.proposals_total && art.proposals_total > 0 && (
+                  <DropdownMenuItem
+                    data-testid="artifact-review"
+                    onSelect={() => setReviewing(true)}
+                  >
+                    <Icon name="review" size={16} />
+                    {art.open_proposals && art.open_proposals > 0
+                      ? `Review proposals (${art.open_proposals})`
+                      : "Proposals"}
+                  </DropdownMenuItem>
+                )}
+                {editable && canPropose && !editing && (
+                  <DropdownMenuItem data-testid="artifact-edit" onSelect={startEdit}>
+                    <Icon name="edit" size={16} />
+                    {canPublish ? "Edit source (dev)" : "Propose change (dev)"}
+                  </DropdownMenuItem>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
+            {/* On phones the bottom-right FAB opens comments, so the header
+                button would just be a redundant extra wrap-row. */}
+            {!isMobile && panel !== "open" && (
               <Button
                 variant="outline"
-                size="icon"
-                title="More"
-                data-testid="artifact-more"
-                className={cn(
-                  art.open_proposals && art.open_proposals > 0 && "border-primary text-primary",
-                )}
+                size="sm"
+                className="gap-1.5"
+                data-testid="artifact-show-comments"
+                onClick={() => setPanel("open")}
+                title="Show comments (c)"
               >
-                <Icon name="more" size={18} />
+                <Icon name="comments" size={16} />
+                {openCount > 0 && <b className="font-bold">{openCount}</b>}
               </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent>
-              <DropdownMenuItem
-                data-testid="artifact-insights"
-                onSelect={() => setSurface("insights")}
-              >
-                <Icon name="insights" size={16} /> Insights
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                data-testid="artifact-history"
-                onSelect={() => setSurface("history")}
-              >
-                <Icon name="history" size={16} /> Version history
-              </DropdownMenuItem>
-              {!!art.proposals_total && art.proposals_total > 0 && (
-                <DropdownMenuItem data-testid="artifact-review" onSelect={() => setReviewing(true)}>
-                  <Icon name="review" size={16} />
-                  {art.open_proposals && art.open_proposals > 0
-                    ? `Review proposals (${art.open_proposals})`
-                    : "Proposals"}
-                </DropdownMenuItem>
-              )}
-              {editable && canPropose && !editing && (
-                <DropdownMenuItem data-testid="artifact-edit" onSelect={startEdit}>
-                  <Icon name="edit" size={16} />
-                  {canPublish ? "Edit source (dev)" : "Propose change (dev)"}
-                </DropdownMenuItem>
-              )}
-            </DropdownMenuContent>
-          </DropdownMenu>
-          {/* On phones the bottom-right FAB opens comments, so the header
-                button would just be a redundant extra wrap-row. */}
-          {!isMobile && panel !== "open" && (
-            <Button
-              variant="outline"
-              size="sm"
-              className="gap-1.5"
-              data-testid="artifact-show-comments"
-              onClick={() => setPanel("open")}
-              title="Show comments (c)"
-            >
-              <Icon name="comments" size={16} />
-              {openCount > 0 && <b className="font-bold">{openCount}</b>}
-            </Button>
-          )}
-        </>
-      }
-    >
+            )}
+          </>,
+          topBarSlot,
+        )}
       <ActionsCtx.Provider value={actions}>
         {reviewing && (
           <ReviewOverlay
@@ -908,6 +910,6 @@ export function Artifact() {
         )}
         {toast}
       </ActionsCtx.Provider>
-    </AppShell>
+    </>
   )
 }
