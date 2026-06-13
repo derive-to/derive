@@ -473,6 +473,10 @@ export class PgMetaStore implements MetaStore {
       .returning()
     return one(rows)
   }
+  async deleteWorkspace(orgId: string): Promise<void> {
+    await this.db.delete(membership).where(eq(membership.org_id, orgId))
+    await this.db.delete(workspace).where(eq(workspace.id, orgId))
+  }
   listWorkspaces(userId: string): Promise<(WorkspaceRecord & { role: Role })[]> {
     return this.db
       .select({

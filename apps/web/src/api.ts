@@ -89,6 +89,7 @@ export interface ArtifactMember {
 }
 /** The workspace: its name, the caller's role, and the member directory. */
 export interface Workspace {
+  id: string
   name: string
   role: Role
   members: ArtifactMember[]
@@ -340,6 +341,8 @@ export const api = {
     f("/v1/workspaces", opts({ name })).then(j),
   switchWorkspace: (id: string): Promise<{ active: string }> =>
     f("/v1/workspace/switch", opts({ id })).then(j),
+  deleteWorkspace: (id: string): Promise<{ deleted: string; active: string | null }> =>
+    f(`/v1/workspaces/${id}`, { method: "DELETE", credentials: "include" }).then(j),
 
   // Collections (shareable groups; sharing grants the role on every item)
   listCollections: (): Promise<{ collections: Collection[] }> =>

@@ -383,6 +383,10 @@ export function makeRepos(db: SqliteDb) {
       .onConflictDoUpdate({ target: workspace.id, set: { name } })
       .returning()
       .get()) as WorkspaceRecord
+  const deleteWorkspace = async (orgId: string): Promise<void> => {
+    await db.delete(membership).where(eq(membership.org_id, orgId)).run()
+    await db.delete(workspace).where(eq(workspace.id, orgId)).run()
+  }
   const listWorkspaces = async (userId: string): Promise<(WorkspaceRecord & { role: Role })[]> =>
     db
       .select({
@@ -782,6 +786,7 @@ export function makeRepos(db: SqliteDb) {
     removeMembership,
     getWorkspace,
     setWorkspace,
+    deleteWorkspace,
     listWorkspaces,
     getArtifactMember,
     listArtifactMembers,

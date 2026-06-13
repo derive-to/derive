@@ -170,5 +170,25 @@ export const workspaceRoutes = (ctx: AppContext) => {
     return c.json({ active: id })
   })
 
+  // Delete a workspace you own. Guarded: Admin only, never your last workspace, and
+  // it must be empty (no artifacts) — we don't cascade-delete content. If it was the
+  // active workspace, switch to another one you own.
+  app.delete("/v1/workspaces/:id", async (c) => {
+    const me = await currentUser(c)
+    if (!me) return fail(c, 401, "unauthenticated")
+    const id = c.req.param("id")
+    const mem = await meta.getMembership(id, me.id)
+    if (!mem || mem.role !== "owner") return fail(c, 403, "only an admin can delete this workspace")
+    const mine = await meta.listWorkspaces(me.id)
+    if (mine.length <= 1) return fail(c, 409, "you need at least one workspace")
+    if ((await meta.countArtifacts(id)) > 0)
+      return fail(c, 409, "this workspace still has artifacts — delete or move them first")
+    const wasActive = (await activeWorkspace(c)) === id
+    await meta.deleteWorkspace(id)
+    const next = mine.find((w) => w.id !== id)?.id ?? null
+    if (wasActive && next) setWsCookie(c, next)
+    return c.json({ deleted: id, active: wasActive ? next : null })
+  })
+
   return app
 }
