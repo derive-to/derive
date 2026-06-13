@@ -159,6 +159,7 @@ export const proposal = pgTable("proposal", {
   state: text("state").$type<ProposalState>().notNull().default("open"),
   decided_by: text("decided_by"),
   decided_version: integer("decided_version"),
+  decision_note: text("decision_note"),
   decided_at: text("decided_at"),
   created_at: text("created_at").notNull().$defaultFn(isoNow),
 })
@@ -314,8 +315,10 @@ export const PG_SCHEMA_STATEMENTS: string[] = [
     state TEXT NOT NULL DEFAULT 'open',
     decided_by TEXT,
     decided_version INTEGER,
+    decision_note TEXT,
     decided_at TEXT,
     created_at TEXT NOT NULL DEFAULT ${isoDefault}
   )`,
+  `ALTER TABLE proposal ADD COLUMN IF NOT EXISTS decision_note TEXT`,
   `CREATE INDEX IF NOT EXISTS proposal_artifact_state ON proposal (artifact_id, state)`,
 ]
