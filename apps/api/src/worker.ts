@@ -1,10 +1,15 @@
-import type { D1Database, DurableObjectNamespace, R2Bucket } from "@cloudflare/workers-types"
+import type {
+  D1Database,
+  DurableObjectNamespace,
+  ExecutionContext,
+  R2Bucket,
+} from "@cloudflare/workers-types"
 import { createD1Store } from "@dock/db/d1"
 import { R2BlobStore } from "@dock/storage"
 import { D1Dialect } from "kysely-d1"
 import { createApp } from "./app"
 import { makeAuth } from "./auth-config"
-import { createDoBackplane } from "./realtime-do"
+import { createDoBackplane, edgeCtx } from "./realtime-do"
 
 // The realtime room Durable Object (one per channel). Exported so the Workers
 // runtime can instantiate the bound class.
@@ -36,7 +41,7 @@ export interface Env {
 let app: ReturnType<typeof createApp> | null = null
 
 export default {
-  fetch(req: Request, env: Env): Response | Promise<Response> {
+  fetch(req: Request, env: Env, ctx: ExecutionContext): Response | Promise<Response> {
     if (!app) {
       const baseUrl = env.BASE_URL ?? new URL(req.url).origin
       const auth = makeAuth(
@@ -54,6 +59,8 @@ export default {
         defaultOrgId: "default",
       })
     }
-    return app.fetch(req)
+    // Run within the per-request context so the DO backplane's publish can waitUntil.
+    const ready = app
+    return edgeCtx.run(ctx, () => ready.fetch(req))
   },
 }

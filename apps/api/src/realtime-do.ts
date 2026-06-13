@@ -1,6 +1,19 @@
-import type { DurableObjectNamespace, DurableObjectState } from "@cloudflare/workers-types"
+import { AsyncLocalStorage } from "node:async_hooks"
+import type {
+  DurableObjectNamespace,
+  DurableObjectState,
+  ExecutionContext,
+} from "@cloudflare/workers-types"
 import type { Context } from "hono"
 import type { Backplane, DockEvent, PresenceStore } from "./bus"
+
+/**
+ * Per-request execution context, so the DO backplane's fire-and-forget publish can
+ * ride `waitUntil` — Workers cancels un-awaited async once the response is sent, so
+ * a bare `void fetch(...)` to the room DO would be killed before it lands. The Worker
+ * entry wraps `app.fetch` in `edgeCtx.run(ctx, …)`.
+ */
+export const edgeCtx = new AsyncLocalStorage<ExecutionContext>()
 
 const PING_MS = 20_000
 const PRESENCE_TTL_MS = 45_000
@@ -113,9 +126,12 @@ export function createDoBackplane(rooms: DurableObjectNamespace): Backplane {
   }
   return {
     publish(channel, e) {
-      void stub(channel)
+      const p = stub(channel)
         .fetch("https://do/publish", { method: "POST", body: JSON.stringify(e) })
         .catch(() => {})
+      const ctx = edgeCtx.getStore()
+      if (ctx) ctx.waitUntil(p)
+      else void p
     },
     subscribe() {
       return () => {}
