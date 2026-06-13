@@ -1,8 +1,16 @@
 import { useNavigate } from "@tanstack/react-router"
+import type { FormEvent } from "react"
 import { useEffect, useState } from "react"
 import { api } from "../api"
 import { Logo } from "../components"
 import { useAuth } from "../ctx"
+
+const FEATURES: [string, string][] = [
+  ["Permanent URLs", "Every artifact gets a stable link with full version history."],
+  ["Review in context", "Comments anchor to the text and survive every republish."],
+  ["Publish from anywhere", "Ship from the CLI, the HTTP API, or an agent over MCP."],
+  ["Yours to host", "Self-host the whole thing, or use the hosted tier."],
+]
 
 export function Login() {
   const { me, loading, setMe } = useAuth()
@@ -18,7 +26,7 @@ export function Login() {
     if (!loading && me) nav({ to: "/" })
   }, [loading, me, nav])
 
-  const submit = async (e: React.FormEvent) => {
+  const submit = async (e: FormEvent) => {
     e.preventDefault()
     setErr("")
     setBusy(true)
@@ -35,113 +43,116 @@ export function Login() {
   }
 
   return (
-    <div className="center">
-      <div style={{ width: 360, maxWidth: "90vw" }}>
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "center",
-            alignItems: "center",
-            gap: 10,
-            marginBottom: 6,
-          }}
-        >
-          <Logo size={30} />
-          <span className="display" style={{ fontWeight: 600, fontSize: 22 }}>
-            Dock
-          </span>
+    <div className="auth">
+      <aside className="auth-aside">
+        <div className="auth-aside-inner">
+          <div className="auth-brand">
+            <Logo size={30} />
+            <span className="display">Dock</span>
+          </div>
+          <h1 className="display auth-headline">The permanent home for your AI artifacts.</h1>
+          <p className="auth-sub">
+            Give any HTML page, doc, or built site a lasting URL, version history, and a review loop
+            your team and your agents can actually use.
+          </p>
+          <ul className="auth-features">
+            {FEATURES.map(([title, desc]) => (
+              <li key={title}>
+                <span className="auth-check" aria-hidden>
+                  ✓
+                </span>
+                <div>
+                  <b>{title}</b>
+                  <span>{desc}</span>
+                </div>
+              </li>
+            ))}
+          </ul>
         </div>
-        <p className="muted" style={{ textAlign: "center", margin: "0 0 24px" }}>
-          {mode === "signup" ? "Create your account." : "Sign in to your workspace."}
-        </p>
-        <form
-          className="card"
-          style={{ padding: 22, boxShadow: "var(--shadow)" }}
-          onSubmit={submit}
-        >
-          {err && (
-            <div
-              style={{
-                background: "var(--cmt-bg)",
-                color: "var(--bad)",
-                borderRadius: 8,
-                padding: "8px 12px",
-                fontSize: 13,
-                marginBottom: 12,
-              }}
-            >
-              {err}
-            </div>
-          )}
-          {mode === "signup" && (
-            <label style={lbl}>
-              Name
+      </aside>
+
+      <main className="auth-main">
+        <div className="auth-card-wrap">
+          <div className="auth-brand auth-brand-mobile">
+            <Logo size={26} />
+            <span className="display">Dock</span>
+          </div>
+          <p className="auth-tagline-mobile muted">
+            Permanent URLs, versions, and review for your AI artifacts.
+          </p>
+          <h2 className="display auth-title">
+            {mode === "signup" ? "Create your account" : "Welcome back"}
+          </h2>
+          <p className="muted auth-card-sub">
+            {mode === "signup"
+              ? "Start publishing artifacts in seconds."
+              : "Sign in to your workspace."}
+          </p>
+
+          <form className="auth-form" onSubmit={submit}>
+            {err && <div className="auth-err">{err}</div>}
+            {mode === "signup" && (
+              <label className="auth-field">
+                Name
+                <input
+                  className="input"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder="Your name"
+                />
+              </label>
+            )}
+            <label className="auth-field">
+              Email
               <input
                 className="input"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="Your name"
+                type="email"
+                required
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="you@company.com"
               />
             </label>
-          )}
-          <label style={lbl}>
-            Email
-            <input
-              className="input"
-              type="email"
-              required
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="you@company.com"
-            />
-          </label>
-          <label style={{ ...lbl, marginBottom: 16 }}>
-            Password
-            <input
-              className="input"
-              type="password"
-              required
-              minLength={8}
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="At least 8 characters"
-            />
-          </label>
-          <button
-            className="btn pri"
-            type="submit"
-            disabled={busy}
-            style={{ width: "100%", justifyContent: "center" }}
-          >
-            {busy ? "…" : mode === "signup" ? "Create account" : "Sign in"}
-          </button>
-        </form>
-        <p className="muted" style={{ textAlign: "center", fontSize: 13, marginTop: 14 }}>
-          {mode === "login" ? (
-            <>
-              New here?{" "}
-              <a style={{ cursor: "pointer" }} onClick={() => setMode("signup")}>
-                Create an account
-              </a>
-            </>
-          ) : (
-            <>
-              Have an account?{" "}
-              <a style={{ cursor: "pointer" }} onClick={() => setMode("login")}>
-                Sign in
-              </a>
-            </>
-          )}
-        </p>
-      </div>
+            <label className="auth-field">
+              Password
+              <input
+                className="input"
+                type="password"
+                required
+                minLength={8}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="At least 8 characters"
+              />
+            </label>
+            <button
+              className="btn pri auth-submit"
+              type="submit"
+              disabled={busy || !email || !password}
+            >
+              {busy ? "…" : mode === "signup" ? "Create account" : "Sign in"}
+            </button>
+          </form>
+
+          <p className="auth-toggle muted">
+            {mode === "login" ? (
+              <>
+                New here?{" "}
+                <button type="button" className="lnk" onClick={() => setMode("signup")}>
+                  Create an account
+                </button>
+              </>
+            ) : (
+              <>
+                Have an account?{" "}
+                <button type="button" className="lnk" onClick={() => setMode("login")}>
+                  Sign in
+                </button>
+              </>
+            )}
+          </p>
+        </div>
+      </main>
     </div>
   )
-}
-
-const lbl: React.CSSProperties = {
-  display: "block",
-  fontSize: 12.5,
-  fontWeight: 600,
-  color: "var(--fg-mut)",
-  marginBottom: 12,
 }
