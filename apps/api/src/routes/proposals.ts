@@ -7,8 +7,9 @@ import {
   propose,
 } from "@dock/core"
 import { type Context, Hono } from "hono"
+import { z } from "zod"
 import type { AppContext } from "../context"
-import { fail, MAX_UPLOAD_BYTES, str } from "../lib/http"
+import { fail, MAX_UPLOAD_BYTES, readJson, str } from "../lib/http"
 
 /** Reviews: a proposal is a candidate version awaiting approval. A commenter
  *  proposes; an editor approves (it goes live) or requests changes. */
@@ -145,7 +146,8 @@ export const proposalRoutes = (ctx: AppContext) => {
     if (proposal.state !== "open") return fail(c, 409, `proposal is ${proposal.state}`)
     const me = await currentUser(c)
     const approver = me ? (me.name ?? me.email) : null
-    const body = (await c.req.json().catch(() => ({}))) as { note?: unknown }
+    const body = await readJson(c, z.object({ note: z.unknown() }))
+    if (body instanceof Response) return body
     try {
       const version = await approveProposal(meta, blobs, proposal, approver, str(body.note) ?? null)
       bus.publish(artifact.id, {
@@ -180,7 +182,8 @@ export const proposalRoutes = (ctx: AppContext) => {
     if (proposal.state !== "open") return fail(c, 409, `proposal is ${proposal.state}`)
     const me = await currentUser(c)
     const reviewer = me ? (me.name ?? me.email) : null
-    const body = (await c.req.json().catch(() => ({}))) as { note?: unknown }
+    const body = await readJson(c, z.object({ note: z.unknown() }))
+    if (body instanceof Response) return body
     await meta.decideProposal(proposal.id, {
       state: "changes_requested",
       decided_by: reviewer,

@@ -1,7 +1,8 @@
-import { isRole, newId } from "@dock/core"
+import { isRole, newId, type Role } from "@dock/core"
 import { Hono } from "hono"
+import { z } from "zod"
 import type { AppContext } from "../context"
-import { fail } from "../lib/http"
+import { fail, readJson } from "../lib/http"
 
 /** Per-artifact role overrides (a share). Managing shares requires `manage` on
  *  the artifact; the share's role beats the caller's workspace baseline. */
@@ -30,8 +31,14 @@ export const sharingRoutes = (ctx: AppContext) => {
     const artifact = await meta.getByShortId(c.req.param("shortId"))
     if (!artifact) return fail(c, 404, "not found")
     if (!(await authorize(c, "manage", artifact))) return fail(c, 403, "forbidden")
-    const b = (await c.req.json().catch(() => ({}))) as { email?: string; role?: string }
-    if (!b.email || !isRole(b.role)) return fail(c, 400, "email and a valid role are required")
+    const b = await readJson(
+      c,
+      z.object({
+        email: z.string().min(1, "an email is required"),
+        role: z.custom<Role>(isRole, "a valid role is required"),
+      }),
+    )
+    if (b instanceof Response) return b
     const user = await meta.findUserByEmail(b.email.trim())
     if (!user) return fail(c, 404, "no Dock user with that email")
     await meta.setArtifactMember({

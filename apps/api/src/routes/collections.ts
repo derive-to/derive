@@ -7,9 +7,10 @@ import {
   roleAllows,
 } from "@dock/core"
 import { type Context, Hono } from "hono"
+import { z } from "zod"
 import type { AppContext } from "../context"
 import { safeEqual } from "../lib/crypto"
-import { fail } from "../lib/http"
+import { fail, readJson } from "../lib/http"
 
 /** Collections: shareable groups of artifacts. A member's role on a collection
  *  propagates to every artifact inside it (see collectionRolesForArtifact). */
@@ -37,9 +38,12 @@ export const collectionRoutes = (ctx: AppContext) => {
   app.post("/v1/collections", async (c) => {
     if (!(await workspaceCan(c, "comment"))) return fail(c, 403, "forbidden")
     const me = await currentUser(c)
-    const body = (await c.req.json().catch(() => ({}))) as { title?: string }
-    const title = (body.title ?? "").trim().slice(0, 120)
-    if (!title) return fail(c, 400, "title required")
+    const body = await readJson(
+      c,
+      z.object({ title: z.string().refine((s) => s.trim() !== "", "title required") }),
+    )
+    if (body instanceof Response) return body
+    const title = body.title.trim().slice(0, 120)
     const createdBy = me?.id ?? "anon"
     const col = await meta.createCollection({
       id: newId("col"),
@@ -61,7 +65,8 @@ export const collectionRoutes = (ctx: AppContext) => {
     const col = await meta.getCollection(c.req.param("id"))
     if (!col) return fail(c, 404, "not found")
     if (!(await canManageCollection(c, col, "publish"))) return fail(c, 403, "forbidden")
-    const body = (await c.req.json().catch(() => ({}))) as { title?: string }
+    const body = await readJson(c, z.object({ title: z.string().optional() }))
+    if (body instanceof Response) return body
     return c.json(await meta.updateCollection(col.id, { title: body.title?.trim().slice(0, 120) }))
   })
   app.delete("/v1/collections/:id", async (c) => {
@@ -109,8 +114,14 @@ export const collectionRoutes = (ctx: AppContext) => {
     const col = await meta.getCollection(c.req.param("id"))
     if (!col) return fail(c, 404, "not found")
     if (!(await canManageCollection(c, col, "manage"))) return fail(c, 403, "forbidden")
-    const b = (await c.req.json().catch(() => ({}))) as { email?: string; role?: string }
-    if (!b.email || !isRole(b.role)) return fail(c, 400, "email and a valid role are required")
+    const b = await readJson(
+      c,
+      z.object({
+        email: z.string().min(1, "an email is required"),
+        role: z.custom<Role>(isRole, "a valid role is required"),
+      }),
+    )
+    if (b instanceof Response) return b
     const user = await meta.findUserByEmail(b.email.trim())
     if (!user) return fail(c, 404, "no Dock user with that email")
     await meta.setCollectionMember({

@@ -1,7 +1,8 @@
 import { Hono } from "hono"
 import { streamSSE } from "hono/streaming"
+import { z } from "zod"
 import type { AppContext } from "../context"
-import { fail } from "../lib/http"
+import { fail, readJson } from "../lib/http"
 
 /** In-app notifications (the header bell) for the signed-in user. */
 export const notificationRoutes = (ctx: AppContext) => {
@@ -21,7 +22,8 @@ export const notificationRoutes = (ctx: AppContext) => {
   app.post("/v1/notifications/read", async (c) => {
     const me = await currentUser(c)
     if (!me) return fail(c, 401, "unauthenticated")
-    const body = (await c.req.json().catch(() => ({}))) as { ids?: unknown; all?: unknown }
+    const body = await readJson(c, z.object({}).catchall(z.unknown()))
+    if (body instanceof Response) return body
     const ids =
       body.all === true
         ? "all"

@@ -1,5 +1,6 @@
 import { type ArtifactRecord, type CommentRecord, isAnchored, newId } from "@dock/core"
 import { type Context, Hono } from "hono"
+import { z } from "zod"
 import type { AppContext } from "../context"
 import {
   commentJson,
@@ -10,7 +11,7 @@ import {
   quoteOf,
   REACTIONS,
 } from "../lib/comments"
-import { fail } from "../lib/http"
+import { fail, readJson } from "../lib/http"
 
 /** Comments: threaded, anchored to text quotes, with reactions, edits, and soft
  *  deletes. @mentions notify people (bell) or land in an agent's pull inbox. */
@@ -94,9 +95,13 @@ export const commentRoutes = (ctx: AppContext) => {
     if (!(await authorize(c, "comment", artifact))) return fail(c, 403, "forbidden")
     const rl = await limited(c, commentLimiter)
     if (rl) return rl
-    const body = (await c.req.json().catch(() => ({}))) as Record<string, unknown>
-    if (typeof body.body_md !== "string" || body.body_md.trim() === "")
-      return fail(c, 400, "body_md required")
+    const body = await readJson(
+      c,
+      z
+        .object({ body_md: z.string().refine((s) => s.trim() !== "", "body_md required") })
+        .catchall(z.unknown()),
+    )
+    if (body instanceof Response) return body
 
     const id = newId("c")
     const threadId = typeof body.thread_id === "string" && body.thread_id ? body.thread_id : id
@@ -177,7 +182,8 @@ export const commentRoutes = (ctx: AppContext) => {
     if (!(await authorize(c, "comment", artifact))) return fail(c, 403, "forbidden")
     const cm = await meta.getComment(c.req.param("commentId"))
     if (!cm || cm.artifact_id !== artifact.id) return fail(c, 404, "not found")
-    const body = (await c.req.json().catch(() => ({}))) as { state?: string }
+    const body = await readJson(c, z.object({ state: z.string().optional() }))
+    if (body instanceof Response) return body
     const state = body.state === "open" ? "open" : "resolved"
     const updated = await meta.setThreadState(artifact.id, cm.thread_id, state)
     bus.publish(artifact.id, { type: "comment.resolved", thread_id: cm.thread_id, state })
@@ -191,8 +197,11 @@ export const commentRoutes = (ctx: AppContext) => {
     if ("error" in r) return r.error
     const { artifact, cm } = r
     if (!(await authorize(c, "comment", artifact))) return fail(c, 403, "forbidden")
-    const body = (await c.req.json().catch(() => ({}))) as { emoji?: string }
-    if (!body.emoji || !REACTIONS.includes(body.emoji)) return fail(c, 400, "unknown reaction")
+    const body = await readJson(
+      c,
+      z.object({ emoji: z.string().refine((e) => REACTIONS.includes(e), "unknown reaction") }),
+    )
+    if (body instanceof Response) return body
     const actor = (await actorName(c)) ?? "anonymous"
     const md = parseMeta(cm.meta)
     const reactions = md.reactions ?? {}
@@ -216,9 +225,11 @@ export const commentRoutes = (ctx: AppContext) => {
     if (!(await authorize(c, "comment", artifact))) return fail(c, 403, "forbidden")
     const actor = await actorName(c)
     if (actor && cm.author !== actor) return fail(c, 403, "forbidden")
-    const body = (await c.req.json().catch(() => ({}))) as { body_md?: string }
-    if (typeof body.body_md !== "string" || body.body_md.trim() === "")
-      return fail(c, 400, "body_md required")
+    const body = await readJson(
+      c,
+      z.object({ body_md: z.string().refine((s) => s.trim() !== "", "body_md required") }),
+    )
+    if (body instanceof Response) return body
     const md = parseMeta(cm.meta)
     md.edited_at = new Date().toISOString()
     const updated = await meta.updateComment(cm.id, {

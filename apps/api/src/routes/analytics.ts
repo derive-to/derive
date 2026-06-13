@@ -1,8 +1,9 @@
 import { can, newId } from "@dock/core"
 import { Hono } from "hono"
 import { getCookie, setCookie } from "hono/cookie"
+import { z } from "zod"
 import type { AppContext } from "../context"
-import { fail, VIEW_DEDUP_MS } from "../lib/http"
+import { fail, readJson, VIEW_DEDUP_MS } from "../lib/http"
 
 /** View recording (de-duped, owner self-views excluded) + per-artifact stats. */
 export const analyticsRoutes = (ctx: AppContext) => {
@@ -47,7 +48,8 @@ export const analyticsRoutes = (ctx: AppContext) => {
       viewer = vid
       kind = "anon"
     }
-    const body = (await c.req.json().catch(() => ({}))) as { version?: number }
+    const body = await readJson(c, z.object({}).catchall(z.unknown()))
+    if (body instanceof Response) return body
     const version = Number.isInteger(body.version)
       ? (body.version as number)
       : artifact.current_version
