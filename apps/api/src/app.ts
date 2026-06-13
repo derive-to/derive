@@ -513,7 +513,17 @@ export function createApp(deps: AppDeps): Hono {
       return c.json({ error: "email and a valid role are required" }, 400)
     const user = await meta.findUserByEmail(b.email.trim())
     if (!user) return c.json({ error: "no Dock user with that email" }, 404)
-    await meta.setMembership({ id: newId("m"), org_id: WORKSPACE, user_id: user.id, role: b.role })
+    // This route both adds and re-roles, so it must honor the same last-Admin
+    // guard as PATCH — otherwise an Admin could demote the sole Admin via PUT.
+    const existing = await meta.getMembership(WORKSPACE, user.id)
+    if (existing?.role === "owner" && b.role !== "owner" && (await isLastOwner(user.id)))
+      return c.json({ error: "the workspace needs at least one admin" }, 409)
+    await meta.setMembership({
+      id: existing?.id ?? newId("m"),
+      org_id: WORKSPACE,
+      user_id: user.id,
+      role: b.role,
+    })
     return c.json({ user_id: user.id, email: user.email, name: user.name, role: b.role }, 201)
   })
 
