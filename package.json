@@ -30,6 +30,7 @@
     "start": "pnpm --filter @dock/api start",
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r test",
+    "test:pg": "bash scripts/test-pg.sh",
     "lint": "biome lint",
     "format": "biome format --write",
     "check": "biome check",
