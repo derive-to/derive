@@ -6,6 +6,7 @@ import type {
   CommentState,
   DeliveryRecord,
   DeliveryStatus,
+  ListArtifactsOpts,
   MembershipRecord,
   MetaStore,
   NewArtifact,
@@ -26,7 +27,7 @@ import type {
   ViewStats,
   WebhookRecord,
 } from "@dock/core"
-import { and, asc, count, desc, eq, inArray, isNull, lte, or, sql } from "drizzle-orm"
+import { and, asc, count, desc, eq, inArray, isNull, like, lt, lte, or, sql } from "drizzle-orm"
 import { type DrizzleD1Database, drizzle } from "drizzle-orm/d1"
 import {
   artifact,
@@ -156,9 +157,38 @@ export class D1MetaStore implements MetaStore {
     return res.meta.changes ?? 0
   }
 
-  async listArtifacts(opts?: { limit?: number }): Promise<ArtifactRecord[]> {
-    const q = this.db.select().from(artifact).orderBy(desc(artifact.created_at))
+  async listArtifacts(opts?: ListArtifactsOpts): Promise<ArtifactRecord[]> {
+    if (opts?.ids && opts.ids.length === 0) return []
+    const conds = []
+    if (opts?.q) conds.push(like(sql`lower(${artifact.title})`, `%${opts.q.toLowerCase()}%`))
+    if (opts?.cursor) conds.push(lt(artifact.created_at, opts.cursor))
+    if (opts?.ids) conds.push(inArray(artifact.id, opts.ids))
+    const q = this.db
+      .select()
+      .from(artifact)
+      .where(conds.length ? and(...conds) : undefined)
+      .orderBy(desc(artifact.created_at))
     return (opts?.limit ? q.limit(opts.limit) : q).all()
+  }
+  async artifactIdsByTag(tag: string): Promise<string[]> {
+    const rows = await this.db
+      .select({ id: artifactTag.artifact_id })
+      .from(artifactTag)
+      .where(eq(artifactTag.tag, tag))
+      .all()
+    return rows.map((r) => r.id)
+  }
+  async countArtifacts(): Promise<number> {
+    const r = await this.db.select({ c: count() }).from(artifact).get()
+    return r?.c ?? 0
+  }
+  async tagCounts(): Promise<{ tag: string; count: number }[]> {
+    return this.db
+      .select({ tag: artifactTag.tag, count: count() })
+      .from(artifactTag)
+      .groupBy(artifactTag.tag)
+      .orderBy(asc(artifactTag.tag))
+      .all()
   }
 
   async recordView(v: NewView): Promise<void> {

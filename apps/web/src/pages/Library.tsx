@@ -1,12 +1,15 @@
 import { useNavigate } from "@tanstack/react-router"
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { API_BASE, type Artifact, api } from "../api"
 import { Header, useIsMobile, useToast } from "../components"
 import { useAuth } from "../ctx"
 
 type Filter = { kind: "all" } | { kind: "favorites" } | { kind: "tag"; tag: string }
+type TagCount = { tag: string; count: number }
+type Summary = { total: number; favorites: number; tags: TagCount[] }
 
 const RAIL_KEY = "dock.browse.rail"
+const PAGE = 30
 
 // A live, scaled-down render of the artifact's current version. Sandboxed and
 // non-interactive (clicks fall through to the card); lazy so off-screen cards
@@ -51,12 +54,18 @@ export function Library() {
   const { me, loading } = useAuth()
   const nav = useNavigate()
   const isMobile = useIsMobile()
-  const [items, setItems] = useState<Artifact[] | null>(null)
-  const [busy, setBusy] = useState(false)
   const file = useRef<HTMLInputElement>(null)
   const { toast, show } = useToast()
 
+  const [items, setItems] = useState<Artifact[]>([])
+  const [nextCursor, setNextCursor] = useState<string | null>(null)
+  const [fetching, setFetching] = useState(true)
+  const [more, setMore] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [summary, setSummary] = useState<Summary | null>(null)
+
   const [query, setQuery] = useState("")
+  const [debouncedQ, setDebouncedQ] = useState("")
   const [filter, setFilter] = useState<Filter>({ kind: "all" })
   const [rail, setRail] = useState<boolean>(() => {
     try {
@@ -78,13 +87,50 @@ export function Library() {
   useEffect(() => {
     if (!loading && !me) nav({ to: "/login" })
   }, [loading, me, nav])
+
+  // Debounce typing into a server query.
   useEffect(() => {
-    if (me)
-      api
-        .listArtifacts()
-        .then((r) => setItems(r.artifacts))
-        .catch(() => setItems([]))
-  }, [me])
+    const t = setTimeout(() => setDebouncedQ(query.trim()), 280)
+    return () => clearTimeout(t)
+  }, [query])
+
+  // Server-side search + filter + keyset pagination. Page 1 on every
+  // query/filter change; `cursor` appends the next page.
+  const load = useCallback(
+    async (cursor?: string) => {
+      cursor ? setMore(true) : setFetching(true)
+      try {
+        const r = await api.listArtifacts({
+          q: debouncedQ || undefined,
+          tag: filter.kind === "tag" ? filter.tag : undefined,
+          favorite: filter.kind === "favorites" || undefined,
+          cursor,
+          limit: PAGE,
+        })
+        setItems((prev) => (cursor ? [...prev, ...r.artifacts] : r.artifacts))
+        setNextCursor(r.next_cursor)
+      } catch {
+        if (!cursor) setItems([])
+      } finally {
+        setFetching(false)
+        setMore(false)
+      }
+    },
+    [debouncedQ, filter],
+  )
+  useEffect(() => {
+    if (me) load()
+  }, [me, load])
+
+  const refreshSummary = useCallback(() => {
+    api
+      .browseSummary()
+      .then(setSummary)
+      .catch(() => {})
+  }, [])
+  useEffect(() => {
+    if (me) refreshSummary()
+  }, [me, refreshSummary])
 
   const publish = async () => {
     const f = file.current?.files?.[0]
@@ -102,41 +148,23 @@ export function Library() {
     }
   }
 
-  // Star toggle is optimistic: reflect immediately, reconcile/revert on error.
+  // Star toggle is optimistic; in the Favorites view an un-star drops the card.
   const toggleFav = async (a: Artifact) => {
     const on = !a.favorite
-    const flip = (val: boolean) =>
-      setItems((p) => p?.map((x) => (x.short_id === a.short_id ? { ...x, favorite: val } : x)) ?? p)
-    flip(on)
+    setItems((prev) => {
+      const next = prev.map((x) => (x.short_id === a.short_id ? { ...x, favorite: on } : x))
+      return filter.kind === "favorites" && !on
+        ? next.filter((x) => x.short_id !== a.short_id)
+        : next
+    })
     try {
       await api.favorite(a.short_id, on)
+      refreshSummary()
     } catch (e) {
       show((e as Error).message)
-      flip(!on)
+      load()
     }
   }
-
-  const all = items ?? []
-  const favCount = all.filter((a) => a.favorite).length
-  const tagCounts = useMemo(() => {
-    const m = new Map<string, number>()
-    for (const a of all) for (const t of a.tags ?? []) m.set(t, (m.get(t) ?? 0) + 1)
-    return [...m.entries()].sort((x, y) => y[1] - x[1] || x[0].localeCompare(y[0]))
-  }, [all])
-
-  const filtered = useMemo(() => {
-    let list = all
-    if (filter.kind === "favorites") list = list.filter((a) => a.favorite)
-    else if (filter.kind === "tag") list = list.filter((a) => (a.tags ?? []).includes(filter.tag))
-    const q = query.trim().toLowerCase()
-    if (q)
-      list = list.filter(
-        (a) =>
-          (a.title ?? a.short_id).toLowerCase().includes(q) ||
-          (a.tags ?? []).some((t) => t.includes(q)),
-      )
-    return list
-  }, [all, filter, query])
 
   const pick = (f: Filter) => {
     setFilter(f)
@@ -148,6 +176,13 @@ export function Library() {
       : filter.kind === "favorites"
         ? "Favorites"
         : `#${filter.tag}`
+  const headingCount = debouncedQ
+    ? items.length
+    : filter.kind === "all"
+      ? (summary?.total ?? items.length)
+      : filter.kind === "favorites"
+        ? (summary?.favorites ?? items.length)
+        : (summary?.tags.find((t) => t.tag === filter.tag)?.count ?? items.length)
 
   if (!me)
     return (
@@ -186,9 +221,9 @@ export function Library() {
           rail={!isMobile && rail}
           drawer={isMobile}
           open={drawer}
-          total={all.length}
-          favCount={favCount}
-          tags={tagCounts}
+          total={summary?.total ?? 0}
+          favCount={summary?.favorites ?? 0}
+          tags={summary?.tags ?? []}
           filter={filter}
           onPick={pick}
           onToggleRail={() => setRail((r) => !r)}
@@ -203,7 +238,7 @@ export function Library() {
             <div className="searchbar">
               <input
                 className="input"
-                placeholder="Search by title or tag…"
+                placeholder="Search by title…"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 style={{ flex: 1, minWidth: 200 }}
@@ -249,82 +284,91 @@ export function Library() {
             <h2 className="display" style={{ fontSize: 17, margin: "0 0 14px" }}>
               {heading}{" "}
               <span className="muted" style={{ fontWeight: 400, fontSize: 14 }}>
-                · {filtered.length}
+                · {headingCount}
               </span>
             </h2>
 
-            {items === null ? (
+            {fetching && items.length === 0 ? (
               <div className="center" style={{ height: 160 }}>
                 <div className="spin" />
               </div>
-            ) : filtered.length === 0 ? (
-              <EmptyState filter={filter} query={query} />
+            ) : items.length === 0 ? (
+              <EmptyState filter={filter} query={debouncedQ} />
             ) : (
-              <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "repeat(auto-fill,minmax(220px,1fr))",
-                  gap: 13,
-                }}
-              >
-                {filtered.map((a) => (
-                  <div key={a.short_id} className="card browse-card">
-                    <div style={{ position: "relative" }}>
-                      <Thumb id={a.short_id} v={a.current_version} />
-                      <button
-                        className={`star${a.favorite ? " on" : ""}`}
-                        title={a.favorite ? "Remove from favorites" : "Add to favorites"}
-                        aria-label="Toggle favorite"
-                        onClick={() => toggleFav(a)}
-                      >
-                        {a.favorite ? "★" : "☆"}
-                      </button>
-                    </div>
-                    <button
-                      className="card-open"
-                      onClick={() => nav({ to: "/a/$ref", params: { ref: a.short_id } })}
-                    >
-                      <span className="display" style={{ fontWeight: 600, fontSize: 15 }}>
-                        {a.title ?? a.short_id}
-                      </span>
-                      <span
-                        className="mono muted"
-                        style={{ fontSize: 11, display: "flex", gap: 8, alignItems: "center" }}
-                      >
-                        <span
-                          style={{
-                            background: "var(--card-2)",
-                            border: "1px solid var(--line-soft)",
-                            borderRadius: 5,
-                            padding: "1px 6px",
-                          }}
+              <>
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "repeat(auto-fill,minmax(220px,1fr))",
+                    gap: 13,
+                  }}
+                >
+                  {items.map((a) => (
+                    <div key={a.short_id} className="card browse-card">
+                      <div style={{ position: "relative" }}>
+                        <Thumb id={a.short_id} v={a.current_version} />
+                        <button
+                          className={`star${a.favorite ? " on" : ""}`}
+                          title={a.favorite ? "Remove from favorites" : "Add to favorites"}
+                          aria-label="Toggle favorite"
+                          onClick={() => toggleFav(a)}
                         >
-                          {a.kind}
-                        </span>
-                        <span>v{a.current_version}</span>
-                        {a.views !== undefined && a.views > 0 && (
-                          <span style={{ marginLeft: "auto" }} title={`${a.views} views`}>
-                            👁 {a.views > 999 ? `${(a.views / 1000).toFixed(1)}k` : a.views}
-                          </span>
-                        )}
-                      </span>
-                    </button>
-                    {(a.tags ?? []).length > 0 && (
-                      <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
-                        {(a.tags ?? []).slice(0, 6).map((t) => (
-                          <button
-                            key={t}
-                            className="tagchip"
-                            onClick={() => pick({ kind: "tag", tag: t })}
-                          >
-                            #{t}
-                          </button>
-                        ))}
+                          {a.favorite ? "★" : "☆"}
+                        </button>
                       </div>
-                    )}
+                      <button
+                        className="card-open"
+                        onClick={() => nav({ to: "/a/$ref", params: { ref: a.short_id } })}
+                      >
+                        <span className="display" style={{ fontWeight: 600, fontSize: 15 }}>
+                          {a.title ?? a.short_id}
+                        </span>
+                        <span
+                          className="mono muted"
+                          style={{ fontSize: 11, display: "flex", gap: 8, alignItems: "center" }}
+                        >
+                          <span
+                            style={{
+                              background: "var(--card-2)",
+                              border: "1px solid var(--line-soft)",
+                              borderRadius: 5,
+                              padding: "1px 6px",
+                            }}
+                          >
+                            {a.kind}
+                          </span>
+                          <span>v{a.current_version}</span>
+                          {a.views !== undefined && a.views > 0 && (
+                            <span style={{ marginLeft: "auto" }} title={`${a.views} views`}>
+                              👁 {a.views > 999 ? `${(a.views / 1000).toFixed(1)}k` : a.views}
+                            </span>
+                          )}
+                        </span>
+                      </button>
+                      {(a.tags ?? []).length > 0 && (
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+                          {(a.tags ?? []).slice(0, 6).map((t) => (
+                            <button
+                              key={t}
+                              className="tagchip"
+                              onClick={() => pick({ kind: "tag", tag: t })}
+                            >
+                              #{t}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+                {nextCursor && (
+                  <div style={{ textAlign: "center", marginTop: 20 }}>
+                    <button className="btn" onClick={() => load(nextCursor)} disabled={more}>
+                      {more ? "Loading…" : "Load more"}
+                    </button>
                   </div>
-                ))}
-              </div>
+                )}
+              </>
             )}
           </div>
         </main>
@@ -352,7 +396,7 @@ function Sidebar({
   open: boolean
   total: number
   favCount: number
-  tags: [string, number][]
+  tags: TagCount[]
   filter: Filter
   onPick: (f: Filter) => void
   onToggleRail: () => void
@@ -385,18 +429,18 @@ function Sidebar({
       {tags.length > 0 && (
         <>
           <div className="side-lbl">Tags</div>
-          {tags.map(([t, n]) => (
+          {tags.map(({ tag, count }) => (
             <button
-              key={t}
-              className={`side-item${filter.kind === "tag" && filter.tag === t ? " on" : ""}`}
-              onClick={() => onPick({ kind: "tag", tag: t })}
-              title={`#${t}`}
+              key={tag}
+              className={`side-item${filter.kind === "tag" && filter.tag === tag ? " on" : ""}`}
+              onClick={() => onPick({ kind: "tag", tag })}
+              title={`#${tag}`}
             >
               <span className="ic">#</span>
               <span className="lbl" style={{ overflow: "hidden", textOverflow: "ellipsis" }}>
-                {t}
+                {tag}
               </span>
-              <span className="n">{n}</span>
+              <span className="n">{count}</span>
             </button>
           ))}
         </>

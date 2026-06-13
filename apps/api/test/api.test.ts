@@ -1113,3 +1113,54 @@ describe("favorites + tags (browse)", () => {
     expect(map[id2]).toBeUndefined() // untagged ids simply have no entry
   })
 })
+
+describe("server-side search + cursor pagination", () => {
+  const putTags = (shortId: string, tags: string[]) =>
+    app.request(`/v1/artifacts/${shortId}/tags`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ tags }),
+    })
+
+  it("searches by title server-side, case-insensitive", async () => {
+    await upload("s1.md", "x", { title: "Quarterly ZZUNIQUE Report" })
+    await upload("s2.md", "x", { title: "Totally unrelated" })
+    const r = await (await app.request("/v1/artifacts?q=zzunique")).json()
+    const titles = r.artifacts.map((a: { title: string | null }) => a.title)
+    expect(titles).toContain("Quarterly ZZUNIQUE Report")
+    expect(titles.every((t: string | null) => /zzunique/i.test(t ?? ""))).toBe(true)
+  })
+
+  it("paginates newest-first with a keyset cursor (no overlap)", async () => {
+    for (const n of ["A", "B", "C"]) await upload(`pg${n}.md`, "x", { title: `PGSEED ${n}` })
+    const p1 = await (await app.request("/v1/artifacts?q=PGSEED&limit=2")).json()
+    expect(p1.artifacts).toHaveLength(2)
+    expect(typeof p1.next_cursor).toBe("string")
+    const p2 = await (
+      await app.request(
+        `/v1/artifacts?q=PGSEED&limit=2&cursor=${encodeURIComponent(p1.next_cursor)}`,
+      )
+    ).json()
+    expect(p2.artifacts).toHaveLength(1)
+    expect(p2.next_cursor).toBeNull()
+    const seen = new Set(p1.artifacts.map((a: { short_id: string }) => a.short_id))
+    expect(p2.artifacts.some((a: { short_id: string }) => seen.has(a.short_id))).toBe(false)
+  })
+
+  it("filters by ?tag= server-side", async () => {
+    const { short_id } = await (await upload("tg.md", "x", { title: "Tagged one" })).json()
+    await putTags(short_id, ["serverfilter"])
+    const r = await (await app.request("/v1/artifacts?tag=serverfilter")).json()
+    expect(r.artifacts.map((a: { short_id: string }) => a.short_id)).toEqual([short_id])
+  })
+
+  it("GET /v1/tags returns a browse summary (total, favorites, tag counts)", async () => {
+    const { short_id } = await (await upload("sum.md", "x", { title: "Summary doc" })).json()
+    await putTags(short_id, ["summaryfilter"])
+    const r = await (await app.request("/v1/tags")).json()
+    expect(typeof r.total).toBe("number")
+    expect(r.total).toBeGreaterThan(0)
+    expect(r.favorites).toBe(0) // anonymous in tests
+    expect(r.tags.find((t: { tag: string }) => t.tag === "summaryfilter")?.count).toBe(1)
+  })
+})

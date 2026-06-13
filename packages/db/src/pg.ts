@@ -5,6 +5,7 @@ import type {
   CommentState,
   DeliveryRecord,
   DeliveryStatus,
+  ListArtifactsOpts,
   MembershipRecord,
   MetaStore,
   NewArtifact,
@@ -25,7 +26,7 @@ import type {
   ViewStats,
   WebhookRecord,
 } from "@dock/core"
-import { and, asc, count, desc, eq, inArray, isNull, lte, or } from "drizzle-orm"
+import { and, asc, count, desc, eq, inArray, isNull, like, lt, lte, or, sql } from "drizzle-orm"
 import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres"
 import { Pool } from "pg"
 import {
@@ -157,9 +158,37 @@ export class PgMetaStore implements MetaStore {
     return rows.length
   }
 
-  listArtifacts(opts?: { limit?: number }): Promise<ArtifactRecord[]> {
-    const q = this.db.select().from(artifact).orderBy(desc(artifact.created_at))
+  listArtifacts(opts?: ListArtifactsOpts): Promise<ArtifactRecord[]> {
+    if (opts?.ids && opts.ids.length === 0) return Promise.resolve([])
+    const conds = []
+    if (opts?.q) conds.push(like(sql`lower(${artifact.title})`, `%${opts.q.toLowerCase()}%`))
+    if (opts?.cursor) conds.push(lt(artifact.created_at, opts.cursor))
+    if (opts?.ids) conds.push(inArray(artifact.id, opts.ids))
+    const q = this.db
+      .select()
+      .from(artifact)
+      .where(conds.length ? and(...conds) : undefined)
+      .orderBy(desc(artifact.created_at))
     return opts?.limit ? q.limit(opts.limit) : q
+  }
+  async artifactIdsByTag(tag: string): Promise<string[]> {
+    const rows = await this.db
+      .select({ id: artifactTag.artifact_id })
+      .from(artifactTag)
+      .where(eq(artifactTag.tag, tag))
+    return rows.map((r) => r.id)
+  }
+  async countArtifacts(): Promise<number> {
+    const rows = await this.db.select({ c: count() }).from(artifact)
+    return Number(rows[0]?.c ?? 0)
+  }
+  async tagCounts(): Promise<{ tag: string; count: number }[]> {
+    const rows = await this.db
+      .select({ tag: artifactTag.tag, count: count() })
+      .from(artifactTag)
+      .groupBy(artifactTag.tag)
+      .orderBy(asc(artifactTag.tag))
+    return rows.map((r) => ({ tag: r.tag, count: Number(r.count) }))
   }
 
   // ---- View analytics (raw: aggregation-heavy) ---------------------------
