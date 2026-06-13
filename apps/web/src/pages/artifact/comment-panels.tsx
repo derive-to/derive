@@ -60,6 +60,7 @@ export function MobileComments({
           stays tappable/scrollable, so no dimming layer intercepts it. */}
       <button
         type="button"
+        data-testid="comments-sheet-backdrop"
         aria-label="Close comments"
         tabIndex={open && full ? 0 : -1}
         onClick={onClose}
@@ -94,6 +95,7 @@ export function MobileComments({
           <Button
             variant="outline"
             size="sm"
+            data-testid="comments-sheet-new"
             onClick={() => {
               setFull(true)
               onNewGeneral()

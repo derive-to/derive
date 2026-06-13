@@ -117,6 +117,7 @@ export function WorkspaceSwitcher({
         )}
         <button
           type="button"
+          data-testid="workspace-settings"
           onClick={() => {
             setOpen(false)
             onSettings()
