@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router"
-import { Artifact } from "../pages/Artifact"
+import { Artifact } from "../pages/artifact"
 
 export const Route = createFileRoute("/a/$ref")({
   // `c` deep-links to a comment thread (opens the panel + focuses its anchor).
