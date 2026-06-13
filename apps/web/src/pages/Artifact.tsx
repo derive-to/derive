@@ -2190,8 +2190,7 @@ function CommentCard({
           <div className="flex gap-1.5 border-t border-border-soft px-3 py-2">
             <div className="flex-1" onClick={(e) => e.stopPropagation()}>
               <MentionField
-                className="input"
-                style={{ padding: "6px 9px", fontSize: 12, width: "100%" }}
+                testId="comment-reply-input"
                 value={reply}
                 onChange={setReply}
                 mentions={replyMentions}
@@ -2271,32 +2270,19 @@ function ResolvedSection({
 }) {
   const [open, setOpen] = useState(false)
   return (
-    <div style={{ marginTop: 4 }}>
+    <div className="mt-1">
       <button
+        type="button"
         onClick={() => setOpen((o) => !o)}
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 6,
-          width: "100%",
-          border: 0,
-          background: "transparent",
-          cursor: "pointer",
-          color: "var(--fg-mut)",
-          padding: "5px 2px",
-          font: "700 9.5px ui-monospace,Menlo,monospace",
-          letterSpacing: ".06em",
-          textTransform: "uppercase",
-        }}
+        data-testid="resolved-section-toggle"
+        className="flex w-full items-center gap-1.5 px-0.5 py-1.5 font-mono text-2xs font-bold uppercase tracking-[0.06em] text-muted-foreground"
       >
-        <span style={{ transition: "transform .15s", transform: open ? "rotate(90deg)" : "none" }}>
-          ▸
-        </span>
+        <span className={cn("transition-transform", open && "rotate-90")}>▸</span>
         Resolved ({threads.length})
       </button>
       {open &&
         threads.map((t) => (
-          <div key={t[0].thread_id} style={{ marginBottom: 9 }}>
+          <div key={t[0].thread_id} className="mb-2.5">
             <CommentCard
               thread={t}
               active={activeThread === t[0].thread_id}
@@ -2334,6 +2320,7 @@ function MentionField({
   multiline,
   className,
   style,
+  testId,
 }: {
   value: string
   onChange: (v: string) => void
@@ -2347,6 +2334,7 @@ function MentionField({
   multiline?: boolean
   className?: string
   style?: CSSProperties
+  testId?: string
 }) {
   const ref = useRef<HTMLTextAreaElement & HTMLInputElement>(null)
   const [menu, setMenu] = useState<{ at: number; end: number; q: string } | null>(null)
@@ -2444,7 +2432,11 @@ function MentionField({
 
   const shared = {
     ref,
-    className,
+    className: cn(
+      "w-full rounded-md border border-input bg-card px-2.5 py-1.5 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-accent",
+      className,
+    ),
+    "data-testid": testId,
     value,
     placeholder,
     onChange: (e: { target: HTMLTextAreaElement | HTMLInputElement }) => {
@@ -2467,45 +2459,24 @@ function MentionField({
         <input {...shared} onClick={(e) => e.stopPropagation()} />
       )}
       {menu && results.length > 0 && (
-        <div
-          className="card"
-          style={{
-            position: "absolute",
-            left: 0,
-            right: 0,
-            top: "calc(100% + 4px)",
-            zIndex: 40,
-            padding: 4,
-            boxShadow: "var(--shadow)",
-            maxHeight: 200,
-            overflow: "auto",
-          }}
-        >
+        <div className="absolute inset-x-0 top-[calc(100%+4px)] z-40 max-h-[200px] overflow-auto rounded-lg border border-border bg-card p-1 shadow-[var(--shadow)]">
           {results.map((u, i) => (
             <button
               key={u.id}
               type="button"
+              data-testid={`mention-option-${u.id}`}
               onMouseDown={(e) => {
                 e.preventDefault()
                 choose(u)
               }}
               onMouseEnter={() => setActive(i)}
-              style={{
-                display: "flex",
-                width: "100%",
-                gap: 8,
-                alignItems: "baseline",
-                padding: "6px 8px",
-                borderRadius: 6,
-                textAlign: "left",
-                background: i === active ? "var(--ac-soft)" : "transparent",
-                color: "var(--fg)",
-              }}
+              className={cn(
+                "flex w-full items-baseline gap-2 rounded-md px-2 py-1.5 text-left text-foreground",
+                i === active ? "bg-accent" : "bg-transparent",
+              )}
             >
-              <span style={{ fontWeight: 600, fontSize: 12.5 }}>{u.name}</span>
-              <span className="mono" style={{ fontSize: 10.5, color: "var(--fg-mut)" }}>
-                {u.email}
-              </span>
+              <span className="text-sm font-semibold">{u.name}</span>
+              <span className="font-mono text-2xs text-muted-foreground">{u.email}</span>
             </button>
           ))}
         </div>
@@ -2529,28 +2500,18 @@ function Composer({
     if (text.trim()) onSubmit(text, resolved)
   }
   return (
-    <div
-      className="card"
-      style={{ boxShadow: "var(--shadow)", borderColor: "var(--ac)", overflow: "hidden" }}
-    >
+    <div className="overflow-hidden rounded-lg border border-primary bg-card shadow-[var(--shadow)]">
       {quote && (
-        <div
-          className="cmt-quote"
-          style={{
-            borderLeft: "3px solid var(--ac)",
-            background: "var(--ac-soft)",
-            color: "var(--fg)",
-            fontStyle: "italic",
-          }}
-        >
+        <div className="block w-full truncate border-l-[3px] border-primary bg-accent px-2.5 py-1.5 text-left text-xs italic text-foreground">
           “{quote}”
         </div>
       )}
-      <div style={{ padding: 9 }}>
+      <div className="p-2.5">
         <MentionField
           multiline
           autoFocus
-          className="input"
+          testId="composer-input"
+          className="min-h-[56px] resize-y"
           value={text}
           onChange={setText}
           mentions={mentions}
@@ -2560,20 +2521,21 @@ function Composer({
           placeholder={
             quote ? "Comment on the selection… (@ to mention)" : "Add a comment… (@ to mention)"
           }
-          style={{ minHeight: 56, resize: "vertical", fontSize: 12.5, width: "100%" }}
         />
-        <div style={{ display: "flex", gap: 6, marginTop: 7 }}>
-          <button
-            className="btn pri sm"
+        <div className="mt-1.5 flex gap-1.5">
+          <Button
+            variant="primary"
+            size="sm"
+            className="flex-1"
             disabled={!text.trim()}
+            data-testid="composer-submit"
             onClick={() => submit(mentions.filter((m) => text.includes(`@${m.name}`)))}
-            style={{ flex: 1, justifyContent: "center" }}
           >
             Comment
-          </button>
-          <button className="btn sm" onClick={onCancel}>
+          </Button>
+          <Button variant="outline" size="sm" onClick={onCancel}>
             Cancel
-          </button>
+          </Button>
         </div>
       </div>
     </div>
