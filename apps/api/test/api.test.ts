@@ -577,15 +577,17 @@ describe("live stream (SSE)", () => {
 // (so the share route can resolve email→id) and stand in a fake `auth` whose
 // session is chosen by an `x-test-user` header (the user's email). A static
 // token keeps the instance secured, so an unauthenticated caller is NOT owner.
-type TestUser = { id: string; email: string; name: string | null }
+type TestUser = { id: string; email: string; name: string | null; image?: string | null }
 
 const makeAuthedApp = (name: string, users: TestUser[], defaultRole?: AppDeps["defaultRole"]) => {
   const path = join(dir, `${name}.db`)
   const m = new SqliteMetaStore(path)
   const raw = new Database(path)
-  raw.exec(`CREATE TABLE IF NOT EXISTS user (id TEXT PRIMARY KEY, email TEXT, name TEXT)`)
-  const ins = raw.prepare(`INSERT OR IGNORE INTO user (id, email, name) VALUES (?,?,?)`)
-  for (const u of users) ins.run(u.id, u.email, u.name)
+  raw.exec(
+    `CREATE TABLE IF NOT EXISTS user (id TEXT PRIMARY KEY, email TEXT, name TEXT, image TEXT)`,
+  )
+  const ins = raw.prepare(`INSERT OR IGNORE INTO user (id, email, name, image) VALUES (?,?,?,?)`)
+  for (const u of users) ins.run(u.id, u.email, u.name, u.image ?? null)
   raw.close()
   const auth = {
     handler: async () => new Response(null, { status: 404 }),
@@ -1479,31 +1481,69 @@ describe("collections", () => {
 
 describe("analytics: identity + retention", () => {
   const ann: TestUser = { id: "u_view_ann", email: "ann@dock.test", name: "Ann" }
-  const { app, meta: m } = makeAuthedApp("analytics-id", [ann])
+  const bob: TestUser = {
+    id: "u_view_bob",
+    email: "bob@dock.test",
+    name: "Bob",
+    image: "https://cdn.dock.test/bob.png",
+  }
+  const { app, meta: m } = makeAuthedApp("analytics-id", [ann, bob], "commenter")
 
-  it("attributes a signed-in viewer to their account, shown by name (not anonymous)", async () => {
+  it("excludes the owner's own opens; counts a viewer (by name + avatar) and anon", async () => {
     const sid = (await (await publishAs(app, "<h1>v</h1>", {}, as(ann.email))).json()).short_id
-    // Two opens by Ann collapse to one view, recorded as a user (never anon).
+    // Ann is the workspace owner (first member). Her own opens don't count.
     for (let i = 0; i < 2; i++)
       await app.request(`/v1/artifacts/${sid}/view`, jsonAs(as(ann.email), { version: 1 }))
+    // Bob is a commenter (audience); his two opens collapse to one counted view.
+    for (let i = 0; i < 2; i++)
+      await app.request(`/v1/artifacts/${sid}/view`, jsonAs(as(bob.email), { version: 1 }))
+    // An anonymous open also counts.
+    await app.request(`/v1/artifacts/${sid}/view`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ version: 1 }),
+    })
     const a = await (
       await app.request(`/v1/artifacts/${sid}/analytics`, { headers: as(ann.email) })
     ).json()
-    expect(a.total).toBe(1) // de-duped
-    expect(a.recent).toHaveLength(1)
-    expect(a.recent[0]).toMatchObject({ kind: "user", viewer: "Ann" }) // name, not id, not "Anonymous"
+    expect(a.total).toBe(2) // Bob (de-duped) + anon; Ann excluded
+    expect(a.unique).toBe(2)
+    expect(a.anonViewers).toBe(1)
+    const named = a.recent.filter((r: { kind: string }) => r.kind === "user")
+    expect(named).toHaveLength(1)
+    expect(named[0]).toMatchObject({ viewer: "Bob", avatar: bob.image }) // name + profile pic
+    expect(a.recent.some((r: { viewer: string }) => r.viewer === "Ann")).toBe(false)
   })
 
   it("prunes view rows older than the cutoff, keeps newer ones", async () => {
     const sid = (await (await publishAs(app, "<h1>p</h1>", {}, as(ann.email))).json()).short_id
-    await app.request(`/v1/artifacts/${sid}/view`, jsonAs(as(ann.email), { version: 1 }))
     const art = await m.getByShortId(sid)
     if (!art) throw new Error("no artifact")
+    await m.recordView({
+      id: "v_old",
+      artifact_id: art.id,
+      version: 1,
+      viewer: "anon_p",
+      viewer_kind: "anon",
+    })
     expect((await m.viewStats(art.id)).total).toBe(1)
     expect(await m.pruneViews(new Date(Date.now() - 86400_000).toISOString())).toBe(0) // none that old
     expect((await m.viewStats(art.id)).total).toBe(1) // kept
     expect(await m.pruneViews(new Date(Date.now() + 86400_000).toISOString())).toBeGreaterThan(0)
     expect((await m.viewStats(art.id)).total).toBe(0) // pruned
+  })
+
+  it("pruneViewsByViewers removes only the listed user-kind rows", async () => {
+    const sid = (await (await publishAs(app, "<h1>pv</h1>", {}, as(ann.email))).json()).short_id
+    const art = await m.getByShortId(sid)
+    if (!art) throw new Error("no artifact")
+    const v = (id: string, viewer: string, kind: "user" | "anon") =>
+      m.recordView({ id, artifact_id: art.id, version: 1, viewer, viewer_kind: kind })
+    await v("v_keep", "u_keep", "user")
+    await v("v_drop", "u_drop", "user")
+    await v("v_anon", "u_drop", "anon") // same string but anon-kind → must be kept
+    expect(await m.pruneViewsByViewers(["u_drop"])).toBe(1) // only the user-kind row
+    expect((await m.viewStats(art.id)).total).toBe(2) // u_keep + the anon row remain
   })
 
   it("the anonymous-viewer cookie is cross-site-safe when the SPA is split", async () => {

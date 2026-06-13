@@ -2989,7 +2989,9 @@ function Insights({ shortId }: { shortId: string }) {
   }, [open, data, off, shortId])
   if (off) return null
   const max = data ? Math.max(1, ...data.daily.map((d) => d.count)) : 1
-  const maxV = data ? Math.max(1, ...data.perVersion.map((v) => v.count)) : 1
+  const namedRecent = data ? data.recent.filter((r) => r.kind === "user") : []
+  const newestAnonAt = data?.recent.find((r) => r.kind === "anon")?.at
+  const moreNamed = data ? Math.max(0, data.unique - data.anonViewers - namedRecent.length) : 0
   return (
     <div ref={ref} style={{ position: "relative" }}>
       <button
@@ -3002,7 +3004,7 @@ function Insights({ shortId }: { shortId: string }) {
         title="View analytics"
       >
         <span style={{ fontSize: 12 }}>👁</span>
-        {data ? data.total.toLocaleString() : "Insights"}
+        {data ? data.unique.toLocaleString() : "Insights"}
       </button>
       {open && (
         <div
@@ -3023,171 +3025,149 @@ function Insights({ shortId }: { shortId: string }) {
             </div>
           ) : (
             <>
-              <div style={{ display: "flex", gap: 18, marginBottom: 12 }}>
-                <div>
-                  <div className="display" style={{ fontSize: 22, fontWeight: 700, lineHeight: 1 }}>
-                    {data.total.toLocaleString()}
-                  </div>
-                  <div className="mono muted" style={{ fontSize: 10 }}>
-                    views
-                  </div>
-                </div>
+              {/* General bar: people-first (viewers), views second, trend right. */}
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 16,
+                  paddingBottom: 12,
+                  marginBottom: 12,
+                  borderBottom: "1px solid var(--line-soft)",
+                }}
+              >
                 <div>
                   <div className="display" style={{ fontSize: 22, fontWeight: 700, lineHeight: 1 }}>
                     {data.unique.toLocaleString()}
                   </div>
                   <div className="mono muted" style={{ fontSize: 10 }}>
-                    unique
+                    {data.unique === 1 ? "viewer" : "viewers"}
                   </div>
                 </div>
+                <div>
+                  <div className="display" style={{ fontSize: 22, fontWeight: 700, lineHeight: 1 }}>
+                    {data.total.toLocaleString()}
+                  </div>
+                  <div className="mono muted" style={{ fontSize: 10 }}>
+                    {data.total === 1 ? "view" : "views"}
+                  </div>
+                </div>
+                {data.daily.length > 0 && (
+                  <div
+                    title="Last 30 days"
+                    style={{
+                      marginLeft: "auto",
+                      display: "flex",
+                      alignItems: "flex-end",
+                      gap: 1.5,
+                      height: 26,
+                      width: 96,
+                    }}
+                  >
+                    {data.daily.map((d) => (
+                      <div
+                        key={d.day}
+                        title={`${d.day}: ${d.count}`}
+                        style={{
+                          flex: 1,
+                          minWidth: 1,
+                          height: `${Math.max(6, (d.count / max) * 100)}%`,
+                          background: "var(--ac)",
+                          borderRadius: 1.5,
+                          opacity: 0.85,
+                        }}
+                      />
+                    ))}
+                  </div>
+                )}
               </div>
+
               <div
                 className="mono muted"
                 style={{
                   fontSize: 9.5,
                   letterSpacing: ".06em",
                   textTransform: "uppercase",
-                  marginBottom: 5,
+                  marginBottom: 7,
                 }}
               >
-                Last 30 days
+                Viewed by
               </div>
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "flex-end",
-                  gap: 2,
-                  height: 40,
-                  marginBottom: 12,
-                }}
-              >
-                {data.daily.length === 0 ? (
-                  <span className="muted" style={{ fontSize: 11 }}>
-                    No views yet.
-                  </span>
-                ) : (
-                  data.daily.map((d) => (
+              {namedRecent.length === 0 && data.anonViewers === 0 ? (
+                <div className="muted" style={{ fontSize: 11.5 }}>
+                  No views yet.
+                </div>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+                  {namedRecent.map((r) => (
                     <div
-                      key={d.day}
-                      title={`${d.day}: ${d.count}`}
-                      style={{
-                        flex: 1,
-                        minWidth: 2,
-                        height: `${(d.count / max) * 100}%`,
-                        background: "var(--ac)",
-                        borderRadius: 2,
-                        opacity: 0.85,
-                      }}
-                    />
-                  ))
-                )}
-              </div>
-              {data.perVersion.length > 0 && (
-                <>
-                  <div
-                    className="mono muted"
-                    style={{
-                      fontSize: 9.5,
-                      letterSpacing: ".06em",
-                      textTransform: "uppercase",
-                      marginBottom: 5,
-                    }}
-                  >
-                    By version
-                  </div>
-                  <div style={{ marginBottom: 12 }}>
-                    {data.perVersion.map((v) => (
-                      <div
-                        key={v.version}
-                        style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 3 }}
-                      >
-                        <span
-                          className="mono"
-                          style={{ fontSize: 10.5, width: 22, color: "var(--fg-mut)" }}
-                        >
-                          v{v.version}
-                        </span>
-                        <div
+                      key={r.viewer + r.at}
+                      style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}
+                    >
+                      {r.avatar ? (
+                        <img
+                          src={r.avatar}
+                          alt=""
                           style={{
-                            flex: 1,
-                            height: 6,
-                            background: "var(--card-2)",
-                            borderRadius: 999,
-                            overflow: "hidden",
-                          }}
-                        >
-                          <div
-                            style={{
-                              width: `${(v.count / maxV) * 100}%`,
-                              height: "100%",
-                              background: "var(--ac)",
-                              borderRadius: 999,
-                            }}
-                          />
-                        </div>
-                        <span
-                          className="mono muted"
-                          style={{ fontSize: 10, width: 30, textAlign: "right" }}
-                        >
-                          {v.count}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                </>
-              )}
-              {data.recent.length > 0 && (
-                <>
-                  <div
-                    className="mono muted"
-                    style={{
-                      fontSize: 9.5,
-                      letterSpacing: ".06em",
-                      textTransform: "uppercase",
-                      marginBottom: 5,
-                    }}
-                  >
-                    Recent viewers
-                  </div>
-                  <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                    {data.recent.map((r) => (
-                      <div
-                        key={r.viewer}
-                        style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 11.5 }}
-                      >
-                        <span
-                          style={{
-                            width: 17,
-                            height: 17,
+                            width: 18,
+                            height: 18,
                             borderRadius: "50%",
-                            background: r.kind === "user" ? "var(--ac-soft)" : "var(--card-2)",
-                            color: "var(--fg-mut)",
-                            display: "grid",
-                            placeItems: "center",
-                            fontSize: 8,
-                            fontWeight: 700,
-                            fontFamily: "ui-monospace,Menlo,monospace",
+                            objectFit: "cover",
+                            flex: "0 0 auto",
                           }}
-                        >
-                          {r.kind === "user" ? (r.viewer || "?").slice(0, 2).toUpperCase() : "·"}
-                        </span>
-                        <span
-                          style={{
-                            flex: 1,
-                            overflow: "hidden",
-                            textOverflow: "ellipsis",
-                            whiteSpace: "nowrap",
-                          }}
-                        >
-                          {r.kind === "user" ? r.viewer : "Anonymous"}
-                        </span>
+                        />
+                      ) : (
+                        <ColoredAvatar name={r.viewer} size={18} />
+                      )}
+                      <span
+                        style={{
+                          flex: 1,
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                          fontWeight: 500,
+                        }}
+                      >
+                        {r.viewer}
+                      </span>
+                      <span className="mono muted" style={{ fontSize: 9.5 }}>
+                        {ago(r.at)}
+                      </span>
+                    </div>
+                  ))}
+                  {data.anonViewers > 0 && (
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}>
+                      <span
+                        style={{
+                          width: 18,
+                          height: 18,
+                          borderRadius: "50%",
+                          background: "var(--card-2)",
+                          color: "var(--fg-mut)",
+                          display: "grid",
+                          placeItems: "center",
+                          fontSize: 11,
+                          flex: "0 0 auto",
+                        }}
+                      >
+                        ·
+                      </span>
+                      <span style={{ flex: 1, color: "var(--fg-mut)" }}>
+                        {data.anonViewers.toLocaleString()} anonymous
+                      </span>
+                      {newestAnonAt && (
                         <span className="mono muted" style={{ fontSize: 9.5 }}>
-                          {ago(r.at)}
+                          {ago(newestAnonAt)}
                         </span>
-                      </div>
-                    ))}
-                  </div>
-                </>
+                      )}
+                    </div>
+                  )}
+                  {moreNamed > 0 && (
+                    <div className="muted" style={{ fontSize: 11, paddingLeft: 26 }}>
+                      +{moreNamed} more
+                    </div>
+                  )}
+                </div>
               )}
             </>
           )}

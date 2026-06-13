@@ -267,12 +267,24 @@ export class SqliteMetaStore implements MetaStore {
     return this.raw.prepare(`DELETE FROM view WHERE created_at < ?`).run(cutoffIso).changes
   }
 
+  async pruneViewsByViewers(viewers: string[]): Promise<number> {
+    if (viewers.length === 0) return 0
+    const ph = viewers.map(() => "?").join(",")
+    return this.raw
+      .prepare(`DELETE FROM view WHERE viewer_kind='user' AND viewer IN (${ph})`)
+      .run(...viewers).changes
+  }
+
   async viewStats(artifactId: string): Promise<ViewStats> {
     const cutoff = new Date(Date.now() - VIEW_WINDOW_MS).toISOString()
     const n = (q: string, ...p: unknown[]) => (this.raw.prepare(q).get(...p) as { n: number }).n
     return {
       total: n(`SELECT count(*) n FROM view WHERE artifact_id=?`, artifactId),
       unique: n(`SELECT count(DISTINCT viewer) n FROM view WHERE artifact_id=?`, artifactId),
+      anonViewers: n(
+        `SELECT count(DISTINCT viewer) n FROM view WHERE artifact_id=? AND viewer_kind='anon'`,
+        artifactId,
+      ),
       perVersion: this.raw
         .prepare(
           `SELECT version, count(*) count FROM view WHERE artifact_id=? GROUP BY version ORDER BY version`,
@@ -689,7 +701,7 @@ export class SqliteMetaStore implements MetaStore {
     try {
       return (
         (this.raw
-          .prepare(`SELECT id, email, name FROM user WHERE email = ?`)
+          .prepare(`SELECT id, email, name, image FROM user WHERE email = ?`)
           .get(email) as UserDir) ?? null
       )
     } catch {
@@ -701,7 +713,7 @@ export class SqliteMetaStore implements MetaStore {
     try {
       const ph = ids.map(() => "?").join(",")
       return this.raw
-        .prepare(`SELECT id, email, name FROM user WHERE id IN (${ph})`)
+        .prepare(`SELECT id, email, name, image FROM user WHERE id IN (${ph})`)
         .all(...ids) as UserDir[]
     } catch {
       return []
