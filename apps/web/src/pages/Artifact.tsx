@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState } from "react"
 import { useNavigate, useParams } from "@tanstack/react-router"
 import { api, API_BASE, type Analytics, type Artifact as Art, type Comment, type Diff } from "../api"
-import { Header, useToast } from "../components"
+import { Header, useIsMobile, useToast } from "../components"
 import { ShareButton } from "../components/ShareDialog"
 import { useAuth } from "../ctx"
 
@@ -37,6 +37,7 @@ export function Artifact() {
   const { me, loading } = useAuth()
   const nav = useNavigate()
   const { toast, show } = useToast()
+  const isMobile = useIsMobile()
 
   const [art, setArt] = useState<Art | null>(null)
   const [failed, setFailed] = useState(false)
@@ -48,8 +49,11 @@ export function Artifact() {
   const [viewers, setViewers] = useState<string[]>([])
   const [src, setSrc] = useState("")
 
-  // Comments UI state.
-  const [panel, setPanel] = useState<Panel>(loadPanel)
+  // Comments UI state. On phones the panel is a slide-up sheet that starts
+  // closed (document-first); on desktop it restores the saved rail/open state.
+  const [panel, setPanel] = useState<Panel>(() =>
+    typeof window !== "undefined" && window.matchMedia("(max-width:640px)").matches ? "hidden" : loadPanel(),
+  )
   const [sel, setSel] = useState<{ selector: Sel; top: number; vTop: number; vBottom: number } | null>(null)
   const [composer, setComposer] = useState<{ anchor: Sel | null; top: number | null } | null>(null)
   const [activeThread, setActiveThread] = useState<string | null>(null)
@@ -381,7 +385,9 @@ export function Artifact() {
     }
   }
 
-  const asideWidth = panel === "open" ? 340 : panel === "rail" ? 50 : 0
+  // On phones the comments live in a slide-up sheet, so the in-flow aside has
+  // no width and the document gets the full screen.
+  const asideWidth = isMobile ? 0 : panel === "open" ? 340 : panel === "rail" ? 50 : 0
 
   return (
     <ActionsCtx.Provider value={actions}>
@@ -389,7 +395,7 @@ export function Artifact() {
       <Header
         right={
           <>
-            <Presence viewers={viewers} self={me?.name ?? me?.email ?? ""} />
+            {!isMobile && <Presence viewers={viewers} self={me?.name ?? me?.email ?? ""} />}
             <ShareButton shortId={shortId} myRole={art.my_role} />
             <Insights shortId={shortId} />
             <HistoryMenu
@@ -398,7 +404,9 @@ export function Artifact() {
               goTo={(n) => nav({ to: "/a/$ref", params: { ref: n === art.current_version ? shortId : `${shortId}@v${n}` } })}
             />
             {editable && !editing && <button className="btn sm" onClick={startEdit}>Edit</button>}
-            {panel !== "open" && (
+            {/* On phones the bottom-right FAB opens comments, so the header
+                button would just be a redundant extra wrap-row. */}
+            {!isMobile && panel !== "open" && (
               <button className="btn sm" onClick={() => setPanel("open")} style={{ gap: 6 }} title="Show comments (c)">
                 💬 {openCount > 0 && <b style={{ fontWeight: 700 }}>{openCount}</b>}
               </button>
@@ -429,7 +437,7 @@ export function Artifact() {
               {/* History-viewing banner: only when looking at a past version.
                   The current version just shows the artifact, no version chrome. */}
               {shown !== art.current_version && (
-                <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 14px", borderBottom: "1px solid var(--line-soft)", background: "var(--ac-soft)", fontSize: 12.5 }}>
+                <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", rowGap: 6, gap: 10, padding: "8px 14px", borderBottom: "1px solid var(--line-soft)", background: "var(--ac-soft)", fontSize: 12.5 }}>
                   <span style={{ color: "var(--ac)", fontWeight: 600 }}>Viewing an earlier version</span>
                   <span className="muted">·</span>
                   <button className="lnk" onClick={() => setView(view === "diff" ? "preview" : "diff")}>
@@ -485,52 +493,76 @@ export function Artifact() {
           )}
         </div>
 
-        <aside
-          style={{
-            width: asideWidth,
-            flex: `0 0 ${asideWidth}px`,
-            borderLeft: panel === "hidden" ? "none" : "1px solid var(--line)",
-            background: "var(--card)",
-            display: "flex",
-            flexDirection: "column",
-            minHeight: 0,
-            overflow: "hidden",
-            transition: "width .22s cubic-bezier(.4,0,.2,1), flex-basis .22s cubic-bezier(.4,0,.2,1)",
-          }}
-        >
-          {panel === "rail" ? (
-            <Rail
-              pins={pinned}
-              generalCount={general.length}
-              active={activeThread}
-              onExpand={() => setPanel("open")}
-              onHide={() => setPanel("hidden")}
-              onDot={(id) => { setPanel("open"); jumpTo(id) }}
-            />
-          ) : (
-            <OpenPanel
-              openCount={openCount}
-              pinned={pinned}
-              general={general}
-              resolved={resolvedThreads}
-              activeThread={activeThread}
-              hoverThread={hoverThread}
-              inDoc={inDoc}
-              composer={composer}
-              onMinimize={() => setPanel("rail")}
-              onHide={() => setPanel("hidden")}
-              onActivate={activate}
-              onHover={setHoverThread}
-              onResolve={toggleResolve}
-              onReply={reply}
-              onJump={jumpTo}
-              onNewGeneral={() => { setComposer({ anchor: null, top: null }); setActiveThread(null) }}
-              onSubmitNew={submitNew}
-              onCancelNew={() => { setComposer(null); setSel(null) }}
-            />
-          )}
-        </aside>
+        {!isMobile && (
+          <aside
+            style={{
+              width: asideWidth,
+              flex: `0 0 ${asideWidth}px`,
+              borderLeft: panel === "hidden" ? "none" : "1px solid var(--line)",
+              background: "var(--card)",
+              display: "flex",
+              flexDirection: "column",
+              minHeight: 0,
+              overflow: "hidden",
+              transition: "width .22s cubic-bezier(.4,0,.2,1), flex-basis .22s cubic-bezier(.4,0,.2,1)",
+            }}
+          >
+            {panel === "rail" ? (
+              <Rail
+                pins={pinned}
+                generalCount={general.length}
+                active={activeThread}
+                onExpand={() => setPanel("open")}
+                onHide={() => setPanel("hidden")}
+                onDot={(id) => { setPanel("open"); jumpTo(id) }}
+              />
+            ) : (
+              <OpenPanel
+                openCount={openCount}
+                pinned={pinned}
+                general={general}
+                resolved={resolvedThreads}
+                activeThread={activeThread}
+                hoverThread={hoverThread}
+                inDoc={inDoc}
+                composer={composer}
+                onMinimize={() => setPanel("rail")}
+                onHide={() => setPanel("hidden")}
+                onActivate={activate}
+                onHover={setHoverThread}
+                onResolve={toggleResolve}
+                onReply={reply}
+                onJump={jumpTo}
+                onNewGeneral={() => { setComposer({ anchor: null, top: null }); setActiveThread(null) }}
+                onSubmitNew={submitNew}
+                onCancelNew={() => { setComposer(null); setSel(null) }}
+              />
+            )}
+          </aside>
+        )}
       </div>
+      {/* Phones: comments live in a slide-up sheet over the full-width document
+          — a flat thread list (no document margin), tapping a quote jumps to the
+          text and closes the sheet. */}
+      {isMobile && (
+        <MobileComments
+          open={panel === "open"}
+          openThreads={openThreads}
+          resolved={resolvedThreads}
+          openCount={openCount}
+          composer={composer}
+          activeThread={activeThread}
+          inDoc={inDoc}
+          onClose={() => { setPanel("hidden"); setComposer(null); setSel(null) }}
+          onNewGeneral={() => { setComposer({ anchor: null, top: null }); setActiveThread(null) }}
+          onActivate={activate}
+          onResolve={toggleResolve}
+          onReply={reply}
+          onJump={(id) => { jumpTo(id); setPanel("hidden") }}
+          onSubmitNew={submitNew}
+          onCancelNew={() => { setComposer(null); setSel(null) }}
+        />
+      )}
       {/* The "comment on selection" affordance floats beside the selection in
           every panel state — minimized or hidden included. Clicking it opens
           the panel if needed and starts a composer pinned to the selection. */}
@@ -553,6 +585,95 @@ export function Artifact() {
       {toast}
     </div>
     </ActionsCtx.Provider>
+  )
+}
+
+// Phones: a slide-up sheet over the document. The pinned document-margin is a
+// desktop affordance (it needs a margin); here every open thread is a flat
+// card with its quote, and tapping the quote jumps to the text + closes the
+// sheet. Reuses CommentCard / Composer / ResolvedSection so behaviour (replies,
+// reactions, edit/delete, resolve, re-anchoring) matches desktop exactly.
+function MobileComments({
+  open, openThreads, resolved, openCount, composer, activeThread, inDoc,
+  onClose, onNewGeneral, onActivate, onResolve, onReply, onJump, onSubmitNew, onCancelNew,
+}: {
+  open: boolean
+  openThreads: Comment[][]
+  resolved: Comment[][]
+  openCount: number
+  composer: { anchor: Sel | null; top: number | null } | null
+  activeThread: string | null
+  inDoc: Record<string, boolean>
+  onClose: () => void
+  onNewGeneral: () => void
+  onActivate: (id: string) => void
+  onResolve: (c: Comment) => void
+  onReply: (text: string, threadId: string) => void
+  onJump: (id: string) => void
+  onSubmitNew: (text: string) => void
+  onCancelNew: () => void
+}) {
+  const empty = openThreads.length === 0 && resolved.length === 0 && !composer
+  return (
+    <>
+      {/* biome-ignore lint/a11y/useKeyWithClickEvents: backdrop dismissal mirrors the ✕ button. */}
+      <div className={`sheet-backdrop${open ? " show" : ""}`} onClick={onClose} aria-hidden />
+      <div className={`sheet${open ? " show" : ""}`} role="dialog" aria-modal="true" aria-label="Comments">
+        {/* biome-ignore lint/a11y/useKeyWithClickEvents: grip is a redundant close affordance. */}
+        <div className="sheet-grip" onClick={onClose} />
+        <div className="sheet-head">
+          <b style={{ fontSize: 14 }}>Comments</b>
+          {openCount > 0 && (
+            <span className="mono" style={{ fontSize: 10, color: "var(--cmt-tx)", background: "var(--cmt-bg)", borderRadius: 999, padding: "1px 8px", fontWeight: 700 }}>{openCount}</span>
+          )}
+          <span style={{ flex: 1 }} />
+          <button className="btn sm" onClick={onNewGeneral}>＋ New</button>
+          <IconBtn title="Close comments" onClick={onClose}>✕</IconBtn>
+        </div>
+        <div className="sheet-body">
+          {composer && (
+            <div style={{ marginBottom: 12 }}>
+              <Composer quote={composer.anchor?.exact ?? null} onSubmit={onSubmitNew} onCancel={onCancelNew} />
+            </div>
+          )}
+          {empty && (
+            <div className="center" style={{ flexDirection: "column", gap: 8, padding: 34, textAlign: "center" }}>
+              <div style={{ fontSize: 28, opacity: 0.5 }}>💬</div>
+              <div className="muted" style={{ fontSize: 13, lineHeight: 1.5 }}>
+                No comments yet.<br />Select text in the document to start one.
+              </div>
+            </div>
+          )}
+          {openThreads.map((t) => (
+            <div key={t[0].thread_id} style={{ marginBottom: 10 }}>
+              <CommentCard
+                thread={t}
+                active={activeThread === t[0].thread_id}
+                hovered={false}
+                present={inDoc[t[0].thread_id]}
+                onActivate={onActivate}
+                onHover={() => {}}
+                onResolve={onResolve}
+                onReply={onReply}
+                onJump={onJump}
+              />
+            </div>
+          ))}
+          {resolved.length > 0 && (
+            <ResolvedSection
+              threads={resolved}
+              activeThread={activeThread}
+              hoverThread={null}
+              onActivate={onActivate}
+              onHover={() => {}}
+              onResolve={onResolve}
+              onReply={onReply}
+              onJump={onJump}
+            />
+          )}
+        </div>
+      </div>
+    </>
   )
 }
 
