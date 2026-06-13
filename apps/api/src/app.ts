@@ -2,6 +2,7 @@ import { type Context, Hono } from "hono"
 import { type AppDeps, buildContext } from "./context"
 import { corsFor } from "./lib/http"
 import { makeRateLimiter } from "./lib/rate-limit"
+import { log } from "./log"
 import { agentRoutes } from "./routes/agents"
 import { analyticsRoutes } from "./routes/analytics"
 import { artifactRoutes } from "./routes/artifacts"
@@ -29,6 +30,17 @@ export type { AppDeps }
 export function createApp(deps: AppDeps): Hono {
   const ctx = buildContext(deps)
   const app = new Hono()
+
+  // Uncaught errors become a consistent JSON 500 (never a stack trace to the
+  // client) and a structured server log line.
+  app.onError((err, c) => {
+    log.error("unhandled error", {
+      method: c.req.method,
+      path: c.req.path,
+      error: err instanceof Error ? err.message : String(err),
+    })
+    return c.json({ error: "internal error" }, 500)
+  })
 
   // ---- Origin isolation (A4) --------------------------------------------
   // When a sandbox origin is configured, artifact bytes live on a different
