@@ -1,7 +1,19 @@
-import { useEffect, useRef, useState } from "react"
-import { type ArtifactMember, api, type Role } from "../api"
+import { Share2, X } from "lucide-react"
+import { useState } from "react"
+import { type ArtifactMember, api, type Role } from "@/api"
+import { EmptyState } from "@/components/shared/empty-state"
+import { RoleSelect } from "@/components/shared/role-select"
+import { Button } from "@/components/ui/button"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog"
+import { Input } from "@/components/ui/input"
 
-const ROLES: Role[] = ["viewer", "commenter", "editor", "owner"]
 const BLURB: Record<Role, string> = {
   viewer: "Can view",
   commenter: "Can view and comment",
@@ -10,28 +22,21 @@ const BLURB: Record<Role, string> = {
 }
 
 /**
- * Per-artifact sharing, as a header popover that mirrors Insights/History. Only
- * an owner of this artifact can change shares; everyone else sees nothing. Kept
- * fully self-contained (no shared Dialog primitive, no edits to the comment
- * sidebar) so it composes into the artifact header with a single line.
+ * Per-artifact sharing, opened from the artifact header. Add people by email at a
+ * role, change a member's role, or remove them. Only an owner of this artifact
+ * can manage shares; for anyone else the trigger isn't rendered. Built on the
+ * shared Dialog primitive (focus trap, Esc, roles for free) and RoleSelect.
  */
 export function ShareButton({ shortId, myRole }: { shortId: string; myRole?: Role | null }) {
-  const [open, setOpen] = useState(false)
   const [members, setMembers] = useState<ArtifactMember[]>([])
   const [defaultRole, setDefaultRole] = useState<Role>("editor")
   const [email, setEmail] = useState("")
   const [role, setRole] = useState<Role>("editor")
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
-  const ref = useRef<HTMLDivElement>(null)
 
-  useEffect(() => {
-    const h = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
-    }
-    document.addEventListener("click", h)
-    return () => document.removeEventListener("click", h)
-  }, [])
+  // Only an owner can manage shares; hide the affordance otherwise.
+  if (myRole !== "owner") return null
 
   const load = () =>
     api
@@ -41,12 +46,6 @@ export function ShareButton({ shortId, myRole }: { shortId: string; myRole?: Rol
         setDefaultRole(r.default_role)
       })
       .catch(() => {})
-  useEffect(() => {
-    if (open) load()
-  }, [open, shortId])
-
-  // Only an owner can manage shares; hide the affordance otherwise.
-  if (myRole !== "owner") return null
 
   const add = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -75,126 +74,103 @@ export function ShareButton({ shortId, myRole }: { shortId: string; myRole?: Rol
   }
 
   return (
-    <div ref={ref} style={{ position: "relative" }}>
-      <button
-        className="btn sm"
-        onClick={(e) => {
-          e.stopPropagation()
-          setOpen((o) => !o)
-        }}
-        style={{ gap: 6 }}
-        title="Share this artifact"
-      >
-        <span style={{ fontSize: 12 }}>🔗</span>
-        Share
-      </button>
-      {open && (
-        <div
-          className="card"
-          style={{
-            position: "absolute",
-            right: 0,
-            top: "calc(100% + 7px)",
-            width: 330,
-            padding: 14,
-            boxShadow: "var(--shadow)",
-            zIndex: 30,
-          }}
-        >
-          <div
-            className="mono muted"
-            style={{
-              fontSize: 9.5,
-              letterSpacing: ".06em",
-              textTransform: "uppercase",
-              marginBottom: 8,
-            }}
-          >
-            People with access
-          </div>
+    <Dialog
+      onOpenChange={(o) => {
+        if (o) {
+          setErr(null)
+          load()
+        }
+      }}
+    >
+      <DialogTrigger asChild>
+        <Button data-testid="share-trigger" variant="default" size="sm" title="Share this artifact">
+          <Share2 />
+          Share
+        </Button>
+      </DialogTrigger>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Share this artifact</DialogTitle>
+          <DialogDescription>
+            Add people by email. Everyone you don't list is a{" "}
+            <b className="text-foreground">{defaultRole}</b> by default.
+          </DialogDescription>
+        </DialogHeader>
 
-          <form onSubmit={add} style={{ display: "flex", gap: 6, marginBottom: 4 }}>
-            <input
-              className="input"
-              type="email"
-              placeholder="teammate@email.com"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              style={{ flex: 1, padding: "7px 9px", fontSize: 13 }}
-            />
-            <select
+        <form onSubmit={add} className="flex gap-1.5">
+          <Input
+            data-testid="share-email"
+            type="email"
+            placeholder="teammate@email.com"
+            aria-label="Email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            className="flex-1"
+          />
+          <div data-testid="share-role" className="w-[104px]">
+            <RoleSelect
               value={role}
-              onChange={(e) => setRole(e.target.value as Role)}
-              className="input"
-              style={{ width: 104, padding: "7px 6px", fontSize: 12 }}
-            >
-              {ROLES.map((r) => (
-                <option key={r} value={r}>
-                  {r}
-                </option>
-              ))}
-            </select>
-            <button className="btn pri sm" type="submit" disabled={busy}>
-              {busy ? "…" : "Add"}
-            </button>
-          </form>
-          <div className="mono muted" style={{ fontSize: 10, marginBottom: 10 }}>
-            {BLURB[role]}.
+              onChange={setRole}
+              aria-label="Role for new member"
+              className="w-full"
+            />
           </div>
-          {err && <div style={{ color: "var(--bad)", fontSize: 11.5, marginBottom: 8 }}>{err}</div>}
+          <Button data-testid="share-add" variant="primary" type="submit" disabled={busy}>
+            {busy ? "…" : "Add"}
+          </Button>
+        </form>
+        <p className="mt-1.5 font-mono text-2xs text-muted-foreground">{BLURB[role]}.</p>
+        {err && (
+          <p data-testid="share-error" role="alert" className="mt-2 text-xs text-destructive">
+            {err}
+          </p>
+        )}
 
+        <div className="mt-3.5">
           {members.length === 0 ? (
-            <div className="muted" style={{ fontSize: 11.5 }}>
-              No one shared yet. Everyone else is a <b>{defaultRole}</b> by default.
+            <div data-testid="share-empty">
+              <EmptyState className="p-6 text-xs">No one shared yet.</EmptyState>
             </div>
           ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+            <div className="flex flex-col gap-1.5">
               {members.map((m) => (
-                <div key={m.user_id} style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div
-                      style={{
-                        fontSize: 12.5,
-                        fontWeight: 600,
-                        whiteSpace: "nowrap",
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                      }}
-                    >
+                <div
+                  key={m.user_id}
+                  data-testid={`share-member-row-${m.user_id}`}
+                  className="flex items-center gap-2"
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-sm font-semibold text-foreground">
                       {m.name ?? m.email ?? m.user_id}
                     </div>
                     {m.name && m.email && (
-                      <div className="muted" style={{ fontSize: 10.5 }}>
-                        {m.email}
-                      </div>
+                      <div className="truncate text-2xs text-muted-foreground">{m.email}</div>
                     )}
                   </div>
-                  <select
-                    value={m.role}
-                    onChange={(e) => change(m, e.target.value as Role)}
-                    className="input"
-                    style={{ width: 96, padding: "5px 6px", fontSize: 11.5 }}
-                  >
-                    {ROLES.map((r) => (
-                      <option key={r} value={r}>
-                        {r}
-                      </option>
-                    ))}
-                  </select>
-                  <button
-                    className="lnk"
+                  <div data-testid={`share-member-role-${m.user_id}`} className="w-[92px]">
+                    <RoleSelect
+                      value={m.role}
+                      onChange={(next) => change(m, next)}
+                      aria-label={`Role for ${m.name ?? m.email ?? "member"}`}
+                      className="w-full"
+                    />
+                  </div>
+                  <Button
+                    data-testid={`share-member-remove-${m.user_id}`}
+                    variant="ghost"
+                    size="icon"
+                    className="size-7 text-muted-foreground hover:text-foreground"
                     onClick={() => remove(m)}
-                    title="Remove"
-                    style={{ textDecoration: "none", fontSize: 14 }}
+                    aria-label={`Remove ${m.name ?? m.email ?? "member"}`}
                   >
-                    ✕
-                  </button>
+                    <X />
+                  </Button>
                 </div>
               ))}
             </div>
           )}
         </div>
-      )}
-    </div>
+      </DialogContent>
+    </Dialog>
   )
 }

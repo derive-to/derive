@@ -1,0 +1,29 @@
+import { expect, test } from "@playwright/test"
+import { signUp } from "./helpers"
+
+// The Login surface, driven through stable test-ids on the migrated Card/Input/Button.
+
+test("the toggle switches between sign in and create account", async ({ page }) => {
+  await page.goto("/login")
+  // Sign-in mode: no name field, the submit reads "Sign in".
+  await expect(page.getByTestId("login-name")).toBeHidden()
+  await expect(page.getByTestId("login-submit")).toHaveText("Sign in")
+  // Switch to create-account.
+  await page.getByTestId("login-toggle").click()
+  await expect(page.getByTestId("login-name")).toBeVisible()
+  await expect(page.getByTestId("login-submit")).toHaveText("Create account")
+})
+
+test("a sign-in with unknown credentials shows an error and stays on /login", async ({ page }) => {
+  await page.goto("/login")
+  await page.getByTestId("login-email").fill("nobody@dock.test")
+  await page.getByTestId("login-password").fill("wrong-password-123")
+  await page.getByTestId("login-submit").click()
+  await expect(page.getByTestId("login-error")).toBeVisible()
+  await expect(page).toHaveURL(/\/login/)
+})
+
+test("creating an account signs in and leaves the login page", async ({ page }) => {
+  await signUp(page) // drives login-toggle / login-name / login-email / login-password / login-submit
+  await expect(page).not.toHaveURL(/\/login/)
+})

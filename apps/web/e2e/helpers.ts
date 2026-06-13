@@ -13,11 +13,11 @@ const uniqueEmail = () => `e2e+${Date.now()}-${seq++}@dock.test`
 export async function signUp(page: Page, name = "E2E Tester"): Promise<string> {
   const email = uniqueEmail()
   await page.goto("/login")
-  await page.getByRole("button", { name: "Create an account" }).click()
-  await page.getByPlaceholder("Your name").fill(name)
-  await page.getByPlaceholder("you@company.com").fill(email)
-  await page.getByPlaceholder("At least 8 characters").fill("e2e-pass-1234")
-  await page.getByRole("button", { name: "Create account" }).click()
+  await page.getByTestId("login-toggle").click() // switch from sign-in to create-account
+  await page.getByTestId("login-name").fill(name)
+  await page.getByTestId("login-email").fill(email)
+  await page.getByTestId("login-password").fill("e2e-pass-1234")
+  await page.getByTestId("login-submit").click()
   await expect(page).not.toHaveURL(/\/login/, { timeout: 15_000 })
   return email
 }
