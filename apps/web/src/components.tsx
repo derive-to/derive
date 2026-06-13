@@ -11,26 +11,32 @@ export const Logo = ({ size = 24 }: { size?: number }) => (
   </svg>
 )
 
+// Matches a max-width breakpoint, reactively. SSR-safe (assumes desktop until
+// the client mounts). Drives the mobile layout branches across the app.
+export function useIsMobile(bp = 640): boolean {
+  const [m, setM] = useState(
+    () => typeof window !== "undefined" && window.matchMedia(`(max-width:${bp}px)`).matches,
+  )
+  useEffect(() => {
+    const mq = window.matchMedia(`(max-width:${bp}px)`)
+    const on = () => setM(mq.matches)
+    on()
+    mq.addEventListener("change", on)
+    return () => mq.removeEventListener("change", on)
+  }, [bp])
+  return m
+}
+
 export function Header({ right }: { right?: React.ReactNode }) {
   return (
-    <header
-      style={{
-        display: "flex",
-        alignItems: "center",
-        gap: 11,
-        padding: "12px 22px",
-        background: "var(--card)",
-        borderBottom: "1px solid var(--line)",
-      }}
-    >
-      <Link to="/" style={{ display: "flex", alignItems: "center", gap: 10, color: "var(--fg)" }}>
+    <header className="app-header">
+      <Link to="/" className="hdr-brand">
         <Logo />
         <span className="display" style={{ fontWeight: 600, fontSize: 18 }}>
           Dock
         </span>
       </Link>
-      <span style={{ flex: 1 }} />
-      {right}
+      {right && <div className="hdr-actions">{right}</div>}
       <UserMenu />
     </header>
   )

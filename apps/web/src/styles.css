@@ -59,6 +59,32 @@ a{color:var(--ac);text-decoration:none}
 .toast.show{opacity:1}
 .center{height:100%;display:grid;place-items:center}
 
+/* -- App header: brand left, actions + avatar right. On phones the actions
+      wrap to their own right-aligned row so nothing overflows and popovers
+      (history/insights/share) stay anchored to their button, never clipped. -- */
+.app-header{display:flex;align-items:center;gap:11px;padding:12px 22px;background:var(--card);border-bottom:1px solid var(--line)}
+.hdr-brand{display:flex;align-items:center;gap:10px;color:var(--fg);margin-right:auto}
+.hdr-actions{display:flex;align-items:center;gap:8px}
+
+/* -- Mobile comments sheet: slides up over the full-width document. -- */
+.sheet-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.34);opacity:0;pointer-events:none;transition:opacity .22s;z-index:60}
+.sheet-backdrop.show{opacity:1;pointer-events:auto}
+.sheet{position:fixed;left:0;right:0;bottom:0;height:80vh;max-height:80vh;background:var(--card);
+  border-top-left-radius:18px;border-top-right-radius:18px;border-top:1px solid var(--line);
+  box-shadow:0 -14px 44px -18px rgba(0,0,0,.5);display:flex;flex-direction:column;
+  transform:translateY(102%);transition:transform .26s cubic-bezier(.4,0,.2,1);z-index:61}
+.sheet.show{transform:none}
+.sheet-grip{width:40px;height:4px;border-radius:999px;background:var(--line);margin:9px auto 4px;flex:0 0 auto;cursor:grab}
+.sheet-head{display:flex;align-items:center;gap:8px;padding:4px 10px 10px 14px;border-bottom:1px solid var(--line-soft)}
+.sheet-body{flex:1;min-height:0;overflow:auto;padding:12px;padding-bottom:max(14px,env(safe-area-inset-bottom));-webkit-overflow-scrolling:touch}
+
+@media(max-width:640px){
+  .app-header{padding:10px 14px;flex-wrap:wrap;gap:8px}
+  .hdr-actions{order:3;flex:1 1 100%;flex-wrap:wrap;justify-content:flex-end;gap:6px}
+  /* 16px inputs keep iOS from auto-zooming the page on focus. */
+  .input{font-size:16px !important}
+}
+
 /* -- Comments margin (Google-Docs-style) -- */
 .cmt-card{animation:cmtin .22s cubic-bezier(.2,.8,.2,1)}
 @keyframes cmtin{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
