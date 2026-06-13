@@ -373,63 +373,65 @@ export function Library() {
                     gap: 13,
                   }}
                 >
-                  {items.map((a) => (
-                    <div key={a.short_id} className="card browse-card">
-                      <div style={{ position: "relative" }}>
-                        <Thumb id={a.short_id} v={a.current_version} />
-                        <button
-                          className={`star${a.favorite ? " on" : ""}`}
-                          title={a.favorite ? "Remove from favorites" : "Add to favorites"}
-                          aria-label="Toggle favorite"
-                          onClick={() => toggleFav(a)}
-                        >
-                          {a.favorite ? "★" : "☆"}
-                        </button>
-                      </div>
-                      <button
-                        className="card-open"
-                        onClick={() => nav({ to: "/a/$ref", params: { ref: a.short_id } })}
-                      >
-                        <span className="display" style={{ fontWeight: 600, fontSize: 15 }}>
-                          {a.title ?? a.short_id}
-                        </span>
-                        <span
-                          className="mono muted"
-                          style={{ fontSize: 11, display: "flex", gap: 8, alignItems: "center" }}
-                        >
-                          <span
-                            style={{
-                              background: "var(--card-2)",
-                              border: "1px solid var(--line-soft)",
-                              borderRadius: 5,
-                              padding: "1px 6px",
+                  {items.map((a) => {
+                    const open = () => nav({ to: "/a/$ref", params: { ref: a.short_id } })
+                    return (
+                      <div key={a.short_id} className="card browse-card">
+                        <div className="browse-thumb">
+                          <Thumb id={a.short_id} v={a.current_version} />
+                          <button
+                            type="button"
+                            className={`star${a.favorite ? " on" : ""}`}
+                            title={a.favorite ? "Remove from favorites" : "Add to favorites"}
+                            aria-label="Toggle favorite"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              toggleFav(a)
                             }}
                           >
-                            {a.kind}
-                          </span>
-                          <span>v{a.current_version}</span>
-                          {a.views !== undefined && a.views > 0 && (
-                            <span style={{ marginLeft: "auto" }} title={`${a.views} views`}>
-                              👁 {a.views > 999 ? `${(a.views / 1000).toFixed(1)}k` : a.views}
-                            </span>
-                          )}
-                        </span>
-                      </button>
-                      {(a.tags ?? []).length > 0 && (
-                        <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
-                          {(a.tags ?? []).slice(0, 6).map((t) => (
-                            <button
-                              key={t}
-                              className="tagchip"
-                              onClick={() => pick({ kind: "tag", tag: t })}
-                            >
-                              #{t}
-                            </button>
-                          ))}
+                            {a.favorite ? "★" : "☆"}
+                          </button>
                         </div>
-                      )}
-                    </div>
-                  ))}
+                        {/* The button's ::after is stretched over the whole card, so a
+                            click anywhere (thumbnail included) opens the artifact; the
+                            star + tag chips sit above it and stay independently clickable. */}
+                        <button
+                          type="button"
+                          className="card-open"
+                          onClick={open}
+                          aria-label={`Open ${a.title ?? a.short_id}`}
+                        >
+                          <span className="display card-title">{a.title ?? a.short_id}</span>
+                          <span className="mono card-meta">
+                            <span className="card-kind">{a.kind}</span>
+                            <span>v{a.current_version}</span>
+                            {a.views !== undefined && a.views > 0 && (
+                              <span className="card-views" title={`${a.views} viewers`}>
+                                👁 {a.views > 999 ? `${(a.views / 1000).toFixed(1)}k` : a.views}
+                              </span>
+                            )}
+                          </span>
+                        </button>
+                        {(a.tags ?? []).length > 0 && (
+                          <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+                            {(a.tags ?? []).slice(0, 6).map((t) => (
+                              <button
+                                key={t}
+                                type="button"
+                                className="tagchip"
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  pick({ kind: "tag", tag: t })
+                                }}
+                              >
+                                #{t}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })}
                 </div>
                 {nextCursor && (
                   <div style={{ textAlign: "center", marginTop: 20 }}>

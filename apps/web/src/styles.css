@@ -33,6 +33,12 @@ a{color:var(--ac);text-decoration:none}
 .display{font-family:"Space Grotesk",Inter,sans-serif;letter-spacing:-.02em}
 .mono{font-family:ui-monospace,Menlo,Consolas,monospace}
 .muted{color:var(--fg-mut)}
+/* Type scale — every text size is one of these steps, applied as a class
+   (.t-sm) or read as a token (var(--text-sm)). No raw px font sizes anywhere. */
+:root{--text-2xs:10px;--text-xs:11px;--text-sm:12.5px;--text-md:14px;--text-lg:16px;--text-xl:18px;--text-2xl:22px;--text-3xl:28px}
+.t-2xs{font-size:var(--text-2xs)}.t-xs{font-size:var(--text-xs)}.t-sm{font-size:var(--text-sm)}
+.t-md{font-size:var(--text-md)}.t-lg{font-size:var(--text-lg)}.t-xl{font-size:var(--text-xl)}
+.t-2xl{font-size:var(--text-2xl)}.t-3xl{font-size:var(--text-3xl)}
 .btn{display:inline-flex;align-items:center;gap:7px;font-weight:600;font-size:13px;padding:8px 14px;border-radius:10px;
   border:1px solid var(--line);background:var(--card);color:var(--fg);cursor:pointer;text-decoration:none;white-space:nowrap;transition:.15s}
 .btn:hover{border-color:var(--ac);color:var(--ac)}
@@ -121,12 +127,34 @@ a{color:var(--ac);text-decoration:none}
 .tagchip{display:inline-flex;align-items:center;gap:4px;font-family:ui-monospace,Menlo,monospace;font-size:10.5px;color:var(--ac);
   background:var(--ac-soft);border:1px solid transparent;border-radius:999px;padding:2px 9px;cursor:pointer;white-space:nowrap}
 .tagchip:hover{border-color:var(--ac)}
-.browse-card{position:relative;display:flex;flex-direction:column;gap:8px;padding:13px}
+.browse-card{position:relative;display:flex;flex-direction:column;gap:8px;padding:13px;cursor:pointer;
+  transition:border-color .15s,box-shadow .15s,transform .15s}
+.browse-card:hover{border-color:var(--ac);box-shadow:var(--shadow);transform:translateY(-2px)}
+.browse-card:active{transform:translateY(0)}
+.browse-card:hover .card-open .display{color:var(--ac)}
+.browse-card:hover .browse-thumb>div{border-color:var(--ac)}
+.browse-thumb>div{transition:border-color .15s}
 .browse-card .star{position:absolute;top:9px;right:9px;z-index:2;width:30px;height:30px;border-radius:8px;border:1px solid var(--line);
   background:var(--card);color:var(--fg-mut);cursor:pointer;font-size:14px;display:grid;place-items:center;opacity:.9;transition:.12s}
 .browse-card .star:hover{opacity:1;border-color:var(--ac)}
 .browse-card .star.on{color:#e0a93a;border-color:#e0a93a}
-.card-open{border:0;background:transparent;text-align:left;cursor:pointer;padding:0;display:flex;flex-direction:column;gap:7px;width:100%}
+/* Stretched-link card: the open button reaches across the whole card via ::after,
+   so a click anywhere (thumbnail, padding) opens it; star + tags sit above. */
+/* Explicit color token: a <button> otherwise falls back to the UA `canvastext`,
+   which renders dark-on-dark (invisible) in the dark theme. */
+.card-open{border:0;background:transparent;color:var(--fg);text-align:left;cursor:pointer;padding:0;
+  display:flex;flex-direction:column;gap:7px;width:100%}
+.card-open .display{transition:color .15s}
+.card-open::after{content:"";position:absolute;inset:0;z-index:1;border-radius:14px}
+.card-open:focus-visible{outline:none}
+.card-open:focus-visible::after{outline:2px solid var(--ac);outline-offset:-2px}
+.browse-card .tagchip{position:relative;z-index:2}
+.browse-thumb{position:relative}
+/* Card text — sizes from the scale, colors from tokens (so dark mode just works). */
+.card-title{font-size:var(--text-lg);font-weight:600;color:var(--fg)}
+.card-meta{display:flex;align-items:center;gap:8px;font-size:var(--text-xs);color:var(--fg-mut)}
+.card-kind{background:var(--card-2);border:1px solid var(--line-soft);border-radius:5px;padding:1px 6px}
+.card-views{margin-left:auto}
 .searchbar{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin-bottom:18px}
 
 @media(max-width:640px){
