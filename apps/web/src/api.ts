@@ -32,6 +32,10 @@ export interface Comment {
   state: "open" | "resolved"
   created_at: string
   anchored?: boolean
+  reactions?: Record<string, string[]>
+  edited?: boolean
+  edited_at?: string | null
+  deleted?: boolean
 }
 export interface Webhook {
   id: string
@@ -130,6 +134,16 @@ export const api = {
     f(`/v1/artifacts/${id}/comments`, opts(body)).then(j),
   resolve: (id: string, commentId: string, state: "open" | "resolved") =>
     f(`/v1/artifacts/${id}/comments/${commentId}/resolve`, opts({ state })).then(j),
+  react: (id: string, commentId: string, emoji: string): Promise<Comment> =>
+    f(`/v1/artifacts/${id}/comments/${commentId}/react`, opts({ emoji })).then(j),
+  editComment: (id: string, commentId: string, body_md: string): Promise<Comment> =>
+    f(`/v1/artifacts/${id}/comments/${commentId}`, { ...opts({ body_md }), method: "PATCH" }).then(j),
+  deleteComment: (id: string, commentId: string): Promise<Comment> =>
+    f(`/v1/artifacts/${id}/comments/${commentId}`, {
+      method: "DELETE",
+      credentials: "include",
+      headers: { accept: "application/json" },
+    }).then(j),
 
   async publish(file: File, fields: Record<string, string> = {}, id?: string): Promise<Artifact> {
     const fd = new FormData()

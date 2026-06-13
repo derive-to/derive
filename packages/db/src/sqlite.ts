@@ -18,7 +18,7 @@ import type {
   ViewStats,
   WebhookRecord,
 } from "@dock/core"
-import { SCHEMA_STATEMENTS, artifact, comment, version, webhook, webhookDelivery } from "./schema"
+import { MIGRATION_STATEMENTS, SCHEMA_STATEMENTS, artifact, comment, version, webhook, webhookDelivery } from "./schema"
 
 const VIEW_WINDOW_MS = 30 * 86400_000
 
@@ -33,6 +33,14 @@ export class SqliteMetaStore implements MetaStore {
     this.raw = new Database(path)
     this.raw.pragma("journal_mode = WAL")
     for (const stmt of SCHEMA_STATEMENTS) this.raw.exec(stmt)
+    // Forward-only column adds; a "duplicate column" throw means already applied.
+    for (const stmt of MIGRATION_STATEMENTS) {
+      try {
+        this.raw.exec(stmt)
+      } catch {
+        /* already applied */
+      }
+    }
     this.db = drizzle(this.raw, { schema })
   }
 
@@ -87,6 +95,14 @@ export class SqliteMetaStore implements MetaStore {
 
   async getComment(id: string): Promise<CommentRecord | null> {
     return this.db.select().from(comment).where(eq(comment.id, id)).get() ?? null
+  }
+
+  async updateComment(
+    id: string,
+    fields: { body_md?: string; meta?: string | null },
+  ): Promise<CommentRecord | null> {
+    this.db.update(comment).set(fields).where(eq(comment.id, id)).run()
+    return this.getComment(id)
   }
 
   async listComments(

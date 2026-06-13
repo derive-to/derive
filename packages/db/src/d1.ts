@@ -86,6 +86,14 @@ export class D1MetaStore implements MetaStore {
     return (await this.db.select().from(comment).where(eq(comment.id, id)).get()) ?? null
   }
 
+  async updateComment(
+    id: string,
+    fields: { body_md?: string; meta?: string | null },
+  ): Promise<CommentRecord | null> {
+    await this.db.update(comment).set(fields).where(eq(comment.id, id)).run()
+    return this.getComment(id)
+  }
+
   async listComments(
     artifactId: string,
     opts?: { state?: CommentState },

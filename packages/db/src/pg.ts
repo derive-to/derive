@@ -94,6 +94,14 @@ export class PgMetaStore implements MetaStore {
     return rows[0] ?? null
   }
 
+  async updateComment(
+    id: string,
+    fields: { body_md?: string; meta?: string | null },
+  ): Promise<CommentRecord | null> {
+    const rows = await this.db.update(comment).set(fields).where(eq(comment.id, id)).returning()
+    return rows[0] ?? null
+  }
+
   listComments(artifactId: string, opts?: { state?: CommentState }): Promise<CommentRecord[]> {
     const where = opts?.state
       ? and(eq(comment.artifact_id, artifactId), eq(comment.state, opts.state))

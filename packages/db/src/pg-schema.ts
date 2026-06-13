@@ -57,6 +57,7 @@ export const comment = pgTable("comment", {
   author: text("author").notNull(),
   state: text("state").$type<CommentState>().notNull().default("open"),
   created_at: text("created_at").notNull().$defaultFn(isoNow),
+  meta: text("meta"),
 })
 
 export const webhook = pgTable("webhook", {
@@ -135,8 +136,10 @@ export const PG_SCHEMA_STATEMENTS: string[] = [
     body_md TEXT NOT NULL,
     author TEXT NOT NULL,
     state TEXT NOT NULL DEFAULT 'open',
-    created_at TEXT NOT NULL DEFAULT ${isoDefault}
+    created_at TEXT NOT NULL DEFAULT ${isoDefault},
+    meta TEXT
   )`,
+  `ALTER TABLE comment ADD COLUMN IF NOT EXISTS meta TEXT`,
   `CREATE TABLE IF NOT EXISTS principal (
     id TEXT PRIMARY KEY,
     org_id TEXT NOT NULL,

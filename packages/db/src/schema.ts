@@ -60,6 +60,7 @@ export const comment = sqliteTable("comment", {
   author: text("author").notNull(),
   state: text("state").$type<CommentState>().notNull().default("open"),
   created_at: text("created_at").notNull().default(now),
+  meta: text("meta"),
 })
 
 export const webhook = sqliteTable("webhook", {
@@ -131,7 +132,8 @@ export const SCHEMA_STATEMENTS: string[] = [
     body_md TEXT NOT NULL,
     author TEXT NOT NULL,
     state TEXT NOT NULL DEFAULT 'open',
-    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    meta TEXT
   )`,
   `CREATE TABLE IF NOT EXISTS principal (
     id TEXT PRIMARY KEY,
@@ -182,6 +184,15 @@ export const SCHEMA_STATEMENTS: string[] = [
   )`,
   `CREATE INDEX IF NOT EXISTS delivery_due ON webhook_delivery (status, next_attempt_at)`,
   // user/session/account/verification are owned and migrated by Better Auth.
+]
+
+/**
+ * Forward-only column adds for tables that predate them. SQLite has no
+ * `ADD COLUMN IF NOT EXISTS`, so each runs inside a try/catch at boot and a
+ * "duplicate column" error is the success path. Keep statements idempotent.
+ */
+export const MIGRATION_STATEMENTS: string[] = [
+  `ALTER TABLE comment ADD COLUMN meta TEXT`,
 ]
 
 // Compile-time guard: the drizzle table defs must exactly match the core record

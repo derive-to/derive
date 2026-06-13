@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react"
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState } from "react"
 import { useNavigate, useParams } from "@tanstack/react-router"
 import { api, API_BASE, type Analytics, type Artifact as Art, type Comment, type Diff } from "../api"
 import { Header, useToast } from "../components"
@@ -156,6 +156,20 @@ export function Artifact() {
   }, [shortId])
   useEffect(load, [load])
 
+  // Deep link: ?c=<thread> opens the panel, activates that thread, and jumps to
+  // its text. Runs once, after comments are in.
+  const deepLinked = useRef(false)
+  useEffect(() => {
+    if (deepLinked.current || comments.length === 0) return
+    deepLinked.current = true
+    const cid = new URLSearchParams(window.location.search).get("c")
+    if (cid && comments.some((c) => c.thread_id === cid)) {
+      setPanel("open")
+      setActiveThread(cid)
+      setTimeout(() => post({ type: "focus-anchor", id: cid }), 320)
+    }
+  }, [comments, post])
+
   // live updates
   useEffect(() => {
     const ev = new EventSource(`${API_BASE}/v1/artifacts/${shortId}/events`, {
@@ -164,6 +178,8 @@ export function Artifact() {
     const refresh = () => api.listComments(shortId).then((r) => setComments(r.comments)).catch(() => {})
     ev.addEventListener("comment.created", refresh)
     ev.addEventListener("comment.resolved", refresh)
+    ev.addEventListener("comment.reacted", refresh)
+    ev.addEventListener("comment.updated", refresh)
     ev.addEventListener("version.published", load)
     ev.addEventListener("presence", (e) => {
       try {
@@ -293,10 +309,31 @@ export function Artifact() {
     setComposer({ anchor: sel.selector, top: sel.top })
     setActiveThread(null)
   }
+  const refetch = () => api.listComments(shortId).then((r) => setComments(r.comments)).catch(() => {})
+  const actions: CommentActions = {
+    meName: me?.name ?? me?.email ?? "",
+    react: (commentId, emoji) => {
+      // Optimistic: reflect the toggle immediately, reconcile on the response.
+      setComments((cs) => cs.map((c) => (c.id === commentId ? toggleReaction(c, emoji, me?.name ?? me?.email ?? "anonymous") : c)))
+      api.react(shortId, commentId, emoji).then(refetch).catch(refetch)
+    },
+    edit: async (commentId, body) => {
+      await api.editComment(shortId, commentId, body).catch((e) => show((e as Error).message))
+      refetch()
+    },
+    remove: (commentId) => {
+      api.deleteComment(shortId, commentId).then(refetch).catch((e) => show((e as Error).message))
+    },
+    copyLink: (threadId) => {
+      const url = `${window.location.origin}${window.location.pathname}?c=${threadId}`
+      navigator.clipboard?.writeText(url).then(() => show("Link copied")).catch(() => show(url))
+    },
+  }
 
   const asideWidth = panel === "open" ? 340 : panel === "rail" ? 50 : 0
 
   return (
+    <ActionsCtx.Provider value={actions}>
     <div style={{ height: "100%", display: "flex", flexDirection: "column" }}>
       <Header
         right={
@@ -455,6 +492,7 @@ export function Artifact() {
       )}
       {toast}
     </div>
+    </ActionsCtx.Provider>
   )
 }
 
@@ -732,6 +770,193 @@ function layoutPins(
 
 // One comment thread. Compact until activated; the active card shows the full
 // thread, a reply box, and resolve controls.
+// ---- Rich comment actions: reactions, edit, delete, copy-link --------------
+// Threaded through one context so the deep card tree doesn't re-pass them.
+type CommentActions = {
+  meName: string
+  react: (commentId: string, emoji: string) => void
+  edit: (commentId: string, body: string) => Promise<void> | void
+  remove: (commentId: string) => void
+  copyLink: (threadId: string) => void
+}
+const NOOP_ACTIONS: CommentActions = {
+  meName: "",
+  react: () => {},
+  edit: () => {},
+  remove: () => {},
+  copyLink: () => {},
+}
+const ActionsCtx = createContext<CommentActions | null>(null)
+const useActions = (): CommentActions => useContext(ActionsCtx) ?? NOOP_ACTIONS
+
+const REACTION_EMOJI = ["👍", "❤️", "🎉", "😄", "👀", "🙏", "🚀", "👎"]
+
+// Optimistic local toggle that mirrors the server's react logic.
+function toggleReaction(c: Comment, emoji: string, who: string): Comment {
+  const reactions: Record<string, string[]> = { ...(c.reactions ?? {}) }
+  const arr = [...(reactions[emoji] ?? [])]
+  const i = arr.indexOf(who)
+  if (i >= 0) arr.splice(i, 1)
+  else arr.push(who)
+  if (arr.length) reactions[emoji] = arr
+  else delete reactions[emoji]
+  return { ...c, reactions }
+}
+
+// Tiny, XSS-safe inline markdown: escape first, then a few transforms. Covers
+// bold, italic, inline code, links/autolinks, and line breaks.
+const esc = (s: string) =>
+  s.replace(/[&<>"]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[ch] as string)
+function mdToHtml(src: string): string {
+  let h = esc(src)
+  h = h.replace(/`([^`]+)`/g, "<code>$1</code>")
+  h = h.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+  h = h.replace(/(^|[^*])\*([^*\n]+)\*/g, "$1<em>$2</em>")
+  h = h.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>')
+  h = h.replace(/(^|[\s(])(https?:\/\/[^\s<)]+)/g, '$1<a href="$2" target="_blank" rel="noopener noreferrer">$2</a>')
+  return h.replace(/\n/g, "<br/>")
+}
+
+// Stable per-author tint, so people are recognisable across avatars + threads.
+const AUTHOR_TINTS = ["#7c6cbd", "#3c6e2f", "#a04425", "#2f6e6e", "#9a5fb0", "#b08322", "#4a63b8", "#9a4a6b"]
+function colorFor(name: string): string {
+  let h = 0
+  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0
+  return AUTHOR_TINTS[h % AUTHOR_TINTS.length]
+}
+
+function ColoredAvatar({ name, size = 17 }: { name: string; size?: number }) {
+  return (
+    <span style={{ width: size, height: size, borderRadius: "50%", background: colorFor(name), color: "#fff", display: "grid", placeItems: "center", fontSize: Math.round(size * 0.5), fontWeight: 700, fontFamily: "ui-monospace,Menlo,monospace", flex: "0 0 auto" }}>
+      {(name || "?").slice(0, 2).toUpperCase()}
+    </span>
+  )
+}
+
+// Small popover that closes on an outside click.
+function Popover({ children, onClose, style }: { children: React.ReactNode; onClose: () => void; style?: React.CSSProperties }) {
+  const ref = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const h = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) onClose()
+    }
+    const t = setTimeout(() => document.addEventListener("mousedown", h), 0)
+    return () => {
+      clearTimeout(t)
+      document.removeEventListener("mousedown", h)
+    }
+  }, [onClose])
+  return (
+    <div ref={ref} className="cmt-pop" style={style} onClick={(e) => e.stopPropagation()}>
+      {children}
+    </div>
+  )
+}
+
+// One comment: avatar, author, markdown body (or an inline editor), reaction
+// pills, and a hover toolbar (react · more → edit/delete/copy-link).
+function CommentRow({ c, compact }: { c: Comment; compact?: boolean }) {
+  const A = useActions()
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState(c.body_md)
+  const [open, setOpen] = useState<null | "react" | "menu">(null)
+  const mine = !!A.meName && c.author === A.meName
+  const reactions = c.reactions ?? {}
+  const close = () => setOpen(null)
+
+  if (c.deleted)
+    return (
+      <div style={{ padding: "9px 12px", borderBottom: compact ? "none" : "1px solid var(--line-soft)" }}>
+        <span className="muted" style={{ fontSize: 12, fontStyle: "italic" }}>Comment deleted</span>
+      </div>
+    )
+
+  return (
+    <div className="cmt-row" style={{ padding: "10px 12px", borderBottom: compact ? "none" : "1px solid var(--line-soft)" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 4 }}>
+        <ColoredAvatar name={c.author} />
+        <span style={{ fontSize: 11.5, fontWeight: 700, color: "var(--cmt-tx)" }}>{c.author}</span>
+        <span className="mono muted" style={{ marginLeft: "auto", fontSize: 9 }}>
+          {ago(c.created_at)}
+          {c.edited ? " · edited" : ""}
+        </span>
+      </div>
+
+      {editing ? (
+        <div onClick={(e) => e.stopPropagation()}>
+          <textarea
+            className="input"
+            value={draft}
+            autoFocus
+            onChange={(e) => setDraft(e.target.value)}
+            style={{ minHeight: 52, fontSize: 12.5, resize: "vertical" }}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") {
+                setEditing(false)
+                setDraft(c.body_md)
+              }
+              if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && draft.trim()) {
+                void A.edit(c.id, draft)
+                setEditing(false)
+              }
+            }}
+          />
+          <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
+            <button className="btn pri sm" disabled={!draft.trim()} onClick={async () => { await A.edit(c.id, draft); setEditing(false) }}>Save</button>
+            <button className="btn sm" onClick={() => { setEditing(false); setDraft(c.body_md) }}>Cancel</button>
+          </div>
+        </div>
+      ) : (
+        // biome-ignore lint/security/noDangerouslySetInnerHtml: input is escaped first in mdToHtml.
+        <div className={`cmt-body${compact ? " cmt-clamp" : ""}`} dangerouslySetInnerHTML={{ __html: mdToHtml(c.body_md) }} />
+      )}
+
+      {Object.keys(reactions).length > 0 && (
+        <div className="cmt-pills">
+          {Object.entries(reactions).map(([emoji, who]) => (
+            <button
+              key={emoji}
+              className={`cmt-pill${who.includes(A.meName) ? " on" : ""}`}
+              title={who.join(", ")}
+              onClick={(e) => { e.stopPropagation(); A.react(c.id, emoji) }}
+            >
+              <span>{emoji}</span>
+              <span className="n">{who.length}</span>
+            </button>
+          ))}
+        </div>
+      )}
+
+      {!editing && (
+        <div className={`cmt-actions${open ? " pin" : ""}`} onClick={(e) => e.stopPropagation()}>
+          <button className="cmt-act" title="React" onClick={() => setOpen(open === "react" ? null : "react")}>😊</button>
+          <button className="cmt-act" title="More" onClick={() => setOpen(open === "menu" ? null : "menu")}>⋯</button>
+          {open === "react" && (
+            <Popover onClose={close} style={{ top: 30, right: 0 }}>
+              <div className="cmt-emoji">
+                {REACTION_EMOJI.map((em) => (
+                  <button key={em} onClick={() => { A.react(c.id, em); close() }}>{em}</button>
+                ))}
+              </div>
+            </Popover>
+          )}
+          {open === "menu" && (
+            <Popover onClose={close} style={{ top: 30, right: 0, minWidth: 132 }}>
+              <div className="cmt-menu">
+                {mine && <button onClick={() => { setEditing(true); close() }}>✎ Edit</button>}
+                <button onClick={() => { A.copyLink(c.thread_id); close() }}>🔗 Copy link</button>
+                {mine && <button className="danger" onClick={() => { A.remove(c.id); close() }}>🗑 Delete</button>}
+              </div>
+            </Popover>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// One comment thread. Compact until activated; the active card shows the full
+// thread, a reply box, and resolve controls.
 function CommentCard({
   thread, active, hovered, present, onActivate, onHover, onResolve, onReply, onJump,
 }: {
@@ -788,32 +1013,19 @@ function CommentCard({
         ))}
 
       {!active ? (
-        // Compact: author, first line, reply count.
-        <div style={{ padding: "9px 11px" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 4 }}>
-            <Avatar name={root.author} />
-            <span style={{ fontSize: 11.5, fontWeight: 700, color: "var(--cmt-tx)" }}>{root.author}</span>
-            <span className="mono muted" style={{ marginLeft: "auto", fontSize: 9.5 }}>{ago(root.created_at)}</span>
-          </div>
-          <p className="cmt-clamp" style={{ margin: 0, fontSize: 12.5, lineHeight: 1.45 }}>{root.body_md}</p>
+        <>
+          <CommentRow c={root} compact />
           {replies > 0 && (
-            <div className="mono" style={{ marginTop: 5, fontSize: 10, color: "var(--ac)", fontWeight: 700 }}>
+            <div className="mono" style={{ padding: "0 12px 9px", fontSize: 10, color: "var(--ac)", fontWeight: 700 }}>
               {replies} repl{replies === 1 ? "y" : "ies"}
             </div>
           )}
-        </div>
+        </>
       ) : (
         <>
-          <div style={{ maxHeight: 340, overflow: "auto" }}>
+          <div style={{ maxHeight: 360, overflow: "auto" }}>
             {thread.map((c) => (
-              <div key={c.id} style={{ padding: "10px 12px", borderBottom: "1px solid var(--line-soft)" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 11, fontWeight: 700, color: "var(--cmt-tx)", marginBottom: 4 }}>
-                  <Avatar name={c.author} />
-                  {c.author}
-                  <span className="mono muted" style={{ marginLeft: "auto", fontWeight: 400, fontSize: 9 }}>{ago(c.created_at)} · v{c.base_version}</span>
-                </div>
-                <p style={{ margin: 0, fontSize: 12.5, lineHeight: 1.45, whiteSpace: "pre-wrap" }}>{c.body_md}</p>
-              </div>
+              <CommentRow key={c.id} c={c} />
             ))}
           </div>
           <div style={{ display: "flex", gap: 6, padding: "8px 12px", borderTop: "1px solid var(--line-soft)" }}>
@@ -986,13 +1198,6 @@ function Rail({
   )
 }
 
-function Avatar({ name }: { name: string }) {
-  return (
-    <span style={{ width: 17, height: 17, borderRadius: "50%", background: "var(--cmt-bg)", color: "var(--cmt-tx)", display: "grid", placeItems: "center", fontSize: 9, fontWeight: 700, fontFamily: "ui-monospace,Menlo,monospace", flex: "0 0 auto" }}>
-      {(name || "?").slice(0, 2).toUpperCase()}
-    </span>
-  )
-}
 
 function IconBtn({ title, onClick, children }: { title: string; onClick: () => void; children: React.ReactNode }) {
   return (
