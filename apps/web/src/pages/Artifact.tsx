@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useLayoutEffect, use
 import { useNavigate, useParams } from "@tanstack/react-router"
 import { api, API_BASE, type Analytics, type Artifact as Art, type Comment, type Diff } from "../api"
 import { Header, useToast } from "../components"
+import { ShareButton } from "../components/ShareDialog"
 import { useAuth } from "../ctx"
 
 type Sel = { type?: string; exact: string; prefix?: string; suffix?: string }
@@ -389,6 +390,7 @@ export function Artifact() {
         right={
           <>
             <Presence viewers={viewers} self={me?.name ?? me?.email ?? ""} />
+            <ShareButton shortId={shortId} myRole={art.my_role} />
             <Insights shortId={shortId} />
             <HistoryMenu
               art={art}

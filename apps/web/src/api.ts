@@ -12,6 +12,7 @@ export interface VersionSession {
   name: string | null
   created_at: string
 }
+export type Role = "viewer" | "commenter" | "editor" | "owner"
 export interface Artifact {
   short_id: string
   url: string
@@ -23,6 +24,14 @@ export interface Artifact {
   /** Time-grouped view of versions for display; newest-first. */
   sessions?: VersionSession[]
   views?: number
+  /** The current caller's effective role on this artifact (null = no access). */
+  my_role?: Role | null
+}
+export interface ArtifactMember {
+  user_id: string
+  email: string | null
+  name: string | null
+  role: Role
 }
 export interface Analytics {
   total: number
@@ -121,6 +130,13 @@ export const api = {
     f(`/v1/artifacts/${id}/diff?from=${from}&to=${to}&format=json`, opts()).then(j),
   restore: (id: string, version: number): Promise<Artifact> =>
     f(`/v1/artifacts/${id}/restore`, opts({ version })).then(j),
+
+  listMembers: (id: string): Promise<{ default_role: Role; members: ArtifactMember[] }> =>
+    f(`/v1/artifacts/${id}/members`, opts()).then(j),
+  setMember: (id: string, email: string, role: Role): Promise<ArtifactMember> =>
+    f(`/v1/artifacts/${id}/members`, { ...opts({ email, role }), method: "PUT" }).then(j),
+  removeMember: (id: string, userId: string): Promise<void> =>
+    f(`/v1/artifacts/${id}/members/${userId}`, { method: "DELETE", credentials: "include" }).then(() => undefined),
   heartbeat: (id: string, name: string): Promise<{ viewers: string[] }> =>
     f(`/v1/artifacts/${id}/presence`, opts({ name })).then(j),
 
