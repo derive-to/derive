@@ -4,6 +4,7 @@ import {
   type Actor,
   ANCHOR_CLIENT_JS,
   type ArtifactRecord,
+  approveProposal,
   artifactUrl,
   type BlobStore,
   BUNDLE_CONTENT_TYPE,
@@ -20,7 +21,9 @@ import {
   type MetaStore,
   mimeFor,
   newId,
+  type ProposalRecord,
   PublishError,
+  propose,
   publish,
   type Role,
   renderMarkdown,
@@ -28,7 +31,6 @@ import {
   roleAllows,
   SELECTION_SCRIPT,
   toJson,
-  type VersionRecord,
   type Visibility,
 } from "@dock/core"
 import { type Context, Hono, type Next } from "hono"
@@ -410,15 +412,17 @@ export function createApp(deps: AppDeps): Hono {
     const me = actor.kind === "user" ? actor.userId : null
     const tags = (await meta.tagsForArtifacts([artifact.id]))[artifact.id] ?? []
     const favorite = me ? (await meta.listUserFavoriteIds(me)).includes(artifact.id) : false
+    const openProposals = await meta.listProposals(artifact.id, { state: "open" })
     // `versions` stays at revision granularity (machines/agents); `sessions` is
     // the time-grouped view the UI shows by default. `my_role` tells the client
-    // which actions to surface.
+    // which actions to surface; `open_proposals` badges the review queue.
     return c.json({
       ...toJson(deps.baseUrl, artifact, versions),
       sessions: groupSessions(versions, versionWindowMs),
       my_role: effectiveRole(actor, artifact.visibility),
       tags,
       favorite,
+      open_proposals: openProposals.length,
     })
   })
 
@@ -553,16 +557,22 @@ export function createApp(deps: AppDeps): Hono {
     )
   })
 
-  /** Source text of a version (entry document for bundles); null if missing. */
-  const sourceText = async (version: VersionRecord): Promise<string | null> => {
+  /**
+   * Source text of stored content (entry document for bundles); null if missing.
+   * Works for a version or a proposal — both carry blob_key + content_type.
+   */
+  const sourceText = async (content: {
+    blob_key: string
+    content_type: string
+  }): Promise<string | null> => {
     let data: Uint8Array | null
-    if (version.content_type === BUNDLE_CONTENT_TYPE) {
-      const manifestBytes = await blobs.get(version.blob_key)
+    if (content.content_type === BUNDLE_CONTENT_TYPE) {
+      const manifestBytes = await blobs.get(content.blob_key)
       if (!manifestBytes) return null
       const manifest = JSON.parse(new TextDecoder().decode(manifestBytes)) as BundleManifest
       data = await blobs.get(manifest.files[manifest.entry].key)
     } else {
-      data = await blobs.get(version.blob_key)
+      data = await blobs.get(content.blob_key)
     }
     return data ? new TextDecoder().decode(data) : null
   }
@@ -613,6 +623,183 @@ export function createApp(deps: AppDeps): Hono {
     if (c.req.query("format") === "json") return c.json({ from, to, ops })
     c.header("Content-Type", "text/plain; charset=utf-8")
     return c.body(formatDiff(ops))
+  })
+
+  // ---- Reviews: proposed versions ---------------------------------------
+
+  const proposalJson = (a: ArtifactRecord, p: ProposalRecord) => ({
+    id: p.id,
+    state: p.state,
+    author: p.author,
+    message: p.message,
+    base_version: p.base_version,
+    kind: p.kind,
+    decided_by: p.decided_by,
+    decided_version: p.decided_version,
+    decided_at: p.decided_at,
+    created_at: p.created_at,
+    // The proposed experience, rendered exactly like a live version.
+    preview_url: `${deps.baseUrl}/raw/${a.short_id}/p/${p.id}/index.html`,
+  })
+
+  // Load an artifact + one of its proposals, read-gated. Returns an error
+  // Response to short-circuit, or the pair to proceed.
+  const loadProposal = async (c: Context) => {
+    const artifact = await meta.getByShortId(c.req.param("shortId") ?? "")
+    if (!artifact || !(await authorize(c, "read", artifact)))
+      return { error: c.json({ error: "not found" }, 404) as Response }
+    const proposal = await meta.getProposal(c.req.param("proposalId") ?? "")
+    if (!proposal || proposal.artifact_id !== artifact.id)
+      return { error: c.json({ error: "not found" }, 404) as Response }
+    return { artifact, proposal }
+  }
+
+  // Propose a candidate version (commenter+). It does NOT go live; an editor
+  // approves it. Same multipart shape as publish.
+  app.post("/v1/artifacts/:shortId/proposals", async (c) => {
+    const artifact = await meta.getByShortId(c.req.param("shortId"))
+    if (!artifact || artifact.current_version === 0) return c.json({ error: "not found" }, 404)
+    if (!(await authorize(c, "propose", artifact))) return c.json({ error: "forbidden" }, 403)
+    const len = Number(c.req.header("content-length") ?? 0)
+    if (len > MAX_UPLOAD_BYTES) return c.json({ error: "upload too large" }, 413)
+
+    const body = await c.req.parseBody()
+    const file = body.file
+    if (!(file instanceof File)) return c.json({ error: "multipart field 'file' required" }, 400)
+    const bytes = new Uint8Array(await file.arrayBuffer())
+    const isBundle =
+      /\.zip$/i.test(file.name) ||
+      body.kind === "bundle" ||
+      (bytes[0] === 0x50 && bytes[1] === 0x4b && (bytes[2] === 3 || bytes[2] === 5))
+
+    const me = await currentUser(c)
+    const author = me ? (me.name ?? me.email) : str(body.author) || "anonymous"
+    try {
+      const { proposal } = await propose(meta, blobs, artifact.short_id, {
+        bytes,
+        filename: file.name,
+        isBundle,
+        spa: body.spa === "true" || body.spa === "1",
+        message: str(body.message),
+        author,
+      })
+      bus.publish(artifact.id, { type: "proposal.created", proposal_id: proposal.id })
+      await notify(artifact, "proposal.created", {
+        proposal_id: proposal.id,
+        author: proposal.author,
+        message: proposal.message,
+        base_version: proposal.base_version,
+      })
+      return c.json(proposalJson(artifact, proposal), 201)
+    } catch (err) {
+      if (err instanceof PublishError) return c.json({ error: err.message }, err.statusCode as 400)
+      throw err
+    }
+  })
+
+  // List proposals (read-gated). ?state=open filters to the review queue.
+  app.get("/v1/artifacts/:shortId/proposals", async (c) => {
+    const artifact = await meta.getByShortId(c.req.param("shortId"))
+    if (!artifact || !(await authorize(c, "read", artifact)))
+      return c.json({ error: "not found" }, 404)
+    const stateQ = c.req.query("state")
+    const state =
+      stateQ === "open" ||
+      stateQ === "approved" ||
+      stateQ === "changes_requested" ||
+      stateQ === "withdrawn"
+        ? stateQ
+        : undefined
+    const proposals = await meta.listProposals(artifact.id, state ? { state } : undefined)
+    return c.json({ proposals: proposals.map((p) => proposalJson(artifact, p)) })
+  })
+
+  // One proposal, with a line diff of its content against its base version.
+  app.get("/v1/artifacts/:shortId/proposals/:proposalId", async (c) => {
+    const r = await loadProposal(c)
+    if ("error" in r) return r.error
+    const { artifact, proposal } = r
+    const base = await meta.getVersion(artifact.id, proposal.base_version)
+    const [a, b] = [base ? await sourceText(base) : "", await sourceText(proposal)]
+    const ops = a !== null && b !== null ? diffLines(a, b) : []
+    return c.json({
+      ...proposalJson(artifact, proposal),
+      diff: { base_version: proposal.base_version, ops },
+    })
+  })
+
+  // Approve: the proposed content becomes the new current version (goes live).
+  app.post("/v1/artifacts/:shortId/proposals/:proposalId/approve", async (c) => {
+    const r = await loadProposal(c)
+    if ("error" in r) return r.error
+    const { artifact, proposal } = r
+    if (!(await authorize(c, "approve", artifact))) return c.json({ error: "forbidden" }, 403)
+    if (proposal.state !== "open") return c.json({ error: `proposal is ${proposal.state}` }, 409)
+    const me = await currentUser(c)
+    const approver = me ? (me.name ?? me.email) : null
+    try {
+      const version = await approveProposal(meta, proposal, approver)
+      bus.publish(artifact.id, {
+        type: "proposal.approved",
+        proposal_id: proposal.id,
+        n: version.n,
+      })
+      bus.publish(artifact.id, {
+        type: "version.published",
+        n: version.n,
+        message: version.message,
+      })
+      await notify(artifact, "proposal.approved", {
+        proposal_id: proposal.id,
+        version: version.n,
+        approver,
+      })
+      const fresh = (await meta.getProposal(proposal.id)) as ProposalRecord
+      return c.json({ ...proposalJson(artifact, fresh), published: version.n })
+    } catch (err) {
+      if (err instanceof PublishError) return c.json({ error: err.message }, err.statusCode as 400)
+      throw err
+    }
+  })
+
+  // Request changes: the candidate stays a proposal; the proposer can revise.
+  app.post("/v1/artifacts/:shortId/proposals/:proposalId/request-changes", async (c) => {
+    const r = await loadProposal(c)
+    if ("error" in r) return r.error
+    const { artifact, proposal } = r
+    if (!(await authorize(c, "approve", artifact))) return c.json({ error: "forbidden" }, 403)
+    if (proposal.state !== "open") return c.json({ error: `proposal is ${proposal.state}` }, 409)
+    const me = await currentUser(c)
+    const reviewer = me ? (me.name ?? me.email) : null
+    await meta.decideProposal(proposal.id, {
+      state: "changes_requested",
+      decided_by: reviewer,
+      decided_version: null,
+    })
+    bus.publish(artifact.id, { type: "proposal.changes_requested", proposal_id: proposal.id })
+    await notify(artifact, "proposal.changes_requested", { proposal_id: proposal.id, reviewer })
+    const fresh = (await meta.getProposal(proposal.id)) as ProposalRecord
+    return c.json(proposalJson(artifact, fresh))
+  })
+
+  // Withdraw: the proposer (or a manager) retracts an open proposal.
+  app.post("/v1/artifacts/:shortId/proposals/:proposalId/withdraw", async (c) => {
+    const r = await loadProposal(c)
+    if ("error" in r) return r.error
+    const { artifact, proposal } = r
+    const me = await currentUser(c)
+    const who = me ? (me.name ?? me.email) : null
+    const isAuthor = who !== null && who === proposal.author
+    if (!isAuthor && !(await authorize(c, "manage", artifact)))
+      return c.json({ error: "forbidden" }, 403)
+    if (proposal.state !== "open") return c.json({ error: `proposal is ${proposal.state}` }, 409)
+    await meta.decideProposal(proposal.id, {
+      state: "withdrawn",
+      decided_by: who,
+      decided_version: null,
+    })
+    const fresh = (await meta.getProposal(proposal.id)) as ProposalRecord
+    return c.json(proposalJson(artifact, fresh))
   })
 
   // ---- Comments ----------------------------------------------------------
@@ -972,20 +1159,19 @@ export function createApp(deps: AppDeps): Hono {
     }),
   )
 
-  app.get("/raw/:shortId/v/:n/*", async (c) => {
-    const shortId = c.req.param("shortId")
-    const n = Number(c.req.param("n"))
-    const artifact = await meta.getByShortId(shortId)
-    if (!artifact || !Number.isInteger(n) || !(await authorize(c, "read", artifact)))
-      return c.text("not found", 404)
-    const version = await meta.getVersion(artifact.id, n)
-    if (!version) return c.text("not found", 404)
-
-    const prefix = `/raw/${shortId}/v/${c.req.param("n")}/`
-    let path = decodeURIComponent(c.req.path.slice(prefix.length))
-
-    if (version.content_type === BUNDLE_CONTENT_TYPE) {
-      const manifestBytes = await blobs.get(version.blob_key)
+  // Serve stored content (a version or a proposal) under `prefix`, resolving a
+  // sub-`path` for bundles. Identical pipeline for both, so a proposal renders
+  // exactly how it will once approved — reviewers approve the experience.
+  const serveContent = async (
+    c: Context,
+    content: { blob_key: string; content_type: string },
+    title: string | null,
+    prefix: string,
+    rawPath: string,
+  ) => {
+    let path = rawPath
+    if (content.content_type === BUNDLE_CONTENT_TYPE) {
+      const manifestBytes = await blobs.get(content.blob_key)
       if (!manifestBytes) return c.text("blob missing", 500)
       const manifest = JSON.parse(new TextDecoder().decode(manifestBytes)) as BundleManifest
 
@@ -1009,16 +1195,16 @@ export function createApp(deps: AppDeps): Hono {
       return c.body(toBody(data), 200, { ...RAW_HEADERS, "Content-Type": entry.type })
     }
 
-    const data = await blobs.get(version.blob_key)
+    const data = await blobs.get(content.blob_key)
     if (!data) return c.text("blob missing", 500)
 
-    if (version.content_type === "text/markdown") {
+    if (content.content_type === "text/markdown") {
       if (path === "raw.md")
         return c.body(toBody(data), 200, {
           ...RAW_HEADERS,
           "Content-Type": "text/markdown; charset=utf-8",
         })
-      const html = await renderMarkdown(new TextDecoder().decode(data), artifact.title)
+      const html = await renderMarkdown(new TextDecoder().decode(data), title)
       return c.body(html, 200, { ...RAW_HEADERS, "Content-Type": "text/html; charset=utf-8" })
     }
 
@@ -1029,6 +1215,34 @@ export function createApp(deps: AppDeps): Hono {
       return c.body(html, 200, { ...RAW_HEADERS, "Content-Type": ct })
     }
     return c.body(toBody(data), 200, { ...RAW_HEADERS, "Content-Type": ct })
+  }
+
+  app.get("/raw/:shortId/v/:n/*", async (c) => {
+    const shortId = c.req.param("shortId")
+    const n = Number(c.req.param("n"))
+    const artifact = await meta.getByShortId(shortId)
+    if (!artifact || !Number.isInteger(n) || !(await authorize(c, "read", artifact)))
+      return c.text("not found", 404)
+    const version = await meta.getVersion(artifact.id, n)
+    if (!version) return c.text("not found", 404)
+
+    const prefix = `/raw/${shortId}/v/${c.req.param("n")}/`
+    const path = decodeURIComponent(c.req.path.slice(prefix.length))
+    return serveContent(c, version, artifact.title, prefix, path)
+  })
+
+  // Render a proposed version exactly like a live one, so review is of the
+  // experience, not a source dump. Read-gated; the proposal must belong here.
+  app.get("/raw/:shortId/p/:proposalId/*", async (c) => {
+    const shortId = c.req.param("shortId")
+    const artifact = await meta.getByShortId(shortId)
+    if (!artifact || !(await authorize(c, "read", artifact))) return c.text("not found", 404)
+    const proposal = await meta.getProposal(c.req.param("proposalId"))
+    if (!proposal || proposal.artifact_id !== artifact.id) return c.text("not found", 404)
+
+    const prefix = `/raw/${shortId}/p/${proposal.id}/`
+    const path = decodeURIComponent(c.req.path.slice(prefix.length))
+    return serveContent(c, proposal, artifact.title, prefix, path)
   })
 
   return app

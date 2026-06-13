@@ -2,7 +2,14 @@ import { createHmac, randomUUID } from "node:crypto"
 import type { ArtifactRecord, DeliveryRecord, MetaStore } from "@dock/core"
 
 /** Event names webhooks can subscribe to. */
-export const WEBHOOK_EVENTS = ["comment.created", "comment.resolved", "version.published"] as const
+export const WEBHOOK_EVENTS = [
+  "comment.created",
+  "comment.resolved",
+  "version.published",
+  "proposal.created",
+  "proposal.approved",
+  "proposal.changes_requested",
+] as const
 export type WebhookEvent = (typeof WEBHOOK_EVENTS)[number]
 
 const MAX_ATTEMPTS = 6
