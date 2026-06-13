@@ -11,6 +11,7 @@ export const moderationRoutes = (ctx: AppContext) => {
 
   // Anyone can report a public artifact for abuse. Rate-limited by the global
   // per-IP limiter on mutating /v1; the reporter's IP is recorded best-effort.
+  // authz-exempt: abuse reports are intentionally public (any visitor can report)
   app.post("/v1/artifacts/:shortId/report", async (c) => {
     const artifact = await meta.getByShortId(c.req.param("shortId"))
     if (!artifact) return c.json({ error: "not found" }, 404)
