@@ -19,7 +19,11 @@ export default defineConfig({
   use: { baseURL: WEB, trace: "retain-on-failure" },
   webServer: [
     {
-      command: `rm -rf .e2e-data && PORT=${API_PORT} DATA_DIR=.e2e-data DOCK_WEB_ORIGIN=${WEB} DOCK_RATE_LIMIT=false pnpm --filter @dock/api dev`,
+      // The rm runs from cwd (repo root, below) but `pnpm --filter @dock/api dev`
+      // runs in apps/api/, so DATA_DIR=.e2e-data lands at apps/api/.e2e-data —
+      // clear THAT path, or the throwaway DB accumulates across runs and the
+      // "first signup = workspace owner" assumption silently breaks.
+      command: `rm -rf apps/api/.e2e-data && PORT=${API_PORT} DATA_DIR=.e2e-data DOCK_WEB_ORIGIN=${WEB} DOCK_RATE_LIMIT=false pnpm --filter @dock/api dev`,
       url: `http://localhost:${API_PORT}/healthz`,
       cwd: "../..",
       timeout: 60_000,
