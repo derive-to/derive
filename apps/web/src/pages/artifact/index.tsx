@@ -1,6 +1,7 @@
+import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useNavigate, useParams } from "@tanstack/react-router"
 import { useCallback, useEffect, useRef, useState } from "react"
-import { API_BASE, type Artifact as Art, api, type Comment, type Diff, type Mention } from "@/api"
+import { API_BASE, api, type Comment, type Diff, type Mention } from "@/api"
 import { useIsMobile, useToast } from "@/components"
 import { AppShell } from "@/components/app-shell"
 import { Icon } from "@/components/icons"
@@ -16,6 +17,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { Input } from "@/components/ui/input"
 import { useAuth } from "@/ctx"
+import { artifactQuery, commentsQuery } from "@/lib/queries"
 import { STORAGE_KEYS } from "@/lib/storage-keys"
 import { cn } from "@/lib/utils"
 import { ActionsCtx, type CommentActions } from "./comment-actions"
@@ -25,6 +27,7 @@ import { CollectionsMenu, ReportButton, StarButton, TagsMenu } from "./header-ac
 import { HistoryDrawer, Insights } from "./insights-history"
 import { clamp, groupThreads, parseAnchor } from "./lib/layout"
 import { toggleReaction } from "./lib/reactions"
+import { parseRef } from "./parse-ref"
 import { DeckBar, Presence, Rail } from "./rail-deck"
 import type { Panel, PinItem, Sel } from "./types"
 
@@ -38,11 +41,6 @@ const loadPanel = (): Panel => {
   }
 }
 
-const parseRef = (ref: string) => {
-  const m = ref.match(/^([0-9a-z]{6,12})(?:-[a-z0-9-]*?)?(?:@v(\d+))?$/)
-  return { shortId: m?.[1] ?? ref, version: m?.[2] ? Number(m[2]) : undefined }
-}
-
 export function Artifact() {
   const { ref } = useParams({ from: "/a/$ref" })
   const { shortId, version } = parseRef(ref)
@@ -51,9 +49,13 @@ export function Artifact() {
   const { toast, show } = useToast()
   const isMobile = useIsMobile()
 
-  const [art, setArt] = useState<Art | null>(null)
-  const [failed, setFailed] = useState(false)
-  const [comments, setComments] = useState<Comment[]>([])
+  // Artifact metadata + comments come from React Query, so the route loader's
+  // intent preload (ensureQueryData) warms exactly what we render here — the
+  // click that follows a hover reads straight from cache. Optimistic edits and
+  // the SSE live updates below write through the same client.
+  const qc = useQueryClient()
+  const { data: art, isError: failed } = useQuery(artifactQuery(shortId))
+  const { data: comments = [] } = useQuery(commentsQuery(shortId))
   const [editing, setEditing] = useState(false)
   const [reviewing, setReviewing] = useState(false)
   // Which "⋯ More" surface is open (large dialog / drawer).
@@ -227,20 +229,17 @@ export function Artifact() {
     if (!loading && !me) nav({ to: "/login" })
   }, [loading, me, nav])
 
+  // Re-pull the artifact + comments from the server (after a publish/restore, or
+  // an SSE version.published). The initial fetch is handled by the useQuery hooks
+  // above; this just invalidates so they refetch.
   const load = useCallback(() => {
-    api
-      .getArtifact(shortId)
-      .then((a) => {
-        setArt(a)
-        setFailed(false)
-      })
-      .catch(() => setFailed(true))
-    api
-      .listComments(shortId)
-      .then((r) => setComments(r.comments))
-      .catch(() => {})
-  }, [shortId])
-  useEffect(load, [load])
+    qc.invalidateQueries({ queryKey: artifactQuery(shortId).queryKey })
+    qc.invalidateQueries({ queryKey: commentsQuery(shortId).queryKey })
+  }, [qc, shortId])
+  // Pull comments fresh (server is the source of truth after a write or SSE ping).
+  const refetchComments = useCallback(() => {
+    qc.invalidateQueries({ queryKey: commentsQuery(shortId).queryKey })
+  }, [qc, shortId])
 
   // Deep link: ?c=<thread> opens the panel, activates that thread, and jumps to
   // its text. Runs once, after comments are in.
@@ -261,15 +260,10 @@ export function Artifact() {
     const ev = new EventSource(`${API_BASE}/v1/artifacts/${shortId}/events`, {
       withCredentials: true,
     })
-    const refresh = () =>
-      api
-        .listComments(shortId)
-        .then((r) => setComments(r.comments))
-        .catch(() => {})
-    ev.addEventListener("comment.created", refresh)
-    ev.addEventListener("comment.resolved", refresh)
-    ev.addEventListener("comment.reacted", refresh)
-    ev.addEventListener("comment.updated", refresh)
+    ev.addEventListener("comment.created", refetchComments)
+    ev.addEventListener("comment.resolved", refetchComments)
+    ev.addEventListener("comment.reacted", refetchComments)
+    ev.addEventListener("comment.updated", refetchComments)
     ev.addEventListener("version.published", load)
     ev.addEventListener("presence", (e) => {
       try {
@@ -279,7 +273,7 @@ export function Artifact() {
       }
     })
     return () => ev.close()
-  }, [shortId, load])
+  }, [shortId, load, refetchComments])
 
   // Announce we're viewing, and keep the heartbeat alive (TTL is 45s server-side).
   useEffect(() => {
@@ -471,7 +465,7 @@ export function Artifact() {
         mentions: opts?.mentions?.length ? opts.mentions : undefined,
       })
       .catch((e) => show((e as Error).message))
-    api.listComments(shortId).then((r) => setComments(r.comments))
+    refetchComments()
   }
   const reply = (text: string, threadId: string, mentions: Mention[] = []) =>
     addComment(text, { threadId, mentions })
@@ -482,7 +476,7 @@ export function Artifact() {
   }
   const toggleResolve = async (root: Comment) => {
     await api.resolve(shortId, root.id, root.state === "open" ? "resolved" : "open")
-    api.listComments(shortId).then((r) => setComments(r.comments))
+    refetchComments()
   }
   const activate = (id: string) => {
     setActiveThread((cur) => (cur === id ? cur : id))
@@ -493,30 +487,26 @@ export function Artifact() {
     setComposer({ anchor: sel.selector, top: sel.top })
     setActiveThread(null)
   }
-  const refetch = () =>
-    api
-      .listComments(shortId)
-      .then((r) => setComments(r.comments))
-      .catch(() => {})
   const actions: CommentActions = {
     meName: me?.name ?? me?.email ?? "",
     react: (commentId, emoji) => {
-      // Optimistic: reflect the toggle immediately, reconcile on the response.
-      setComments((cs) =>
-        cs.map((c) =>
+      // Optimistic: reflect the toggle in the cache immediately, reconcile on
+      // the response.
+      qc.setQueryData(commentsQuery(shortId).queryKey, (cs) =>
+        (cs ?? []).map((c) =>
           c.id === commentId ? toggleReaction(c, emoji, me?.name ?? me?.email ?? "anonymous") : c,
         ),
       )
-      api.react(shortId, commentId, emoji).then(refetch).catch(refetch)
+      api.react(shortId, commentId, emoji).then(refetchComments).catch(refetchComments)
     },
     edit: async (commentId, body) => {
       await api.editComment(shortId, commentId, body).catch((e) => show((e as Error).message))
-      refetch()
+      refetchComments()
     },
     remove: (commentId) => {
       api
         .deleteComment(shortId, commentId)
-        .then(refetch)
+        .then(refetchComments)
         .catch((e) => show((e as Error).message))
     },
     copyLink: (threadId) => {
@@ -553,18 +543,28 @@ export function Artifact() {
           <StarButton
             shortId={shortId}
             favorite={!!art.favorite}
-            onChange={(fav) => setArt((a) => (a ? { ...a, favorite: fav } : a))}
+            onChange={(fav) =>
+              qc.setQueryData(artifactQuery(shortId).queryKey, (a) =>
+                a ? { ...a, favorite: fav } : a,
+              )
+            }
           />
           <TagsMenu
             shortId={shortId}
             tags={art.tags ?? []}
             canEdit={art.my_role === "editor" || art.my_role === "owner"}
-            onChange={(tags) => setArt((a) => (a ? { ...a, tags } : a))}
+            onChange={(tags) =>
+              qc.setQueryData(artifactQuery(shortId).queryKey, (a) => (a ? { ...a, tags } : a))
+            }
           />
           <CollectionsMenu
             shortId={shortId}
             inCollections={art.collections ?? []}
-            onChange={(collections) => setArt((a) => (a ? { ...a, collections } : a))}
+            onChange={(collections) =>
+              qc.setQueryData(artifactQuery(shortId).queryKey, (a) =>
+                a ? { ...a, collections } : a,
+              )
+            }
           />
           <ShareButton shortId={shortId} myRole={art.my_role} />
           <ReportButton shortId={shortId} onDone={show} />
@@ -911,5 +911,3 @@ export function Artifact() {
     </AppShell>
   )
 }
-
-// Header star: toggle this artifact as a personal favorite. Optimistic.
