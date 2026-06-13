@@ -2469,62 +2469,43 @@ function Rail({
   return (
     <>
       <button
+        type="button"
         onClick={onExpand}
         title="Expand comments (c)"
-        className="rail-top"
-        style={{ borderBottom: "1px solid var(--line-soft)" }}
+        className="flex h-[38px] w-full shrink-0 items-center justify-center gap-1.5 border-b border-border-soft text-foreground transition-colors hover:bg-hover"
       >
-        <span style={{ fontSize: 13 }}>⟨</span>
+        <span className="text-xs">⟨</span>
         {total > 0 && (
-          <span
-            className="mono"
-            style={{
-              fontSize: 9.5,
-              fontWeight: 700,
-              color: "var(--cmt-tx)",
-              background: "var(--cmt-bg)",
-              borderRadius: 999,
-              padding: "1px 5px",
-            }}
-          >
+          <span className="rounded-full bg-accent px-1.5 py-px font-mono text-2xs font-bold text-primary">
             {total}
           </span>
         )}
       </button>
-      <div ref={ref} style={{ flex: 1, position: "relative", overflow: "hidden" }}>
+      <div ref={ref} className="relative flex-1 overflow-hidden">
         {pins.map((p) => {
           const id = p.thread[0].thread_id
           const isActive = active === id
           return (
             <button
+              type="button"
               key={id}
               onClick={() => onDot(id)}
               title={p.thread[0].body_md}
-              style={{
-                position: "absolute",
-                left: "50%",
-                top: clamp(p.desiredY + 6, 10, h - 14),
-                transform: "translateX(-50%)",
-                width: isActive ? 14 : 10,
-                height: isActive ? 14 : 10,
-                borderRadius: "50%",
-                border: "2px solid var(--card)",
-                background: "var(--ac)",
-                cursor: "pointer",
-                padding: 0,
-                boxShadow: isActive ? "0 0 0 3px var(--ac-soft)" : "none",
-                transition: "width .12s, height .12s, transform .18s",
-                opacity: p.located ? 1 : 0.4,
-              }}
+              className={cn(
+                "absolute left-1/2 -translate-x-1/2 rounded-full border-2 border-card bg-primary p-0 transition-all",
+                isActive ? "size-3.5 shadow-[0_0_0_3px_var(--ac-soft)]" : "size-2.5",
+                !p.located && "opacity-40",
+              )}
+              style={{ top: clamp(p.desiredY + 6, 10, h - 14) }}
             />
           )
         })}
       </div>
       <button
+        type="button"
         onClick={onHide}
         title="Hide comments"
-        className="rail-top"
-        style={{ borderTop: "1px solid var(--line-soft)", color: "var(--fg-mut)" }}
+        className="flex h-[38px] w-full shrink-0 items-center justify-center border-t border-border-soft text-muted-foreground transition-colors hover:bg-hover"
       >
         ✕
       </button>
@@ -2543,28 +2524,10 @@ function IconBtn({
 }) {
   return (
     <button
+      type="button"
       title={title}
       onClick={onClick}
-      style={{
-        width: 26,
-        height: 26,
-        display: "grid",
-        placeItems: "center",
-        border: 0,
-        background: "transparent",
-        color: "var(--fg-mut)",
-        borderRadius: 7,
-        cursor: "pointer",
-        fontSize: 13,
-      }}
-      onMouseEnter={(e) => {
-        e.currentTarget.style.background = "var(--hover)"
-        e.currentTarget.style.color = "var(--fg)"
-      }}
-      onMouseLeave={(e) => {
-        e.currentTarget.style.background = "transparent"
-        e.currentTarget.style.color = "var(--fg-mut)"
-      }}
+      className="grid size-[26px] place-items-center rounded-md text-muted-foreground transition-colors hover:bg-hover hover:text-foreground"
     >
       {children}
     </button>
@@ -2573,16 +2536,7 @@ function IconBtn({
 
 function SectionLabel({ children }: { children: React.ReactNode }) {
   return (
-    <div
-      className="mono"
-      style={{
-        fontSize: 9.5,
-        letterSpacing: ".06em",
-        textTransform: "uppercase",
-        color: "var(--fg-mut)",
-        padding: "2px 2px 6px",
-      }}
-    >
+    <div className="px-0.5 pb-1.5 pt-0.5 font-mono text-2xs uppercase tracking-[0.06em] text-muted-foreground">
       {children}
     </div>
   )
@@ -2605,47 +2559,25 @@ function DeckBar({
   onNext: () => void
   onFullscreen: () => void
 }) {
-  const btn: React.CSSProperties = {
-    width: 30,
-    height: 30,
-    borderRadius: 8,
-    border: "1px solid var(--line)",
-    background: "var(--card)",
-    color: "var(--fg)",
-    cursor: "pointer",
-    display: "grid",
-    placeItems: "center",
-    fontSize: 15,
-  }
+  const btn =
+    "grid size-[30px] place-items-center rounded-lg border border-border bg-card text-foreground transition-colors hover:bg-hover disabled:pointer-events-none disabled:opacity-40"
   return (
-    <div
-      style={{
-        position: "absolute",
-        bottom: 14,
-        left: "50%",
-        transform: "translateX(-50%)",
-        display: "flex",
-        alignItems: "center",
-        gap: 6,
-        padding: 6,
-        borderRadius: 999,
-        background: "var(--card)",
-        border: "1px solid var(--line)",
-        boxShadow: "var(--shadow)",
-        zIndex: 5,
-      }}
-    >
-      <button style={btn} onClick={onPrev} disabled={deck.i <= 0} aria-label="Previous slide">
+    <div className="absolute bottom-3.5 left-1/2 z-[5] flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-border bg-card p-1.5 shadow-[var(--shadow)]">
+      <button
+        type="button"
+        className={btn}
+        onClick={onPrev}
+        disabled={deck.i <= 0}
+        aria-label="Previous slide"
+      >
         ‹
       </button>
-      <span
-        className="mono"
-        style={{ fontSize: 12, color: "var(--fg-mut)", minWidth: 52, textAlign: "center" }}
-      >
+      <span className="min-w-[52px] text-center font-mono text-sm text-muted-foreground">
         {deck.i + 1} / {deck.total}
       </span>
       <button
-        style={btn}
+        type="button"
+        className={btn}
         onClick={onNext}
         disabled={deck.i >= deck.total - 1}
         aria-label="Next slide"
@@ -2653,7 +2585,8 @@ function DeckBar({
         ›
       </button>
       <button
-        style={{ ...btn, marginLeft: 4 }}
+        type="button"
+        className={cn(btn, "ml-1")}
         onClick={onFullscreen}
         title="Present (fullscreen)"
         aria-label="Present fullscreen"
@@ -2672,37 +2605,25 @@ function Presence({ viewers, self }: { viewers: string[]; self: string }) {
   const extra = ordered.length - shown.length
   return (
     <div
-      style={{ display: "flex", alignItems: "center", gap: 7 }}
+      className="flex items-center gap-1.5"
       title={`${ordered.length} viewing: ${ordered.join(", ")}`}
     >
-      <div style={{ display: "flex" }}>
+      <div className="flex">
         {shown.map((name, i) => (
           <span
             key={name}
-            style={{
-              width: 22,
-              height: 22,
-              borderRadius: "50%",
-              background: name === self ? "var(--ac)" : "var(--cmt-bg)",
-              color: name === self ? "var(--ac-fg)" : "var(--cmt-tx)",
-              border: "2px solid var(--card)",
-              marginLeft: i === 0 ? 0 : -7,
-              display: "grid",
-              placeItems: "center",
-              fontSize: 9,
-              fontWeight: 700,
-              fontFamily: "ui-monospace,Menlo,monospace",
-            }}
+            className={cn(
+              "grid size-[22px] place-items-center rounded-full border-2 border-card font-mono text-2xs font-bold",
+              name === self ? "bg-primary text-primary-foreground" : "bg-accent text-primary",
+              i > 0 && "-ml-[7px]",
+            )}
           >
             {(name || "?").slice(0, 2).toUpperCase()}
           </span>
         ))}
       </div>
-      <span
-        className="mono muted"
-        style={{ fontSize: 11, display: "flex", alignItems: "center", gap: 4 }}
-      >
-        <span style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--good)" }} />
+      <span className="flex items-center gap-1 font-mono text-xs text-muted-foreground">
+        <span className="size-1.5 rounded-full bg-success" />
         {ordered.length} viewing{extra > 0 ? ` (+${extra})` : ""}
       </span>
     </div>
