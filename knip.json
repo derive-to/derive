@@ -1,5 +1,5 @@
 {
-  "$schema": "https://unpkg.com/knip@5/schema.json",
+  "$schema": "https://unpkg.com/knip@6/schema.json",
   "workspaces": {
     "apps/api": {
       "entry": ["src/worker.ts", "gen-auth-schema.ts"]
@@ -17,7 +17,6 @@
     "nsExports": "off",
     "nsTypes": "off",
     "enumMembers": "off",
-    "classMembers": "off",
     "duplicates": "off",
     "binaries": "off",
     "unresolved": "off"

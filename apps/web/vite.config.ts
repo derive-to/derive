@@ -1,7 +1,8 @@
 import { fileURLToPath } from "node:url"
+import babel from "@rolldown/plugin-babel"
 import tailwindcss from "@tailwindcss/vite"
 import { tanstackStart } from "@tanstack/react-start/plugin/vite"
-import viteReact from "@vitejs/plugin-react"
+import viteReact, { reactCompilerPreset } from "@vitejs/plugin-react"
 import { visualizer } from "rollup-plugin-visualizer"
 import { defineConfig } from "vite"
 
@@ -21,6 +22,19 @@ export default defineConfig({
   resolve: {
     alias: { "@": fileURLToPath(new URL("./src", import.meta.url)) },
   },
+  build: {
+    rollupOptions: {
+      output: {
+        // Keep React/runtime in its own vendor chunk so app changes don't bust
+        // its cache (and the entry chunk stays lean) — React 19's react-dom would
+        // otherwise fold into the entry.
+        manualChunks: (id) =>
+          /node_modules\/(react|react-dom|scheduler|react-compiler-runtime)\//.test(id)
+            ? "react-vendor"
+            : undefined,
+      },
+    },
+  },
   server: {
     port: 3000,
     // /a is the SPA's own route — only proxy API + raw artifact bytes.
@@ -28,5 +42,14 @@ export default defineConfig({
       ["/v1", "/api", "/raw", "/healthz"].map((p) => [p, { target: API, changeOrigin: true }]),
     ),
   },
-  plugins: [tailwindcss(), tanstackStart({ spa: { enabled: true } }), viteReact(), ...analyze],
+  plugins: [
+    tailwindcss(),
+    tanstackStart({ spa: { enabled: true } }),
+    viteReact(),
+    // React Compiler (stable, React 19) auto-memoizes components/hooks — it
+    // retires hand-rolled useMemo/useCallback and the exhaustive-deps papercuts.
+    // Wired the plugin-react v6 way: a Rolldown babel pass running the preset.
+    babel({ presets: [reactCompilerPreset()] }),
+    ...analyze,
+  ],
 })
