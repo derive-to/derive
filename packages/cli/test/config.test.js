@@ -6,6 +6,7 @@ import {
   CONFIG_FILE,
   TEMPLATES,
   defaultConfig,
+  formatComments,
   loadConfig,
   resolvePublish,
   scaffold,
@@ -27,7 +28,7 @@ describe("scaffold", () => {
   it("md template writes dock.json + index.md + AGENTS.md", () => {
     const d = tmp()
     const { created } = scaffold(d, "Report", "md")
-    expect(created.sort()).toEqual(["AGENTS.md", "dock.json", "index.md"])
+    expect(created.sort()).toEqual(["AGENTS.md", "dock.json", "dock.schema.json", "index.md"])
     const cfg = JSON.parse(readFileSync(join(d, CONFIG_FILE), "utf8"))
     expect(cfg).toMatchObject({ title: "Report", entry: "index.md", id: null, visibility: "link" })
   })
@@ -58,9 +59,49 @@ describe("scaffold", () => {
     expect(JSON.parse(readFileSync(join(d, CONFIG_FILE), "utf8")).id).toBe("keep")
   })
 
-  it("exposes the three templates", () => {
-    expect(TEMPLATES).toEqual(["md", "html", "slides"])
+  it("site template scaffolds a multi-file bundle with a directory entry", () => {
+    const d = tmp()
+    const { created } = scaffold(d, "Docs", "site")
+    expect(created).toEqual(expect.arrayContaining(["site/index.html", "site/about.html", "site/style.css"]))
+    expect(JSON.parse(readFileSync(join(d, CONFIG_FILE), "utf8")).entry).toBe("site")
+  })
+
+  it("writes a dock.schema.json and references it from dock.json", () => {
+    const d = tmp()
+    scaffold(d, "X", "md")
+    const cfg = JSON.parse(readFileSync(join(d, CONFIG_FILE), "utf8"))
+    expect(cfg.$schema).toBe("./dock.schema.json")
+    const schema = JSON.parse(readFileSync(join(d, "dock.schema.json"), "utf8"))
+    expect(schema.properties.visibility.enum).toContain("link")
+  })
+
+  it("exposes the four templates", () => {
+    expect(TEMPLATES).toEqual(["md", "html", "slides", "site"])
     expect(Object.keys(scaffoldFiles("T", "slides"))).toContain("slides.html")
+  })
+})
+
+describe("formatComments", () => {
+  const c = (id, tid, author, body, state = "open", anchor = null) => ({
+    id, thread_id: tid, author, body_md: body, state, anchor,
+  })
+  it("returns a friendly message when empty", () => {
+    expect(formatComments([])).toBe("No comments yet.")
+  })
+  it("groups by thread and shows author, body, and state glyph", () => {
+    const out = formatComments([
+      c("c1", "t1", "ava", "looks off", "open"),
+      c("c2", "t1", "bo", "fixed"),
+      c("c3", "t2", "ci", "done", "resolved"),
+    ])
+    expect(out).toContain("○ thread t1")
+    expect(out).toContain("    ava: looks off")
+    expect(out).toContain("    bo: fixed")
+    expect(out).toContain("✓ thread t2")
+  })
+  it("shows the anchored quote when present", () => {
+    const out = formatComments([c("c1", "t1", "ava", "tighten", "open", JSON.stringify({ exact: "p99 budget" }))])
+    expect(out).toContain("“p99 budget”")
   })
 })
 

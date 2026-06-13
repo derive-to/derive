@@ -6,6 +6,7 @@ export const CONFIG_FILE = "dock.json"
 
 /** The dock.json a fresh project starts with (no id until first publish). */
 export const defaultConfig = (title = "My artifact", entry = "index.md") => ({
+  $schema: "./dock.schema.json",
   title,
   entry,
   visibility: "link",
@@ -13,7 +14,7 @@ export const defaultConfig = (title = "My artifact", entry = "index.md") => ({
   id: null,
 })
 
-export const TEMPLATES = ["md", "html", "slides"]
+export const TEMPLATES = ["md", "html", "slides", "site"]
 
 /** Read dock.json from `dir`, or null if absent. Throws on malformed JSON. */
 export function loadConfig(dir = ".") {
@@ -56,25 +57,76 @@ export function writeId(dir, id) {
   return config
 }
 
-// Each template's entry file + its starter content. AGENTS.md + dock.json are
-// added to every template.
+// Each template's entry (what `dock publish` targets) + the starter file(s) it
+// writes. `site` is a multi-file bundle (entry is a directory). dock.json,
+// dock.schema.json, and AGENTS.md are added to every template.
 const STARTERS = {
-  md: { entry: "index.md", content: () => STARTER_MD },
-  html: { entry: "index.html", content: (t) => starterHtml(t) },
-  slides: { entry: "slides.html", content: (t) => starterSlides(t) },
+  md: { entry: "index.md", files: (t) => ({ "index.md": starterMd(t) }) },
+  html: { entry: "index.html", files: (t) => ({ "index.html": starterHtml(t) }) },
+  slides: { entry: "slides.html", files: (t) => ({ "slides.html": starterSlides(t) }) },
+  site: {
+    entry: "site",
+    files: (t) => ({
+      "site/index.html": starterSiteIndex(t),
+      "site/about.html": starterSiteAbout(t),
+      "site/style.css": SITE_CSS,
+    }),
+  },
 }
 
 /**
  * Files a new project gets for a template. dock.json drives publishing; AGENTS.md
- * is the loop convention for agents; the entry file is a publishable starter so
- * `dock publish` works immediately.
+ * is the loop convention for agents; the starter is publishable immediately.
  */
 export function scaffoldFiles(title = "My artifact", template = "md") {
   const t = STARTERS[template] ?? STARTERS.md
   return {
     [CONFIG_FILE]: `${JSON.stringify(defaultConfig(title, t.entry), null, 2)}\n`,
-    [t.entry]: t.content(title),
+    "dock.schema.json": `${JSON.stringify(DOCK_SCHEMA, null, 2)}\n`,
+    ...t.files(title),
     "AGENTS.md": AGENTS_MD,
+  }
+}
+
+/** JSON Schema for dock.json — gives editors autocomplete + validation. */
+export const DOCK_SCHEMA = {
+  $schema: "http://json-schema.org/draft-07/schema#",
+  title: "dock.json",
+  type: "object",
+  properties: {
+    title: { type: "string", description: "Artifact title." },
+    entry: { type: "string", description: "File or directory `dock publish` targets." },
+    visibility: { enum: ["public", "link", "org", "password"], default: "link" },
+    spa: { type: "boolean", description: "Serve a single-page-app fallback for unknown paths.", default: false },
+    id: { type: ["string", "null"], description: "Artifact short id; set automatically on first publish." },
+    server: { type: "string", description: "Dock server URL (overrides DOCK_SERVER)." },
+  },
+}
+
+/** Render comments as a readable thread list for `dock comments`. Pure. */
+export function formatComments(comments) {
+  if (!comments || comments.length === 0) return "No comments yet."
+  const threads = new Map()
+  for (const c of comments) {
+    if (!threads.has(c.thread_id)) threads.set(c.thread_id, [])
+    threads.get(c.thread_id).push(c)
+  }
+  const out = []
+  for (const [tid, thread] of threads) {
+    const root = thread[0]
+    const quote = anchorQuote(root.anchor)
+    out.push(`${root.state === "resolved" ? "✓" : "○"} thread ${tid}${quote ? `  “${quote}”` : ""}`)
+    for (const c of thread) out.push(`    ${c.author}: ${c.body_md.replace(/\n/g, " ")}`)
+  }
+  return out.join("\n")
+}
+
+const anchorQuote = (anchor) => {
+  if (!anchor) return null
+  try {
+    return JSON.parse(anchor).exact ?? null
+  } catch {
+    return null
   }
 }
 
@@ -100,7 +152,7 @@ export function scaffold(dir = ".", title = "My artifact", template = "md") {
   return { created, skipped }
 }
 
-const STARTER_MD = `# My artifact
+const starterMd = (title) => `# ${title}
 
 Edit this, then run \`dock publish\`. Every publish becomes a new version at the
 same URL, and reviewers can comment on the rendered page.
@@ -110,6 +162,34 @@ same URL, and reviewers can comment on the rendered page.
 Comments anchor to the words they're attached to. They survive edits best when
 surrounding text stays recognizable — keep headings stable and avoid rewording
 a sentence end to end when you only meant to tweak it. See STANDARD.md.
+`
+
+const starterSiteIndex = (title) => `<!doctype html>
+<meta charset="utf-8">
+<title>${title}</title>
+<link rel="stylesheet" href="/style.css">
+<nav><a href="/">Home</a> · <a href="/about.html">About</a></nav>
+<h1>${title}</h1>
+<p>A multi-page static site, published as one artifact. Build any generator into
+a folder; <code>dock publish</code> zips it and serves it. Absolute asset paths
+are rewritten so the bundle stays sandboxed.</p>
+`
+
+const starterSiteAbout = (title) => `<!doctype html>
+<meta charset="utf-8">
+<title>About · ${title}</title>
+<link rel="stylesheet" href="/style.css">
+<nav><a href="/">Home</a> · <a href="/about.html">About</a></nav>
+<h1>About</h1>
+<p>Page two. Internal links work; reviewers can comment on any page.</p>
+`
+
+const SITE_CSS = `body{font:16px/1.7 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:#23203a;
+  max-width:640px;margin:0 auto;padding:48px 24px}
+nav{font-size:14px;color:#655999;margin-bottom:22px}
+a{color:#655999}
+h1{letter-spacing:-.02em}
+code{background:#f1ead9;padding:1px 6px;border-radius:5px}
 `
 
 const starterHtml = (title) => `<!doctype html>
@@ -223,26 +303,21 @@ Each publish is a new immutable version at the same URL. Name a checkpoint with
 
 ## The loop: publish -> review -> revise
 
-1. **Publish** a draft. Share the URL.
-2. **Read comments** — each has a quote (the anchored text), a thread, and a state:
-   \`\`\`bash
-   curl -s "$DOCK_SERVER/v1/artifacts/$ID/comments"
-   \`\`\`
-3. **Revise** the source to address the feedback, then **publish again** — same id,
-   new version. The comment's highlight re-anchors to the moved text automatically.
-4. **Reply in-thread** to discuss, or **resolve** a thread once handled:
-   \`\`\`bash
-   # reply (omit thread_id to start a new thread)
-   curl -s -X POST "$DOCK_SERVER/v1/artifacts/$ID/comments" \\
-     -H 'content-type: application/json' \\
-     -d '{"thread_id":"<id>","body_md":"Addressed in the new version."}'
+The CLI has a verb for each step (all read the artifact id from dock.json):
 
-   # resolve the thread a comment belongs to
-   curl -s -X POST "$DOCK_SERVER/v1/artifacts/$ID/comments/<commentId>/resolve" \\
-     -H 'content-type: application/json' -d '{"state":"resolved"}'
-   \`\`\`
-   Republishing can also resolve threads in one call: add \`resolves=<commentId,...>\`
-   to the publish request.
+\`\`\`bash
+dock publish                      # 1. publish a draft, share the URL
+dock comments                     # 2. read the comment threads (quote · author · state)
+# 3. revise the source for the feedback, then:
+dock publish --name "Rev 2"       #    publish again — same URL, highlights re-anchor
+dock reply <thread_id> "Fixed in this version."   # 4a. discuss
+dock resolve <comment_id>         # 4b. close a handled thread  (dock reopen to undo)
+dock open                         # open the artifact in a browser
+\`\`\`
+
+Each is also a plain HTTP call if you'd rather not shell out — see the API under
+\`/v1/artifacts/:id/comments\`. Republishing can resolve threads in one shot:
+include \`resolves=<commentId,...>\` in the publish request.
 
 ## Keep comments anchorable
 

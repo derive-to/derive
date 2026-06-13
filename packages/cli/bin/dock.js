@@ -1,13 +1,16 @@
 #!/usr/bin/env node
-// dock — scaffold and publish artifacts to a Dock server.
-//   dock init [dir] [--template md|html|slides] [--title t]   scaffold a project
-//   dock publish [file|dir] [flags]        publish (reads dock.json if present)
-//     flags: --id X --title t --slug s --spa --message m --name "checkpoint"
-//            --visibility public|link|org|password --server url --token t
+// dock — scaffold, publish, and run the review loop against a Dock server.
+//   dock init [dir] [--template md|html|slides|site] [--title t]
+//   dock publish [file|dir] [--id --title --slug --spa --message --name --visibility --server --token]
+//   dock comments [--id]                 list the artifact's comment threads
+//   dock open [--id]                     open the artifact in a browser
+//   dock reply <thread_id> <message…>    reply in a thread
+//   dock resolve|reopen <comment_id>     set a thread's state
+import { spawn } from "node:child_process"
 import { readFileSync, readdirSync, statSync } from "node:fs"
 import { basename, join, relative } from "node:path"
 import { zipSync } from "fflate"
-import { CONFIG_FILE, TEMPLATES, loadConfig, resolvePublish, scaffold, writeId } from "../src/config.js"
+import { CONFIG_FILE, TEMPLATES, formatComments, loadConfig, resolvePublish, scaffold, writeId } from "../src/config.js"
 
 const args = process.argv.slice(2)
 const cmd = args.shift()
@@ -36,10 +39,85 @@ if (cmd === "init") {
   process.exit(0)
 }
 
+// ---- Loop verbs (comments / open / reply / resolve / reopen) --------------
+const LOOP = ["comments", "open", "reply", "resolve", "reopen"]
+if (LOOP.includes(cmd)) {
+  let cfg = null
+  try {
+    cfg = loadConfig(".")
+  } catch (e) {
+    console.error(`error: ${e.message}`)
+    process.exit(1)
+  }
+  const r = resolvePublish(flags, cfg)
+  if (!r.id) {
+    console.error(`error: no artifact id. Set "id" in ${CONFIG_FILE} (publish once), or pass --id.`)
+    process.exit(1)
+  }
+  const auth = r.token ? { authorization: `Bearer ${r.token}` } : {}
+  const base = `${r.server}/v1/artifacts/${r.id}`
+  const die = async (res) => {
+    const j = await res.json().catch(() => ({}))
+    console.error(`error (${res.status}): ${j.error ?? res.statusText}`)
+    process.exit(1)
+  }
+
+  if (cmd === "open") {
+    const url = `${r.server}/a/${r.id}`
+    console.log(url)
+    const opener = process.platform === "darwin" ? "open" : process.platform === "win32" ? "start" : "xdg-open"
+    spawn(opener, [url], { stdio: "ignore", detached: true }).on("error", () => {}).unref()
+    process.exit(0)
+  }
+
+  if (cmd === "comments") {
+    const res = await fetch(`${base}/comments`, { headers: auth })
+    if (!res.ok) await die(res)
+    console.log(formatComments((await res.json()).comments))
+    process.exit(0)
+  }
+
+  if (cmd === "reply") {
+    const threadId = positional[0]
+    const body = positional.slice(1).join(" ")
+    if (!threadId || !body) {
+      console.error(`usage: dock reply <thread_id> <message…>`)
+      process.exit(1)
+    }
+    const res = await fetch(`${base}/comments`, {
+      method: "POST",
+      headers: { "content-type": "application/json", ...auth },
+      body: JSON.stringify({ thread_id: threadId, body_md: body }),
+    })
+    if (!res.ok) await die(res)
+    console.log(`✓ replied in ${threadId}`)
+    process.exit(0)
+  }
+
+  // resolve | reopen
+  const commentId = positional[0]
+  if (!commentId) {
+    console.error(`usage: dock ${cmd} <comment_id>`)
+    process.exit(1)
+  }
+  const res = await fetch(`${base}/comments/${commentId}/resolve`, {
+    method: "POST",
+    headers: { "content-type": "application/json", ...auth },
+    body: JSON.stringify({ state: cmd === "resolve" ? "resolved" : "open" }),
+  })
+  if (!res.ok) await die(res)
+  console.log(`✓ thread ${cmd === "resolve" ? "resolved" : "reopened"}`)
+  process.exit(0)
+}
+
 if (cmd !== "publish") {
   console.error(`usage:
-  dock init [dir] [--title t]
-  dock publish [file|dir] [--id X] [--title t] [--slug s] [--spa] [--message m] [--name "x"] [--visibility v] [--server url] [--token t]`)
+  dock init [dir] [--template md|html|slides|site] [--title t]
+  dock publish [file|dir] [--id X] [--title t] [--slug s] [--spa] [--message m] [--name "x"] [--visibility v] [--server url] [--token t]
+  dock comments [--id X]                 list comment threads
+  dock open [--id X]                     open the artifact in a browser
+  dock reply <thread_id> <message…>      reply in a thread
+  dock resolve|reopen <comment_id>       set a thread's state`)
   process.exit(cmd ? 1 : 0)
 }
 
