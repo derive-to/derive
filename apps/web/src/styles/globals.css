@@ -1,10 +1,18 @@
+/* Cascade layer order (low → high priority). `legacy` sits ABOVE base so the
+   old class rules still beat Tailwind's preflight on unconverted surfaces, but
+   BELOW utilities so a converted element's `text-foreground` / `bg-card` always
+   win over leftover legacy color rules. This is what keeps dark-mode text from
+   being clobbered by unlayered legacy CSS. */
+@layer theme, base, legacy, components, utilities;
+
 @import "tailwindcss";
 @import "tw-animate-css";
 /* Legacy hand-rolled CSS, kept while surfaces migrate to Tailwind + ui/.
    Defines the per-theme CSS vars ([data-theme] → --fg/--card/--ac/…) that the
    @theme bridge below references, plus the old utility classes still in use.
-   Delete from here as each surface is converted. */
-@import "../styles.css";
+   Imported into the `legacy` layer so utilities outrank it. Delete from here as
+   each surface is converted. */
+@import "../styles.css" layer(legacy);
 
 /* Dark variant keys off the theme attribute the app sets on <html>. dusk is a
    dark family too, so `dark:` utilities apply there as well. */
@@ -31,6 +39,7 @@
   --color-destructive: var(--bad);
   --color-destructive-foreground: #fff;
   --color-success: var(--good);
+  --color-gold: #e0a93a;
   --color-border: var(--line);
   --color-border-soft: var(--line-soft);
   --color-input: var(--line);

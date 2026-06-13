@@ -1,5 +1,10 @@
 import { useNavigate } from "@tanstack/react-router"
+import { Menu, Plus, Star, X } from "lucide-react"
 import { useCallback, useEffect, useRef, useState } from "react"
+import { Button } from "@/components/ui/button"
+import { Card } from "@/components/ui/card"
+import { Input } from "@/components/ui/input"
+import { cn } from "@/lib/utils"
 import {
   API_BASE,
   type Artifact,
@@ -241,19 +246,19 @@ export function Library() {
     )
 
   return (
-    <div style={{ height: "100%", display: "flex", flexDirection: "column" }}>
+    <div className="flex h-full flex-col">
       <Header
         left={
           isMobile ? (
-            <button
-              className="btn sm"
+            <Button
+              variant="outline"
+              size="icon"
               onClick={() => setDrawer(true)}
               title="Menu"
               aria-label="Open menu"
-              style={{ padding: "5px 10px", fontSize: 15 }}
             >
-              ☰
-            </button>
+              <Menu />
+            </Button>
           ) : undefined
         }
       />
@@ -286,45 +291,35 @@ export function Library() {
           }}
         />
         <main className="browse-main">
-          <div style={{ maxWidth: 1000, margin: "0 auto", padding: "22px 22px 64px" }}>
-            <div className="searchbar">
-              <input
-                className="input"
+          <div className="mx-auto max-w-[1000px] px-5.5 pb-16 pt-5.5">
+            <div className="mb-[18px] flex flex-wrap items-center gap-2.5">
+              <Input
                 placeholder="Search by title…"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                style={{ flex: 1, minWidth: 200 }}
+                className="min-w-[200px] flex-1"
               />
               {filter.kind !== "all" && (
-                <button className="btn sm" onClick={() => setFilter({ kind: "all" })}>
+                <Button variant="outline" size="sm" onClick={() => setFilter({ kind: "all" })}>
                   {filter.kind === "favorites"
                     ? "★ Favorites"
                     : filter.kind === "tag"
                       ? `#${filter.tag}`
-                      : `📁 ${filter.title}`}{" "}
-                  ✕
-                </button>
+                      : `📁 ${filter.title}`}
+                  <X />
+                </Button>
               )}
             </div>
 
             {filter.kind !== "collection" && (
-              <div
-                className="card"
-                style={{
-                  padding: 16,
-                  marginBottom: 22,
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 14,
-                  flexWrap: "wrap",
-                }}
-              >
-                <div style={{ flex: 1, minWidth: 220 }}>
-                  <div className="display" style={{ fontWeight: 600, fontSize: 15 }}>
-                    Publish an artifact
-                  </div>
-                  <div className="muted" style={{ fontSize: 13 }}>
-                    Drop an HTML or Markdown file, or run <code className="mono">dock publish</code>
+              <Card className="mb-5.5 flex flex-wrap items-center gap-3.5 p-4">
+                <div className="min-w-[220px] flex-1">
+                  <div className="font-display text-lg font-semibold">Publish an artifact</div>
+                  <div className="text-sm text-muted-foreground">
+                    Drop an HTML or Markdown file, or run{" "}
+                    <code className="rounded bg-muted px-1.5 py-px font-mono text-[0.86em]">
+                      dock publish
+                    </code>
                     .
                   </div>
                 </div>
@@ -332,13 +327,19 @@ export function Library() {
                   ref={file}
                   type="file"
                   accept=".html,.htm,.md,.markdown,.zip"
-                  style={{ maxWidth: 230, fontSize: 12 }}
+                  className="max-w-[230px] text-sm text-muted-foreground"
                   onChange={publish}
                 />
-                <button className="btn pri" onClick={publish} disabled={busy}>
-                  {busy ? "Publishing…" : "Publish"}
-                </button>
-              </div>
+                <Button variant="primary" onClick={publish} disabled={busy}>
+                  {busy ? (
+                    "Publishing…"
+                  ) : (
+                    <>
+                      <Plus /> Publish
+                    </>
+                  )}
+                </Button>
+              </Card>
             )}
 
             {filter.kind === "collection" ? (
@@ -350,9 +351,9 @@ export function Library() {
                 onDelete={() => deleteCollection(filter.id)}
               />
             ) : (
-              <h2 className="display" style={{ fontSize: 17, margin: "0 0 14px" }}>
+              <h2 className="mb-3.5 font-display text-lg font-semibold">
                 {heading}{" "}
-                <span className="muted" style={{ fontWeight: 400, fontSize: 14 }}>
+                <span className="text-base font-normal text-muted-foreground">
                   · {headingCount}
                 </span>
               </h2>
@@ -366,63 +367,69 @@ export function Library() {
               <EmptyState filter={filter} query={debouncedQ} />
             ) : (
               <>
-                <div
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns: "repeat(auto-fill,minmax(220px,1fr))",
-                    gap: 13,
-                  }}
-                >
+                <div className="grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-3">
                   {items.map((a) => {
                     const open = () => nav({ to: "/a/$ref", params: { ref: a.short_id } })
                     return (
-                      <div key={a.short_id} className="card browse-card">
-                        <div className="browse-thumb">
+                      // Stretched-link card: the open button's ::after covers the whole
+                      // card so a click anywhere (thumbnail included) opens it; the star
+                      // + tag chips sit above (z-20) and stay independently clickable.
+                      <div
+                        key={a.short_id}
+                        className="group relative flex cursor-pointer flex-col gap-2 rounded-lg border border-border bg-card p-3.5 transition-all hover:-translate-y-0.5 hover:border-primary hover:shadow-[var(--shadow)] active:translate-y-0"
+                      >
+                        <div className="relative">
                           <Thumb id={a.short_id} v={a.current_version} />
                           <button
                             type="button"
-                            className={`star${a.favorite ? " on" : ""}`}
                             title={a.favorite ? "Remove from favorites" : "Add to favorites"}
                             aria-label="Toggle favorite"
                             onClick={(e) => {
                               e.stopPropagation()
                               toggleFav(a)
                             }}
+                            className={cn(
+                              "absolute right-2.5 top-2.5 z-20 grid size-7 place-items-center rounded-md border bg-card transition hover:border-primary",
+                              a.favorite
+                                ? "border-gold text-gold"
+                                : "border-border text-muted-foreground opacity-90",
+                            )}
                           >
-                            {a.favorite ? "★" : "☆"}
+                            <Star className={cn("size-3.5", a.favorite && "fill-current")} />
                           </button>
                         </div>
-                        {/* The button's ::after is stretched over the whole card, so a
-                            click anywhere (thumbnail included) opens the artifact; the
-                            star + tag chips sit above it and stay independently clickable. */}
                         <button
                           type="button"
-                          className="card-open"
                           onClick={open}
                           aria-label={`Open ${a.title ?? a.short_id}`}
+                          className="flex w-full flex-col gap-1.5 text-left outline-none after:absolute after:inset-0 after:z-[1] after:rounded-lg after:content-[''] focus-visible:after:outline-2 focus-visible:after:-outline-offset-2 focus-visible:after:outline-ring"
                         >
-                          <span className="display card-title">{a.title ?? a.short_id}</span>
-                          <span className="mono card-meta">
-                            <span className="card-kind">{a.kind}</span>
+                          <span className="font-display text-lg font-semibold text-foreground transition-colors group-hover:text-primary">
+                            {a.title ?? a.short_id}
+                          </span>
+                          <span className="flex items-center gap-2 font-mono text-xs text-muted-foreground">
+                            <span className="rounded-[5px] border border-border-soft bg-secondary px-1.5 py-px">
+                              {a.kind}
+                            </span>
                             <span>v{a.current_version}</span>
                             {a.views !== undefined && a.views > 0 && (
-                              <span className="card-views" title={`${a.views} viewers`}>
+                              <span className="ml-auto" title={`${a.views} viewers`}>
                                 👁 {a.views > 999 ? `${(a.views / 1000).toFixed(1)}k` : a.views}
                               </span>
                             )}
                           </span>
                         </button>
                         {(a.tags ?? []).length > 0 && (
-                          <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+                          <div className="relative z-20 flex flex-wrap gap-1.5">
                             {(a.tags ?? []).slice(0, 6).map((t) => (
                               <button
                                 key={t}
                                 type="button"
-                                className="tagchip"
                                 onClick={(e) => {
                                   e.stopPropagation()
                                   pick({ kind: "tag", tag: t })
                                 }}
+                                className="rounded-md border border-border bg-card px-1.5 py-px font-mono text-2xs text-primary transition hover:border-primary"
                               >
                                 #{t}
                               </button>
@@ -434,10 +441,10 @@ export function Library() {
                   })}
                 </div>
                 {nextCursor && (
-                  <div style={{ textAlign: "center", marginTop: 20 }}>
-                    <button className="btn" onClick={() => load(nextCursor)} disabled={more}>
+                  <div className="mt-5 text-center">
+                    <Button variant="outline" onClick={() => load(nextCursor)} disabled={more}>
                       {more ? "Loading…" : "Load more"}
-                    </button>
+                    </Button>
                   </div>
                 )}
               </>
