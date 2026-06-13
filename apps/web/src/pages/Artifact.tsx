@@ -2135,46 +2135,37 @@ function CommentCard({
 
   return (
     <div
+      data-testid="comment-card"
       onMouseEnter={() => onHover(root.thread_id)}
       onMouseLeave={() => onHover(null)}
       onClick={() => !active && onActivate(root.thread_id)}
-      className="card cmt-card"
-      style={{
-        overflow: "hidden",
-        cursor: active ? "default" : "pointer",
-        opacity: resolved && !active ? 0.62 : 1,
-        borderColor: active ? "var(--ac)" : hovered ? "var(--cmt-bd)" : "var(--line)",
-        boxShadow: active ? "var(--shadow)" : hovered ? "0 4px 14px -8px rgba(0,0,0,.45)" : "none",
-        transition: "box-shadow .15s, border-color .15s",
-      }}
+      className={cn(
+        "cmt-card overflow-hidden rounded-lg border bg-card transition-[box-shadow,border-color]",
+        active
+          ? "cursor-default border-primary shadow-[var(--shadow)]"
+          : hovered
+            ? "cursor-pointer border-primary/40 shadow-[0_4px_14px_-8px_rgba(0,0,0,0.45)]"
+            : "cursor-pointer border-border",
+        resolved && !active && "opacity-60",
+      )}
     >
       {quote &&
         (textPresent && !resolved ? (
           <button
+            type="button"
             onClick={(e) => {
               e.stopPropagation()
               onJump(root.thread_id)
             }}
             title="Jump to the highlighted text"
-            className="cmt-quote"
-            style={{
-              borderLeft: "3px solid var(--ac)",
-              background: "var(--ac-soft)",
-              color: "var(--fg)",
-              cursor: "pointer",
-            }}
+            className="block w-full cursor-pointer truncate border-l-[3px] border-primary bg-accent px-2.5 py-1.5 text-left text-xs italic text-foreground"
           >
             “{quote}”
           </button>
         ) : (
           <div
             title="The text this comment was attached to was edited or removed in this version"
-            className="cmt-quote"
-            style={{
-              borderLeft: "3px solid var(--line)",
-              background: "var(--card-2)",
-              color: "var(--fg-mut)",
-            }}
+            className="block w-full truncate border-l-[3px] border-border bg-secondary px-2.5 py-1.5 text-left text-xs italic text-muted-foreground"
           >
             “{quote}”
           </div>
@@ -2184,30 +2175,20 @@ function CommentCard({
         <>
           <CommentRow c={root} compact />
           {replies > 0 && (
-            <div
-              className="mono"
-              style={{ padding: "0 12px 9px", fontSize: 10, color: "var(--ac)", fontWeight: 700 }}
-            >
+            <div className="px-3 pb-2.5 font-mono text-2xs font-bold text-primary">
               {replies} repl{replies === 1 ? "y" : "ies"}
             </div>
           )}
         </>
       ) : (
         <>
-          <div style={{ maxHeight: 360, overflow: "auto" }}>
+          <div className="max-h-[360px] overflow-auto">
             {thread.map((c) => (
               <CommentRow key={c.id} c={c} />
             ))}
           </div>
-          <div
-            style={{
-              display: "flex",
-              gap: 6,
-              padding: "8px 12px",
-              borderTop: "1px solid var(--line-soft)",
-            }}
-          >
-            <div style={{ flex: 1 }} onClick={(e) => e.stopPropagation()}>
+          <div className="flex gap-1.5 border-t border-border-soft px-3 py-2">
+            <div className="flex-1" onClick={(e) => e.stopPropagation()}>
               <MentionField
                 className="input"
                 style={{ padding: "6px 9px", fontSize: 12, width: "100%" }}
@@ -2220,65 +2201,48 @@ function CommentCard({
                 autoFocus
               />
             </div>
-            <button
-              className="btn sm"
+            <Button
+              variant="outline"
+              size="sm"
               disabled={!reply.trim()}
+              data-testid="comment-reply-send"
               onClick={(e) => {
                 e.stopPropagation()
                 sendReply(replyMentions.filter((m) => reply.includes(`@${m.name}`)))
               }}
             >
               Reply
-            </button>
+            </Button>
           </div>
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 7,
-              padding: "7px 12px",
-              background: "var(--card-2)",
-            }}
-          >
+          <div className="flex items-center gap-1.5 bg-secondary px-3 py-1.5">
             <span
-              className="mono"
-              style={{
-                fontSize: 9.5,
-                fontWeight: 700,
-                padding: "2px 8px",
-                borderRadius: 999,
-                background: resolved ? "var(--good-bg)" : "var(--ac-soft)",
-                color: resolved ? "var(--good)" : "var(--ac)",
-              }}
+              className={cn(
+                "rounded-full px-2 py-0.5 font-mono text-2xs font-bold",
+                resolved ? "bg-success/15 text-success" : "bg-accent text-primary",
+              )}
             >
               {resolved ? "resolved" : "open"}
             </span>
             {quote && !textPresent && !resolved && (
               <span
-                className="mono"
                 title="The text this comment was attached to was edited or removed in this version"
-                style={{
-                  fontSize: 9.5,
-                  fontWeight: 700,
-                  padding: "2px 8px",
-                  borderRadius: 999,
-                  background: "var(--cmt-bg)",
-                  color: "var(--cmt-tx)",
-                }}
+                className="rounded-full bg-accent px-2 py-0.5 font-mono text-2xs font-bold text-primary"
               >
                 text changed
               </span>
             )}
-            <button
-              className="btn sm"
-              style={{ marginLeft: "auto" }}
+            <Button
+              variant="outline"
+              size="sm"
+              className="ml-auto"
+              data-testid="comment-resolve"
               onClick={(e) => {
                 e.stopPropagation()
                 onResolve(root)
               }}
             >
               {resolved ? "Reopen" : "Resolve"}
-            </button>
+            </Button>
           </div>
         </>
       )}
