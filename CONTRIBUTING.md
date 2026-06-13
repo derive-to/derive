@@ -104,10 +104,13 @@ shipping. If something below surprises you, that's the guardrail doing its job:
   `Button`/`Input`/`Textarea`/`DropdownMenuItem`) in `pages/` or `components/shared/`
   without a `data-testid` fails `pnpm lint:testids`. Add a surface-scoped id, or
   `testid-ignore` a non-assertable control. (`ui/` primitives are exempt.)
+- **Ad-hoc error responses.** A route that returns `c.json({ error }, status)` directly
+  fails `pnpm lint:api`. Return `fail(c, status, message)` (`apps/api/src/lib/http.ts`) so
+  the error shape stays one thing.
 
-The frontend checks (`lint:tokens`, `lint:frontend`, `lint:testids`) and Biome all run
-inside `pnpm run ci`, so the one gate command covers them; `pnpm typecheck` and `pnpm test`
-(which includes the authz-coverage test) complete it.
+The custom checks (`lint:tokens`, `lint:frontend`, `lint:testids`, `lint:api`) and Biome all
+run inside `pnpm run ci`, so the one gate command covers them; `pnpm typecheck` and
+`pnpm test` (which includes the authz-coverage test) complete it.
 
 ## Commits & PRs
 

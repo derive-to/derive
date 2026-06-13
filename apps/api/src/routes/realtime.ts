@@ -1,6 +1,7 @@
 import { Hono } from "hono"
 import { streamSSE } from "hono/streaming"
 import type { AppContext } from "../context"
+import { fail } from "../lib/http"
 
 /** Live updates per artifact (SSE) + ephemeral presence (who's viewing now). */
 export const realtimeRoutes = (ctx: AppContext) => {
@@ -29,8 +30,7 @@ export const realtimeRoutes = (ctx: AppContext) => {
 
   app.post("/v1/artifacts/:shortId/presence", async (c) => {
     const artifact = await meta.getByShortId(c.req.param("shortId"))
-    if (!artifact || !(await authorize(c, "read", artifact)))
-      return c.json({ error: "not found" }, 404)
+    if (!artifact || !(await authorize(c, "read", artifact))) return fail(c, 404, "not found")
     const body = (await c.req.json().catch(() => ({}))) as { name?: string }
     const name = typeof body.name === "string" && body.name ? body.name : "anonymous"
     const viewers = presence.heartbeat(artifact.id, name, Date.now())

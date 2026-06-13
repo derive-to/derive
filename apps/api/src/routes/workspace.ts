@@ -1,7 +1,7 @@
 import { newId, type Role } from "@dock/core"
 import { Hono } from "hono"
 import type { AppContext } from "../context"
-import { DEFAULT_WORKSPACE_NAME, isWorkspaceRole } from "../lib/http"
+import { DEFAULT_WORKSPACE_NAME, fail, isWorkspaceRole } from "../lib/http"
 
 /** The workspace itself: name + members (Admin-managed), plus multi-workspace
  *  list / create / switch. A workspace always keeps at least one Admin. */
@@ -30,7 +30,7 @@ export const workspaceRoutes = (ctx: AppContext) => {
   // The workspace name, the caller's role, and the full member directory.
   app.get("/v1/workspace", async (c) => {
     const role = await workspaceRole(c)
-    if (role === null) return c.json({ error: "unauthenticated" }, 401)
+    if (role === null) return fail(c, 401, "unauthenticated")
     const org = await activeWorkspace(c)
     const [ws, members] = await Promise.all([meta.getWorkspace(org), meta.listMemberships(org)])
     const users = await meta.getUsers(members.map((m) => m.user_id))
@@ -46,28 +46,28 @@ export const workspaceRoutes = (ctx: AppContext) => {
 
   // Rename the workspace (Admin only).
   app.patch("/v1/workspace", async (c) => {
-    if (!(await workspaceCan(c, "manage"))) return c.json({ error: "forbidden" }, 403)
+    if (!(await workspaceCan(c, "manage"))) return fail(c, 403, "forbidden")
     const b = (await c.req.json().catch(() => ({}))) as { name?: unknown }
     const name = typeof b.name === "string" ? b.name.trim().slice(0, 80) : ""
-    if (!name) return c.json({ error: "name required" }, 400)
+    if (!name) return fail(c, 400, "name required")
     const ws = await meta.setWorkspace(await activeWorkspace(c), name)
     return c.json({ name: ws.name })
   })
 
   // Add a member by email, or update their role (Admin only).
   app.put("/v1/workspace/members", async (c) => {
-    if (!(await workspaceCan(c, "manage"))) return c.json({ error: "forbidden" }, 403)
+    if (!(await workspaceCan(c, "manage"))) return fail(c, 403, "forbidden")
     const b = (await c.req.json().catch(() => ({}))) as { email?: string; role?: unknown }
     if (!b.email || !isWorkspaceRole(b.role))
-      return c.json({ error: "email and a valid role are required" }, 400)
+      return fail(c, 400, "email and a valid role are required")
     const user = await meta.findUserByEmail(b.email.trim())
-    if (!user) return c.json({ error: "no Dock user with that email" }, 404)
+    if (!user) return fail(c, 404, "no Dock user with that email")
     const org = await activeWorkspace(c)
     // This route both adds and re-roles, so it must honor the same last-Admin
     // guard as PATCH — otherwise an Admin could demote the sole Admin via PUT.
     const existing = await meta.getMembership(org, user.id)
     if (existing?.role === "owner" && b.role !== "owner" && (await isLastOwner(org, user.id)))
-      return c.json({ error: "the workspace needs at least one admin" }, 409)
+      return fail(c, 409, "the workspace needs at least one admin")
     await meta.setMembership({
       id: existing?.id ?? newId("m"),
       org_id: org,
@@ -79,28 +79,28 @@ export const workspaceRoutes = (ctx: AppContext) => {
 
   // Change a member's role (Admin only; can't strip the last Admin).
   app.patch("/v1/workspace/members/:userId", async (c) => {
-    if (!(await workspaceCan(c, "manage"))) return c.json({ error: "forbidden" }, 403)
+    if (!(await workspaceCan(c, "manage"))) return fail(c, 403, "forbidden")
     const userId = c.req.param("userId")
     const b = (await c.req.json().catch(() => ({}))) as { role?: unknown }
-    if (!isWorkspaceRole(b.role)) return c.json({ error: "a valid role is required" }, 400)
+    if (!isWorkspaceRole(b.role)) return fail(c, 400, "a valid role is required")
     const org = await activeWorkspace(c)
     const existing = await meta.getMembership(org, userId)
-    if (!existing) return c.json({ error: "not a member" }, 404)
+    if (!existing) return fail(c, 404, "not a member")
     if (existing.role === "owner" && b.role !== "owner" && (await isLastOwner(org, userId)))
-      return c.json({ error: "the workspace needs at least one admin" }, 409)
+      return fail(c, 409, "the workspace needs at least one admin")
     await meta.setMembership({ id: existing.id, org_id: org, user_id: userId, role: b.role })
     return c.json({ user_id: userId, role: b.role })
   })
 
   // Remove a member (Admin only; can't remove the last Admin).
   app.delete("/v1/workspace/members/:userId", async (c) => {
-    if (!(await workspaceCan(c, "manage"))) return c.json({ error: "forbidden" }, 403)
+    if (!(await workspaceCan(c, "manage"))) return fail(c, 403, "forbidden")
     const userId = c.req.param("userId")
     const org = await activeWorkspace(c)
     const existing = await meta.getMembership(org, userId)
     if (!existing) return c.body(null, 204)
     if (existing.role === "owner" && (await isLastOwner(org, userId)))
-      return c.json({ error: "the workspace needs at least one admin" }, 409)
+      return fail(c, 409, "the workspace needs at least one admin")
     await meta.removeMembership(org, userId)
     return c.body(null, 204)
   })
@@ -110,7 +110,7 @@ export const workspaceRoutes = (ctx: AppContext) => {
   // the workspace this request resolved to.
   app.get("/v1/workspaces", async (c) => {
     const role = await workspaceRole(c)
-    if (role === null) return c.json({ error: "unauthenticated" }, 401)
+    if (role === null) return fail(c, 401, "unauthenticated")
     const active = await activeWorkspace(c)
     const me = await currentUser(c)
     if (!multi || !me) {
@@ -131,12 +131,12 @@ export const workspaceRoutes = (ctx: AppContext) => {
 
   // Create a workspace (multi only). The creator becomes its Admin and is switched in.
   app.post("/v1/workspaces", async (c) => {
-    if (!multi) return c.json({ error: "multi-workspace is disabled" }, 403)
+    if (!multi) return fail(c, 403, "multi-workspace is disabled")
     const me = await currentUser(c)
-    if (!me) return c.json({ error: "unauthenticated" }, 401)
+    if (!me) return fail(c, 401, "unauthenticated")
     const b = (await c.req.json().catch(() => ({}))) as { name?: unknown }
     const name = typeof b.name === "string" ? b.name.trim().slice(0, 80) : ""
-    if (!name) return c.json({ error: "name required" }, 400)
+    if (!name) return fail(c, 400, "name required")
     const id = newId("ws")
     await meta.setWorkspace(id, name)
     await meta.setMembership({ id: newId("m"), org_id: id, user_id: me.id, role: "owner" })
@@ -146,13 +146,13 @@ export const workspaceRoutes = (ctx: AppContext) => {
 
   // Switch the active workspace (multi only). Must be a member.
   app.post("/v1/workspace/switch", async (c) => {
-    if (!multi) return c.json({ error: "multi-workspace is disabled" }, 403)
+    if (!multi) return fail(c, 403, "multi-workspace is disabled")
     const me = await currentUser(c)
-    if (!me) return c.json({ error: "unauthenticated" }, 401)
+    if (!me) return fail(c, 401, "unauthenticated")
     const b = (await c.req.json().catch(() => ({}))) as { id?: unknown }
     const id = typeof b.id === "string" ? b.id : ""
     if (!id || !(await meta.getMembership(id, me.id)))
-      return c.json({ error: "not a member of that workspace" }, 403)
+      return fail(c, 403, "not a member of that workspace")
     setWsCookie(c, id)
     return c.json({ active: id })
   })
