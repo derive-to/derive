@@ -5,3 +5,8 @@ dist/
 .DS_Store
 .wrangler/
 .tanstack/
+
+# e2e (Playwright)
+.e2e-data/
+test-results/
+playwright-report/
