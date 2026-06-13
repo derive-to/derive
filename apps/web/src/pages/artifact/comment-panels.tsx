@@ -214,7 +214,7 @@ export function OpenPanel(props: {
           </span>
         )}
         <span className="flex-1" />
-        <IconBtn title="New comment" onClick={onNewGeneral}>
+        <IconBtn title="New comment" testId="comment-new" onClick={onNewGeneral}>
           ＋
         </IconBtn>
         <IconBtn title="Minimize to rail (c)" onClick={onMinimize}>

@@ -1,5 +1,5 @@
 import { Buffer } from "node:buffer"
-import { expect, type Page } from "@playwright/test"
+import { type APIRequestContext, expect, type Page } from "@playwright/test"
 
 // Reusable building blocks for the e2e suite. The whole app is instrumented with
 // stable `data-testid`s, so specs drive it through page.getByTestId(...) — no
@@ -49,4 +49,39 @@ export async function publishArtifact(
     shortId = ((await res.json()) as { short_id: string }).short_id
   }).toPass({ timeout: 10_000 })
   return shortId
+}
+
+// Open an artifact's page and wait for the comment panel to be ready — the
+// deterministic "artifact view is interactive" gate every comment test needs.
+export async function openArtifact(page: Page, shortId: string): Promise<void> {
+  await page.goto(`/a/${shortId}`)
+  await expect(page.getByText("Comments", { exact: true })).toBeVisible()
+}
+
+// Post a top-level comment through the composer (all test-id driven) and wait
+// for it to render. Returns nothing — assert on the body text in the caller.
+export async function addComment(page: Page, body: string): Promise<void> {
+  await page.getByTestId("comment-new").click()
+  await page.getByTestId("composer-input").fill(body)
+  await page.getByTestId("composer-submit").click()
+  await expect(page.getByText(body)).toBeVisible()
+}
+
+// Propose a candidate version on an artifact through the API (commenter+ — an
+// editor teammate in tests). Drives the review flow without the editor UI.
+export async function proposeEdit(
+  req: APIRequestContext,
+  shortId: string,
+  message: string,
+  body: string,
+): Promise<void> {
+  await expect(async () => {
+    const res = await req.post(`/v1/artifacts/${shortId}/proposals`, {
+      multipart: {
+        file: { name: "edit.md", mimeType: "text/markdown", buffer: Buffer.from(body) },
+        message,
+      },
+    })
+    expect(res.ok(), `propose failed: ${res.status()}`).toBeTruthy()
+  }).toPass({ timeout: 10_000 })
 }

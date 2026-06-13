@@ -242,6 +242,7 @@ export function Library() {
               onClick={() => setDrawer(true)}
               title="Menu"
               aria-label="Open menu"
+              data-testid="library-menu"
             >
               <Menu />
             </Button>
@@ -253,6 +254,7 @@ export function Library() {
           <button
             type="button"
             aria-label="Close menu"
+            data-testid="library-menu-close"
             tabIndex={drawer ? 0 : -1}
             onClick={() => setDrawer(false)}
             className={cn(
@@ -291,6 +293,7 @@ export function Library() {
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 className="min-w-[200px] flex-1"
+                data-testid="library-search"
               />
               {filter.kind !== "all" && (
                 <Button variant="outline" size="sm" onClick={() => setFilter({ kind: "all" })}>
@@ -322,8 +325,14 @@ export function Library() {
                   accept=".html,.htm,.md,.markdown,.zip"
                   className="max-w-[230px] text-sm text-muted-foreground"
                   onChange={publish}
+                  data-testid="publish-file"
                 />
-                <Button variant="primary" onClick={publish} disabled={busy}>
+                <Button
+                  variant="primary"
+                  onClick={publish}
+                  disabled={busy}
+                  data-testid="publish-submit"
+                >
                   {busy ? (
                     "Publishing…"
                   ) : (

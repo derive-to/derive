@@ -1,0 +1,44 @@
+name: e2e deep (nightly)
+
+# The comprehensive regression suite: every surface in depth (comment system,
+# review flow, settings tabs, share roles, library search/favorites/collections)
+# plus a responsive/mobile pass. Heavier than smoke; intended to run NIGHTLY.
+#
+# Manual-dispatch only for now (run it from the Actions tab → "Run workflow").
+# When ready to wire into CI, uncomment the `schedule` trigger below.
+on:
+  workflow_dispatch:
+  # schedule:
+  #   - cron: "0 7 * * *" # 07:00 UTC nightly
+
+permissions:
+  contents: read
+
+jobs:
+  deep:
+    runs-on: ubicloud-standard-4
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Install Playwright browser
+        run: pnpm --filter @dock/web exec playwright install --with-deps chromium
+
+      - name: Deep suite
+        run: pnpm --filter @dock/web test:e2e:deep
+
+      - name: Upload Playwright report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-deep
+          path: apps/web/playwright-report
+          retention-days: 14

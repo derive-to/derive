@@ -30,6 +30,14 @@ export default defineConfig({
     screenshot: "only-on-failure",
     video: "retain-on-failure",
   },
+  // Two suites, one shared server (multi-workspace isolation makes that safe):
+  //  • smoke — one fast critical path per surface; the post-merge gate.
+  //  • deep  — comprehensive per-surface + responsive; the nightly/regression run.
+  // `--project=smoke` / `--project=deep` selects one; no flag runs both.
+  projects: [
+    { name: "smoke", testMatch: /smoke\/.*\.spec\.ts$/ },
+    { name: "deep", testMatch: /deep\/.*\.spec\.ts$/ },
+  ],
   webServer: [
     {
       command: `rm -rf apps/api/.e2e-data && PORT=${API_PORT} DATA_DIR=.e2e-data DOCK_MULTI_WORKSPACE=true DOCK_WEB_ORIGIN=${WEB} DOCK_RATE_LIMIT=false pnpm --filter @dock/api dev`,

@@ -15,6 +15,7 @@ function SideItem({
   active,
   rail,
   title,
+  testId,
   onClick,
 }: {
   icon: ReactNode
@@ -23,6 +24,7 @@ function SideItem({
   active?: boolean
   rail?: boolean
   title?: string
+  testId?: string
   onClick: () => void
 }) {
   return (
@@ -30,6 +32,7 @@ function SideItem({
       type="button"
       onClick={onClick}
       title={title ?? label}
+      data-testid={testId}
       aria-current={active ? "page" : undefined}
       className={cn(
         "flex w-full items-center gap-2.5 whitespace-nowrap rounded-[9px] px-2.5 py-2 text-left text-sm font-semibold text-foreground transition-colors hover:bg-hover",
@@ -139,6 +142,7 @@ export function Sidebar({
         label="All artifacts"
         count={total}
         rail={rail}
+        testId="nav-all"
         active={filter.kind === "all"}
         onClick={() => onPick({ kind: "all" })}
       />
@@ -147,6 +151,7 @@ export function Sidebar({
         label="Favorites"
         count={favCount}
         rail={rail}
+        testId="nav-favorites"
         active={filter.kind === "favorites"}
         onClick={() => onPick({ kind: "favorites" })}
       />
@@ -159,6 +164,7 @@ export function Sidebar({
               onClick={() => setCreating((v) => !v)}
               title="New collection"
               aria-label="New collection"
+              data-testid="new-collection"
               className="cursor-pointer text-sm text-primary"
             >
               ＋
@@ -174,6 +180,7 @@ export function Sidebar({
           autoFocus
           placeholder="Collection name…"
           aria-label="Collection name"
+          data-testid="collection-name"
           onChange={(e) => setName(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Enter") submit()
@@ -193,6 +200,7 @@ export function Sidebar({
           label={col.title}
           count={col.count}
           rail={rail}
+          testId={`nav-collection-${col.id}`}
           active={filter.kind === "collection" && filter.id === col.id}
           onClick={() => onPick({ kind: "collection", id: col.id, title: col.title })}
         />
@@ -208,6 +216,7 @@ export function Sidebar({
               label={tag}
               count={count}
               rail={rail}
+              testId={`nav-tag-${tag}`}
               active={filter.kind === "tag" && filter.tag === tag}
               onClick={() => onPick({ kind: "tag", tag })}
             />

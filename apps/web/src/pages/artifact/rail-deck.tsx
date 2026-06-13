@@ -73,10 +73,12 @@ export function Rail({
 export function IconBtn({
   title,
   onClick,
+  testId,
   children,
 }: {
   title: string
   onClick: () => void
+  testId?: string
   children: React.ReactNode
 }) {
   return (
@@ -84,6 +86,7 @@ export function IconBtn({
       type="button"
       title={title}
       onClick={onClick}
+      data-testid={testId}
       className="grid size-[26px] place-items-center rounded-md text-muted-foreground transition-colors hover:bg-hover hover:text-foreground"
     >
       {children}
