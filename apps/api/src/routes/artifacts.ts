@@ -153,6 +153,9 @@ export const artifactRoutes = (ctx: AppContext) => {
     if (!(file instanceof File)) return fail(c, 400, "multipart field 'file' required")
 
     const bytes = new Uint8Array(await file.arrayBuffer())
+    // The content-length header is advisory (a client can omit/understate it),
+    // so re-check the actual buffered size — the hard cap before anything stores.
+    if (bytes.length > MAX_UPLOAD_BYTES) return fail(c, 413, "upload too large")
     if (await overStorage(org, bytes.length)) return fail(c, 413, "storage quota exceeded")
     const isBundle =
       /\.zip$/i.test(file.name) ||

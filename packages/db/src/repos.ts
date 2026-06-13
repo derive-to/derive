@@ -647,8 +647,11 @@ export function makeRepos(db: SqliteDb) {
     db.select().from(agent).where(eq(agent.org_id, orgId)).all()
   const getAgentByToken = async (token: string): Promise<AgentRecord | null> =>
     (await db.select().from(agent).where(eq(agent.token, token)).get()) ?? null
-  const deleteAgent = async (id: string): Promise<void> => {
-    await db.delete(agent).where(eq(agent.id, id)).run()
+  const deleteAgent = async (id: string, orgId: string): Promise<void> => {
+    await db
+      .delete(agent)
+      .where(and(eq(agent.id, id), eq(agent.org_id, orgId)))
+      .run()
   }
   const createAgentMention = async (m: NewAgentMention): Promise<void> => {
     await db.insert(agentMention).values(m).run()

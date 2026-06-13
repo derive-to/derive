@@ -247,7 +247,7 @@ export interface MetaStore {
   listAgents(orgId: string): Promise<AgentRecord[]>
   /** Resolve an agent from its bearer token (the agent's identity). */
   getAgentByToken(token: string): Promise<AgentRecord | null>
-  deleteAgent(id: string): Promise<void>
+  deleteAgent(id: string, orgId: string): Promise<void>
   /** Queue a mention into an agent's pull inbox. */
   createAgentMention(m: NewAgentMention): Promise<void>
   /** Pending (unhandled) mentions for an agent, oldest first. */

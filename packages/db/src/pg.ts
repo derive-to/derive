@@ -771,8 +771,8 @@ export class PgMetaStore implements MetaStore {
     const rows = await this.db.select().from(agent).where(eq(agent.token, token))
     return rows[0] ?? null
   }
-  async deleteAgent(id: string): Promise<void> {
-    await this.db.delete(agent).where(eq(agent.id, id))
+  async deleteAgent(id: string, orgId: string): Promise<void> {
+    await this.db.delete(agent).where(and(eq(agent.id, id), eq(agent.org_id, orgId)))
   }
   async createAgentMention(m: NewAgentMention): Promise<void> {
     await this.db.insert(agentMention).values(m)
