@@ -11,22 +11,29 @@ import {
   PublishError,
   artifactUrl,
   SELECTION_SCRIPT,
+  can,
+  effectiveRole,
   diffLines,
   formatDiff,
   groupSessions,
   DEFAULT_VERSION_WINDOW_MS,
   isAnchored,
+  isRole,
   mimeFor,
   newId,
   publish,
   renderMarkdown,
   renderShell,
+  roleAllows,
   toJson,
+  type Action,
+  type Actor,
   type ArtifactRecord,
   type BlobStore,
   type BundleManifest,
   type CommentRecord,
   type MetaStore,
+  type Role,
   type VersionRecord,
   type Visibility,
 } from "@dock/core"
@@ -84,7 +91,12 @@ export interface AppDeps {
   analytics?: boolean
   /** Revisions within this window (ms) collapse into one displayed version. */
   versionWindowMs?: number
+  /** Workspace role granted to a member who isn't the first user. Default "editor". */
+  defaultRole?: Role
 }
+
+/** The single workspace (multi-workspace is a later layer). */
+const WORKSPACE = "local"
 
 const VISIBILITIES = ["public", "link", "org", "password"] as const
 
@@ -148,16 +160,46 @@ export function createApp(deps: AppDeps): Hono {
     return s?.user ? { id: s.user.id, email: s.user.email, name: s.user.name ?? null } : null
   }
 
-  // A static token (CI/agents) or a valid login session authorizes writes;
-  // gated reads need one too. No token + no session = open dev instance.
-  const writeOk = async (c: Context): Promise<boolean> =>
-    !deps.token || bearer(c) === deps.token || (await currentUser(c)) !== null
-  const readOk = async (c: Context, a: ArtifactRecord): Promise<boolean> =>
-    a.visibility === "public" ||
-    a.visibility === "link" ||
-    !deps.token ||
-    bearer(c) === deps.token ||
-    (await currentUser(c)) !== null
+  // ---- Authorization ----------------------------------------------------
+  // One choke point: every gate resolves an Actor and asks can(). An unsecured
+  // instance (no static token) trusts anonymous callers — zero-config self-host.
+  const open = !deps.token
+  const defaultRole: Role = deps.defaultRole ?? "editor"
+
+  // Lazy provisioning: the first member of the workspace is its owner; everyone
+  // else joins at the default role. Returns the caller's workspace role.
+  const ensureMembership = async (userId: string): Promise<Role> => {
+    const existing = await meta.getMembership(WORKSPACE, userId)
+    if (existing) return existing.role
+    const role: Role = (await meta.countMemberships(WORKSPACE)) === 0 ? "owner" : defaultRole
+    await meta.setMembership({ id: newId("m"), org_id: WORKSPACE, user_id: userId, role })
+    return role
+  }
+
+  const actorFor = async (c: Context, a: ArtifactRecord): Promise<Actor> => {
+    if (deps.token && bearer(c) === deps.token) return { kind: "token" }
+    const me = await currentUser(c)
+    if (!me) return { kind: "anon", open }
+    const orgRole = await ensureMembership(me.id)
+    const am = await meta.getArtifactMember(a.id, me.id)
+    return { kind: "user", userId: me.id, artifactRole: am?.role ?? null, orgRole, open }
+  }
+
+  /** Authorize an action against a specific artifact. */
+  const authorize = (c: Context, action: Action, a: ArtifactRecord): Promise<boolean> =>
+    actorFor(c, a).then((actor) => can(actor, action, a.visibility))
+
+  /** The caller's role at the workspace level (creating artifacts, settings). */
+  const workspaceRole = async (c: Context): Promise<Role | null> => {
+    if (deps.token && bearer(c) === deps.token) return "owner"
+    const me = await currentUser(c)
+    if (!me) return open ? "owner" : null
+    return ensureMembership(me.id)
+  }
+  const workspaceCan = async (c: Context, action: Action): Promise<boolean> => {
+    const r = await workspaceRole(c)
+    return r !== null && roleAllows(r, action)
+  }
 
   // Better Auth owns /api/auth/* (sign-up/in/out, OAuth, OIDC/SSO, session).
   if (deps.auth) {
@@ -179,7 +221,9 @@ export function createApp(deps: AppDeps): Hono {
 
   app.get("/v1/me", async (c) => {
     const u = await currentUser(c)
-    return u ? c.json({ user: u }) : c.json({ error: "unauthenticated" }, 401)
+    if (!u) return c.json({ error: "unauthenticated" }, 401)
+    const role = await ensureMembership(u.id) // provisions on first load
+    return c.json({ user: { ...u, role } })
   })
 
   app.get("/v1/artifacts", async (c) => {
@@ -195,7 +239,15 @@ export function createApp(deps: AppDeps): Hono {
   // ---- Publish ----------------------------------------------------------
 
   const handlePublish = async (c: Context, shortId?: string) => {
-    if (!(await writeOk(c))) return c.json({ error: "unauthorized" }, 401)
+    // Republishing a version needs publish rights on that artifact; creating a
+    // new one needs publish rights at the workspace level.
+    if (shortId) {
+      const existing = await meta.getByShortId(shortId)
+      if (!existing) return c.json({ error: "not found" }, 404)
+      if (!(await authorize(c, "publish", existing))) return c.json({ error: "forbidden" }, 403)
+    } else if (!(await workspaceCan(c, "publish"))) {
+      return c.json({ error: "forbidden" }, 403)
+    }
     const len = Number(c.req.header("content-length") ?? 0)
     if (len > MAX_UPLOAD_BYTES) return c.json({ error: "upload too large" }, 413)
 
@@ -261,22 +313,63 @@ export function createApp(deps: AppDeps): Hono {
 
   app.get("/v1/artifacts/:shortId", async (c) => {
     const artifact = await meta.getByShortId(c.req.param("shortId"))
-    if (!artifact || !(await readOk(c, artifact))) return c.json({ error: "not found" }, 404)
+    const actor = await actorFor(c, artifact ?? ({ id: "", visibility: "password" } as ArtifactRecord))
+    if (!artifact || !can(actor, "read", artifact.visibility)) return c.json({ error: "not found" }, 404)
     const versions = await meta.listVersions(artifact.id)
     // `versions` stays at revision granularity (machines/agents); `sessions` is
-    // the time-grouped view the UI shows by default.
+    // the time-grouped view the UI shows by default. `my_role` tells the client
+    // which actions to surface.
     return c.json({
       ...toJson(deps.baseUrl, artifact, versions),
       sessions: groupSessions(versions, versionWindowMs),
+      my_role: effectiveRole(actor, artifact.visibility),
     })
+  })
+
+  // ---- Sharing: per-artifact role overrides -----------------------------
+  app.get("/v1/artifacts/:shortId/members", async (c) => {
+    const artifact = await meta.getByShortId(c.req.param("shortId"))
+    if (!artifact || !(await authorize(c, "read", artifact))) return c.json({ error: "not found" }, 404)
+    const rows = await meta.listArtifactMembers(artifact.id)
+    const users = await meta.getUsers(rows.map((r) => r.user_id))
+    const byId = new Map(users.map((u) => [u.id, u]))
+    return c.json({
+      default_role: defaultRole,
+      members: rows.map((r) => ({
+        user_id: r.user_id,
+        email: byId.get(r.user_id)?.email ?? null,
+        name: byId.get(r.user_id)?.name ?? null,
+        role: r.role,
+      })),
+    })
+  })
+
+  app.put("/v1/artifacts/:shortId/members", async (c) => {
+    const artifact = await meta.getByShortId(c.req.param("shortId"))
+    if (!artifact) return c.json({ error: "not found" }, 404)
+    if (!(await authorize(c, "manage", artifact))) return c.json({ error: "forbidden" }, 403)
+    const b = (await c.req.json().catch(() => ({}))) as { email?: string; role?: string }
+    if (!b.email || !isRole(b.role)) return c.json({ error: "email and a valid role are required" }, 400)
+    const user = await meta.findUserByEmail(b.email.trim())
+    if (!user) return c.json({ error: "no Dock user with that email" }, 404)
+    await meta.setArtifactMember({ id: newId("am"), artifact_id: artifact.id, user_id: user.id, role: b.role })
+    return c.json({ user_id: user.id, email: user.email, name: user.name, role: b.role }, 201)
+  })
+
+  app.delete("/v1/artifacts/:shortId/members/:userId", async (c) => {
+    const artifact = await meta.getByShortId(c.req.param("shortId"))
+    if (!artifact) return c.json({ error: "not found" }, 404)
+    if (!(await authorize(c, "manage", artifact))) return c.json({ error: "forbidden" }, 403)
+    await meta.removeArtifactMember(artifact.id, c.req.param("userId"))
+    return c.body(null, 204)
   })
 
   // Restore a past version: re-point a new revision at its stored blob (no
   // re-upload, works for files and bundles). History is never rewritten.
   app.post("/v1/artifacts/:shortId/restore", async (c) => {
-    if (!(await writeOk(c))) return c.json({ error: "unauthorized" }, 401)
     const artifact = await meta.getByShortId(c.req.param("shortId"))
     if (!artifact) return c.json({ error: "not found" }, 404)
+    if (!(await authorize(c, "publish", artifact))) return c.json({ error: "forbidden" }, 403)
     const body = (await c.req.json().catch(() => ({}))) as { version?: number }
     if (!Number.isInteger(body.version)) return c.json({ error: "version required" }, 400)
     const src = await meta.getVersion(artifact.id, body.version as number)
@@ -315,7 +408,7 @@ export function createApp(deps: AppDeps): Hono {
   // version, as plain text (?v=N selects a version; defaults to current).
   app.get("/v1/artifacts/:shortId/content", async (c) => {
     const artifact = await meta.getByShortId(c.req.param("shortId"))
-    if (!artifact || artifact.current_version === 0 || !(await readOk(c, artifact)))
+    if (!artifact || artifact.current_version === 0 || !(await authorize(c, "read", artifact)))
       return c.json({ error: "not found" }, 404)
     const v = c.req.query("v") ? Number(c.req.query("v")) : artifact.current_version
     if (!Number.isInteger(v)) return c.json({ error: "bad version" }, 400)
@@ -335,7 +428,7 @@ export function createApp(deps: AppDeps): Hono {
   // ?format=json returns the structured ops; otherwise unified-style text.
   app.get("/v1/artifacts/:shortId/diff", async (c) => {
     const artifact = await meta.getByShortId(c.req.param("shortId"))
-    if (!artifact || artifact.current_version === 0 || !(await readOk(c, artifact)))
+    if (!artifact || artifact.current_version === 0 || !(await authorize(c, "read", artifact)))
       return c.json({ error: "not found" }, 404)
     const cur = artifact.current_version
     const from = c.req.query("from") ? Number(c.req.query("from")) : Math.max(1, cur - 1)
@@ -359,9 +452,9 @@ export function createApp(deps: AppDeps): Hono {
 
   // Create a comment (new thread) or a reply (pass thread_id).
   app.post("/v1/artifacts/:shortId/comments", async (c) => {
-    if (!(await writeOk(c))) return c.json({ error: "unauthorized" }, 401)
     const artifact = await meta.getByShortId(c.req.param("shortId"))
     if (!artifact || artifact.current_version === 0) return c.json({ error: "not found" }, 404)
+    if (!(await authorize(c, "comment", artifact))) return c.json({ error: "forbidden" }, 403)
     const body = (await c.req.json().catch(() => ({}))) as Record<string, unknown>
     if (typeof body.body_md !== "string" || body.body_md.trim() === "")
       return c.json({ error: "body_md required" }, 400)
@@ -406,7 +499,7 @@ export function createApp(deps: AppDeps): Hono {
 
   app.get("/v1/artifacts/:shortId/comments", async (c) => {
     const artifact = await meta.getByShortId(c.req.param("shortId"))
-    if (!artifact || !(await readOk(c, artifact))) return c.json({ error: "not found" }, 404)
+    if (!artifact || !(await authorize(c, "read", artifact))) return c.json({ error: "not found" }, 404)
     const q = c.req.query("state")
     const state = q === "open" || q === "resolved" ? q : undefined
     const comments = await meta.listComments(artifact.id, state ? { state } : undefined)
@@ -420,9 +513,9 @@ export function createApp(deps: AppDeps): Hono {
 
   // Resolve (or reopen, with {state:"open"}) the thread a comment belongs to.
   app.post("/v1/artifacts/:shortId/comments/:commentId/resolve", async (c) => {
-    if (!(await writeOk(c))) return c.json({ error: "unauthorized" }, 401)
     const artifact = await meta.getByShortId(c.req.param("shortId"))
     if (!artifact) return c.json({ error: "not found" }, 404)
+    if (!(await authorize(c, "comment", artifact))) return c.json({ error: "forbidden" }, 403)
     const cm = await meta.getComment(c.req.param("commentId"))
     if (!cm || cm.artifact_id !== artifact.id) return c.json({ error: "not found" }, 404)
     const body = (await c.req.json().catch(() => ({}))) as { state?: string }
@@ -451,10 +544,10 @@ export function createApp(deps: AppDeps): Hono {
 
   // Toggle the current user's reaction (one of REACTIONS) on a comment.
   app.post("/v1/artifacts/:shortId/comments/:commentId/react", async (c) => {
-    if (!(await writeOk(c))) return c.json({ error: "unauthorized" }, 401)
     const r = await loadComment(c)
     if ("error" in r) return r.error
     const { artifact, cm } = r
+    if (!(await authorize(c, "comment", artifact))) return c.json({ error: "forbidden" }, 403)
     const body = (await c.req.json().catch(() => ({}))) as { emoji?: string }
     if (!body.emoji || !REACTIONS.includes(body.emoji)) return c.json({ error: "unknown reaction" }, 400)
     const actor = (await actorName(c)) ?? "anonymous"
@@ -474,10 +567,10 @@ export function createApp(deps: AppDeps): Hono {
 
   // Edit a comment's body (author only when signed in).
   app.patch("/v1/artifacts/:shortId/comments/:commentId", async (c) => {
-    if (!(await writeOk(c))) return c.json({ error: "unauthorized" }, 401)
     const r = await loadComment(c)
     if ("error" in r) return r.error
     const { artifact, cm } = r
+    if (!(await authorize(c, "comment", artifact))) return c.json({ error: "forbidden" }, 403)
     const actor = await actorName(c)
     if (actor && cm.author !== actor) return c.json({ error: "forbidden" }, 403)
     const body = (await c.req.json().catch(() => ({}))) as { body_md?: string }
@@ -493,10 +586,10 @@ export function createApp(deps: AppDeps): Hono {
   // Soft-delete a comment (author only when signed in); the row stays so replies
   // keep their thread, and the body is tombstoned.
   app.delete("/v1/artifacts/:shortId/comments/:commentId", async (c) => {
-    if (!(await writeOk(c))) return c.json({ error: "unauthorized" }, 401)
     const r = await loadComment(c)
     if ("error" in r) return r.error
     const { artifact, cm } = r
+    if (!(await authorize(c, "comment", artifact))) return c.json({ error: "forbidden" }, 403)
     const actor = await actorName(c)
     if (actor && cm.author !== actor) return c.json({ error: "forbidden" }, 403)
     const md = parseMeta(cm.meta)
@@ -510,7 +603,7 @@ export function createApp(deps: AppDeps): Hono {
 
   app.get("/v1/artifacts/:shortId/events", async (c) => {
     const artifact = await meta.getByShortId(c.req.param("shortId"))
-    if (!artifact || !(await readOk(c, artifact))) return c.text("not found", 404)
+    if (!artifact || !(await authorize(c, "read", artifact))) return c.text("not found", 404)
     c.header("Access-Control-Allow-Origin", "*")
     return streamSSE(c, async (stream) => {
       const unsub = bus.subscribe(artifact.id, (e) => {
@@ -527,7 +620,7 @@ export function createApp(deps: AppDeps): Hono {
 
   app.post("/v1/artifacts/:shortId/presence", async (c) => {
     const artifact = await meta.getByShortId(c.req.param("shortId"))
-    if (!artifact || !(await readOk(c, artifact))) return c.json({ error: "not found" }, 404)
+    if (!artifact || !(await authorize(c, "read", artifact))) return c.json({ error: "not found" }, 404)
     const body = (await c.req.json().catch(() => ({}))) as { name?: string }
     const name = typeof body.name === "string" && body.name ? body.name : "anonymous"
     const viewers = presence.heartbeat(artifact.id, name, Date.now())
@@ -542,7 +635,7 @@ export function createApp(deps: AppDeps): Hono {
   app.post("/v1/artifacts/:shortId/view", async (c) => {
     if (!analyticsOn) return c.body(null, 204)
     const artifact = await meta.getByShortId(c.req.param("shortId"))
-    if (!artifact || artifact.current_version === 0 || !(await readOk(c, artifact)))
+    if (!artifact || artifact.current_version === 0 || !(await authorize(c, "read", artifact)))
       return c.json({ error: "not found" }, 404)
     const me = await currentUser(c)
     let viewer: string
@@ -568,7 +661,7 @@ export function createApp(deps: AppDeps): Hono {
   app.get("/v1/artifacts/:shortId/analytics", async (c) => {
     if (!analyticsOn) return c.json({ error: "analytics disabled" }, 404)
     const artifact = await meta.getByShortId(c.req.param("shortId"))
-    if (!artifact || !(await readOk(c, artifact))) return c.json({ error: "not found" }, 404)
+    if (!artifact || !(await authorize(c, "read", artifact))) return c.json({ error: "not found" }, 404)
     return c.json(await meta.viewStats(artifact.id))
   })
 
@@ -577,13 +670,13 @@ export function createApp(deps: AppDeps): Hono {
   const publicWebhook = (w: { secret: string }) => ({ ...w, secret: undefined })
 
   app.get("/v1/webhooks", async (c) => {
-    if (!(await writeOk(c))) return c.json({ error: "unauthorized" }, 401)
+    if (!(await workspaceCan(c, "manage"))) return c.json({ error: "forbidden" }, 403)
     const hooks = await meta.listWebhooks()
     return c.json({ webhooks: hooks.map(publicWebhook) })
   })
 
   app.post("/v1/webhooks", async (c) => {
-    if (!(await writeOk(c))) return c.json({ error: "unauthorized" }, 401)
+    if (!(await workspaceCan(c, "manage"))) return c.json({ error: "forbidden" }, 403)
     const b = (await c.req.json().catch(() => ({}))) as Record<string, unknown>
     if (typeof b.url !== "string" || !/^https?:\/\//.test(b.url))
       return c.json({ error: "a valid http(s) url is required" }, 400)
@@ -612,13 +705,13 @@ export function createApp(deps: AppDeps): Hono {
   })
 
   app.delete("/v1/webhooks/:id", async (c) => {
-    if (!(await writeOk(c))) return c.json({ error: "unauthorized" }, 401)
+    if (!(await workspaceCan(c, "manage"))) return c.json({ error: "forbidden" }, 403)
     await meta.deleteWebhook(c.req.param("id"))
     return c.body(null, 204)
   })
 
   app.get("/v1/webhooks/:id/deliveries", async (c) => {
-    if (!(await writeOk(c))) return c.json({ error: "unauthorized" }, 401)
+    if (!(await workspaceCan(c, "manage"))) return c.json({ error: "forbidden" }, 403)
     const rows = await meta.recentDeliveries(c.req.param("id"), 20)
     return c.json({
       deliveries: rows.map((d) => ({
@@ -634,7 +727,7 @@ export function createApp(deps: AppDeps): Hono {
 
   // Send a sample event to a webhook so you can confirm it lands.
   app.post("/v1/webhooks/:id/test", async (c) => {
-    if (!(await writeOk(c))) return c.json({ error: "unauthorized" }, 401)
+    if (!(await workspaceCan(c, "manage"))) return c.json({ error: "forbidden" }, 403)
     const w = await meta.getWebhook(c.req.param("id"))
     if (!w) return c.json({ error: "not found" }, 404)
     const sample = JSON.stringify({
@@ -661,7 +754,7 @@ export function createApp(deps: AppDeps): Hono {
     const m = REF_RE.exec(c.req.param("ref"))
     if (!m) return c.text("not found", 404)
     const artifact = await meta.getByShortId(m[1])
-    if (!artifact || artifact.current_version === 0 || !(await readOk(c, artifact)))
+    if (!artifact || artifact.current_version === 0 || !(await authorize(c, "read", artifact)))
       return c.text("not found", 404)
     const n = m[2] ? Number(m[2]) : artifact.current_version
     const version = await meta.getVersion(artifact.id, n)
@@ -687,7 +780,7 @@ export function createApp(deps: AppDeps): Hono {
     const shortId = c.req.param("shortId")
     const n = Number(c.req.param("n"))
     const artifact = await meta.getByShortId(shortId)
-    if (!artifact || !Number.isInteger(n) || !(await readOk(c, artifact))) return c.text("not found", 404)
+    if (!artifact || !Number.isInteger(n) || !(await authorize(c, "read", artifact))) return c.text("not found", 404)
     const version = await meta.getVersion(artifact.id, n)
     if (!version) return c.text("not found", 404)
 
