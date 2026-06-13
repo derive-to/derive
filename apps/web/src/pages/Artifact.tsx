@@ -10,6 +10,8 @@ import {
   useRef,
   useState,
 } from "react"
+import { ColoredAvatar } from "@/components/shared/colored-avatar"
+import { ago } from "@/lib/time"
 import {
   type Analytics,
   API_BASE,
@@ -25,6 +27,8 @@ import { Header, useIsMobile, useToast } from "../components"
 import { ReviewOverlay } from "../components/review"
 import { ShareButton } from "../components/ShareDialog"
 import { useAuth } from "../ctx"
+import { mdToHtml } from "./artifact/lib/markdown"
+import { REACTION_EMOJI, toggleReaction } from "./artifact/lib/reactions"
 
 type Sel = { type?: string; exact: string; prefix?: string; suffix?: string }
 type Panel = "open" | "rail" | "hidden"
@@ -37,14 +41,6 @@ const loadPanel = (): Panel => {
   } catch {
     return "open"
   }
-}
-
-const ago = (iso: string): string => {
-  const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000)
-  if (s < 60) return "just now"
-  if (s < 3600) return `${Math.floor(s / 60)}m ago`
-  if (s < 86400) return `${Math.floor(s / 3600)}h ago`
-  return `${Math.floor(s / 86400)}d ago`
 }
 
 const parseRef = (ref: string) => {
@@ -1883,92 +1879,6 @@ const NOOP_ACTIONS: CommentActions = {
 }
 const ActionsCtx = createContext<CommentActions | null>(null)
 const useActions = (): CommentActions => useContext(ActionsCtx) ?? NOOP_ACTIONS
-
-const REACTION_EMOJI = ["👍", "❤️", "🎉", "😄", "👀", "🙏", "🚀", "👎"]
-
-// Optimistic local toggle that mirrors the server's react logic.
-function toggleReaction(c: Comment, emoji: string, who: string): Comment {
-  const reactions: Record<string, string[]> = { ...(c.reactions ?? {}) }
-  const arr = [...(reactions[emoji] ?? [])]
-  const i = arr.indexOf(who)
-  if (i >= 0) arr.splice(i, 1)
-  else arr.push(who)
-  if (arr.length) reactions[emoji] = arr
-  else delete reactions[emoji]
-  return { ...c, reactions }
-}
-
-// Tiny, XSS-safe inline markdown: escape first, then a few transforms. Covers
-// bold, italic, inline code, links/autolinks, and line breaks.
-const esc = (s: string) =>
-  s.replace(
-    /[&<>"]/g,
-    (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[ch] as string,
-  )
-const escRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
-function mdToHtml(src: string, mentions?: Mention[]): string {
-  let h = esc(src)
-  // Highlight @mentions from the comment's known set (longest name first so a
-  // fuller name wins over a prefix). Names are escaped to match the escaped body.
-  if (mentions?.length) {
-    const names = [...new Set(mentions.map((m) => m.name))]
-      .sort((a, b) => b.length - a.length)
-      .map((n) => escRe(esc(n)))
-    if (names.length)
-      h = h.replace(new RegExp(`@(${names.join("|")})`, "g"), '<span class="mention">@$1</span>')
-  }
-  h = h.replace(/`([^`]+)`/g, "<code>$1</code>")
-  h = h.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
-  h = h.replace(/(^|[^*])\*([^*\n]+)\*/g, "$1<em>$2</em>")
-  h = h.replace(
-    /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g,
-    '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>',
-  )
-  h = h.replace(
-    /(^|[\s(])(https?:\/\/[^\s<)]+)/g,
-    '$1<a href="$2" target="_blank" rel="noopener noreferrer">$2</a>',
-  )
-  return h.replace(/\n/g, "<br/>")
-}
-
-// Stable per-author tint, so people are recognisable across avatars + threads.
-const AUTHOR_TINTS = [
-  "#7c6cbd",
-  "#3c6e2f",
-  "#a04425",
-  "#2f6e6e",
-  "#9a5fb0",
-  "#b08322",
-  "#4a63b8",
-  "#9a4a6b",
-]
-function colorFor(name: string): string {
-  let h = 0
-  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0
-  return AUTHOR_TINTS[h % AUTHOR_TINTS.length]
-}
-
-function ColoredAvatar({ name, size = 17 }: { name: string; size?: number }) {
-  return (
-    <span
-      style={{
-        width: size,
-        height: size,
-        borderRadius: "50%",
-        background: colorFor(name),
-        color: "#fff",
-        display: "grid",
-        placeItems: "center",
-        fontSize: Math.round(size * 0.5),
-        fontWeight: 700,
-        fontFamily: "ui-monospace,Menlo,monospace",
-        flex: "0 0 auto",
-      }}
-    >
-      {(name || "?").slice(0, 2).toUpperCase()}
-    </span>
-  )
-}
 
 // Small popover that closes on an outside click.
 function Popover({
