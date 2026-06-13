@@ -1,5 +1,12 @@
 import { type Browser, test as base, expect, type Page } from "@playwright/test"
-import { addComment, openArtifact, proposeEdit, publishArtifact, signUp } from "./helpers"
+import {
+  activateThread,
+  addComment,
+  openArtifact,
+  proposeEdit,
+  publishArtifact,
+  signUp,
+} from "./helpers"
 
 // Composable fixtures are the project's auth/seed layer. Tests declare what they
 // need (`owner`, `secondUser`) and get a ready, isolated state — no per-test
@@ -31,4 +38,4 @@ export const test = base.extend<Fixtures>({
   },
 })
 
-export { addComment, expect, openArtifact, proposeEdit, publishArtifact, signUp }
+export { activateThread, addComment, expect, openArtifact, proposeEdit, publishArtifact, signUp }

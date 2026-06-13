@@ -1,23 +1,23 @@
+import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query"
 import { useNavigate, useSearch } from "@tanstack/react-router"
 import { Plus, X } from "lucide-react"
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { type Artifact, api } from "@/api"
 import { Icon } from "@/components/icons"
 import { EmptyState } from "@/components/shared/empty-state"
-import { Spinner } from "@/components/shared/spinner"
 import { useShell } from "@/components/shell-context"
 import { useToast } from "@/components/toast"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
+import { type LibraryParams, libraryArtifactsQuery } from "@/lib/queries"
 import { usePrefetchArtifact } from "@/lib/use-prefetch-artifact"
 import { cn } from "@/lib/utils"
-import { ArtifactCard } from "./artifact-card"
+import { ArtifactGrid } from "./artifact-grid"
 import { CollectionBar } from "./collection-bar"
+import { LibrarySkeleton } from "./library-skeleton"
 import { ShareCollectionDialog } from "./share-collection-dialog"
 import type { Filter } from "./types"
-
-const PAGE = 30
 
 // Route component for "/". The persistent AppShell (mounted once around the
 // router Outlet) owns the rail/pod and the auth gate, so this just renders the
@@ -33,12 +33,11 @@ function LibraryBody() {
   const { summary, collections, refreshSummary } = useShell()
   const { toast, show } = useToast()
   const prefetch = usePrefetchArtifact()
+  const qc = useQueryClient()
   const file = useRef<HTMLInputElement>(null)
+  // The library is the scroll container; the virtualized grid windows against it.
+  const scrollRef = useRef<HTMLDivElement>(null)
 
-  const [items, setItems] = useState<Artifact[]>([])
-  const [nextCursor, setNextCursor] = useState<string | null>(null)
-  const [fetching, setFetching] = useState(true)
-  const [more, setMore] = useState(false)
   const [busy, setBusy] = useState(false)
   const [dragging, setDragging] = useState(false)
   const [shareCol, setShareCol] = useState<(typeof collections)[number] | null>(null)
@@ -64,34 +63,18 @@ function LibraryBody() {
     return () => clearTimeout(t)
   }, [query])
 
-  // Server-side search + filter + keyset pagination. Page 1 on any query/filter
-  // change; `cursor` appends the next page.
-  const load = useCallback(
-    async (cursor?: string) => {
-      cursor ? setMore(true) : setFetching(true)
-      try {
-        const r = await api.listArtifacts({
-          q: debouncedQ || undefined,
-          tag: search.tag,
-          collection: search.collection,
-          favorite: search.f === "favorites" || undefined,
-          cursor,
-          limit: PAGE,
-        })
-        setItems((prev) => (cursor ? [...prev, ...r.artifacts] : r.artifacts))
-        setNextCursor(r.next_cursor)
-      } catch {
-        if (!cursor) setItems([])
-      } finally {
-        setFetching(false)
-        setMore(false)
-      }
-    },
-    [debouncedQ, search.f, search.tag, search.collection],
-  )
-  useEffect(() => {
-    load()
-  }, [load])
+  // Server-side search + filter + keyset pagination, as one infinite query keyed
+  // by the active filter. Scrolling to the end pulls the next page.
+  const params: LibraryParams = {
+    q: debouncedQ || undefined,
+    tag: search.tag,
+    collection: search.collection,
+    favorite: search.f === "favorites" || undefined,
+  }
+  const listQuery = libraryArtifactsQuery(params)
+  const { data, isPending, isError, fetchNextPage, hasNextPage, isFetchingNextPage } =
+    useInfiniteQuery(listQuery)
+  const items = data?.pages.flatMap((p) => p.artifacts) ?? []
 
   // One publish path, fed by either a drag-drop or the native picker.
   const publishFile = async (f: File) => {
@@ -107,21 +90,30 @@ function LibraryBody() {
   // The "Publish" button opens the OS picker; choosing a file uploads immediately.
   const pickFile = () => file.current?.click()
 
-  // Star toggle is optimistic; in the Favorites view an un-star drops the card.
+  // Star toggle is optimistic across every cached page; in the Favorites view an
+  // un-star drops the card. Reconcile against the server on failure.
   const toggleFav = async (a: Artifact) => {
     const on = !a.favorite
-    setItems((prev) => {
-      const next = prev.map((x) => (x.short_id === a.short_id ? { ...x, favorite: on } : x))
-      return filter.kind === "favorites" && !on
-        ? next.filter((x) => x.short_id !== a.short_id)
-        : next
-    })
+    const drop = filter.kind === "favorites" && !on
+    qc.setQueryData(listQuery.queryKey, (old) =>
+      old
+        ? {
+            ...old,
+            pages: old.pages.map((pg) => ({
+              ...pg,
+              artifacts: pg.artifacts.flatMap((x) =>
+                x.short_id !== a.short_id ? [x] : drop ? [] : [{ ...x, favorite: on }],
+              ),
+            })),
+          }
+        : old,
+    )
     try {
       await api.favorite(a.short_id, on)
       refreshSummary()
     } catch (e) {
       show((e as Error).message)
-      load()
+      qc.invalidateQueries({ queryKey: listQuery.queryKey })
     }
   }
 
@@ -166,7 +158,7 @@ function LibraryBody() {
           : "Nothing yet. Publish above, or run dock publish ./file."
 
   return (
-    <div className="flex-1 overflow-y-auto">
+    <div ref={scrollRef} className="flex-1 overflow-y-auto">
       <div className="mx-auto max-w-[1000px] px-5.5 pb-16 pt-5.5">
         <div className="mb-[18px] flex flex-wrap items-center gap-2.5">
           <Input
@@ -272,36 +264,31 @@ function LibraryBody() {
           </h2>
         )}
 
-        {fetching && items.length === 0 ? (
-          <div className="grid h-40 place-items-center">
-            <Spinner />
-          </div>
+        {isPending ? (
+          <LibrarySkeleton />
+        ) : isError ? (
+          <EmptyState>Couldn’t load the library. Check your connection and try again.</EmptyState>
         ) : items.length === 0 ? (
           <EmptyState>{emptyMessage}</EmptyState>
         ) : (
           <>
-            <div className="grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-3">
-              {items.map((a) => (
-                <ArtifactCard
-                  key={a.short_id}
-                  artifact={a}
-                  onOpen={() => nav({ to: "/a/$ref", params: { ref: a.short_id } })}
-                  onToggleFavorite={() => toggleFav(a)}
-                  onPickTag={(tag) => nav({ to: "/", search: { tag } })}
-                  onPrefetch={() => prefetch(a.short_id, a.current_version)}
-                />
-              ))}
-            </div>
-            {nextCursor && (
-              <div className="mt-5 text-center">
-                <Button
-                  variant="outline"
-                  data-testid="library-load-more"
-                  onClick={() => load(nextCursor)}
-                  disabled={more}
-                >
-                  {more ? "Loading…" : "Load more"}
-                </Button>
+            <ArtifactGrid
+              items={items}
+              scrollRef={scrollRef}
+              hasNextPage={!!hasNextPage}
+              isFetchingNextPage={isFetchingNextPage}
+              onLoadMore={() => fetchNextPage()}
+              onOpen={(a) => nav({ to: "/a/$ref", params: { ref: a.short_id } })}
+              onToggleFavorite={toggleFav}
+              onPickTag={(tag) => nav({ to: "/", search: { tag } })}
+              onPrefetch={(a) => prefetch(a.short_id, a.current_version)}
+            />
+            {isFetchingNextPage && (
+              <div
+                className="mt-4 text-center text-sm text-muted-foreground"
+                data-testid="library-loading-more"
+              >
+                Loading more…
               </div>
             )}
           </>

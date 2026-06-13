@@ -67,6 +67,19 @@ export async function addComment(page: Page, body: string): Promise<void> {
   await expect(page.getByText(body)).toBeVisible()
 }
 
+// Open (activate) a comment thread by clicking its card, then wait for the
+// expanded controls (the resolve button) to appear. A just-posted card can be
+// mid entrance-animation, or re-rendering from the create refetch, exactly as
+// the click lands — so the first click is occasionally absorbed before it
+// registers. Re-clicking until the thread is open makes activation reliable
+// (clicking an already-open card is a no-op, so the retry is safe).
+export async function activateThread(page: Page, text: string): Promise<void> {
+  await expect(async () => {
+    await page.getByText(text).first().click()
+    await expect(page.getByTestId("comment-resolve")).toBeVisible({ timeout: 2000 })
+  }).toPass({ timeout: 15_000 })
+}
+
 // Propose a candidate version on an artifact through the API (commenter+ — an
 // editor teammate in tests). Drives the review flow without the editor UI.
 export async function proposeEdit(

@@ -1,5 +1,28 @@
-import { queryOptions } from "@tanstack/react-query"
+import { infiniteQueryOptions, keepPreviousData, queryOptions } from "@tanstack/react-query"
 import { API_BASE, api } from "@/api"
+
+const LIBRARY_PAGE = 30
+
+// The library list as an infinite query: each page is a keyset slice, and the
+// next cursor drives infinite scroll. Keyed by the active filter (search / tag /
+// collection / favorites) so each view caches independently.
+export type LibraryParams = {
+  q?: string
+  tag?: string
+  collection?: string
+  favorite?: boolean
+}
+export const libraryArtifactsQuery = (params: LibraryParams) =>
+  infiniteQueryOptions({
+    queryKey: ["artifacts", params] as const,
+    queryFn: ({ pageParam }) =>
+      api.listArtifacts({ ...params, cursor: pageParam || undefined, limit: LIBRARY_PAGE }),
+    initialPageParam: "",
+    getNextPageParam: (last) => last.next_cursor ?? undefined,
+    // Keep showing the current results while a new filter/search loads, so
+    // switching views doesn't flash the skeleton.
+    placeholderData: keepPreviousData,
+  })
 
 // Typed query options shared by route loaders (ensureQueryData, for intent
 // preloading) and components (useQuery). One source of truth for keys +

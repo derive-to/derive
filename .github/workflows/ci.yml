@@ -68,6 +68,24 @@ jobs:
       - name: API coverage
         run: pnpm --filter @dock/api test:coverage
 
+  # Bundle budget: build the web client and fail if the gzipped JS blows past the
+  # budget (see scripts/check-bundle.mjs), so phosphor / radix / cmdk weight can't
+  # regress silently.
+  bundle:
+    runs-on: ubicloud-standard-2
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Build web client
+        run: pnpm --filter @dock/web build
+      - name: Bundle budget
+        run: pnpm lint:bundle
+
   # Supply-chain: a known-vulnerable production dependency, or a committed secret,
   # fails the build. Reads the lockfile + working tree, so no install is needed.
   security:

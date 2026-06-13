@@ -1,11 +1,10 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useNavigate, useParams } from "@tanstack/react-router"
-import { useCallback, useEffect, useRef, useState } from "react"
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react"
 import { createPortal } from "react-dom"
 import { API_BASE, api, type Comment, type Diff, type Mention } from "@/api"
 import { useIsMobile, useToast } from "@/components"
 import { Icon } from "@/components/icons"
-import { ReviewOverlay } from "@/components/review"
 import { ShareButton } from "@/components/ShareDialog"
 import { Spinner } from "@/components/shared/spinner"
 import { useShell } from "@/components/shell-context"
@@ -25,12 +24,21 @@ import { ActionsCtx, type CommentActions } from "./comment-actions"
 import { MobileComments, OpenPanel } from "./comment-panels"
 import { DiffView } from "./diff-view"
 import { CollectionsMenu, ReportButton, StarButton, TagsMenu } from "./header-actions"
-import { HistoryDrawer, Insights } from "./insights-history"
 import { clamp, groupThreads, parseAnchor } from "./lib/layout"
 import { toggleReaction } from "./lib/reactions"
 import { parseRef } from "./parse-ref"
 import { DeckBar, Presence, Rail } from "./rail-deck"
 import type { Panel, PinItem, Sel } from "./types"
+
+// Heavy on-demand surfaces — split out of the artifact route's initial chunk and
+// loaded only when the user opens them (review proposals / insights / history).
+const ReviewOverlay = lazy(() =>
+  import("@/components/review").then((m) => ({ default: m.ReviewOverlay })),
+)
+const Insights = lazy(() => import("./insights-history").then((m) => ({ default: m.Insights })))
+const HistoryDrawer = lazy(() =>
+  import("./insights-history").then((m) => ({ default: m.HistoryDrawer })),
+)
 
 const PANEL_KEY = STORAGE_KEYS.commentsPanel
 const loadPanel = (): Panel => {
@@ -641,33 +649,43 @@ export function Artifact() {
         )}
       <ActionsCtx.Provider value={actions}>
         {reviewing && (
-          <ReviewOverlay
-            shortId={shortId}
-            currentVersion={art.current_version}
-            myRole={art.my_role}
-            meName={me?.name ?? me?.email ?? null}
-            onClose={() => setReviewing(false)}
-            onApplied={load}
-          />
+          <Suspense fallback={null}>
+            <ReviewOverlay
+              shortId={shortId}
+              currentVersion={art.current_version}
+              myRole={art.my_role}
+              meName={me?.name ?? me?.email ?? null}
+              onClose={() => setReviewing(false)}
+              onApplied={load}
+            />
+          </Suspense>
         )}
-        <Insights
-          shortId={shortId}
-          title={art.title}
-          open={surface === "insights"}
-          onOpenChange={(o) => setSurface(o ? "insights" : null)}
-        />
-        <HistoryDrawer
-          art={art}
-          shown={shown}
-          goTo={(n) =>
-            nav({
-              to: "/a/$ref",
-              params: { ref: n === art.current_version ? shortId : `${shortId}@v${n}` },
-            })
-          }
-          open={surface === "history"}
-          onOpenChange={(o) => setSurface(o ? "history" : null)}
-        />
+        {surface === "insights" && (
+          <Suspense fallback={null}>
+            <Insights
+              shortId={shortId}
+              title={art.title}
+              open
+              onOpenChange={(o) => setSurface(o ? "insights" : null)}
+            />
+          </Suspense>
+        )}
+        {surface === "history" && (
+          <Suspense fallback={null}>
+            <HistoryDrawer
+              art={art}
+              shown={shown}
+              goTo={(n) =>
+                nav({
+                  to: "/a/$ref",
+                  params: { ref: n === art.current_version ? shortId : `${shortId}@v${n}` },
+                })
+              }
+              open
+              onOpenChange={(o) => setSurface(o ? "history" : null)}
+            />
+          </Suspense>
+        )}
         <div className="flex min-h-0 flex-1">
           <div
             className={cn(

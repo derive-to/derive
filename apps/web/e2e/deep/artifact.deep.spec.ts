@@ -1,4 +1,12 @@
-import { addComment, expect, openArtifact, publishArtifact, signUp, test } from "../fixtures"
+import {
+  activateThread,
+  addComment,
+  expect,
+  openArtifact,
+  publishArtifact,
+  signUp,
+  test,
+} from "../fixtures"
 
 // Deep coverage of the artifact page comment system: post, reply, react, edit,
 // delete, resolve, reopen — plus insights, star/report, and tagging. Drives the
@@ -18,7 +26,7 @@ test("comment, reply, resolve, and reopen a thread", async ({ page }) => {
   await addComment(page, "First observation.")
 
   // Activate the thread, reply, and see the reply land.
-  await page.getByText("First observation.").click()
+  await activateThread(page, "First observation.")
   await page.getByTestId("comment-reply-input").fill("A follow-up reply.")
   await page.getByTestId("comment-reply-send").click()
   await expect(page.getByText("A follow-up reply.")).toBeVisible()
@@ -29,7 +37,7 @@ test("comment, reply, resolve, and reopen a thread", async ({ page }) => {
 
   // Expand that section, reopen the thread, and confirm the toggle flips back.
   await page.getByRole("button", { name: /Resolved \(\d+\)/ }).click()
-  await page.getByText("First observation.").first().click()
+  await activateThread(page, "First observation.")
   await page.getByTestId("comment-resolve").click() // currently reads "Reopen"
   await expect(page.getByTestId("comment-resolve")).toHaveText("Resolve")
 })
