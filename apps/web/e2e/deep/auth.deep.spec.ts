@@ -1,7 +1,7 @@
-import { expect, test } from "@playwright/test"
-import { signUp } from "./helpers"
+import { expect, signUp, test } from "../fixtures"
 
-// The Login surface, driven through stable test-ids on the migrated Card/Input/Button.
+// The Login surface in depth: mode toggle, bad-credentials error, and the happy
+// create-account path — all driven through stable test-ids on the Card/Input/Button.
 
 test("the toggle switches between sign in and create account", async ({ page }) => {
   await page.goto("/login")

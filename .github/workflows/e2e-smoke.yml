@@ -1,0 +1,44 @@
+name: e2e smoke (post-merge)
+
+# The fast critical-path suite: one happy path per surface (sign up, publish →
+# comment → resolve, library, share, settings, theme, review) — runs in well
+# under two minutes. Intended as the POST-MERGE gate on main.
+#
+# Manual-dispatch only for now (run it from the Actions tab → "Run workflow").
+# When ready to wire into CI, uncomment the `push` trigger below.
+on:
+  workflow_dispatch:
+  # push:
+  #   branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubicloud-standard-2
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Install Playwright browser
+        run: pnpm --filter @dock/web exec playwright install --with-deps chromium
+
+      - name: Smoke suite
+        run: pnpm --filter @dock/web test:e2e:smoke
+
+      - name: Upload Playwright report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-smoke
+          path: apps/web/playwright-report
+          retention-days: 7
