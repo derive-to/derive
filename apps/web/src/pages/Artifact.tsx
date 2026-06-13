@@ -17,6 +17,7 @@ import {
   type Diff,
 } from "../api"
 import { Header, useIsMobile, useToast } from "../components"
+import { ReviewOverlay } from "../components/ReviewOverlay"
 import { ShareButton } from "../components/ShareDialog"
 import { useAuth } from "../ctx"
 
@@ -58,6 +59,7 @@ export function Artifact() {
   const [failed, setFailed] = useState(false)
   const [comments, setComments] = useState<Comment[]>([])
   const [editing, setEditing] = useState(false)
+  const [reviewing, setReviewing] = useState(false)
   const [view, setView] = useState<"preview" | "diff">("preview")
   const [diff, setDiff] = useState<Diff | null>(null)
   const [restoring, setRestoring] = useState(false)
@@ -341,6 +343,9 @@ export function Artifact() {
   const shown = version ?? art.current_version
   const editable = art.kind === "file" && shown === art.current_version
   const rawSrc = `${API_BASE}/raw/${shortId}/v/${shown}/index.html`
+  // Editors publish directly; commenters propose a candidate for review.
+  const canPublish = art.my_role === "editor" || art.my_role === "owner"
+  const canPropose = canPublish || art.my_role === "commenter"
 
   // Sort threads into pinned (anchored & present in this live doc), general
   // (unanchored or orphaned), and resolved. Pins drive both the margin cards
@@ -377,6 +382,22 @@ export function Artifact() {
         "edited in browser",
       )
       show(`Published v${a.current_version}`)
+      setEditing(false)
+      load()
+    } catch (e) {
+      show((e as Error).message)
+    }
+  }
+  // A commenter can't publish; their edit becomes a proposal for review.
+  const proposeEdit = async () => {
+    try {
+      await api.propose(
+        shortId,
+        src,
+        art.title ? `${art.short_id}.md` : "edit.md",
+        "proposed change",
+      )
+      show("Proposed — sent for review")
       setEditing(false)
       load()
     } catch (e) {
@@ -468,6 +489,16 @@ export function Artifact() {
   return (
     <ActionsCtx.Provider value={actions}>
       <div style={{ height: "100%", display: "flex", flexDirection: "column" }}>
+        {reviewing && (
+          <ReviewOverlay
+            shortId={shortId}
+            currentVersion={art.current_version}
+            myRole={art.my_role}
+            meName={me?.name ?? me?.email ?? null}
+            onClose={() => setReviewing(false)}
+            onApplied={load}
+          />
+        )}
         <Header
           right={
             <>
@@ -495,9 +526,19 @@ export function Artifact() {
                   })
                 }
               />
-              {editable && !editing && (
+              {!!art.open_proposals && art.open_proposals > 0 && (
+                <button
+                  className="btn sm"
+                  onClick={() => setReviewing(true)}
+                  style={{ gap: 6, borderColor: "var(--ac)", color: "var(--ac)" }}
+                  title="Review proposed changes"
+                >
+                  Review <b style={{ fontWeight: 700 }}>{art.open_proposals}</b>
+                </button>
+              )}
+              {editable && canPropose && !editing && (
                 <button className="btn sm" onClick={startEdit}>
-                  Edit
+                  {canPublish ? "Edit" : "Propose"}
                 </button>
               )}
               {/* On phones the bottom-right FAB opens comments, so the header
@@ -555,9 +596,15 @@ export function Artifact() {
                   <button className="btn sm" onClick={() => setEditing(false)}>
                     Cancel
                   </button>
-                  <button className="btn pri sm" onClick={publishEdit}>
-                    Publish new version
-                  </button>
+                  {canPublish ? (
+                    <button className="btn pri sm" onClick={publishEdit}>
+                      Publish new version
+                    </button>
+                  ) : (
+                    <button className="btn pri sm" onClick={proposeEdit}>
+                      Propose change
+                    </button>
+                  )}
                 </div>
                 <textarea
                   className="mono"

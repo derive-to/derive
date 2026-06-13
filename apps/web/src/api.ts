@@ -36,6 +36,25 @@ export interface Artifact {
   tags?: string[]
   /** Whether the current user has starred this artifact. */
   favorite?: boolean
+  /** Count of proposals awaiting review. */
+  open_proposals?: number
+}
+export type ProposalState = "open" | "approved" | "changes_requested" | "withdrawn"
+export interface Proposal {
+  id: string
+  state: ProposalState
+  author: string
+  message: string | null
+  base_version: number
+  kind: "file" | "bundle"
+  decided_by: string | null
+  decided_version: number | null
+  decided_at: string | null
+  created_at: string
+  /** The proposed experience, rendered exactly like a live version. */
+  preview_url: string
+  /** Present on the single-proposal fetch: line diff vs the base version. */
+  diff?: { base_version: number; ops: DiffOp[] }
 }
 export interface ArtifactMember {
   user_id: string
@@ -144,6 +163,28 @@ export const api = {
     f(`/v1/artifacts/${id}/diff?from=${from}&to=${to}&format=json`, opts()).then(j),
   restore: (id: string, version: number): Promise<Artifact> =>
     f(`/v1/artifacts/${id}/restore`, opts({ version })).then(j),
+
+  listProposals: (id: string, state?: ProposalState): Promise<{ proposals: Proposal[] }> =>
+    f(`/v1/artifacts/${id}/proposals${state ? `?state=${state}` : ""}`, opts()).then(j),
+  getProposal: (id: string, proposalId: string): Promise<Proposal> =>
+    f(`/v1/artifacts/${id}/proposals/${proposalId}`, opts()).then(j),
+  propose(id: string, text: string, filename: string, message: string): Promise<Proposal> {
+    const fd = new FormData()
+    fd.append("file", new File([text], filename))
+    if (message) fd.append("message", message)
+    return f(`/v1/artifacts/${id}/proposals`, {
+      method: "POST",
+      body: fd,
+      credentials: "include",
+      headers: { accept: "application/json" },
+    }).then(j)
+  },
+  approveProposal: (id: string, proposalId: string): Promise<Proposal & { published: number }> =>
+    f(`/v1/artifacts/${id}/proposals/${proposalId}/approve`, opts({})).then(j),
+  requestChanges: (id: string, proposalId: string): Promise<Proposal> =>
+    f(`/v1/artifacts/${id}/proposals/${proposalId}/request-changes`, opts({})).then(j),
+  withdrawProposal: (id: string, proposalId: string): Promise<Proposal> =>
+    f(`/v1/artifacts/${id}/proposals/${proposalId}/withdraw`, opts({})).then(j),
 
   listMembers: (id: string): Promise<{ default_role: Role; members: ArtifactMember[] }> =>
     f(`/v1/artifacts/${id}/members`, opts()).then(j),
