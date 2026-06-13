@@ -240,26 +240,10 @@
     </ul>
   </div>
 
-  <div class="phase">
-    <div class="hd"><span class="pn">P8</span><h3>Distribution, prepared</h3><span class="scope">build now · ship on public</span></div>
-    <p class="lead">The "CLI-first" promise needs the CLI installable. Wire it all up now; the publish step turns on at launch.</p>
-    <ul>
-      <li><b>Release automation.</b> <span class="m">changesets for versioned, changelog-driven releases across the workspace (replaces the static 0.1.0). (now: config; on public: publish)</span></li>
-      <li><b>Publishable CLI.</b> <span class="m"><code>@dock/cli</code> gets <code>description</code>/<code>keywords</code>/<code>files</code>/<code>author</code> and a <code>private:false</code>-ready state, so <code>npm i -g @dock/cli</code> works at launch. (now: metadata)</span></li>
-      <li><b>Release workflow.</b> <span class="m">A publish-on-tag workflow with npm provenance, gated so it only fires once public. (on public)</span></li>
-      <li><b>HTTP API surface.</b> <span class="m">An OpenAPI spec for the Hono API (served + checked in) so clients/SDKs can be generated. (now)</span></li>
-    </ul>
-  </div>
-
-  <div class="phase">
-    <div class="hd"><span class="pn">P9</span><h3>Discoverability + community</h3><span class="scope">docs now · badges on public</span></div>
-    <p class="lead">The repo is the landing page. Make the first 60 seconds sell it.</p>
-    <ul>
-      <li><b>README.</b> <span class="m">A demo gif/screenshot, a crisp "why Dock", and the correct user-install path (not the clone-and-run dev path). Badges (CI/version/coverage) when public. (now: content)</span></li>
-      <li><b>Docs.</b> <span class="m">Consolidate the (already-good) scattered markdown into a small docs site or a clear docs/ index; add a "publish your first artifact" tutorial. (now)</span></li>
-      <li><b>ROADMAP + community.</b> <span class="m">ROADMAP.md, a labels strategy (good-first-issue), FUNDING; enable Discussions. (now: docs; on public: Discussions)</span></li>
-    </ul>
-  </div>
+  <p class="foothint">Distribution (npm publish, changesets, release workflow, OpenAPI) and discoverability
+  (README, docs site, ROADMAP, badges) are launch concerns, not private hardening, so they moved to
+  their own checklist: <code>before-public.html</code>. This plan stays scoped to what gets hardened
+  while the repo is private.</p>
 
 </div>
 </body>

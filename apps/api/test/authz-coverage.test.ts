@@ -69,26 +69,29 @@ const scanFile = (file: string): Violation[] => {
   collect(src)
 
   const visit = (node: ts.Node) => {
+    const pathArg = ts.isCallExpression(node) ? node.arguments[0] : undefined
+    const handler = ts.isCallExpression(node)
+      ? node.arguments[node.arguments.length - 1]
+      : undefined
     if (
       ts.isCallExpression(node) &&
       ts.isPropertyAccessExpression(node.expression) &&
       MUTATIONS.has(node.expression.name.text) &&
-      node.arguments.length >= 2 &&
-      ts.isStringLiteralLike(node.arguments[0])
+      pathArg &&
+      handler &&
+      ts.isStringLiteralLike(pathArg) &&
+      (ts.isArrowFunction(handler) || ts.isFunctionExpression(handler))
     ) {
-      const handler = node.arguments[node.arguments.length - 1]
-      if (ts.isArrowFunction(handler) || ts.isFunctionExpression(handler)) {
-        const { line } = src.getLineAndCharacterOfPosition(node.getStart(src))
-        const around = `${lines[line - 1] ?? ""}\n${lines[line] ?? ""}`
-        const gated = [...identifiersIn(handler)].some((n) => gaters.has(n))
-        if (!gated && !around.includes(EXEMPT)) {
-          out.push({
-            file,
-            method: node.expression.name.text.toUpperCase(),
-            path: node.arguments[0].getText(src).replace(/['"`]/g, ""),
-            line: line + 1,
-          })
-        }
+      const { line } = src.getLineAndCharacterOfPosition(node.getStart(src))
+      const around = `${lines[line - 1] ?? ""}\n${lines[line] ?? ""}`
+      const gated = [...identifiersIn(handler)].some((n) => gaters.has(n))
+      if (!gated && !around.includes(EXEMPT)) {
+        out.push({
+          file,
+          method: node.expression.name.text.toUpperCase(),
+          path: pathArg.getText(src).replace(/['"`]/g, ""),
+          line: line + 1,
+        })
       }
     }
     ts.forEachChild(node, visit)

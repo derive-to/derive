@@ -1,6 +1,7 @@
 // The Dock mark. Brand colors are intentionally fixed — a logo doesn't theme —
 // while everything else in the app is tokenized.
 export const Logo = ({ size = 24 }: { size?: number }) => (
+  // biome-ignore lint/a11y/noSvgWithoutTitle: decorative brand mark; the adjacent "Dock" wordmark labels it
   <svg width={size} height={size} viewBox="0 0 32 32" fill="none" aria-hidden>
     <rect x="1" y="1" width="30" height="30" rx="8" fill="#2a2540" />
     <path

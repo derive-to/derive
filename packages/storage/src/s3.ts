@@ -105,7 +105,7 @@ export class S3BlobStore implements BlobStore {
 const awsRegion = (hostname: string): string => {
   if (hostname === "s3.amazonaws.com") return "us-east-1"
   const m = hostname.match(/^s3[.-]([a-z0-9-]+?)\.amazonaws\.com$/i)
-  return m ? m[1] : "us-east-1"
+  return m?.[1] ?? "us-east-1"
 }
 
 /**

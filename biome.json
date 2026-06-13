@@ -61,13 +61,13 @@
         "noFocusedTests": "error"
       },
       "a11y": {
-        "useButtonType": "warn",
-        "useKeyWithClickEvents": "warn",
-        "noStaticElementInteractions": "warn",
-        "useValidAnchor": "warn",
-        "noAutofocus": "warn",
-        "useIframeTitle": "warn",
-        "noSvgWithoutTitle": "warn"
+        "useButtonType": "error",
+        "useKeyWithClickEvents": "error",
+        "noStaticElementInteractions": "error",
+        "useValidAnchor": "error",
+        "noAutofocus": "error",
+        "useIframeTitle": "error",
+        "noSvgWithoutTitle": "error"
       }
     }
   },

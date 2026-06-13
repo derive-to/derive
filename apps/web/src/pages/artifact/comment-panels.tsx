@@ -78,7 +78,7 @@ export function MobileComments({
         role="dialog"
         aria-label="Comments"
       >
-        {/* biome-ignore lint/a11y/useKeyWithClickEvents: grip toggles height; ✕ closes. */}
+        {/* biome-ignore lint/a11y/useKeyWithClickEvents lint/a11y/noStaticElementInteractions: grip toggles height; ✕ closes. */}
         <div
           className="mx-auto mb-1 mt-[9px] h-1 w-10 shrink-0 cursor-grab rounded-full bg-border"
           onClick={() => setFull((f) => !f)}

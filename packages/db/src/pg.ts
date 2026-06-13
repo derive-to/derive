@@ -68,6 +68,12 @@ import {
   workspace,
 } from "./pg-schema"
 
+const one = <T>(rows: T[]): T => {
+  const r = rows[0]
+  if (r === undefined) throw new Error("expected a returning row")
+  return r
+}
+
 const schema = {
   artifact,
   version,
@@ -162,7 +168,7 @@ export class PgMetaStore implements MetaStore {
         .select()
         .from(version)
         .where(and(eq(version.artifact_id, artifactId), eq(version.n, n)))
-      return rows[0]
+      return one(rows)
     })
   }
 
@@ -184,7 +190,7 @@ export class PgMetaStore implements MetaStore {
 
   async createComment(c: NewComment): Promise<CommentRecord> {
     const rows = await this.db.insert(comment).values(c).returning()
-    return rows[0]
+    return one(rows)
   }
 
   async getComment(id: string): Promise<CommentRecord | null> {
@@ -359,7 +365,7 @@ export class PgMetaStore implements MetaStore {
   // ---- Webhooks + outbox -------------------------------------------------
   async createWebhook(w: NewWebhook): Promise<WebhookRecord> {
     const rows = await this.db.insert(webhook).values(w).returning()
-    return rows[0]
+    return one(rows)
   }
   listWebhooks(orgId: string): Promise<WebhookRecord[]> {
     return this.db
@@ -448,7 +454,7 @@ export class PgMetaStore implements MetaStore {
         set: { role: m.role },
       })
       .returning()
-    return rows[0]
+    return one(rows)
   }
   async removeMembership(orgId: string, userId: string): Promise<void> {
     await this.db
@@ -465,7 +471,7 @@ export class PgMetaStore implements MetaStore {
       .values({ id: orgId, name })
       .onConflictDoUpdate({ target: workspace.id, set: { name } })
       .returning()
-    return rows[0]
+    return one(rows)
   }
   listWorkspaces(userId: string): Promise<(WorkspaceRecord & { role: Role })[]> {
     return this.db
@@ -503,7 +509,7 @@ export class PgMetaStore implements MetaStore {
         set: { role: m.role },
       })
       .returning()
-    return rows[0]
+    return one(rows)
   }
   async removeArtifactMember(artifactId: string, userId: string): Promise<void> {
     await this.db
@@ -540,10 +546,10 @@ export class PgMetaStore implements MetaStore {
       .where(inArray(artifactTag.artifact_id, artifactIds))
     const out: Record<string, string[]> = {}
     for (const r of rows) {
-      if (!out[r.artifact_id]) out[r.artifact_id] = []
-      out[r.artifact_id].push(r.tag)
+      out[r.artifact_id] ??= []
+      out[r.artifact_id]?.push(r.tag)
     }
-    for (const k in out) out[k].sort()
+    for (const k in out) out[k]?.sort()
     return out
   }
   async setArtifactTags(artifactId: string, tags: string[]): Promise<void> {
@@ -559,7 +565,7 @@ export class PgMetaStore implements MetaStore {
   // ---- Collections -------------------------------------------------------
   async createCollection(c: NewCollection): Promise<CollectionRecord> {
     const rows = await this.db.insert(collection).values(c).returning()
-    return rows[0]
+    return one(rows)
   }
   async getCollection(id: string): Promise<CollectionRecord | null> {
     const rows = await this.db.select().from(collection).where(eq(collection.id, id))
@@ -650,7 +656,7 @@ export class PgMetaStore implements MetaStore {
         set: { role: m.role },
       })
       .returning()
-    return rows[0]
+    return one(rows)
   }
   async removeCollectionMember(collectionId: string, userId: string): Promise<void> {
     await this.db
@@ -671,7 +677,7 @@ export class PgMetaStore implements MetaStore {
   // ---- Reviews: proposed versions ----------------------------------------
   async createProposal(p: NewProposal): Promise<ProposalRecord> {
     const rows = await this.db.insert(proposal).values(p).returning()
-    return rows[0]
+    return one(rows)
   }
   async getProposal(id: string): Promise<ProposalRecord | null> {
     const rows = await this.db.select().from(proposal).where(eq(proposal.id, id))
@@ -770,7 +776,7 @@ export class PgMetaStore implements MetaStore {
   // ---- Agents + their pull inbox -----------------------------------------
   async createAgent(a: NewAgent): Promise<AgentRecord> {
     const rows = await this.db.insert(agent).values(a).returning()
-    return rows[0]
+    return one(rows)
   }
   listAgents(orgId: string): Promise<AgentRecord[]> {
     return this.db.select().from(agent).where(eq(agent.org_id, orgId))
@@ -805,7 +811,7 @@ export class PgMetaStore implements MetaStore {
   // ---- Moderation: reports, takedown, audit log --------------------------
   async createReport(r: NewReport): Promise<ReportRecord> {
     const rows = await this.db.insert(report).values(r).returning()
-    return rows[0]
+    return one(rows)
   }
   async getReport(id: string, orgId?: string): Promise<ReportRecord | null> {
     const rows = await this.db

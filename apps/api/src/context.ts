@@ -273,7 +273,7 @@ export function buildContext(deps: AppDeps) {
       if (ck && (await meta.getMembership(ck, me.id))) ws = ck
       else {
         const mine = await meta.listWorkspaces(me.id)
-        ws = mine.length ? mine[0].id : await provisionPersonal(me)
+        ws = mine[0]?.id ?? (await provisionPersonal(me))
       }
     }
     wsCache.set(c, ws)
@@ -344,7 +344,9 @@ export function buildContext(deps: AppDeps) {
       const manifestBytes = await blobs.get(content.blob_key)
       if (!manifestBytes) return null
       const manifest = JSON.parse(new TextDecoder().decode(manifestBytes)) as BundleManifest
-      data = await blobs.get(manifest.files[manifest.entry].key)
+      const entryFile = manifest.files[manifest.entry]
+      if (!entryFile) return null
+      data = await blobs.get(entryFile.key)
     } else {
       data = await blobs.get(content.blob_key)
     }

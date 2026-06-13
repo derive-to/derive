@@ -34,6 +34,7 @@ describe("agents: @mention → pull inbox → propose → ack", () => {
     const raw = reg.token as string
     // Single-workspace mode provisions under the default org id.
     const [stored] = await m2.listAgents("default")
+    if (!stored) throw new Error("expected one agent")
     expect(stored.token).not.toBe(raw) // the raw secret is never at rest
     expect(stored.token).toMatch(/^[0-9a-f]{64}$/) // it's a sha-256 hash
     // The raw token still works: the agent can read its own inbox.

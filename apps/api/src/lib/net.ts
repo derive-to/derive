@@ -1,5 +1,9 @@
-/** Is a dotted-decimal octet quad in a private / loopback / link-local range? */
-function isPrivateV4([a, b]: number[]): boolean {
+/** Is a dotted-decimal octet quad in a private / loopback / link-local range?
+ *  Callers always pass a 4-octet array; the `?? -1` defaults satisfy the index
+ *  checker and match no range, so an undersized array reads as "not private". */
+function isPrivateV4(octets: number[]): boolean {
+  const a = octets[0] ?? -1
+  const b = octets[1] ?? -1
   return (
     a === 0 ||
     a === 10 ||
@@ -33,11 +37,13 @@ function ipv4Octets(host: string): number[] | null {
   }
   const k = vals.length
   // The last value fills the remaining low bytes; each leading value is one byte.
-  if (vals[k - 1] > 2 ** ((5 - k) * 8) - 1) return null
-  let value = vals[k - 1]
+  const last = vals[k - 1] ?? 0
+  if (last > 2 ** ((5 - k) * 8) - 1) return null
+  let value = last
   for (let i = 0; i < k - 1; i++) {
-    if (vals[i] > 255) return null
-    value += vals[i] * 2 ** (24 - i * 8)
+    const vi = vals[i] ?? 0
+    if (vi > 255) return null
+    value += vi * 2 ** (24 - i * 8)
   }
   if (value > 0xffffffff) return null
   return [(value >>> 24) & 255, (value >>> 16) & 255, (value >>> 8) & 255, value & 255]
@@ -70,15 +76,15 @@ export function isPublicHttpUrl(raw: string): boolean {
     // run the private-range check on it.
     const m = host.match(/^::ffff:(.+)$/i)
     if (m) {
-      const suf = m[1]
+      const suf = m[1] ?? ""
       let oct: number[] | null = null
       if (suf.includes(".")) {
         oct = ipv4Octets(suf)
       } else {
         const g = suf.split(":").map((x) => Number.parseInt(x, 16))
         if (g.every((x) => Number.isInteger(x) && x >= 0 && x <= 0xffff)) {
-          const lo = g[g.length - 1]
-          const hi = g.length >= 2 ? g[g.length - 2] : 0
+          const lo = g[g.length - 1] ?? 0
+          const hi = (g.length >= 2 ? g[g.length - 2] : 0) ?? 0
           oct = [(hi >> 8) & 255, hi & 255, (lo >> 8) & 255, lo & 255]
         }
       }

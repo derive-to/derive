@@ -166,6 +166,8 @@ export function CommentRow({ c, compact }: { c: Comment; compact?: boolean }) {
       </div>
 
       {editing ? (
+        // biome-ignore lint/a11y/noStaticElementInteractions: stopPropagation wrapper, not an interactive control
+        // biome-ignore lint/a11y/useKeyWithClickEvents: stopPropagation wrapper, not an interactive control
         <div onClick={(e) => e.stopPropagation()}>
           <Textarea
             value={draft}
@@ -248,6 +250,8 @@ export function CommentRow({ c, compact }: { c: Comment; compact?: boolean }) {
       )}
 
       {!editing && (
+        // biome-ignore lint/a11y/noStaticElementInteractions: stopPropagation wrapper around the action toolbar, not a control
+        // biome-ignore lint/a11y/useKeyWithClickEvents: stopPropagation wrapper around the action toolbar, not a control
         <div
           className={cn(
             "absolute right-2 top-1.5 z-[6] flex gap-px rounded-[9px] border border-border bg-card p-0.5 shadow-[var(--shadow)] transition-opacity",
@@ -382,6 +386,8 @@ export function CommentCard({
   const replies = thread.length - 1
 
   return (
+    // biome-ignore lint/a11y/noStaticElementInteractions: click-to-activate convenience; the card's own buttons are keyboard-accessible
+    // biome-ignore lint/a11y/useKeyWithClickEvents: click-to-activate convenience; the card's own buttons are keyboard-accessible
     <div
       data-testid="comment-card"
       onMouseEnter={() => onHover(root.thread_id)}
@@ -437,6 +443,8 @@ export function CommentCard({
             ))}
           </div>
           <div className="flex gap-1.5 border-t border-border-soft px-3 py-2">
+            {/* biome-ignore lint/a11y/noStaticElementInteractions: stopPropagation wrapper, not an interactive control */}
+            {/* biome-ignore lint/a11y/useKeyWithClickEvents: stopPropagation wrapper, not an interactive control */}
             <div className="flex-1" onClick={(e) => e.stopPropagation()}>
               <MentionField
                 testId="comment-reply-input"

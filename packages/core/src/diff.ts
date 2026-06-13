@@ -9,26 +9,40 @@ export function diffLines(a: string, b: string): DiffOp[] {
   // dp[i][j] = length of LCS of A[i:] and B[j:]
   const dp: number[][] = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(0))
   for (let i = n - 1; i >= 0; i--) {
+    // rows always exist by construction; the `?? []` / `?? 0` only satisfy the
+    // index-access checker, they never fire for an in-bounds index.
+    const row = dp[i] ?? []
+    const below = dp[i + 1] ?? []
     for (let j = m - 1; j >= 0; j--) {
-      dp[i][j] = A[i] === B[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1])
+      row[j] = A[i] === B[j] ? (below[j + 1] ?? 0) + 1 : Math.max(below[j] ?? 0, row[j + 1] ?? 0)
     }
   }
   const out: DiffOp[] = []
   let i = 0
   let j = 0
   while (i < n && j < m) {
-    if (A[i] === B[j]) {
-      out.push({ t: "ctx", line: A[i] })
+    const ai = A[i] ?? ""
+    const bj = B[j] ?? ""
+    if (ai === bj) {
+      out.push({ t: "ctx", line: ai })
       i++
       j++
-    } else if (dp[i + 1][j] >= dp[i][j + 1]) {
-      out.push({ t: "del", line: A[i++] })
+    } else if ((dp[i + 1]?.[j] ?? 0) >= (dp[i]?.[j + 1] ?? 0)) {
+      out.push({ t: "del", line: ai })
+      i++
     } else {
-      out.push({ t: "add", line: B[j++] })
+      out.push({ t: "add", line: bj })
+      j++
     }
   }
-  while (i < n) out.push({ t: "del", line: A[i++] })
-  while (j < m) out.push({ t: "add", line: B[j++] })
+  while (i < n) {
+    out.push({ t: "del", line: A[i] ?? "" })
+    i++
+  }
+  while (j < m) {
+    out.push({ t: "add", line: B[j] ?? "" })
+    j++
+  }
   return out
 }
 

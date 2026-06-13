@@ -60,7 +60,7 @@ describe("dock client (the MCP server's backend) over real HTTP", () => {
   it("lists version history with messages", async () => {
     const a = await client.get(shortId)
     expect(a.versions.map((v) => v.n)).toEqual([1, 2])
-    expect(a.versions[1].message).toBe("update")
+    expect(a.versions[1]?.message).toBe("update")
   })
 
   it("runs the comment loop: comment, read back, resolve on republish", async () => {
@@ -75,7 +75,7 @@ describe("dock client (the MCP server's backend) over real HTTP", () => {
     // agent reads the open feedback
     const open = await client.listComments(a.short_id, "open")
     expect(open).toHaveLength(1)
-    expect(open[0].body_md).toBe("tighten the intro")
+    expect(open[0]?.body_md).toBe("tighten the intro")
 
     // agent republishes, resolving the thread in the same call
     const v2 = await client.publish({

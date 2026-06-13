@@ -93,7 +93,9 @@ async function storeContent(
     for (const raw of paths) {
       const path = cleanPath(raw)
       if (!path) continue
-      files[path] = { key: await blobs.put(unzipped[raw]), type: mimeFor(path) }
+      const data = unzipped[raw]
+      if (data === undefined) continue
+      files[path] = { key: await blobs.put(data), type: mimeFor(path) }
     }
     // Entry point: root index.html, else the shallowest html file.
     const entry =

@@ -68,7 +68,7 @@ const makePgStore = (name: string, users: TestUser[]): TestStore => {
       (_t, prop: string) =>
       (...args: unknown[]) =>
         ready.then((s) =>
-          (s as unknown as Record<string, (...a: unknown[]) => unknown>)[prop](...args),
+          (s as unknown as Record<string, (...a: unknown[]) => unknown>)[prop]?.(...args),
         ),
   })
 }
