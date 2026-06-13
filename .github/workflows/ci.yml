@@ -10,7 +10,9 @@ permissions:
 
 jobs:
   check:
-    runs-on: ubuntu-latest
+    # Ubicloud runners (cheaper than GitHub-hosted). Bump the suffix (-4, -8) for
+    # more cores; falls back to a label your org's Ubicloud integration provides.
+    runs-on: ubicloud-standard-2
     steps:
       - uses: actions/checkout@v4
 
