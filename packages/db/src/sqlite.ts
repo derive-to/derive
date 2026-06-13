@@ -227,10 +227,19 @@ export class SqliteMetaStore implements MetaStore {
     const q = this.db.select({ c: count() }).from(artifact)
     return (orgId ? q.where(eq(artifact.org_id, orgId)).get() : q.get())?.c ?? 0
   }
-  async storageBytes(): Promise<number> {
-    const row = this.db
-      .select({ s: sql<number>`coalesce(sum(${version.size_bytes}), 0)` })
+  async storageBytes(orgId: string): Promise<number> {
+    // One row per distinct blob in the org (max size_bytes guards a stale 0 on a
+    // restored row), then summed — so dedup'd content is counted once.
+    const perBlob = this.db
+      .select({ mx: sql<number>`max(${version.size_bytes})`.as("mx") })
       .from(version)
+      .innerJoin(artifact, eq(artifact.id, version.artifact_id))
+      .where(eq(artifact.org_id, orgId))
+      .groupBy(version.blob_key)
+      .as("per_blob")
+    const row = this.db
+      .select({ s: sql<number>`coalesce(sum(${perBlob.mx}), 0)` })
+      .from(perBlob)
       .get()
     return Number(row?.s ?? 0)
   }

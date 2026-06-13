@@ -110,8 +110,12 @@ export interface MetaStore {
   artifactIdsByTag(tag: string): Promise<string[]>
   /** Total artifact count, scoped to a workspace when orgId is given. */
   countArtifacts(orgId?: string): Promise<number>
-  /** Sum of version byte sizes across the workspace — the storage-quota meter. */
-  storageBytes(): Promise<number>
+  /**
+   * The storage-quota meter for one workspace: bytes counted once per distinct
+   * blob (content is content-addressed, so republishes/restores of identical
+   * bytes don't double-count), scoped to the given org.
+   */
+  storageBytes(orgId: string): Promise<number>
   /** Tag → usage count, scoped to a workspace when orgId is given (browse sidebar). */
   tagCounts(orgId?: string): Promise<{ tag: string; count: number }[]>
 
