@@ -1,6 +1,8 @@
 import { useNavigate, useParams } from "@tanstack/react-router"
 import {
+  type CSSProperties,
   createContext,
+  type KeyboardEvent as ReactKeyboardEvent,
   useCallback,
   useContext,
   useEffect,
@@ -15,6 +17,8 @@ import {
   api,
   type Comment,
   type Diff,
+  type DirUser,
+  type Mention,
 } from "../api"
 import { Header, useIsMobile, useToast } from "../components"
 import { ReviewOverlay } from "../components/ReviewOverlay"
@@ -407,20 +411,25 @@ export function Artifact() {
       show((e as Error).message)
     }
   }
-  const addComment = async (text: string, opts?: { threadId?: string; anchor?: Sel | null }) => {
+  const addComment = async (
+    text: string,
+    opts?: { threadId?: string; anchor?: Sel | null; mentions?: Mention[] },
+  ) => {
     if (!text.trim()) return
     await api
       .comment(shortId, {
         body_md: text,
         thread_id: opts?.threadId,
         anchor: opts?.threadId ? undefined : (opts?.anchor ?? undefined),
+        mentions: opts?.mentions?.length ? opts.mentions : undefined,
       })
       .catch((e) => show((e as Error).message))
     api.listComments(shortId).then((r) => setComments(r.comments))
   }
-  const reply = (text: string, threadId: string) => addComment(text, { threadId })
-  const submitNew = async (text: string) => {
-    await addComment(text, { anchor: composer?.anchor ?? null })
+  const reply = (text: string, threadId: string, mentions: Mention[] = []) =>
+    addComment(text, { threadId, mentions })
+  const submitNew = async (text: string, mentions: Mention[] = []) => {
+    await addComment(text, { anchor: composer?.anchor ?? null, mentions })
     setComposer(null)
     setSel(null)
   }
@@ -1076,9 +1085,9 @@ function MobileComments({
   onNewGeneral: () => void
   onActivate: (id: string) => void
   onResolve: (c: Comment) => void
-  onReply: (text: string, threadId: string) => void
+  onReply: (text: string, threadId: string, mentions?: Mention[]) => void
   onJump: (id: string) => void
-  onSubmitNew: (text: string) => void
+  onSubmitNew: (text: string, mentions?: Mention[]) => void
   onCancelNew: () => void
 }) {
   // Half by default (document visible above). Reset to half each time it opens;
@@ -1227,10 +1236,10 @@ function OpenPanel(props: {
   onActivate: (id: string) => void
   onHover: (id: string | null) => void
   onResolve: (c: Comment) => void
-  onReply: (text: string, threadId: string) => void
+  onReply: (text: string, threadId: string, mentions?: Mention[]) => void
   onJump: (id: string) => void
   onNewGeneral: () => void
-  onSubmitNew: (text: string) => void
+  onSubmitNew: (text: string, mentions?: Mention[]) => void
   onCancelNew: () => void
 }) {
   const {
@@ -1417,9 +1426,9 @@ function PinnedZone({
   onActivate: (id: string) => void
   onHover: (id: string | null) => void
   onResolve: (c: Comment) => void
-  onReply: (text: string, threadId: string) => void
+  onReply: (text: string, threadId: string, mentions?: Mention[]) => void
   onJump: (id: string) => void
-  onSubmitNew: (text: string) => void
+  onSubmitNew: (text: string, mentions?: Mention[]) => void
   onCancelNew: () => void
 }) {
   const [heights, setHeights] = useState<Record<string, number>>({})
@@ -1596,8 +1605,18 @@ const esc = (s: string) =>
     /[&<>"]/g,
     (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[ch] as string,
   )
-function mdToHtml(src: string): string {
+const escRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+function mdToHtml(src: string, mentions?: Mention[]): string {
   let h = esc(src)
+  // Highlight @mentions from the comment's known set (longest name first so a
+  // fuller name wins over a prefix). Names are escaped to match the escaped body.
+  if (mentions?.length) {
+    const names = [...new Set(mentions.map((m) => m.name))]
+      .sort((a, b) => b.length - a.length)
+      .map((n) => escRe(esc(n)))
+    if (names.length)
+      h = h.replace(new RegExp(`@(${names.join("|")})`, "g"), '<span class="mention">@$1</span>')
+  }
   h = h.replace(/`([^`]+)`/g, "<code>$1</code>")
   h = h.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
   h = h.replace(/(^|[^*])\*([^*\n]+)\*/g, "$1<em>$2</em>")
@@ -1766,7 +1785,7 @@ function CommentRow({ c, compact }: { c: Comment; compact?: boolean }) {
         <div
           className={`cmt-body${compact ? " cmt-clamp" : ""}`}
           // biome-ignore lint/security/noDangerouslySetInnerHtml: input is escaped first in mdToHtml.
-          dangerouslySetInnerHTML={{ __html: mdToHtml(c.body_md) }}
+          dangerouslySetInnerHTML={{ __html: mdToHtml(c.body_md, c.mentions) }}
         />
       )}
 
@@ -1883,11 +1902,18 @@ function CommentCard({
   onActivate: (id: string) => void
   onHover: (id: string | null) => void
   onResolve: (c: Comment) => void
-  onReply: (text: string, threadId: string) => void
+  onReply: (text: string, threadId: string, mentions?: Mention[]) => void
   onJump: (id: string) => void
 }) {
   const [reply, setReply] = useState("")
+  const [replyMentions, setReplyMentions] = useState<Mention[]>([])
   const root = thread[0]
+  const sendReply = (resolved: Mention[]) => {
+    if (!reply.trim()) return
+    onReply(reply, root.thread_id, resolved)
+    setReply("")
+    setReplyMentions([])
+  }
   const resolved = root.state === "resolved"
   const quote = anchorExact(root.anchor)
   const textPresent = present !== undefined ? present : root.anchored !== false
@@ -1967,30 +1993,25 @@ function CommentCard({
               borderTop: "1px solid var(--line-soft)",
             }}
           >
-            <input
-              className="input"
-              style={{ padding: "6px 9px", fontSize: 12 }}
-              value={reply}
-              placeholder="Reply…"
-              autoFocus
-              onClick={(e) => e.stopPropagation()}
-              onChange={(e) => setReply(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && reply.trim()) {
-                  onReply(reply, root.thread_id)
-                  setReply("")
-                }
-              }}
-            />
+            <div style={{ flex: 1 }} onClick={(e) => e.stopPropagation()}>
+              <MentionField
+                className="input"
+                style={{ padding: "6px 9px", fontSize: 12, width: "100%" }}
+                value={reply}
+                onChange={setReply}
+                mentions={replyMentions}
+                onMentions={setReplyMentions}
+                onSubmit={sendReply}
+                placeholder="Reply… (@ to mention)"
+                autoFocus
+              />
+            </div>
             <button
               className="btn sm"
               disabled={!reply.trim()}
               onClick={(e) => {
                 e.stopPropagation()
-                if (reply.trim()) {
-                  onReply(reply, root.thread_id)
-                  setReply("")
-                }
+                sendReply(replyMentions.filter((m) => reply.includes(`@${m.name}`)))
               }}
             >
               Reply
@@ -2067,7 +2088,7 @@ function ResolvedSection({
   onActivate: (id: string) => void
   onHover: (id: string | null) => void
   onResolve: (c: Comment) => void
-  onReply: (text: string, threadId: string) => void
+  onReply: (text: string, threadId: string, mentions?: Mention[]) => void
   onJump: (id: string) => void
 }) {
   const [open, setOpen] = useState(false)
@@ -2115,22 +2136,219 @@ function ResolvedSection({
 }
 
 // New-comment composer (anchored or general).
+/**
+ * A text control with @mention autocomplete. Typing "@" opens a live directory
+ * popover (/v1/users); picking inserts "@Name " and records the user's id. The
+ * picker — not a server-side @name parse — is the source of mention ids, so the
+ * data is unambiguous. Mentions whose inserted "@Name" is later deleted from the
+ * text are dropped at submit time. Single-line submits on Enter; multiline on
+ * Cmd/Ctrl+Enter (matching the surrounding composer/reply conventions).
+ */
+function MentionField({
+  value,
+  onChange,
+  mentions,
+  onMentions,
+  onSubmit,
+  onCancel,
+  placeholder,
+  autoFocus,
+  multiline,
+  className,
+  style,
+}: {
+  value: string
+  onChange: (v: string) => void
+  mentions: Mention[]
+  onMentions: (m: Mention[]) => void
+  /** Receives the mentions still present in the text (deleted ones pruned). */
+  onSubmit: (resolved: Mention[]) => void
+  onCancel?: () => void
+  placeholder?: string
+  autoFocus?: boolean
+  multiline?: boolean
+  className?: string
+  style?: CSSProperties
+}) {
+  const ref = useRef<HTMLTextAreaElement & HTMLInputElement>(null)
+  const [menu, setMenu] = useState<{ at: number; end: number; q: string } | null>(null)
+  const [results, setResults] = useState<DirUser[]>([])
+  const [active, setActive] = useState(0)
+
+  useLayoutEffect(() => {
+    if (autoFocus) ref.current?.focus()
+  }, [autoFocus])
+
+  // Fetch directory matches as the @query under the caret changes.
+  useEffect(() => {
+    if (!menu) {
+      setResults([])
+      return
+    }
+    let cancelled = false
+    api
+      .users(menu.q)
+      .then((r) => {
+        if (!cancelled) {
+          setResults(r.users.slice(0, 6))
+          setActive(0)
+        }
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [menu])
+
+  // Is the caret sitting at the end of an "@token"? If so, open the popover.
+  const detect = (el: HTMLTextAreaElement | HTMLInputElement) => {
+    const caret = el.selectionStart ?? el.value.length
+    const m = /(?:^|\s)@([\w.-]{0,30})$/.exec(el.value.slice(0, caret))
+    if (m) setMenu({ at: caret - m[1].length - 1, end: caret, q: m[1] })
+    else setMenu(null)
+  }
+
+  const choose = (u: DirUser) => {
+    if (!menu) return
+    const before = value.slice(0, menu.at)
+    const insert = `@${u.name} `
+    onChange(before + insert + value.slice(menu.end))
+    if (!mentions.some((m) => m.id === u.id)) onMentions([...mentions, { id: u.id, name: u.name }])
+    setMenu(null)
+    const pos = before.length + insert.length
+    requestAnimationFrame(() => {
+      const el = ref.current
+      if (el) {
+        el.focus()
+        el.setSelectionRange(pos, pos)
+      }
+    })
+  }
+
+  // Mentions whose "@Name" survived edits are the real ones.
+  const resolve = () => mentions.filter((m) => value.includes(`@${m.name}`))
+  const submit = () => {
+    if (value.trim()) onSubmit(resolve())
+  }
+
+  const onKeyDown = (e: ReactKeyboardEvent) => {
+    if (menu && results.length) {
+      if (e.key === "ArrowDown") {
+        e.preventDefault()
+        setActive((a) => (a + 1) % results.length)
+        return
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault()
+        setActive((a) => (a - 1 + results.length) % results.length)
+        return
+      }
+      if (e.key === "Enter" || e.key === "Tab") {
+        e.preventDefault()
+        choose(results[active])
+        return
+      }
+      if (e.key === "Escape") {
+        e.preventDefault()
+        setMenu(null)
+        return
+      }
+    }
+    if (e.key === "Escape") {
+      onCancel?.()
+      return
+    }
+    if (e.key === "Enter" && (!multiline || e.metaKey || e.ctrlKey)) {
+      e.preventDefault()
+      submit()
+    }
+  }
+
+  const shared = {
+    ref,
+    className,
+    value,
+    placeholder,
+    onChange: (e: { target: HTMLTextAreaElement | HTMLInputElement }) => {
+      onChange(e.target.value)
+      detect(e.target)
+    },
+    onKeyUp: (e: ReactKeyboardEvent<HTMLTextAreaElement | HTMLInputElement>) => {
+      // Caret moves (arrows/click) can leave or re-enter a token.
+      if (e.key.startsWith("Arrow") || e.key === "Home" || e.key === "End") detect(e.currentTarget)
+    },
+    onKeyDown,
+    style,
+  }
+
+  return (
+    <div style={{ position: "relative" }}>
+      {multiline ? (
+        <textarea {...shared} />
+      ) : (
+        <input {...shared} onClick={(e) => e.stopPropagation()} />
+      )}
+      {menu && results.length > 0 && (
+        <div
+          className="card"
+          style={{
+            position: "absolute",
+            left: 0,
+            right: 0,
+            top: "calc(100% + 4px)",
+            zIndex: 40,
+            padding: 4,
+            boxShadow: "var(--shadow)",
+            maxHeight: 200,
+            overflow: "auto",
+          }}
+        >
+          {results.map((u, i) => (
+            <button
+              key={u.id}
+              type="button"
+              onMouseDown={(e) => {
+                e.preventDefault()
+                choose(u)
+              }}
+              onMouseEnter={() => setActive(i)}
+              style={{
+                display: "flex",
+                width: "100%",
+                gap: 8,
+                alignItems: "baseline",
+                padding: "6px 8px",
+                borderRadius: 6,
+                textAlign: "left",
+                background: i === active ? "var(--ac-soft)" : "transparent",
+                color: "var(--fg)",
+              }}
+            >
+              <span style={{ fontWeight: 600, fontSize: 12.5 }}>{u.name}</span>
+              <span className="mono" style={{ fontSize: 10.5, color: "var(--fg-mut)" }}>
+                {u.email}
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function Composer({
   quote,
   onSubmit,
   onCancel,
 }: {
   quote: string | null
-  onSubmit: (t: string) => void
+  onSubmit: (t: string, mentions: Mention[]) => void
   onCancel: () => void
 }) {
   const [text, setText] = useState("")
-  const ref = useRef<HTMLTextAreaElement>(null)
-  useLayoutEffect(() => {
-    ref.current?.focus()
-  }, [])
-  const submit = () => {
-    if (text.trim()) onSubmit(text)
+  const [mentions, setMentions] = useState<Mention[]>([])
+  const submit = (resolved: Mention[]) => {
+    if (text.trim()) onSubmit(text, resolved)
   }
   return (
     <div
@@ -2151,23 +2369,26 @@ function Composer({
         </div>
       )}
       <div style={{ padding: 9 }}>
-        <textarea
-          ref={ref}
+        <MentionField
+          multiline
+          autoFocus
           className="input"
           value={text}
-          onChange={(e) => setText(e.target.value)}
-          placeholder={quote ? "Comment on the selection…" : "Add a comment…"}
-          style={{ minHeight: 56, resize: "vertical", fontSize: 12.5 }}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) submit()
-            if (e.key === "Escape") onCancel()
-          }}
+          onChange={setText}
+          mentions={mentions}
+          onMentions={setMentions}
+          onSubmit={submit}
+          onCancel={onCancel}
+          placeholder={
+            quote ? "Comment on the selection… (@ to mention)" : "Add a comment… (@ to mention)"
+          }
+          style={{ minHeight: 56, resize: "vertical", fontSize: 12.5, width: "100%" }}
         />
         <div style={{ display: "flex", gap: 6, marginTop: 7 }}>
           <button
             className="btn pri sm"
             disabled={!text.trim()}
-            onClick={submit}
+            onClick={() => submit(mentions.filter((m) => text.includes(`@${m.name}`)))}
             style={{ flex: 1, justifyContent: "center" }}
           >
             Comment

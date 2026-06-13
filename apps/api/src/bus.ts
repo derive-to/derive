@@ -9,6 +9,7 @@ export interface DockEvent {
     | "proposal.approved"
     | "proposal.changes_requested"
     | "presence"
+    | "notification"
   [k: string]: unknown
 }
 

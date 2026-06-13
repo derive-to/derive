@@ -7,6 +7,8 @@ import type {
   DeliveryRecord,
   DeliveryStatus,
   MembershipRecord,
+  NotificationKind,
+  NotificationRecord,
   ProposalRecord,
   ProposalState,
   Role,
@@ -121,6 +123,21 @@ export const artifactMember = sqliteTable(
   },
   (t) => [uniqueIndex("artifact_member_user").on(t.artifact_id, t.user_id)],
 )
+
+export const notification = sqliteTable("notification", {
+  id: text("id").primaryKey(),
+  user_id: text("user_id").notNull(),
+  actor: text("actor").notNull(),
+  kind: text("kind").$type<NotificationKind>().notNull(),
+  artifact_id: text("artifact_id").notNull(),
+  artifact_short_id: text("artifact_short_id").notNull(),
+  artifact_title: text("artifact_title"),
+  thread_id: text("thread_id").notNull(),
+  comment_id: text("comment_id").notNull(),
+  preview: text("preview").notNull(),
+  read: integer("read").$type<0 | 1>().notNull().default(0),
+  created_at: text("created_at").notNull().default(now),
+})
 
 // Per-user stars. One row per (artifact, user); favorites are personal, never shared.
 export const artifactFavorite = sqliteTable(
@@ -280,6 +297,21 @@ export const SCHEMA_STATEMENTS: string[] = [
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
     UNIQUE (artifact_id, user_id)
   )`,
+  `CREATE TABLE IF NOT EXISTS notification (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    actor TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    artifact_id TEXT NOT NULL,
+    artifact_short_id TEXT NOT NULL,
+    artifact_title TEXT,
+    thread_id TEXT NOT NULL,
+    comment_id TEXT NOT NULL,
+    preview TEXT NOT NULL,
+    read INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+  )`,
+  `CREATE INDEX IF NOT EXISTS notification_user_time ON notification (user_id, created_at)`,
   `CREATE TABLE IF NOT EXISTS artifact_favorite (
     id TEXT PRIMARY KEY,
     artifact_id TEXT NOT NULL REFERENCES artifact(id),
@@ -339,6 +371,7 @@ const _schemaParity: [
   Exact<typeof webhookDelivery.$inferSelect, DeliveryRecord>,
   Exact<typeof membership.$inferSelect, MembershipRecord>,
   Exact<typeof artifactMember.$inferSelect, ArtifactMemberRecord>,
+  Exact<typeof notification.$inferSelect, NotificationRecord>,
   Exact<typeof proposal.$inferSelect, ProposalRecord>,
-] = [true, true, true, true, true, true, true, true]
+] = [true, true, true, true, true, true, true, true, true]
 void _schemaParity

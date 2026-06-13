@@ -13,10 +13,12 @@ import type {
   NewComment,
   NewDelivery,
   NewMembership,
+  NewNotification,
   NewProposal,
   NewVersion,
   NewView,
   NewWebhook,
+  NotificationRecord,
   ProposalRecord,
   ProposalState,
   UserDir,
@@ -35,6 +37,7 @@ import {
   comment,
   MIGRATION_STATEMENTS,
   membership,
+  notification,
   proposal,
   SCHEMA_STATEMENTS,
   version,
@@ -52,6 +55,7 @@ const schema = {
   webhookDelivery,
   membership,
   artifactMember,
+  notification,
   artifactFavorite,
   artifactTag,
   proposal,
@@ -495,6 +499,41 @@ export class SqliteMetaStore implements MetaStore {
     } catch {
       return []
     }
+  }
+
+  // ---- Notifications (in-app, one row per recipient) ---------------------
+  async createNotification(n: NewNotification): Promise<void> {
+    this.db.insert(notification).values(n).run()
+  }
+  listNotifications(userId: string, limit: number): Promise<NotificationRecord[]> {
+    return Promise.resolve(
+      this.db
+        .select()
+        .from(notification)
+        .where(eq(notification.user_id, userId))
+        .orderBy(desc(notification.created_at))
+        .limit(limit)
+        .all(),
+    )
+  }
+  async unreadNotificationCount(userId: string): Promise<number> {
+    return (
+      this.db
+        .select({ n: count() })
+        .from(notification)
+        .where(and(eq(notification.user_id, userId), eq(notification.read, 0)))
+        .get()?.n ?? 0
+    )
+  }
+  async markNotificationsRead(userId: string, ids: string[] | "all"): Promise<void> {
+    const where =
+      ids === "all"
+        ? eq(notification.user_id, userId)
+        : ids.length > 0
+          ? and(eq(notification.user_id, userId), inArray(notification.id, ids))
+          : null
+    if (!where) return
+    this.db.update(notification).set({ read: 1 }).where(where).run()
   }
 
   close(): void {

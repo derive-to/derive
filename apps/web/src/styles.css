@@ -66,6 +66,19 @@ a{color:var(--ac);text-decoration:none}
 .hdr-brand{display:flex;align-items:center;gap:10px;color:var(--fg);margin-right:auto}
 .hdr-actions{display:flex;align-items:center;gap:8px}
 
+/* -- Notification bell + panel. -- */
+.icon-btn{padding:6px 8px}
+.notif-badge{position:absolute;top:-5px;right:-5px;min-width:16px;height:16px;padding:0 4px;border-radius:999px;
+  background:var(--ac);color:var(--ac-fg);font:700 9.5px/16px ui-monospace,Menlo,monospace;text-align:center;box-shadow:0 0 0 2px var(--card)}
+.notif-item{display:flex;gap:9px;width:100%;text-align:left;border:0;border-bottom:1px solid var(--line-soft);
+  padding:10px 12px;cursor:pointer;color:var(--fg);transition:background .12s}
+.notif-item:last-child{border-bottom:0}
+.notif-item:hover{filter:brightness(.97)}
+.notif-dot{flex:0 0 auto;width:7px;height:7px;margin-top:5px;border-radius:50%;background:var(--ac)}
+.notif-dot.read{background:var(--line)}
+.notif-preview{display:block;font-size:11.5px;color:var(--fg-mut);margin:1px 0 2px;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
 /* -- Mobile comments sheet: slides up over the full-width document. -- */
 .sheet-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.34);opacity:0;pointer-events:none;transition:opacity .22s;z-index:60}
 .sheet-backdrop.show{opacity:1;pointer-events:auto}
@@ -157,6 +170,7 @@ a{color:var(--ac);text-decoration:none}
   border:1px solid var(--line-soft);border-radius:5px;padding:1px 4px}
 .cmt-body a{color:var(--ac);text-decoration:underline;text-underline-offset:2px}
 .cmt-body strong{font-weight:700}
+.mention{color:var(--ac);background:var(--ac-soft);font-weight:600;border-radius:4px;padding:0 3px;white-space:nowrap}
 /* Reaction pills. */
 .cmt-pills{display:flex;flex-wrap:wrap;gap:4px;margin-top:6px}
 .cmt-pill{display:inline-flex;align-items:center;gap:4px;font-size:11px;line-height:1;padding:3px 7px;border-radius:999px;

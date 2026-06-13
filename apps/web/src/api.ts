@@ -73,6 +73,11 @@ export interface Analytics {
   daily: { day: string; count: number }[]
   recent: { viewer: string; kind: "user" | "anon"; at: string }[]
 }
+/** A resolved @mention: the picked user's id + the display name shown inline. */
+export interface Mention {
+  id: string
+  name: string
+}
 export interface Comment {
   id: string
   thread_id: string
@@ -88,6 +93,27 @@ export interface Comment {
   edited?: boolean
   edited_at?: string | null
   deleted?: boolean
+  mentions?: Mention[]
+}
+/** A workspace member as offered by the @mention picker. */
+export interface DirUser {
+  id: string
+  name: string
+  email: string
+}
+export interface Notification {
+  id: string
+  user_id: string
+  actor: string
+  kind: "mention" | "comment"
+  artifact_id: string
+  artifact_short_id: string
+  artifact_title: string | null
+  thread_id: string
+  comment_id: string
+  preview: string
+  read: 0 | 1
+  created_at: string
 }
 export interface Webhook {
   id: string
@@ -250,7 +276,7 @@ export const api = {
     f(`/v1/artifacts/${id}/comments`, opts()).then(j),
   comment: (
     id: string,
-    body: { body_md: string; thread_id?: string; anchor?: unknown },
+    body: { body_md: string; thread_id?: string; anchor?: unknown; mentions?: Mention[] },
   ): Promise<Comment> => f(`/v1/artifacts/${id}/comments`, opts(body)).then(j),
   resolve: (id: string, commentId: string, state: "open" | "resolved") =>
     f(`/v1/artifacts/${id}/comments/${commentId}/resolve`, opts({ state })).then(j),
@@ -266,6 +292,15 @@ export const api = {
       credentials: "include",
       headers: { accept: "application/json" },
     }).then(j),
+
+  // ---- Mention directory + in-app notifications -------------------------
+  users: (q?: string): Promise<{ users: DirUser[] }> =>
+    f(`/v1/users${q ? `?q=${encodeURIComponent(q)}` : ""}`, opts()).then(j),
+  notifications: (): Promise<{ notifications: Notification[]; unread: number }> =>
+    f("/v1/notifications", opts()).then(j),
+  markNotificationsRead: (sel: { ids: string[] } | { all: true }): Promise<{ unread: number }> =>
+    f("/v1/notifications/read", opts(sel)).then(j),
+  notificationsStreamUrl: (): string => u("/v1/notifications/events"),
 
   async publish(file: File, fields: Record<string, string> = {}, id?: string): Promise<Artifact> {
     const fd = new FormData()

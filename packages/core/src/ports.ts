@@ -176,6 +176,13 @@ export interface MetaStore {
   // ---- User directory (reads Better Auth's `user` table) ----------------
   findUserByEmail(email: string): Promise<UserDir | null>
   getUsers(ids: string[]): Promise<UserDir[]>
+
+  // ---- Notifications (in-app, one row per recipient) --------------------
+  createNotification(n: NewNotification): Promise<void>
+  listNotifications(userId: string, limit: number): Promise<NotificationRecord[]>
+  unreadNotificationCount(userId: string): Promise<number>
+  /** Mark the given ids read, or all of the user's notifications when "all". */
+  markNotificationsRead(userId: string, ids: string[] | "all"): Promise<void>
 }
 
 /**
@@ -227,6 +234,34 @@ export interface UserDir {
   id: string
   email: string
   name: string | null
+}
+
+export type NotificationKind = "mention" | "comment"
+export interface NotificationRecord {
+  id: string
+  user_id: string
+  actor: string
+  kind: NotificationKind
+  artifact_id: string
+  artifact_short_id: string
+  artifact_title: string | null
+  thread_id: string
+  comment_id: string
+  preview: string
+  read: 0 | 1
+  created_at: string
+}
+export interface NewNotification {
+  id: string
+  user_id: string
+  actor: string
+  kind: NotificationKind
+  artifact_id: string
+  artifact_short_id: string
+  artifact_title: string | null
+  thread_id: string
+  comment_id: string
+  preview: string
 }
 
 export interface MembershipRecord {

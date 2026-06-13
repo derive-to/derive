@@ -13,10 +13,12 @@ import type {
   NewComment,
   NewDelivery,
   NewMembership,
+  NewNotification,
   NewProposal,
   NewVersion,
   NewView,
   NewWebhook,
+  NotificationRecord,
   ProposalRecord,
   ProposalState,
   UserDir,
@@ -34,6 +36,7 @@ import {
   artifactTag,
   comment,
   membership,
+  notification,
   PG_SCHEMA_STATEMENTS,
   proposal,
   version,
@@ -49,6 +52,7 @@ const schema = {
   webhookDelivery,
   membership,
   artifactMember,
+  notification,
   artifactFavorite,
   artifactTag,
   proposal,
@@ -465,6 +469,36 @@ export class PgMetaStore implements MetaStore {
     } catch {
       return []
     }
+  }
+
+  // ---- Notifications (in-app, one row per recipient) ---------------------
+  async createNotification(n: NewNotification): Promise<void> {
+    await this.db.insert(notification).values(n)
+  }
+  listNotifications(userId: string, limit: number): Promise<NotificationRecord[]> {
+    return this.db
+      .select()
+      .from(notification)
+      .where(eq(notification.user_id, userId))
+      .orderBy(desc(notification.created_at))
+      .limit(limit)
+  }
+  async unreadNotificationCount(userId: string): Promise<number> {
+    const rows = await this.db
+      .select({ n: count() })
+      .from(notification)
+      .where(and(eq(notification.user_id, userId), eq(notification.read, 0)))
+    return rows[0]?.n ?? 0
+  }
+  async markNotificationsRead(userId: string, ids: string[] | "all"): Promise<void> {
+    const where =
+      ids === "all"
+        ? eq(notification.user_id, userId)
+        : ids.length > 0
+          ? and(eq(notification.user_id, userId), inArray(notification.id, ids))
+          : null
+    if (!where) return
+    await this.db.update(notification).set({ read: 1 }).where(where)
   }
 
   async close(): Promise<void> {

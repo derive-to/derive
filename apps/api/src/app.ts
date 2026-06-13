@@ -43,7 +43,14 @@ import { enqueueForEvent, WEBHOOK_EVENTS, type WebhookEvent } from "./webhooks"
 /** The fixed reaction set; arbitrary emoji are rejected to keep data clean. */
 const REACTIONS = ["👍", "❤️", "🎉", "😄", "👀", "🙏", "🚀", "👎"]
 
-type CommentMeta = { reactions?: Record<string, string[]>; edited_at?: string; deleted?: boolean }
+/** A resolved @mention captured by the composer: the picked user's id + display name. */
+type Mention = { id: string; name: string }
+type CommentMeta = {
+  reactions?: Record<string, string[]>
+  edited_at?: string
+  deleted?: boolean
+  mentions?: Mention[]
+}
 const parseMeta = (m: string | null): CommentMeta => {
   if (!m) return {}
   try {
@@ -51,6 +58,22 @@ const parseMeta = (m: string | null): CommentMeta => {
   } catch {
     return {}
   }
+}
+
+/** Coerce arbitrary input into a clean Mention[] (defensive against bad clients). */
+function parseMentions(input: unknown): Mention[] {
+  if (!Array.isArray(input)) return []
+  const out: Mention[] = []
+  const seen = new Set<string>()
+  for (const m of input) {
+    if (!m || typeof m !== "object") continue
+    const id = (m as { id?: unknown }).id
+    const name = (m as { name?: unknown }).name
+    if (typeof id !== "string" || typeof name !== "string" || !id || seen.has(id)) continue
+    seen.add(id)
+    out.push({ id, name })
+  }
+  return out
 }
 
 /** Wire shape for a comment: meta unpacked into clean fields; deleted bodies blanked. */
@@ -65,6 +88,7 @@ function commentJson(cm: CommentRecord, anchored?: boolean) {
     edited: !!md.edited_at,
     edited_at: md.edited_at ?? null,
     deleted,
+    mentions: deleted ? [] : (md.mentions ?? []),
     ...(anchored !== undefined ? { anchored } : {}),
   }
 }
@@ -213,6 +237,44 @@ export function createApp(deps: AppDeps): Hono {
   // delivers). Awaited so the row is durable before we respond, but never fatal.
   const notify = (a: ArtifactRecord, event: WebhookEvent, data: Record<string, unknown>) =>
     enqueueForEvent(meta, deps.baseUrl, a, event, data).catch(() => {})
+
+  // Create in-app notification rows for the people a comment @mentions (real
+  // users only, never the author) and push each a live event over their stream.
+  // Returns the display names actually notified (for the Slack webhook).
+  const notifyMentions = async (
+    a: ArtifactRecord,
+    cm: CommentRecord,
+    mentions: Mention[],
+    actorId: string | null,
+  ): Promise<string[]> => {
+    const targetIds = mentions.map((m) => m.id).filter((mid) => mid !== actorId)
+    if (targetIds.length === 0) return []
+    const real = new Set((await meta.getUsers(targetIds)).map((u) => u.id))
+    const preview = previewOf(cm.body_md)
+    const notified: string[] = []
+    for (const m of mentions) {
+      if (m.id === actorId || !real.has(m.id)) continue
+      const row = {
+        id: newId("n"),
+        user_id: m.id,
+        actor: cm.author,
+        kind: "mention" as const,
+        artifact_id: a.id,
+        artifact_short_id: a.short_id,
+        artifact_title: a.title,
+        thread_id: cm.thread_id,
+        comment_id: cm.id,
+        preview,
+      }
+      await meta.createNotification(row)
+      notified.push(m.name)
+      bus.publish(`u:${m.id}`, {
+        type: "notification",
+        notification: { ...row, read: 0, created_at: new Date().toISOString() },
+      })
+    }
+    return notified
+  }
   if (allowOrigins.size) {
     app.use("/api/*", corsFor(allowOrigins))
     app.use("/v1/*", corsFor(allowOrigins))
@@ -301,6 +363,25 @@ export function createApp(deps: AppDeps): Hono {
     if (!u) return c.json({ error: "unauthenticated" }, 401)
     const role = await ensureMembership(u.id) // provisions on first load
     return c.json({ user: { ...u, role } })
+  })
+
+  // Workspace member directory for the @mention picker. Signed-in (or open) only;
+  // optional ?q= filters by name/email prefix. Never exposes non-members.
+  app.get("/v1/users", async (c) => {
+    if (!open && !(await currentUser(c)) && bearer(c) !== deps.token)
+      return c.json({ error: "unauthenticated" }, 401)
+    const members = await meta.listMemberships(WORKSPACE)
+    const users = await meta.getUsers(members.map((m) => m.user_id))
+    const q = (c.req.query("q") ?? "").trim().toLowerCase()
+    const filtered = q
+      ? users.filter(
+          (u) => (u.name ?? "").toLowerCase().includes(q) || u.email.toLowerCase().includes(q),
+        )
+      : users
+    filtered.sort((a, b) => (a.name ?? a.email).localeCompare(b.name ?? b.email))
+    return c.json({
+      users: filtered.map((u) => ({ id: u.id, name: u.name ?? u.email, email: u.email })),
+    })
   })
 
   // Newest-first, keyset-paginated (?cursor=<created_at>&limit=N), with optional
@@ -873,7 +954,8 @@ export function createApp(deps: AppDeps): Hono {
       : typeof body.author === "string" && body.author
         ? body.author
         : "anonymous"
-    const created = await meta.createComment({
+    const mentions = parseMentions(body.mentions)
+    let created = await meta.createComment({
       id,
       artifact_id: artifact.id,
       thread_id: threadId,
@@ -883,13 +965,30 @@ export function createApp(deps: AppDeps): Hono {
       body_md: body.body_md,
       author,
     })
-    bus.publish(artifact.id, { type: "comment.created", comment: created })
+    // Mentions live in the comment's meta JSON (the picker supplies user ids, so
+    // there's no fragile server-side @name parsing); persist them with the row.
+    if (mentions.length) {
+      const patched = await meta.updateComment(created.id, {
+        meta: JSON.stringify({ ...parseMeta(created.meta), mentions }),
+      })
+      if (patched) created = patched
+    }
+    bus.publish(artifact.id, { type: "comment.created", comment: commentJson(created) })
     await notify(artifact, "comment.created", {
       author: created.author,
       body: created.body_md,
       quote: quoteOf(created.anchor),
       thread_id: created.thread_id,
     })
+    const notified = await notifyMentions(artifact, created, mentions, me?.id ?? null)
+    if (notified.length)
+      await notify(artifact, "comment.mention", {
+        author: created.author,
+        mentioned: notified,
+        body: created.body_md,
+        quote: quoteOf(created.anchor),
+        thread_id: created.thread_id,
+      })
     return c.json(commentJson(created), 201)
   })
 
@@ -1084,6 +1183,52 @@ export function createApp(deps: AppDeps): Hono {
     if (!artifact || !(await authorize(c, "read", artifact)))
       return c.json({ error: "not found" }, 404)
     return c.json(await meta.viewStats(artifact.id))
+  })
+
+  // ---- In-app notifications (per signed-in user) ------------------------
+
+  app.get("/v1/notifications", async (c) => {
+    const me = await currentUser(c)
+    if (!me) return c.json({ error: "unauthenticated" }, 401)
+    const [notifications, unread] = await Promise.all([
+      meta.listNotifications(me.id, 50),
+      meta.unreadNotificationCount(me.id),
+    ])
+    return c.json({ notifications, unread })
+  })
+
+  app.post("/v1/notifications/read", async (c) => {
+    const me = await currentUser(c)
+    if (!me) return c.json({ error: "unauthenticated" }, 401)
+    const body = (await c.req.json().catch(() => ({}))) as { ids?: unknown; all?: unknown }
+    const ids =
+      body.all === true
+        ? "all"
+        : Array.isArray(body.ids)
+          ? body.ids.filter((x): x is string => typeof x === "string")
+          : []
+    await meta.markNotificationsRead(me.id, ids)
+    const unread = await meta.unreadNotificationCount(me.id)
+    return c.json({ unread })
+  })
+
+  // Live notification stream for the signed-in user (the header bell subscribes).
+  app.get("/v1/notifications/events", async (c) => {
+    const me = await currentUser(c)
+    if (!me) return c.text("unauthenticated", 401)
+    c.header("Access-Control-Allow-Origin", "*")
+    const userId = me.id
+    return streamSSE(c, async (stream) => {
+      const unsub = bus.subscribe(`u:${userId}`, (e) => {
+        void stream.writeSSE({ event: e.type, data: JSON.stringify(e) })
+      })
+      stream.onAbort(unsub)
+      await stream.writeSSE({ event: "ready", data: "{}" })
+      while (!stream.aborted) {
+        await stream.sleep(15000)
+        await stream.writeSSE({ event: "ping", data: "{}" })
+      }
+    })
   })
 
   // ---- Webhooks (notifications: Slack + arbitrary endpoints) -------------
@@ -1323,6 +1468,12 @@ const quoteOf = (anchor: string | null): string | null => {
   } catch {
     return null
   }
+}
+
+/** A short single-line preview of a comment body for notification rows. */
+const previewOf = (body: string): string => {
+  const flat = body.replace(/\s+/g, " ").trim()
+  return flat.length > 160 ? `${flat.slice(0, 159)}…` : flat
 }
 
 const str = (v: unknown): string | undefined => (typeof v === "string" && v !== "" ? v : undefined)

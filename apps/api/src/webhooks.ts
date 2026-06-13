@@ -4,6 +4,7 @@ import type { ArtifactRecord, DeliveryRecord, MetaStore } from "@dock/core"
 /** Event names webhooks can subscribe to. */
 export const WEBHOOK_EVENTS = [
   "comment.created",
+  "comment.mention",
   "comment.resolved",
   "version.published",
   "proposal.created",
@@ -53,6 +54,12 @@ export function slackMessage(p: EventPayload): unknown {
   if (p.event === "comment.created") {
     const author = String(p.data.author ?? "someone")
     head = `:speech_balloon: *${author}* commented on ${link}`
+    if (p.data.quote) lines.push(`> _${truncate(String(p.data.quote), 140)}_`)
+    if (p.data.body) lines.push(truncate(String(p.data.body), 280))
+  } else if (p.event === "comment.mention") {
+    const author = String(p.data.author ?? "someone")
+    const who = Array.isArray(p.data.mentioned) ? (p.data.mentioned as string[]).join(", ") : ""
+    head = `:wave: *${author}* mentioned ${who ? `*${who}*` : "you"} on ${link}`
     if (p.data.quote) lines.push(`> _${truncate(String(p.data.quote), 140)}_`)
     if (p.data.body) lines.push(truncate(String(p.data.body), 280))
   } else if (p.event === "comment.resolved") {
