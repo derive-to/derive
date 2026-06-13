@@ -1,3 +1,4 @@
+import type { Context } from "hono"
 import type { DomainEvent } from "./events"
 
 export interface DockEvent {
@@ -53,5 +54,39 @@ export class Presence {
     m.set(name, now)
     for (const [n, t] of m) if (now - t > this.ttlMs) m.delete(n)
     return [...m.keys()]
+  }
+}
+
+/** Presence as a port: in-process is synchronous; a Durable Object / Redis store
+ *  resolves asynchronously, so callers await the result either way. */
+export interface PresenceStore {
+  heartbeat(channel: string, name: string, now: number): string[] | Promise<string[]>
+}
+
+/**
+ * The realtime backplane: cross-instance event relay + presence, with an optional
+ * connection-owning hook. Relay adapters (in-process, Redis) return null from
+ * `handleStream` and let the route hold the SSE stream + `subscribe`; a Durable
+ * Object adapter owns the stream itself and returns the Response. `publish` stays
+ * synchronous (fire-and-forget for remote adapters) so the route call sites don't
+ * change. Selected by env; defaults to in-process so self-host stays zero-config.
+ */
+export interface Backplane {
+  publish(channel: string, e: DockEvent): void
+  subscribe(channel: string, cb: (e: DockEvent) => void): () => void
+  presence: PresenceStore
+  handleStream?(c: Context, channel: string): Response | Promise<Response> | null
+}
+
+/** Default backplane: in-memory bus + presence, single process. The route owns
+ *  the SSE stream (handleStream returns null). */
+export function createInProcessBackplane(): Backplane {
+  const bus = createBus()
+  const presence = new Presence()
+  return {
+    publish: bus.publish,
+    subscribe: bus.subscribe,
+    presence,
+    handleStream: () => null,
   }
 }

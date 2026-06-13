@@ -42,6 +42,12 @@ importers:
       hono:
         specifier: ^4.6.0
         version: 4.12.25
+      kysely:
+        specifier: ^0.29.2
+        version: 0.29.2
+      kysely-d1:
+        specifier: ^0.4.0
+        version: 0.4.0(kysely@0.29.2)
       pg:
         specifier: ^8.13.1
         version: 8.21.0
@@ -49,6 +55,9 @@ importers:
         specifier: ^3.25.0
         version: 3.25.76
     devDependencies:
+      '@cloudflare/workers-types':
+        specifier: ^4.20260611.1
+        version: 4.20260611.1
       '@types/better-sqlite3':
         specifier: ^7.6.11
         version: 7.6.13
@@ -2312,6 +2321,11 @@ packages:
     resolution: {integrity: sha512-XmOWe7eyHYH14cLdVPoyg+GOH3rYX++KpzrylJwSW98t3Nk+U8XOl8FWKOgwtzdb8lXGf6zYwDUzeHMWfxasyg==}
     engines: {node: '>=6'}
     hasBin: true
+
+  kysely-d1@0.4.0:
+    resolution: {integrity: sha512-wUcVvQNtm30OTfuo7Ad5vYJ1qHqPXOCZc+zWchVKNyuvqY3u8OuGw4gmUx1Ypdx2wRVFLHVQC9I7v0pTmF7Nkw==}
+    peerDependencies:
+      kysely: '*'
 
   kysely@0.29.2:
     resolution: {integrity: sha512-s6WVJyEZrbm6jhBpiKHsGHyePMrVQKJ85wZCFCr9W4QHv6WTjWIrdvTmO9hDEA3bNK0xkrE2DqrHsXMLWuZpQg==}
@@ -4984,6 +4998,10 @@ snapshots:
   json-schema-typed@8.0.2: {}
 
   json5@2.2.3: {}
+
+  kysely-d1@0.4.0(kysely@0.29.2):
+    dependencies:
+      kysely: 0.29.2
 
   kysely@0.29.2: {}
 
