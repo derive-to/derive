@@ -35,7 +35,7 @@ export const agentRoutes = (ctx: AppContext) => {
       c,
       z.object({
         name: z.string().refine((s) => s.trim() !== "", "name required"),
-        role: z.unknown(),
+        role: z.unknown().optional(),
       }),
     )
     if (b instanceof Response) return b

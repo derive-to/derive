@@ -148,7 +148,7 @@ export const proposalRoutes = (ctx: AppContext) => {
     if (proposal.state !== "open") return fail(c, 409, `proposal is ${proposal.state}`)
     const me = await currentUser(c)
     const approver = me ? (me.name ?? me.email) : null
-    const body = await readJson(c, z.object({ note: z.unknown() }))
+    const body = await readJson(c, z.object({ note: z.unknown().optional() }))
     if (body instanceof Response) return body
     try {
       const version = await approveProposal(meta, blobs, proposal, approver, str(body.note) ?? null)
@@ -184,7 +184,7 @@ export const proposalRoutes = (ctx: AppContext) => {
     if (proposal.state !== "open") return fail(c, 409, `proposal is ${proposal.state}`)
     const me = await currentUser(c)
     const reviewer = me ? (me.name ?? me.email) : null
-    const body = await readJson(c, z.object({ note: z.unknown() }))
+    const body = await readJson(c, z.object({ note: z.unknown().optional() }))
     if (body instanceof Response) return body
     await meta.decideProposal(proposal.id, {
       state: "changes_requested",

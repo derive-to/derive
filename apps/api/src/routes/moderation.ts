@@ -20,7 +20,7 @@ export const moderationRoutes = (ctx: AppContext) => {
       c,
       z.object({
         reason: z.string().refine((s) => s.trim() !== "", "reason required"),
-        detail: z.unknown(),
+        detail: z.unknown().optional(),
       }),
     )
     if (b instanceof Response) return b
@@ -77,7 +77,7 @@ export const moderationRoutes = (ctx: AppContext) => {
     if (!artifact || (!(await isSuperAdmin(c)) && artifact.org_id !== (await activeWorkspace(c))))
       return fail(c, 404, "not found")
     const who = (await actingUser(c))?.name ?? "owner"
-    const b = await readJson(c, z.object({ note: z.unknown() }))
+    const b = await readJson(c, z.object({ note: z.unknown().optional() }))
     if (b instanceof Response) return b
     await meta.setArtifactRemoved(artifact.id, new Date().toISOString())
     for (const r of await meta.listReports(artifact.org_id, { state: "open" }))

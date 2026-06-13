@@ -48,7 +48,7 @@ export const favoriteRoutes = (ctx: AppContext) => {
     const artifact = await meta.getByShortId(c.req.param("shortId"))
     if (!artifact || !(await authorize(c, "read", artifact))) return fail(c, 404, "not found")
     if (!(await authorize(c, "publish", artifact))) return fail(c, 403, "forbidden")
-    const body = await readJson(c, z.object({ tags: z.unknown() }))
+    const body = await readJson(c, z.object({ tags: z.unknown().optional() }))
     if (body instanceof Response) return body
     const tags = normalizeTags(body.tags)
     await meta.setArtifactTags(artifact.id, tags)
