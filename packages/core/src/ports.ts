@@ -11,7 +11,7 @@ export interface BlobStore {
 }
 
 export type ArtifactKind = "file" | "bundle"
-export type Visibility = "public" | "link" | "org" | "password"
+export type Visibility = "public" | "link" | "org"
 
 export interface ArtifactRecord {
   id: string

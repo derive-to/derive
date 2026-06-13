@@ -222,6 +222,19 @@ void (async () => {
 const blobDesc = process.env.OBJECT_STORE_URL ? "S3/R2" : `local disk (${DATA_DIR})`
 const metaDesc = DATABASE_URL ? "postgres" : `sqlite (${DATA_DIR})`
 
+// Loud warning for the footgun: a cross-site / public-looking deployment that
+// serves untrusted artifact HTML on its own origin (no separate sandbox host).
+// Single-origin self-host is a supported mode (the iframe sandbox is the wall);
+// a cross-site setup without isolation is not.
+if (
+  !process.env.DOCK_SANDBOX_URL &&
+  (process.env.DOCK_CROSS_SITE === "true" || webOrigins.length)
+) {
+  console.warn(
+    "⚠ DOCK_SANDBOX_URL is unset on a cross-site deployment. Artifact HTML will be served from the app origin; set DOCK_SANDBOX_URL to a separate domain to isolate untrusted content from session cookies.",
+  )
+}
+
 serve({ fetch: app.fetch, port: PORT }, () => {
   console.log(`dock api listening on :${PORT}`)
   console.log(`  meta:    ${metaDesc}`)

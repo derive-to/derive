@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto"
+import { createHash, randomUUID, timingSafeEqual } from "node:crypto"
 import {
   type Action,
   type Actor,
@@ -195,9 +195,17 @@ const isWorkspaceRole = (v: unknown): v is Role =>
  *  to one recorded view — a refresh or quick re-open doesn't inflate the count. */
 const VIEW_DEDUP_MS = 30 * 60_000
 
-const VISIBILITIES = ["public", "link", "org", "password"] as const
+const VISIBILITIES = ["public", "link", "org"] as const
 
 const MAX_UPLOAD_BYTES = 100 * 1024 * 1024
+
+const sha256 = (s: string): string => createHash("sha256").update(s).digest("hex")
+// Constant-time string compare: hash both sides to a fixed length first so
+// neither the contents nor the length leak through comparison timing. An unset
+// secret (undefined) never matches.
+const safeEqual = (a: string, b: string | undefined): boolean =>
+  !!b &&
+  timingSafeEqual(createHash("sha256").update(a).digest(), createHash("sha256").update(b).digest())
 
 /** Headers for everything inside the artifact sandbox. */
 const RAW_HEADERS: Record<string, string> = {
@@ -446,7 +454,9 @@ export function createApp(deps: AppDeps): Hono {
   const agentFor = async (c: Context): Promise<AgentRecord | null> => {
     if (agentCache.has(c)) return agentCache.get(c) ?? null
     const b = bearer(c)
-    const a = !b || (deps.token && b === deps.token) ? null : await meta.getAgentByToken(b)
+    // Tokens are stored hashed; look up by the hash of the presented bearer.
+    const a =
+      !b || (deps.token && safeEqual(b, deps.token)) ? null : await meta.getAgentByToken(sha256(b))
     agentCache.set(c, a)
     return a
   }
@@ -553,7 +563,7 @@ export function createApp(deps: AppDeps): Hono {
     })
 
   const actorFor = async (c: Context, a: ArtifactRecord): Promise<Actor> => {
-    if (deps.token && bearer(c) === deps.token) return { kind: "token" }
+    if (deps.token && safeEqual(bearer(c), deps.token)) return { kind: "token" }
     const ag = await agentFor(c)
     if (ag) {
       const am = await meta.getArtifactMember(a.id, ag.id)
@@ -581,7 +591,7 @@ export function createApp(deps: AppDeps): Hono {
 
   /** The caller's role in their active workspace (creating artifacts, settings). */
   const workspaceRole = async (c: Context): Promise<Role | null> => {
-    if (deps.token && bearer(c) === deps.token) return "owner"
+    if (deps.token && safeEqual(bearer(c), deps.token)) return "owner"
     const ag = await agentFor(c)
     if (ag) return ag.role
     const me = await currentUser(c)
@@ -625,7 +635,7 @@ export function createApp(deps: AppDeps): Hono {
   // an agent can be @mentioned like anyone. Signed-in (or open) only; optional
   // ?q= filters by name/email prefix. Never exposes non-members.
   app.get("/v1/users", async (c) => {
-    if (!open && !(await currentUser(c)) && bearer(c) !== deps.token)
+    if (!open && !(await currentUser(c)) && !safeEqual(bearer(c), deps.token))
       return c.json({ error: "unauthenticated" }, 401)
     const org = await activeWorkspace(c)
     const members = await meta.listMemberships(org)
@@ -808,8 +818,10 @@ export function createApp(deps: AppDeps): Hono {
   })
 
   // Create an agent + mint its token. The token is returned ONCE here; only its
-  // hash-free secret lives in the row, so store it now. Default role commenter
-  // (propose-only); editor is opt-in. Owner is never allowed for an agent.
+  // SHA-256 hash is stored, so a database leak can't expose usable credentials
+  // (the token is high-entropy random, so a plain hash is sufficient — no salt
+  // or slow KDF needed). Default role commenter (propose-only); editor is
+  // opt-in. Owner is never allowed for an agent.
   app.post("/v1/agents", async (c) => {
     if (!(await workspaceCan(c, "manage"))) return c.json({ error: "forbidden" }, 403)
     const b = (await c.req.json().catch(() => ({}))) as { name?: unknown; role?: unknown }
@@ -823,10 +835,10 @@ export function createApp(deps: AppDeps): Hono {
         id: newId("ag"),
         org_id: await activeWorkspace(c),
         name,
-        token,
+        token: sha256(token),
         role,
       })
-      // The only place the token is ever exposed.
+      // The only place the raw token is ever exposed.
       return c.json({ ...agentJson(agent), token }, 201)
     } catch {
       return c.json({ error: "an agent with that name already exists" }, 409)
@@ -873,7 +885,7 @@ export function createApp(deps: AppDeps): Hono {
   // { artifacts, next_cursor }. tag/favorite resolve to an id set first.
   app.get("/v1/artifacts", async (c) => {
     const me = await currentUser(c)
-    if (!me && deps.token && bearer(c) !== deps.token)
+    if (!me && deps.token && !safeEqual(bearer(c), deps.token))
       return c.json({ error: "unauthenticated" }, 401)
     const limit = Math.min(100, Math.max(1, Number(c.req.query("limit")) || 30))
     // Opaque compound cursor "<created_at>|<id>" — the id tiebreak keeps paging
@@ -926,7 +938,7 @@ export function createApp(deps: AppDeps): Hono {
   // and tag → count (so counts stay accurate independent of the current page).
   app.get("/v1/tags", async (c) => {
     const me = await currentUser(c)
-    if (!me && deps.token && bearer(c) !== deps.token)
+    if (!me && deps.token && !safeEqual(bearer(c), deps.token))
       return c.json({ error: "unauthenticated" }, 401)
     const org = await activeWorkspace(c)
     const [total, tags, favIds, ws] = await Promise.all([
@@ -947,7 +959,7 @@ export function createApp(deps: AppDeps): Hono {
   // ---- Collections (shareable groups; a member's role propagates to items) -
   // A user's role on a collection: creator/member role, token/open → owner.
   const collectionRole = async (c: Context, col: CollectionRecord): Promise<Role | null> => {
-    if (deps.token && bearer(c) === deps.token) return "owner"
+    if (deps.token && safeEqual(bearer(c), deps.token)) return "owner"
     const me = await currentUser(c)
     if (!me) return open ? "owner" : null
     if (col.created_by === me.id) return "owner"
@@ -958,7 +970,7 @@ export function createApp(deps: AppDeps): Hono {
     roleAllows((await collectionRole(c, col)) ?? "viewer", action)
 
   app.get("/v1/collections", async (c) => {
-    if (!(await currentUser(c)) && deps.token && bearer(c) !== deps.token)
+    if (!(await currentUser(c)) && deps.token && !safeEqual(bearer(c), deps.token))
       return c.json({ error: "unauthenticated" }, 401)
     return c.json({ collections: await meta.listCollections(await activeWorkspace(c)) })
   })
@@ -1145,10 +1157,9 @@ export function createApp(deps: AppDeps): Hono {
 
   app.get("/v1/artifacts/:shortId", async (c) => {
     const artifact = await meta.getByShortId(c.req.param("shortId"))
-    const actor = await actorFor(
-      c,
-      artifact ?? ({ id: "", visibility: "password" } as ArtifactRecord),
-    )
+    // For a missing artifact, fall back to the most restrictive visibility so
+    // an anonymous probe can't learn anything (a non-member gets no access).
+    const actor = await actorFor(c, artifact ?? ({ id: "", visibility: "org" } as ArtifactRecord))
     if (!artifact || !can(actor, "read", artifact.visibility))
       return c.json({ error: "not found" }, 404)
     const versions = await meta.listVersions(artifact.id)
