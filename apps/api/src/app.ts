@@ -20,6 +20,8 @@ import { viewerRoutes } from "./routes/viewer"
 import { webhookRoutes } from "./routes/webhooks"
 import { workspaceRoutes } from "./routes/workspace"
 
+// Re-exported from its lib home so existing importers (and tests) keep working.
+export { isPublicHttpUrl } from "./lib/net"
 export type { AppDeps }
 
 /**

@@ -6,7 +6,7 @@ import { FsBlobStore } from "@dock/storage/fs"
 import Database from "better-sqlite3"
 import { zipSync } from "fflate"
 import { afterAll, describe, expect, it } from "vitest"
-import { type AppDeps, createApp } from "../src/app"
+import { type AppDeps, createApp, isPublicHttpUrl } from "../src/app"
 
 const dir = mkdtempSync(join(tmpdir(), "dock-test-"))
 const meta = new SqliteMetaStore(join(dir, "dock.db"))
@@ -1923,7 +1923,11 @@ describe("quotas: per-workspace storage caps (C4b)", () => {
     const { app, meta: m } = quotaApp("quota-meter", {})
     const a = await (await pub(app, "hello")).json() // 5 bytes
     await pub(app, "worldwide", {}, a.short_id) // +9 bytes on v2
-    expect(await m.storageBytes()).toBe(14)
+    expect(await m.storageBytes("default")).toBe(14)
+    // Republishing identical bytes is content-addressed to the same blob, so the
+    // meter dedups it — still 14, not 19.
+    await pub(app, "hello", {}, a.short_id)
+    expect(await m.storageBytes("default")).toBe(14)
     m.close()
   })
 
@@ -1933,7 +1937,7 @@ describe("quotas: per-workspace storage caps (C4b)", () => {
     const over = await pub(app, "0123456789AB") // total 22 > 20
     expect(over.status).toBe(413)
     expect((await over.json()).error).toMatch(/storage quota/)
-    expect(await m.storageBytes()).toBe(10) // the rejected upload stored nothing
+    expect(await m.storageBytes("default")).toBe(10) // the rejected upload stored nothing
     m.close()
   })
 
@@ -1983,5 +1987,73 @@ describe("rate limits: per-actor write throttles (C4b)", () => {
     expect((await pub(app, "a1", {}, undefined, as(amy.email))).status).toBe(201)
     expect((await pub(app, "a2", {}, undefined, as(amy.email))).status).toBe(429) // Amy capped
     expect((await pub(app, "b1", {}, undefined, as(ben.email))).status).toBe(201) // Ben unaffected
+  })
+})
+
+describe("multi-tenant hardening: per-org quotas + cross-org isolation", () => {
+  const amy: TestUser = { id: "u_mt_amy", email: "mtamy@dock.test", name: "Amy" }
+  const ben: TestUser = { id: "u_mt_ben", email: "mtben@dock.test", name: "Ben" }
+
+  it("storage quota is per-workspace — one org filling up does NOT block another", async () => {
+    const { app } = quotaApp("mt-quota", { multiWorkspace: true, maxBytes: 12 }, [amy, ben])
+    await app.request("/v1/me", { headers: as(amy.email) }) // provision Amy's workspace
+    await app.request("/v1/me", { headers: as(ben.email) }) // provision Ben's workspace
+    // Amy fills her own 12-byte cap.
+    expect((await pub(app, "0123456789", {}, undefined, as(amy.email))).status).toBe(201) // 10
+    expect((await pub(app, "ABCDE", {}, undefined, as(amy.email))).status).toBe(413) // +5 > 12
+    // Ben's workspace meter is independent — before the per-org fix this 413'd
+    // because the meter summed every workspace's bytes against one global cap.
+    expect((await pub(app, "0123456789", {}, undefined, as(ben.email))).status).toBe(201)
+  })
+
+  it("an artifact in one org with 'org' visibility is 404 to a member of another org", async () => {
+    const { app } = quotaApp("mt-isolation", { multiWorkspace: true }, [amy, ben])
+    await app.request("/v1/me", { headers: as(amy.email) })
+    await app.request("/v1/me", { headers: as(ben.email) })
+    const a = await (
+      await pub(app, "amy's private doc", { visibility: "org" }, undefined, as(amy.email))
+    ).json()
+    // Amy sees her own artifact; Ben (different workspace) cannot, by id.
+    expect(
+      (await app.request(`/v1/artifacts/${a.short_id}`, { headers: as(amy.email) })).status,
+    ).toBe(200)
+    expect(
+      (await app.request(`/v1/artifacts/${a.short_id}`, { headers: as(ben.email) })).status,
+    ).toBe(404)
+    expect(
+      (await app.request(`/v1/artifacts/${a.short_id}/content`, { headers: as(ben.email) })).status,
+    ).toBe(404)
+  })
+})
+
+describe("SSRF guard: integer/hex/octal IP encodings can't bypass the private-range check", () => {
+  it("blocks loopback / metadata / private in every encoding", () => {
+    for (const u of [
+      "http://127.0.0.1/", // dotted
+      "http://2130706433/", // decimal int = 127.0.0.1
+      "http://0x7f000001/", // hex = 127.0.0.1
+      "http://0177.0.0.1/", // octal octet = 127.0.0.1
+      "http://127.1/", // short form = 127.0.0.1
+      "http://[::ffff:127.0.0.1]/", // IPv4-mapped IPv6 loopback
+      "http://169.254.169.254/latest/meta-data/", // cloud metadata
+      "http://localhost/", // name
+      "http://10.0.0.5/",
+      "http://192.168.1.1/",
+      "http://[::1]/", // IPv6 loopback
+      "ftp://example.com/", // wrong scheme
+    ]) {
+      expect(isPublicHttpUrl(u)).toBe(false)
+    }
+  })
+
+  it("allows genuinely public hosts", () => {
+    for (const u of [
+      "https://hooks.example.com/abc",
+      "http://8.8.8.8/",
+      "http://1.1.1.1/",
+      "https://203.0.113.10/webhook",
+    ]) {
+      expect(isPublicHttpUrl(u)).toBe(true)
+    }
   })
 })

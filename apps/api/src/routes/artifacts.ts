@@ -120,17 +120,21 @@ export const artifactRoutes = (ctx: AppContext) => {
   const handlePublish = async (c: Context, shortId?: string) => {
     // Republishing a version needs publish rights on that artifact; creating a
     // new one needs publish rights at the workspace level.
+    let existing: ArtifactRecord | null = null
     if (shortId) {
-      const existing = await meta.getByShortId(shortId)
+      existing = await meta.getByShortId(shortId)
       if (!existing) return c.json({ error: "not found" }, 404)
       if (!(await authorize(c, "publish", existing))) return c.json({ error: "forbidden" }, 403)
     } else if (!(await workspaceCan(c, "publish"))) {
       return c.json({ error: "forbidden" }, 403)
     }
+    // Quotas are per-workspace: a republish counts against the artifact's own
+    // org, a new artifact against the caller's active workspace.
+    const org = existing ? existing.org_id : await activeWorkspace(c)
     const rl = await limited(c, publishLimiter)
     if (rl) return rl
     // A new artifact counts against the artifact cap; republishes don't.
-    if (!shortId && deps.maxArtifacts && (await meta.countArtifacts()) >= deps.maxArtifacts)
+    if (!shortId && deps.maxArtifacts && (await meta.countArtifacts(org)) >= deps.maxArtifacts)
       return c.json({ error: "artifact quota reached" }, 409)
     const len = Number(c.req.header("content-length") ?? 0)
     if (len > MAX_UPLOAD_BYTES) return c.json({ error: "upload too large" }, 413)
@@ -140,7 +144,8 @@ export const artifactRoutes = (ctx: AppContext) => {
     if (!(file instanceof File)) return c.json({ error: "multipart field 'file' required" }, 400)
 
     const bytes = new Uint8Array(await file.arrayBuffer())
-    if (await overStorage(bytes.length)) return c.json({ error: "storage quota exceeded" }, 413)
+    if (await overStorage(org, bytes.length))
+      return c.json({ error: "storage quota exceeded" }, 413)
     const isBundle =
       /\.zip$/i.test(file.name) ||
       body["kind"] === "bundle" ||
@@ -160,7 +165,7 @@ export const artifactRoutes = (ctx: AppContext) => {
           message: str(body["message"]),
           author: str(body["author"]),
           name: str(body["name"]),
-          orgId: await activeWorkspace(c),
+          orgId: org,
           visibility: visibilityOf(body["visibility"]),
         },
         shortId,
@@ -248,6 +253,9 @@ export const artifactRoutes = (ctx: AppContext) => {
       id: newId("v"),
       blob_key: src.blob_key,
       content_type: src.content_type,
+      // Same blob as the restored version — carry its size so the storage meter
+      // stays consistent (and dedup'd, since it reuses the same blob_key).
+      size_bytes: src.size_bytes,
       author: me ? (me.name ?? me.email) : "anonymous",
       message: `Restored v${src.n}`,
       name: null,

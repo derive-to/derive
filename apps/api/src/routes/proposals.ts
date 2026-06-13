@@ -72,8 +72,10 @@ export const proposalRoutes = (ctx: AppContext) => {
     const file = body.file
     if (!(file instanceof File)) return c.json({ error: "multipart field 'file' required" }, 400)
     const bytes = new Uint8Array(await file.arrayBuffer())
-    // Proposals store a blob immediately, so they count toward the storage cap.
-    if (await overStorage(bytes.length)) return c.json({ error: "storage quota exceeded" }, 413)
+    // Proposals store a blob immediately, so they count toward the storage cap
+    // of the artifact's workspace.
+    if (await overStorage(artifact.org_id, bytes.length))
+      return c.json({ error: "storage quota exceeded" }, 413)
     const isBundle =
       /\.zip$/i.test(file.name) ||
       body.kind === "bundle" ||

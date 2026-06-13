@@ -193,9 +193,9 @@ export function buildContext(deps: AppDeps) {
     c.header("Retry-After", String(r.retryAfter))
     return c.json({ error: "rate limit exceeded" }, 429)
   }
-  // Would storing `incoming` more bytes push the workspace over its storage cap?
-  const overStorage = async (incoming: number): Promise<boolean> =>
-    !!deps.maxBytes && (await meta.storageBytes()) + incoming > deps.maxBytes
+  // Would storing `incoming` more bytes push THIS workspace over its storage cap?
+  const overStorage = async (orgId: string, incoming: number): Promise<boolean> =>
+    !!deps.maxBytes && (await meta.storageBytes(orgId)) + incoming > deps.maxBytes
 
   // Lazy provisioning: the first member of a workspace is its owner; everyone
   // else joins at the default role. Returns the caller's role in that workspace.
