@@ -2,6 +2,7 @@
  * Core owns the ports; packages/db and packages/storage provide the adapters.
  * Everything here must run on Node AND Cloudflare Workers — no Node APIs.
  */
+import type { Role } from "./permissions"
 
 export interface BlobStore {
   /** Content-addressed put; returns the sha256 hex key. Idempotent. */
@@ -100,6 +101,58 @@ export interface MetaStore {
   ): Promise<void>
   /** Recent deliveries for a webhook (for the settings log). */
   recentDeliveries(webhookId: string, limit: number): Promise<DeliveryRecord[]>
+
+  // ---- Permissions: workspace membership + per-artifact shares -----------
+  getMembership(orgId: string, userId: string): Promise<MembershipRecord | null>
+  listMemberships(orgId: string): Promise<MembershipRecord[]>
+  countMemberships(orgId: string): Promise<number>
+  /** Insert or update a member's workspace role. */
+  setMembership(m: NewMembership): Promise<MembershipRecord>
+
+  getArtifactMember(artifactId: string, userId: string): Promise<ArtifactMemberRecord | null>
+  listArtifactMembers(artifactId: string): Promise<ArtifactMemberRecord[]>
+  /** Insert or update a per-artifact role override (a share). */
+  setArtifactMember(m: NewArtifactMember): Promise<ArtifactMemberRecord>
+  removeArtifactMember(artifactId: string, userId: string): Promise<void>
+
+  // ---- User directory (reads Better Auth's `user` table) ----------------
+  findUserByEmail(email: string): Promise<UserDir | null>
+  getUsers(ids: string[]): Promise<UserDir[]>
+}
+
+/** A person, as needed for sharing UIs. Sourced from Better Auth's user table. */
+export interface UserDir {
+  id: string
+  email: string
+  name: string | null
+}
+
+export interface MembershipRecord {
+  id: string
+  org_id: string
+  user_id: string
+  role: Role
+  created_at: string
+}
+export interface NewMembership {
+  id: string
+  org_id: string
+  user_id: string
+  role: Role
+}
+
+export interface ArtifactMemberRecord {
+  id: string
+  artifact_id: string
+  user_id: string
+  role: Role
+  created_at: string
+}
+export interface NewArtifactMember {
+  id: string
+  artifact_id: string
+  user_id: string
+  role: Role
 }
 
 export type WebhookKind = "generic" | "slack"

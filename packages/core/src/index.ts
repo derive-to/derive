@@ -1,4 +1,5 @@
 export * from "./ports"
+export * from "./permissions"
 export * from "./ids"
 export * from "./mime"
 export * from "./hash"
