@@ -39,6 +39,14 @@ export interface AppDeps {
   baseUrl: string
   /** A static token (CI/agents) authorizes writes + gated reads, alongside a login session. */
   token?: string
+  /**
+   * "Open" instance: anonymous (and non-member) callers are trusted as owners —
+   * the zero-config self-host / CI experience. Leave UNSET on a real multi-user
+   * deployment so normal permissions apply (anon → viewer on public links, no
+   * access otherwise). Defaults to `!token` when unset, preserving the historical
+   * behavior; the edge worker sets it explicitly from DOCK_OPEN (secure default).
+   */
+  open?: boolean
   /** Operator (instance super-admin) emails: global moderation powers, on top of `token`. */
   superAdmins?: string[]
   /** Better Auth instance — mounts /api/auth/* and provides the session. */
@@ -124,7 +132,10 @@ export function buildContext(deps: AppDeps) {
   const analyticsOn = deps.analytics !== false
   const versionWindowMs = deps.versionWindowMs ?? DEFAULT_VERSION_WINDOW_MS
   const allowOrigins = new Set(deps.webOrigins ?? [])
-  const open = !deps.token
+  // Explicit `open` wins; otherwise fall back to the historical default (an instance
+  // with no static token is treated as open / zero-config). A real multi-user
+  // deployment passes `open: false` so anonymous callers get real permissions.
+  const open = deps.open ?? !deps.token
   const defaultRole: Role = deps.defaultRole ?? "editor"
   // The bootstrap workspace id — always a real value, never a magic
   // literal. The Node entry generates + persists one; tests fall back to this.
