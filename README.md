@@ -12,15 +12,20 @@ API; view it rendered and sandboxed. Self-host it, or use the hosted tier.
 pnpm install
 pnpm dev                                  # api on http://localhost:8080
 
-# publish a file
-node packages/cli/bin/dock.js publish ./README.md
+# scaffold a project (templates: md · html · slides)
+node packages/cli/bin/dock.js init my-doc --template slides
+cd my-doc
 
-# publish any static build output (a dist/ folder)
-node packages/cli/bin/dock.js publish ./dist --title "My site" --spa
-
-# new version, same URL
-node packages/cli/bin/dock.js publish ./README.md --id <short_id> --message "v2"
+# publish — reads dock.json, so no flags; the id is saved for next time
+node packages/cli/bin/dock.js publish
+# edit, then publish again → new version, same URL, same artifact
+node packages/cli/bin/dock.js publish --name "First draft"
 ```
+
+`dock init` writes a `dock.json` (artifact id, title, visibility, spa, entry) and
+an `AGENTS.md` describing the publish → review → revise loop. Without a project
+you can still `dock publish <file|dir> [--title --spa --id …]` directly.
+Authoring + the anchor-client protocol are documented in [STANDARD.md](STANDARD.md).
 
 ## Self-host
 
@@ -60,7 +65,7 @@ apps/web          web UI (TanStack Start, SPA mode — static bundle)
 packages/core     domain: ports, publish, markdown render, viewer shell
 packages/db       MetaStore: sqlite (default) · postgres · d1
 packages/storage  BlobStore: fs (default) · s3/r2
-packages/cli      dock publish <file|dir>
+packages/cli      dock init (md/html/slides) · dock publish <file|dir>
 packages/mcp      MCP server: publish / read-back tools for agents
 ```
 
