@@ -1,13 +1,12 @@
-import { betterAuth } from "better-auth"
+import { type BetterAuthOptions, betterAuth } from "better-auth"
 import { getMigrations } from "better-auth/db/migration"
 import { genericOAuth } from "better-auth/plugins"
-import type Database from "better-sqlite3"
-import type { Pool } from "pg"
 
 const env = (k: string) => process.env[k]
 
-/** Better Auth runs on the same datastore as the app: a better-sqlite3 handle or a pg Pool. */
-export type AuthDb = Database.Database | Pool
+/** Whatever Better Auth accepts as its datastore: a better-sqlite3 / pg handle on
+ *  Node, or a Kysely dialect config (`{ dialect, type }`) on the edge (D1). */
+export type AuthDb = BetterAuthOptions["database"]
 
 /**
  * Better Auth: email+password out of the box; Google when its env is set; and

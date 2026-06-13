@@ -6,7 +6,7 @@ import { fail, readJson } from "../lib/http"
 
 /** In-app notifications (the header bell) for the signed-in user. */
 export const notificationRoutes = (ctx: AppContext) => {
-  const { meta, bus, currentUser } = ctx
+  const { meta, bus, backplane, currentUser } = ctx
   const app = new Hono()
 
   app.get("/v1/notifications", async (c) => {
@@ -39,8 +39,10 @@ export const notificationRoutes = (ctx: AppContext) => {
   app.get("/v1/notifications/events", async (c) => {
     const me = await currentUser(c)
     if (!me) return c.text("unauthenticated", 401)
-    c.header("Access-Control-Allow-Origin", "*")
     const userId = me.id
+    const direct = backplane.handleStream?.(c, `u:${userId}`)
+    if (direct) return direct
+    c.header("Access-Control-Allow-Origin", "*")
     return streamSSE(c, async (stream) => {
       const unsub = bus.subscribe(`u:${userId}`, (e) => {
         void stream.writeSSE({ event: e.type, data: JSON.stringify(e) })

@@ -6,12 +6,16 @@ import { fail, readJson } from "../lib/http"
 
 /** Live updates per artifact (SSE) + ephemeral presence (who's viewing now). */
 export const realtimeRoutes = (ctx: AppContext) => {
-  const { meta, bus, presence, authorize } = ctx
+  const { meta, bus, presence, backplane, authorize } = ctx
   const app = new Hono()
 
   app.get("/v1/artifacts/:shortId/events", async (c) => {
     const artifact = await meta.getByShortId(c.req.param("shortId"))
     if (!artifact || !(await authorize(c, "read", artifact))) return c.text("not found", 404)
+    // A Durable Object backplane owns the stream itself (edge); relay adapters
+    // (in-process, Redis) return null and we hold the SSE here.
+    const direct = backplane.handleStream?.(c, artifact.id)
+    if (direct) return direct
     c.header("Access-Control-Allow-Origin", "*")
     return streamSSE(c, async (stream) => {
       const unsub = bus.subscribe(artifact.id, (e) => {
@@ -35,7 +39,7 @@ export const realtimeRoutes = (ctx: AppContext) => {
     const body = await readJson(c, z.object({ name: z.string().optional() }).catchall(z.unknown()))
     if (body instanceof Response) return body
     const name = typeof body.name === "string" && body.name ? body.name : "anonymous"
-    const viewers = presence.heartbeat(artifact.id, name, Date.now())
+    const viewers = await presence.heartbeat(artifact.id, name, Date.now())
     bus.publish(artifact.id, { type: "presence", viewers })
     return c.json({ viewers })
   })
