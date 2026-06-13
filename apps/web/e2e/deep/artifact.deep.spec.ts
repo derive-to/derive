@@ -65,7 +65,9 @@ test("edit and delete an own comment", async ({ page }) => {
 })
 
 test("the insights panel opens and reports viewers", async ({ page }) => {
-  // The owner opening their own artifact does not count as a viewer.
+  // The owner opening their own artifact does not count as a viewer. Insights
+  // lives in the "⋯ More" menu.
+  await page.getByTestId("artifact-more").click()
   await page.getByTestId("artifact-insights").click()
   await expect(page.getByText(/viewers?/i).first()).toBeVisible()
 })

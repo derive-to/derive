@@ -136,7 +136,7 @@ export function AppShell({
           <Button
             variant="outline"
             size="icon"
-            data-testid="sidebar-toggle"
+            data-testid="library-menu"
             aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
             title="Toggle sidebar"
             onClick={() => (isMobile ? setDrawerOpen(true) : toggleCollapsed())}
@@ -154,6 +154,7 @@ export function AppShell({
           {isMobile && (
             <button
               type="button"
+              data-testid="library-menu-backdrop"
               aria-label="Close menu"
               tabIndex={drawerOpen ? 0 : -1}
               onClick={() => setDrawerOpen(false)}

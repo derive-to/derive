@@ -783,7 +783,9 @@ export function Artifact() {
                 className="absolute bottom-[18px] right-[18px] flex h-11 items-center gap-2 rounded-full border border-border bg-card px-4 text-sm font-semibold text-foreground shadow-[var(--shadow)]"
               >
                 <Icon name="comments" size={18} />
-                {openCount > 0 ? `${openCount} comment${openCount === 1 ? "" : "s"}` : "Comments"}
+                {openCount > 0
+                  ? `${openCount} comment${openCount === 1 ? "" : "s"}`
+                  : "Show comments"}
               </button>
             )}
           </div>
