@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto"
 import {
   type Action,
   type Actor,
+  type AgentRecord,
   ANCHOR_CLIENT_JS,
   type ArtifactRecord,
   approveProposal,
@@ -256,28 +257,45 @@ export function createApp(deps: AppDeps): Hono {
     const targetIds = mentions.map((m) => m.id).filter((mid) => mid !== actorId)
     if (targetIds.length === 0) return []
     const real = new Set((await meta.getUsers(targetIds)).map((u) => u.id))
+    // Registered agents are mentionable too; a mention of an agent lands in its
+    // pull inbox instead of a notification bell.
+    const agentIds = new Set((await meta.listAgents(WORKSPACE)).map((ag) => ag.id))
     const preview = previewOf(cm.body_md)
     const notified: string[] = []
     for (const m of mentions) {
-      if (m.id === actorId || !real.has(m.id)) continue
-      const row = {
-        id: newId("n"),
-        user_id: m.id,
-        actor: cm.author,
-        kind: "mention" as const,
-        artifact_id: a.id,
-        artifact_short_id: a.short_id,
-        artifact_title: a.title,
-        thread_id: cm.thread_id,
-        comment_id: cm.id,
-        preview,
+      if (m.id === actorId) continue
+      if (real.has(m.id)) {
+        const row = {
+          id: newId("n"),
+          user_id: m.id,
+          actor: cm.author,
+          kind: "mention" as const,
+          artifact_id: a.id,
+          artifact_short_id: a.short_id,
+          artifact_title: a.title,
+          thread_id: cm.thread_id,
+          comment_id: cm.id,
+          preview,
+        }
+        await meta.createNotification(row)
+        notified.push(m.name)
+        bus.publish(`u:${m.id}`, {
+          type: "notification",
+          notification: { ...row, read: 0, created_at: new Date().toISOString() },
+        })
+      } else if (agentIds.has(m.id)) {
+        await meta.createAgentMention({
+          id: newId("amn"),
+          agent_id: m.id,
+          artifact_id: a.id,
+          artifact_short_id: a.short_id,
+          comment_id: cm.id,
+          thread_id: cm.thread_id,
+          body: cm.body_md,
+          author: cm.author,
+        })
+        notified.push(m.name)
       }
-      await meta.createNotification(row)
-      notified.push(m.name)
-      bus.publish(`u:${m.id}`, {
-        type: "notification",
-        notification: { ...row, read: 0, created_at: new Date().toISOString() },
-      })
     }
     return notified
   }
@@ -305,6 +323,27 @@ export function createApp(deps: AppDeps): Hono {
     return s?.user ? { id: s.user.id, email: s.user.email, name: s.user.name ?? null } : null
   }
 
+  // A registered agent acting via its bearer token (memoized per request). An
+  // agent is a workspace principal: same authorization path as a member, with
+  // its own identity and (default commenter) role.
+  const agentCache = new WeakMap<Context, AgentRecord | null>()
+  const agentFor = async (c: Context): Promise<AgentRecord | null> => {
+    if (agentCache.has(c)) return agentCache.get(c) ?? null
+    const b = bearer(c)
+    const a = !b || (deps.token && b === deps.token) ? null : await meta.getAgentByToken(b)
+    agentCache.set(c, a)
+    return a
+  }
+
+  // The acting identity (agent or signed-in user) for authorship; null when
+  // anonymous. Agents author as their name, never spoofing a person.
+  const actingUser = async (c: Context): Promise<{ id: string; name: string } | null> => {
+    const ag = await agentFor(c)
+    if (ag) return { id: ag.id, name: ag.name }
+    const me = await currentUser(c)
+    return me ? { id: me.id, name: me.name ?? me.email } : null
+  }
+
   // ---- Authorization ----------------------------------------------------
   // One choke point: every gate resolves an Actor and asks can(). An unsecured
   // instance (no static token) trusts anonymous callers — zero-config self-host.
@@ -323,6 +362,11 @@ export function createApp(deps: AppDeps): Hono {
 
   const actorFor = async (c: Context, a: ArtifactRecord): Promise<Actor> => {
     if (deps.token && bearer(c) === deps.token) return { kind: "token" }
+    const ag = await agentFor(c)
+    if (ag) {
+      const am = await meta.getArtifactMember(a.id, ag.id)
+      return { kind: "user", userId: ag.id, artifactRole: am?.role ?? null, orgRole: ag.role, open }
+    }
     const me = await currentUser(c)
     if (!me) return { kind: "anon", open }
     const orgRole = await ensureMembership(me.id)
@@ -337,6 +381,8 @@ export function createApp(deps: AppDeps): Hono {
   /** The caller's role at the workspace level (creating artifacts, settings). */
   const workspaceRole = async (c: Context): Promise<Role | null> => {
     if (deps.token && bearer(c) === deps.token) return "owner"
+    const ag = await agentFor(c)
+    if (ag) return ag.role
     const me = await currentUser(c)
     if (!me) return open ? "owner" : null
     return ensureMembership(me.id)
@@ -374,23 +420,102 @@ export function createApp(deps: AppDeps): Hono {
     return c.json({ user: { ...u, role } })
   })
 
-  // Workspace member directory for the @mention picker. Signed-in (or open) only;
-  // optional ?q= filters by name/email prefix. Never exposes non-members.
+  // Workspace member directory for the @mention picker — people AND agents, so
+  // an agent can be @mentioned like anyone. Signed-in (or open) only; optional
+  // ?q= filters by name/email prefix. Never exposes non-members.
   app.get("/v1/users", async (c) => {
     if (!open && !(await currentUser(c)) && bearer(c) !== deps.token)
       return c.json({ error: "unauthenticated" }, 401)
     const members = await meta.listMemberships(WORKSPACE)
     const users = await meta.getUsers(members.map((m) => m.user_id))
     const q = (c.req.query("q") ?? "").trim().toLowerCase()
-    const filtered = q
-      ? users.filter(
-          (u) => (u.name ?? "").toLowerCase().includes(q) || u.email.toLowerCase().includes(q),
-        )
-      : users
-    filtered.sort((a, b) => (a.name ?? a.email).localeCompare(b.name ?? b.email))
+    const people = (
+      q
+        ? users.filter(
+            (u) => (u.name ?? "").toLowerCase().includes(q) || u.email.toLowerCase().includes(q),
+          )
+        : users
+    ).map((u) => ({ id: u.id, name: u.name ?? u.email, email: u.email, kind: "user" as const }))
+    const agents = (await meta.listAgents(WORKSPACE))
+      .filter((ag) => !q || ag.name.toLowerCase().includes(q))
+      .map((ag) => ({ id: ag.id, name: ag.name, email: "", kind: "agent" as const }))
+    const all = [...people, ...agents].sort((a, b) => a.name.localeCompare(b.name))
+    return c.json({ users: all })
+  })
+
+  // ---- Agents: registry (owner-managed) + the pull inbox -----------------
+  const agentJson = (a: AgentRecord) => ({
+    id: a.id,
+    name: a.name,
+    role: a.role,
+    created_at: a.created_at,
+  })
+
+  app.get("/v1/agents", async (c) => {
+    if (!(await workspaceCan(c, "manage"))) return c.json({ error: "forbidden" }, 403)
+    const agents = await meta.listAgents(WORKSPACE)
+    return c.json({ agents: agents.map(agentJson) })
+  })
+
+  // Create an agent + mint its token. The token is returned ONCE here; only its
+  // hash-free secret lives in the row, so store it now. Default role commenter
+  // (propose-only); editor is opt-in. Owner is never allowed for an agent.
+  app.post("/v1/agents", async (c) => {
+    if (!(await workspaceCan(c, "manage"))) return c.json({ error: "forbidden" }, 403)
+    const b = (await c.req.json().catch(() => ({}))) as { name?: unknown; role?: unknown }
+    const name = typeof b.name === "string" ? b.name.trim() : ""
+    if (!name) return c.json({ error: "name required" }, 400)
+    const role: Role =
+      b.role === "viewer" || b.role === "commenter" || b.role === "editor" ? b.role : "commenter"
+    const token = `dk_agt_${randomUUID().replace(/-/g, "")}${randomUUID().replace(/-/g, "")}`
+    try {
+      const agent = await meta.createAgent({
+        id: newId("ag"),
+        org_id: WORKSPACE,
+        name,
+        token,
+        role,
+      })
+      // The only place the token is ever exposed.
+      return c.json({ ...agentJson(agent), token }, 201)
+    } catch {
+      return c.json({ error: "an agent with that name already exists" }, 409)
+    }
+  })
+
+  app.delete("/v1/agents/:id", async (c) => {
+    if (!(await workspaceCan(c, "manage"))) return c.json({ error: "forbidden" }, 403)
+    await meta.deleteAgent(c.req.param("id"))
+    return c.body(null, 204)
+  })
+
+  // The agent's pull inbox: mentions awaiting a response. Auth = the agent's
+  // own bearer token. The agent reads context via the normal read endpoints,
+  // proposes/replies with this same token, then acks.
+  app.get("/v1/agent/inbox", async (c) => {
+    const agent = await agentFor(c)
+    if (!agent) return c.json({ error: "agent token required" }, 401)
+    const limit = Math.min(50, Math.max(1, Number(c.req.query("limit")) || 20))
+    const mentions = await meta.listPendingAgentMentions(agent.id, limit)
     return c.json({
-      users: filtered.map((u) => ({ id: u.id, name: u.name ?? u.email, email: u.email })),
+      agent: agentJson(agent),
+      mentions: mentions.map((m) => ({
+        id: m.id,
+        artifact: m.artifact_short_id,
+        comment_id: m.comment_id,
+        thread_id: m.thread_id,
+        body: m.body,
+        author: m.author,
+        created_at: m.created_at,
+      })),
     })
+  })
+
+  app.post("/v1/agent/mentions/:id/ack", async (c) => {
+    const agent = await agentFor(c)
+    if (!agent) return c.json({ error: "agent token required" }, 401)
+    const ok = await meta.ackAgentMention(agent.id, c.req.param("id"))
+    return ok ? c.json({ ok: true }) : c.json({ error: "not found" }, 404)
   })
 
   // Newest-first, keyset-paginated (?cursor=<created_at>&limit=N), with optional
@@ -801,8 +926,8 @@ export function createApp(deps: AppDeps): Hono {
       body.kind === "bundle" ||
       (bytes[0] === 0x50 && bytes[1] === 0x4b && (bytes[2] === 3 || bytes[2] === 5))
 
-    const me = await currentUser(c)
-    const author = me ? (me.name ?? me.email) : str(body.author) || "anonymous"
+    const acting = await actingUser(c)
+    const author = acting ? acting.name : str(body.author) || "anonymous"
     try {
       const { proposal } = await propose(meta, blobs, artifact.short_id, {
         bytes,
@@ -957,9 +1082,9 @@ export function createApp(deps: AppDeps): Hono {
           ? body.anchor
           : null
 
-    const me = await currentUser(c)
-    const author = me
-      ? (me.name ?? me.email)
+    const acting = await actingUser(c)
+    const author = acting
+      ? acting.name
       : typeof body.author === "string" && body.author
         ? body.author
         : "anonymous"
@@ -989,7 +1114,7 @@ export function createApp(deps: AppDeps): Hono {
       quote: quoteOf(created.anchor),
       thread_id: created.thread_id,
     })
-    const notified = await notifyMentions(artifact, created, mentions, me?.id ?? null)
+    const notified = await notifyMentions(artifact, created, mentions, acting?.id ?? null)
     if (notified.length)
       await notify(artifact, "comment.mention", {
         author: created.author,
@@ -1043,11 +1168,9 @@ export function createApp(deps: AppDeps): Hono {
     if (!cm || cm.artifact_id !== artifact.id) return { error: c.json({ error: "not found" }, 404) }
     return { artifact, cm }
   }
-  // The signed-in actor's display name, or null on an open (no-auth) instance.
-  const actorName = async (c: Context): Promise<string | null> => {
-    const me = await currentUser(c)
-    return me ? (me.name ?? me.email) : null
-  }
+  // The acting display name (agent or signed-in user); null on an open instance.
+  const actorName = async (c: Context): Promise<string | null> =>
+    (await actingUser(c))?.name ?? null
 
   // Toggle the current user's reaction (one of REACTIONS) on a comment.
   app.post("/v1/artifacts/:shortId/comments/:commentId/react", async (c) => {

@@ -183,6 +183,67 @@ export interface MetaStore {
   unreadNotificationCount(userId: string): Promise<number>
   /** Mark the given ids read, or all of the user's notifications when "all". */
   markNotificationsRead(userId: string, ids: string[] | "all"): Promise<void>
+
+  // ---- Agents (mentionable principals that act via a scoped token) -------
+  createAgent(a: NewAgent): Promise<AgentRecord>
+  listAgents(orgId: string): Promise<AgentRecord[]>
+  /** Resolve an agent from its bearer token (the agent's identity). */
+  getAgentByToken(token: string): Promise<AgentRecord | null>
+  deleteAgent(id: string): Promise<void>
+  /** Queue a mention into an agent's pull inbox. */
+  createAgentMention(m: NewAgentMention): Promise<void>
+  /** Pending (unhandled) mentions for an agent, oldest first. */
+  listPendingAgentMentions(agentId: string, limit: number): Promise<AgentMentionRecord[]>
+  /** Mark a mention handled; false if it isn't this agent's or doesn't exist. */
+  ackAgentMention(agentId: string, id: string): Promise<boolean>
+}
+
+/**
+ * A registered agent: a mentionable principal that acts through a scoped token.
+ * Default role is commenter, so an agent can propose but never publish directly
+ * — a human still approves. Treated like a member of the workspace.
+ */
+export interface AgentRecord {
+  id: string
+  org_id: string
+  name: string
+  token: string
+  role: Role
+  created_at: string
+}
+export interface NewAgent {
+  id: string
+  org_id: string
+  name: string
+  token: string
+  role: Role
+}
+
+export type AgentMentionState = "pending" | "done"
+/** A queued mention for an agent's pull inbox (denormalized for a cheap read). */
+export interface AgentMentionRecord {
+  id: string
+  agent_id: string
+  artifact_id: string
+  artifact_short_id: string
+  comment_id: string
+  thread_id: string
+  /** The body of the comment that mentioned the agent. */
+  body: string
+  /** Who mentioned it. */
+  author: string
+  state: AgentMentionState
+  created_at: string
+}
+export interface NewAgentMention {
+  id: string
+  agent_id: string
+  artifact_id: string
+  artifact_short_id: string
+  comment_id: string
+  thread_id: string
+  body: string
+  author: string
 }
 
 /**
