@@ -22,7 +22,7 @@ import {
   type Mention,
 } from "../api"
 import { Header, useIsMobile, useToast } from "../components"
-import { ReviewOverlay } from "../components/ReviewOverlay"
+import { ReviewOverlay } from "../components/review"
 import { ShareButton } from "../components/ShareDialog"
 import { useAuth } from "../ctx"
 
