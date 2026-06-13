@@ -26,6 +26,7 @@ export interface Env {
   BASE_URL?: string
   DOCK_AUTH_SECRET?: string
   DOCK_MULTI_WORKSPACE?: string
+  DOCK_SUPERADMIN_EMAILS?: string
 }
 
 let app: ReturnType<typeof createApp> | null = null
@@ -51,6 +52,10 @@ export default {
         blobs: new R2BlobStore(env.BUCKET),
         baseUrl,
         auth,
+        superAdmins: (env.DOCK_SUPERADMIN_EMAILS ?? "")
+          .split(",")
+          .map((s) => s.trim().toLowerCase())
+          .filter(Boolean),
         multiWorkspace: env.DOCK_MULTI_WORKSPACE === "true",
         defaultOrgId: "default",
       })

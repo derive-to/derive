@@ -68,6 +68,7 @@ const app = createApp({
   blobs,
   baseUrl: cfg.baseUrl,
   token: cfg.token,
+  superAdmins: cfg.superAdmins,
   auth,
   webOrigins: cfg.webOrigins,
   analytics: cfg.analytics,

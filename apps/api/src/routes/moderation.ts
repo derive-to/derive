@@ -7,7 +7,7 @@ import { fail, readJson, str } from "../lib/http"
 /** Abuse reports (public) + takedown / reinstate / audit (Admin). A taken-down
  *  artifact keeps its record but serves no content (410). */
 export const moderationRoutes = (ctx: AppContext) => {
-  const { meta, actingUser, workspaceCan, activeWorkspace } = ctx
+  const { meta, actingUser, workspaceCan, activeWorkspace, isSuperAdmin } = ctx
   const app = new Hono()
 
   // Anyone can report a public artifact for abuse. Rate-limited by the global
@@ -66,9 +66,9 @@ export const moderationRoutes = (ctx: AppContext) => {
   app.post("/v1/artifacts/:shortId/takedown", async (c) => {
     if (!(await workspaceCan(c, "manage"))) return fail(c, 403, "forbidden")
     const artifact = await meta.getByShortId(c.req.param("shortId"))
-    // Scope to the caller's workspace: an Admin can only take down artifacts in
-    // their own workspace, not any artifact instance-wide by short_id.
-    if (!artifact || artifact.org_id !== (await activeWorkspace(c)))
+    // A super-admin (operator) takes down any artifact globally; a workspace
+    // Admin only within their own workspace.
+    if (!artifact || (!(await isSuperAdmin(c)) && artifact.org_id !== (await activeWorkspace(c))))
       return fail(c, 404, "not found")
     const who = (await actingUser(c))?.name ?? "owner"
     const b = await readJson(c, z.object({ note: z.unknown() }))
@@ -90,7 +90,7 @@ export const moderationRoutes = (ctx: AppContext) => {
   app.post("/v1/artifacts/:shortId/reinstate", async (c) => {
     if (!(await workspaceCan(c, "manage"))) return fail(c, 403, "forbidden")
     const artifact = await meta.getByShortId(c.req.param("shortId"))
-    if (!artifact || artifact.org_id !== (await activeWorkspace(c)))
+    if (!artifact || (!(await isSuperAdmin(c)) && artifact.org_id !== (await activeWorkspace(c))))
       return fail(c, 404, "not found")
     const who = (await actingUser(c))?.name ?? "owner"
     await meta.setArtifactRemoved(artifact.id, null)
