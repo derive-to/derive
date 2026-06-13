@@ -8,25 +8,25 @@ test.use({ viewport: { width: 390, height: 844 } })
 test("the sidebar opens as a drawer and navigates on mobile", async ({ owner }) => {
   await owner.goto("/")
 
-  // The persistent sidebar is replaced by a menu button; its dimmer overlay is
+  // The persistent sidebar is replaced by a menu button; its dimmer backdrop is
   // always mounted and toggles opacity, so assert on that (not visibility).
-  const overlay = owner.getByTestId("library-menu-close")
-  await expect(overlay).toHaveCSS("opacity", "0") // drawer starts closed
+  const backdrop = owner.getByTestId("library-menu-backdrop")
+  await expect(backdrop).toHaveCSS("opacity", "0") // drawer starts closed
 
   await owner.getByTestId("library-menu").click()
-  await expect(overlay).toHaveCSS("opacity", "1") // drawer open
+  await expect(backdrop).toHaveCSS("opacity", "1") // drawer open
 
   // Picking a destination applies the filter and closes the drawer.
-  await owner.getByTestId("nav-favorites").click()
+  await owner.getByTestId("sidebar-favorites").click()
   await expect(owner.getByRole("heading", { name: /Favorites/ })).toBeVisible()
-  await expect(overlay).toHaveCSS("opacity", "0") // drawer closed again
+  await expect(backdrop).toHaveCSS("opacity", "0") // drawer closed again
 })
 
 test("the core publish, open, and comment loop works at phone width", async ({ owner }) => {
   const id = await publishArtifact(owner, "mobile.md", "# Mobile\n\nbody text")
 
   await owner.goto("/")
-  await expect(owner.getByTestId(`library-card-${id}`)).toBeVisible()
+  await expect(owner.getByTestId(`artifact-card-open-${id}`)).toBeVisible()
 
   await openArtifact(owner, id)
   await expect(owner.getByTestId("artifact-star")).toBeVisible()

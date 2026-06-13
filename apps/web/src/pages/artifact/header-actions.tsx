@@ -103,7 +103,12 @@ export function ReportButton({
               className="resize-none text-sm"
             />
             <div className="mt-2 flex justify-end gap-1.5">
-              <Button variant="outline" size="sm" onClick={() => setOpen(false)}>
+              <Button
+                variant="outline"
+                size="sm"
+                data-testid="report-cancel"
+                onClick={() => setOpen(false)}
+              >
                 Cancel
               </Button>
               <Button
@@ -197,6 +202,7 @@ export function CollectionsMenu({
               <button
                 key={col.id}
                 type="button"
+                data-testid={`collections-menu-${col.id}`}
                 onClick={() => toggle(col)}
                 className={cn(
                   "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm font-medium text-foreground transition-colors hover:bg-hover",
@@ -297,6 +303,7 @@ export function TagsMenu({
                 {canEdit && (
                   <button
                     type="button"
+                    data-testid={`tag-remove-${t}`}
                     onClick={() => save(tags.filter((x) => x !== t))}
                     aria-label={`Remove ${t}`}
                     className="leading-none text-primary"

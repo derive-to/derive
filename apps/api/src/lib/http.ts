@@ -1,5 +1,14 @@
 import type { Role, Visibility } from "@dock/core"
 import type { Context } from "hono"
+import type { ContentfulStatusCode } from "hono/utils/http-status"
+
+/**
+ * The one error-response shape. Routes return `fail(c, status, message)` rather
+ * than a bare `c.json({ error }, status)`, so the error contract lives in one
+ * place. Enforced by the no-ad-hoc-error guard (scripts/check-api.mjs).
+ */
+export const fail = (c: Context, status: ContentfulStatusCode, message: string) =>
+  c.json({ error: message }, status)
 
 export const DEFAULT_WORKSPACE_NAME = "My Workspace"
 /** Cookie holding the active workspace id (multi-workspace mode). */

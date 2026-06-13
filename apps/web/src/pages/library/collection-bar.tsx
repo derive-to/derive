@@ -34,6 +34,7 @@ export function CollectionBar({
         <Input
           value={draft}
           autoFocus
+          data-testid="collection-rename-input"
           aria-label="Collection name"
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => {
@@ -48,12 +49,19 @@ export function CollectionBar({
         </h2>
       )}
       <span className="flex-1" />
-      <Button variant="primary" size="sm" onClick={onShare} title="Share this collection">
+      <Button
+        variant="primary"
+        size="sm"
+        data-testid="collection-share"
+        onClick={onShare}
+        title="Share this collection"
+      >
         🔗 Share
       </Button>
       <Button
         variant="outline"
         size="sm"
+        data-testid="collection-rename"
         onClick={() => (renaming ? commitRename() : setRenaming(true))}
       >
         {renaming ? "Save" : "Rename"}
@@ -61,6 +69,7 @@ export function CollectionBar({
       <Button
         variant="ghost"
         size="sm"
+        data-testid="collection-delete"
         className="text-destructive hover:text-destructive"
         onClick={() => {
           if (confirm(`Delete the collection “${title}”? The artifacts are not deleted.`))

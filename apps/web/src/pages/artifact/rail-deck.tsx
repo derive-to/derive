@@ -27,6 +27,7 @@ export function Rail({
     <>
       <button
         type="button"
+        data-testid="comments-rail-expand"
         onClick={onExpand}
         title="Expand comments (c)"
         className="flex h-[38px] w-full shrink-0 items-center justify-center gap-1.5 border-b border-border-soft text-foreground transition-colors hover:bg-hover"
@@ -46,6 +47,7 @@ export function Rail({
             <button
               type="button"
               key={id}
+              data-testid={`comments-rail-dot-${id}`}
               onClick={() => onDot(id)}
               title={p.thread[0].body_md}
               className={cn(
@@ -60,6 +62,7 @@ export function Rail({
       </div>
       <button
         type="button"
+        data-testid="comments-rail-hide"
         onClick={onHide}
         title="Hide comments"
         className="flex h-[38px] w-full shrink-0 items-center justify-center border-t border-border-soft text-muted-foreground transition-colors hover:bg-hover"
@@ -73,20 +76,20 @@ export function Rail({
 export function IconBtn({
   title,
   onClick,
-  testId,
   children,
+  testId,
 }: {
   title: string
   onClick: () => void
-  testId?: string
   children: React.ReactNode
+  testId?: string
 }) {
   return (
     <button
       type="button"
+      data-testid={testId}
       title={title}
       onClick={onClick}
-      data-testid={testId}
       className="grid size-[26px] place-items-center rounded-md text-muted-foreground transition-colors hover:bg-hover hover:text-foreground"
     >
       {children}
@@ -124,6 +127,7 @@ export function DeckBar({
       <button
         type="button"
         className={btn}
+        data-testid="deck-prev"
         onClick={onPrev}
         disabled={deck.i <= 0}
         aria-label="Previous slide"
@@ -136,6 +140,7 @@ export function DeckBar({
       <button
         type="button"
         className={btn}
+        data-testid="deck-next"
         onClick={onNext}
         disabled={deck.i >= deck.total - 1}
         aria-label="Next slide"
@@ -145,6 +150,7 @@ export function DeckBar({
       <button
         type="button"
         className={cn(btn, "ml-1")}
+        data-testid="deck-fullscreen"
         onClick={onFullscreen}
         title="Present (fullscreen)"
         aria-label="Present fullscreen"

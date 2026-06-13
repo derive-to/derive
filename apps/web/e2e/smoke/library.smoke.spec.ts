@@ -6,8 +6,9 @@ test("a published artifact appears in the library and opens", async ({ owner }) 
 
   // Re-fetch the library home so it picks up the freshly published artifact.
   await owner.goto("/")
-  await expect(owner.getByTestId(`library-card-${shortId}`)).toBeVisible()
+  const card = owner.getByTestId(`artifact-card-open-${shortId}`)
+  await expect(card).toBeVisible()
 
-  await owner.getByTestId(`library-open-${shortId}`).click()
+  await card.click()
   await expect(owner.getByText("Comments", { exact: true })).toBeVisible()
 })

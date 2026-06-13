@@ -19,18 +19,15 @@ export function ArtifactCard({
   onPickTag: (tag: string) => void
 }) {
   return (
-    <div
-      data-testid={`library-card-${a.short_id}`}
-      className="group relative flex cursor-pointer flex-col gap-2 rounded-lg border border-border bg-card p-3.5 transition-all hover:-translate-y-0.5 hover:border-primary hover:shadow-[var(--shadow)] active:translate-y-0"
-    >
+    <div className="group relative flex cursor-pointer flex-col gap-2 rounded-lg border border-border bg-card p-3.5 transition-all hover:-translate-y-0.5 hover:border-primary hover:shadow-[var(--shadow)] active:translate-y-0">
       <div className="relative">
         <Thumb id={a.short_id} v={a.current_version} />
         <button
           type="button"
+          data-testid={`artifact-card-favorite-${a.short_id}`}
           title={a.favorite ? "Remove from favorites" : "Add to favorites"}
           aria-label="Toggle favorite"
           aria-pressed={a.favorite}
-          data-testid={`library-favorite-${a.short_id}`}
           onClick={(e) => {
             e.stopPropagation()
             onToggleFavorite()
@@ -45,9 +42,9 @@ export function ArtifactCard({
       </div>
       <button
         type="button"
+        data-testid={`artifact-card-open-${a.short_id}`}
         onClick={onOpen}
         aria-label={`Open ${a.title ?? a.short_id}`}
-        data-testid={`library-open-${a.short_id}`}
         className="flex w-full flex-col gap-1.5 text-left outline-none after:absolute after:inset-0 after:z-[1] after:rounded-lg after:content-[''] focus-visible:after:outline-2 focus-visible:after:-outline-offset-2 focus-visible:after:outline-ring"
       >
         <span className="font-display text-lg font-semibold text-foreground transition-colors group-hover:text-primary">
@@ -71,6 +68,7 @@ export function ArtifactCard({
             <button
               key={t}
               type="button"
+              data-testid={`artifact-card-tag-${t}`}
               onClick={(e) => {
                 e.stopPropagation()
                 onPickTag(t)

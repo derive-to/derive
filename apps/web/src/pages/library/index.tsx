@@ -239,10 +239,10 @@ export function Library() {
             <Button
               variant="outline"
               size="icon"
+              data-testid="library-menu"
               onClick={() => setDrawer(true)}
               title="Menu"
               aria-label="Open menu"
-              data-testid="library-menu"
             >
               <Menu />
             </Button>
@@ -253,8 +253,8 @@ export function Library() {
         {isMobile && (
           <button
             type="button"
+            data-testid="library-menu-backdrop"
             aria-label="Close menu"
-            data-testid="library-menu-close"
             tabIndex={drawer ? 0 : -1}
             onClick={() => setDrawer(false)}
             className={cn(
@@ -290,13 +290,18 @@ export function Library() {
             <div className="mb-[18px] flex flex-wrap items-center gap-2.5">
               <Input
                 placeholder="Search by title…"
+                data-testid="library-search"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 className="min-w-[200px] flex-1"
-                data-testid="library-search"
               />
               {filter.kind !== "all" && (
-                <Button variant="outline" size="sm" onClick={() => setFilter({ kind: "all" })}>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  data-testid="library-clear-filter"
+                  onClick={() => setFilter({ kind: "all" })}
+                >
                   {filter.kind === "favorites"
                     ? "★ Favorites"
                     : filter.kind === "tag"
@@ -322,16 +327,16 @@ export function Library() {
                 <input
                   ref={file}
                   type="file"
+                  data-testid="library-file-input"
                   accept=".html,.htm,.md,.markdown,.zip"
                   className="max-w-[230px] text-sm text-muted-foreground"
                   onChange={publish}
-                  data-testid="publish-file"
                 />
                 <Button
                   variant="primary"
+                  data-testid="library-publish"
                   onClick={publish}
                   disabled={busy}
-                  data-testid="publish-submit"
                 >
                   {busy ? (
                     "Publishing…"
@@ -382,7 +387,12 @@ export function Library() {
                 </div>
                 {nextCursor && (
                   <div className="mt-5 text-center">
-                    <Button variant="outline" onClick={() => load(nextCursor)} disabled={more}>
+                    <Button
+                      variant="outline"
+                      data-testid="library-load-more"
+                      onClick={() => load(nextCursor)}
+                      disabled={more}
+                    >
                       {more ? "Loading…" : "Load more"}
                     </Button>
                   </div>

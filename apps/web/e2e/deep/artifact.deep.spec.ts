@@ -19,7 +19,7 @@ test("comment, reply, resolve, and reopen a thread", async ({ page }) => {
 
   // Activate the thread, reply, and see the reply land.
   await page.getByText("First observation.").click()
-  await page.getByPlaceholder("Reply… (@ to mention)").fill("A follow-up reply.")
+  await page.getByTestId("comment-reply-input").fill("A follow-up reply.")
   await page.getByTestId("comment-reply-send").click()
   await expect(page.getByText("A follow-up reply.")).toBeVisible()
 

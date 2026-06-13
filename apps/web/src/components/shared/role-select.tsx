@@ -11,15 +11,18 @@ export function RoleSelect({
   onChange,
   className,
   "aria-label": ariaLabel = "Role",
+  "data-testid": testId,
 }: {
   value: Role
   onChange: (role: Role) => void
   className?: string
   "aria-label"?: string
+  "data-testid"?: string
 }) {
   return (
     <select
       aria-label={ariaLabel}
+      data-testid={testId}
       value={value}
       onChange={(e) => onChange(e.target.value as Role)}
       className={cn(

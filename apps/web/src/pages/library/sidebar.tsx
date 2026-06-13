@@ -15,8 +15,8 @@ function SideItem({
   active,
   rail,
   title,
-  testId,
   onClick,
+  testId,
 }: {
   icon: ReactNode
   label: string
@@ -24,15 +24,15 @@ function SideItem({
   active?: boolean
   rail?: boolean
   title?: string
-  testId?: string
   onClick: () => void
+  testId?: string
 }) {
   return (
     <button
       type="button"
+      data-testid={testId}
       onClick={onClick}
       title={title ?? label}
-      data-testid={testId}
       aria-current={active ? "page" : undefined}
       className={cn(
         "flex w-full items-center gap-2.5 whitespace-nowrap rounded-[9px] px-2.5 py-2 text-left text-sm font-semibold text-foreground transition-colors hover:bg-hover",
@@ -142,8 +142,8 @@ export function Sidebar({
         label="All artifacts"
         count={total}
         rail={rail}
-        testId="nav-all"
         active={filter.kind === "all"}
+        testId="sidebar-all"
         onClick={() => onPick({ kind: "all" })}
       />
       <SideItem
@@ -151,8 +151,8 @@ export function Sidebar({
         label="Favorites"
         count={favCount}
         rail={rail}
-        testId="nav-favorites"
         active={filter.kind === "favorites"}
+        testId="sidebar-favorites"
         onClick={() => onPick({ kind: "favorites" })}
       />
 
@@ -161,10 +161,10 @@ export function Sidebar({
           action={
             <button
               type="button"
+              data-testid="sidebar-new-collection"
               onClick={() => setCreating((v) => !v)}
               title="New collection"
               aria-label="New collection"
-              data-testid="new-collection"
               className="cursor-pointer text-sm text-primary"
             >
               ＋
@@ -178,9 +178,9 @@ export function Sidebar({
         <Input
           value={name}
           autoFocus
+          data-testid="sidebar-new-collection-input"
           placeholder="Collection name…"
           aria-label="Collection name"
-          data-testid="collection-name"
           onChange={(e) => setName(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Enter") submit()
@@ -200,8 +200,8 @@ export function Sidebar({
           label={col.title}
           count={col.count}
           rail={rail}
-          testId={`nav-collection-${col.id}`}
           active={filter.kind === "collection" && filter.id === col.id}
+          testId={`sidebar-collection-${col.id}`}
           onClick={() => onPick({ kind: "collection", id: col.id, title: col.title })}
         />
       ))}
@@ -216,8 +216,8 @@ export function Sidebar({
               label={tag}
               count={count}
               rail={rail}
-              testId={`nav-tag-${tag}`}
               active={filter.kind === "tag" && filter.tag === tag}
+              testId={`sidebar-tag-${tag}`}
               onClick={() => onPick({ kind: "tag", tag })}
             />
           ))}
@@ -225,15 +225,22 @@ export function Sidebar({
       )}
 
       <div className="mt-auto flex flex-col gap-px pt-2">
-        <SideItem icon="⚙" label="Settings" rail={rail} onClick={onSettings} />
+        <SideItem
+          icon="⚙"
+          label="Settings"
+          rail={rail}
+          testId="sidebar-settings"
+          onClick={onSettings}
+        />
         {drawer ? (
-          <SideItem icon="✕" label="Close" onClick={onClose} />
+          <SideItem icon="✕" label="Close" testId="sidebar-close" onClick={onClose} />
         ) : (
           <SideItem
             icon={rail ? "»" : "«"}
             label="Collapse"
             rail={rail}
             title={rail ? "Expand sidebar" : "Collapse sidebar"}
+            testId="sidebar-collapse"
             onClick={onToggleRail}
           />
         )}

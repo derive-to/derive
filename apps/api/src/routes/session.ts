@@ -1,6 +1,7 @@
 import { Hono } from "hono"
 import type { AppContext } from "../context"
 import { safeEqual } from "../lib/crypto"
+import { fail } from "../lib/http"
 
 /** Session identity + the workspace member/agent directory for the @mention picker. */
 export const sessionRoutes = (ctx: AppContext) => {
@@ -9,7 +10,7 @@ export const sessionRoutes = (ctx: AppContext) => {
 
   app.get("/v1/me", async (c) => {
     const u = await currentUser(c)
-    if (!u) return c.json({ error: "unauthenticated" }, 401)
+    if (!u) return fail(c, 401, "unauthenticated")
     const role = await ensureMembership(await activeWorkspace(c), u.id) // provisions on first load
     return c.json({ user: { ...u, role }, multi })
   })
@@ -19,7 +20,7 @@ export const sessionRoutes = (ctx: AppContext) => {
   // ?q= filters by name/email prefix. Never exposes non-members.
   app.get("/v1/users", async (c) => {
     if (!open && !(await currentUser(c)) && !safeEqual(bearer(c), deps.token))
-      return c.json({ error: "unauthenticated" }, 401)
+      return fail(c, 401, "unauthenticated")
     const org = await activeWorkspace(c)
     const members = await meta.listMemberships(org)
     const users = await meta.getUsers(members.map((m) => m.user_id))
