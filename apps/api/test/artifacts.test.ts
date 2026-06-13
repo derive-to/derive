@@ -134,10 +134,12 @@ describe("publish html file", () => {
     expect(json.current_version).toBe(1)
   })
 
-  it("serves the viewer shell and sandboxed raw content", async () => {
-    const viewer = await app.request(`/a/${shortId}-q1-review`)
-    expect(viewer.status).toBe(200)
-    expect(await viewer.text()).toContain("Q1 Review")
+  it("serves artifact metadata and sandboxed raw content", async () => {
+    // The viewer at /a/:ref is the SPA (client-rendered); the server exposes the
+    // artifact's metadata over the data API and the bytes over the sandboxed /raw.
+    const detail = await app.request(`/v1/artifacts/${shortId}`)
+    expect(detail.status).toBe(200)
+    expect((await detail.json()).title).toBe("Q1 Review")
 
     const raw = await app.request(`/raw/${shortId}/v/1/index.html`)
     expect(raw.status).toBe(200)
@@ -162,9 +164,6 @@ describe("publish html file", () => {
     expect(await (await app.request(`/raw/${shortId}/v/2/index.html`)).text()).toContain(
       "Q1 Review v2",
     )
-
-    const oldViewer = await app.request(`/a/${shortId}@v1`)
-    expect(await oldViewer.text()).toContain("jump to current (v2)")
   })
 })
 
@@ -279,7 +278,6 @@ describe("api surface", () => {
 
   it("404s on unknown artifacts and rejects empty zips", async () => {
     expect((await app.request("/v1/artifacts/zzzzzzzz")).status).toBe(404)
-    expect((await app.request("/a/zzzzzzzz")).status).toBe(404)
     const bad = await upload("dist.zip", zipSync({}))
     expect(bad.status).toBe(400)
   })

@@ -45,11 +45,15 @@ export function AppShell({ children }: { children: ReactNode }) {
   // The top bar's right region; a page portals its actions here (see useTopBarSlot).
   const [topBarSlot, setTopBarSlot] = useState<HTMLElement | null>(null)
 
-  // Auth gate for the whole authed app (this shell wraps every non-login route):
-  // bounce to /login once we know there's no session.
+  // Public artifact pages (/a/:ref) render for anonymous visitors too — read-only,
+  // with a sign-up CTA (the viral path). Every other route requires a session.
+  const pathname = useRouterState({ select: (s) => s.location.pathname })
+  const publicView = pathname.startsWith("/a/")
+
+  // Auth gate: bounce to /login on auth-only routes once we know there's no session.
   useEffect(() => {
-    if (!loading && !me) nav({ to: "/login" })
-  }, [loading, me, nav])
+    if (!loading && !me && !publicView) nav({ to: "/login" })
+  }, [loading, me, publicView, nav])
 
   useEffect(() => {
     try {
@@ -99,8 +103,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   // is mounted once now (it no longer remounts per nav), so without this the
   // counts would freeze at their mount-time values after a publish / favorite /
   // collection edit. Keyed to the pathname, so in-page filter changes (search,
-  // tag) on the library don't trigger a refetch.
-  const pathname = useRouterState({ select: (s) => s.location.pathname })
+  // tag) on the library don't trigger a refetch. (pathname computed above.)
   // biome-ignore lint/correctness/useExhaustiveDependencies: pathname is an intentional re-run trigger — the effect refetches on every route change, even though its body doesn't read pathname.
   useEffect(() => {
     if (me) {
@@ -182,8 +185,9 @@ export function AppShell({ children }: { children: ReactNode }) {
   )
 
   // Until the session resolves, hold the frame rather than flashing the rail
-  // (and the redirect above handles the signed-out case).
-  if (loading || !me) return <CenteredSpinner />
+  // (and the redirect above handles the signed-out case). Public artifact pages
+  // render for anon visitors, so don't gate those on a session.
+  if (loading || (!me && !publicView)) return <CenteredSpinner />
 
   return (
     <ShellCtx.Provider value={value}>

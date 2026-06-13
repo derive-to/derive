@@ -22,6 +22,10 @@ describe("security: sandbox serving origin (A4)", () => {
     ).short_id
 
     // App (cookie) origin must never render user HTML — it 302s to the sandbox.
+    // The SPA's artifact iframe uses `${API_BASE}/raw/...` on the app origin; this
+    // redirect is what lands it on the sandbox origin, so untrusted HTML never
+    // touches the app's cookies. The isolation lives in this route, not in any
+    // server-rendered shell (the viewer is the SPA, client-rendered).
     const onApp = await app.request(`http://app.test/raw/${shortId}/v/1/index.html`)
     expect(onApp.status).toBe(302)
     expect(onApp.headers.get("location")).toBe(`http://sandbox.test/raw/${shortId}/v/1/index.html`)
@@ -38,11 +42,6 @@ describe("security: sandbox serving origin (A4)", () => {
     expect((await app.request(`http://sandbox.test/a/${shortId}`)).status).toBe(404)
     // Health stays reachable on the sandbox host (for its own monitoring).
     expect((await app.request("http://sandbox.test/healthz")).status).toBe(200)
-  })
-
-  it("the viewer shell points its iframe at the sandbox origin", async () => {
-    const shell = await (await app.request(`http://app.test/a/${shortId}`)).text()
-    expect(shell).toContain(`http://sandbox.test/raw/${shortId}/v/1/index.html`)
   })
 
   it("without a sandbox origin, raw is served in place (single-origin self-host)", async () => {

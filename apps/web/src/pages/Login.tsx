@@ -1,4 +1,4 @@
-import { useNavigate } from "@tanstack/react-router"
+import { getRouteApi, useNavigate } from "@tanstack/react-router"
 import { Check } from "lucide-react"
 import type { FormEvent } from "react"
 import { useEffect, useState } from "react"
@@ -16,10 +16,13 @@ const FEATURES: [string, string][] = [
   ["Yours to host", "Self-host the whole thing, or use the hosted tier."],
 ]
 
+const loginRoute = getRouteApi("/login")
+
 export function Login() {
   const { me, loading, setMe } = useAuth()
   const nav = useNavigate()
-  const [mode, setMode] = useState<"login" | "signup">("login")
+  const { signup: wantSignup } = loginRoute.useSearch()
+  const [mode, setMode] = useState<"login" | "signup">(wantSignup ? "signup" : "login")
   const [name, setName] = useState("")
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
