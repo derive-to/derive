@@ -384,7 +384,7 @@ export function CommentCard({
       onMouseLeave={() => onHover(null)}
       onClick={() => !active && onActivate(root.thread_id)}
       className={cn(
-        "cmt-card overflow-hidden rounded-lg border bg-card transition-[box-shadow,border-color]",
+        "animate-in fade-in slide-in-from-bottom-1 duration-200 overflow-hidden rounded-lg border bg-card transition-[box-shadow,border-color]",
         active
           ? "cursor-default border-primary shadow-[var(--shadow)]"
           : hovered
