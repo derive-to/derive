@@ -1,0 +1,21 @@
+# Cloudflare Workers entry for Dock (experimental edge tier: Workers + D1 + R2).
+# Replace database_id with your own `wrangler d1 create dock` id. See DEPLOY.md.
+name = "dock"
+main = "src/worker.ts"
+compatibility_date = "2024-11-01"
+compatibility_flags = ["nodejs_compat"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "dock"
+database_id = "REPLACE_WITH_YOUR_D1_ID"
+
+[[r2_buckets]]
+binding = "BUCKET"
+bucket_name = "dock-blobs"
+
+# baseUrl falls back to the request origin when unset. Secured by Better Auth; set
+# DOCK_AUTH_SECRET via `wrangler secret put`. Realtime runs in-process here;
+# cross-instance fan-out on the edge is a follow-up (a Durable Object backplane).
+[vars]
+DOCK_MULTI_WORKSPACE = "false"
