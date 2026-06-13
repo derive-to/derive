@@ -16,7 +16,18 @@ import { startWebhookWorker } from "./webhooks"
 
 const PORT = Number(process.env.PORT ?? 8080)
 const DATA_DIR = process.env.DATA_DIR ?? "./data"
-const BASE_URL = process.env.BASE_URL ?? `http://localhost:${PORT}`
+// The public origin: explicit BASE_URL wins; otherwise infer the URL a managed
+// host assigned us (Railway/Render/Fly) so a one-click deploy gets working auth
+// cookies + share links without anyone hand-typing the domain. Localhost is the
+// last resort. Override BASE_URL once you point a custom domain at it.
+const inferredBaseUrl = process.env.RAILWAY_PUBLIC_DOMAIN
+  ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`
+  : process.env.RENDER_EXTERNAL_URL
+    ? process.env.RENDER_EXTERNAL_URL
+    : process.env.FLY_APP_NAME
+      ? `https://${process.env.FLY_APP_NAME}.fly.dev`
+      : `http://localhost:${PORT}`
+const BASE_URL = process.env.BASE_URL ?? inferredBaseUrl
 const DATABASE_URL = process.env.DATABASE_URL
 
 // Single-container self-host: when the web SPA has been built (Docker image, or

@@ -31,12 +31,31 @@ Authoring + the anchor-client protocol are documented in [STANDARD.md](STANDARD.
 
 ```bash
 docker compose -f deploy/compose.yml up -d
-# → http://localhost:8080 · SQLite + local blobs in one volume, zero config
+# → http://localhost:8080 · the whole app (API + web), SQLite + blobs in one volume
 ```
 
-Optional env vars (nothing is required):
+The image bundles the web app and serves it same-origin, so one container is the
+complete product — sign-in, publish, comments, reviews, the sandboxed viewer — at
+one URL. Optional env vars (nothing is required):
 `DATABASE_URL` → Postgres · `OBJECT_STORE_URL` → S3/R2 · `DOCK_TOKEN` → require a
 bearer token for publishing and for reading gated artifacts · `BASE_URL`, `PORT`, `DATA_DIR`.
+
+### Deploy to the cloud
+
+The single-container image runs on any host with a persistent volume.
+
+[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/new)
+&nbsp;&nbsp;
+[![Deploy to Fly.io](https://img.shields.io/badge/Deploy%20to-Fly.io-8B5CF6)](DEPLOY.md)
+
+- **Railway** — New Project → *Deploy from GitHub repo* → this repo. `railway.json`
+  builds `deploy/Dockerfile`; add a **Volume mounted at `/data`** so SQLite + blobs
+  persist (or attach Railway Postgres and set `DATABASE_URL`).
+- **Fly.io** — `fly launch --config deploy/fly.toml --dockerfile deploy/Dockerfile`,
+  then `fly deploy`. The bundled volume keeps `/data`.
+
+Both auto-detect their assigned URL for auth cookies + share links; set `BASE_URL`
+only when you put a custom domain in front. Full guide: [DEPLOY.md](DEPLOY.md).
 
 ### The app & accounts
 

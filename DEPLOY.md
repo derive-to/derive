@@ -54,6 +54,23 @@ dock.example.com {
 Cloudflare Tunnel, nginx, or any host's built-in HTTPS works the same way. Then set
 `BASE_URL=https://dock.example.com` and you're live.
 
+### On a managed host (Railway / Render / Fly)
+
+Any host that builds a Dockerfile and gives you a persistent disk runs this as-is.
+
+- **Railway**: New Project → *Deploy from GitHub repo*. `railway.json` points it at
+  `deploy/Dockerfile`. Add a **Volume mounted at `/data`** for SQLite + blobs (or
+  attach Railway Postgres and set `DATABASE_URL`).
+- **Fly.io**: `fly launch --config deploy/fly.toml --dockerfile deploy/Dockerfile`
+  then `fly deploy` — `fly.toml` already mounts `/data`.
+- **Render**: a Docker web service + a persistent disk at `/data`.
+
+`PORT` is read from the environment, and the public URL is auto-detected from the
+host (`RAILWAY_PUBLIC_DOMAIN` / `RENDER_EXTERNAL_URL` / `FLY_APP_NAME`) so auth
+cookies and share links work out of the box. Set `BASE_URL` only when you point a
+custom domain at it. Set `DOCK_AUTH_SECRET` once so sessions survive redeploys on
+hosts with an ephemeral filesystem.
+
 ### First user
 
 The first person to sign up becomes the workspace **owner**; everyone after joins at
