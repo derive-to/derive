@@ -15,7 +15,7 @@
       "!**/.output",
       "!**/.vinxi",
       "!data",
-      "!docs/**",
+      "!docs",
       "!pnpm-lock.yaml"
     ]
   },
@@ -47,7 +47,7 @@
     "rules": {
       "preset": "recommended",
       "style": {
-        "noNonNullAssertion": "off"
+        "noNonNullAssertion": "error"
       },
       "complexity": {
         "useLiteralKeys": "off"

@@ -8,6 +8,7 @@ import { Spinner } from "@/components/shared/spinner"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { useAuth } from "@/ctx"
+import { STORAGE_KEYS } from "@/lib/storage-keys"
 import { cn } from "@/lib/utils"
 import { ActionsCtx, type CommentActions } from "./comment-actions"
 import { MobileComments, OpenPanel } from "./comment-panels"
@@ -19,10 +20,9 @@ import { toggleReaction } from "./lib/reactions"
 import { DeckBar, Presence, Rail } from "./rail-deck"
 import type { Panel, PinItem, Sel } from "./types"
 
-const PANEL_KEY = "dock.comments.panel"
 const loadPanel = (): Panel => {
   try {
-    const v = localStorage.getItem(PANEL_KEY)
+    const v = localStorage.getItem(STORAGE_KEYS.commentsPanel)
     return v === "rail" || v === "hidden" ? v : "open"
   } catch {
     return "open"
@@ -124,7 +124,7 @@ export function Artifact() {
   // Persist the collapse state.
   useEffect(() => {
     try {
-      localStorage.setItem(PANEL_KEY, panel)
+      localStorage.setItem(STORAGE_KEYS.commentsPanel, panel)
     } catch {
       /* private mode — ignore */
     }

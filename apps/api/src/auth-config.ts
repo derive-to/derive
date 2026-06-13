@@ -29,11 +29,10 @@ export function makeAuth(db: AuthDb, baseUrl: string, secret: string) {
   const trusted = [...new Set([baseUrl, ...webOrigins, ...devOrigins])]
 
   const socialProviders: Record<string, { clientId: string; clientSecret: string }> = {}
-  if (env("GOOGLE_CLIENT_ID") && env("GOOGLE_CLIENT_SECRET"))
-    socialProviders.google = {
-      clientId: env("GOOGLE_CLIENT_ID")!,
-      clientSecret: env("GOOGLE_CLIENT_SECRET")!,
-    }
+  const googleId = env("GOOGLE_CLIENT_ID")
+  const googleSecret = env("GOOGLE_CLIENT_SECRET")
+  if (googleId && googleSecret)
+    socialProviders.google = { clientId: googleId, clientSecret: googleSecret }
 
   const oidc: {
     providerId: string
@@ -42,12 +41,15 @@ export function makeAuth(db: AuthDb, baseUrl: string, secret: string) {
     clientSecret: string
     scopes: string[]
   }[] = []
-  if (env("OIDC_ISSUER") && env("OIDC_CLIENT_ID") && env("OIDC_CLIENT_SECRET"))
+  const oidcIssuer = env("OIDC_ISSUER")
+  const oidcId = env("OIDC_CLIENT_ID")
+  const oidcSecret = env("OIDC_CLIENT_SECRET")
+  if (oidcIssuer && oidcId && oidcSecret)
     oidc.push({
       providerId: env("OIDC_PROVIDER_ID") ?? "sso",
-      discoveryUrl: `${env("OIDC_ISSUER")!.replace(/\/$/, "")}/.well-known/openid-configuration`,
-      clientId: env("OIDC_CLIENT_ID")!,
-      clientSecret: env("OIDC_CLIENT_SECRET")!,
+      discoveryUrl: `${oidcIssuer.replace(/\/$/, "")}/.well-known/openid-configuration`,
+      clientId: oidcId,
+      clientSecret: oidcSecret,
       scopes: ["openid", "email", "profile"],
     })
 

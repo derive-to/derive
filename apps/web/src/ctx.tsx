@@ -1,5 +1,6 @@
 import { createContext, type ReactNode, useContext, useEffect, useState } from "react"
 import { api, type Me } from "./api"
+import { STORAGE_KEYS } from "./lib/storage-keys"
 
 /* ---- auth ---- */
 interface AuthState {
@@ -40,11 +41,13 @@ export const useTheme = () => useContext(ThemeCtx)
 export function ThemeProvider({ children }: { children: ReactNode }) {
   // Guard for the prerendered shell (no window/localStorage at build time).
   const [theme, setTheme] = useState(() =>
-    typeof localStorage === "undefined" ? "paper" : (localStorage.getItem("dock_theme") ?? "paper"),
+    typeof localStorage === "undefined"
+      ? "paper"
+      : (localStorage.getItem(STORAGE_KEYS.theme) ?? "paper"),
   )
   useEffect(() => {
     document.documentElement.dataset.theme = theme
-    localStorage.setItem("dock_theme", theme)
+    localStorage.setItem(STORAGE_KEYS.theme, theme)
   }, [theme])
   return <ThemeCtx.Provider value={{ theme, setTheme }}>{children}</ThemeCtx.Provider>
 }
