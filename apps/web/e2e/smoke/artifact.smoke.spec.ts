@@ -1,4 +1,11 @@
-import { addComment, expect, openArtifact, publishArtifact, test } from "../fixtures"
+import {
+  activateThread,
+  addComment,
+  expect,
+  openArtifact,
+  publishArtifact,
+  test,
+} from "../fixtures"
 
 // The core product loop, end to end: publish a doc, open it, comment, resolve.
 test("publish, open, comment, and resolve", async ({ owner }) => {
@@ -8,7 +15,7 @@ test("publish, open, comment, and resolve", async ({ owner }) => {
   await addComment(owner, "Looks good, shipping.")
 
   // Activate the thread, then resolve it — it collapses into the Resolved section.
-  await owner.getByText("Looks good, shipping.").click()
+  await activateThread(owner, "Looks good, shipping.")
   await owner.getByTestId("comment-resolve").click()
   await expect(owner.getByText(/Resolved \(\d+\)/)).toBeVisible()
 })

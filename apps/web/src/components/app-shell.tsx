@@ -1,17 +1,22 @@
 import { Link, useNavigate, useRouterState } from "@tanstack/react-router"
-import { type ReactNode, useCallback, useEffect, useState } from "react"
+import { lazy, type ReactNode, Suspense, useCallback, useEffect, useState } from "react"
 import { api, type Collection, type Workspaces } from "@/api"
 import { Button } from "@/components/ui/button"
 import { useAuth } from "@/ctx"
 import { STORAGE_KEYS } from "@/lib/storage-keys"
 import { useIsMobile } from "@/lib/use-is-mobile"
 import { cn } from "@/lib/utils"
-import { CommandPalette } from "./command-palette"
 import { Icon } from "./icons"
 import { NavRail } from "./nav-rail"
 import { Logo } from "./shared/logo"
 import { CenteredSpinner } from "./shared/spinner"
 import { ShellCtx, type ShellValue, type Summary } from "./shell-context"
+
+// The ⌘K palette pulls in cmdk; it's only needed once the user opens it, so keep
+// it (and cmdk) out of the shared bundle every route pays for. Loads on first open.
+const CommandPalette = lazy(() =>
+  import("./command-palette").then((m) => ({ default: m.CommandPalette })),
+)
 
 const COLLAPSE_KEY = STORAGE_KEYS.navCollapsed
 
@@ -189,7 +194,11 @@ export function AppShell({ children }: { children: ReactNode }) {
           <main className="flex min-w-0 flex-1 flex-col overflow-hidden">{children}</main>
         </div>
       </div>
-      <CommandPalette />
+      {paletteOpen && (
+        <Suspense fallback={null}>
+          <CommandPalette />
+        </Suspense>
+      )}
     </ShellCtx.Provider>
   )
 }
