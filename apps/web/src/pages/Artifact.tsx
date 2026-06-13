@@ -1312,50 +1312,49 @@ function MobileComments({
     <>
       {/* Backdrop only at full height (reading mode). At half the document above
           stays tappable/scrollable, so no dimming layer intercepts it. */}
-      {/* biome-ignore lint/a11y/useKeyWithClickEvents: backdrop dismissal mirrors the ✕ button. */}
-      <div
-        className={`sheet-backdrop${open && full ? " show" : ""}`}
+      <button
+        type="button"
+        aria-label="Close comments"
+        tabIndex={open && full ? 0 : -1}
         onClick={onClose}
-        aria-hidden
+        className={cn(
+          "fixed inset-0 z-[60] bg-black/35 transition-opacity",
+          open && full ? "opacity-100" : "pointer-events-none opacity-0",
+        )}
       />
       <div
-        className={`sheet ${full ? "full" : "half"}${open ? " show" : ""}`}
+        className={cn(
+          "fixed inset-x-0 bottom-0 z-[61] flex flex-col rounded-t-[18px] border-t border-border bg-card shadow-[0_-14px_44px_-18px_rgba(0,0,0,0.5)] transition-[transform,height] duration-[260ms]",
+          full ? "h-[88vh]" : "h-[50vh]",
+          open ? "translate-y-0" : "translate-y-full",
+        )}
         role="dialog"
         aria-label="Comments"
       >
         {/* biome-ignore lint/a11y/useKeyWithClickEvents: grip toggles height; ✕ closes. */}
         <div
-          className="sheet-grip"
+          className="mx-auto mb-1 mt-[9px] h-1 w-10 shrink-0 cursor-grab rounded-full bg-border"
           onClick={() => setFull((f) => !f)}
           title={full ? "Collapse" : "Expand"}
         />
-        <div className="sheet-head">
-          <b style={{ fontSize: 14 }}>Comments</b>
+        <div className="flex items-center gap-2 border-b border-border-soft pb-2.5 pl-3.5 pr-2.5 pt-1">
+          <b className="text-base">Comments</b>
           {openCount > 0 && (
-            <span
-              className="mono"
-              style={{
-                fontSize: 10,
-                color: "var(--cmt-tx)",
-                background: "var(--cmt-bg)",
-                borderRadius: 999,
-                padding: "1px 8px",
-                fontWeight: 700,
-              }}
-            >
+            <span className="rounded-full bg-accent px-2 py-px font-mono text-2xs font-bold text-primary">
               {openCount}
             </span>
           )}
-          <span style={{ flex: 1 }} />
-          <button
-            className="btn sm"
+          <span className="flex-1" />
+          <Button
+            variant="outline"
+            size="sm"
             onClick={() => {
               setFull(true)
               onNewGeneral()
             }}
           >
             ＋ New
-          </button>
+          </Button>
           <IconBtn title={full ? "Collapse" : "Expand"} onClick={() => setFull((f) => !f)}>
             {full ? "▾" : "▴"}
           </IconBtn>
@@ -1363,9 +1362,9 @@ function MobileComments({
             ✕
           </IconBtn>
         </div>
-        <div className="sheet-body">
+        <div className="min-h-0 flex-1 overflow-auto p-3 pb-[max(14px,env(safe-area-inset-bottom))]">
           {composer && (
-            <div style={{ marginBottom: 12 }}>
+            <div className="mb-3">
               <Composer
                 quote={composer.anchor?.exact ?? null}
                 onSubmit={onSubmitNew}
@@ -1374,12 +1373,9 @@ function MobileComments({
             </div>
           )}
           {empty && (
-            <div
-              className="center"
-              style={{ flexDirection: "column", gap: 8, padding: 34, textAlign: "center" }}
-            >
-              <div style={{ fontSize: 28, opacity: 0.5 }}>💬</div>
-              <div className="muted" style={{ fontSize: 13, lineHeight: 1.5 }}>
+            <div className="grid place-items-center gap-2 p-[34px] text-center">
+              <div className="text-3xl opacity-50">💬</div>
+              <div className="text-sm leading-relaxed text-muted-foreground">
                 No comments yet.
                 <br />
                 Select text in the document to start one.
@@ -1387,7 +1383,7 @@ function MobileComments({
             </div>
           )}
           {openThreads.map((t) => (
-            <div key={t[0].thread_id} style={{ marginBottom: 10 }}>
+            <div key={t[0].thread_id} className="mb-2.5">
               <CommentCard
                 thread={t}
                 active={activeThread === t[0].thread_id}
@@ -1470,32 +1466,14 @@ function OpenPanel(props: {
 
   return (
     <>
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 8,
-          padding: "10px 8px 10px 14px",
-          borderBottom: "1px solid var(--line-soft)",
-        }}
-      >
-        <b style={{ fontSize: 13 }}>Comments</b>
+      <div className="flex items-center gap-2 border-b border-border-soft py-2.5 pl-3.5 pr-2">
+        <b className="text-sm">Comments</b>
         {openCount > 0 && (
-          <span
-            className="mono"
-            style={{
-              fontSize: 10,
-              color: "var(--cmt-tx)",
-              background: "var(--cmt-bg)",
-              borderRadius: 999,
-              padding: "1px 8px",
-              fontWeight: 700,
-            }}
-          >
+          <span className="rounded-full bg-accent px-2 py-px font-mono text-2xs font-bold text-primary">
             {openCount}
           </span>
         )}
-        <span style={{ flex: 1 }} />
+        <span className="flex-1" />
         <IconBtn title="New comment" onClick={onNewGeneral}>
           ＋
         </IconBtn>
@@ -1507,7 +1485,7 @@ function OpenPanel(props: {
         </IconBtn>
       </div>
 
-      <div style={{ flex: 1, minHeight: 0, position: "relative", overflow: "hidden" }}>
+      <div className="relative min-h-0 flex-1 overflow-hidden">
         {/* Pinned margin — cards (and a new-comment composer) float beside their
             highlighted text, sharing one overlap-free layout. */}
         <PinnedZone
@@ -1527,19 +1505,9 @@ function OpenPanel(props: {
 
         {/* Empty state. */}
         {empty && (
-          <div
-            className="center"
-            style={{
-              position: "absolute",
-              inset: 0,
-              flexDirection: "column",
-              gap: 8,
-              padding: 24,
-              textAlign: "center",
-            }}
-          >
-            <div style={{ fontSize: 26, opacity: 0.5 }}>💬</div>
-            <div className="muted" style={{ fontSize: 12.5, lineHeight: 1.5 }}>
+          <div className="absolute inset-0 grid place-items-center gap-2 p-6 text-center">
+            <div className="text-3xl opacity-50">💬</div>
+            <div className="text-sm leading-relaxed text-muted-foreground">
               No comments yet.
               <br />
               Select text in the document to start one.
@@ -1550,17 +1518,9 @@ function OpenPanel(props: {
 
       {/* General + resolved threads live in a scrollable footer drawer. */}
       {(generalComposer || general.length > 0 || resolved.length > 0) && (
-        <div
-          style={{
-            flex: "0 0 auto",
-            maxHeight: "44%",
-            overflow: "auto",
-            borderTop: "1px solid var(--line-soft)",
-            padding: 10,
-          }}
-        >
+        <div className="max-h-[44%] shrink-0 overflow-auto border-t border-border-soft p-2.5">
           {generalComposer && (
-            <div style={{ marginBottom: 10 }}>
+            <div className="mb-2.5">
               <Composer quote={null} onSubmit={onSubmitNew} onCancel={onCancelNew} />
             </div>
           )}
@@ -1568,7 +1528,7 @@ function OpenPanel(props: {
             <>
               <SectionLabel>General</SectionLabel>
               {general.map((t) => (
-                <div key={t[0].thread_id} style={{ marginBottom: 9 }}>
+                <div key={t[0].thread_id} className="mb-2.5">
                   <CommentCard
                     thread={t}
                     active={activeThread === t[0].thread_id}
@@ -2872,59 +2832,42 @@ function DiffView({
 }) {
   if (!diff)
     return (
-      <div className="center" style={{ flex: 1 }}>
-        <div className="spin" />
+      <div className="grid flex-1 place-items-center">
+        <Spinner />
       </div>
     )
   const adds = diff.ops.filter((o) => o.t === "add").length
   const dels = diff.ops.filter((o) => o.t === "del").length
   return (
-    <div style={{ flex: 1, overflow: "auto", background: "var(--card)" }}>
-      <div
-        style={{
-          display: "flex",
-          gap: 12,
-          padding: "8px 16px",
-          borderBottom: "1px solid var(--line-soft)",
-          fontSize: 12,
-          alignItems: "center",
-        }}
-      >
+    <div className="flex-1 overflow-auto bg-card">
+      <div className="flex items-center gap-3 border-b border-border-soft px-4 py-2 text-sm">
         {fromLabel && toLabel && (
-          <span className="mono muted" style={{ marginRight: "auto" }}>
+          <span className="mr-auto font-mono text-muted-foreground">
             {fromLabel} → {toLabel}
           </span>
         )}
-        <span className="mono" style={{ color: "var(--good)" }}>
-          +{adds}
-        </span>
-        <span className="mono" style={{ color: "var(--bad)" }}>
-          −{dels}
-        </span>
-        <span className="mono muted">{diff.ops.length} lines</span>
+        <span className="font-mono text-success">+{adds}</span>
+        <span className="font-mono text-destructive">−{dels}</span>
+        <span className="font-mono text-muted-foreground">{diff.ops.length} lines</span>
       </div>
-      <pre
-        className="mono"
-        style={{ margin: 0, padding: "10px 0", fontSize: 12.5, lineHeight: 1.6 }}
-      >
+      <pre className="m-0 py-2.5 font-mono text-sm leading-relaxed">
         {diff.ops.map((o, i) => (
           <div
             key={i}
-            style={{
-              padding: "0 16px",
-              whiteSpace: "pre-wrap",
-              wordBreak: "break-word",
-              background:
-                o.t === "add" ? "var(--good-bg)" : o.t === "del" ? "var(--cmt-bg)" : "transparent",
-              color: o.t === "ctx" ? "var(--fg-mut)" : "var(--fg)",
-            }}
+            className={cn(
+              "whitespace-pre-wrap break-words px-4",
+              o.t === "add"
+                ? "bg-success/15 text-foreground"
+                : o.t === "del"
+                  ? "bg-destructive/10 text-foreground"
+                  : "text-muted-foreground",
+            )}
           >
             <span
-              style={{
-                userSelect: "none",
-                color: o.t === "add" ? "var(--good)" : o.t === "del" ? "var(--bad)" : "var(--line)",
-                marginRight: 10,
-              }}
+              className={cn(
+                "mr-2.5 select-none",
+                o.t === "add" ? "text-success" : o.t === "del" ? "text-destructive" : "text-border",
+              )}
             >
               {o.t === "add" ? "+" : o.t === "del" ? "−" : " "}
             </span>
