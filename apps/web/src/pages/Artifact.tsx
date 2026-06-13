@@ -512,6 +512,11 @@ export function Artifact() {
               flexDirection: "column",
               minWidth: 0,
               position: "relative",
+              // On phones, the comments sheet sits in the bottom half — reserve
+              // that space so the document stays visible above it (and a
+              // jumped-to highlight lands in view, not behind the sheet).
+              paddingBottom: isMobile && panel === "open" ? "50vh" : undefined,
+              transition: "padding-bottom .26s cubic-bezier(.4,0,.2,1)",
             }}
           >
             {editing ? (
@@ -723,9 +728,10 @@ export function Artifact() {
             </aside>
           )}
         </div>
-        {/* Phones: comments live in a slide-up sheet over the full-width document
-          — a flat thread list (no document margin), tapping a quote jumps to the
-          text and closes the sheet. */}
+        {/* Phones: comments live in a slide-up sheet that takes the bottom half,
+          so the document stays visible above it. A flat thread list (no document
+          margin); tapping a quote scrolls the visible document to the highlight
+          without closing the sheet. The grip expands it to full for reading. */}
         {isMobile && (
           <MobileComments
             open={panel === "open"}
@@ -747,10 +753,7 @@ export function Artifact() {
             onActivate={activate}
             onResolve={toggleResolve}
             onReply={reply}
-            onJump={(id) => {
-              jumpTo(id)
-              setPanel("hidden")
-            }}
+            onJump={jumpTo}
             onSubmitNew={submitNew}
             onCancelNew={() => {
               setComposer(null)
@@ -824,19 +827,42 @@ function MobileComments({
   onSubmitNew: (text: string) => void
   onCancelNew: () => void
 }) {
+  // Half by default (document visible above). Reset to half each time it opens;
+  // a composer wants room, so expand to full automatically.
+  const [full, setFull] = useState(false)
+  useEffect(() => {
+    if (open) setFull(false)
+  }, [open])
+  useEffect(() => {
+    if (open && composer) setFull(true)
+  }, [open, composer])
   const empty = openThreads.length === 0 && resolved.length === 0 && !composer
+  // Jumping to text: collapse to half so the highlight lands in the visible doc.
+  const jumpToText = (id: string) => {
+    setFull(false)
+    onJump(id)
+  }
   return (
     <>
+      {/* Backdrop only at full height (reading mode). At half the document above
+          stays tappable/scrollable, so no dimming layer intercepts it. */}
       {/* biome-ignore lint/a11y/useKeyWithClickEvents: backdrop dismissal mirrors the ✕ button. */}
-      <div className={`sheet-backdrop${open ? " show" : ""}`} onClick={onClose} aria-hidden />
       <div
-        className={`sheet${open ? " show" : ""}`}
+        className={`sheet-backdrop${open && full ? " show" : ""}`}
+        onClick={onClose}
+        aria-hidden
+      />
+      <div
+        className={`sheet ${full ? "full" : "half"}${open ? " show" : ""}`}
         role="dialog"
-        aria-modal="true"
         aria-label="Comments"
       >
-        {/* biome-ignore lint/a11y/useKeyWithClickEvents: grip is a redundant close affordance. */}
-        <div className="sheet-grip" onClick={onClose} />
+        {/* biome-ignore lint/a11y/useKeyWithClickEvents: grip toggles height; ✕ closes. */}
+        <div
+          className="sheet-grip"
+          onClick={() => setFull((f) => !f)}
+          title={full ? "Collapse" : "Expand"}
+        />
         <div className="sheet-head">
           <b style={{ fontSize: 14 }}>Comments</b>
           {openCount > 0 && (
@@ -855,9 +881,18 @@ function MobileComments({
             </span>
           )}
           <span style={{ flex: 1 }} />
-          <button className="btn sm" onClick={onNewGeneral}>
+          <button
+            className="btn sm"
+            onClick={() => {
+              setFull(true)
+              onNewGeneral()
+            }}
+          >
             ＋ New
           </button>
+          <IconBtn title={full ? "Collapse" : "Expand"} onClick={() => setFull((f) => !f)}>
+            {full ? "▾" : "▴"}
+          </IconBtn>
           <IconBtn title="Close comments" onClick={onClose}>
             ✕
           </IconBtn>
@@ -896,7 +931,7 @@ function MobileComments({
                 onHover={() => {}}
                 onResolve={onResolve}
                 onReply={onReply}
-                onJump={onJump}
+                onJump={jumpToText}
               />
             </div>
           ))}
@@ -909,7 +944,7 @@ function MobileComments({
               onHover={() => {}}
               onResolve={onResolve}
               onReply={onReply}
-              onJump={onJump}
+              onJump={jumpToText}
             />
           )}
         </div>
