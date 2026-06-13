@@ -16,6 +16,12 @@ import { startWebhookWorker } from "./webhooks"
 
 const PORT = Number(process.env.PORT ?? 8080)
 const DATA_DIR = process.env.DATA_DIR ?? "./data"
+
+/** Parse a positive integer env var; undefined (unset/blank/≤0/NaN) = "no limit". */
+const posInt = (v: string | undefined): number | undefined => {
+  const n = v ? Number(v) : NaN
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : undefined
+}
 // The public origin: explicit BASE_URL wins; otherwise infer the URL a managed
 // host assigned us (Railway/Render/Fly) so a one-click deploy gets working auth
 // cookies + share links without anyone hand-typing the domain. Localhost is the
@@ -156,6 +162,12 @@ const app = createApp({
   versionWindowMs: process.env.DOCK_VERSION_WINDOW
     ? Number(process.env.DOCK_VERSION_WINDOW) * 60_000
     : undefined,
+  // Storage backstops: unset = unlimited (self-host stays open).
+  maxArtifacts: posInt(process.env.DOCK_MAX_ARTIFACTS),
+  maxBytes: posInt(process.env.DOCK_MAX_BYTES),
+  // Per-actor write rate limits (per minute); unset = built-in defaults.
+  publishRate: posInt(process.env.DOCK_PUBLISH_RATE),
+  commentRate: posInt(process.env.DOCK_COMMENT_RATE),
 })
 
 // Serve the bundled SPA from this process (single-container self-host). The API

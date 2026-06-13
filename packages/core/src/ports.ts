@@ -50,6 +50,8 @@ export interface VersionRecord {
   n: number
   blob_key: string
   content_type: string
+  /** Byte length of the uploaded payload, summed per workspace for storage quotas. */
+  size_bytes: number
   author: string
   message: string | null
   /** A named checkpoint (Docs-style). Null = an ordinary auto-saved revision. */
@@ -72,6 +74,7 @@ export interface NewVersion {
   id: string
   blob_key: string
   content_type: string
+  size_bytes?: number
   author: string
   message: string | null
   name?: string | null
@@ -107,6 +110,8 @@ export interface MetaStore {
   artifactIdsByTag(tag: string): Promise<string[]>
   /** Total artifact count, scoped to a workspace when orgId is given. */
   countArtifacts(orgId?: string): Promise<number>
+  /** Sum of version byte sizes across the workspace — the storage-quota meter. */
+  storageBytes(): Promise<number>
   /** Tag → usage count, scoped to a workspace when orgId is given (browse sidebar). */
   tagCounts(orgId?: string): Promise<{ tag: string; count: number }[]>
 

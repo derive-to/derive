@@ -139,6 +139,22 @@ export interface AppDeps {
   /** In-memory per-IP rate limiting on auth + mutating routes. Off by default. */
   rateLimit?: boolean
   /**
+   * Per-workspace storage backstops (abuse gate). Both default to unlimited so
+   * self-host stays open; the hosted tier sets them. maxArtifacts caps how many
+   * artifacts a workspace can create; maxBytes caps the summed byte size of all
+   * stored versions. Exceeding maxArtifacts → 409, maxBytes → 413.
+   */
+  maxArtifacts?: number
+  maxBytes?: number
+  /**
+   * Per-actor (signed-in user or agent, falling back to IP) write rate limits,
+   * in actions per minute. Applied only when rateLimit is on; identity-keyed so
+   * one noisy account can't drown the workspace. Default: 30 publishes/min,
+   * 60 comments/min.
+   */
+  publishRate?: number
+  commentRate?: number
+  /**
    * The web SPA is served from this same process (single-container self-host).
    * When true, the bare `/` placeholder is dropped so the bundled SPA's index
    * owns the app shell; the Node entry wires the static + fallback middleware.
@@ -238,6 +254,23 @@ function makeRateLimiter(windowMs: number, max: number) {
       return c.json({ error: "rate limit exceeded" }, 429)
     }
     return next()
+  }
+}
+
+/** Fixed-window limiter keyed by an arbitrary string (e.g. an actor id), for
+ *  identity-based limits on specific actions — distinct from the IP middleware. */
+function makeKeyedLimiter(windowMs: number, max: number) {
+  const hits = new Map<string, { count: number; reset: number }>()
+  return (key: string): { ok: boolean; retryAfter: number } => {
+    const now = Date.now()
+    if (hits.size > 10_000) for (const [k, v] of hits) if (v.reset < now) hits.delete(k)
+    let b = hits.get(key)
+    if (!b || b.reset < now) {
+      b = { count: 0, reset: now + windowMs }
+      hits.set(key, b)
+    }
+    b.count++
+    return { ok: b.count <= max, retryAfter: Math.ceil((b.reset - now) / 1000) }
   }
 }
 
@@ -389,6 +422,11 @@ export function createApp(deps: AppDeps): Hono {
       c.req.method === "GET" || c.req.method === "HEAD" ? next() : writeLimiter(c, next),
     )
   }
+  // Per-actor limiters on the two flood-prone actions, identity-keyed so one
+  // account can't drown the workspace even from many IPs. Active only when
+  // rate limiting is on; the IP middleware above is the per-origin backstop.
+  const publishLimiter = deps.rateLimit ? makeKeyedLimiter(60_000, deps.publishRate ?? 30) : null
+  const commentLimiter = deps.rateLimit ? makeKeyedLimiter(60_000, deps.commentRate ?? 60) : null
 
   const bearer = (c: Context): string => {
     const h = c.req.header("authorization") ?? ""
@@ -421,6 +459,31 @@ export function createApp(deps: AppDeps): Hono {
     const me = await currentUser(c)
     return me ? { id: me.id, name: me.name ?? me.email } : null
   }
+
+  const ipOf = (c: Context): string =>
+    (c.req.header("x-forwarded-for")?.split(",")[0] ?? c.req.header("x-real-ip") ?? "global").trim()
+  // A stable rate-limit key for the caller: the signed-in user / agent if known,
+  // otherwise their IP so anonymous floods are still bounded.
+  const actorKey = async (c: Context): Promise<string> => {
+    const a = await actingUser(c)
+    return a ? `id:${a.id}` : `ip:${ipOf(c)}`
+  }
+
+  // Apply a keyed limiter to the caller; returns a 429 Response when over, else
+  // null to continue. Helper because publish + propose + comment share it.
+  const limited = async (
+    c: Context,
+    limiter: ReturnType<typeof makeKeyedLimiter> | null,
+  ): Promise<Response | null> => {
+    if (!limiter) return null
+    const r = limiter(await actorKey(c))
+    if (r.ok) return null
+    c.header("Retry-After", String(r.retryAfter))
+    return c.json({ error: "rate limit exceeded" }, 429)
+  }
+  // Would storing `incoming` more bytes push the workspace over its storage cap?
+  const overStorage = async (incoming: number): Promise<boolean> =>
+    !!deps.maxBytes && (await meta.storageBytes()) + incoming > deps.maxBytes
 
   // ---- Authorization ----------------------------------------------------
   // One choke point: every gate resolves an Actor and asks can(). An unsecured
@@ -1007,6 +1070,11 @@ export function createApp(deps: AppDeps): Hono {
     } else if (!(await workspaceCan(c, "publish"))) {
       return c.json({ error: "forbidden" }, 403)
     }
+    const rl = await limited(c, publishLimiter)
+    if (rl) return rl
+    // A new artifact counts against the artifact cap; republishes don't.
+    if (!shortId && deps.maxArtifacts && (await meta.countArtifacts()) >= deps.maxArtifacts)
+      return c.json({ error: "artifact quota reached" }, 409)
     const len = Number(c.req.header("content-length") ?? 0)
     if (len > MAX_UPLOAD_BYTES) return c.json({ error: "upload too large" }, 413)
 
@@ -1015,6 +1083,7 @@ export function createApp(deps: AppDeps): Hono {
     if (!(file instanceof File)) return c.json({ error: "multipart field 'file' required" }, 400)
 
     const bytes = new Uint8Array(await file.arrayBuffer())
+    if (await overStorage(bytes.length)) return c.json({ error: "storage quota exceeded" }, 413)
     const isBundle =
       /\.zip$/i.test(file.name) ||
       body["kind"] === "bundle" ||
@@ -1442,6 +1511,8 @@ export function createApp(deps: AppDeps): Hono {
     const artifact = await meta.getByShortId(c.req.param("shortId"))
     if (!artifact || artifact.current_version === 0) return c.json({ error: "not found" }, 404)
     if (!(await authorize(c, "propose", artifact))) return c.json({ error: "forbidden" }, 403)
+    const rl = await limited(c, publishLimiter)
+    if (rl) return rl
     const len = Number(c.req.header("content-length") ?? 0)
     if (len > MAX_UPLOAD_BYTES) return c.json({ error: "upload too large" }, 413)
 
@@ -1449,6 +1520,8 @@ export function createApp(deps: AppDeps): Hono {
     const file = body.file
     if (!(file instanceof File)) return c.json({ error: "multipart field 'file' required" }, 400)
     const bytes = new Uint8Array(await file.arrayBuffer())
+    // Proposals store a blob immediately, so they count toward the storage cap.
+    if (await overStorage(bytes.length)) return c.json({ error: "storage quota exceeded" }, 413)
     const isBundle =
       /\.zip$/i.test(file.name) ||
       body.kind === "bundle" ||
@@ -1521,7 +1594,7 @@ export function createApp(deps: AppDeps): Hono {
     const approver = me ? (me.name ?? me.email) : null
     const body = (await c.req.json().catch(() => ({}))) as { note?: unknown }
     try {
-      const version = await approveProposal(meta, proposal, approver, str(body.note) ?? null)
+      const version = await approveProposal(meta, blobs, proposal, approver, str(body.note) ?? null)
       bus.publish(artifact.id, {
         type: "proposal.approved",
         proposal_id: proposal.id,
@@ -1594,6 +1667,8 @@ export function createApp(deps: AppDeps): Hono {
     const artifact = await meta.getByShortId(c.req.param("shortId"))
     if (!artifact || artifact.current_version === 0) return c.json({ error: "not found" }, 404)
     if (!(await authorize(c, "comment", artifact))) return c.json({ error: "forbidden" }, 403)
+    const rl = await limited(c, commentLimiter)
+    if (rl) return rl
     const body = (await c.req.json().catch(() => ({}))) as Record<string, unknown>
     if (typeof body.body_md !== "string" || body.body_md.trim() === "")
       return c.json({ error: "body_md required" }, 400)

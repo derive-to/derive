@@ -147,6 +147,7 @@ export async function publish(
       id: newId("v"),
       blob_key: blobKey,
       content_type: contentType,
+      size_bytes: input.bytes.length,
       author,
       message: input.message ?? null,
       name: input.name ?? null,
@@ -169,6 +170,7 @@ export async function publish(
     id: newId("v"),
     blob_key: blobKey,
     content_type: contentType,
+    size_bytes: input.bytes.length,
     author,
     message: input.message ?? "first publish",
     name: input.name ?? null,
@@ -236,16 +238,21 @@ export async function propose(
  */
 export async function approveProposal(
   meta: MetaStore,
+  blobs: BlobStore,
   proposal: ProposalRecord,
   approver: string | null,
   note?: string | null,
 ): Promise<VersionRecord> {
   if (proposal.state !== "open")
     throw new PublishError(409, `proposal is ${proposal.state}, not open`)
+  // The proposal already stored its blob; the approved version reuses it, so
+  // its byte cost is first counted here (proposals don't create versions).
+  const stored = await blobs.get(proposal.blob_key)
   const version = await meta.addVersion(proposal.artifact_id, {
     id: newId("v"),
     blob_key: proposal.blob_key,
     content_type: proposal.content_type,
+    size_bytes: stored?.length ?? 0,
     author: proposal.author,
     message: proposal.message ?? "Approved proposal",
     name: null,

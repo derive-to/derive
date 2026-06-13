@@ -227,6 +227,13 @@ export class SqliteMetaStore implements MetaStore {
     const q = this.db.select({ c: count() }).from(artifact)
     return (orgId ? q.where(eq(artifact.org_id, orgId)).get() : q.get())?.c ?? 0
   }
+  async storageBytes(): Promise<number> {
+    const row = this.db
+      .select({ s: sql<number>`coalesce(sum(${version.size_bytes}), 0)` })
+      .from(version)
+      .get()
+    return Number(row?.s ?? 0)
+  }
   async tagCounts(orgId?: string): Promise<{ tag: string; count: number }[]> {
     const base = this.db
       .select({ tag: artifactTag.tag, count: count() })
