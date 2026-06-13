@@ -21,11 +21,13 @@ import type {
   ViewStats,
   WebhookRecord,
 } from "@dock/core"
-import { and, asc, count, desc, eq, isNull, lte, or, sql } from "drizzle-orm"
+import { and, asc, count, desc, eq, inArray, isNull, lte, or, sql } from "drizzle-orm"
 import { type DrizzleD1Database, drizzle } from "drizzle-orm/d1"
 import {
   artifact,
+  artifactFavorite,
   artifactMember,
+  artifactTag,
   comment,
   membership,
   version,
@@ -33,7 +35,17 @@ import {
   webhookDelivery,
 } from "./schema"
 
-const schema = { artifact, version, comment, webhook, webhookDelivery, membership, artifactMember }
+const schema = {
+  artifact,
+  version,
+  comment,
+  webhook,
+  webhookDelivery,
+  membership,
+  artifactMember,
+  artifactFavorite,
+  artifactTag,
+}
 const VIEW_WINDOW_MS = 30 * 86400_000
 
 /**
@@ -306,6 +318,55 @@ export class D1MetaStore implements MetaStore {
       .delete(artifactMember)
       .where(and(eq(artifactMember.artifact_id, artifactId), eq(artifactMember.user_id, userId)))
       .run()
+  }
+
+  // ---- Favorites + tags --------------------------------------------------
+  async listUserFavoriteIds(userId: string): Promise<string[]> {
+    const rows = await this.db
+      .select({ id: artifactFavorite.artifact_id })
+      .from(artifactFavorite)
+      .where(eq(artifactFavorite.user_id, userId))
+      .all()
+    return rows.map((r) => r.id)
+  }
+  async setFavorite(artifactId: string, userId: string): Promise<void> {
+    await this.db
+      .insert(artifactFavorite)
+      .values({ id: crypto.randomUUID(), artifact_id: artifactId, user_id: userId })
+      .onConflictDoNothing({ target: [artifactFavorite.artifact_id, artifactFavorite.user_id] })
+      .run()
+  }
+  async removeFavorite(artifactId: string, userId: string): Promise<void> {
+    await this.db
+      .delete(artifactFavorite)
+      .where(
+        and(eq(artifactFavorite.artifact_id, artifactId), eq(artifactFavorite.user_id, userId)),
+      )
+      .run()
+  }
+  async tagsForArtifacts(artifactIds: string[]): Promise<Record<string, string[]>> {
+    if (artifactIds.length === 0) return {}
+    const rows = await this.db
+      .select({ artifact_id: artifactTag.artifact_id, tag: artifactTag.tag })
+      .from(artifactTag)
+      .where(inArray(artifactTag.artifact_id, artifactIds))
+      .all()
+    const out: Record<string, string[]> = {}
+    for (const r of rows) {
+      if (!out[r.artifact_id]) out[r.artifact_id] = []
+      out[r.artifact_id].push(r.tag)
+    }
+    for (const k in out) out[k].sort()
+    return out
+  }
+  // D1 has no interactive transactions; replace is delete-then-insert.
+  async setArtifactTags(artifactId: string, tags: string[]): Promise<void> {
+    await this.db.delete(artifactTag).where(eq(artifactTag.artifact_id, artifactId)).run()
+    if (tags.length)
+      await this.db
+        .insert(artifactTag)
+        .values(tags.map((tag) => ({ id: crypto.randomUUID(), artifact_id: artifactId, tag })))
+        .run()
   }
 
   // ---- User directory (Better Auth's `user` table; raw, may be absent) ---

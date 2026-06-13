@@ -117,6 +117,32 @@ export const artifactMember = pgTable(
   (t) => [uniqueIndex("artifact_member_user").on(t.artifact_id, t.user_id)],
 )
 
+export const artifactFavorite = pgTable(
+  "artifact_favorite",
+  {
+    id: text("id").primaryKey(),
+    artifact_id: text("artifact_id")
+      .notNull()
+      .references(() => artifact.id),
+    user_id: text("user_id").notNull(),
+    created_at: text("created_at").notNull().$defaultFn(isoNow),
+  },
+  (t) => [uniqueIndex("artifact_favorite_user").on(t.artifact_id, t.user_id)],
+)
+
+export const artifactTag = pgTable(
+  "artifact_tag",
+  {
+    id: text("id").primaryKey(),
+    artifact_id: text("artifact_id")
+      .notNull()
+      .references(() => artifact.id),
+    tag: text("tag").notNull(),
+    created_at: text("created_at").notNull().$defaultFn(isoNow),
+  },
+  (t) => [uniqueIndex("artifact_tag_uniq").on(t.artifact_id, t.tag)],
+)
+
 // Compile-time guard: the pg table defs must match the core record shapes (and
 // therefore the sqlite defs). Drift here means SQLite and Postgres disagree.
 type Exact<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false
@@ -238,4 +264,20 @@ export const PG_SCHEMA_STATEMENTS: string[] = [
     created_at TEXT NOT NULL DEFAULT ${isoDefault},
     UNIQUE (artifact_id, user_id)
   )`,
+  `CREATE TABLE IF NOT EXISTS artifact_favorite (
+    id TEXT PRIMARY KEY,
+    artifact_id TEXT NOT NULL REFERENCES artifact(id),
+    user_id TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT ${isoDefault},
+    UNIQUE (artifact_id, user_id)
+  )`,
+  `CREATE INDEX IF NOT EXISTS favorite_user ON artifact_favorite (user_id)`,
+  `CREATE TABLE IF NOT EXISTS artifact_tag (
+    id TEXT PRIMARY KEY,
+    artifact_id TEXT NOT NULL REFERENCES artifact(id),
+    tag TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT ${isoDefault},
+    UNIQUE (artifact_id, tag)
+  )`,
+  `CREATE INDEX IF NOT EXISTS tag_name ON artifact_tag (tag)`,
 ]

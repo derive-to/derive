@@ -120,6 +120,34 @@ export const artifactMember = sqliteTable(
   (t) => [uniqueIndex("artifact_member_user").on(t.artifact_id, t.user_id)],
 )
 
+// Per-user stars. One row per (artifact, user); favorites are personal, never shared.
+export const artifactFavorite = sqliteTable(
+  "artifact_favorite",
+  {
+    id: text("id").primaryKey(),
+    artifact_id: text("artifact_id")
+      .notNull()
+      .references(() => artifact.id),
+    user_id: text("user_id").notNull(),
+    created_at: text("created_at").notNull().default(now),
+  },
+  (t) => [uniqueIndex("artifact_favorite_user").on(t.artifact_id, t.user_id)],
+)
+
+// Browse tags. One row per (artifact, tag); workspace-wide, not per-user.
+export const artifactTag = sqliteTable(
+  "artifact_tag",
+  {
+    id: text("id").primaryKey(),
+    artifact_id: text("artifact_id")
+      .notNull()
+      .references(() => artifact.id),
+    tag: text("tag").notNull(),
+    created_at: text("created_at").notNull().default(now),
+  },
+  (t) => [uniqueIndex("artifact_tag_uniq").on(t.artifact_id, t.tag)],
+)
+
 // user/session/account/verification tables are owned and migrated by Better Auth
 // (see apps/api/src/auth-config.ts) — not declared here.
 
@@ -230,6 +258,22 @@ export const SCHEMA_STATEMENTS: string[] = [
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
     UNIQUE (artifact_id, user_id)
   )`,
+  `CREATE TABLE IF NOT EXISTS artifact_favorite (
+    id TEXT PRIMARY KEY,
+    artifact_id TEXT NOT NULL REFERENCES artifact(id),
+    user_id TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    UNIQUE (artifact_id, user_id)
+  )`,
+  `CREATE INDEX IF NOT EXISTS favorite_user ON artifact_favorite (user_id)`,
+  `CREATE TABLE IF NOT EXISTS artifact_tag (
+    id TEXT PRIMARY KEY,
+    artifact_id TEXT NOT NULL REFERENCES artifact(id),
+    tag TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    UNIQUE (artifact_id, tag)
+  )`,
+  `CREATE INDEX IF NOT EXISTS tag_name ON artifact_tag (tag)`,
   // user/session/account/verification are owned and migrated by Better Auth.
 ]
 

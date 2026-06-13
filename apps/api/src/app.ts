@@ -302,14 +302,20 @@ export function createApp(deps: AppDeps): Hono {
   })
 
   app.get("/v1/artifacts", async (c) => {
-    if (!(await currentUser(c)) && deps.token && bearer(c) !== deps.token)
+    const me = await currentUser(c)
+    if (!me && deps.token && bearer(c) !== deps.token)
       return c.json({ error: "unauthenticated" }, 401)
     const artifacts = await meta.listArtifacts({ limit: 200 })
-    const counts = analyticsOn ? await meta.viewCounts(artifacts.map((a) => a.id)) : {}
+    const ids = artifacts.map((a) => a.id)
+    const counts = analyticsOn ? await meta.viewCounts(ids) : {}
+    const tags = await meta.tagsForArtifacts(ids)
+    const favorites = me ? new Set(await meta.listUserFavoriteIds(me.id)) : new Set<string>()
     return c.json({
       artifacts: artifacts.map((a) => ({
         ...toJson(deps.baseUrl, a, []),
         views: counts[a.id] ?? 0,
+        tags: tags[a.id] ?? [],
+        favorite: favorites.has(a.id),
       })),
     })
   })
@@ -401,6 +407,9 @@ export function createApp(deps: AppDeps): Hono {
     if (!artifact || !can(actor, "read", artifact.visibility))
       return c.json({ error: "not found" }, 404)
     const versions = await meta.listVersions(artifact.id)
+    const me = actor.kind === "user" ? actor.userId : null
+    const tags = (await meta.tagsForArtifacts([artifact.id]))[artifact.id] ?? []
+    const favorite = me ? (await meta.listUserFavoriteIds(me)).includes(artifact.id) : false
     // `versions` stays at revision granularity (machines/agents); `sessions` is
     // the time-grouped view the UI shows by default. `my_role` tells the client
     // which actions to surface.
@@ -408,6 +417,8 @@ export function createApp(deps: AppDeps): Hono {
       ...toJson(deps.baseUrl, artifact, versions),
       sessions: groupSessions(versions, versionWindowMs),
       my_role: effectiveRole(actor, artifact.visibility),
+      tags,
+      favorite,
     })
   })
 
@@ -454,6 +465,55 @@ export function createApp(deps: AppDeps): Hono {
     if (!(await authorize(c, "manage", artifact))) return c.json({ error: "forbidden" }, 403)
     await meta.removeArtifactMember(artifact.id, c.req.param("userId"))
     return c.body(null, 204)
+  })
+
+  // ---- Favorites (per-user stars) + tags (browse metadata) --------------
+  // Favorites are personal: any user who can read the artifact can star it.
+  app.put("/v1/artifacts/:shortId/favorite", async (c) => {
+    const me = await currentUser(c)
+    if (!me) return c.json({ error: "unauthenticated" }, 401)
+    const artifact = await meta.getByShortId(c.req.param("shortId"))
+    if (!artifact || !(await authorize(c, "read", artifact)))
+      return c.json({ error: "not found" }, 404)
+    await meta.setFavorite(artifact.id, me.id)
+    return c.json({ favorite: true })
+  })
+  app.delete("/v1/artifacts/:shortId/favorite", async (c) => {
+    const me = await currentUser(c)
+    if (!me) return c.json({ error: "unauthenticated" }, 401)
+    const artifact = await meta.getByShortId(c.req.param("shortId"))
+    if (!artifact) return c.json({ error: "not found" }, 404)
+    await meta.removeFavorite(artifact.id, me.id)
+    return c.json({ favorite: false })
+  })
+
+  // Tags are workspace metadata: editors set them. Normalized (trimmed,
+  // lowercased, deduped, capped) so browse stays tidy.
+  const normalizeTags = (raw: unknown): string[] => {
+    if (!Array.isArray(raw)) return []
+    const seen = new Set<string>()
+    const out: string[] = []
+    for (const t of raw) {
+      if (typeof t !== "string") continue
+      const v = t.trim().toLowerCase().replace(/\s+/g, " ").slice(0, 40)
+      if (!v || seen.has(v)) continue
+      seen.add(v)
+      out.push(v)
+      if (out.length >= 20) break
+    }
+    // Sorted so the PUT response matches the list/detail order (tagsForArtifacts
+    // also sorts), and browse chips read alphabetically everywhere.
+    return out.sort()
+  }
+  app.put("/v1/artifacts/:shortId/tags", async (c) => {
+    const artifact = await meta.getByShortId(c.req.param("shortId"))
+    if (!artifact || !(await authorize(c, "read", artifact)))
+      return c.json({ error: "not found" }, 404)
+    if (!(await authorize(c, "publish", artifact))) return c.json({ error: "forbidden" }, 403)
+    const body = (await c.req.json().catch(() => ({}))) as { tags?: unknown }
+    const tags = normalizeTags(body.tags)
+    await meta.setArtifactTags(artifact.id, tags)
+    return c.json({ tags })
   })
 
   // Restore a past version: re-point a new revision at its stored blob (no

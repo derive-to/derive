@@ -472,6 +472,17 @@ export function Artifact() {
           right={
             <>
               {!isMobile && <Presence viewers={viewers} self={me?.name ?? me?.email ?? ""} />}
+              <StarButton
+                shortId={shortId}
+                favorite={!!art.favorite}
+                onChange={(fav) => setArt((a) => (a ? { ...a, favorite: fav } : a))}
+              />
+              <TagsMenu
+                shortId={shortId}
+                tags={art.tags ?? []}
+                canEdit={art.my_role === "editor" || art.my_role === "owner"}
+                onChange={(tags) => setArt((a) => (a ? { ...a, tags } : a))}
+              />
               <ShareButton shortId={shortId} myRole={art.my_role} />
               <Insights shortId={shortId} />
               <HistoryMenu
@@ -786,6 +797,177 @@ export function Artifact() {
         {toast}
       </div>
     </ActionsCtx.Provider>
+  )
+}
+
+// Header star: toggle this artifact as a personal favorite. Optimistic.
+function StarButton({
+  shortId,
+  favorite,
+  onChange,
+}: {
+  shortId: string
+  favorite: boolean
+  onChange: (f: boolean) => void
+}) {
+  const [busy, setBusy] = useState(false)
+  const toggle = async () => {
+    const next = !favorite
+    onChange(next)
+    setBusy(true)
+    try {
+      await api.favorite(shortId, next)
+    } catch {
+      onChange(!next)
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <button
+      className="btn sm"
+      onClick={toggle}
+      disabled={busy}
+      title={favorite ? "Remove from favorites" : "Add to favorites"}
+      aria-label="Toggle favorite"
+      style={{
+        color: favorite ? "#e0a93a" : undefined,
+        borderColor: favorite ? "#e0a93a" : undefined,
+      }}
+    >
+      {favorite ? "★" : "☆"}
+    </button>
+  )
+}
+
+// Header tags popover: view tags; editors add/remove. Writes replace the full
+// set (the server normalizes: trim, lowercase, dedupe, cap).
+function TagsMenu({
+  shortId,
+  tags,
+  canEdit,
+  onChange,
+}: {
+  shortId: string
+  tags: string[]
+  canEdit: boolean
+  onChange: (t: string[]) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const [draft, setDraft] = useState("")
+  const ref = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const h = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener("click", h)
+    return () => document.removeEventListener("click", h)
+  }, [])
+  const save = async (next: string[]) => {
+    onChange(next)
+    try {
+      const r = await api.setTags(shortId, next)
+      onChange(r.tags)
+    } catch {
+      /* keep the optimistic value */
+    }
+  }
+  const add = () => {
+    const v = draft.trim().toLowerCase()
+    setDraft("")
+    if (v && !tags.includes(v)) save([...tags, v])
+  }
+  return (
+    <div ref={ref} style={{ position: "relative" }}>
+      <button
+        className="btn sm"
+        onClick={(e) => {
+          e.stopPropagation()
+          setOpen((o) => !o)
+        }}
+        style={{ gap: 6 }}
+        title="Tags"
+      >
+        🏷 {tags.length > 0 && <b style={{ fontWeight: 700 }}>{tags.length}</b>}
+      </button>
+      {open && (
+        <div
+          className="card"
+          style={{
+            position: "absolute",
+            right: 0,
+            top: "calc(100% + 7px)",
+            width: 244,
+            padding: 12,
+            boxShadow: "var(--shadow)",
+            zIndex: 30,
+          }}
+        >
+          <div
+            className="mono muted"
+            style={{
+              fontSize: 9.5,
+              letterSpacing: ".06em",
+              textTransform: "uppercase",
+              marginBottom: 8,
+            }}
+          >
+            Tags
+          </div>
+          {tags.length === 0 && (
+            <div className="muted" style={{ fontSize: 12, marginBottom: canEdit ? 9 : 0 }}>
+              {canEdit ? "No tags yet — add one below." : "No tags."}
+            </div>
+          )}
+          {tags.length > 0 && (
+            <div
+              style={{ display: "flex", flexWrap: "wrap", gap: 5, marginBottom: canEdit ? 10 : 0 }}
+            >
+              {tags.map((t) => (
+                <span key={t} className="tagchip" style={{ cursor: "default" }}>
+                  #{t}
+                  {canEdit && (
+                    <button
+                      onClick={() => save(tags.filter((x) => x !== t))}
+                      aria-label={`Remove ${t}`}
+                      style={{
+                        border: 0,
+                        background: "transparent",
+                        color: "inherit",
+                        cursor: "pointer",
+                        padding: 0,
+                        marginLeft: 2,
+                        fontSize: 13,
+                        lineHeight: 1,
+                      }}
+                    >
+                      ×
+                    </button>
+                  )}
+                </span>
+              ))}
+            </div>
+          )}
+          {canEdit && (
+            <div style={{ display: "flex", gap: 6 }}>
+              <input
+                className="input"
+                value={draft}
+                placeholder="Add a tag…"
+                onChange={(e) => setDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") add()
+                }}
+                style={{ padding: "6px 9px", fontSize: 12.5 }}
+              />
+              <button className="btn sm" onClick={add} disabled={!draft.trim()}>
+                Add
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
   )
 }
 
