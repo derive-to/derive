@@ -69,6 +69,7 @@ export const comment = sqliteTable("comment", {
 
 export const webhook = sqliteTable("webhook", {
   id: text("id").primaryKey(),
+  org_id: text("org_id").notNull().default("default"),
   artifact_id: text("artifact_id").references(() => artifact.id),
   url: text("url").notNull(),
   secret: text("secret").notNull(),
@@ -263,6 +264,7 @@ export const proposal = sqliteTable("proposal", {
 // Abuse reports against public artifacts; anyone can file one.
 export const report = sqliteTable("report", {
   id: text("id").primaryKey(),
+  org_id: text("org_id").notNull().default("default"),
   artifact_id: text("artifact_id").notNull(),
   artifact_short_id: text("artifact_short_id").notNull(),
   reason: text("reason").notNull(),
@@ -275,6 +277,7 @@ export const report = sqliteTable("report", {
 // Immutable moderation-action log (report filed, takedown, reinstate, dismiss).
 export const auditLog = sqliteTable("audit_log", {
   id: text("id").primaryKey(),
+  org_id: text("org_id").notNull().default("default"),
   action: text("action").$type<AuditAction>().notNull(),
   artifact_id: text("artifact_id"),
   actor: text("actor").notNull(),
@@ -354,6 +357,7 @@ export const SCHEMA_STATEMENTS: string[] = [
   `CREATE INDEX IF NOT EXISTS view_artifact_time ON view (artifact_id, created_at)`,
   `CREATE TABLE IF NOT EXISTS webhook (
     id TEXT PRIMARY KEY,
+    org_id TEXT NOT NULL DEFAULT 'default',
     artifact_id TEXT REFERENCES artifact(id),
     url TEXT NOT NULL,
     secret TEXT NOT NULL,
@@ -497,6 +501,7 @@ export const SCHEMA_STATEMENTS: string[] = [
   `CREATE INDEX IF NOT EXISTS proposal_artifact_state ON proposal (artifact_id, state)`,
   `CREATE TABLE IF NOT EXISTS report (
     id TEXT PRIMARY KEY,
+    org_id TEXT NOT NULL DEFAULT 'default',
     artifact_id TEXT NOT NULL,
     artifact_short_id TEXT NOT NULL,
     reason TEXT NOT NULL,
@@ -508,6 +513,7 @@ export const SCHEMA_STATEMENTS: string[] = [
   `CREATE INDEX IF NOT EXISTS report_state ON report (state, created_at)`,
   `CREATE TABLE IF NOT EXISTS audit_log (
     id TEXT PRIMARY KEY,
+    org_id TEXT NOT NULL DEFAULT 'default',
     action TEXT NOT NULL,
     artifact_id TEXT,
     actor TEXT NOT NULL,
@@ -529,6 +535,9 @@ export const MIGRATION_STATEMENTS: string[] = [
   `ALTER TABLE proposal ADD COLUMN decision_note TEXT`,
   `ALTER TABLE artifact ADD COLUMN removed_at TEXT`,
   `ALTER TABLE version ADD COLUMN size_bytes INTEGER NOT NULL DEFAULT 0`,
+  `ALTER TABLE webhook ADD COLUMN org_id TEXT NOT NULL DEFAULT 'default'`,
+  `ALTER TABLE report ADD COLUMN org_id TEXT NOT NULL DEFAULT 'default'`,
+  `ALTER TABLE audit_log ADD COLUMN org_id TEXT NOT NULL DEFAULT 'default'`,
 ]
 
 // Schema parity is enforced in repos.ts, where the shared `schema` object lives:

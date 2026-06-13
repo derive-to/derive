@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { useAuth } from "@/ctx"
+import { usePrefetchArtifact } from "@/lib/use-prefetch-artifact"
 import { ArtifactCard } from "./artifact-card"
 import { CollectionBar } from "./collection-bar"
 import { ShareCollectionDialog } from "./share-collection-dialog"
@@ -41,6 +42,7 @@ function LibraryBody() {
   const search = useSearch({ from: "/" })
   const { summary, collections, refreshSummary } = useShell()
   const { toast, show } = useToast()
+  const prefetch = usePrefetchArtifact()
   const file = useRef<HTMLInputElement>(null)
 
   const [items, setItems] = useState<Artifact[]>([])
@@ -276,6 +278,7 @@ function LibraryBody() {
                   onOpen={() => nav({ to: "/a/$ref", params: { ref: a.short_id } })}
                   onToggleFavorite={() => toggleFav(a)}
                   onPickTag={(tag) => nav({ to: "/", search: { tag } })}
+                  onPrefetch={() => prefetch(a.short_id, a.current_version)}
                 />
               ))}
             </div>

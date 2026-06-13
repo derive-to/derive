@@ -367,23 +367,31 @@ export class PgMetaStore implements MetaStore {
     const rows = await this.db.insert(webhook).values(w).returning()
     return one(rows)
   }
-  listWebhooks(): Promise<WebhookRecord[]> {
-    return this.db.select().from(webhook).orderBy(desc(webhook.created_at))
+  listWebhooks(orgId: string): Promise<WebhookRecord[]> {
+    return this.db
+      .select()
+      .from(webhook)
+      .where(eq(webhook.org_id, orgId))
+      .orderBy(desc(webhook.created_at))
   }
-  async getWebhook(id: string): Promise<WebhookRecord | null> {
-    const rows = await this.db.select().from(webhook).where(eq(webhook.id, id))
+  async getWebhook(id: string, orgId: string): Promise<WebhookRecord | null> {
+    const rows = await this.db
+      .select()
+      .from(webhook)
+      .where(and(eq(webhook.id, id), eq(webhook.org_id, orgId)))
     return rows[0] ?? null
   }
-  async deleteWebhook(id: string): Promise<void> {
-    await this.db.delete(webhook).where(eq(webhook.id, id))
+  async deleteWebhook(id: string, orgId: string): Promise<void> {
+    await this.db.delete(webhook).where(and(eq(webhook.id, id), eq(webhook.org_id, orgId)))
   }
-  activeWebhooks(artifactId: string): Promise<WebhookRecord[]> {
+  activeWebhooks(artifactId: string, orgId: string): Promise<WebhookRecord[]> {
     return this.db
       .select()
       .from(webhook)
       .where(
         and(
           eq(webhook.active, 1),
+          eq(webhook.org_id, orgId),
           or(isNull(webhook.artifact_id), eq(webhook.artifact_id, artifactId)),
         ),
       )
@@ -777,8 +785,8 @@ export class PgMetaStore implements MetaStore {
     const rows = await this.db.select().from(agent).where(eq(agent.token, token))
     return rows[0] ?? null
   }
-  async deleteAgent(id: string): Promise<void> {
-    await this.db.delete(agent).where(eq(agent.id, id))
+  async deleteAgent(id: string, orgId: string): Promise<void> {
+    await this.db.delete(agent).where(and(eq(agent.id, id), eq(agent.org_id, orgId)))
   }
   async createAgentMention(m: NewAgentMention): Promise<void> {
     await this.db.insert(agentMention).values(m)
@@ -805,20 +813,41 @@ export class PgMetaStore implements MetaStore {
     const rows = await this.db.insert(report).values(r).returning()
     return one(rows)
   }
-  listReports(opts?: { state?: ReportState; limit?: number }): Promise<ReportRecord[]> {
+  async getReport(id: string, orgId?: string): Promise<ReportRecord | null> {
+    const rows = await this.db
+      .select()
+      .from(report)
+      .where(and(eq(report.id, id), orgId ? eq(report.org_id, orgId) : undefined))
+    return rows[0] ?? null
+  }
+  listReports(
+    orgId: string | undefined,
+    opts?: { state?: ReportState; limit?: number },
+  ): Promise<ReportRecord[]> {
     const q = this.db
       .select()
       .from(report)
-      .where(opts?.state ? eq(report.state, opts.state) : undefined)
+      .where(
+        and(
+          orgId ? eq(report.org_id, orgId) : undefined,
+          opts?.state ? eq(report.state, opts.state) : undefined,
+        ),
+      )
       .orderBy(desc(report.created_at))
     return opts?.limit ? q.limit(opts.limit) : q
   }
-  async countOpenReports(): Promise<number> {
-    const rows = await this.db.select({ n: count() }).from(report).where(eq(report.state, "open"))
+  async countOpenReports(orgId: string | undefined): Promise<number> {
+    const rows = await this.db
+      .select({ n: count() })
+      .from(report)
+      .where(and(eq(report.state, "open"), orgId ? eq(report.org_id, orgId) : undefined))
     return Number(rows[0]?.n ?? 0)
   }
-  async setReportState(id: string, state: ReportState): Promise<void> {
-    await this.db.update(report).set({ state }).where(eq(report.id, id))
+  async setReportState(id: string, state: ReportState, orgId?: string): Promise<void> {
+    await this.db
+      .update(report)
+      .set({ state })
+      .where(and(eq(report.id, id), orgId ? eq(report.org_id, orgId) : undefined))
   }
   async setArtifactRemoved(id: string, removedAt: string | null): Promise<void> {
     await this.db.update(artifact).set({ removed_at: removedAt }).where(eq(artifact.id, id))
@@ -826,11 +855,19 @@ export class PgMetaStore implements MetaStore {
   async createAuditLog(a: NewAuditLog): Promise<void> {
     await this.db.insert(auditLog).values(a)
   }
-  listAuditLog(opts?: { artifactId?: string; limit?: number }): Promise<AuditLogRecord[]> {
+  listAuditLog(
+    orgId: string | undefined,
+    opts?: { artifactId?: string; limit?: number },
+  ): Promise<AuditLogRecord[]> {
     const q = this.db
       .select()
       .from(auditLog)
-      .where(opts?.artifactId ? eq(auditLog.artifact_id, opts.artifactId) : undefined)
+      .where(
+        and(
+          orgId ? eq(auditLog.org_id, orgId) : undefined,
+          opts?.artifactId ? eq(auditLog.artifact_id, opts.artifactId) : undefined,
+        ),
+      )
       .orderBy(desc(auditLog.created_at))
     return opts?.limit ? q.limit(opts.limit) : q
   }

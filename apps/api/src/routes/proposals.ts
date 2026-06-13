@@ -73,6 +73,8 @@ export const proposalRoutes = (ctx: AppContext) => {
     const file = body.file
     if (!(file instanceof File)) return fail(c, 400, "multipart field 'file' required")
     const bytes = new Uint8Array(await file.arrayBuffer())
+    // content-length is advisory; re-check the actual buffered size (hard cap).
+    if (bytes.length > MAX_UPLOAD_BYTES) return fail(c, 413, "upload too large")
     // Proposals store a blob immediately, so they count toward the storage cap
     // of the artifact's workspace.
     if (await overStorage(artifact.org_id, bytes.length))

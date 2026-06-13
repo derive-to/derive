@@ -10,6 +10,7 @@ import {
   CommandItem,
   CommandList,
 } from "@/components/ui/command"
+import { usePrefetchArtifact } from "@/lib/use-prefetch-artifact"
 import { Icon } from "./icons"
 import { useShell } from "./shell-context"
 
@@ -20,6 +21,7 @@ import { useShell } from "./shell-context"
 export function CommandPalette() {
   const { paletteOpen, setPaletteOpen, collections, workspaces, switchWorkspace } = useShell()
   const nav = useNavigate()
+  const prefetch = usePrefetchArtifact()
   const [query, setQuery] = useState("")
   const [results, setResults] = useState<Artifact[]>([])
   const [loading, setLoading] = useState(false)
@@ -104,6 +106,8 @@ export function CommandPalette() {
                   key={a.short_id}
                   value={`artifact-${a.short_id}`}
                   onSelect={() => go(() => nav({ to: "/a/$ref", params: { ref: a.short_id } }))}
+                  onMouseEnter={() => prefetch(a.short_id, a.current_version)}
+                  onFocus={() => prefetch(a.short_id, a.current_version)}
                 >
                   <Icon name="all" size={16} className="text-muted-foreground" />
                   <span className="flex-1 truncate">{a.title ?? a.short_id}</span>

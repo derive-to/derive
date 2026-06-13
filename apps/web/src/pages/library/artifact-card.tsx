@@ -12,11 +12,15 @@ export function ArtifactCard({
   onOpen,
   onToggleFavorite,
   onPickTag,
+  onPrefetch,
 }: {
   artifact: Artifact
   onOpen: () => void
   onToggleFavorite: () => void
   onPickTag: (tag: string) => void
+  // Warm the artifact (metadata + comments + rendered HTML) when the card is
+  // hovered or focused, so the click that follows opens instantly.
+  onPrefetch?: () => void
 }) {
   return (
     <div className="group relative flex cursor-pointer flex-col gap-2 rounded-lg border border-border bg-card p-3.5 transition-all hover:-translate-y-0.5 hover:border-primary hover:shadow-[var(--shadow)] active:translate-y-0">
@@ -44,6 +48,8 @@ export function ArtifactCard({
         type="button"
         data-testid={`artifact-card-open-${a.short_id}`}
         onClick={onOpen}
+        onMouseEnter={onPrefetch}
+        onFocus={onPrefetch}
         aria-label={`Open ${a.title ?? a.short_id}`}
         className="flex w-full flex-col gap-1.5 text-left outline-none after:absolute after:inset-0 after:z-[1] after:rounded-lg after:content-[''] focus-visible:after:outline-2 focus-visible:after:-outline-offset-2 focus-visible:after:outline-ring"
       >

@@ -60,7 +60,9 @@ export const agentRoutes = (ctx: AppContext) => {
 
   app.delete("/v1/agents/:id", async (c) => {
     if (!(await workspaceCan(c, "manage"))) return fail(c, 403, "forbidden")
-    await meta.deleteAgent(c.req.param("id"))
+    // Scope the delete to the caller's workspace: deleteAgent is keyed by
+    // (id, org) so an Admin can't delete another workspace's agent by id.
+    await meta.deleteAgent(c.req.param("id"), await activeWorkspace(c))
     return c.body(null, 204)
   })
 
