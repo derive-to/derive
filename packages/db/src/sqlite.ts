@@ -1,28 +1,43 @@
 import Database from "better-sqlite3"
-import { and, asc, desc, eq, isNull, lte, or } from "drizzle-orm"
+import { and, asc, count, desc, eq, isNull, lte, or } from "drizzle-orm"
 import { drizzle, type BetterSQLite3Database } from "drizzle-orm/better-sqlite3"
 import type {
+  ArtifactMemberRecord,
   ArtifactRecord,
   CommentRecord,
   CommentState,
   DeliveryRecord,
   DeliveryStatus,
+  MembershipRecord,
   MetaStore,
   NewArtifact,
+  NewArtifactMember,
   NewComment,
   NewDelivery,
+  NewMembership,
   NewVersion,
   NewView,
   NewWebhook,
+  UserDir,
   VersionRecord,
   ViewStats,
   WebhookRecord,
 } from "@dock/core"
-import { MIGRATION_STATEMENTS, SCHEMA_STATEMENTS, artifact, comment, version, webhook, webhookDelivery } from "./schema"
+import {
+  MIGRATION_STATEMENTS,
+  SCHEMA_STATEMENTS,
+  artifact,
+  artifactMember,
+  comment,
+  membership,
+  version,
+  webhook,
+  webhookDelivery,
+} from "./schema"
 
 const VIEW_WINDOW_MS = 30 * 86400_000
 
-const schema = { artifact, version, comment, webhook, webhookDelivery }
+const schema = { artifact, version, comment, webhook, webhookDelivery, membership, artifactMember }
 
 /** Embedded SQLite (WAL). The zero-dependency default; no external services. */
 export class SqliteMetaStore implements MetaStore {
@@ -222,6 +237,79 @@ export class SqliteMetaStore implements MetaStore {
         .limit(limit)
         .all(),
     )
+  }
+
+  // ---- Permissions: membership + per-artifact shares ---------------------
+  async getMembership(orgId: string, userId: string): Promise<MembershipRecord | null> {
+    return (
+      this.db.select().from(membership).where(and(eq(membership.org_id, orgId), eq(membership.user_id, userId))).get() ??
+      null
+    )
+  }
+  listMemberships(orgId: string): Promise<MembershipRecord[]> {
+    return Promise.resolve(this.db.select().from(membership).where(eq(membership.org_id, orgId)).all())
+  }
+  async countMemberships(orgId: string): Promise<number> {
+    return this.db.select({ n: count() }).from(membership).where(eq(membership.org_id, orgId)).get()?.n ?? 0
+  }
+  setMembership(m: NewMembership): Promise<MembershipRecord> {
+    return Promise.resolve(
+      this.db
+        .insert(membership)
+        .values(m)
+        .onConflictDoUpdate({ target: [membership.org_id, membership.user_id], set: { role: m.role } })
+        .returning()
+        .get(),
+    )
+  }
+
+  async getArtifactMember(artifactId: string, userId: string): Promise<ArtifactMemberRecord | null> {
+    return (
+      this.db
+        .select()
+        .from(artifactMember)
+        .where(and(eq(artifactMember.artifact_id, artifactId), eq(artifactMember.user_id, userId)))
+        .get() ?? null
+    )
+  }
+  listArtifactMembers(artifactId: string): Promise<ArtifactMemberRecord[]> {
+    return Promise.resolve(
+      this.db.select().from(artifactMember).where(eq(artifactMember.artifact_id, artifactId)).all(),
+    )
+  }
+  setArtifactMember(m: NewArtifactMember): Promise<ArtifactMemberRecord> {
+    return Promise.resolve(
+      this.db
+        .insert(artifactMember)
+        .values(m)
+        .onConflictDoUpdate({ target: [artifactMember.artifact_id, artifactMember.user_id], set: { role: m.role } })
+        .returning()
+        .get(),
+    )
+  }
+  async removeArtifactMember(artifactId: string, userId: string): Promise<void> {
+    this.db
+      .delete(artifactMember)
+      .where(and(eq(artifactMember.artifact_id, artifactId), eq(artifactMember.user_id, userId)))
+      .run()
+  }
+
+  // ---- User directory (Better Auth's `user` table; raw, may be absent) ---
+  async findUserByEmail(email: string): Promise<UserDir | null> {
+    try {
+      return (this.raw.prepare(`SELECT id, email, name FROM user WHERE email = ?`).get(email) as UserDir) ?? null
+    } catch {
+      return null
+    }
+  }
+  async getUsers(ids: string[]): Promise<UserDir[]> {
+    if (ids.length === 0) return []
+    try {
+      const ph = ids.map(() => "?").join(",")
+      return this.raw.prepare(`SELECT id, email, name FROM user WHERE id IN (${ph})`).all(...ids) as UserDir[]
+    } catch {
+      return []
+    }
   }
 
   close(): void {

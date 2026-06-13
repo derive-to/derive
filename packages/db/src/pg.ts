@@ -1,26 +1,40 @@
-import { and, asc, desc, eq, isNull, lte, or } from "drizzle-orm"
+import { and, asc, count, desc, eq, isNull, lte, or } from "drizzle-orm"
 import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres"
 import { Pool } from "pg"
 import type {
+  ArtifactMemberRecord,
   ArtifactRecord,
   CommentRecord,
   CommentState,
   DeliveryRecord,
   DeliveryStatus,
+  MembershipRecord,
   MetaStore,
   NewArtifact,
+  NewArtifactMember,
   NewComment,
   NewDelivery,
+  NewMembership,
   NewVersion,
   NewView,
   NewWebhook,
+  UserDir,
   VersionRecord,
   ViewStats,
   WebhookRecord,
 } from "@dock/core"
-import { PG_SCHEMA_STATEMENTS, artifact, comment, version, webhook, webhookDelivery } from "./pg-schema"
+import {
+  PG_SCHEMA_STATEMENTS,
+  artifact,
+  artifactMember,
+  comment,
+  membership,
+  version,
+  webhook,
+  webhookDelivery,
+} from "./pg-schema"
 
-const schema = { artifact, version, comment, webhook, webhookDelivery }
+const schema = { artifact, version, comment, webhook, webhookDelivery, membership, artifactMember }
 const VIEW_WINDOW_MS = 30 * 86400_000
 
 /**
@@ -215,6 +229,74 @@ export class PgMetaStore implements MetaStore {
       .where(eq(webhookDelivery.webhook_id, webhookId))
       .orderBy(desc(webhookDelivery.created_at))
       .limit(limit)
+  }
+
+  // ---- Permissions: membership + per-artifact shares ---------------------
+  async getMembership(orgId: string, userId: string): Promise<MembershipRecord | null> {
+    const rows = await this.db
+      .select()
+      .from(membership)
+      .where(and(eq(membership.org_id, orgId), eq(membership.user_id, userId)))
+    return rows[0] ?? null
+  }
+  listMemberships(orgId: string): Promise<MembershipRecord[]> {
+    return this.db.select().from(membership).where(eq(membership.org_id, orgId))
+  }
+  async countMemberships(orgId: string): Promise<number> {
+    const rows = await this.db.select({ n: count() }).from(membership).where(eq(membership.org_id, orgId))
+    return rows[0]?.n ?? 0
+  }
+  async setMembership(m: NewMembership): Promise<MembershipRecord> {
+    const rows = await this.db
+      .insert(membership)
+      .values(m)
+      .onConflictDoUpdate({ target: [membership.org_id, membership.user_id], set: { role: m.role } })
+      .returning()
+    return rows[0]
+  }
+
+  async getArtifactMember(artifactId: string, userId: string): Promise<ArtifactMemberRecord | null> {
+    const rows = await this.db
+      .select()
+      .from(artifactMember)
+      .where(and(eq(artifactMember.artifact_id, artifactId), eq(artifactMember.user_id, userId)))
+    return rows[0] ?? null
+  }
+  listArtifactMembers(artifactId: string): Promise<ArtifactMemberRecord[]> {
+    return this.db.select().from(artifactMember).where(eq(artifactMember.artifact_id, artifactId))
+  }
+  async setArtifactMember(m: NewArtifactMember): Promise<ArtifactMemberRecord> {
+    const rows = await this.db
+      .insert(artifactMember)
+      .values(m)
+      .onConflictDoUpdate({ target: [artifactMember.artifact_id, artifactMember.user_id], set: { role: m.role } })
+      .returning()
+    return rows[0]
+  }
+  async removeArtifactMember(artifactId: string, userId: string): Promise<void> {
+    await this.db
+      .delete(artifactMember)
+      .where(and(eq(artifactMember.artifact_id, artifactId), eq(artifactMember.user_id, userId)))
+  }
+
+  // ---- User directory (Better Auth's "user" table; raw, may be absent) ---
+  async findUserByEmail(email: string): Promise<UserDir | null> {
+    try {
+      const { rows } = await this.pool.query(`SELECT id, email, name FROM "user" WHERE email = $1`, [email])
+      return (rows[0] as UserDir) ?? null
+    } catch {
+      return null
+    }
+  }
+  async getUsers(ids: string[]): Promise<UserDir[]> {
+    if (ids.length === 0) return []
+    try {
+      const ph = ids.map((_, i) => `$${i + 1}`).join(",")
+      const { rows } = await this.pool.query(`SELECT id, email, name FROM "user" WHERE id IN (${ph})`, ids)
+      return rows as UserDir[]
+    } catch {
+      return []
+    }
   }
 
   async close(): Promise<void> {

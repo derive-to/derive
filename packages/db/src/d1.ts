@@ -1,26 +1,31 @@
 import type { D1Database } from "@cloudflare/workers-types"
-import { and, asc, desc, eq, isNull, lte, or, sql } from "drizzle-orm"
+import { and, asc, count, desc, eq, isNull, lte, or, sql } from "drizzle-orm"
 import { drizzle, type DrizzleD1Database } from "drizzle-orm/d1"
 import type {
+  ArtifactMemberRecord,
   ArtifactRecord,
   CommentRecord,
   CommentState,
   DeliveryRecord,
   DeliveryStatus,
+  MembershipRecord,
   MetaStore,
   NewArtifact,
+  NewArtifactMember,
   NewComment,
   NewDelivery,
+  NewMembership,
   NewVersion,
   NewView,
   NewWebhook,
+  UserDir,
   VersionRecord,
   ViewStats,
   WebhookRecord,
 } from "@dock/core"
-import { artifact, comment, version, webhook, webhookDelivery } from "./schema"
+import { artifact, artifactMember, comment, membership, version, webhook, webhookDelivery } from "./schema"
 
-const schema = { artifact, version, comment, webhook, webhookDelivery }
+const schema = { artifact, version, comment, webhook, webhookDelivery, membership, artifactMember }
 const VIEW_WINDOW_MS = 30 * 86400_000
 
 /**
@@ -208,5 +213,79 @@ export class D1MetaStore implements MetaStore {
       .orderBy(desc(webhookDelivery.created_at))
       .limit(limit)
       .all()
+  }
+
+  // ---- Permissions: membership + per-artifact shares ---------------------
+  async getMembership(orgId: string, userId: string): Promise<MembershipRecord | null> {
+    return (
+      (await this.db
+        .select()
+        .from(membership)
+        .where(and(eq(membership.org_id, orgId), eq(membership.user_id, userId)))
+        .get()) ?? null
+    )
+  }
+  listMemberships(orgId: string): Promise<MembershipRecord[]> {
+    return this.db.select().from(membership).where(eq(membership.org_id, orgId)).all()
+  }
+  async countMemberships(orgId: string): Promise<number> {
+    const r = await this.db.select({ n: count() }).from(membership).where(eq(membership.org_id, orgId)).get()
+    return r?.n ?? 0
+  }
+  setMembership(m: NewMembership): Promise<MembershipRecord> {
+    return this.db
+      .insert(membership)
+      .values(m)
+      .onConflictDoUpdate({ target: [membership.org_id, membership.user_id], set: { role: m.role } })
+      .returning()
+      .get()
+  }
+
+  async getArtifactMember(artifactId: string, userId: string): Promise<ArtifactMemberRecord | null> {
+    return (
+      (await this.db
+        .select()
+        .from(artifactMember)
+        .where(and(eq(artifactMember.artifact_id, artifactId), eq(artifactMember.user_id, userId)))
+        .get()) ?? null
+    )
+  }
+  listArtifactMembers(artifactId: string): Promise<ArtifactMemberRecord[]> {
+    return this.db.select().from(artifactMember).where(eq(artifactMember.artifact_id, artifactId)).all()
+  }
+  setArtifactMember(m: NewArtifactMember): Promise<ArtifactMemberRecord> {
+    return this.db
+      .insert(artifactMember)
+      .values(m)
+      .onConflictDoUpdate({ target: [artifactMember.artifact_id, artifactMember.user_id], set: { role: m.role } })
+      .returning()
+      .get()
+  }
+  async removeArtifactMember(artifactId: string, userId: string): Promise<void> {
+    await this.db
+      .delete(artifactMember)
+      .where(and(eq(artifactMember.artifact_id, artifactId), eq(artifactMember.user_id, userId)))
+      .run()
+  }
+
+  // ---- User directory (Better Auth's `user` table; raw, may be absent) ---
+  async findUserByEmail(email: string): Promise<UserDir | null> {
+    try {
+      return ((await this.db.get(sql`SELECT id, email, name FROM user WHERE email = ${email}`)) as UserDir) ?? null
+    } catch {
+      return null
+    }
+  }
+  async getUsers(ids: string[]): Promise<UserDir[]> {
+    if (ids.length === 0) return []
+    try {
+      const list = sql.join(
+        ids.map((id) => sql`${id}`),
+        sql`, `,
+      )
+      return (await this.db.all(sql`SELECT id, email, name FROM user WHERE id IN (${list})`)) as UserDir[]
+    } catch {
+      return []
+    }
   }
 }

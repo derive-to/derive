@@ -2,11 +2,14 @@ import { sql } from "drizzle-orm"
 import { integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core"
 import type {
   ArtifactKind,
+  ArtifactMemberRecord,
   ArtifactRecord,
   CommentRecord,
   CommentState,
   DeliveryRecord,
   DeliveryStatus,
+  MembershipRecord,
+  Role,
   VersionRecord,
   Visibility,
   WebhookKind,
@@ -90,6 +93,32 @@ export const webhookDelivery = sqliteTable("webhook_delivery", {
   next_attempt_at: text("next_attempt_at").notNull().default(now),
   created_at: text("created_at").notNull().default(now),
 })
+
+export const membership = sqliteTable(
+  "membership",
+  {
+    id: text("id").primaryKey(),
+    org_id: text("org_id").notNull(),
+    user_id: text("user_id").notNull(),
+    role: text("role").$type<Role>().notNull(),
+    created_at: text("created_at").notNull().default(now),
+  },
+  (t) => [uniqueIndex("membership_org_user").on(t.org_id, t.user_id)],
+)
+
+export const artifactMember = sqliteTable(
+  "artifact_member",
+  {
+    id: text("id").primaryKey(),
+    artifact_id: text("artifact_id")
+      .notNull()
+      .references(() => artifact.id),
+    user_id: text("user_id").notNull(),
+    role: text("role").$type<Role>().notNull(),
+    created_at: text("created_at").notNull().default(now),
+  },
+  (t) => [uniqueIndex("artifact_member_user").on(t.artifact_id, t.user_id)],
+)
 
 // user/session/account/verification tables are owned and migrated by Better Auth
 // (see apps/api/src/auth-config.ts) — not declared here.
@@ -185,6 +214,22 @@ export const SCHEMA_STATEMENTS: string[] = [
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
   )`,
   `CREATE INDEX IF NOT EXISTS delivery_due ON webhook_delivery (status, next_attempt_at)`,
+  `CREATE TABLE IF NOT EXISTS membership (
+    id TEXT PRIMARY KEY,
+    org_id TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    role TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    UNIQUE (org_id, user_id)
+  )`,
+  `CREATE TABLE IF NOT EXISTS artifact_member (
+    id TEXT PRIMARY KEY,
+    artifact_id TEXT NOT NULL REFERENCES artifact(id),
+    user_id TEXT NOT NULL,
+    role TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    UNIQUE (artifact_id, user_id)
+  )`,
   // user/session/account/verification are owned and migrated by Better Auth.
 ]
 
@@ -207,5 +252,7 @@ const _schemaParity: [
   Exact<typeof comment.$inferSelect, CommentRecord>,
   Exact<typeof webhook.$inferSelect, WebhookRecord>,
   Exact<typeof webhookDelivery.$inferSelect, DeliveryRecord>,
-] = [true, true, true, true, true]
+  Exact<typeof membership.$inferSelect, MembershipRecord>,
+  Exact<typeof artifactMember.$inferSelect, ArtifactMemberRecord>,
+] = [true, true, true, true, true, true, true]
 void _schemaParity

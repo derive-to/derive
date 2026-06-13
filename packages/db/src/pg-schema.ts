@@ -1,11 +1,14 @@
-import { integer, pgTable, text } from "drizzle-orm/pg-core"
+import { integer, pgTable, text, uniqueIndex } from "drizzle-orm/pg-core"
 import type {
   ArtifactKind,
+  ArtifactMemberRecord,
   ArtifactRecord,
   CommentRecord,
   CommentState,
   DeliveryRecord,
   DeliveryStatus,
+  MembershipRecord,
+  Role,
   VersionRecord,
   Visibility,
   WebhookKind,
@@ -88,6 +91,32 @@ export const webhookDelivery = pgTable("webhook_delivery", {
   created_at: text("created_at").notNull().$defaultFn(isoNow),
 })
 
+export const membership = pgTable(
+  "membership",
+  {
+    id: text("id").primaryKey(),
+    org_id: text("org_id").notNull(),
+    user_id: text("user_id").notNull(),
+    role: text("role").$type<Role>().notNull(),
+    created_at: text("created_at").notNull().$defaultFn(isoNow),
+  },
+  (t) => [uniqueIndex("membership_org_user").on(t.org_id, t.user_id)],
+)
+
+export const artifactMember = pgTable(
+  "artifact_member",
+  {
+    id: text("id").primaryKey(),
+    artifact_id: text("artifact_id")
+      .notNull()
+      .references(() => artifact.id),
+    user_id: text("user_id").notNull(),
+    role: text("role").$type<Role>().notNull(),
+    created_at: text("created_at").notNull().$defaultFn(isoNow),
+  },
+  (t) => [uniqueIndex("artifact_member_user").on(t.artifact_id, t.user_id)],
+)
+
 // Compile-time guard: the pg table defs must match the core record shapes (and
 // therefore the sqlite defs). Drift here means SQLite and Postgres disagree.
 type Exact<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false
@@ -97,7 +126,9 @@ const _pgParity: [
   Exact<typeof comment.$inferSelect, CommentRecord>,
   Exact<typeof webhook.$inferSelect, WebhookRecord>,
   Exact<typeof webhookDelivery.$inferSelect, DeliveryRecord>,
-] = [true, true, true, true, true]
+  Exact<typeof membership.$inferSelect, MembershipRecord>,
+  Exact<typeof artifactMember.$inferSelect, ArtifactMemberRecord>,
+] = [true, true, true, true, true, true, true]
 void _pgParity
 
 // Boot DDL (idempotent). created_at uses a SQL default as a server-side backstop.
@@ -191,4 +222,20 @@ export const PG_SCHEMA_STATEMENTS: string[] = [
     created_at TEXT NOT NULL DEFAULT ${isoDefault}
   )`,
   `CREATE INDEX IF NOT EXISTS delivery_due ON webhook_delivery (status, next_attempt_at)`,
+  `CREATE TABLE IF NOT EXISTS membership (
+    id TEXT PRIMARY KEY,
+    org_id TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    role TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT ${isoDefault},
+    UNIQUE (org_id, user_id)
+  )`,
+  `CREATE TABLE IF NOT EXISTS artifact_member (
+    id TEXT PRIMARY KEY,
+    artifact_id TEXT NOT NULL REFERENCES artifact(id),
+    user_id TEXT NOT NULL,
+    role TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT ${isoDefault},
+    UNIQUE (artifact_id, user_id)
+  )`,
 ]
