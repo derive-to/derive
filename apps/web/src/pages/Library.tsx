@@ -7,6 +7,7 @@ import {
   api,
   type Collection,
   type Role,
+  type Workspaces,
 } from "../api"
 import { Header, useIsMobile, useToast } from "../components"
 import { useAuth } from "../ctx"
@@ -76,6 +77,7 @@ export function Library() {
   const [summary, setSummary] = useState<Summary | null>(null)
   const [collections, setCollections] = useState<Collection[]>([])
   const [shareCol, setShareCol] = useState<Collection | null>(null)
+  const [workspaces, setWorkspaces] = useState<Workspaces | null>(null)
 
   const [query, setQuery] = useState("")
   const [debouncedQ, setDebouncedQ] = useState("")
@@ -148,12 +150,39 @@ export function Library() {
       .then((r) => setCollections(r.collections))
       .catch(() => {})
   }, [])
+  const refreshWorkspaces = useCallback(() => {
+    api
+      .listWorkspaces()
+      .then(setWorkspaces)
+      .catch(() => {})
+  }, [])
   useEffect(() => {
     if (me) {
       refreshSummary()
       refreshCollections()
+      refreshWorkspaces()
     }
-  }, [me, refreshSummary, refreshCollections])
+  }, [me, refreshSummary, refreshCollections, refreshWorkspaces])
+
+  // Switching or creating a workspace swaps the whole content context, so reload
+  // the page rather than re-thread every list — a deliberate, infrequent action.
+  const switchWorkspace = async (id: string) => {
+    if (id === workspaces?.active) return
+    try {
+      await api.switchWorkspace(id)
+      window.location.reload()
+    } catch (e) {
+      show((e as Error).message)
+    }
+  }
+  const createWorkspace = async (name: string) => {
+    try {
+      await api.createWorkspace(name)
+      window.location.reload()
+    } catch (e) {
+      show((e as Error).message)
+    }
+  }
 
   const publish = async () => {
     const f = file.current?.files?.[0]
@@ -271,6 +300,7 @@ export function Library() {
           drawer={isMobile}
           open={drawer}
           workspace={summary?.workspace ?? ""}
+          workspaces={workspaces}
           total={summary?.total ?? 0}
           favCount={summary?.favorites ?? 0}
           tags={summary?.tags ?? []}
@@ -278,6 +308,8 @@ export function Library() {
           filter={filter}
           onPick={pick}
           onCreateCollection={createCollection}
+          onSwitchWorkspace={switchWorkspace}
+          onCreateWorkspace={createWorkspace}
           onToggleRail={() => setRail((r) => !r)}
           onClose={() => setDrawer(false)}
           onSettings={() => {
@@ -681,11 +713,147 @@ function CollectionShareDialog({
   )
 }
 
+// The workspace name in the sidebar. Single mode: a shortcut to settings. Multi
+// mode: a dropdown to switch between workspaces or create a new one.
+function WorkspaceSwitcher({
+  label,
+  workspaces,
+  onSwitch,
+  onCreate,
+  onSettings,
+}: {
+  label: string
+  workspaces: Workspaces | null
+  onSwitch: (id: string) => void
+  onCreate: (name: string) => void
+  onSettings: () => void
+}) {
+  const [open, setOpen] = useState(false)
+  const [adding, setAdding] = useState(false)
+  const [name, setName] = useState("")
+
+  if (!workspaces?.multi)
+    return (
+      <button
+        className="side-item"
+        onClick={onSettings}
+        title="Workspace settings"
+        style={{ fontWeight: 600 }}
+      >
+        <span className="ic">◆</span>
+        <span className="lbl" style={{ overflow: "hidden", textOverflow: "ellipsis" }}>
+          {label}
+        </span>
+      </button>
+    )
+
+  const submit = () => {
+    const t = name.trim()
+    if (t) onCreate(t)
+    setName("")
+    setAdding(false)
+    setOpen(false)
+  }
+  return (
+    <div style={{ position: "relative" }}>
+      <button
+        className="side-item"
+        onClick={() => setOpen((v) => !v)}
+        title="Switch workspace"
+        style={{ fontWeight: 600 }}
+      >
+        <span className="ic">◆</span>
+        <span className="lbl" style={{ overflow: "hidden", textOverflow: "ellipsis" }}>
+          {label}
+        </span>
+        <span className="n">⌄</span>
+      </button>
+      {open && (
+        <>
+          <button
+            type="button"
+            aria-label="Close workspace menu"
+            onClick={() => setOpen(false)}
+            style={{
+              position: "fixed",
+              inset: 0,
+              zIndex: 20,
+              border: 0,
+              background: "transparent",
+              cursor: "default",
+            }}
+          />
+          <div
+            className="card"
+            style={{
+              position: "absolute",
+              top: "100%",
+              left: 0,
+              right: 0,
+              zIndex: 21,
+              marginTop: 4,
+              padding: 4,
+              maxHeight: 320,
+              overflowY: "auto",
+            }}
+          >
+            {workspaces.workspaces.map((w) => (
+              <button
+                key={w.id}
+                className={`side-item${w.id === workspaces.active ? " on" : ""}`}
+                onClick={() => {
+                  onSwitch(w.id)
+                  setOpen(false)
+                }}
+              >
+                <span className="ic">{w.id === workspaces.active ? "✓" : "◇"}</span>
+                <span className="lbl" style={{ overflow: "hidden", textOverflow: "ellipsis" }}>
+                  {w.name}
+                </span>
+              </button>
+            ))}
+            <div style={{ borderTop: "1px solid var(--line)", margin: "4px 0" }} />
+            {adding ? (
+              <input
+                className="input"
+                placeholder="Workspace name"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") submit()
+                  if (e.key === "Escape") setAdding(false)
+                }}
+                style={{ width: "100%", margin: "2px 0" }}
+              />
+            ) : (
+              <button className="side-item" onClick={() => setAdding(true)}>
+                <span className="ic">＋</span>
+                <span className="lbl">New workspace</span>
+              </button>
+            )}
+            <button
+              className="side-item"
+              onClick={() => {
+                setOpen(false)
+                onSettings()
+              }}
+            >
+              <span className="ic">⚙</span>
+              <span className="lbl">Workspace settings</span>
+            </button>
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
 function Sidebar({
   rail,
   drawer,
   open,
   workspace,
+  workspaces,
   total,
   favCount,
   tags,
@@ -693,6 +861,8 @@ function Sidebar({
   filter,
   onPick,
   onCreateCollection,
+  onSwitchWorkspace,
+  onCreateWorkspace,
   onToggleRail,
   onClose,
   onSettings,
@@ -701,6 +871,7 @@ function Sidebar({
   drawer: boolean
   open: boolean
   workspace: string
+  workspaces: Workspaces | null
   total: number
   favCount: number
   tags: TagCount[]
@@ -708,6 +879,8 @@ function Sidebar({
   filter: Filter
   onPick: (f: Filter) => void
   onCreateCollection: (title: string) => void
+  onSwitchWorkspace: (id: string) => void
+  onCreateWorkspace: (name: string) => void
   onToggleRail: () => void
   onClose: () => void
   onSettings: () => void
@@ -724,17 +897,13 @@ function Sidebar({
   return (
     <aside className={cls} aria-label="Browse">
       {!rail && workspace && (
-        <button
-          className="side-item"
-          onClick={onSettings}
-          title="Workspace settings"
-          style={{ fontWeight: 600 }}
-        >
-          <span className="ic">◆</span>
-          <span className="lbl" style={{ overflow: "hidden", textOverflow: "ellipsis" }}>
-            {workspace}
-          </span>
-        </button>
+        <WorkspaceSwitcher
+          label={workspace}
+          workspaces={workspaces}
+          onSwitch={onSwitchWorkspace}
+          onCreate={onCreateWorkspace}
+          onSettings={onSettings}
+        />
       )}
       <div className="side-lbl">Library</div>
       <button

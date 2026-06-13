@@ -40,6 +40,8 @@ export interface ListArtifactsOpts {
   q?: string
   /** Restrict to these artifact ids (tag / favorite filters resolve to ids). Empty ⇒ none. */
   ids?: string[]
+  /** Scope to one workspace (multi-workspace). Omitted ⇒ every workspace. */
+  orgId?: string
 }
 
 export interface VersionRecord {
@@ -103,10 +105,10 @@ export interface MetaStore {
   listArtifacts(opts?: ListArtifactsOpts): Promise<ArtifactRecord[]>
   /** Artifact ids carrying a tag (server-side tag filtering). */
   artifactIdsByTag(tag: string): Promise<string[]>
-  /** Total artifact count (browse summary). */
-  countArtifacts(): Promise<number>
-  /** Tag → usage count across the workspace (browse sidebar). */
-  tagCounts(): Promise<{ tag: string; count: number }[]>
+  /** Total artifact count, scoped to a workspace when orgId is given. */
+  countArtifacts(orgId?: string): Promise<number>
+  /** Tag → usage count, scoped to a workspace when orgId is given (browse sidebar). */
+  tagCounts(orgId?: string): Promise<{ tag: string; count: number }[]>
 
   /** Append a view event. */
   recordView(v: NewView): Promise<void>
@@ -152,6 +154,8 @@ export interface MetaStore {
   getWorkspace(orgId: string): Promise<WorkspaceRecord | null>
   /** Insert or rename the workspace. */
   setWorkspace(orgId: string, name: string): Promise<WorkspaceRecord>
+  /** Every workspace a user belongs to, with their role, oldest first (the switcher). */
+  listWorkspaces(userId: string): Promise<(WorkspaceRecord & { role: Role })[]>
   getMembership(orgId: string, userId: string): Promise<MembershipRecord | null>
   listMemberships(orgId: string): Promise<MembershipRecord[]>
   countMemberships(orgId: string): Promise<number>
@@ -182,8 +186,8 @@ export interface MetaStore {
   updateCollection(id: string, fields: { title?: string }): Promise<CollectionRecord | null>
   /** Remove a collection and its items + member rows. */
   deleteCollection(id: string): Promise<void>
-  /** All collections (workspace-wide) with their item counts, newest first. */
-  listCollections(): Promise<(CollectionRecord & { count: number })[]>
+  /** Collections with their item counts, newest first; scoped to a workspace when orgId is given. */
+  listCollections(orgId?: string): Promise<(CollectionRecord & { count: number })[]>
   /** Artifact ids in a collection (drives ?collection= browse). */
   collectionArtifactIds(collectionId: string): Promise<string[]>
   /** Collection ids containing an artifact (for the artifact's "add to" UI). */

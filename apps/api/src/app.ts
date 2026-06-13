@@ -122,6 +122,20 @@ export interface AppDeps {
   versionWindowMs?: number
   /** Workspace role granted to a member who isn't the first user. Default "editor". */
   defaultRole?: Role
+  /**
+   * Enable multiple workspaces: users can create/switch workspaces and each is
+   * scoped by org_id. Off by default (self-host is single-workspace); the hosted
+   * product turns it on. Single mode behaves exactly as before, just keyed by a
+   * real `defaultOrgId` instead of a magic constant.
+   */
+  multiWorkspace?: boolean
+  /**
+   * The org_id of the single/bootstrap workspace. A real, persisted id (never a
+   * magic literal) so flipping on multiWorkspace later is a no-op for the data.
+   * Defaults to "default" when unset (tests); the Node entry generates + persists
+   * one and rekeys any legacy rows onto it.
+   */
+  defaultOrgId?: string
   /** In-memory per-IP rate limiting on auth + mutating routes. Off by default. */
   rateLimit?: boolean
   /**
@@ -147,9 +161,9 @@ export interface AppDeps {
   crossSite?: boolean
 }
 
-/** The single workspace (multi-workspace is a later layer). */
-const WORKSPACE = "local"
 const DEFAULT_WORKSPACE_NAME = "My Workspace"
+/** Cookie holding the active workspace id (multi-workspace mode). */
+const WS_COOKIE = "dock_ws"
 
 // Workspace membership is three simple roles, presented to people as
 // Admin / Creator / Viewer:
@@ -323,7 +337,7 @@ export function createApp(deps: AppDeps): Hono {
     const real = new Set((await meta.getUsers(targetIds)).map((u) => u.id))
     // Registered agents are mentionable too; a mention of an agent lands in its
     // pull inbox instead of a notification bell.
-    const agentIds = new Set((await meta.listAgents(WORKSPACE)).map((ag) => ag.id))
+    const agentIds = new Set((await meta.listAgents(a.org_id)).map((ag) => ag.id))
     const preview = previewOf(cm.body_md)
     const notified: string[] = []
     for (const m of mentions) {
@@ -413,16 +427,67 @@ export function createApp(deps: AppDeps): Hono {
   // instance (no static token) trusts anonymous callers — zero-config self-host.
   const open = !deps.token
   const defaultRole: Role = deps.defaultRole ?? "editor"
+  const multi = !!deps.multiWorkspace
+  // The single/bootstrap workspace id — always a real value, never a magic
+  // literal. The Node entry generates + persists one; tests fall back to this.
+  const DEFAULT_ORG = deps.defaultOrgId ?? "default"
 
-  // Lazy provisioning: the first member of the workspace is its owner; everyone
-  // else joins at the default role. Returns the caller's workspace role.
-  const ensureMembership = async (userId: string): Promise<Role> => {
-    const existing = await meta.getMembership(WORKSPACE, userId)
+  // Lazy provisioning: the first member of a workspace is its owner; everyone
+  // else joins at the default role. Returns the caller's role in that workspace.
+  const ensureMembership = async (orgId: string, userId: string): Promise<Role> => {
+    const existing = await meta.getMembership(orgId, userId)
     if (existing) return existing.role
-    const role: Role = (await meta.countMemberships(WORKSPACE)) === 0 ? "owner" : defaultRole
-    await meta.setMembership({ id: newId("m"), org_id: WORKSPACE, user_id: userId, role })
+    const role: Role = (await meta.countMemberships(orgId)) === 0 ? "owner" : defaultRole
+    await meta.setMembership({ id: newId("m"), org_id: orgId, user_id: userId, role })
     return role
   }
+
+  // A signed-in user's own workspace, created on demand (multi mode, first login).
+  const provisionPersonal = async (me: SessionUser): Promise<string> => {
+    const id = newId("ws")
+    const base = (me.name ?? me.email).split("@")[0] || "My"
+    await meta.setWorkspace(id, `${base}'s Workspace`)
+    await meta.setMembership({ id: newId("m"), org_id: id, user_id: me.id, role: "owner" })
+    return id
+  }
+
+  // The caller's active workspace for this request (memoized). Single mode: always
+  // the bootstrap org. Multi mode: the dock_ws cookie (validated against
+  // membership), else the user's first workspace, provisioning one if they have none.
+  const wsCache = new WeakMap<Context, string>()
+  const activeWorkspace = async (c: Context): Promise<string> => {
+    if (!multi) return DEFAULT_ORG
+    const cached = wsCache.get(c)
+    if (cached) return cached
+    // An agent acts within its own workspace, never a cookie's.
+    const ag = await agentFor(c)
+    const me = ag ? null : await currentUser(c)
+    let ws: string
+    if (ag) {
+      ws = ag.org_id
+    } else if (!me) {
+      ws = getCookie(c, WS_COOKIE) || DEFAULT_ORG
+    } else {
+      const ck = getCookie(c, WS_COOKIE)
+      if (ck && (await meta.getMembership(ck, me.id))) ws = ck
+      else {
+        const mine = await meta.listWorkspaces(me.id)
+        ws = mine.length ? mine[0].id : await provisionPersonal(me)
+      }
+    }
+    wsCache.set(c, ws)
+    return ws
+  }
+  // Persist the active-workspace choice. Same cross-site handling as the viewer
+  // cookie so it survives the hosted SPA↔API split.
+  const setWsCookie = (c: Context, id: string): void =>
+    setCookie(c, WS_COOKIE, id, {
+      path: "/",
+      maxAge: 60 * 60 * 24 * 365,
+      httpOnly: true,
+      sameSite: deps.crossSite ? "None" : "Lax",
+      secure: deps.crossSite || new URL(deps.baseUrl).protocol === "https:",
+    })
 
   const actorFor = async (c: Context, a: ArtifactRecord): Promise<Actor> => {
     if (deps.token && bearer(c) === deps.token) return { kind: "token" }
@@ -433,7 +498,12 @@ export function createApp(deps: AppDeps): Hono {
     }
     const me = await currentUser(c)
     if (!me) return { kind: "anon", open }
-    const orgRole = await ensureMembership(me.id)
+    // Baseline role = membership in the ARTIFACT's workspace. Single mode keeps
+    // its first-user-owner auto-join; multi mode never auto-joins you into
+    // someone else's workspace just because you opened a shared link.
+    const orgRole = multi
+      ? ((await meta.getMembership(a.org_id, me.id))?.role ?? null)
+      : await ensureMembership(a.org_id, me.id)
     const am = await meta.getArtifactMember(a.id, me.id)
     // A collection share grants its role on every artifact in the collection,
     // folded in alongside any per-artifact share (the higher wins).
@@ -446,14 +516,14 @@ export function createApp(deps: AppDeps): Hono {
   const authorize = (c: Context, action: Action, a: ArtifactRecord): Promise<boolean> =>
     actorFor(c, a).then((actor) => can(actor, action, a.visibility))
 
-  /** The caller's role at the workspace level (creating artifacts, settings). */
+  /** The caller's role in their active workspace (creating artifacts, settings). */
   const workspaceRole = async (c: Context): Promise<Role | null> => {
     if (deps.token && bearer(c) === deps.token) return "owner"
     const ag = await agentFor(c)
     if (ag) return ag.role
     const me = await currentUser(c)
     if (!me) return open ? "owner" : null
-    return ensureMembership(me.id)
+    return ensureMembership(await activeWorkspace(c), me.id)
   }
   const workspaceCan = async (c: Context, action: Action): Promise<boolean> => {
     const r = await workspaceRole(c)
@@ -484,8 +554,8 @@ export function createApp(deps: AppDeps): Hono {
   app.get("/v1/me", async (c) => {
     const u = await currentUser(c)
     if (!u) return c.json({ error: "unauthenticated" }, 401)
-    const role = await ensureMembership(u.id) // provisions on first load
-    return c.json({ user: { ...u, role } })
+    const role = await ensureMembership(await activeWorkspace(c), u.id) // provisions on first load
+    return c.json({ user: { ...u, role }, multi })
   })
 
   // Workspace member directory for the @mention picker — people AND agents, so
@@ -494,7 +564,8 @@ export function createApp(deps: AppDeps): Hono {
   app.get("/v1/users", async (c) => {
     if (!open && !(await currentUser(c)) && bearer(c) !== deps.token)
       return c.json({ error: "unauthenticated" }, 401)
-    const members = await meta.listMemberships(WORKSPACE)
+    const org = await activeWorkspace(c)
+    const members = await meta.listMemberships(org)
     const users = await meta.getUsers(members.map((m) => m.user_id))
     const q = (c.req.query("q") ?? "").trim().toLowerCase()
     const people = (
@@ -504,7 +575,7 @@ export function createApp(deps: AppDeps): Hono {
           )
         : users
     ).map((u) => ({ id: u.id, name: u.name ?? u.email, email: u.email, kind: "user" as const }))
-    const agents = (await meta.listAgents(WORKSPACE))
+    const agents = (await meta.listAgents(org))
       .filter((ag) => !q || ag.name.toLowerCase().includes(q))
       .map((ag) => ({ id: ag.id, name: ag.name, email: "", kind: "agent" as const }))
     const all = [...people, ...agents].sort((a, b) => a.name.localeCompare(b.name))
@@ -512,10 +583,10 @@ export function createApp(deps: AppDeps): Hono {
   })
 
   // ---- Workspace: name + members (Admin-managed) -------------------------
-  // The workspace must always keep at least one Admin, so it stays manageable:
+  // A workspace must always keep at least one Admin, so it stays manageable:
   // demoting or removing the last owner is refused.
-  const isLastOwner = async (userId: string): Promise<boolean> => {
-    const owners = (await meta.listMemberships(WORKSPACE)).filter((m) => m.role === "owner")
+  const isLastOwner = async (orgId: string, userId: string): Promise<boolean> => {
+    const owners = (await meta.listMemberships(orgId)).filter((m) => m.role === "owner")
     return owners.length <= 1 && owners.some((m) => m.user_id === userId)
   }
 
@@ -533,15 +604,15 @@ export function createApp(deps: AppDeps): Hono {
   app.get("/v1/workspace", async (c) => {
     const role = await workspaceRole(c)
     if (role === null) return c.json({ error: "unauthenticated" }, 401)
-    const [ws, members] = await Promise.all([
-      meta.getWorkspace(WORKSPACE),
-      meta.listMemberships(WORKSPACE),
-    ])
+    const org = await activeWorkspace(c)
+    const [ws, members] = await Promise.all([meta.getWorkspace(org), meta.listMemberships(org)])
     const users = await meta.getUsers(members.map((m) => m.user_id))
     const dir = new Map(users.map((u) => [u.id, u]))
     return c.json({
+      id: org,
       name: ws?.name ?? DEFAULT_WORKSPACE_NAME,
       role,
+      multi,
       members: members.map((m) => memberJson(m, dir)),
     })
   })
@@ -552,7 +623,7 @@ export function createApp(deps: AppDeps): Hono {
     const b = (await c.req.json().catch(() => ({}))) as { name?: unknown }
     const name = typeof b.name === "string" ? b.name.trim().slice(0, 80) : ""
     if (!name) return c.json({ error: "name required" }, 400)
-    const ws = await meta.setWorkspace(WORKSPACE, name)
+    const ws = await meta.setWorkspace(await activeWorkspace(c), name)
     return c.json({ name: ws.name })
   })
 
@@ -564,14 +635,15 @@ export function createApp(deps: AppDeps): Hono {
       return c.json({ error: "email and a valid role are required" }, 400)
     const user = await meta.findUserByEmail(b.email.trim())
     if (!user) return c.json({ error: "no Dock user with that email" }, 404)
+    const org = await activeWorkspace(c)
     // This route both adds and re-roles, so it must honor the same last-Admin
     // guard as PATCH — otherwise an Admin could demote the sole Admin via PUT.
-    const existing = await meta.getMembership(WORKSPACE, user.id)
-    if (existing?.role === "owner" && b.role !== "owner" && (await isLastOwner(user.id)))
+    const existing = await meta.getMembership(org, user.id)
+    if (existing?.role === "owner" && b.role !== "owner" && (await isLastOwner(org, user.id)))
       return c.json({ error: "the workspace needs at least one admin" }, 409)
     await meta.setMembership({
       id: existing?.id ?? newId("m"),
-      org_id: WORKSPACE,
+      org_id: org,
       user_id: user.id,
       role: b.role,
     })
@@ -584,11 +656,12 @@ export function createApp(deps: AppDeps): Hono {
     const userId = c.req.param("userId")
     const b = (await c.req.json().catch(() => ({}))) as { role?: unknown }
     if (!isWorkspaceRole(b.role)) return c.json({ error: "a valid role is required" }, 400)
-    const existing = await meta.getMembership(WORKSPACE, userId)
+    const org = await activeWorkspace(c)
+    const existing = await meta.getMembership(org, userId)
     if (!existing) return c.json({ error: "not a member" }, 404)
-    if (existing.role === "owner" && b.role !== "owner" && (await isLastOwner(userId)))
+    if (existing.role === "owner" && b.role !== "owner" && (await isLastOwner(org, userId)))
       return c.json({ error: "the workspace needs at least one admin" }, 409)
-    await meta.setMembership({ id: existing.id, org_id: WORKSPACE, user_id: userId, role: b.role })
+    await meta.setMembership({ id: existing.id, org_id: org, user_id: userId, role: b.role })
     return c.json({ user_id: userId, role: b.role })
   })
 
@@ -596,12 +669,65 @@ export function createApp(deps: AppDeps): Hono {
   app.delete("/v1/workspace/members/:userId", async (c) => {
     if (!(await workspaceCan(c, "manage"))) return c.json({ error: "forbidden" }, 403)
     const userId = c.req.param("userId")
-    const existing = await meta.getMembership(WORKSPACE, userId)
+    const org = await activeWorkspace(c)
+    const existing = await meta.getMembership(org, userId)
     if (!existing) return c.body(null, 204)
-    if (existing.role === "owner" && (await isLastOwner(userId)))
+    if (existing.role === "owner" && (await isLastOwner(org, userId)))
       return c.json({ error: "the workspace needs at least one admin" }, 409)
-    await meta.removeMembership(WORKSPACE, userId)
+    await meta.removeMembership(org, userId)
     return c.body(null, 204)
+  })
+
+  // ---- Workspaces: list / create / switch (multi-workspace) --------------
+  // The caller's workspaces (just the one in single mode). `active` is the id of
+  // the workspace this request resolved to.
+  app.get("/v1/workspaces", async (c) => {
+    const role = await workspaceRole(c)
+    if (role === null) return c.json({ error: "unauthenticated" }, 401)
+    const active = await activeWorkspace(c)
+    const me = await currentUser(c)
+    if (!multi || !me) {
+      const ws = await meta.getWorkspace(active)
+      return c.json({
+        multi,
+        active,
+        workspaces: [{ id: active, name: ws?.name ?? DEFAULT_WORKSPACE_NAME, role }],
+      })
+    }
+    const mine = await meta.listWorkspaces(me.id)
+    return c.json({
+      multi,
+      active,
+      workspaces: mine.map((w) => ({ id: w.id, name: w.name, role: w.role })),
+    })
+  })
+
+  // Create a workspace (multi only). The creator becomes its Admin and is switched in.
+  app.post("/v1/workspaces", async (c) => {
+    if (!multi) return c.json({ error: "multi-workspace is disabled" }, 403)
+    const me = await currentUser(c)
+    if (!me) return c.json({ error: "unauthenticated" }, 401)
+    const b = (await c.req.json().catch(() => ({}))) as { name?: unknown }
+    const name = typeof b.name === "string" ? b.name.trim().slice(0, 80) : ""
+    if (!name) return c.json({ error: "name required" }, 400)
+    const id = newId("ws")
+    await meta.setWorkspace(id, name)
+    await meta.setMembership({ id: newId("m"), org_id: id, user_id: me.id, role: "owner" })
+    setWsCookie(c, id)
+    return c.json({ id, name, role: "owner" }, 201)
+  })
+
+  // Switch the active workspace (multi only). Must be a member.
+  app.post("/v1/workspace/switch", async (c) => {
+    if (!multi) return c.json({ error: "multi-workspace is disabled" }, 403)
+    const me = await currentUser(c)
+    if (!me) return c.json({ error: "unauthenticated" }, 401)
+    const b = (await c.req.json().catch(() => ({}))) as { id?: unknown }
+    const id = typeof b.id === "string" ? b.id : ""
+    if (!id || !(await meta.getMembership(id, me.id)))
+      return c.json({ error: "not a member of that workspace" }, 403)
+    setWsCookie(c, id)
+    return c.json({ active: id })
   })
 
   // ---- Agents: registry (owner-managed) + the pull inbox -----------------
@@ -614,7 +740,7 @@ export function createApp(deps: AppDeps): Hono {
 
   app.get("/v1/agents", async (c) => {
     if (!(await workspaceCan(c, "manage"))) return c.json({ error: "forbidden" }, 403)
-    const agents = await meta.listAgents(WORKSPACE)
+    const agents = await meta.listAgents(await activeWorkspace(c))
     return c.json({ agents: agents.map(agentJson) })
   })
 
@@ -632,7 +758,7 @@ export function createApp(deps: AppDeps): Hono {
     try {
       const agent = await meta.createAgent({
         id: newId("ag"),
-        org_id: WORKSPACE,
+        org_id: await activeWorkspace(c),
         name,
         token,
         role,
@@ -712,7 +838,8 @@ export function createApp(deps: AppDeps): Hono {
     if (favOnly) narrow(favIds)
     if (ids && ids.length === 0) return c.json({ artifacts: [], next_cursor: null })
 
-    const rows = await meta.listArtifacts({ limit: limit + 1, cursor, q, ids })
+    const orgId = await activeWorkspace(c)
+    const rows = await meta.listArtifacts({ limit: limit + 1, cursor, q, ids, orgId })
     const hasMore = rows.length > limit
     const page = hasMore ? rows.slice(0, limit) : rows
     const last = page[page.length - 1]
@@ -738,11 +865,12 @@ export function createApp(deps: AppDeps): Hono {
     const me = await currentUser(c)
     if (!me && deps.token && bearer(c) !== deps.token)
       return c.json({ error: "unauthenticated" }, 401)
+    const org = await activeWorkspace(c)
     const [total, tags, favIds, ws] = await Promise.all([
-      meta.countArtifacts(),
-      meta.tagCounts(),
+      meta.countArtifacts(org),
+      meta.tagCounts(org),
       me ? meta.listUserFavoriteIds(me.id) : Promise.resolve([]),
-      meta.getWorkspace(WORKSPACE),
+      meta.getWorkspace(org),
     ])
     tags.sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag))
     return c.json({
@@ -769,7 +897,7 @@ export function createApp(deps: AppDeps): Hono {
   app.get("/v1/collections", async (c) => {
     if (!(await currentUser(c)) && deps.token && bearer(c) !== deps.token)
       return c.json({ error: "unauthenticated" }, 401)
-    return c.json({ collections: await meta.listCollections() })
+    return c.json({ collections: await meta.listCollections(await activeWorkspace(c)) })
   })
   app.post("/v1/collections", async (c) => {
     if (!(await workspaceCan(c, "comment"))) return c.json({ error: "forbidden" }, 403)
@@ -777,10 +905,10 @@ export function createApp(deps: AppDeps): Hono {
     const body = (await c.req.json().catch(() => ({}))) as { title?: string }
     const title = (body.title ?? "").trim().slice(0, 120)
     if (!title) return c.json({ error: "title required" }, 400)
-    const createdBy = me?.id ?? "local"
+    const createdBy = me?.id ?? "anon"
     const col = await meta.createCollection({
       id: newId("col"),
-      org_id: WORKSPACE,
+      org_id: await activeWorkspace(c),
       title,
       created_by: createdBy,
     })
@@ -906,6 +1034,7 @@ export function createApp(deps: AppDeps): Hono {
           message: str(body["message"]),
           author: str(body["author"]),
           name: str(body["name"]),
+          orgId: await activeWorkspace(c),
           visibility: visibilityOf(body["visibility"]),
         },
         shortId,

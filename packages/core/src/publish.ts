@@ -22,6 +22,8 @@ export interface PublishInput {
   spa?: boolean
   message?: string
   author?: string
+  /** The workspace the new artifact belongs to (multi-workspace). */
+  orgId?: string
   visibility?: Visibility
   /** Names this publish a pinned checkpoint (Docs-style). */
   name?: string
@@ -156,7 +158,7 @@ export async function publish(
   const artifact = await meta.createArtifact({
     id: newId("a"),
     short_id: newShortId(),
-    org_id: "local",
+    org_id: input.orgId ?? "local",
     slug: input.slug ? slugify(input.slug) : slugify(title) || null,
     title,
     visibility: input.visibility ?? "link",

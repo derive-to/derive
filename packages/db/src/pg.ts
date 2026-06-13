@@ -201,6 +201,7 @@ export class PgMetaStore implements MetaStore {
         ),
       )
     if (opts?.ids) conds.push(inArray(artifact.id, opts.ids))
+    if (opts?.orgId) conds.push(eq(artifact.org_id, opts.orgId))
     const q = this.db
       .select()
       .from(artifact)
@@ -215,14 +216,17 @@ export class PgMetaStore implements MetaStore {
       .where(eq(artifactTag.tag, tag))
     return rows.map((r) => r.id)
   }
-  async countArtifacts(): Promise<number> {
-    const rows = await this.db.select({ c: count() }).from(artifact)
+  async countArtifacts(orgId?: string): Promise<number> {
+    const q = this.db.select({ c: count() }).from(artifact)
+    const rows = await (orgId ? q.where(eq(artifact.org_id, orgId)) : q)
     return Number(rows[0]?.c ?? 0)
   }
-  async tagCounts(): Promise<{ tag: string; count: number }[]> {
-    const rows = await this.db
+  async tagCounts(orgId?: string): Promise<{ tag: string; count: number }[]> {
+    const base = this.db
       .select({ tag: artifactTag.tag, count: count() })
       .from(artifactTag)
+      .innerJoin(artifact, eq(artifact.id, artifactTag.artifact_id))
+    const rows = await (orgId ? base.where(eq(artifact.org_id, orgId)) : base)
       .groupBy(artifactTag.tag)
       .orderBy(asc(artifactTag.tag))
     return rows.map((r) => ({ tag: r.tag, count: Number(r.count) }))
@@ -398,6 +402,19 @@ export class PgMetaStore implements MetaStore {
       .returning()
     return rows[0]
   }
+  listWorkspaces(userId: string): Promise<(WorkspaceRecord & { role: Role })[]> {
+    return this.db
+      .select({
+        id: workspace.id,
+        name: workspace.name,
+        created_at: workspace.created_at,
+        role: membership.role,
+      })
+      .from(membership)
+      .innerJoin(workspace, eq(workspace.id, membership.org_id))
+      .where(eq(membership.user_id, userId))
+      .orderBy(asc(workspace.created_at))
+  }
 
   async getArtifactMember(
     artifactId: string,
@@ -499,8 +516,11 @@ export class PgMetaStore implements MetaStore {
       await tx.delete(collection).where(eq(collection.id, id))
     })
   }
-  async listCollections(): Promise<(CollectionRecord & { count: number })[]> {
-    const rows = await this.db.select().from(collection).orderBy(desc(collection.created_at))
+  async listCollections(orgId?: string): Promise<(CollectionRecord & { count: number })[]> {
+    const base = this.db.select().from(collection)
+    const rows = await (orgId ? base.where(eq(collection.org_id, orgId)) : base).orderBy(
+      desc(collection.created_at),
+    )
     const counts = await this.db
       .select({ id: collectionItem.collection_id, c: count() })
       .from(collectionItem)
