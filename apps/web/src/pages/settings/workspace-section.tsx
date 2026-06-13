@@ -1,5 +1,5 @@
 import { User } from "lucide-react"
-import { useEffect, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import { type ArtifactMember, api, type Role, type Workspace } from "@/api"
 import { Spinner } from "@/components/shared/spinner"
 import { Badge } from "@/components/ui/badge"
@@ -16,17 +16,20 @@ export function WorkspaceSection({ meId, show }: { meId: string; show: (m: strin
   const [addRole, setAddRole] = useState<Role>("commenter")
   const [adding, setAdding] = useState(false)
 
-  const load = () =>
-    api
-      .getWorkspace()
-      .then((w) => {
-        setWs(w)
-        setName(w.name)
-      })
-      .catch(() => setWs(null))
+  const load = useCallback(
+    () =>
+      api
+        .getWorkspace()
+        .then((w) => {
+          setWs(w)
+          setName(w.name)
+        })
+        .catch(() => setWs(null)),
+    [],
+  )
   useEffect(() => {
     load()
-  }, [])
+  }, [load])
 
   const isAdmin = ws?.role === "owner"
 

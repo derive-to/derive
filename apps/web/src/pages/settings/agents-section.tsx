@@ -1,5 +1,5 @@
 import { Bot } from "lucide-react"
-import { useEffect, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import { type Agent, api, type Role } from "@/api"
 import { EmptyState } from "@/components/shared/empty-state"
 import { Spinner } from "@/components/shared/spinner"
@@ -11,14 +11,17 @@ import { selectClass } from "./roles"
 
 export function AgentsSection({ show }: { show: (m: string) => void }) {
   const [agents, setAgents] = useState<Agent[] | null>(null)
-  const load = () =>
-    api
-      .listAgents()
-      .then((r) => setAgents(r.agents))
-      .catch(() => setAgents([]))
+  const load = useCallback(
+    () =>
+      api
+        .listAgents()
+        .then((r) => setAgents(r.agents))
+        .catch(() => setAgents([])),
+    [],
+  )
   useEffect(() => {
     load()
-  }, [])
+  }, [load])
 
   return (
     <section>

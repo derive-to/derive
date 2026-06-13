@@ -53,7 +53,7 @@
         "useLiteralKeys": "off"
       },
       "correctness": {
-        "useExhaustiveDependencies": "warn"
+        "useExhaustiveDependencies": "error"
       },
       "suspicious": {
         "noArrayIndexKey": "warn",
