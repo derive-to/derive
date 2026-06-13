@@ -123,6 +123,16 @@ export interface MetaStore {
   setArtifactMember(m: NewArtifactMember): Promise<ArtifactMemberRecord>
   removeArtifactMember(artifactId: string, userId: string): Promise<void>
 
+  // ---- Favorites (per-user stars) + tags (browse metadata) ---------------
+  /** Artifact ids this user has starred. */
+  listUserFavoriteIds(userId: string): Promise<string[]>
+  setFavorite(artifactId: string, userId: string): Promise<void>
+  removeFavorite(artifactId: string, userId: string): Promise<void>
+  /** Tags per artifact, batched (no N+1). Missing ids map to no entry. */
+  tagsForArtifacts(artifactIds: string[]): Promise<Record<string, string[]>>
+  /** Replace an artifact's full tag set (deduped, trimmed, lowercased upstream). */
+  setArtifactTags(artifactId: string, tags: string[]): Promise<void>
+
   // ---- User directory (reads Better Auth's `user` table) ----------------
   findUserByEmail(email: string): Promise<UserDir | null>
   getUsers(ids: string[]): Promise<UserDir[]>

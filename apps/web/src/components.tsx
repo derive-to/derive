@@ -33,9 +33,10 @@ export function useIsMobile(bp = 640): boolean {
   return m
 }
 
-export function Header({ right }: { right?: React.ReactNode }) {
+export function Header({ left, right }: { left?: React.ReactNode; right?: React.ReactNode }) {
   return (
     <header className="app-header">
+      {left}
       <Link to="/" className="hdr-brand">
         <Logo />
         <span className="display" style={{ fontWeight: 600, fontSize: 18 }}>

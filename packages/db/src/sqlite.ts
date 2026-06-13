@@ -21,11 +21,13 @@ import type {
   WebhookRecord,
 } from "@dock/core"
 import Database from "better-sqlite3"
-import { and, asc, count, desc, eq, isNull, lte, or } from "drizzle-orm"
+import { and, asc, count, desc, eq, inArray, isNull, lte, or } from "drizzle-orm"
 import { type BetterSQLite3Database, drizzle } from "drizzle-orm/better-sqlite3"
 import {
   artifact,
+  artifactFavorite,
   artifactMember,
+  artifactTag,
   comment,
   MIGRATION_STATEMENTS,
   membership,
@@ -37,7 +39,17 @@ import {
 
 const VIEW_WINDOW_MS = 30 * 86400_000
 
-const schema = { artifact, version, comment, webhook, webhookDelivery, membership, artifactMember }
+const schema = {
+  artifact,
+  version,
+  comment,
+  webhook,
+  webhookDelivery,
+  membership,
+  artifactMember,
+  artifactFavorite,
+  artifactTag,
+}
 
 /** Embedded SQLite (WAL). The zero-dependency default; no external services. */
 export class SqliteMetaStore implements MetaStore {
@@ -328,6 +340,57 @@ export class SqliteMetaStore implements MetaStore {
       .delete(artifactMember)
       .where(and(eq(artifactMember.artifact_id, artifactId), eq(artifactMember.user_id, userId)))
       .run()
+  }
+
+  // ---- Favorites + tags --------------------------------------------------
+  async listUserFavoriteIds(userId: string): Promise<string[]> {
+    return this.db
+      .select({ id: artifactFavorite.artifact_id })
+      .from(artifactFavorite)
+      .where(eq(artifactFavorite.user_id, userId))
+      .all()
+      .map((r) => r.id)
+  }
+  async setFavorite(artifactId: string, userId: string): Promise<void> {
+    this.db
+      .insert(artifactFavorite)
+      .values({ id: crypto.randomUUID(), artifact_id: artifactId, user_id: userId })
+      .onConflictDoNothing({ target: [artifactFavorite.artifact_id, artifactFavorite.user_id] })
+      .run()
+  }
+  async removeFavorite(artifactId: string, userId: string): Promise<void> {
+    this.db
+      .delete(artifactFavorite)
+      .where(
+        and(eq(artifactFavorite.artifact_id, artifactId), eq(artifactFavorite.user_id, userId)),
+      )
+      .run()
+  }
+  async tagsForArtifacts(artifactIds: string[]): Promise<Record<string, string[]>> {
+    if (artifactIds.length === 0) return {}
+    const rows = this.db
+      .select({ artifact_id: artifactTag.artifact_id, tag: artifactTag.tag })
+      .from(artifactTag)
+      .where(inArray(artifactTag.artifact_id, artifactIds))
+      .all()
+    const out: Record<string, string[]> = {}
+    for (const r of rows) {
+      if (!out[r.artifact_id]) out[r.artifact_id] = []
+      out[r.artifact_id].push(r.tag)
+    }
+    for (const k in out) out[k].sort()
+    return out
+  }
+  async setArtifactTags(artifactId: string, tags: string[]): Promise<void> {
+    this.raw.transaction(() => {
+      this.db.delete(artifactTag).where(eq(artifactTag.artifact_id, artifactId)).run()
+      for (const tag of tags) {
+        this.db
+          .insert(artifactTag)
+          .values({ id: crypto.randomUUID(), artifact_id: artifactId, tag })
+          .run()
+      }
+    })()
   }
 
   // ---- User directory (Better Auth's `user` table; raw, may be absent) ---

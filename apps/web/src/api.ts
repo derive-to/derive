@@ -32,6 +32,10 @@ export interface Artifact {
   views?: number
   /** The current caller's effective role on this artifact (null = no access). */
   my_role?: Role | null
+  /** Browse tags (workspace-wide). */
+  tags?: string[]
+  /** Whether the current user has starred this artifact. */
+  favorite?: boolean
 }
 export interface ArtifactMember {
   user_id: string
@@ -151,6 +155,11 @@ export const api = {
     ),
   heartbeat: (id: string, name: string): Promise<{ viewers: string[] }> =>
     f(`/v1/artifacts/${id}/presence`, opts({ name })).then(j),
+
+  favorite: (id: string, on: boolean): Promise<{ favorite: boolean }> =>
+    f(`/v1/artifacts/${id}/favorite`, { ...opts(), method: on ? "PUT" : "DELETE" }).then(j),
+  setTags: (id: string, tags: string[]): Promise<{ tags: string[] }> =>
+    f(`/v1/artifacts/${id}/tags`, { ...opts({ tags }), method: "PUT" }).then(j),
 
   listWebhooks: (): Promise<{ webhooks: Webhook[] }> => f("/v1/webhooks", opts()).then(j),
   createWebhook: (body: {

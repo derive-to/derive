@@ -20,12 +20,14 @@ import type {
   ViewStats,
   WebhookRecord,
 } from "@dock/core"
-import { and, asc, count, desc, eq, isNull, lte, or } from "drizzle-orm"
+import { and, asc, count, desc, eq, inArray, isNull, lte, or } from "drizzle-orm"
 import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres"
 import { Pool } from "pg"
 import {
   artifact,
+  artifactFavorite,
   artifactMember,
+  artifactTag,
   comment,
   membership,
   PG_SCHEMA_STATEMENTS,
@@ -34,7 +36,17 @@ import {
   webhookDelivery,
 } from "./pg-schema"
 
-const schema = { artifact, version, comment, webhook, webhookDelivery, membership, artifactMember }
+const schema = {
+  artifact,
+  version,
+  comment,
+  webhook,
+  webhookDelivery,
+  membership,
+  artifactMember,
+  artifactFavorite,
+  artifactTag,
+}
 const VIEW_WINDOW_MS = 30 * 86400_000
 
 /**
@@ -305,6 +317,51 @@ export class PgMetaStore implements MetaStore {
     await this.db
       .delete(artifactMember)
       .where(and(eq(artifactMember.artifact_id, artifactId), eq(artifactMember.user_id, userId)))
+  }
+
+  // ---- Favorites + tags --------------------------------------------------
+  async listUserFavoriteIds(userId: string): Promise<string[]> {
+    const rows = await this.db
+      .select({ id: artifactFavorite.artifact_id })
+      .from(artifactFavorite)
+      .where(eq(artifactFavorite.user_id, userId))
+    return rows.map((r) => r.id)
+  }
+  async setFavorite(artifactId: string, userId: string): Promise<void> {
+    await this.db
+      .insert(artifactFavorite)
+      .values({ id: crypto.randomUUID(), artifact_id: artifactId, user_id: userId })
+      .onConflictDoNothing({ target: [artifactFavorite.artifact_id, artifactFavorite.user_id] })
+  }
+  async removeFavorite(artifactId: string, userId: string): Promise<void> {
+    await this.db
+      .delete(artifactFavorite)
+      .where(
+        and(eq(artifactFavorite.artifact_id, artifactId), eq(artifactFavorite.user_id, userId)),
+      )
+  }
+  async tagsForArtifacts(artifactIds: string[]): Promise<Record<string, string[]>> {
+    if (artifactIds.length === 0) return {}
+    const rows = await this.db
+      .select({ artifact_id: artifactTag.artifact_id, tag: artifactTag.tag })
+      .from(artifactTag)
+      .where(inArray(artifactTag.artifact_id, artifactIds))
+    const out: Record<string, string[]> = {}
+    for (const r of rows) {
+      if (!out[r.artifact_id]) out[r.artifact_id] = []
+      out[r.artifact_id].push(r.tag)
+    }
+    for (const k in out) out[k].sort()
+    return out
+  }
+  async setArtifactTags(artifactId: string, tags: string[]): Promise<void> {
+    await this.db.transaction(async (tx) => {
+      await tx.delete(artifactTag).where(eq(artifactTag.artifact_id, artifactId))
+      if (tags.length)
+        await tx
+          .insert(artifactTag)
+          .values(tags.map((tag) => ({ id: crypto.randomUUID(), artifact_id: artifactId, tag })))
+    })
   }
 
   // ---- User directory (Better Auth's "user" table; raw, may be absent) ---
