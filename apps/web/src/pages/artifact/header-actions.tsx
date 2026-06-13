@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react"
 import { api, type Collection } from "@/api"
+import { Icon } from "@/components/icons"
 import { Button } from "@/components/ui/button"
 import { Input, Textarea } from "@/components/ui/input"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
@@ -39,7 +40,7 @@ export function StarButton({
       data-testid="artifact-star"
       className={cn(favorite && "border-gold text-gold hover:text-gold")}
     >
-      {favorite ? "★" : "☆"}
+      <Icon name="star" size={16} className={cn(!favorite && "text-muted-foreground")} />
     </Button>
   )
 }
@@ -81,7 +82,7 @@ export function ReportButton({
           aria-label="Report"
           data-testid="artifact-report"
         >
-          ⚐
+          <Icon name="report" size={16} />
         </Button>
       </PopoverTrigger>
       <PopoverContent align="end" className="w-64">
@@ -179,7 +180,8 @@ export function CollectionsMenu({
           title="Collections"
           data-testid="artifact-collections"
         >
-          📁 {inCollections.length > 0 && <b className="font-bold">{inCollections.length}</b>}
+          <Icon name="collections" size={16} />
+          {inCollections.length > 0 && <b className="font-bold">{inCollections.length}</b>}
         </Button>
       </PopoverTrigger>
       <PopoverContent align="end" className="max-h-[340px] w-[248px] overflow-auto">
@@ -274,7 +276,8 @@ export function TagsMenu({
           title="Tags"
           data-testid="artifact-tags"
         >
-          🏷 {tags.length > 0 && <b className="font-bold">{tags.length}</b>}
+          <Icon name="tag" size={16} />
+          {tags.length > 0 && <b className="font-bold">{tags.length}</b>}
         </Button>
       </PopoverTrigger>
       <PopoverContent align="end" className="w-[244px]">

@@ -175,115 +175,117 @@ function LibraryBody() {
           : "Nothing yet. Publish above, or run dock publish ./file."
 
   return (
-    <div className="mx-auto max-w-[1000px] px-5.5 pb-16 pt-5.5">
-      <div className="mb-[18px] flex flex-wrap items-center gap-2.5">
-        <Input
-          placeholder="Search by title…"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          className="min-w-[200px] flex-1"
-        />
-        {filter.kind !== "all" && (
-          <Button variant="outline" size="sm" onClick={() => nav({ to: "/", search: {} })}>
-            {filter.kind === "favorites" ? (
-              <>
-                <Icon name="favorites" size={15} /> Favorites
-              </>
-            ) : filter.kind === "tag" ? (
-              `#${filter.tag}`
-            ) : (
-              <>
-                <Icon name="collection" size={15} /> {filter.title}
-              </>
-            )}
-            <X />
-          </Button>
-        )}
-      </div>
-
-      {filter.kind !== "collection" && (
-        <Card className="mb-5.5 flex flex-wrap items-center gap-3.5 p-4">
-          <div className="min-w-[220px] flex-1">
-            <div className="font-display text-lg font-semibold">Publish an artifact</div>
-            <div className="text-sm text-muted-foreground">
-              Drop an HTML or Markdown file, or run{" "}
-              <code className="rounded bg-muted px-1.5 py-px font-mono text-[0.86em]">
-                dock publish
-              </code>
-              .
-            </div>
-          </div>
-          <input
-            ref={file}
-            type="file"
-            accept=".html,.htm,.md,.markdown,.zip"
-            className="max-w-[230px] text-sm text-muted-foreground"
-            onChange={publish}
+    <div className="flex-1 overflow-y-auto">
+      <div className="mx-auto max-w-[1000px] px-5.5 pb-16 pt-5.5">
+        <div className="mb-[18px] flex flex-wrap items-center gap-2.5">
+          <Input
+            placeholder="Search by title…"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            className="min-w-[200px] flex-1"
           />
-          <Button variant="primary" onClick={publish} disabled={busy}>
-            {busy ? (
-              "Publishing…"
-            ) : (
-              <>
-                <Plus /> Publish
-              </>
-            )}
-          </Button>
-        </Card>
-      )}
-
-      {filter.kind === "collection" ? (
-        <CollectionBar
-          title={heading}
-          count={headingCount}
-          onShare={() => activeCollection && setShareCol(activeCollection)}
-          onRename={(t) => renameCollection(filter.id, t)}
-          onDelete={() => deleteCollection(filter.id)}
-        />
-      ) : (
-        <h2 className="mb-3.5 font-display text-lg font-semibold">
-          {heading}{" "}
-          <span className="text-base font-normal text-muted-foreground">· {headingCount}</span>
-        </h2>
-      )}
-
-      {fetching && items.length === 0 ? (
-        <div className="grid h-40 place-items-center">
-          <Spinner />
-        </div>
-      ) : items.length === 0 ? (
-        <EmptyState>{emptyMessage}</EmptyState>
-      ) : (
-        <>
-          <div className="grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-3">
-            {items.map((a) => (
-              <ArtifactCard
-                key={a.short_id}
-                artifact={a}
-                onOpen={() => nav({ to: "/a/$ref", params: { ref: a.short_id } })}
-                onToggleFavorite={() => toggleFav(a)}
-                onPickTag={(tag) => nav({ to: "/", search: { tag } })}
-              />
-            ))}
-          </div>
-          {nextCursor && (
-            <div className="mt-5 text-center">
-              <Button variant="outline" onClick={() => load(nextCursor)} disabled={more}>
-                {more ? "Loading…" : "Load more"}
-              </Button>
-            </div>
+          {filter.kind !== "all" && (
+            <Button variant="outline" size="sm" onClick={() => nav({ to: "/", search: {} })}>
+              {filter.kind === "favorites" ? (
+                <>
+                  <Icon name="favorites" size={15} /> Favorites
+                </>
+              ) : filter.kind === "tag" ? (
+                `#${filter.tag}`
+              ) : (
+                <>
+                  <Icon name="collection" size={15} /> {filter.title}
+                </>
+              )}
+              <X />
+            </Button>
           )}
-        </>
-      )}
+        </div>
 
-      {shareCol && (
-        <ShareCollectionDialog
-          collection={shareCol}
-          show={show}
-          onClose={() => setShareCol(null)}
-        />
-      )}
-      {toast}
+        {filter.kind !== "collection" && (
+          <Card className="mb-5.5 flex flex-wrap items-center gap-3.5 p-4">
+            <div className="min-w-[220px] flex-1">
+              <div className="font-display text-lg font-semibold">Publish an artifact</div>
+              <div className="text-sm text-muted-foreground">
+                Drop an HTML or Markdown file, or run{" "}
+                <code className="rounded bg-muted px-1.5 py-px font-mono text-[0.86em]">
+                  dock publish
+                </code>
+                .
+              </div>
+            </div>
+            <input
+              ref={file}
+              type="file"
+              accept=".html,.htm,.md,.markdown,.zip"
+              className="max-w-[230px] text-sm text-muted-foreground"
+              onChange={publish}
+            />
+            <Button variant="primary" onClick={publish} disabled={busy}>
+              {busy ? (
+                "Publishing…"
+              ) : (
+                <>
+                  <Plus /> Publish
+                </>
+              )}
+            </Button>
+          </Card>
+        )}
+
+        {filter.kind === "collection" ? (
+          <CollectionBar
+            title={heading}
+            count={headingCount}
+            onShare={() => activeCollection && setShareCol(activeCollection)}
+            onRename={(t) => renameCollection(filter.id, t)}
+            onDelete={() => deleteCollection(filter.id)}
+          />
+        ) : (
+          <h2 className="mb-3.5 font-display text-lg font-semibold">
+            {heading}{" "}
+            <span className="text-base font-normal text-muted-foreground">· {headingCount}</span>
+          </h2>
+        )}
+
+        {fetching && items.length === 0 ? (
+          <div className="grid h-40 place-items-center">
+            <Spinner />
+          </div>
+        ) : items.length === 0 ? (
+          <EmptyState>{emptyMessage}</EmptyState>
+        ) : (
+          <>
+            <div className="grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-3">
+              {items.map((a) => (
+                <ArtifactCard
+                  key={a.short_id}
+                  artifact={a}
+                  onOpen={() => nav({ to: "/a/$ref", params: { ref: a.short_id } })}
+                  onToggleFavorite={() => toggleFav(a)}
+                  onPickTag={(tag) => nav({ to: "/", search: { tag } })}
+                />
+              ))}
+            </div>
+            {nextCursor && (
+              <div className="mt-5 text-center">
+                <Button variant="outline" onClick={() => load(nextCursor)} disabled={more}>
+                  {more ? "Loading…" : "Load more"}
+                </Button>
+              </div>
+            )}
+          </>
+        )}
+
+        {shareCol && (
+          <ShareCollectionDialog
+            collection={shareCol}
+            show={show}
+            onClose={() => setShareCol(null)}
+          />
+        )}
+        {toast}
+      </div>
     </div>
   )
 }

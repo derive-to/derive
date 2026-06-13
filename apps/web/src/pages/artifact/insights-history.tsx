@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react"
 import { type Analytics, type Artifact as Art, api } from "@/api"
+import { Icon } from "@/components/icons"
 import { ColoredAvatar } from "@/components/shared/colored-avatar"
 import { Spinner } from "@/components/shared/spinner"
 import { Button } from "@/components/ui/button"
@@ -33,7 +34,7 @@ export function Insights({ shortId }: { shortId: string }) {
           title="View analytics"
           data-testid="artifact-insights"
         >
-          <span className="text-sm">👁</span>
+          <Icon name="insights" size={16} />
           {data ? data.unique.toLocaleString() : "Insights"}
         </Button>
       </PopoverTrigger>
@@ -175,8 +176,9 @@ export function HistoryMenu({
           title="Version history"
           data-testid="artifact-history"
         >
+          <Icon name="history" size={16} />
           {latest ? `Edited ${ago(latest.created_at)}` : "History"}
-          <span className="text-2xs opacity-70">▾</span>
+          <Icon name="caret" size={13} className="opacity-70" />
         </Button>
       </PopoverTrigger>
       <PopoverContent align="end" className="max-h-[400px] w-[286px] overflow-auto p-1.5">
