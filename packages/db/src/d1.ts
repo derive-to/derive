@@ -234,6 +234,23 @@ export class D1MetaStore implements MetaStore {
     )
   }
 
+  async viewedSince(
+    artifactId: string,
+    viewer: string,
+    version: number,
+    sinceIso: string,
+  ): Promise<boolean> {
+    const row = await this.db.get(
+      sql`SELECT 1 FROM view WHERE artifact_id=${artifactId} AND viewer=${viewer} AND version=${version} AND created_at>=${sinceIso} LIMIT 1`,
+    )
+    return !!row
+  }
+
+  async pruneViews(cutoffIso: string): Promise<number> {
+    const res = await this.db.run(sql`DELETE FROM view WHERE created_at < ${cutoffIso}`)
+    return res.meta.changes ?? 0
+  }
+
   async viewStats(artifactId: string): Promise<ViewStats> {
     const cutoff = new Date(Date.now() - VIEW_WINDOW_MS).toISOString()
     const tot = (await this.db.get(

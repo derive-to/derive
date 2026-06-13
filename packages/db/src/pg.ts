@@ -236,6 +236,24 @@ export class PgMetaStore implements MetaStore {
     )
   }
 
+  async viewedSince(
+    artifactId: string,
+    viewer: string,
+    version: number,
+    sinceIso: string,
+  ): Promise<boolean> {
+    const { rows } = await this.pool.query(
+      `SELECT 1 FROM view WHERE artifact_id=$1 AND viewer=$2 AND version=$3 AND created_at>=$4 LIMIT 1`,
+      [artifactId, viewer, version, sinceIso],
+    )
+    return rows.length > 0
+  }
+
+  async pruneViews(cutoffIso: string): Promise<number> {
+    const res = await this.pool.query(`DELETE FROM view WHERE created_at < $1`, [cutoffIso])
+    return res.rowCount ?? 0
+  }
+
   async viewStats(artifactId: string): Promise<ViewStats> {
     const cutoff = new Date(Date.now() - VIEW_WINDOW_MS).toISOString()
     const [tot, uni, perV, daily, recent] = await Promise.all([

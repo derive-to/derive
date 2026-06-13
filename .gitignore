@@ -10,3 +10,7 @@ dist/
 .e2e-data/
 test-results/
 playwright-report/
+
+# ad-hoc local data dirs
+.data-*
+**/.data-*

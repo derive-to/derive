@@ -139,6 +139,12 @@ export interface AppDeps {
    * single-origin self-host, where the iframe `sandbox` attribute is the wall.
    */
   sandboxOrigin?: string
+  /**
+   * The SPA and API are on different sites (hosted split). Makes first-party
+   * cookies we set here — currently the anonymous-viewer id — `SameSite=None;
+   * Secure` so they survive the cross-site request, matching the session cookie.
+   */
+  crossSite?: boolean
 }
 
 /** The single workspace (multi-workspace is a later layer). */
@@ -154,6 +160,10 @@ const DEFAULT_WORKSPACE_NAME = "My Workspace"
 // offered as a workspace role (a Viewer can always comment).
 const isWorkspaceRole = (v: unknown): v is Role =>
   v === "owner" || v === "editor" || v === "commenter"
+
+/** Repeat opens by the same viewer of the same version inside this window collapse
+ *  to one recorded view — a refresh or quick re-open doesn't inflate the count. */
+const VIEW_DEDUP_MS = 30 * 60_000
 
 const VISIBILITIES = ["public", "link", "org", "password"] as const
 
@@ -1668,17 +1678,23 @@ export function createApp(deps: AppDeps): Hono {
     let viewer: string
     let kind: "user" | "anon"
     if (me) {
-      viewer = me.name ?? me.email
+      // Stable identity = the account. The same signed-in person is one viewer,
+      // shown by name — never "anonymous".
+      viewer = me.id
       kind = "user"
     } else {
+      // A long-lived first-party cookie keeps the same browser as one anonymous
+      // viewer across opens. SameSite=None;Secure when the SPA is cross-site, so
+      // it actually sticks there (Lax would be dropped on the cross-site fetch).
       let vid = getCookie(c, "dock_vid")
       if (!vid) {
-        vid = newId("v")
+        vid = newId("anon")
         setCookie(c, "dock_vid", vid, {
           path: "/",
           maxAge: 60 * 60 * 24 * 365,
           httpOnly: true,
-          sameSite: "Lax",
+          sameSite: deps.crossSite ? "None" : "Lax",
+          secure: deps.crossSite || new URL(deps.baseUrl).protocol === "https:",
         })
       }
       viewer = vid
@@ -1688,6 +1704,9 @@ export function createApp(deps: AppDeps): Hono {
     const version = Number.isInteger(body.version)
       ? (body.version as number)
       : artifact.current_version
+    // De-dup: skip if this viewer already saw this version recently (a refresh).
+    const since = new Date(Date.now() - VIEW_DEDUP_MS).toISOString()
+    if (await meta.viewedSince(artifact.id, viewer, version, since)) return c.body(null, 204)
     await meta.recordView({
       id: newId("v"),
       artifact_id: artifact.id,
@@ -1703,7 +1722,16 @@ export function createApp(deps: AppDeps): Hono {
     const artifact = await meta.getByShortId(c.req.param("shortId"))
     if (!artifact || !(await authorize(c, "read", artifact)))
       return c.json({ error: "not found" }, 404)
-    return c.json(await meta.viewStats(artifact.id))
+    const stats = await meta.viewStats(artifact.id)
+    // Recent user-viewers are stored by id (stable); resolve to display names.
+    const userIds = stats.recent.filter((r) => r.kind === "user").map((r) => r.viewer)
+    if (userIds.length) {
+      const byId = new Map((await meta.getUsers(userIds)).map((u) => [u.id, u.name ?? u.email]))
+      stats.recent = stats.recent.map((r) =>
+        r.kind === "user" ? { ...r, viewer: byId.get(r.viewer) ?? "Someone" } : r,
+      )
+    }
+    return c.json(stats)
   })
 
   // ---- In-app notifications (per signed-in user) ------------------------

@@ -243,11 +243,12 @@ describe("publish static bundle (astro-style dist)", () => {
 })
 
 describe("view analytics", () => {
-  it("records views and aggregates counts, uniques, per-version, and recent viewers", async () => {
+  it("de-dups rapid re-opens and aggregates uniques, per-version, recent viewers", async () => {
     const { short_id } = await (await upload("a.md", "# A")).json()
     await upload("a.md", "# A v2", { message: "v2" }, short_id) // now at v2
 
-    // Three views from one anonymous viewer (cookie reused), one from another.
+    // Three rapid opens from one anonymous viewer (cookie reused) collapse to ONE
+    // recorded view — a refresh no longer inflates the count.
     let cookie = ""
     for (let i = 0; i < 3; i++) {
       const r = await app.request(`/v1/artifacts/${short_id}/view`, {
@@ -257,27 +258,34 @@ describe("view analytics", () => {
       })
       cookie ||= (r.headers.get("set-cookie") ?? "").split(";")[0]
     }
+    // The same viewer on a different version is a distinct view.
+    await app.request(`/v1/artifacts/${short_id}/view`, {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie },
+      body: JSON.stringify({ version: 2 }),
+    })
+    // A fresh anonymous viewer (no cookie) is a distinct unique.
     await app.request(`/v1/artifacts/${short_id}/view`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({}),
+      body: JSON.stringify({ version: 2 }),
     })
 
     const a = await (await app.request(`/v1/artifacts/${short_id}/analytics`)).json()
-    expect(a.total).toBe(4)
-    expect(a.unique).toBe(2) // one reused cookie + one fresh
+    expect(a.total).toBe(3) // viewerA@v1 (de-duped from 3), viewerA@v2, viewerB@v2
+    expect(a.unique).toBe(2) // two distinct anon cookies
     expect(a.perVersion).toEqual([
-      { version: 1, count: 3 },
-      { version: 2, count: 1 },
+      { version: 1, count: 1 },
+      { version: 2, count: 2 },
     ])
-    expect(a.daily.reduce((s: number, d: { count: number }) => s + d.count, 0)).toBe(4)
-    expect(a.recent.length).toBe(2)
+    expect(a.daily.reduce((s: number, d: { count: number }) => s + d.count, 0)).toBe(3)
+    expect(a.recent.length).toBe(2) // per-viewer, newest-first
     expect(a.recent.every((r: { kind: string }) => r.kind === "anon")).toBe(true)
 
     // Batch counts surface on the library listing.
     const list = await (await app.request("/v1/artifacts")).json()
     const row = list.artifacts.find((x: { short_id: string }) => x.short_id === short_id)
-    expect(row.views).toBe(4)
+    expect(row.views).toBe(3)
   })
 
   it("no-ops when analytics is disabled", async () => {
@@ -1466,6 +1474,59 @@ describe("collections", () => {
     expect(await meta.getCollection(col.id)).toBeNull()
     // the artifact itself is untouched
     expect(await meta.getByShortId(short_id)).not.toBeNull()
+  })
+})
+
+describe("analytics: identity + retention", () => {
+  const ann: TestUser = { id: "u_view_ann", email: "ann@dock.test", name: "Ann" }
+  const { app, meta: m } = makeAuthedApp("analytics-id", [ann])
+
+  it("attributes a signed-in viewer to their account, shown by name (not anonymous)", async () => {
+    const sid = (await (await publishAs(app, "<h1>v</h1>", {}, as(ann.email))).json()).short_id
+    // Two opens by Ann collapse to one view, recorded as a user (never anon).
+    for (let i = 0; i < 2; i++)
+      await app.request(`/v1/artifacts/${sid}/view`, jsonAs(as(ann.email), { version: 1 }))
+    const a = await (
+      await app.request(`/v1/artifacts/${sid}/analytics`, { headers: as(ann.email) })
+    ).json()
+    expect(a.total).toBe(1) // de-duped
+    expect(a.recent).toHaveLength(1)
+    expect(a.recent[0]).toMatchObject({ kind: "user", viewer: "Ann" }) // name, not id, not "Anonymous"
+  })
+
+  it("prunes view rows older than the cutoff, keeps newer ones", async () => {
+    const sid = (await (await publishAs(app, "<h1>p</h1>", {}, as(ann.email))).json()).short_id
+    await app.request(`/v1/artifacts/${sid}/view`, jsonAs(as(ann.email), { version: 1 }))
+    const art = await m.getByShortId(sid)
+    if (!art) throw new Error("no artifact")
+    expect((await m.viewStats(art.id)).total).toBe(1)
+    expect(await m.pruneViews(new Date(Date.now() - 86400_000).toISOString())).toBe(0) // none that old
+    expect((await m.viewStats(art.id)).total).toBe(1) // kept
+    expect(await m.pruneViews(new Date(Date.now() + 86400_000).toISOString())).toBeGreaterThan(0)
+    expect((await m.viewStats(art.id)).total).toBe(0) // pruned
+  })
+
+  it("the anonymous-viewer cookie is cross-site-safe when the SPA is split", async () => {
+    const xs = createApp({
+      meta,
+      blobs: new FsBlobStore(join(dir, "blobs")),
+      baseUrl: "https://api.dock.test",
+      crossSite: true,
+    })
+    const fd = new FormData()
+    fd.append("file", new Blob([new TextEncoder().encode("# x")]), "x.md")
+    const { short_id } = await (
+      await xs.request("/v1/artifacts", { method: "POST", body: fd })
+    ).json()
+    const r = await xs.request(`/v1/artifacts/${short_id}/view`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    })
+    const sc = (r.headers.get("set-cookie") ?? "").toLowerCase()
+    expect(sc).toContain("dock_vid=")
+    expect(sc).toContain("samesite=none") // rides the cross-site request
+    expect(sc).toContain("secure")
   })
 })
 
