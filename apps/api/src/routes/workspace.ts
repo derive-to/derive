@@ -7,8 +7,7 @@ import { DEFAULT_WORKSPACE_NAME, fail, isWorkspaceRole, readJson } from "../lib/
 /** The workspace itself: name + members (Admin-managed), plus multi-workspace
  *  list / create / switch. A workspace always keeps at least one Admin. */
 export const workspaceRoutes = (ctx: AppContext) => {
-  const { meta, multi, currentUser, activeWorkspace, setWsCookie, workspaceRole, workspaceCan } =
-    ctx
+  const { meta, currentUser, activeWorkspace, setWsCookie, workspaceRole, workspaceCan } = ctx
   const app = new Hono()
 
   // A workspace must always keep at least one Admin, so it stays manageable:
@@ -40,7 +39,7 @@ export const workspaceRoutes = (ctx: AppContext) => {
       id: org,
       name: ws?.name ?? DEFAULT_WORKSPACE_NAME,
       role,
-      multi,
+      multi: true,
       members: members.map((m) => memberJson(m, dir)),
     })
   })
@@ -125,25 +124,24 @@ export const workspaceRoutes = (ctx: AppContext) => {
     if (role === null) return fail(c, 401, "unauthenticated")
     const active = await activeWorkspace(c)
     const me = await currentUser(c)
-    if (!multi || !me) {
+    if (!me) {
       const ws = await meta.getWorkspace(active)
       return c.json({
-        multi,
+        multi: true,
         active,
         workspaces: [{ id: active, name: ws?.name ?? DEFAULT_WORKSPACE_NAME, role }],
       })
     }
     const mine = await meta.listWorkspaces(me.id)
     return c.json({
-      multi,
+      multi: true,
       active,
       workspaces: mine.map((w) => ({ id: w.id, name: w.name, role: w.role })),
     })
   })
 
-  // Create a workspace (multi only). The creator becomes its Admin and is switched in.
+  // Create a workspace. The creator becomes its Admin and is switched in.
   app.post("/v1/workspaces", async (c) => {
-    if (!multi) return fail(c, 403, "multi-workspace is disabled")
     const me = await currentUser(c)
     if (!me) return fail(c, 401, "unauthenticated")
     const b = await readJson(
@@ -159,9 +157,8 @@ export const workspaceRoutes = (ctx: AppContext) => {
     return c.json({ id, name, role: "owner" }, 201)
   })
 
-  // Switch the active workspace (multi only). Must be a member.
+  // Switch the active workspace. Must be a member.
   app.post("/v1/workspace/switch", async (c) => {
-    if (!multi) return fail(c, 403, "multi-workspace is disabled")
     const me = await currentUser(c)
     if (!me) return fail(c, 401, "unauthenticated")
     const b = await readJson(c, z.object({}).catchall(z.unknown()))

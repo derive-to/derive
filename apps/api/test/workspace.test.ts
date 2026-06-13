@@ -193,7 +193,7 @@ describe("workspace: open + token modes", () => {
 describe("multi-workspace: isolation, switch, create, provision", () => {
   const ada: TestUser = { id: "u_mw_ada", email: "mwada@dock.test", name: "Ada" }
   const bo: TestUser = { id: "u_mw_bo", email: "mwbo@dock.test", name: "Bo" }
-  const { app } = makeAuthedApp("multiws", [ada, bo], "commenter", true)
+  const { app } = makeAuthedApp("multiws", [ada, bo], "commenter", { isolated: true })
 
   // Pull the dock_ws cookie out of a Set-Cookie header to thread it on later calls.
   const wsCookie = (res: Response): string => {
@@ -257,19 +257,5 @@ describe("multi-workspace: isolation, switch, create, provision", () => {
   })
 })
 
-describe("multi-workspace: create/switch are disabled in single mode", () => {
-  const ada: TestUser = { id: "u_sw_ada", email: "swada@dock.test", name: "Ada" }
-  const { app } = makeAuthedApp("singlews", [ada], "commenter") // multi off
-
-  it("403s create and switch, and reports multi:false", async () => {
-    expect((await app.request("/v1/workspaces", jsonAs(as(ada.email), { name: "X" }))).status).toBe(
-      403,
-    )
-    expect(
-      (await app.request("/v1/workspace/switch", jsonAs(as(ada.email), { id: "whatever" }))).status,
-    ).toBe(403)
-    const list = await (await app.request("/v1/workspaces", { headers: as(ada.email) })).json()
-    expect(list.multi).toBe(false)
-    expect(list.workspaces).toHaveLength(1)
-  })
-})
+// (single-mode create/switch-disabled tests removed — multi-workspace is now the
+// only mode; create + switch are always available, /me reports multi:true.)

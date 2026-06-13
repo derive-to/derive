@@ -78,7 +78,7 @@ describe("multi-tenant hardening: per-org quotas + cross-org isolation", () => {
   const ben: TestUser = { id: "u_mt_ben", email: "mtben@dock.test", name: "Ben" }
 
   it("storage quota is per-workspace — one org filling up does NOT block another", async () => {
-    const { app } = quotaApp("mt-quota", { multiWorkspace: true, maxBytes: 12 }, [amy, ben])
+    const { app } = quotaApp("mt-quota", { maxBytes: 12 }, [amy, ben])
     await app.request("/v1/me", { headers: as(amy.email) }) // provision Amy's workspace
     await app.request("/v1/me", { headers: as(ben.email) }) // provision Ben's workspace
     // Amy fills her own 12-byte cap.
@@ -90,7 +90,7 @@ describe("multi-tenant hardening: per-org quotas + cross-org isolation", () => {
   })
 
   it("an artifact in one org with 'org' visibility is 404 to a member of another org", async () => {
-    const { app } = quotaApp("mt-isolation", { multiWorkspace: true }, [amy, ben])
+    const { app } = quotaApp("mt-isolation", {}, [amy, ben])
     await app.request("/v1/me", { headers: as(amy.email) })
     await app.request("/v1/me", { headers: as(ben.email) })
     const a = await (

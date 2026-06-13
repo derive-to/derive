@@ -5,14 +5,14 @@ import { fail } from "../lib/http"
 
 /** Session identity + the workspace member/agent directory for the @mention picker. */
 export const sessionRoutes = (ctx: AppContext) => {
-  const { meta, deps, open, multi, bearer, currentUser, ensureMembership, activeWorkspace } = ctx
+  const { meta, deps, open, bearer, currentUser, ensureMembership, activeWorkspace } = ctx
   const app = new Hono()
 
   app.get("/v1/me", async (c) => {
     const u = await currentUser(c)
     if (!u) return fail(c, 401, "unauthenticated")
     const role = await ensureMembership(await activeWorkspace(c), u.id) // provisions on first load
-    return c.json({ user: { ...u, role }, multi })
+    return c.json({ user: { ...u, role }, multi: true })
   })
 
   // Workspace member directory for the @mention picker — people AND agents, so

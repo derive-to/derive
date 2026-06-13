@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import type { MetaStore } from "@dock/core"
+import type { MetaStore, Role } from "@dock/core"
 import { PgMetaStore } from "@dock/db/pg"
 import { SqliteMetaStore } from "@dock/db/sqlite"
 import { FsBlobStore } from "@dock/storage/fs"
@@ -9,6 +9,7 @@ import Database from "better-sqlite3"
 import { Pool } from "pg"
 import { afterAll } from "vitest"
 import { type AppDeps, createApp } from "../src/app"
+import { DEFAULT_WORKSPACE_NAME } from "../src/lib/http"
 
 export const dir = mkdtempSync(join(tmpdir(), "dock-test-"))
 
@@ -22,6 +23,8 @@ if (process.env.DOCK_TEST_DB === "pg" && !PG_URL)
   throw new Error("DOCK_TEST_DB=pg requires TEST_DATABASE_URL to be set")
 
 type TestStore = MetaStore & { close(): unknown }
+// A seat in the shared test workspace: who, at what role.
+type Seat = { user_id: string; role: Role }
 
 // Postgres has no file-per-store isolation like SQLite, so each named store gets
 // its own schema (search_path), dropped + recreated on first use in this process.
@@ -32,7 +35,7 @@ const pgSchemas = new Set<string>()
 const schemaFor = (name: string) =>
   `t_${process.pid}_${name.replace(/[^a-z0-9]+/gi, "_").toLowerCase()}`
 
-const makePgStore = (name: string, users: TestUser[]): TestStore => {
+const makePgStore = (name: string, users: TestUser[], team: Seat[]): TestStore => {
   const base = PG_URL as string
   const schema = schemaFor(name)
   const ready = (async (): Promise<TestStore> => {
@@ -59,7 +62,20 @@ const makePgStore = (name: string, users: TestUser[]): TestStore => {
     // Encode the search_path manually: URLSearchParams emits `+` for spaces, which
     // node-postgres decodeURIComponent's back to `+` (not a space) → invalid options.
     const opt = encodeURIComponent(`-c search_path=${schema}`)
-    return PgMetaStore.create(`${base}${base.includes("?") ? "&" : "?"}options=${opt}`)
+    const store = await PgMetaStore.create(`${base}${base.includes("?") ? "&" : "?"}options=${opt}`)
+    // Seed the shared "default" team inside `ready`, so the Proxy's deferred calls
+    // (test requests) only run once the membership rows exist (no race).
+    if (team.length) {
+      await store.setWorkspace("default", DEFAULT_WORKSPACE_NAME)
+      for (const t of team)
+        await store.setMembership({
+          id: `m_${t.user_id}`,
+          org_id: "default",
+          user_id: t.user_id,
+          role: t.role,
+        })
+    }
+    return store
   })()
   // Every MetaStore method is async, so a Proxy that defers each call until
   // connect+migrate finishes lets the synchronous call sites stay unchanged.
@@ -83,17 +99,32 @@ const seedSqliteUsers = (path: string, users: TestUser[]): void => {
   raw.close()
 }
 
+// Seed a shared "default" workspace + memberships (the single-mode default before
+// always-multi). The tables exist after SqliteMetaStore migrates on construction.
+const seedSqliteTeam = (path: string, team: Seat[]): void => {
+  const raw = new Database(path)
+  raw
+    .prepare(`INSERT OR IGNORE INTO workspace (id, name) VALUES ('default', ?)`)
+    .run(DEFAULT_WORKSPACE_NAME)
+  const ins = raw.prepare(
+    `INSERT OR IGNORE INTO membership (id, org_id, user_id, role) VALUES (?, 'default', ?, ?)`,
+  )
+  for (const t of team) ins.run(`m_${t.user_id}`, t.user_id, t.role)
+  raw.close()
+}
+
 // One metadata store per named test app: Postgres schema or SQLite file. Seeds
 // the Better Auth `user` table so the share/mention routes can resolve email→id.
-const makeStore = (name: string, users: TestUser[]): TestStore => {
+const makeStore = (name: string, users: TestUser[], team: Seat[] = []): TestStore => {
   if (PG_URL) {
-    const s = makePgStore(name, users)
+    const s = makePgStore(name, users, team)
     pgStores.push(s)
     return s
   }
   const path = join(dir, `${name}.db`)
   const m = new SqliteMetaStore(path)
   if (users.length) seedSqliteUsers(path, users)
+  if (team.length) seedSqliteTeam(path, team)
   return m
 }
 
@@ -158,9 +189,20 @@ export const makeAuthedApp = (
   name: string,
   users: TestUser[],
   defaultRole?: AppDeps["defaultRole"],
-  multiWorkspace?: boolean,
+  opts?: { isolated?: boolean },
 ) => {
-  const m = makeStore(name, users)
+  // Seed a shared "default" workspace so the user list collaborates (the single-
+  // mode default before always-multi): users[0] is the Admin/owner, the rest take
+  // defaultRole. `isolated` skips it, so each user provisions their own workspace
+  // (the cross-tenant / multi-workspace tests).
+  const team: Seat[] =
+    opts?.isolated || !users.length
+      ? []
+      : users.map((u, i) => ({
+          user_id: u.id,
+          role: i === 0 ? "owner" : (defaultRole ?? "editor"),
+        }))
+  const m = makeStore(name, users, team)
   const app = createApp({
     meta: m,
     blobs: new FsBlobStore(join(dir, "blobs")),
@@ -168,7 +210,6 @@ export const makeAuthedApp = (
     token: "tok",
     auth: fakeAuth(users),
     defaultRole,
-    multiWorkspace,
     defaultOrgId: "default",
   })
   return { app, meta: m }
