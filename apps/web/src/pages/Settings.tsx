@@ -5,6 +5,7 @@ import {
   type ArtifactMember,
   api,
   type Delivery,
+  type Report,
   type Role,
   type Webhook,
   type Workspace,
@@ -31,6 +32,7 @@ export function Settings() {
   const { toast, show } = useToast()
   const [hooks, setHooks] = useState<Webhook[] | null>(null)
   const [agents, setAgents] = useState<Agent[] | null>(null)
+  const [reports, setReports] = useState<Report[] | null>(null)
 
   useEffect(() => {
     if (!loading && !me) nav({ to: "/login" })
@@ -45,10 +47,16 @@ export function Settings() {
       .listAgents()
       .then((r) => setAgents(r.agents))
       .catch(() => setAgents([]))
+  const loadReports = () =>
+    api
+      .listReports()
+      .then((r) => setReports(r.reports))
+      .catch(() => setReports([]))
   useEffect(() => {
     if (me) {
       load()
       loadAgents()
+      loadReports()
     }
   }, [me])
 
@@ -71,6 +79,37 @@ export function Settings() {
         </p>
 
         <WorkspaceSection meId={me.id} show={show} />
+
+        {/* Abuse reports surface only when there are open ones — urgent + owner-only. */}
+        {reports && reports.length > 0 && (
+          <section style={{ marginTop: 38 }}>
+            <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 4 }}>
+              <h3 className="display" style={{ fontSize: 16, margin: 0, color: "var(--bad)" }}>
+                Reports
+              </h3>
+              <span className="muted" style={{ fontSize: 13 }}>
+                · {reports.length} open
+              </span>
+            </div>
+            <p className="muted" style={{ fontSize: 13, margin: "0 0 16px" }}>
+              Abuse reports against artifacts in this workspace. Take an artifact down to 410 its
+              content everywhere (the record is kept), or dismiss the report.
+            </p>
+            <div style={{ display: "flex", flexDirection: "column", gap: 11 }}>
+              {reports.map((r) => (
+                <ReportRow
+                  key={r.id}
+                  report={r}
+                  onChanged={(m) => {
+                    show(m)
+                    loadReports()
+                  }}
+                  onError={show}
+                />
+              ))}
+            </div>
+          </section>
+        )}
 
         <section style={{ marginTop: 38 }}>
           <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 4 }}>
@@ -416,6 +455,76 @@ function WorkspaceSection({ meId, show }: { meId: string; show: (m: string) => v
         )}
       </div>
     </section>
+  )
+}
+
+function ReportRow({
+  report,
+  onChanged,
+  onError,
+}: {
+  report: Report
+  onChanged: (msg: string) => void
+  onError: (msg: string) => void
+}) {
+  const [busy, setBusy] = useState(false)
+  const act = async (fn: () => Promise<unknown>, msg: string) => {
+    setBusy(true)
+    try {
+      await fn()
+      onChanged(msg)
+    } catch (e) {
+      onError((e as Error).message)
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <div
+      className="card"
+      style={{ padding: "13px 15px", borderColor: "var(--bad)", display: "flex", gap: 12 }}
+    >
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 13.5, fontWeight: 600 }}>
+          {report.reason}{" "}
+          <a
+            href={`/a/${report.artifact_short_id}`}
+            className="mono"
+            style={{ fontSize: 11, fontWeight: 500 }}
+          >
+            {report.artifact_short_id}
+          </a>
+        </div>
+        {report.detail && (
+          <div className="muted" style={{ fontSize: 12.5, marginTop: 2 }}>
+            {report.detail}
+          </div>
+        )}
+        <div className="muted" style={{ fontSize: 11, marginTop: 3 }}>
+          {report.reporter ? `reported from ${report.reporter}` : "reported anonymously"}
+        </div>
+      </div>
+      <div style={{ display: "flex", gap: 8, alignItems: "center", flex: "0 0 auto" }}>
+        <button
+          className="btn sm"
+          disabled={busy}
+          onClick={() => act(() => api.dismissReport(report.id), "Report dismissed")}
+        >
+          Dismiss
+        </button>
+        <button
+          className="btn pri sm"
+          disabled={busy}
+          style={{ background: "var(--bad)", borderColor: "var(--bad)" }}
+          onClick={() =>
+            confirm(`Take down ${report.artifact_short_id}? Its content stops serving (410).`) &&
+            act(() => api.takedown(report.artifact_id), "Artifact taken down")
+          }
+        >
+          Take down
+        </button>
+      </div>
+    </div>
   )
 }
 

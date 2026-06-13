@@ -346,6 +346,46 @@ export function Artifact() {
       </div>
     )
 
+  // Removed artifacts show a tombstone instead of the document — content is
+  // gone (the server 410s the raw routes), but an owner can still reinstate.
+  if (art.removed)
+    return (
+      <div style={{ minHeight: "100%" }}>
+        <Header />
+        <div
+          className="center"
+          style={{ height: "60vh", flexDirection: "column", gap: 12, textAlign: "center" }}
+        >
+          <div style={{ fontSize: 30, opacity: 0.55 }}>🚫</div>
+          <div style={{ fontWeight: 600, fontSize: 16 }}>This artifact was removed</div>
+          <div className="muted" style={{ fontSize: 13, maxWidth: 360, lineHeight: 1.5 }}>
+            It was taken down by a moderator and is no longer available.
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            {art.my_role === "owner" && (
+              <button
+                className="btn"
+                onClick={async () => {
+                  try {
+                    await api.reinstate(shortId)
+                    show("Reinstated")
+                    load()
+                  } catch (e) {
+                    show((e as Error).message)
+                  }
+                }}
+              >
+                Reinstate
+              </button>
+            )}
+            <button className="btn" onClick={() => nav({ to: "/" })}>
+              Back to library
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+
   const shown = version ?? art.current_version
   const editable = art.kind === "file" && shown === art.current_version
   const rawSrc = `${API_BASE}/raw/${shortId}/v/${shown}/index.html`
@@ -533,6 +573,7 @@ export function Artifact() {
                 onChange={(collections) => setArt((a) => (a ? { ...a, collections } : a))}
               />
               <ShareButton shortId={shortId} myRole={art.my_role} />
+              <ReportButton shortId={shortId} onDone={show} />
               <Insights shortId={shortId} />
               <HistoryMenu
                 art={art}
@@ -924,6 +965,102 @@ function StarButton({
     >
       {favorite ? "★" : "☆"}
     </button>
+  )
+}
+
+// Header report popover: anyone viewing can flag an artifact for moderation.
+// A short reason is required; owners triage the queue in Settings.
+function ReportButton({ shortId, onDone }: { shortId: string; onDone: (msg: string) => void }) {
+  const [open, setOpen] = useState(false)
+  const [reason, setReason] = useState("")
+  const [sent, setSent] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const h = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener("click", h)
+    return () => document.removeEventListener("click", h)
+  }, [])
+  const submit = async () => {
+    const r = reason.trim()
+    if (!r || busy) return
+    setBusy(true)
+    try {
+      await api.report(shortId, r)
+      setSent(true)
+      onDone("Reported — thanks for flagging this")
+    } catch (e) {
+      onDone((e as Error).message)
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <div ref={ref} style={{ position: "relative" }}>
+      <button
+        className="btn sm"
+        onClick={(e) => {
+          e.stopPropagation()
+          setOpen((o) => !o)
+        }}
+        title="Report this artifact"
+        aria-label="Report"
+      >
+        ⚐
+      </button>
+      {open && (
+        <div
+          className="card"
+          style={{
+            position: "absolute",
+            right: 0,
+            top: "calc(100% + 7px)",
+            width: 256,
+            padding: 12,
+            boxShadow: "var(--shadow)",
+            zIndex: 30,
+          }}
+        >
+          {sent ? (
+            <div className="muted" style={{ fontSize: 12.5, lineHeight: 1.5 }}>
+              Thanks — this has been flagged for review.
+            </div>
+          ) : (
+            <>
+              <div
+                className="mono muted"
+                style={{
+                  fontSize: 9.5,
+                  letterSpacing: ".06em",
+                  textTransform: "uppercase",
+                  marginBottom: 8,
+                }}
+              >
+                Report artifact
+              </div>
+              <textarea
+                className="input"
+                value={reason}
+                onChange={(e) => setReason(e.target.value)}
+                placeholder="What's wrong with this? (required)"
+                rows={3}
+                style={{ width: "100%", padding: "6px 9px", fontSize: 12.5, resize: "none" }}
+              />
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 6, marginTop: 8 }}>
+                <button className="btn sm" onClick={() => setOpen(false)}>
+                  Cancel
+                </button>
+                <button className="btn pri sm" onClick={submit} disabled={!reason.trim() || busy}>
+                  {busy ? "Sending…" : "Report"}
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+    </div>
   )
 }
 
