@@ -32,7 +32,9 @@ export function createBus(): EventBus {
       }
     },
     publish(artifactId, e) {
-      subs.get(artifactId)?.forEach((cb) => cb(e))
+      subs.get(artifactId)?.forEach((cb) => {
+        cb(e)
+      })
     },
   }
 }

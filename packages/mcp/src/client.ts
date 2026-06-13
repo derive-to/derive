@@ -129,11 +129,15 @@ export function createClient(opts: ClientOptions): DockClient {
       if (args.spa) form.append("spa", "true")
       if (args.resolves?.length) form.append("resolves", args.resolves.join(","))
       const url = args.id ? `${base}/v1/artifacts/${args.id}/versions` : `${base}/v1/artifacts`
-      return ok(await f(url, { method: "POST", body: form, headers: authHeaders })) as Promise<ArtifactJson>
+      return ok(
+        await f(url, { method: "POST", body: form, headers: authHeaders }),
+      ) as Promise<ArtifactJson>
     },
 
     async get(shortId) {
-      return ok(await f(`${base}/v1/artifacts/${shortId}`, { headers: authHeaders })) as Promise<ArtifactJson>
+      return ok(
+        await f(`${base}/v1/artifacts/${shortId}`, { headers: authHeaders }),
+      ) as Promise<ArtifactJson>
     },
 
     async getContent(shortId, version) {

@@ -4,13 +4,13 @@ import { join } from "node:path"
 import { afterEach, describe, expect, it } from "vitest"
 import {
   CONFIG_FILE,
-  TEMPLATES,
   defaultConfig,
   formatComments,
   loadConfig,
   resolvePublish,
   scaffold,
   scaffoldFiles,
+  TEMPLATES,
   writeId,
 } from "../src/config.js"
 
@@ -66,7 +66,9 @@ describe("scaffold", () => {
   it("site template scaffolds a multi-file bundle with a directory entry", () => {
     const d = tmp()
     const { created } = scaffold(d, "Docs", "site")
-    expect(created).toEqual(expect.arrayContaining(["site/index.html", "site/about.html", "site/style.css"]))
+    expect(created).toEqual(
+      expect.arrayContaining(["site/index.html", "site/about.html", "site/style.css"]),
+    )
     expect(JSON.parse(readFileSync(join(d, CONFIG_FILE), "utf8")).entry).toBe("site")
   })
 
@@ -87,7 +89,12 @@ describe("scaffold", () => {
 
 describe("formatComments", () => {
   const c = (id, tid, author, body, state = "open", anchor = null) => ({
-    id, thread_id: tid, author, body_md: body, state, anchor,
+    id,
+    thread_id: tid,
+    author,
+    body_md: body,
+    state,
+    anchor,
   })
   it("returns a friendly message when empty", () => {
     expect(formatComments([])).toBe("No comments yet.")
@@ -104,7 +111,9 @@ describe("formatComments", () => {
     expect(out).toContain("✓ thread t2")
   })
   it("shows the anchored quote when present", () => {
-    const out = formatComments([c("c1", "t1", "ava", "tighten", "open", JSON.stringify({ exact: "p99 budget" }))])
+    const out = formatComments([
+      c("c1", "t1", "ava", "tighten", "open", JSON.stringify({ exact: "p99 budget" })),
+    ])
     expect(out).toContain("“p99 budget”")
   })
 })
@@ -127,7 +136,14 @@ describe("loadConfig", () => {
 
 describe("resolvePublish", () => {
   it("flags win over config win over defaults", () => {
-    const cfg = { id: "cfg", title: "cfgTitle", entry: "doc.md", visibility: "org", spa: true, server: "http://cfg" }
+    const cfg = {
+      id: "cfg",
+      title: "cfgTitle",
+      entry: "doc.md",
+      visibility: "org",
+      spa: true,
+      server: "http://cfg",
+    }
     const r = resolvePublish({ title: "flagTitle", server: "http://flag" }, cfg)
     expect(r.title).toBe("flagTitle") // flag wins
     expect(r.id).toBe("cfg") // from config

@@ -1,4 +1,3 @@
-import { integer, pgTable, text, uniqueIndex } from "drizzle-orm/pg-core"
 import type {
   ArtifactKind,
   ArtifactMemberRecord,
@@ -14,6 +13,7 @@ import type {
   WebhookKind,
   WebhookRecord,
 } from "@dock/core"
+import { integer, pgTable, text, uniqueIndex } from "drizzle-orm/pg-core"
 
 // Postgres drizzle schema — the query source of truth, dialect-paired with the
 // SQLite defs in schema.ts. created_at is ISO-8601 text so record shapes and

@@ -1,6 +1,21 @@
-import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState } from "react"
 import { useNavigate, useParams } from "@tanstack/react-router"
-import { api, API_BASE, type Analytics, type Artifact as Art, type Comment, type Diff } from "../api"
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react"
+import {
+  type Analytics,
+  API_BASE,
+  type Artifact as Art,
+  api,
+  type Comment,
+  type Diff,
+} from "../api"
 import { Header, useIsMobile, useToast } from "../components"
 import { ShareButton } from "../components/ShareDialog"
 import { useAuth } from "../ctx"
@@ -52,9 +67,16 @@ export function Artifact() {
   // Comments UI state. On phones the panel is a slide-up sheet that starts
   // closed (document-first); on desktop it restores the saved rail/open state.
   const [panel, setPanel] = useState<Panel>(() =>
-    typeof window !== "undefined" && window.matchMedia("(max-width:640px)").matches ? "hidden" : loadPanel(),
+    typeof window !== "undefined" && window.matchMedia("(max-width:640px)").matches
+      ? "hidden"
+      : loadPanel(),
   )
-  const [sel, setSel] = useState<{ selector: Sel; top: number; vTop: number; vBottom: number } | null>(null)
+  const [sel, setSel] = useState<{
+    selector: Sel
+    top: number
+    vTop: number
+    vBottom: number
+  } | null>(null)
   const [composer, setComposer] = useState<{ anchor: Sel | null; top: number | null } | null>(null)
   const [activeThread, setActiveThread] = useState<string | null>(null)
   const [hoverThread, setHoverThread] = useState<string | null>(null)
@@ -86,7 +108,12 @@ export function Artifact() {
       if (d.type === "select") {
         if (d.selector && d.rect) {
           const ft = frame.current?.getBoundingClientRect().top ?? 0
-          setSel({ selector: d.selector, top: d.rect.top, vTop: ft + d.rect.top, vBottom: ft + d.rect.bottom })
+          setSel({
+            selector: d.selector,
+            top: d.rect.top,
+            vTop: ft + d.rect.top,
+            vBottom: ft + d.rect.bottom,
+          })
         } else setSel(null)
       } else if (d.type === "anchors-resolved") setInDoc(d.resolved ?? {})
       else if (d.type === "anchor-rects") {
@@ -191,8 +218,17 @@ export function Artifact() {
   }, [loading, me, nav])
 
   const load = useCallback(() => {
-    api.getArtifact(shortId).then((a) => { setArt(a); setFailed(false) }).catch(() => setFailed(true))
-    api.listComments(shortId).then((r) => setComments(r.comments)).catch(() => {})
+    api
+      .getArtifact(shortId)
+      .then((a) => {
+        setArt(a)
+        setFailed(false)
+      })
+      .catch(() => setFailed(true))
+    api
+      .listComments(shortId)
+      .then((r) => setComments(r.comments))
+      .catch(() => {})
   }, [shortId])
   useEffect(load, [load])
 
@@ -215,7 +251,11 @@ export function Artifact() {
     const ev = new EventSource(`${API_BASE}/v1/artifacts/${shortId}/events`, {
       withCredentials: true,
     })
-    const refresh = () => api.listComments(shortId).then((r) => setComments(r.comments)).catch(() => {})
+    const refresh = () =>
+      api
+        .listComments(shortId)
+        .then((r) => setComments(r.comments))
+        .catch(() => {})
     ev.addEventListener("comment.created", refresh)
     ev.addEventListener("comment.resolved", refresh)
     ev.addEventListener("comment.reacted", refresh)
@@ -235,7 +275,11 @@ export function Artifact() {
   useEffect(() => {
     if (!me) return
     const name = me.name ?? me.email
-    const beat = () => api.heartbeat(shortId, name).then((r) => setViewers(r.viewers)).catch(() => {})
+    const beat = () =>
+      api
+        .heartbeat(shortId, name)
+        .then((r) => setViewers(r.viewers))
+        .catch(() => {})
     beat()
     const t = setInterval(beat, 20_000)
     return () => clearInterval(t)
@@ -263,7 +307,10 @@ export function Artifact() {
     }
     setDiff(null)
     let alive = true
-    api.diff(shortId, shownN, art.current_version).then((d) => alive && setDiff(d)).catch(() => {})
+    api
+      .diff(shortId, shownN, art.current_version)
+      .then((d) => alive && setDiff(d))
+      .catch(() => {})
     return () => {
       alive = false
     }
@@ -275,11 +322,21 @@ export function Artifact() {
         <Header />
         <div className="center" style={{ height: "60vh", flexDirection: "column", gap: 10 }}>
           <div className="muted">Artifact not found, or you don't have access.</div>
-          <button className="btn" onClick={() => nav({ to: "/" })}>Back to library</button>
+          <button className="btn" onClick={() => nav({ to: "/" })}>
+            Back to library
+          </button>
         </div>
       </div>
     )
-  if (!art) return <div style={{ minHeight: "100%" }}><Header /><div className="center" style={{ height: "60vh" }}><div className="spin" /></div></div>
+  if (!art)
+    return (
+      <div style={{ minHeight: "100%" }}>
+        <Header />
+        <div className="center" style={{ height: "60vh" }}>
+          <div className="spin" />
+        </div>
+      </div>
+    )
 
   const shown = version ?? art.current_version
   const editable = art.kind === "file" && shown === art.current_version
@@ -313,7 +370,12 @@ export function Artifact() {
   }
   const publishEdit = async () => {
     try {
-      const a = await api.publishText(shortId, src, art.title ? `${art.short_id}.md` : "edit.md", "edited in browser")
+      const a = await api.publishText(
+        shortId,
+        src,
+        art.title ? `${art.short_id}.md` : "edit.md",
+        "edited in browser",
+      )
       show(`Published v${a.current_version}`)
       setEditing(false)
       load()
@@ -327,7 +389,7 @@ export function Artifact() {
       .comment(shortId, {
         body_md: text,
         thread_id: opts?.threadId,
-        anchor: opts?.threadId ? undefined : opts?.anchor ?? undefined,
+        anchor: opts?.threadId ? undefined : (opts?.anchor ?? undefined),
       })
       .catch((e) => show((e as Error).message))
     api.listComments(shortId).then((r) => setComments(r.comments))
@@ -351,12 +413,20 @@ export function Artifact() {
     setComposer({ anchor: sel.selector, top: sel.top })
     setActiveThread(null)
   }
-  const refetch = () => api.listComments(shortId).then((r) => setComments(r.comments)).catch(() => {})
+  const refetch = () =>
+    api
+      .listComments(shortId)
+      .then((r) => setComments(r.comments))
+      .catch(() => {})
   const actions: CommentActions = {
     meName: me?.name ?? me?.email ?? "",
     react: (commentId, emoji) => {
       // Optimistic: reflect the toggle immediately, reconcile on the response.
-      setComments((cs) => cs.map((c) => (c.id === commentId ? toggleReaction(c, emoji, me?.name ?? me?.email ?? "anonymous") : c)))
+      setComments((cs) =>
+        cs.map((c) =>
+          c.id === commentId ? toggleReaction(c, emoji, me?.name ?? me?.email ?? "anonymous") : c,
+        ),
+      )
       api.react(shortId, commentId, emoji).then(refetch).catch(refetch)
     },
     edit: async (commentId, body) => {
@@ -364,11 +434,17 @@ export function Artifact() {
       refetch()
     },
     remove: (commentId) => {
-      api.deleteComment(shortId, commentId).then(refetch).catch((e) => show((e as Error).message))
+      api
+        .deleteComment(shortId, commentId)
+        .then(refetch)
+        .catch((e) => show((e as Error).message))
     },
     copyLink: (threadId) => {
       const url = `${window.location.origin}${window.location.pathname}?c=${threadId}`
-      navigator.clipboard?.writeText(url).then(() => show("Link copied")).catch(() => show(url))
+      navigator.clipboard
+        ?.writeText(url)
+        .then(() => show("Link copied"))
+        .catch(() => show(url))
     },
   }
   const restore = async (n: number) => {
@@ -391,199 +467,321 @@ export function Artifact() {
 
   return (
     <ActionsCtx.Provider value={actions}>
-    <div style={{ height: "100%", display: "flex", flexDirection: "column" }}>
-      <Header
-        right={
-          <>
-            {!isMobile && <Presence viewers={viewers} self={me?.name ?? me?.email ?? ""} />}
-            <ShareButton shortId={shortId} myRole={art.my_role} />
-            <Insights shortId={shortId} />
-            <HistoryMenu
-              art={art}
-              shown={shown}
-              goTo={(n) => nav({ to: "/a/$ref", params: { ref: n === art.current_version ? shortId : `${shortId}@v${n}` } })}
-            />
-            {editable && !editing && <button className="btn sm" onClick={startEdit}>Edit</button>}
-            {/* On phones the bottom-right FAB opens comments, so the header
-                button would just be a redundant extra wrap-row. */}
-            {!isMobile && panel !== "open" && (
-              <button className="btn sm" onClick={() => setPanel("open")} style={{ gap: 6 }} title="Show comments (c)">
-                💬 {openCount > 0 && <b style={{ fontWeight: 700 }}>{openCount}</b>}
-              </button>
-            )}
-          </>
-        }
-      />
-      <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
-        <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, position: "relative" }}>
-          {editing ? (
-            <div style={{ flex: 1, display: "flex", flexDirection: "column", background: "var(--card)" }}>
-              <div style={{ display: "flex", gap: 8, padding: "8px 12px", borderBottom: "1px solid var(--line-soft)", alignItems: "center" }}>
-                <span className="mono muted" style={{ fontSize: 11 }}>editing source</span>
-                <span style={{ flex: 1 }} />
-                <button className="btn sm" onClick={() => setEditing(false)}>Cancel</button>
-                <button className="btn pri sm" onClick={publishEdit}>Publish new version</button>
-              </div>
-              <textarea
-                className="mono"
-                value={src}
-                onChange={(e) => setSrc(e.target.value)}
-                spellCheck={false}
-                style={{ flex: 1, border: 0, resize: "none", padding: "16px 20px", fontSize: 13, lineHeight: 1.6, color: "var(--fg)", background: "var(--card)", outline: "none" }}
-              />
-            </div>
-          ) : (
+      <div style={{ height: "100%", display: "flex", flexDirection: "column" }}>
+        <Header
+          right={
             <>
-              {/* History-viewing banner: only when looking at a past version.
-                  The current version just shows the artifact, no version chrome. */}
-              {shown !== art.current_version && (
-                <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", rowGap: 6, gap: 10, padding: "8px 14px", borderBottom: "1px solid var(--line-soft)", background: "var(--ac-soft)", fontSize: 12.5 }}>
-                  <span style={{ color: "var(--ac)", fontWeight: 600 }}>Viewing an earlier version</span>
-                  <span className="muted">·</span>
-                  <button className="lnk" onClick={() => setView(view === "diff" ? "preview" : "diff")}>
-                    {view === "diff" ? "Hide changes" : "Show changes since this"}
-                  </button>
-                  <span style={{ flex: 1 }} />
-                  <button className="btn sm" onClick={() => restore(shown)} disabled={restoring}>
-                    {restoring ? "Restoring…" : "Restore this version"}
-                  </button>
-                  <button className="btn pri sm" onClick={() => nav({ to: "/a/$ref", params: { ref: shortId } })}>
-                    Back to current
-                  </button>
-                </div>
+              {!isMobile && <Presence viewers={viewers} self={me?.name ?? me?.email ?? ""} />}
+              <ShareButton shortId={shortId} myRole={art.my_role} />
+              <Insights shortId={shortId} />
+              <HistoryMenu
+                art={art}
+                shown={shown}
+                goTo={(n) =>
+                  nav({
+                    to: "/a/$ref",
+                    params: { ref: n === art.current_version ? shortId : `${shortId}@v${n}` },
+                  })
+                }
+              />
+              {editable && !editing && (
+                <button className="btn sm" onClick={startEdit}>
+                  Edit
+                </button>
               )}
-              {view === "diff" && shown !== art.current_version ? (
-                <DiffView diff={diff} fromLabel={`v${shown}`} toLabel="current" />
-              ) : (
-                <div ref={presentWrap} style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0, position: "relative", background: "#fff" }}>
-                  <iframe
-                    ref={frame}
-                    onLoad={() => setFrameReady((n) => n + 1)}
-                    title={art.title ?? shortId}
-                    src={rawSrc}
-                    allow="fullscreen"
-                    sandbox="allow-scripts allow-forms allow-popups allow-modals allow-downloads"
-                    style={{ flex: 1, border: 0, background: "#fff" }}
-                  />
-                  {deck && (
-                    <DeckBar
-                      deck={deck}
-                      onPrev={() => deckCmd("prev")}
-                      onNext={() => deckCmd("next")}
-                      onFullscreen={toggleFullscreen}
-                    />
-                  )}
-                </div>
+              {/* On phones the bottom-right FAB opens comments, so the header
+                button would just be a redundant extra wrap-row. */}
+              {!isMobile && panel !== "open" && (
+                <button
+                  className="btn sm"
+                  onClick={() => setPanel("open")}
+                  style={{ gap: 6 }}
+                  title="Show comments (c)"
+                >
+                  💬 {openCount > 0 && <b style={{ fontWeight: 700 }}>{openCount}</b>}
+                </button>
               )}
             </>
-          )}
-          {panel === "hidden" && (
-            <button
-              onClick={() => setPanel("open")}
-              title="Show comments (c)"
-              style={{
-                position: "absolute", right: 18, bottom: 18, height: 44, borderRadius: 999, border: "1px solid var(--line)",
-                background: "var(--card)", color: "var(--fg)", cursor: "pointer", boxShadow: "var(--shadow)",
-                display: "flex", alignItems: "center", gap: 8, padding: "0 16px", fontWeight: 600, fontSize: 13,
-              }}
-            >
-              <span style={{ fontSize: 15 }}>💬</span>
-              {openCount > 0 ? `${openCount} comment${openCount === 1 ? "" : "s"}` : "Comments"}
-            </button>
-          )}
-        </div>
-
-        {!isMobile && (
-          <aside
+          }
+        />
+        <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
+          <div
             style={{
-              width: asideWidth,
-              flex: `0 0 ${asideWidth}px`,
-              borderLeft: panel === "hidden" ? "none" : "1px solid var(--line)",
-              background: "var(--card)",
+              flex: 1,
               display: "flex",
               flexDirection: "column",
-              minHeight: 0,
-              overflow: "hidden",
-              transition: "width .22s cubic-bezier(.4,0,.2,1), flex-basis .22s cubic-bezier(.4,0,.2,1)",
+              minWidth: 0,
+              position: "relative",
             }}
           >
-            {panel === "rail" ? (
-              <Rail
-                pins={pinned}
-                generalCount={general.length}
-                active={activeThread}
-                onExpand={() => setPanel("open")}
-                onHide={() => setPanel("hidden")}
-                onDot={(id) => { setPanel("open"); jumpTo(id) }}
-              />
+            {editing ? (
+              <div
+                style={{
+                  flex: 1,
+                  display: "flex",
+                  flexDirection: "column",
+                  background: "var(--card)",
+                }}
+              >
+                <div
+                  style={{
+                    display: "flex",
+                    gap: 8,
+                    padding: "8px 12px",
+                    borderBottom: "1px solid var(--line-soft)",
+                    alignItems: "center",
+                  }}
+                >
+                  <span className="mono muted" style={{ fontSize: 11 }}>
+                    editing source
+                  </span>
+                  <span style={{ flex: 1 }} />
+                  <button className="btn sm" onClick={() => setEditing(false)}>
+                    Cancel
+                  </button>
+                  <button className="btn pri sm" onClick={publishEdit}>
+                    Publish new version
+                  </button>
+                </div>
+                <textarea
+                  className="mono"
+                  value={src}
+                  onChange={(e) => setSrc(e.target.value)}
+                  spellCheck={false}
+                  style={{
+                    flex: 1,
+                    border: 0,
+                    resize: "none",
+                    padding: "16px 20px",
+                    fontSize: 13,
+                    lineHeight: 1.6,
+                    color: "var(--fg)",
+                    background: "var(--card)",
+                    outline: "none",
+                  }}
+                />
+              </div>
             ) : (
-              <OpenPanel
-                openCount={openCount}
-                pinned={pinned}
-                general={general}
-                resolved={resolvedThreads}
-                activeThread={activeThread}
-                hoverThread={hoverThread}
-                inDoc={inDoc}
-                composer={composer}
-                onMinimize={() => setPanel("rail")}
-                onHide={() => setPanel("hidden")}
-                onActivate={activate}
-                onHover={setHoverThread}
-                onResolve={toggleResolve}
-                onReply={reply}
-                onJump={jumpTo}
-                onNewGeneral={() => { setComposer({ anchor: null, top: null }); setActiveThread(null) }}
-                onSubmitNew={submitNew}
-                onCancelNew={() => { setComposer(null); setSel(null) }}
-              />
+              <>
+                {/* History-viewing banner: only when looking at a past version.
+                  The current version just shows the artifact, no version chrome. */}
+                {shown !== art.current_version && (
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      flexWrap: "wrap",
+                      rowGap: 6,
+                      gap: 10,
+                      padding: "8px 14px",
+                      borderBottom: "1px solid var(--line-soft)",
+                      background: "var(--ac-soft)",
+                      fontSize: 12.5,
+                    }}
+                  >
+                    <span style={{ color: "var(--ac)", fontWeight: 600 }}>
+                      Viewing an earlier version
+                    </span>
+                    <span className="muted">·</span>
+                    <button
+                      className="lnk"
+                      onClick={() => setView(view === "diff" ? "preview" : "diff")}
+                    >
+                      {view === "diff" ? "Hide changes" : "Show changes since this"}
+                    </button>
+                    <span style={{ flex: 1 }} />
+                    <button className="btn sm" onClick={() => restore(shown)} disabled={restoring}>
+                      {restoring ? "Restoring…" : "Restore this version"}
+                    </button>
+                    <button
+                      className="btn pri sm"
+                      onClick={() => nav({ to: "/a/$ref", params: { ref: shortId } })}
+                    >
+                      Back to current
+                    </button>
+                  </div>
+                )}
+                {view === "diff" && shown !== art.current_version ? (
+                  <DiffView diff={diff} fromLabel={`v${shown}`} toLabel="current" />
+                ) : (
+                  <div
+                    ref={presentWrap}
+                    style={{
+                      flex: 1,
+                      display: "flex",
+                      flexDirection: "column",
+                      minHeight: 0,
+                      position: "relative",
+                      background: "#fff",
+                    }}
+                  >
+                    <iframe
+                      ref={frame}
+                      onLoad={() => setFrameReady((n) => n + 1)}
+                      title={art.title ?? shortId}
+                      src={rawSrc}
+                      allow="fullscreen"
+                      sandbox="allow-scripts allow-forms allow-popups allow-modals allow-downloads"
+                      style={{ flex: 1, border: 0, background: "#fff" }}
+                    />
+                    {deck && (
+                      <DeckBar
+                        deck={deck}
+                        onPrev={() => deckCmd("prev")}
+                        onNext={() => deckCmd("next")}
+                        onFullscreen={toggleFullscreen}
+                      />
+                    )}
+                  </div>
+                )}
+              </>
             )}
-          </aside>
-        )}
-      </div>
-      {/* Phones: comments live in a slide-up sheet over the full-width document
+            {panel === "hidden" && (
+              <button
+                onClick={() => setPanel("open")}
+                title="Show comments (c)"
+                style={{
+                  position: "absolute",
+                  right: 18,
+                  bottom: 18,
+                  height: 44,
+                  borderRadius: 999,
+                  border: "1px solid var(--line)",
+                  background: "var(--card)",
+                  color: "var(--fg)",
+                  cursor: "pointer",
+                  boxShadow: "var(--shadow)",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  padding: "0 16px",
+                  fontWeight: 600,
+                  fontSize: 13,
+                }}
+              >
+                <span style={{ fontSize: 15 }}>💬</span>
+                {openCount > 0 ? `${openCount} comment${openCount === 1 ? "" : "s"}` : "Comments"}
+              </button>
+            )}
+          </div>
+
+          {!isMobile && (
+            <aside
+              style={{
+                width: asideWidth,
+                flex: `0 0 ${asideWidth}px`,
+                borderLeft: panel === "hidden" ? "none" : "1px solid var(--line)",
+                background: "var(--card)",
+                display: "flex",
+                flexDirection: "column",
+                minHeight: 0,
+                overflow: "hidden",
+                transition:
+                  "width .22s cubic-bezier(.4,0,.2,1), flex-basis .22s cubic-bezier(.4,0,.2,1)",
+              }}
+            >
+              {panel === "rail" ? (
+                <Rail
+                  pins={pinned}
+                  generalCount={general.length}
+                  active={activeThread}
+                  onExpand={() => setPanel("open")}
+                  onHide={() => setPanel("hidden")}
+                  onDot={(id) => {
+                    setPanel("open")
+                    jumpTo(id)
+                  }}
+                />
+              ) : (
+                <OpenPanel
+                  openCount={openCount}
+                  pinned={pinned}
+                  general={general}
+                  resolved={resolvedThreads}
+                  activeThread={activeThread}
+                  hoverThread={hoverThread}
+                  inDoc={inDoc}
+                  composer={composer}
+                  onMinimize={() => setPanel("rail")}
+                  onHide={() => setPanel("hidden")}
+                  onActivate={activate}
+                  onHover={setHoverThread}
+                  onResolve={toggleResolve}
+                  onReply={reply}
+                  onJump={jumpTo}
+                  onNewGeneral={() => {
+                    setComposer({ anchor: null, top: null })
+                    setActiveThread(null)
+                  }}
+                  onSubmitNew={submitNew}
+                  onCancelNew={() => {
+                    setComposer(null)
+                    setSel(null)
+                  }}
+                />
+              )}
+            </aside>
+          )}
+        </div>
+        {/* Phones: comments live in a slide-up sheet over the full-width document
           — a flat thread list (no document margin), tapping a quote jumps to the
           text and closes the sheet. */}
-      {isMobile && (
-        <MobileComments
-          open={panel === "open"}
-          openThreads={openThreads}
-          resolved={resolvedThreads}
-          openCount={openCount}
-          composer={composer}
-          activeThread={activeThread}
-          inDoc={inDoc}
-          onClose={() => { setPanel("hidden"); setComposer(null); setSel(null) }}
-          onNewGeneral={() => { setComposer({ anchor: null, top: null }); setActiveThread(null) }}
-          onActivate={activate}
-          onResolve={toggleResolve}
-          onReply={reply}
-          onJump={(id) => { jumpTo(id); setPanel("hidden") }}
-          onSubmitNew={submitNew}
-          onCancelNew={() => { setComposer(null); setSel(null) }}
-        />
-      )}
-      {/* The "comment on selection" affordance floats beside the selection in
+        {isMobile && (
+          <MobileComments
+            open={panel === "open"}
+            openThreads={openThreads}
+            resolved={resolvedThreads}
+            openCount={openCount}
+            composer={composer}
+            activeThread={activeThread}
+            inDoc={inDoc}
+            onClose={() => {
+              setPanel("hidden")
+              setComposer(null)
+              setSel(null)
+            }}
+            onNewGeneral={() => {
+              setComposer({ anchor: null, top: null })
+              setActiveThread(null)
+            }}
+            onActivate={activate}
+            onResolve={toggleResolve}
+            onReply={reply}
+            onJump={(id) => {
+              jumpTo(id)
+              setPanel("hidden")
+            }}
+            onSubmitNew={submitNew}
+            onCancelNew={() => {
+              setComposer(null)
+              setSel(null)
+            }}
+          />
+        )}
+        {/* The "comment on selection" affordance floats beside the selection in
           every panel state — minimized or hidden included. Clicking it opens
           the panel if needed and starts a composer pinned to the selection. */}
-      {docLive && sel && !composer && (
-        <button
-          className="cmt-bubble"
-          title="Comment on the selection"
-          onMouseDown={(e) => e.preventDefault()}
-          onClick={() => { if (panel !== "open") setPanel("open"); startSelComment() }}
-          style={{
-            position: "fixed",
-            top: clamp((sel.vTop + sel.vBottom) / 2 - 15, 64, window.innerHeight - 46),
-            right: asideWidth + 12,
-            zIndex: 50,
-          }}
-        >
-          💬 Comment
-        </button>
-      )}
-      {toast}
-    </div>
+        {docLive && sel && !composer && (
+          <button
+            className="cmt-bubble"
+            title="Comment on the selection"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => {
+              if (panel !== "open") setPanel("open")
+              startSelComment()
+            }}
+            style={{
+              position: "fixed",
+              top: clamp((sel.vTop + sel.vBottom) / 2 - 15, 64, window.innerHeight - 46),
+              right: asideWidth + 12,
+              zIndex: 50,
+            }}
+          >
+            💬 Comment
+          </button>
+        )}
+        {toast}
+      </div>
     </ActionsCtx.Provider>
   )
 }
@@ -594,8 +792,21 @@ export function Artifact() {
 // sheet. Reuses CommentCard / Composer / ResolvedSection so behaviour (replies,
 // reactions, edit/delete, resolve, re-anchoring) matches desktop exactly.
 function MobileComments({
-  open, openThreads, resolved, openCount, composer, activeThread, inDoc,
-  onClose, onNewGeneral, onActivate, onResolve, onReply, onJump, onSubmitNew, onCancelNew,
+  open,
+  openThreads,
+  resolved,
+  openCount,
+  composer,
+  activeThread,
+  inDoc,
+  onClose,
+  onNewGeneral,
+  onActivate,
+  onResolve,
+  onReply,
+  onJump,
+  onSubmitNew,
+  onCancelNew,
 }: {
   open: boolean
   openThreads: Comment[][]
@@ -618,29 +829,59 @@ function MobileComments({
     <>
       {/* biome-ignore lint/a11y/useKeyWithClickEvents: backdrop dismissal mirrors the ✕ button. */}
       <div className={`sheet-backdrop${open ? " show" : ""}`} onClick={onClose} aria-hidden />
-      <div className={`sheet${open ? " show" : ""}`} role="dialog" aria-modal="true" aria-label="Comments">
+      <div
+        className={`sheet${open ? " show" : ""}`}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Comments"
+      >
         {/* biome-ignore lint/a11y/useKeyWithClickEvents: grip is a redundant close affordance. */}
         <div className="sheet-grip" onClick={onClose} />
         <div className="sheet-head">
           <b style={{ fontSize: 14 }}>Comments</b>
           {openCount > 0 && (
-            <span className="mono" style={{ fontSize: 10, color: "var(--cmt-tx)", background: "var(--cmt-bg)", borderRadius: 999, padding: "1px 8px", fontWeight: 700 }}>{openCount}</span>
+            <span
+              className="mono"
+              style={{
+                fontSize: 10,
+                color: "var(--cmt-tx)",
+                background: "var(--cmt-bg)",
+                borderRadius: 999,
+                padding: "1px 8px",
+                fontWeight: 700,
+              }}
+            >
+              {openCount}
+            </span>
           )}
           <span style={{ flex: 1 }} />
-          <button className="btn sm" onClick={onNewGeneral}>＋ New</button>
-          <IconBtn title="Close comments" onClick={onClose}>✕</IconBtn>
+          <button className="btn sm" onClick={onNewGeneral}>
+            ＋ New
+          </button>
+          <IconBtn title="Close comments" onClick={onClose}>
+            ✕
+          </IconBtn>
         </div>
         <div className="sheet-body">
           {composer && (
             <div style={{ marginBottom: 12 }}>
-              <Composer quote={composer.anchor?.exact ?? null} onSubmit={onSubmitNew} onCancel={onCancelNew} />
+              <Composer
+                quote={composer.anchor?.exact ?? null}
+                onSubmit={onSubmitNew}
+                onCancel={onCancelNew}
+              />
             </div>
           )}
           {empty && (
-            <div className="center" style={{ flexDirection: "column", gap: 8, padding: 34, textAlign: "center" }}>
+            <div
+              className="center"
+              style={{ flexDirection: "column", gap: 8, padding: 34, textAlign: "center" }}
+            >
               <div style={{ fontSize: 28, opacity: 0.5 }}>💬</div>
               <div className="muted" style={{ fontSize: 13, lineHeight: 1.5 }}>
-                No comments yet.<br />Select text in the document to start one.
+                No comments yet.
+                <br />
+                Select text in the document to start one.
               </div>
             </div>
           )}
@@ -704,24 +945,65 @@ function OpenPanel(props: {
   onCancelNew: () => void
 }) {
   const {
-    openCount, pinned, general, resolved, activeThread, hoverThread, inDoc, composer,
-    onMinimize, onHide, onActivate, onHover, onResolve, onReply, onJump,
-    onNewGeneral, onSubmitNew, onCancelNew,
+    openCount,
+    pinned,
+    general,
+    resolved,
+    activeThread,
+    hoverThread,
+    inDoc,
+    composer,
+    onMinimize,
+    onHide,
+    onActivate,
+    onHover,
+    onResolve,
+    onReply,
+    onJump,
+    onNewGeneral,
+    onSubmitNew,
+    onCancelNew,
   } = props
   const generalComposer = composer && !composer.anchor
   const empty = openCount === 0 && resolved.length === 0 && !composer
 
   return (
     <>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 8px 10px 14px", borderBottom: "1px solid var(--line-soft)" }}>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          padding: "10px 8px 10px 14px",
+          borderBottom: "1px solid var(--line-soft)",
+        }}
+      >
         <b style={{ fontSize: 13 }}>Comments</b>
         {openCount > 0 && (
-          <span className="mono" style={{ fontSize: 10, color: "var(--cmt-tx)", background: "var(--cmt-bg)", borderRadius: 999, padding: "1px 8px", fontWeight: 700 }}>{openCount}</span>
+          <span
+            className="mono"
+            style={{
+              fontSize: 10,
+              color: "var(--cmt-tx)",
+              background: "var(--cmt-bg)",
+              borderRadius: 999,
+              padding: "1px 8px",
+              fontWeight: 700,
+            }}
+          >
+            {openCount}
+          </span>
         )}
         <span style={{ flex: 1 }} />
-        <IconBtn title="New comment" onClick={onNewGeneral}>＋</IconBtn>
-        <IconBtn title="Minimize to rail (c)" onClick={onMinimize}>⟩</IconBtn>
-        <IconBtn title="Hide comments" onClick={onHide}>✕</IconBtn>
+        <IconBtn title="New comment" onClick={onNewGeneral}>
+          ＋
+        </IconBtn>
+        <IconBtn title="Minimize to rail (c)" onClick={onMinimize}>
+          ⟩
+        </IconBtn>
+        <IconBtn title="Hide comments" onClick={onHide}>
+          ✕
+        </IconBtn>
       </div>
 
       <div style={{ flex: 1, minHeight: 0, position: "relative", overflow: "hidden" }}>
@@ -744,10 +1026,22 @@ function OpenPanel(props: {
 
         {/* Empty state. */}
         {empty && (
-          <div className="center" style={{ position: "absolute", inset: 0, flexDirection: "column", gap: 8, padding: 24, textAlign: "center" }}>
+          <div
+            className="center"
+            style={{
+              position: "absolute",
+              inset: 0,
+              flexDirection: "column",
+              gap: 8,
+              padding: 24,
+              textAlign: "center",
+            }}
+          >
             <div style={{ fontSize: 26, opacity: 0.5 }}>💬</div>
             <div className="muted" style={{ fontSize: 12.5, lineHeight: 1.5 }}>
-              No comments yet.<br />Select text in the document to start one.
+              No comments yet.
+              <br />
+              Select text in the document to start one.
             </div>
           </div>
         )}
@@ -755,7 +1049,15 @@ function OpenPanel(props: {
 
       {/* General + resolved threads live in a scrollable footer drawer. */}
       {(generalComposer || general.length > 0 || resolved.length > 0) && (
-        <div style={{ flex: "0 0 auto", maxHeight: "44%", overflow: "auto", borderTop: "1px solid var(--line-soft)", padding: 10 }}>
+        <div
+          style={{
+            flex: "0 0 auto",
+            maxHeight: "44%",
+            overflow: "auto",
+            borderTop: "1px solid var(--line-soft)",
+            padding: 10,
+          }}
+        >
           {generalComposer && (
             <div style={{ marginBottom: 10 }}>
               <Composer quote={null} onSubmit={onSubmitNew} onCancel={onCancelNew} />
@@ -805,8 +1107,18 @@ function OpenPanel(props: {
 const COMPOSER_ID = "__composer__"
 
 function PinnedZone({
-  pins, composer, activeThread, hoverThread, inDoc,
-  onActivate, onHover, onResolve, onReply, onJump, onSubmitNew, onCancelNew,
+  pins,
+  composer,
+  activeThread,
+  hoverThread,
+  inDoc,
+  onActivate,
+  onHover,
+  onResolve,
+  onReply,
+  onJump,
+  onSubmitNew,
+  onCancelNew,
 }: {
   pins: PinItem[]
   composer: { anchor: Sel | null; top: number | null } | null
@@ -849,7 +1161,7 @@ function PinnedZone({
   // A composer for a new anchored comment joins the same layout as a pinned
   // item that owns priority, so neighbouring cards flow around it instead of
   // colliding with it.
-  const composing = !!(composer && composer.anchor && composer.top != null)
+  const composing = !!(composer?.anchor && composer?.top != null)
   const items = pins.map((p) => ({ id: p.thread[0].thread_id, desiredY: p.desiredY }))
   if (composing) items.push({ id: COMPOSER_ID, desiredY: composer!.top! })
   const activeId = composing ? COMPOSER_ID : activeThread
@@ -905,7 +1217,11 @@ function PinnedZone({
             zIndex: 10,
           }}
         >
-          <Composer quote={composer!.anchor?.exact ?? null} onSubmit={onSubmitNew} onCancel={onCancelNew} />
+          <Composer
+            quote={composer!.anchor?.exact ?? null}
+            onSubmit={onSubmitNew}
+            onCancel={onCancelNew}
+          />
         </div>
       )}
     </div>
@@ -987,19 +1303,37 @@ function toggleReaction(c: Comment, emoji: string, who: string): Comment {
 // Tiny, XSS-safe inline markdown: escape first, then a few transforms. Covers
 // bold, italic, inline code, links/autolinks, and line breaks.
 const esc = (s: string) =>
-  s.replace(/[&<>"]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[ch] as string)
+  s.replace(
+    /[&<>"]/g,
+    (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[ch] as string,
+  )
 function mdToHtml(src: string): string {
   let h = esc(src)
   h = h.replace(/`([^`]+)`/g, "<code>$1</code>")
   h = h.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
   h = h.replace(/(^|[^*])\*([^*\n]+)\*/g, "$1<em>$2</em>")
-  h = h.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>')
-  h = h.replace(/(^|[\s(])(https?:\/\/[^\s<)]+)/g, '$1<a href="$2" target="_blank" rel="noopener noreferrer">$2</a>')
+  h = h.replace(
+    /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g,
+    '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>',
+  )
+  h = h.replace(
+    /(^|[\s(])(https?:\/\/[^\s<)]+)/g,
+    '$1<a href="$2" target="_blank" rel="noopener noreferrer">$2</a>',
+  )
   return h.replace(/\n/g, "<br/>")
 }
 
 // Stable per-author tint, so people are recognisable across avatars + threads.
-const AUTHOR_TINTS = ["#7c6cbd", "#3c6e2f", "#a04425", "#2f6e6e", "#9a5fb0", "#b08322", "#4a63b8", "#9a4a6b"]
+const AUTHOR_TINTS = [
+  "#7c6cbd",
+  "#3c6e2f",
+  "#a04425",
+  "#2f6e6e",
+  "#9a5fb0",
+  "#b08322",
+  "#4a63b8",
+  "#9a4a6b",
+]
 function colorFor(name: string): string {
   let h = 0
   for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0
@@ -1008,14 +1342,36 @@ function colorFor(name: string): string {
 
 function ColoredAvatar({ name, size = 17 }: { name: string; size?: number }) {
   return (
-    <span style={{ width: size, height: size, borderRadius: "50%", background: colorFor(name), color: "#fff", display: "grid", placeItems: "center", fontSize: Math.round(size * 0.5), fontWeight: 700, fontFamily: "ui-monospace,Menlo,monospace", flex: "0 0 auto" }}>
+    <span
+      style={{
+        width: size,
+        height: size,
+        borderRadius: "50%",
+        background: colorFor(name),
+        color: "#fff",
+        display: "grid",
+        placeItems: "center",
+        fontSize: Math.round(size * 0.5),
+        fontWeight: 700,
+        fontFamily: "ui-monospace,Menlo,monospace",
+        flex: "0 0 auto",
+      }}
+    >
       {(name || "?").slice(0, 2).toUpperCase()}
     </span>
   )
 }
 
 // Small popover that closes on an outside click.
-function Popover({ children, onClose, style }: { children: React.ReactNode; onClose: () => void; style?: React.CSSProperties }) {
+function Popover({
+  children,
+  onClose,
+  style,
+}: {
+  children: React.ReactNode
+  onClose: () => void
+  style?: React.CSSProperties
+}) {
   const ref = useRef<HTMLDivElement>(null)
   useEffect(() => {
     const h = (e: MouseEvent) => {
@@ -1047,13 +1403,26 @@ function CommentRow({ c, compact }: { c: Comment; compact?: boolean }) {
 
   if (c.deleted)
     return (
-      <div style={{ padding: "9px 12px", borderBottom: compact ? "none" : "1px solid var(--line-soft)" }}>
-        <span className="muted" style={{ fontSize: 12, fontStyle: "italic" }}>Comment deleted</span>
+      <div
+        style={{
+          padding: "9px 12px",
+          borderBottom: compact ? "none" : "1px solid var(--line-soft)",
+        }}
+      >
+        <span className="muted" style={{ fontSize: 12, fontStyle: "italic" }}>
+          Comment deleted
+        </span>
       </div>
     )
 
   return (
-    <div className="cmt-row" style={{ padding: "10px 12px", borderBottom: compact ? "none" : "1px solid var(--line-soft)" }}>
+    <div
+      className="cmt-row"
+      style={{
+        padding: "10px 12px",
+        borderBottom: compact ? "none" : "1px solid var(--line-soft)",
+      }}
+    >
       <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 4 }}>
         <ColoredAvatar name={c.author} />
         <span style={{ fontSize: 11.5, fontWeight: 700, color: "var(--cmt-tx)" }}>{c.author}</span>
@@ -1083,13 +1452,33 @@ function CommentRow({ c, compact }: { c: Comment; compact?: boolean }) {
             }}
           />
           <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
-            <button className="btn pri sm" disabled={!draft.trim()} onClick={async () => { await A.edit(c.id, draft); setEditing(false) }}>Save</button>
-            <button className="btn sm" onClick={() => { setEditing(false); setDraft(c.body_md) }}>Cancel</button>
+            <button
+              className="btn pri sm"
+              disabled={!draft.trim()}
+              onClick={async () => {
+                await A.edit(c.id, draft)
+                setEditing(false)
+              }}
+            >
+              Save
+            </button>
+            <button
+              className="btn sm"
+              onClick={() => {
+                setEditing(false)
+                setDraft(c.body_md)
+              }}
+            >
+              Cancel
+            </button>
           </div>
         </div>
       ) : (
-        // biome-ignore lint/security/noDangerouslySetInnerHtml: input is escaped first in mdToHtml.
-        <div className={`cmt-body${compact ? " cmt-clamp" : ""}`} dangerouslySetInnerHTML={{ __html: mdToHtml(c.body_md) }} />
+        <div
+          className={`cmt-body${compact ? " cmt-clamp" : ""}`}
+          // biome-ignore lint/security/noDangerouslySetInnerHtml: input is escaped first in mdToHtml.
+          dangerouslySetInnerHTML={{ __html: mdToHtml(c.body_md) }}
+        />
       )}
 
       {Object.keys(reactions).length > 0 && (
@@ -1099,7 +1488,10 @@ function CommentRow({ c, compact }: { c: Comment; compact?: boolean }) {
               key={emoji}
               className={`cmt-pill${who.includes(A.meName) ? " on" : ""}`}
               title={who.join(", ")}
-              onClick={(e) => { e.stopPropagation(); A.react(c.id, emoji) }}
+              onClick={(e) => {
+                e.stopPropagation()
+                A.react(c.id, emoji)
+              }}
             >
               <span>{emoji}</span>
               <span className="n">{who.length}</span>
@@ -1110,13 +1502,33 @@ function CommentRow({ c, compact }: { c: Comment; compact?: boolean }) {
 
       {!editing && (
         <div className={`cmt-actions${open ? " pin" : ""}`} onClick={(e) => e.stopPropagation()}>
-          <button className="cmt-act" title="React" onClick={() => setOpen(open === "react" ? null : "react")}>😊</button>
-          <button className="cmt-act" title="More" onClick={() => setOpen(open === "menu" ? null : "menu")}>⋯</button>
+          <button
+            className="cmt-act"
+            title="React"
+            onClick={() => setOpen(open === "react" ? null : "react")}
+          >
+            😊
+          </button>
+          <button
+            className="cmt-act"
+            title="More"
+            onClick={() => setOpen(open === "menu" ? null : "menu")}
+          >
+            ⋯
+          </button>
           {open === "react" && (
             <Popover onClose={close} style={{ top: 30, right: 0 }}>
               <div className="cmt-emoji">
                 {REACTION_EMOJI.map((em) => (
-                  <button key={em} onClick={() => { A.react(c.id, em); close() }}>{em}</button>
+                  <button
+                    key={em}
+                    onClick={() => {
+                      A.react(c.id, em)
+                      close()
+                    }}
+                  >
+                    {em}
+                  </button>
                 ))}
               </div>
             </Popover>
@@ -1124,9 +1536,35 @@ function CommentRow({ c, compact }: { c: Comment; compact?: boolean }) {
           {open === "menu" && (
             <Popover onClose={close} style={{ top: 30, right: 0, minWidth: 132 }}>
               <div className="cmt-menu">
-                {mine && <button onClick={() => { setEditing(true); close() }}>✎ Edit</button>}
-                <button onClick={() => { A.copyLink(c.thread_id); close() }}>🔗 Copy link</button>
-                {mine && <button className="danger" onClick={() => { A.remove(c.id); close() }}>🗑 Delete</button>}
+                {mine && (
+                  <button
+                    onClick={() => {
+                      setEditing(true)
+                      close()
+                    }}
+                  >
+                    ✎ Edit
+                  </button>
+                )}
+                <button
+                  onClick={() => {
+                    A.copyLink(c.thread_id)
+                    close()
+                  }}
+                >
+                  🔗 Copy link
+                </button>
+                {mine && (
+                  <button
+                    className="danger"
+                    onClick={() => {
+                      A.remove(c.id)
+                      close()
+                    }}
+                  >
+                    🗑 Delete
+                  </button>
+                )}
               </div>
             </Popover>
           )}
@@ -1139,7 +1577,15 @@ function CommentRow({ c, compact }: { c: Comment; compact?: boolean }) {
 // One comment thread. Compact until activated; the active card shows the full
 // thread, a reply box, and resolve controls.
 function CommentCard({
-  thread, active, hovered, present, onActivate, onHover, onResolve, onReply, onJump,
+  thread,
+  active,
+  hovered,
+  present,
+  onActivate,
+  onHover,
+  onResolve,
+  onReply,
+  onJump,
 }: {
   thread: Comment[]
   active: boolean
@@ -1176,10 +1622,18 @@ function CommentCard({
       {quote &&
         (textPresent && !resolved ? (
           <button
-            onClick={(e) => { e.stopPropagation(); onJump(root.thread_id) }}
+            onClick={(e) => {
+              e.stopPropagation()
+              onJump(root.thread_id)
+            }}
             title="Jump to the highlighted text"
             className="cmt-quote"
-            style={{ borderLeft: "3px solid var(--ac)", background: "var(--ac-soft)", color: "var(--fg)", cursor: "pointer" }}
+            style={{
+              borderLeft: "3px solid var(--ac)",
+              background: "var(--ac-soft)",
+              color: "var(--fg)",
+              cursor: "pointer",
+            }}
           >
             “{quote}”
           </button>
@@ -1187,7 +1641,11 @@ function CommentCard({
           <div
             title="The text this comment was attached to was edited or removed in this version"
             className="cmt-quote"
-            style={{ borderLeft: "3px solid var(--line)", background: "var(--card-2)", color: "var(--fg-mut)" }}
+            style={{
+              borderLeft: "3px solid var(--line)",
+              background: "var(--card-2)",
+              color: "var(--fg-mut)",
+            }}
           >
             “{quote}”
           </div>
@@ -1197,7 +1655,10 @@ function CommentCard({
         <>
           <CommentRow c={root} compact />
           {replies > 0 && (
-            <div className="mono" style={{ padding: "0 12px 9px", fontSize: 10, color: "var(--ac)", fontWeight: 700 }}>
+            <div
+              className="mono"
+              style={{ padding: "0 12px 9px", fontSize: 10, color: "var(--ac)", fontWeight: 700 }}
+            >
               {replies} repl{replies === 1 ? "y" : "ies"}
             </div>
           )}
@@ -1209,7 +1670,14 @@ function CommentCard({
               <CommentRow key={c.id} c={c} />
             ))}
           </div>
-          <div style={{ display: "flex", gap: 6, padding: "8px 12px", borderTop: "1px solid var(--line-soft)" }}>
+          <div
+            style={{
+              display: "flex",
+              gap: 6,
+              padding: "8px 12px",
+              borderTop: "1px solid var(--line-soft)",
+            }}
+          >
             <input
               className="input"
               style={{ padding: "6px 9px", fontSize: 12 }}
@@ -1218,20 +1686,73 @@ function CommentCard({
               autoFocus
               onClick={(e) => e.stopPropagation()}
               onChange={(e) => setReply(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter" && reply.trim()) { onReply(reply, root.thread_id); setReply("") } }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && reply.trim()) {
+                  onReply(reply, root.thread_id)
+                  setReply("")
+                }
+              }}
             />
-            <button className="btn sm" disabled={!reply.trim()} onClick={(e) => { e.stopPropagation(); if (reply.trim()) { onReply(reply, root.thread_id); setReply("") } }}>Reply</button>
+            <button
+              className="btn sm"
+              disabled={!reply.trim()}
+              onClick={(e) => {
+                e.stopPropagation()
+                if (reply.trim()) {
+                  onReply(reply, root.thread_id)
+                  setReply("")
+                }
+              }}
+            >
+              Reply
+            </button>
           </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 7, padding: "7px 12px", background: "var(--card-2)" }}>
-            <span className="mono" style={{ fontSize: 9.5, fontWeight: 700, padding: "2px 8px", borderRadius: 999, background: resolved ? "var(--good-bg)" : "var(--ac-soft)", color: resolved ? "var(--good)" : "var(--ac)" }}>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 7,
+              padding: "7px 12px",
+              background: "var(--card-2)",
+            }}
+          >
+            <span
+              className="mono"
+              style={{
+                fontSize: 9.5,
+                fontWeight: 700,
+                padding: "2px 8px",
+                borderRadius: 999,
+                background: resolved ? "var(--good-bg)" : "var(--ac-soft)",
+                color: resolved ? "var(--good)" : "var(--ac)",
+              }}
+            >
               {resolved ? "resolved" : "open"}
             </span>
             {quote && !textPresent && !resolved && (
-              <span className="mono" title="The text this comment was attached to was edited or removed in this version" style={{ fontSize: 9.5, fontWeight: 700, padding: "2px 8px", borderRadius: 999, background: "var(--cmt-bg)", color: "var(--cmt-tx)" }}>
+              <span
+                className="mono"
+                title="The text this comment was attached to was edited or removed in this version"
+                style={{
+                  fontSize: 9.5,
+                  fontWeight: 700,
+                  padding: "2px 8px",
+                  borderRadius: 999,
+                  background: "var(--cmt-bg)",
+                  color: "var(--cmt-tx)",
+                }}
+              >
                 text changed
               </span>
             )}
-            <button className="btn sm" style={{ marginLeft: "auto" }} onClick={(e) => { e.stopPropagation(); onResolve(root) }}>
+            <button
+              className="btn sm"
+              style={{ marginLeft: "auto" }}
+              onClick={(e) => {
+                e.stopPropagation()
+                onResolve(root)
+              }}
+            >
               {resolved ? "Reopen" : "Resolve"}
             </button>
           </div>
@@ -1242,7 +1763,14 @@ function CommentCard({
 }
 
 function ResolvedSection({
-  threads, activeThread, hoverThread, onActivate, onHover, onResolve, onReply, onJump,
+  threads,
+  activeThread,
+  hoverThread,
+  onActivate,
+  onHover,
+  onResolve,
+  onReply,
+  onJump,
 }: {
   threads: Comment[][]
   activeThread: string | null
@@ -1258,9 +1786,24 @@ function ResolvedSection({
     <div style={{ marginTop: 4 }}>
       <button
         onClick={() => setOpen((o) => !o)}
-        style={{ display: "flex", alignItems: "center", gap: 6, width: "100%", border: 0, background: "transparent", cursor: "pointer", color: "var(--fg-mut)", padding: "5px 2px", font: "700 9.5px ui-monospace,Menlo,monospace", letterSpacing: ".06em", textTransform: "uppercase" }}
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+          width: "100%",
+          border: 0,
+          background: "transparent",
+          cursor: "pointer",
+          color: "var(--fg-mut)",
+          padding: "5px 2px",
+          font: "700 9.5px ui-monospace,Menlo,monospace",
+          letterSpacing: ".06em",
+          textTransform: "uppercase",
+        }}
       >
-        <span style={{ transition: "transform .15s", transform: open ? "rotate(90deg)" : "none" }}>▸</span>
+        <span style={{ transition: "transform .15s", transform: open ? "rotate(90deg)" : "none" }}>
+          ▸
+        </span>
         Resolved ({threads.length})
       </button>
       {open &&
@@ -1283,7 +1826,15 @@ function ResolvedSection({
 }
 
 // New-comment composer (anchored or general).
-function Composer({ quote, onSubmit, onCancel }: { quote: string | null; onSubmit: (t: string) => void; onCancel: () => void }) {
+function Composer({
+  quote,
+  onSubmit,
+  onCancel,
+}: {
+  quote: string | null
+  onSubmit: (t: string) => void
+  onCancel: () => void
+}) {
   const [text, setText] = useState("")
   const ref = useRef<HTMLTextAreaElement>(null)
   useLayoutEffect(() => {
@@ -1293,9 +1844,20 @@ function Composer({ quote, onSubmit, onCancel }: { quote: string | null; onSubmi
     if (text.trim()) onSubmit(text)
   }
   return (
-    <div className="card" style={{ boxShadow: "var(--shadow)", borderColor: "var(--ac)", overflow: "hidden" }}>
+    <div
+      className="card"
+      style={{ boxShadow: "var(--shadow)", borderColor: "var(--ac)", overflow: "hidden" }}
+    >
       {quote && (
-        <div className="cmt-quote" style={{ borderLeft: "3px solid var(--ac)", background: "var(--ac-soft)", color: "var(--fg)", fontStyle: "italic" }}>
+        <div
+          className="cmt-quote"
+          style={{
+            borderLeft: "3px solid var(--ac)",
+            background: "var(--ac-soft)",
+            color: "var(--fg)",
+            fontStyle: "italic",
+          }}
+        >
           “{quote}”
         </div>
       )}
@@ -1313,8 +1875,17 @@ function Composer({ quote, onSubmit, onCancel }: { quote: string | null; onSubmi
           }}
         />
         <div style={{ display: "flex", gap: 6, marginTop: 7 }}>
-          <button className="btn pri sm" disabled={!text.trim()} onClick={submit} style={{ flex: 1, justifyContent: "center" }}>Comment</button>
-          <button className="btn sm" onClick={onCancel}>Cancel</button>
+          <button
+            className="btn pri sm"
+            disabled={!text.trim()}
+            onClick={submit}
+            style={{ flex: 1, justifyContent: "center" }}
+          >
+            Comment
+          </button>
+          <button className="btn sm" onClick={onCancel}>
+            Cancel
+          </button>
         </div>
       </div>
     </div>
@@ -1323,7 +1894,12 @@ function Composer({ quote, onSubmit, onCancel }: { quote: string | null; onSubmi
 
 // Collapsed rail: a thin column of dots, each beside its comment's text.
 function Rail({
-  pins, generalCount, active, onExpand, onHide, onDot,
+  pins,
+  generalCount,
+  active,
+  onExpand,
+  onHide,
+  onDot,
 }: {
   pins: PinItem[]
   generalCount: number
@@ -1339,9 +1915,28 @@ function Rail({
   const total = pins.length + generalCount
   return (
     <>
-      <button onClick={onExpand} title="Expand comments (c)" className="rail-top" style={{ borderBottom: "1px solid var(--line-soft)" }}>
+      <button
+        onClick={onExpand}
+        title="Expand comments (c)"
+        className="rail-top"
+        style={{ borderBottom: "1px solid var(--line-soft)" }}
+      >
         <span style={{ fontSize: 13 }}>⟨</span>
-        {total > 0 && <span className="mono" style={{ fontSize: 9.5, fontWeight: 700, color: "var(--cmt-tx)", background: "var(--cmt-bg)", borderRadius: 999, padding: "1px 5px" }}>{total}</span>}
+        {total > 0 && (
+          <span
+            className="mono"
+            style={{
+              fontSize: 9.5,
+              fontWeight: 700,
+              color: "var(--cmt-tx)",
+              background: "var(--cmt-bg)",
+              borderRadius: 999,
+              padding: "1px 5px",
+            }}
+          >
+            {total}
+          </span>
+        )}
       </button>
       <div ref={ref} style={{ flex: 1, position: "relative", overflow: "hidden" }}>
         {pins.map((p) => {
@@ -1372,22 +1967,51 @@ function Rail({
           )
         })}
       </div>
-      <button onClick={onHide} title="Hide comments" className="rail-top" style={{ borderTop: "1px solid var(--line-soft)", color: "var(--fg-mut)" }}>
+      <button
+        onClick={onHide}
+        title="Hide comments"
+        className="rail-top"
+        style={{ borderTop: "1px solid var(--line-soft)", color: "var(--fg-mut)" }}
+      >
         ✕
       </button>
     </>
   )
 }
 
-
-function IconBtn({ title, onClick, children }: { title: string; onClick: () => void; children: React.ReactNode }) {
+function IconBtn({
+  title,
+  onClick,
+  children,
+}: {
+  title: string
+  onClick: () => void
+  children: React.ReactNode
+}) {
   return (
     <button
       title={title}
       onClick={onClick}
-      style={{ width: 26, height: 26, display: "grid", placeItems: "center", border: 0, background: "transparent", color: "var(--fg-mut)", borderRadius: 7, cursor: "pointer", fontSize: 13 }}
-      onMouseEnter={(e) => { e.currentTarget.style.background = "var(--hover)"; e.currentTarget.style.color = "var(--fg)" }}
-      onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "var(--fg-mut)" }}
+      style={{
+        width: 26,
+        height: 26,
+        display: "grid",
+        placeItems: "center",
+        border: 0,
+        background: "transparent",
+        color: "var(--fg-mut)",
+        borderRadius: 7,
+        cursor: "pointer",
+        fontSize: 13,
+      }}
+      onMouseEnter={(e) => {
+        e.currentTarget.style.background = "var(--hover)"
+        e.currentTarget.style.color = "var(--fg)"
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.background = "transparent"
+        e.currentTarget.style.color = "var(--fg-mut)"
+      }}
     >
       {children}
     </button>
@@ -1396,7 +2020,16 @@ function IconBtn({ title, onClick, children }: { title: string; onClick: () => v
 
 function SectionLabel({ children }: { children: React.ReactNode }) {
   return (
-    <div className="mono" style={{ fontSize: 9.5, letterSpacing: ".06em", textTransform: "uppercase", color: "var(--fg-mut)", padding: "2px 2px 6px" }}>
+    <div
+      className="mono"
+      style={{
+        fontSize: 9.5,
+        letterSpacing: ".06em",
+        textTransform: "uppercase",
+        color: "var(--fg-mut)",
+        padding: "2px 2px 6px",
+      }}
+    >
       {children}
     </div>
   )
@@ -1449,12 +2082,31 @@ function DeckBar({
         zIndex: 5,
       }}
     >
-      <button style={btn} onClick={onPrev} disabled={deck.i <= 0} aria-label="Previous slide">‹</button>
-      <span className="mono" style={{ fontSize: 12, color: "var(--fg-mut)", minWidth: 52, textAlign: "center" }}>
+      <button style={btn} onClick={onPrev} disabled={deck.i <= 0} aria-label="Previous slide">
+        ‹
+      </button>
+      <span
+        className="mono"
+        style={{ fontSize: 12, color: "var(--fg-mut)", minWidth: 52, textAlign: "center" }}
+      >
         {deck.i + 1} / {deck.total}
       </span>
-      <button style={btn} onClick={onNext} disabled={deck.i >= deck.total - 1} aria-label="Next slide">›</button>
-      <button style={{ ...btn, marginLeft: 4 }} onClick={onFullscreen} title="Present (fullscreen)" aria-label="Present fullscreen">⛶</button>
+      <button
+        style={btn}
+        onClick={onNext}
+        disabled={deck.i >= deck.total - 1}
+        aria-label="Next slide"
+      >
+        ›
+      </button>
+      <button
+        style={{ ...btn, marginLeft: 4 }}
+        onClick={onFullscreen}
+        title="Present (fullscreen)"
+        aria-label="Present fullscreen"
+      >
+        ⛶
+      </button>
     </div>
   )
 }
@@ -1466,7 +2118,10 @@ function Presence({ viewers, self }: { viewers: string[]; self: string }) {
   const shown = ordered.slice(0, 4)
   const extra = ordered.length - shown.length
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 7 }} title={`${ordered.length} viewing: ${ordered.join(", ")}`}>
+    <div
+      style={{ display: "flex", alignItems: "center", gap: 7 }}
+      title={`${ordered.length} viewing: ${ordered.join(", ")}`}
+    >
       <div style={{ display: "flex" }}>
         {shown.map((name, i) => (
           <span
@@ -1490,7 +2145,10 @@ function Presence({ viewers, self }: { viewers: string[]; self: string }) {
           </span>
         ))}
       </div>
-      <span className="mono muted" style={{ fontSize: 11, display: "flex", alignItems: "center", gap: 4 }}>
+      <span
+        className="mono muted"
+        style={{ fontSize: 11, display: "flex", alignItems: "center", gap: 4 }}
+      >
         <span style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--good)" }} />
         {ordered.length} viewing{extra > 0 ? ` (+${extra})` : ""}
       </span>
@@ -1513,54 +2171,156 @@ function Insights({ shortId }: { shortId: string }) {
     return () => document.removeEventListener("click", h)
   }, [])
   useEffect(() => {
-    if (open && !data && !off) api.analytics(shortId).then(setData).catch(() => setOff(true))
+    if (open && !data && !off)
+      api
+        .analytics(shortId)
+        .then(setData)
+        .catch(() => setOff(true))
   }, [open, data, off, shortId])
   if (off) return null
   const max = data ? Math.max(1, ...data.daily.map((d) => d.count)) : 1
   const maxV = data ? Math.max(1, ...data.perVersion.map((v) => v.count)) : 1
   return (
     <div ref={ref} style={{ position: "relative" }}>
-      <button className="btn sm" onClick={(e) => { e.stopPropagation(); setOpen((o) => !o) }} style={{ gap: 6 }} title="View analytics">
+      <button
+        className="btn sm"
+        onClick={(e) => {
+          e.stopPropagation()
+          setOpen((o) => !o)
+        }}
+        style={{ gap: 6 }}
+        title="View analytics"
+      >
         <span style={{ fontSize: 12 }}>👁</span>
         {data ? data.total.toLocaleString() : "Insights"}
       </button>
       {open && (
-        <div className="card" style={{ position: "absolute", right: 0, top: "calc(100% + 7px)", width: 300, padding: 14, boxShadow: "var(--shadow)", zIndex: 30 }}>
+        <div
+          className="card"
+          style={{
+            position: "absolute",
+            right: 0,
+            top: "calc(100% + 7px)",
+            width: 300,
+            padding: 14,
+            boxShadow: "var(--shadow)",
+            zIndex: 30,
+          }}
+        >
           {!data ? (
-            <div className="center" style={{ height: 80 }}><div className="spin" /></div>
+            <div className="center" style={{ height: 80 }}>
+              <div className="spin" />
+            </div>
           ) : (
             <>
               <div style={{ display: "flex", gap: 18, marginBottom: 12 }}>
                 <div>
-                  <div className="display" style={{ fontSize: 22, fontWeight: 700, lineHeight: 1 }}>{data.total.toLocaleString()}</div>
-                  <div className="mono muted" style={{ fontSize: 10 }}>views</div>
+                  <div className="display" style={{ fontSize: 22, fontWeight: 700, lineHeight: 1 }}>
+                    {data.total.toLocaleString()}
+                  </div>
+                  <div className="mono muted" style={{ fontSize: 10 }}>
+                    views
+                  </div>
                 </div>
                 <div>
-                  <div className="display" style={{ fontSize: 22, fontWeight: 700, lineHeight: 1 }}>{data.unique.toLocaleString()}</div>
-                  <div className="mono muted" style={{ fontSize: 10 }}>unique</div>
+                  <div className="display" style={{ fontSize: 22, fontWeight: 700, lineHeight: 1 }}>
+                    {data.unique.toLocaleString()}
+                  </div>
+                  <div className="mono muted" style={{ fontSize: 10 }}>
+                    unique
+                  </div>
                 </div>
               </div>
-              <div className="mono muted" style={{ fontSize: 9.5, letterSpacing: ".06em", textTransform: "uppercase", marginBottom: 5 }}>Last 30 days</div>
-              <div style={{ display: "flex", alignItems: "flex-end", gap: 2, height: 40, marginBottom: 12 }}>
+              <div
+                className="mono muted"
+                style={{
+                  fontSize: 9.5,
+                  letterSpacing: ".06em",
+                  textTransform: "uppercase",
+                  marginBottom: 5,
+                }}
+              >
+                Last 30 days
+              </div>
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "flex-end",
+                  gap: 2,
+                  height: 40,
+                  marginBottom: 12,
+                }}
+              >
                 {data.daily.length === 0 ? (
-                  <span className="muted" style={{ fontSize: 11 }}>No views yet.</span>
+                  <span className="muted" style={{ fontSize: 11 }}>
+                    No views yet.
+                  </span>
                 ) : (
                   data.daily.map((d) => (
-                    <div key={d.day} title={`${d.day}: ${d.count}`} style={{ flex: 1, minWidth: 2, height: `${(d.count / max) * 100}%`, background: "var(--ac)", borderRadius: 2, opacity: 0.85 }} />
+                    <div
+                      key={d.day}
+                      title={`${d.day}: ${d.count}`}
+                      style={{
+                        flex: 1,
+                        minWidth: 2,
+                        height: `${(d.count / max) * 100}%`,
+                        background: "var(--ac)",
+                        borderRadius: 2,
+                        opacity: 0.85,
+                      }}
+                    />
                   ))
                 )}
               </div>
               {data.perVersion.length > 0 && (
                 <>
-                  <div className="mono muted" style={{ fontSize: 9.5, letterSpacing: ".06em", textTransform: "uppercase", marginBottom: 5 }}>By version</div>
+                  <div
+                    className="mono muted"
+                    style={{
+                      fontSize: 9.5,
+                      letterSpacing: ".06em",
+                      textTransform: "uppercase",
+                      marginBottom: 5,
+                    }}
+                  >
+                    By version
+                  </div>
                   <div style={{ marginBottom: 12 }}>
                     {data.perVersion.map((v) => (
-                      <div key={v.version} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 3 }}>
-                        <span className="mono" style={{ fontSize: 10.5, width: 22, color: "var(--fg-mut)" }}>v{v.version}</span>
-                        <div style={{ flex: 1, height: 6, background: "var(--card-2)", borderRadius: 999, overflow: "hidden" }}>
-                          <div style={{ width: `${(v.count / maxV) * 100}%`, height: "100%", background: "var(--ac)", borderRadius: 999 }} />
+                      <div
+                        key={v.version}
+                        style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 3 }}
+                      >
+                        <span
+                          className="mono"
+                          style={{ fontSize: 10.5, width: 22, color: "var(--fg-mut)" }}
+                        >
+                          v{v.version}
+                        </span>
+                        <div
+                          style={{
+                            flex: 1,
+                            height: 6,
+                            background: "var(--card-2)",
+                            borderRadius: 999,
+                            overflow: "hidden",
+                          }}
+                        >
+                          <div
+                            style={{
+                              width: `${(v.count / maxV) * 100}%`,
+                              height: "100%",
+                              background: "var(--ac)",
+                              borderRadius: 999,
+                            }}
+                          />
                         </div>
-                        <span className="mono muted" style={{ fontSize: 10, width: 30, textAlign: "right" }}>{v.count}</span>
+                        <span
+                          className="mono muted"
+                          style={{ fontSize: 10, width: 30, textAlign: "right" }}
+                        >
+                          {v.count}
+                        </span>
                       </div>
                     ))}
                   </div>
@@ -1568,17 +2328,52 @@ function Insights({ shortId }: { shortId: string }) {
               )}
               {data.recent.length > 0 && (
                 <>
-                  <div className="mono muted" style={{ fontSize: 9.5, letterSpacing: ".06em", textTransform: "uppercase", marginBottom: 5 }}>Recent viewers</div>
+                  <div
+                    className="mono muted"
+                    style={{
+                      fontSize: 9.5,
+                      letterSpacing: ".06em",
+                      textTransform: "uppercase",
+                      marginBottom: 5,
+                    }}
+                  >
+                    Recent viewers
+                  </div>
                   <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                     {data.recent.map((r) => (
-                      <div key={r.viewer} style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 11.5 }}>
-                        <span style={{ width: 17, height: 17, borderRadius: "50%", background: r.kind === "user" ? "var(--ac-soft)" : "var(--card-2)", color: "var(--fg-mut)", display: "grid", placeItems: "center", fontSize: 8, fontWeight: 700, fontFamily: "ui-monospace,Menlo,monospace" }}>
+                      <div
+                        key={r.viewer}
+                        style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 11.5 }}
+                      >
+                        <span
+                          style={{
+                            width: 17,
+                            height: 17,
+                            borderRadius: "50%",
+                            background: r.kind === "user" ? "var(--ac-soft)" : "var(--card-2)",
+                            color: "var(--fg-mut)",
+                            display: "grid",
+                            placeItems: "center",
+                            fontSize: 8,
+                            fontWeight: 700,
+                            fontFamily: "ui-monospace,Menlo,monospace",
+                          }}
+                        >
                           {r.kind === "user" ? (r.viewer || "?").slice(0, 2).toUpperCase() : "·"}
                         </span>
-                        <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        <span
+                          style={{
+                            flex: 1,
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            whiteSpace: "nowrap",
+                          }}
+                        >
                           {r.kind === "user" ? r.viewer : "Anonymous"}
                         </span>
-                        <span className="mono muted" style={{ fontSize: 9.5 }}>{ago(r.at)}</span>
+                        <span className="mono muted" style={{ fontSize: 9.5 }}>
+                          {ago(r.at)}
+                        </span>
                       </div>
                     ))}
                   </div>
@@ -1622,46 +2417,137 @@ function HistoryMenu({ art, shown, goTo }: { art: Art; shown: number; goTo: (n: 
     art.sessions ??
     [...art.versions]
       .sort((a, b) => b.n - a.n)
-      .map((v) => ({ n: v.n, from_n: v.n, count: 1, author: v.author, name: v.name, created_at: v.created_at }))
+      .map((v) => ({
+        n: v.n,
+        from_n: v.n,
+        count: 1,
+        author: v.author,
+        name: v.name,
+        created_at: v.created_at,
+      }))
   const latest = sessions[0]
   let lastDay = ""
   return (
     <div ref={ref} style={{ position: "relative" }}>
-      <button className="btn sm" onClick={(e) => { e.stopPropagation(); setOpen((o) => !o) }} style={{ gap: 6 }} title="Version history">
+      <button
+        className="btn sm"
+        onClick={(e) => {
+          e.stopPropagation()
+          setOpen((o) => !o)
+        }}
+        style={{ gap: 6 }}
+        title="Version history"
+      >
         {latest ? `Edited ${ago(latest.created_at)}` : "History"}
         <span style={{ fontSize: 9, opacity: 0.7 }}>▾</span>
       </button>
       {open && (
-        <div className="card" style={{ position: "absolute", right: 0, top: "calc(100% + 7px)", width: 286, padding: 6, boxShadow: "var(--shadow)", zIndex: 30, maxHeight: 400, overflow: "auto" }}>
-          <div className="mono" style={{ fontSize: 9.5, letterSpacing: ".06em", textTransform: "uppercase", color: "var(--fg-mut)", padding: "6px 8px 4px" }}>
+        <div
+          className="card"
+          style={{
+            position: "absolute",
+            right: 0,
+            top: "calc(100% + 7px)",
+            width: 286,
+            padding: 6,
+            boxShadow: "var(--shadow)",
+            zIndex: 30,
+            maxHeight: 400,
+            overflow: "auto",
+          }}
+        >
+          <div
+            className="mono"
+            style={{
+              fontSize: 9.5,
+              letterSpacing: ".06em",
+              textTransform: "uppercase",
+              color: "var(--fg-mut)",
+              padding: "6px 8px 4px",
+            }}
+          >
             Version history
           </div>
           {sessions.map((s) => {
             const cur = s.n === shown
             const day = dayLabel(s.created_at)
-            const header = day !== lastDay ? ((lastDay = day), day) : null
+            const header = day !== lastDay ? day : null
+            if (header !== null) lastDay = day
             return (
               <div key={s.n}>
                 {header && (
-                  <div className="mono muted" style={{ fontSize: 9, letterSpacing: ".05em", textTransform: "uppercase", padding: "8px 9px 3px" }}>{header}</div>
+                  <div
+                    className="mono muted"
+                    style={{
+                      fontSize: 9,
+                      letterSpacing: ".05em",
+                      textTransform: "uppercase",
+                      padding: "8px 9px 3px",
+                    }}
+                  >
+                    {header}
+                  </div>
                 )}
                 <button
-                  onClick={() => { goTo(s.n); setOpen(false) }}
-                  style={{ display: "block", width: "100%", textAlign: "left", border: 0, background: cur ? "var(--ac-soft)" : "transparent", borderRadius: 7, padding: "7px 9px", cursor: "pointer", marginBottom: 1 }}
+                  onClick={() => {
+                    goTo(s.n)
+                    setOpen(false)
+                  }}
+                  style={{
+                    display: "block",
+                    width: "100%",
+                    textAlign: "left",
+                    border: 0,
+                    background: cur ? "var(--ac-soft)" : "transparent",
+                    borderRadius: 7,
+                    padding: "7px 9px",
+                    cursor: "pointer",
+                    marginBottom: 1,
+                  }}
                 >
                   <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
-                    <span style={{ color: s.name ? "var(--ac)" : "var(--fg-mut)", fontSize: 11 }}>{s.name ? "★" : "●"}</span>
-                    <span style={{ fontSize: 12.5, fontWeight: 600, color: cur ? "var(--ac)" : "var(--fg)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    <span style={{ color: s.name ? "var(--ac)" : "var(--fg-mut)", fontSize: 11 }}>
+                      {s.name ? "★" : "●"}
+                    </span>
+                    <span
+                      style={{
+                        fontSize: 12.5,
+                        fontWeight: 600,
+                        color: cur ? "var(--ac)" : "var(--fg)",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
                       {s.name ?? clock(s.created_at)}
                     </span>
                     {s.n === art.current_version && (
-                      <span className="mono" style={{ fontSize: 8.5, fontWeight: 700, padding: "1px 6px", borderRadius: 999, background: "var(--good-bg)", color: "var(--good)" }}>current</span>
+                      <span
+                        className="mono"
+                        style={{
+                          fontSize: 8.5,
+                          fontWeight: 700,
+                          padding: "1px 6px",
+                          borderRadius: 999,
+                          background: "var(--good-bg)",
+                          color: "var(--good)",
+                        }}
+                      >
+                        current
+                      </span>
                     )}
                     {s.count > 1 && (
-                      <span className="mono muted" style={{ marginLeft: "auto", fontSize: 9.5 }}>{s.count} edits</span>
+                      <span className="mono muted" style={{ marginLeft: "auto", fontSize: 9.5 }}>
+                        {s.count} edits
+                      </span>
                     )}
                   </div>
-                  <div className="mono muted" style={{ fontSize: 9.5, marginTop: 2, paddingLeft: 18 }}>{s.author}</div>
+                  <div
+                    className="mono muted"
+                    style={{ fontSize: 9.5, marginTop: 2, paddingLeft: 18 }}
+                  >
+                    {s.author}
+                  </div>
                 </button>
               </div>
             )
@@ -1672,21 +2558,52 @@ function HistoryMenu({ art, shown, goTo }: { art: Art; shown: number; goTo: (n: 
   )
 }
 
-function DiffView({ diff, fromLabel, toLabel }: { diff: Diff | null; fromLabel?: string; toLabel?: string }) {
-  if (!diff) return <div className="center" style={{ flex: 1 }}><div className="spin" /></div>
+function DiffView({
+  diff,
+  fromLabel,
+  toLabel,
+}: {
+  diff: Diff | null
+  fromLabel?: string
+  toLabel?: string
+}) {
+  if (!diff)
+    return (
+      <div className="center" style={{ flex: 1 }}>
+        <div className="spin" />
+      </div>
+    )
   const adds = diff.ops.filter((o) => o.t === "add").length
   const dels = diff.ops.filter((o) => o.t === "del").length
   return (
     <div style={{ flex: 1, overflow: "auto", background: "var(--card)" }}>
-      <div style={{ display: "flex", gap: 12, padding: "8px 16px", borderBottom: "1px solid var(--line-soft)", fontSize: 12, alignItems: "center" }}>
+      <div
+        style={{
+          display: "flex",
+          gap: 12,
+          padding: "8px 16px",
+          borderBottom: "1px solid var(--line-soft)",
+          fontSize: 12,
+          alignItems: "center",
+        }}
+      >
         {fromLabel && toLabel && (
-          <span className="mono muted" style={{ marginRight: "auto" }}>{fromLabel} → {toLabel}</span>
+          <span className="mono muted" style={{ marginRight: "auto" }}>
+            {fromLabel} → {toLabel}
+          </span>
         )}
-        <span className="mono" style={{ color: "var(--good)" }}>+{adds}</span>
-        <span className="mono" style={{ color: "var(--bad)" }}>−{dels}</span>
+        <span className="mono" style={{ color: "var(--good)" }}>
+          +{adds}
+        </span>
+        <span className="mono" style={{ color: "var(--bad)" }}>
+          −{dels}
+        </span>
         <span className="mono muted">{diff.ops.length} lines</span>
       </div>
-      <pre className="mono" style={{ margin: 0, padding: "10px 0", fontSize: 12.5, lineHeight: 1.6 }}>
+      <pre
+        className="mono"
+        style={{ margin: 0, padding: "10px 0", fontSize: 12.5, lineHeight: 1.6 }}
+      >
         {diff.ops.map((o, i) => (
           <div
             key={i}
@@ -1694,11 +2611,18 @@ function DiffView({ diff, fromLabel, toLabel }: { diff: Diff | null; fromLabel?:
               padding: "0 16px",
               whiteSpace: "pre-wrap",
               wordBreak: "break-word",
-              background: o.t === "add" ? "var(--good-bg)" : o.t === "del" ? "var(--cmt-bg)" : "transparent",
+              background:
+                o.t === "add" ? "var(--good-bg)" : o.t === "del" ? "var(--cmt-bg)" : "transparent",
               color: o.t === "ctx" ? "var(--fg-mut)" : "var(--fg)",
             }}
           >
-            <span style={{ userSelect: "none", color: o.t === "add" ? "var(--good)" : o.t === "del" ? "var(--bad)" : "var(--line)", marginRight: 10 }}>
+            <span
+              style={{
+                userSelect: "none",
+                color: o.t === "add" ? "var(--good)" : o.t === "del" ? "var(--bad)" : "var(--line)",
+                marginRight: 10,
+              }}
+            >
               {o.t === "add" ? "+" : o.t === "del" ? "−" : " "}
             </span>
             {o.line || "​"}

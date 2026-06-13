@@ -3,7 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "bin": { "dock": "./bin/dock.js" },
+  "bin": {
+    "dock": "./bin/dock.js"
+  },
   "scripts": {
     "typecheck": "echo 'plain js cli'",
     "test": "vitest run"

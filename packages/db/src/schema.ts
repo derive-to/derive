@@ -1,5 +1,3 @@
-import { sql } from "drizzle-orm"
-import { integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core"
 import type {
   ArtifactKind,
   ArtifactMemberRecord,
@@ -15,6 +13,8 @@ import type {
   WebhookKind,
   WebhookRecord,
 } from "@dock/core"
+import { sql } from "drizzle-orm"
+import { integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core"
 
 const now = sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`
 

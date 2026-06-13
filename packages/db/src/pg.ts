@@ -1,6 +1,3 @@
-import { and, asc, count, desc, eq, isNull, lte, or } from "drizzle-orm"
-import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres"
-import { Pool } from "pg"
 import type {
   ArtifactMemberRecord,
   ArtifactRecord,
@@ -23,12 +20,15 @@ import type {
   ViewStats,
   WebhookRecord,
 } from "@dock/core"
+import { and, asc, count, desc, eq, isNull, lte, or } from "drizzle-orm"
+import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres"
+import { Pool } from "pg"
 import {
-  PG_SCHEMA_STATEMENTS,
   artifact,
   artifactMember,
   comment,
   membership,
+  PG_SCHEMA_STATEMENTS,
   version,
   webhook,
   webhookDelivery,
@@ -87,7 +87,11 @@ export class PgMetaStore implements MetaStore {
   }
 
   listVersions(artifactId: string): Promise<VersionRecord[]> {
-    return this.db.select().from(version).where(eq(version.artifact_id, artifactId)).orderBy(asc(version.n))
+    return this.db
+      .select()
+      .from(version)
+      .where(eq(version.artifact_id, artifactId))
+      .orderBy(asc(version.n))
   }
 
   async getVersion(artifactId: string, n: number): Promise<VersionRecord | null> {
@@ -149,7 +153,9 @@ export class PgMetaStore implements MetaStore {
     const cutoff = new Date(Date.now() - VIEW_WINDOW_MS).toISOString()
     const [tot, uni, perV, daily, recent] = await Promise.all([
       this.pool.query(`SELECT count(*)::int n FROM view WHERE artifact_id=$1`, [artifactId]),
-      this.pool.query(`SELECT count(DISTINCT viewer)::int n FROM view WHERE artifact_id=$1`, [artifactId]),
+      this.pool.query(`SELECT count(DISTINCT viewer)::int n FROM view WHERE artifact_id=$1`, [
+        artifactId,
+      ]),
       this.pool.query(
         `SELECT version, count(*)::int c FROM view WHERE artifact_id=$1 GROUP BY version ORDER BY version`,
         [artifactId],
@@ -203,7 +209,12 @@ export class PgMetaStore implements MetaStore {
     return this.db
       .select()
       .from(webhook)
-      .where(and(eq(webhook.active, 1), or(isNull(webhook.artifact_id), eq(webhook.artifact_id, artifactId))))
+      .where(
+        and(
+          eq(webhook.active, 1),
+          or(isNull(webhook.artifact_id), eq(webhook.artifact_id, artifactId)),
+        ),
+      )
   }
   async enqueueDelivery(d: NewDelivery): Promise<void> {
     await this.db.insert(webhookDelivery).values(d)
@@ -218,7 +229,12 @@ export class PgMetaStore implements MetaStore {
   }
   async updateDelivery(
     id: string,
-    f: { status: DeliveryStatus; attempts: number; last_error: string | null; next_attempt_at: string },
+    f: {
+      status: DeliveryStatus
+      attempts: number
+      last_error: string | null
+      next_attempt_at: string
+    },
   ): Promise<void> {
     await this.db.update(webhookDelivery).set(f).where(eq(webhookDelivery.id, id))
   }
@@ -243,19 +259,28 @@ export class PgMetaStore implements MetaStore {
     return this.db.select().from(membership).where(eq(membership.org_id, orgId))
   }
   async countMemberships(orgId: string): Promise<number> {
-    const rows = await this.db.select({ n: count() }).from(membership).where(eq(membership.org_id, orgId))
+    const rows = await this.db
+      .select({ n: count() })
+      .from(membership)
+      .where(eq(membership.org_id, orgId))
     return rows[0]?.n ?? 0
   }
   async setMembership(m: NewMembership): Promise<MembershipRecord> {
     const rows = await this.db
       .insert(membership)
       .values(m)
-      .onConflictDoUpdate({ target: [membership.org_id, membership.user_id], set: { role: m.role } })
+      .onConflictDoUpdate({
+        target: [membership.org_id, membership.user_id],
+        set: { role: m.role },
+      })
       .returning()
     return rows[0]
   }
 
-  async getArtifactMember(artifactId: string, userId: string): Promise<ArtifactMemberRecord | null> {
+  async getArtifactMember(
+    artifactId: string,
+    userId: string,
+  ): Promise<ArtifactMemberRecord | null> {
     const rows = await this.db
       .select()
       .from(artifactMember)
@@ -269,7 +294,10 @@ export class PgMetaStore implements MetaStore {
     const rows = await this.db
       .insert(artifactMember)
       .values(m)
-      .onConflictDoUpdate({ target: [artifactMember.artifact_id, artifactMember.user_id], set: { role: m.role } })
+      .onConflictDoUpdate({
+        target: [artifactMember.artifact_id, artifactMember.user_id],
+        set: { role: m.role },
+      })
       .returning()
     return rows[0]
   }
@@ -282,7 +310,10 @@ export class PgMetaStore implements MetaStore {
   // ---- User directory (Better Auth's "user" table; raw, may be absent) ---
   async findUserByEmail(email: string): Promise<UserDir | null> {
     try {
-      const { rows } = await this.pool.query(`SELECT id, email, name FROM "user" WHERE email = $1`, [email])
+      const { rows } = await this.pool.query(
+        `SELECT id, email, name FROM "user" WHERE email = $1`,
+        [email],
+      )
       return (rows[0] as UserDir) ?? null
     } catch {
       return null
@@ -292,7 +323,10 @@ export class PgMetaStore implements MetaStore {
     if (ids.length === 0) return []
     try {
       const ph = ids.map((_, i) => `$${i + 1}`).join(",")
-      const { rows } = await this.pool.query(`SELECT id, email, name FROM "user" WHERE id IN (${ph})`, ids)
+      const { rows } = await this.pool.query(
+        `SELECT id, email, name FROM "user" WHERE id IN (${ph})`,
+        ids,
+      )
       return rows as UserDir[]
     } catch {
       return []

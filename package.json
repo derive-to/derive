@@ -3,7 +3,9 @@
   "private": true,
   "packageManager": "pnpm@10.26.1",
   "pnpm": {
-    "onlyBuiltDependencies": ["better-sqlite3"],
+    "onlyBuiltDependencies": [
+      "better-sqlite3"
+    ],
     "overrides": {
       "esbuild": ">=0.25.0",
       "drizzle-orm": "0.45.2"
@@ -13,6 +15,14 @@
     "dev": "pnpm --filter @dock/server dev",
     "start": "pnpm --filter @dock/server start",
     "typecheck": "pnpm -r typecheck",
-    "test": "pnpm -r test"
+    "test": "pnpm -r test",
+    "lint": "biome lint",
+    "format": "biome format --write",
+    "check": "biome check",
+    "check:fix": "biome check --write",
+    "ci": "biome ci"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.0"
   }
 }

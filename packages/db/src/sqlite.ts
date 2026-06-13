@@ -1,6 +1,3 @@
-import Database from "better-sqlite3"
-import { and, asc, count, desc, eq, isNull, lte, or } from "drizzle-orm"
-import { drizzle, type BetterSQLite3Database } from "drizzle-orm/better-sqlite3"
 import type {
   ArtifactMemberRecord,
   ArtifactRecord,
@@ -23,13 +20,16 @@ import type {
   ViewStats,
   WebhookRecord,
 } from "@dock/core"
+import Database from "better-sqlite3"
+import { and, asc, count, desc, eq, isNull, lte, or } from "drizzle-orm"
+import { type BetterSQLite3Database, drizzle } from "drizzle-orm/better-sqlite3"
 import {
-  MIGRATION_STATEMENTS,
-  SCHEMA_STATEMENTS,
   artifact,
   artifactMember,
   comment,
+  MIGRATION_STATEMENTS,
   membership,
+  SCHEMA_STATEMENTS,
   version,
   webhook,
   webhookDelivery,
@@ -78,7 +78,9 @@ export class SqliteMetaStore implements MetaStore {
         .get()
       if (!row) throw new Error(`artifact not found: ${artifactId}`)
       const next = row.cv + 1
-      tx.insert(version).values({ ...v, artifact_id: artifactId, n: next }).run()
+      tx.insert(version)
+        .values({ ...v, artifact_id: artifactId, n: next })
+        .run()
       tx.update(artifact).set({ current_version: next }).where(eq(artifact.id, artifactId)).run()
       return next
     })
@@ -131,11 +133,7 @@ export class SqliteMetaStore implements MetaStore {
     return this.db.select().from(comment).where(where).orderBy(asc(comment.created_at)).all()
   }
 
-  async setThreadState(
-    artifactId: string,
-    threadId: string,
-    state: CommentState,
-  ): Promise<number> {
+  async setThreadState(artifactId: string, threadId: string, state: CommentState): Promise<number> {
     const res = this.db
       .update(comment)
       .set({ state })
@@ -151,25 +149,32 @@ export class SqliteMetaStore implements MetaStore {
 
   async recordView(v: NewView): Promise<void> {
     this.raw
-      .prepare(`INSERT INTO view (id, artifact_id, version, viewer, viewer_kind) VALUES (?,?,?,?,?)`)
+      .prepare(
+        `INSERT INTO view (id, artifact_id, version, viewer, viewer_kind) VALUES (?,?,?,?,?)`,
+      )
       .run(v.id, v.artifact_id, v.version, v.viewer, v.viewer_kind)
   }
 
   async viewStats(artifactId: string): Promise<ViewStats> {
     const cutoff = new Date(Date.now() - VIEW_WINDOW_MS).toISOString()
-    const n = (q: string, ...p: unknown[]) =>
-      (this.raw.prepare(q).get(...p) as { n: number }).n
+    const n = (q: string, ...p: unknown[]) => (this.raw.prepare(q).get(...p) as { n: number }).n
     return {
       total: n(`SELECT count(*) n FROM view WHERE artifact_id=?`, artifactId),
       unique: n(`SELECT count(DISTINCT viewer) n FROM view WHERE artifact_id=?`, artifactId),
       perVersion: this.raw
-        .prepare(`SELECT version, count(*) count FROM view WHERE artifact_id=? GROUP BY version ORDER BY version`)
+        .prepare(
+          `SELECT version, count(*) count FROM view WHERE artifact_id=? GROUP BY version ORDER BY version`,
+        )
         .all(artifactId) as { version: number; count: number }[],
       daily: this.raw
-        .prepare(`SELECT substr(created_at,1,10) day, count(*) count FROM view WHERE artifact_id=? AND created_at>=? GROUP BY day ORDER BY day`)
+        .prepare(
+          `SELECT substr(created_at,1,10) day, count(*) count FROM view WHERE artifact_id=? AND created_at>=? GROUP BY day ORDER BY day`,
+        )
         .all(artifactId, cutoff) as { day: string; count: number }[],
       recent: this.raw
-        .prepare(`SELECT viewer, viewer_kind kind, max(created_at) at FROM view WHERE artifact_id=? GROUP BY viewer, viewer_kind ORDER BY at DESC LIMIT 8`)
+        .prepare(
+          `SELECT viewer, viewer_kind kind, max(created_at) at FROM view WHERE artifact_id=? GROUP BY viewer, viewer_kind ORDER BY at DESC LIMIT 8`,
+        )
         .all(artifactId) as { viewer: string; kind: "user" | "anon"; at: string }[],
     }
   }
@@ -178,7 +183,9 @@ export class SqliteMetaStore implements MetaStore {
     if (artifactIds.length === 0) return {}
     const ph = artifactIds.map(() => "?").join(",")
     const rows = this.raw
-      .prepare(`SELECT artifact_id, count(*) c FROM view WHERE artifact_id IN (${ph}) GROUP BY artifact_id`)
+      .prepare(
+        `SELECT artifact_id, count(*) c FROM view WHERE artifact_id IN (${ph}) GROUP BY artifact_id`,
+      )
       .all(...artifactIds) as { artifact_id: string; c: number }[]
     const out: Record<string, number> = {}
     for (const r of rows) out[r.artifact_id] = r.c
@@ -203,7 +210,12 @@ export class SqliteMetaStore implements MetaStore {
       this.db
         .select()
         .from(webhook)
-        .where(and(eq(webhook.active, 1), or(isNull(webhook.artifact_id), eq(webhook.artifact_id, artifactId))))
+        .where(
+          and(
+            eq(webhook.active, 1),
+            or(isNull(webhook.artifact_id), eq(webhook.artifact_id, artifactId)),
+          ),
+        )
         .all(),
     )
   }
@@ -215,7 +227,9 @@ export class SqliteMetaStore implements MetaStore {
       this.db
         .select()
         .from(webhookDelivery)
-        .where(and(eq(webhookDelivery.status, "pending"), lte(webhookDelivery.next_attempt_at, now)))
+        .where(
+          and(eq(webhookDelivery.status, "pending"), lte(webhookDelivery.next_attempt_at, now)),
+        )
         .orderBy(asc(webhookDelivery.next_attempt_at))
         .limit(limit)
         .all(),
@@ -223,7 +237,12 @@ export class SqliteMetaStore implements MetaStore {
   }
   async updateDelivery(
     id: string,
-    f: { status: DeliveryStatus; attempts: number; last_error: string | null; next_attempt_at: string },
+    f: {
+      status: DeliveryStatus
+      attempts: number
+      last_error: string | null
+      next_attempt_at: string
+    },
   ): Promise<void> {
     this.db.update(webhookDelivery).set(f).where(eq(webhookDelivery.id, id)).run()
   }
@@ -242,28 +261,42 @@ export class SqliteMetaStore implements MetaStore {
   // ---- Permissions: membership + per-artifact shares ---------------------
   async getMembership(orgId: string, userId: string): Promise<MembershipRecord | null> {
     return (
-      this.db.select().from(membership).where(and(eq(membership.org_id, orgId), eq(membership.user_id, userId))).get() ??
-      null
+      this.db
+        .select()
+        .from(membership)
+        .where(and(eq(membership.org_id, orgId), eq(membership.user_id, userId)))
+        .get() ?? null
     )
   }
   listMemberships(orgId: string): Promise<MembershipRecord[]> {
-    return Promise.resolve(this.db.select().from(membership).where(eq(membership.org_id, orgId)).all())
+    return Promise.resolve(
+      this.db.select().from(membership).where(eq(membership.org_id, orgId)).all(),
+    )
   }
   async countMemberships(orgId: string): Promise<number> {
-    return this.db.select({ n: count() }).from(membership).where(eq(membership.org_id, orgId)).get()?.n ?? 0
+    return (
+      this.db.select({ n: count() }).from(membership).where(eq(membership.org_id, orgId)).get()
+        ?.n ?? 0
+    )
   }
   setMembership(m: NewMembership): Promise<MembershipRecord> {
     return Promise.resolve(
       this.db
         .insert(membership)
         .values(m)
-        .onConflictDoUpdate({ target: [membership.org_id, membership.user_id], set: { role: m.role } })
+        .onConflictDoUpdate({
+          target: [membership.org_id, membership.user_id],
+          set: { role: m.role },
+        })
         .returning()
         .get(),
     )
   }
 
-  async getArtifactMember(artifactId: string, userId: string): Promise<ArtifactMemberRecord | null> {
+  async getArtifactMember(
+    artifactId: string,
+    userId: string,
+  ): Promise<ArtifactMemberRecord | null> {
     return (
       this.db
         .select()
@@ -282,7 +315,10 @@ export class SqliteMetaStore implements MetaStore {
       this.db
         .insert(artifactMember)
         .values(m)
-        .onConflictDoUpdate({ target: [artifactMember.artifact_id, artifactMember.user_id], set: { role: m.role } })
+        .onConflictDoUpdate({
+          target: [artifactMember.artifact_id, artifactMember.user_id],
+          set: { role: m.role },
+        })
         .returning()
         .get(),
     )
@@ -297,7 +333,11 @@ export class SqliteMetaStore implements MetaStore {
   // ---- User directory (Better Auth's `user` table; raw, may be absent) ---
   async findUserByEmail(email: string): Promise<UserDir | null> {
     try {
-      return (this.raw.prepare(`SELECT id, email, name FROM user WHERE email = ?`).get(email) as UserDir) ?? null
+      return (
+        (this.raw
+          .prepare(`SELECT id, email, name FROM user WHERE email = ?`)
+          .get(email) as UserDir) ?? null
+      )
     } catch {
       return null
     }
@@ -306,7 +346,9 @@ export class SqliteMetaStore implements MetaStore {
     if (ids.length === 0) return []
     try {
       const ph = ids.map(() => "?").join(",")
-      return this.raw.prepare(`SELECT id, email, name FROM user WHERE id IN (${ph})`).all(...ids) as UserDir[]
+      return this.raw
+        .prepare(`SELECT id, email, name FROM user WHERE id IN (${ph})`)
+        .all(...ids) as UserDir[]
     } catch {
       return []
     }

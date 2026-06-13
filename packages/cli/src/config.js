@@ -97,8 +97,15 @@ export const DOCK_SCHEMA = {
     title: { type: "string", description: "Artifact title." },
     entry: { type: "string", description: "File or directory `dock publish` targets." },
     visibility: { enum: ["public", "link", "org", "password"], default: "link" },
-    spa: { type: "boolean", description: "Serve a single-page-app fallback for unknown paths.", default: false },
-    id: { type: ["string", "null"], description: "Artifact short id; set automatically on first publish." },
+    spa: {
+      type: "boolean",
+      description: "Serve a single-page-app fallback for unknown paths.",
+      default: false,
+    },
+    id: {
+      type: ["string", "null"],
+      description: "Artifact short id; set automatically on first publish.",
+    },
     server: { type: "string", description: "Dock server URL (overrides DOCK_SERVER)." },
   },
 }

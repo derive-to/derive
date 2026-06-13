@@ -82,6 +82,7 @@ a{color:var(--ac);text-decoration:none}
   .app-header{padding:10px 14px;flex-wrap:wrap;gap:8px}
   .hdr-actions{order:3;flex:1 1 100%;flex-wrap:wrap;justify-content:flex-end;gap:6px}
   /* 16px inputs keep iOS from auto-zooming the page on focus. */
+  /* biome-ignore lint/complexity/noImportantStyles: needed to win specificity for the iOS zoom fix */
   .input{font-size:16px !important}
 }
 

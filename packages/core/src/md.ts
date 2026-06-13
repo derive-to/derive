@@ -1,7 +1,8 @@
 import { marked } from "marked"
-import { SELECTION_SCRIPT } from "./anchor"
 // xss is CJS; named ESM imports fail at runtime under Node's interop.
 import xssPkg from "xss"
+import { SELECTION_SCRIPT } from "./anchor"
+
 const { FilterXSS, whiteList } = xssPkg as unknown as typeof import("xss")
 
 const sanitizer = new FilterXSS({

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { S3BlobStore, s3FromUrl } from "../src/s3"
+import { type S3BlobStore, s3FromUrl } from "../src/s3"
 
 const cfgOf = (store: S3BlobStore) => (store as unknown as { cfg: Record<string, unknown> }).cfg
 const KEY = "a".repeat(64)
@@ -38,10 +38,14 @@ describe("s3FromUrl", () => {
   })
 
   it("?pathStyle= overrides the auto default", () => {
-    expect(cfgOf(s3FromUrl("s3://AK:S@s3.us-east-1.amazonaws.com/dock?pathStyle=true"))).toMatchObject({
+    expect(
+      cfgOf(s3FromUrl("s3://AK:S@s3.us-east-1.amazonaws.com/dock?pathStyle=true")),
+    ).toMatchObject({
       pathStyle: true,
     })
-    expect(cfgOf(s3FromUrl("s3://AK:S@acct.r2.cloudflarestorage.com/dock?pathStyle=false"))).toMatchObject({
+    expect(
+      cfgOf(s3FromUrl("s3://AK:S@acct.r2.cloudflarestorage.com/dock?pathStyle=false")),
+    ).toMatchObject({
       pathStyle: false,
     })
   })

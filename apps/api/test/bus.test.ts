@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { Presence, createBus } from "../src/bus"
+import { createBus, Presence } from "../src/bus"
 
 describe("event bus", () => {
   it("delivers published events to subscribers of that artifact only", () => {

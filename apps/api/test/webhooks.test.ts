@@ -1,12 +1,12 @@
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { afterAll, describe, expect, it } from "vitest"
+import type { ArtifactRecord } from "@dock/core"
 import { SqliteMetaStore } from "@dock/db/sqlite"
 import { FsBlobStore } from "@dock/storage/fs"
+import { afterAll, describe, expect, it } from "vitest"
 import { createApp } from "../src/app"
 import { buildPayload, sign, slackMessage } from "../src/webhooks"
-import type { ArtifactRecord } from "@dock/core"
 
 const sampleArtifact = {
   id: "a1",
@@ -30,10 +30,14 @@ describe("webhook formatting + signing", () => {
   })
 
   it("formats Slack messages per event type", () => {
-    const comment = slackMessage(buildPayload("http://h", sampleArtifact, "comment.created", { author: "ann", body: "nice" })) as { text: string }
+    const comment = slackMessage(
+      buildPayload("http://h", sampleArtifact, "comment.created", { author: "ann", body: "nice" }),
+    ) as { text: string }
     expect(comment.text).toContain(":speech_balloon:")
     expect(comment.text).toContain("ann")
-    const published = slackMessage(buildPayload("http://h", sampleArtifact, "version.published", { version: 3 })) as { text: string }
+    const published = slackMessage(
+      buildPayload("http://h", sampleArtifact, "version.published", { version: 3 }),
+    ) as { text: string }
     expect(published.text).toContain(":package:")
     expect(published.text).toContain("v3")
   })
@@ -41,7 +45,11 @@ describe("webhook formatting + signing", () => {
 
 const dir = mkdtempSync(join(tmpdir(), "dock-wh-"))
 const meta = new SqliteMetaStore(join(dir, "dock.db"))
-const app = createApp({ meta, blobs: new FsBlobStore(join(dir, "blobs")), baseUrl: "http://dock.test" })
+const app = createApp({
+  meta,
+  blobs: new FsBlobStore(join(dir, "blobs")),
+  baseUrl: "http://dock.test",
+})
 afterAll(() => {
   meta.close()
   rmSync(dir, { recursive: true, force: true })
@@ -52,13 +60,20 @@ describe("webhook outbox", () => {
     await app.request("/v1/webhooks", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ url: "http://example.com/hook", kind: "generic", secret: "s", events: ["version.published"] }),
+      body: JSON.stringify({
+        url: "http://example.com/hook",
+        kind: "generic",
+        secret: "s",
+        events: ["version.published"],
+      }),
     })
 
     // each publish (the new artifact + the republish) fires version.published
     const form = new FormData()
     form.append("file", new Blob([new TextEncoder().encode("# a")]), "a.md")
-    const { short_id } = await (await app.request("/v1/artifacts", { method: "POST", body: form })).json()
+    const { short_id } = await (
+      await app.request("/v1/artifacts", { method: "POST", body: form })
+    ).json()
     const f2 = new FormData()
     f2.append("file", new Blob([new TextEncoder().encode("# a2")]), "a.md")
     f2.append("message", "v2")

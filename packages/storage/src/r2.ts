@@ -1,4 +1,4 @@
-import { sha256Hex, type BlobStore } from "@dock/core"
+import { type BlobStore, sha256Hex } from "@dock/core"
 
 /** Structural type for a Cloudflare R2 binding (no hard dep on workers-types). */
 export interface R2Like {

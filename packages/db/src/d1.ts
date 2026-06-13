@@ -1,6 +1,4 @@
 import type { D1Database } from "@cloudflare/workers-types"
-import { and, asc, count, desc, eq, isNull, lte, or, sql } from "drizzle-orm"
-import { drizzle, type DrizzleD1Database } from "drizzle-orm/d1"
 import type {
   ArtifactMemberRecord,
   ArtifactRecord,
@@ -23,7 +21,17 @@ import type {
   ViewStats,
   WebhookRecord,
 } from "@dock/core"
-import { artifact, artifactMember, comment, membership, version, webhook, webhookDelivery } from "./schema"
+import { and, asc, count, desc, eq, isNull, lte, or, sql } from "drizzle-orm"
+import { type DrizzleD1Database, drizzle } from "drizzle-orm/d1"
+import {
+  artifact,
+  artifactMember,
+  comment,
+  membership,
+  version,
+  webhook,
+  webhookDelivery,
+} from "./schema"
 
 const schema = { artifact, version, comment, webhook, webhookDelivery, membership, artifactMember }
 const VIEW_WINDOW_MS = 30 * 86400_000
@@ -47,7 +55,9 @@ export class D1MetaStore implements MetaStore {
   }
 
   async getByShortId(shortId: string): Promise<ArtifactRecord | null> {
-    return (await this.db.select().from(artifact).where(eq(artifact.short_id, shortId)).get()) ?? null
+    return (
+      (await this.db.select().from(artifact).where(eq(artifact.short_id, shortId)).get()) ?? null
+    )
   }
 
   async addVersion(artifactId: string, v: NewVersion): Promise<VersionRecord> {
@@ -58,8 +68,15 @@ export class D1MetaStore implements MetaStore {
       .get()
     if (!row) throw new Error(`artifact not found: ${artifactId}`)
     const n = row.cv + 1
-    await this.db.insert(version).values({ ...v, artifact_id: artifactId, n }).run()
-    await this.db.update(artifact).set({ current_version: n }).where(eq(artifact.id, artifactId)).run()
+    await this.db
+      .insert(version)
+      .values({ ...v, artifact_id: artifactId, n })
+      .run()
+    await this.db
+      .update(artifact)
+      .set({ current_version: n })
+      .where(eq(artifact.id, artifactId))
+      .run()
     return (await this.getVersion(artifactId, n)) as VersionRecord
   }
 
@@ -109,11 +126,7 @@ export class D1MetaStore implements MetaStore {
     return this.db.select().from(comment).where(where).orderBy(asc(comment.created_at)).all()
   }
 
-  async setThreadState(
-    artifactId: string,
-    threadId: string,
-    state: CommentState,
-  ): Promise<number> {
+  async setThreadState(artifactId: string, threadId: string, state: CommentState): Promise<number> {
     const res = await this.db
       .update(comment)
       .set({ state })
@@ -184,7 +197,12 @@ export class D1MetaStore implements MetaStore {
     return this.db
       .select()
       .from(webhook)
-      .where(and(eq(webhook.active, 1), or(isNull(webhook.artifact_id), eq(webhook.artifact_id, artifactId))))
+      .where(
+        and(
+          eq(webhook.active, 1),
+          or(isNull(webhook.artifact_id), eq(webhook.artifact_id, artifactId)),
+        ),
+      )
       .all()
   }
   async enqueueDelivery(d: NewDelivery): Promise<void> {
@@ -201,7 +219,12 @@ export class D1MetaStore implements MetaStore {
   }
   async updateDelivery(
     id: string,
-    f: { status: DeliveryStatus; attempts: number; last_error: string | null; next_attempt_at: string },
+    f: {
+      status: DeliveryStatus
+      attempts: number
+      last_error: string | null
+      next_attempt_at: string
+    },
   ): Promise<void> {
     await this.db.update(webhookDelivery).set(f).where(eq(webhookDelivery.id, id)).run()
   }
@@ -229,19 +252,29 @@ export class D1MetaStore implements MetaStore {
     return this.db.select().from(membership).where(eq(membership.org_id, orgId)).all()
   }
   async countMemberships(orgId: string): Promise<number> {
-    const r = await this.db.select({ n: count() }).from(membership).where(eq(membership.org_id, orgId)).get()
+    const r = await this.db
+      .select({ n: count() })
+      .from(membership)
+      .where(eq(membership.org_id, orgId))
+      .get()
     return r?.n ?? 0
   }
   setMembership(m: NewMembership): Promise<MembershipRecord> {
     return this.db
       .insert(membership)
       .values(m)
-      .onConflictDoUpdate({ target: [membership.org_id, membership.user_id], set: { role: m.role } })
+      .onConflictDoUpdate({
+        target: [membership.org_id, membership.user_id],
+        set: { role: m.role },
+      })
       .returning()
       .get()
   }
 
-  async getArtifactMember(artifactId: string, userId: string): Promise<ArtifactMemberRecord | null> {
+  async getArtifactMember(
+    artifactId: string,
+    userId: string,
+  ): Promise<ArtifactMemberRecord | null> {
     return (
       (await this.db
         .select()
@@ -251,13 +284,20 @@ export class D1MetaStore implements MetaStore {
     )
   }
   listArtifactMembers(artifactId: string): Promise<ArtifactMemberRecord[]> {
-    return this.db.select().from(artifactMember).where(eq(artifactMember.artifact_id, artifactId)).all()
+    return this.db
+      .select()
+      .from(artifactMember)
+      .where(eq(artifactMember.artifact_id, artifactId))
+      .all()
   }
   setArtifactMember(m: NewArtifactMember): Promise<ArtifactMemberRecord> {
     return this.db
       .insert(artifactMember)
       .values(m)
-      .onConflictDoUpdate({ target: [artifactMember.artifact_id, artifactMember.user_id], set: { role: m.role } })
+      .onConflictDoUpdate({
+        target: [artifactMember.artifact_id, artifactMember.user_id],
+        set: { role: m.role },
+      })
       .returning()
       .get()
   }
@@ -271,7 +311,11 @@ export class D1MetaStore implements MetaStore {
   // ---- User directory (Better Auth's `user` table; raw, may be absent) ---
   async findUserByEmail(email: string): Promise<UserDir | null> {
     try {
-      return ((await this.db.get(sql`SELECT id, email, name FROM user WHERE email = ${email}`)) as UserDir) ?? null
+      return (
+        ((await this.db.get(
+          sql`SELECT id, email, name FROM user WHERE email = ${email}`,
+        )) as UserDir) ?? null
+      )
     } catch {
       return null
     }
@@ -283,7 +327,9 @@ export class D1MetaStore implements MetaStore {
         ids.map((id) => sql`${id}`),
         sql`, `,
       )
-      return (await this.db.all(sql`SELECT id, email, name FROM user WHERE id IN (${list})`)) as UserDir[]
+      return (await this.db.all(
+        sql`SELECT id, email, name FROM user WHERE id IN (${list})`,
+      )) as UserDir[]
     } catch {
       return []
     }
