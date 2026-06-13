@@ -28,6 +28,11 @@ if (cfg.databaseUrl) {
 } else {
   meta = new SqliteMetaStore(join(cfg.dataDir, "dock.db"))
   authDb = new Database(join(cfg.dataDir, "dock.db"))
+  // Better Auth opens its own connection to the same dock.db. Match the store's
+  // WAL + busy_timeout so concurrent auth writes (e.g. bursts of signups) wait
+  // for the lock instead of failing with SQLITE_BUSY.
+  authDb.pragma("journal_mode = WAL")
+  authDb.pragma("busy_timeout = 5000")
 }
 
 const auth = makeAuth(authDb, cfg.baseUrl, resolveAuthSecret(cfg.dataDir))
