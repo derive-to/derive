@@ -125,6 +125,12 @@ export interface Webhook {
   active: 0 | 1
   created_at: string
 }
+export interface Agent {
+  id: string
+  name: string
+  role: Role
+  created_at: string
+}
 export interface Delivery {
   id: string
   event_type: string
@@ -255,6 +261,12 @@ export const api = {
     f(`/v1/artifacts/${id}/favorite`, { ...opts(), method: on ? "PUT" : "DELETE" }).then(j),
   setTags: (id: string, tags: string[]): Promise<{ tags: string[] }> =>
     f(`/v1/artifacts/${id}/tags`, { ...opts({ tags }), method: "PUT" }).then(j),
+
+  listAgents: (): Promise<{ agents: Agent[] }> => f("/v1/agents", opts()).then(j),
+  createAgent: (name: string, role?: Role): Promise<Agent & { token: string }> =>
+    f("/v1/agents", opts({ name, role })).then(j),
+  deleteAgent: (id: string): Promise<void> =>
+    f(`/v1/agents/${id}`, { method: "DELETE", credentials: "include" }).then(() => undefined),
 
   listWebhooks: (): Promise<{ webhooks: Webhook[] }> => f("/v1/webhooks", opts()).then(j),
   createWebhook: (body: {
