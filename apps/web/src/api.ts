@@ -20,7 +20,13 @@ export interface Artifact {
   kind: "file" | "bundle"
   visibility: string
   current_version: number
-  versions: { n: number; author: string; message: string | null; name: string | null; created_at: string }[]
+  versions: {
+    n: number
+    author: string
+    message: string | null
+    name: string | null
+    created_at: string
+  }[]
   /** Time-grouped view of versions for display; newest-first. */
   sessions?: VersionSession[]
   views?: number
@@ -113,7 +119,9 @@ export const api = {
       r.ok ? r.json() : null,
     )
     if (!s?.user) throw new Error("unauthenticated")
-    return { user: { id: s.user.id, email: s.user.email, name: s.user.name ?? null, role: "member" } }
+    return {
+      user: { id: s.user.id, email: s.user.email, name: s.user.name ?? null, role: "member" },
+    }
   },
   login: (email: string, password: string): Promise<unknown> =>
     f("/api/auth/sign-in/email", opts({ email, password })).then(authJson),
@@ -125,7 +133,9 @@ export const api = {
   listArtifacts: (): Promise<{ artifacts: Artifact[] }> => f("/v1/artifacts", opts()).then(j),
   getArtifact: (id: string): Promise<Artifact> => f(`/v1/artifacts/${id}`, opts()).then(j),
   getContent: (id: string, v?: number): Promise<string> =>
-    f(`/v1/artifacts/${id}/content${v ? `?v=${v}` : ""}`, { credentials: "include" }).then((r) => r.text()),
+    f(`/v1/artifacts/${id}/content${v ? `?v=${v}` : ""}`, { credentials: "include" }).then((r) =>
+      r.text(),
+    ),
   diff: (id: string, from: number, to: number): Promise<Diff> =>
     f(`/v1/artifacts/${id}/diff?from=${from}&to=${to}&format=json`, opts()).then(j),
   restore: (id: string, version: number): Promise<Artifact> =>
@@ -136,7 +146,9 @@ export const api = {
   setMember: (id: string, email: string, role: Role): Promise<ArtifactMember> =>
     f(`/v1/artifacts/${id}/members`, { ...opts({ email, role }), method: "PUT" }).then(j),
   removeMember: (id: string, userId: string): Promise<void> =>
-    f(`/v1/artifacts/${id}/members/${userId}`, { method: "DELETE", credentials: "include" }).then(() => undefined),
+    f(`/v1/artifacts/${id}/members/${userId}`, { method: "DELETE", credentials: "include" }).then(
+      () => undefined,
+    ),
   heartbeat: (id: string, name: string): Promise<{ viewers: string[] }> =>
     f(`/v1/artifacts/${id}/presence`, opts({ name })).then(j),
 
@@ -158,14 +170,18 @@ export const api = {
   analytics: (id: string): Promise<Analytics> => f(`/v1/artifacts/${id}/analytics`, opts()).then(j),
   listComments: (id: string): Promise<{ comments: Comment[] }> =>
     f(`/v1/artifacts/${id}/comments`, opts()).then(j),
-  comment: (id: string, body: { body_md: string; thread_id?: string; anchor?: unknown }): Promise<Comment> =>
-    f(`/v1/artifacts/${id}/comments`, opts(body)).then(j),
+  comment: (
+    id: string,
+    body: { body_md: string; thread_id?: string; anchor?: unknown },
+  ): Promise<Comment> => f(`/v1/artifacts/${id}/comments`, opts(body)).then(j),
   resolve: (id: string, commentId: string, state: "open" | "resolved") =>
     f(`/v1/artifacts/${id}/comments/${commentId}/resolve`, opts({ state })).then(j),
   react: (id: string, commentId: string, emoji: string): Promise<Comment> =>
     f(`/v1/artifacts/${id}/comments/${commentId}/react`, opts({ emoji })).then(j),
   editComment: (id: string, commentId: string, body_md: string): Promise<Comment> =>
-    f(`/v1/artifacts/${id}/comments/${commentId}`, { ...opts({ body_md }), method: "PATCH" }).then(j),
+    f(`/v1/artifacts/${id}/comments/${commentId}`, { ...opts({ body_md }), method: "PATCH" }).then(
+      j,
+    ),
   deleteComment: (id: string, commentId: string): Promise<Comment> =>
     f(`/v1/artifacts/${id}/comments/${commentId}`, {
       method: "DELETE",
@@ -178,7 +194,12 @@ export const api = {
     fd.append("file", file)
     for (const [k, v] of Object.entries(fields)) fd.append(k, v)
     const path = id ? `/v1/artifacts/${id}/versions` : "/v1/artifacts"
-    return f(path, { method: "POST", body: fd, credentials: "include", headers: { accept: "application/json" } }).then(j)
+    return f(path, {
+      method: "POST",
+      body: fd,
+      credentials: "include",
+      headers: { accept: "application/json" },
+    }).then(j)
   },
   publishText(id: string, text: string, filename: string, message: string): Promise<Artifact> {
     return this.publish(new File([text], filename), { message }, id)

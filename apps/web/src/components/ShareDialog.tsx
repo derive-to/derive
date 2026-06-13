@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react"
-import { api, type ArtifactMember, type Role } from "../api"
+import { type ArtifactMember, api, type Role } from "../api"
 
 const ROLES: Role[] = ["viewer", "commenter", "editor", "owner"]
 const BLURB: Record<Role, string> = {
@@ -91,9 +91,25 @@ export function ShareButton({ shortId, myRole }: { shortId: string; myRole?: Rol
       {open && (
         <div
           className="card"
-          style={{ position: "absolute", right: 0, top: "calc(100% + 7px)", width: 330, padding: 14, boxShadow: "var(--shadow)", zIndex: 30 }}
+          style={{
+            position: "absolute",
+            right: 0,
+            top: "calc(100% + 7px)",
+            width: 330,
+            padding: 14,
+            boxShadow: "var(--shadow)",
+            zIndex: 30,
+          }}
         >
-          <div className="mono muted" style={{ fontSize: 9.5, letterSpacing: ".06em", textTransform: "uppercase", marginBottom: 8 }}>
+          <div
+            className="mono muted"
+            style={{
+              fontSize: 9.5,
+              letterSpacing: ".06em",
+              textTransform: "uppercase",
+              marginBottom: 8,
+            }}
+          >
             People with access
           </div>
 
@@ -122,7 +138,9 @@ export function ShareButton({ shortId, myRole }: { shortId: string; myRole?: Rol
               {busy ? "…" : "Add"}
             </button>
           </form>
-          <div className="mono muted" style={{ fontSize: 10, marginBottom: 10 }}>{BLURB[role]}.</div>
+          <div className="mono muted" style={{ fontSize: 10, marginBottom: 10 }}>
+            {BLURB[role]}.
+          </div>
           {err && <div style={{ color: "var(--bad)", fontSize: 11.5, marginBottom: 8 }}>{err}</div>}
 
           {members.length === 0 ? (
@@ -134,10 +152,22 @@ export function ShareButton({ shortId, myRole }: { shortId: string; myRole?: Rol
               {members.map((m) => (
                 <div key={m.user_id} style={{ display: "flex", alignItems: "center", gap: 8 }}>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 12.5, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                    <div
+                      style={{
+                        fontSize: 12.5,
+                        fontWeight: 600,
+                        whiteSpace: "nowrap",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                      }}
+                    >
                       {m.name ?? m.email ?? m.user_id}
                     </div>
-                    {m.name && m.email && <div className="muted" style={{ fontSize: 10.5 }}>{m.email}</div>}
+                    {m.name && m.email && (
+                      <div className="muted" style={{ fontSize: 10.5 }}>
+                        {m.email}
+                      </div>
+                    )}
                   </div>
                   <select
                     value={m.role}
@@ -151,7 +181,12 @@ export function ShareButton({ shortId, myRole }: { shortId: string; myRole?: Rol
                       </option>
                     ))}
                   </select>
-                  <button className="lnk" onClick={() => remove(m)} title="Remove" style={{ textDecoration: "none", fontSize: 14 }}>
+                  <button
+                    className="lnk"
+                    onClick={() => remove(m)}
+                    title="Remove"
+                    style={{ textDecoration: "none", fontSize: 14 }}
+                  >
                     ✕
                   </button>
                 </div>

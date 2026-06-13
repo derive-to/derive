@@ -118,8 +118,7 @@ export async function enqueueForEvent(
   )
 }
 
-const backoff = (attempts: number) =>
-  Math.min(MAX_BACKOFF_MS, BASE_BACKOFF_MS * 2 ** attempts)
+const backoff = (attempts: number) => Math.min(MAX_BACKOFF_MS, BASE_BACKOFF_MS * 2 ** attempts)
 
 /** The outbox worker: claim due deliveries, deliver, retry with backoff, dead-letter. */
 export function startWebhookWorker(meta: MetaStore, intervalMs = 1500): () => void {
@@ -132,12 +131,27 @@ export function startWebhookWorker(meta: MetaStore, intervalMs = 1500): () => vo
         const r = await deliverOnce(d)
         const attempts = d.attempts + 1
         if (r.ok) {
-          await meta.updateDelivery(d.id, { status: "delivered", attempts, last_error: null, next_attempt_at: d.next_attempt_at })
+          await meta.updateDelivery(d.id, {
+            status: "delivered",
+            attempts,
+            last_error: null,
+            next_attempt_at: d.next_attempt_at,
+          })
         } else if (attempts >= MAX_ATTEMPTS) {
-          await meta.updateDelivery(d.id, { status: "dead", attempts, last_error: r.status, next_attempt_at: d.next_attempt_at })
+          await meta.updateDelivery(d.id, {
+            status: "dead",
+            attempts,
+            last_error: r.status,
+            next_attempt_at: d.next_attempt_at,
+          })
         } else {
           const next = new Date(Date.now() + backoff(attempts)).toISOString()
-          await meta.updateDelivery(d.id, { status: "pending", attempts, last_error: r.status, next_attempt_at: next })
+          await meta.updateDelivery(d.id, {
+            status: "pending",
+            attempts,
+            last_error: r.status,
+            next_attempt_at: next,
+          })
         }
       }
     } catch {

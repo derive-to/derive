@@ -16,8 +16,5 @@ export default defineConfig({
       ["/v1", "/api", "/raw", "/healthz"].map((p) => [p, { target: API, changeOrigin: true }]),
     ),
   },
-  plugins: [
-    tanstackStart({ spa: { enabled: true } }),
-    viteReact(),
-  ],
+  plugins: [tanstackStart({ spa: { enabled: true } }), viteReact()],
 })

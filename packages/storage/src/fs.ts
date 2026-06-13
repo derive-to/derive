@@ -1,7 +1,7 @@
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises"
 import { existsSync } from "node:fs"
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises"
 import { join } from "node:path"
-import { sha256Hex, type BlobStore } from "@dock/core"
+import { type BlobStore, sha256Hex } from "@dock/core"
 
 /** Content-addressed blobs on the local filesystem. The default store. */
 export class FsBlobStore implements BlobStore {

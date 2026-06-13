@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from "react"
 import { useNavigate } from "@tanstack/react-router"
-import { api, API_BASE, type Artifact } from "../api"
+import { useEffect, useRef, useState } from "react"
+import { API_BASE, type Artifact, api } from "../api"
 import { Header, useToast } from "../components"
 import { useAuth } from "../ctx"
 
@@ -55,7 +55,11 @@ export function Library() {
     if (!loading && !me) nav({ to: "/login" })
   }, [loading, me, nav])
   useEffect(() => {
-    if (me) api.listArtifacts().then((r) => setItems(r.artifacts)).catch(() => setItems([]))
+    if (me)
+      api
+        .listArtifacts()
+        .then((r) => setItems(r.artifacts))
+        .catch(() => setItems([]))
   }, [me])
 
   const publish = async () => {
@@ -74,13 +78,28 @@ export function Library() {
     }
   }
 
-  if (!me) return <div className="center"><div className="spin" /></div>
+  if (!me)
+    return (
+      <div className="center">
+        <div className="spin" />
+      </div>
+    )
 
   return (
     <div style={{ minHeight: "100%" }}>
       <Header />
       <main style={{ maxWidth: 1000, margin: "0 auto", padding: "26px 22px 60px" }}>
-        <div className="card" style={{ padding: 18, marginBottom: 24, display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+        <div
+          className="card"
+          style={{
+            padding: 18,
+            marginBottom: 24,
+            display: "flex",
+            alignItems: "center",
+            gap: 14,
+            flexWrap: "wrap",
+          }}
+        >
           <div style={{ flex: 1, minWidth: 220 }}>
             <div className="display" style={{ fontWeight: 600, fontSize: 16 }}>
               Publish an artifact
@@ -89,40 +108,86 @@ export function Library() {
               Drop an HTML or Markdown file, or run <code className="mono">dock publish</code>.
             </div>
           </div>
-          <input ref={file} type="file" accept=".html,.htm,.md,.markdown,.zip" style={{ maxWidth: 240, fontSize: 12 }} onChange={publish} />
+          <input
+            ref={file}
+            type="file"
+            accept=".html,.htm,.md,.markdown,.zip"
+            style={{ maxWidth: 240, fontSize: 12 }}
+            onChange={publish}
+          />
           <button className="btn pri" onClick={publish} disabled={busy}>
             {busy ? "Publishing…" : "Publish"}
           </button>
         </div>
 
         <h2 className="display" style={{ fontSize: 18, margin: "0 0 14px" }}>
-          Library <span className="muted" style={{ fontWeight: 400, fontSize: 14 }}>· {items?.length ?? 0}</span>
+          Library{" "}
+          <span className="muted" style={{ fontWeight: 400, fontSize: 14 }}>
+            · {items?.length ?? 0}
+          </span>
         </h2>
         {items === null ? (
-          <div className="center" style={{ height: 160 }}><div className="spin" /></div>
+          <div className="center" style={{ height: 160 }}>
+            <div className="spin" />
+          </div>
         ) : items.length === 0 ? (
-          <div className="muted" style={{ textAlign: "center", padding: 40, border: "1px dashed var(--line)", borderRadius: 14 }}>
+          <div
+            className="muted"
+            style={{
+              textAlign: "center",
+              padding: 40,
+              border: "1px dashed var(--line)",
+              borderRadius: 14,
+            }}
+          >
             Nothing yet. Publish above, or run <code className="mono">dock publish ./file</code>.
           </div>
         ) : (
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(220px,1fr))", gap: 13 }}>
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fill,minmax(220px,1fr))",
+              gap: 13,
+            }}
+          >
             {items.map((a) => (
               <button
                 key={a.short_id}
                 onClick={() => nav({ to: "/a/$ref", params: { ref: a.short_id } })}
                 className="card"
-                style={{ textAlign: "left", padding: 15, cursor: "pointer", display: "flex", flexDirection: "column", gap: 8 }}
+                style={{
+                  textAlign: "left",
+                  padding: 15,
+                  cursor: "pointer",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 8,
+                }}
               >
                 <Thumb id={a.short_id} v={a.current_version} />
                 <div className="display" style={{ fontWeight: 600, fontSize: 15 }}>
                   {a.title ?? a.short_id}
                 </div>
-                <div className="mono muted" style={{ fontSize: 11, display: "flex", gap: 8, alignItems: "center" }}>
-                  <span style={{ background: "var(--card-2)", border: "1px solid var(--line-soft)", borderRadius: 5, padding: "1px 6px" }}>{a.kind}</span>
+                <div
+                  className="mono muted"
+                  style={{ fontSize: 11, display: "flex", gap: 8, alignItems: "center" }}
+                >
+                  <span
+                    style={{
+                      background: "var(--card-2)",
+                      border: "1px solid var(--line-soft)",
+                      borderRadius: 5,
+                      padding: "1px 6px",
+                    }}
+                  >
+                    {a.kind}
+                  </span>
                   <span>v{a.current_version}</span>
                   <span>{a.visibility}</span>
                   {a.views !== undefined && a.views > 0 && (
-                    <span style={{ marginLeft: "auto" }} title={`${a.views} views`}>👁 {a.views > 999 ? `${(a.views / 1000).toFixed(1)}k` : a.views}</span>
+                    <span style={{ marginLeft: "auto" }} title={`${a.views} views`}>
+                      👁 {a.views > 999 ? `${(a.views / 1000).toFixed(1)}k` : a.views}
+                    </span>
                   )}
                 </div>
               </button>

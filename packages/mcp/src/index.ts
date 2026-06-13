@@ -135,7 +135,9 @@ server.registerTool(
   async ({ short_id, body_md, quote }) => {
     const anchor = quote ? { type: "TextQuoteSelector", exact: quote } : undefined
     const c = await client.createComment(short_id, { body_md, anchor, author: "agent" })
-    return text(`Commented (thread ${c.thread_id}, comment ${c.id})${quote ? ` on “${quote}”` : ""}.`)
+    return text(
+      `Commented (thread ${c.thread_id}, comment ${c.id})${quote ? ` on “${quote}”` : ""}.`,
+    )
   },
 )
 
@@ -205,7 +207,11 @@ server.registerTool(
 server.registerResource(
   "dock-guide",
   "dock://guide",
-  { title: "Dock agent guide", description: "How to run the publish → review → revise loop.", mimeType: "text/markdown" },
+  {
+    title: "Dock agent guide",
+    description: "How to run the publish → review → revise loop.",
+    mimeType: "text/markdown",
+  },
   async (uri) => ({ contents: [{ uri: uri.href, mimeType: "text/markdown", text: GUIDE }] }),
 )
 

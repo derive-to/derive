@@ -1,12 +1,18 @@
-import { useEffect, useRef, useState } from "react"
 import { Link, useNavigate } from "@tanstack/react-router"
+import { useEffect, useRef, useState } from "react"
 import { api } from "./api"
 import { THEMES, useAuth, useTheme } from "./ctx"
 
 export const Logo = ({ size = 24 }: { size?: number }) => (
   <svg width={size} height={size} viewBox="0 0 32 32" fill="none" aria-hidden>
     <rect x="1" y="1" width="30" height="30" rx="8" fill="#2a2540" />
-    <path d="M16 7l7 7v11h-4.6v-6.2h-4.8V25H9V14l7-7z" fill="none" stroke="#8a7dc0" strokeWidth="1.7" strokeLinejoin="round" />
+    <path
+      d="M16 7l7 7v11h-4.6v-6.2h-4.8V25H9V14l7-7z"
+      fill="none"
+      stroke="#8a7dc0"
+      strokeWidth="1.7"
+      strokeLinejoin="round"
+    />
     <rect x="13.6" y="6.4" width="4.8" height="4.8" rx="1.2" fill="#655999" />
   </svg>
 )
@@ -87,24 +93,53 @@ export function UserMenu() {
       {open && (
         <div
           className="card"
-          style={{ position: "absolute", right: 0, top: "calc(100% + 7px)", width: 200, padding: 6, boxShadow: "var(--shadow)", zIndex: 30 }}
+          style={{
+            position: "absolute",
+            right: 0,
+            top: "calc(100% + 7px)",
+            width: 200,
+            padding: 6,
+            boxShadow: "var(--shadow)",
+            zIndex: 30,
+          }}
         >
-          <div className="mono" style={{ fontSize: 9.5, letterSpacing: ".06em", textTransform: "uppercase", color: "var(--fg-mut)", padding: "6px 8px 4px" }}>
+          <div
+            className="mono"
+            style={{
+              fontSize: 9.5,
+              letterSpacing: ".06em",
+              textTransform: "uppercase",
+              color: "var(--fg-mut)",
+              padding: "6px 8px 4px",
+            }}
+          >
             Theme
           </div>
           {THEMES.map((t) => (
-            <button
-              key={t.id}
-              onClick={() => setTheme(t.id)}
-              style={menuRow}
-            >
-              <span style={{ width: 13, height: 13, borderRadius: "50%", background: t.sw, border: "1px solid rgba(0,0,0,.12)" }} />
+            <button key={t.id} onClick={() => setTheme(t.id)} style={menuRow}>
+              <span
+                style={{
+                  width: 13,
+                  height: 13,
+                  borderRadius: "50%",
+                  background: t.sw,
+                  border: "1px solid rgba(0,0,0,.12)",
+                }}
+              />
               {t.label}
-              <span style={{ marginLeft: "auto", color: "var(--ac)", fontWeight: 700 }}>{theme === t.id ? "✓" : ""}</span>
+              <span style={{ marginLeft: "auto", color: "var(--ac)", fontWeight: 700 }}>
+                {theme === t.id ? "✓" : ""}
+              </span>
             </button>
           ))}
           <div style={{ height: 1, background: "var(--line-soft)", margin: "5px 2px" }} />
-          <button onClick={() => { setOpen(false); nav({ to: "/settings" }) }} style={menuRow}>
+          <button
+            onClick={() => {
+              setOpen(false)
+              nav({ to: "/settings" })
+            }}
+            style={menuRow}
+          >
             Settings
           </button>
           <button
@@ -140,9 +175,7 @@ const menuRow: React.CSSProperties = {
 
 export function useToast() {
   const [msg, setMsg] = useState("")
-  const el = (
-    <div className={`toast${msg ? " show" : ""}`}>{msg}</div>
-  )
+  const el = <div className={`toast${msg ? " show" : ""}`}>{msg}</div>
   const show = (m: string) => {
     setMsg(m)
     setTimeout(() => setMsg(""), 1900)

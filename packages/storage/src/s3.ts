@@ -1,5 +1,5 @@
 import { createHash, createHmac } from "node:crypto"
-import { sha256Hex, type BlobStore } from "@dock/core"
+import { type BlobStore, sha256Hex } from "@dock/core"
 
 /**
  * S3-compatible blob store for the Node container — covers AWS S3, Cloudflare
@@ -127,8 +127,7 @@ export function s3FromUrl(raw: string): S3BlobStore {
   const tls = url.searchParams.get("tls") === "false" ? false : !local
   const pathStyleParam = url.searchParams.get("pathStyle")
   const pathStyle = pathStyleParam != null ? pathStyleParam !== "false" : !isAws
-  const region =
-    url.searchParams.get("region") ?? (isAws ? awsRegion(url.hostname) : "auto")
+  const region = url.searchParams.get("region") ?? (isAws ? awsRegion(url.hostname) : "auto")
 
   return new S3BlobStore({
     endpoint: url.host,

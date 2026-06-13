@@ -1,10 +1,10 @@
 import { unzipSync } from "fflate"
-import { mimeFor } from "./mime"
 import { newId, newShortId, slugify } from "./ids"
+import { mimeFor } from "./mime"
 import {
-  BUNDLE_CONTENT_TYPE,
   type ArtifactRecord,
   type BlobStore,
+  BUNDLE_CONTENT_TYPE,
   type BundleManifest,
   type MetaStore,
   type VersionRecord,
@@ -43,7 +43,10 @@ const MAX_BUNDLE_FILES = 2000
 
 /** Normalizes a zip entry path; null means skip the entry. */
 const cleanPath = (raw: string): string | null => {
-  const p = raw.replace(/\\/g, "/").replace(/^(\.\/)+/, "").replace(/^\/+/, "")
+  const p = raw
+    .replace(/\\/g, "/")
+    .replace(/^(\.\/)+/, "")
+    .replace(/^\/+/, "")
   if (!p || p.endsWith("/")) return null
   const segs = p.split("/")
   if (segs.some((s) => s === ".." || s === "")) return null

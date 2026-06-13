@@ -7,10 +7,18 @@
 //   dock reply <thread_id> <message…>    reply in a thread
 //   dock resolve|reopen <comment_id>     set a thread's state
 import { spawn } from "node:child_process"
-import { readFileSync, readdirSync, statSync } from "node:fs"
+import { readdirSync, readFileSync, statSync } from "node:fs"
 import { basename, join, relative } from "node:path"
 import { zipSync } from "fflate"
-import { CONFIG_FILE, TEMPLATES, formatComments, loadConfig, resolvePublish, scaffold, writeId } from "../src/config.js"
+import {
+  CONFIG_FILE,
+  formatComments,
+  loadConfig,
+  resolvePublish,
+  scaffold,
+  TEMPLATES,
+  writeId,
+} from "../src/config.js"
 
 const args = process.argv.slice(2)
 const cmd = args.shift()
@@ -35,7 +43,11 @@ if (cmd === "init") {
   for (const f of created) console.log(`  + ${f}`)
   for (const f of skipped) console.log(`  · ${f} (exists, kept)`)
   const entry = created.find((f) => f !== CONFIG_FILE && f !== "AGENTS.md") ?? "the entry"
-  console.log(created.length ? `\nReady (${template}). Edit ${entry}, then run \`dock publish\`.` : `\nNothing to do — ${CONFIG_FILE} already here.`)
+  console.log(
+    created.length
+      ? `\nReady (${template}). Edit ${entry}, then run \`dock publish\`.`
+      : `\nNothing to do — ${CONFIG_FILE} already here.`,
+  )
   process.exit(0)
 }
 
@@ -65,8 +77,11 @@ if (LOOP.includes(cmd)) {
   if (cmd === "open") {
     const url = `${r.server}/a/${r.id}`
     console.log(url)
-    const opener = process.platform === "darwin" ? "open" : process.platform === "win32" ? "start" : "xdg-open"
-    spawn(opener, [url], { stdio: "ignore", detached: true }).on("error", () => {}).unref()
+    const opener =
+      process.platform === "darwin" ? "open" : process.platform === "win32" ? "start" : "xdg-open"
+    spawn(opener, [url], { stdio: "ignore", detached: true })
+      .on("error", () => {})
+      .unref()
     process.exit(0)
   }
 
@@ -132,13 +147,21 @@ try {
 const p = resolvePublish({ ...flags, target: positional[0] }, config)
 
 if (!p.target) {
-  console.error(`error: nothing to publish. Pass a file/dir, or set "entry" in ${CONFIG_FILE} (run \`dock init\`).`)
+  console.error(
+    `error: nothing to publish. Pass a file/dir, or set "entry" in ${CONFIG_FILE} (run \`dock init\`).`,
+  )
   process.exit(1)
 }
 
 const collect = (dir, base, out = {}) => {
   for (const name of readdirSync(dir)) {
-    if (name === ".DS_Store" || name === "node_modules" || name.startsWith(".git") || name === CONFIG_FILE) continue
+    if (
+      name === ".DS_Store" ||
+      name === "node_modules" ||
+      name.startsWith(".git") ||
+      name === CONFIG_FILE
+    )
+      continue
     const path = join(dir, name)
     const st = statSync(path)
     if (st.isDirectory()) collect(path, base, out)

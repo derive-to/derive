@@ -71,7 +71,10 @@ export interface MetaStore {
   listComments(artifactId: string, opts?: { state?: CommentState }): Promise<CommentRecord[]>
   getComment(id: string): Promise<CommentRecord | null>
   /** Patch a single comment's body and/or meta (reactions, edited, deleted). */
-  updateComment(id: string, fields: { body_md?: string; meta?: string | null }): Promise<CommentRecord | null>
+  updateComment(
+    id: string,
+    fields: { body_md?: string; meta?: string | null },
+  ): Promise<CommentRecord | null>
   /** Flips every comment in a thread to a state; returns the count updated. */
   setThreadState(artifactId: string, threadId: string, state: CommentState): Promise<number>
 
@@ -97,7 +100,12 @@ export interface MetaStore {
   claimDueDeliveries(now: string, limit: number): Promise<DeliveryRecord[]>
   updateDelivery(
     id: string,
-    fields: { status: DeliveryStatus; attempts: number; last_error: string | null; next_attempt_at: string },
+    fields: {
+      status: DeliveryStatus
+      attempts: number
+      last_error: string | null
+      next_attempt_at: string
+    },
   ): Promise<void>
   /** Recent deliveries for a webhook (for the settings log). */
   recentDeliveries(webhookId: string, limit: number): Promise<DeliveryRecord[]>

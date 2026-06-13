@@ -1,12 +1,12 @@
 import { mkdtempSync, rmSync } from "node:fs"
+import type { AddressInfo } from "node:net"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import type { AddressInfo } from "node:net"
-import { serve } from "@hono/node-server"
-import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import { createApp } from "@dock/api/app"
 import { SqliteMetaStore } from "@dock/db/sqlite"
 import { FsBlobStore } from "@dock/storage/fs"
+import { serve } from "@hono/node-server"
+import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import { createClient, type DockClient } from "../src/client"
 
 let server: ReturnType<typeof serve>
@@ -111,7 +111,12 @@ describe("dock client (the MCP server's backend) over real HTTP", () => {
 
   it("diffs two versions", async () => {
     const a = await client.publish({ content: "# title\nalpha", filename: "d.md" })
-    await client.publish({ id: a.short_id, content: "# title\nbeta", filename: "d.md", message: "v2" })
+    await client.publish({
+      id: a.short_id,
+      content: "# title\nbeta",
+      filename: "d.md",
+      message: "v2",
+    })
     const d = await client.diff(a.short_id, 1, 2)
     expect(d).toMatchObject({ from: 1, to: 2 })
     expect(d.ops).toContainEqual({ t: "add", line: "beta" })

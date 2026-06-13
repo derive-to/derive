@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react"
 import { useNavigate } from "@tanstack/react-router"
+import { useEffect, useState } from "react"
 import { api } from "../api"
 import { Logo } from "../components"
 import { useAuth } from "../ctx"
@@ -37,7 +37,15 @@ export function Login() {
   return (
     <div className="center">
       <div style={{ width: 360, maxWidth: "90vw" }}>
-        <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: 10, marginBottom: 6 }}>
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "center",
+            alignItems: "center",
+            gap: 10,
+            marginBottom: 6,
+          }}
+        >
           <Logo size={30} />
           <span className="display" style={{ fontWeight: 600, fontSize: 22 }}>
             Dock
@@ -46,27 +54,65 @@ export function Login() {
         <p className="muted" style={{ textAlign: "center", margin: "0 0 24px" }}>
           {mode === "signup" ? "Create your account." : "Sign in to your workspace."}
         </p>
-        <form className="card" style={{ padding: 22, boxShadow: "var(--shadow)" }} onSubmit={submit}>
+        <form
+          className="card"
+          style={{ padding: 22, boxShadow: "var(--shadow)" }}
+          onSubmit={submit}
+        >
           {err && (
-            <div style={{ background: "var(--cmt-bg)", color: "var(--bad)", borderRadius: 8, padding: "8px 12px", fontSize: 13, marginBottom: 12 }}>
+            <div
+              style={{
+                background: "var(--cmt-bg)",
+                color: "var(--bad)",
+                borderRadius: 8,
+                padding: "8px 12px",
+                fontSize: 13,
+                marginBottom: 12,
+              }}
+            >
               {err}
             </div>
           )}
           {mode === "signup" && (
             <label style={lbl}>
               Name
-              <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="Your name" />
+              <input
+                className="input"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="Your name"
+              />
             </label>
           )}
           <label style={lbl}>
             Email
-            <input className="input" type="email" required value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@company.com" />
+            <input
+              className="input"
+              type="email"
+              required
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="you@company.com"
+            />
           </label>
           <label style={{ ...lbl, marginBottom: 16 }}>
             Password
-            <input className="input" type="password" required minLength={8} value={password} onChange={(e) => setPassword(e.target.value)} placeholder="At least 8 characters" />
+            <input
+              className="input"
+              type="password"
+              required
+              minLength={8}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="At least 8 characters"
+            />
           </label>
-          <button className="btn pri" type="submit" disabled={busy} style={{ width: "100%", justifyContent: "center" }}>
+          <button
+            className="btn pri"
+            type="submit"
+            disabled={busy}
+            style={{ width: "100%", justifyContent: "center" }}
+          >
             {busy ? "…" : mode === "signup" ? "Create account" : "Sign in"}
           </button>
         </form>
@@ -92,4 +138,10 @@ export function Login() {
   )
 }
 
-const lbl: React.CSSProperties = { display: "block", fontSize: 12.5, fontWeight: 600, color: "var(--fg-mut)", marginBottom: 12 }
+const lbl: React.CSSProperties = {
+  display: "block",
+  fontSize: 12.5,
+  fontWeight: 600,
+  color: "var(--fg-mut)",
+  marginBottom: 12,
+}
