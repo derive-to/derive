@@ -84,6 +84,30 @@ shipping. If something below surprises you, that's the guardrail doing its job:
 - **Event names.** Bus and webhook event names come from one list
   (`apps/api/src/events.ts`); a typo or a webhook event the bus doesn't know about is a
   compile error.
+- **Missing auth check.** Every mutating route (`POST`/`PUT`/`PATCH`/`DELETE`) must gate on
+  identity or permission. A handler that references no authz helper (`authorize`,
+  `workspaceCan`, `collectionRole`, `ensureMembership`, `currentUser`, …) fails
+  `apps/api/test/authz-coverage.test.ts`. A genuinely public mutation opts out with an
+  `authz-exempt: <reason>` comment on its route line.
+- **Hardcoded colors or text sizes.** In `apps/web`, a hex, an `rgb()`/`hsl()`, a raw
+  Tailwind palette color (`bg-red-500`), an arbitrary color (`bg-[#abc]`), or an absolute
+  font size (`text-[14px]`, inline `fontSize`) fails `pnpm lint:tokens`. Colors and sizes
+  come from the token system in `apps/web/src/styles/globals.css` (semantic utilities + the
+  `text-*` scale). Raw-color data files (the logo, the avatar palette, the theme swatches)
+  are allow-listed; a one-off uses a `tokens-ignore` comment.
+- **Non-null assertions.** `x!` is a lint error repo-wide (`noNonNullAssertion`) — narrow
+  the value instead of asserting the null away.
+- **Hardcoded storage keys.** A `localStorage`/`sessionStorage` call keyed by a string
+  literal fails `pnpm lint:frontend`; keys live in `apps/web/src/lib/storage-keys.ts`
+  (`STORAGE_KEYS`).
+- **Untestable UI.** An interactive control (`button`/`input`/`select`/`textarea` or shadcn
+  `Button`/`Input`/`Textarea`/`DropdownMenuItem`) in `pages/` or `components/shared/`
+  without a `data-testid` fails `pnpm lint:testids`. Add a surface-scoped id, or
+  `testid-ignore` a non-assertable control. (`ui/` primitives are exempt.)
+
+The frontend checks (`lint:tokens`, `lint:frontend`, `lint:testids`) and Biome all run
+inside `pnpm run ci`, so the one gate command covers them; `pnpm typecheck` and `pnpm test`
+(which includes the authz-coverage test) complete it.
 
 ## Commits & PRs
 
