@@ -79,6 +79,8 @@ export function Artifact() {
     top: number
     vTop: number
     vBottom: number
+    vLeft: number
+    vRight: number
   } | null>(null)
   const [composer, setComposer] = useState<{ anchor: Sel | null; top: number | null } | null>(null)
   const [activeThread, setActiveThread] = useState<string | null>(null)
@@ -110,12 +112,18 @@ export function Artifact() {
       if (d.source !== "dock") return
       if (d.type === "select") {
         if (d.selector && d.rect) {
-          const ft = frame.current?.getBoundingClientRect().top ?? 0
+          const fr = frame.current?.getBoundingClientRect()
+          const ft = fr?.top ?? 0
+          const fl = fr?.left ?? 0
           setSel({
             selector: d.selector,
             top: d.rect.top,
             vTop: ft + d.rect.top,
             vBottom: ft + d.rect.bottom,
+            // left/right are sent by the current anchor client; guard against a
+            // stale-cached client posting only top/bottom so we never get NaN.
+            vLeft: fl + (d.rect.left ?? 0),
+            vRight: fl + (d.rect.right ?? d.rect.left ?? 0),
           })
         } else setSel(null)
       } else if (d.type === "anchors-resolved") setInDoc(d.resolved ?? {})
@@ -890,7 +898,7 @@ export function Artifact() {
         {docLive && sel && !composer && (
           <button
             type="button"
-            className="fixed z-50 inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border border-primary bg-card px-2.5 py-1.5 text-xs font-semibold text-primary shadow-[var(--shadow)] transition-colors hover:bg-primary hover:text-primary-foreground"
+            className="fixed z-50 inline-flex items-center gap-2 whitespace-nowrap rounded-full border border-primary bg-card px-3.5 py-2 text-sm font-semibold text-primary shadow-[var(--shadow)] transition-colors hover:bg-primary hover:text-primary-foreground"
             title="Comment on the selection"
             data-testid="comment-on-selection"
             onMouseDown={(e) => e.preventDefault()}
@@ -899,11 +907,18 @@ export function Artifact() {
               startSelComment()
             }}
             style={{
-              top: clamp((sel.vTop + sel.vBottom) / 2 - 15, 64, window.innerHeight - 46),
-              right: asideWidth + 12,
+              // Float just above the selection, horizontally centered on it, so it
+              // lands where the user is actually reading. Clamp into the document
+              // column (left of the aside) and below the top header.
+              top: clamp(sel.vTop - 44, 64, window.innerHeight - 52),
+              left: clamp(
+                (sel.vLeft + sel.vRight) / 2 - 60,
+                12,
+                window.innerWidth - asideWidth - 132,
+              ),
             }}
           >
-            <Icon name="comments" size={14} /> Comment
+            <Icon name="comments" size={16} /> Comment
           </button>
         )}
         {toast}

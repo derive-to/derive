@@ -13,6 +13,7 @@ import { Card } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { useAuth } from "@/ctx"
 import { usePrefetchArtifact } from "@/lib/use-prefetch-artifact"
+import { cn } from "@/lib/utils"
 import { ArtifactCard } from "./artifact-card"
 import { CollectionBar } from "./collection-bar"
 import { ShareCollectionDialog } from "./share-collection-dialog"
@@ -50,6 +51,7 @@ function LibraryBody() {
   const [fetching, setFetching] = useState(true)
   const [more, setMore] = useState(false)
   const [busy, setBusy] = useState(false)
+  const [dragging, setDragging] = useState(false)
   const [shareCol, setShareCol] = useState<(typeof collections)[number] | null>(null)
   const [query, setQuery] = useState(search.q ?? "")
   const [debouncedQ, setDebouncedQ] = useState((search.q ?? "").trim())
@@ -102,12 +104,8 @@ function LibraryBody() {
     load()
   }, [load])
 
-  const publish = async () => {
-    const f = file.current?.files?.[0]
-    if (!f) {
-      file.current?.click()
-      return
-    }
+  // One publish path, fed by either a drag-drop or the native picker.
+  const publishFile = async (f: File) => {
     setBusy(true)
     try {
       const a = await api.publish(f, { title: f.name.replace(/\.[^.]+$/, "") })
@@ -117,6 +115,8 @@ function LibraryBody() {
       setBusy(false)
     }
   }
+  // The "Publish" button opens the OS picker; choosing a file uploads immediately.
+  const pickFile = () => file.current?.click()
 
   // Star toggle is optimistic; in the Favorites view an un-star drops the card.
   const toggleFav = async (a: Artifact) => {
@@ -211,11 +211,29 @@ function LibraryBody() {
         </div>
 
         {filter.kind !== "collection" && (
-          <Card className="mb-5.5 flex flex-wrap items-center gap-3.5 p-4">
+          // The whole card is the drop target; the button opens the picker. One
+          // affordance each — no stray native "Browse… no file selected" input.
+          <Card
+            className={cn(
+              "mb-5.5 flex flex-wrap items-center gap-3.5 border-dashed p-4 transition-colors",
+              dragging && "border-primary bg-primary/5",
+            )}
+            onDragOver={(e) => {
+              e.preventDefault()
+              if (!dragging) setDragging(true)
+            }}
+            onDragLeave={() => setDragging(false)}
+            onDrop={(e) => {
+              e.preventDefault()
+              setDragging(false)
+              const f = e.dataTransfer.files?.[0]
+              if (f) publishFile(f)
+            }}
+          >
             <div className="min-w-[220px] flex-1">
               <div className="font-display text-lg font-semibold">Publish an artifact</div>
               <div className="text-sm text-muted-foreground">
-                Drop an HTML or Markdown file, or run{" "}
+                Drop an HTML or Markdown file here, or run{" "}
                 <code className="rounded bg-muted px-1.5 py-px font-mono text-[0.86em]">
                   dock publish
                 </code>
@@ -227,13 +245,16 @@ function LibraryBody() {
               type="file"
               data-testid="library-file-input"
               accept=".html,.htm,.md,.markdown,.zip"
-              className="max-w-[230px] text-sm text-muted-foreground"
-              onChange={publish}
+              className="hidden"
+              onChange={(e) => {
+                const f = e.target.files?.[0]
+                if (f) publishFile(f)
+              }}
             />
             <Button
               variant="primary"
               data-testid="library-publish"
-              onClick={publish}
+              onClick={pickFile}
               disabled={busy}
             >
               {busy ? (

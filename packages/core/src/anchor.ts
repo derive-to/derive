@@ -68,7 +68,7 @@ function emitSelection(){
   if(!t||t.length<2){post({type:"select",selector:null,rect:null});return}
   var ctx=(s.anchorNode&&s.anchorNode.textContent)||t,i=ctx.indexOf(t);
   var rect=null;try{var r=s.getRangeAt(0).getBoundingClientRect();
-    if(r&&(r.height||r.width))rect={top:r.top,bottom:r.bottom}}catch(_){}
+    if(r&&(r.height||r.width))rect={top:r.top,bottom:r.bottom,left:r.left,right:r.right}}catch(_){}
   post({type:"select",rect:rect,selector:{type:"TextQuoteSelector",exact:t,
     prefix:i>=0?ctx.slice(Math.max(0,i-24),i):"",
     suffix:i>=0?ctx.slice(i+t.length,i+t.length+24):""}})}
