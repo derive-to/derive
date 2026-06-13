@@ -117,7 +117,11 @@ describe("live stream (SSE)", () => {
       await readUntil(reader, "event: ready")
 
       await app.request(`/v1/artifacts/${short_id}/comments`, json({ body_md: "live note" }))
-      expect(await readUntil(reader, "event: comment.created")).toContain("live note")
+      // Signal-only: the comment.created event fires (clients refetch /comments) but
+      // never carries the body, so it can't leak to an anonymous SSE subscriber.
+      const frame = await readUntil(reader, "event: comment.created")
+      expect(frame).toContain("comment.created")
+      expect(frame).not.toContain("live note")
 
       const form = new FormData()
       form.append("file", new Blob([new TextEncoder().encode("# live v2")]), "live.md")

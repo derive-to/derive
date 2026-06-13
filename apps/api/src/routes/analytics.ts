@@ -7,7 +7,7 @@ import { fail, readJson, VIEW_DEDUP_MS } from "../lib/http"
 
 /** View recording (de-duped, owner self-views excluded) + per-artifact stats. */
 export const analyticsRoutes = (ctx: AppContext) => {
-  const { meta, deps, analyticsOn, currentUser, actorFor, authorize } = ctx
+  const { meta, deps, analyticsOn, currentUser, actorFor, anonLocked, authorize } = ctx
   const app = new Hono()
 
   // Record a view. The viewer is the logged-in user, or a stable anonymous id
@@ -70,6 +70,8 @@ export const analyticsRoutes = (ctx: AppContext) => {
     if (!analyticsOn) return fail(c, 404, "analytics disabled")
     const artifact = await meta.getByShortId(c.req.param("shortId"))
     if (!artifact || !(await authorize(c, "read", artifact))) return fail(c, 404, "not found")
+    // View analytics are for collaborators, not anonymous link-visitors.
+    if (await anonLocked(c, artifact)) return fail(c, 404, "not found")
     const stats = await meta.viewStats(artifact.id)
     // Recent user-viewers are stored by id (stable); resolve to name + avatar.
     const userIds = stats.recent.filter((r) => r.kind === "user").map((r) => r.viewer)

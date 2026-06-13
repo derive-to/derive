@@ -16,7 +16,17 @@ import { fail, readJson } from "../lib/http"
 /** Comments: threaded, anchored to text quotes, with reactions, edits, and soft
  *  deletes. @mentions notify people (bell) or land in an agent's pull inbox. */
 export const commentRoutes = (ctx: AppContext) => {
-  const { meta, bus, notify, actingUser, authorize, limited, commentLimiter, sourceText } = ctx
+  const {
+    meta,
+    bus,
+    notify,
+    actingUser,
+    anonLocked,
+    authorize,
+    limited,
+    commentLimiter,
+    sourceText,
+  } = ctx
   const app = new Hono()
 
   // Create in-app notification rows for the people a comment @mentions (real
@@ -140,7 +150,10 @@ export const commentRoutes = (ctx: AppContext) => {
       })
       if (patched) created = patched
     }
-    bus.publish(artifact.id, { type: "comment.created", comment: commentJson(created) })
+    // Signal-only: never put the comment body on the realtime bus. Clients refetch
+    // /comments (which is account-gated), so the content can't leak to an anonymous
+    // SSE subscriber. Webhooks carry their own payload via notify() below.
+    bus.publish(artifact.id, { type: "comment.created" })
     await notify(artifact, "comment.created", {
       author: created.author,
       body: created.body_md,
@@ -162,6 +175,10 @@ export const commentRoutes = (ctx: AppContext) => {
   app.get("/v1/artifacts/:shortId/comments", async (c) => {
     const artifact = await meta.getByShortId(c.req.param("shortId"))
     if (!artifact || !(await authorize(c, "read", artifact))) return fail(c, 404, "not found")
+    // Comments are collaboration, not content: anonymous visitors (no account) never
+    // see them, even on a public link. Authenticated readers — including a plain
+    // viewer — do, the Google-Docs way. So the gate is "has an account", not the role.
+    if (await anonLocked(c, artifact)) return fail(c, 404, "not found")
     const q = c.req.query("state")
     const state = q === "open" || q === "resolved" ? q : undefined
     const comments = await meta.listComments(artifact.id, state ? { state } : undefined)
