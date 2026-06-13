@@ -25,6 +25,12 @@ const VIEW_WINDOW_MS = 30 * 86400_000
 export function createSqliteStore(path: string): MetaStore & { close(): void } {
   const raw = new Database(path)
   raw.pragma("journal_mode = WAL")
+  // WAL still allows only one writer at a time; without a busy timeout a second
+  // concurrent writer fails immediately with SQLITE_BUSY. Make writers wait for
+  // the lock instead (graceful under bursty concurrent load, incl. parallel e2e
+  // and busy self-host instances). NORMAL sync is the standard, safe WAL pairing.
+  raw.pragma("busy_timeout = 5000")
+  raw.pragma("synchronous = NORMAL")
   for (const stmt of SCHEMA_STATEMENTS) raw.exec(stmt)
   // Forward-only column adds (SQLite lacks ADD COLUMN IF NOT EXISTS); a
   // "duplicate column" throw means the migration is already applied.

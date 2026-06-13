@@ -5,8 +5,9 @@ import { expect, type Page } from "@playwright/test"
 // stable `data-testid`s, so specs drive it through page.getByTestId(...) — no
 // brittle text/role lookups that shift as copy or layout changes.
 
-let seq = 0
-const uniqueEmail = () => `e2e+${Date.now()}-${seq++}@dock.test`
+// Globally unique across parallel workers — a per-worker counter would collide
+// between worker processes (each starts at 0), so use a UUID.
+const uniqueEmail = () => `e2e+${crypto.randomUUID()}@dock.test`
 
 // Fresh-DB signup. The first account on a throwaway database is the workspace
 // owner, so this also seeds an authenticated session for everything downstream.
@@ -19,6 +20,9 @@ export async function signUp(page: Page, name = "E2E Tester"): Promise<string> {
   await page.getByTestId("login-password").fill("e2e-pass-1234")
   await page.getByTestId("login-submit").click()
   await expect(page).not.toHaveURL(/\/login/, { timeout: 15_000 })
+  // Authenticated chrome is up (the header user menu renders on every page once
+  // `me` resolves) — a deterministic "signed in and the app shell is ready" gate.
+  await expect(page.getByTestId("user-menu-trigger")).toBeVisible()
   return email
 }
 
@@ -30,11 +34,19 @@ export async function publishArtifact(
   name = "doc.md",
   body = "# Doc\n\nbody text",
 ): Promise<string> {
-  const res = await page.request.post("/v1/artifacts", {
-    multipart: {
-      file: { name, mimeType: "text/markdown", buffer: Buffer.from(body) },
-    },
-  })
-  expect(res.ok()).toBeTruthy()
-  return ((await res.json()) as { short_id: string }).short_id
+  // Retry the publish: in multi-workspace mode a brand-new user's personal
+  // workspace is provisioned lazily on first request, so the very first publish
+  // can briefly race that. toPass re-issues it until it succeeds (eventual
+  // consistency, not flake-masking) within a short window.
+  let shortId = ""
+  await expect(async () => {
+    const res = await page.request.post("/v1/artifacts", {
+      multipart: {
+        file: { name, mimeType: "text/markdown", buffer: Buffer.from(body) },
+      },
+    })
+    expect(res.ok(), `publish failed: ${res.status()}`).toBeTruthy()
+    shortId = ((await res.json()) as { short_id: string }).short_id
+  }).toPass({ timeout: 10_000 })
+  return shortId
 }
