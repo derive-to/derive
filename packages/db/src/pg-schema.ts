@@ -5,6 +5,8 @@ import type {
   ArtifactKind,
   ArtifactMemberRecord,
   ArtifactRecord,
+  AuditAction,
+  AuditLogRecord,
   CommentRecord,
   CommentState,
   DeliveryRecord,
@@ -14,6 +16,8 @@ import type {
   NotificationRecord,
   ProposalRecord,
   ProposalState,
+  ReportRecord,
+  ReportState,
   Role,
   VersionRecord,
   Visibility,
@@ -39,6 +43,7 @@ export const artifact = pgTable("artifact", {
   spa: integer("spa").$type<0 | 1>().notNull().default(0),
   current_version: integer("current_version").notNull().default(0),
   created_at: text("created_at").notNull().$defaultFn(isoNow),
+  removed_at: text("removed_at"),
 })
 
 export const version = pgTable("version", {
@@ -254,6 +259,26 @@ export const proposal = pgTable("proposal", {
   created_at: text("created_at").notNull().$defaultFn(isoNow),
 })
 
+export const report = pgTable("report", {
+  id: text("id").primaryKey(),
+  artifact_id: text("artifact_id").notNull(),
+  artifact_short_id: text("artifact_short_id").notNull(),
+  reason: text("reason").notNull(),
+  detail: text("detail"),
+  reporter: text("reporter"),
+  state: text("state").$type<ReportState>().notNull().default("open"),
+  created_at: text("created_at").notNull().$defaultFn(isoNow),
+})
+
+export const auditLog = pgTable("audit_log", {
+  id: text("id").primaryKey(),
+  action: text("action").$type<AuditAction>().notNull(),
+  artifact_id: text("artifact_id"),
+  actor: text("actor").notNull(),
+  detail: text("detail"),
+  created_at: text("created_at").notNull().$defaultFn(isoNow),
+})
+
 // Compile-time guard: the pg table defs must match the core record shapes (and
 // therefore the sqlite defs). Drift here means SQLite and Postgres disagree.
 type Exact<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false
@@ -269,7 +294,9 @@ const _pgParity: [
   Exact<typeof proposal.$inferSelect, ProposalRecord>,
   Exact<typeof agent.$inferSelect, AgentRecord>,
   Exact<typeof agentMention.$inferSelect, AgentMentionRecord>,
-] = [true, true, true, true, true, true, true, true, true, true, true]
+  Exact<typeof report.$inferSelect, ReportRecord>,
+  Exact<typeof auditLog.$inferSelect, AuditLogRecord>,
+] = [true, true, true, true, true, true, true, true, true, true, true, true, true]
 void _pgParity
 
 // Boot DDL (idempotent). created_at uses a SQL default as a server-side backstop.
@@ -286,8 +313,10 @@ export const PG_SCHEMA_STATEMENTS: string[] = [
     kind TEXT NOT NULL,
     spa INTEGER NOT NULL DEFAULT 0,
     current_version INTEGER NOT NULL DEFAULT 0,
-    created_at TEXT NOT NULL DEFAULT ${isoDefault}
+    created_at TEXT NOT NULL DEFAULT ${isoDefault},
+    removed_at TEXT
   )`,
+  `ALTER TABLE artifact ADD COLUMN IF NOT EXISTS removed_at TEXT`,
   `CREATE TABLE IF NOT EXISTS version (
     id TEXT PRIMARY KEY,
     artifact_id TEXT NOT NULL REFERENCES artifact(id),
@@ -481,4 +510,24 @@ export const PG_SCHEMA_STATEMENTS: string[] = [
   )`,
   `ALTER TABLE proposal ADD COLUMN IF NOT EXISTS decision_note TEXT`,
   `CREATE INDEX IF NOT EXISTS proposal_artifact_state ON proposal (artifact_id, state)`,
+  `CREATE TABLE IF NOT EXISTS report (
+    id TEXT PRIMARY KEY,
+    artifact_id TEXT NOT NULL,
+    artifact_short_id TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    detail TEXT,
+    reporter TEXT,
+    state TEXT NOT NULL DEFAULT 'open',
+    created_at TEXT NOT NULL DEFAULT ${isoDefault}
+  )`,
+  `CREATE INDEX IF NOT EXISTS report_state ON report (state, created_at)`,
+  `CREATE TABLE IF NOT EXISTS audit_log (
+    id TEXT PRIMARY KEY,
+    action TEXT NOT NULL,
+    artifact_id TEXT,
+    actor TEXT NOT NULL,
+    detail TEXT,
+    created_at TEXT NOT NULL DEFAULT ${isoDefault}
+  )`,
+  `CREATE INDEX IF NOT EXISTS audit_artifact ON audit_log (artifact_id, created_at)`,
 ]

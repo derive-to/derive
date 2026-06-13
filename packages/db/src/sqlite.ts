@@ -3,6 +3,7 @@ import type {
   AgentRecord,
   ArtifactMemberRecord,
   ArtifactRecord,
+  AuditLogRecord,
   CollectionMemberRecord,
   CollectionRecord,
   CommentRecord,
@@ -16,6 +17,7 @@ import type {
   NewAgentMention,
   NewArtifact,
   NewArtifactMember,
+  NewAuditLog,
   NewCollection,
   NewCollectionMember,
   NewComment,
@@ -23,12 +25,15 @@ import type {
   NewMembership,
   NewNotification,
   NewProposal,
+  NewReport,
   NewVersion,
   NewView,
   NewWebhook,
   NotificationRecord,
   ProposalRecord,
   ProposalState,
+  ReportRecord,
+  ReportState,
   Role,
   UserDir,
   VersionRecord,
@@ -46,6 +51,7 @@ import {
   artifactFavorite,
   artifactMember,
   artifactTag,
+  auditLog,
   collection,
   collectionItem,
   collectionMember,
@@ -54,6 +60,7 @@ import {
   membership,
   notification,
   proposal,
+  report,
   SCHEMA_STATEMENTS,
   version,
   webhook,
@@ -81,6 +88,8 @@ const schema = {
   collection,
   collectionItem,
   collectionMember,
+  report,
+  auditLog,
 }
 
 /** Embedded SQLite (WAL). The zero-dependency default; no external services. */
@@ -743,6 +752,39 @@ export class SqliteMetaStore implements MetaStore {
       .where(and(eq(agentMention.id, id), eq(agentMention.agent_id, agentId)))
       .run()
     return res.changes > 0
+  }
+
+  // ---- Moderation: reports, takedown, audit log --------------------------
+  createReport(r: NewReport): Promise<ReportRecord> {
+    return Promise.resolve(this.db.insert(report).values(r).returning().get())
+  }
+  listReports(opts?: { state?: ReportState; limit?: number }): Promise<ReportRecord[]> {
+    const q = this.db
+      .select()
+      .from(report)
+      .where(opts?.state ? eq(report.state, opts.state) : undefined)
+      .orderBy(desc(report.created_at))
+    return Promise.resolve((opts?.limit ? q.limit(opts.limit) : q).all())
+  }
+  async countOpenReports(): Promise<number> {
+    return this.db.select({ n: count() }).from(report).where(eq(report.state, "open")).get()?.n ?? 0
+  }
+  async setReportState(id: string, state: ReportState): Promise<void> {
+    this.db.update(report).set({ state }).where(eq(report.id, id)).run()
+  }
+  async setArtifactRemoved(id: string, removedAt: string | null): Promise<void> {
+    this.db.update(artifact).set({ removed_at: removedAt }).where(eq(artifact.id, id)).run()
+  }
+  async createAuditLog(a: NewAuditLog): Promise<void> {
+    this.db.insert(auditLog).values(a).run()
+  }
+  listAuditLog(opts?: { artifactId?: string; limit?: number }): Promise<AuditLogRecord[]> {
+    const q = this.db
+      .select()
+      .from(auditLog)
+      .where(opts?.artifactId ? eq(auditLog.artifact_id, opts.artifactId) : undefined)
+      .orderBy(desc(auditLog.created_at))
+    return Promise.resolve((opts?.limit ? q.limit(opts.limit) : q).all())
   }
 
   close(): void {

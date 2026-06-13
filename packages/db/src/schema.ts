@@ -5,6 +5,8 @@ import type {
   ArtifactKind,
   ArtifactMemberRecord,
   ArtifactRecord,
+  AuditAction,
+  AuditLogRecord,
   CommentRecord,
   CommentState,
   DeliveryRecord,
@@ -14,6 +16,8 @@ import type {
   NotificationRecord,
   ProposalRecord,
   ProposalState,
+  ReportRecord,
+  ReportState,
   Role,
   VersionRecord,
   Visibility,
@@ -38,6 +42,7 @@ export const artifact = sqliteTable("artifact", {
   spa: integer("spa").$type<0 | 1>().notNull().default(0),
   current_version: integer("current_version").notNull().default(0),
   created_at: text("created_at").notNull().default(now),
+  removed_at: text("removed_at"),
 })
 
 export const version = sqliteTable(
@@ -267,6 +272,28 @@ export const proposal = sqliteTable("proposal", {
   created_at: text("created_at").notNull().default(now),
 })
 
+// Abuse reports against public artifacts; anyone can file one.
+export const report = sqliteTable("report", {
+  id: text("id").primaryKey(),
+  artifact_id: text("artifact_id").notNull(),
+  artifact_short_id: text("artifact_short_id").notNull(),
+  reason: text("reason").notNull(),
+  detail: text("detail"),
+  reporter: text("reporter"),
+  state: text("state").$type<ReportState>().notNull().default("open"),
+  created_at: text("created_at").notNull().default(now),
+})
+
+// Immutable moderation-action log (report filed, takedown, reinstate, dismiss).
+export const auditLog = sqliteTable("audit_log", {
+  id: text("id").primaryKey(),
+  action: text("action").$type<AuditAction>().notNull(),
+  artifact_id: text("artifact_id"),
+  actor: text("actor").notNull(),
+  detail: text("detail"),
+  created_at: text("created_at").notNull().default(now),
+})
+
 // user/session/account/verification tables are owned and migrated by Better Auth
 // (see apps/api/src/auth-config.ts) — not declared here.
 
@@ -286,7 +313,8 @@ export const SCHEMA_STATEMENTS: string[] = [
     kind TEXT NOT NULL,
     spa INTEGER NOT NULL DEFAULT 0,
     current_version INTEGER NOT NULL DEFAULT 0,
-    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    removed_at TEXT
   )`,
   `CREATE TABLE IF NOT EXISTS version (
     id TEXT PRIMARY KEY,
@@ -478,6 +506,26 @@ export const SCHEMA_STATEMENTS: string[] = [
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
   )`,
   `CREATE INDEX IF NOT EXISTS proposal_artifact_state ON proposal (artifact_id, state)`,
+  `CREATE TABLE IF NOT EXISTS report (
+    id TEXT PRIMARY KEY,
+    artifact_id TEXT NOT NULL,
+    artifact_short_id TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    detail TEXT,
+    reporter TEXT,
+    state TEXT NOT NULL DEFAULT 'open',
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+  )`,
+  `CREATE INDEX IF NOT EXISTS report_state ON report (state, created_at)`,
+  `CREATE TABLE IF NOT EXISTS audit_log (
+    id TEXT PRIMARY KEY,
+    action TEXT NOT NULL,
+    artifact_id TEXT,
+    actor TEXT NOT NULL,
+    detail TEXT,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+  )`,
+  `CREATE INDEX IF NOT EXISTS audit_artifact ON audit_log (artifact_id, created_at)`,
   // user/session/account/verification are owned and migrated by Better Auth.
 ]
 
@@ -490,6 +538,7 @@ export const MIGRATION_STATEMENTS: string[] = [
   `ALTER TABLE comment ADD COLUMN meta TEXT`,
   `ALTER TABLE version ADD COLUMN name TEXT`,
   `ALTER TABLE proposal ADD COLUMN decision_note TEXT`,
+  `ALTER TABLE artifact ADD COLUMN removed_at TEXT`,
 ]
 
 // Compile-time guard: the drizzle table defs must exactly match the core record
@@ -507,5 +556,7 @@ const _schemaParity: [
   Exact<typeof proposal.$inferSelect, ProposalRecord>,
   Exact<typeof agent.$inferSelect, AgentRecord>,
   Exact<typeof agentMention.$inferSelect, AgentMentionRecord>,
-] = [true, true, true, true, true, true, true, true, true, true, true]
+  Exact<typeof report.$inferSelect, ReportRecord>,
+  Exact<typeof auditLog.$inferSelect, AuditLogRecord>,
+] = [true, true, true, true, true, true, true, true, true, true, true, true, true]
 void _schemaParity
