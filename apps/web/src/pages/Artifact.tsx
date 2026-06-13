@@ -11,6 +11,7 @@ import {
   useState,
 } from "react"
 import { ColoredAvatar } from "@/components/shared/colored-avatar"
+import { Spinner } from "@/components/shared/spinner"
 import { Button } from "@/components/ui/button"
 import { Input, Textarea } from "@/components/ui/input"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
@@ -2714,14 +2715,6 @@ function Insights({ shortId }: { shortId: string }) {
   const [open, setOpen] = useState(false)
   const [data, setData] = useState<Analytics | null>(null)
   const [off, setOff] = useState(false)
-  const ref = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    const h = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
-    }
-    document.addEventListener("click", h)
-    return () => document.removeEventListener("click", h)
-  }, [])
   useEffect(() => {
     if (open && !data && !off)
       api
@@ -2735,187 +2728,104 @@ function Insights({ shortId }: { shortId: string }) {
   const newestAnonAt = data?.recent.find((r) => r.kind === "anon")?.at
   const moreNamed = data ? Math.max(0, data.unique - data.anonViewers - namedRecent.length) : 0
   return (
-    <div ref={ref} style={{ position: "relative" }}>
-      <button
-        className="btn sm"
-        onClick={(e) => {
-          e.stopPropagation()
-          setOpen((o) => !o)
-        }}
-        style={{ gap: 6 }}
-        title="View analytics"
-      >
-        <span style={{ fontSize: 12 }}>👁</span>
-        {data ? data.unique.toLocaleString() : "Insights"}
-      </button>
-      {open && (
-        <div
-          className="card"
-          style={{
-            position: "absolute",
-            right: 0,
-            top: "calc(100% + 7px)",
-            width: 300,
-            padding: 14,
-            boxShadow: "var(--shadow)",
-            zIndex: 30,
-          }}
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button
+          variant="outline"
+          size="sm"
+          className="gap-1.5"
+          title="View analytics"
+          data-testid="artifact-insights"
         >
-          {!data ? (
-            <div className="center" style={{ height: 80 }}>
-              <div className="spin" />
-            </div>
-          ) : (
-            <>
-              {/* General bar: people-first (viewers), views second, trend right. */}
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 16,
-                  paddingBottom: 12,
-                  marginBottom: 12,
-                  borderBottom: "1px solid var(--line-soft)",
-                }}
-              >
-                <div>
-                  <div className="display" style={{ fontSize: 22, fontWeight: 700, lineHeight: 1 }}>
-                    {data.unique.toLocaleString()}
-                  </div>
-                  <div className="mono muted" style={{ fontSize: 10 }}>
-                    {data.unique === 1 ? "viewer" : "viewers"}
-                  </div>
+          <span className="text-sm">👁</span>
+          {data ? data.unique.toLocaleString() : "Insights"}
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="end" className="w-[300px] p-3.5">
+        {!data ? (
+          <div className="grid h-20 place-items-center">
+            <Spinner />
+          </div>
+        ) : (
+          <>
+            {/* General bar: people-first (viewers), views second, trend right. */}
+            <div className="mb-3 flex items-center gap-4 border-b border-border-soft pb-3">
+              <div>
+                <div className="font-display text-2xl font-bold leading-none">
+                  {data.unique.toLocaleString()}
                 </div>
-                <div>
-                  <div className="display" style={{ fontSize: 22, fontWeight: 700, lineHeight: 1 }}>
-                    {data.total.toLocaleString()}
-                  </div>
-                  <div className="mono muted" style={{ fontSize: 10 }}>
-                    {data.total === 1 ? "view" : "views"}
-                  </div>
+                <div className="font-mono text-2xs text-muted-foreground">
+                  {data.unique === 1 ? "viewer" : "viewers"}
                 </div>
-                {data.daily.length > 0 && (
-                  <div
-                    title="Last 30 days"
-                    style={{
-                      marginLeft: "auto",
-                      display: "flex",
-                      alignItems: "flex-end",
-                      gap: 1.5,
-                      height: 26,
-                      width: 96,
-                    }}
-                  >
-                    {data.daily.map((d) => (
-                      <div
-                        key={d.day}
-                        title={`${d.day}: ${d.count}`}
-                        style={{
-                          flex: 1,
-                          minWidth: 1,
-                          height: `${Math.max(6, (d.count / max) * 100)}%`,
-                          background: "var(--ac)",
-                          borderRadius: 1.5,
-                          opacity: 0.85,
-                        }}
-                      />
-                    ))}
-                  </div>
-                )}
               </div>
-
-              <div
-                className="mono muted"
-                style={{
-                  fontSize: 9.5,
-                  letterSpacing: ".06em",
-                  textTransform: "uppercase",
-                  marginBottom: 7,
-                }}
-              >
-                Viewed by
-              </div>
-              {namedRecent.length === 0 && data.anonViewers === 0 ? (
-                <div className="muted" style={{ fontSize: 11.5 }}>
-                  No views yet.
+              <div>
+                <div className="font-display text-2xl font-bold leading-none">
+                  {data.total.toLocaleString()}
                 </div>
-              ) : (
-                <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
-                  {namedRecent.map((r) => (
+                <div className="font-mono text-2xs text-muted-foreground">
+                  {data.total === 1 ? "view" : "views"}
+                </div>
+              </div>
+              {data.daily.length > 0 && (
+                <div title="Last 30 days" className="ml-auto flex h-[26px] w-24 items-end gap-px">
+                  {data.daily.map((d) => (
                     <div
-                      key={r.viewer + r.at}
-                      style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}
-                    >
-                      {r.avatar ? (
-                        <img
-                          src={r.avatar}
-                          alt=""
-                          style={{
-                            width: 18,
-                            height: 18,
-                            borderRadius: "50%",
-                            objectFit: "cover",
-                            flex: "0 0 auto",
-                          }}
-                        />
-                      ) : (
-                        <ColoredAvatar name={r.viewer} size={18} />
-                      )}
-                      <span
-                        style={{
-                          flex: 1,
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                          whiteSpace: "nowrap",
-                          fontWeight: 500,
-                        }}
-                      >
-                        {r.viewer}
-                      </span>
-                      <span className="mono muted" style={{ fontSize: 9.5 }}>
-                        {ago(r.at)}
-                      </span>
-                    </div>
+                      key={d.day}
+                      title={`${d.day}: ${d.count}`}
+                      className="min-w-px flex-1 rounded-[1.5px] bg-primary opacity-90"
+                      style={{ height: `${Math.max(6, (d.count / max) * 100)}%` }}
+                    />
                   ))}
-                  {data.anonViewers > 0 && (
-                    <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}>
-                      <span
-                        style={{
-                          width: 18,
-                          height: 18,
-                          borderRadius: "50%",
-                          background: "var(--card-2)",
-                          color: "var(--fg-mut)",
-                          display: "grid",
-                          placeItems: "center",
-                          fontSize: 11,
-                          flex: "0 0 auto",
-                        }}
-                      >
-                        ·
-                      </span>
-                      <span style={{ flex: 1, color: "var(--fg-mut)" }}>
-                        {data.anonViewers.toLocaleString()} anonymous
-                      </span>
-                      {newestAnonAt && (
-                        <span className="mono muted" style={{ fontSize: 9.5 }}>
-                          {ago(newestAnonAt)}
-                        </span>
-                      )}
-                    </div>
-                  )}
-                  {moreNamed > 0 && (
-                    <div className="muted" style={{ fontSize: 11, paddingLeft: 26 }}>
-                      +{moreNamed} more
-                    </div>
-                  )}
                 </div>
               )}
-            </>
-          )}
-        </div>
-      )}
-    </div>
+            </div>
+
+            <div className="mb-1.5 font-mono text-2xs uppercase tracking-[0.06em] text-muted-foreground">
+              Viewed by
+            </div>
+            {namedRecent.length === 0 && data.anonViewers === 0 ? (
+              <div className="text-xs text-muted-foreground">No views yet.</div>
+            ) : (
+              <div className="flex flex-col gap-1.5">
+                {namedRecent.map((r) => (
+                  <div key={r.viewer + r.at} className="flex items-center gap-2 text-sm">
+                    {r.avatar ? (
+                      <img
+                        src={r.avatar}
+                        alt=""
+                        className="size-[18px] shrink-0 rounded-full object-cover"
+                      />
+                    ) : (
+                      <ColoredAvatar name={r.viewer} size={18} />
+                    )}
+                    <span className="flex-1 truncate font-medium">{r.viewer}</span>
+                    <span className="font-mono text-2xs text-muted-foreground">{ago(r.at)}</span>
+                  </div>
+                ))}
+                {data.anonViewers > 0 && (
+                  <div className="flex items-center gap-2 text-sm">
+                    <span className="grid size-[18px] shrink-0 place-items-center rounded-full bg-secondary text-xs text-muted-foreground">
+                      ·
+                    </span>
+                    <span className="flex-1 text-muted-foreground">
+                      {data.anonViewers.toLocaleString()} anonymous
+                    </span>
+                    {newestAnonAt && (
+                      <span className="font-mono text-2xs text-muted-foreground">
+                        {ago(newestAnonAt)}
+                      </span>
+                    )}
+                  </div>
+                )}
+                {moreNamed > 0 && (
+                  <div className="pl-[26px] text-xs text-muted-foreground">+{moreNamed} more</div>
+                )}
+              </div>
+            )}
+          </>
+        )}
+      </PopoverContent>
+    </Popover>
   )
 }
 
