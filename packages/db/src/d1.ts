@@ -35,6 +35,7 @@ import type {
   VersionRecord,
   ViewStats,
   WebhookRecord,
+  WorkspaceRecord,
 } from "@dock/core"
 import { and, asc, count, desc, eq, inArray, isNull, like, lt, lte, or, sql } from "drizzle-orm"
 import { type DrizzleD1Database, drizzle } from "drizzle-orm/d1"
@@ -55,6 +56,7 @@ import {
   version,
   webhook,
   webhookDelivery,
+  workspace,
 } from "./schema"
 
 const schema = {
@@ -64,6 +66,7 @@ const schema = {
   webhook,
   webhookDelivery,
   membership,
+  workspace,
   artifactMember,
   notification,
   artifactFavorite,
@@ -360,6 +363,23 @@ export class D1MetaStore implements MetaStore {
         target: [membership.org_id, membership.user_id],
         set: { role: m.role },
       })
+      .returning()
+      .get()
+  }
+  async removeMembership(orgId: string, userId: string): Promise<void> {
+    await this.db
+      .delete(membership)
+      .where(and(eq(membership.org_id, orgId), eq(membership.user_id, userId)))
+      .run()
+  }
+  async getWorkspace(orgId: string): Promise<WorkspaceRecord | null> {
+    return (await this.db.select().from(workspace).where(eq(workspace.id, orgId)).get()) ?? null
+  }
+  setWorkspace(orgId: string, name: string): Promise<WorkspaceRecord> {
+    return this.db
+      .insert(workspace)
+      .values({ id: orgId, name })
+      .onConflictDoUpdate({ target: workspace.id, set: { name } })
       .returning()
       .get()
   }

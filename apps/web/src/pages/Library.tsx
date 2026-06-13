@@ -17,7 +17,7 @@ type Filter =
   | { kind: "tag"; tag: string }
   | { kind: "collection"; id: string; title: string }
 type TagCount = { tag: string; count: number }
-type Summary = { total: number; favorites: number; tags: TagCount[] }
+type Summary = { total: number; favorites: number; tags: TagCount[]; workspace: string }
 
 const RAIL_KEY = "dock.browse.rail"
 const PAGE = 30
@@ -270,6 +270,7 @@ export function Library() {
           rail={!isMobile && rail}
           drawer={isMobile}
           open={drawer}
+          workspace={summary?.workspace ?? ""}
           total={summary?.total ?? 0}
           favCount={summary?.favorites ?? 0}
           tags={summary?.tags ?? []}
@@ -684,6 +685,7 @@ function Sidebar({
   rail,
   drawer,
   open,
+  workspace,
   total,
   favCount,
   tags,
@@ -698,6 +700,7 @@ function Sidebar({
   rail: boolean
   drawer: boolean
   open: boolean
+  workspace: string
   total: number
   favCount: number
   tags: TagCount[]
@@ -720,6 +723,19 @@ function Sidebar({
   }
   return (
     <aside className={cls} aria-label="Browse">
+      {!rail && workspace && (
+        <button
+          className="side-item"
+          onClick={onSettings}
+          title="Workspace settings"
+          style={{ fontWeight: 600 }}
+        >
+          <span className="ic">◆</span>
+          <span className="lbl" style={{ overflow: "hidden", textOverflow: "ellipsis" }}>
+            {workspace}
+          </span>
+        </button>
+      )}
       <div className="side-lbl">Library</div>
       <button
         className={`side-item${filter.kind === "all" ? " on" : ""}`}
