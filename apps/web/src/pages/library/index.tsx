@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { useAuth } from "@/ctx"
+import { STORAGE_KEYS } from "@/lib/storage-keys"
 import { cn } from "@/lib/utils"
 import { ArtifactCard } from "./artifact-card"
 import { CollectionBar } from "./collection-bar"
@@ -16,7 +17,6 @@ import { ShareCollectionDialog } from "./share-collection-dialog"
 import { Sidebar } from "./sidebar"
 import type { Filter, Summary } from "./types"
 
-const RAIL_KEY = "dock.browse.rail"
 const PAGE = 30
 
 export function Library() {
@@ -41,7 +41,7 @@ export function Library() {
   const [filter, setFilter] = useState<Filter>({ kind: "all" })
   const [rail, setRail] = useState<boolean>(() => {
     try {
-      return localStorage.getItem(RAIL_KEY) === "1"
+      return localStorage.getItem(STORAGE_KEYS.libraryRail) === "1"
     } catch {
       return false
     }
@@ -50,7 +50,7 @@ export function Library() {
 
   useEffect(() => {
     try {
-      localStorage.setItem(RAIL_KEY, rail ? "1" : "0")
+      localStorage.setItem(STORAGE_KEYS.libraryRail, rail ? "1" : "0")
     } catch {
       /* private mode */
     }
