@@ -12,9 +12,12 @@ import type {
   NewComment,
   NewDelivery,
   NewMembership,
+  NewProposal,
   NewVersion,
   NewView,
   NewWebhook,
+  ProposalRecord,
+  ProposalState,
   UserDir,
   VersionRecord,
   ViewStats,
@@ -31,6 +34,7 @@ import {
   comment,
   MIGRATION_STATEMENTS,
   membership,
+  proposal,
   SCHEMA_STATEMENTS,
   version,
   webhook,
@@ -49,6 +53,7 @@ const schema = {
   artifactMember,
   artifactFavorite,
   artifactTag,
+  proposal,
 }
 
 /** Embedded SQLite (WAL). The zero-dependency default; no external services. */
@@ -391,6 +396,47 @@ export class SqliteMetaStore implements MetaStore {
           .run()
       }
     })()
+  }
+
+  // ---- Reviews: proposed versions ----------------------------------------
+  createProposal(p: NewProposal): Promise<ProposalRecord> {
+    return Promise.resolve(this.db.insert(proposal).values(p).returning().get())
+  }
+  async getProposal(id: string): Promise<ProposalRecord | null> {
+    return this.db.select().from(proposal).where(eq(proposal.id, id)).get() ?? null
+  }
+  listProposals(artifactId: string, opts?: { state?: ProposalState }): Promise<ProposalRecord[]> {
+    const where = opts?.state
+      ? and(eq(proposal.artifact_id, artifactId), eq(proposal.state, opts.state))
+      : eq(proposal.artifact_id, artifactId)
+    return Promise.resolve(
+      this.db.select().from(proposal).where(where).orderBy(desc(proposal.created_at)).all(),
+    )
+  }
+  async openProposalCounts(artifactIds: string[]): Promise<Record<string, number>> {
+    if (artifactIds.length === 0) return {}
+    const ph = artifactIds.map(() => "?").join(",")
+    const rows = this.raw
+      .prepare(
+        `SELECT artifact_id, count(*) c FROM proposal WHERE state='open' AND artifact_id IN (${ph}) GROUP BY artifact_id`,
+      )
+      .all(...artifactIds) as { artifact_id: string; c: number }[]
+    const out: Record<string, number> = {}
+    for (const r of rows) out[r.artifact_id] = r.c
+    return out
+  }
+  async decideProposal(
+    id: string,
+    fields: { state: ProposalState; decided_by: string | null; decided_version: number | null },
+  ): Promise<ProposalRecord | null> {
+    return (
+      this.db
+        .update(proposal)
+        .set({ ...fields, decided_at: new Date().toISOString() })
+        .where(eq(proposal.id, id))
+        .returning()
+        .get() ?? null
+    )
   }
 
   // ---- User directory (Better Auth's `user` table; raw, may be absent) ---

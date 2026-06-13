@@ -133,9 +133,64 @@ export interface MetaStore {
   /** Replace an artifact's full tag set (deduped, trimmed, lowercased upstream). */
   setArtifactTags(artifactId: string, tags: string[]): Promise<void>
 
+  // ---- Reviews: proposed versions awaiting approval ----------------------
+  createProposal(p: NewProposal): Promise<ProposalRecord>
+  getProposal(id: string): Promise<ProposalRecord | null>
+  /** Proposals for an artifact, newest first; filterable by state. */
+  listProposals(artifactId: string, opts?: { state?: ProposalState }): Promise<ProposalRecord[]>
+  /** How many proposals are still awaiting a decision (for badges, no N+1). */
+  openProposalCounts(artifactIds: string[]): Promise<Record<string, number>>
+  /** Record a reviewer's decision (approve / request changes / withdraw). */
+  decideProposal(
+    id: string,
+    fields: { state: ProposalState; decided_by: string | null; decided_version: number | null },
+  ): Promise<ProposalRecord | null>
+
   // ---- User directory (reads Better Auth's `user` table) ----------------
   findUserByEmail(email: string): Promise<UserDir | null>
   getUsers(ids: string[]): Promise<UserDir[]>
+}
+
+/**
+ * A candidate version awaiting review. It holds content exactly like a version
+ * (blob_key + content_type, file or bundle manifest) but is NOT current until a
+ * reviewer approves it, at which point it is appended as the new live version.
+ *   open → approved | changes_requested | withdrawn
+ */
+export type ProposalState = "open" | "approved" | "changes_requested" | "withdrawn"
+
+export interface ProposalRecord {
+  id: string
+  artifact_id: string
+  blob_key: string
+  content_type: string
+  kind: ArtifactKind
+  /** Optional new title the proposal would set on approval. */
+  title: string | null
+  /** What the proposer is changing, in their words. */
+  message: string | null
+  author: string
+  /** The current_version this candidate was proposed against (for the diff). */
+  base_version: number
+  state: ProposalState
+  /** Set once decided. */
+  decided_by: string | null
+  /** The version number it became on approval; null otherwise. */
+  decided_version: number | null
+  decided_at: string | null
+  created_at: string
+}
+
+export interface NewProposal {
+  id: string
+  artifact_id: string
+  blob_key: string
+  content_type: string
+  kind: ArtifactKind
+  title?: string | null
+  message?: string | null
+  author: string
+  base_version: number
 }
 
 /** A person, as needed for sharing UIs. Sourced from Better Auth's user table. */
