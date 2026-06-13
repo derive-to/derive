@@ -1,9 +1,6 @@
-import { useNavigate } from "@tanstack/react-router"
 import { useCallback, useEffect, useState } from "react"
 import { api, type Report } from "@/api"
 import { useToast } from "@/components"
-import { AppShell } from "@/components/app-shell"
-import { CenteredSpinner } from "@/components/shared/spinner"
 import { Badge } from "@/components/ui/badge"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { useAuth } from "@/ctx"
@@ -13,15 +10,12 @@ import { WebhooksSection } from "./webhooks-section"
 import { WorkspaceSection } from "./workspace-section"
 
 export function Settings() {
-  const { me, loading } = useAuth()
-  const nav = useNavigate()
+  // AppShell (mounted once around the Outlet) gates auth, so `me` is present
+  // whenever Settings renders.
+  const { me } = useAuth()
   const { toast, show } = useToast()
   const [reports, setReports] = useState<Report[] | null>(null)
   const [tab, setTab] = useState("workspace")
-
-  useEffect(() => {
-    if (!loading && !me) nav({ to: "/login" })
-  }, [loading, me, nav])
 
   const loadReports = useCallback(
     () =>
@@ -41,14 +35,14 @@ export function Settings() {
     if ((reports?.length ?? 0) === 0 && tab === "reports") setTab("workspace")
   }, [reports, tab])
 
-  if (!me) return <CenteredSpinner />
+  if (!me) return null
 
   // Reports are urgent + owner-only — surface a tab only when there are open ones.
   const openReports = reports ?? []
   const hasReports = openReports.length > 0
 
   return (
-    <AppShell>
+    <>
       <div className="flex-1 overflow-y-auto">
         <main className="mx-auto max-w-3xl px-5 pb-16 pt-7">
           <h1 className="font-display text-2xl font-semibold">Settings</h1>
@@ -95,6 +89,6 @@ export function Settings() {
         </main>
       </div>
       {toast}
-    </AppShell>
+    </>
   )
 }
