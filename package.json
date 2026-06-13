@@ -32,10 +32,11 @@
     "test": "pnpm -r test",
     "test:pg": "bash scripts/test-pg.sh",
     "lint": "biome lint",
+    "lint:tokens": "node scripts/check-design-tokens.mjs",
     "format": "biome format --write",
     "check": "biome check",
     "check:fix": "biome check --write",
-    "ci": "biome ci"
+    "ci": "biome ci && pnpm lint:tokens"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.0"
