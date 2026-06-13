@@ -215,8 +215,9 @@ const starterHtml = (title) => `<!doctype html>
 </html>
 `
 
-// Pure-HTML slides with a small viewing + presentation layer (arrow / space to
-// navigate, F for fullscreen). Self-contained so it renders in the sandbox.
+// Pure-HTML slides with a real presentation layer: on-screen prev/next +
+// fullscreen, keyboard, and the dock-deck protocol so the Dock viewer can drive
+// it too (postMessage). Self-contained, renders in the sandbox.
 const starterSlides = (title) => `<!doctype html>
 <html lang="en">
 <head>
@@ -240,7 +241,17 @@ const starterSlides = (title) => `<!doctype html>
   ul{padding-left:1.1em} li{margin:.3em 0}
   .bar{position:fixed;bottom:0;left:0;right:0;height:3px;background:rgba(255,255,255,.08)}
   .bar i{display:block;height:100%;background:var(--ac);transition:width .3s}
-  .num{position:fixed;bottom:14px;right:18px;font-size:13px;color:var(--mut);font-variant-numeric:tabular-nums}
+  /* on-screen controls — fade in on hover/move, always reachable */
+  .ctrl{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);display:flex;align-items:center;gap:6px;
+    background:rgba(20,16,31,.72);border:1px solid rgba(255,255,255,.12);border-radius:999px;padding:6px 8px;
+    backdrop-filter:blur(8px);opacity:0;transition:opacity .25s;z-index:5}
+  body:hover .ctrl,.ctrl:focus-within{opacity:1}
+  .ctrl button{width:34px;height:34px;border:0;border-radius:50%;background:transparent;color:var(--fg);
+    font-size:16px;cursor:pointer;display:grid;place-items:center}
+  .ctrl button:hover{background:rgba(255,255,255,.12)}
+  .ctrl .pos{font-size:13px;color:var(--mut);padding:0 8px;font-variant-numeric:tabular-nums;min-width:54px;text-align:center}
+  .edge{position:fixed;top:0;bottom:0;width:18vw;border:0;background:transparent;cursor:pointer;z-index:4}
+  .edge.l{left:0} .edge.r{right:0}
   kbd{background:rgba(255,255,255,.1);border-radius:4px;padding:1px 6px;font-size:.8em}
 </style>
 </head>
@@ -248,7 +259,7 @@ const starterSlides = (title) => `<!doctype html>
 <div class="deck">
   <section class="slide on">
     <h1>${title}</h1>
-    <p class="lede">Pure-HTML slides. <kbd>→</kbd> / <kbd>Space</kbd> to advance, <kbd>←</kbd> back, <kbd>F</kbd> fullscreen.</p>
+    <p class="lede">Pure-HTML slides. <kbd>→</kbd> / <kbd>Space</kbd> advance, <kbd>←</kbd> back, <kbd>F</kbd> fullscreen.</p>
   </section>
   <section class="slide">
     <h2>One idea per slide</h2>
@@ -263,21 +274,41 @@ const starterSlides = (title) => `<!doctype html>
     <p class="lede">Edit the markup and styles. It's just HTML.</p>
   </section>
 </div>
+<button class="edge l" aria-label="Previous"></button>
+<button class="edge r" aria-label="Next"></button>
 <div class="bar"><i></i></div>
-<div class="num"></div>
+<div class="ctrl">
+  <button data-act="prev" aria-label="Previous slide">‹</button>
+  <span class="pos"></span>
+  <button data-act="next" aria-label="Next slide">›</button>
+  <button data-act="full" aria-label="Fullscreen" title="Fullscreen (F)">⛶</button>
+</div>
 <script>
   var slides=[].slice.call(document.querySelectorAll('.slide')),i=0;
-  var bar=document.querySelector('.bar i'),num=document.querySelector('.num');
+  var bar=document.querySelector('.bar i'),pos=document.querySelector('.pos');
+  function announce(){ // dock-deck protocol: report position to the Dock viewer
+    try{parent.postMessage({source:'dock-deck',type:'state',i:i,total:slides.length},'*')}catch(e){}
+  }
   function show(n){i=Math.max(0,Math.min(slides.length-1,n));
     slides.forEach(function(s,k){s.classList.toggle('on',k===i)});
-    bar.style.width=((i+1)/slides.length*100)+'%';num.textContent=(i+1)+' / '+slides.length}
+    bar.style.width=((i+1)/slides.length*100)+'%';pos.textContent=(i+1)+' / '+slides.length;announce()}
+  function full(){if(!document.fullscreenElement){(document.documentElement.requestFullscreen||function(){})()}else{document.exitFullscreen()}}
   addEventListener('keydown',function(e){
     if(e.key==='ArrowRight'||e.key===' '||e.key==='PageDown'){e.preventDefault();show(i+1)}
     else if(e.key==='ArrowLeft'||e.key==='PageUp'){show(i-1)}
-    else if(e.key==='f'||e.key==='F'){if(!document.fullscreenElement)document.documentElement.requestFullscreen&&document.documentElement.requestFullscreen();else document.exitFullscreen()}
+    else if(e.key==='f'||e.key==='F'){full()}
+    else if(e.key==='Home'){show(0)} else if(e.key==='End'){show(slides.length-1)}
   });
-  addEventListener('click',function(e){if(e.target.closest('a'))return;show(i+1)});
-  show(0);
+  document.querySelector('.ctrl').addEventListener('click',function(e){
+    var b=e.target.closest('button'); if(!b)return;
+    var a=b.getAttribute('data-act'); if(a==='prev')show(i-1); else if(a==='next')show(i+1); else if(a==='full')full()});
+  document.querySelector('.edge.l').addEventListener('click',function(){show(i-1)});
+  document.querySelector('.edge.r').addEventListener('click',function(){show(i+1)});
+  // accept drive commands from the Dock viewer's presentation bar
+  addEventListener('message',function(e){var d=e.data;
+    if(!d||d.source!=='dock-host'||d.type!=='deck')return;
+    if(d.action==='next')show(i+1);else if(d.action==='prev')show(i-1);else if(d.action==='goto')show(d.n)});
+  show(0); announce();
 </script>
 </body>
 </html>

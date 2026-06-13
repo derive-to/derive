@@ -40,14 +40,18 @@ describe("scaffold", () => {
     expect(readFileSync(join(d, "index.html"), "utf8")).toContain("<title>Page</title>")
   })
 
-  it("slides template scaffolds a self-contained deck with a nav layer", () => {
+  it("slides template scaffolds a deck with controls + the dock-deck protocol", () => {
     const d = tmp()
     const { created } = scaffold(d, "Talk", "slides")
     expect(created).toContain("slides.html")
     const html = readFileSync(join(d, "slides.html"), "utf8")
     expect(JSON.parse(readFileSync(join(d, CONFIG_FILE), "utf8")).entry).toBe("slides.html")
     expect(html).toContain('class="slide')
-    expect(html).toMatch(/ArrowRight|ArrowLeft/) // keyboard navigation present
+    expect(html).toMatch(/ArrowRight|ArrowLeft/) // keyboard navigation
+    expect(html).toMatch(/data-act="prev"|data-act="next"/) // on-screen prev/next
+    expect(html).toContain('data-act="full"') // fullscreen control
+    expect(html).toContain("source:'dock-deck'") // announces state to the host
+    expect(html).toMatch(/dock-host[\s\S]*deck/) // accepts host drive commands
   })
 
   it("never clobbers existing files", () => {

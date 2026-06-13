@@ -64,8 +64,33 @@ HTML, old artifacts would be frozen on old client behavior forever. Serving it a
 a URL (short cache) lets the comment layer evolve independently of published
 content — and lets other tools build their own viewers against this contract.
 
-## 3. The agent loop
+## 3. The deck protocol (slides)
+
+An artifact that is a slide deck can announce itself so the Dock viewer shows a
+presentation bar (prev / next / position / fullscreen) and can drive it. Like the
+anchor client, it's pure `postMessage`. Opt-in: any HTML that posts these works;
+anything that doesn't is served normally.
+
+### Deck → host (`source: "dock-deck"`)
+
+| `type` | payload | meaning |
+|---|---|---|
+| `state` | `{ i, total }` | current slide index (0-based) and slide count; post on load and on every change |
+
+### Host → deck (`source: "dock-host"`)
+
+| `type` | payload | meaning |
+|---|---|---|
+| `deck` | `{ action: "next" \| "prev" \| "goto", n? }` | advance, go back, or jump to slide `n` |
+
+The deck owns its own rendering, keyboard, and on-screen controls; the host bar
+is an additional driver. Fullscreen is host-side (it fullscreens the iframe
+wrapper), so a deck needs no special support for it. `dock init --template slides`
+scaffolds a deck that speaks this protocol.
+
+## 4. The agent loop
 
 `dock init` scaffolds an `AGENTS.md` describing publish → read comments → revise
-→ reply/resolve over the HTTP API. That's the convention for agents (and humans)
-to close the loop without prior knowledge of Dock.
+→ reply/resolve over the HTTP API (and the matching `dock comments` / `reply` /
+`resolve` / `open` verbs). That's the convention for agents (and humans) to close
+the loop without prior knowledge of Dock.
