@@ -51,6 +51,9 @@ const app = createApp({
   auth,
   webOrigins,
   analytics: process.env.DOCK_ANALYTICS !== "false",
+  versionWindowMs: process.env.DOCK_VERSION_WINDOW
+    ? Number(process.env.DOCK_VERSION_WINDOW) * 60_000
+    : undefined,
 })
 
 // The webhook outbox worker delivers queued events with retries + backoff.

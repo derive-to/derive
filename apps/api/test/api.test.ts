@@ -29,6 +29,114 @@ const upload = (name: string, content: Uint8Array | string, fields: Record<strin
   return app.request(url, { method: "POST", body: form })
 }
 
+const postJson = (path: string, body: unknown) =>
+  app.request(path, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  })
+
+describe("version sessions", () => {
+  it("a named publish stores the checkpoint name on the version", async () => {
+    const { short_id } = await (await upload("n.md", "v1")).json()
+    await upload("n.md", "v2", { name: "Final draft" }, short_id)
+    const a = await (await app.request(`/v1/artifacts/${short_id}`)).json()
+    expect(a.versions[1].name).toBe("Final draft")
+    expect(a.versions[0].name).toBeNull()
+  })
+
+  it("includes a sessions array alongside raw versions", async () => {
+    const { short_id } = await (await upload("s.md", "v1")).json()
+    const a = await (await app.request(`/v1/artifacts/${short_id}`)).json()
+    expect(Array.isArray(a.sessions)).toBe(true)
+    expect(a.sessions[0]).toMatchObject({ n: 1, from_n: 1, count: 1 })
+  })
+
+  it("collapses a same-author burst into one session", async () => {
+    const { short_id } = await (await upload("b.md", "v1")).json()
+    await upload("b.md", "v2", {}, short_id)
+    await upload("b.md", "v3", {}, short_id)
+    const a = await (await app.request(`/v1/artifacts/${short_id}`)).json()
+    expect(a.versions).toHaveLength(3)
+    expect(a.sessions).toHaveLength(1)
+    expect(a.sessions[0]).toMatchObject({ n: 3, from_n: 1, count: 3 })
+  })
+
+  it("pins a named checkpoint as its own session", async () => {
+    const { short_id } = await (await upload("p.md", "v1")).json()
+    await upload("p.md", "v2", {}, short_id)
+    await upload("p.md", "v3", { name: "Approved" }, short_id)
+    const a = await (await app.request(`/v1/artifacts/${short_id}`)).json()
+    // newest-first: [named v3], [v1+v2 burst]
+    expect(a.sessions).toHaveLength(2)
+    expect(a.sessions[0]).toMatchObject({ n: 3, name: "Approved", count: 1 })
+    expect(a.sessions[1]).toMatchObject({ n: 2, from_n: 1, count: 2 })
+  })
+
+  it("starts a new session when the author changes", async () => {
+    const { short_id } = await (await upload("au.md", "v1", { author: "ava" })).json()
+    await upload("au.md", "v2", { author: "bo" }, short_id)
+    const a = await (await app.request(`/v1/artifacts/${short_id}`)).json()
+    expect(a.sessions).toHaveLength(2)
+    expect(a.sessions[0]).toMatchObject({ author: "bo" })
+    expect(a.sessions[1]).toMatchObject({ author: "ava" })
+  })
+
+  it("honors the configured window (each revision its own session)", async () => {
+    const m2 = new SqliteMetaStore(join(dir, "win.db"))
+    const app2 = createApp({ meta: m2, blobs: new FsBlobStore(join(dir, "blobs")), baseUrl: "http://dock.test", versionWindowMs: -1 })
+    const mk = (c: string, id?: string) => {
+      const fd = new FormData()
+      fd.append("file", new Blob([new TextEncoder().encode(c)]), "w.md")
+      return app2.request(id ? `/v1/artifacts/${id}/versions` : "/v1/artifacts", { method: "POST", body: fd })
+    }
+    const { short_id } = await (await mk("v1")).json()
+    await mk("v2", short_id)
+    const a = await (await app2.request(`/v1/artifacts/${short_id}`)).json()
+    expect(a.versions).toHaveLength(2)
+    expect(a.sessions).toHaveLength(2) // window -1 → never merge
+    m2.close()
+  })
+})
+
+describe("version restore", () => {
+  it("restores a past version as a new current revision", async () => {
+    const { short_id } = await (await upload("r.md", "alpha")).json()
+    await upload("r.md", "beta", {}, short_id)
+    const res = await postJson(`/v1/artifacts/${short_id}/restore`, { version: 1 })
+    expect(res.status).toBe(201)
+    const a = await res.json()
+    expect(a.current_version).toBe(3)
+    expect(a.versions[2].message).toBe("Restored v1")
+  })
+
+  it("reproduces the restored version's content exactly", async () => {
+    const { short_id } = await (await upload("rc.md", "# original")).json()
+    await upload("rc.md", "# changed", {}, short_id)
+    await postJson(`/v1/artifacts/${short_id}/restore`, { version: 1 })
+    const current = await (await app.request(`/v1/artifacts/${short_id}/content`)).text()
+    expect(current).toBe("# original")
+  })
+
+  it("preserves the original version after restore (history not rewritten)", async () => {
+    const { short_id } = await (await upload("rp.md", "one")).json()
+    await upload("rp.md", "two", {}, short_id)
+    await postJson(`/v1/artifacts/${short_id}/restore`, { version: 1 })
+    expect(await (await app.request(`/v1/artifacts/${short_id}/content?v=1`)).text()).toBe("one")
+    expect(await (await app.request(`/v1/artifacts/${short_id}/content?v=2`)).text()).toBe("two")
+  })
+
+  it("404s restoring an unknown version", async () => {
+    const { short_id } = await (await upload("r4.md", "x")).json()
+    expect((await postJson(`/v1/artifacts/${short_id}/restore`, { version: 99 })).status).toBe(404)
+  })
+
+  it("400s when no version is given", async () => {
+    const { short_id } = await (await upload("r0.md", "x")).json()
+    expect((await postJson(`/v1/artifacts/${short_id}/restore`, {})).status).toBe(400)
+  })
+})
+
 describe("publish html file", () => {
   let shortId: string
 

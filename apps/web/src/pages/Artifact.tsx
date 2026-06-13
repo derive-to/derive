@@ -43,6 +43,7 @@ export function Artifact() {
   const [editing, setEditing] = useState(false)
   const [view, setView] = useState<"preview" | "diff">("preview")
   const [diff, setDiff] = useState<Diff | null>(null)
+  const [restoring, setRestoring] = useState(false)
   const [viewers, setViewers] = useState<string[]>([])
   const [src, setSrc] = useState("")
 
@@ -55,10 +56,13 @@ export function Artifact() {
 
   // The anchor channel with the sandboxed iframe (see ANCHOR_CLIENT_JS).
   const frame = useRef<HTMLIFrameElement>(null)
+  const presentWrap = useRef<HTMLDivElement>(null)
   const [frameReady, setFrameReady] = useState(0)
   const [inDoc, setInDoc] = useState<Record<string, boolean>>({})
   const [anchorTops, setAnchorTops] = useState<Record<string, number>>({})
   const [scrollY, setScrollY] = useState(0)
+  // Set when the artifact announces itself as a deck (dock-deck protocol).
+  const [deck, setDeck] = useState<{ i: number; total: number } | null>(null)
 
   const post = useCallback((msg: Record<string, unknown>) => {
     frame.current?.contentWindow?.postMessage({ source: "dock-host", ...msg }, "*")
@@ -67,7 +71,13 @@ export function Artifact() {
   useEffect(() => {
     const onMsg = (e: MessageEvent) => {
       const d = e.data
-      if (!d || d.source !== "dock") return
+      if (!d) return
+      // A slide deck reporting its position (any HTML that speaks the protocol).
+      if (d.source === "dock-deck" && d.type === "state") {
+        setDeck({ i: d.i ?? 0, total: d.total ?? 1 })
+        return
+      }
+      if (d.source !== "dock") return
       if (d.type === "select") {
         if (d.selector && d.rect) {
           const ft = frame.current?.getBoundingClientRect().top ?? 0
@@ -118,6 +128,31 @@ export function Artifact() {
   useEffect(() => {
     post({ type: "emphasize", id: hoverThread })
   }, [hoverThread, post])
+
+  // Drive the deck from the host bar; fullscreen wraps the iframe + bar so the
+  // controls stay reachable while presenting.
+  const deckCmd = (action: "next" | "prev" | "goto", n?: number) =>
+    frame.current?.contentWindow?.postMessage({ source: "dock-host", type: "deck", action, n }, "*")
+  const toggleFullscreen = () => {
+    const el = presentWrap.current
+    if (!el) return
+    if (document.fullscreenElement) document.exitFullscreen()
+    else el.requestFullscreen?.()
+  }
+  // Reset deck state when the artifact/version changes (re-announced on load).
+  useEffect(() => setDeck(null), [shortId, version])
+  // Arrow keys drive the deck from the host (when not typing in a field).
+  useEffect(() => {
+    if (!deck) return
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA")) return
+      if (e.key === "ArrowRight") deckCmd("next")
+      else if (e.key === "ArrowLeft") deckCmd("prev")
+    }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [deck])
 
   // Paint highlights for open, anchored threads whenever the doc or comments change.
   const sendAnchors = useCallback(() => {
@@ -212,16 +247,18 @@ export function Artifact() {
   // Switching versions returns to the rendered preview.
   useEffect(() => setView("preview"), [version, shortId])
 
-  // The diff view compares the shown version to the one before it.
+  // In history mode, "show changes" diffs the version being viewed against the
+  // current one — what's changed since this older version.
   useEffect(() => {
     if (view !== "diff" || !art) return
-    const cur = version ?? art.current_version
-    if (cur <= 1) {
+    const shownN = version ?? art.current_version
+    if (shownN >= art.current_version) {
       setDiff(null)
       return
     }
+    setDiff(null)
     let alive = true
-    api.diff(shortId, cur - 1, cur).then((d) => alive && setDiff(d)).catch(() => {})
+    api.diff(shortId, shownN, art.current_version).then((d) => alive && setDiff(d)).catch(() => {})
     return () => {
       alive = false
     }
@@ -329,6 +366,19 @@ export function Artifact() {
       navigator.clipboard?.writeText(url).then(() => show("Link copied")).catch(() => show(url))
     },
   }
+  const restore = async (n: number) => {
+    setRestoring(true)
+    try {
+      const a = await api.restore(shortId, n)
+      show(`Restored as v${a.current_version}`)
+      nav({ to: "/a/$ref", params: { ref: shortId } }) // jump to the new current
+      load()
+    } catch (e) {
+      show((e as Error).message)
+    } finally {
+      setRestoring(false)
+    }
+  }
 
   const asideWidth = panel === "open" ? 340 : panel === "rail" ? 50 : 0
 
@@ -340,10 +390,10 @@ export function Artifact() {
           <>
             <Presence viewers={viewers} self={me?.name ?? me?.email ?? ""} />
             <Insights shortId={shortId} />
-            <VersionMenu
+            <HistoryMenu
               art={art}
               shown={shown}
-              goTo={(n) => nav({ to: "/a/$ref", params: { ref: `${shortId}@v${n}` } })}
+              goTo={(n) => nav({ to: "/a/$ref", params: { ref: n === art.current_version ? shortId : `${shortId}@v${n}` } })}
             />
             {editable && !editing && <button className="btn sm" onClick={startEdit}>Edit</button>}
             {panel !== "open" && (
@@ -374,38 +424,46 @@ export function Artifact() {
             </div>
           ) : (
             <>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 12px", borderBottom: "1px solid var(--line-soft)", background: "var(--card)" }}>
-                <div className="seg" style={{ display: "flex", gap: 2, background: "var(--card-2)", borderRadius: 7, padding: 2 }}>
-                  <button className={`seg-b${view === "preview" ? " on" : ""}`} onClick={() => setView("preview")}>Preview</button>
-                  <button
-                    className={`seg-b${view === "diff" ? " on" : ""}`}
-                    onClick={() => setView("diff")}
-                    disabled={shown <= 1}
-                    title={shown <= 1 ? "No earlier version to compare" : `Changes from v${shown - 1} to v${shown}`}
-                  >
-                    Diff
+              {/* History-viewing banner: only when looking at a past version.
+                  The current version just shows the artifact, no version chrome. */}
+              {shown !== art.current_version && (
+                <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 14px", borderBottom: "1px solid var(--line-soft)", background: "var(--ac-soft)", fontSize: 12.5 }}>
+                  <span style={{ color: "var(--ac)", fontWeight: 600 }}>Viewing an earlier version</span>
+                  <span className="muted">·</span>
+                  <button className="lnk" onClick={() => setView(view === "diff" ? "preview" : "diff")}>
+                    {view === "diff" ? "Hide changes" : "Show changes since this"}
+                  </button>
+                  <span style={{ flex: 1 }} />
+                  <button className="btn sm" onClick={() => restore(shown)} disabled={restoring}>
+                    {restoring ? "Restoring…" : "Restore this version"}
+                  </button>
+                  <button className="btn pri sm" onClick={() => nav({ to: "/a/$ref", params: { ref: shortId } })}>
+                    Back to current
                   </button>
                 </div>
-                {view === "diff" && shown > 1 && (
-                  <span className="mono muted" style={{ fontSize: 11 }}>v{shown - 1} → v{shown}</span>
-                )}
-                {view === "preview" && (
-                  <span className="mono muted" style={{ marginLeft: "auto", fontSize: 10.5, opacity: 0.8 }}>
-                    Select text to comment
-                  </span>
-                )}
-              </div>
-              {view === "diff" ? (
-                <DiffView diff={diff} />
+              )}
+              {view === "diff" && shown !== art.current_version ? (
+                <DiffView diff={diff} fromLabel={`v${shown}`} toLabel="current" />
               ) : (
-                <iframe
-                  ref={frame}
-                  onLoad={() => setFrameReady((n) => n + 1)}
-                  title={art.title ?? shortId}
-                  src={rawSrc}
-                  sandbox="allow-scripts allow-forms allow-popups allow-modals allow-downloads"
-                  style={{ flex: 1, border: 0, background: "#fff" }}
-                />
+                <div ref={presentWrap} style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0, position: "relative", background: "#fff" }}>
+                  <iframe
+                    ref={frame}
+                    onLoad={() => setFrameReady((n) => n + 1)}
+                    title={art.title ?? shortId}
+                    src={rawSrc}
+                    allow="fullscreen"
+                    sandbox="allow-scripts allow-forms allow-popups allow-modals allow-downloads"
+                    style={{ flex: 1, border: 0, background: "#fff" }}
+                  />
+                  {deck && (
+                    <DeckBar
+                      deck={deck}
+                      onPrev={() => deckCmd("prev")}
+                      onNext={() => deckCmd("next")}
+                      onFullscreen={toggleFullscreen}
+                    />
+                  )}
+                </div>
               )}
             </>
           )}
@@ -1225,6 +1283,59 @@ const clamp = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, n
 
 // Who is viewing right now. Live over the presence SSE channel; self listed
 // first as "you". Hidden when you're the only one here.
+// Host presentation bar — shown when the artifact is a slide deck. Drives the
+// deck over postMessage and fullscreens the wrapper (controls stay reachable).
+function DeckBar({
+  deck,
+  onPrev,
+  onNext,
+  onFullscreen,
+}: {
+  deck: { i: number; total: number }
+  onPrev: () => void
+  onNext: () => void
+  onFullscreen: () => void
+}) {
+  const btn: React.CSSProperties = {
+    width: 30,
+    height: 30,
+    borderRadius: 8,
+    border: "1px solid var(--line)",
+    background: "var(--card)",
+    color: "var(--fg)",
+    cursor: "pointer",
+    display: "grid",
+    placeItems: "center",
+    fontSize: 15,
+  }
+  return (
+    <div
+      style={{
+        position: "absolute",
+        bottom: 14,
+        left: "50%",
+        transform: "translateX(-50%)",
+        display: "flex",
+        alignItems: "center",
+        gap: 6,
+        padding: 6,
+        borderRadius: 999,
+        background: "var(--card)",
+        border: "1px solid var(--line)",
+        boxShadow: "var(--shadow)",
+        zIndex: 5,
+      }}
+    >
+      <button style={btn} onClick={onPrev} disabled={deck.i <= 0} aria-label="Previous slide">‹</button>
+      <span className="mono" style={{ fontSize: 12, color: "var(--fg-mut)", minWidth: 52, textAlign: "center" }}>
+        {deck.i + 1} / {deck.total}
+      </span>
+      <button style={btn} onClick={onNext} disabled={deck.i >= deck.total - 1} aria-label="Next slide">›</button>
+      <button style={{ ...btn, marginLeft: 4 }} onClick={onFullscreen} title="Present (fullscreen)" aria-label="Present fullscreen">⛶</button>
+    </div>
+  )
+}
+
 function Presence({ viewers, self }: { viewers: string[]; self: string }) {
   const others = viewers.filter((v) => v !== self)
   if (others.length === 0) return null
@@ -1358,7 +1469,23 @@ function Insights({ shortId }: { shortId: string }) {
   )
 }
 
-function VersionMenu({ art, shown, goTo }: { art: Art; shown: number; goTo: (n: number) => void }) {
+// Quiet, Docs-style history: the header shows only "Edited {ago}". The dropdown
+// lists time-grouped sessions (named checkpoints pinned with a star), not every
+// raw revision — version chrome stays out of the way.
+const clock = (iso: string) =>
+  new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
+const dayLabel = (iso: string): string => {
+  const d = new Date(iso)
+  const today = new Date()
+  const y = new Date(today)
+  y.setDate(today.getDate() - 1)
+  const same = (a: Date, b: Date) => a.toDateString() === b.toDateString()
+  if (same(d, today)) return "Today"
+  if (same(d, y)) return "Yesterday"
+  return d.toLocaleDateString([], { month: "short", day: "numeric" })
+}
+
+function HistoryMenu({ art, shown, goTo }: { art: Art; shown: number; goTo: (n: number) => void }) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
   useEffect(() => {
@@ -1368,39 +1495,52 @@ function VersionMenu({ art, shown, goTo }: { art: Art; shown: number; goTo: (n: 
     document.addEventListener("click", h)
     return () => document.removeEventListener("click", h)
   }, [])
-  const versions = [...art.versions].sort((a, b) => b.n - a.n)
+  const sessions =
+    art.sessions ??
+    [...art.versions]
+      .sort((a, b) => b.n - a.n)
+      .map((v) => ({ n: v.n, from_n: v.n, count: 1, author: v.author, name: v.name, created_at: v.created_at }))
+  const latest = sessions[0]
+  let lastDay = ""
   return (
     <div ref={ref} style={{ position: "relative" }}>
-      <button className="btn sm" onClick={(e) => { e.stopPropagation(); setOpen((o) => !o) }} style={{ gap: 6 }}>
-        v{shown}
-        {shown !== art.current_version && <span className="mono muted" style={{ fontSize: 9.5 }}>of {art.current_version}</span>}
+      <button className="btn sm" onClick={(e) => { e.stopPropagation(); setOpen((o) => !o) }} style={{ gap: 6 }} title="Version history">
+        {latest ? `Edited ${ago(latest.created_at)}` : "History"}
         <span style={{ fontSize: 9, opacity: 0.7 }}>▾</span>
       </button>
       {open && (
-        <div className="card" style={{ position: "absolute", right: 0, top: "calc(100% + 7px)", width: 268, padding: 6, boxShadow: "var(--shadow)", zIndex: 30, maxHeight: 360, overflow: "auto" }}>
+        <div className="card" style={{ position: "absolute", right: 0, top: "calc(100% + 7px)", width: 286, padding: 6, boxShadow: "var(--shadow)", zIndex: 30, maxHeight: 400, overflow: "auto" }}>
           <div className="mono" style={{ fontSize: 9.5, letterSpacing: ".06em", textTransform: "uppercase", color: "var(--fg-mut)", padding: "6px 8px 4px" }}>
             Version history
           </div>
-          {versions.map((v) => {
-            const cur = v.n === shown
+          {sessions.map((s) => {
+            const cur = s.n === shown
+            const day = dayLabel(s.created_at)
+            const header = day !== lastDay ? ((lastDay = day), day) : null
             return (
-              <button
-                key={v.n}
-                onClick={() => { goTo(v.n); setOpen(false) }}
-                style={{ display: "block", width: "100%", textAlign: "left", border: 0, background: cur ? "var(--ac-soft)" : "transparent", borderRadius: 7, padding: "8px 9px", cursor: "pointer", marginBottom: 1 }}
-              >
-                <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
-                  <span className="mono" style={{ fontSize: 11.5, fontWeight: 700, color: cur ? "var(--ac)" : "var(--fg)" }}>v{v.n}</span>
-                  {v.n === art.current_version && (
-                    <span className="mono" style={{ fontSize: 8.5, fontWeight: 700, padding: "1px 6px", borderRadius: 999, background: "var(--good-bg)", color: "var(--good)" }}>latest</span>
-                  )}
-                  <span className="mono muted" style={{ marginLeft: "auto", fontSize: 9.5 }}>{ago(v.created_at)}</span>
-                </div>
-                <div style={{ fontSize: 11.5, color: "var(--fg-mut)", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {v.message || <span className="muted">no message</span>}
-                </div>
-                <div className="mono muted" style={{ fontSize: 9.5, marginTop: 1 }}>{v.author}</div>
-              </button>
+              <div key={s.n}>
+                {header && (
+                  <div className="mono muted" style={{ fontSize: 9, letterSpacing: ".05em", textTransform: "uppercase", padding: "8px 9px 3px" }}>{header}</div>
+                )}
+                <button
+                  onClick={() => { goTo(s.n); setOpen(false) }}
+                  style={{ display: "block", width: "100%", textAlign: "left", border: 0, background: cur ? "var(--ac-soft)" : "transparent", borderRadius: 7, padding: "7px 9px", cursor: "pointer", marginBottom: 1 }}
+                >
+                  <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+                    <span style={{ color: s.name ? "var(--ac)" : "var(--fg-mut)", fontSize: 11 }}>{s.name ? "★" : "●"}</span>
+                    <span style={{ fontSize: 12.5, fontWeight: 600, color: cur ? "var(--ac)" : "var(--fg)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {s.name ?? clock(s.created_at)}
+                    </span>
+                    {s.n === art.current_version && (
+                      <span className="mono" style={{ fontSize: 8.5, fontWeight: 700, padding: "1px 6px", borderRadius: 999, background: "var(--good-bg)", color: "var(--good)" }}>current</span>
+                    )}
+                    {s.count > 1 && (
+                      <span className="mono muted" style={{ marginLeft: "auto", fontSize: 9.5 }}>{s.count} edits</span>
+                    )}
+                  </div>
+                  <div className="mono muted" style={{ fontSize: 9.5, marginTop: 2, paddingLeft: 18 }}>{s.author}</div>
+                </button>
+              </div>
             )
           })}
         </div>
@@ -1409,13 +1549,16 @@ function VersionMenu({ art, shown, goTo }: { art: Art; shown: number; goTo: (n: 
   )
 }
 
-function DiffView({ diff }: { diff: Diff | null }) {
+function DiffView({ diff, fromLabel, toLabel }: { diff: Diff | null; fromLabel?: string; toLabel?: string }) {
   if (!diff) return <div className="center" style={{ flex: 1 }}><div className="spin" /></div>
   const adds = diff.ops.filter((o) => o.t === "add").length
   const dels = diff.ops.filter((o) => o.t === "del").length
   return (
     <div style={{ flex: 1, overflow: "auto", background: "var(--card)" }}>
-      <div style={{ display: "flex", gap: 12, padding: "8px 16px", borderBottom: "1px solid var(--line-soft)", fontSize: 12 }}>
+      <div style={{ display: "flex", gap: 12, padding: "8px 16px", borderBottom: "1px solid var(--line-soft)", fontSize: 12, alignItems: "center" }}>
+        {fromLabel && toLabel && (
+          <span className="mono muted" style={{ marginRight: "auto" }}>{fromLabel} → {toLabel}</span>
+        )}
         <span className="mono" style={{ color: "var(--good)" }}>+{adds}</span>
         <span className="mono" style={{ color: "var(--bad)" }}>−{dels}</span>
         <span className="mono muted">{diff.ops.length} lines</span>

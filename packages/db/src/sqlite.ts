@@ -33,7 +33,8 @@ export class SqliteMetaStore implements MetaStore {
     this.raw = new Database(path)
     this.raw.pragma("journal_mode = WAL")
     for (const stmt of SCHEMA_STATEMENTS) this.raw.exec(stmt)
-    // Forward-only column adds; a "duplicate column" throw means already applied.
+    // Forward-only column adds (SQLite lacks ADD COLUMN IF NOT EXISTS); a
+    // "duplicate column" throw means the migration is already applied.
     for (const stmt of MIGRATION_STATEMENTS) {
       try {
         this.raw.exec(stmt)

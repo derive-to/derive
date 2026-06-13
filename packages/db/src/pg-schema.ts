@@ -41,6 +41,7 @@ export const version = pgTable("version", {
   content_type: text("content_type").notNull(),
   author: text("author").notNull(),
   message: text("message"),
+  name: text("name"),
   created_at: text("created_at").notNull().$defaultFn(isoNow),
 })
 
@@ -123,9 +124,11 @@ export const PG_SCHEMA_STATEMENTS: string[] = [
     content_type TEXT NOT NULL,
     author TEXT NOT NULL,
     message TEXT,
+    name TEXT,
     created_at TEXT NOT NULL DEFAULT ${isoDefault},
     UNIQUE (artifact_id, n)
   )`,
+  `ALTER TABLE version ADD COLUMN IF NOT EXISTS name TEXT`,
   `CREATE TABLE IF NOT EXISTS comment (
     id TEXT PRIMARY KEY,
     artifact_id TEXT NOT NULL REFERENCES artifact(id),
