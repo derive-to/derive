@@ -1,4 +1,4 @@
-import { Link, useNavigate } from "@tanstack/react-router"
+import { Link, useNavigate, useRouterState } from "@tanstack/react-router"
 import { type ReactNode, useCallback, useEffect, useState } from "react"
 import { api, type Collection, type Workspaces } from "@/api"
 import { Button } from "@/components/ui/button"
@@ -84,13 +84,25 @@ export function AppShell({ children }: { children: ReactNode }) {
       .then(setWorkspaces)
       .catch(() => {})
   }, [])
+  // Workspaces only change via create/switch, which both hard-reload the page —
+  // so they can't go stale mid-session. Fetch once.
+  useEffect(() => {
+    if (me) refreshWorkspaces()
+  }, [me, refreshWorkspaces])
+
+  // Summary (rail counts) + collections refresh on every route change. The shell
+  // is mounted once now (it no longer remounts per nav), so without this the
+  // counts would freeze at their mount-time values after a publish / favorite /
+  // collection edit. Keyed to the pathname, so in-page filter changes (search,
+  // tag) on the library don't trigger a refetch.
+  const pathname = useRouterState({ select: (s) => s.location.pathname })
+  // biome-ignore lint/correctness/useExhaustiveDependencies: pathname is an intentional re-run trigger — the effect refetches on every route change, even though its body doesn't read pathname.
   useEffect(() => {
     if (me) {
       refreshSummary()
       refreshCollections()
-      refreshWorkspaces()
     }
-  }, [me, refreshSummary, refreshCollections, refreshWorkspaces])
+  }, [me, pathname, refreshSummary, refreshCollections])
 
   // Switching/creating a workspace swaps the whole content context, so reload the
   // page rather than re-thread every list (a deliberate, infrequent action).
