@@ -193,6 +193,40 @@ export const artifactTag = pgTable(
   },
   (t) => [uniqueIndex("artifact_tag_uniq").on(t.artifact_id, t.tag)],
 )
+export const collection = pgTable("collection", {
+  id: text("id").primaryKey(),
+  org_id: text("org_id").notNull().default("local"),
+  title: text("title").notNull(),
+  created_by: text("created_by").notNull(),
+  created_at: text("created_at").notNull().$defaultFn(isoNow),
+})
+export const collectionItem = pgTable(
+  "collection_item",
+  {
+    id: text("id").primaryKey(),
+    collection_id: text("collection_id")
+      .notNull()
+      .references(() => collection.id),
+    artifact_id: text("artifact_id")
+      .notNull()
+      .references(() => artifact.id),
+    created_at: text("created_at").notNull().$defaultFn(isoNow),
+  },
+  (t) => [uniqueIndex("collection_item_uniq").on(t.collection_id, t.artifact_id)],
+)
+export const collectionMember = pgTable(
+  "collection_member",
+  {
+    id: text("id").primaryKey(),
+    collection_id: text("collection_id")
+      .notNull()
+      .references(() => collection.id),
+    user_id: text("user_id").notNull(),
+    role: text("role").$type<Role>().notNull(),
+    created_at: text("created_at").notNull().$defaultFn(isoNow),
+  },
+  (t) => [uniqueIndex("collection_member_uniq").on(t.collection_id, t.user_id)],
+)
 export const proposal = pgTable("proposal", {
   id: text("id").primaryKey(),
   artifact_id: text("artifact_id")
@@ -392,6 +426,30 @@ export const PG_SCHEMA_STATEMENTS: string[] = [
     UNIQUE (artifact_id, tag)
   )`,
   `CREATE INDEX IF NOT EXISTS tag_name ON artifact_tag (tag)`,
+  `CREATE TABLE IF NOT EXISTS collection (
+    id TEXT PRIMARY KEY,
+    org_id TEXT NOT NULL DEFAULT 'local',
+    title TEXT NOT NULL,
+    created_by TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT ${isoDefault}
+  )`,
+  `CREATE TABLE IF NOT EXISTS collection_item (
+    id TEXT PRIMARY KEY,
+    collection_id TEXT NOT NULL REFERENCES collection(id),
+    artifact_id TEXT NOT NULL REFERENCES artifact(id),
+    created_at TEXT NOT NULL DEFAULT ${isoDefault},
+    UNIQUE (collection_id, artifact_id)
+  )`,
+  `CREATE INDEX IF NOT EXISTS collection_item_artifact ON collection_item (artifact_id)`,
+  `CREATE TABLE IF NOT EXISTS collection_member (
+    id TEXT PRIMARY KEY,
+    collection_id TEXT NOT NULL REFERENCES collection(id),
+    user_id TEXT NOT NULL,
+    role TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT ${isoDefault},
+    UNIQUE (collection_id, user_id)
+  )`,
+  `CREATE INDEX IF NOT EXISTS collection_member_user ON collection_member (user_id)`,
   `CREATE TABLE IF NOT EXISTS proposal (
     id TEXT PRIMARY KEY,
     artifact_id TEXT NOT NULL REFERENCES artifact(id),

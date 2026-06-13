@@ -32,6 +32,14 @@ export const isRole = (v: unknown): v is Role => typeof v === "string" && v in R
 /** Does this role permit this action? */
 export const roleAllows = (role: Role, action: Action): boolean => RANK[role] >= RANK[NEEDS[action]]
 
+/** The highest of a set of roles (nulls ignored); null if none. Folds a
+ *  collection-membership role in alongside a per-artifact share. */
+export function maxRole(...roles: (Role | null | undefined)[]): Role | null {
+  let best: Role | null = null
+  for (const r of roles) if (r && (best === null || RANK[r] > RANK[best])) best = r
+  return best
+}
+
 /**
  * Who is making a request, with their standing already resolved from the store.
  * Every surface (web session, static token, MCP agent) becomes one of these.

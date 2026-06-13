@@ -40,6 +40,15 @@ export interface Artifact {
   open_proposals?: number
   /** Count of non-withdrawn proposals (open + decided) — gates the Proposals entry. */
   proposals_total?: number
+  /** Collection ids this artifact belongs to (detail endpoint). */
+  collections?: string[]
+}
+export interface Collection {
+  id: string
+  title: string
+  created_by: string
+  created_at: string
+  count: number
 }
 export type ProposalState = "open" | "approved" | "changes_requested" | "withdrawn"
 export interface Proposal {
@@ -192,6 +201,7 @@ export const api = {
   listArtifacts: (params?: {
     q?: string
     tag?: string
+    collection?: string
     favorite?: boolean
     cursor?: string
     limit?: number
@@ -199,6 +209,7 @@ export const api = {
     const qs = new URLSearchParams()
     if (params?.q) qs.set("q", params.q)
     if (params?.tag) qs.set("tag", params.tag)
+    if (params?.collection) qs.set("collection", params.collection)
     if (params?.favorite) qs.set("favorite", "true")
     if (params?.cursor) qs.set("cursor", params.cursor)
     if (params?.limit) qs.set("limit", String(params.limit))
@@ -267,6 +278,34 @@ export const api = {
     f("/v1/agents", opts({ name, role })).then(j),
   deleteAgent: (id: string): Promise<void> =>
     f(`/v1/agents/${id}`, { method: "DELETE", credentials: "include" }).then(() => undefined),
+
+  // Collections (shareable groups; sharing grants the role on every item)
+  listCollections: (): Promise<{ collections: Collection[] }> =>
+    f("/v1/collections", opts()).then(j),
+  createCollection: (title: string): Promise<Collection> =>
+    f("/v1/collections", opts({ title })).then(j),
+  renameCollection: (id: string, title: string): Promise<Collection> =>
+    f(`/v1/collections/${id}`, { ...opts({ title }), method: "PATCH" }).then(j),
+  deleteCollection: (id: string): Promise<void> =>
+    f(`/v1/collections/${id}`, { method: "DELETE", credentials: "include" }).then(() => undefined),
+  addToCollection: (collectionId: string, shortId: string): Promise<void> =>
+    f(`/v1/collections/${collectionId}/items/${shortId}`, { ...opts(), method: "PUT" }).then(
+      () => undefined,
+    ),
+  removeFromCollection: (collectionId: string, shortId: string): Promise<void> =>
+    f(`/v1/collections/${collectionId}/items/${shortId}`, {
+      method: "DELETE",
+      credentials: "include",
+    }).then(() => undefined),
+  listCollectionMembers: (id: string): Promise<{ created_by: string; members: ArtifactMember[] }> =>
+    f(`/v1/collections/${id}/members`, opts()).then(j),
+  setCollectionMember: (id: string, email: string, role: Role): Promise<ArtifactMember> =>
+    f(`/v1/collections/${id}/members`, { ...opts({ email, role }), method: "PUT" }).then(j),
+  removeCollectionMember: (id: string, userId: string): Promise<void> =>
+    f(`/v1/collections/${id}/members/${userId}`, {
+      method: "DELETE",
+      credentials: "include",
+    }).then(() => undefined),
 
   listWebhooks: (): Promise<{ webhooks: Webhook[] }> => f("/v1/webhooks", opts()).then(j),
   createWebhook: (body: {

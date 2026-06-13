@@ -15,6 +15,7 @@ import {
   API_BASE,
   type Artifact as Art,
   api,
+  type Collection,
   type Comment,
   type Diff,
   type DirUser,
@@ -526,6 +527,11 @@ export function Artifact() {
                 canEdit={art.my_role === "editor" || art.my_role === "owner"}
                 onChange={(tags) => setArt((a) => (a ? { ...a, tags } : a))}
               />
+              <CollectionsMenu
+                shortId={shortId}
+                inCollections={art.collections ?? []}
+                onChange={(collections) => setArt((a) => (a ? { ...a, collections } : a))}
+              />
               <ShareButton shortId={shortId} myRole={art.my_role} />
               <Insights shortId={shortId} />
               <HistoryMenu
@@ -918,6 +924,163 @@ function StarButton({
     >
       {favorite ? "★" : "☆"}
     </button>
+  )
+}
+
+// Header collections popover: toggle this artifact in/out of collections, or
+// create one on the fly. Adding to a shared collection grants its members their
+// role on this artifact too.
+function CollectionsMenu({
+  shortId,
+  inCollections,
+  onChange,
+}: {
+  shortId: string
+  inCollections: string[]
+  onChange: (ids: string[]) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const [all, setAll] = useState<Collection[]>([])
+  const [draft, setDraft] = useState("")
+  const ref = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const h = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener("click", h)
+    return () => document.removeEventListener("click", h)
+  }, [])
+  useEffect(() => {
+    if (open)
+      api
+        .listCollections()
+        .then((r) => setAll(r.collections))
+        .catch(() => {})
+  }, [open])
+  const inSet = new Set(inCollections)
+  const toggle = async (col: Collection) => {
+    const isIn = inSet.has(col.id)
+    onChange(isIn ? inCollections.filter((id) => id !== col.id) : [...inCollections, col.id])
+    try {
+      if (isIn) await api.removeFromCollection(col.id, shortId)
+      else await api.addToCollection(col.id, shortId)
+    } catch {
+      onChange(inCollections)
+    }
+  }
+  const create = async () => {
+    const t = draft.trim()
+    setDraft("")
+    if (!t) return
+    try {
+      const col = await api.createCollection(t)
+      await api.addToCollection(col.id, shortId)
+      setAll((a) => [col, ...a])
+      onChange([...inCollections, col.id])
+    } catch {
+      /* ignore */
+    }
+  }
+  return (
+    <div ref={ref} style={{ position: "relative" }}>
+      <button
+        className="btn sm"
+        onClick={(e) => {
+          e.stopPropagation()
+          setOpen((o) => !o)
+        }}
+        style={{ gap: 6 }}
+        title="Collections"
+      >
+        📁 {inCollections.length > 0 && <b style={{ fontWeight: 700 }}>{inCollections.length}</b>}
+      </button>
+      {open && (
+        <div
+          className="card"
+          style={{
+            position: "absolute",
+            right: 0,
+            top: "calc(100% + 7px)",
+            width: 248,
+            padding: 12,
+            boxShadow: "var(--shadow)",
+            zIndex: 30,
+            maxHeight: 340,
+            overflow: "auto",
+          }}
+        >
+          <div
+            className="mono muted"
+            style={{
+              fontSize: 9.5,
+              letterSpacing: ".06em",
+              textTransform: "uppercase",
+              marginBottom: 8,
+            }}
+          >
+            Add to collection
+          </div>
+          {all.length === 0 && (
+            <div className="muted" style={{ fontSize: 12, marginBottom: 9 }}>
+              No collections yet — create one below.
+            </div>
+          )}
+          {all.length > 0 && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 1, marginBottom: 10 }}>
+              {all.map((col) => (
+                <button
+                  key={col.id}
+                  onClick={() => toggle(col)}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                    width: "100%",
+                    border: 0,
+                    background: inSet.has(col.id) ? "var(--ac-soft)" : "transparent",
+                    color: "var(--fg)",
+                    padding: "6px 8px",
+                    borderRadius: 7,
+                    cursor: "pointer",
+                    textAlign: "left",
+                    font: "500 12.5px Inter,sans-serif",
+                  }}
+                >
+                  <span style={{ width: 14, color: "var(--ac)" }}>
+                    {inSet.has(col.id) ? "✓" : ""}
+                  </span>
+                  <span
+                    style={{
+                      flex: 1,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {col.title}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+          <div style={{ display: "flex", gap: 6 }}>
+            <input
+              className="input"
+              value={draft}
+              placeholder="New collection…"
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") create()
+              }}
+              style={{ padding: "6px 9px", fontSize: 12.5 }}
+            />
+            <button className="btn sm" onClick={create} disabled={!draft.trim()}>
+              Add
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
   )
 }
 

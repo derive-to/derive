@@ -1,10 +1,21 @@
 import { useNavigate } from "@tanstack/react-router"
 import { useCallback, useEffect, useRef, useState } from "react"
-import { API_BASE, type Artifact, api } from "../api"
+import {
+  API_BASE,
+  type Artifact,
+  type ArtifactMember,
+  api,
+  type Collection,
+  type Role,
+} from "../api"
 import { Header, useIsMobile, useToast } from "../components"
 import { useAuth } from "../ctx"
 
-type Filter = { kind: "all" } | { kind: "favorites" } | { kind: "tag"; tag: string }
+type Filter =
+  | { kind: "all" }
+  | { kind: "favorites" }
+  | { kind: "tag"; tag: string }
+  | { kind: "collection"; id: string; title: string }
 type TagCount = { tag: string; count: number }
 type Summary = { total: number; favorites: number; tags: TagCount[] }
 
@@ -63,6 +74,8 @@ export function Library() {
   const [more, setMore] = useState(false)
   const [busy, setBusy] = useState(false)
   const [summary, setSummary] = useState<Summary | null>(null)
+  const [collections, setCollections] = useState<Collection[]>([])
+  const [shareCol, setShareCol] = useState<Collection | null>(null)
 
   const [query, setQuery] = useState("")
   const [debouncedQ, setDebouncedQ] = useState("")
@@ -103,6 +116,7 @@ export function Library() {
         const r = await api.listArtifacts({
           q: debouncedQ || undefined,
           tag: filter.kind === "tag" ? filter.tag : undefined,
+          collection: filter.kind === "collection" ? filter.id : undefined,
           favorite: filter.kind === "favorites" || undefined,
           cursor,
           limit: PAGE,
@@ -128,9 +142,18 @@ export function Library() {
       .then(setSummary)
       .catch(() => {})
   }, [])
+  const refreshCollections = useCallback(() => {
+    api
+      .listCollections()
+      .then((r) => setCollections(r.collections))
+      .catch(() => {})
+  }, [])
   useEffect(() => {
-    if (me) refreshSummary()
-  }, [me, refreshSummary])
+    if (me) {
+      refreshSummary()
+      refreshCollections()
+    }
+  }, [me, refreshSummary, refreshCollections])
 
   const publish = async () => {
     const f = file.current?.files?.[0]
@@ -170,19 +193,45 @@ export function Library() {
     setFilter(f)
     setDrawer(false)
   }
+  const createCollection = async (title: string) => {
+    try {
+      const col = await api.createCollection(title)
+      refreshCollections()
+      pick({ kind: "collection", id: col.id, title: col.title })
+    } catch (e) {
+      show((e as Error).message)
+    }
+  }
+  const renameCollection = async (id: string, title: string) => {
+    await api.renameCollection(id, title).catch((e) => show((e as Error).message))
+    refreshCollections()
+    setFilter((f) => (f.kind === "collection" && f.id === id ? { ...f, title } : f))
+  }
+  const deleteCollection = async (id: string) => {
+    await api.deleteCollection(id).catch((e) => show((e as Error).message))
+    refreshCollections()
+    setFilter({ kind: "all" })
+  }
+
+  const activeCollection =
+    filter.kind === "collection" ? collections.find((c) => c.id === filter.id) : undefined
   const heading =
     filter.kind === "all"
       ? "All artifacts"
       : filter.kind === "favorites"
         ? "Favorites"
-        : `#${filter.tag}`
+        : filter.kind === "tag"
+          ? `#${filter.tag}`
+          : filter.title
   const headingCount = debouncedQ
     ? items.length
     : filter.kind === "all"
       ? (summary?.total ?? items.length)
       : filter.kind === "favorites"
         ? (summary?.favorites ?? items.length)
-        : (summary?.tags.find((t) => t.tag === filter.tag)?.count ?? items.length)
+        : filter.kind === "tag"
+          ? (summary?.tags.find((t) => t.tag === filter.tag)?.count ?? items.length)
+          : (activeCollection?.count ?? items.length)
 
   if (!me)
     return (
@@ -224,8 +273,10 @@ export function Library() {
           total={summary?.total ?? 0}
           favCount={summary?.favorites ?? 0}
           tags={summary?.tags ?? []}
+          collections={collections}
           filter={filter}
           onPick={pick}
+          onCreateCollection={createCollection}
           onToggleRail={() => setRail((r) => !r)}
           onClose={() => setDrawer(false)}
           onSettings={() => {
@@ -245,48 +296,66 @@ export function Library() {
               />
               {filter.kind !== "all" && (
                 <button className="btn sm" onClick={() => setFilter({ kind: "all" })}>
-                  {filter.kind === "favorites" ? "★ Favorites" : `#${filter.tag}`} ✕
+                  {filter.kind === "favorites"
+                    ? "★ Favorites"
+                    : filter.kind === "tag"
+                      ? `#${filter.tag}`
+                      : `📁 ${filter.title}`}{" "}
+                  ✕
                 </button>
               )}
             </div>
 
-            <div
-              className="card"
-              style={{
-                padding: 16,
-                marginBottom: 22,
-                display: "flex",
-                alignItems: "center",
-                gap: 14,
-                flexWrap: "wrap",
-              }}
-            >
-              <div style={{ flex: 1, minWidth: 220 }}>
-                <div className="display" style={{ fontWeight: 600, fontSize: 15 }}>
-                  Publish an artifact
+            {filter.kind !== "collection" && (
+              <div
+                className="card"
+                style={{
+                  padding: 16,
+                  marginBottom: 22,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 14,
+                  flexWrap: "wrap",
+                }}
+              >
+                <div style={{ flex: 1, minWidth: 220 }}>
+                  <div className="display" style={{ fontWeight: 600, fontSize: 15 }}>
+                    Publish an artifact
+                  </div>
+                  <div className="muted" style={{ fontSize: 13 }}>
+                    Drop an HTML or Markdown file, or run <code className="mono">dock publish</code>
+                    .
+                  </div>
                 </div>
-                <div className="muted" style={{ fontSize: 13 }}>
-                  Drop an HTML or Markdown file, or run <code className="mono">dock publish</code>.
-                </div>
+                <input
+                  ref={file}
+                  type="file"
+                  accept=".html,.htm,.md,.markdown,.zip"
+                  style={{ maxWidth: 230, fontSize: 12 }}
+                  onChange={publish}
+                />
+                <button className="btn pri" onClick={publish} disabled={busy}>
+                  {busy ? "Publishing…" : "Publish"}
+                </button>
               </div>
-              <input
-                ref={file}
-                type="file"
-                accept=".html,.htm,.md,.markdown,.zip"
-                style={{ maxWidth: 230, fontSize: 12 }}
-                onChange={publish}
-              />
-              <button className="btn pri" onClick={publish} disabled={busy}>
-                {busy ? "Publishing…" : "Publish"}
-              </button>
-            </div>
+            )}
 
-            <h2 className="display" style={{ fontSize: 17, margin: "0 0 14px" }}>
-              {heading}{" "}
-              <span className="muted" style={{ fontWeight: 400, fontSize: 14 }}>
-                · {headingCount}
-              </span>
-            </h2>
+            {filter.kind === "collection" ? (
+              <CollectionBar
+                title={heading}
+                count={headingCount}
+                onShare={() => activeCollection && setShareCol(activeCollection)}
+                onRename={(t) => renameCollection(filter.id, t)}
+                onDelete={() => deleteCollection(filter.id)}
+              />
+            ) : (
+              <h2 className="display" style={{ fontSize: 17, margin: "0 0 14px" }}>
+                {heading}{" "}
+                <span className="muted" style={{ fontWeight: 400, fontSize: 14 }}>
+                  · {headingCount}
+                </span>
+              </h2>
+            )}
 
             {fetching && items.length === 0 ? (
               <div className="center" style={{ height: 160 }}>
@@ -373,7 +442,240 @@ export function Library() {
           </div>
         </main>
       </div>
+      {shareCol && (
+        <CollectionShareDialog
+          collection={shareCol}
+          show={show}
+          onClose={() => setShareCol(null)}
+        />
+      )}
       {toast}
+    </div>
+  )
+}
+
+// The bar shown when viewing a collection: title, count, and the owner actions
+// (share / rename / delete). Share is the headline — it grants the role on
+// every artifact in the collection.
+function CollectionBar({
+  title,
+  count,
+  onShare,
+  onRename,
+  onDelete,
+}: {
+  title: string
+  count: number
+  onShare: () => void
+  onRename: (title: string) => void
+  onDelete: () => void
+}) {
+  const [renaming, setRenaming] = useState(false)
+  const [draft, setDraft] = useState(title)
+  useEffect(() => setDraft(title), [title])
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 10,
+        flexWrap: "wrap",
+        margin: "0 0 16px",
+        paddingBottom: 14,
+        borderBottom: "1px solid var(--line-soft)",
+      }}
+    >
+      <span style={{ fontSize: 19 }}>📁</span>
+      {renaming ? (
+        <input
+          className="input"
+          value={draft}
+          autoFocus
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && draft.trim()) {
+              onRename(draft.trim())
+              setRenaming(false)
+            }
+            if (e.key === "Escape") setRenaming(false)
+          }}
+          style={{ maxWidth: 280, fontSize: 16, fontWeight: 600 }}
+        />
+      ) : (
+        <h2 className="display" style={{ fontSize: 19, margin: 0 }}>
+          {title}{" "}
+          <span className="muted" style={{ fontWeight: 400, fontSize: 14 }}>
+            · {count}
+          </span>
+        </h2>
+      )}
+      <span style={{ flex: 1 }} />
+      <button className="btn sm pri" onClick={onShare} title="Share this collection">
+        🔗 Share
+      </button>
+      <button
+        className="btn sm"
+        onClick={() =>
+          renaming ? (onRename(draft.trim()), setRenaming(false)) : setRenaming(true)
+        }
+      >
+        {renaming ? "Save" : "Rename"}
+      </button>
+      <button
+        className="btn sm"
+        style={{ color: "var(--bad)" }}
+        onClick={() => {
+          if (confirm(`Delete the collection “${title}”? The artifacts are not deleted.`))
+            onDelete()
+        }}
+      >
+        Delete
+      </button>
+    </div>
+  )
+}
+
+// Share a collection: add people by email at a role. A member's role applies to
+// every artifact in the collection (the headline of collection-level sharing).
+function CollectionShareDialog({
+  collection,
+  show,
+  onClose,
+}: {
+  collection: Collection
+  show: (m: string) => void
+  onClose: () => void
+}) {
+  const [members, setMembers] = useState<ArtifactMember[]>([])
+  const [email, setEmail] = useState("")
+  const [role, setRole] = useState<Role>("editor")
+  const [busy, setBusy] = useState(false)
+  const load = useCallback(() => {
+    api
+      .listCollectionMembers(collection.id)
+      .then((r) => setMembers(r.members))
+      .catch(() => {})
+  }, [collection.id])
+  useEffect(() => {
+    load()
+  }, [load])
+  const add = async (e: React.FormEvent) => {
+    e.preventDefault()
+    const addr = email.trim()
+    if (!addr) return
+    setBusy(true)
+    try {
+      await api.setCollectionMember(collection.id, addr, role)
+      setEmail("")
+      load()
+    } catch (x) {
+      show((x as Error).message)
+    } finally {
+      setBusy(false)
+    }
+  }
+  const remove = async (m: ArtifactMember) => {
+    await api.removeCollectionMember(collection.id, m.user_id).catch(() => {})
+    load()
+  }
+  const ROLES: Role[] = ["viewer", "commenter", "editor", "owner"]
+  return (
+    // biome-ignore lint/a11y/useKeyWithClickEvents: backdrop dismissal mirrors the ✕ button.
+    <div
+      className="sheet-backdrop show"
+      style={{ display: "grid", placeItems: "center", padding: 18 }}
+      onClick={onClose}
+    >
+      {/* biome-ignore lint/a11y/noStaticElementInteractions: stop click-through to the backdrop. */}
+      <div
+        className="card"
+        style={{ width: 380, maxWidth: "100%", padding: 18, boxShadow: "var(--shadow)" }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+          <b className="display" style={{ fontSize: 15 }}>
+            Share “{collection.title}”
+          </b>
+          <span style={{ flex: 1 }} />
+          <button
+            className="btn sm"
+            onClick={onClose}
+            aria-label="Close"
+            style={{ padding: "4px 9px" }}
+          >
+            ✕
+          </button>
+        </div>
+        <p className="muted" style={{ fontSize: 12.5, margin: "0 0 12px" }}>
+          People here get this role on <b>every artifact</b> in the collection.
+        </p>
+        <form onSubmit={add} style={{ display: "flex", gap: 6, marginBottom: 12 }}>
+          <input
+            className="input"
+            type="email"
+            placeholder="teammate@email.com"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            style={{ flex: 1, padding: "7px 9px", fontSize: 13 }}
+          />
+          <select
+            value={role}
+            onChange={(e) => setRole(e.target.value as Role)}
+            className="input"
+            style={{ width: 104, padding: "7px 6px", fontSize: 12 }}
+          >
+            {ROLES.map((r) => (
+              <option key={r} value={r}>
+                {r}
+              </option>
+            ))}
+          </select>
+          <button className="btn pri sm" type="submit" disabled={busy}>
+            {busy ? "…" : "Add"}
+          </button>
+        </form>
+        {members.length === 0 ? (
+          <div className="muted" style={{ fontSize: 12 }}>
+            No one shared yet.
+          </div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+            {members.map((m) => (
+              <div key={m.user_id} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div
+                    style={{
+                      fontSize: 12.5,
+                      fontWeight: 600,
+                      whiteSpace: "nowrap",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                    }}
+                  >
+                    {m.name ?? m.email ?? m.user_id}
+                  </div>
+                  {m.name && m.email && (
+                    <div className="muted" style={{ fontSize: 10.5 }}>
+                      {m.email}
+                    </div>
+                  )}
+                </div>
+                <span className="mono muted" style={{ fontSize: 11 }}>
+                  {m.role}
+                </span>
+                <button
+                  className="lnk"
+                  onClick={() => remove(m)}
+                  title="Remove"
+                  style={{ textDecoration: "none", fontSize: 14 }}
+                >
+                  ✕
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   )
 }
@@ -385,8 +687,10 @@ function Sidebar({
   total,
   favCount,
   tags,
+  collections,
   filter,
   onPick,
+  onCreateCollection,
   onToggleRail,
   onClose,
   onSettings,
@@ -397,13 +701,23 @@ function Sidebar({
   total: number
   favCount: number
   tags: TagCount[]
+  collections: Collection[]
   filter: Filter
   onPick: (f: Filter) => void
+  onCreateCollection: (title: string) => void
   onToggleRail: () => void
   onClose: () => void
   onSettings: () => void
 }) {
   const cls = drawer ? `side side-drawer${open ? " open" : ""}` : `side${rail ? " rail" : ""}`
+  const [creating, setCreating] = useState(false)
+  const [name, setName] = useState("")
+  const submit = () => {
+    const t = name.trim()
+    if (t) onCreateCollection(t)
+    setName("")
+    setCreating(false)
+  }
   return (
     <aside className={cls} aria-label="Browse">
       <div className="side-lbl">Library</div>
@@ -425,6 +739,59 @@ function Sidebar({
         <span className="lbl">Favorites</span>
         <span className="n">{favCount}</span>
       </button>
+
+      <div className="side-lbl" style={{ display: "flex", alignItems: "center" }}>
+        <span className="lbl" style={{ flex: 1 }}>
+          Collections
+        </span>
+        <button
+          className="lbl"
+          onClick={() => setCreating((v) => !v)}
+          title="New collection"
+          style={{
+            border: 0,
+            background: "transparent",
+            color: "var(--accent-ink, var(--ac))",
+            cursor: "pointer",
+            fontSize: 13,
+            padding: 0,
+          }}
+        >
+          ＋
+        </button>
+      </div>
+      {creating && (
+        <input
+          className="input lbl"
+          value={name}
+          autoFocus
+          placeholder="Collection name…"
+          onChange={(e) => setName(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") submit()
+            if (e.key === "Escape") {
+              setCreating(false)
+              setName("")
+            }
+          }}
+          onBlur={submit}
+          style={{ margin: "2px 4px 6px", padding: "6px 9px", fontSize: 13 }}
+        />
+      )}
+      {collections.map((col) => (
+        <button
+          key={col.id}
+          className={`side-item${filter.kind === "collection" && filter.id === col.id ? " on" : ""}`}
+          onClick={() => onPick({ kind: "collection", id: col.id, title: col.title })}
+          title={col.title}
+        >
+          <span className="ic">📁</span>
+          <span className="lbl" style={{ overflow: "hidden", textOverflow: "ellipsis" }}>
+            {col.title}
+          </span>
+          <span className="n">{col.count}</span>
+        </button>
+      ))}
 
       {tags.length > 0 && (
         <>
@@ -486,7 +853,9 @@ function EmptyState({ filter, query }: { filter: Filter; query: string }) {
       ? "No favorites yet. Tap the ☆ on any artifact to star it."
       : filter.kind === "tag"
         ? `Nothing tagged #${filter.tag} yet.`
-        : "Nothing yet. Publish above, or run dock publish ./file."
+        : filter.kind === "collection"
+          ? "This collection is empty. Open an artifact and add it from the 📁 menu."
+          : "Nothing yet. Publish above, or run dock publish ./file."
   return (
     <div
       className="muted"
