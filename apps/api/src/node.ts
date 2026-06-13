@@ -98,7 +98,15 @@ const app = createApp({
 if (cfg.serveWeb) {
   const webRoot = relative(process.cwd(), cfg.webDir) || "."
   const shellHtml = readFileSync(cfg.webShell, "utf8")
-  app.use("/assets/*", serveStatic({ root: webRoot }))
+  // Vite's /assets/* are content-hashed, so the bytes behind a URL never change
+  // — cache them hard (a year, immutable). A new build emits new hashes.
+  app.use(
+    "/assets/*",
+    serveStatic({
+      root: webRoot,
+      onFound: (_path, c) => c.header("Cache-Control", "public, max-age=31536000, immutable"),
+    }),
+  )
   // Root-level static files Vite emits (favicon, manifest, etc.).
   app.get("/:file{[^/]+\\.[^/]+}", serveStatic({ root: webRoot }))
   app.notFound((c) => {
