@@ -35,6 +35,21 @@ export interface NewCommentArgs {
   anchor?: unknown
 }
 
+export interface VersionJson {
+  n: number
+  author: string
+  message: string | null
+  name: string | null
+  created_at: string
+}
+export interface SessionJson {
+  n: number
+  from_n: number
+  count: number
+  author: string
+  name: string | null
+  created_at: string
+}
 export interface ArtifactJson {
   short_id: string
   url: string
@@ -42,7 +57,27 @@ export interface ArtifactJson {
   kind: "file" | "bundle"
   visibility: string
   current_version: number
-  versions: { n: number; author: string; message: string | null; created_at: string }[]
+  versions: VersionJson[]
+  /** Time-grouped version view (newest-first); present on the detail endpoint. */
+  sessions?: SessionJson[]
+}
+
+export interface DiffOpJson {
+  t: "ctx" | "add" | "del"
+  line: string
+}
+export interface DiffJson {
+  from: number
+  to: number
+  ops: DiffOpJson[]
+}
+
+export interface ViewStatsJson {
+  total: number
+  unique: number
+  perVersion: { version: number; count: number }[]
+  daily: { day: string; count: number }[]
+  recent: { viewer: string; kind: "user" | "anon"; at: string }[]
 }
 
 export interface DockClient {
@@ -51,6 +86,14 @@ export interface DockClient {
   getContent(shortId: string, version?: number): Promise<string>
   listComments(shortId: string, state?: "open" | "resolved"): Promise<CommentJson[]>
   createComment(shortId: string, args: NewCommentArgs): Promise<CommentJson>
+  /** Resolve or reopen the thread a comment belongs to. */
+  setThreadState(shortId: string, commentId: string, state: "resolved" | "open"): Promise<void>
+  /** Line diff between two versions (defaults: current-1 → current). */
+  diff(shortId: string, from?: number, to?: number): Promise<DiffJson>
+  /** Restore a past version as a new current revision. */
+  restore(shortId: string, version: number): Promise<ArtifactJson>
+  /** Aggregated view analytics. */
+  viewStats(shortId: string): Promise<ViewStatsJson>
 }
 
 export interface ClientOptions {
@@ -119,6 +162,41 @@ export function createClient(opts: ClientOptions): DockClient {
           body: JSON.stringify(args),
         }),
       ) as Promise<CommentJson>
+    },
+
+    async setThreadState(shortId, commentId, state) {
+      await ok(
+        await f(`${base}/v1/artifacts/${shortId}/comments/${commentId}/resolve`, {
+          method: "POST",
+          headers: { ...authHeaders, "content-type": "application/json" },
+          body: JSON.stringify({ state }),
+        }),
+      )
+    },
+
+    async diff(shortId, from, to) {
+      const q = new URLSearchParams({ format: "json" })
+      if (from != null) q.set("from", String(from))
+      if (to != null) q.set("to", String(to))
+      return ok(
+        await f(`${base}/v1/artifacts/${shortId}/diff?${q}`, { headers: authHeaders }),
+      ) as Promise<DiffJson>
+    },
+
+    async restore(shortId, version) {
+      return ok(
+        await f(`${base}/v1/artifacts/${shortId}/restore`, {
+          method: "POST",
+          headers: { ...authHeaders, "content-type": "application/json" },
+          body: JSON.stringify({ version }),
+        }),
+      ) as Promise<ArtifactJson>
+    },
+
+    async viewStats(shortId) {
+      return ok(
+        await f(`${base}/v1/artifacts/${shortId}/analytics`, { headers: authHeaders }),
+      ) as Promise<ViewStatsJson>
     },
   }
 }

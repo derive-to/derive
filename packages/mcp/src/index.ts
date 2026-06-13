@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs"
+import { fileURLToPath } from "node:url"
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod"
@@ -7,6 +9,15 @@ const client = createClient({
   baseUrl: process.env.DOCK_SERVER ?? "http://localhost:8080",
   token: process.env.DOCK_TOKEN,
 })
+
+// The agent guide, served as an MCP resource (single source: SKILL.md).
+const GUIDE = (() => {
+  try {
+    return readFileSync(fileURLToPath(new URL("../SKILL.md", import.meta.url)), "utf8")
+  } catch {
+    return "# Dock\nPublish, read comments, revise, reply, resolve via the dock tools."
+  }
+})()
 
 const server = new McpServer({ name: "dock", version: "0.1.0" })
 
@@ -108,6 +119,94 @@ server.registerTool(
     const c = await client.createComment(short_id, { thread_id, body_md, author: "agent" })
     return text(`Replied in thread ${c.thread_id} (comment ${c.id}).`)
   },
+)
+
+server.registerTool(
+  "add_comment",
+  {
+    description:
+      "Leave new feedback as a new thread. Optionally anchor it to a quoted span of the rendered text.",
+    inputSchema: {
+      short_id: z.string(),
+      body_md: z.string(),
+      quote: z.string().optional().describe("Exact text to anchor the comment to."),
+    },
+  },
+  async ({ short_id, body_md, quote }) => {
+    const anchor = quote ? { type: "TextQuoteSelector", exact: quote } : undefined
+    const c = await client.createComment(short_id, { body_md, anchor, author: "agent" })
+    return text(`Commented (thread ${c.thread_id}, comment ${c.id})${quote ? ` on “${quote}”` : ""}.`)
+  },
+)
+
+server.registerTool(
+  "resolve_thread",
+  {
+    description: "Resolve (or reopen) the thread a comment belongs to, once feedback is handled.",
+    inputSchema: {
+      short_id: z.string(),
+      comment_id: z.string(),
+      state: z.enum(["resolved", "open"]).default("resolved"),
+    },
+  },
+  async ({ short_id, comment_id, state }) => {
+    await client.setThreadState(short_id, comment_id, state)
+    return text(`Thread ${state === "resolved" ? "resolved" : "reopened"}.`)
+  },
+)
+
+server.registerTool(
+  "diff_versions",
+  {
+    description: "Show what changed between two versions (defaults to previous → current).",
+    inputSchema: {
+      short_id: z.string(),
+      from: z.number().int().optional(),
+      to: z.number().int().optional(),
+    },
+  },
+  async ({ short_id, from, to }) => {
+    const d = await client.diff(short_id, from, to)
+    const body = d.ops
+      .map((o) => `${o.t === "add" ? "+" : o.t === "del" ? "-" : " "} ${o.line}`)
+      .join("\n")
+    const adds = d.ops.filter((o) => o.t === "add").length
+    const dels = d.ops.filter((o) => o.t === "del").length
+    return text(`diff v${d.from} → v${d.to}  (+${adds} -${dels})\n\n${body}`)
+  },
+)
+
+server.registerTool(
+  "restore_version",
+  {
+    description: "Restore a past version as a new current revision (history is not rewritten).",
+    inputSchema: { short_id: z.string(), version: z.number().int() },
+  },
+  async ({ short_id, version }) => {
+    const a = await client.restore(short_id, version)
+    return text(`Restored v${version} → ${a.url} is now v${a.current_version}.`)
+  },
+)
+
+server.registerTool(
+  "view_stats",
+  {
+    description: "Read view analytics for an artifact (total, unique viewers, per-version).",
+    inputSchema: { short_id: z.string() },
+  },
+  async ({ short_id }) => {
+    const s = await client.viewStats(short_id)
+    const perV = s.perVersion.map((v) => `v${v.version}: ${v.count}`).join(", ")
+    return text(`${s.total} views · ${s.unique} unique${perV ? `\nby version — ${perV}` : ""}`)
+  },
+)
+
+// Expose the agent loop as an MCP resource so any client can read the conventions.
+server.registerResource(
+  "dock-guide",
+  "dock://guide",
+  { title: "Dock agent guide", description: "How to run the publish → review → revise loop.", mimeType: "text/markdown" },
+  async (uri) => ({ contents: [{ uri: uri.href, mimeType: "text/markdown", text: GUIDE }] }),
 )
 
 await server.connect(new StdioServerTransport())

@@ -83,7 +83,11 @@ Point an agent at a Dock server over MCP (stdio):
 DOCK_SERVER=http://localhost:8080 pnpm --filter @dock/mcp start
 ```
 
-Tools: `publish_artifact`, `publish_version` (with `resolves`), `get_artifact` (source read-back), `list_versions`, `list_comments`, `reply_comment`.
+Tools: `publish_artifact`, `publish_version` (with `resolves`), `get_artifact`
+(source read-back), `list_versions`, `diff_versions`, `restore_version`,
+`list_comments`, `add_comment` (with a `quote` anchor), `reply_comment`,
+`resolve_thread`, `view_stats`. The `dock://guide` resource serves the full
+publish → review → revise loop (also in [packages/mcp/SKILL.md](packages/mcp/SKILL.md)).
 
 ## Live updates
 
