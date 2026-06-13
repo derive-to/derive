@@ -1164,3 +1164,23 @@ describe("server-side search + cursor pagination", () => {
     expect(r.tags.find((t: { tag: string }) => t.tag === "summaryfilter")?.count).toBe(1)
   })
 })
+
+describe("single-container web serving", () => {
+  it("serves the API landing at / by default", async () => {
+    const r = await app.request("/")
+    expect(r.status).toBe(200)
+    expect(await r.text()).toContain("open home for AI-generated artifacts")
+  })
+
+  it("drops the / placeholder when serveWeb is set, so the bundled SPA owns the shell", async () => {
+    const webApp = createApp({
+      meta,
+      blobs: new FsBlobStore(join(dir, "blobs")),
+      baseUrl: "http://dock.test",
+      serveWeb: true,
+    })
+    // No placeholder here; the Node entry's static + index.html fallback (added
+    // around createApp when a build is present) is what answers `/` in prod.
+    expect((await webApp.request("/")).status).toBe(404)
+  })
+})

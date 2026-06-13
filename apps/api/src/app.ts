@@ -121,6 +121,12 @@ export interface AppDeps {
   defaultRole?: Role
   /** In-memory per-IP rate limiting on auth + mutating routes. Off by default. */
   rateLimit?: boolean
+  /**
+   * The web SPA is served from this same process (single-container self-host).
+   * When true, the bare `/` placeholder is dropped so the bundled SPA's index
+   * owns the app shell; the Node entry wires the static + fallback middleware.
+   */
+  serveWeb?: boolean
 }
 
 /** The single workspace (multi-workspace is a later layer). */
@@ -348,15 +354,18 @@ export function createApp(deps: AppDeps): Hono {
 
   app.get("/healthz", (c) => c.json({ ok: true }))
 
-  app.get("/", (c) =>
-    c.html(
-      `<!doctype html><meta charset="utf-8"><title>Dock</title>
+  // A minimal API-origin landing. Skipped when the SPA is bundled in-process
+  // (serveWeb) so the app's own home page owns `/`.
+  if (!deps.serveWeb)
+    app.get("/", (c) =>
+      c.html(
+        `<!doctype html><meta charset="utf-8"><title>Dock</title>
 <body style="font:16px/1.6 system-ui;background:#f6f0e3;color:#2a2540;display:grid;place-items:center;height:100vh;margin:0">
 <div style="text-align:center"><h1 style="letter-spacing:-.02em">Dock</h1>
 <p>An open home for AI-generated artifacts.<br>
 <code style="background:#eee7d6;padding:2px 8px;border-radius:6px">dock publish ./your-thing</code></p></div>`,
-    ),
-  )
+      ),
+    )
 
   app.get("/v1/me", async (c) => {
     const u = await currentUser(c)

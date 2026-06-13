@@ -1,4 +1,5 @@
-# Default: zero external dependencies — sqlite + local blobs in one volume.
+# The whole app (API + web + sandboxed viewer) in one container: zero external
+# dependencies — SQLite + local blobs in one volume. Open http://localhost:8080.
 # Uncomment DATABASE_URL / OBJECT_STORE_URL to use Postgres + S3/R2 instead.
 services:
   dock:
@@ -11,6 +12,8 @@ services:
       - dock-data:/data
     environment:
       BASE_URL: http://localhost:8080
+      # Set a stable session secret in production (any 32-byte hex):
+      # DOCK_AUTH_SECRET: change-me
       # DATABASE_URL: postgres://...
       # OBJECT_STORE_URL: s3://...
 

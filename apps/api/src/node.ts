@@ -1,12 +1,13 @@
 import { randomBytes } from "node:crypto"
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
-import { join } from "node:path"
+import { join, relative, resolve } from "node:path"
 import type { BlobStore, MetaStore } from "@dock/core"
 import { PgMetaStore } from "@dock/db/pg"
 import { SqliteMetaStore } from "@dock/db/sqlite"
 import { FsBlobStore } from "@dock/storage/fs"
 import { s3FromUrl } from "@dock/storage/s3"
 import { serve } from "@hono/node-server"
+import { serveStatic } from "@hono/node-server/serve-static"
 import Database from "better-sqlite3"
 import { Pool } from "pg"
 import { createApp } from "./app"
@@ -17,6 +18,18 @@ const PORT = Number(process.env.PORT ?? 8080)
 const DATA_DIR = process.env.DATA_DIR ?? "./data"
 const BASE_URL = process.env.BASE_URL ?? `http://localhost:${PORT}`
 const DATABASE_URL = process.env.DATABASE_URL
+
+// Single-container self-host: when the web SPA has been built (Docker image, or
+// `pnpm --filter @dock/web build` locally), this same process serves it so the
+// whole app lives at one origin — no CDN, no CORS, no cross-site cookies.
+// DOCK_WEB_DIR overrides; default is the build output relative to this file.
+const WEB_DIR = resolve(
+  process.env.DOCK_WEB_DIR ?? join(import.meta.dirname, "../../web/dist/client"),
+)
+// TanStack Start's SPA build emits `_shell.html` (the prerendered shell every
+// route hydrates from), not index.html.
+const WEB_SHELL = join(WEB_DIR, "_shell.html")
+const SERVE_WEB = existsSync(WEB_SHELL)
 
 mkdirSync(join(DATA_DIR, "blobs"), { recursive: true })
 
@@ -79,10 +92,29 @@ const app = createApp({
   webOrigins,
   analytics: process.env.DOCK_ANALYTICS !== "false",
   rateLimit: process.env.DOCK_RATE_LIMIT !== "false",
+  serveWeb: SERVE_WEB,
   versionWindowMs: process.env.DOCK_VERSION_WINDOW
     ? Number(process.env.DOCK_VERSION_WINDOW) * 60_000
     : undefined,
 })
+
+// Serve the bundled SPA from this process (single-container self-host). The API
+// routes above always win; static assets are served by hash (immutable), and any
+// other GET that isn't an API/asset path falls back to index.html so the client
+// router can take over (deep links, refresh). serveStatic roots are cwd-relative.
+if (SERVE_WEB) {
+  const webRoot = relative(process.cwd(), WEB_DIR) || "."
+  const shellHtml = readFileSync(WEB_SHELL, "utf8")
+  app.use("/assets/*", serveStatic({ root: webRoot }))
+  // Root-level static files Vite emits (favicon, manifest, etc.).
+  app.get("/:file{[^/]+\\.[^/]+}", serveStatic({ root: webRoot }))
+  app.notFound((c) => {
+    const p = c.req.path
+    if (p.startsWith("/v1") || p.startsWith("/api") || p.startsWith("/raw") || p === "/healthz")
+      return c.json({ error: "not found" }, 404)
+    return c.html(shellHtml)
+  })
+}
 
 // The webhook outbox worker delivers queued events with retries + backoff.
 startWebhookWorker(meta)
@@ -95,5 +127,6 @@ serve({ fetch: app.fetch, port: PORT }, () => {
   console.log(`  meta:    ${metaDesc}`)
   console.log(`  blobs:   ${blobDesc}`)
   console.log(`  auth:    /api/auth/* (Better Auth)`)
+  console.log(`  web:     ${SERVE_WEB ? `bundled SPA at ${BASE_URL}` : "not bundled (API only)"}`)
   console.log(`  publish: dock publish <file|dir> --server ${BASE_URL}`)
 })
