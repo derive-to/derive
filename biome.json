@@ -15,6 +15,7 @@
       "!**/.output",
       "!**/.vinxi",
       "!data",
+      "!docs/**",
       "!pnpm-lock.yaml"
     ]
   },
@@ -34,6 +35,9 @@
     }
   },
   "css": {
+    "parser": {
+      "tailwindDirectives": true
+    },
     "formatter": {
       "enabled": false
     }
