@@ -5,6 +5,7 @@ import type {
   CommentState,
   DeliveryRecord,
   DeliveryStatus,
+  ListArtifactsOpts,
   MembershipRecord,
   MetaStore,
   NewArtifact,
@@ -24,7 +25,7 @@ import type {
   WebhookRecord,
 } from "@dock/core"
 import Database from "better-sqlite3"
-import { and, asc, count, desc, eq, inArray, isNull, lte, or } from "drizzle-orm"
+import { and, asc, count, desc, eq, inArray, isNull, like, lt, lte, or, sql } from "drizzle-orm"
 import { type BetterSQLite3Database, drizzle } from "drizzle-orm/better-sqlite3"
 import {
   artifact,
@@ -159,9 +160,37 @@ export class SqliteMetaStore implements MetaStore {
     return res.changes
   }
 
-  async listArtifacts(opts?: { limit?: number }): Promise<ArtifactRecord[]> {
-    const q = this.db.select().from(artifact).orderBy(desc(artifact.created_at))
-    return opts?.limit ? q.limit(opts.limit).all() : q.all()
+  async listArtifacts(opts?: ListArtifactsOpts): Promise<ArtifactRecord[]> {
+    if (opts?.ids && opts.ids.length === 0) return []
+    const conds = []
+    if (opts?.q) conds.push(like(sql`lower(${artifact.title})`, `%${opts.q.toLowerCase()}%`))
+    if (opts?.cursor) conds.push(lt(artifact.created_at, opts.cursor))
+    if (opts?.ids) conds.push(inArray(artifact.id, opts.ids))
+    const rows = this.db
+      .select()
+      .from(artifact)
+      .where(conds.length ? and(...conds) : undefined)
+      .orderBy(desc(artifact.created_at))
+    return opts?.limit ? rows.limit(opts.limit).all() : rows.all()
+  }
+  async artifactIdsByTag(tag: string): Promise<string[]> {
+    return this.db
+      .select({ id: artifactTag.artifact_id })
+      .from(artifactTag)
+      .where(eq(artifactTag.tag, tag))
+      .all()
+      .map((r) => r.id)
+  }
+  async countArtifacts(): Promise<number> {
+    return this.db.select({ c: count() }).from(artifact).get()?.c ?? 0
+  }
+  async tagCounts(): Promise<{ tag: string; count: number }[]> {
+    return this.db
+      .select({ tag: artifactTag.tag, count: count() })
+      .from(artifactTag)
+      .groupBy(artifactTag.tag)
+      .orderBy(asc(artifactTag.tag))
+      .all()
   }
 
   async recordView(v: NewView): Promise<void> {
