@@ -1,6 +1,6 @@
 import { useNavigate } from "@tanstack/react-router"
 import { useEffect, useState } from "react"
-import { api, type Delivery, type Webhook } from "../api"
+import { type Agent, api, type Delivery, type Role, type Webhook } from "../api"
 import { Header, useToast } from "../components"
 import { useAuth } from "../ctx"
 
@@ -11,6 +11,7 @@ export function Settings() {
   const nav = useNavigate()
   const { toast, show } = useToast()
   const [hooks, setHooks] = useState<Webhook[] | null>(null)
+  const [agents, setAgents] = useState<Agent[] | null>(null)
 
   useEffect(() => {
     if (!loading && !me) nav({ to: "/login" })
@@ -20,8 +21,16 @@ export function Settings() {
       .listWebhooks()
       .then((r) => setHooks(r.webhooks))
       .catch(() => setHooks([]))
+  const loadAgents = () =>
+    api
+      .listAgents()
+      .then((r) => setAgents(r.agents))
+      .catch(() => setAgents([]))
   useEffect(() => {
-    if (me) load()
+    if (me) {
+      load()
+      loadAgents()
+    }
   }, [me])
 
   if (!me)
@@ -97,8 +106,213 @@ export function Settings() {
             )}
           </div>
         </section>
+
+        <section style={{ marginTop: 38 }}>
+          <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 4 }}>
+            <h3 className="display" style={{ fontSize: 16, margin: 0 }}>
+              Agents
+            </h3>
+            <span className="muted" style={{ fontSize: 13 }}>
+              · {agents?.length ?? 0}
+            </span>
+          </div>
+          <p className="muted" style={{ fontSize: 13, margin: "0 0 16px" }}>
+            Register an agent so people can <code className="mono">@mention</code> it in a thread.
+            It gets a scoped token and acts as a commenter — it can propose changes for review, but
+            a human still approves. The agent reads its mentions from{" "}
+            <code className="mono">GET /v1/agent/inbox</code> with its token.
+          </p>
+
+          <NewAgent
+            onCreated={(msg) => {
+              show(msg)
+              loadAgents()
+            }}
+          />
+
+          <div style={{ marginTop: 18, display: "flex", flexDirection: "column", gap: 11 }}>
+            {agents === null ? (
+              <div className="center" style={{ height: 80 }}>
+                <div className="spin" />
+              </div>
+            ) : agents.length === 0 ? (
+              <div
+                className="muted"
+                style={{
+                  textAlign: "center",
+                  padding: 28,
+                  border: "1px dashed var(--line)",
+                  borderRadius: 12,
+                  fontSize: 13,
+                }}
+              >
+                No agents yet. Add one above.
+              </div>
+            ) : (
+              agents.map((a) => (
+                <AgentRow
+                  key={a.id}
+                  agent={a}
+                  onChanged={(m) => {
+                    show(m)
+                    loadAgents()
+                  }}
+                  onError={show}
+                />
+              ))
+            )}
+          </div>
+        </section>
       </main>
       {toast}
+    </div>
+  )
+}
+
+function NewAgent({ onCreated }: { onCreated: (msg: string) => void }) {
+  const [name, setName] = useState("")
+  const [role, setRole] = useState<Role>("commenter")
+  const [busy, setBusy] = useState(false)
+  const [created, setCreated] = useState<{ name: string; token: string } | null>(null)
+
+  const add = async () => {
+    if (!name.trim()) return
+    setBusy(true)
+    try {
+      const a = await api.createAgent(name.trim(), role)
+      setCreated({ name: a.name, token: a.token })
+      setName("")
+      onCreated(`Agent ${a.name} created`)
+    } catch (e) {
+      onCreated((e as Error).message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="card" style={{ padding: 16 }}>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <input
+          className="input"
+          placeholder="Agent name (e.g. Claude)"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          style={{ flex: 1, minWidth: 180 }}
+        />
+        <select
+          className="input"
+          value={role}
+          onChange={(e) => setRole(e.target.value as Role)}
+          style={{ width: 150 }}
+        >
+          <option value="commenter">Commenter (propose)</option>
+          <option value="editor">Editor (publish)</option>
+        </select>
+        <button className="btn pri" onClick={add} disabled={busy || !name.trim()}>
+          {busy ? "Adding…" : "Add agent"}
+        </button>
+      </div>
+      {/* The token is shown exactly once, right after creation. */}
+      {created && (
+        <div
+          style={{
+            marginTop: 12,
+            padding: "11px 13px",
+            background: "var(--ac-soft)",
+            border: "1px solid var(--ac)",
+            borderRadius: 10,
+          }}
+        >
+          <div style={{ fontSize: 12.5, fontWeight: 600, marginBottom: 6 }}>
+            Token for {created.name} — copy it now, it won't be shown again.
+          </div>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <code
+              className="mono"
+              style={{
+                flex: 1,
+                fontSize: 11.5,
+                wordBreak: "break-all",
+                background: "var(--card)",
+                padding: "7px 9px",
+                borderRadius: 7,
+                border: "1px solid var(--line)",
+              }}
+            >
+              {created.token}
+            </code>
+            <button
+              className="btn sm"
+              onClick={() => {
+                navigator.clipboard?.writeText(created.token)
+                onCreated("Token copied")
+              }}
+            >
+              Copy
+            </button>
+            <button className="btn sm" onClick={() => setCreated(null)}>
+              Done
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function AgentRow({
+  agent,
+  onChanged,
+  onError,
+}: {
+  agent: Agent
+  onChanged: (msg: string) => void
+  onError: (msg: string) => void
+}) {
+  const [busy, setBusy] = useState(false)
+  const remove = async () => {
+    if (!confirm(`Remove agent ${agent.name}? Its token stops working.`)) return
+    setBusy(true)
+    try {
+      await api.deleteAgent(agent.id)
+      onChanged(`Agent ${agent.name} removed`)
+    } catch (e) {
+      onError((e as Error).message)
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <div
+      className="card"
+      style={{ padding: "12px 15px", display: "flex", alignItems: "center", gap: 12 }}
+    >
+      <span style={{ fontSize: 16 }}>🤖</span>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 14, fontWeight: 600 }}>
+          @{agent.name}{" "}
+          <span
+            className="mono"
+            style={{
+              fontSize: 10,
+              fontWeight: 700,
+              color: "var(--ac)",
+              background: "var(--ac-soft)",
+              borderRadius: 999,
+              padding: "1px 7px",
+            }}
+          >
+            {agent.role}
+          </span>
+        </div>
+        <div className="muted" style={{ fontSize: 11.5 }}>
+          Mention it in any thread to send it work.
+        </div>
+      </div>
+      <button className="btn sm" onClick={remove} disabled={busy} title="Remove agent">
+        Remove
+      </button>
     </div>
   )
 }
