@@ -44,7 +44,7 @@
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.0",
-    "knip": "^5.64.4",
-    "typescript": "^5.9.3"
+    "knip": "^6.16.1",
+    "typescript": "^6.0.3"
   }
 }
