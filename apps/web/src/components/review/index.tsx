@@ -66,6 +66,7 @@ export function ReviewOverlay({
       })
       .catch(() => {})
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: reload is keyed to shortId; onClose (which load may call) is not a refetch trigger.
   useEffect(() => {
     load()
   }, [shortId])
@@ -73,6 +74,7 @@ export function ReviewOverlay({
   // Refetch the detail when the selection changes OR when the selected proposal's
   // state flips (just approved / changes-requested), so the note + badge update.
   const activeState = proposals.find((p) => p.id === activeId)?.state
+  // biome-ignore lint/correctness/useExhaustiveDependencies: activeState is an intentional trigger so the detail refetches when the selected proposal's state flips.
   useEffect(() => {
     if (activeId)
       api

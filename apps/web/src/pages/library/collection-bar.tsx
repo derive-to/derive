@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react"
+import { Icon } from "@/components/icons"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 
@@ -29,7 +30,7 @@ export function CollectionBar({
 
   return (
     <div className="mb-4 flex flex-wrap items-center gap-2.5 border-b border-border-soft pb-3.5">
-      <span className="text-xl">📁</span>
+      <Icon name="collection" size={20} />
       {renaming ? (
         <Input
           value={draft}
@@ -56,7 +57,7 @@ export function CollectionBar({
         onClick={onShare}
         title="Share this collection"
       >
-        🔗 Share
+        <Icon name="share" size={15} /> Share
       </Button>
       <Button
         variant="outline"

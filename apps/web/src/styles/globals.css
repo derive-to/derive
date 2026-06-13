@@ -33,6 +33,15 @@
   --color-destructive-foreground: #fff;
   --color-success: var(--good);
   --color-gold: #e0a93a;
+  /* Playful icon accents — fixed brights that read on all four themes, surfaced
+     as text-share / text-comments / … utilities that the <Icon> component applies
+     (color stays a token, never a raw hex in tsx; see check-design-tokens.mjs). */
+  --color-share: #7c6cf0;
+  --color-comments: #3b9ed8;
+  --color-tag: #16b3a7;
+  --color-collection: #f0883a;
+  --color-insights: #46b1f0;
+  --color-review: #52a544;
   --color-border: var(--line);
   --color-border-soft: var(--line-soft);
   --color-input: var(--line);

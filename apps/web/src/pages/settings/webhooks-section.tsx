@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import { api, type Delivery, type Webhook } from "@/api"
 import { EmptyState } from "@/components/shared/empty-state"
 import { Spinner } from "@/components/shared/spinner"
@@ -10,14 +10,17 @@ import { ALL_EVENTS, selectClass } from "./roles"
 
 export function WebhooksSection({ show }: { show: (m: string) => void }) {
   const [hooks, setHooks] = useState<Webhook[] | null>(null)
-  const load = () =>
-    api
-      .listWebhooks()
-      .then((r) => setHooks(r.webhooks))
-      .catch(() => setHooks([]))
+  const load = useCallback(
+    () =>
+      api
+        .listWebhooks()
+        .then((r) => setHooks(r.webhooks))
+        .catch(() => setHooks([])),
+    [],
+  )
   useEffect(() => {
     load()
-  }, [])
+  }, [load])
 
   return (
     <section>

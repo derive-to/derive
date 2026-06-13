@@ -1,17 +1,22 @@
 import { useNavigate } from "@tanstack/react-router"
-import { Bell } from "lucide-react"
 import { useCallback, useEffect, useState } from "react"
 import { api, type Notification } from "@/api"
-import { Button } from "@/components/ui/button"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { useAuth } from "@/ctx"
 import { ago } from "@/lib/time"
 import { cn } from "@/lib/utils"
+import { Icon } from "./icons"
 
-// Header bell: unread badge + a panel of recent @mentions, kept live over SSE.
-// Clicking an item deep-links to its comment thread (?c=) and marks it read.
-// Built on the Popover primitive — outside-click, Escape and focus are handled.
-export function NotificationBell() {
+// Nav-rail row classes (kept in sync with NavRail's SideItem so notifications +
+// settings sit flush with the nav items above them).
+const ROW =
+  "flex w-full items-center gap-2.5 whitespace-nowrap rounded-[9px] px-2.5 py-2 text-left text-sm font-semibold text-foreground transition-colors hover:bg-hover"
+const ROW_RAIL = "justify-center px-0 py-2.5"
+
+// Notifications: an unread badge + a panel of recent @mentions, kept live over
+// SSE. Lives at the foot of the nav rail; clicking an item deep-links to its
+// comment thread (?c=) and marks it read. Built on the Popover primitive.
+export function NotificationBell({ collapsed }: { collapsed?: boolean }) {
   const { me } = useAuth()
   const nav = useNavigate()
   const [items, setItems] = useState<Notification[]>([])
@@ -64,23 +69,30 @@ export function NotificationBell() {
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
-        <Button
-          variant="outline"
-          size="icon"
-          className="relative"
-          title="Notifications"
+        <button
+          type="button"
           data-testid="notif-bell"
+          title="Notifications"
           aria-label={unread > 0 ? `Notifications, ${unread} unread` : "Notifications"}
+          className={cn(ROW, collapsed && ROW_RAIL)}
         >
-          <Bell className="size-4" />
-          {unread > 0 && (
-            <span className="absolute -right-1.5 -top-1.5 grid h-4 min-w-4 place-items-center rounded-full px-1 bg-primary font-mono text-2xs font-bold text-primary-foreground ring-2 ring-card">
+          <span className="relative flex w-[18px] shrink-0 items-center justify-center">
+            <Icon name="bell" size={18} />
+            {collapsed && unread > 0 && (
+              <span className="absolute -right-2 -top-2 grid h-4 min-w-4 place-items-center rounded-full bg-primary px-1 font-mono text-2xs font-bold text-primary-foreground ring-2 ring-card">
+                {unread > 9 ? "9+" : unread}
+              </span>
+            )}
+          </span>
+          {!collapsed && <span className="overflow-hidden text-ellipsis">Notifications</span>}
+          {!collapsed && unread > 0 && (
+            <span className="ml-auto font-mono text-2xs text-muted-foreground">
               {unread > 9 ? "9+" : unread}
             </span>
           )}
-        </Button>
+        </button>
       </PopoverTrigger>
-      <PopoverContent className="w-[330px] overflow-hidden p-0">
+      <PopoverContent side="right" align="end" className="w-[330px] overflow-hidden p-0">
         <div className="flex items-center justify-between border-b border-border-soft px-3 py-2.5">
           <span className="text-sm font-semibold">Notifications</span>
           {unread > 0 && (
