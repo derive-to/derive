@@ -1,4 +1,5 @@
 import { type Context, Hono } from "hono"
+import { compress } from "hono/compress"
 import { type AppDeps, buildContext } from "./context"
 import { corsFor } from "./lib/http"
 import { makeRateLimiter } from "./lib/rate-limit"
@@ -32,6 +33,16 @@ export type { AppDeps }
 export function createApp(deps: AppDeps): Hono {
   const ctx = buildContext(deps)
   const app = new Hono()
+
+  // gzip everything (Node/Fly entry only — the Worker edge compresses already).
+  // Registered first so it wraps every downstream response; honors Accept-Encoding
+  // and skips already-small bodies. Exception: the SSE streams (paths ending in
+  // /events) — gzip buffers the stream and would stall real-time delivery, so they
+  // pass through uncompressed.
+  if (deps.compress) {
+    const gzip = compress()
+    app.use("*", (c, next) => (c.req.path.endsWith("/events") ? next() : gzip(c, next)))
+  }
 
   // Uncaught errors become a consistent JSON 500 (never a stack trace to the
   // client) and a structured server log line.

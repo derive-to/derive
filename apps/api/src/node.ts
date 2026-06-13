@@ -74,6 +74,9 @@ const app = createApp({
   analytics: cfg.analytics,
   rateLimit: cfg.rateLimit,
   serveWeb: cfg.serveWeb,
+  // Fly gives HTTP/2 but doesn't compress; gzip here. (The Worker edge does its
+  // own compression, so worker.ts leaves this off.)
+  compress: true,
   defaultOrgId: defaultOrg,
   // Origin isolation: serve artifact bytes from a separate registrable domain
   // pointed at this same container. Keeps user HTML off the app's cookie origin.
