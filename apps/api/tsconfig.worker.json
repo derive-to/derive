@@ -5,5 +5,5 @@
     "types": ["@cloudflare/workers-types", "node"],
     "skipLibCheck": true
   },
-  "include": ["src/worker.ts"]
+  "include": ["src/worker.ts", "src/realtime-do.ts"]
 }

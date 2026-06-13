@@ -14,8 +14,16 @@ database_id = "REPLACE_WITH_YOUR_D1_ID"
 binding = "BUCKET"
 bucket_name = "dock-blobs"
 
+[[durable_objects.bindings]]
+name = "ROOMS"
+class_name = "ArtifactRoom"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["ArtifactRoom"]
+
 # baseUrl falls back to the request origin when unset. Secured by Better Auth; set
-# DOCK_AUTH_SECRET via `wrangler secret put`. Realtime runs in-process here;
-# cross-instance fan-out on the edge is a follow-up (a Durable Object backplane).
+# DOCK_AUTH_SECRET via `wrangler secret put`. Cross-instance realtime fan-out uses
+# the ArtifactRoom Durable Object (one room per channel).
 [vars]
 DOCK_MULTI_WORKSPACE = "false"
