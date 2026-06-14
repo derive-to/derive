@@ -107,6 +107,8 @@ const app = createApp({
   // pointed at this same container. Keeps user HTML off the app's cookie origin.
   sandboxOrigin: cfg.sandboxOrigin,
   crossSite: cfg.crossSite,
+  // Vanity subdomains (domain mode): when set, name.<base> serves its artifact.
+  subdomainBase: cfg.subdomainBase,
   versionWindowMs: cfg.versionWindowMs,
   // Storage backstops: unset = unlimited (self-host stays open).
   maxArtifacts: cfg.maxArtifacts,

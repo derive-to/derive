@@ -10,6 +10,7 @@ import type {
   CommentState,
   DeliveryRecord,
   DeliveryStatus,
+  DomainRecord,
   ListArtifactsOpts,
   MembershipRecord,
   NewAgent,
@@ -21,6 +22,7 @@ import type {
   NewCollectionMember,
   NewComment,
   NewDelivery,
+  NewDomain,
   NewMembership,
   NewNotification,
   NewProposal,
@@ -53,6 +55,7 @@ import {
   collectionItem,
   collectionMember,
   comment,
+  domain,
   membership,
   notification,
   proposal,
@@ -82,6 +85,7 @@ export const schema = {
   collection,
   collectionItem,
   collectionMember,
+  domain,
   report,
   auditLog,
 }
@@ -105,6 +109,7 @@ const _schemaShapes: Shapes<typeof schema> = {
   agentMention: true,
   collection: true,
   collectionMember: true,
+  domain: true,
   report: true,
   auditLog: true,
 }
@@ -135,6 +140,8 @@ export function makeRepos(db: SqliteDb) {
   // ---- Artifacts + versions ----------------------------------------------
   const getByShortId = async (shortId: string): Promise<ArtifactRecord | null> =>
     (await db.select().from(artifact).where(eq(artifact.short_id, shortId)).get()) ?? null
+  const getArtifactById = async (id: string): Promise<ArtifactRecord | null> =>
+    (await db.select().from(artifact).where(eq(artifact.id, id)).get()) ?? null
 
   const createArtifact = async (a: NewArtifact): Promise<ArtifactRecord> => {
     await db.insert(artifact).values(a).run()
@@ -609,6 +616,24 @@ export function makeRepos(db: SqliteDb) {
         .all()
     ).map((r) => r.role)
 
+  // ---- Domains (hostname → artifact) -------------------------------------
+  const getDomain = async (host: string): Promise<DomainRecord | null> =>
+    (await db.select().from(domain).where(eq(domain.host, host)).get()) ?? null
+  // Insert-only: a taken host yields no row (the route turns that into a 409),
+  // so one workspace can never claim a host already owned by another.
+  const setDomain = async (d: NewDomain): Promise<DomainRecord | null> =>
+    ((await db.insert(domain).values(d).onConflictDoNothing().returning().get()) as
+      | DomainRecord
+      | undefined) ?? null
+  const getArtifactDomains = async (artifactId: string): Promise<DomainRecord[]> =>
+    db.select().from(domain).where(eq(domain.artifact_id, artifactId)).all()
+  const deleteDomain = async (host: string, orgId: string): Promise<void> => {
+    await db
+      .delete(domain)
+      .where(and(eq(domain.host, host), eq(domain.org_id, orgId)))
+      .run()
+  }
+
   // ---- Reviews: proposals ------------------------------------------------
   const createProposal = async (p: NewProposal): Promise<ProposalRecord> =>
     (await db.insert(proposal).values(p).returning().get()) as ProposalRecord
@@ -770,6 +795,7 @@ export function makeRepos(db: SqliteDb) {
     createArtifact,
     setVisibility,
     getByShortId,
+    getArtifactById,
     addVersion,
     listVersions,
     getVersion,
@@ -825,6 +851,10 @@ export function makeRepos(db: SqliteDb) {
     setCollectionMember,
     removeCollectionMember,
     collectionRolesForArtifact,
+    getDomain,
+    setDomain,
+    getArtifactDomains,
+    deleteDomain,
     createProposal,
     getProposal,
     listProposals,
