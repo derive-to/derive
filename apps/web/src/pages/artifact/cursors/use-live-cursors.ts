@@ -1,7 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { API_BASE } from "@/api"
 import { useCursorPref } from "@/ctx"
-import { CURSOR_FALLBACK, CURSOR_TUNING, type CursorFrame } from "@/lib/cursors"
+import {
+  CURSOR_FALLBACK,
+  CURSOR_TUNING,
+  type CursorFrame,
+  effectiveDocH,
+  placePeer,
+} from "@/lib/cursors"
 
 // All of the live-cursor realtime behaviour, kept out of the page and out of the
 // presence/comments hook:
@@ -243,7 +249,7 @@ export function useLiveCursors(shortId: string): {
         // New peer: seed the eased position at the target so it appears in place.
         // y is document-normalized, so seed cy in document pixels (eased there).
         const r = layerRef.current?.getBoundingClientRect()
-        const docH = geomRef.current.docH || r?.height || 0
+        const docH = effectiveDocH(geomRef.current.docH, r?.height ?? 0)
         targets.current.set(f.id, {
           x: f.x,
           y: f.y,
@@ -303,7 +309,7 @@ export function useLiveCursors(shortId: string): {
         // Receiver geometry: a peer's y is a fraction of the document, so map it to
         // document pixels and subtract our scroll for a screen y. Fall back to
         // viewport mapping until the frame reports real geometry.
-        const docH = geomRef.current.docH || r.height || 1
+        const docH = effectiveDocH(geomRef.current.docH, r.height)
         const scrollY = geomRef.current.scrollY || 0
         let pruned = false
         const above: PeerView[] = []
@@ -326,20 +332,19 @@ export function useLiveCursors(shortId: string): {
           t.cy += (ty - t.cy) * ease
           if (moved) t.lastMoveAt = now
           if (t.gone) t.fade = Math.max(0, t.fade - 16 / CURSOR_TUNING.leaveFadeMs)
-          const screenY = t.cy - scrollY
-          const onScreen = screenY >= 0 && screenY <= r.height
+          const place = placePeer(t.cx, t.cy, { scrollY, docH, viewH: r.height })
           if (t.el) {
-            if (onScreen) {
-              t.el.style.transform = `translate3d(${t.cx.toFixed(1)}px, ${screenY.toFixed(1)}px, 0)`
+            if (place.onScreen) {
+              t.el.style.transform = `translate3d(${place.x.toFixed(1)}px, ${place.y.toFixed(1)}px, 0)`
               t.el.style.opacity = t.gone ? t.fade.toFixed(2) : "1"
             } else {
               // Off-screen: the edge indicator stands in for this cursor.
               t.el.style.opacity = "0"
             }
           }
-          if (!onScreen && !t.gone) {
+          if (!place.onScreen && !t.gone) {
             const v: PeerView = { id, color: t.color, kind: t.kind, emoji: t.emoji, name: t.name }
-            ;(screenY < 0 ? above : below).push(v)
+            ;(place.side === "above" ? above : below).push(v)
           }
           if (t.labelEl) {
             const hideLabel = !t.gone && now - t.lastMoveAt > CURSOR_TUNING.labelIdleMs
