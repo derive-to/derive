@@ -19,10 +19,12 @@ import { Input } from "@/components/ui/input"
 import { roleLabel, roleValue, selectClass, WS_ROLES } from "./roles"
 
 export function WorkspaceSection({ meId }: { meId: string }) {
-  const { refreshWorkspaces } = useShell()
+  const { refreshWorkspaces, createWorkspace } = useShell()
   const [ws, setWs] = useState<Workspace | null>(null)
   const [name, setName] = useState("")
   const [savingName, setSavingName] = useState(false)
+  const [createOpen, setCreateOpen] = useState(false)
+  const [newName, setNewName] = useState("")
   const [email, setEmail] = useState("")
   const [addRole, setAddRole] = useState<Role>("commenter")
   const [adding, setAdding] = useState(false)
@@ -45,6 +47,17 @@ export function WorkspaceSection({ meId }: { meId: string }) {
   }, [load])
 
   const isAdmin = ws?.role === "owner"
+
+  // Create a brand-new workspace. Lives here (a deliberate, infrequent action)
+  // rather than in the rail's workspace switcher. createWorkspace reloads the
+  // page into the new workspace.
+  const createSubmit = () => {
+    const t = newName.trim()
+    if (!t) return
+    createWorkspace(t)
+    setNewName("")
+    setCreateOpen(false)
+  }
 
   const saveName = async () => {
     const n = name.trim()
@@ -122,10 +135,54 @@ export function WorkspaceSection({ meId }: { meId: string }) {
 
   return (
     <section>
-      <p className="mb-4 text-sm text-muted-foreground">
-        Name your workspace and choose who's in it. <strong>Admins</strong> add people,{" "}
-        <strong>Creators</strong> publish artifacts, <strong>Viewers</strong> read and comment.
-      </p>
+      <div className="mb-4 flex items-start justify-between gap-3">
+        <p className="text-sm text-muted-foreground">
+          Name your workspace and choose who's in it. <strong>Admins</strong> add people,{" "}
+          <strong>Creators</strong> publish artifacts, <strong>Viewers</strong> read and comment.
+        </p>
+        <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+          <DialogTrigger asChild>
+            <Button data-testid="workspace-new" variant="outline" size="sm" className="shrink-0">
+              New workspace
+            </Button>
+          </DialogTrigger>
+          <DialogContent className="max-w-sm">
+            <DialogHeader>
+              <DialogTitle>Create a workspace</DialogTitle>
+              <DialogDescription>Starts empty. You'll be the owner.</DialogDescription>
+            </DialogHeader>
+            <Input
+              autoFocus
+              value={newName}
+              placeholder="Acme Marketing"
+              aria-label="New workspace name"
+              data-testid="workspace-new-input"
+              onChange={(e) => setNewName(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && createSubmit()}
+              maxLength={80}
+            />
+            <div className="mt-3 flex justify-end gap-2">
+              <Button
+                data-testid="workspace-new-cancel"
+                variant="outline"
+                size="sm"
+                onClick={() => setCreateOpen(false)}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={createSubmit}
+                disabled={!newName.trim()}
+                data-testid="workspace-create-submit"
+              >
+                Create
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
+      </div>
 
       <Card className="p-4">
         <div className="text-xs font-semibold text-muted-foreground">Workspace name</div>
