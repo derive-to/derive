@@ -910,6 +910,9 @@ export class PgMetaStore implements MetaStore {
   async setArtifactRemoved(id: string, removedAt: string | null): Promise<void> {
     await this.db.update(artifact).set({ removed_at: removedAt }).where(eq(artifact.id, id))
   }
+  async setArtifactTitle(id: string, title: string): Promise<void> {
+    await this.db.update(artifact).set({ title }).where(eq(artifact.id, id))
+  }
   async createAuditLog(a: NewAuditLog): Promise<void> {
     await this.db.insert(auditLog).values(a)
   }

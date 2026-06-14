@@ -2,8 +2,9 @@ import { newId, type RepoSourceRecord } from "@dock/core"
 import { Hono } from "hono"
 import { z } from "zod"
 import type { AppContext } from "../context"
+import { decryptSecret, encryptSecret } from "../lib/crypto"
 import { GitHubError, parseRepo } from "../lib/github"
-import { fail, readJson } from "../lib/http"
+import { fail, MAX_UPLOAD_BYTES, readJson } from "../lib/http"
 import { runSync } from "../lib/sync"
 
 const DEFAULT_INCLUDES = "**/*.md,**/*.html"
@@ -28,7 +29,7 @@ const toJson = (s: RepoSourceRecord) => {
  * the connection and drives the engine (lib/sync).
  */
 export const syncRoutes = (ctx: AppContext) => {
-  const { meta, deps, currentUser, activeWorkspace, workspaceCan } = ctx
+  const { meta, deps, currentUser, activeWorkspace, workspaceCan, overStorage } = ctx
   const app = new Hono()
 
   app.get("/v1/sync/github", async (c) => {
@@ -67,6 +68,10 @@ export const syncRoutes = (ctx: AppContext) => {
       user_id: createdBy,
       role: "owner",
     })
+    // Encrypt the PAT at rest when a server key is configured (the Node + Worker
+    // entries pass one); never store or return it in the clear.
+    const raw = body.token?.trim()
+    const token = raw ? (deps.encryptionKey ? encryptSecret(raw, deps.encryptionKey) : raw) : null
     const source = await meta.createRepoSource({
       id: newId("rs"),
       org_id: org,
@@ -74,7 +79,7 @@ export const syncRoutes = (ctx: AppContext) => {
       repo,
       ref: body.ref?.trim() || "HEAD",
       includes: body.includes?.trim() || DEFAULT_INCLUDES,
-      token: body.token?.trim() || null,
+      token,
       created_by: createdBy,
     })
     return c.json(toJson(source), 201)
@@ -85,21 +90,32 @@ export const syncRoutes = (ctx: AppContext) => {
     const org = await activeWorkspace(c)
     const source = await meta.getRepoSource(c.req.param("id"), org)
     if (!source) return fail(c, 404, "not found")
+    // Mirror the publish route's artifact cap (the per-file size + storage-quota
+    // guards are enforced inside runSync via the limits below).
+    if (deps.maxArtifacts && (await meta.countArtifacts(org)) >= deps.maxArtifacts)
+      return fail(c, 409, "artifact quota reached")
+    const token =
+      source.token && deps.encryptionKey
+        ? decryptSecret(source.token, deps.encryptionKey)
+        : source.token
     try {
-      const result = await runSync(meta, deps.blobs, source, new Date().toISOString())
+      // runSync persists its own status (incl. errors) and the partial file map,
+      // so a mid-run failure can't orphan artifacts; here we only map it to HTTP.
+      // A GitHub <500 is a bad repo/token (the caller's to fix → 400); else 502.
+      const result = await runSync(
+        meta,
+        deps.blobs,
+        { ...source, token },
+        new Date().toISOString(),
+        {
+          maxBytes: MAX_UPLOAD_BYTES,
+          overStorage: (n) => overStorage(org, n),
+        },
+      )
       return c.json(result)
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "sync failed"
-      // Record the failure on the source (without touching the file map) so the
-      // UI can show it, then surface it. A GitHub <500 is a bad repo/token (the
-      // caller's to fix → 400); anything else is an upstream failure → 502.
-      await meta.updateRepoSourceSync(source.id, {
-        files: source.files,
-        last_synced_at: new Date().toISOString(),
-        last_status: `error: ${msg}`.slice(0, 300),
-      })
       const userError = err instanceof GitHubError && err.status < 500
-      return fail(c, userError ? 400 : 502, msg)
+      return fail(c, userError ? 400 : 502, err instanceof Error ? err.message : "sync failed")
     }
   })
 

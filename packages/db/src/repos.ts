@@ -277,6 +277,9 @@ export function makeRepos(db: SqliteDb) {
   const setArtifactRemoved = async (id: string, removedAt: string | null): Promise<void> => {
     await db.update(artifact).set({ removed_at: removedAt }).where(eq(artifact.id, id)).run()
   }
+  const setArtifactTitle = async (id: string, title: string): Promise<void> => {
+    await db.update(artifact).set({ title }).where(eq(artifact.id, id)).run()
+  }
 
   // ---- Comments + threads ------------------------------------------------
   const getComment = async (id: string): Promise<CommentRecord | null> =>
@@ -840,6 +843,7 @@ export function makeRepos(db: SqliteDb) {
     storageBytes,
     tagCounts,
     setArtifactRemoved,
+    setArtifactTitle,
     createComment,
     getComment,
     updateComment,

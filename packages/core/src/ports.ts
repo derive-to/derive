@@ -302,6 +302,9 @@ export interface MetaStore {
   setReportState(id: string, state: ReportState, orgId?: string): Promise<void>
   /** Set or clear an artifact's takedown tombstone (the record is never deleted). */
   setArtifactRemoved(id: string, removedAt: string | null): Promise<void>
+  /** Update an artifact's display title (used when a GitHub-synced file is renamed —
+   *  the title tracks the repo path; the artifact + its comments are preserved). */
+  setArtifactTitle(id: string, title: string): Promise<void>
   createAuditLog(a: NewAuditLog): Promise<void>
   /** Moderation history, newest first. One workspace's, or — super-admin, orgId
    *  undefined — the whole instance's. Optionally narrowed to one artifact. */
