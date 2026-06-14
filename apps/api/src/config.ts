@@ -17,6 +17,10 @@ export interface Config {
   baseUrl: string
   databaseUrl?: string
   token?: string
+  /** Secure by default: anonymous callers get real (locked) permissions. Set
+   *  DOCK_OPEN=true to opt into zero-config "open" mode where the anonymous
+   *  caller is the trusted owner (a single-user localhost demo, never public). */
+  open: boolean
   /** Operator (instance super-admin) emails: these accounts get global powers
    *  (cross-workspace takedown, the global reports/audit queue) on top of the
    *  DOCK_TOKEN bearer. The people who run + host the deployment. */
@@ -81,6 +85,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     baseUrl,
     databaseUrl: env.DATABASE_URL,
     token: env.DOCK_TOKEN,
+    // Secure by default (anonymous is locked). DOCK_OPEN=true is an explicit
+    // opt-in to zero-config open mode (single-user localhost), matching the
+    // edge worker's DOCK_OPEN handling — never open implicitly just because no
+    // DOCK_TOKEN is set.
+    open: env.DOCK_OPEN === "true",
     // Comma-separated operator emails (case-insensitive). More than one person
     // can run + host a deployment, so this is a list, not a single owner.
     superAdmins: (env.DOCK_SUPERADMIN_EMAILS ?? "")

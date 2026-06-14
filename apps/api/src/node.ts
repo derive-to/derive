@@ -68,6 +68,11 @@ const app = createApp({
   blobs,
   baseUrl: cfg.baseUrl,
   token: cfg.token,
+  // Secure by default: anonymous callers are locked unless DOCK_OPEN=true is set
+  // explicitly. Without this the context falls back to `!token` (open when no
+  // token), which let anonymous publish on a no-token container — the edge worker
+  // already passes an explicit `open`, so this makes both entrypoints consistent.
+  open: cfg.open,
   superAdmins: cfg.superAdmins,
   auth,
   webOrigins: cfg.webOrigins,

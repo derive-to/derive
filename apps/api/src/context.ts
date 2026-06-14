@@ -138,9 +138,10 @@ export function buildContext(deps: AppDeps) {
   const analyticsOn = deps.analytics !== false
   const versionWindowMs = deps.versionWindowMs ?? DEFAULT_VERSION_WINDOW_MS
   const allowOrigins = new Set(deps.webOrigins ?? [])
-  // Explicit `open` wins; otherwise fall back to the historical default (an instance
-  // with no static token is treated as open / zero-config). A real multi-user
-  // deployment passes `open: false` so anonymous callers get real permissions.
+  // Explicit `open` wins. Both real entrypoints pass it (node.ts from DOCK_OPEN,
+  // worker.ts from env.DOCK_OPEN) so deployments are secure by default — anonymous
+  // callers get real (locked) permissions unless open is explicitly true. The
+  // `!deps.token` fallback only applies to embedders/tests that omit `open`.
   const open = deps.open ?? !deps.token
   const defaultRole: Role = deps.defaultRole ?? "editor"
   // The bootstrap workspace id — always a real value, never a magic

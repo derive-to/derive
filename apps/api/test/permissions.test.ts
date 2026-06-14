@@ -48,6 +48,25 @@ describe("auth: token write-gating + per-artifact read-gating", () => {
   })
 })
 
+describe("security: container is secure by default (anonymous locked without DOCK_OPEN)", () => {
+  // What node.ts passes when DOCK_OPEN is unset: no token, open:false. The bug it
+  // closes: `open` defaulting to `!token` (true) on a no-token container let an
+  // anonymous caller publish (it was the trusted owner). open:false locks anon
+  // everywhere; the edge worker already passed an explicit open. No bypass.
+  const locked = createApp({
+    meta,
+    blobs: new FsBlobStore(join(dir, "blobs")),
+    baseUrl: "http://dock.test",
+    open: false,
+  })
+
+  it("refuses an anonymous publish (no token, not open)", async () => {
+    const form = new FormData()
+    form.append("file", new Blob([new TextEncoder().encode("<h1>x</h1>")]), "x.html")
+    expect((await locked.request("/v1/artifacts", { method: "POST", body: form })).status).toBe(403)
+  })
+})
+
 describe("permissions: workspace roles gate writes", () => {
   const alice: TestUser = { id: "u_alice", email: "alice@dock.test", name: "Alice" }
   const bob: TestUser = { id: "u_bob", email: "bob@dock.test", name: "Bob" }
