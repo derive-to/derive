@@ -1,5 +1,5 @@
-import { isRole, newId, type Role } from "@dock/core"
-import { Hono } from "hono"
+import { type ArtifactRecord, effectiveRole, isRole, newId, ROLES, type Role } from "@dock/core"
+import { type Context, Hono } from "hono"
 import { z } from "zod"
 import type { AppContext } from "../context"
 import { fail, readJson } from "../lib/http"
@@ -7,8 +7,16 @@ import { fail, readJson } from "../lib/http"
 /** Per-artifact role overrides (a share). Managing shares requires `share`
  *  (editor+, GDocs model); the share's role beats the caller's workspace baseline. */
 export const sharingRoutes = (ctx: AppContext) => {
-  const { meta, defaultRole, anonLocked, authorize } = ctx
+  const { meta, defaultRole, anonLocked, authorize, actorFor } = ctx
   const app = new Hono()
+
+  // A sharer can never grant — or remove — a role above their own. An editor (who
+  // has `share` but not `manage`) invites viewers/commenters/editors; only an owner
+  // can grant owner. Without this, an editor could PUT themselves `owner` (which
+  // confers `manage`) and DELETE the real owner, seizing the artifact.
+  const rank = (r: Role | null): number => (r ? ROLES.indexOf(r) : -1)
+  const callerRank = async (c: Context, a: ArtifactRecord): Promise<number> =>
+    rank(effectiveRole(await actorFor(c, a), a.visibility))
 
   app.get("/v1/artifacts/:shortId/members", async (c) => {
     const artifact = await meta.getByShortId(c.req.param("shortId"))
@@ -42,6 +50,8 @@ export const sharingRoutes = (ctx: AppContext) => {
       }),
     )
     if (b instanceof Response) return b
+    if (rank(b.role) > (await callerRank(c, artifact)))
+      return fail(c, 403, "you can't grant a role above your own")
     const user = await meta.findUserByEmail(b.email.trim())
     if (!user) return fail(c, 404, "no Dock user with that email")
     await meta.setArtifactMember({
@@ -57,6 +67,11 @@ export const sharingRoutes = (ctx: AppContext) => {
     const artifact = await meta.getByShortId(c.req.param("shortId"))
     if (!artifact) return fail(c, 404, "not found")
     if (!(await authorize(c, "share", artifact))) return fail(c, 403, "forbidden")
+    const target = (await meta.listArtifactMembers(artifact.id)).find(
+      (m) => m.user_id === c.req.param("userId"),
+    )
+    if (target && rank(target.role) > (await callerRank(c, artifact)))
+      return fail(c, 403, "you can't remove a collaborator who outranks you")
     await meta.removeArtifactMember(artifact.id, c.req.param("userId"))
     return c.body(null, 204)
   })

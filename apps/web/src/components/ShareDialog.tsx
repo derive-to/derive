@@ -99,6 +99,13 @@ export function ShareButton({
         setDefaultRole(r.default_role)
       })
       .catch(() => {})
+  // After a share change, refresh the local list AND the shared cache: the artifact
+  // query holds `my_role` (drives the toolbar), and the library reflects access.
+  const synced = async () => {
+    await load()
+    qc.invalidateQueries({ queryKey: ["artifact", shortId] })
+    qc.invalidateQueries({ queryKey: ["artifacts"] })
+  }
 
   const add = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -109,7 +116,7 @@ export function ShareButton({
     try {
       await api.setMember(shortId, addr, role)
       setEmail("")
-      await load()
+      await synced()
     } catch (x) {
       setErr(x instanceof Error ? x.message : "Could not share")
     } finally {
@@ -119,11 +126,11 @@ export function ShareButton({
   const change = async (m: ArtifactMember, next: Role) => {
     if (next === m.role || !m.email) return
     await api.setMember(shortId, m.email, next).catch(() => {})
-    await load()
+    await synced()
   }
   const remove = async (m: ArtifactMember) => {
     await api.removeMember(shortId, m.user_id).catch(() => {})
-    await load()
+    await synced()
   }
 
   return (

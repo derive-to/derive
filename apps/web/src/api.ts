@@ -267,9 +267,10 @@ export const api = {
   }> => f("/v1/tags", opts()).then(j),
   getArtifact: (id: string): Promise<Artifact> => f(`/v1/artifacts/${id}`, opts()).then(j),
   getContent: (id: string, v?: number): Promise<string> =>
-    f(`/v1/artifacts/${id}/content${v ? `?v=${v}` : ""}`, { credentials: "include" }).then((r) =>
-      r.text(),
-    ),
+    f(`/v1/artifacts/${id}/content${v ? `?v=${v}` : ""}`, { credentials: "include" }).then((r) => {
+      if (!r.ok) throw new Error(`HTTP ${r.status}`)
+      return r.text()
+    }),
   // Verify a password artifact's password; on success the server sets the unlock
   // cookie and subsequent reads of this artifact succeed.
   unlock: (id: string, password: string): Promise<{ ok: true }> =>
