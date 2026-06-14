@@ -230,6 +230,22 @@ export interface MetaStore {
    *  artifact — folded into their effective artifact role (collection sharing). */
   collectionRolesForArtifact(artifactId: string, userId: string): Promise<Role[]>
 
+  // ---- GitHub sync sources (a repo mirrored into a collection, one-way) ---
+  createRepoSource(s: NewRepoSource): Promise<RepoSourceRecord>
+  /** One source by id, scoped to a workspace when orgId is given. */
+  getRepoSource(id: string, orgId?: string): Promise<RepoSourceRecord | null>
+  /** A workspace's sync sources, newest first. */
+  listRepoSources(orgId: string): Promise<RepoSourceRecord[]>
+  /** Persist the post-sync state: the path→artifact map, time, and status. */
+  updateRepoSourceSync(
+    id: string,
+    fields: { files: string; last_synced_at: string; last_status: string },
+  ): Promise<void>
+  deleteRepoSource(id: string, orgId: string): Promise<void>
+  /** Ids of every artifact mirrored from a sync source in this workspace —
+   *  drives the read-only gate + the `managed` flag (synced docs aren't editable). */
+  managedArtifactIds(orgId: string): Promise<string[]>
+
   // ---- Reviews: proposed versions awaiting approval ----------------------
   createProposal(p: NewProposal): Promise<ProposalRecord>
   getProposal(id: string): Promise<ProposalRecord | null>
@@ -515,6 +531,43 @@ export interface NewCollectionMember {
   collection_id: string
   user_id: string
   role: Role
+}
+
+/**
+ * A GitHub repository mirrored into a collection, one-way (GitHub is the source
+ * of truth). `files` is a JSON map of repo path → { artifact_id, sha } so a
+ * re-sync can skip unchanged files (sha match), version changed ones, and
+ * tombstone vanished ones. The token is a read-only PAT (null for public repos)
+ * and is never returned to clients (redacted in list responses).
+ */
+export interface RepoSourceRecord {
+  id: string
+  org_id: string
+  collection_id: string
+  /** "owner/name". */
+  repo: string
+  /** Branch or ref to read (default "HEAD"). */
+  ref: string
+  /** Comma-separated include globs, e.g. "**\/*.md,**\/*.html". */
+  includes: string
+  token: string | null
+  /** JSON: { [repoPath]: { artifact_id: string; sha: string } }. */
+  files: string
+  last_synced_at: string | null
+  /** "ok" or "error: …" from the last run. */
+  last_status: string | null
+  created_by: string
+  created_at: string
+}
+export interface NewRepoSource {
+  id: string
+  org_id: string
+  collection_id: string
+  repo: string
+  ref: string
+  includes: string
+  token?: string | null
+  created_by: string
 }
 
 export interface ArtifactMemberRecord {

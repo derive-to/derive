@@ -4,6 +4,7 @@ import { Badge } from "@/components/ui/badge"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { useAuth } from "@/ctx"
 import { AgentsSection } from "./agents-section"
+import { GithubSection } from "./github-section"
 import { ReportsSection } from "./reports-section"
 import { WebhooksSection } from "./webhooks-section"
 import { WorkspaceSection } from "./workspace-section"
@@ -58,6 +59,9 @@ export function Settings() {
             <TabsTrigger data-testid="settings-tab-agents" value="agents">
               Agents
             </TabsTrigger>
+            <TabsTrigger data-testid="settings-tab-github" value="github">
+              GitHub
+            </TabsTrigger>
             {hasReports && (
               <TabsTrigger data-testid="settings-tab-reports" value="reports">
                 Reports
@@ -76,6 +80,9 @@ export function Settings() {
           </TabsContent>
           <TabsContent value="agents">
             <AgentsSection />
+          </TabsContent>
+          <TabsContent value="github">
+            <GithubSection />
           </TabsContent>
           {hasReports && (
             <TabsContent value="reports">

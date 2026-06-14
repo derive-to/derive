@@ -137,6 +137,11 @@ export const artifactRoutes = (ctx: AppContext) => {
       existing = await meta.getByShortId(shortId)
       if (!existing) return fail(c, 404, "not found")
       if (!(await authorize(c, "publish", existing))) return fail(c, 403, "forbidden")
+      // A GitHub-synced artifact is read-only in Dock: GitHub is the source of
+      // truth, so a republish would be silently overwritten on the next sync.
+      // Edit it in the repo instead.
+      if ((await meta.managedArtifactIds(existing.org_id)).includes(existing.id))
+        return fail(c, 409, "managed by GitHub sync — edit this file in the repo")
     } else if (!(await workspaceCan(c, "publish"))) {
       return fail(c, 403, "forbidden")
     }
@@ -269,6 +274,9 @@ export const artifactRoutes = (ctx: AppContext) => {
       // A taken-down artifact keeps its record but serves no content (410); the
       // UI shows a tombstone instead of the iframe.
       removed: !!artifact.removed_at,
+      // Mirrored from a GitHub sync source → read-only in Dock (the client hides
+      // Edit/Propose; the publish/propose routes also refuse it server-side).
+      managed: (await meta.managedArtifactIds(artifact.org_id)).includes(artifact.id),
     })
   })
 
