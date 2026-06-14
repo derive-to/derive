@@ -5,7 +5,7 @@ import type {
   ExecutionContext,
 } from "@cloudflare/workers-types"
 import type { Context } from "hono"
-import type { Backplane, DockEvent, PresenceStore } from "./bus"
+import type { Backplane, DockEvent, PresenceStore, Viewer } from "./bus"
 
 /**
  * Per-request execution context, so the DO backplane's fire-and-forget publish can
@@ -32,7 +32,7 @@ const frame = (event: string, data: string) => enc.encode(`event: ${event}\ndata
  */
 export class ArtifactRoom {
   private streams = new Set<ReadableStreamDefaultController<Uint8Array>>()
-  private viewers = new Map<string, number>()
+  private viewers = new Map<string, { v: Viewer; t: number }>()
   constructor(private state: DurableObjectState) {}
 
   async fetch(req: Request): Promise<Response> {
@@ -78,12 +78,12 @@ export class ArtifactRoom {
       return new Response("ok")
     }
 
-    // Presence heartbeat: record + return the live viewer names.
+    // Presence heartbeat: record + return the live viewers.
     if (req.method === "POST" && url.pathname.endsWith("/heartbeat")) {
-      const { name, now } = (await req.json()) as { name: string; now: number }
-      this.viewers.set(name, now)
-      for (const [n, t] of this.viewers) if (now - t > PRESENCE_TTL_MS) this.viewers.delete(n)
-      return Response.json([...this.viewers.keys()])
+      const { viewer, now } = (await req.json()) as { viewer: Viewer; now: number }
+      this.viewers.set(viewer.id, { v: viewer, t: now })
+      for (const [id, e] of this.viewers) if (now - e.t > PRESENCE_TTL_MS) this.viewers.delete(id)
+      return Response.json([...this.viewers.values()].map((e) => e.v))
     }
 
     return new Response("not found", { status: 404 })
@@ -116,12 +116,12 @@ export class ArtifactRoom {
 export function createDoBackplane(rooms: DurableObjectNamespace): Backplane {
   const stub = (channel: string) => rooms.get(rooms.idFromName(channel))
   const presence: PresenceStore = {
-    async heartbeat(channel, name, now) {
+    async heartbeat(channel, viewer, now) {
       const res = await stub(channel).fetch("https://do/heartbeat", {
         method: "POST",
-        body: JSON.stringify({ name, now }),
+        body: JSON.stringify({ viewer, now }),
       })
-      return (await res.json()) as string[]
+      return (await res.json()) as Viewer[]
     },
   }
   return {

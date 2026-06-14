@@ -197,6 +197,14 @@ export interface Agent {
   role: Role
   created_at: string
 }
+/** A live viewer of an artifact (presence). `email` is present for signed-in
+ *  users, null for an anonymous viewer; `role` is their effective role here. */
+export interface Viewer {
+  id: string
+  name: string
+  email: string | null
+  role: string | null
+}
 export interface Delivery {
   id: string
   event_type: string
@@ -408,8 +416,9 @@ export const api = {
     f(`/v1/workspace/domains/${host}`, { method: "DELETE", credentials: "include" }).then(
       () => undefined,
     ),
-  heartbeat: (id: string, name: string): Promise<{ viewers: string[] }> =>
-    f(`/v1/artifacts/${id}/presence`, opts({ name })).then(j),
+  // Identity is derived server-side from the session/cookie, so we send nothing.
+  heartbeat: (id: string): Promise<{ viewers: Viewer[] }> =>
+    f(`/v1/artifacts/${id}/presence`, opts({})).then(j),
 
   favorite: (id: string, on: boolean): Promise<{ favorite: boolean }> =>
     f(`/v1/artifacts/${id}/favorite`, { ...opts(), method: on ? "PUT" : "DELETE" }).then(j),

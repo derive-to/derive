@@ -1,8 +1,6 @@
 import { useEffect, useRef, useState } from "react"
-import { API_BASE, api } from "@/api"
+import { API_BASE, api, type Viewer } from "@/api"
 import { useLiveCursors } from "./cursors/use-live-cursors"
-
-type Me = { name?: string | null; email?: string | null } | null
 
 /**
  * Everything realtime on the artifact page, kept out of the page component:
@@ -18,12 +16,11 @@ type Me = { name?: string | null; email?: string | null } | null
  */
 export function useArtifactLive(opts: {
   shortId: string
-  me: Me
   onComment: () => void
   onVersion: () => void
 }) {
-  const { shortId, me, onComment, onVersion } = opts
-  const [viewers, setViewers] = useState<string[]>([])
+  const { shortId, onComment, onVersion } = opts
+  const [viewers, setViewers] = useState<Viewer[]>([])
   const cursors = useLiveCursors(shortId)
   const { paintFrame } = cursors
 
@@ -40,7 +37,7 @@ export function useArtifactLive(opts: {
     ev.addEventListener("version.published", onVersion)
     ev.addEventListener("presence", (e) => {
       try {
-        setViewers((JSON.parse((e as MessageEvent).data).viewers as string[]) ?? [])
+        setViewers((JSON.parse((e as MessageEvent).data).viewers as Viewer[]) ?? [])
       } catch {
         /* ignore malformed frames */
       }
@@ -58,16 +55,15 @@ export function useArtifactLive(opts: {
   // Announce we're viewing (anon shows up by their server handle — Google-Docs
   // style) and keep the heartbeat alive (TTL 45s).
   useEffect(() => {
-    const name = me ? (me.name ?? me.email ?? "Guest") : "Guest"
     const beat = () =>
       api
-        .heartbeat(shortId, name ?? "Guest")
+        .heartbeat(shortId)
         .then((r) => setViewers(r.viewers))
         .catch(() => {})
     beat()
     const t = setInterval(beat, 20_000)
     return () => clearInterval(t)
-  }, [shortId, me])
+  }, [shortId])
 
   // Record one view per artifact open.
   const recorded = useRef("")

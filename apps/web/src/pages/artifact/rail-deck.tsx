@@ -1,4 +1,6 @@
 import { useCallback, useState } from "react"
+import type { Viewer } from "@/api"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { cn } from "@/lib/utils"
 import { clamp } from "./lib/layout"
 import type { PinItem } from "./types"
@@ -159,36 +161,82 @@ export function DeckBar({
   )
 }
 
-export function Presence({ viewers, self }: { viewers: string[]; self: string }) {
-  const others = viewers.filter((v) => v !== self)
+const initials = (v: Viewer) => (v.name || "?").slice(0, 2).toUpperCase()
+
+// "Who's viewing" — an avatar stack that opens a popover listing each live viewer
+// with their name, email (signed-in only), and role. Identity is server-derived
+// (see the presence route), so nothing here is spoofable. Hidden when you're the
+// only viewer. Built on the shared Popover, so it dismisses on outside/iframe click.
+export function Presence({ viewers, selfId }: { viewers: Viewer[]; selfId?: string }) {
+  const self = viewers.find((v) => v.id === selfId) ?? null
+  const others = viewers.filter((v) => v.id !== selfId)
   if (others.length === 0) return null
-  const ordered = [self, ...others].filter(Boolean)
+  const ordered = self ? [self, ...others] : others
   const shown = ordered.slice(0, 4)
   const extra = ordered.length - shown.length
   return (
-    <div
-      className="flex items-center gap-1.5"
-      title={`${ordered.length} viewing: ${ordered.join(", ")}`}
-    >
-      <div className="flex">
-        {shown.map((name, i) => (
-          <span
-            key={name}
-            className={cn(
-              "grid size-[22px] place-items-center rounded-full border-2 border-card font-mono text-2xs font-bold",
-              name === self ? "bg-primary text-primary-foreground" : "bg-accent text-primary",
-              i > 0 && "-ml-[7px]",
-            )}
-          >
-            {(name || "?").slice(0, 2).toUpperCase()}
+    <Popover>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          data-testid="presence-trigger"
+          aria-label={`${ordered.length} viewing — see who`}
+          className="flex items-center gap-1.5 rounded-full py-0.5 pl-1 pr-2 transition-colors hover:bg-hover"
+        >
+          <div className="flex">
+            {shown.map((v, i) => (
+              <span
+                key={v.id}
+                className={cn(
+                  "grid size-[22px] place-items-center rounded-full border-2 border-card font-mono text-2xs font-bold",
+                  v.id === selfId ? "bg-primary text-primary-foreground" : "bg-accent text-primary",
+                  i > 0 && "-ml-[7px]",
+                )}
+              >
+                {initials(v)}
+              </span>
+            ))}
+          </div>
+          <span className="flex items-center gap-1 font-mono text-xs text-muted-foreground">
+            <span className="size-1.5 rounded-full bg-success" />
+            {ordered.length} viewing{extra > 0 ? ` (+${extra})` : ""}
           </span>
-        ))}
-      </div>
-      <span className="flex items-center gap-1 font-mono text-xs text-muted-foreground">
-        <span className="size-1.5 rounded-full bg-success" />
-        {ordered.length} viewing{extra > 0 ? ` (+${extra})` : ""}
-      </span>
-    </div>
+        </button>
+      </PopoverTrigger>
+      <PopoverContent align="end" data-testid="presence-popover" className="w-64 p-1.5">
+        <div className="px-2 py-1 font-mono text-2xs uppercase tracking-wide text-muted-foreground">
+          {ordered.length} viewing now
+        </div>
+        <div className="max-h-[280px] overflow-auto">
+          {ordered.map((v) => (
+            <div key={v.id} className="flex items-center gap-2.5 rounded-md px-2 py-1.5">
+              <span
+                className={cn(
+                  "grid size-7 shrink-0 place-items-center rounded-full font-mono text-2xs font-bold",
+                  v.id === selfId ? "bg-primary text-primary-foreground" : "bg-accent text-primary",
+                )}
+              >
+                {initials(v)}
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="flex items-center gap-1.5 text-sm font-medium text-foreground">
+                  <span className="truncate">{v.name}</span>
+                  {v.id === selfId && <span className="text-2xs text-muted-foreground">(you)</span>}
+                </span>
+                <span className="block truncate text-xs text-muted-foreground">
+                  {v.email ?? "Anonymous viewer"}
+                </span>
+              </span>
+              {v.role && (
+                <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 font-mono text-2xs capitalize text-muted-foreground">
+                  {v.role}
+                </span>
+              )}
+            </div>
+          ))}
+        </div>
+      </PopoverContent>
+    </Popover>
   )
 }
 

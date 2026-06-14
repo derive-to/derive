@@ -1,12 +1,24 @@
+import { effectiveRole } from "@dock/core"
 import { Hono } from "hono"
 import { streamSSE } from "hono/streaming"
 import { z } from "zod"
+import type { Viewer } from "../bus"
 import type { AppContext } from "../context"
 import { anonName, fail, readJson } from "../lib/http"
 
 /** Live updates per artifact (SSE) + ephemeral presence (who's viewing now). */
 export const realtimeRoutes = (ctx: AppContext) => {
-  const { meta, bus, presence, backplane, authorize, actingUser, anonViewerId } = ctx
+  const {
+    meta,
+    bus,
+    presence,
+    backplane,
+    authorize,
+    actingUser,
+    currentUser,
+    actorFor,
+    anonViewerId,
+  } = ctx
   const app = new Hono()
 
   app.get("/v1/artifacts/:shortId/events", async (c) => {
@@ -36,13 +48,18 @@ export const realtimeRoutes = (ctx: AppContext) => {
   app.post("/v1/artifacts/:shortId/presence", async (c) => {
     const artifact = await meta.getByShortId(c.req.param("shortId"))
     if (!artifact || !(await authorize(c, "read", artifact))) return fail(c, 404, "not found")
-    // Presence identity is server-derived, never client-supplied: a signed-in
-    // user or agent shows by their account name; an anonymous viewer gets a
-    // stable, friendly handle (`helpful-kitty-95`) keyed to their viewer cookie,
-    // so they can't impersonate anyone or spam arbitrary names. This is the only
-    // thing an anonymous caller may do beyond reading (see the lockdown in app.ts).
-    const name = (await actingUser(c))?.name ?? anonName(anonViewerId(c))
-    const viewers = await presence.heartbeat(artifact.id, name, Date.now())
+    // Presence identity is built entirely server-side, never client-supplied: a
+    // signed-in user by their account (name + email), an anonymous viewer by a
+    // stable, friendly handle (`helpful-kitty-95`) keyed to their viewer cookie and
+    // no email, so nobody can impersonate or spam names. `role` is their effective
+    // role on this artifact (so email/role can't be forged either). Presence is the
+    // only thing an anonymous caller may do beyond reading (lockdown in app.ts).
+    const me = await currentUser(c)
+    const role = effectiveRole(await actorFor(c, artifact), artifact.visibility)
+    const viewer: Viewer = me
+      ? { id: me.id, name: me.name ?? me.email, email: me.email, role }
+      : { id: anonViewerId(c), name: anonName(anonViewerId(c)), email: null, role }
+    const viewers = await presence.heartbeat(artifact.id, viewer, Date.now())
     bus.publish(artifact.id, { type: "presence", viewers })
     return c.json({ viewers })
   })
