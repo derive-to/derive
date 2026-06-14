@@ -10,12 +10,14 @@ import { cn } from "@/lib/utils"
 const CodeEditor = lazy(() => import("./code-editor"))
 
 /**
- * The full-screen source editor: edit on the left, a live preview on the right
- * that re-renders as you type. Markdown is rendered through the *same*
- * renderMarkdown the server uses, so the preview is exactly what publishes; HTML
- * is shown raw. Editors publish a new version directly (with an optional commit
- * message); commenters submit the edit as a proposal with a "why". On phones the
- * two panes collapse to an Edit / Preview toggle.
+ * The source editor: edit on the left, a live preview on the right that
+ * re-renders as you type. Renders in-flow in the document column (the app sidebar
+ * + the comments panel stay, so you can reference comments while editing), not as
+ * a fullscreen overlay. Markdown is rendered through the *same* renderMarkdown the
+ * server uses, so the preview is exactly what publishes; HTML is shown raw.
+ * Editors publish a new version directly (with an optional commit message);
+ * commenters submit the edit as a proposal with a "why". On phones the two panes
+ * collapse to an Edit / Preview toggle.
  */
 export function SourceEditor({
   canPublish,
@@ -85,7 +87,10 @@ export function SourceEditor({
   )
 
   return (
-    <div className="fixed inset-0 z-[70] flex flex-col bg-card">
+    // In-flow (fills the document column), not a fullscreen overlay: the app
+    // sidebar stays, and the comments panel toggles in/out beside the editor just
+    // like in normal viewing — so you can reference comments while editing.
+    <div className="flex min-h-0 flex-1 flex-col bg-card">
       <div className="flex flex-wrap items-center gap-2 border-b border-border-soft px-4 py-2.5">
         <span className="flex items-center gap-2 font-mono text-xs text-muted-foreground">
           <Icon name="edit" size={16} />
@@ -99,7 +104,7 @@ export function SourceEditor({
             onChange={(e) => onMessage(e.target.value)}
             placeholder="Describe this version (optional)"
             data-testid="artifact-commit-message"
-            className="h-8 min-w-[140px] max-w-[360px] flex-1 text-sm"
+            className="order-last h-8 w-full text-sm md:order-none md:w-auto md:max-w-[360px] md:flex-1"
           />
         ) : (
           <Input
@@ -107,7 +112,7 @@ export function SourceEditor({
             onChange={(e) => onProposeMsg(e.target.value)}
             placeholder="What are you changing, and why?"
             data-testid="artifact-propose-message"
-            className="h-8 min-w-[140px] max-w-[420px] flex-1 text-sm"
+            className="order-last h-8 w-full text-sm md:order-none md:w-auto md:max-w-[420px] md:flex-1"
           />
         )}
         <span className="ml-auto flex items-center gap-2">
