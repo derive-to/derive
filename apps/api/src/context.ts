@@ -174,8 +174,9 @@ export function buildContext(deps: AppDeps) {
   const commentLimiter = deps.rateLimit ? makeKeyedLimiter(60_000, deps.commentRate ?? 60) : null
   // Password unlock is a credential-guessing surface, so it gets a much tighter
   // cap than the lenient global /v1 write limiter (120/min) it would otherwise
-  // share: 10 attempts/min per caller (IP, when anonymous) bounds brute force.
-  const unlockLimiter = deps.rateLimit ? makeKeyedLimiter(60_000, 10) : null
+  // share: 5 attempts per 5 minutes per caller (IP, when anonymous) — enough for
+  // a legit fat-finger, slow enough that brute force is hopeless.
+  const unlockLimiter = deps.rateLimit ? makeKeyedLimiter(5 * 60_000, 5) : null
 
   // Fan an event to subscribed webhooks (enqueues to the outbox; the worker
   // delivers). Awaited so the row is durable before we respond, but never fatal.

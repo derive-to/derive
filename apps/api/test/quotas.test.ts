@@ -60,7 +60,7 @@ describe("rate limits: per-actor write throttles (C4b)", () => {
     expect((await comment()).status).toBe(429)
   })
 
-  it("throttles password-unlock attempts with a tight dedicated cap (10/min)", async () => {
+  it("throttles password-unlock attempts with a tight dedicated cap (5 per 5 min)", async () => {
     const { app } = quotaApp("rl-unlock", { rateLimit: true })
     const form = new FormData()
     form.append("file", new Blob([new TextEncoder().encode("<h1>x</h1>")]), "x.html")
@@ -70,7 +70,7 @@ describe("rate limits: per-actor write throttles (C4b)", () => {
       await app.request("/v1/artifacts", { method: "POST", body: form, headers: bearer("tok") })
     ).json()
     // Anonymous wrong-password attempts: the limiter runs before the password
-    // check, so each counts. Ten are allowed (401 wrong-password), the 11th 429s —
+    // check, so each counts. Five are allowed (401 wrong-password), the 6th 429s —
     // far below the lenient 120/min global write cap this used to share.
     const attempt = () =>
       app.request(`/v1/artifacts/${a.short_id}/unlock`, {
@@ -78,7 +78,7 @@ describe("rate limits: per-actor write throttles (C4b)", () => {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ password: "wrong" }),
       })
-    for (let i = 0; i < 10; i++) expect((await attempt()).status).toBe(401)
+    for (let i = 0; i < 5; i++) expect((await attempt()).status).toBe(401)
     const blocked = await attempt()
     expect(blocked.status).toBe(429)
     expect(blocked.headers.get("Retry-After")).toBeTruthy()
