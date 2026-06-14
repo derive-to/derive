@@ -533,8 +533,16 @@ export const api = {
     }).then(j),
 
   // ---- Mention directory + in-app notifications -------------------------
-  users: (q?: string): Promise<{ users: DirUser[] }> =>
-    f(`/v1/users${q ? `?q=${encodeURIComponent(q)}` : ""}`, opts()).then(j),
+  // `artifact` (a short_id) scopes the directory to that thread's people —
+  // workspace members + collaborators + everyone who has commented — so you can
+  // @ someone on the thread even if they're not in your workspace.
+  users: (q?: string, artifact?: string): Promise<{ users: DirUser[] }> => {
+    const p = new URLSearchParams()
+    if (q) p.set("q", q)
+    if (artifact) p.set("artifact", artifact)
+    const qs = p.toString()
+    return f(`/v1/users${qs ? `?${qs}` : ""}`, opts()).then(j)
+  },
   notifications: (): Promise<{ notifications: Notification[]; unread: number }> =>
     f("/v1/notifications", opts()).then(j),
   markNotificationsRead: (sel: { ids: string[] } | { all: true }): Promise<{ unread: number }> =>
