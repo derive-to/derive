@@ -36,13 +36,14 @@
     "lint:frontend": "node scripts/check-frontend.mjs",
     "lint:testids": "node scripts/check-testids.mjs",
     "lint:api": "node scripts/check-api.mjs",
+    "lint:schema": "node scripts/check-schema.mjs",
     "lint:filesize": "node scripts/check-file-size.mjs",
     "lint:bundle": "node scripts/check-bundle.mjs",
     "lint:deadcode": "knip",
     "format": "biome format --write",
     "check": "biome check",
     "check:fix": "biome check --write",
-    "ci": "biome ci && pnpm lint:tokens && pnpm lint:frontend && pnpm lint:testids && pnpm lint:api && pnpm lint:filesize && pnpm lint:deadcode"
+    "ci": "biome ci && pnpm lint:tokens && pnpm lint:frontend && pnpm lint:testids && pnpm lint:api && pnpm lint:schema && pnpm lint:filesize && pnpm lint:deadcode"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.0",

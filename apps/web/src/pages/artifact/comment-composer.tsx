@@ -286,11 +286,12 @@ export function MentionField({
               <button
                 key={emo}
                 type="button"
+                aria-label={`Insert ${emo} emoji`}
                 data-testid="emoji-option"
-                onMouseDown={(e) => {
-                  e.preventDefault()
-                  insertEmoji(emo)
-                }}
+                // mousedown only prevents the textarea from losing focus; the
+                // actual insert is onClick so keyboard (Enter/Space) works too.
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => insertEmoji(emo)}
                 className="grid size-7 place-items-center rounded text-lg leading-none hover:bg-hover"
               >
                 {emo}

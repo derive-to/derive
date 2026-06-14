@@ -31,3 +31,10 @@ test("sign out returns to the login screen", async ({ owner }) => {
   await owner.getByTestId("menu-signout").click()
   await expect(owner).toHaveURL(/\/login/)
 })
+
+// Accessibility: icon-only chrome controls must expose an accessible name (added
+// in the a11y pass). Located by ROLE + NAME, so a dropped aria-label fails here.
+test("icon-only chrome controls expose accessible names", async ({ owner }) => {
+  await expect(owner.getByRole("button", { name: "Search (⌘K)" })).toBeVisible()
+  await expect(owner.getByRole("textbox", { name: "Search artifacts by title" })).toBeVisible()
+})

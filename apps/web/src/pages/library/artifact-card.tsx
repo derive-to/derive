@@ -23,7 +23,7 @@ export function ArtifactCard({
   onPrefetch?: () => void
 }) {
   return (
-    <div className="group relative flex cursor-pointer flex-col gap-2 rounded-lg border border-border bg-card p-3.5 transition-all hover:-translate-y-0.5 hover:border-primary hover:shadow-[var(--shadow)] active:translate-y-0">
+    <div className="group relative flex cursor-pointer flex-col gap-2 rounded-lg border border-border bg-card p-3.5 transition-all motion-safe:hover:-translate-y-0.5 hover:border-primary hover:shadow-[var(--shadow)] active:translate-y-0">
       <div className="relative">
         <Thumb id={a.short_id} v={a.current_version} />
         <button
@@ -65,6 +65,7 @@ export function ArtifactCard({
             <span className="ml-auto inline-flex items-center gap-1" title={`${a.views} viewers`}>
               <Icon name="views" size={13} />{" "}
               {a.views > 999 ? `${(a.views / 1000).toFixed(1)}k` : a.views}
+              <span className="sr-only"> views</span>
             </span>
           )}
         </span>

@@ -183,6 +183,7 @@ function LibraryBody() {
         <div className="mb-[18px] flex flex-wrap items-center gap-2.5">
           <Input
             placeholder="Search by title…"
+            aria-label="Search artifacts by title"
             data-testid="library-search"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
