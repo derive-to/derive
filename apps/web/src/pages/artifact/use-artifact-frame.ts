@@ -46,6 +46,11 @@ export function useArtifactFrame(p: {
   const [inDoc, setInDoc] = useState<Record<string, boolean>>({})
   const [anchorTops, setAnchorTops] = useState<Record<string, number>>({})
   const [scrollY, setScrollY] = useState(0)
+  // The frame's own document height + visible height, reported alongside scroll.
+  // The live-cursor layer needs both to map a peer's document position to a screen
+  // position in this viewport (and decide who's scrolled off-screen).
+  const [docH, setDocH] = useState(0)
+  const [viewH, setViewH] = useState(0)
   // Set when the artifact announces itself as a deck (dock-deck protocol).
   const [deck, setDeck] = useState<{ i: number; total: number } | null>(null)
 
@@ -88,8 +93,12 @@ export function useArtifactFrame(p: {
       else if (d.type === "anchor-rects") {
         setAnchorTops(d.tops ?? {})
         if (typeof d.scrollY === "number") setScrollY(d.scrollY)
+        if (typeof d.docH === "number") setDocH(d.docH)
+        if (typeof d.viewH === "number") setViewH(d.viewH)
       } else if (d.type === "scroll") {
         if (typeof d.scrollY === "number") setScrollY(d.scrollY)
+        if (typeof d.docH === "number") setDocH(d.docH)
+        if (typeof d.viewH === "number") setViewH(d.viewH)
       } else if (d.type === "anchor-hover") setHoverThread(d.id ?? null)
       else if (d.type === "anchor-click") {
         setActiveThread(d.id)
@@ -179,5 +188,7 @@ export function useArtifactFrame(p: {
     inDoc,
     anchorTops,
     scrollY,
+    docH,
+    viewH,
   }
 }

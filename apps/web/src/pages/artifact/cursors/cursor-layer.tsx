@@ -1,12 +1,24 @@
 import { memo } from "react"
 import { CursorGlyph, NameTag } from "@/components/cursor/glyph"
+import { cn } from "@/lib/utils"
 import type { CursorLayerHandle, PeerView, Ripple } from "./use-live-cursors"
 
 // The peer-cursor overlay, painted over the artifact frame. Mount/unmount and
 // styling are React's job; every-frame motion is driven straight on the DOM by
 // the rAF loop in use-live-cursors (it writes `transform`/`opacity` on these
 // nodes via the `register` ref). Ripple/peer colors are identity data.
-export function CursorLayer({ layer }: { layer: CursorLayerHandle }) {
+export function CursorLayer({
+  layer,
+  onScrollDoc,
+}: {
+  layer: CursorLayerHandle
+  onScrollDoc?: (dy: number) => void
+}) {
+  // Click an edge indicator to scroll ~70% of a screen toward those peers.
+  const jump = (dir: "up" | "down") => {
+    const h = layer.ref.current?.clientHeight ?? 600
+    onScrollDoc?.(dir === "up" ? -h * 0.7 : h * 0.7)
+  }
   return (
     <div
       ref={layer.ref}
@@ -20,7 +32,51 @@ export function CursorLayer({ layer }: { layer: CursorLayerHandle }) {
       {layer.ripples.map((r) => (
         <RippleDot key={r.key} ripple={r} />
       ))}
+      {layer.above.length > 0 && (
+        <EdgeIndicator side="top" peers={layer.above} onClick={() => jump("up")} />
+      )}
+      {layer.below.length > 0 && (
+        <EdgeIndicator side="bottom" peers={layer.below} onClick={() => jump("down")} />
+      )}
     </div>
+  )
+}
+
+// Peers scrolled out of view, collapsed into a cluster at the top/bottom edge
+// (Miro/Figma style): how many, in their cursor colors, click to scroll toward
+// them. Identity colors are data, not theme tokens, so they ride inline styles.
+function EdgeIndicator({
+  side,
+  peers,
+  onClick,
+}: {
+  side: "top" | "bottom"
+  peers: PeerView[]
+  onClick: () => void
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      data-testid={`cursor-offscreen-${side}`}
+      title={`${peers.map((p) => p.name).join(", ")} ${side === "top" ? "above" : "below"}. Click to scroll.`}
+      className={cn(
+        "pointer-events-auto absolute left-1/2 z-30 flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-border bg-card/95 px-2.5 py-1 text-xs font-semibold text-foreground shadow-[var(--shadow)] backdrop-blur transition-colors hover:bg-hover",
+        side === "top" ? "top-2" : "bottom-2",
+      )}
+    >
+      <span aria-hidden>{side === "top" ? "▲" : "▼"}</span>
+      <span className="flex -space-x-1">
+        {peers.slice(0, 3).map((p) => (
+          <span
+            key={p.id}
+            className="size-3 rounded-full ring-1 ring-card"
+            style={{ background: p.color }}
+          />
+        ))}
+      </span>
+      <span className="tabular-nums">{peers.length}</span>
+    </button>
   )
 }
 

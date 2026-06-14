@@ -112,6 +112,8 @@ export function Artifact() {
     inDoc,
     anchorTops,
     scrollY,
+    docH,
+    viewH,
   } = useArtifactFrame({
     comments,
     shortId,
@@ -128,6 +130,13 @@ export function Artifact() {
   // Preview vs. line-diff for the shown version, plus the fetched diff. See
   // use-version-diff.
   const { view, setView, diff } = useVersionDiff(art, shortId, version)
+
+  // Feed our live iframe geometry to the cursor layer, so peers render at their
+  // document position (mapped against our scroll) and scrolled-off peers collapse
+  // into the top/bottom edge indicators.
+  useEffect(() => {
+    live.setGeom({ scrollY, docH, viewH })
+  }, [live.setGeom, scrollY, docH, viewH])
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: clears the active thread + composer when the artifact/version changes (the iframe bridge clears its own selection).
   useEffect(() => {
@@ -403,6 +412,7 @@ export function Artifact() {
                 frameRef={frame}
                 presentWrapRef={presentWrap}
                 cursor={live.cursor}
+                onScrollDoc={scrollBy}
                 onFrameLoad={onFrameLoad}
                 onToggleDiff={() => setView(view === "diff" ? "preview" : "diff")}
                 onRestore={() => restore(shown)}

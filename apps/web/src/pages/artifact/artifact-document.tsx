@@ -24,6 +24,7 @@ export function ArtifactDocument({
   frameRef,
   presentWrapRef,
   cursor,
+  onScrollDoc,
   onFrameLoad,
   onToggleDiff,
   onRestore,
@@ -43,6 +44,7 @@ export function ArtifactDocument({
   frameRef: RefObject<HTMLIFrameElement | null>
   presentWrapRef: RefObject<HTMLDivElement | null>
   cursor: CursorLayerHandle
+  onScrollDoc: (dy: number) => void
   onFrameLoad: () => void
   onToggleDiff: () => void
   onRestore: () => void
@@ -113,7 +115,7 @@ export function ArtifactDocument({
               origin, so its anchor script forwards pointer moves/leave/tap out via
               postMessage; the overlay eases them in here in the parent, over the
               frame. Anon viewers too. */}
-          <CursorLayer layer={cursor} />
+          <CursorLayer layer={cursor} onScrollDoc={onScrollDoc} />
         </div>
       )}
     </>
