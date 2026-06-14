@@ -76,7 +76,10 @@ const STARTERS = {
 
 /**
  * Files a new project gets for a template. dock.json drives publishing; AGENTS.md
- * is the loop convention for agents; the starter is publishable immediately.
+ * is the loop convention for agents; the starter is publishable immediately. The
+ * agent on-ramp ships too: a Claude Code skill (.claude/skills/dock) and a project
+ * MCP config (.mcp.json) so "let my agent ship the page and bring comments back"
+ * is wired the moment the project exists.
  */
 export function scaffoldFiles(title = "My artifact", template = "md") {
   const t = STARTERS[template] ?? STARTERS.md
@@ -85,7 +88,30 @@ export function scaffoldFiles(title = "My artifact", template = "md") {
     "dock.schema.json": `${JSON.stringify(DOCK_SCHEMA, null, 2)}\n`,
     ...t.files(title),
     "AGENTS.md": AGENTS_MD,
+    ".claude/skills/dock/SKILL.md": SKILL_MD,
+    ".mcp.json": `${JSON.stringify(MCP_CONFIG, null, 2)}\n`,
   }
+}
+
+/** Project-scoped MCP config (Claude Code et al. read `.mcp.json`). Reads the
+ *  server + token from the environment so no secret is written to disk; falls
+ *  back to a local server. `npx -y @dock/mcp` needs no install. */
+// Shell-style env expansion the agent harness resolves when it reads .mcp.json:
+// `${VAR:-default}`. Assembled from parts so the source carries no literal
+// template placeholder (which a plain JS string shouldn't).
+const envRef = (name, fallback = "") => ["${", name, ":-", fallback, "}"].join("")
+
+const MCP_CONFIG = {
+  mcpServers: {
+    dock: {
+      command: "npx",
+      args: ["-y", "@dock/mcp"],
+      env: {
+        DOCK_SERVER: envRef("DOCK_SERVER", "http://localhost:8080"),
+        DOCK_TOKEN: envRef("DOCK_TOKEN"),
+      },
+    },
+  },
 }
 
 /** JSON Schema for dock.json — gives editors autocomplete + validation. */
@@ -362,4 +388,57 @@ include \`resolves=<commentId,...>\` in the publish request.
 Anchors are text quotes with surrounding context. They survive edits when prose
 stays recognizable. Prefer small, local edits over wholesale rewrites; keep
 headings and distinctive phrases stable. Full guidance: STANDARD.md.
+
+## Using an agent harness
+
+A Claude Code skill ships in \`.claude/skills/dock\`, and \`.mcp.json\` wires the
+Dock MCP server (\`publish_artifact\`, \`list_comments\`, \`publish_version\`,
+\`resolve_thread\`, …). Set \`DOCK_SERVER\` and \`DOCK_TOKEN\` in your environment;
+both the CLI and the MCP server read them.
+`
+
+// A Claude Code / agent skill: discoverable, trigger-tagged instructions for the
+// publish -> review -> revise loop. Mirrors AGENTS.md in skill form so a harness
+// surfaces it automatically when the user asks to publish, share, or get feedback.
+const SKILL_MD = `---
+name: dock-publish
+description: Publish this project to Dock — a permanent versioned URL with inline comments — and run the review loop (share, read comments, revise, resolve). Use when the user asks to publish, share, or ship a page, doc, or site, or to read and act on Dock review comments.
+---
+
+# Publish to Dock and close the loop
+
+This project is wired to Dock (see \`dock.json\`). Dock hosts an artifact — HTML,
+Markdown, or a static site — at a permanent, versioned URL with inline comments,
+so a human or another agent reviews on the rendered page and you revise.
+
+## Publish
+
+\`\`\`bash
+dock publish              # publishes dock.json "entry" (a file or a built folder)
+\`\`\`
+
+Each publish is a new immutable version at the same URL. Name a checkpoint with
+\`dock publish --name "Final draft"\`.
+
+## The loop: publish -> review -> revise
+
+\`\`\`bash
+dock publish                    # 1. share the URL
+dock comments                   # 2. read threads (quote · author · state)
+# 3. revise the source for the feedback, then republish:
+dock publish --name "Rev 2"     #    same URL, highlights re-anchor
+dock reply <thread_id> "Fixed." # 4a. discuss
+dock resolve <comment_id>       # 4b. close a handled thread
+\`\`\`
+
+If the Dock MCP server is connected (\`.mcp.json\`), prefer its tools for the same
+loop without shelling out: \`publish_artifact\`, \`list_comments\`,
+\`publish_version\` (pass \`resolves\` to close threads), \`reply_comment\`,
+\`resolve_thread\`, \`diff_versions\`.
+
+## Keep comments anchorable
+
+Anchors are text quotes with context; they survive edits when surrounding text
+stays recognizable. Prefer small, local edits; keep headings and distinctive
+phrases stable. Full guidance: STANDARD.md.
 `

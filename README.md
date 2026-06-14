@@ -94,19 +94,52 @@ Single container (SQLite + local disk) or a hosted split (CDN web + API containe
 Postgres + S3/R2). Both run the same image; everything is env driven. See
 [DEPLOY.md](DEPLOY.md).
 
-## MCP
+## Agents: ship a page, get the review comments back
 
-Point an agent at a Dock server over MCP (stdio):
+Dock is built for the loop where an agent publishes and a human (or another agent)
+reviews. `dock init` scaffolds the on-ramp straight into your project: a Claude Code
+skill (`.claude/skills/dock`) plus a project MCP config (`.mcp.json`), so an agent
+can publish, read comments, revise, and resolve with no extra wiring.
+
+One line to connect Claude Code over MCP:
 
 ```bash
-DOCK_SERVER=http://localhost:8080 pnpm --filter @dock/mcp start
+claude mcp add dock --env DOCK_SERVER=http://localhost:8080 --env DOCK_TOKEN=$DOCK_TOKEN -- npx -y @dock/mcp
 ```
 
-Tools: `publish_artifact`, `publish_version` (with `resolves`), `get_artifact`
+Or drive it from the CLI, no MCP needed:
+
+```bash
+npx -y @dock/cli init        # dock.json + a starter + the skill + .mcp.json
+npx -y @dock/cli publish     # share a versioned URL
+npx -y @dock/cli comments    # read the review threads, then revise and publish again
+```
+
+Both read `DOCK_SERVER` and `DOCK_TOKEN` from the environment. Mint a scoped agent
+token in workspace settings, or set the instance-wide `DOCK_TOKEN` when self-hosting.
+
+MCP tools: `publish_artifact`, `publish_version` (with `resolves`), `get_artifact`
 (source read-back), `list_versions`, `diff_versions`, `restore_version`,
 `list_comments`, `add_comment` (with a `quote` anchor), `reply_comment`,
 `resolve_thread`, `view_stats`. The `dock://guide` resource serves the full
 publish → review → revise loop (also in [packages/mcp/SKILL.md](packages/mcp/SKILL.md)).
+
+Working in this repo before the packages are published? Run the server directly:
+`DOCK_SERVER=http://localhost:8080 pnpm --filter @dock/mcp start`.
+
+## Embeds and unfurls
+
+Every share link (`/a/:ref`) unfurls as a rich card in Slack, Discord, X, and
+Notion, and can be dropped into any page. The server adds OG/Twitter meta to the
+artifact's `/a/:ref` HTML and exposes:
+
+- `GET /v1/og/:ref` — the card image (1200×630 SVG; private artifacts get a
+  no-leak locked card)
+- `GET /v1/oembed?url=…` — an oEmbed `rich` document (a sandboxed iframe)
+- `GET /v1/embed/:ref` — the embeddable view; copy a ready iframe snippet from the
+  Share dialog
+
+All honor visibility against the requester, so a crawler never sees a gated title.
 
 ## Live updates
 

@@ -1,7 +1,6 @@
 {
   "name": "@dock/cli",
   "version": "0.1.0",
-  "private": true,
   "type": "module",
   "license": "Apache-2.0",
   "repository": {
@@ -11,6 +10,10 @@
   },
   "bin": {
     "dock": "./bin/dock.js"
+  },
+  "files": ["bin", "src"],
+  "publishConfig": {
+    "access": "public"
   },
   "scripts": {
     "typecheck": "echo 'plain js cli'",

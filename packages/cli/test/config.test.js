@@ -25,12 +25,26 @@ afterEach(() => {
 })
 
 describe("scaffold", () => {
-  it("md template writes dock.json + index.md + AGENTS.md", () => {
+  it("md template writes dock.json + index.md + AGENTS.md + the agent on-ramp", () => {
     const d = tmp()
     const { created } = scaffold(d, "Report", "md")
-    expect(created.sort()).toEqual(["AGENTS.md", "dock.json", "dock.schema.json", "index.md"])
+    expect(created.sort()).toEqual([
+      ".claude/skills/dock/SKILL.md",
+      ".mcp.json",
+      "AGENTS.md",
+      "dock.json",
+      "dock.schema.json",
+      "index.md",
+    ])
     const cfg = JSON.parse(readFileSync(join(d, CONFIG_FILE), "utf8"))
     expect(cfg).toMatchObject({ title: "Report", entry: "index.md", id: null, visibility: "link" })
+    // The MCP config + skill are present and reference the published server.
+    expect(JSON.parse(readFileSync(join(d, ".mcp.json"), "utf8")).mcpServers.dock.args).toContain(
+      "@dock/mcp",
+    )
+    expect(readFileSync(join(d, ".claude/skills/dock/SKILL.md"), "utf8")).toContain(
+      "name: dock-publish",
+    )
   })
 
   it("html template uses index.html as the entry", () => {
