@@ -50,31 +50,25 @@ function ipv4Octets(host: string): number[] | null {
 }
 
 /**
- * Reject webhook URLs aimed at private, loopback, or link-local addresses
- * (incl. the cloud metadata endpoint) to blunt SSRF. Literal IPs (in every
- * encoding) + localhost are blocked here; hostnames that resolve into private
- * space (DNS rebinding) are out of scope for this static check.
+ * Is a host literal a private / loopback / link-local address (incl. the cloud
+ * metadata endpoint)? Handles `localhost`, IPv4 in every inet_aton encoding, and
+ * IPv6 (loopback, unique-local, link-local, IPv4-mapped). A plain DNS hostname
+ * returns false — it isn't a literal private address; resolve it first to judge
+ * where it points (see the delivery-time check in webhooks.ts).
  */
-export function isPublicHttpUrl(raw: string): boolean {
-  let u: URL
-  try {
-    u = new URL(raw)
-  } catch {
-    return false
-  }
-  if (u.protocol !== "http:" && u.protocol !== "https:") return false
-  const host = u.hostname.toLowerCase().replace(/^\[|\]$/g, "")
-  if (host === "" || host === "localhost" || host.endsWith(".localhost")) return false
-  const v4 = ipv4Octets(host)
-  if (v4) return !isPrivateV4(v4)
-  if (host.includes(":")) {
-    if (host === "::1" || host === "::") return false
-    if (/^f[cd]/.test(host)) return false // unique-local fc00::/7
-    if (/^fe80/.test(host)) return false // link-local
+export function isPrivateAddress(host: string): boolean {
+  const h = host.toLowerCase().replace(/^\[|\]$/g, "")
+  if (h === "" || h === "localhost" || h.endsWith(".localhost")) return true
+  const v4 = ipv4Octets(h)
+  if (v4) return isPrivateV4(v4)
+  if (h.includes(":")) {
+    if (h === "::1" || h === "::") return true
+    if (/^f[cd]/.test(h)) return true // unique-local fc00::/7
+    if (/^fe80/.test(h)) return true // link-local
     // IPv4-mapped (::ffff:a.b.c.d). The URL parser rewrites the dotted tail to
     // hex hextets (::ffff:7f00:1), so handle both: decode the embedded v4 and
     // run the private-range check on it.
-    const m = host.match(/^::ffff:(.+)$/i)
+    const m = h.match(/^::ffff:(.+)$/i)
     if (m) {
       const suf = m[1] ?? ""
       let oct: number[] | null = null
@@ -88,9 +82,26 @@ export function isPublicHttpUrl(raw: string): boolean {
           oct = [(hi >> 8) & 255, hi & 255, (lo >> 8) & 255, lo & 255]
         }
       }
-      if (oct && isPrivateV4(oct)) return false
+      if (oct && isPrivateV4(oct)) return true
     }
-    return true
+    return false
   }
-  return true
+  return false
+}
+
+/**
+ * Reject webhook URLs aimed at private, loopback, or link-local addresses to
+ * blunt SSRF at registration. Literal IPs (in every encoding) + localhost are
+ * blocked here; a hostname that *resolves* into private space (DNS rebinding) is
+ * re-checked at delivery time (see deliverOnce), which is where DNS is available.
+ */
+export function isPublicHttpUrl(raw: string): boolean {
+  let u: URL
+  try {
+    u = new URL(raw)
+  } catch {
+    return false
+  }
+  if (u.protocol !== "http:" && u.protocol !== "https:") return false
+  return !isPrivateAddress(u.hostname)
 }

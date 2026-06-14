@@ -11,8 +11,19 @@ import { type ReactNode, useEffect } from "react"
 import { AppShell } from "../components/app-shell"
 import { AuthProvider, ThemeProvider } from "../ctx"
 import { queryClient } from "../lib/query-client"
+import { STORAGE_KEYS } from "../lib/storage-keys"
 import { reportWebVitals } from "../lib/vitals"
 import "@/styles/globals.css"
+
+// Apply the saved theme before first paint. The prerendered shell ships
+// data-theme="paper"; without this, a user on Dark/Dusk/Light sees a paper
+// flash until ThemeProvider's effect runs post-hydration. This runs
+// synchronously in <head>, ahead of body render. Keyed off STORAGE_KEYS.theme
+// (not a literal) so it tracks the one key definition and stays out of the
+// storage-key linter's way.
+const THEME_BOOT = `(function(){try{var t=localStorage.getItem(${JSON.stringify(
+  STORAGE_KEYS.theme,
+)});if(t)document.documentElement.dataset.theme=t}catch(e){}})()`
 
 export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()({
   head: () => ({
@@ -77,6 +88,10 @@ function RootDocument({ children }: { children: ReactNode }) {
   return (
     <html lang="en" data-theme="paper">
       <head>
+        <script
+          // biome-ignore lint/security/noDangerouslySetInnerHtml: static boot string built from a constant storage key, no user input.
+          dangerouslySetInnerHTML={{ __html: THEME_BOOT }}
+        />
         <HeadContent />
       </head>
       <body>

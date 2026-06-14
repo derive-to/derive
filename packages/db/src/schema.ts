@@ -307,6 +307,11 @@ export const SCHEMA_STATEMENTS: string[] = [
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
     removed_at TEXT
   )`,
+  // The library feed: filter by org_id, order by (created_at, id) desc (keyset
+  // pagination). Composite index serves both the scope and the sort; SQLite/D1
+  // reverse-scan it for the DESC order. Without it every workspace list is a
+  // full table scan + filesort.
+  `CREATE INDEX IF NOT EXISTS artifact_org_created ON artifact (org_id, created_at, id)`,
   `CREATE TABLE IF NOT EXISTS version (
     id TEXT PRIMARY KEY,
     artifact_id TEXT NOT NULL REFERENCES artifact(id),
