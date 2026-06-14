@@ -117,6 +117,12 @@ export interface AppDeps {
    */
   sandboxOrigin?: string
   /**
+   * Base domain for vanity subdomains (e.g. "dockd.app"). When set, a request to
+   * `<label>.<base>` whose host is in the `domain` table serves that artifact at
+   * the host root (domain mode). Unset = subdomain serving off.
+   */
+  subdomainBase?: string
+  /**
    * The SPA and API are on different sites (hosted split). Makes first-party
    * cookies we set here — currently the anonymous-viewer id — `SameSite=None;
    * Secure` so they survive the cross-site request, matching the session cookie.

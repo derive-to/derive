@@ -1,14 +1,16 @@
 import { type Context, Hono } from "hono"
 import { compress } from "hono/compress"
 import { type AppDeps, buildContext } from "./context"
-import { corsFor, fail } from "./lib/http"
+import { corsFor, fail, TOMBSTONE } from "./lib/http"
 import { makeRateLimiter } from "./lib/rate-limit"
+import { serveContent } from "./lib/serve-content"
 import { log } from "./log"
 import { agentRoutes } from "./routes/agents"
 import { analyticsRoutes } from "./routes/analytics"
 import { artifactRoutes } from "./routes/artifacts"
 import { collectionRoutes } from "./routes/collections"
 import { commentRoutes } from "./routes/comments"
+import { domainRoutes } from "./routes/domains"
 import { embedRoutes } from "./routes/embeds"
 import { favoriteRoutes } from "./routes/favorites"
 import { moderationRoutes } from "./routes/moderation"
@@ -78,6 +80,47 @@ export function createApp(deps: AppDeps): Hono {
         return c.redirect(`${deps.sandboxOrigin}${path}${new URL(c.req.url).search}`, 302)
       }
       return next()
+    })
+  }
+
+  // ---- Domain mode (C1): vanity subdomains -------------------------------
+  // With a base domain configured, a request to `<label>.<base>` whose host is in
+  // the `domain` table serves that artifact at the host root: its own origin, no
+  // path prefix, the absolute-URL rewriting a no-op. Like the sandbox host, these
+  // vanity hosts serve ONLY artifact bytes + the anchor client, never the
+  // app/auth/API, and the app's own host is never matched. A vanity host is
+  // cross-origin, so the actor is anonymous: only public/link artifacts resolve,
+  // gated ones 404, a removed one 410.
+  const subBase = deps.subdomainBase?.toLowerCase()
+  const appHostForSub = (() => {
+    try {
+      return new URL(deps.baseUrl).host.toLowerCase()
+    } catch {
+      return null
+    }
+  })()
+  if (subBase) {
+    app.use("*", async (c, next) => {
+      const host = (c.req.header("host") ?? new URL(c.req.url).host).toLowerCase().split(":")[0]
+      if (
+        !host ||
+        host === appHostForSub ||
+        (sandboxHost && host === sandboxHost.toLowerCase()) ||
+        host === subBase ||
+        !host.endsWith(`.${subBase}`)
+      )
+        return next()
+      // The served HTML references /raw/dock-client.js; let raw + health through.
+      if (c.req.path === "/healthz" || c.req.path.startsWith("/raw/")) return next()
+      const record = await ctx.meta.getDomain(host)
+      if (!record) return c.text("not found", 404)
+      const artifact = await ctx.meta.getArtifactById(record.artifact_id)
+      if (!artifact || !(await ctx.authorize(c, "read", artifact))) return c.text("not found", 404)
+      if (artifact.removed_at) return c.text(TOMBSTONE, 410)
+      const version = await ctx.meta.getVersion(artifact.id, artifact.current_version)
+      if (!version) return c.text("not found", 404)
+      const reqPath = decodeURIComponent(c.req.path.replace(/^\/+/, ""))
+      return serveContent(c, ctx.blobs, version, artifact.title, "/", reqPath)
     })
   }
 
@@ -161,6 +204,7 @@ export function createApp(deps: AppDeps): Hono {
     webhookRoutes,
     rawRoutes,
     embedRoutes,
+    domainRoutes,
   ])
     app.route("/", routes(ctx))
 

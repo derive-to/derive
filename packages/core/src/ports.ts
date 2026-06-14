@@ -15,6 +15,9 @@ export type ArtifactKind = "file" | "bundle"
 // the visitor enters the password (then a viewer; members/owners see it by role).
 export type Visibility = "public" | "link" | "org" | "password"
 
+/** A platform subdomain (`name.dockd.app`) or a customer's own domain. */
+export type DomainKind = "subdomain" | "custom"
+
 export interface ArtifactRecord {
   id: string
   short_id: string
@@ -96,6 +99,8 @@ export interface MetaStore {
     passwordHash: string | null,
   ): Promise<void>
   getByShortId(shortId: string): Promise<ArtifactRecord | null>
+  /** Load an artifact by its internal id (used by domain mode's host lookup). */
+  getArtifactById(id: string): Promise<ArtifactRecord | null>
   /** Appends the next version and bumps current_version. */
   addVersion(artifactId: string, v: NewVersion): Promise<VersionRecord>
   listVersions(artifactId: string): Promise<VersionRecord[]>
@@ -229,6 +234,16 @@ export interface MetaStore {
   /** This user's collection-member roles over collections containing the
    *  artifact — folded into their effective artifact role (collection sharing). */
   collectionRolesForArtifact(artifactId: string, userId: string): Promise<Role[]>
+
+  // ---- Domain mode: a hostname serving an artifact at its own origin ------
+  /** The artifact a hostname serves, or null. The hot path for host dispatch. */
+  getDomain(host: string): Promise<DomainRecord | null>
+  /** Claim a hostname for an artifact. Returns null if the host is already taken. */
+  setDomain(d: NewDomain): Promise<DomainRecord | null>
+  /** Hostnames pointing at an artifact (for the share UI). */
+  getArtifactDomains(artifactId: string): Promise<DomainRecord[]>
+  /** Release a hostname, scoped to its owning workspace. */
+  deleteDomain(host: string, orgId: string): Promise<void>
 
   // ---- Reviews: proposed versions awaiting approval ----------------------
   createProposal(p: NewProposal): Promise<ProposalRecord>
@@ -502,6 +517,19 @@ export interface NewCollection {
   org_id: string
   title: string
   created_by: string
+}
+export interface DomainRecord {
+  host: string
+  artifact_id: string
+  org_id: string
+  kind: DomainKind
+  created_at: string
+}
+export interface NewDomain {
+  host: string
+  artifact_id: string
+  org_id: string
+  kind: DomainKind
 }
 export interface CollectionMemberRecord {
   id: string

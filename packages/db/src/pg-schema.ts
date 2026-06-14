@@ -4,6 +4,7 @@ import type {
   AuditAction,
   CommentState,
   DeliveryStatus,
+  DomainKind,
   NotificationKind,
   ProposalState,
   ReportState,
@@ -229,6 +230,15 @@ export const collectionMember = pgTable(
   },
   (t) => [uniqueIndex("collection_member_uniq").on(t.collection_id, t.user_id)],
 )
+export const domain = pgTable("domain", {
+  host: text("host").primaryKey(),
+  artifact_id: text("artifact_id")
+    .notNull()
+    .references(() => artifact.id),
+  org_id: text("org_id").notNull(),
+  kind: text("kind").$type<DomainKind>().notNull().default("subdomain"),
+  created_at: text("created_at").notNull().$defaultFn(isoNow),
+})
 export const proposal = pgTable("proposal", {
   id: text("id").primaryKey(),
   artifact_id: text("artifact_id")
@@ -476,6 +486,14 @@ export const PG_SCHEMA_STATEMENTS: string[] = [
     UNIQUE (collection_id, user_id)
   )`,
   `CREATE INDEX IF NOT EXISTS collection_member_user ON collection_member (user_id)`,
+  `CREATE TABLE IF NOT EXISTS domain (
+    host TEXT PRIMARY KEY,
+    artifact_id TEXT NOT NULL REFERENCES artifact(id),
+    org_id TEXT NOT NULL,
+    kind TEXT NOT NULL DEFAULT 'subdomain',
+    created_at TEXT NOT NULL DEFAULT ${isoDefault}
+  )`,
+  `CREATE INDEX IF NOT EXISTS domain_artifact ON domain (artifact_id)`,
   `CREATE TABLE IF NOT EXISTS proposal (
     id TEXT PRIMARY KEY,
     artifact_id TEXT NOT NULL REFERENCES artifact(id),

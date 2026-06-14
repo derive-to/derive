@@ -10,6 +10,7 @@ import type {
   CommentState,
   DeliveryRecord,
   DeliveryStatus,
+  DomainRecord,
   ListArtifactsOpts,
   MembershipRecord,
   MetaStore,
@@ -22,6 +23,7 @@ import type {
   NewCollectionMember,
   NewComment,
   NewDelivery,
+  NewDomain,
   NewMembership,
   NewNotification,
   NewProposal,
@@ -58,6 +60,7 @@ import {
   collectionItem,
   collectionMember,
   comment,
+  domain,
   membership,
   notification,
   PG_SCHEMA_STATEMENTS,
@@ -93,6 +96,7 @@ const schema = {
   collection,
   collectionItem,
   collectionMember,
+  domain,
   report,
   auditLog,
 }
@@ -116,6 +120,7 @@ const _schemaShapes: Shapes<typeof schema> = {
   agentMention: true,
   collection: true,
   collectionMember: true,
+  domain: true,
   report: true,
   auditLog: true,
 }
@@ -162,6 +167,10 @@ export class PgMetaStore implements MetaStore {
 
   async getByShortId(shortId: string): Promise<ArtifactRecord | null> {
     const rows = await this.db.select().from(artifact).where(eq(artifact.short_id, shortId))
+    return rows[0] ?? null
+  }
+  async getArtifactById(id: string): Promise<ArtifactRecord | null> {
+    const rows = await this.db.select().from(artifact).where(eq(artifact.id, id))
     return rows[0] ?? null
   }
 
@@ -688,6 +697,24 @@ export class PgMetaStore implements MetaStore {
       .innerJoin(collectionItem, eq(collectionItem.collection_id, collectionMember.collection_id))
       .where(and(eq(collectionItem.artifact_id, artifactId), eq(collectionMember.user_id, userId)))
     return rows.map((r) => r.role)
+  }
+
+  // ---- Domains (hostname → artifact) -------------------------------------
+  async getDomain(host: string): Promise<DomainRecord | null> {
+    const rows = await this.db.select().from(domain).where(eq(domain.host, host))
+    return rows[0] ?? null
+  }
+  // Insert-only: a taken host yields no row (→ 409 in the route), so a workspace
+  // can never claim a host already owned by another.
+  async setDomain(d: NewDomain): Promise<DomainRecord | null> {
+    const rows = await this.db.insert(domain).values(d).onConflictDoNothing().returning()
+    return rows[0] ?? null
+  }
+  async getArtifactDomains(artifactId: string): Promise<DomainRecord[]> {
+    return this.db.select().from(domain).where(eq(domain.artifact_id, artifactId))
+  }
+  async deleteDomain(host: string, orgId: string): Promise<void> {
+    await this.db.delete(domain).where(and(eq(domain.host, host), eq(domain.org_id, orgId)))
   }
 
   // ---- Reviews: proposed versions ----------------------------------------
