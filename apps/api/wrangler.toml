@@ -27,12 +27,15 @@ new_sqlite_classes = ["ArtifactRoom"]
 # the API (no CORS, first-party cookies). Prepare the build first:
 # `pnpm --filter @dock/api build:web` (builds apps/web and preps dist/client for Workers:
 # _shell.html -> index.html, drops the Pages _redirects).
-# Only the API/data paths run the Worker first; every other path (incl. /a/:ref) serves a
-# static asset, and non-asset routes fall back to the SPA shell (index.html) so the client
-# router owns the page. The SPA is the one and only frontend (no server-rendered viewer).
+# The API/data paths run the Worker first; so does /a/* — the share URL, where the
+# Worker serves the SPA shell with per-artifact OG/unfurl meta injected for crawlers
+# (it reads the shell via the ASSETS binding). Every other path serves a static asset,
+# and non-asset routes fall back to the SPA shell (index.html) so the client router
+# owns the page. The SPA is the one and only frontend (no server-rendered viewer).
 [assets]
 directory = "../web/dist/client"
-run_worker_first = ["/v1/*", "/api/*", "/raw/*", "/healthz"]
+binding = "ASSETS"
+run_worker_first = ["/v1/*", "/api/*", "/raw/*", "/a/*", "/healthz"]
 not_found_handling = "single-page-application"
 
 # baseUrl falls back to the request origin when unset. Secured by Better Auth; set

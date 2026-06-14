@@ -63,10 +63,15 @@ const blobs: BlobStore = cfg.objectStoreUrl
   ? s3FromUrl(cfg.objectStoreUrl)
   : new FsBlobStore(join(cfg.dataDir, "blobs"))
 
+// The SPA shell, read once: passed to createApp (so /a/:ref can inject unfurl
+// meta) and to mountWeb (the client-router fallback). Only when serving the web.
+const shellHtml = cfg.serveWeb ? readFileSync(cfg.webShell, "utf8") : undefined
+
 const app = createApp({
   meta,
   blobs,
   baseUrl: cfg.baseUrl,
+  shell: shellHtml,
   token: cfg.token,
   superAdmins: cfg.superAdmins,
   auth,
@@ -95,10 +100,10 @@ const app = createApp({
 // routes above always win; the server-owned path set, the immutable-asset caching,
 // and the index.html fallback live in mountWeb, shared as one contract with the
 // edge Worker (wrangler.toml) and the dev proxy (serve-web.test asserts parity).
-if (cfg.serveWeb)
+if (cfg.serveWeb && shellHtml !== undefined)
   mountWeb(app, {
     webRoot: relative(process.cwd(), cfg.webDir) || ".",
-    shellHtml: readFileSync(cfg.webShell, "utf8"),
+    shellHtml,
   })
 
 // The webhook outbox worker delivers queued events with retries + backoff.

@@ -1,13 +1,23 @@
 {
   "name": "@dock/mcp",
   "version": "0.1.0",
-  "private": true,
   "type": "module",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
     "url": "https://github.com/Niftory/dock.build.git",
     "directory": "packages/mcp"
+  },
+  "bin": {
+    "dock-mcp": "./bin/dock-mcp.mjs"
+  },
+  "files": [
+    "bin",
+    "src",
+    "SKILL.md"
+  ],
+  "publishConfig": {
+    "access": "public"
   },
   "exports": {
     ".": "./src/index.ts",
@@ -20,6 +30,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.0",
+    "tsx": "^4.19.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {
@@ -28,7 +39,6 @@
     "@dock/storage": "workspace:*",
     "@hono/node-server": "^2.0.4",
     "@types/node": "^25.9.3",
-    "tsx": "^4.19.0",
     "typescript": "^6.0.3",
     "vitest": "^4.1.8"
   }

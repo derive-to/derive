@@ -18,6 +18,13 @@ import type { Hono } from "hono"
 const API_PREFIXES = ["/v1", "/api", "/raw"] as const
 const API_EXACT = ["/healthz"] as const
 
+// Page prefixes the SERVER renders before handing off to the SPA, but that are NOT
+// API paths: `/a/:ref` is served as the SPA shell with per-artifact unfurl meta
+// injected (crawlers don't run JS). The edge Worker must run first on these to
+// inject; the dev proxy and `isApiPath` deliberately ignore them (in dev the SPA
+// owns the page, and an unmatched one still falls back to the shell, never JSON).
+const SERVER_PAGE_PREFIXES = ["/a"] as const
+
 /** Server-owned path tokens in declaration order (as the dev proxy lists them). */
 export const API_PATHS: readonly string[] = [...API_PREFIXES, ...API_EXACT]
 
@@ -25,8 +32,13 @@ export const API_PATHS: readonly string[] = [...API_PREFIXES, ...API_EXACT]
 export const isApiPath = (path: string): boolean =>
   API_PREFIXES.some((p) => path.startsWith(p)) || (API_EXACT as readonly string[]).includes(path)
 
-/** The `run_worker_first` globs this contract implies (prefixes → `/*`, exact as-is). */
-export const workerFirstGlobs = (): string[] => [...API_PREFIXES.map((p) => `${p}/*`), ...API_EXACT]
+/** The `run_worker_first` globs this contract implies: API prefixes + the
+ *  server-rendered page prefixes (both → `/*`), plus the exact paths as-is. */
+export const workerFirstGlobs = (): string[] => [
+  ...API_PREFIXES.map((p) => `${p}/*`),
+  ...SERVER_PAGE_PREFIXES.map((p) => `${p}/*`),
+  ...API_EXACT,
+]
 
 // Content-hashed assets never change behind a URL — cache them for a year. A new
 // build emits new hashes, so this is safe and maximizes cache hits.

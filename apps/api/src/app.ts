@@ -9,6 +9,7 @@ import { analyticsRoutes } from "./routes/analytics"
 import { artifactRoutes } from "./routes/artifacts"
 import { collectionRoutes } from "./routes/collections"
 import { commentRoutes } from "./routes/comments"
+import { embedRoutes } from "./routes/embeds"
 import { favoriteRoutes } from "./routes/favorites"
 import { moderationRoutes } from "./routes/moderation"
 import { notificationRoutes } from "./routes/notifications"
@@ -159,6 +160,7 @@ export function createApp(deps: AppDeps): Hono {
     notificationRoutes,
     webhookRoutes,
     rawRoutes,
+    embedRoutes,
   ])
     app.route("/", routes(ctx))
 
