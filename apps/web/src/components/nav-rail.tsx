@@ -91,7 +91,6 @@ export function NavRail() {
     collections,
     workspaces,
     switchWorkspace,
-    createWorkspace,
     refreshCollections,
     setPaletteOpen,
   } = useShell()
@@ -329,7 +328,6 @@ export function NavRail() {
           workspaceLabel={summary?.workspace ?? ""}
           workspaces={workspaces}
           onSwitchWorkspace={switchWorkspace}
-          onCreateWorkspace={createWorkspace}
         />
       </div>
     </aside>
