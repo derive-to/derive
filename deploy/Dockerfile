@@ -22,4 +22,10 @@ ENV NODE_ENV=production \
 # Only used in the SQLite fallback; ignored when DATABASE_URL + OBJECT_STORE_URL are set.
 VOLUME /data
 EXPOSE 8080
-CMD ["pnpm", "--filter", "@dock/api", "start"]
+# Run node directly as PID 1, NOT via `pnpm ... start`: pnpm doesn't forward
+# SIGTERM to the node child, so on `docker stop` / Fly's auto-stop / a redeploy the
+# process would die instantly without running node.ts's graceful-shutdown handler
+# (drain in-flight requests, close the DB pool). tsx supplies the TS loader and the
+# app runs in this same process, so SIGTERM reaches our handler.
+WORKDIR /app/apps/api
+CMD ["node", "--import", "tsx", "src/node.ts"]
