@@ -282,8 +282,9 @@ describe("publish: URL + JSON helpers", () => {
     created_at: "t",
   } as unknown as ArtifactRecord
 
-  it("artifactUrl appends the slug when present, omits it otherwise", () => {
-    expect(artifactUrl("https://dock.test", artifact)).toBe("https://dock.test/a/abc123-my-doc")
+  it("artifactUrl prepends the slug when present, omits it otherwise", () => {
+    // Name-first refs (#130): <slug>-<short_id>.
+    expect(artifactUrl("https://dock.test", artifact)).toBe("https://dock.test/a/my-doc-abc123")
     expect(artifactUrl("https://dock.test", { ...artifact, slug: null })).toBe(
       "https://dock.test/a/abc123",
     )
@@ -293,7 +294,7 @@ describe("publish: URL + JSON helpers", () => {
     const json = toJson("https://dock.test", artifact, [])
     expect(json).toMatchObject({
       short_id: "abc123",
-      url: "https://dock.test/a/abc123-my-doc",
+      url: "https://dock.test/a/my-doc-abc123",
       kind: "file",
       spa: false,
       current_version: 2,

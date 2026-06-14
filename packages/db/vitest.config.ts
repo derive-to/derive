@@ -4,12 +4,11 @@ import { defineConfig } from "vitest/config"
 // exercise: the cross-dialect query layer (repos.ts), the SQLite driver (sqlite.ts),
 // and the DDL (schema.ts / d1-schema.ts, pinned by the schema-conformance test).
 //
-// pg.ts and d1.ts are deliberately excluded: they're the Postgres and Cloudflare-D1
-// drivers, which need a live Postgres / the workerd runtime to run. pg.ts is
-// exercised behaviorally by the api suite under DOCK_TEST_DB=pg (the same tests, the
-// pg driver); both dialects' DDL is conformance-checked against the drizzle defs. A
-// floor here would otherwise just track "is a Postgres container in CI", not data
-// correctness. The thresholds sit just under the current numbers as a ratchet.
+// pg.ts is gated separately in the `pg` lane (vitest.pg.config.ts): the store
+// contract runs against a real Postgres there, which this default (no-Postgres) lane
+// can't. d1.ts stays out — the Cloudflare-D1 driver needs the workerd runtime. Both
+// dialects' DDL is conformance-checked against the drizzle defs. The thresholds sit
+// just under the current numbers as a ratchet.
 export default defineConfig({
   test: {
     coverage: {
