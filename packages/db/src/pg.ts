@@ -47,7 +47,7 @@ import type {
   WebhookRecord,
   WorkspaceRecord,
 } from "@dock/core"
-import { and, asc, count, desc, eq, inArray, isNull, like, lt, lte, or, sql } from "drizzle-orm"
+import { and, asc, count, desc, eq, inArray, isNull, lte, or, sql } from "drizzle-orm"
 import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres"
 import { Pool } from "pg"
 import type { Exhaustive, Shapes } from "./parity"
@@ -75,7 +75,7 @@ import {
   webhookDelivery,
   workspace,
 } from "./pg-schema"
-import { collectManagedIds } from "./repos"
+import { artifactListConditions, collectManagedIds } from "./repos"
 
 const one = <T>(rows: T[]): T => {
   const r = rows[0]
@@ -267,17 +267,7 @@ export class PgMetaStore implements MetaStore {
 
   listArtifacts(opts?: ListArtifactsOpts): Promise<ArtifactRecord[]> {
     if (opts?.ids && opts.ids.length === 0) return Promise.resolve([])
-    const conds = []
-    if (opts?.q) conds.push(like(sql`lower(${artifact.title})`, `%${opts.q.toLowerCase()}%`))
-    if (opts?.cursor)
-      conds.push(
-        or(
-          lt(artifact.created_at, opts.cursor.created_at),
-          and(eq(artifact.created_at, opts.cursor.created_at), lt(artifact.id, opts.cursor.id)),
-        ),
-      )
-    if (opts?.ids) conds.push(inArray(artifact.id, opts.ids))
-    if (opts?.orgId) conds.push(eq(artifact.org_id, opts.orgId))
+    const conds = artifactListConditions(artifact, opts)
     const q = this.db
       .select()
       .from(artifact)
