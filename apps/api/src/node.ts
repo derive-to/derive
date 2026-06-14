@@ -22,17 +22,37 @@ mkdirSync(join(cfg.dataDir, "blobs"), { recursive: true })
 // stateless multi-instance topology), else embedded SQLite (zero-config).
 let meta: MetaStore
 let authDb: AuthDb
+// Closes the metadata store + the Better Auth datastore (separate handles onto
+// the same backend) for graceful shutdown.
+let closeStores: () => Promise<void>
 if (cfg.databaseUrl) {
-  meta = await PgMetaStore.create(cfg.databaseUrl)
-  authDb = new Pool({ connectionString: cfg.databaseUrl })
+  // A pool 'error' (DB restart / network blip / Neon scale-to-zero) without a
+  // listener becomes an unhandled exception that crashes the process — log it.
+  const pgMeta = await PgMetaStore.create(cfg.databaseUrl, (e) =>
+    log.error("pg meta pool error", { error: e.message }),
+  )
+  const pool = new Pool({ connectionString: cfg.databaseUrl })
+  pool.on("error", (e) => log.error("pg auth pool error", { error: e.message }))
+  meta = pgMeta
+  authDb = pool
+  closeStores = async () => {
+    await pgMeta.close()
+    await pool.end()
+  }
 } else {
-  meta = new SqliteMetaStore(join(cfg.dataDir, "dock.db"))
-  authDb = new Database(join(cfg.dataDir, "dock.db"))
+  const db = new Database(join(cfg.dataDir, "dock.db"))
   // Better Auth opens its own connection to the same dock.db. Match the store's
   // WAL + busy_timeout so concurrent auth writes (e.g. bursts of signups) wait
   // for the lock instead of failing with SQLITE_BUSY.
-  authDb.pragma("journal_mode = WAL")
-  authDb.pragma("busy_timeout = 5000")
+  db.pragma("journal_mode = WAL")
+  db.pragma("busy_timeout = 5000")
+  const sqliteMeta = new SqliteMetaStore(join(cfg.dataDir, "dock.db"))
+  meta = sqliteMeta
+  authDb = db
+  closeStores = async () => {
+    sqliteMeta.close()
+    db.close()
+  }
 }
 
 const auth = makeAuth(authDb, cfg.baseUrl, resolveAuthSecret(cfg.dataDir))
@@ -107,17 +127,19 @@ if (cfg.serveWeb && shellHtml !== undefined)
   })
 
 // The webhook outbox worker delivers queued events with retries + backoff.
-startWebhookWorker(meta)
+const stopWorker = startWebhookWorker(meta)
 
 // Analytics retention: views are a rolling window (default 365 days). A daily
 // prune keeps the append-only view table bounded. 0 disables pruning entirely.
+let pruneTimer: ReturnType<typeof setInterval> | undefined
 if (cfg.retentionDays > 0) {
   const prune = () =>
     meta
       .pruneViews(new Date(Date.now() - cfg.retentionDays * 86400_000).toISOString())
       .catch(() => 0)
   void prune()
-  setInterval(prune, 24 * 3600_000).unref?.()
+  pruneTimer = setInterval(prune, 24 * 3600_000)
+  pruneTimer.unref?.()
 }
 
 // One-time cleanup of pre-existing owner self-views (the route no longer records
@@ -150,7 +172,7 @@ if (!cfg.sandboxOrigin && (cfg.crossSite || cfg.webOrigins.length)) {
   )
 }
 
-serve({ fetch: app.fetch, port: cfg.port }, () => {
+const server = serve({ fetch: app.fetch, port: cfg.port }, () => {
   log.info("dock api listening", {
     port: cfg.port,
     base_url: cfg.baseUrl,
@@ -159,4 +181,44 @@ serve({ fetch: app.fetch, port: cfg.port }, () => {
     web: cfg.serveWeb ? "bundled SPA" : "API only",
     spaces: `multi-workspace (bootstrap org ${defaultOrg})`,
   })
+})
+
+// Graceful shutdown: Fly's auto-stop and every redeploy send SIGTERM. Stop the
+// worker + timers, stop accepting connections and drain in-flight requests, close
+// the datastores, then exit — instead of Node's default of dropping everything.
+let shuttingDown = false
+const shutdown = async (signal: string) => {
+  if (shuttingDown) return
+  shuttingDown = true
+  log.info("shutting down", { signal })
+  // Hard deadline so a hung drain can't wedge the orchestrator forever.
+  setTimeout(() => {
+    log.error("shutdown timed out; forcing exit")
+    process.exit(1)
+  }, 10_000).unref()
+  stopWorker()
+  if (pruneTimer) clearInterval(pruneTimer)
+  await new Promise<void>((resolve) => server.close(() => resolve()))
+  try {
+    await closeStores()
+  } catch (e) {
+    log.error("error closing datastores", { error: e instanceof Error ? e.message : String(e) })
+  }
+  log.info("shutdown complete")
+  process.exit(0)
+}
+process.on("SIGTERM", () => void shutdown("SIGTERM"))
+process.on("SIGINT", () => void shutdown("SIGINT"))
+
+// Last-resort crash safety: a stray rejection shouldn't vanish silently, and a
+// truly uncaught exception should exit cleanly so the orchestrator restarts a
+// fresh process rather than leaving a half-dead one serving 500s.
+process.on("unhandledRejection", (reason) => {
+  log.error("unhandledRejection", {
+    error: reason instanceof Error ? reason.message : String(reason),
+  })
+})
+process.on("uncaughtException", (err) => {
+  log.error("uncaughtException", { error: err.message, stack: err.stack })
+  process.exit(1)
 })
