@@ -736,6 +736,12 @@ export class PgMetaStore implements MetaStore {
   async getArtifactDomains(artifactId: string): Promise<DomainRecord[]> {
     return this.db.select().from(domain).where(eq(domain.artifact_id, artifactId))
   }
+  async getWorkspaceDomains(orgId: string): Promise<DomainRecord[]> {
+    return this.db
+      .select()
+      .from(domain)
+      .where(and(eq(domain.org_id, orgId), isNull(domain.artifact_id)))
+  }
   async updateDomain(
     host: string,
     fields: { status?: DomainStatus; verification?: string | null },

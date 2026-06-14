@@ -1,3 +1,4 @@
+import { type ArtifactRecord, parseRef } from "@dock/core"
 import { type Context, Hono } from "hono"
 import { compress } from "hono/compress"
 import { type AppDeps, buildContext } from "./context"
@@ -23,6 +24,7 @@ import { sessionRoutes } from "./routes/session"
 import { sharingRoutes } from "./routes/sharing"
 import { webhookRoutes } from "./routes/webhooks"
 import { workspaceRoutes } from "./routes/workspace"
+import { workspaceDomainRoutes } from "./routes/workspace-domains"
 
 // Re-exported from its lib home so existing importers (and tests) keep working.
 export { isPublicHttpUrl } from "./lib/net"
@@ -89,16 +91,18 @@ export function createApp(deps: AppDeps): Hono {
     })
   }
 
-  // ---- Domain mode (C1): vanity subdomains + custom domains --------------
-  // A request whose Host is in the `domain` table (a `<label>.<base>` subdomain, or a
-  // bring-your-own custom domain registered via Cloudflare for SaaS) serves that
-  // artifact at the host root: its own origin, no path prefix, the absolute-URL
-  // rewriting a no-op. Like the sandbox host, these hosts serve ONLY artifact bytes +
-  // the anchor client, never the app/auth/API, and the app's own host is never
-  // matched. The host is cross-origin so the actor is anonymous: only public/link
-  // artifacts resolve, gated ones 404, a removed one 410, a not-yet-active custom
-  // domain falls through. No host cache needed: on the edge, Cloudflare only routes
-  // registered hostnames to the Worker, so the lookup surface is bounded.
+  // ---- Domain mode (C1): vanity subdomains + workspace custom domains -----
+  // A request whose Host is in the `domain` table serves artifact bytes off the app
+  // origin (only bytes + the anchor client, never the app/auth/API; the app's own
+  // host is never matched). The host is cross-origin so the actor is anonymous: only
+  // public/link artifacts resolve, gated ones 404, removed ones 410. Two shapes,
+  // chosen by whether the row is bound to one artifact — this keeps per-artifact
+  // custom domains + wildcard subdomains addable later with no dispatch change:
+  //   · artifact-bound (subdomain today)  → serve that artifact at the host root.
+  //   · workspace domain (artifact_id null) → serve `<host>/<ref>`, scoped to the
+  //     domain's workspace so one tenant's domain can't serve another's artifact.
+  // No host cache needed: on the edge, Cloudflare only routes registered hostnames
+  // to the Worker, so the lookup surface is bounded.
   const subBase = deps.subdomainBase?.toLowerCase()
   const customEnabled = !!deps.customDomains
   const appHostForSub = (() => {
@@ -109,12 +113,24 @@ export function createApp(deps: AppDeps): Hono {
     }
   })()
   if (subBase || customEnabled) {
+    const serveArtifact = async (
+      c: Context,
+      a: ArtifactRecord,
+      n: number,
+      prefix: string,
+      rawPath: string,
+    ) => {
+      if (!(await ctx.authorize(c, "read", a))) return c.text("not found", 404)
+      if (a.removed_at) return c.text(TOMBSTONE, 410)
+      const version = await ctx.meta.getVersion(a.id, n)
+      if (!version) return c.text("not found", 404)
+      return serveContent(c, ctx.blobs, version, a.title, prefix, rawPath)
+    }
     app.use("*", async (c, next) => {
       const host = (c.req.header("host") ?? new URL(c.req.url).host).toLowerCase().split(":")[0]
       if (!host || host === appHostForSub || (sandboxHost && host === sandboxHost.toLowerCase()))
         return next()
       const isSub = !!subBase && host !== subBase && host.endsWith(`.${subBase}`)
-      // A custom-domain candidate is any other host, but only when custom domains are on.
       if (!isSub && !customEnabled) return next()
       // The served HTML references /raw/dock-client.js; let raw + health through.
       if (c.req.path === "/healthz" || c.req.path.startsWith("/raw/")) return next()
@@ -122,13 +138,27 @@ export function createApp(deps: AppDeps): Hono {
       // Unknown subdomain → 404 (clearly ours); unknown/pending custom host → fall
       // through so an unregistered host pointed at us never serves stale content.
       if (!record || record.status !== "active") return isSub ? c.text("not found", 404) : next()
-      const artifact = await ctx.meta.getArtifactById(record.artifact_id)
-      if (!artifact || !(await ctx.authorize(c, "read", artifact))) return c.text("not found", 404)
-      if (artifact.removed_at) return c.text(TOMBSTONE, 410)
-      const version = await ctx.meta.getVersion(artifact.id, artifact.current_version)
-      if (!version) return c.text("not found", 404)
-      const reqPath = decodeURIComponent(c.req.path.replace(/^\/+/, ""))
-      return serveContent(c, ctx.blobs, version, artifact.title, "/", reqPath)
+      if (record.artifact_id) {
+        // Artifact-bound host (subdomain today): serve that one artifact at the root.
+        const a = await ctx.meta.getArtifactById(record.artifact_id)
+        if (!a) return c.text("not found", 404)
+        return serveArtifact(
+          c,
+          a,
+          a.current_version,
+          "/",
+          decodeURIComponent(c.req.path.replace(/^\/+/, "")),
+        )
+      }
+      // Workspace domain: `<host>/<ref>/<sub>` → the workspace's artifact at <ref>,
+      // scoped to the domain's org so a tenant can't serve another tenant's artifact.
+      const segs = c.req.path.replace(/^\/+/, "").split("/")
+      const ref = segs[0] ?? ""
+      if (!ref) return c.text("not found", 404)
+      const a = await ctx.meta.getByShortId(parseRef(ref).shortId)
+      if (!a || a.org_id !== record.org_id) return c.text("not found", 404)
+      const n = parseRef(ref).version ?? a.current_version
+      return serveArtifact(c, a, n, `/${ref}/`, decodeURIComponent(segs.slice(1).join("/")))
     })
   }
 
@@ -230,6 +260,7 @@ export function createApp(deps: AppDeps): Hono {
     rawRoutes,
     embedRoutes,
     domainRoutes,
+    workspaceDomainRoutes,
   ])
     app.route("/", routes(ctx))
 

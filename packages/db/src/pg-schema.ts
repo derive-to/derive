@@ -233,9 +233,7 @@ export const collectionMember = pgTable(
 )
 export const domain = pgTable("domain", {
   host: text("host").primaryKey(),
-  artifact_id: text("artifact_id")
-    .notNull()
-    .references(() => artifact.id),
+  artifact_id: text("artifact_id").references(() => artifact.id),
   org_id: text("org_id").notNull(),
   kind: text("kind").$type<DomainKind>().notNull().default("subdomain"),
   status: text("status").$type<DomainStatus>().notNull().default("active"),
@@ -492,7 +490,7 @@ export const PG_SCHEMA_STATEMENTS: string[] = [
   `CREATE INDEX IF NOT EXISTS collection_member_user ON collection_member (user_id)`,
   `CREATE TABLE IF NOT EXISTS domain (
     host TEXT PRIMARY KEY,
-    artifact_id TEXT NOT NULL REFERENCES artifact(id),
+    artifact_id TEXT REFERENCES artifact(id),
     org_id TEXT NOT NULL,
     kind TEXT NOT NULL DEFAULT 'subdomain',
     status TEXT NOT NULL DEFAULT 'active',

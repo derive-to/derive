@@ -249,9 +249,9 @@ export const collectionMember = sqliteTable(
 // subdomain (name.dockd.app) from a customer's own domain.
 export const domain = sqliteTable("domain", {
   host: text("host").primaryKey(),
-  artifact_id: text("artifact_id")
-    .notNull()
-    .references(() => artifact.id),
+  // Set when the host serves one artifact at its root (subdomain / per-artifact
+  // custom); null for a workspace domain (artifacts served at `<host>/<ref>`).
+  artifact_id: text("artifact_id").references(() => artifact.id),
   org_id: text("org_id").notNull(),
   kind: text("kind").$type<DomainKind>().notNull().default("subdomain"),
   // `active` immediately for subdomains; a custom domain is `pending` until its
@@ -512,7 +512,7 @@ export const SCHEMA_STATEMENTS: string[] = [
   `CREATE INDEX IF NOT EXISTS collection_member_user ON collection_member (user_id)`,
   `CREATE TABLE IF NOT EXISTS domain (
     host TEXT PRIMARY KEY,
-    artifact_id TEXT NOT NULL REFERENCES artifact(id),
+    artifact_id TEXT REFERENCES artifact(id),
     org_id TEXT NOT NULL,
     kind TEXT NOT NULL DEFAULT 'subdomain',
     status TEXT NOT NULL DEFAULT 'active',
