@@ -11,11 +11,17 @@ describe("moderation: report → takedown (410) → reinstate + audit (C4a)", ()
     await app.request("/v1/me", { headers: as(owner.email) })
     await app.request("/v1/me", { headers: as(dev.email) })
     shortId = (await (await publishAs(app, "<h1>spammy</h1>", {}, as(owner.email))).json()).short_id
-    // No reason → 400. Anonymous (no session) → still allowed.
-    expect((await app.request(`/v1/artifacts/${shortId}/report`, jsonAs({}, {}))).status).toBe(400)
+    // Anonymous (no session) can't report at all — refused at the door.
+    expect(
+      (await app.request(`/v1/artifacts/${shortId}/report`, jsonAs({}, { reason: "x" }))).status,
+    ).toBe(403)
+    // Signed in but no reason → 400.
+    expect(
+      (await app.request(`/v1/artifacts/${shortId}/report`, jsonAs(as(dev.email), {}))).status,
+    ).toBe(400)
     const r = await app.request(
       `/v1/artifacts/${shortId}/report`,
-      jsonAs({}, { reason: "phishing", detail: "fake login page" }),
+      jsonAs(as(dev.email), { reason: "phishing", detail: "fake login page" }),
     )
     expect(r.status).toBe(201)
   })

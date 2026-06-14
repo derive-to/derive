@@ -1,13 +1,15 @@
-import { expect, proposeEdit, publishArtifact, test } from "../fixtures"
+import { expect, proposeEdit, publishArtifact, shareArtifact, test } from "../fixtures"
 
 // The review overlay (full-screen, tabbed Proposed/Current/Diff + decision bar)
-// in depth. The `owner` fixture approves; the `secondUser` (an editor on the
-// link-visible artifact) authors the proposals, so owner ≠ author and can decide.
+// in depth. The `owner` fixture approves; the `secondUser` (shared as an editor on
+// the artifact) authors the proposals, so owner ≠ author and can decide.
 test("owner reviews proposals: toggles views, approves one, requests changes on another", async ({
   owner,
   secondUser,
 }) => {
   const id = await publishArtifact(owner)
+  // Only collaborators can propose — share the artifact with the teammate first.
+  await shareArtifact(owner.request, id, secondUser.email, "editor")
   await proposeEdit(secondUser.page.request, id, "Tighten the intro", "# Doc\n\ntighter intro")
   await proposeEdit(secondUser.page.request, id, "Fix the footer", "# Doc\n\nbody\n\nfixed footer")
 

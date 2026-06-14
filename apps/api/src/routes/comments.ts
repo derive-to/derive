@@ -94,7 +94,8 @@ export const commentRoutes = (ctx: AppContext) => {
     if (!cm || cm.artifact_id !== artifact.id) return { error: fail(c, 404, "not found") }
     return { artifact, cm }
   }
-  // The acting display name (agent or signed-in user); null on an open instance.
+  // The acting display name (agent or signed-in user); null for an anonymous
+  // caller — who can't reach any commenting route anyway.
   const actorName = async (c: Context): Promise<string | null> =>
     (await actingUser(c))?.name ?? null
 

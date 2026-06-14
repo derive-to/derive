@@ -21,9 +21,11 @@ release; please run a recent build.
 
 Dock ships safe defaults, but a few choices matter for an internet-facing deploy:
 
-- **Set `DOCK_TOKEN`.** Without a static token the instance runs *open* — anonymous
-  callers are trusted as owners (the zero-config local/CI experience). Always set a
-  token for any shared or public deployment.
+- **Anonymous callers are always read-only.** They may view public/link artifacts
+  and join live presence (a server-assigned handle + cursor) — nothing else. There is
+  no "open" mode that elevates anonymous callers to owners. To write, a caller must
+  sign in (Better Auth is always available, even zero-config) or present a static
+  `DOCK_TOKEN`; set `DOCK_TOKEN` for headless CI/agent automation.
 - **Set `DOCK_AUTH_SECRET`.** Generated and persisted automatically for single-node
   self-host; you must set it explicitly for multi-instance deployments so every node
   shares the same session-signing secret.

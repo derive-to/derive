@@ -43,13 +43,12 @@ describe("effectiveRole resolution", () => {
     expect(effectiveRole(user({}), "org")).toBe(null)
     expect(effectiveRole(user({}), "password")).toBe(null)
   })
-  it("a static token is owner; anon on a secured instance is read-only", () => {
+  it("a static token is owner; an anonymous caller is always read-only", () => {
     expect(effectiveRole({ kind: "token" }, "org")).toBe("owner")
+    // No "open"/trusted-anonymous path exists: anon never gets a writing role.
     expect(effectiveRole({ kind: "anon" }, "org")).toBe(null)
     expect(effectiveRole({ kind: "anon" }, "link")).toBe("viewer")
-  })
-  it("an unsecured (open) instance trusts anonymous callers as owners", () => {
-    expect(effectiveRole({ kind: "anon", open: true }, "org")).toBe("owner")
+    expect(effectiveRole({ kind: "anon" }, "public")).toBe("viewer")
   })
 })
 

@@ -1,7 +1,7 @@
 import { type Context, Hono } from "hono"
 import { compress } from "hono/compress"
 import { type AppDeps, buildContext } from "./context"
-import { corsFor } from "./lib/http"
+import { corsFor, fail } from "./lib/http"
 import { makeRateLimiter } from "./lib/rate-limit"
 import { log } from "./log"
 import { agentRoutes } from "./routes/agents"
@@ -116,6 +116,29 @@ export function createApp(deps: AppDeps): Hono {
 <code style="background:#eee7d6;padding:2px 8px;border-radius:6px">dock publish ./your-thing</code></p></div>`,
       ),
     )
+
+  // ---- Hard anonymous lockdown ------------------------------------------
+  // An anonymous caller (no signed-in session, no agent, no static token) may
+  // only READ and signal that they're viewing — the Google-Docs/Figma "someone
+  // is here" experience (presence, view count, and a live cursor). Every other
+  // mutation is refused here, at the door, before any route runs: one structural
+  // gate, so a newly added mutating route can never accidentally be exposed to
+  // anonymous callers. The per-route role checks still apply on top (defense in
+  // depth). Auth lives under /api/auth and reads (GET/HEAD) are untouched;
+  // OPTIONS preflights pass through to CORS. All three allowed actions are
+  // ephemeral and identity-safe (the server, not the client, names the viewer).
+  const ANON_WRITE_ALLOW = [
+    /^\/v1\/artifacts\/[^/]+\/presence$/, // ephemeral "I'm viewing" heartbeat
+    /^\/v1\/artifacts\/[^/]+\/cursor$/, // ephemeral live cursor (viral viewing)
+    /^\/v1\/artifacts\/[^/]+\/view$/, // de-duped, anonymous-safe view counter
+  ]
+  app.use("/v1/*", async (c, next) => {
+    const m = c.req.method
+    if (m === "GET" || m === "HEAD" || m === "OPTIONS") return next()
+    if (await ctx.isPrincipal(c)) return next()
+    if (ANON_WRITE_ALLOW.some((re) => re.test(c.req.path))) return next()
+    return fail(c, 403, "forbidden")
+  })
 
   // One router per feature, all sharing the context. Paths are distinct, so the
   // mount order doesn't affect matching.

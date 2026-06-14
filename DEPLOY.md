@@ -90,8 +90,7 @@ the default role. Sign up at `/login`.
 | `OBJECT_STORE_URL` | (local disk) | S3/R2 blob storage (scale-out) |
 | `DOCK_WEB_ORIGIN` | (none) | Comma-separated web origins for CORS (split deploy only) |
 | `DOCK_CROSS_SITE` | `false` | `true` for `SameSite=None; Secure` cookies (split deploy only) |
-| `DOCK_TOKEN` | (none) | Static bearer token for CI/agents |
-| `DOCK_OPEN` | `false` | `true` trusts anonymous callers as owners (zero-config single-user localhost demo). Secure by default on both the Node container and the Worker: leave it off so permissions apply (anon → viewer on public links, else no access). Sign up to get an owner account. |
+| `DOCK_TOKEN` | (none) | Static bearer token for CI/agents. One of the two ways to write (the other is a sign-in session); anonymous callers are always read-only (public/link artifacts), never owners. |
 | `DOCK_WEB_DIR` | (auto) | Override the bundled SPA path |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | (none) | Google sign-in |
 | `OIDC_ISSUER` / `OIDC_CLIENT_ID` / `OIDC_CLIENT_SECRET` / `OIDC_PROVIDER_ID` | (none) | Enterprise SSO |

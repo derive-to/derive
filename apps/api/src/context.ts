@@ -19,7 +19,7 @@ import { getCookie, setCookie } from "hono/cookie"
 import type { Auth } from "./auth-config"
 import { type Backplane, createInProcessBackplane } from "./bus"
 import { safeEqual, sha256 } from "./lib/crypto"
-import { WS_COOKIE } from "./lib/http"
+import { VIEWER_COOKIE, WS_COOKIE } from "./lib/http"
 import { makeKeyedLimiter } from "./lib/rate-limit"
 import { log } from "./log"
 import { enqueueForEvent, type WebhookEvent } from "./webhooks"
@@ -39,14 +39,6 @@ export interface AppDeps {
   baseUrl: string
   /** A static token (CI/agents) authorizes writes + gated reads, alongside a login session. */
   token?: string
-  /**
-   * "Open" instance: anonymous (and non-member) callers are trusted as owners —
-   * the zero-config self-host / CI experience. Leave UNSET on a real multi-user
-   * deployment so normal permissions apply (anon → viewer on public links, no
-   * access otherwise). Defaults to `!token` when unset, preserving the historical
-   * behavior; the edge worker sets it explicitly from DOCK_OPEN (secure default).
-   */
-  open?: boolean
   /** Operator (instance super-admin) emails: global moderation powers, on top of `token`. */
   superAdmins?: string[]
   /** Better Auth instance — mounts /api/auth/* and provides the session. */
@@ -138,11 +130,6 @@ export function buildContext(deps: AppDeps) {
   const analyticsOn = deps.analytics !== false
   const versionWindowMs = deps.versionWindowMs ?? DEFAULT_VERSION_WINDOW_MS
   const allowOrigins = new Set(deps.webOrigins ?? [])
-  // Explicit `open` wins. Both real entrypoints pass it (node.ts from DOCK_OPEN,
-  // worker.ts from env.DOCK_OPEN) so deployments are secure by default — anonymous
-  // callers get real (locked) permissions unless open is explicitly true. The
-  // `!deps.token` fallback only applies to embedders/tests that omit `open`.
-  const open = deps.open ?? !deps.token
   const defaultRole: Role = deps.defaultRole ?? "editor"
   // The bootstrap workspace id — always a real value, never a magic
   // literal. The Node entry generates + persists one; tests fall back to this.
@@ -300,15 +287,34 @@ export function buildContext(deps: AppDeps) {
       secure: deps.crossSite || new URL(deps.baseUrl).protocol === "https:",
     })
 
+  // A stable id for an anonymous viewer, kept in a long-lived first-party cookie
+  // so the same browser counts as one viewer across opens (unique-view counts +
+  // a stable presence handle). Minted on first sight. Same SameSite/secure rules
+  // as the workspace cookie so it survives the hosted cross-site split.
+  const anonViewerId = (c: Context): string => {
+    let vid = getCookie(c, VIEWER_COOKIE)
+    if (!vid) {
+      vid = newId("anon")
+      setCookie(c, VIEWER_COOKIE, vid, {
+        path: "/",
+        maxAge: 60 * 60 * 24 * 365,
+        httpOnly: true,
+        sameSite: deps.crossSite ? "None" : "Lax",
+        secure: deps.crossSite || new URL(deps.baseUrl).protocol === "https:",
+      })
+    }
+    return vid
+  }
+
   const actorFor = async (c: Context, a: ArtifactRecord): Promise<Actor> => {
     if (deps.token && safeEqual(bearer(c), deps.token)) return { kind: "token" }
     const ag = await agentFor(c)
     if (ag) {
       const am = await meta.getArtifactMember(a.id, ag.id)
-      return { kind: "user", userId: ag.id, artifactRole: am?.role ?? null, orgRole: ag.role, open }
+      return { kind: "user", userId: ag.id, artifactRole: am?.role ?? null, orgRole: ag.role }
     }
     const me = await currentUser(c)
-    if (!me) return { kind: "anon", open }
+    if (!me) return { kind: "anon" }
     // Baseline role = membership in the ARTIFACT's workspace. Opening a shared
     // link never auto-joins you into someone else's workspace; you only carry an
     // org role where you're explicitly a member.
@@ -318,7 +324,7 @@ export function buildContext(deps: AppDeps) {
     // folded in alongside any per-artifact share (the higher wins).
     const cRoles = await meta.collectionRolesForArtifact(a.id, me.id)
     const artifactRole = maxRole(am?.role ?? null, ...cRoles)
-    return { kind: "user", userId: me.id, artifactRole, orgRole, open }
+    return { kind: "user", userId: me.id, artifactRole, orgRole }
   }
 
   /** Authorize an action against a specific artifact. */
@@ -326,15 +332,26 @@ export function buildContext(deps: AppDeps) {
     actorFor(c, a).then((actor) => can(actor, action, a.visibility))
 
   /**
-   * True when the caller is an anonymous visitor on a SECURE instance — they may
-   * view public content but nothing collaborative (comments, member list, proposals,
-   * analytics). On an open / zero-config instance, anonymous is the trusted owner,
-   * so this is false. Use as a post-`read` gate to hide collaboration from public
-   * link-visitors without touching the role model.
+   * True when the caller is an anonymous visitor — they may view public content
+   * but nothing collaborative (comments, member list, proposals, analytics).
+   * Anonymous is never a trusted principal, so this is a simple kind check. Use
+   * as a post-`read` gate to hide collaboration from public link-visitors without
+   * touching the role model.
    */
   const anonLocked = async (c: Context, a: ArtifactRecord): Promise<boolean> => {
     const actor = await actorFor(c, a)
-    return actor.kind === "anon" && !actor.open
+    return actor.kind === "anon"
+  }
+
+  /**
+   * Is the caller an authenticated principal — a static token, a registered
+   * agent, or a signed-in user — as opposed to an anonymous visitor? The single
+   * source of truth for "not anonymous", used by the global anonymous-write
+   * lockdown so a new mutating route can never accidentally be exposed to anon.
+   */
+  const isPrincipal = async (c: Context): Promise<boolean> => {
+    if (deps.token && safeEqual(bearer(c), deps.token)) return true
+    return !!(await actingUser(c))
   }
 
   /** The caller's role in their active workspace (creating artifacts, settings). */
@@ -343,7 +360,7 @@ export function buildContext(deps: AppDeps) {
     const ag = await agentFor(c)
     if (ag) return ag.role
     const me = await currentUser(c)
-    if (!me) return open ? "owner" : null
+    if (!me) return null
     return ensureMembership(await activeWorkspace(c), me.id)
   }
   const workspaceCan = async (c: Context, action: Action): Promise<boolean> => {
@@ -383,7 +400,6 @@ export function buildContext(deps: AppDeps) {
     analyticsOn,
     versionWindowMs,
     allowOrigins,
-    open,
     defaultOrg,
     defaultRole,
     publishLimiter,
@@ -399,9 +415,11 @@ export function buildContext(deps: AppDeps) {
     provisionPersonal,
     activeWorkspace,
     setWsCookie,
+    anonViewerId,
     actorFor,
     authorize,
     anonLocked,
+    isPrincipal,
     isSuperAdmin,
     workspaceRole,
     workspaceCan,

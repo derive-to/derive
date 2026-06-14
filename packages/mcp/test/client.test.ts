@@ -16,16 +16,19 @@ const dir = mkdtempSync(join(tmpdir(), "dock-mcp-"))
 
 beforeAll(async () => {
   meta = new SqliteMetaStore(join(dir, "dock.db"))
+  // The MCP server authenticates to Dock with a static token (DOCK_TOKEN in prod);
+  // anonymous callers can't write, so the test wires the same token end-to-end.
   const app = createApp({
     meta,
     blobs: new FsBlobStore(join(dir, "blobs")),
     baseUrl: "http://dock.test",
+    token: "tok",
   })
   await new Promise<void>((resolve) => {
     server = serve({ fetch: app.fetch, port: 0 }, () => resolve())
   })
   const port = (server.address() as AddressInfo).port
-  client = createClient({ baseUrl: `http://localhost:${port}` })
+  client = createClient({ baseUrl: `http://localhost:${port}`, token: "tok" })
 })
 
 afterAll(() => {

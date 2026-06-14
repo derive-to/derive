@@ -55,12 +55,6 @@ export interface Actor {
   artifactRole?: Role | null
   /** Baseline role from membership in the artifact's workspace, if any. */
   orgRole?: Role | null
-  /**
-   * "Open" instance: anonymous (and non-member) callers are trusted as owners,
-   * for zero-config self-host / CI. Set per deployment (the `open` dep / DOCK_OPEN);
-   * a real multi-user instance leaves it off so normal permissions apply.
-   */
-  open?: boolean
 }
 
 /**
@@ -74,9 +68,9 @@ export function effectiveRole(actor: Actor, visibility: Visibility): Role | null
     const explicit = actor.artifactRole ?? actor.orgRole
     if (explicit) return explicit
   }
-  // No membership / anonymous: an unsecured instance trusts everyone; otherwise
-  // only public + link artifacts are world-readable.
-  if (actor.open) return "owner"
+  // No membership / anonymous: only public + link artifacts are world-readable,
+  // and only as a viewer. There is deliberately no "trusted anonymous" path — an
+  // unauthenticated caller can never be elevated to a writing role.
   return visibility === "public" || visibility === "link" ? "viewer" : null
 }
 

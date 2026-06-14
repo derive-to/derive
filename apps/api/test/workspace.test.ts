@@ -157,24 +157,20 @@ describe("workspace: edge conditions", () => {
   })
 })
 
-describe("workspace: open + token modes", () => {
-  it("an unsecured instance trusts anon as Admin and defaults the name", async () => {
-    const openApp = createApp({
+describe("workspace: anonymous lockout + token mode", () => {
+  it("a no-token instance still does NOT trust anonymous callers (can't manage)", async () => {
+    const noTokenApp = createApp({
       meta: new SqliteMetaStore(join(dir, "ws-open.db")),
       blobs: new FsBlobStore(join(dir, "blobs")),
       baseUrl: "http://dock.test",
     })
-    const w = await (await openApp.request("/v1/workspace")).json()
-    expect(w.name).toBe("My Workspace")
-    expect(w.role).toBe("owner")
-    expect(w.members).toEqual([])
-    const renamed = await openApp.request("/v1/workspace", {
+    // No open-mode owner elevation: an anonymous caller can't rename the workspace.
+    const renamed = await noTokenApp.request("/v1/workspace", {
       method: "PATCH",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ name: "Solo" }),
     })
-    expect(renamed.status).toBe(200)
-    expect((await renamed.json()).name).toBe("Solo")
+    expect(renamed.status).toBe(403)
   })
 
   it("a static token acts as Admin", async () => {

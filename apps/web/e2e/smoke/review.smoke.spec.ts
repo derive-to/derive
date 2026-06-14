@@ -1,8 +1,11 @@
-import { expect, proposeEdit, publishArtifact, test } from "../fixtures"
+import { expect, proposeEdit, publishArtifact, shareArtifact, test } from "../fixtures"
 
 // A teammate proposes an edit; the owner opens the review overlay and approves it.
 test("owner approves a proposed change", async ({ owner, secondUser }) => {
   const shortId = await publishArtifact(owner)
+  // The teammate must be a collaborator to propose — share it with them first
+  // (only members can comment/propose; a non-member link visitor is read-only).
+  await shareArtifact(owner.request, shortId, secondUser.email, "commenter")
   await proposeEdit(secondUser.page.request, shortId, "Tighten the intro", "# Doc\n\ntighter intro")
 
   await owner.goto(`/a/${shortId}`)

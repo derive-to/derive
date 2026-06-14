@@ -3,10 +3,10 @@ import { SqliteMetaStore } from "@dock/db/sqlite"
 import { FsBlobStore } from "@dock/storage/fs"
 import { describe, expect, it } from "vitest"
 import { createApp, isPublicHttpUrl } from "../src/app"
-import { as, dir, makeAuthedApp, meta, type TestUser } from "./helpers"
+import { as, dir, makeAuthedApp, meta, ownerApp, type TestUser } from "./helpers"
 
 describe("security: sandbox serving origin (A4)", () => {
-  const app = createApp({
+  const app = ownerApp({
     meta: new SqliteMetaStore(join(dir, "sandbox.db")),
     blobs: new FsBlobStore(join(dir, "blobs")),
     baseUrl: "http://app.test",
@@ -45,7 +45,7 @@ describe("security: sandbox serving origin (A4)", () => {
   })
 
   it("without a sandbox origin, raw is served in place (single-origin self-host)", async () => {
-    const solo = createApp({
+    const solo = ownerApp({
       meta: new SqliteMetaStore(join(dir, "solo.db")),
       blobs: new FsBlobStore(join(dir, "blobs")),
       baseUrl: "http://app.test",

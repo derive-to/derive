@@ -36,9 +36,6 @@ export interface Env {
   BASE_URL?: string
   DOCK_AUTH_SECRET?: string
   DOCK_SUPERADMIN_EMAILS?: string
-  /** "true" to run the edge instance open (anon = owner, zero-config). Unset/anything
-   *  else = secure: real permissions apply (anon → viewer on public, else no access). */
-  DOCK_OPEN?: string
 }
 
 let app: ReturnType<typeof createApp> | null = null
@@ -65,9 +62,6 @@ export default {
         backplane: createDoBackplane(env.ROOMS),
         baseUrl,
         auth,
-        // Secure by default on the edge: anonymous callers are NOT owners. Set
-        // DOCK_OPEN=true only for a single-user / zero-config edge instance.
-        open: env.DOCK_OPEN === "true",
         superAdmins: (env.DOCK_SUPERADMIN_EMAILS ?? "")
           .split(",")
           .map((s) => s.trim().toLowerCase())

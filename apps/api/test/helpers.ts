@@ -128,12 +128,50 @@ const makeStore = (name: string, users: TestUser[], team: Seat[] = []): TestStor
   return m
 }
 
+// The shared default app is SECURED with a static token — anonymous callers can
+// no longer write (open mode is gone). The convenience helpers below
+// (`upload`/`postJson`/`pub`) authenticate as that token by default, so most test
+// bodies stay unchanged while still exercising the real authz path. Tests that
+// probe anonymous behavior stand up their own no-token app.
+export const TEST_TOKEN = "tok"
+const TOKEN_HEADER = { authorization: `Bearer ${TEST_TOKEN}` }
+
+// Wrap an app so every request auto-authenticates as the static token (owner)
+// unless the caller set their own Authorization header. The overwhelming majority
+// of tests drive an app to set up + exercise happy paths and never thought about
+// auth (anonymous used to be the owner); routing them through the token keeps
+// those bodies unchanged against a now-SECURED instance. Anonymous-probe tests
+// send no Authorization (or use `anonApp`), so requests there stay anonymous.
+export const authProxy = <T extends ReturnType<typeof createApp>>(a: T): T =>
+  new Proxy(a, {
+    get(target, prop, receiver) {
+      if (prop !== "request") return Reflect.get(target, prop, receiver)
+      return (input: string | URL | Request, init?: RequestInit) => {
+        const headers = new Headers(init?.headers as HeadersInit | undefined)
+        if (!headers.has("authorization")) headers.set("authorization", `Bearer ${TEST_TOKEN}`)
+        return target.request(input as string, { ...init, headers })
+      }
+    },
+  }) as T
+
+// A standalone app with custom deps, secured by the test token and wrapped so its
+// requests auto-authenticate as that token — the shared `app` with knobs (sandbox
+// origin, version window, …).
+export const ownerApp = (deps: Omit<AppDeps, "token">) =>
+  authProxy(createApp({ ...deps, token: TEST_TOKEN }))
+
 export const meta = makeStore("default", [])
-export const app = createApp({
+const sharedApp = createApp({
   meta,
   blobs: new FsBlobStore(join(dir, "blobs")),
   baseUrl: "http://dock.test",
+  token: TEST_TOKEN,
 })
+// The default app: every request authenticates as the token (owner).
+export const app = authProxy(sharedApp)
+// The SAME instance + store, but with NO auto-auth — send your own headers; with
+// none you are anonymous. For probing anonymous behavior against shared data.
+export const anonApp = sharedApp
 
 afterAll(async () => {
   if (PG_URL) await Promise.all(pgStores.map((s) => Promise.resolve(s.close()).catch(() => {})))
@@ -152,13 +190,13 @@ export const upload = (
   form.append("file", new Blob([bytes as BlobPart]), name)
   for (const [k, v] of Object.entries(fields)) form.append(k, v)
   const url = shortId ? `/v1/artifacts/${shortId}/versions` : "/v1/artifacts"
-  return app.request(url, { method: "POST", body: form })
+  return app.request(url, { method: "POST", body: form, headers: TOKEN_HEADER })
 }
 
 export const postJson = (path: string, body: unknown) =>
   app.request(path, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", ...TOKEN_HEADER },
     body: JSON.stringify(body),
   })
 
@@ -251,16 +289,18 @@ export const proposeAs = (
 export const bearer = (token: string) => ({ authorization: `Bearer ${token}` })
 
 // C4b — launch-gate prevention: storage quotas + per-actor rate limits.
-// A fresh app with custom deps. Without `users` it's an open instance (anonymous
-// = owner) — handy for quota/anonymous-flood tests; with `users` it's secured
-// and the session is picked by an `x-test-user` header, for per-actor tests.
+// A fresh app with custom deps, always SECURED by a static token (anonymous
+// callers can't write). `pub(app, …)` with no headers authenticates as that
+// token; with `users`, an `x-test-user` header picks a session, for per-actor
+// tests.
 export const quotaApp = (name: string, extra: Partial<AppDeps>, users?: TestUser[]) => {
   const m = makeStore(name, users ?? [])
   const app = createApp({
     meta: m,
     blobs: new FsBlobStore(join(dir, `blobs-${name}`)),
     baseUrl: "http://dock.test",
-    ...(users ? { token: "tok", auth: fakeAuth(users) } : {}),
+    token: TEST_TOKEN,
+    ...(users ? { auth: fakeAuth(users) } : {}),
     ...extra,
   })
   return { app, meta: m }
@@ -279,5 +319,8 @@ export const pub = (
   form.append("file", new Blob([new TextEncoder().encode(content)]), "f.html")
   for (const [k, v] of Object.entries(fields)) form.append(k, v)
   const url = shortId ? `/v1/artifacts/${shortId}/versions` : "/v1/artifacts"
-  return app.request(url, { method: "POST", body: form, headers })
+  // Default to the static token (owner) so a bare `pub(app, …)` writes; an
+  // explicit session header (e.g. `as(amy)`) still wins for per-actor tests.
+  const h = Object.keys(headers).length ? headers : TOKEN_HEADER
+  return app.request(url, { method: "POST", body: form, headers: h })
 }

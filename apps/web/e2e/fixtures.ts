@@ -5,6 +5,7 @@ import {
   openArtifact,
   proposeEdit,
   publishArtifact,
+  shareArtifact,
   signUp,
 } from "./helpers"
 
@@ -38,4 +39,13 @@ export const test = base.extend<Fixtures>({
   },
 })
 
-export { activateThread, addComment, expect, openArtifact, proposeEdit, publishArtifact, signUp }
+export {
+  activateThread,
+  addComment,
+  expect,
+  openArtifact,
+  proposeEdit,
+  publishArtifact,
+  shareArtifact,
+  signUp,
+}
