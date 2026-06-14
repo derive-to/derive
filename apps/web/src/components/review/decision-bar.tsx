@@ -65,6 +65,7 @@ export function ReviewDecisionBar({
           )}
           <Textarea
             data-testid="review-note"
+            aria-label="Decision note to the proposer"
             autoFocus
             value={note}
             onChange={(e) => onNoteChange(e.target.value)}

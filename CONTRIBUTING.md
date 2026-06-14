@@ -81,6 +81,12 @@ shipping. If something below surprises you, that's the guardrail doing its job:
 - **Postgres behavioral drift.** The full `apps/api` suite also runs against a real
   Postgres in CI (`pnpm test:pg`), so a pg driver bug (a wrong query, a missing org
   scope) fails a test, not just a typecheck.
+- **Destructive DDL.** The schema sources are re-applied at boot, so a `DROP TABLE` /
+  `DROP COLUMN` / `TRUNCATE` / `DELETE FROM` in `packages/db/src/schema.ts`
+  (`SCHEMA_STATEMENTS`/`MIGRATION_STATEMENTS`) or `pg-schema.ts` (`PG_SCHEMA_STATEMENTS`)
+  would wipe data on every restart — it fails `pnpm lint:schema`. Evolve by adding
+  (expand/contract), deprecating a column in place; a deliberate, reviewed removal opts out
+  with a `schema-ignore` comment. See [Database migrations](#database-migrations).
 - **Event names.** Bus and webhook event names come from one list
   (`apps/api/src/events.ts`); a typo or a webhook event the bus doesn't know about is a
   compile error.
@@ -117,9 +123,45 @@ shipping. If something below surprises you, that's the guardrail doing its job:
   files + dependencies only (not every unused export, to leave the design-system surface
   alone).
 
-The custom checks (`lint:tokens`, `lint:frontend`, `lint:testids`, `lint:api`) and Biome all
-run inside `pnpm run ci`, so the one gate command covers them; `pnpm typecheck` and
-`pnpm test` (which includes the authz-coverage test) complete it.
+The custom checks (`lint:tokens`, `lint:frontend`, `lint:testids`, `lint:api`, `lint:schema`)
+and Biome all run inside `pnpm run ci`, so the one gate command covers them; `pnpm typecheck`
+and `pnpm test` (which includes the authz-coverage test) complete it.
+
+## Database migrations
+
+Dock evolves the schema with **forward-only, idempotent DDL applied at boot** — no migration
+framework, so a fresh self-host is one command. The trade-off is that the same statements
+re-run on every start, so they must be additive (see the destructive-DDL guard above) and
+idempotent. The model is small but spread across a few files; the guards below catch anything
+you miss.
+
+- **SQLite/D1** ([packages/db/src/schema.ts](packages/db/src/schema.ts)): tables in
+  `SCHEMA_STATEMENTS` use `CREATE TABLE IF NOT EXISTS`; a new column on an existing table goes
+  in `MIGRATION_STATEMENTS` as a plain `ALTER TABLE … ADD COLUMN` (SQLite has no per-column
+  `IF NOT EXISTS`, so the boot runner swallows the "duplicate column" throw).
+- **Postgres** ([packages/db/src/pg-schema.ts](packages/db/src/pg-schema.ts)):
+  `PG_SCHEMA_STATEMENTS` mirrors it with `CREATE TABLE IF NOT EXISTS` + `ALTER TABLE …
+  ADD COLUMN IF NOT EXISTS`.
+- **D1**: `deploy/d1-schema.sql` is generated from `SCHEMA_STATEMENTS` — never hand-edit it;
+  run `pnpm --filter @dock/db gen:d1-schema`.
+
+**Adding a column:**
+
+1. Add the field to the `@dock/core` Record (+ its `New*` input) in
+   [packages/core/src/ports.ts](packages/core/src/ports.ts).
+2. Add it to the drizzle table in **both** `schema.ts` and `pg-schema.ts` (the parity guard
+   fails the typecheck if a dialect, or the Record, drifts).
+3. Add the column to the DDL: `SCHEMA_STATEMENTS` + `MIGRATION_STATEMENTS` (sqlite) and
+   `PG_SCHEMA_STATEMENTS` (pg). The conformance tests
+   ([schema-conformance.test.ts](packages/db/test/schema-conformance.test.ts), and
+   [pg-schema-conformance.test.ts](packages/db/test/pg-schema-conformance.test.ts) under
+   `pnpm test:pg`) go red if the live table's columns don't match the drizzle defs.
+4. Run `pnpm --filter @dock/db gen:d1-schema` to regenerate `deploy/d1-schema.sql`.
+
+**Removing or renaming** is the unsafe path: prefer expand/contract — add the new shape,
+move reads/writes over, and leave the old column unused — over a `DROP`. An actual drop is a
+separate, deliberately-reviewed change that opts past `lint:schema` with a `schema-ignore`
+comment.
 
 ## Commits & PRs
 

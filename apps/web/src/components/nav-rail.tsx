@@ -46,6 +46,7 @@ function SideItem({
       to="/"
       search={search}
       title={label}
+      aria-label={label}
       data-testid={testId}
       aria-current={active ? "page" : undefined}
       onClick={onClick}
@@ -205,6 +206,7 @@ export function NavRail() {
             setPaletteOpen(true)
           }}
           title="Search (⌘K)"
+          aria-label="Search (⌘K)"
           data-testid="open-command-palette"
           className={cn(ROW_BASE, railMode && ROW_RAIL)}
         >

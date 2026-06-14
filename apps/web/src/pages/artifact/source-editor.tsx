@@ -107,6 +107,7 @@ export function SourceEditor({
             value={message}
             onChange={(e) => onMessage(e.target.value)}
             placeholder="Describe this version (optional)"
+            aria-label="Version description"
             data-testid="artifact-commit-message"
             className="order-last h-8 w-full text-sm md:order-none md:w-auto md:max-w-[360px] md:flex-1"
           />
@@ -115,6 +116,7 @@ export function SourceEditor({
             value={proposeMsg}
             onChange={(e) => onProposeMsg(e.target.value)}
             placeholder="What are you changing, and why?"
+            aria-label="Proposal description"
             data-testid="artifact-propose-message"
             className="order-last h-8 w-full text-sm md:order-none md:w-auto md:max-w-[420px] md:flex-1"
           />
@@ -175,6 +177,7 @@ export function SourceEditor({
                 value={src}
                 onChange={(e) => onSrc(e.target.value)}
                 spellCheck={false}
+                aria-label="Artifact source"
                 data-testid="artifact-source-editor"
                 className="h-full flex-1 resize-none border-0 bg-card px-5 py-4 font-mono text-sm leading-relaxed text-foreground outline-none"
               />

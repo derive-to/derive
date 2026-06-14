@@ -178,6 +178,7 @@ export function CollectionsMenu({
           size="sm"
           className="gap-1.5"
           title="Collections"
+          aria-label="Add to collection"
           data-testid="artifact-collections"
         >
           <Icon name="collections" size={16} />
@@ -275,6 +276,7 @@ export function TagsMenu({
           size="sm"
           className="gap-1.5"
           title="Tags"
+          aria-label="Manage tags"
           data-testid="artifact-tags"
         >
           <Icon name="tag" size={16} />

@@ -185,6 +185,7 @@ export function CommentRow({ c, compact }: { c: Comment; compact?: boolean }) {
               <button
                 type="button"
                 title="React"
+                aria-label="Add reaction"
                 data-testid="comment-react"
                 className="grid size-6 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-hover hover:text-foreground"
               >
@@ -197,6 +198,7 @@ export function CommentRow({ c, compact }: { c: Comment; compact?: boolean }) {
                   <button
                     key={em}
                     type="button"
+                    aria-label={`React with ${em}`}
                     data-testid={`react-emoji-${em}`}
                     onClick={() => {
                       A.react(c.id, em)
@@ -215,6 +217,7 @@ export function CommentRow({ c, compact }: { c: Comment; compact?: boolean }) {
               <button
                 type="button"
                 title="More"
+                aria-label="Comment actions"
                 data-testid="comment-more"
                 className="grid size-6 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-hover hover:text-foreground"
               >
