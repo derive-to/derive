@@ -19,6 +19,14 @@ import { LibrarySkeleton } from "./library-skeleton"
 import { ShareCollectionDialog } from "./share-collection-dialog"
 import type { Filter } from "./types"
 
+// General access (visibility) options for a new artifact, decreasing reach.
+const VISIBILITIES = [
+  { value: "public", label: "Public" },
+  { value: "link", label: "Anyone with link" },
+  { value: "org", label: "Workspace" },
+  { value: "password", label: "Password" },
+]
+
 // Route component for "/". The persistent AppShell (mounted once around the
 // router Outlet) owns the rail/pod and the auth gate, so this just renders the
 // library body. The filter lives in the URL, so the body reads it from search
@@ -39,6 +47,9 @@ function LibraryBody() {
 
   const [busy, setBusy] = useState(false)
   const [dragging, setDragging] = useState(false)
+  // General access for the next publish; a password when "Password" is chosen.
+  const [vis, setVis] = useState("link")
+  const [pw, setPw] = useState("")
   const [shareCol, setShareCol] = useState<(typeof collections)[number] | null>(null)
   const [query, setQuery] = useState(search.q ?? "")
   const [debouncedQ, setDebouncedQ] = useState((search.q ?? "").trim())
@@ -75,11 +86,21 @@ function LibraryBody() {
     useInfiniteQuery(listQuery)
   const items = data?.pages.flatMap((p) => p.artifacts) ?? []
 
-  // One publish path, fed by either a drag-drop or the native picker.
+  // One publish path, fed by either a drag-drop or the native picker. Carries the
+  // chosen visibility (+ password) so a "Password" publish is gated from the start.
   const publishFile = async (f: File) => {
+    if (vis === "password" && !pw.trim()) {
+      toast.error("Enter a password for password-protected visibility.")
+      return
+    }
     setBusy(true)
     try {
-      const a = await api.publish(f, { title: f.name.replace(/\.[^.]+$/, "") })
+      const fields: Record<string, string> = {
+        title: f.name.replace(/\.[^.]+$/, ""),
+        visibility: vis,
+      }
+      if (vis === "password") fields.password = pw.trim()
+      const a = await api.publish(f, fields)
       nav({ to: "/a/$ref", params: { ref: a.short_id } })
     } catch (e) {
       toast.error((e as Error).message)
@@ -231,6 +252,30 @@ function LibraryBody() {
                 if (f) publishFile(f)
               }}
             />
+            <select
+              aria-label="Visibility"
+              data-testid="library-visibility"
+              value={vis}
+              onChange={(e) => setVis(e.target.value)}
+              className="rounded-md border border-input bg-card px-2 py-2 text-sm text-foreground outline-none transition-colors focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              {VISIBILITIES.map((v) => (
+                <option key={v.value} value={v.value}>
+                  {v.label}
+                </option>
+              ))}
+            </select>
+            {vis === "password" && (
+              <Input
+                type="password"
+                data-testid="library-visibility-password"
+                placeholder="Password"
+                aria-label="Password"
+                value={pw}
+                onChange={(e) => setPw(e.target.value)}
+                className="w-[150px]"
+              />
+            )}
             <Button
               variant="primary"
               data-testid="library-publish"
