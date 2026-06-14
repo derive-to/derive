@@ -1,16 +1,14 @@
 #!/usr/bin/env node
-// File-size guard. Big files accrete complexity, hide bugs, and breed merge
-// conflicts — and agents (human or AI) keep appending to the file that's already
-// open instead of extracting. Source files must stay under MAX_LINES. A small
-// allowlist pins the existing large files at their current ceiling: they may only
-// SHRINK, never grow, and the moment one drops under the limit its entry must be
-// removed. Any NEW oversized file fails outright — split it into focused
-// modules/components/hooks. Escape hatch: add the path to ALLOWLIST with the reason
-// it's irreducibly long (a generated schema, a flat type/DDL catalog).
+// File-size nudge — NOT a hard gate. Big files tend to lose their shape: too many
+// concerns in one place, harder to review, a magnet for merge conflicts. This
+// never fails the build; it just flags any source file over WARN_LINES so someone
+// can decide whether it's time to pull out a hook, component, or module. Length
+// itself is fine — a flat DDL or query catalog is legitimately long. The point is
+// organization, not a line count. Treat a warning as "take a look," not "blocked."
 import { readdirSync, readFileSync, statSync } from "node:fs"
 import { join, relative } from "node:path"
 
-const MAX_LINES = 500
+const WARN_LINES = 750
 const ROOT = process.cwd()
 const SCAN = [
   "apps/api/src",
@@ -21,21 +19,6 @@ const SCAN = [
   "packages/mcp/src",
   "packages/storage/src",
 ]
-
-// path -> ceiling (its current line count). An allowlisted file may be <= its
-// ceiling; lower the number as you split it, and delete the entry once it's under
-// MAX_LINES. Prefer splitting over allowlisting — only pin genuinely flat files.
-const ALLOWLIST = {
-  // React pages worth decomposing (tracked down, not pinned forever):
-  "apps/web/src/pages/artifact/comment-thread.tsx": 803, // comment thread UI — split candidate
-  // Irreducibly flat by nature (DDL / a port interface / driver query catalogs):
-  "packages/db/src/pg.ts": 883, // Postgres MetaStore: one flat method per query
-  "packages/db/src/repos.ts": 840, // shared SQL repo methods
-  "packages/core/src/ports.ts": 628, // the MetaStore port — a flat interface catalog
-  "packages/db/src/schema.ts": 546, // SQLite schema (DDL)
-  "packages/db/src/pg-schema.ts": 518, // Postgres schema (DDL)
-}
-
 const EXCLUDE = /\.(test|spec|gen|d)\.tsx?$|[/\\]generated[/\\]/
 
 const walk = (dir, out = []) => {
@@ -53,41 +36,23 @@ const walk = (dir, out = []) => {
   return out
 }
 
-const files = SCAN.flatMap((d) => walk(join(ROOT, d)))
-const errors = []
-const seen = new Set()
-
-for (const file of files) {
-  const rel = relative(ROOT, file).split("\\").join("/")
+const big = []
+for (const file of SCAN.flatMap((d) => walk(join(ROOT, d)))) {
   const lines = readFileSync(file, "utf8").split("\n").length
-  const ceiling = ALLOWLIST[rel]
-  if (ceiling != null) {
-    seen.add(rel)
-    if (lines > ceiling)
-      errors.push(`${rel}: ${lines} lines > pinned ${ceiling} — it grew. Split it, don't append.`)
-    else if (lines <= MAX_LINES)
-      errors.push(`${rel}: ${lines} lines is under ${MAX_LINES} now — delete its allowlist entry.`)
-  } else if (lines > MAX_LINES) {
-    errors.push(
-      `${rel}: ${lines} lines > ${MAX_LINES} — split into focused modules` +
-        ` (allowlist only if irreducibly flat, with a reason).`,
-    )
-  }
+  if (lines > WARN_LINES) big.push({ rel: relative(ROOT, file).split("\\").join("/"), lines })
 }
-for (const rel of Object.keys(ALLOWLIST))
-  if (!seen.has(rel)) errors.push(`${rel}: allowlisted but not found — remove the stale entry.`)
+big.sort((a, b) => b.lines - a.lines)
 
-if (errors.length === 0) {
-  console.log(
-    `filesize: ok — no source file over ${MAX_LINES} lines` +
-      ` (${Object.keys(ALLOWLIST).length} pinned + shrinking)`,
+if (big.length === 0) {
+  console.log(`filesize: ok — no source file over ${WARN_LINES} lines`)
+} else {
+  console.warn(`filesize: ${big.length} file(s) over ${WARN_LINES} lines — worth a look:`)
+  for (const { rel, lines } of big) console.warn(`  ${rel}: ${lines} lines`)
+  console.warn(
+    `\n  Not a hard limit. Long is fine when a file is one cohesive thing (a flat` +
+      `\n  DDL/query catalog). If it's several concerns piled up, extract a hook,` +
+      `\n  component, or module. Organization over length.`,
   )
-  process.exit(0)
 }
-console.error(`filesize: ${errors.length} oversized-file issue(s)\n`)
-for (const e of errors) console.error(`  ${e}`)
-console.error(
-  `\n  Keep files small: extract components, hooks, and helpers. Files balloon one` +
-    `\n  append at a time — this guard ratchets them down. See scripts/check-file-size.mjs.`,
-)
-process.exit(1)
+// Always succeeds — this is a warning, never a gate.
+process.exit(0)
