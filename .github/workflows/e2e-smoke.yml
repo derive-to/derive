@@ -1,13 +1,15 @@
-name: e2e smoke (post-merge)
+name: e2e smoke
 
 # The fast critical-path suite: one happy path per surface (sign up, publish →
 # comment → resolve, library, share, settings, theme, review) — runs in well
-# under two minutes. Intended as the POST-MERGE gate on main.
+# under two minutes.
 #
-# Runs on every push to main (the post-merge gate) and on demand. Fast enough
-# (~2 min) that a regression is caught within minutes of landing.
+# Runs on every PR (the pre-merge gate, so a broken critical path can't land),
+# on every push to main (the post-merge backstop), and on demand. Fast enough
+# (~2 min) that it gates a PR without slowing review.
 on:
   workflow_dispatch:
+  pull_request:
   push:
     branches: [main]
 

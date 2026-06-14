@@ -29,4 +29,17 @@ describe("health + readiness endpoints", () => {
     const app = createApp({ meta: broken, blobs, baseUrl: "http://dock.test" })
     expect((await app.request("/readyz")).status).toBe(503)
   })
+
+  it("/readyz returns 503 when the blob store is unreachable", async () => {
+    // The probe must do real blob I/O: it reads with a valid 64-hex sentinel key
+    // (a non-hex key short-circuits to null without touching the backend), so a
+    // store whose backend is down throws and the check fails. This guards against
+    // the probe silently regressing back into a no-op.
+    const brokenBlobs = new Proxy(blobs, {
+      get: (t, p) =>
+        p === "get" ? () => Promise.reject(new Error("blob backend down")) : Reflect.get(t, p),
+    })
+    const app = createApp({ meta, blobs: brokenBlobs, baseUrl: "http://dock.test" })
+    expect((await app.request("/readyz")).status).toBe(503)
+  })
 })

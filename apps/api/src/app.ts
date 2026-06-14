@@ -26,6 +26,7 @@ import { realtimeRoutes } from "./routes/realtime"
 import { sessionRoutes } from "./routes/session"
 import { sharingRoutes } from "./routes/sharing"
 import { syncRoutes } from "./routes/sync"
+import { vitalsRoutes } from "./routes/vitals"
 import { webhookRoutes } from "./routes/webhooks"
 import { workspaceRoutes } from "./routes/workspace"
 import { workspaceDomainRoutes } from "./routes/workspace-domains"
@@ -303,7 +304,11 @@ export function createApp(deps: AppDeps): Hono {
   app.get("/readyz", async (c) => {
     try {
       await deps.meta.getWorkspace(deps.defaultOrgId ?? "default")
-      await deps.blobs.get("__readyz_probe__")
+      // A valid 64-hex key so the store does real I/O (fs read / S3 GET): the
+      // sentinel doesn't exist, so a healthy backend returns null, but an
+      // unreachable one throws — which is the signal we want. A non-hex key
+      // would short-circuit to null without touching the backend (no-op probe).
+      await deps.blobs.get("0".repeat(64))
       return c.json({ ok: true })
     } catch (err) {
       log.error("readiness check failed", {
@@ -341,6 +346,7 @@ export function createApp(deps: AppDeps): Hono {
     /^\/v1\/artifacts\/[^/]+\/cursor$/, // ephemeral live cursor (viral viewing)
     /^\/v1\/artifacts\/[^/]+\/view$/, // de-duped, anonymous-safe view counter
     /^\/v1\/artifacts\/[^/]+\/unlock$/, // password unlock — the password is the gate
+    /^\/v1\/vitals$/, // anonymous Core Web Vitals beacon (telemetry, no state)
   ]
   app.use("/v1/*", async (c, next) => {
     const m = c.req.method
@@ -361,6 +367,7 @@ export function createApp(deps: AppDeps): Hono {
     favoriteRoutes,
     collectionRoutes,
     syncRoutes,
+    vitalsRoutes,
     moderationRoutes,
     proposalRoutes,
     commentRoutes,

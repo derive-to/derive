@@ -47,6 +47,7 @@ export const artifactRoutes = (ctx: AppContext) => {
     limited,
     overStorage,
     publishLimiter,
+    unlockLimiter,
     sourceText,
   } = ctx
   const app = new Hono()
@@ -308,9 +309,12 @@ export const artifactRoutes = (ctx: AppContext) => {
 
   // Unlock a `password` artifact: verify the password and drop a cookie whose
   // value is derived from the server-only hash (so it can't be forged and dies if
-  // the password changes). Brute force is bounded by the global /v1 rate limiter.
+  // the password changes). Brute force is bounded by a dedicated tight limiter
+  // (10 attempts/min per caller), well below the lenient global /v1 write cap.
   // authz-exempt: the password itself is the gate; any visitor may attempt unlock.
   app.post("/v1/artifacts/:shortId/unlock", async (c) => {
+    const over = await limited(c, unlockLimiter)
+    if (over) return over
     const artifact = await meta.getByShortId(c.req.param("shortId"))
     if (!artifact || artifact.visibility !== "password" || !artifact.password_hash)
       return fail(c, 404, "not found")

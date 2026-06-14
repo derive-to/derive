@@ -79,17 +79,21 @@ export const moderationRoutes = (ctx: AppContext) => {
     const who = (await actingUser(c))?.name ?? "owner"
     const b = await readJson(c, z.object({ note: z.unknown().optional() }))
     if (b instanceof Response) return b
-    await meta.setArtifactRemoved(artifact.id, new Date().toISOString())
-    for (const r of await meta.listReports(artifact.org_id, { state: "open" }))
-      if (r.artifact_id === artifact.id)
-        await meta.setReportState(r.id, "actioned", artifact.org_id)
-    await meta.createAuditLog({
-      id: newId("aud"),
-      org_id: artifact.org_id,
-      action: "takedown",
-      artifact_id: artifact.id,
-      actor: who,
-      detail: str(b.note) ?? null,
+    // One atomic step: tombstone the artifact, resolve every open report against
+    // it, and write the audit entry. (Was a non-transactional read-loop-write that
+    // also scanned the whole open-report queue to filter by artifact — N+1.)
+    await meta.takedownArtifact({
+      artifactId: artifact.id,
+      orgId: artifact.org_id,
+      removedAt: new Date().toISOString(),
+      audit: {
+        id: newId("aud"),
+        org_id: artifact.org_id,
+        action: "takedown",
+        artifact_id: artifact.id,
+        actor: who,
+        detail: str(b.note) ?? null,
+      },
     })
     return c.json({ ok: true, removed: true })
   })

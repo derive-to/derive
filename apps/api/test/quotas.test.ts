@@ -60,6 +60,30 @@ describe("rate limits: per-actor write throttles (C4b)", () => {
     expect((await comment()).status).toBe(429)
   })
 
+  it("throttles password-unlock attempts with a tight dedicated cap (10/min)", async () => {
+    const { app } = quotaApp("rl-unlock", { rateLimit: true })
+    const form = new FormData()
+    form.append("file", new Blob([new TextEncoder().encode("<h1>x</h1>")]), "x.html")
+    form.append("visibility", "password")
+    form.append("password", "hunter2")
+    const a = await (
+      await app.request("/v1/artifacts", { method: "POST", body: form, headers: bearer("tok") })
+    ).json()
+    // Anonymous wrong-password attempts: the limiter runs before the password
+    // check, so each counts. Ten are allowed (401 wrong-password), the 11th 429s —
+    // far below the lenient 120/min global write cap this used to share.
+    const attempt = () =>
+      app.request(`/v1/artifacts/${a.short_id}/unlock`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ password: "wrong" }),
+      })
+    for (let i = 0; i < 10; i++) expect((await attempt()).status).toBe(401)
+    const blocked = await attempt()
+    expect(blocked.status).toBe(429)
+    expect(blocked.headers.get("Retry-After")).toBeTruthy()
+  })
+
   it("keys the limit by identity — one user hitting the cap doesn't block another", async () => {
     const amy: TestUser = { id: "u_amy", email: "amy@dock.test", name: "Amy" }
     const ben: TestUser = { id: "u_ben", email: "ben@dock.test", name: "Ben" }
