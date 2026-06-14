@@ -47,12 +47,16 @@ export function SourceEditor({
   onPropose: () => void
 }) {
   const [pane, setPane] = useState<"edit" | "preview">("edit")
+  // Desktop preview-pane visibility (mobile uses the Edit/Preview tabs instead).
+  const [previewOpen, setPreviewOpen] = useState(true)
   const [preview, setPreview] = useState("")
 
   // Debounced, faithful preview. HTML renders in-browser as-is; markdown is
   // rendered by the server's real renderer (the same one publish uses), so what
-  // you see is exactly what ships.
+  // you see is exactly what ships. Skipped while the preview is hidden so we don't
+  // render on every keystroke for nothing.
   useEffect(() => {
+    if (!previewOpen) return
     let cancelled = false
     const t = setTimeout(() => {
       if (format === "html") {
@@ -70,7 +74,7 @@ export function SourceEditor({
       cancelled = true
       clearTimeout(t)
     }
-  }, [src, format, title])
+  }, [src, format, title, previewOpen])
 
   const tab = (id: "edit" | "preview", label: string) => (
     <button
@@ -116,7 +120,24 @@ export function SourceEditor({
           />
         )}
         <span className="ml-auto flex items-center gap-2">
-          {/* Phone: one pane at a time. Desktop shows both, so the toggle hides. */}
+          {/* Desktop: show/hide the preview for a full-width editor when you don't
+              need it. (Phones use the Edit/Preview tabs below instead.) */}
+          <Button
+            variant="outline"
+            size="sm"
+            data-testid="artifact-preview-toggle"
+            onClick={() => setPreviewOpen((v) => !v)}
+            title={previewOpen ? "Hide preview" : "Show preview"}
+            aria-pressed={previewOpen}
+            className={cn(
+              "hidden gap-1.5 md:inline-flex",
+              previewOpen && "border-primary text-primary",
+            )}
+          >
+            <Icon name="views" size={16} />
+            Preview
+          </Button>
+          {/* Phone: one pane at a time. */}
           <span className="flex rounded-lg border border-border bg-muted/50 p-0.5 md:hidden">
             {tab("edit", "Edit")}
             {tab("preview", "Preview")}
@@ -164,8 +185,9 @@ export function SourceEditor({
         </div>
         <div
           className={cn(
-            "min-h-0 flex-1 flex-col bg-white md:flex md:border-l md:border-border-soft",
+            "min-h-0 flex-1 flex-col bg-white md:border-l md:border-border-soft",
             pane === "preview" ? "flex" : "hidden",
+            previewOpen ? "md:flex" : "md:hidden",
           )}
         >
           <iframe
