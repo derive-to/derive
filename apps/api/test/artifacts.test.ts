@@ -4,7 +4,7 @@ import { FsBlobStore } from "@dock/storage/fs"
 import { zipSync } from "fflate"
 import { describe, expect, it } from "vitest"
 import { createApp } from "../src/app"
-import { app, dir, meta, postJson, upload } from "./helpers"
+import { app, dir, meta, ownerApp, postJson, upload } from "./helpers"
 
 describe("version sessions", () => {
   it("a named publish stores the checkpoint name on the version", async () => {
@@ -54,7 +54,7 @@ describe("version sessions", () => {
 
   it("honors the configured window (each revision its own session)", async () => {
     const m2 = new SqliteMetaStore(join(dir, "win.db"))
-    const app2 = createApp({
+    const app2 = ownerApp({
       meta: m2,
       blobs: new FsBlobStore(join(dir, "blobs")),
       baseUrl: "http://dock.test",

@@ -3,14 +3,17 @@ import { FsBlobStore } from "@dock/storage/fs"
 import { describe, expect, it } from "vitest"
 import { createApp } from "../src/app"
 import {
+  anonApp,
   app,
   as,
+  bearer,
   dir,
   json,
   jsonAs,
   makeAuthedApp,
   meta,
   publishAs,
+  TEST_TOKEN,
   type TestUser,
   upload,
 } from "./helpers"
@@ -24,7 +27,7 @@ describe("view analytics", () => {
     // recorded view — a refresh no longer inflates the count.
     let cookie = ""
     for (let i = 0; i < 3; i++) {
-      const r = await app.request(`/v1/artifacts/${short_id}/view`, {
+      const r = await anonApp.request(`/v1/artifacts/${short_id}/view`, {
         method: "POST",
         headers: { "content-type": "application/json", ...(cookie ? { cookie } : {}) },
         body: JSON.stringify({ version: 1 }),
@@ -32,13 +35,13 @@ describe("view analytics", () => {
       cookie ||= (r.headers.get("set-cookie") ?? "").split(";")[0] ?? ""
     }
     // The same viewer on a different version is a distinct view.
-    await app.request(`/v1/artifacts/${short_id}/view`, {
+    await anonApp.request(`/v1/artifacts/${short_id}/view`, {
       method: "POST",
       headers: { "content-type": "application/json", cookie },
       body: JSON.stringify({ version: 2 }),
     })
     // A fresh anonymous viewer (no cookie) is a distinct unique.
-    await app.request(`/v1/artifacts/${short_id}/view`, {
+    await anonApp.request(`/v1/artifacts/${short_id}/view`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ version: 2 }),
@@ -133,10 +136,26 @@ describe("live stream (SSE)", () => {
     }
   })
 
-  it("reports presence on heartbeat", async () => {
-    const { short_id } = await (await upload("p.md", "# p", {})).json()
-    const res = await app.request(`/v1/artifacts/${short_id}/presence`, json({ name: "Jess" }))
-    expect((await res.json()).viewers).toEqual(["Jess"])
+  it("reports presence by server identity (signed-in name; anon gets a rando handle)", async () => {
+    const jess: TestUser = { id: "u_pres_jess", email: "jess@dock.test", name: "Jess" }
+    const { app: a } = makeAuthedApp("presence", [jess])
+    const { short_id } = await (
+      await publishAs(a, "<h1>p</h1>", { visibility: "public" }, as(jess.email))
+    ).json()
+    // Signed-in: the heartbeat is attributed to the account name, never a
+    // client-supplied one.
+    const signed = await a.request(
+      `/v1/artifacts/${short_id}/presence`,
+      jsonAs(as(jess.email), { name: "SPOOF" }),
+    )
+    const signedViewers = (await signed.json()).viewers as string[]
+    expect(signedViewers).toContain("Jess")
+    expect(signedViewers).not.toContain("SPOOF")
+    // Anonymous: a stable, friendly handle (helpful-kitty-95 style), never "anonymous".
+    const anon = await a.request(`/v1/artifacts/${short_id}/presence`, json({}))
+    const viewers = (await anon.json()).viewers as string[]
+    expect(viewers).not.toContain("anonymous")
+    expect(viewers.some((v) => /^[a-z]+-[a-z]+-\d{1,2}$/.test(v))).toBe(true)
   })
 })
 
@@ -213,11 +232,13 @@ describe("analytics: identity + retention", () => {
       blobs: new FsBlobStore(join(dir, "blobs")),
       baseUrl: "https://api.dock.test",
       crossSite: true,
+      token: TEST_TOKEN,
     })
     const fd = new FormData()
     fd.append("file", new Blob([new TextEncoder().encode("# x")]), "x.md")
+    // Publish as the token (owner); the view below is anonymous so it sets the cookie.
     const { short_id } = await (
-      await xs.request("/v1/artifacts", { method: "POST", body: fd })
+      await xs.request("/v1/artifacts", { method: "POST", body: fd, headers: bearer(TEST_TOKEN) })
     ).json()
     const r = await xs.request(`/v1/artifacts/${short_id}/view`, {
       method: "POST",

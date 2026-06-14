@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { as, pub, quotaApp, type TestUser } from "./helpers"
+import { as, bearer, pub, quotaApp, type TestUser } from "./helpers"
 
 describe("quotas: per-workspace storage caps (C4b)", () => {
   it("persists each version's byte size and meters the workspace total", async () => {
@@ -52,7 +52,7 @@ describe("rate limits: per-actor write throttles (C4b)", () => {
     const comment = () =>
       app.request(`/v1/artifacts/${a.short_id}/comments`, {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: { "content-type": "application/json", ...bearer("tok") },
         body: JSON.stringify({ body_md: "hi", author: "x" }),
       })
     expect((await comment()).status).toBe(201)

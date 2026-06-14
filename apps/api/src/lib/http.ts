@@ -33,6 +33,79 @@ export const readJson = async <T>(c: Context, schema: z.ZodType<T>): Promise<T |
 export const DEFAULT_WORKSPACE_NAME = "My Workspace"
 /** Cookie holding the active workspace id (multi-workspace mode). */
 export const WS_COOKIE = "dock_ws"
+/** Long-lived cookie that gives an anonymous browser one stable identity — used
+ *  for unique-view counts and a stable presence name across opens. */
+export const VIEWER_COOKIE = "dock_vid"
+
+// Friendly, anonymous presence handles — `helpful-kitty-95` style. An anonymous
+// viewer never picks their own name (no impersonation/spam); the server derives a
+// stable one from their viewer cookie, so the same browser keeps the same handle.
+const ANON_ADJECTIVES = [
+  "helpful",
+  "brave",
+  "calm",
+  "clever",
+  "eager",
+  "gentle",
+  "jolly",
+  "keen",
+  "lively",
+  "mellow",
+  "nimble",
+  "plucky",
+  "quiet",
+  "swift",
+  "witty",
+  "zesty",
+  "sunny",
+  "breezy",
+  "cosy",
+  "merry",
+  "spry",
+  "chipper",
+  "dapper",
+  "snappy",
+] as const
+const ANON_ANIMALS = [
+  "kitty",
+  "otter",
+  "panda",
+  "koala",
+  "finch",
+  "lynx",
+  "heron",
+  "tapir",
+  "gecko",
+  "moth",
+  "wren",
+  "yak",
+  "ibis",
+  "puma",
+  "seal",
+  "crane",
+  "fox",
+  "robin",
+  "badger",
+  "newt",
+  "vole",
+  "swan",
+  "hare",
+  "owl",
+] as const
+
+/** A deterministic `adjective-animal-NN` handle for an anonymous viewer, keyed to
+ *  a stable seed (their viewer cookie) so it doesn't change between heartbeats. */
+export const anonName = (seed: string): string => {
+  let h = 2166136261
+  for (let i = 0; i < seed.length; i++) {
+    h ^= seed.charCodeAt(i)
+    h = Math.imul(h, 16777619)
+  }
+  h >>>= 0
+  const adj = ANON_ADJECTIVES[h % ANON_ADJECTIVES.length]
+  const animal = ANON_ANIMALS[(h >>> 8) % ANON_ANIMALS.length]
+  return `${adj}-${animal}-${(h >>> 16) % 100}`
+}
 
 export const VISIBILITIES = ["public", "link", "org"] as const
 

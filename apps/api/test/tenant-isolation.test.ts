@@ -101,7 +101,7 @@ describe.skipIf(process.env.DOCK_TEST_DB === "pg" && !process.env.TEST_DATABASE_
       const aliceArt = await publish(app, alice)
       const rep = await app.request(`/v1/artifacts/${aliceArt}/report`, {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: { "content-type": "application/json", ...as(alice.email) },
         body: JSON.stringify({ reason: "spam" }),
       })
       expect(rep.status).toBe(201)

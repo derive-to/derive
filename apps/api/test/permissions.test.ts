@@ -2,7 +2,7 @@ import { join } from "node:path"
 import { FsBlobStore } from "@dock/storage/fs"
 import { describe, expect, it } from "vitest"
 import { createApp } from "../src/app"
-import { app, as, dir, jsonAs, makeAuthedApp, meta, publishAs, type TestUser } from "./helpers"
+import { anonApp, as, dir, jsonAs, makeAuthedApp, meta, publishAs, type TestUser } from "./helpers"
 
 describe("auth: token write-gating + per-artifact read-gating", () => {
   const authApp = createApp({
@@ -41,10 +41,14 @@ describe("auth: token write-gating + per-artifact read-gating", () => {
     expect((await authApp.request(`/v1/artifacts/${short_id}`, authed())).status).toBe(200)
   })
 
-  it("leaves a no-token instance fully open (the default app)", async () => {
+  it("rejects anonymous writes even on a no-token instance (no open mode)", async () => {
+    // `anonApp` is the shared instance with no auto-auth: a request with no
+    // Authorization is anonymous, and anonymous can never publish.
     const form = new FormData()
     form.append("file", new Blob([new TextEncoder().encode("# x")]), "x.md")
-    expect((await app.request("/v1/artifacts", { method: "POST", body: form })).status).toBe(201)
+    expect((await anonApp.request("/v1/artifacts", { method: "POST", body: form })).status).toBe(
+      403,
+    )
   })
 })
 

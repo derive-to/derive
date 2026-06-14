@@ -5,7 +5,7 @@ import { fail } from "../lib/http"
 
 /** Session identity + the workspace member/agent directory for the @mention picker. */
 export const sessionRoutes = (ctx: AppContext) => {
-  const { meta, deps, open, bearer, currentUser, ensureMembership, activeWorkspace } = ctx
+  const { meta, deps, bearer, currentUser, ensureMembership, activeWorkspace } = ctx
   const app = new Hono()
 
   app.get("/v1/me", async (c) => {
@@ -16,10 +16,11 @@ export const sessionRoutes = (ctx: AppContext) => {
   })
 
   // Workspace member directory for the @mention picker — people AND agents, so
-  // an agent can be @mentioned like anyone. Signed-in (or open) only; optional
-  // ?q= filters by name/email prefix. Never exposes non-members.
+  // an agent can be @mentioned like anyone. Authenticated callers only (a signed-in
+  // user or the static token); an anonymous visitor can never enumerate members.
+  // Optional ?q= filters by name/email prefix. Never exposes non-members.
   app.get("/v1/users", async (c) => {
-    if (!open && !(await currentUser(c)) && !safeEqual(bearer(c), deps.token))
+    if (!(await currentUser(c)) && !safeEqual(bearer(c), deps.token))
       return fail(c, 401, "unauthenticated")
     const org = await activeWorkspace(c)
     const members = await meta.listMemberships(org)

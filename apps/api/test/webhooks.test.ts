@@ -5,8 +5,8 @@ import type { ArtifactRecord } from "@dock/core"
 import { SqliteMetaStore } from "@dock/db/sqlite"
 import { FsBlobStore } from "@dock/storage/fs"
 import { afterAll, describe, expect, it } from "vitest"
-import { createApp } from "../src/app"
 import { buildPayload, sign, slackMessage } from "../src/webhooks"
+import { ownerApp } from "./helpers"
 
 const sampleArtifact = {
   id: "a1",
@@ -45,7 +45,7 @@ describe("webhook formatting + signing", () => {
 
 const dir = mkdtempSync(join(tmpdir(), "dock-wh-"))
 const meta = new SqliteMetaStore(join(dir, "dock.db"))
-const app = createApp({
+const app = ownerApp({
   meta,
   blobs: new FsBlobStore(join(dir, "blobs")),
   baseUrl: "http://dock.test",

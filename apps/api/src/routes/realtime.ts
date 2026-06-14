@@ -2,11 +2,11 @@ import { Hono } from "hono"
 import { streamSSE } from "hono/streaming"
 import { z } from "zod"
 import type { AppContext } from "../context"
-import { fail, readJson } from "../lib/http"
+import { anonName, fail, readJson } from "../lib/http"
 
 /** Live updates per artifact (SSE) + ephemeral presence (who's viewing now). */
 export const realtimeRoutes = (ctx: AppContext) => {
-  const { meta, bus, presence, backplane, authorize } = ctx
+  const { meta, bus, presence, backplane, authorize, actingUser, anonViewerId } = ctx
   const app = new Hono()
 
   app.get("/v1/artifacts/:shortId/events", async (c) => {
@@ -36,9 +36,12 @@ export const realtimeRoutes = (ctx: AppContext) => {
   app.post("/v1/artifacts/:shortId/presence", async (c) => {
     const artifact = await meta.getByShortId(c.req.param("shortId"))
     if (!artifact || !(await authorize(c, "read", artifact))) return fail(c, 404, "not found")
-    const body = await readJson(c, z.object({ name: z.string().optional() }).catchall(z.unknown()))
-    if (body instanceof Response) return body
-    const name = typeof body.name === "string" && body.name ? body.name : "anonymous"
+    // Presence identity is server-derived, never client-supplied: a signed-in
+    // user or agent shows by their account name; an anonymous viewer gets a
+    // stable, friendly handle (`helpful-kitty-95`) keyed to their viewer cookie,
+    // so they can't impersonate anyone or spam arbitrary names. This is the only
+    // thing an anonymous caller may do beyond reading (see the lockdown in app.ts).
+    const name = (await actingUser(c))?.name ?? anonName(anonViewerId(c))
     const viewers = await presence.heartbeat(artifact.id, name, Date.now())
     bus.publish(artifact.id, { type: "presence", viewers })
     return c.json({ viewers })
@@ -62,10 +65,14 @@ export const realtimeRoutes = (ctx: AppContext) => {
     )
     if (body instanceof Response) return body
     const clamp = (n: number) => (n < 0 ? 0 : n > 1 ? 1 : n)
+    // Same server-derived identity as presence: a signed-in user/agent by their
+    // account name, an anonymous viewer by their stable rando handle — never a
+    // client-supplied label. So a cursor and its presence row share one identity.
+    const name = (await actingUser(c))?.name ?? anonName(anonViewerId(c))
     bus.publish(artifact.id, {
       type: "cursor",
       id: body.id,
-      name: body.name ?? "anonymous",
+      name,
       color: body.color ?? "#655999",
       x: clamp(body.x),
       y: clamp(body.y),

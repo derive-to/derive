@@ -177,7 +177,9 @@ export const artifactRoutes = (ctx: AppContext) => {
           message: str(body["message"]),
           // Author is the authenticated identity (signed-in user or agent), never a
           // client-supplied field — a logged-in publish must be attributed to that
-          // person, not "anonymous". Anonymous can't publish at all (open mode off).
+          // person. Anonymous callers can't reach this route at all, so a publish is
+          // always attributed to a real principal (the token's optional `author`
+          // label is the one headless exception).
           author: (await actingUser(c))?.name ?? str(body["author"]),
           name: str(body["name"]),
           orgId: org,
