@@ -347,6 +347,12 @@ export interface MetaStore {
   setReportState(id: string, state: ReportState, orgId?: string): Promise<void>
   /** Set or clear an artifact's takedown tombstone (the record is never deleted). */
   setArtifactRemoved(id: string, removedAt: string | null): Promise<void>
+  /** Take an artifact down atomically: tombstone the artifact, resolve every open
+   *  report against it (→ actioned), and write the audit entry — all in one
+   *  transaction so a crash mid-way can't leave a half-applied takedown (removed
+   *  but reports still open, or no audit trail). Replaces the route's
+   *  read-loop-write, which was both non-atomic and N+1 in the open-report count. */
+  takedownArtifact(input: TakedownInput): Promise<void>
   /** Update an artifact's display title (used when a GitHub-synced file is renamed —
    *  the title tracks the repo path; the artifact + its comments are preserved). */
   setArtifactTitle(id: string, title: string): Promise<void>
@@ -414,6 +420,16 @@ export interface NewAuditLog {
   artifact_id?: string | null
   actor: string
   detail?: string | null
+}
+
+/** A whole takedown as one unit: the artifact + workspace it targets, the
+ *  tombstone timestamp, and the audit entry to record — applied atomically by
+ *  {@link MetaStore.takedownArtifact}. */
+export interface TakedownInput {
+  artifactId: string
+  orgId: string
+  removedAt: string
+  audit: NewAuditLog
 }
 
 /**

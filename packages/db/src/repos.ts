@@ -39,6 +39,7 @@ import type {
   ReportState,
   RepoSourceRecord,
   Role,
+  TakedownInput,
   VersionRecord,
   Visibility,
   WebhookRecord,
@@ -979,6 +980,28 @@ export function makeRepos(db: SqliteDb) {
   const createAuditLog = async (a: NewAuditLog): Promise<void> => {
     await db.insert(auditLog).values(a).run()
   }
+  // Sequential takedown (used by D1, which has no multi-statement transaction in
+  // this driver). better-sqlite3 + pg override this with a real transaction; the
+  // single bulk report UPDATE (vs the old per-report loop) is the same here.
+  const takedownArtifact = async (input: TakedownInput): Promise<void> => {
+    await db
+      .update(artifact)
+      .set({ removed_at: input.removedAt })
+      .where(eq(artifact.id, input.artifactId))
+      .run()
+    await db
+      .update(report)
+      .set({ state: "actioned" })
+      .where(
+        and(
+          eq(report.artifact_id, input.artifactId),
+          eq(report.org_id, input.orgId),
+          eq(report.state, "open"),
+        ),
+      )
+      .run()
+    await db.insert(auditLog).values(input.audit).run()
+  }
   const listAuditLog = async (
     orgId: string | undefined,
     opts?: { artifactId?: string; limit?: number },
@@ -1093,6 +1116,7 @@ export function makeRepos(db: SqliteDb) {
     countOpenReports,
     setReportState,
     createAuditLog,
+    takedownArtifact,
     listAuditLog,
   }
 }

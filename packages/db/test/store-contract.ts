@@ -483,5 +483,56 @@ export function runStoreContract(
       const log = await store.listAuditLog(ORG, { artifactId: a.id })
       expect(log.map((x) => x.action)).toContain("takedown")
     })
+
+    it("takedownArtifact applies the tombstone, resolves open reports, and audits atomically", async () => {
+      const a = await store.createArtifact(newArtifact())
+      // Two open reports against this artifact, plus one against another that must
+      // be left untouched (the bulk resolve is scoped to the target artifact).
+      const r1 = await store.createReport({
+        id: uuid(),
+        org_id: ORG,
+        artifact_id: a.id,
+        artifact_short_id: a.short_id,
+        reason: "spam",
+      })
+      const r2 = await store.createReport({
+        id: uuid(),
+        org_id: ORG,
+        artifact_id: a.id,
+        artifact_short_id: a.short_id,
+        reason: "abuse",
+      })
+      const other = await store.createArtifact(newArtifact())
+      const rOther = await store.createReport({
+        id: uuid(),
+        org_id: ORG,
+        artifact_id: other.id,
+        artifact_short_id: other.short_id,
+        reason: "unrelated",
+      })
+
+      await store.takedownArtifact({
+        artifactId: a.id,
+        orgId: ORG,
+        removedAt: "2026-06-14T00:00:00.000Z",
+        audit: {
+          id: uuid(),
+          org_id: ORG,
+          action: "takedown",
+          artifact_id: a.id,
+          actor: "amy",
+          detail: "policy",
+        },
+      })
+
+      // Tombstone set, both of this artifact's reports actioned, the other left open.
+      expect((await store.getArtifactById(a.id))?.removed_at).toBe("2026-06-14T00:00:00.000Z")
+      expect((await store.getReport(r1.id, ORG))?.state).toBe("actioned")
+      expect((await store.getReport(r2.id, ORG))?.state).toBe("actioned")
+      expect((await store.getReport(rOther.id, ORG))?.state).toBe("open")
+      // The audit entry landed in the same step.
+      const log = await store.listAuditLog(ORG, { artifactId: a.id })
+      expect(log.map((x) => x.action)).toContain("takedown")
+    })
   })
 }

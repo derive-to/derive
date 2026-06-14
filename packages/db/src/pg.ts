@@ -41,6 +41,7 @@ import type {
   ReportState,
   RepoSourceRecord,
   Role,
+  TakedownInput,
   UserDir,
   VersionRecord,
   ViewStats,
@@ -1035,6 +1036,28 @@ export class PgMetaStore implements MetaStore {
   }
   async createAuditLog(a: NewAuditLog): Promise<void> {
     await this.db.insert(auditLog).values(a)
+  }
+  // Atomic takedown: tombstone + bulk open-report resolution + audit entry in one
+  // transaction, so a failure mid-way rolls back instead of leaving a half-applied
+  // takedown. The single bulk UPDATE replaces the route's per-report loop (N+1).
+  async takedownArtifact(input: TakedownInput): Promise<void> {
+    await this.db.transaction(async (tx) => {
+      await tx
+        .update(artifact)
+        .set({ removed_at: input.removedAt })
+        .where(eq(artifact.id, input.artifactId))
+      await tx
+        .update(report)
+        .set({ state: "actioned" })
+        .where(
+          and(
+            eq(report.artifact_id, input.artifactId),
+            eq(report.org_id, input.orgId),
+            eq(report.state, "open"),
+          ),
+        )
+      await tx.insert(auditLog).values(input.audit)
+    })
   }
   listAuditLog(
     orgId: string | undefined,

@@ -1,15 +1,17 @@
 import type { MetaStore, NewVersion, UserDir, VersionRecord, ViewStats } from "@dock/core"
 import Database from "better-sqlite3"
-import { eq } from "drizzle-orm"
+import { and, eq } from "drizzle-orm"
 import { drizzle } from "drizzle-orm/better-sqlite3"
 import { makeRepos, schema } from "./repos"
 import {
   artifact,
   artifactTag,
+  auditLog,
   collection,
   collectionItem,
   collectionMember,
   MIGRATION_STATEMENTS,
+  report,
   SCHEMA_STATEMENTS,
   version,
 } from "./schema"
@@ -82,6 +84,29 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
         db.delete(collectionItem).where(eq(collectionItem.collection_id, id)).run()
         db.delete(collectionMember).where(eq(collectionMember.collection_id, id)).run()
         db.delete(collection).where(eq(collection.id, id)).run()
+      })()
+    },
+
+    // Atomic takedown: the tombstone, the bulk open-report resolution, and the
+    // audit entry commit together (or not at all), so a crash mid-takedown can't
+    // leave an artifact removed with its reports still open or no audit trail.
+    takedownArtifact: async (input): Promise<void> => {
+      raw.transaction(() => {
+        db.update(artifact)
+          .set({ removed_at: input.removedAt })
+          .where(eq(artifact.id, input.artifactId))
+          .run()
+        db.update(report)
+          .set({ state: "actioned" })
+          .where(
+            and(
+              eq(report.artifact_id, input.artifactId),
+              eq(report.org_id, input.orgId),
+              eq(report.state, "open"),
+            ),
+          )
+          .run()
+        db.insert(auditLog).values(input.audit).run()
       })()
     },
 
