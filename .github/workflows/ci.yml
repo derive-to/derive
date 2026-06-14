@@ -54,7 +54,8 @@ jobs:
       - name: Test against Postgres
         run: pnpm test:pg
 
-  # Coverage gate on the API suite (a ratchet floor; see apps/api/vitest.config.ts).
+  # Coverage gates (ratchet floors; see each package's vitest.config.ts): the API
+  # suite and the data layer (@dock/db repos + sqlite driver).
   coverage:
     runs-on: ubicloud-standard-2
     steps:
@@ -67,6 +68,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: API coverage
         run: pnpm --filter @dock/api test:coverage
+      - name: DB coverage
+        run: pnpm --filter @dock/db test:coverage
 
   # Bundle budget: build the web client and fail if the gzipped JS blows past the
   # budget (see scripts/check-bundle.mjs), so phosphor / radix / cmdk weight can't
