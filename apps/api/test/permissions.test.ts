@@ -164,3 +164,44 @@ describe("permissions: a per-artifact share overrides the workspace role", () =>
     )
   })
 })
+
+describe("permissions: a sharer can't grant or remove a role above their own", () => {
+  const owner: TestUser = { id: "u_o2", email: "o2@dock.test", name: "O2" }
+  const ed: TestUser = { id: "u_ed2", email: "ed2@dock.test", name: "Ed2" }
+  const out: TestUser = { id: "u_out2", email: "out2@dock.test", name: "Out2" }
+  const { app } = makeAuthedApp("perm-clamp", [owner, ed, out], "viewer")
+  let shortId: string
+
+  const putMember = (by: TestUser, email: string, role: string) =>
+    app.request(`/v1/artifacts/${shortId}/members`, {
+      method: "PUT",
+      headers: { "content-type": "application/json", ...as(by.email) },
+      body: JSON.stringify({ email, role }),
+    })
+  const delMember = (by: TestUser, userId: string) =>
+    app.request(`/v1/artifacts/${shortId}/members/${userId}`, {
+      method: "DELETE",
+      headers: as(by.email),
+    })
+
+  it("sets up an org artifact shared to an editor", async () => {
+    shortId = (
+      await (await publishAs(app, "<h1>x</h1>", { visibility: "org" }, as(owner.email))).json()
+    ).short_id
+    expect((await putMember(owner, ed.email, "editor")).status).toBe(201)
+  })
+
+  it("blocks an editor from granting owner (privilege escalation), but an owner can", async () => {
+    expect((await putMember(ed, out.email, "owner")).status).toBe(403)
+    expect((await putMember(owner, out.email, "owner")).status).toBe(201)
+  })
+
+  it("blocks an editor from removing a collaborator who outranks them, but an owner can", async () => {
+    expect((await delMember(ed, out.id)).status).toBe(403)
+    expect((await delMember(owner, out.id)).status).toBe(204)
+  })
+
+  it("still lets an editor grant up to their own role", async () => {
+    expect((await putMember(ed, out.email, "editor")).status).toBe(201)
+  })
+})
