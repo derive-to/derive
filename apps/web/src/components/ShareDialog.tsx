@@ -2,7 +2,7 @@ import { useQueryClient } from "@tanstack/react-query"
 import { Lock, Share2, X } from "lucide-react"
 import { useState } from "react"
 import { toast } from "sonner"
-import { API_BASE, type ArtifactMember, api, type Role } from "@/api"
+import { API_BASE, type ArtifactDomain, type ArtifactMember, api, type Role } from "@/api"
 import { EmptyState } from "@/components/shared/empty-state"
 import { RoleSelect } from "@/components/shared/role-select"
 import { Button } from "@/components/ui/button"
@@ -15,6 +15,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 
 const BLURB: Record<Role, string> = {
   viewer: "Can view",
@@ -71,6 +72,14 @@ export function ShareButton({
   const [savingVis, setSavingVis] = useState(false)
 
   const [copied, setCopied] = useState(false)
+
+  // Per-artifact vanity subdomains (`domainBase` null = off) + the workspace's
+  // custom domains shown read-only (managed in Settings).
+  const [domains, setDomains] = useState<ArtifactDomain[]>([])
+  const [domainBase, setDomainBase] = useState<string | null>(null)
+  const [workspaceDomains, setWorkspaceDomains] = useState<{ host: string; url: string }[]>([])
+  const [label, setLabel] = useState("")
+  const [claiming, setClaiming] = useState(false)
 
   // GDocs model: owners and editors manage access; everyone else gets view-only.
   const canManage = myRole === "owner" || myRole === "editor"
@@ -153,6 +162,44 @@ export function ShareButton({
     await synced()
   }
 
+  const loadDomains = () =>
+    api
+      .listDomains(shortId)
+      .then((r) => {
+        setDomains(r.domains)
+        setDomainBase(r.base)
+        setWorkspaceDomains(r.workspace_domains)
+      })
+      .catch(() => {})
+  const claimDomain = async (e: React.FormEvent) => {
+    e.preventDefault()
+    const l = label.trim().toLowerCase()
+    if (!l) return
+    setClaiming(true)
+    try {
+      await api.setDomain(shortId, l)
+      setLabel("")
+      await loadDomains()
+      toast.success("Custom URL claimed")
+    } catch (x) {
+      toast.error(x instanceof Error ? x.message : "Couldn't claim that URL")
+    } finally {
+      setClaiming(false)
+    }
+  }
+  const dropDomain = async (host: string) => {
+    await api.removeDomain(shortId, host).catch(() => {})
+    await loadDomains()
+  }
+  const copyUrl = async (url: string) => {
+    try {
+      await navigator.clipboard.writeText(url)
+      toast.success("URL copied")
+    } catch {
+      toast.error("Couldn't copy to clipboard")
+    }
+  }
+
   return (
     <Dialog
       onOpenChange={(o) => {
@@ -161,6 +208,7 @@ export function ShareButton({
           setVis(visibility)
           setPw("")
           load()
+          loadDomains()
         }
       }}
     >
@@ -174,200 +222,317 @@ export function ShareButton({
         <DialogHeader>
           <DialogTitle>Share this artifact</DialogTitle>
           <DialogDescription>
-            {canManage ? (
-              <>
-                Add people by email. Everyone you don't list is a{" "}
-                <b className="text-foreground">{defaultRole}</b> by default.
-              </>
-            ) : (
-              "You can view this artifact but can't change who has access."
-            )}
+            {canManage
+              ? "Choose who can open it, and how to share it."
+              : "You can view this artifact but can't change who has access."}
           </DialogDescription>
         </DialogHeader>
 
-        {canManage ? (
-          <>
-            <form onSubmit={add} className="flex gap-1.5">
-              <Input
-                data-testid="share-email"
-                type="email"
-                placeholder="teammate@email.com"
-                aria-label="Email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                className="flex-1"
-              />
-              <div data-testid="share-role" className="w-[104px]">
-                <RoleSelect
-                  value={role}
-                  onChange={setRole}
-                  aria-label="Role for new member"
-                  className="w-full"
-                />
-              </div>
-              <Button data-testid="share-add" variant="primary" type="submit" disabled={busy}>
-                {busy ? "…" : "Add"}
-              </Button>
-            </form>
-            <p className="mt-1.5 font-mono text-2xs text-muted-foreground">{BLURB[role]}.</p>
-          </>
-        ) : (
-          <div
-            data-testid="share-viewonly"
-            className="flex items-center gap-2 rounded-md border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground"
-          >
-            <Lock className="size-3.5 shrink-0" />
-            View only · ask an owner or editor to change access.
-          </div>
-        )}
-        {err && (
-          <p data-testid="share-error" role="alert" className="mt-2 text-xs text-destructive">
-            {err}
-          </p>
-        )}
+        <Tabs defaultValue="people" className="mt-1">
+          <TabsList className="grid w-full grid-cols-2">
+            <TabsTrigger value="people" data-testid="share-tab-people">
+              People
+            </TabsTrigger>
+            <TabsTrigger value="links" data-testid="share-tab-links">
+              Links
+            </TabsTrigger>
+          </TabsList>
 
-        <div className="mt-3.5">
-          <div className="mb-1.5 font-mono text-2xs font-semibold uppercase tracking-wide text-muted-foreground">
-            People with access
-          </div>
-          {members.length === 0 ? (
-            <div data-testid="share-empty">
-              <EmptyState className="p-6 text-xs">
-                {canManage ? "No one shared yet." : "Just you and the workspace."}
-              </EmptyState>
-            </div>
-          ) : (
-            <div className="flex flex-col gap-1.5">
-              {members.map((m) => (
-                <div
-                  key={m.user_id}
-                  data-testid={`share-member-row-${m.user_id}`}
-                  className="flex items-center gap-2"
-                >
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate text-sm font-semibold text-foreground">
-                      {m.name ?? m.email ?? m.user_id}
-                    </div>
-                    {m.name && m.email && (
-                      <div className="truncate text-2xs text-muted-foreground">{m.email}</div>
-                    )}
+          {/* ---- People: who can access + general access ---- */}
+          <TabsContent value="people">
+            {canManage ? (
+              <>
+                <form onSubmit={add} className="flex gap-1.5">
+                  <Input
+                    data-testid="share-email"
+                    type="email"
+                    placeholder="teammate@email.com"
+                    aria-label="Email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    className="flex-1"
+                  />
+                  <div data-testid="share-role" className="w-[104px]">
+                    <RoleSelect
+                      value={role}
+                      onChange={setRole}
+                      aria-label="Role for new member"
+                      className="w-full"
+                    />
                   </div>
-                  {canManage ? (
-                    <>
-                      <div data-testid={`share-member-role-${m.user_id}`} className="w-[92px]">
-                        <RoleSelect
-                          value={m.role}
-                          onChange={(next) => change(m, next)}
-                          aria-label={`Role for ${m.name ?? m.email ?? "member"}`}
-                          className="w-full"
-                        />
-                      </div>
-                      <Button
-                        data-testid={`share-member-remove-${m.user_id}`}
-                        variant="ghost"
-                        size="icon"
-                        className="size-7 text-muted-foreground hover:text-foreground"
-                        onClick={() => remove(m)}
-                        aria-label={`Remove ${m.name ?? m.email ?? "member"}`}
-                      >
-                        <X />
-                      </Button>
-                    </>
-                  ) : (
-                    <span
-                      data-testid={`share-member-role-${m.user_id}`}
-                      className="text-xs text-muted-foreground"
-                    >
-                      {ROLE_LABEL[m.role]}
-                    </span>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
+                  <Button data-testid="share-add" variant="primary" type="submit" disabled={busy}>
+                    {busy ? "…" : "Add"}
+                  </Button>
+                </form>
+                <p className="mt-1.5 font-mono text-2xs text-muted-foreground">
+                  {BLURB[role]}. Everyone you don't list is a {defaultRole} by default.
+                </p>
+              </>
+            ) : (
+              <div
+                data-testid="share-viewonly"
+                className="flex items-center gap-2 rounded-md border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground"
+              >
+                <Lock className="size-3.5 shrink-0" />
+                View only · ask an owner or editor to change access.
+              </div>
+            )}
+            {err && (
+              <p data-testid="share-error" role="alert" className="mt-2 text-xs text-destructive">
+                {err}
+              </p>
+            )}
 
-        {/* General access (visibility) — the "anyone with the link" control. */}
-        <div className="mt-4 border-t border-border pt-3.5">
-          <div className="mb-1.5 font-mono text-2xs font-semibold uppercase tracking-wide text-muted-foreground">
-            General access
-          </div>
-          {canManage ? (
-            <>
-              <div className="flex gap-1.5">
-                <select
-                  aria-label="General access"
-                  data-testid="share-visibility"
-                  value={vis}
-                  onChange={(e) => setVis(e.target.value)}
-                  className="flex-1 rounded-md border border-input bg-card px-2 py-2 text-sm text-foreground outline-none transition-colors focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring"
-                >
-                  {ACCESS.map((a) => (
-                    <option key={a.value} value={a.value}>
-                      {a.label}
-                    </option>
+            <div className="mt-3.5">
+              <div className="mb-1.5 font-mono text-2xs font-semibold uppercase tracking-wide text-muted-foreground">
+                People with access
+              </div>
+              {members.length === 0 ? (
+                <div data-testid="share-empty">
+                  <EmptyState className="p-6 text-xs">
+                    {canManage ? "No one shared yet." : "Just you and the workspace."}
+                  </EmptyState>
+                </div>
+              ) : (
+                <div className="flex flex-col gap-1.5">
+                  {members.map((m) => (
+                    <div
+                      key={m.user_id}
+                      data-testid={`share-member-row-${m.user_id}`}
+                      className="flex items-center gap-2"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate text-sm font-semibold text-foreground">
+                          {m.name ?? m.email ?? m.user_id}
+                        </div>
+                        {m.name && m.email && (
+                          <div className="truncate text-2xs text-muted-foreground">{m.email}</div>
+                        )}
+                      </div>
+                      {canManage ? (
+                        <>
+                          <div data-testid={`share-member-role-${m.user_id}`} className="w-[92px]">
+                            <RoleSelect
+                              value={m.role}
+                              onChange={(next) => change(m, next)}
+                              aria-label={`Role for ${m.name ?? m.email ?? "member"}`}
+                              className="w-full"
+                            />
+                          </div>
+                          <Button
+                            data-testid={`share-member-remove-${m.user_id}`}
+                            variant="ghost"
+                            size="icon"
+                            className="size-7 text-muted-foreground hover:text-foreground"
+                            onClick={() => remove(m)}
+                            aria-label={`Remove ${m.name ?? m.email ?? "member"}`}
+                          >
+                            <X />
+                          </Button>
+                        </>
+                      ) : (
+                        <span
+                          data-testid={`share-member-role-${m.user_id}`}
+                          className="text-xs text-muted-foreground"
+                        >
+                          {ROLE_LABEL[m.role]}
+                        </span>
+                      )}
+                    </div>
                   ))}
-                </select>
-                <Button
-                  data-testid="share-visibility-save"
-                  variant="primary"
-                  disabled={savingVis || needsPw || visUnchanged}
-                  onClick={saveVisibility}
-                >
-                  {savingVis ? "…" : "Update"}
+                </div>
+              )}
+            </div>
+
+            {/* General access (visibility) — the "anyone with the link" control. */}
+            <div className="mt-4 border-t border-border pt-3.5">
+              <div className="mb-1.5 font-mono text-2xs font-semibold uppercase tracking-wide text-muted-foreground">
+                General access
+              </div>
+              {canManage ? (
+                <>
+                  <div className="flex gap-1.5">
+                    <select
+                      aria-label="General access"
+                      data-testid="share-visibility"
+                      value={vis}
+                      onChange={(e) => setVis(e.target.value)}
+                      className="flex-1 rounded-md border border-input bg-card px-2 py-2 text-sm text-foreground outline-none transition-colors focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring"
+                    >
+                      {ACCESS.map((a) => (
+                        <option key={a.value} value={a.value}>
+                          {a.label}
+                        </option>
+                      ))}
+                    </select>
+                    <Button
+                      data-testid="share-visibility-save"
+                      variant="primary"
+                      disabled={savingVis || needsPw || visUnchanged}
+                      onClick={saveVisibility}
+                    >
+                      {savingVis ? "…" : "Update"}
+                    </Button>
+                  </div>
+                  {vis === "password" && (
+                    <Input
+                      type="password"
+                      data-testid="share-visibility-password"
+                      placeholder={
+                        visibility === "password"
+                          ? "New password (leave blank to keep)"
+                          : "Set a password"
+                      }
+                      aria-label="Password"
+                      value={pw}
+                      onChange={(e) => setPw(e.target.value)}
+                      className="mt-1.5"
+                    />
+                  )}
+                  <p className="mt-1.5 font-mono text-2xs text-muted-foreground">
+                    {ACCESS.find((a) => a.value === vis)?.blurb}
+                  </p>
+                </>
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  {ACCESS.find((a) => a.value === visibility)?.label ?? visibility}
+                </p>
+              )}
+            </div>
+          </TabsContent>
+
+          {/* ---- Links: embed + custom URL ---- */}
+          <TabsContent value="links">
+            {/* Embed — drop the artifact into any page. Shows for anyone who can open
+                the link, so it needs link- or world-readable access. */}
+            <div>
+              <div className="mb-1.5 font-mono text-2xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Embed
+              </div>
+              <div className="flex gap-1.5">
+                <Input
+                  readOnly
+                  data-testid="share-embed-snippet"
+                  aria-label="Embed code"
+                  value={embedSnippet}
+                  onFocus={(e) => e.currentTarget.select()}
+                  className="flex-1 font-mono text-2xs"
+                />
+                <Button data-testid="share-embed-copy" variant="primary" onClick={copyEmbed}>
+                  {copied ? "Copied" : "Copy"}
                 </Button>
               </div>
-              {vis === "password" && (
-                <Input
-                  type="password"
-                  data-testid="share-visibility-password"
-                  placeholder={
-                    visibility === "password"
-                      ? "New password (leave blank to keep)"
-                      : "Set a password"
-                  }
-                  aria-label="Password"
-                  value={pw}
-                  onChange={(e) => setPw(e.target.value)}
-                  className="mt-1.5"
-                />
-              )}
               <p className="mt-1.5 font-mono text-2xs text-muted-foreground">
-                {ACCESS.find((a) => a.value === vis)?.blurb}
+                {linkAccessible
+                  ? "Paste into any page — Notion, a blog, docs. Live, with a link back to Dock."
+                  : "Set access to “Anyone with the link” or “Public” for the embed to load for others."}
               </p>
-            </>
-          ) : (
-            <p className="text-xs text-muted-foreground">
-              {ACCESS.find((a) => a.value === visibility)?.label ?? visibility}
-            </p>
-          )}
-        </div>
+            </div>
 
-        {/* Embed — drop the artifact into any page. Shows for anyone who can open
-            the link, so it needs link- or world-readable access. */}
-        <div className="mt-4 border-t border-border pt-3.5">
-          <div className="mb-1.5 font-mono text-2xs font-semibold uppercase tracking-wide text-muted-foreground">
-            Embed
-          </div>
-          <div className="flex gap-1.5">
-            <Input
-              readOnly
-              data-testid="share-embed-snippet"
-              aria-label="Embed code"
-              value={embedSnippet}
-              onFocus={(e) => e.currentTarget.select()}
-              className="flex-1 font-mono text-2xs"
-            />
-            <Button data-testid="share-embed-copy" variant="primary" onClick={copyEmbed}>
-              {copied ? "Copied" : "Copy"}
-            </Button>
-          </div>
-          <p className="mt-1.5 font-mono text-2xs text-muted-foreground">
-            {linkAccessible
-              ? "Paste into any page — Notion, a blog, docs. Live, with a link back to Dock."
-              : "Set access to “Anyone with the link” or “Public” for the embed to load for others."}
-          </p>
-        </div>
+            {/* Custom URL — a vanity subdomain that serves the artifact at its own
+            origin. Only shown when the server has a base domain configured. */}
+            {domainBase && (
+              <div className="mt-4 border-t border-border pt-3.5">
+                <div className="mb-1.5 font-mono text-2xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  Custom URL
+                </div>
+                {domains.length > 0 ? (
+                  <div className="flex flex-col gap-1.5">
+                    {domains.map((d) => (
+                      <div key={d.host} className="flex items-center gap-1.5">
+                        <Input
+                          readOnly
+                          data-testid="share-domain-url"
+                          aria-label="Custom URL"
+                          value={d.url}
+                          onFocus={(e) => e.currentTarget.select()}
+                          className="flex-1 font-mono text-2xs"
+                        />
+                        <Button
+                          variant="outline"
+                          data-testid="share-domain-copy"
+                          onClick={() => copyUrl(d.url)}
+                        >
+                          Copy
+                        </Button>
+                        {canManage && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            data-testid="share-domain-remove"
+                            className="size-7 text-muted-foreground hover:text-foreground"
+                            onClick={() => dropDomain(d.host)}
+                            aria-label="Remove custom URL"
+                          >
+                            <X />
+                          </Button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                ) : canManage ? (
+                  <form onSubmit={claimDomain} className="flex items-center gap-1.5">
+                    <Input
+                      data-testid="share-domain-label"
+                      aria-label="Subdomain label"
+                      placeholder="my-page"
+                      value={label}
+                      onChange={(e) => setLabel(e.target.value)}
+                      className="flex-1"
+                    />
+                    <span className="whitespace-nowrap font-mono text-2xs text-muted-foreground">
+                      .{domainBase}
+                    </span>
+                    <Button
+                      data-testid="share-domain-claim"
+                      variant="primary"
+                      type="submit"
+                      disabled={claiming || !label.trim()}
+                    >
+                      {claiming ? "…" : "Claim"}
+                    </Button>
+                  </form>
+                ) : (
+                  <p className="text-xs text-muted-foreground">No custom URL.</p>
+                )}
+                <p className="mt-1.5 font-mono text-2xs text-muted-foreground">
+                  A clean URL on {domainBase}, served at its own origin. Works for link- or
+                  world-readable artifacts.
+                </p>
+              </div>
+            )}
+
+            {/* Also at — this artifact's URL on each of the workspace's custom
+                domains (managed in workspace settings, shown read-only here). */}
+            {workspaceDomains.length > 0 && (
+              <div className="mt-4 border-t border-border pt-3.5">
+                <div className="mb-1.5 font-mono text-2xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  Also at
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  {workspaceDomains.map((d) => (
+                    <div key={d.host} className="flex items-center gap-1.5">
+                      <Input
+                        readOnly
+                        data-testid="share-workspace-domain"
+                        aria-label={`URL on ${d.host}`}
+                        value={d.url}
+                        onFocus={(e) => e.currentTarget.select()}
+                        className="flex-1 font-mono text-2xs"
+                      />
+                      <Button variant="outline" onClick={() => copyUrl(d.url)}>
+                        Copy
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+                <p className="mt-1.5 font-mono text-2xs text-muted-foreground">
+                  On your workspace's custom domain. Manage domains in workspace settings.
+                </p>
+              </div>
+            )}
+          </TabsContent>
+        </Tabs>
       </DialogContent>
     </Dialog>
   )

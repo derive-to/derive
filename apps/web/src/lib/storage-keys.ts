@@ -4,6 +4,7 @@
 // object, never a bare string literal.
 export const STORAGE_KEYS = {
   theme: "dock_theme",
+  cursorPref: "dock.cursor.pref",
   libraryRail: "dock.browse.rail",
   commentsPanel: "dock.comments.panel",
   navCollapsed: "dock.nav.collapsed",

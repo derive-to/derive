@@ -5,6 +5,7 @@ import { createPortal } from "react-dom"
 import { toast } from "sonner"
 import { API_BASE, ApiError, api, type Comment } from "@/api"
 import { useIsMobile } from "@/components"
+import { CursorButton } from "@/components/cursor/cursor-button"
 import { Icon } from "@/components/icons"
 import { useTopBarSlot } from "@/components/shell-context"
 import { useAuth } from "@/ctx"
@@ -111,6 +112,8 @@ export function Artifact() {
     version,
     hoverThread,
     onPointerMove: live.onPointerMove,
+    onPointerLeave: live.onPointerLeave,
+    onTap: live.onTap,
     setHoverThread,
     setActiveThread,
     setPanel,
@@ -260,6 +263,7 @@ export function Artifact() {
         createPortal(
           <>
             {!isMobile && <Presence viewers={live.viewers} self={me?.name ?? me?.email ?? ""} />}
+            {!isMobile && <CursorButton />}
             {!isAnon && (
               <ArtifactTopBar
                 shortId={shortId}
@@ -375,7 +379,7 @@ export function Artifact() {
                 deck={deck}
                 frameRef={frame}
                 presentWrapRef={presentWrap}
-                cursorLayerRef={live.cursorLayer}
+                cursor={live.cursor}
                 onFrameLoad={onFrameLoad}
                 onToggleDiff={() => setView(view === "diff" ? "preview" : "diff")}
                 onRestore={() => restore(shown)}

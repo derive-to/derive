@@ -18,6 +18,7 @@ import type { Context } from "hono"
 import { getCookie, setCookie } from "hono/cookie"
 import type { Auth } from "./auth-config"
 import { type Backplane, createInProcessBackplane } from "./bus"
+import type { CustomDomainProvider } from "./lib/cloudflare-saas"
 import { safeEqual, sha256, unlockCookie, unlockToken } from "./lib/crypto"
 import { VIEWER_COOKIE, WS_COOKIE } from "./lib/http"
 import { makeKeyedLimiter } from "./lib/rate-limit"
@@ -121,6 +122,18 @@ export interface AppDeps {
    */
   sandboxOrigin?: string
   /**
+   * Base domain for vanity subdomains (e.g. "dockd.app"). When set, a request to
+   * `<label>.<base>` whose host is in the `domain` table serves that artifact at
+   * the host root (domain mode). Unset = subdomain serving off.
+   */
+  subdomainBase?: string
+  /**
+   * Bring-your-own custom domains (hosted tier). When set, an owner can attach their
+   * own hostname to an artifact and Cloudflare for SaaS issues + renews the TLS cert.
+   * Unset = custom domains disabled (those endpoints 501). Subdomains work without it.
+   */
+  customDomains?: CustomDomainProvider
+  /**
    * The SPA and API are on different sites (hosted split). Makes first-party
    * cookies we set here — currently the anonymous-viewer id — `SameSite=None;
    * Secure` so they survive the cross-site request, matching the session cookie.
@@ -186,6 +199,7 @@ export function buildContext(deps: AppDeps) {
     const s = deps.auth ? await deps.auth.api.getSession({ headers: c.req.raw.headers }) : null
     const u = s?.user ? { id: s.user.id, email: s.user.email, name: s.user.name ?? null } : null
     userCache.set(c, u)
+    if (u) c.set("actorId", u.id) // tag the access log with the resolved actor
     return u
   }
 
@@ -212,6 +226,7 @@ export function buildContext(deps: AppDeps) {
     const a =
       !b || (deps.token && safeEqual(b, deps.token)) ? null : await meta.getAgentByToken(sha256(b))
     agentCache.set(c, a)
+    if (a) c.set("actorId", a.id)
     return a
   }
 
@@ -292,6 +307,7 @@ export function buildContext(deps: AppDeps) {
       }
     }
     wsCache.set(c, ws)
+    c.set("orgId", ws)
     return ws
   }
   // Persist the active-workspace choice. Same cross-site handling as the viewer

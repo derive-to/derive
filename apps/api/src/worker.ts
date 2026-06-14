@@ -10,6 +10,7 @@ import { R2BlobStore } from "@dock/storage"
 import { D1Dialect } from "kysely-d1"
 import { createApp } from "./app"
 import { makeAuth } from "./auth-config"
+import { customDomainsFromEnv } from "./lib/cloudflare-saas"
 import { createDoBackplane, edgeCtx } from "./realtime-do"
 
 // The realtime room Durable Object (one per channel). Exported so the Workers
@@ -28,6 +29,12 @@ export { ArtifactRoom } from "./realtime-do"
  * not at runtime: D1 forbids the sqlite_master introspection Better Auth's migrator
  * needs (SQLITE_AUTH); generate that DDL with gen-auth-schema.ts. See DEPLOY.md.
  *
+ * LIMITATION: the webhook outbox worker is NOT run on this tier. Delivery depends on
+ * node:dns (SSRF re-validation in webhooks.ts), which Workers don't provide, so a
+ * `scheduled()` drain would need an edge-native delivery path first. Webhooks enqueue
+ * but are not delivered on the Workers tier (experimental); the Node/Fly tier drains
+ * them. Tracked as a follow-up for the edge tier.
+ *
  * NEVER import node.ts / config.ts / @dock/storage/fs here — those pull Node built-ins.
  */
 export interface Env {
@@ -40,6 +47,12 @@ export interface Env {
   BASE_URL?: string
   DOCK_AUTH_SECRET?: string
   DOCK_SUPERADMIN_EMAILS?: string
+  // Base domain for vanity subdomains (domain mode); unset = off.
+  DOCK_SUBDOMAIN_BASE?: string
+  // Cloudflare for SaaS (BYO custom domains); all three unset = custom domains off.
+  CF_API_TOKEN?: string
+  CF_ZONE_ID?: string
+  CF_SAAS_FALLBACK_ORIGIN?: string
 }
 
 let app: ReturnType<typeof createApp> | null = null
@@ -76,12 +89,18 @@ export default {
           .map((s) => s.trim().toLowerCase())
           .filter(Boolean),
         defaultOrgId: "default",
+        subdomainBase:
+          env.DOCK_SUBDOMAIN_BASE?.toLowerCase().replace(/^\.+|\.+$/g, "") || undefined,
+        customDomains: customDomainsFromEnv(env),
         // Read the SPA shell from static assets so /a/:ref can carry unfurl meta.
         // Cached per isolate; null on any miss leaves the shell untouched.
         shellFetch: async () => {
           if (shellCache !== null) return shellCache
           try {
-            const res = await env.ASSETS.fetch(new URL("/index.html", baseUrl).toString())
+            // Fetch "/" (the canonical shell URL), NOT "/index.html": Static Assets
+            // 307-redirects /index.html -> /, so a non-2xx would null the shell and
+            // drop unfurl/OG injection on /a/:ref (crawlers/social cards get no meta).
+            const res = await env.ASSETS.fetch(new URL("/", baseUrl).toString())
             shellCache = res.ok ? await res.text() : null
           } catch {
             shellCache = null

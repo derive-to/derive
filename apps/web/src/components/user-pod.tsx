@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { useAuth } from "@/ctx"
 import { cn } from "@/lib/utils"
+import { CursorSwitch } from "./cursor/cursor-switch"
 import { Icon } from "./icons"
 import { ThemeSwitch } from "./theme-switch"
 
@@ -161,6 +162,12 @@ export function UserPod({
           <div className={SECTION}>Theme</div>
           <div className="px-1 pb-1">
             <ThemeSwitch />
+          </div>
+          <div className="my-1 h-px bg-border-soft" />
+
+          <div className={SECTION}>Cursor</div>
+          <div className="px-1 pb-1">
+            <CursorSwitch />
           </div>
           <div className="my-1 h-px bg-border-soft" />
 

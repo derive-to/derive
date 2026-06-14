@@ -22,6 +22,7 @@ import type {
   CollectionRecord,
   CommentRecord,
   DeliveryRecord,
+  DomainRecord,
   MembershipRecord,
   NotificationRecord,
   ProposalRecord,
@@ -52,6 +53,7 @@ export interface TypedTables {
   collection: CollectionRecord
   collectionMember: CollectionMemberRecord
   repoSource: RepoSourceRecord
+  domain: DomainRecord
   report: ReportRecord
   auditLog: AuditLogRecord
 }

@@ -237,6 +237,19 @@ CREATE TABLE IF NOT EXISTS repo_source (
 
 CREATE INDEX IF NOT EXISTS repo_source_org ON repo_source (org_id);
 
+CREATE TABLE IF NOT EXISTS domain (
+    host TEXT PRIMARY KEY,
+    artifact_id TEXT REFERENCES artifact(id),
+    org_id TEXT NOT NULL,
+    kind TEXT NOT NULL DEFAULT 'subdomain',
+    status TEXT NOT NULL DEFAULT 'active',
+    cf_hostname_id TEXT,
+    verification TEXT,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+  );
+
+CREATE INDEX IF NOT EXISTS domain_artifact ON domain (artifact_id);
+
 CREATE TABLE IF NOT EXISTS proposal (
     id TEXT PRIMARY KEY,
     artifact_id TEXT NOT NULL REFERENCES artifact(id),

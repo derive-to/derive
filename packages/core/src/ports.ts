@@ -15,6 +15,13 @@ export type ArtifactKind = "file" | "bundle"
 // the visitor enters the password (then a viewer; members/owners see it by role).
 export type Visibility = "public" | "link" | "org" | "password"
 
+/** A platform subdomain (`name.dockd.app`) or a customer's own domain. */
+export type DomainKind = "subdomain" | "custom"
+
+/** Serving status of a host. Subdomains are `active` immediately; a custom domain
+ *  is `pending` until its TLS cert + ownership validate (then `active`), or `error`. */
+export type DomainStatus = "active" | "pending" | "error"
+
 export interface ArtifactRecord {
   id: string
   short_id: string
@@ -96,6 +103,8 @@ export interface MetaStore {
     passwordHash: string | null,
   ): Promise<void>
   getByShortId(shortId: string): Promise<ArtifactRecord | null>
+  /** Load an artifact by its internal id (used by domain mode's host lookup). */
+  getArtifactById(id: string): Promise<ArtifactRecord | null>
   /** Appends the next version and bumps current_version. */
   addVersion(artifactId: string, v: NewVersion): Promise<VersionRecord>
   listVersions(artifactId: string): Promise<VersionRecord[]>
@@ -160,8 +169,17 @@ export interface MetaStore {
   activeWebhooks(artifactId: string, orgId: string): Promise<WebhookRecord[]>
   /** Enqueue a delivery into the outbox (target is denormalized for durability). */
   enqueueDelivery(d: NewDelivery): Promise<void>
-  /** Pending deliveries whose next_attempt_at has passed, oldest first. */
-  claimDueDeliveries(now: string, limit: number): Promise<DeliveryRecord[]>
+  /**
+   * Atomically claim up to `limit` pending deliveries whose next_attempt_at has
+   * passed: increments their attempt count and leases them (sets next_attempt_at
+   * to `leaseUntil`, hiding them from other workers until the lease expires), then
+   * returns the claimed rows. Postgres uses `FOR UPDATE SKIP LOCKED` so concurrent
+   * instances never grab the same row — without this the outbox double-delivers
+   * under the multi-instance topology. A crash mid-delivery is recovered when the
+   * lease lapses; a persistently-crashing (poison) delivery dead-letters because
+   * each claim still counts an attempt.
+   */
+  claimDueDeliveries(now: string, limit: number, leaseUntil: string): Promise<DeliveryRecord[]>
   updateDelivery(
     id: string,
     fields: {
@@ -245,6 +263,26 @@ export interface MetaStore {
   /** Ids of every artifact mirrored from a sync source in this workspace —
    *  drives the read-only gate + the `managed` flag (synced docs aren't editable). */
   managedArtifactIds(orgId: string): Promise<string[]>
+  // ---- Domain mode: a hostname serving artifact(s) at its own origin ------
+  // A domain row is either bound to one artifact (`artifact_id` set: a vanity
+  // subdomain today, a per-artifact custom domain later — served at the host root)
+  // or a workspace domain (`artifact_id` null, `org_id` set — the workspace's
+  // artifacts served at `<host>/<ref>`).
+  /** The domain record for a host, or null. The hot path for host dispatch. */
+  getDomain(host: string): Promise<DomainRecord | null>
+  /** Claim a host. Returns null if it's already taken (globally unique). */
+  setDomain(d: NewDomain): Promise<DomainRecord | null>
+  /** Hosts bound to a specific artifact (subdomains; per-artifact customs later). */
+  getArtifactDomains(artifactId: string): Promise<DomainRecord[]>
+  /** A workspace's own custom domains (artifact_id null), for the settings UI. */
+  getWorkspaceDomains(orgId: string): Promise<DomainRecord[]>
+  /** Update a custom domain's validation status + the records to display. */
+  updateDomain(
+    host: string,
+    fields: { status?: DomainStatus; verification?: string | null },
+  ): Promise<DomainRecord | null>
+  /** Release a hostname, scoped to its owning workspace. */
+  deleteDomain(host: string, orgId: string): Promise<void>
 
   // ---- Reviews: proposed versions awaiting approval ----------------------
   createProposal(p: NewProposal): Promise<ProposalRecord>
@@ -521,6 +559,29 @@ export interface NewCollection {
   org_id: string
   title: string
   created_by: string
+}
+export interface DomainRecord {
+  host: string
+  /** The artifact this host serves at its root; null for a workspace domain. */
+  artifact_id: string | null
+  org_id: string
+  kind: DomainKind
+  status: DomainStatus
+  /** The Cloudflare custom-hostname id, for status refresh + teardown (custom only). */
+  cf_hostname_id: string | null
+  /** JSON-encoded DNS records the customer must add to validate (custom, while pending). */
+  verification: string | null
+  created_at: string
+}
+export interface NewDomain {
+  host: string
+  /** Bind to an artifact (subdomain / per-artifact custom); omit for a workspace domain. */
+  artifact_id?: string | null
+  org_id: string
+  kind: DomainKind
+  status?: DomainStatus
+  cf_hostname_id?: string | null
+  verification?: string | null
 }
 export interface CollectionMemberRecord {
   id: string

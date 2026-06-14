@@ -90,6 +90,28 @@ export interface ArtifactMember {
   name: string | null
   role: Role
 }
+/** A DNS record the customer adds to validate a custom domain. */
+export interface DomainDnsRecord {
+  type: string
+  name: string
+  value: string
+}
+/** A vanity subdomain bound to one artifact (the per-artifact share section). */
+export interface ArtifactDomain {
+  host: string
+  url: string
+  kind: string
+  status: string
+  created_at: string
+}
+/** A workspace custom domain (managed in settings; Cloudflare for SaaS). */
+export interface WorkspaceDomain {
+  host: string
+  status: string
+  /** DNS records to add while pending (undefined once active). */
+  records?: DomainDnsRecord[]
+  created_at: string
+}
 /** The workspace: its name, the caller's role, and the member directory. */
 export interface Workspace {
   id: string
@@ -353,6 +375,37 @@ export const api = {
     f(`/v1/artifacts/${id}/members`, { ...opts({ email, role }), method: "PUT" }).then(j),
   removeMember: (id: string, userId: string): Promise<void> =>
     f(`/v1/artifacts/${id}/members/${userId}`, { method: "DELETE", credentials: "include" }).then(
+      () => undefined,
+    ),
+
+  // Per-artifact vanity subdomains (`base` null when off) + the workspace's custom
+  // domains shown read-only as the artifact's URL on each.
+  listDomains: (
+    id: string,
+  ): Promise<{
+    base: string | null
+    domains: ArtifactDomain[]
+    workspace_domains: { host: string; url: string }[]
+  }> => f(`/v1/artifacts/${id}/domains`, opts()).then(j),
+  setDomain: (id: string, label: string): Promise<ArtifactDomain> =>
+    f(`/v1/artifacts/${id}/domains`, { ...opts({ label }), method: "PUT" }).then(j),
+  removeDomain: (id: string, host: string): Promise<void> =>
+    f(`/v1/artifacts/${id}/domains/${host}`, { method: "DELETE", credentials: "include" }).then(
+      () => undefined,
+    ),
+
+  // Workspace custom domains (Cloudflare for SaaS), managed in settings.
+  listWorkspaceDomains: (): Promise<{
+    enabled: boolean
+    cname_target: string | null
+    domains: WorkspaceDomain[]
+  }> => f("/v1/workspace/domains", opts()).then(j),
+  addWorkspaceDomain: (host: string): Promise<WorkspaceDomain & { cname_target: string }> =>
+    f("/v1/workspace/domains", opts({ host })).then(j),
+  refreshWorkspaceDomain: (host: string): Promise<WorkspaceDomain> =>
+    f(`/v1/workspace/domains/${host}/refresh`, opts({})).then(j),
+  removeWorkspaceDomain: (host: string): Promise<void> =>
+    f(`/v1/workspace/domains/${host}`, { method: "DELETE", credentials: "include" }).then(
       () => undefined,
     ),
   heartbeat: (id: string, name: string): Promise<{ viewers: string[] }> =>

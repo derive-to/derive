@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import type { ArtifactRecord } from "@dock/core"
+import { type ArtifactRecord, newId } from "@dock/core"
 import { SqliteMetaStore } from "@dock/db/sqlite"
 import { FsBlobStore } from "@dock/storage/fs"
 import { afterAll, describe, expect, it } from "vitest"
@@ -79,7 +79,11 @@ describe("webhook outbox", () => {
     f2.append("message", "v2")
     await app.request(`/v1/artifacts/${short_id}/versions`, { method: "POST", body: f2 })
 
-    const due = await meta.claimDueDeliveries(new Date(Date.now() + 1000).toISOString(), 10)
+    const due = await meta.claimDueDeliveries(
+      new Date(Date.now() + 1000).toISOString(),
+      10,
+      new Date(Date.now() + 60_000).toISOString(),
+    )
     const forThis = due.filter((d) => JSON.parse(d.payload).artifact.short_id === short_id)
     expect(forThis.length).toBe(2)
     expect(forThis.every((d) => d.event_type === "version.published")).toBe(true)
@@ -91,5 +95,50 @@ describe("webhook outbox", () => {
     const list = await (await app.request("/v1/webhooks")).json()
     expect(list.webhooks.length).toBeGreaterThan(0)
     expect(list.webhooks[0].secret).toBeUndefined()
+  })
+})
+
+// A fresh store so the only due rows are the ones this test enqueues. The claim is
+// what stops the outbox double-delivering under multi-instance Postgres; on SQLite
+// (single-writer) the same lease+increment logic prevents overlapping-tick dupes.
+describe("webhook outbox: atomic claim", () => {
+  const cdir = mkdtempSync(join(tmpdir(), "dock-whc-"))
+  const m = new SqliteMetaStore(join(cdir, "dock.db"))
+  afterAll(() => {
+    m.close()
+    rmSync(cdir, { recursive: true, force: true })
+  })
+
+  it("hands each due delivery to exactly one claimer, counts an attempt, and leases it", async () => {
+    const ids: string[] = []
+    for (let i = 0; i < 6; i++) {
+      const id = newId("whd")
+      ids.push(id)
+      await m.enqueueDelivery({
+        id,
+        webhook_id: "wh_test",
+        url: "http://example.com/hook",
+        secret: "s",
+        kind: "generic",
+        event_type: "version.published",
+        payload: "{}",
+      })
+    }
+    const now = new Date(Date.now() + 1000).toISOString()
+    const lease = new Date(Date.now() + 60_000).toISOString()
+    // Two competing claimers; together they should partition the 6 due rows.
+    const [a, b] = await Promise.all([
+      m.claimDueDeliveries(now, 4, lease),
+      m.claimDueDeliveries(now, 4, lease),
+    ])
+    const claimedIds = [...a, ...b].map((d) => d.id)
+    expect([...claimedIds].sort()).toEqual([...ids].sort()) // all 6, exactly once
+    expect(new Set(claimedIds).size).toBe(6) // none claimed twice
+    for (const d of [...a, ...b]) {
+      expect(d.attempts).toBe(1) // the claim counts an attempt
+      expect(d.next_attempt_at).toBe(lease) // and leases the row forward
+    }
+    // A re-claim at the same instant finds nothing — every row is leased forward.
+    expect(await m.claimDueDeliveries(now, 50, lease)).toHaveLength(0)
   })
 })

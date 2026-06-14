@@ -50,6 +50,12 @@ export const realtimeRoutes = (ctx: AppContext) => {
   // Live cursor: a viewer's pointer position (viewport-normalized 0..1) fanned out
   // to everyone else on the artifact. Ephemeral — never stored, never webhooked;
   // it rides the same backplane as presence, so the DO relays it across isolates.
+  //
+  // The same frame also carries the viewer's chosen style (`kind` + `emoji`, a
+  // cosmetic preference) and two one-shot signals: `gone` (the viewer blurred /
+  // went idle — peers drop the cursor at once instead of waiting for it to go
+  // stale) and `tap` (the viewer clicked — peers pulse a ripple there). Style and
+  // signals are length/enum-bounded; identity (`name`) stays server-derived.
   app.post("/v1/artifacts/:shortId/cursor", async (c) => {
     const artifact = await meta.getByShortId(c.req.param("shortId"))
     if (!artifact || !(await authorize(c, "read", artifact))) return fail(c, 404, "not found")
@@ -59,6 +65,10 @@ export const realtimeRoutes = (ctx: AppContext) => {
         id: z.string().min(1).max(64),
         name: z.string().max(80).optional(),
         color: z.string().max(32).optional(),
+        kind: z.enum(["arrow", "emoji"]).optional(),
+        emoji: z.string().max(16).optional(),
+        gone: z.boolean().optional(),
+        tap: z.boolean().optional(),
         x: z.number(),
         y: z.number(),
       }),
@@ -69,11 +79,19 @@ export const realtimeRoutes = (ctx: AppContext) => {
     // account name, an anonymous viewer by their stable rando handle — never a
     // client-supplied label. So a cursor and its presence row share one identity.
     const name = (await actingUser(c))?.name ?? anonName(anonViewerId(c))
+    const kind = body.kind ?? "arrow"
     bus.publish(artifact.id, {
       type: "cursor",
       id: body.id,
       name,
       color: body.color ?? "#655999",
+      kind,
+      // Only forward the glyph when the emoji style is actually selected.
+      emoji: kind === "emoji" ? body.emoji : undefined,
+      // Coerce to a strict, present-only boolean so a frame is either a leave/tap
+      // or it isn't — peers branch on truthiness without inspecting the value.
+      gone: body.gone === true ? true : undefined,
+      tap: body.tap === true ? true : undefined,
       x: clamp(body.x),
       y: clamp(body.y),
     })

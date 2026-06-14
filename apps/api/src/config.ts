@@ -3,10 +3,36 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs"
 import { join, resolve } from "node:path"
 import { log } from "./log"
 
-/** Parse a positive integer env var; undefined (unset/blank/≤0/NaN) = "no limit". */
-const posInt = (v: string | undefined): number | undefined => {
-  const n = v ? Number(v) : NaN
-  return Number.isFinite(n) && n > 0 ? Math.floor(n) : undefined
+/** Parse a positive-integer env var; unset/blank = "no limit". A set-but-invalid
+ *  value is a likely typo, so warn loudly rather than silently ignore it. */
+const posInt = (name: string, v: string | undefined): number | undefined => {
+  if (v === undefined || v === "") return undefined
+  const n = Number(v)
+  if (!Number.isFinite(n) || n <= 0) {
+    log.warn(`ignoring invalid ${name}=${v} (expected a positive integer)`)
+    return undefined
+  }
+  return Math.floor(n)
+}
+
+/** A required-with-default numeric env var; a malformed value fails fast at boot. */
+const numOr = (name: string, v: string | undefined, def: number): number => {
+  if (v === undefined || v === "") return def
+  const n = Number(v)
+  if (!Number.isFinite(n)) throw new Error(`invalid ${name}: ${v} (expected a number)`)
+  return n
+}
+
+/** Validate that an optional env var parses as a URL; a typo fails fast at boot
+ *  rather than lazily on the first request that touches the DB / blob store. */
+const urlOr = (name: string, v: string | undefined): string | undefined => {
+  if (!v) return undefined
+  try {
+    new URL(v)
+  } catch {
+    throw new Error(`invalid ${name}: ${v} (expected a URL)`)
+  }
+  return v
 }
 
 /** The fully-resolved, validated runtime configuration. Read once at boot from
@@ -25,6 +51,9 @@ export interface Config {
   rateLimit: boolean
   sandboxOrigin?: string
   crossSite: boolean
+  /** Base domain for vanity subdomains (e.g. "dockd.app"): an artifact assigned
+   *  `q3.dockd.app` is served at that host's root. Unset = subdomain mode off. */
+  subdomainBase?: string
   versionWindowMs?: number
   maxArtifacts?: number
   maxBytes?: number
@@ -83,7 +112,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     port,
     dataDir,
     baseUrl,
-    databaseUrl: env.DATABASE_URL,
+    databaseUrl: urlOr("DATABASE_URL", env.DATABASE_URL),
     token: env.DOCK_TOKEN,
     // Comma-separated operator emails (case-insensitive). More than one person
     // can run + host a deployment, so this is a list, not a single owner.
@@ -95,14 +124,17 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     rateLimit: env.DOCK_RATE_LIMIT !== "false",
     sandboxOrigin: env.DOCK_SANDBOX_URL,
     crossSite: env.DOCK_CROSS_SITE === "true",
-    versionWindowMs: env.DOCK_VERSION_WINDOW ? Number(env.DOCK_VERSION_WINDOW) * 60_000 : undefined,
-    maxArtifacts: posInt(env.DOCK_MAX_ARTIFACTS),
-    maxBytes: posInt(env.DOCK_MAX_BYTES),
-    publishRate: posInt(env.DOCK_PUBLISH_RATE),
-    commentRate: posInt(env.DOCK_COMMENT_RATE),
+    subdomainBase: env.DOCK_SUBDOMAIN_BASE?.toLowerCase().replace(/^\.+|\.+$/g, "") || undefined,
+    versionWindowMs: env.DOCK_VERSION_WINDOW
+      ? numOr("DOCK_VERSION_WINDOW", env.DOCK_VERSION_WINDOW, 0) * 60_000
+      : undefined,
+    maxArtifacts: posInt("DOCK_MAX_ARTIFACTS", env.DOCK_MAX_ARTIFACTS),
+    maxBytes: posInt("DOCK_MAX_BYTES", env.DOCK_MAX_BYTES),
+    publishRate: posInt("DOCK_PUBLISH_RATE", env.DOCK_PUBLISH_RATE),
+    commentRate: posInt("DOCK_COMMENT_RATE", env.DOCK_COMMENT_RATE),
     webOrigins,
-    retentionDays: Number(env.DOCK_ANALYTICS_RETENTION_DAYS ?? 365),
-    objectStoreUrl: env.OBJECT_STORE_URL,
+    retentionDays: numOr("DOCK_ANALYTICS_RETENTION_DAYS", env.DOCK_ANALYTICS_RETENTION_DAYS, 365),
+    objectStoreUrl: urlOr("OBJECT_STORE_URL", env.OBJECT_STORE_URL),
     webDir,
     webShell,
     serveWeb: existsSync(webShell),

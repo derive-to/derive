@@ -10,6 +10,8 @@ import type {
   CommentState,
   DeliveryRecord,
   DeliveryStatus,
+  DomainRecord,
+  DomainStatus,
   ListArtifactsOpts,
   MembershipRecord,
   MetaStore,
@@ -22,6 +24,7 @@ import type {
   NewCollectionMember,
   NewComment,
   NewDelivery,
+  NewDomain,
   NewMembership,
   NewNotification,
   NewProposal,
@@ -60,6 +63,7 @@ import {
   collectionItem,
   collectionMember,
   comment,
+  domain,
   membership,
   notification,
   PG_SCHEMA_STATEMENTS,
@@ -98,6 +102,7 @@ const schema = {
   collectionItem,
   collectionMember,
   repoSource,
+  domain,
   report,
   auditLog,
 }
@@ -122,6 +127,7 @@ const _schemaShapes: Shapes<typeof schema> = {
   collection: true,
   collectionMember: true,
   repoSource: true,
+  domain: true,
   report: true,
   auditLog: true,
 }
@@ -143,9 +149,22 @@ export class PgMetaStore implements MetaStore {
     private db: NodePgDatabase<typeof schema>,
   ) {}
 
-  /** Connect and apply the schema (idempotent) before first use. */
-  static async create(connectionString: string): Promise<PgMetaStore> {
-    const pool = new Pool({ connectionString })
+  /** Connect and apply the schema (idempotent) before first use. `onError` is
+   *  invoked for idle-pool errors: a DB restart / network blip emits an `'error'`
+   *  on the pool, and without a listener node-postgres turns it into an unhandled
+   *  exception that crashes the whole process. */
+  static async create(
+    connectionString: string,
+    onError?: (err: Error) => void,
+  ): Promise<PgMetaStore> {
+    const pool = new Pool({
+      connectionString,
+      // Bound how long a query / connection acquisition can hang, so a stuck query
+      // can't pin a connection indefinitely and exhaust the pool.
+      statement_timeout: 30_000,
+      connectionTimeoutMillis: 10_000,
+    })
+    pool.on("error", (err) => onError?.(err))
     for (const stmt of PG_SCHEMA_STATEMENTS) await pool.query(stmt)
     return new PgMetaStore(pool, drizzle(pool, { schema }))
   }
@@ -168,6 +187,10 @@ export class PgMetaStore implements MetaStore {
 
   async getByShortId(shortId: string): Promise<ArtifactRecord | null> {
     const rows = await this.db.select().from(artifact).where(eq(artifact.short_id, shortId))
+    return rows[0] ?? null
+  }
+  async getArtifactById(id: string): Promise<ArtifactRecord | null> {
+    const rows = await this.db.select().from(artifact).where(eq(artifact.id, id))
     return rows[0] ?? null
   }
 
@@ -417,13 +440,22 @@ export class PgMetaStore implements MetaStore {
   async enqueueDelivery(d: NewDelivery): Promise<void> {
     await this.db.insert(webhookDelivery).values(d)
   }
-  claimDueDeliveries(now: string, limit: number): Promise<DeliveryRecord[]> {
-    return this.db
-      .select()
+  claimDueDeliveries(now: string, limit: number, leaseUntil: string): Promise<DeliveryRecord[]> {
+    // FOR UPDATE SKIP LOCKED so concurrent instances each grab a disjoint set;
+    // the UPDATE then leases the rows (next_attempt_at -> future) + counts an
+    // attempt, so no other tick re-selects them until the lease lapses.
+    const due = this.db
+      .select({ id: webhookDelivery.id })
       .from(webhookDelivery)
       .where(and(eq(webhookDelivery.status, "pending"), lte(webhookDelivery.next_attempt_at, now)))
       .orderBy(asc(webhookDelivery.next_attempt_at))
       .limit(limit)
+      .for("update", { skipLocked: true })
+    return this.db
+      .update(webhookDelivery)
+      .set({ attempts: sql`${webhookDelivery.attempts} + 1`, next_attempt_at: leaseUntil })
+      .where(inArray(webhookDelivery.id, due))
+      .returning()
   }
   async updateDelivery(
     id: string,
@@ -730,6 +762,37 @@ export class PgMetaStore implements MetaStore {
       .from(repoSource)
       .where(eq(repoSource.org_id, orgId))
     return collectManagedIds(rows)
+  }
+
+  // ---- Domains (hostname → artifact) -------------------------------------
+  async getDomain(host: string): Promise<DomainRecord | null> {
+    const rows = await this.db.select().from(domain).where(eq(domain.host, host))
+    return rows[0] ?? null
+  }
+  // Insert-only: a taken host yields no row (→ 409 in the route), so a workspace
+  // can never claim a host already owned by another.
+  async setDomain(d: NewDomain): Promise<DomainRecord | null> {
+    const rows = await this.db.insert(domain).values(d).onConflictDoNothing().returning()
+    return rows[0] ?? null
+  }
+  async getArtifactDomains(artifactId: string): Promise<DomainRecord[]> {
+    return this.db.select().from(domain).where(eq(domain.artifact_id, artifactId))
+  }
+  async getWorkspaceDomains(orgId: string): Promise<DomainRecord[]> {
+    return this.db
+      .select()
+      .from(domain)
+      .where(and(eq(domain.org_id, orgId), isNull(domain.artifact_id)))
+  }
+  async updateDomain(
+    host: string,
+    fields: { status?: DomainStatus; verification?: string | null },
+  ): Promise<DomainRecord | null> {
+    const rows = await this.db.update(domain).set(fields).where(eq(domain.host, host)).returning()
+    return rows[0] ?? null
+  }
+  async deleteDomain(host: string, orgId: string): Promise<void> {
+    await this.db.delete(domain).where(and(eq(domain.host, host), eq(domain.org_id, orgId)))
   }
 
   // ---- Reviews: proposed versions ----------------------------------------

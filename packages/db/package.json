@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "license": "Apache-2.0",
+  "license": "FSL-1.1-ALv2",
   "repository": {
     "type": "git",
     "url": "https://github.com/Niftory/dock.build.git",
@@ -19,6 +19,7 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests",
+    "test:coverage": "vitest run --coverage",
     "gen:d1-schema": "vitest run test/d1-schema.test.ts -u"
   },
   "dependencies": {

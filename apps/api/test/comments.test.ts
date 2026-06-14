@@ -201,7 +201,11 @@ describe("@mentions + in-app notifications", () => {
       `/v1/artifacts/${shortId}/comments`,
       jsonAs(as(alice.email), { body_md: "ping again", mentions: [{ id: bob.id, name: "Bob" }] }),
     )
-    const due = await m.claimDueDeliveries(new Date(Date.now() + 1000).toISOString(), 50)
+    const due = await m.claimDueDeliveries(
+      new Date(Date.now() + 1000).toISOString(),
+      50,
+      new Date(Date.now() + 60_000).toISOString(),
+    )
     const mention = due.find((d) => d.event_type === "comment.mention")
     expect(mention).toBeTruthy()
     const payload = JSON.parse(mention?.payload ?? "{}")

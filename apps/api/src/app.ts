@@ -1,14 +1,18 @@
+import { type ArtifactRecord, parseRef } from "@dock/core"
 import { type Context, Hono } from "hono"
 import { compress } from "hono/compress"
 import { type AppDeps, buildContext } from "./context"
-import { corsFor, fail } from "./lib/http"
+import { corsFor, fail, TOMBSTONE } from "./lib/http"
+import { observability } from "./lib/observability"
 import { makeRateLimiter } from "./lib/rate-limit"
+import { serveContent } from "./lib/serve-content"
 import { log } from "./log"
 import { agentRoutes } from "./routes/agents"
 import { analyticsRoutes } from "./routes/analytics"
 import { artifactRoutes } from "./routes/artifacts"
 import { collectionRoutes } from "./routes/collections"
 import { commentRoutes } from "./routes/comments"
+import { domainRoutes } from "./routes/domains"
 import { embedRoutes } from "./routes/embeds"
 import { favoriteRoutes } from "./routes/favorites"
 import { moderationRoutes } from "./routes/moderation"
@@ -21,6 +25,7 @@ import { sharingRoutes } from "./routes/sharing"
 import { syncRoutes } from "./routes/sync"
 import { webhookRoutes } from "./routes/webhooks"
 import { workspaceRoutes } from "./routes/workspace"
+import { workspaceDomainRoutes } from "./routes/workspace-domains"
 
 // Re-exported from its lib home so existing importers (and tests) keep working.
 export { isPublicHttpUrl } from "./lib/net"
@@ -34,6 +39,10 @@ export type { AppDeps }
 export function createApp(deps: AppDeps): Hono {
   const ctx = buildContext(deps)
   const app = new Hono()
+
+  // Outermost: a per-request id + one structured access-log line (method, path,
+  // status, duration, actor, org), so a 500 is correlatable to who/what.
+  app.use("*", observability())
 
   // gzip everything (Node/Fly entry only — the Worker edge compresses already).
   // Registered first so it wraps every downstream response; honors Accept-Encoding
@@ -51,6 +60,7 @@ export function createApp(deps: AppDeps): Hono {
     log.error("unhandled error", {
       method: c.req.method,
       path: c.req.path,
+      request_id: c.get("requestId"),
       error: err instanceof Error ? err.message : String(err),
     })
     return c.json({ error: "internal error" }, 500)
@@ -82,6 +92,77 @@ export function createApp(deps: AppDeps): Hono {
     })
   }
 
+  // ---- Domain mode (C1): vanity subdomains + workspace custom domains -----
+  // A request whose Host is in the `domain` table serves artifact bytes off the app
+  // origin (only bytes + the anchor client, never the app/auth/API; the app's own
+  // host is never matched). The host is cross-origin so the actor is anonymous: only
+  // public/link artifacts resolve, gated ones 404, removed ones 410. Two shapes,
+  // chosen by whether the row is bound to one artifact — this keeps per-artifact
+  // custom domains + wildcard subdomains addable later with no dispatch change:
+  //   · artifact-bound (subdomain today)  → serve that artifact at the host root.
+  //   · workspace domain (artifact_id null) → serve `<host>/<ref>`, scoped to the
+  //     domain's workspace so one tenant's domain can't serve another's artifact.
+  // No host cache needed: on the edge, Cloudflare only routes registered hostnames
+  // to the Worker, so the lookup surface is bounded.
+  const subBase = deps.subdomainBase?.toLowerCase()
+  const customEnabled = !!deps.customDomains
+  const appHostForSub = (() => {
+    try {
+      return new URL(deps.baseUrl).host.toLowerCase()
+    } catch {
+      return null
+    }
+  })()
+  if (subBase || customEnabled) {
+    const serveArtifact = async (
+      c: Context,
+      a: ArtifactRecord,
+      n: number,
+      prefix: string,
+      rawPath: string,
+    ) => {
+      if (!(await ctx.authorize(c, "read", a))) return c.text("not found", 404)
+      if (a.removed_at) return c.text(TOMBSTONE, 410)
+      const version = await ctx.meta.getVersion(a.id, n)
+      if (!version) return c.text("not found", 404)
+      return serveContent(c, ctx.blobs, version, a.title, prefix, rawPath)
+    }
+    app.use("*", async (c, next) => {
+      const host = (c.req.header("host") ?? new URL(c.req.url).host).toLowerCase().split(":")[0]
+      if (!host || host === appHostForSub || (sandboxHost && host === sandboxHost.toLowerCase()))
+        return next()
+      const isSub = !!subBase && host !== subBase && host.endsWith(`.${subBase}`)
+      if (!isSub && !customEnabled) return next()
+      // The served HTML references /raw/dock-client.js; let raw + health through.
+      if (c.req.path === "/healthz" || c.req.path.startsWith("/raw/")) return next()
+      const record = await ctx.meta.getDomain(host)
+      // Unknown subdomain → 404 (clearly ours); unknown/pending custom host → fall
+      // through so an unregistered host pointed at us never serves stale content.
+      if (!record || record.status !== "active") return isSub ? c.text("not found", 404) : next()
+      if (record.artifact_id) {
+        // Artifact-bound host (subdomain today): serve that one artifact at the root.
+        const a = await ctx.meta.getArtifactById(record.artifact_id)
+        if (!a) return c.text("not found", 404)
+        return serveArtifact(
+          c,
+          a,
+          a.current_version,
+          "/",
+          decodeURIComponent(c.req.path.replace(/^\/+/, "")),
+        )
+      }
+      // Workspace domain: `<host>/<ref>/<sub>` → the workspace's artifact at <ref>,
+      // scoped to the domain's org so a tenant can't serve another tenant's artifact.
+      const segs = c.req.path.replace(/^\/+/, "").split("/")
+      const ref = segs[0] ?? ""
+      if (!ref) return c.text("not found", 404)
+      const a = await ctx.meta.getByShortId(parseRef(ref).shortId)
+      if (!a || a.org_id !== record.org_id) return c.text("not found", 404)
+      const n = parseRef(ref).version ?? a.current_version
+      return serveArtifact(c, a, n, `/${ref}/`, decodeURIComponent(segs.slice(1).join("/")))
+    })
+  }
+
   // Credentialed CORS for the cross-origin SPA. A wildcard ACAO can't carry
   // cookies, so the request's Origin is echoed back only when it's allow-listed;
   // OPTIONS preflights are answered here. Same-origin/self-host = no-op.
@@ -105,6 +186,23 @@ export function createApp(deps: AppDeps): Hono {
   }
 
   app.get("/healthz", (c) => c.json({ ok: true }))
+
+  // Readiness (vs /healthz liveness): proves the datastore + blob store are
+  // actually reachable, so an orchestrator stops routing to an instance whose DB
+  // or blob backend is down instead of letting it 500 every request. 503 on any
+  // failure. Point the platform healthcheck here for rollout/traffic gating.
+  app.get("/readyz", async (c) => {
+    try {
+      await deps.meta.getWorkspace(deps.defaultOrgId ?? "default")
+      await deps.blobs.get("__readyz_probe__")
+      return c.json({ ok: true })
+    } catch (err) {
+      log.error("readiness check failed", {
+        error: err instanceof Error ? err.message : String(err),
+      })
+      return c.json({ ok: false }, 503)
+    }
+  })
 
   // A minimal API-origin landing. Skipped when the SPA is bundled in-process
   // (serveWeb) so the app's own home page owns `/`.
@@ -163,6 +261,8 @@ export function createApp(deps: AppDeps): Hono {
     webhookRoutes,
     rawRoutes,
     embedRoutes,
+    domainRoutes,
+    workspaceDomainRoutes,
   ])
     app.route("/", routes(ctx))
 

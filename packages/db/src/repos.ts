@@ -10,6 +10,8 @@ import type {
   CommentState,
   DeliveryRecord,
   DeliveryStatus,
+  DomainRecord,
+  DomainStatus,
   ListArtifactsOpts,
   MembershipRecord,
   NewAgent,
@@ -21,6 +23,7 @@ import type {
   NewCollectionMember,
   NewComment,
   NewDelivery,
+  NewDomain,
   NewMembership,
   NewNotification,
   NewProposal,
@@ -55,6 +58,7 @@ import {
   collectionItem,
   collectionMember,
   comment,
+  domain,
   membership,
   notification,
   proposal,
@@ -86,6 +90,7 @@ export const schema = {
   collectionItem,
   collectionMember,
   repoSource,
+  domain,
   report,
   auditLog,
 }
@@ -110,6 +115,7 @@ const _schemaShapes: Shapes<typeof schema> = {
   collection: true,
   collectionMember: true,
   repoSource: true,
+  domain: true,
   report: true,
   auditLog: true,
 }
@@ -159,6 +165,8 @@ export function makeRepos(db: SqliteDb) {
   // ---- Artifacts + versions ----------------------------------------------
   const getByShortId = async (shortId: string): Promise<ArtifactRecord | null> =>
     (await db.select().from(artifact).where(eq(artifact.short_id, shortId)).get()) ?? null
+  const getArtifactById = async (id: string): Promise<ArtifactRecord | null> =>
+    (await db.select().from(artifact).where(eq(artifact.id, id)).get()) ?? null
 
   const createArtifact = async (a: NewArtifact): Promise<ArtifactRecord> => {
     await db.insert(artifact).values(a).run()
@@ -358,14 +366,26 @@ export function makeRepos(db: SqliteDb) {
   const enqueueDelivery = async (d: NewDelivery): Promise<void> => {
     await db.insert(webhookDelivery).values(d).run()
   }
-  const claimDueDeliveries = async (now: string, limit: number): Promise<DeliveryRecord[]> =>
-    db
-      .select()
+  const claimDueDeliveries = async (
+    now: string,
+    limit: number,
+    leaseUntil: string,
+  ): Promise<DeliveryRecord[]> => {
+    // sqlite/d1 are single-writer, so the UPDATE...WHERE id IN (SELECT...) claim is
+    // atomic without row locks; bumping next_attempt_at to the lease hides the row
+    // from overlapping ticks and recovers a crashed delivery once the lease lapses.
+    const due = db
+      .select({ id: webhookDelivery.id })
       .from(webhookDelivery)
       .where(and(eq(webhookDelivery.status, "pending"), lte(webhookDelivery.next_attempt_at, now)))
       .orderBy(asc(webhookDelivery.next_attempt_at))
       .limit(limit)
-      .all()
+    return (await db
+      .update(webhookDelivery)
+      .set({ attempts: sql`${webhookDelivery.attempts} + 1`, next_attempt_at: leaseUntil })
+      .where(inArray(webhookDelivery.id, due))
+      .returning()) as DeliveryRecord[]
+  }
   const updateDelivery = async (
     id: string,
     f: {
@@ -672,6 +692,37 @@ export function makeRepos(db: SqliteDb) {
       .all()
     return collectManagedIds(rows)
   }
+  // ---- Domains (hostname → artifact) -------------------------------------
+  const getDomain = async (host: string): Promise<DomainRecord | null> =>
+    (await db.select().from(domain).where(eq(domain.host, host)).get()) ?? null
+  // Insert-only: a taken host yields no row (the route turns that into a 409),
+  // so one workspace can never claim a host already owned by another.
+  const setDomain = async (d: NewDomain): Promise<DomainRecord | null> =>
+    ((await db.insert(domain).values(d).onConflictDoNothing().returning().get()) as
+      | DomainRecord
+      | undefined) ?? null
+  const getArtifactDomains = async (artifactId: string): Promise<DomainRecord[]> =>
+    db.select().from(domain).where(eq(domain.artifact_id, artifactId)).all()
+  // A workspace's own custom domains: org-scoped and not bound to one artifact.
+  const getWorkspaceDomains = async (orgId: string): Promise<DomainRecord[]> =>
+    db
+      .select()
+      .from(domain)
+      .where(and(eq(domain.org_id, orgId), isNull(domain.artifact_id)))
+      .all()
+  const updateDomain = async (
+    host: string,
+    fields: { status?: DomainStatus; verification?: string | null },
+  ): Promise<DomainRecord | null> =>
+    ((await db.update(domain).set(fields).where(eq(domain.host, host)).returning().get()) as
+      | DomainRecord
+      | undefined) ?? null
+  const deleteDomain = async (host: string, orgId: string): Promise<void> => {
+    await db
+      .delete(domain)
+      .where(and(eq(domain.host, host), eq(domain.org_id, orgId)))
+      .run()
+  }
 
   // ---- Reviews: proposals ------------------------------------------------
   const createProposal = async (p: NewProposal): Promise<ProposalRecord> =>
@@ -834,6 +885,7 @@ export function makeRepos(db: SqliteDb) {
     createArtifact,
     setVisibility,
     getByShortId,
+    getArtifactById,
     addVersion,
     listVersions,
     getVersion,
@@ -896,6 +948,12 @@ export function makeRepos(db: SqliteDb) {
     updateRepoSourceSync,
     deleteRepoSource,
     managedArtifactIds,
+    getDomain,
+    setDomain,
+    getArtifactDomains,
+    getWorkspaceDomains,
+    updateDomain,
+    deleteDomain,
     createProposal,
     getProposal,
     listProposals,

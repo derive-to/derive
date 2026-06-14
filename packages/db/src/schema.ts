@@ -4,6 +4,8 @@ import type {
   AuditAction,
   CommentState,
   DeliveryStatus,
+  DomainKind,
+  DomainStatus,
   NotificationKind,
   ProposalState,
   ReportState,
@@ -258,6 +260,26 @@ export const repoSource = sqliteTable("repo_source", {
   last_synced_at: text("last_synced_at"),
   last_status: text("last_status"),
   created_by: text("created_by").notNull(),
+  created_at: text("created_at").notNull().default(now),
+})
+
+// Domain mode: a hostname that serves an artifact at the root of its own origin.
+// `host` is globally unique (one host → one artifact); `kind` separates a platform
+// subdomain (name.dockd.app) from a customer's own domain.
+export const domain = sqliteTable("domain", {
+  host: text("host").primaryKey(),
+  // Set when the host serves one artifact at its root (subdomain / per-artifact
+  // custom); null for a workspace domain (artifacts served at `<host>/<ref>`).
+  artifact_id: text("artifact_id").references(() => artifact.id),
+  org_id: text("org_id").notNull(),
+  kind: text("kind").$type<DomainKind>().notNull().default("subdomain"),
+  // `active` immediately for subdomains; a custom domain is `pending` until its
+  // Cloudflare custom-hostname cert + ownership validate.
+  status: text("status").$type<DomainStatus>().notNull().default("active"),
+  // Cloudflare custom-hostname id (for refresh + teardown) and the JSON-encoded DNS
+  // records to show while pending. Null for subdomains.
+  cf_hostname_id: text("cf_hostname_id"),
+  verification: text("verification"),
   created_at: text("created_at").notNull().default(now),
 })
 
@@ -522,6 +544,17 @@ export const SCHEMA_STATEMENTS: string[] = [
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
   )`,
   `CREATE INDEX IF NOT EXISTS repo_source_org ON repo_source (org_id)`,
+  `CREATE TABLE IF NOT EXISTS domain (
+    host TEXT PRIMARY KEY,
+    artifact_id TEXT REFERENCES artifact(id),
+    org_id TEXT NOT NULL,
+    kind TEXT NOT NULL DEFAULT 'subdomain',
+    status TEXT NOT NULL DEFAULT 'active',
+    cf_hostname_id TEXT,
+    verification TEXT,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+  )`,
+  `CREATE INDEX IF NOT EXISTS domain_artifact ON domain (artifact_id)`,
   `CREATE TABLE IF NOT EXISTS proposal (
     id TEXT PRIMARY KEY,
     artifact_id TEXT NOT NULL REFERENCES artifact(id),
