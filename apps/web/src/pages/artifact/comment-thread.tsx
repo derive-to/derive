@@ -12,9 +12,11 @@ import { ColoredAvatar } from "@/components/shared/colored-avatar"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/input"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { PICKER_EMOJI } from "@/lib/emoji"
 import { ago } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { useActions } from "./comment-actions"
+import { useCommentScope } from "./lib/comment-scope"
 import { anchorExact, COMPOSER_ID, layoutPins } from "./lib/layout"
 import { mdToHtml } from "./lib/markdown"
 import { REACTION_EMOJI } from "./lib/reactions"
@@ -134,6 +136,55 @@ export function PinnedZone({
   )
 }
 
+// A comment's rendered body. In a thread (not compact) a long body is clamped to
+// a few lines with a "Show more" toggle, so one wall of text can't dominate the
+// panel; the rail preview keeps its 2-line clamp. Height is measured after layout
+// (scrollHeight reports the full content even while clamped).
+function CommentBody({ html, compact }: { html: string; compact?: boolean }) {
+  const ref = useRef<HTMLDivElement>(null)
+  const [expanded, setExpanded] = useState(false)
+  const [overflows, setOverflows] = useState(false)
+  const MAX_PX = 168
+  useLayoutEffect(() => {
+    const el = ref.current
+    // Re-measure whenever the rendered body (html) or mode changes.
+    if (compact || !html || !el) {
+      setOverflows(false)
+      return
+    }
+    setOverflows(el.scrollHeight > MAX_PX + 16)
+  }, [html, compact])
+  const clamped = !compact && overflows && !expanded
+  return (
+    <div>
+      <div
+        ref={ref}
+        className={cn(
+          "cmt-body text-sm leading-relaxed [word-break:break-word]",
+          compact && "line-clamp-2",
+          clamped &&
+            "max-h-[168px] overflow-hidden [mask-image:linear-gradient(to_bottom,#000_120px,transparent)]",
+        )}
+        // biome-ignore lint/security/noDangerouslySetInnerHtml: input is escaped first in mdToHtml.
+        dangerouslySetInnerHTML={{ __html: html }}
+      />
+      {!compact && overflows && (
+        <button
+          type="button"
+          data-testid="comment-toggle-length"
+          onClick={(e) => {
+            e.stopPropagation()
+            setExpanded((v) => !v)
+          }}
+          className="mt-1 text-xs font-semibold text-primary hover:underline"
+        >
+          {expanded ? "Show less" : "Show more"}
+        </button>
+      )}
+    </div>
+  )
+}
+
 // Stack a set of cards by desired Y without overlap. The active card is pinned
 // to its exact anchor and its neighbours are pushed up/down to make room.
 export function CommentRow({ c, compact }: { c: Comment; compact?: boolean }) {
@@ -213,14 +264,7 @@ export function CommentRow({ c, compact }: { c: Comment; compact?: boolean }) {
           </div>
         </div>
       ) : (
-        <div
-          className={cn(
-            "cmt-body text-sm leading-relaxed [word-break:break-word]",
-            compact && "line-clamp-2",
-          )}
-          // biome-ignore lint/security/noDangerouslySetInnerHtml: input is escaped first in mdToHtml.
-          dangerouslySetInnerHTML={{ __html: mdToHtml(c.body_md, c.mentions) }}
-        />
+        <CommentBody html={mdToHtml(c.body_md, c.mentions)} compact={compact} />
       )}
 
       {Object.keys(reactions).length > 0 && (
@@ -556,6 +600,59 @@ export function ResolvedSection({
   )
 }
 
+// The general (non-anchored) comments, collapsible so they don't crowd the panel.
+// Mirrors ResolvedSection but defaults OPEN — general comments are usually wanted,
+// you just want the option to fold them away.
+export function GeneralSection({
+  threads,
+  activeThread,
+  hoverThread,
+  onActivate,
+  onHover,
+  onResolve,
+  onReply,
+  onJump,
+}: {
+  threads: Comment[][]
+  activeThread: string | null
+  hoverThread: string | null
+  onActivate: (id: string) => void
+  onHover: (id: string | null) => void
+  onResolve: (c: Comment) => void
+  onReply: (text: string, threadId: string, mentions?: Mention[]) => void
+  onJump: (id: string) => void
+}) {
+  const [open, setOpen] = useState(true)
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        data-testid="general-section-toggle"
+        className="flex w-full items-center gap-1.5 px-0.5 py-1.5 font-mono text-2xs font-bold uppercase tracking-[0.06em] text-muted-foreground"
+      >
+        <span className={cn("transition-transform", open && "rotate-90")}>▸</span>
+        General ({threads.length})
+      </button>
+      {open &&
+        threads.map((t) => (
+          <div key={t[0].thread_id} className="mb-2.5">
+            <CommentCard
+              thread={t}
+              active={activeThread === t[0].thread_id}
+              hovered={hoverThread === t[0].thread_id}
+              onActivate={onActivate}
+              onHover={onHover}
+              onResolve={onResolve}
+              onReply={onReply}
+              onJump={onJump}
+            />
+          </div>
+        ))}
+    </div>
+  )
+}
+
 // New-comment composer (anchored or general).
 /**
  * A text control with @mention autocomplete. Typing "@" opens a live directory
@@ -594,9 +691,28 @@ export function MentionField({
   testId?: string
 }) {
   const ref = useRef<HTMLTextAreaElement & HTMLInputElement>(null)
+  const { shortId } = useCommentScope()
   const [menu, setMenu] = useState<{ at: number; end: number; q: string } | null>(null)
   const [results, setResults] = useState<DirUser[]>([])
   const [active, setActive] = useState(0)
+  const [emojiOpen, setEmojiOpen] = useState(false)
+
+  // Insert an emoji at the caret (replacing any selection), then restore focus.
+  const insertEmoji = (emo: string) => {
+    const el = ref.current
+    const start = el?.selectionStart ?? value.length
+    const end = el?.selectionEnd ?? start
+    onChange(value.slice(0, start) + emo + value.slice(end))
+    setEmojiOpen(false)
+    const pos = start + emo.length
+    requestAnimationFrame(() => {
+      const e = ref.current
+      if (e) {
+        e.focus()
+        e.setSelectionRange(pos, pos)
+      }
+    })
+  }
 
   useLayoutEffect(() => {
     if (autoFocus) ref.current?.focus()
@@ -610,7 +726,7 @@ export function MentionField({
     }
     let cancelled = false
     api
-      .users(menu.q)
+      .users(menu.q, shortId ?? undefined)
       .then((r) => {
         if (!cancelled) {
           setResults(r.users.slice(0, 6))
@@ -621,7 +737,7 @@ export function MentionField({
     return () => {
       cancelled = true
     }
-  }, [menu])
+  }, [menu, shortId])
 
   // Is the caret sitting at the end of an "@token"? If so, open the popover.
   const detect = (el: HTMLTextAreaElement | HTMLInputElement) => {
@@ -690,7 +806,7 @@ export function MentionField({
   const shared = {
     ref,
     className: cn(
-      "w-full rounded-md border border-input bg-card px-2.5 py-1.5 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-accent",
+      "w-full rounded-md border border-input bg-card px-2.5 py-1.5 pr-9 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-accent",
       className,
     ),
     "data-testid": testId,
@@ -715,6 +831,53 @@ export function MentionField({
       ) : (
         <input {...shared} onClick={(e) => e.stopPropagation()} />
       )}
+
+      {/* Emoji picker: a one-tap grid of the common emoji. Typing :shortcode:
+          works too (rendered on display); this is the no-memorization path. */}
+      <button
+        type="button"
+        data-testid="emoji-trigger"
+        title="Add emoji"
+        aria-label="Add emoji"
+        aria-expanded={emojiOpen}
+        onClick={() => setEmojiOpen((o) => !o)}
+        className="absolute right-1.5 top-1.5 grid size-6 place-items-center rounded text-base leading-none text-muted-foreground transition-colors hover:bg-hover hover:text-foreground"
+      >
+        🙂
+      </button>
+      {emojiOpen && (
+        <>
+          {/* click-catcher to dismiss */}
+          <button
+            type="button"
+            data-testid="emoji-picker-backdrop"
+            aria-label="Close emoji picker"
+            tabIndex={-1}
+            className="fixed inset-0 z-40 cursor-default"
+            onClick={() => setEmojiOpen(false)}
+          />
+          <div
+            data-testid="emoji-picker"
+            className="absolute right-1.5 top-9 z-50 grid w-[244px] grid-cols-8 gap-0.5 rounded-lg border border-border bg-card p-1.5 shadow-[var(--shadow)]"
+          >
+            {PICKER_EMOJI.map((emo) => (
+              <button
+                key={emo}
+                type="button"
+                data-testid="emoji-option"
+                onMouseDown={(e) => {
+                  e.preventDefault()
+                  insertEmoji(emo)
+                }}
+                className="grid size-7 place-items-center rounded text-lg leading-none hover:bg-hover"
+              >
+                {emo}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+
       {menu && results.length > 0 && (
         <div className="absolute inset-x-0 top-[calc(100%+4px)] z-40 max-h-[200px] overflow-auto rounded-lg border border-border bg-card p-1 shadow-[var(--shadow)]">
           {results.map((u, i) => (

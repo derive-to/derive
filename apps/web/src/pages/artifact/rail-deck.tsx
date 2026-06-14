@@ -101,14 +101,6 @@ export function IconBtn({
   )
 }
 
-export function SectionLabel({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="px-0.5 pb-1.5 pt-0.5 font-mono text-2xs uppercase tracking-[0.06em] text-muted-foreground">
-      {children}
-    </div>
-  )
-}
-
 // Who is viewing right now. Live over the presence SSE channel; self listed
 // first as "you". Hidden when you're the only one here.
 // Host presentation bar — shown when the artifact is a slide deck. Drives the

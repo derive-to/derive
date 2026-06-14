@@ -3,6 +3,7 @@ import type { Comment, Mention } from "@/api"
 import { Icon } from "@/components/icons"
 import { cn } from "@/lib/utils"
 import { MobileComments, OpenPanel } from "./comment-panels"
+import { CommentScopeProvider } from "./lib/comment-scope"
 import { clamp } from "./lib/layout"
 import { Rail } from "./rail-deck"
 import type { Panel, PinItem, Sel } from "./types"
@@ -24,6 +25,7 @@ type Selection = {
  * page owns the state + mutations and threads them in.
  */
 export function ArtifactComments(p: {
+  shortId: string
   isMobile: boolean
   isAnon: boolean
   docLive: boolean
@@ -62,7 +64,7 @@ export function ArtifactComments(p: {
   }
 
   return (
-    <>
+    <CommentScopeProvider value={{ shortId: p.shortId }}>
       {!isMobile && !isAnon && (
         <aside
           className={cn(
@@ -160,6 +162,6 @@ export function ArtifactComments(p: {
           <Icon name="comments" size={16} /> Comment
         </button>
       )}
-    </>
+    </CommentScopeProvider>
   )
 }

@@ -2,8 +2,14 @@ import { useEffect, useState } from "react"
 import type { Comment, Mention } from "@/api"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
-import { CommentCard, Composer, PinnedZone, ResolvedSection } from "./comment-thread"
-import { IconBtn, SectionLabel } from "./rail-deck"
+import {
+  CommentCard,
+  Composer,
+  GeneralSection,
+  PinnedZone,
+  ResolvedSection,
+} from "./comment-thread"
+import { IconBtn } from "./rail-deck"
 import type { PinItem, Sel } from "./types"
 
 export function MobileComments({
@@ -267,24 +273,16 @@ export function OpenPanel(props: {
             </div>
           )}
           {general.length > 0 && (
-            <>
-              <SectionLabel>General</SectionLabel>
-              {general.map((t) => (
-                <div key={t[0].thread_id} className="mb-2.5">
-                  <CommentCard
-                    thread={t}
-                    active={activeThread === t[0].thread_id}
-                    hovered={hoverThread === t[0].thread_id}
-                    present={inDoc[t[0].thread_id]}
-                    onActivate={onActivate}
-                    onHover={onHover}
-                    onResolve={onResolve}
-                    onReply={onReply}
-                    onJump={onJump}
-                  />
-                </div>
-              ))}
-            </>
+            <GeneralSection
+              threads={general}
+              activeThread={activeThread}
+              hoverThread={hoverThread}
+              onActivate={onActivate}
+              onHover={onHover}
+              onResolve={onResolve}
+              onReply={onReply}
+              onJump={onJump}
+            />
           )}
           {resolved.length > 0 && (
             <ResolvedSection
