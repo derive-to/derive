@@ -44,7 +44,22 @@ import type {
   WebhookRecord,
   WorkspaceRecord,
 } from "@dock/core"
-import { and, asc, count, desc, eq, inArray, isNull, like, lt, lte, or, sql } from "drizzle-orm"
+import {
+  and,
+  asc,
+  type Column,
+  count,
+  desc,
+  eq,
+  inArray,
+  isNull,
+  like,
+  lt,
+  lte,
+  or,
+  type SQL,
+  sql,
+} from "drizzle-orm"
 import type { BaseSQLiteDatabase } from "drizzle-orm/sqlite-core"
 import type { Exhaustive, Shapes } from "./parity"
 import {
@@ -70,6 +85,31 @@ import {
   webhookDelivery,
   workspace,
 } from "./schema"
+
+/**
+ * The WHERE conditions for the artifact list (title search, keyset cursor, id
+ * restriction, workspace scope). The drizzle operators are dialect-agnostic and
+ * only the `artifact` columns differ between SQLite/D1 and Postgres, so both
+ * drivers build the same filter through this one helper — a new filter is added
+ * once, not in two places (the listArtifacts the review flagged as duplicated).
+ */
+export function artifactListConditions(
+  art: { title: Column; created_at: Column; id: Column; org_id: Column },
+  opts?: ListArtifactsOpts,
+): SQL[] {
+  const conds: SQL[] = []
+  if (opts?.q) conds.push(like(sql`lower(${art.title})`, `%${opts.q.toLowerCase()}%`))
+  if (opts?.cursor) {
+    const cursor = or(
+      lt(art.created_at, opts.cursor.created_at),
+      and(eq(art.created_at, opts.cursor.created_at), lt(art.id, opts.cursor.id)),
+    )
+    if (cursor) conds.push(cursor)
+  }
+  if (opts?.ids) conds.push(inArray(art.id, opts.ids))
+  if (opts?.orgId) conds.push(eq(art.org_id, opts.orgId))
+  return conds
+}
 
 /** The drizzle schema object — shared by the better-sqlite3 and D1 drivers. */
 export const schema = {
@@ -235,17 +275,7 @@ export function makeRepos(db: SqliteDb) {
 
   const listArtifacts = async (opts?: ListArtifactsOpts): Promise<ArtifactRecord[]> => {
     if (opts?.ids && opts.ids.length === 0) return []
-    const conds = []
-    if (opts?.q) conds.push(like(sql`lower(${artifact.title})`, `%${opts.q.toLowerCase()}%`))
-    if (opts?.cursor)
-      conds.push(
-        or(
-          lt(artifact.created_at, opts.cursor.created_at),
-          and(eq(artifact.created_at, opts.cursor.created_at), lt(artifact.id, opts.cursor.id)),
-        ),
-      )
-    if (opts?.ids) conds.push(inArray(artifact.id, opts.ids))
-    if (opts?.orgId) conds.push(eq(artifact.org_id, opts.orgId))
+    const conds = artifactListConditions(artifact, opts)
     const rows = db
       .select()
       .from(artifact)

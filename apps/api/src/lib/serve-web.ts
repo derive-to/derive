@@ -15,7 +15,7 @@ import type { Hono } from "hono"
  *  · prefixes match the path and any subpath (`/v1`, `/v1/artifacts`, …)
  *  · exact paths match only themselves (`/healthz`)
  */
-const API_PREFIXES = ["/v1", "/api", "/raw"] as const
+const API_PREFIXES = ["/v1", "/api", "/raw", "/oauth"] as const
 const API_EXACT = ["/healthz"] as const
 
 // Page prefixes the SERVER renders before handing off to the SPA, but that are NOT

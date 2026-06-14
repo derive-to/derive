@@ -151,6 +151,7 @@ export function useLiveCursors(shortId: string): {
   }, [])
 
   const sendCursor = useCallback(() => {
+    if (prefRef.current.hidden) return
     sentAt.current = Date.now()
     send(look())
   }, [send, look])
@@ -163,6 +164,7 @@ export function useLiveCursors(shortId: string): {
 
   const onPointerMove = useCallback(
     (x: number, y: number) => {
+      if (prefRef.current.hidden) return
       xy.current = [x, y]
       live.current = true
       if (idleTimer.current) clearTimeout(idleTimer.current)
@@ -176,6 +178,7 @@ export function useLiveCursors(shortId: string): {
 
   const onTap = useCallback(
     (x: number, y: number) => {
+      if (prefRef.current.hidden) return
       xy.current = [x, y]
       live.current = true
       send({ ...look(), tap: true })
@@ -194,6 +197,8 @@ export function useLiveCursors(shortId: string): {
   const paintFrame = useCallback(
     (f: CursorFrame) => {
       if (!f?.id || f.id === selfId.current) return
+      // Viewer opted out of the cursor layer — ignore every incoming peer.
+      if (prefRef.current.hidden) return
 
       if (f.tap && !reducedMotion.current) {
         const key = ++rippleKey.current
@@ -247,6 +252,17 @@ export function useLiveCursors(shortId: string): {
     },
     [markRosterDirty],
   )
+
+  // Hiding opts the viewer out of the whole layer: retire our own cursor for
+  // peers right away, drop everyone else's, and (via the guards above) stop
+  // sending and painting until it's turned back on.
+  useEffect(() => {
+    if (!pref.hidden) return
+    sendLeave()
+    targets.current.clear()
+    setRoster([])
+    setRipples([])
+  }, [pref.hidden, sendLeave])
 
   // The single animation loop: ease every peer toward its target, fade the name
   // tag on stillness, fade-out and prune anyone who left or went stale.

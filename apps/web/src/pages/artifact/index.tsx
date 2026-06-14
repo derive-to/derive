@@ -14,7 +14,12 @@ import { cn } from "@/lib/utils"
 import { artifactActions } from "./artifact-actions"
 import { ArtifactComments } from "./artifact-comments"
 import { ArtifactDocument } from "./artifact-document"
-import { ArtifactLoading, ArtifactNotFound, ArtifactRemoved } from "./artifact-states"
+import {
+  ArtifactLoadError,
+  ArtifactLoading,
+  ArtifactNotFound,
+  ArtifactRemoved,
+} from "./artifact-states"
 import { ArtifactTopBar } from "./artifact-top-bar"
 import { ActionsCtx } from "./comment-actions"
 import { groupThreads, parseAnchor } from "./lib/layout"
@@ -98,6 +103,7 @@ export function Artifact() {
     presentWrap,
     onFrameLoad,
     post,
+    scrollBy,
     deck,
     deckCmd,
     toggleFullscreen,
@@ -136,11 +142,15 @@ export function Artifact() {
   }
 
   useEffect(() => {
-    // Anonymous can view a public artifact (read-only, with a sign-up CTA). Only
-    // bounce to login when it isn't readable for them (private / 404) — then an
-    // account is required. A signed-in user with no access bounces the same way.
-    if (!loading && !me && failed && !locked) nav({ to: "/login" })
-  }, [loading, me, failed, locked, nav])
+    // Anonymous can view a public artifact (read-only, with a sign-up CTA). Bounce
+    // to login ONLY when the artifact is genuinely gated (404/403) for a logged-out
+    // visitor — then an account is required. A TRANSIENT failure (5xx/network) also
+    // nulls `me` (the session check failed too), but must NOT eject the user to
+    // login mid-outage — the recoverable error state below handles that, so the
+    // page comes back cleanly once the server does.
+    const gated = error instanceof ApiError && (error.status === 404 || error.status === 403)
+    if (!loading && !me && failed && !locked && gated) nav({ to: "/login" })
+  }, [loading, me, failed, locked, error, nav])
 
   // Deep link: ?c=<thread> opens the panel, activates that thread, and jumps to
   // its text. Runs once, after comments are in.
@@ -157,7 +167,18 @@ export function Artifact() {
   }, [comments, post, setPanel])
 
   if (locked) return <PasswordGate shortId={shortId} onUnlocked={() => refetch()} />
-  if (failed) return <ArtifactNotFound onBack={() => nav({ to: "/" })} />
+  if (failed) {
+    // A genuine 404/403 is "not found / no access". Anything else (a 5xx, a
+    // network blip, the server briefly unhealthy) is transient — the query already
+    // auto-retried with backoff, so offer a clean "Try again" rather than a
+    // dead-end. This is what made the outage look like a permanent failure.
+    const status = error instanceof ApiError ? error.status : undefined
+    return status === 404 || status === 403 ? (
+      <ArtifactNotFound onBack={() => nav({ to: "/" })} />
+    ) : (
+      <ArtifactLoadError onRetry={() => refetch()} onBack={() => nav({ to: "/" })} />
+    )
+  }
   if (!art) return <ArtifactLoading />
   // Removed artifacts show a tombstone instead of the document — content is gone
   // (the server 410s the raw routes), but an owner can still reinstate.
@@ -201,13 +222,15 @@ export function Artifact() {
   // and the collapsed rail dots.
   const docLive = !editing && view === "preview"
   const all = groupThreads(comments)
-  const openThreads = all.filter((t) => t[0].state === "open")
-  const resolvedThreads = all.filter((t) => t[0].state === "resolved")
+  const openThreads = all.filter((t) => t[0]?.state === "open")
+  const resolvedThreads = all.filter((t) => t[0]?.state === "resolved")
   const pinned: PinItem[] = []
   const general: Comment[][] = []
   for (const t of openThreads) {
-    const id = t[0].thread_id
-    const hasAnchor = !!parseAnchor(t[0].anchor)
+    const head = t[0]
+    if (!head) continue
+    const id = head.thread_id
+    const hasAnchor = !!parseAnchor(head.anchor)
     const present = inDoc[id] !== false
     if (docLive && hasAnchor && present) {
       const top = anchorTops[id]
@@ -413,6 +436,8 @@ export function Artifact() {
             panel={panel}
             asideWidth={asideWidth}
             openCount={openCount}
+            scrollY={scrollY}
+            onScrollDoc={scrollBy}
             pinned={pinned}
             general={general}
             resolved={resolvedThreads}

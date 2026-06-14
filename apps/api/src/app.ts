@@ -54,19 +54,28 @@ export function createApp(deps: AppDeps): Hono {
   // (/v1/embed), a subdomain-served artifact (already carries a CSP), or SSE streams.
   app.use("*", async (c, next) => {
     await next()
-    const h = c.res.headers
-    if (!h.has("x-content-type-options")) h.set("X-Content-Type-Options", "nosniff")
-    const proto = (c.req.header("x-forwarded-proto") ?? new URL(c.req.url).protocol).replace(
-      ":",
-      "",
-    )
-    if (proto === "https" && !h.has("strict-transport-security"))
-      h.set("Strict-Transport-Security", "max-age=63072000; includeSubDomains; preload")
-    const path = c.req.path
-    const framable = path.startsWith("/raw/") || path.startsWith("/v1/embed/")
-    if (!framable && !path.endsWith("/events") && !h.has("content-security-policy")) {
-      h.set("Content-Security-Policy", "frame-ancestors 'none'")
-      h.set("X-Frame-Options", "DENY")
+    // A proxied/streamed response (e.g. a Durable Object's SSE stream on the edge,
+    // returned via stub.fetch) carries IMMUTABLE headers — mutating them throws and
+    // would 500 the request. These headers are belt-and-suspenders on the app
+    // surface, never load-bearing on a streamed DO/raw response, so skip silently
+    // when the headers can't be written.
+    try {
+      const h = c.res.headers
+      if (!h.has("x-content-type-options")) h.set("X-Content-Type-Options", "nosniff")
+      const proto = (c.req.header("x-forwarded-proto") ?? new URL(c.req.url).protocol).replace(
+        ":",
+        "",
+      )
+      if (proto === "https" && !h.has("strict-transport-security"))
+        h.set("Strict-Transport-Security", "max-age=63072000; includeSubDomains; preload")
+      const path = c.req.path
+      const framable = path.startsWith("/raw/") || path.startsWith("/v1/embed/")
+      if (!framable && !path.endsWith("/events") && !h.has("content-security-policy")) {
+        h.set("Content-Security-Policy", "frame-ancestors 'none'")
+        h.set("X-Frame-Options", "DENY")
+      }
+    } catch {
+      // immutable (proxied/streamed) response headers — leave as-is
     }
   })
 

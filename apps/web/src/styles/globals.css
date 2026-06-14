@@ -152,13 +152,34 @@
   .cmt-body strong {
     font-weight: 700;
   }
+  /* A mention reads as a solid tag, not faint coloured text, so the tagged
+     person can't miss it: full accent fill + its contrasting foreground. */
   .mention {
-    color: var(--ac);
-    background: var(--ac-soft);
-    font-weight: 600;
+    color: var(--ac-fg);
+    background: var(--ac);
+    font-weight: 700;
+    border-radius: 5px;
+    padding: 1px 6px;
+    white-space: nowrap;
+    box-decoration-break: clone;
+    -webkit-box-decoration-break: clone;
+  }
+
+  /* The live highlight painted behind the composer textarea (see MentionField's
+     overlay). It reads as the same solid accent tag as a delivered .mention, so a
+     tag is unmistakable the instant you pick someone — but it must NOT shift the
+     text's metrics or it drifts off the caret. So: a solid fill + contrasting ink
+     (both paint-only), and the horizontal breathing room is net-zero (padding out,
+     equal negative margin back in), so following glyphs keep their exact advance.
+     No font-weight/size change for the same reason. */
+  .mention-live {
+    color: var(--ac-fg);
+    background: var(--ac);
     border-radius: 4px;
     padding: 0 3px;
-    white-space: nowrap;
+    margin: 0 -3px;
+    box-decoration-break: clone;
+    -webkit-box-decoration-break: clone;
   }
 }
 

@@ -23,6 +23,36 @@ export function ArtifactNotFound({ onBack }: { onBack: () => void }) {
   )
 }
 
+// A TRANSIENT failure (network blip, a 5xx, the server briefly unhealthy) — distinct
+// from a real 404/403. The query already auto-retries with backoff; this is the
+// recoverable fallback once those are exhausted, so the page comes back with one
+// click instead of dead-ending on "not found".
+export function ArtifactLoadError({
+  onRetry,
+  onBack,
+}: {
+  onRetry: () => void
+  onBack: () => void
+}) {
+  return (
+    <div className="grid h-full place-items-center gap-3 text-center">
+      <Icon name="removed" size={36} className="opacity-50" />
+      <div className="text-lg font-semibold">Couldn't load this artifact</div>
+      <div className="max-w-[360px] text-sm leading-relaxed text-muted-foreground">
+        Something went wrong reaching the server. This is usually temporary.
+      </div>
+      <div className="flex gap-2">
+        <Button variant="primary" data-testid="artifact-load-retry" onClick={onRetry}>
+          Try again
+        </Button>
+        <Button variant="outline" data-testid="artifact-load-back" onClick={onBack}>
+          Back to library
+        </Button>
+      </div>
+    </div>
+  )
+}
+
 // A taken-down artifact: content is gone (the server 410s the raw routes), but an
 // owner can still reinstate it.
 export function ArtifactRemoved({

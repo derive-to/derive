@@ -136,21 +136,25 @@ export function MobileComments({
               </div>
             </div>
           )}
-          {openThreads.map((t) => (
-            <div key={t[0].thread_id} className="mb-2.5">
-              <CommentCard
-                thread={t}
-                active={activeThread === t[0].thread_id}
-                hovered={false}
-                present={inDoc[t[0].thread_id]}
-                onActivate={onActivate}
-                onHover={() => {}}
-                onResolve={onResolve}
-                onReply={onReply}
-                onJump={jumpToText}
-              />
-            </div>
-          ))}
+          {openThreads.map((t) => {
+            const head = t[0]
+            if (!head) return null
+            return (
+              <div key={head.thread_id} className="mb-2.5">
+                <CommentCard
+                  thread={t}
+                  active={activeThread === head.thread_id}
+                  hovered={false}
+                  present={inDoc[head.thread_id]}
+                  onActivate={onActivate}
+                  onHover={() => {}}
+                  onResolve={onResolve}
+                  onReply={onReply}
+                  onJump={jumpToText}
+                />
+              </div>
+            )
+          })}
           {resolved.length > 0 && (
             <ResolvedSection
               threads={resolved}
@@ -171,6 +175,8 @@ export function MobileComments({
 
 export function OpenPanel(props: {
   openCount: number
+  scrollY: number
+  onScrollDoc: (dy: number) => void
   pinned: PinItem[]
   general: Comment[][]
   resolved: Comment[][]
@@ -191,6 +197,8 @@ export function OpenPanel(props: {
 }) {
   const {
     openCount,
+    scrollY,
+    onScrollDoc,
     pinned,
     general,
     resolved,
@@ -238,6 +246,8 @@ export function OpenPanel(props: {
             highlighted text, sharing one overlap-free layout. */}
         <PinnedZone
           pins={pinned}
+          scrollY={scrollY}
+          onScrollDoc={onScrollDoc}
           composer={composer}
           activeThread={activeThread}
           hoverThread={hoverThread}

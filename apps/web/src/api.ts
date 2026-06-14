@@ -171,7 +171,7 @@ export interface Notification {
   id: string
   user_id: string
   actor: string
-  kind: "mention" | "comment"
+  kind: "mention" | "comment" | "share"
   artifact_id: string
   artifact_short_id: string
   artifact_title: string | null

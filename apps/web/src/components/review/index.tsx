@@ -61,7 +61,8 @@ export function ReviewOverlay({
         }
         setActiveId((cur) => {
           if (cur && live.some((p) => p.id === cur)) return cur
-          return (live.find((p) => p.state === "open") ?? live[0]).id
+          const next = live.find((p) => p.state === "open") ?? live[0]
+          return next ? next.id : cur
         })
       })
       .catch(() => {})
