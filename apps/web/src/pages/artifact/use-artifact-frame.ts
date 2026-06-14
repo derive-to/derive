@@ -31,11 +31,13 @@ export function useArtifactFrame(p: {
   version: number | undefined
   hoverThread: string | null
   onPointerMove: (x: number, y: number) => void
+  onPointerLeave: () => void
+  onTap: (x: number, y: number) => void
   setHoverThread: Dispatch<SetStateAction<string | null>>
   setActiveThread: Dispatch<SetStateAction<string | null>>
   setPanel: Dispatch<SetStateAction<Panel>>
 }) {
-  const { comments, shortId, version, hoverThread, onPointerMove } = p
+  const { comments, shortId, version, hoverThread, onPointerMove, onPointerLeave, onTap } = p
   const { setHoverThread, setActiveThread, setPanel } = p
   const frame = useRef<HTMLIFrameElement>(null)
   const presentWrap = useRef<HTMLDivElement>(null)
@@ -89,11 +91,15 @@ export function useArtifactFrame(p: {
         setPanel((cur) => (cur === "open" ? cur : "open"))
       } else if (d.type === "cursor" && typeof d.x === "number" && typeof d.y === "number") {
         onPointerMove(d.x, d.y)
+      } else if (d.type === "cursor-tap" && typeof d.x === "number" && typeof d.y === "number") {
+        onTap(d.x, d.y)
+      } else if (d.type === "cursor-leave") {
+        onPointerLeave()
       }
     }
     window.addEventListener("message", onMsg)
     return () => window.removeEventListener("message", onMsg)
-  }, [onPointerMove, setHoverThread, setActiveThread, setPanel])
+  }, [onPointerMove, onPointerLeave, onTap, setHoverThread, setActiveThread, setPanel])
 
   // Two-way hover: emphasize the matching highlight in the doc when a comment
   // card is hovered (the inbound anchor-hover sets the same state the other way).

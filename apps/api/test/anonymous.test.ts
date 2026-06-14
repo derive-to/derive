@@ -105,6 +105,9 @@ describe("anonymous can never write — global lockdown sweep", () => {
     expect((await at("/view", json({}))).status).toBe(204) // passive view counter
     expect((await at("/presence", json({}))).status).toBe(200) // "someone is viewing"
     expect((await at("/cursor", json({ id: "g", x: 0, y: 0 }))).status).toBe(204) // live cursor
+    // leave/tap ride the same /cursor route (a flag, not a new path), so they need
+    // no new anonymous gate — an anon viewer can retire their own cursor.
+    expect((await at("/cursor", json({ id: "g", gone: true, x: 0, y: 0 }))).status).toBe(204)
   })
 
   it("refuses every anonymous mutation across the API", async () => {

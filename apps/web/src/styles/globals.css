@@ -161,3 +161,17 @@
     white-space: nowrap;
   }
 }
+
+/* A peer's click ripple on the live-cursor overlay: a ring that expands from the
+   click point and fades once. Centered via the transform so percentage left/top
+   place the click point itself (see cursor-layer.tsx RippleDot). */
+@keyframes dock-cursor-ripple {
+  from {
+    opacity: 0.55;
+    transform: translate(-50%, -50%) scale(0.4);
+  }
+  to {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(1.9);
+  }
+}
