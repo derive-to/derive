@@ -5,24 +5,17 @@ import { createPortal } from "react-dom"
 import { API_BASE, api, type Comment, type Diff, type Mention } from "@/api"
 import { useIsMobile, useToast } from "@/components"
 import { Icon } from "@/components/icons"
-import { ShareButton } from "@/components/ShareDialog"
 import { useTopBarSlot } from "@/components/shell-context"
 import { Button } from "@/components/ui/button"
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
 import { useAuth } from "@/ctx"
 import { artifactQuery, commentsQuery } from "@/lib/queries"
 import { STORAGE_KEYS } from "@/lib/storage-keys"
 import { cn } from "@/lib/utils"
 import { ArtifactLoading, ArtifactNotFound, ArtifactRemoved } from "./artifact-states"
+import { ArtifactTopBar } from "./artifact-top-bar"
 import { ActionsCtx, type CommentActions } from "./comment-actions"
 import { MobileComments, OpenPanel } from "./comment-panels"
 import { DiffView } from "./diff-view"
-import { CollectionsMenu, ReportButton, StarButton, TagsMenu } from "./header-actions"
 import { clamp, groupThreads, parseAnchor } from "./lib/layout"
 import { toggleReaction } from "./lib/reactions"
 import { parseRef } from "./parse-ref"
@@ -491,101 +484,40 @@ export function Artifact() {
           <>
             {!isMobile && <Presence viewers={live.viewers} self={me?.name ?? me?.email ?? ""} />}
             {!isAnon && (
-              <>
-                <StarButton
-                  shortId={shortId}
-                  favorite={!!art.favorite}
-                  onChange={(fav) =>
-                    qc.setQueryData(artifactQuery(shortId).queryKey, (a) =>
-                      a ? { ...a, favorite: fav } : a,
-                    )
-                  }
-                />
-                <TagsMenu
-                  shortId={shortId}
-                  tags={art.tags ?? []}
-                  canEdit={art.my_role === "editor" || art.my_role === "owner"}
-                  onChange={(tags) =>
-                    qc.setQueryData(artifactQuery(shortId).queryKey, (a) =>
-                      a ? { ...a, tags } : a,
-                    )
-                  }
-                />
-                <CollectionsMenu
-                  shortId={shortId}
-                  inCollections={art.collections ?? []}
-                  onChange={(collections) =>
-                    qc.setQueryData(artifactQuery(shortId).queryKey, (a) =>
-                      a ? { ...a, collections } : a,
-                    )
-                  }
-                />
-                <ShareButton shortId={shortId} myRole={art.my_role} />
-                <ReportButton shortId={shortId} onDone={show} />
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button
-                      variant="outline"
-                      size="icon"
-                      title="More"
-                      data-testid="artifact-more"
-                      className={cn(
-                        art.open_proposals &&
-                          art.open_proposals > 0 &&
-                          "border-primary text-primary",
-                      )}
-                    >
-                      <Icon name="more" size={18} />
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent>
-                    <DropdownMenuItem
-                      data-testid="artifact-insights"
-                      onSelect={() => setSurface("insights")}
-                    >
-                      <Icon name="insights" size={16} /> Insights
-                    </DropdownMenuItem>
-                    <DropdownMenuItem
-                      data-testid="artifact-history"
-                      onSelect={() => setSurface("history")}
-                    >
-                      <Icon name="history" size={16} /> Version history
-                    </DropdownMenuItem>
-                    {!!art.proposals_total && art.proposals_total > 0 && (
-                      <DropdownMenuItem
-                        data-testid="artifact-review"
-                        onSelect={() => setReviewing(true)}
-                      >
-                        <Icon name="review" size={16} />
-                        {art.open_proposals && art.open_proposals > 0
-                          ? `Review proposals (${art.open_proposals})`
-                          : "Proposals"}
-                      </DropdownMenuItem>
-                    )}
-                    {editable && canPropose && !editing && (
-                      <DropdownMenuItem data-testid="artifact-edit" onSelect={startEdit}>
-                        <Icon name="edit" size={16} />
-                        {canPublish ? "Edit source (dev)" : "Propose change (dev)"}
-                      </DropdownMenuItem>
-                    )}
-                  </DropdownMenuContent>
-                </DropdownMenu>
-                {/* On phones the bottom-right FAB opens comments, so the header
-                button would just be a redundant extra wrap-row. */}
-                {!isMobile && panel !== "open" && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="gap-1.5"
-                    data-testid="artifact-show-comments"
-                    onClick={() => setPanel("open")}
-                    title="Show comments (c)"
-                  >
-                    <Icon name="comments" size={16} />
-                    {openCount > 0 && <b className="font-bold">{openCount}</b>}
-                  </Button>
-                )}
-              </>
+              <ArtifactTopBar
+                shortId={shortId}
+                myRole={art.my_role}
+                favorite={!!art.favorite}
+                tags={art.tags ?? []}
+                collections={art.collections ?? []}
+                canEditTags={art.my_role === "editor" || art.my_role === "owner"}
+                openProposals={art.open_proposals ?? 0}
+                proposalsTotal={art.proposals_total ?? 0}
+                isMobile={isMobile}
+                panelOpen={panel === "open"}
+                openCount={openCount}
+                showEdit={editable && canPropose && !editing}
+                editLabel={canPublish ? "Edit source (dev)" : "Propose change (dev)"}
+                onFavorite={(fav) =>
+                  qc.setQueryData(artifactQuery(shortId).queryKey, (a) =>
+                    a ? { ...a, favorite: fav } : a,
+                  )
+                }
+                onTags={(tags) =>
+                  qc.setQueryData(artifactQuery(shortId).queryKey, (a) => (a ? { ...a, tags } : a))
+                }
+                onCollections={(collections) =>
+                  qc.setQueryData(artifactQuery(shortId).queryKey, (a) =>
+                    a ? { ...a, collections } : a,
+                  )
+                }
+                onReport={show}
+                onInsights={() => setSurface("insights")}
+                onHistory={() => setSurface("history")}
+                onReview={() => setReviewing(true)}
+                onStartEdit={startEdit}
+                onShowComments={() => setPanel("open")}
+              />
             )}
           </>,
           topBarSlot,
