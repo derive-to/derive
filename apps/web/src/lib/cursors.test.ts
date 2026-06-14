@@ -90,6 +90,31 @@ describe("placePeer", () => {
   })
 })
 
+describe("document mapping (effectiveDocH + placePeer, as the rAF loop composes them)", () => {
+  // Mirror the loop: a peer's normalized y -> document pixels -> screen placement.
+  const map = (yNorm: number, reportedDocH: number, layerH: number, scrollY: number) =>
+    placePeer(0, yNorm * effectiveDocH(reportedDocH, layerH), {
+      scrollY,
+      docH: reportedDocH,
+      viewH: layerH,
+    })
+
+  it("never pushes a peer off-screen in a document shorter than the viewport", () => {
+    // docH 400 < viewH 800: even a peer at the very bottom of the doc is in view.
+    expect(map(0.99, 400, 800, 0)).toMatchObject({ onScreen: true })
+  })
+
+  it("classifies a peer deep in a tall document as below, then on-screen once scrolled", () => {
+    expect(map(0.6, 5000, 800, 0)).toMatchObject({ onScreen: false, side: "below" })
+    expect(map(0.6, 5000, 800, 2400)).toEqual({ onScreen: true, x: 0, y: 600 })
+  })
+
+  it("still shows a peer (viewport-mapped) before the frame has reported geometry", () => {
+    // reportedDocH 0 -> fall back to the layer height, so y=0.5 lands mid-viewport.
+    expect(map(0.5, 0, 800, 0)).toEqual({ onScreen: true, x: 0, y: 400 })
+  })
+})
+
 describe("normalizePref / defaultPrefFor (hidden field)", () => {
   const fb: CursorPref = { color: CURSOR_COLORS[0], kind: "arrow", emoji: "👆", hidden: false }
   it("defaults hidden to false", () => {

@@ -106,3 +106,89 @@ test("hiding cursors removes the edge indicators too", async ({ owner, secondUse
   await expect(owner.getByTestId("cursor-offscreen-bottom")).toHaveCount(0)
   await expect(owner.getByTestId("remote-cursor")).toHaveCount(0)
 })
+
+test("capture side: the iframe reports a document position, so the same screen point yields a different y after scrolling", async ({
+  owner,
+}) => {
+  const shortId = await publishTall(owner)
+  await openArtifact(owner, shortId)
+
+  // Record the y of every cursor frame the app posts for our own pointer.
+  const ys: number[] = []
+  owner.on("request", (req) => {
+    if (req.method() === "POST" && req.url().includes("/cursor")) {
+      try {
+        const b = req.postDataJSON() as { y?: number }
+        if (typeof b?.y === "number") ys.push(b.y)
+      } catch {
+        /* non-JSON body */
+      }
+    }
+  })
+
+  const box = await owner.locator("iframe").first().boundingBox()
+  if (!box) throw new Error("no iframe box")
+  const cx = box.x + box.width / 2
+  const cy = box.y + box.height / 2
+
+  // Move at a fixed point over the artifact → a frame at scroll 0.
+  await owner.mouse.move(cx - 4, cy - 4)
+  await owner.mouse.move(cx, cy)
+  await expect.poll(() => ys.length, { timeout: 10_000 }).toBeGreaterThan(0)
+  const atTop = ys.at(-1) as number
+
+  // Scroll the document, then move to the SAME screen point again.
+  await owner.mouse.move(cx, cy)
+  await owner.mouse.wheel(0, 2000)
+  await owner.waitForTimeout(400)
+  ys.length = 0
+  await owner.mouse.move(cx + 4, cy + 4)
+  await owner.mouse.move(cx, cy)
+  await expect.poll(() => ys.length, { timeout: 10_000 }).toBeGreaterThan(0)
+  const afterScroll = ys.at(-1) as number
+
+  // Same screen position, but scrolled down → a larger fraction of the document.
+  // (A viewport-relative cursor would report the same y both times.)
+  expect(afterScroll).toBeGreaterThan(atTop + 0.02)
+})
+
+test("stress: many peers and rapid scrolling stay consistent (above + below at once)", async ({
+  owner,
+  secondUser,
+}) => {
+  const shortId = await publishTall(owner)
+  await openArtifact(owner, shortId)
+  const N = 12
+  // A crowd spread evenly down the document, re-sent in parallel to keep alive.
+  const sendAll = () =>
+    Promise.all(
+      Array.from({ length: N }, (_, i) =>
+        secondUser.page.request.post(`/v1/artifacts/${shortId}/cursor`, {
+          data: { id: `s${i}`, x: ((i % 5) + 1) / 6, y: (i + 1) / (N + 1), color: "#7c6cbd" },
+        }),
+      ),
+    )
+
+  await expect(async () => {
+    await sendAll()
+    await expect(owner.getByTestId("cursor-offscreen-bottom")).toBeVisible({ timeout: 1000 })
+  }).toPass({ timeout: 20_000 })
+
+  // Rapidly scroll into the middle; peers stay alive and re-map every frame.
+  for (let i = 0; i < 6; i++) {
+    await owner
+      .getByTestId("cursor-offscreen-bottom")
+      .click()
+      .catch(() => {})
+    await sendAll()
+    await owner.waitForTimeout(120)
+  }
+
+  // In the middle of a tall doc the crowd splits: some above, some below — and the
+  // page is still alive and rendering cursors (no crash under load).
+  await expect(async () => {
+    await sendAll()
+    await expect(owner.getByTestId("cursor-offscreen-top")).toBeVisible({ timeout: 1500 })
+    await expect(owner.getByTestId("cursor-offscreen-bottom")).toBeVisible({ timeout: 1500 })
+  }).toPass({ timeout: 20_000 })
+})
