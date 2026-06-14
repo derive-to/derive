@@ -433,13 +433,22 @@ export class PgMetaStore implements MetaStore {
   async enqueueDelivery(d: NewDelivery): Promise<void> {
     await this.db.insert(webhookDelivery).values(d)
   }
-  claimDueDeliveries(now: string, limit: number): Promise<DeliveryRecord[]> {
-    return this.db
-      .select()
+  claimDueDeliveries(now: string, limit: number, leaseUntil: string): Promise<DeliveryRecord[]> {
+    // FOR UPDATE SKIP LOCKED so concurrent instances each grab a disjoint set;
+    // the UPDATE then leases the rows (next_attempt_at -> future) + counts an
+    // attempt, so no other tick re-selects them until the lease lapses.
+    const due = this.db
+      .select({ id: webhookDelivery.id })
       .from(webhookDelivery)
       .where(and(eq(webhookDelivery.status, "pending"), lte(webhookDelivery.next_attempt_at, now)))
       .orderBy(asc(webhookDelivery.next_attempt_at))
       .limit(limit)
+      .for("update", { skipLocked: true })
+    return this.db
+      .update(webhookDelivery)
+      .set({ attempts: sql`${webhookDelivery.attempts} + 1`, next_attempt_at: leaseUntil })
+      .where(inArray(webhookDelivery.id, due))
+      .returning()
   }
   async updateDelivery(
     id: string,

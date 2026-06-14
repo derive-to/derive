@@ -338,14 +338,26 @@ export function makeRepos(db: SqliteDb) {
   const enqueueDelivery = async (d: NewDelivery): Promise<void> => {
     await db.insert(webhookDelivery).values(d).run()
   }
-  const claimDueDeliveries = async (now: string, limit: number): Promise<DeliveryRecord[]> =>
-    db
-      .select()
+  const claimDueDeliveries = async (
+    now: string,
+    limit: number,
+    leaseUntil: string,
+  ): Promise<DeliveryRecord[]> => {
+    // sqlite/d1 are single-writer, so the UPDATE...WHERE id IN (SELECT...) claim is
+    // atomic without row locks; bumping next_attempt_at to the lease hides the row
+    // from overlapping ticks and recovers a crashed delivery once the lease lapses.
+    const due = db
+      .select({ id: webhookDelivery.id })
       .from(webhookDelivery)
       .where(and(eq(webhookDelivery.status, "pending"), lte(webhookDelivery.next_attempt_at, now)))
       .orderBy(asc(webhookDelivery.next_attempt_at))
       .limit(limit)
-      .all()
+    return (await db
+      .update(webhookDelivery)
+      .set({ attempts: sql`${webhookDelivery.attempts} + 1`, next_attempt_at: leaseUntil })
+      .where(inArray(webhookDelivery.id, due))
+      .returning()) as DeliveryRecord[]
+  }
   const updateDelivery = async (
     id: string,
     f: {
