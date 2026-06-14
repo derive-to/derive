@@ -1,20 +1,24 @@
 #!/usr/bin/env node
 // dock — scaffold, publish, and run the review loop against a Dock server.
 //   dock init [dir] [--template md|html|slides|site] [--title t]
+//   dock login [--server url] [--scope "…"]   OAuth sign-in; saves a token
 //   dock publish [file|dir] [--id --title --slug --spa --message --name --visibility --server --token]
 //   dock comments [--id]                 list the artifact's comment threads
 //   dock open [--id]                     open the artifact in a browser
 //   dock reply <thread_id> <message…>    reply in a thread
 //   dock resolve|reopen <comment_id>     set a thread's state
 import { spawn } from "node:child_process"
+import { createHash, randomBytes } from "node:crypto"
 import { readdirSync, readFileSync, statSync } from "node:fs"
 import { basename, join, relative } from "node:path"
+import { createInterface } from "node:readline"
 import { zipSync } from "fflate"
 import {
   CONFIG_FILE,
   formatComments,
   loadConfig,
   resolvePublish,
+  saveToken,
   scaffold,
   TEMPLATES,
   writeId,
@@ -49,6 +53,94 @@ if (cmd === "init") {
       ? `\nReady (${template}). Edit ${entry}, then run \`dock publish\`.`
       : `\nNothing to do — ${CONFIG_FILE} already here.`,
   )
+  process.exit(0)
+}
+
+// ---- dock login (OAuth 2.1, PKCE, hosted callback) ------------------------
+// The native-app flow without the localhost bounce: register a public client,
+// send the user to approve consent in their browser, land on Dock's hosted
+// /oauth/cli-callback page, and have them paste the one-time code back here. The
+// PKCE verifier never leaves this process, so the exchange (and the resulting
+// token) stay bound to this machine.
+if (cmd === "login") {
+  const b64url = (b) =>
+    b.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "")
+  const server = (flags.server ?? process.env.DOCK_SERVER ?? "http://localhost:8080").replace(
+    /\/+$/,
+    "",
+  )
+  const redirect = `${server}/oauth/cli-callback`
+  const scope = flags.scope ?? "openid dock:read dock:publish"
+  const verifier = b64url(randomBytes(64))
+  const challenge = b64url(createHash("sha256").update(verifier).digest())
+  const state = b64url(randomBytes(16))
+
+  const reg = await fetch(`${server}/api/auth/oauth2/register`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      client_name: flags.name ?? "Dock CLI",
+      redirect_uris: [redirect],
+      token_endpoint_auth_method: "none",
+      grant_types: ["authorization_code", "refresh_token"],
+      response_types: ["code"],
+    }),
+  }).catch((e) => ({ ok: false, status: 0, json: async () => ({ error: e.message }) }))
+  const client = await reg.json().catch(() => ({}))
+  if (!reg.ok || !client.client_id) {
+    console.error(`error: client registration failed (${reg.status}): ${client.error ?? "unknown"}`)
+    process.exit(1)
+  }
+
+  const authUrl =
+    `${server}/api/auth/oauth2/authorize?response_type=code` +
+    `&client_id=${encodeURIComponent(client.client_id)}` +
+    `&redirect_uri=${encodeURIComponent(redirect)}` +
+    `&scope=${encodeURIComponent(scope)}` +
+    `&code_challenge=${challenge}&code_challenge_method=S256&state=${state}`
+
+  console.log(`\nOpening Dock to authorize (scopes: ${scope}).`)
+  console.log(`If your browser doesn't open, visit:\n\n  ${authUrl}\n`)
+  const opener =
+    process.platform === "darwin" ? "open" : process.platform === "win32" ? "start" : "xdg-open"
+  spawn(opener, [authUrl], { stdio: "ignore", detached: true })
+    .on("error", () => {})
+    .unref()
+
+  const code = await new Promise((resolve) => {
+    const rl = createInterface({ input: process.stdin, output: process.stdout })
+    rl.question("Paste the code from the Dock page: ", (a) => {
+      rl.close()
+      resolve((a ?? "").trim())
+    })
+  })
+  if (!code) {
+    console.error("error: no code entered")
+    process.exit(1)
+  }
+
+  const tok = await fetch(`${server}/api/auth/oauth2/token`, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      grant_type: "authorization_code",
+      code,
+      redirect_uri: redirect,
+      client_id: client.client_id,
+      code_verifier: verifier,
+    }),
+  }).catch((e) => ({ ok: false, status: 0, json: async () => ({ error: e.message }) }))
+  const tj = await tok.json().catch(() => ({}))
+  if (!tok.ok || !tj.access_token) {
+    console.error(
+      `error: token exchange failed (${tok.status}): ${tj.error_description ?? tj.error ?? "unknown"}`,
+    )
+    process.exit(1)
+  }
+
+  const path = saveToken(server, tj.access_token)
+  console.log(`\n✓ Signed in to ${server}`)
+  console.log(`  Token saved to ${path} — \`dock publish\` will use it automatically.`)
   process.exit(0)
 }
 
@@ -129,6 +221,7 @@ if (LOOP.includes(cmd)) {
 if (cmd !== "publish") {
   console.error(`usage:
   dock init [dir] [--template md|html|slides|site] [--title t]
+  dock login [--server url] [--scope "openid dock:read dock:publish"]   OAuth sign-in; saves a token
   dock publish [file|dir] [--id X] [--title t] [--slug s] [--spa] [--message m] [--name "x"] [--visibility v] [--password p] [--server url] [--token t] [--json]
   dock comments [--id X]                 list comment threads
   dock open [--id X]                     open the artifact in a browser

@@ -1,8 +1,49 @@
 // dock.json + scaffold logic, kept pure so it's unit-testable without a server.
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
+import { homedir } from "node:os"
 import { dirname, join } from "node:path"
 
 export const CONFIG_FILE = "dock.json"
+
+// ---- User-level credentials (`dock login`) --------------------------------
+// Tokens are secrets, so they live in a user-level store (one entry per Dock
+// origin), never in the project's dock.json. DOCK_CONFIG_DIR overrides the dir.
+
+const configDir = () => process.env.DOCK_CONFIG_DIR ?? join(homedir(), ".config", "dock")
+const credsPath = () => join(configDir(), "credentials.json")
+
+/** Normalize a server URL to its origin so one entry covers every path under it. */
+const originOf = (server) => {
+  try {
+    return new URL(server).origin
+  } catch {
+    return server
+  }
+}
+
+/** All saved credentials, keyed by server origin. {} if none / unreadable. */
+export function loadCredentials() {
+  try {
+    return JSON.parse(readFileSync(credsPath(), "utf8"))
+  } catch {
+    return {}
+  }
+}
+
+/** Persist a token for `server` (0600, owner-only). Returns the store path. */
+export function saveToken(server, token) {
+  const dir = configDir()
+  mkdirSync(dir, { recursive: true })
+  const all = loadCredentials()
+  all[originOf(server)] = { token, saved_at: new Date().toISOString() }
+  writeFileSync(credsPath(), `${JSON.stringify(all, null, 2)}\n`, { mode: 0o600 })
+  return credsPath()
+}
+
+/** The saved token for `server`, or null. */
+export function tokenFor(server) {
+  return loadCredentials()[originOf(server)]?.token ?? null
+}
 
 /** The dock.json a fresh project starts with (no id until first publish). */
 export const defaultConfig = (title = "My artifact", entry = "index.md") => ({
@@ -34,6 +75,7 @@ export function loadConfig(dir = ".") {
 export function resolvePublish(opts = {}, config = null) {
   const c = config ?? {}
   const spa = opts.spa != null ? opts.spa === "true" || opts.spa === true : !!c.spa
+  const server = opts.server ?? c.server ?? process.env.DOCK_SERVER ?? "http://localhost:8080"
   return {
     id: opts.id ?? c.id ?? null,
     target: opts.target ?? c.entry ?? null,
@@ -43,8 +85,9 @@ export function resolvePublish(opts = {}, config = null) {
     spa,
     message: opts.message,
     name: opts.name,
-    server: opts.server ?? c.server ?? process.env.DOCK_SERVER ?? "http://localhost:8080",
-    token: opts.token ?? process.env.DOCK_TOKEN,
+    server,
+    // Explicit flag / env win; otherwise fall back to the `dock login` token.
+    token: opts.token ?? process.env.DOCK_TOKEN ?? tokenFor(server),
   }
 }
 
