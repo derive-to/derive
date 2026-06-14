@@ -20,6 +20,7 @@ export const commentRoutes = (ctx: AppContext) => {
     meta,
     bus,
     notify,
+    background,
     actingUser,
     anonLocked,
     authorize,
@@ -162,22 +163,30 @@ export const commentRoutes = (ctx: AppContext) => {
     // Signal-only: never put the comment body on the realtime bus. Clients refetch
     // /comments (which is account-gated), so the content can't leak to an anonymous
     // SSE subscriber. Webhooks carry their own payload via notify() below.
+    // The realtime signal goes out now (cheap, in-process); everyone watching
+    // refetches. The webhook enqueues and mention notifications are best-effort
+    // fan-out, so they run after the response instead of stacking sequential D1
+    // round-trips onto the post (the "couple of seconds to send" people felt).
     bus.publish(artifact.id, { type: "comment.created" })
-    await notify(artifact, "comment.created", {
-      author: created.author,
-      body: created.body_md,
-      quote: quoteOf(created.anchor),
-      thread_id: created.thread_id,
-    })
-    const notified = await notifyMentions(artifact, created, mentions, acting?.id ?? null)
-    if (notified.length)
-      await notify(artifact, "comment.mention", {
-        author: created.author,
-        mentioned: notified,
-        body: created.body_md,
-        quote: quoteOf(created.anchor),
-        thread_id: created.thread_id,
-      })
+    await background(
+      (async () => {
+        await notify(artifact, "comment.created", {
+          author: created.author,
+          body: created.body_md,
+          quote: quoteOf(created.anchor),
+          thread_id: created.thread_id,
+        })
+        const notified = await notifyMentions(artifact, created, mentions, acting?.id ?? null)
+        if (notified.length)
+          await notify(artifact, "comment.mention", {
+            author: created.author,
+            mentioned: notified,
+            body: created.body_md,
+            quote: quoteOf(created.anchor),
+            thread_id: created.thread_id,
+          })
+      })(),
+    )
     return c.json(commentJson(created), 201)
   })
 

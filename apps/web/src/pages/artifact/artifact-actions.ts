@@ -29,7 +29,7 @@ type Selection = {
  */
 export function artifactActions(p: {
   shortId: string
-  art: { title?: string | null; short_id: string }
+  art: { title?: string | null; short_id: string; current_version: number }
   qc: QueryClient
   me: Me
   src: string
@@ -96,15 +96,41 @@ export function artifactActions(p: {
     opts?: { threadId?: string; anchor?: Sel | null; mentions?: Mention[] },
   ) => {
     if (!text.trim()) return
-    await api
-      .comment(shortId, {
+    const key = commentsQuery(shortId).queryKey
+    // Optimistic: the comment appears the instant you hit send, so there is never a
+    // dead gap wondering whether it posted. A `temp-` id marks it as in-flight; the
+    // server's row swaps in on success, a refetch reconciles ordering + anchored
+    // flags, and a failure rolls the temp back out with a toast.
+    const tempId = `temp-${crypto.randomUUID()}`
+    const optimistic: Comment = {
+      id: tempId,
+      thread_id: opts?.threadId ?? tempId,
+      base_version: p.art.current_version,
+      path: null,
+      anchor: opts?.anchor ? JSON.stringify(opts.anchor) : null,
+      body_md: text,
+      author: me?.name ?? me?.email ?? "You",
+      state: "open",
+      created_at: new Date().toISOString(),
+      reactions: {},
+      mentions: opts?.mentions,
+    }
+    qc.setQueryData<Comment[]>(key, (old) => [...(old ?? []), optimistic])
+    try {
+      const real = await api.comment(shortId, {
         body_md: text,
         thread_id: opts?.threadId,
         anchor: opts?.threadId ? undefined : (opts?.anchor ?? undefined),
         mentions: opts?.mentions?.length ? opts.mentions : undefined,
       })
-      .catch((e) => toast.error((e as Error).message))
-    refetchComments()
+      qc.setQueryData<Comment[]>(key, (old) =>
+        (old ?? []).map((cmt) => (cmt.id === tempId ? real : cmt)),
+      )
+      refetchComments()
+    } catch (e) {
+      qc.setQueryData<Comment[]>(key, (old) => (old ?? []).filter((cmt) => cmt.id !== tempId))
+      toast.error((e as Error).message)
+    }
   }
   const reply = (text: string, threadId: string, mentions: Mention[] = []) =>
     addComment(text, { threadId, mentions })

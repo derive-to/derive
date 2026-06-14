@@ -80,7 +80,13 @@ export function CommentRow({ c, compact }: { c: Comment; compact?: boolean }) {
   return (
     <div
       data-testid="comment-row"
-      className={cn("group relative px-3 py-2.5", !compact && "border-b border-border-soft")}
+      // An optimistic (not-yet-saved) comment carries a `temp-` id; dim it slightly
+      // until the server row swaps in, so "sending" vs "sent" reads at a glance.
+      className={cn(
+        "group relative px-3 py-2.5",
+        !compact && "border-b border-border-soft",
+        c.id.startsWith("temp-") && "opacity-60",
+      )}
     >
       <div className="mb-1 flex items-center gap-1.5">
         <ColoredAvatar name={c.author} />
