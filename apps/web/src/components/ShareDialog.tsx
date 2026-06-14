@@ -2,7 +2,7 @@ import { useQueryClient } from "@tanstack/react-query"
 import { Lock, Share2, X } from "lucide-react"
 import { useState } from "react"
 import { toast } from "sonner"
-import { API_BASE, type ArtifactMember, api, type Role } from "@/api"
+import { API_BASE, type ArtifactDomain, type ArtifactMember, api, type Role } from "@/api"
 import { EmptyState } from "@/components/shared/empty-state"
 import { RoleSelect } from "@/components/shared/role-select"
 import { Button } from "@/components/ui/button"
@@ -71,6 +71,13 @@ export function ShareButton({
   const [savingVis, setSavingVis] = useState(false)
 
   const [copied, setCopied] = useState(false)
+
+  // Domain mode (vanity subdomains). `domainBase` is null when the server has no
+  // base configured, which hides the whole section.
+  const [domains, setDomains] = useState<ArtifactDomain[]>([])
+  const [domainBase, setDomainBase] = useState<string | null>(null)
+  const [label, setLabel] = useState("")
+  const [claiming, setClaiming] = useState(false)
 
   // GDocs model: owners and editors manage access; everyone else gets view-only.
   const canManage = myRole === "owner" || myRole === "editor"
@@ -153,6 +160,43 @@ export function ShareButton({
     await synced()
   }
 
+  const loadDomains = () =>
+    api
+      .listDomains(shortId)
+      .then((r) => {
+        setDomains(r.domains)
+        setDomainBase(r.base)
+      })
+      .catch(() => {})
+  const claimDomain = async (e: React.FormEvent) => {
+    e.preventDefault()
+    const l = label.trim().toLowerCase()
+    if (!l) return
+    setClaiming(true)
+    try {
+      await api.setDomain(shortId, l)
+      setLabel("")
+      await loadDomains()
+      toast.success("Custom URL claimed")
+    } catch (x) {
+      toast.error(x instanceof Error ? x.message : "Couldn't claim that URL")
+    } finally {
+      setClaiming(false)
+    }
+  }
+  const dropDomain = async (host: string) => {
+    await api.removeDomain(shortId, host).catch(() => {})
+    await loadDomains()
+  }
+  const copyUrl = async (url: string) => {
+    try {
+      await navigator.clipboard.writeText(url)
+      toast.success("URL copied")
+    } catch {
+      toast.error("Couldn't copy to clipboard")
+    }
+  }
+
   return (
     <Dialog
       onOpenChange={(o) => {
@@ -161,6 +205,7 @@ export function ShareButton({
           setVis(visibility)
           setPw("")
           load()
+          loadDomains()
         }
       }}
     >
@@ -368,6 +413,79 @@ export function ShareButton({
               : "Set access to “Anyone with the link” or “Public” for the embed to load for others."}
           </p>
         </div>
+
+        {/* Custom URL — a vanity subdomain that serves the artifact at its own
+            origin. Only shown when the server has a base domain configured. */}
+        {domainBase && (
+          <div className="mt-4 border-t border-border pt-3.5">
+            <div className="mb-1.5 font-mono text-2xs font-semibold uppercase tracking-wide text-muted-foreground">
+              Custom URL
+            </div>
+            {domains.length > 0 ? (
+              <div className="flex flex-col gap-1.5">
+                {domains.map((d) => (
+                  <div key={d.host} className="flex items-center gap-1.5">
+                    <Input
+                      readOnly
+                      data-testid="share-domain-url"
+                      aria-label="Custom URL"
+                      value={d.url}
+                      onFocus={(e) => e.currentTarget.select()}
+                      className="flex-1 font-mono text-2xs"
+                    />
+                    <Button
+                      variant="outline"
+                      data-testid="share-domain-copy"
+                      onClick={() => copyUrl(d.url)}
+                    >
+                      Copy
+                    </Button>
+                    {canManage && (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        data-testid="share-domain-remove"
+                        className="size-7 text-muted-foreground hover:text-foreground"
+                        onClick={() => dropDomain(d.host)}
+                        aria-label="Remove custom URL"
+                      >
+                        <X />
+                      </Button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            ) : canManage ? (
+              <form onSubmit={claimDomain} className="flex items-center gap-1.5">
+                <Input
+                  data-testid="share-domain-label"
+                  aria-label="Subdomain label"
+                  placeholder="my-page"
+                  value={label}
+                  onChange={(e) => setLabel(e.target.value)}
+                  className="flex-1"
+                />
+                <span className="whitespace-nowrap font-mono text-2xs text-muted-foreground">
+                  .{domainBase}
+                </span>
+                <Button
+                  data-testid="share-domain-claim"
+                  variant="primary"
+                  type="submit"
+                  disabled={claiming || !label.trim()}
+                >
+                  {claiming ? "…" : "Claim"}
+                </Button>
+              </form>
+            ) : (
+              <p className="text-xs text-muted-foreground">No custom URL.</p>
+            )}
+            <p className="mt-1.5 font-mono text-2xs text-muted-foreground">
+              A clean URL on {domainBase}, served at its own origin. Works for link- or
+              world-readable artifacts.
+            </p>
+          </div>
+        )}
       </DialogContent>
     </Dialog>
   )
