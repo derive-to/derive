@@ -73,10 +73,11 @@ export function ShareButton({
 
   const [copied, setCopied] = useState(false)
 
-  // Domain mode (vanity subdomains). `domainBase` is null when the server has no
-  // base configured, which hides the whole section.
+  // Per-artifact vanity subdomains (`domainBase` null = off) + the workspace's
+  // custom domains shown read-only (managed in Settings).
   const [domains, setDomains] = useState<ArtifactDomain[]>([])
   const [domainBase, setDomainBase] = useState<string | null>(null)
+  const [workspaceDomains, setWorkspaceDomains] = useState<{ host: string; url: string }[]>([])
   const [label, setLabel] = useState("")
   const [claiming, setClaiming] = useState(false)
 
@@ -167,6 +168,7 @@ export function ShareButton({
       .then((r) => {
         setDomains(r.domains)
         setDomainBase(r.base)
+        setWorkspaceDomains(r.workspace_domains)
       })
       .catch(() => {})
   const claimDomain = async (e: React.FormEvent) => {
@@ -496,6 +498,36 @@ export function ShareButton({
                 <p className="mt-1.5 font-mono text-2xs text-muted-foreground">
                   A clean URL on {domainBase}, served at its own origin. Works for link- or
                   world-readable artifacts.
+                </p>
+              </div>
+            )}
+
+            {/* Also at — this artifact's URL on each of the workspace's custom
+                domains (managed in workspace settings, shown read-only here). */}
+            {workspaceDomains.length > 0 && (
+              <div className="mt-4 border-t border-border pt-3.5">
+                <div className="mb-1.5 font-mono text-2xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  Also at
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  {workspaceDomains.map((d) => (
+                    <div key={d.host} className="flex items-center gap-1.5">
+                      <Input
+                        readOnly
+                        data-testid="share-workspace-domain"
+                        aria-label={`URL on ${d.host}`}
+                        value={d.url}
+                        onFocus={(e) => e.currentTarget.select()}
+                        className="flex-1 font-mono text-2xs"
+                      />
+                      <Button variant="outline" onClick={() => copyUrl(d.url)}>
+                        Copy
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+                <p className="mt-1.5 font-mono text-2xs text-muted-foreground">
+                  On your workspace's custom domain. Manage domains in workspace settings.
                 </p>
               </div>
             )}

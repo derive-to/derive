@@ -1,4 +1,4 @@
-import type { DomainRecord } from "@dock/core"
+import type { ArtifactRecord, DomainRecord } from "@dock/core"
 import { Hono } from "hono"
 import { z } from "zod"
 import type { AppContext } from "../context"
@@ -26,11 +26,14 @@ const RESERVED = new Set([
 // A single DNS label: 1-63 chars, a-z0-9 and hyphens, not hyphen-edged.
 const LABEL = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/
 
+/** The artifact's ref (`<short_id>-<slug>`), the path segment in its URLs. */
+const refOf = (a: ArtifactRecord): string => (a.slug ? `${a.short_id}-${a.slug}` : a.short_id)
+
 /**
- * Vanity subdomains (domain mode C1, subdomain tier): assign `<label>.<base>` to an
- * artifact, list, and release. Gated on `share` (the same authority as visibility),
- * and only available when the server sets a base domain (DOCK_SUBDOMAIN_BASE).
- * Serving at the host root is handled by the host-dispatch middleware in app.ts.
+ * Per-artifact vanity subdomains (`<label>.<base>`, needs DOCK_SUBDOMAIN_BASE): claim,
+ * list, release; gated on `share`. Workspace custom domains are managed separately
+ * (workspace-domains.ts) but surfaced here read-only as "also at <domain>/<ref>", so
+ * the share dialog shows every URL an artifact is reachable at. Serving is in app.ts.
  */
 export const domainRoutes = (ctx: AppContext) => {
   const { meta, authorize } = ctx
@@ -48,15 +51,27 @@ export const domainRoutes = (ctx: AppContext) => {
     host: d.host,
     url: `${scheme}//${d.host}`,
     kind: d.kind,
+    status: d.status,
     created_at: d.created_at,
   })
 
-  // The artifact's vanity hosts (and whether the server has a base configured).
+  // The artifact's subdomains (manageable) + the workspace's active custom domains
+  // (read-only here; managed in workspace settings), each with this artifact's URL.
   app.get("/v1/artifacts/:shortId/domains", async (c) => {
     const artifact = await meta.getByShortId(c.req.param("shortId"))
     if (!artifact || !(await authorize(c, "read", artifact))) return fail(c, 404, "not found")
-    const domains = await meta.getArtifactDomains(artifact.id)
-    return c.json({ base: base ?? null, domains: domains.map(toJson) })
+    const [subs, wsDomains] = await Promise.all([
+      meta.getArtifactDomains(artifact.id),
+      meta.getWorkspaceDomains(artifact.org_id),
+    ])
+    const ref = refOf(artifact)
+    return c.json({
+      base: base ?? null,
+      domains: subs.map(toJson),
+      workspace_domains: wsDomains
+        .filter((d) => d.status === "active")
+        .map((d) => ({ host: d.host, url: `${scheme}//${d.host}/${ref}` })),
+    })
   })
 
   // Claim `<label>.<base>` for the artifact. Idempotent if it is already yours.
@@ -86,7 +101,7 @@ export const domainRoutes = (ctx: AppContext) => {
     return c.json(toJson(created), 201)
   })
 
-  // Release a vanity host (scoped to the artifact's workspace).
+  // Release one of the artifact's subdomains (scoped to this artifact).
   app.delete("/v1/artifacts/:shortId/domains/:host", async (c) => {
     const artifact = await meta.getByShortId(c.req.param("shortId"))
     if (!artifact || !(await authorize(c, "read", artifact))) return fail(c, 404, "not found")

@@ -18,6 +18,10 @@ export type Visibility = "public" | "link" | "org" | "password"
 /** A platform subdomain (`name.dockd.app`) or a customer's own domain. */
 export type DomainKind = "subdomain" | "custom"
 
+/** Serving status of a host. Subdomains are `active` immediately; a custom domain
+ *  is `pending` until its TLS cert + ownership validate (then `active`), or `error`. */
+export type DomainStatus = "active" | "pending" | "error"
+
 export interface ArtifactRecord {
   id: string
   short_id: string
@@ -244,13 +248,24 @@ export interface MetaStore {
    *  artifact — folded into their effective artifact role (collection sharing). */
   collectionRolesForArtifact(artifactId: string, userId: string): Promise<Role[]>
 
-  // ---- Domain mode: a hostname serving an artifact at its own origin ------
-  /** The artifact a hostname serves, or null. The hot path for host dispatch. */
+  // ---- Domain mode: a hostname serving artifact(s) at its own origin ------
+  // A domain row is either bound to one artifact (`artifact_id` set: a vanity
+  // subdomain today, a per-artifact custom domain later — served at the host root)
+  // or a workspace domain (`artifact_id` null, `org_id` set — the workspace's
+  // artifacts served at `<host>/<ref>`).
+  /** The domain record for a host, or null. The hot path for host dispatch. */
   getDomain(host: string): Promise<DomainRecord | null>
-  /** Claim a hostname for an artifact. Returns null if the host is already taken. */
+  /** Claim a host. Returns null if it's already taken (globally unique). */
   setDomain(d: NewDomain): Promise<DomainRecord | null>
-  /** Hostnames pointing at an artifact (for the share UI). */
+  /** Hosts bound to a specific artifact (subdomains; per-artifact customs later). */
   getArtifactDomains(artifactId: string): Promise<DomainRecord[]>
+  /** A workspace's own custom domains (artifact_id null), for the settings UI. */
+  getWorkspaceDomains(orgId: string): Promise<DomainRecord[]>
+  /** Update a custom domain's validation status + the records to display. */
+  updateDomain(
+    host: string,
+    fields: { status?: DomainStatus; verification?: string | null },
+  ): Promise<DomainRecord | null>
   /** Release a hostname, scoped to its owning workspace. */
   deleteDomain(host: string, orgId: string): Promise<void>
 
@@ -529,16 +544,26 @@ export interface NewCollection {
 }
 export interface DomainRecord {
   host: string
-  artifact_id: string
+  /** The artifact this host serves at its root; null for a workspace domain. */
+  artifact_id: string | null
   org_id: string
   kind: DomainKind
+  status: DomainStatus
+  /** The Cloudflare custom-hostname id, for status refresh + teardown (custom only). */
+  cf_hostname_id: string | null
+  /** JSON-encoded DNS records the customer must add to validate (custom, while pending). */
+  verification: string | null
   created_at: string
 }
 export interface NewDomain {
   host: string
-  artifact_id: string
+  /** Bind to an artifact (subdomain / per-artifact custom); omit for a workspace domain. */
+  artifact_id?: string | null
   org_id: string
   kind: DomainKind
+  status?: DomainStatus
+  cf_hostname_id?: string | null
+  verification?: string | null
 }
 export interface CollectionMemberRecord {
   id: string

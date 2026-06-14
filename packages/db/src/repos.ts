@@ -11,6 +11,7 @@ import type {
   DeliveryRecord,
   DeliveryStatus,
   DomainRecord,
+  DomainStatus,
   ListArtifactsOpts,
   MembershipRecord,
   NewAgent,
@@ -639,6 +640,20 @@ export function makeRepos(db: SqliteDb) {
       | undefined) ?? null
   const getArtifactDomains = async (artifactId: string): Promise<DomainRecord[]> =>
     db.select().from(domain).where(eq(domain.artifact_id, artifactId)).all()
+  // A workspace's own custom domains: org-scoped and not bound to one artifact.
+  const getWorkspaceDomains = async (orgId: string): Promise<DomainRecord[]> =>
+    db
+      .select()
+      .from(domain)
+      .where(and(eq(domain.org_id, orgId), isNull(domain.artifact_id)))
+      .all()
+  const updateDomain = async (
+    host: string,
+    fields: { status?: DomainStatus; verification?: string | null },
+  ): Promise<DomainRecord | null> =>
+    ((await db.update(domain).set(fields).where(eq(domain.host, host)).returning().get()) as
+      | DomainRecord
+      | undefined) ?? null
   const deleteDomain = async (host: string, orgId: string): Promise<void> => {
     await db
       .delete(domain)
@@ -866,6 +881,8 @@ export function makeRepos(db: SqliteDb) {
     getDomain,
     setDomain,
     getArtifactDomains,
+    getWorkspaceDomains,
+    updateDomain,
     deleteDomain,
     createProposal,
     getProposal,

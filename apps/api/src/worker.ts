@@ -10,6 +10,7 @@ import { R2BlobStore } from "@dock/storage"
 import { D1Dialect } from "kysely-d1"
 import { createApp } from "./app"
 import { makeAuth } from "./auth-config"
+import { customDomainsFromEnv } from "./lib/cloudflare-saas"
 import { createDoBackplane, edgeCtx } from "./realtime-do"
 
 // The realtime room Durable Object (one per channel). Exported so the Workers
@@ -48,6 +49,10 @@ export interface Env {
   DOCK_SUPERADMIN_EMAILS?: string
   // Base domain for vanity subdomains (domain mode); unset = off.
   DOCK_SUBDOMAIN_BASE?: string
+  // Cloudflare for SaaS (BYO custom domains); all three unset = custom domains off.
+  CF_API_TOKEN?: string
+  CF_ZONE_ID?: string
+  CF_SAAS_FALLBACK_ORIGIN?: string
 }
 
 let app: ReturnType<typeof createApp> | null = null
@@ -84,6 +89,7 @@ export default {
         defaultOrgId: "default",
         subdomainBase:
           env.DOCK_SUBDOMAIN_BASE?.toLowerCase().replace(/^\.+|\.+$/g, "") || undefined,
+        customDomains: customDomainsFromEnv(env),
         // Read the SPA shell from static assets so /a/:ref can carry unfurl meta.
         // Cached per isolate; null on any miss leaves the shell untouched.
         shellFetch: async () => {
