@@ -188,6 +188,7 @@ export function buildContext(deps: AppDeps) {
     const s = deps.auth ? await deps.auth.api.getSession({ headers: c.req.raw.headers }) : null
     const u = s?.user ? { id: s.user.id, email: s.user.email, name: s.user.name ?? null } : null
     userCache.set(c, u)
+    if (u) c.set("actorId", u.id) // tag the access log with the resolved actor
     return u
   }
 
@@ -214,6 +215,7 @@ export function buildContext(deps: AppDeps) {
     const a =
       !b || (deps.token && safeEqual(b, deps.token)) ? null : await meta.getAgentByToken(sha256(b))
     agentCache.set(c, a)
+    if (a) c.set("actorId", a.id)
     return a
   }
 
@@ -294,6 +296,7 @@ export function buildContext(deps: AppDeps) {
       }
     }
     wsCache.set(c, ws)
+    c.set("orgId", ws)
     return ws
   }
   // Persist the active-workspace choice. Same cross-site handling as the viewer
