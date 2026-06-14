@@ -39,28 +39,39 @@ export function createBus(): EventBus {
   }
 }
 
-/** Ephemeral presence per artifact: name → last-seen ms. Lost on restart. */
+/** A live viewer of an artifact: server-derived identity + their effective role.
+ *  `email` is present for signed-in users, null for an anonymous (rando-handle)
+ *  viewer. Identity is never client-supplied (see the presence route). */
+export interface Viewer {
+  id: string
+  name: string
+  email: string | null
+  role: string | null
+}
+
+/** Ephemeral presence per artifact: viewer id → {viewer, last-seen ms}. Lost on
+ *  restart. Keyed by id so multiple tabs of one person collapse to a single row. */
 export class Presence {
-  private viewers = new Map<string, Map<string, number>>()
+  private viewers = new Map<string, Map<string, { v: Viewer; t: number }>>()
   constructor(private ttlMs = 45_000) {}
 
-  /** Records a heartbeat and returns the live viewer names. */
-  heartbeat(artifactId: string, name: string, now: number): string[] {
+  /** Records a heartbeat and returns the live viewers. */
+  heartbeat(artifactId: string, viewer: Viewer, now: number): Viewer[] {
     let m = this.viewers.get(artifactId)
     if (!m) {
       m = new Map()
       this.viewers.set(artifactId, m)
     }
-    m.set(name, now)
-    for (const [n, t] of m) if (now - t > this.ttlMs) m.delete(n)
-    return [...m.keys()]
+    m.set(viewer.id, { v: viewer, t: now })
+    for (const [id, e] of m) if (now - e.t > this.ttlMs) m.delete(id)
+    return [...m.values()].map((e) => e.v)
   }
 }
 
 /** Presence as a port: in-process is synchronous; a Durable Object / Redis store
  *  resolves asynchronously, so callers await the result either way. */
 export interface PresenceStore {
-  heartbeat(channel: string, name: string, now: number): string[] | Promise<string[]>
+  heartbeat(channel: string, viewer: Viewer, now: number): Viewer[] | Promise<Viewer[]>
 }
 
 /**

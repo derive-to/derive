@@ -2,6 +2,7 @@ import { join } from "node:path"
 import { FsBlobStore } from "@dock/storage/fs"
 import { describe, expect, it } from "vitest"
 import { createApp } from "../src/app"
+import type { Viewer } from "../src/bus"
 import {
   anonApp,
   app,
@@ -136,26 +137,31 @@ describe("live stream (SSE)", () => {
     }
   })
 
-  it("reports presence by server identity (signed-in name; anon gets a rando handle)", async () => {
+  it("reports presence by server identity: name + email + role; anon gets a rando handle, no email", async () => {
     const jess: TestUser = { id: "u_pres_jess", email: "jess@dock.test", name: "Jess" }
     const { app: a } = makeAuthedApp("presence", [jess])
     const { short_id } = await (
       await publishAs(a, "<h1>p</h1>", { visibility: "public" }, as(jess.email))
     ).json()
-    // Signed-in: the heartbeat is attributed to the account name, never a
-    // client-supplied one.
+    // Signed-in: identity is server-derived — account name + email + their role on
+    // the artifact (owner here), never a client-supplied label.
     const signed = await a.request(
       `/v1/artifacts/${short_id}/presence`,
       jsonAs(as(jess.email), { name: "SPOOF" }),
     )
-    const signedViewers = (await signed.json()).viewers as string[]
-    expect(signedViewers).toContain("Jess")
-    expect(signedViewers).not.toContain("SPOOF")
-    // Anonymous: a stable, friendly handle (helpful-kitty-95 style), never "anonymous".
+    const signedViewers = (await signed.json()).viewers as Viewer[]
+    const me = signedViewers.find((v) => v.email === "jess@dock.test")
+    expect(me).toMatchObject({ name: "Jess", email: "jess@dock.test", role: "owner" })
+    expect(signedViewers.some((v) => v.name === "SPOOF")).toBe(false)
+    // Anonymous: a stable, friendly handle (helpful-kitty-95 style), never
+    // "anonymous", and no email. Public artifact → role "viewer".
     const anon = await a.request(`/v1/artifacts/${short_id}/presence`, json({}))
-    const viewers = (await anon.json()).viewers as string[]
-    expect(viewers).not.toContain("anonymous")
-    expect(viewers.some((v) => /^[a-z]+-[a-z]+-\d{1,2}$/.test(v))).toBe(true)
+    const viewers = (await anon.json()).viewers as Viewer[]
+    expect(viewers.some((v) => v.name === "anonymous")).toBe(false)
+    const handle = viewers.find((v) => /^[a-z]+-[a-z]+-\d{1,2}$/.test(v.name))
+    expect(handle).toBeDefined()
+    expect(handle?.email).toBeNull()
+    expect(handle?.role).toBe("viewer")
   })
 })
 

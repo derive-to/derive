@@ -93,7 +93,7 @@ export function Artifact() {
   // Presence, live multiplayer cursors, the SSE stream, and view recording — see
   // use-artifact-live. The page feeds pointer moves in (from the iframe bridge
   // below) and reads `viewers` + the `cursorLayer` overlay ref back out.
-  const live = useArtifactLive({ shortId, me, onComment: refetchComments, onVersion: load })
+  const live = useArtifactLive({ shortId, onComment: refetchComments, onVersion: load })
 
   // The whole postMessage channel with the sandboxed iframe: text selection,
   // anchor geometry, scroll, deck position, and peer cursors in; highlight
@@ -294,7 +294,7 @@ export function Artifact() {
       {topBarSlot &&
         createPortal(
           <>
-            {!isMobile && <Presence viewers={live.viewers} self={me?.name ?? me?.email ?? ""} />}
+            {!isMobile && <Presence viewers={live.viewers} selfId={me?.id} />}
             {!isMobile && <CursorButton />}
             {!isAnon && (
               <ArtifactTopBar
