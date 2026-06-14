@@ -98,3 +98,18 @@ export async function proposeEdit(
     expect(res.ok(), `propose failed: ${res.status()}`).toBeTruthy()
   }).toPass({ timeout: 10_000 })
 }
+
+// Grant another account a role on an artifact (the GDocs-style per-artifact share).
+// Needed so a collaborator can comment/propose — only members can; an anonymous or
+// non-member link visitor is read-only.
+export async function shareArtifact(
+  req: APIRequestContext,
+  shortId: string,
+  email: string,
+  role: "viewer" | "commenter" | "editor" | "owner",
+): Promise<void> {
+  await expect(async () => {
+    const res = await req.put(`/v1/artifacts/${shortId}/members`, { data: { email, role } })
+    expect(res.ok(), `share failed: ${res.status()}`).toBeTruthy()
+  }).toPass({ timeout: 10_000 })
+}
