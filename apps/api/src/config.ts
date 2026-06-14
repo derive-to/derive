@@ -25,6 +25,9 @@ export interface Config {
   rateLimit: boolean
   sandboxOrigin?: string
   crossSite: boolean
+  /** Base domain for vanity subdomains (e.g. "dockd.app"): an artifact assigned
+   *  `q3.dockd.app` is served at that host's root. Unset = subdomain mode off. */
+  subdomainBase?: string
   versionWindowMs?: number
   maxArtifacts?: number
   maxBytes?: number
@@ -95,6 +98,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     rateLimit: env.DOCK_RATE_LIMIT !== "false",
     sandboxOrigin: env.DOCK_SANDBOX_URL,
     crossSite: env.DOCK_CROSS_SITE === "true",
+    subdomainBase: env.DOCK_SUBDOMAIN_BASE?.toLowerCase().replace(/^\.+|\.+$/g, "") || undefined,
     versionWindowMs: env.DOCK_VERSION_WINDOW ? Number(env.DOCK_VERSION_WINDOW) * 60_000 : undefined,
     maxArtifacts: posInt(env.DOCK_MAX_ARTIFACTS),
     maxBytes: posInt(env.DOCK_MAX_BYTES),

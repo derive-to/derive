@@ -220,6 +220,16 @@ CREATE TABLE IF NOT EXISTS collection_member (
 
 CREATE INDEX IF NOT EXISTS collection_member_user ON collection_member (user_id);
 
+CREATE TABLE IF NOT EXISTS domain (
+    host TEXT PRIMARY KEY,
+    artifact_id TEXT NOT NULL REFERENCES artifact(id),
+    org_id TEXT NOT NULL,
+    kind TEXT NOT NULL DEFAULT 'subdomain',
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+  );
+
+CREATE INDEX IF NOT EXISTS domain_artifact ON domain (artifact_id);
+
 CREATE TABLE IF NOT EXISTS proposal (
     id TEXT PRIMARY KEY,
     artifact_id TEXT NOT NULL REFERENCES artifact(id),

@@ -40,6 +40,8 @@ export interface Env {
   BASE_URL?: string
   DOCK_AUTH_SECRET?: string
   DOCK_SUPERADMIN_EMAILS?: string
+  // Base domain for vanity subdomains (domain mode); unset = off.
+  DOCK_SUBDOMAIN_BASE?: string
 }
 
 let app: ReturnType<typeof createApp> | null = null
@@ -74,6 +76,8 @@ export default {
           .map((s) => s.trim().toLowerCase())
           .filter(Boolean),
         defaultOrgId: "default",
+        subdomainBase:
+          env.DOCK_SUBDOMAIN_BASE?.toLowerCase().replace(/^\.+|\.+$/g, "") || undefined,
         // Read the SPA shell from static assets so /a/:ref can carry unfurl meta.
         // Cached per isolate; null on any miss leaves the shell untouched.
         shellFetch: async () => {

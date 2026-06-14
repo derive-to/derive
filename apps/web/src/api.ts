@@ -88,6 +88,13 @@ export interface ArtifactMember {
   name: string | null
   role: Role
 }
+/** A vanity host serving an artifact (domain mode). */
+export interface ArtifactDomain {
+  host: string
+  url: string
+  kind: string
+  created_at: string
+}
 /** The workspace: its name, the caller's role, and the member directory. */
 export interface Workspace {
   id: string
@@ -330,6 +337,17 @@ export const api = {
     f(`/v1/artifacts/${id}/members`, { ...opts({ email, role }), method: "PUT" }).then(j),
   removeMember: (id: string, userId: string): Promise<void> =>
     f(`/v1/artifacts/${id}/members/${userId}`, { method: "DELETE", credentials: "include" }).then(
+      () => undefined,
+    ),
+
+  // Vanity subdomains (domain mode). `base` is null when the server has none set,
+  // in which case the Share dialog hides the section.
+  listDomains: (id: string): Promise<{ base: string | null; domains: ArtifactDomain[] }> =>
+    f(`/v1/artifacts/${id}/domains`, opts()).then(j),
+  setDomain: (id: string, label: string): Promise<ArtifactDomain> =>
+    f(`/v1/artifacts/${id}/domains`, { ...opts({ label }), method: "PUT" }).then(j),
+  removeDomain: (id: string, host: string): Promise<void> =>
+    f(`/v1/artifacts/${id}/domains/${host}`, { method: "DELETE", credentials: "include" }).then(
       () => undefined,
     ),
   heartbeat: (id: string, name: string): Promise<{ viewers: string[] }> =>

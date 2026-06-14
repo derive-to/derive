@@ -4,6 +4,7 @@ import type {
   AuditAction,
   CommentState,
   DeliveryStatus,
+  DomainKind,
   NotificationKind,
   ProposalState,
   ReportState,
@@ -241,6 +242,19 @@ export const collectionMember = sqliteTable(
   },
   (t) => [uniqueIndex("collection_member_uniq").on(t.collection_id, t.user_id)],
 )
+
+// Domain mode: a hostname that serves an artifact at the root of its own origin.
+// `host` is globally unique (one host → one artifact); `kind` separates a platform
+// subdomain (name.dockd.app) from a customer's own domain.
+export const domain = sqliteTable("domain", {
+  host: text("host").primaryKey(),
+  artifact_id: text("artifact_id")
+    .notNull()
+    .references(() => artifact.id),
+  org_id: text("org_id").notNull(),
+  kind: text("kind").$type<DomainKind>().notNull().default("subdomain"),
+  created_at: text("created_at").notNull().default(now),
+})
 
 export const proposal = sqliteTable("proposal", {
   id: text("id").primaryKey(),
@@ -488,6 +502,14 @@ export const SCHEMA_STATEMENTS: string[] = [
     UNIQUE (collection_id, user_id)
   )`,
   `CREATE INDEX IF NOT EXISTS collection_member_user ON collection_member (user_id)`,
+  `CREATE TABLE IF NOT EXISTS domain (
+    host TEXT PRIMARY KEY,
+    artifact_id TEXT NOT NULL REFERENCES artifact(id),
+    org_id TEXT NOT NULL,
+    kind TEXT NOT NULL DEFAULT 'subdomain',
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+  )`,
+  `CREATE INDEX IF NOT EXISTS domain_artifact ON domain (artifact_id)`,
   `CREATE TABLE IF NOT EXISTS proposal (
     id TEXT PRIMARY KEY,
     artifact_id TEXT NOT NULL REFERENCES artifact(id),
