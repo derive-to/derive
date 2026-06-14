@@ -7,9 +7,15 @@
 //  - remove the Pages-style `_redirects` (`/*  /_shell.html  200`): on Workers that
 //    catch-all also rewrites `/assets/*`, so JS/CSS get served as HTML and the SPA never
 //    boots. `not_found_handling` replaces it correctly (real files win over the fallback).
+//  - write a `_headers` file so Vite's content-hashed `/assets/*` get a one-year
+//    immutable Cache-Control. Static Assets defaults to `max-age=0, must-revalidate`
+//    (right for the shell, which changes every deploy) but that re-validates every
+//    fingerprinted chunk on each load. The hash in the filename already busts the
+//    cache on change, so these are safe to pin. `_headers` only applies to assets the
+//    static layer serves directly — `/assets/*` is not in run_worker_first, so it does.
 //
 // Run via `pnpm --filter @dock/api build:web` (which builds apps/web first). Idempotent.
-import { copyFileSync, existsSync, rmSync } from "node:fs"
+import { copyFileSync, existsSync, rmSync, writeFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 
@@ -22,4 +28,10 @@ if (!existsSync(shell)) {
 copyFileSync(shell, join(dist, "index.html"))
 const redirects = join(dist, "_redirects")
 if (existsSync(redirects)) rmSync(redirects)
-process.stdout.write(`prepped edge assets in ${dist} (index.html written, _redirects removed)\n`)
+writeFileSync(
+  join(dist, "_headers"),
+  "/assets/*\n  Cache-Control: public, max-age=31536000, immutable\n",
+)
+process.stdout.write(
+  `prepped edge assets in ${dist} (index.html written, _redirects removed, _headers written)\n`,
+)
