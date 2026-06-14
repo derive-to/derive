@@ -125,13 +125,20 @@ export function artifactActions(p: {
   const actions: CommentActions = {
     meName: me?.name ?? me?.email ?? "",
     react: (commentId, emoji) => {
-      // Optimistic: reflect the toggle in the cache immediately, reconcile on the response.
-      qc.setQueryData(commentsQuery(shortId).queryKey, (cs) =>
+      // Optimistic: reflect the toggle immediately, snapshot to roll back on failure.
+      // A plain refetch can't undo the toggle when the server is unreachable, so the
+      // catch restores the pre-toggle cache instead.
+      const key = commentsQuery(shortId).queryKey
+      const prev = qc.getQueryData(key)
+      qc.setQueryData(key, (cs) =>
         (cs ?? []).map((c) =>
           c.id === commentId ? toggleReaction(c, emoji, me?.name ?? me?.email ?? "anonymous") : c,
         ),
       )
-      api.react(shortId, commentId, emoji).then(refetchComments).catch(refetchComments)
+      api
+        .react(shortId, commentId, emoji)
+        .then(refetchComments)
+        .catch(() => qc.setQueryData(key, prev))
     },
     edit: async (commentId, body) => {
       await api

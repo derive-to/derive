@@ -1,3 +1,4 @@
+import { useQueryClient } from "@tanstack/react-query"
 import { Lock, Share2, X } from "lucide-react"
 import { useState } from "react"
 import { type ArtifactMember, api, type Role } from "@/api"
@@ -46,6 +47,7 @@ export function ShareButton({ shortId, myRole }: { shortId: string; myRole?: Rol
   // GDocs model: owners and editors manage access; everyone else gets view-only.
   const canManage = myRole === "owner" || myRole === "editor"
 
+  const qc = useQueryClient()
   const load = () =>
     api
       .listMembers(shortId)
@@ -54,6 +56,13 @@ export function ShareButton({ shortId, myRole }: { shortId: string; myRole?: Rol
         setDefaultRole(r.default_role)
       })
       .catch(() => {})
+  // After a share change, refresh the local list AND the shared cache: the artifact
+  // query holds `my_role` (drives the toolbar), and the library reflects access.
+  const synced = async () => {
+    await load()
+    qc.invalidateQueries({ queryKey: ["artifact", shortId] })
+    qc.invalidateQueries({ queryKey: ["artifacts"] })
+  }
 
   const add = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -64,7 +73,7 @@ export function ShareButton({ shortId, myRole }: { shortId: string; myRole?: Rol
     try {
       await api.setMember(shortId, addr, role)
       setEmail("")
-      await load()
+      await synced()
     } catch (x) {
       setErr(x instanceof Error ? x.message : "Could not share")
     } finally {
@@ -74,11 +83,11 @@ export function ShareButton({ shortId, myRole }: { shortId: string; myRole?: Rol
   const change = async (m: ArtifactMember, next: Role) => {
     if (next === m.role || !m.email) return
     await api.setMember(shortId, m.email, next).catch(() => {})
-    await load()
+    await synced()
   }
   const remove = async (m: ArtifactMember) => {
     await api.removeMember(shortId, m.user_id).catch(() => {})
-    await load()
+    await synced()
   }
 
   return (
