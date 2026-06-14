@@ -1,3 +1,4 @@
+import { createHmac } from "node:crypto"
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -12,6 +13,7 @@ import {
   edgeGuard,
   enqueueForEvent,
   runDeliveryTick,
+  standardWebhookSignature,
 } from "../src/webhooks"
 import { nodeDnsGuard } from "../src/webhooks-node"
 import { ownerApp } from "./helpers"
@@ -107,6 +109,53 @@ describe("deliverOnce honors the injected guard", () => {
     const r = await deliverOnce(makeDelivery({ url: "http://127.0.0.1:1/hook" }), allowAll)
     expect(r.ok).toBe(false)
     expect(r.status).not.toMatch(/private address/)
+  })
+})
+
+describe("Standard Webhooks signing", () => {
+  it("produces a v1 base64 signature over {id}.{timestamp}.{body} a library can verify", () => {
+    const sig = standardWebhookSignature("whsec_c2VjcmV0", "wd_1", "1700000000", "{}")
+    expect(sig).toMatch(/^v1,[A-Za-z0-9+/]+=*$/)
+    // Independently reproduce it the way the standardwebhooks verifier does: strip the
+    // whsec_ prefix, base64-decode the key, HMAC the signed content, base64 the digest.
+    const key = Buffer.from("c2VjcmV0", "base64")
+    const expected = createHmac("sha256", key).update("wd_1.1700000000.{}").digest("base64")
+    expect(sig).toBe(`v1,${expected}`)
+  })
+
+  it("changes when the id, timestamp, or body changes (no replay across deliveries)", () => {
+    const base = standardWebhookSignature("s", "wd_1", "1700000000", "{}")
+    expect(standardWebhookSignature("s", "wd_2", "1700000000", "{}")).not.toBe(base)
+    expect(standardWebhookSignature("s", "wd_1", "1700000001", "{}")).not.toBe(base)
+    expect(standardWebhookSignature("s", "wd_1", "1700000000", '{"x":1}')).not.toBe(base)
+  })
+
+  it("sends both Standard Webhooks headers and the legacy header for a generic hook", async () => {
+    const spy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("ok", { status: 200 }))
+    const r = await deliverOnce(makeDelivery({ url: "https://hooks.example.com/x" }), allowAll)
+    expect(r.ok).toBe(true)
+    const headers = (spy.mock.calls[0]?.[1]?.headers ?? {}) as Record<string, string>
+    const ts = headers["webhook-timestamp"] ?? ""
+    expect(headers["webhook-id"]).toBe("wd_test")
+    expect(ts).toMatch(/^\d+$/)
+    expect(headers["webhook-signature"]).toMatch(/^v1,/)
+    expect(headers["x-dock-signature"]).toMatch(/^sha256=/) // legacy still present
+    // The signature is over the id/timestamp it actually sent.
+    const body = spy.mock.calls[0]?.[1]?.body as string
+    expect(headers["webhook-signature"]).toBe(standardWebhookSignature("s", "wd_test", ts, body))
+    spy.mockRestore()
+  })
+
+  it("does not sign Slack messages (Slack uses its own incoming-webhook URL secret)", async () => {
+    const spy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("ok", { status: 200 }))
+    await deliverOnce(
+      makeDelivery({ kind: "slack", url: "https://hooks.slack.com/services/x" }),
+      allowAll,
+    )
+    const headers = (spy.mock.calls[0]?.[1]?.headers ?? {}) as Record<string, string>
+    expect(headers["webhook-signature"]).toBeUndefined()
+    expect(headers["x-dock-signature"]).toBeUndefined()
+    spy.mockRestore()
   })
 })
 

@@ -28,6 +28,15 @@ export function WebhooksSection() {
       <p className="mb-4 text-sm text-muted-foreground">
         Get a POST (or a Slack message) when a comment is added or resolved, or a new version is
         published. Generic payloads are signed with{" "}
+        <a
+          href="https://www.standardwebhooks.com"
+          target="_blank"
+          rel="noreferrer"
+          className="underline"
+        >
+          Standard Webhooks
+        </a>{" "}
+        headers (<code className="font-mono">webhook-signature</code>), and the legacy{" "}
         <code className="font-mono">X-Dock-Signature</code>.
       </p>
 

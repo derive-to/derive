@@ -115,6 +115,26 @@ export function sign(secret: string, body: string): string {
   return `sha256=${createHmac("sha256", secret).update(body).digest("hex")}`
 }
 
+/**
+ * Standard Webhooks (standardwebhooks.com) signature. The signed content is
+ * `{id}.{timestamp}.{body}` and the header is `webhook-signature: v1,<base64 sig>`,
+ * paired with `webhook-id` and `webhook-timestamp`. The key is the secret with any
+ * `whsec_` prefix stripped, base64-decoded — exactly how the standardwebhooks
+ * verifier libraries derive it, so a consumer can verify Dock with an off-the-shelf
+ * library (passing the same secret string) instead of hand-rolling HMAC. We send this
+ * alongside the legacy `X-Dock-Signature` header, so existing consumers keep working.
+ */
+export function standardWebhookSignature(
+  secret: string,
+  id: string,
+  timestamp: string,
+  body: string,
+): string {
+  const key = Buffer.from(secret.replace(/^whsec_/, ""), "base64")
+  const sig = createHmac("sha256", key).update(`${id}.${timestamp}.${body}`).digest("base64")
+  return `v1,${sig}`
+}
+
 /** Deliver one outbox row. Slack kind sends a Slack message; generic sends the
  *  signed normalized payload. The `guard` re-validates the target host for SSRF at
  *  delivery time (Node resolves DNS; the edge trusts Cloudflare's egress isolation).
@@ -132,7 +152,17 @@ export async function deliverOnce(
       "user-agent": "dock-webhooks/1",
       "x-dock-event": d.event_type,
     }
-    if (!isSlack) headers["x-dock-signature"] = sign(d.secret, body)
+    if (!isSlack) {
+      // Sign two ways: the legacy `X-Dock-Signature` (sha256=hex over the body) for
+      // existing consumers, and Standard Webhooks headers so new consumers can verify
+      // with an off-the-shelf library. `webhook-id` is the (unique) delivery id, which
+      // also gives consumers a natural idempotency key for at-least-once delivery.
+      headers["x-dock-signature"] = sign(d.secret, body)
+      const ts = Math.floor(Date.now() / 1000).toString()
+      headers["webhook-id"] = d.id
+      headers["webhook-timestamp"] = ts
+      headers["webhook-signature"] = standardWebhookSignature(d.secret, d.id, ts, body)
+    }
     // Re-validate the target at delivery, not just at registration: a hostname that
     // was public when the webhook was created can be rebound to an internal IP
     // (169.254.169.254 / RFC1918 / loopback) by delivery time (DNS rebinding). The
