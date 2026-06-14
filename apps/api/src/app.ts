@@ -2,6 +2,7 @@ import { type Context, Hono } from "hono"
 import { compress } from "hono/compress"
 import { type AppDeps, buildContext } from "./context"
 import { corsFor, fail, TOMBSTONE } from "./lib/http"
+import { observability } from "./lib/observability"
 import { makeRateLimiter } from "./lib/rate-limit"
 import { serveContent } from "./lib/serve-content"
 import { log } from "./log"
@@ -36,6 +37,10 @@ export function createApp(deps: AppDeps): Hono {
   const ctx = buildContext(deps)
   const app = new Hono()
 
+  // Outermost: a per-request id + one structured access-log line (method, path,
+  // status, duration, actor, org), so a 500 is correlatable to who/what.
+  app.use("*", observability())
+
   // gzip everything (Node/Fly entry only — the Worker edge compresses already).
   // Registered first so it wraps every downstream response; honors Accept-Encoding
   // and skips already-small bodies. Exception: the SSE streams (paths ending in
@@ -52,6 +57,7 @@ export function createApp(deps: AppDeps): Hono {
     log.error("unhandled error", {
       method: c.req.method,
       path: c.req.path,
+      request_id: c.get("requestId"),
       error: err instanceof Error ? err.message : String(err),
     })
     return c.json({ error: "internal error" }, 500)
