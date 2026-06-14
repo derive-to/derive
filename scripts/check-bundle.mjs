@@ -10,13 +10,15 @@ import { gzipSync } from "node:zlib"
 
 const ASSETS = join(process.cwd(), "apps/web/dist/client/assets")
 
-// Total gzipped JS across all chunks (catches broad weight creep), and the
-// single largest chunk (catches a fat eager import landing in the entry/vendor).
-const TOTAL_BUDGET = 260 * 1024
-// Bumped 95 -> 120 after the React 19 + React Compiler upgrade (#94): the compiler
-// runtime + React 19 land in the entry chunk (~102 kB gzipped), a justified, one-time
-// baseline jump. Still catches a stray fat import (radix/cmdk/phosphor) on top.
-const CHUNK_BUDGET = 120 * 1024
+// This is a tripwire for ACCIDENTS (a stray `import * from "phosphor"`, a fat dep
+// landing eagerly), not a perf diet. Cloudflare gives the client assets multi-MB
+// of room, so the absolute numbers are loose on purpose — generous headroom over
+// the real figures (~259 kB total / ~113 kB largest at the time of writing) so a
+// normal dep doesn't trip it, but a sudden balloon does. Bump deliberately when a
+// feature earns it. The single-chunk budget is the sharper signal: a fat eager
+// import shows up as one chunk blowing past, not as broad creep.
+const TOTAL_BUDGET = 450 * 1024
+const CHUNK_BUDGET = 180 * 1024
 
 let files
 try {

@@ -2,11 +2,11 @@ import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query"
 import { useNavigate, useSearch } from "@tanstack/react-router"
 import { Plus, X } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
+import { toast } from "sonner"
 import { type Artifact, api } from "@/api"
 import { Icon } from "@/components/icons"
 import { EmptyState } from "@/components/shared/empty-state"
 import { useShell } from "@/components/shell-context"
-import { useToast } from "@/components/toast"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -31,7 +31,6 @@ function LibraryBody() {
   const nav = useNavigate()
   const search = useSearch({ from: "/" })
   const { summary, collections, refreshSummary } = useShell()
-  const { toast, show } = useToast()
   const prefetch = usePrefetchArtifact()
   const qc = useQueryClient()
   const file = useRef<HTMLInputElement>(null)
@@ -83,7 +82,7 @@ function LibraryBody() {
       const a = await api.publish(f, { title: f.name.replace(/\.[^.]+$/, "") })
       nav({ to: "/a/$ref", params: { ref: a.short_id } })
     } catch (e) {
-      show((e as Error).message)
+      toast.error((e as Error).message)
       setBusy(false)
     }
   }
@@ -112,18 +111,18 @@ function LibraryBody() {
       await api.favorite(a.short_id, on)
       refreshSummary()
     } catch (e) {
-      show((e as Error).message)
+      toast.error((e as Error).message)
       qc.invalidateQueries({ queryKey: listQuery.queryKey })
     }
   }
 
   const renameCollection = async (id: string, title: string) => {
-    await api.renameCollection(id, title).catch((e) => show((e as Error).message))
+    await api.renameCollection(id, title).catch((e) => toast.error((e as Error).message))
     refreshSummary()
     nav({ to: "/", search: { collection: id } })
   }
   const deleteCollection = async (id: string) => {
-    await api.deleteCollection(id).catch((e) => show((e as Error).message))
+    await api.deleteCollection(id).catch((e) => toast.error((e as Error).message))
     nav({ to: "/", search: {} })
   }
 
@@ -295,13 +294,8 @@ function LibraryBody() {
         )}
 
         {shareCol && (
-          <ShareCollectionDialog
-            collection={shareCol}
-            show={show}
-            onClose={() => setShareCol(null)}
-          />
+          <ShareCollectionDialog collection={shareCol} onClose={() => setShareCol(null)} />
         )}
-        {toast}
       </div>
     </div>
   )

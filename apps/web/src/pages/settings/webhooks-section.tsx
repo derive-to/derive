@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react"
+import { toast } from "sonner"
 import { api, type Delivery, type Webhook } from "@/api"
 import { EmptyState } from "@/components/shared/empty-state"
 import { Spinner } from "@/components/shared/spinner"
@@ -8,7 +9,7 @@ import { Card } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { ALL_EVENTS, selectClass } from "./roles"
 
-export function WebhooksSection({ show }: { show: (m: string) => void }) {
+export function WebhooksSection() {
   const [hooks, setHooks] = useState<Webhook[] | null>(null)
   const load = useCallback(
     () =>
@@ -32,7 +33,7 @@ export function WebhooksSection({ show }: { show: (m: string) => void }) {
 
       <NewWebhook
         onCreated={(msg) => {
-          show(msg)
+          toast.success(msg)
           load()
         }}
       />
@@ -50,10 +51,10 @@ export function WebhooksSection({ show }: { show: (m: string) => void }) {
               key={w.id}
               hook={w}
               onChanged={(m) => {
-                show(m)
+                toast.success(m)
                 load()
               }}
-              onError={show}
+              onError={(m) => toast.error(m)}
             />
           ))
         )}

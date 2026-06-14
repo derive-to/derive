@@ -1,5 +1,6 @@
 import type { QueryClient } from "@tanstack/react-query"
 import type { Dispatch, SetStateAction } from "react"
+import { toast } from "sonner"
 import { api, type Comment, type Mention } from "@/api"
 import { commentsQuery } from "@/lib/queries"
 import type { CommentActions } from "./comment-actions"
@@ -38,7 +39,6 @@ export function artifactActions(p: {
   post: (msg: Record<string, unknown>) => void
   load: () => void
   refetchComments: () => void
-  show: (msg: string) => void
   onRestoredJump: () => void
   setEditing: Dispatch<SetStateAction<boolean>>
   setSrc: Dispatch<SetStateAction<string>>
@@ -48,7 +48,7 @@ export function artifactActions(p: {
   setActiveThread: Dispatch<SetStateAction<string | null>>
   setRestoring: Dispatch<SetStateAction<boolean>>
 }) {
-  const { shortId, art, qc, me, post, load, refetchComments, show } = p
+  const { shortId, art, qc, me, post, load, refetchComments } = p
 
   const startEdit = async () => {
     p.setEditing(true)
@@ -62,11 +62,11 @@ export function artifactActions(p: {
         art.title ? `${art.short_id}.md` : "edit.md",
         "edited in browser",
       )
-      show(`Published v${a.current_version}`)
+      toast.success(`Published v${a.current_version}`)
       p.setEditing(false)
       load()
     } catch (e) {
-      show((e as Error).message)
+      toast.error((e as Error).message)
     }
   }
   // A commenter can't publish; their edit becomes a proposal for review. The
@@ -79,12 +79,12 @@ export function artifactActions(p: {
         art.title ? `${art.short_id}.md` : "edit.md",
         p.proposeMsg.trim() || "Proposed change",
       )
-      show("Proposed — sent for review")
+      toast.success("Proposed — sent for review")
       p.setEditing(false)
       p.setProposeMsg("")
       load()
     } catch (e) {
-      show((e as Error).message)
+      toast.error((e as Error).message)
     }
   }
   const addComment = async (
@@ -99,7 +99,7 @@ export function artifactActions(p: {
         anchor: opts?.threadId ? undefined : (opts?.anchor ?? undefined),
         mentions: opts?.mentions?.length ? opts.mentions : undefined,
       })
-      .catch((e) => show((e as Error).message))
+      .catch((e) => toast.error((e as Error).message))
     refetchComments()
   }
   const reply = (text: string, threadId: string, mentions: Mention[] = []) =>
@@ -134,32 +134,34 @@ export function artifactActions(p: {
       api.react(shortId, commentId, emoji).then(refetchComments).catch(refetchComments)
     },
     edit: async (commentId, body) => {
-      await api.editComment(shortId, commentId, body).catch((e) => show((e as Error).message))
+      await api
+        .editComment(shortId, commentId, body)
+        .catch((e) => toast.error((e as Error).message))
       refetchComments()
     },
     remove: (commentId) => {
       api
         .deleteComment(shortId, commentId)
         .then(refetchComments)
-        .catch((e) => show((e as Error).message))
+        .catch((e) => toast.error((e as Error).message))
     },
     copyLink: (threadId) => {
       const url = `${window.location.origin}${window.location.pathname}?c=${threadId}`
       navigator.clipboard
         ?.writeText(url)
-        .then(() => show("Link copied"))
-        .catch(() => show(url))
+        .then(() => toast.success("Link copied"))
+        .catch(() => toast(url))
     },
   }
   const restore = async (n: number) => {
     p.setRestoring(true)
     try {
       const a = await api.restore(shortId, n)
-      show(`Restored as v${a.current_version}`)
+      toast.success(`Restored as v${a.current_version}`)
       p.onRestoredJump() // jump to the new current
       load()
     } catch (e) {
-      show((e as Error).message)
+      toast.error((e as Error).message)
     } finally {
       p.setRestoring(false)
     }

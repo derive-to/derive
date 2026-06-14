@@ -9,6 +9,7 @@ import {
 } from "@tanstack/react-router"
 import { type ReactNode, useEffect } from "react"
 import { AppShell } from "../components/app-shell"
+import { Toaster } from "../components/ui/sonner"
 import { AuthProvider, ThemeProvider } from "../ctx"
 import { queryClient } from "../lib/query-client"
 import { STORAGE_KEYS } from "../lib/storage-keys"
@@ -96,6 +97,7 @@ function RootDocument({ children }: { children: ReactNode }) {
       </head>
       <body>
         {children}
+        <Toaster />
         <Scripts />
       </body>
     </html>

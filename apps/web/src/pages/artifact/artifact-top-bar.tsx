@@ -34,7 +34,6 @@ export function ArtifactTopBar(props: {
   onFavorite: (fav: boolean) => void
   onTags: (tags: string[]) => void
   onCollections: (ids: string[]) => void
-  onReport: (msg: string) => void
   onInsights: () => void
   onHistory: () => void
   onReview: () => void
@@ -57,7 +56,7 @@ export function ArtifactTopBar(props: {
         onChange={props.onCollections}
       />
       <ShareButton shortId={shortId} myRole={props.myRole} />
-      <ReportButton shortId={shortId} onDone={props.onReport} />
+      <ReportButton shortId={shortId} />
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <Button

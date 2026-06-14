@@ -1,5 +1,6 @@
 import { Bot } from "lucide-react"
 import { useCallback, useEffect, useState } from "react"
+import { toast } from "sonner"
 import { type Agent, api, type Role } from "@/api"
 import { EmptyState } from "@/components/shared/empty-state"
 import { Spinner } from "@/components/shared/spinner"
@@ -9,7 +10,7 @@ import { Card } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { selectClass } from "./roles"
 
-export function AgentsSection({ show }: { show: (m: string) => void }) {
+export function AgentsSection() {
   const [agents, setAgents] = useState<Agent[] | null>(null)
   const load = useCallback(
     () =>
@@ -34,7 +35,7 @@ export function AgentsSection({ show }: { show: (m: string) => void }) {
 
       <NewAgent
         onCreated={(msg) => {
-          show(msg)
+          toast.success(msg)
           load()
         }}
       />
@@ -52,10 +53,10 @@ export function AgentsSection({ show }: { show: (m: string) => void }) {
               key={a.id}
               agent={a}
               onChanged={(m) => {
-                show(m)
+                toast.success(m)
                 load()
               }}
-              onError={show}
+              onError={(m) => toast.error(m)}
             />
           ))
         )}
