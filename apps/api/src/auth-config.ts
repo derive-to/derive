@@ -25,7 +25,25 @@ export function makeAuth(db: AuthDb, baseUrl: string, secret: string) {
   const devOrigins = /^https?:\/\/(localhost|127\.0\.0\.1)(:|$)/.test(baseUrl)
     ? ["http://localhost:3000", "http://localhost:5173"]
     : []
-  const trusted = [...new Set([baseUrl, ...webOrigins, ...devOrigins])]
+  const staticTrusted = [...new Set([baseUrl, ...webOrigins, ...devOrigins])]
+
+  // Also trust a request whose Origin equals the origin it was actually served on
+  // (its own Host). A same-origin request is never CSRF, so this is safe: a
+  // cross-site attacker's Origin can never equal the victim browser's Host. It
+  // rescues the common self-host footgun: a port-mapped container or reverse proxy
+  // reached at an origin that doesn't exactly match BASE_URL (e.g. BASE_URL inferred
+  // as :8080 but the host published :8081) would otherwise 403 INVALID_ORIGIN on
+  // signup/login. Cross-origin (the real CSRF case) still requires an explicit
+  // baseUrl / DOCK_WEB_ORIGIN entry. A TLS-terminating proxy (browser https, app
+  // http) won't match here, so set BASE_URL to the public https origin for those.
+  const trusted = async (request?: Request): Promise<string[]> => {
+    try {
+      const origin = request?.headers.get("origin")
+      if (origin && request && origin === new URL(request.url).origin)
+        return [...staticTrusted, origin]
+    } catch {}
+    return staticTrusted
+  }
 
   const socialProviders: Record<string, { clientId: string; clientSecret: string }> = {}
   const googleId = env("GOOGLE_CLIENT_ID")
@@ -64,9 +82,15 @@ export function makeAuth(db: AuthDb, baseUrl: string, secret: string) {
     socialProviders,
     trustedOrigins: trusted,
     plugins: oidc.length ? [genericOAuth({ config: oidc })] : [],
-    ...(crossSite
-      ? { advanced: { defaultCookieAttributes: { sameSite: "none" as const, secure: true } } }
-      : {}),
+    advanced: {
+      // Keep the CSRF origin check on in every environment. Better Auth silently
+      // disables it when NODE_ENV=test; pinning it false means a server mistakenly
+      // booted with NODE_ENV=test still validates Origin (and lets the suite test it).
+      disableOriginCheck: false,
+      ...(crossSite
+        ? { defaultCookieAttributes: { sameSite: "none" as const, secure: true } }
+        : {}),
+    },
   })
 }
 
