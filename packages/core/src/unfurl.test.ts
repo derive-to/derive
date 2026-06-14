@@ -16,17 +16,19 @@ const info: UnfurlInfo = {
   kindLabel: "Markdown",
   versionCount: 3,
   commentCount: 1,
-  pageUrl: "http://dock.test/a/abc12345-my-report",
+  pageUrl: "http://dock.test/a/my-report-abc12345",
   imageUrl: "http://dock.test/v1/og/abc12345",
   oembedUrl: "http://dock.test/v1/oembed?url=http%3A%2F%2Fdock.test%2Fa%2Fabc12345",
   embedUrl: "http://dock.test/v1/embed/abc12345",
 }
 
 describe("parseRef", () => {
-  it("reads a bare short id, a slug, and a version suffix", () => {
+  it("reads a bare short id, a name-first slug, a version suffix, and legacy order", () => {
     expect(parseRef("abc12345")).toEqual({ shortId: "abc12345", version: undefined })
+    expect(parseRef("my-title-abc12345")).toEqual({ shortId: "abc12345", version: undefined })
+    expect(parseRef("my-title-abc12345@v4")).toEqual({ shortId: "abc12345", version: 4 })
+    // Legacy short-id-first links still resolve.
     expect(parseRef("abc12345-my-title")).toEqual({ shortId: "abc12345", version: undefined })
-    expect(parseRef("abc12345@v4")).toEqual({ shortId: "abc12345", version: 4 })
   })
 })
 

@@ -116,7 +116,8 @@ describe("workspace custom domains (Cloudflare for SaaS)", () => {
     // The per-artifact share data shows the artifact's URL on the workspace domain.
     const art = await (await owner.request(`/v1/artifacts/${short}/domains`)).json()
     const wd = art.workspace_domains.find((d: { host: string }) => d.host === "pages.acme.com")
-    expect(wd?.url).toMatch(new RegExp(`^https://pages\\.acme\\.com/${short}`))
+    // Name-first ref: the short id is the last path token.
+    expect(wd?.url).toMatch(new RegExp(`^https://pages\\.acme\\.com/.*${short}$`))
   })
 
   it("never serves one workspace's artifact under another workspace's domain", async () => {

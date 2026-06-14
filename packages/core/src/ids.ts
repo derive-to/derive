@@ -13,15 +13,22 @@ export const slugify = (s: string): string =>
     .slice(0, 48)
 
 /**
- * An artifact ref is a short id, optionally with a slug and an `@vN` suffix:
- *   abc12345            → { shortId: "abc12345" }
- *   abc12345-my-title   → { shortId: "abc12345" }
- *   abc12345@v4         → { shortId: "abc12345", version: 4 }
- * Used by the API (unfurl/embed/og routes); mirrors the SPA's own `parse-ref.ts`
+ * An artifact ref is a name (slug) followed by the short id, with an optional `@vN`
+ * suffix — the short id is the last hyphen token (name-first, so the URL reads well):
+ *   abc12345              → { shortId: "abc12345" }
+ *   my-title-abc12345     → { shortId: "abc12345" }
+ *   my-title-abc12345@v4  → { shortId: "abc12345", version: 4 }
+ * The short id is taken from the last token, falling back to the first (legacy
+ * short-id-first links) then the whole ref. Mirrors the SPA's own `parse-ref.ts`
  * (kept separate so the client bundle doesn't pull in core) so the same `/a/:ref`
  * link resolves identically on the server and the client.
  */
 export const parseRef = (ref: string): { shortId: string; version?: number } => {
-  const m = ref.match(/^([0-9a-z]{6,12})(?:-[a-z0-9-]*?)?(?:@v(\d+))?$/)
-  return { shortId: m?.[1] ?? ref, version: m?.[2] ? Number(m[2]) : undefined }
+  const [base = "", v] = ref.split("@v")
+  const parts = base.split("-")
+  const id = /^[0-9a-z]{6,12}$/
+  const last = parts[parts.length - 1] ?? ""
+  const first = parts[0] ?? ""
+  const shortId = id.test(last) ? last : id.test(first) ? first : base
+  return { shortId, version: v ? Number(v) : undefined }
 }

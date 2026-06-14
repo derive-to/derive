@@ -35,7 +35,8 @@ describe("unfurl + embed", () => {
       title: "Deck",
     })
     expect(body.html).toContain("<iframe")
-    expect(body.html).toContain(`/v1/embed/${short}`)
+    // Name-first ref: the embed URL is /v1/embed/<slug>-<short_id>.
+    expect(body.html).toContain(`/v1/embed/deck-${short}`)
   })
 
   it("oembed rejects a non-artifact url and a missing url", async () => {
