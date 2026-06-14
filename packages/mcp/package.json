@@ -11,7 +11,11 @@
   "bin": {
     "dock-mcp": "./bin/dock-mcp.mjs"
   },
-  "files": ["bin", "src", "SKILL.md"],
+  "files": [
+    "bin",
+    "src",
+    "SKILL.md"
+  ],
   "publishConfig": {
     "access": "public"
   },

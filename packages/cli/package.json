@@ -11,7 +11,10 @@
   "bin": {
     "dock": "./bin/dock.js"
   },
-  "files": ["bin", "src"],
+  "files": [
+    "bin",
+    "src"
+  ],
   "publishConfig": {
     "access": "public"
   },
