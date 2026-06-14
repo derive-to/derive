@@ -136,21 +136,25 @@ export function MobileComments({
               </div>
             </div>
           )}
-          {openThreads.map((t) => (
-            <div key={t[0].thread_id} className="mb-2.5">
-              <CommentCard
-                thread={t}
-                active={activeThread === t[0].thread_id}
-                hovered={false}
-                present={inDoc[t[0].thread_id]}
-                onActivate={onActivate}
-                onHover={() => {}}
-                onResolve={onResolve}
-                onReply={onReply}
-                onJump={jumpToText}
-              />
-            </div>
-          ))}
+          {openThreads.map((t) => {
+            const head = t[0]
+            if (!head) return null
+            return (
+              <div key={head.thread_id} className="mb-2.5">
+                <CommentCard
+                  thread={t}
+                  active={activeThread === head.thread_id}
+                  hovered={false}
+                  present={inDoc[head.thread_id]}
+                  onActivate={onActivate}
+                  onHover={() => {}}
+                  onResolve={onResolve}
+                  onReply={onReply}
+                  onJump={jumpToText}
+                />
+              </div>
+            )
+          })}
           {resolved.length > 0 && (
             <ResolvedSection
               threads={resolved}

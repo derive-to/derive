@@ -8,6 +8,7 @@ import {
   useState,
 } from "react"
 import { api, type Comment, type DirUser, type Mention } from "@/api"
+import { Icon } from "@/components/icons"
 import { ColoredAvatar } from "@/components/shared/colored-avatar"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/input"
@@ -83,7 +84,10 @@ export function PinnedZone({
     composer?.anchor && composer.top != null
       ? { top: composer.top, quote: composer.anchor.exact ?? null }
       : null
-  const items = pins.map((p) => ({ id: p.thread[0].thread_id, desiredY: p.desiredY }))
+  const items = pins.flatMap((p) => {
+    const head = p.thread[0]
+    return head ? [{ id: head.thread_id, desiredY: p.desiredY }] : []
+  })
   if (activeComposer) items.push({ id: COMPOSER_ID, desiredY: activeComposer.top })
   const activeId = activeComposer ? COMPOSER_ID : activeThread
   const pos = layoutPins(items, heights, activeId, 12)
@@ -91,7 +95,9 @@ export function PinnedZone({
   return (
     <div className="absolute inset-0 overflow-hidden">
       {pins.map((p) => {
-        const id = p.thread[0].thread_id
+        const head = p.thread[0]
+        if (!head) return null
+        const id = head.thread_id
         const active = !activeComposer && activeThread === id
         const y = pos[id] ?? p.desiredY
         return (
@@ -313,7 +319,7 @@ export function CommentRow({ c, compact }: { c: Comment; compact?: boolean }) {
                 data-testid="comment-react"
                 className="grid size-6 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-hover hover:text-foreground"
               >
-                😊
+                <Icon name="react" size={16} />
               </button>
             </PopoverTrigger>
             <PopoverContent align="end" className="w-auto p-1">
@@ -343,7 +349,7 @@ export function CommentRow({ c, compact }: { c: Comment; compact?: boolean }) {
                 data-testid="comment-more"
                 className="grid size-6 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-hover hover:text-foreground"
               >
-                ⋯
+                <Icon name="more" size={16} />
               </button>
             </PopoverTrigger>
             <PopoverContent align="end" className="w-auto min-w-[132px] p-1">
@@ -357,7 +363,7 @@ export function CommentRow({ c, compact }: { c: Comment; compact?: boolean }) {
                   }}
                   className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-sm font-medium text-foreground transition-colors hover:bg-hover"
                 >
-                  ✎ Edit
+                  <Icon name="pencil" size={15} /> Edit
                 </button>
               )}
               <button
@@ -369,7 +375,7 @@ export function CommentRow({ c, compact }: { c: Comment; compact?: boolean }) {
                 }}
                 className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-sm font-medium text-foreground transition-colors hover:bg-hover"
               >
-                🔗 Copy link
+                <Icon name="link" size={15} /> Copy link
               </button>
               {mine && (
                 <button
@@ -381,7 +387,7 @@ export function CommentRow({ c, compact }: { c: Comment; compact?: boolean }) {
                   }}
                   className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-sm font-medium text-foreground transition-colors hover:bg-hover hover:text-destructive"
                 >
-                  🗑 Delete
+                  <Icon name="delete" size={15} /> Delete
                 </button>
               )}
             </PopoverContent>
@@ -418,6 +424,7 @@ export function CommentCard({
   const [reply, setReply] = useState("")
   const [replyMentions, setReplyMentions] = useState<Mention[]>([])
   const root = thread[0]
+  if (!root) return null
   const sendReply = (resolved: Mention[]) => {
     if (!reply.trim()) return
     onReply(reply, root.thread_id, resolved)
@@ -582,20 +589,24 @@ export function ResolvedSection({
         Resolved ({threads.length})
       </button>
       {open &&
-        threads.map((t) => (
-          <div key={t[0].thread_id} className="mb-2.5">
-            <CommentCard
-              thread={t}
-              active={activeThread === t[0].thread_id}
-              hovered={hoverThread === t[0].thread_id}
-              onActivate={onActivate}
-              onHover={onHover}
-              onResolve={onResolve}
-              onReply={onReply}
-              onJump={onJump}
-            />
-          </div>
-        ))}
+        threads.map((t) => {
+          const head = t[0]
+          if (!head) return null
+          return (
+            <div key={head.thread_id} className="mb-2.5">
+              <CommentCard
+                thread={t}
+                active={activeThread === head.thread_id}
+                hovered={hoverThread === head.thread_id}
+                onActivate={onActivate}
+                onHover={onHover}
+                onResolve={onResolve}
+                onReply={onReply}
+                onJump={onJump}
+              />
+            </div>
+          )
+        })}
     </div>
   )
 }
@@ -635,20 +646,24 @@ export function GeneralSection({
         General ({threads.length})
       </button>
       {open &&
-        threads.map((t) => (
-          <div key={t[0].thread_id} className="mb-2.5">
-            <CommentCard
-              thread={t}
-              active={activeThread === t[0].thread_id}
-              hovered={hoverThread === t[0].thread_id}
-              onActivate={onActivate}
-              onHover={onHover}
-              onResolve={onResolve}
-              onReply={onReply}
-              onJump={onJump}
-            />
-          </div>
-        ))}
+        threads.map((t) => {
+          const head = t[0]
+          if (!head) return null
+          return (
+            <div key={head.thread_id} className="mb-2.5">
+              <CommentCard
+                thread={t}
+                active={activeThread === head.thread_id}
+                hovered={hoverThread === head.thread_id}
+                onActivate={onActivate}
+                onHover={onHover}
+                onResolve={onResolve}
+                onReply={onReply}
+                onJump={onJump}
+              />
+            </div>
+          )
+        })}
     </div>
   )
 }
@@ -743,8 +758,10 @@ export function MentionField({
   const detect = (el: HTMLTextAreaElement | HTMLInputElement) => {
     const caret = el.selectionStart ?? el.value.length
     const m = /(?:^|\s)@([\w.-]{0,30})$/.exec(el.value.slice(0, caret))
-    if (m) setMenu({ at: caret - m[1].length - 1, end: caret, q: m[1] })
-    else setMenu(null)
+    if (m) {
+      const tok = m[1] ?? ""
+      setMenu({ at: caret - tok.length - 1, end: caret, q: tok })
+    } else setMenu(null)
   }
 
   const choose = (u: DirUser) => {
@@ -784,7 +801,8 @@ export function MentionField({
       }
       if (e.key === "Enter" || e.key === "Tab") {
         e.preventDefault()
-        choose(results[active])
+        const sel = results[active]
+        if (sel) choose(sel)
         return
       }
       if (e.key === "Escape") {
