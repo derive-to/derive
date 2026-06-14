@@ -28,6 +28,7 @@ const positional = []
 for (let i = 0; i < args.length; i++) {
   const a = args[i]
   if (a === "--spa") flags.spa = "true"
+  else if (a === "--json") flags.json = "true"
   else if (a.startsWith("--")) flags[a.slice(2)] = args[++i]
   else positional.push(a)
 }
@@ -128,7 +129,7 @@ if (LOOP.includes(cmd)) {
 if (cmd !== "publish") {
   console.error(`usage:
   dock init [dir] [--template md|html|slides|site] [--title t]
-  dock publish [file|dir] [--id X] [--title t] [--slug s] [--spa] [--message m] [--name "x"] [--visibility v] [--password p] [--server url] [--token t]
+  dock publish [file|dir] [--id X] [--title t] [--slug s] [--spa] [--message m] [--name "x"] [--visibility v] [--password p] [--server url] [--token t] [--json]
   dock comments [--id X]                 list comment threads
   dock open [--id X]                     open the artifact in a browser
   dock reply <thread_id> <message…>      reply in a thread
@@ -215,6 +216,12 @@ if (!p.id && config && json.short_id) {
   savedId = true
 }
 
-console.log(`✓ ${json.url}`)
-console.log(`  short_id ${json.short_id} · v${json.current_version} · ${json.kind}`)
-if (savedId) console.log(`  saved id to ${CONFIG_FILE} — future publishes target this artifact`)
+// `--json`: print the server response only, for scripts + CI (the GitHub Action
+// parses this). Otherwise the friendly summary.
+if (flags.json) {
+  console.log(JSON.stringify(json))
+} else {
+  console.log(`✓ ${json.url}`)
+  console.log(`  short_id ${json.short_id} · v${json.current_version} · ${json.kind}`)
+  if (savedId) console.log(`  saved id to ${CONFIG_FILE} — future publishes target this artifact`)
+}

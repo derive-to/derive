@@ -1,0 +1,116 @@
+name: "Dock Publish"
+description: "Publish an artifact (file or built site) to a Dock server, then comment the review URL on the pull request."
+branding:
+  icon: "anchor"
+  color: "purple"
+
+inputs:
+  server:
+    description: "Dock server URL, e.g. https://dock.example.com."
+    required: true
+  token:
+    description: "Dock API token (a scoped agent token, or the instance DOCK_TOKEN). Pass via secrets."
+    required: true
+  path:
+    description: "File or directory to publish. Defaults to the dock.json `entry`."
+    required: false
+    default: ""
+  id:
+    description: "Existing artifact short id to publish a new version of. Defaults to dock.json `id`."
+    required: false
+    default: ""
+  title:
+    description: "Artifact title (used when creating a new artifact)."
+    required: false
+    default: ""
+  visibility:
+    description: "public | link | org | password."
+    required: false
+    default: ""
+  name:
+    description: "Version checkpoint name, e.g. a git sha or release tag."
+    required: false
+    default: ""
+  comment-pr:
+    description: "Comment the artifact URL on the pull request (when the run is a PR)."
+    required: false
+    default: "true"
+  cli-version:
+    description: "@dock/cli version or dist-tag to run via npx."
+    required: false
+    default: "latest"
+
+outputs:
+  url:
+    description: "The artifact's canonical URL."
+    value: ${{ steps.publish.outputs.url }}
+  short_id:
+    description: "The artifact short id."
+    value: ${{ steps.publish.outputs.short_id }}
+  embed:
+    description: "A ready-to-paste iframe embed snippet for the artifact."
+    value: ${{ steps.publish.outputs.embed }}
+
+runs:
+  using: "composite"
+  steps:
+    - id: publish
+      shell: bash
+      env:
+        DOCK_SERVER: ${{ inputs.server }}
+        DOCK_TOKEN: ${{ inputs.token }}
+        IN_PATH: ${{ inputs.path }}
+        IN_ID: ${{ inputs.id }}
+        IN_TITLE: ${{ inputs.title }}
+        IN_VIS: ${{ inputs.visibility }}
+        IN_NAME: ${{ inputs.name }}
+        CLI_VERSION: ${{ inputs.cli-version }}
+      run: |
+        set -euo pipefail
+        args=(publish)
+        [ -n "$IN_PATH" ] && args+=("$IN_PATH")
+        [ -n "$IN_ID" ] && args+=(--id "$IN_ID")
+        [ -n "$IN_TITLE" ] && args+=(--title "$IN_TITLE")
+        [ -n "$IN_VIS" ] && args+=(--visibility "$IN_VIS")
+        [ -n "$IN_NAME" ] && args+=(--name "$IN_NAME")
+        args+=(--json)
+        out="$(npx -y "@dock/cli@${CLI_VERSION}" "${args[@]}")"
+        # --json prints one JSON line on stdout; take the last line to be safe.
+        json="$(printf '%s\n' "$out" | tail -n 1)"
+        node -e '
+          const j = JSON.parse(process.argv[1] || "{}")
+          const fs = require("node:fs")
+          const sid = j.short_id || "", url = j.url || ""
+          const server = (process.env.DOCK_SERVER || "").replace(/\/$/, "")
+          const embed = sid
+            ? `<iframe src="${server}/v1/embed/${sid}" width="100%" height="480" style="border:0;border-radius:12px" loading="lazy" title="Dock artifact"></iframe>`
+            : ""
+          if (!url) { console.error("dock publish did not return a url"); process.exit(1) }
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `url=${url}\nshort_id=${sid}\nembed=${embed}\n`)
+          console.log(`Published ${url}`)
+        ' "$json"
+
+    - if: ${{ inputs.comment-pr == 'true' && github.event_name == 'pull_request' }}
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const url = ${{ toJSON(steps.publish.outputs.url) }}
+          const sid = ${{ toJSON(steps.publish.outputs.short_id) }}
+          if (!url) return
+          // Idempotent: one comment per artifact, updated on each push.
+          const marker = `<!-- dock-publish:${sid} -->`
+          const body = [
+            marker,
+            `### 📦 Published to Dock`,
+            ``,
+            `[Open the artifact to review and comment](${url})`,
+            ``,
+            `\`${url}\``,
+          ].join("\n")
+          const { owner, repo } = context.repo
+          const issue_number = context.issue.number
+          const { data: comments } = await github.rest.issues.listComments({ owner, repo, issue_number })
+          const existing = comments.find((c) => c.body && c.body.includes(marker))
+          if (existing)
+            await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body })
+          else await github.rest.issues.createComment({ owner, repo, issue_number, body })
