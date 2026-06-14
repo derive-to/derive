@@ -8,6 +8,7 @@ import {
   useState,
 } from "react"
 import { api, type Comment, type DirUser, type Mention } from "@/api"
+import { Icon } from "@/components/icons"
 import { ColoredAvatar } from "@/components/shared/colored-avatar"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/input"
@@ -269,7 +270,7 @@ export function CommentRow({ c, compact }: { c: Comment; compact?: boolean }) {
                 data-testid="comment-react"
                 className="grid size-6 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-hover hover:text-foreground"
               >
-                😊
+                <Icon name="react" size={16} />
               </button>
             </PopoverTrigger>
             <PopoverContent align="end" className="w-auto p-1">
@@ -299,7 +300,7 @@ export function CommentRow({ c, compact }: { c: Comment; compact?: boolean }) {
                 data-testid="comment-more"
                 className="grid size-6 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-hover hover:text-foreground"
               >
-                ⋯
+                <Icon name="more" size={16} />
               </button>
             </PopoverTrigger>
             <PopoverContent align="end" className="w-auto min-w-[132px] p-1">
@@ -313,7 +314,7 @@ export function CommentRow({ c, compact }: { c: Comment; compact?: boolean }) {
                   }}
                   className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-sm font-medium text-foreground transition-colors hover:bg-hover"
                 >
-                  ✎ Edit
+                  <Icon name="pencil" size={15} /> Edit
                 </button>
               )}
               <button
@@ -325,7 +326,7 @@ export function CommentRow({ c, compact }: { c: Comment; compact?: boolean }) {
                 }}
                 className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-sm font-medium text-foreground transition-colors hover:bg-hover"
               >
-                🔗 Copy link
+                <Icon name="link" size={15} /> Copy link
               </button>
               {mine && (
                 <button
@@ -337,7 +338,7 @@ export function CommentRow({ c, compact }: { c: Comment; compact?: boolean }) {
                   }}
                   className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-sm font-medium text-foreground transition-colors hover:bg-hover hover:text-destructive"
                 >
-                  🗑 Delete
+                  <Icon name="delete" size={15} /> Delete
                 </button>
               )}
             </PopoverContent>

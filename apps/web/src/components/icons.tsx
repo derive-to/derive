@@ -22,7 +22,9 @@ import {
   GitPullRequestIcon,
   HouseIcon,
   type IconWeight,
+  LinkIcon,
   MagnifyingGlassIcon,
+  PencilSimpleIcon,
   type Icon as PhIcon,
   PlusIcon,
   ProhibitIcon,
@@ -30,10 +32,12 @@ import {
   ShareNetworkIcon,
   SidebarSimpleIcon,
   SignOutIcon,
+  SmileyIcon,
   SquaresFourIcon,
   StackIcon,
   StarIcon,
   TagIcon,
+  TrashIcon,
   XIcon,
 } from "@phosphor-icons/react"
 import { cn } from "@/lib/utils"
@@ -76,6 +80,11 @@ const REG = {
   pin: [PushPinIcon, "text-gold"],
   views: [EyeIcon, "text-muted-foreground"],
   removed: [ProhibitIcon, "text-muted-foreground"],
+  // comment toolbar / menu
+  react: [SmileyIcon, "text-muted-foreground"],
+  pencil: [PencilSimpleIcon, "text-muted-foreground"],
+  link: [LinkIcon, "text-muted-foreground"],
+  delete: [TrashIcon, "text-muted-foreground"],
 } as const satisfies Record<string, readonly [PhIcon, string]>
 
 export type IconName = keyof typeof REG
