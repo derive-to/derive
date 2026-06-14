@@ -49,6 +49,9 @@ export function reanchor(sel: QuoteSelector, text: string): Reanchor {
  *                 scroll            (live scroll offset — cards track their text)
  *                 anchor-click      (user clicked a highlight)
  *                 anchor-hover      (pointer entered/left a highlight)
+ *                 cursor            (live pointer position for multiplayer cursors)
+ *                 cursor-tap        (a click — peers ripple at this point)
+ *                 cursor-leave      (pointer left / frame blurred — drop our cursor)
  *  host → frame:  anchors           (paint highlights for these anchors)
  *                 focus-anchor      (scroll to + flash one anchor)
  *                 emphasize         (lift one anchor's highlight — host card hover)
@@ -77,12 +80,22 @@ document.addEventListener("selectionchange",function(){
   var s=window.getSelection();if(!s||s.isCollapsed)post({type:"select",selector:null,rect:null})});
 
 /* -- live cursor: throttled pointer position, viewport-normalized 0..1, so the
-      host can fan it out to other viewers as a multiplayer cursor -- */
+      host can fan it out to other viewers as a multiplayer cursor. Plus an
+      explicit leave (pointer left the doc / frame blurred / tab hidden) so peers
+      drop us at once instead of waiting the cursor out, and a tap on click so
+      peers can ripple where we acted. -- */
 var cT=0;
 document.addEventListener("mousemove",function(e){
   var n=Date.now();if(n-cT<40)return;cT=n;
   var w=window.innerWidth||1,h=window.innerHeight||1;
   post({type:"cursor",x:e.clientX/w,y:e.clientY/h})});
+document.addEventListener("mousedown",function(e){
+  var w=window.innerWidth||1,h=window.innerHeight||1;
+  post({type:"cursor-tap",x:e.clientX/w,y:e.clientY/h})});
+document.addEventListener("mouseleave",function(){post({type:"cursor-leave"})});
+window.addEventListener("blur",function(){post({type:"cursor-leave"})});
+document.addEventListener("visibilitychange",function(){
+  if(document.hidden)post({type:"cursor-leave"})});
 
 /* -- highlight styles (mark's default yellow is overridden) -- */
 var st=document.createElement("style");

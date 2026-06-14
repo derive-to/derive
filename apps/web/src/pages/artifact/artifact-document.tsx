@@ -1,6 +1,8 @@
 import type { RefObject } from "react"
 import type { Diff } from "@/api"
 import { Button } from "@/components/ui/button"
+import { CursorLayer } from "./cursors/cursor-layer"
+import type { CursorLayerHandle } from "./cursors/use-live-cursors"
 import { DiffView } from "./diff-view"
 import { DeckBar } from "./rail-deck"
 
@@ -21,7 +23,7 @@ export function ArtifactDocument({
   deck,
   frameRef,
   presentWrapRef,
-  cursorLayerRef,
+  cursor,
   onFrameLoad,
   onToggleDiff,
   onRestore,
@@ -40,7 +42,7 @@ export function ArtifactDocument({
   deck: { i: number; total: number } | null
   frameRef: RefObject<HTMLIFrameElement | null>
   presentWrapRef: RefObject<HTMLDivElement | null>
-  cursorLayerRef: RefObject<HTMLDivElement | null>
+  cursor: CursorLayerHandle
   onFrameLoad: () => void
   onToggleDiff: () => void
   onRestore: () => void
@@ -107,13 +109,11 @@ export function ArtifactDocument({
               onFullscreen={onFullscreen}
             />
           )}
-          {/* Live peer cursors (Google-Docs style). The iframe is a separate opaque
-              origin, so its anchor script forwards mousemove out via postMessage; we
-              paint the dots here in the parent, over the frame. Anon viewers too. */}
-          <div
-            ref={cursorLayerRef}
-            className="pointer-events-none absolute inset-0 z-20 overflow-hidden"
-          />
+          {/* Live peer cursors (Figma/Notion style). The iframe is a separate opaque
+              origin, so its anchor script forwards pointer moves/leave/tap out via
+              postMessage; the overlay eases them in here in the parent, over the
+              frame. Anon viewers too. */}
+          <CursorLayer layer={cursor} />
         </div>
       )}
     </>

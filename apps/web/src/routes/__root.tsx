@@ -10,7 +10,7 @@ import {
 import { type ReactNode, useEffect } from "react"
 import { AppShell } from "../components/app-shell"
 import { Toaster } from "../components/ui/sonner"
-import { AuthProvider, ThemeProvider } from "../ctx"
+import { AuthProvider, CursorPrefProvider, ThemeProvider } from "../ctx"
 import { queryClient } from "../lib/query-client"
 import { STORAGE_KEYS } from "../lib/storage-keys"
 import { reportWebVitals } from "../lib/vitals"
@@ -62,7 +62,9 @@ function RootComponent() {
       <QueryClientProvider client={queryClient}>
         <ThemeProvider>
           <AuthProvider>
-            <AppFrame />
+            <CursorPrefProvider>
+              <AppFrame />
+            </CursorPrefProvider>
           </AuthProvider>
         </ThemeProvider>
       </QueryClientProvider>
