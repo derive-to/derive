@@ -49,14 +49,12 @@ export const RAW_HEADERS: Record<string, string> = {
     "sandbox allow-scripts allow-forms allow-popups allow-modals allow-downloads",
   "Access-Control-Allow-Origin": "*",
   "X-Content-Type-Options": "nosniff",
-  // Raw artifact bytes are never the indexable surface (the viewer is); keeping
-  // them out of search engines also blunts using the host for SEO-spam/phishing.
+  // Raw artifact bytes are never the indexable surface; keeping them out of
+  // search engines also blunts using the host for SEO-spam/phishing.
   "X-Robots-Tag": "noindex",
   // Versioned paths are immutable by construction.
   "Cache-Control": "public, max-age=31536000, immutable",
 }
-
-export const REF_RE = /^([0-9a-z]{6,12})(?:-[a-z0-9-]*)?(?:@v(\d+))?$/
 
 /** A taken-down artifact: content is gone (410), the record is preserved. */
 export const TOMBSTONE = "This artifact was removed."

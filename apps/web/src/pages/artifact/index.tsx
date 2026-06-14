@@ -113,6 +113,81 @@ export function Artifact() {
     frame.current?.contentWindow?.postMessage({ source: "dock-host", ...msg }, "*")
   }, [])
 
+  // ---- Live multiplayer cursors (one viewer for everyone — ported from the old
+  // server shell). The anchor client inside the iframe relays pointer moves out via
+  // postMessage; we publish them (throttled) and render peers as an overlay layer. ----
+  const cursorLayer = useRef<HTMLDivElement>(null)
+  const cursorSelf = useRef<{ id: string; color: string }>({ id: "", color: "" })
+  if (!cursorSelf.current.id) {
+    const id = Math.random().toString(36).slice(2, 9)
+    let h = 0
+    for (const ch of id) h = (h * 31 + ch.charCodeAt(0)) % 360
+    cursorSelf.current = { id, color: `hsl(${h} 72% 52%)` } // tokens-ignore: per-peer identity hue (hashed), not a theme color
+  }
+  const cursorXY = useRef<[number, number] | null>(null)
+  const cursorSentAt = useRef(0)
+  const peerCursors = useRef(new Map<string, HTMLDivElement>())
+  const cursorTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>())
+
+  const sendCursor = useCallback(() => {
+    const xy = cursorXY.current
+    if (!xy) return
+    cursorSentAt.current = Date.now()
+    fetch(`${API_BASE}/v1/artifacts/${shortId}/cursor`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({
+        id: cursorSelf.current.id,
+        name: me?.name ?? me?.email ?? "Guest",
+        color: cursorSelf.current.color,
+        x: xy[0],
+        y: xy[1],
+      }),
+    }).catch(() => {})
+  }, [shortId, me])
+
+  const showPeerCursor = useCallback(
+    (d: { id: string; name?: string; color?: string; x: number; y: number }) => {
+      if (d.id === cursorSelf.current.id) return
+      const layer = cursorLayer.current
+      if (!layer) return
+      let el = peerCursors.current.get(d.id)
+      if (!el) {
+        el = document.createElement("div")
+        el.className =
+          "pointer-events-none absolute left-0 top-0 z-30 transition-[transform,opacity] duration-100"
+        // tokens-ignore: #fff is the fixed white cursor outline + label text (contrast on any artifact bg), not a theme color
+        el.innerHTML =
+          '<svg width="20" height="20" viewBox="0 0 16 20"><path d="M1 1 L1 16 L5 12.5 L8 19 L10.5 18 L7.5 11.5 L13 11.5 Z" stroke="#fff" stroke-width="1.3" stroke-linejoin="round"/></svg><b style="position:absolute;left:13px;top:13px;padding:1px 6px;border-radius:5px;color:#fff;font:600 10.5px ui-sans-serif,system-ui;white-space:nowrap"></b>' // tokens-ignore
+        layer.appendChild(el)
+        peerCursors.current.set(d.id, el)
+      }
+      const color = d.color || "#655999" // tokens-ignore: lavender fallback only if a peer sends no color
+      const svg = el.querySelector("svg")
+      if (svg) (svg as SVGElement).style.fill = color
+      const tag = el.querySelector("b")
+      if (tag) {
+        tag.textContent = d.name || "Guest"
+        ;(tag as HTMLElement).style.background = color
+      }
+      const r = layer.getBoundingClientRect()
+      el.style.transform = `translate(${(d.x * r.width).toFixed(1)}px, ${(d.y * r.height).toFixed(1)}px)`
+      el.style.opacity = "1"
+      const prev = cursorTimers.current.get(d.id)
+      if (prev) clearTimeout(prev)
+      cursorTimers.current.set(
+        d.id,
+        setTimeout(() => {
+          peerCursors.current.get(d.id)?.remove()
+          peerCursors.current.delete(d.id)
+          cursorTimers.current.delete(d.id)
+        }, 8000),
+      )
+    },
+    [],
+  )
+
   useEffect(() => {
     const onMsg = (e: MessageEvent) => {
       const d = e.data
@@ -149,11 +224,14 @@ export function Artifact() {
       else if (d.type === "anchor-click") {
         setActiveThread(d.id)
         setPanel((p) => (p === "open" ? p : "open"))
+      } else if (d.type === "cursor" && typeof d.x === "number" && typeof d.y === "number") {
+        cursorXY.current = [d.x, d.y]
+        if (Date.now() - cursorSentAt.current >= 45) sendCursor()
       }
     }
     window.addEventListener("message", onMsg)
     return () => window.removeEventListener("message", onMsg)
-  }, [])
+  }, [sendCursor])
 
   // Persist the collapse state.
   useEffect(() => {
@@ -247,8 +325,11 @@ export function Artifact() {
   }
 
   useEffect(() => {
-    if (!loading && !me) nav({ to: "/login" })
-  }, [loading, me, nav])
+    // Anonymous can view a public artifact (read-only, with a sign-up CTA). Only
+    // bounce to login when it isn't readable for them (private / 404) — then an
+    // account is required. A signed-in user with no access bounces the same way.
+    if (!loading && !me && failed) nav({ to: "/login" })
+  }, [loading, me, failed, nav])
 
   // Re-pull the artifact + comments from the server (after a publish/restore, or
   // an SSE version.published). The initial fetch is handled by the useQuery hooks
@@ -293,13 +374,21 @@ export function Artifact() {
         /* ignore malformed frames */
       }
     })
+    ev.addEventListener("cursor", (e) => {
+      try {
+        showPeerCursor(JSON.parse((e as MessageEvent).data))
+      } catch {
+        /* ignore malformed frames */
+      }
+    })
     return () => ev.close()
-  }, [shortId, load, refetchComments])
+  }, [shortId, load, refetchComments, showPeerCursor])
 
-  // Announce we're viewing, and keep the heartbeat alive (TTL is 45s server-side).
+  // Announce we're viewing (anon shows up as "Guest" — Google-Docs-style presence),
+  // keep the heartbeat alive (TTL 45s), and re-send our cursor so a still pointer
+  // doesn't fade out for peers.
   useEffect(() => {
-    if (!me) return
-    const name = me.name ?? me.email
+    const name = me ? (me.name ?? me.email) : "Guest"
     const beat = () =>
       api
         .heartbeat(shortId, name)
@@ -307,8 +396,14 @@ export function Artifact() {
         .catch(() => {})
     beat()
     const t = setInterval(beat, 20_000)
-    return () => clearInterval(t)
-  }, [shortId, me])
+    const ct = setInterval(() => {
+      if (cursorXY.current) sendCursor()
+    }, 3000)
+    return () => {
+      clearInterval(t)
+      clearInterval(ct)
+    }
+  }, [shortId, me, sendCursor])
 
   // Record one view per artifact open.
   const recorded = useRef("")
@@ -407,6 +502,12 @@ export function Artifact() {
   // Editors publish directly; commenters propose a candidate for review.
   const canPublish = art.my_role === "editor" || art.my_role === "owner"
   const canPropose = canPublish || art.my_role === "commenter"
+  // A logged-out visitor on a public/link artifact: strictly view-only. They get
+  // the document + live presence/cursors (Google-Docs style) and nothing else —
+  // no favorite, tags, collections, share, report, comments, or version tools.
+  // The API gates every one of those for anon (anonLocked); hiding them here keeps
+  // the chrome honest so there's no dead/forbidden affordance to bump into.
+  const isAnon = !me
 
   // Sort threads into pinned (anchored & present in this live doc), general
   // (unanchored or orphaned), and resolved. Pins drive both the margin cards
@@ -556,94 +657,102 @@ export function Artifact() {
         createPortal(
           <>
             {!isMobile && <Presence viewers={viewers} self={me?.name ?? me?.email ?? ""} />}
-            <StarButton
-              shortId={shortId}
-              favorite={!!art.favorite}
-              onChange={(fav) =>
-                qc.setQueryData(artifactQuery(shortId).queryKey, (a) =>
-                  a ? { ...a, favorite: fav } : a,
-                )
-              }
-            />
-            <TagsMenu
-              shortId={shortId}
-              tags={art.tags ?? []}
-              canEdit={art.my_role === "editor" || art.my_role === "owner"}
-              onChange={(tags) =>
-                qc.setQueryData(artifactQuery(shortId).queryKey, (a) => (a ? { ...a, tags } : a))
-              }
-            />
-            <CollectionsMenu
-              shortId={shortId}
-              inCollections={art.collections ?? []}
-              onChange={(collections) =>
-                qc.setQueryData(artifactQuery(shortId).queryKey, (a) =>
-                  a ? { ...a, collections } : a,
-                )
-              }
-            />
-            <ShareButton shortId={shortId} myRole={art.my_role} />
-            <ReportButton shortId={shortId} onDone={show} />
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  variant="outline"
-                  size="icon"
-                  title="More"
-                  data-testid="artifact-more"
-                  className={cn(
-                    art.open_proposals && art.open_proposals > 0 && "border-primary text-primary",
-                  )}
-                >
-                  <Icon name="more" size={18} />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent>
-                <DropdownMenuItem
-                  data-testid="artifact-insights"
-                  onSelect={() => setSurface("insights")}
-                >
-                  <Icon name="insights" size={16} /> Insights
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  data-testid="artifact-history"
-                  onSelect={() => setSurface("history")}
-                >
-                  <Icon name="history" size={16} /> Version history
-                </DropdownMenuItem>
-                {!!art.proposals_total && art.proposals_total > 0 && (
-                  <DropdownMenuItem
-                    data-testid="artifact-review"
-                    onSelect={() => setReviewing(true)}
-                  >
-                    <Icon name="review" size={16} />
-                    {art.open_proposals && art.open_proposals > 0
-                      ? `Review proposals (${art.open_proposals})`
-                      : "Proposals"}
-                  </DropdownMenuItem>
-                )}
-                {editable && canPropose && !editing && (
-                  <DropdownMenuItem data-testid="artifact-edit" onSelect={startEdit}>
-                    <Icon name="edit" size={16} />
-                    {canPublish ? "Edit source (dev)" : "Propose change (dev)"}
-                  </DropdownMenuItem>
-                )}
-              </DropdownMenuContent>
-            </DropdownMenu>
-            {/* On phones the bottom-right FAB opens comments, so the header
+            {!isAnon && (
+              <>
+                <StarButton
+                  shortId={shortId}
+                  favorite={!!art.favorite}
+                  onChange={(fav) =>
+                    qc.setQueryData(artifactQuery(shortId).queryKey, (a) =>
+                      a ? { ...a, favorite: fav } : a,
+                    )
+                  }
+                />
+                <TagsMenu
+                  shortId={shortId}
+                  tags={art.tags ?? []}
+                  canEdit={art.my_role === "editor" || art.my_role === "owner"}
+                  onChange={(tags) =>
+                    qc.setQueryData(artifactQuery(shortId).queryKey, (a) =>
+                      a ? { ...a, tags } : a,
+                    )
+                  }
+                />
+                <CollectionsMenu
+                  shortId={shortId}
+                  inCollections={art.collections ?? []}
+                  onChange={(collections) =>
+                    qc.setQueryData(artifactQuery(shortId).queryKey, (a) =>
+                      a ? { ...a, collections } : a,
+                    )
+                  }
+                />
+                <ShareButton shortId={shortId} myRole={art.my_role} />
+                <ReportButton shortId={shortId} onDone={show} />
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      title="More"
+                      data-testid="artifact-more"
+                      className={cn(
+                        art.open_proposals &&
+                          art.open_proposals > 0 &&
+                          "border-primary text-primary",
+                      )}
+                    >
+                      <Icon name="more" size={18} />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent>
+                    <DropdownMenuItem
+                      data-testid="artifact-insights"
+                      onSelect={() => setSurface("insights")}
+                    >
+                      <Icon name="insights" size={16} /> Insights
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      data-testid="artifact-history"
+                      onSelect={() => setSurface("history")}
+                    >
+                      <Icon name="history" size={16} /> Version history
+                    </DropdownMenuItem>
+                    {!!art.proposals_total && art.proposals_total > 0 && (
+                      <DropdownMenuItem
+                        data-testid="artifact-review"
+                        onSelect={() => setReviewing(true)}
+                      >
+                        <Icon name="review" size={16} />
+                        {art.open_proposals && art.open_proposals > 0
+                          ? `Review proposals (${art.open_proposals})`
+                          : "Proposals"}
+                      </DropdownMenuItem>
+                    )}
+                    {editable && canPropose && !editing && (
+                      <DropdownMenuItem data-testid="artifact-edit" onSelect={startEdit}>
+                        <Icon name="edit" size={16} />
+                        {canPublish ? "Edit source (dev)" : "Propose change (dev)"}
+                      </DropdownMenuItem>
+                    )}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+                {/* On phones the bottom-right FAB opens comments, so the header
                 button would just be a redundant extra wrap-row. */}
-            {!isMobile && panel !== "open" && (
-              <Button
-                variant="outline"
-                size="sm"
-                className="gap-1.5"
-                data-testid="artifact-show-comments"
-                onClick={() => setPanel("open")}
-                title="Show comments (c)"
-              >
-                <Icon name="comments" size={16} />
-                {openCount > 0 && <b className="font-bold">{openCount}</b>}
-              </Button>
+                {!isMobile && panel !== "open" && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="gap-1.5"
+                    data-testid="artifact-show-comments"
+                    onClick={() => setPanel("open")}
+                    title="Show comments (c)"
+                  >
+                    <Icon name="comments" size={16} />
+                    {openCount > 0 && <b className="font-bold">{openCount}</b>}
+                  </Button>
+                )}
+              </>
             )}
           </>,
           topBarSlot,
@@ -809,11 +918,19 @@ export function Artifact() {
                         onFullscreen={toggleFullscreen}
                       />
                     )}
+                    {/* Live peer cursors (Google-Docs style). The iframe is a
+                        separate opaque origin, so its anchor script forwards
+                        mousemove out via postMessage; we paint the dots here in
+                        the parent, over the frame. Anon viewers see + are seen. */}
+                    <div
+                      ref={cursorLayer}
+                      className="pointer-events-none absolute inset-0 z-20 overflow-hidden"
+                    />
                   </div>
                 )}
               </>
             )}
-            {panel === "hidden" && (
+            {!isAnon && panel === "hidden" && (
               <button
                 type="button"
                 onClick={() => setPanel("open")}
@@ -829,7 +946,7 @@ export function Artifact() {
             )}
           </div>
 
-          {!isMobile && (
+          {!isMobile && !isAnon && (
             <aside
               className={cn(
                 "flex min-h-0 shrink-0 grow-0 flex-col overflow-hidden bg-card transition-[width,flex-basis] duration-200",
@@ -884,7 +1001,7 @@ export function Artifact() {
           so the document stays visible above it. A flat thread list (no document
           margin); tapping a quote scrolls the visible document to the highlight
           without closing the sheet. The grip expands it to full for reading. */}
-        {isMobile && (
+        {isMobile && !isAnon && (
           <MobileComments
             open={panel === "open"}
             openThreads={openThreads}
@@ -915,8 +1032,9 @@ export function Artifact() {
         )}
         {/* The "comment on selection" affordance floats beside the selection in
           every panel state — minimized or hidden included. Clicking it opens
-          the panel if needed and starts a composer pinned to the selection. */}
-        {docLive && sel && !composer && (
+          the panel if needed and starts a composer pinned to the selection.
+          Hidden for anon (commenting is logged-in only). */}
+        {!isAnon && docLive && sel && !composer && (
           <button
             type="button"
             className="fixed z-50 inline-flex items-center gap-2 whitespace-nowrap rounded-full border border-primary bg-card px-3.5 py-2 text-sm font-semibold text-primary shadow-[var(--shadow)] transition-colors hover:bg-primary hover:text-primary-foreground"

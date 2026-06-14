@@ -37,7 +37,6 @@ describe("moderation: report → takedown (410) → reinstate + audit (C4a)", ()
     // Content is gone (410) on every serving surface; the record survives.
     expect((await app.request(`/v1/artifacts/${shortId}/content`)).status).toBe(410)
     expect((await app.request(`/raw/${shortId}/v/1/index.html`)).status).toBe(410)
-    expect((await app.request(`/a/${shortId}`)).status).toBe(410)
     const art = await (
       await app.request(`/v1/artifacts/${shortId}`, { headers: as(owner.email) })
     ).json()

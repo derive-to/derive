@@ -30,16 +30,14 @@ describe("auth: token write-gating + per-artifact read-gating", () => {
 
   it("serves public/link artifacts to anyone", async () => {
     const { short_id } = await (await pub("link", { authorization: "Bearer s3cret" })).json()
-    expect((await authApp.request(`/a/${short_id}`)).status).toBe(200)
+    expect((await authApp.request(`/v1/artifacts/${short_id}`)).status).toBe(200)
     expect((await authApp.request(`/v1/artifacts/${short_id}/content`)).status).toBe(200)
   })
 
   it("hides gated artifacts without the token (404), reveals with it", async () => {
     const { short_id } = await (await pub("org", { authorization: "Bearer s3cret" })).json()
-    expect((await authApp.request(`/a/${short_id}`)).status).toBe(404)
     expect((await authApp.request(`/v1/artifacts/${short_id}`)).status).toBe(404)
     expect((await authApp.request(`/v1/artifacts/${short_id}/content`)).status).toBe(404)
-    expect((await authApp.request(`/a/${short_id}`, authed())).status).toBe(200)
     expect((await authApp.request(`/v1/artifacts/${short_id}`, authed())).status).toBe(200)
   })
 

@@ -17,7 +17,6 @@ import { rawRoutes } from "./routes/raw"
 import { realtimeRoutes } from "./routes/realtime"
 import { sessionRoutes } from "./routes/session"
 import { sharingRoutes } from "./routes/sharing"
-import { viewerRoutes } from "./routes/viewer"
 import { webhookRoutes } from "./routes/webhooks"
 import { workspaceRoutes } from "./routes/workspace"
 
@@ -135,7 +134,6 @@ export function createApp(deps: AppDeps): Hono {
     analyticsRoutes,
     notificationRoutes,
     webhookRoutes,
-    viewerRoutes,
     rawRoutes,
   ])
     app.route("/", routes(ctx))

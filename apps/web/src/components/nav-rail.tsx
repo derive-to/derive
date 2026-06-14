@@ -1,12 +1,15 @@
 import { Link, useLocation, useNavigate } from "@tanstack/react-router"
 import { type ReactNode, useState } from "react"
 import { api } from "@/api"
+import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { useAuth } from "@/ctx"
 import { useIsMobile } from "@/lib/use-is-mobile"
 import { cn } from "@/lib/utils"
 import type { LibrarySearch } from "@/pages/library/types"
 import { Icon, type IconName } from "./icons"
 import { NotificationBell } from "./notification-bell"
+import { Logo } from "./shared/logo"
 import { useShell } from "./shell-context"
 import { UserPod } from "./user-pod"
 
@@ -92,6 +95,7 @@ export function NavRail() {
     refreshCollections,
     setPaletteOpen,
   } = useShell()
+  const { me } = useAuth()
   const isMobile = useIsMobile()
   const nav = useNavigate()
   const loc = useLocation()
@@ -123,21 +127,77 @@ export function NavRail() {
     }
   }
 
+  const asideClass = cn(
+    "flex flex-col gap-px overflow-y-auto border-r border-border bg-card py-3.5 transition-[transform,flex-basis,width] duration-200",
+    isMobile
+      ? cn(
+          "fixed inset-y-0 left-0 z-[61] w-[266px] basis-[266px] px-2.5 shadow-[0_0_44px_-10px_rgba(0,0,0,0.45)]",
+          drawerOpen ? "translate-x-0" : "-translate-x-[105%]",
+        )
+      : collapsed
+        ? "w-[62px] shrink-0 basis-[62px] px-[9px]"
+        : "w-56 shrink-0 basis-56 px-2.5",
+  )
+
+  // Anonymous visitor on a shared public artifact. There's no workspace to
+  // navigate, so the rail becomes the conversion surface — a single path to
+  // making their own (Figma/Notion-style viral loop). The artifact itself stays
+  // fully view-only; this is the only nav an anon ever sees.
+  if (!me)
+    return (
+      <aside aria-label="Navigation" className={asideClass}>
+        {railMode ? (
+          <Link
+            to="/login"
+            search={{ signup: true }}
+            title="Sign up for Dock"
+            data-testid="anon-signup"
+            className={cn(ROW_BASE, ROW_RAIL, "text-primary")}
+          >
+            <Icon name="plus" size={18} />
+          </Link>
+        ) : (
+          <div className="flex flex-1 flex-col">
+            <div className="rounded-lg border border-border bg-background/60 p-3.5">
+              <div className="flex items-center gap-2">
+                <Logo size={22} />
+                <span className="font-display text-sm font-semibold text-foreground">
+                  Create your own
+                </span>
+              </div>
+              <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
+                Give your AI artifacts a permanent home: versions, comments, and one link to share.
+              </p>
+              <Button
+                asChild
+                variant="primary"
+                size="sm"
+                className="mt-3 w-full"
+                data-testid="anon-signup"
+              >
+                <Link to="/login" search={{ signup: true }} onClick={closeDrawer}>
+                  Sign up free
+                </Link>
+              </Button>
+            </div>
+            <p className="mt-3 px-1 text-xs text-muted-foreground">
+              Already have an account?{" "}
+              <Link
+                to="/login"
+                onClick={closeDrawer}
+                data-testid="anon-login"
+                className="font-semibold text-primary hover:underline"
+              >
+                Log in
+              </Link>
+            </p>
+          </div>
+        )}
+      </aside>
+    )
+
   return (
-    <aside
-      aria-label="Navigation"
-      className={cn(
-        "flex flex-col gap-px overflow-y-auto border-r border-border bg-card py-3.5 transition-[transform,flex-basis,width] duration-200",
-        isMobile
-          ? cn(
-              "fixed inset-y-0 left-0 z-[61] w-[266px] basis-[266px] px-2.5 shadow-[0_0_44px_-10px_rgba(0,0,0,0.45)]",
-              drawerOpen ? "translate-x-0" : "-translate-x-[105%]",
-            )
-          : collapsed
-            ? "w-[62px] shrink-0 basis-[62px] px-[9px]"
-            : "w-56 shrink-0 basis-56 px-2.5",
-      )}
-    >
+    <aside aria-label="Navigation" className={asideClass}>
       <div className="flex flex-1 flex-col gap-px">
         <button
           type="button"
