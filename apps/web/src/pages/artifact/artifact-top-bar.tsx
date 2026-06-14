@@ -20,6 +20,7 @@ import { CollectionsMenu, ReportButton, StarButton, TagsMenu } from "./header-ac
 export function ArtifactTopBar(props: {
   shortId: string
   myRole?: Role | null
+  visibility: string
   favorite: boolean
   tags: string[]
   collections: string[]
@@ -55,7 +56,7 @@ export function ArtifactTopBar(props: {
         inCollections={props.collections}
         onChange={props.onCollections}
       />
-      <ShareButton shortId={shortId} myRole={props.myRole} />
+      <ShareButton shortId={shortId} myRole={props.myRole} visibility={props.visibility} />
       <ReportButton shortId={shortId} />
       <DropdownMenu>
         <DropdownMenuTrigger asChild>

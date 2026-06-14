@@ -131,6 +131,7 @@ export function createApp(deps: AppDeps): Hono {
     /^\/v1\/artifacts\/[^/]+\/presence$/, // ephemeral "I'm viewing" heartbeat
     /^\/v1\/artifacts\/[^/]+\/cursor$/, // ephemeral live cursor (viral viewing)
     /^\/v1\/artifacts\/[^/]+\/view$/, // de-duped, anonymous-safe view counter
+    /^\/v1\/artifacts\/[^/]+\/unlock$/, // password unlock — the password is the gate
   ]
   app.use("/v1/*", async (c, next) => {
     const m = c.req.method

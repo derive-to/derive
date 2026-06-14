@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS artifact (
     slug TEXT,
     title TEXT,
     visibility TEXT NOT NULL DEFAULT 'link',
+    password_hash TEXT,
     kind TEXT NOT NULL,
     spa INTEGER NOT NULL DEFAULT 0,
     current_version INTEGER NOT NULL DEFAULT 0,

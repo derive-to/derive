@@ -29,6 +29,18 @@ const ROLE_LABEL: Record<Role, string> = {
   owner: "Owner",
 }
 
+// General access (visibility) options, in order of decreasing reach.
+const ACCESS: { value: string; label: string; blurb: string }[] = [
+  { value: "public", label: "Public — listed", blurb: "In the public directory and indexable." },
+  { value: "link", label: "Anyone with the link", blurb: "Anyone with the link can view." },
+  { value: "org", label: "Workspace only", blurb: "Only members of this workspace." },
+  {
+    value: "password",
+    label: "Password protected",
+    blurb: "Anyone with the link and the password.",
+  },
+]
+
 /**
  * Per-artifact sharing, opened from the artifact header. Follows the Google Docs
  * model: the Share button is ALWAYS visible. Owners and editors can add people by
@@ -36,18 +48,49 @@ const ROLE_LABEL: Record<Role, string> = {
  * "view only" panel, so the access state is always legible. Built on the shared
  * Dialog primitive (focus trap, Esc) and RoleSelect.
  */
-export function ShareButton({ shortId, myRole }: { shortId: string; myRole?: Role | null }) {
+export function ShareButton({
+  shortId,
+  myRole,
+  visibility,
+}: {
+  shortId: string
+  myRole?: Role | null
+  visibility: string
+}) {
+  const qc = useQueryClient()
   const [members, setMembers] = useState<ArtifactMember[]>([])
   const [defaultRole, setDefaultRole] = useState<Role>("editor")
   const [email, setEmail] = useState("")
   const [role, setRole] = useState<Role>("editor")
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
+  // General access (visibility) draft + a password when enabling/changing password.
+  const [vis, setVis] = useState(visibility)
+  const [pw, setPw] = useState("")
+  const [savingVis, setSavingVis] = useState(false)
 
   // GDocs model: owners and editors manage access; everyone else gets view-only.
   const canManage = myRole === "owner" || myRole === "editor"
 
-  const qc = useQueryClient()
+  const saveVisibility = async () => {
+    setSavingVis(true)
+    setErr(null)
+    try {
+      await api.setVisibility(shortId, vis, vis === "password" && pw ? pw : undefined)
+      setPw("")
+      // Refresh the artifact (drives the toolbar/visibility) and the library.
+      qc.invalidateQueries({ queryKey: ["artifact", shortId] })
+      qc.invalidateQueries({ queryKey: ["artifacts"] })
+    } catch (x) {
+      setErr(x instanceof Error ? x.message : "Couldn't update access")
+    } finally {
+      setSavingVis(false)
+    }
+  }
+  // Enabling password needs a password; an unchanged selection has nothing to save.
+  const needsPw = vis === "password" && visibility !== "password" && !pw
+  const visUnchanged = vis === visibility && !pw
+
   const load = () =>
     api
       .listMembers(shortId)
@@ -95,6 +138,8 @@ export function ShareButton({ shortId, myRole }: { shortId: string; myRole?: Rol
       onOpenChange={(o) => {
         if (o) {
           setErr(null)
+          setVis(visibility)
+          setPw("")
           load()
         }
       }}
@@ -219,6 +264,62 @@ export function ShareButton({ shortId, myRole }: { shortId: string; myRole?: Rol
                 </div>
               ))}
             </div>
+          )}
+        </div>
+
+        {/* General access (visibility) — the "anyone with the link" control. */}
+        <div className="mt-4 border-t border-border pt-3.5">
+          <div className="mb-1.5 font-mono text-2xs font-semibold uppercase tracking-wide text-muted-foreground">
+            General access
+          </div>
+          {canManage ? (
+            <>
+              <div className="flex gap-1.5">
+                <select
+                  aria-label="General access"
+                  data-testid="share-visibility"
+                  value={vis}
+                  onChange={(e) => setVis(e.target.value)}
+                  className="flex-1 rounded-md border border-input bg-card px-2 py-2 text-sm text-foreground outline-none transition-colors focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  {ACCESS.map((a) => (
+                    <option key={a.value} value={a.value}>
+                      {a.label}
+                    </option>
+                  ))}
+                </select>
+                <Button
+                  data-testid="share-visibility-save"
+                  variant="primary"
+                  disabled={savingVis || needsPw || visUnchanged}
+                  onClick={saveVisibility}
+                >
+                  {savingVis ? "…" : "Update"}
+                </Button>
+              </div>
+              {vis === "password" && (
+                <Input
+                  type="password"
+                  data-testid="share-visibility-password"
+                  placeholder={
+                    visibility === "password"
+                      ? "New password (leave blank to keep)"
+                      : "Set a password"
+                  }
+                  aria-label="Password"
+                  value={pw}
+                  onChange={(e) => setPw(e.target.value)}
+                  className="mt-1.5"
+                />
+              )}
+              <p className="mt-1.5 font-mono text-2xs text-muted-foreground">
+                {ACCESS.find((a) => a.value === vis)?.blurb}
+              </p>
+            </>
+          ) : (
+            <p className="text-xs text-muted-foreground">
+              {ACCESS.find((a) => a.value === visibility)?.label ?? visibility}
+            </p>
           )}
         </div>
       </DialogContent>

@@ -128,7 +128,7 @@ if (LOOP.includes(cmd)) {
 if (cmd !== "publish") {
   console.error(`usage:
   dock init [dir] [--template md|html|slides|site] [--title t]
-  dock publish [file|dir] [--id X] [--title t] [--slug s] [--spa] [--message m] [--name "x"] [--visibility v] [--server url] [--token t]
+  dock publish [file|dir] [--id X] [--title t] [--slug s] [--spa] [--message m] [--name "x"] [--visibility v] [--password p] [--server url] [--token t]
   dock comments [--id X]                 list comment threads
   dock open [--id X]                     open the artifact in a browser
   dock reply <thread_id> <message…>      reply in a thread
@@ -194,6 +194,9 @@ if (p.spa) form.append("spa", "true")
 if (p.message) form.append("message", p.message)
 if (p.name) form.append("name", p.name)
 if (p.visibility) form.append("visibility", p.visibility)
+// --password is a per-publish secret for `--visibility password`; never put it in
+// dock.json (it isn't a config field), only pass it on the command line.
+if (p.password) form.append("password", p.password)
 
 const url = p.id ? `${p.server}/v1/artifacts/${p.id}/versions` : `${p.server}/v1/artifacts`
 const headers = p.token ? { authorization: `Bearer ${p.token}` } : {}

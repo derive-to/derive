@@ -107,7 +107,7 @@ export const anonName = (seed: string): string => {
   return `${adj}-${animal}-${(h >>> 16) % 100}`
 }
 
-export const VISIBILITIES = ["public", "link", "org"] as const
+export const VISIBILITIES = ["public", "link", "org", "password"] as const
 
 export const MAX_UPLOAD_BYTES = 100 * 1024 * 1024
 

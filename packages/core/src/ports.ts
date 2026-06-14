@@ -11,7 +11,9 @@ export interface BlobStore {
 }
 
 export type ArtifactKind = "file" | "bundle"
-export type Visibility = "public" | "link" | "org"
+// `password`: world-reachable by URL like `link`, but the bytes stay gated until
+// the visitor enters the password (then a viewer; members/owners see it by role).
+export type Visibility = "public" | "link" | "org" | "password"
 
 export interface ArtifactRecord {
   id: string
@@ -20,6 +22,8 @@ export interface ArtifactRecord {
   slug: string | null
   title: string | null
   visibility: Visibility
+  /** Salted hash of the unlock password for `password` visibility; null otherwise. */
+  password_hash: string | null
   kind: ArtifactKind
   spa: 0 | 1
   current_version: number
@@ -66,6 +70,8 @@ export interface NewArtifact {
   slug: string | null
   title: string | null
   visibility: Visibility
+  /** Salted unlock-password hash; set only for `password` visibility. */
+  password_hash?: string | null
   kind: ArtifactKind
   spa: 0 | 1
 }
@@ -82,6 +88,13 @@ export interface NewVersion {
 
 export interface MetaStore {
   createArtifact(a: NewArtifact): Promise<ArtifactRecord>
+  /** Change an artifact's general access (visibility), setting/clearing the unlock
+   *  password hash (null for any non-`password` visibility). */
+  setVisibility(
+    artifactId: string,
+    visibility: Visibility,
+    passwordHash: string | null,
+  ): Promise<void>
   getByShortId(shortId: string): Promise<ArtifactRecord | null>
   /** Appends the next version and bumps current_version. */
   addVersion(artifactId: string, v: NewVersion): Promise<VersionRecord>

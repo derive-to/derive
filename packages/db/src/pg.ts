@@ -38,6 +38,7 @@ import type {
   UserDir,
   VersionRecord,
   ViewStats,
+  Visibility,
   WebhookRecord,
   WorkspaceRecord,
 } from "@dock/core"
@@ -146,6 +147,17 @@ export class PgMetaStore implements MetaStore {
   async createArtifact(a: NewArtifact): Promise<ArtifactRecord> {
     await this.db.insert(artifact).values(a)
     return (await this.getByShortId(a.short_id)) as ArtifactRecord
+  }
+
+  async setVisibility(
+    artifactId: string,
+    visibility: Visibility,
+    passwordHash: string | null,
+  ): Promise<void> {
+    await this.db
+      .update(artifact)
+      .set({ visibility, password_hash: passwordHash })
+      .where(eq(artifact.id, artifactId))
   }
 
   async getByShortId(shortId: string): Promise<ArtifactRecord | null> {

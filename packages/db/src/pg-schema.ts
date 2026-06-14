@@ -26,6 +26,7 @@ export const artifact = pgTable("artifact", {
   slug: text("slug"),
   title: text("title"),
   visibility: text("visibility").$type<Visibility>().notNull().default("link"),
+  password_hash: text("password_hash"),
   kind: text("kind").$type<ArtifactKind>().notNull(),
   spa: integer("spa").$type<0 | 1>().notNull().default(0),
   current_version: integer("current_version").notNull().default(0),
@@ -286,6 +287,7 @@ export const PG_SCHEMA_STATEMENTS: string[] = [
     slug TEXT,
     title TEXT,
     visibility TEXT NOT NULL DEFAULT 'link',
+    password_hash TEXT,
     kind TEXT NOT NULL,
     spa INTEGER NOT NULL DEFAULT 0,
     current_version INTEGER NOT NULL DEFAULT 0,
@@ -293,6 +295,7 @@ export const PG_SCHEMA_STATEMENTS: string[] = [
     removed_at TEXT
   )`,
   `ALTER TABLE artifact ADD COLUMN IF NOT EXISTS removed_at TEXT`,
+  `ALTER TABLE artifact ADD COLUMN IF NOT EXISTS password_hash TEXT`,
   // Library feed: scope by org_id + keyset order on (created_at, id) desc. One
   // composite serves both; Postgres backward-scans it for the DESC order.
   `CREATE INDEX IF NOT EXISTS artifact_org_created ON artifact (org_id, created_at, id)`,

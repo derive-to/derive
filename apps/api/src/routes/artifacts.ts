@@ -11,9 +11,10 @@ import {
   toJson,
 } from "@dock/core"
 import { type Context, Hono } from "hono"
+import { setCookie } from "hono/cookie"
 import { z } from "zod"
 import type { AppContext } from "../context"
-import { safeEqual } from "../lib/crypto"
+import { hashPassword, safeEqual, unlockCookie, unlockToken, verifyPassword } from "../lib/crypto"
 import {
   DEFAULT_WORKSPACE_NAME,
   fail,
@@ -163,6 +164,15 @@ export const artifactRoutes = (ctx: AppContext) => {
       body["kind"] === "bundle" ||
       (bytes[0] === 0x50 && bytes[1] === 0x4b && (bytes[2] === 3 || bytes[2] === 5))
 
+    // `password` visibility on a NEW artifact must carry a password to hash; a
+    // republish keeps whatever the artifact already has (publish() never re-creates
+    // the artifact, only adds a version, so visibility/password are set-on-create).
+    const visibility = visibilityOf(body["visibility"])
+    const password = str(body["password"])
+    if (!shortId && visibility === "password" && !password)
+      return fail(c, 400, "a password is required for password visibility")
+    const passwordHash = visibility === "password" && password ? hashPassword(password) : undefined
+
     try {
       const { artifact, version } = await publish(
         meta,
@@ -183,7 +193,8 @@ export const artifactRoutes = (ctx: AppContext) => {
           author: (await actingUser(c))?.name ?? str(body["author"]),
           name: str(body["name"]),
           orgId: org,
-          visibility: visibilityOf(body["visibility"]),
+          visibility,
+          passwordHash,
         },
         shortId,
       )
@@ -227,7 +238,13 @@ export const artifactRoutes = (ctx: AppContext) => {
     // For a missing artifact, fall back to the most restrictive visibility so
     // an anonymous probe can't learn anything (a non-member gets no access).
     const actor = await actorFor(c, artifact ?? ({ id: "", visibility: "org" } as ArtifactRecord))
-    if (!artifact || !can(actor, "read", artifact.visibility)) return fail(c, 404, "not found")
+    if (!artifact) return fail(c, 404, "not found")
+    if (!can(actor, "read", artifact.visibility))
+      // A password artifact isn't hidden, it's lockable: tell the client to prompt
+      // for the password (401) rather than claim it doesn't exist (404).
+      return artifact.visibility === "password"
+        ? fail(c, 401, "password required")
+        : fail(c, 404, "not found")
     const versions = await meta.listVersions(artifact.id)
     const me = actor.kind === "user" ? actor.userId : null
     const tags = (await meta.tagsForArtifacts([artifact.id]))[artifact.id] ?? []
@@ -252,6 +269,58 @@ export const artifactRoutes = (ctx: AppContext) => {
       // UI shows a tombstone instead of the iframe.
       removed: !!artifact.removed_at,
     })
+  })
+
+  // Change general access (visibility) after publish — the Share dialog's
+  // "general access" control. Editors+ (share), per the GDocs model. Enabling
+  // `password` needs a password (or keeps the existing one); any other visibility
+  // clears the stored hash.
+  app.patch("/v1/artifacts/:shortId/visibility", async (c) => {
+    const artifact = await meta.getByShortId(c.req.param("shortId"))
+    if (!artifact) return fail(c, 404, "not found")
+    if (!(await authorize(c, "share", artifact))) return fail(c, 403, "forbidden")
+    const b = await readJson(
+      c,
+      z.object({ visibility: z.string(), password: z.string().optional() }),
+    )
+    if (b instanceof Response) return b
+    const visibility = visibilityOf(b.visibility)
+    if (!visibility) return fail(c, 400, "invalid visibility")
+    let passwordHash: string | null = null
+    if (visibility === "password") {
+      if (b.password) passwordHash = hashPassword(b.password)
+      else if (artifact.visibility === "password" && artifact.password_hash)
+        passwordHash = artifact.password_hash
+      else return fail(c, 400, "a password is required for password visibility")
+    }
+    await meta.setVisibility(artifact.id, visibility, passwordHash)
+    return c.json({ visibility })
+  })
+
+  // Unlock a `password` artifact: verify the password and drop a cookie whose
+  // value is derived from the server-only hash (so it can't be forged and dies if
+  // the password changes). Brute force is bounded by the global /v1 rate limiter.
+  // authz-exempt: the password itself is the gate; any visitor may attempt unlock.
+  app.post("/v1/artifacts/:shortId/unlock", async (c) => {
+    const artifact = await meta.getByShortId(c.req.param("shortId"))
+    if (!artifact || artifact.visibility !== "password" || !artifact.password_hash)
+      return fail(c, 404, "not found")
+    const b = await readJson(c, z.object({ password: z.string().min(1) }))
+    if (b instanceof Response) return b
+    if (!verifyPassword(b.password, artifact.password_hash)) return fail(c, 401, "wrong password")
+    setCookie(
+      c,
+      unlockCookie(artifact.short_id),
+      unlockToken(artifact.id, artifact.password_hash),
+      {
+        path: "/",
+        maxAge: 60 * 60 * 24 * 30,
+        httpOnly: true,
+        sameSite: deps.crossSite ? "None" : "Lax",
+        secure: deps.crossSite || new URL(deps.baseUrl).protocol === "https:",
+      },
+    )
+    return c.json({ ok: true })
   })
 
   // Restore a past version: re-point a new revision at its stored blob (no

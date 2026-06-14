@@ -18,7 +18,7 @@ import type { Context } from "hono"
 import { getCookie, setCookie } from "hono/cookie"
 import type { Auth } from "./auth-config"
 import { type Backplane, createInProcessBackplane } from "./bus"
-import { safeEqual, sha256 } from "./lib/crypto"
+import { safeEqual, sha256, unlockCookie, unlockToken } from "./lib/crypto"
 import { VIEWER_COOKIE, WS_COOKIE } from "./lib/http"
 import { makeKeyedLimiter } from "./lib/rate-limit"
 import { log } from "./log"
@@ -307,6 +307,12 @@ export function buildContext(deps: AppDeps) {
   }
 
   const actorFor = async (c: Context, a: ArtifactRecord): Promise<Actor> => {
+    // For a `password` artifact, has this visitor entered the password? The unlock
+    // cookie's value is derived from the server-only hash, so it can't be forged.
+    const unlocked =
+      a.visibility === "password" &&
+      !!a.password_hash &&
+      safeEqual(getCookie(c, unlockCookie(a.short_id)) ?? "", unlockToken(a.id, a.password_hash))
     if (deps.token && safeEqual(bearer(c), deps.token)) return { kind: "token" }
     const ag = await agentFor(c)
     if (ag) {
@@ -314,7 +320,7 @@ export function buildContext(deps: AppDeps) {
       return { kind: "user", userId: ag.id, artifactRole: am?.role ?? null, orgRole: ag.role }
     }
     const me = await currentUser(c)
-    if (!me) return { kind: "anon" }
+    if (!me) return { kind: "anon", unlocked }
     // Baseline role = membership in the ARTIFACT's workspace. Opening a shared
     // link never auto-joins you into someone else's workspace; you only carry an
     // org role where you're explicitly a member.
@@ -324,7 +330,7 @@ export function buildContext(deps: AppDeps) {
     // folded in alongside any per-artifact share (the higher wins).
     const cRoles = await meta.collectionRolesForArtifact(a.id, me.id)
     const artifactRole = maxRole(am?.role ?? null, ...cRoles)
-    return { kind: "user", userId: me.id, artifactRole, orgRole }
+    return { kind: "user", userId: me.id, artifactRole, orgRole, unlocked }
   }
 
   /** Authorize an action against a specific artifact. */
