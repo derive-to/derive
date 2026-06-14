@@ -165,8 +165,17 @@ export interface MetaStore {
   activeWebhooks(artifactId: string, orgId: string): Promise<WebhookRecord[]>
   /** Enqueue a delivery into the outbox (target is denormalized for durability). */
   enqueueDelivery(d: NewDelivery): Promise<void>
-  /** Pending deliveries whose next_attempt_at has passed, oldest first. */
-  claimDueDeliveries(now: string, limit: number): Promise<DeliveryRecord[]>
+  /**
+   * Atomically claim up to `limit` pending deliveries whose next_attempt_at has
+   * passed: increments their attempt count and leases them (sets next_attempt_at
+   * to `leaseUntil`, hiding them from other workers until the lease expires), then
+   * returns the claimed rows. Postgres uses `FOR UPDATE SKIP LOCKED` so concurrent
+   * instances never grab the same row — without this the outbox double-delivers
+   * under the multi-instance topology. A crash mid-delivery is recovered when the
+   * lease lapses; a persistently-crashing (poison) delivery dead-letters because
+   * each claim still counts an attempt.
+   */
+  claimDueDeliveries(now: string, limit: number, leaseUntil: string): Promise<DeliveryRecord[]>
   updateDelivery(
     id: string,
     fields: {

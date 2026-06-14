@@ -28,6 +28,12 @@ export { ArtifactRoom } from "./realtime-do"
  * not at runtime: D1 forbids the sqlite_master introspection Better Auth's migrator
  * needs (SQLITE_AUTH); generate that DDL with gen-auth-schema.ts. See DEPLOY.md.
  *
+ * LIMITATION: the webhook outbox worker is NOT run on this tier. Delivery depends on
+ * node:dns (SSRF re-validation in webhooks.ts), which Workers don't provide, so a
+ * `scheduled()` drain would need an edge-native delivery path first. Webhooks enqueue
+ * but are not delivered on the Workers tier (experimental); the Node/Fly tier drains
+ * them. Tracked as a follow-up for the edge tier.
+ *
  * NEVER import node.ts / config.ts / @dock/storage/fs here — those pull Node built-ins.
  */
 export interface Env {

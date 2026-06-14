@@ -12,6 +12,11 @@ export { WEBHOOK_EVENTS, type WebhookEvent } from "./events"
 const MAX_ATTEMPTS = 6
 const BASE_BACKOFF_MS = 3_000
 const MAX_BACKOFF_MS = 60 * 60_000
+// A claimed delivery is leased this long: hidden from other workers/ticks until it
+// finishes or the lease lapses (crash recovery). Must exceed a single delivery's
+// timeout so an in-flight delivery is never re-claimed.
+const CLAIM_LEASE_MS = 60_000
+const DELIVER_TIMEOUT_MS = 15_000
 
 /** Normalized payload stored in the outbox (canonical, re-deliverable). */
 export interface EventPayload {
@@ -109,7 +114,15 @@ export async function deliverOnce(d: DeliveryRecord): Promise<{ ok: boolean; sta
     // Do NOT follow redirects: the URL was SSRF-checked at registration, but a
     // 302 to 169.254.169.254 / localhost would bypass that. A redirect is a
     // delivery failure here.
-    const res = await fetch(d.url, { method: "POST", headers, body, redirect: "manual" })
+    const res = await fetch(d.url, {
+      method: "POST",
+      headers,
+      body,
+      redirect: "manual",
+      // Bound a single delivery so a hung endpoint can't pin the worker (and stays
+      // well under the claim lease, so the row is never re-claimed mid-delivery).
+      signal: AbortSignal.timeout(DELIVER_TIMEOUT_MS),
+    })
     if (res.ok) return { ok: true, status: String(res.status) }
     if (res.status >= 300 && res.status < 400)
       return { ok: false, status: `HTTP ${res.status} (redirect not followed)` }
@@ -149,40 +162,52 @@ export async function enqueueForEvent(
 
 const backoff = (attempts: number) => Math.min(MAX_BACKOFF_MS, BASE_BACKOFF_MS * 2 ** attempts)
 
-/** The outbox worker: claim due deliveries, deliver, retry with backoff, dead-letter. */
+/**
+ * One outbox pass: atomically claim due deliveries, deliver each, record the
+ * result (delivered / retry-with-backoff / dead-letter). The claim increments
+ * attempts and leases the rows, so this is safe to run concurrently across
+ * instances and from a Worker cron — no row is delivered twice.
+ */
+export async function runDeliveryTick(meta: MetaStore, limit = 20): Promise<void> {
+  const now = new Date()
+  const leaseUntil = new Date(now.getTime() + CLAIM_LEASE_MS).toISOString()
+  const due = await meta.claimDueDeliveries(now.toISOString(), limit, leaseUntil)
+  for (const d of due) {
+    const r = await deliverOnce(d)
+    const attempts = d.attempts // already incremented by the claim
+    if (r.ok) {
+      await meta.updateDelivery(d.id, {
+        status: "delivered",
+        attempts,
+        last_error: null,
+        next_attempt_at: d.next_attempt_at,
+      })
+    } else if (attempts >= MAX_ATTEMPTS) {
+      await meta.updateDelivery(d.id, {
+        status: "dead",
+        attempts,
+        last_error: r.status,
+        next_attempt_at: d.next_attempt_at,
+      })
+    } else {
+      const next = new Date(Date.now() + backoff(attempts)).toISOString()
+      await meta.updateDelivery(d.id, {
+        status: "pending",
+        attempts,
+        last_error: r.status,
+        next_attempt_at: next,
+      })
+    }
+  }
+}
+
+/** The Node outbox worker: run a delivery tick on an interval. Returns a stop fn. */
 export function startWebhookWorker(meta: MetaStore, intervalMs = 1500): () => void {
   let stopped = false
   const tick = async () => {
     if (stopped) return
     try {
-      const due = await meta.claimDueDeliveries(new Date().toISOString(), 20)
-      for (const d of due) {
-        const r = await deliverOnce(d)
-        const attempts = d.attempts + 1
-        if (r.ok) {
-          await meta.updateDelivery(d.id, {
-            status: "delivered",
-            attempts,
-            last_error: null,
-            next_attempt_at: d.next_attempt_at,
-          })
-        } else if (attempts >= MAX_ATTEMPTS) {
-          await meta.updateDelivery(d.id, {
-            status: "dead",
-            attempts,
-            last_error: r.status,
-            next_attempt_at: d.next_attempt_at,
-          })
-        } else {
-          const next = new Date(Date.now() + backoff(attempts)).toISOString()
-          await meta.updateDelivery(d.id, {
-            status: "pending",
-            attempts,
-            last_error: r.status,
-            next_attempt_at: next,
-          })
-        }
-      }
+      await runDeliveryTick(meta)
     } catch (err) {
       // A bad tick must not kill the loop, but it must not vanish either —
       // otherwise a persistently failing outbox is invisible.
