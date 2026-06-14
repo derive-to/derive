@@ -203,7 +203,16 @@ const shutdown = async (signal: string) => {
   }, 10_000).unref()
   stopWorker()
   if (pruneTimer) clearInterval(pruneTimer)
-  await new Promise<void>((resolve) => server.close(() => resolve()))
+  // server.close() stops accepting connections and resolves once existing ones end,
+  // but Node never closes IDLE keep-alive sockets on its own — a browser, a load
+  // balancer, or any client holding one keeps close() pending until the hard
+  // deadline force-exits (a 10s stall on every redeploy). closeIdleConnections drops
+  // those now; in-flight requests keep their socket and still drain.
+  const drained = new Promise<void>((resolve) => server.close(() => resolve()))
+  // `in` narrows the http2/https union @hono/node-server returns; our serve() is a
+  // plain http.Server, which has had closeIdleConnections since Node 18.2.
+  if ("closeIdleConnections" in server) server.closeIdleConnections()
+  await drained
   try {
     await closeStores()
   } catch (e) {

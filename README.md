@@ -154,4 +154,7 @@ cookies, storage, or other artifacts.
 
 ## License
 
-[Apache-2.0](LICENSE)
+[Functional Source License (FSL-1.1-ALv2)](LICENSE) — fair-code / source-available.
+Run, modify, and self-host Dock freely for any purpose **except** offering it as a
+competing commercial product or service. Each release automatically converts to
+Apache-2.0 two years after it ships.

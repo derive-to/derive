@@ -95,7 +95,10 @@ export default {
         shellFetch: async () => {
           if (shellCache !== null) return shellCache
           try {
-            const res = await env.ASSETS.fetch(new URL("/index.html", baseUrl).toString())
+            // Fetch "/" (the canonical shell URL), NOT "/index.html": Static Assets
+            // 307-redirects /index.html -> /, so a non-2xx would null the shell and
+            // drop unfurl/OG injection on /a/:ref (crawlers/social cards get no meta).
+            const res = await env.ASSETS.fetch(new URL("/", baseUrl).toString())
             shellCache = res.ok ? await res.text() : null
           } catch {
             shellCache = null
