@@ -193,7 +193,7 @@ export function AppShell({ children }: { children: ReactNode }) {
     <ShellCtx.Provider value={value}>
       <TopBarSlotCtx.Provider value={topBarSlot}>
         <div className="flex h-full flex-col">
-          <header className="flex items-center gap-2.5 border-b border-border bg-card px-5.5 py-3 max-sm:px-3.5 max-sm:py-2.5">
+          <header className="flex items-center gap-2.5 border-b border-border bg-card px-5.5 py-3 max-sm:flex-wrap max-sm:px-3.5 max-sm:py-2.5">
             <Button
               variant="outline"
               size="icon"
@@ -208,7 +208,10 @@ export function AppShell({ children }: { children: ReactNode }) {
               <Logo />
               <span className="font-display text-lg font-semibold">Dock</span>
             </Link>
-            <div ref={setTopBarSlot} className="ml-auto flex items-center gap-2" />
+            <div
+              ref={setTopBarSlot}
+              className="ml-auto flex items-center gap-2 max-sm:flex-wrap max-sm:justify-end"
+            />
           </header>
 
           <div className="flex min-h-0 flex-1">

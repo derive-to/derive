@@ -22,6 +22,7 @@ export interface Artifact {
   current_version: number
   versions: {
     n: number
+    content_type?: string
     author: string
     message: string | null
     name: string | null
@@ -271,6 +272,10 @@ export const api = {
       if (!r.ok) throw new Error(`HTTP ${r.status}`)
       return r.text()
     }),
+  // Render a markdown draft to the exact published HTML, for the live editor
+  // preview (markdown only; HTML drafts preview in-browser).
+  renderPreview: (source: string, title: string | null): Promise<{ html: string }> =>
+    f("/v1/preview", opts({ source, title })).then(j),
   // Verify a password artifact's password; on success the server sets the unlock
   // cookie and subsequent reads of this artifact succeed.
   unlock: (id: string, password: string): Promise<{ ok: true }> =>
