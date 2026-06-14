@@ -1,8 +1,9 @@
 // The OAuth consent screen Dock serves when an agent (an MCP client like Claude)
-// asks to act on your behalf. Better Auth's oidc-provider plugin renders this
-// inline at the authorize endpoint once you're signed in (getConsentHTML). Approve
-// posts to /api/auth/oauth2/consent and follows the returned redirect back to the
-// client. This is the human-in-the-loop grant: an agent can't self-authorize.
+// asks to act on your behalf. The oauth-provider plugin redirects the signed-in
+// user here (/oauth/consent?client_id&scope&code); on Approve we POST to
+// /api/auth/oauth2/consent with the original query, and the plugin returns the
+// browser to the client's redirect_uri with the authorization code. This is the
+// human-in-the-loop grant: an agent can't self-authorize.
 
 const SCOPE_LABELS: Record<string, string> = {
   openid: "Confirm who you are",
@@ -21,16 +22,14 @@ const esc = (s: string): string =>
     c === "&" ? "&amp;" : c === "<" ? "&lt;" : c === ">" ? "&gt;" : c === '"' ? "&quot;" : "&#39;",
   )
 
-/** The consent page HTML. `code` is the consent_code the Approve button echoes back. */
+/** The consent page HTML. `query` is the original authorize query string, echoed
+ *  back to /oauth2/consent so the plugin can complete the authorization. */
 export function consentHTML(props: {
-  clientId: string
-  clientName?: string
-  clientIcon?: string
-  clientMetadata?: Record<string, unknown> | null
-  code: string
+  clientName: string
   scopes: string[]
+  query: string
 }): string {
-  const name = esc(props.clientName || props.clientId || "An application")
+  const name = esc(props.clientName || "An application")
   const items = props.scopes
     .map((s) => `<li><span class="tick">✓</span><span>${esc(SCOPE_LABELS[s] ?? s)}</span></li>`)
     .join("")
@@ -81,17 +80,23 @@ export function consentHTML(props: {
     <p class="foot">Revoke anytime in Settings → Agents.</p>
   </main>
   <script>
-    var code = ${JSON.stringify(props.code)};
+    var query = ${JSON.stringify(props.query)};
     var allow = document.getElementById("allow"), deny = document.getElementById("deny"), err = document.getElementById("err");
     async function decide(accept){
       allow.disabled = deny.disabled = true; err.textContent = "";
       try{
         var r = await fetch("/api/auth/oauth2/consent", {
           method:"POST", headers:{"content-type":"application/json"},
-          credentials:"include", body: JSON.stringify({ accept: accept, consent_code: code })
+          credentials:"include", redirect:"manual",
+          body: JSON.stringify({ accept: accept, oauth_query: query })
         });
+        // The plugin replies JSON { redirect: true, url: "<redirect_uri>?code=..." }
+        // (note: "redirect" is a boolean flag, the destination is "url").
+        var loc = r.headers.get("location");
+        if (loc){ window.location.href = loc; return; }
         var data = await r.json().catch(function(){ return {}; });
-        if (data && data.redirectURI){ window.location.href = data.redirectURI; return; }
+        var to = data && (data.url || data.redirectURI || data.location);
+        if (to){ window.location.href = to; return; }
         err.textContent = (data && (data.error_description || data.error)) || "Something went wrong.";
       }catch(e){ err.textContent = "Network error. Try again."; }
       allow.disabled = deny.disabled = false;

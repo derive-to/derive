@@ -138,6 +138,19 @@ type RunResult = { changes?: number; meta?: { changes?: number } }
 /** Pull the artifact ids out of repo_source `files` JSON rows. A file map is
  *  `{ [repoPath]: { artifact_id, sha } }`; a managed artifact is any id therein.
  *  Shared by both drivers so "is this artifact synced?" reads identically. */
+/** The oauth-provider stores granted scopes as a JSON array string
+ *  (`["openid","dock:publish"]`); tolerate a space-separated form too. */
+export const parseOAuthScopes = (s: string | null): string[] => {
+  if (!s) return []
+  try {
+    const a = JSON.parse(s)
+    if (Array.isArray(a)) return a.filter((x): x is string => typeof x === "string")
+  } catch {
+    // not JSON; fall through to the space-separated form
+  }
+  return s.split(/\s+/).filter(Boolean)
+}
+
 export const collectManagedIds = (rows: { files: string }[]): string[] => {
   const ids = new Set<string>()
   for (const r of rows) {
@@ -796,7 +809,7 @@ export function makeRepos(db: SqliteDb) {
   // Introspect a Better Auth oidc-provider access token (its own tables, same DB).
   // Quoted camelCase identifiers resolve on better-sqlite3 + D1; the token is bound,
   // not interpolated. Joined to the app row for the granting client's display name.
-  const getOAuthGrant = async (token: string): Promise<OAuthGrant | null> => {
+  const getOAuthGrant = async (tokenHash: string): Promise<OAuthGrant | null> => {
     type GrantRow = {
       user_id: string
       user_email: string
@@ -810,15 +823,15 @@ export function makeRepos(db: SqliteDb) {
     try {
       row = (await db.get(sql`
         select t."userId" as user_id, t."clientId" as client_id, t."scopes" as scopes,
-               t."accessTokenExpiresAt" as expires_at, a."name" as client_name,
+               t."expiresAt" as expires_at, c."name" as client_name,
                u."email" as user_email, u."name" as user_name
         from "oauthAccessToken" t
-        join "oauthApplication" a on a."clientId" = t."clientId"
+        join "oauthClient" c on c."clientId" = t."clientId"
         join "user" u on u."id" = t."userId"
-        where t."accessToken" = ${token} limit 1
+        where t."token" = ${tokenHash} limit 1
       `)) as GrantRow | undefined
     } catch {
-      // OAuth tables absent (oidc-provider not migrated) or query error: no grant.
+      // OAuth tables absent (oauth-provider not migrated) or query error: no grant.
       return null
     }
     if (!row) return null
@@ -835,8 +848,18 @@ export function makeRepos(db: SqliteDb) {
       userName: row.user_name,
       clientId: row.client_id,
       clientName: row.client_name,
-      scopes: row.scopes ? row.scopes.split(" ").filter(Boolean) : [],
+      scopes: parseOAuthScopes(row.scopes),
       expiresAt: new Date(ts),
+    }
+  }
+  const getOAuthClientName = async (clientId: string): Promise<string | null> => {
+    try {
+      const r = (await db.get(
+        sql`select "name" as name from "oauthClient" where "clientId" = ${clientId} limit 1`,
+      )) as { name?: string | null } | undefined
+      return r?.name ?? null
+    } catch {
+      return null
     }
   }
   const deleteAgent = async (id: string, orgId: string): Promise<void> => {
@@ -1013,6 +1036,7 @@ export function makeRepos(db: SqliteDb) {
     listAgents,
     getAgentByToken,
     getOAuthGrant,
+    getOAuthClientName,
     deleteAgent,
     createAgentMention,
     listPendingAgentMentions,

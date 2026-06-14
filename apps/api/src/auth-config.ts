@@ -1,8 +1,8 @@
+import { oauthProvider } from "@better-auth/oauth-provider"
 import { type BetterAuthOptions, betterAuth } from "better-auth"
 import { getMigrations } from "better-auth/db/migration"
-import { genericOAuth } from "better-auth/plugins"
-import { oidcProvider } from "better-auth/plugins/oidc-provider"
-import { consentHTML } from "./oauth-consent"
+import { genericOAuth, jwt } from "better-auth/plugins"
+import { sha256 } from "./lib/crypto"
 
 // Scopes an agent can be granted via the OAuth consent. The dock:* scopes map to
 // what the issued token may do; openid/profile/email/offline_access are the
@@ -100,23 +100,22 @@ export function makeAuth(db: AuthDb, baseUrl: string, secret: string) {
     trustedOrigins: trusted,
     plugins: [
       ...(oidc.length ? [genericOAuth({ config: oidc })] : []),
-      // Dock as an OAuth 2.1 / OIDC authorization server: agents (MCP clients)
-      // authenticate via a browser consent instead of a pasted token, and get a
-      // scoped, expiring access token. Endpoints land under /api/auth/oauth2/*;
-      // the consent screen is rendered inline (oauth-consent.ts).
-      oidcProvider({
+      // oauthProvider signs id tokens + serves JWKS through the jwt plugin.
+      jwt(),
+      // Dock as an OAuth 2.1 authorization server: agents (MCP clients) authenticate
+      // via a browser consent instead of a pasted token, and get a scoped, expiring
+      // access token. Endpoints land under /api/auth/oauth2/*; the consent screen is
+      // a route we own (/oauth/consent). Tokens are opaque and stored hashed with
+      // Dock's own sha256, so the bridge can resolve them by hash (see context.ts).
+      oauthProvider({
         loginPage: "/login",
-        getConsentHTML: (props) => consentHTML(props),
+        consentPage: "/oauth/consent",
         requirePKCE: true,
         allowDynamicClientRegistration: true,
-        allowPlainCodeChallengeMethod: false,
         accessTokenExpiresIn: 60 * 60, // 1h
         refreshTokenExpiresIn: 60 * 60 * 24 * 7, // 7d
-        codeExpiresIn: 600, // 10m
-        defaultScope: "openid",
         scopes: [...OAUTH_SCOPES],
-        storeClientSecret: "hashed",
-        __skipDeprecationWarning: true,
+        storeTokens: { hash: async (token) => sha256(token) },
       }),
     ],
     advanced: {

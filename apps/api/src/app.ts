@@ -8,6 +8,7 @@ import { observability } from "./lib/observability"
 import { makeRateLimiter } from "./lib/rate-limit"
 import { serveContent } from "./lib/serve-content"
 import { log } from "./log"
+import { consentHTML } from "./oauth-consent"
 import { agentRoutes } from "./routes/agents"
 import { analyticsRoutes } from "./routes/analytics"
 import { artifactRoutes } from "./routes/artifacts"
@@ -241,6 +242,16 @@ export function createApp(deps: AppDeps): Hono {
       scopes_supported: [...OAUTH_SCOPES],
       bearer_methods_supported: ["header"],
     })
+  })
+
+  // The consent screen the oauth-provider plugin redirects a signed-in user to
+  // (client_id + scope + code in the query). We render the branded grant page; on
+  // Approve it posts back to /api/auth/oauth2/consent, which completes the flow.
+  app.get("/oauth/consent", async (c) => {
+    const clientId = c.req.query("client_id") ?? ""
+    const scopes = (c.req.query("scope") ?? "").split(/\s+/).filter(Boolean)
+    const clientName = (await ctx.meta.getOAuthClientName(clientId)) || clientId || "An application"
+    return c.html(consentHTML({ clientName, scopes, query: new URL(c.req.url).search }))
   })
 
   // Better Auth owns /api/auth/* (sign-up/in/out, OAuth, OIDC/SSO, session).

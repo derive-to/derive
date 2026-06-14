@@ -247,7 +247,9 @@ export function buildContext(deps: AppDeps) {
   // takes a role derived from the granted dock:* scopes. Expired tokens resolve to
   // nothing — the caller is then anonymous (read-only), never the owner.
   const oauthAgent = async (token: string): Promise<AgentRecord | null> => {
-    const grant = await meta.getOAuthGrant(token)
+    // Opaque access tokens are stored hashed (sha256, same as agent tokens), so
+    // resolve by the hash of the presented bearer.
+    const grant = await meta.getOAuthGrant(sha256(token))
     if (!grant || grant.expiresAt.getTime() <= Date.now()) return null
     // The agent runs in the granting user's workspace, provisioning it on first
     // touch exactly as the user's own first request would (multi mode, lazy).

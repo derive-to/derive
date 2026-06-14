@@ -318,8 +318,10 @@ export interface MetaStore {
   listAgents(orgId: string): Promise<AgentRecord[]>
   /** Resolve an agent from its bearer token (the agent's identity). */
   getAgentByToken(token: string): Promise<AgentRecord | null>
-  /** Resolve a live OAuth access token (issued by the consent flow) to its grant. */
-  getOAuthGrant(token: string): Promise<OAuthGrant | null>
+  /** Resolve a live OAuth access token (by its stored hash) to its grant. */
+  getOAuthGrant(tokenHash: string): Promise<OAuthGrant | null>
+  /** The display name of a registered OAuth client (for the consent screen). */
+  getOAuthClientName(clientId: string): Promise<string | null>
   deleteAgent(id: string, orgId: string): Promise<void>
   /** Queue a mention into an agent's pull inbox. */
   createAgentMention(m: NewAgentMention): Promise<void>
