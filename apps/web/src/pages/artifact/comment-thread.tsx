@@ -1,30 +1,20 @@
-import {
-  type CSSProperties,
-  type KeyboardEvent as ReactKeyboardEvent,
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useRef,
-  useState,
-} from "react"
-import { api, type Comment, type DirUser, type Mention } from "@/api"
-import { Icon } from "@/components/icons"
-import { ColoredAvatar } from "@/components/shared/colored-avatar"
+import { useCallback, useEffect, useRef, useState } from "react"
+import type { Comment, Mention } from "@/api"
 import { Button } from "@/components/ui/button"
-import { Textarea } from "@/components/ui/input"
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
-import { PICKER_EMOJI } from "@/lib/emoji"
-import { ago } from "@/lib/time"
 import { cn } from "@/lib/utils"
-import { useActions } from "./comment-actions"
-import { useCommentScope } from "./lib/comment-scope"
+import { Composer, MentionField } from "./comment-composer"
+import { CommentRow } from "./comment-row"
 import { anchorExact, COMPOSER_ID, layoutPins } from "./lib/layout"
-import { mdToHtml } from "./lib/markdown"
-import { REACTION_EMOJI } from "./lib/reactions"
 import type { PinItem, Sel } from "./types"
+
+// Composer is consumed by comment-panels through this module; re-export so its
+// import path is unchanged now that it lives in comment-composer.
+export { Composer }
 
 export function PinnedZone({
   pins,
+  scrollY,
+  onScrollDoc,
   composer,
   activeThread,
   hoverThread,
@@ -38,6 +28,8 @@ export function PinnedZone({
   onCancelNew,
 }: {
   pins: PinItem[]
+  scrollY: number
+  onScrollDoc: (dy: number) => void
   composer: { anchor: Sel | null; top: number | null } | null
   activeThread: string | null
   hoverThread: string | null
@@ -91,9 +83,45 @@ export function PinnedZone({
   if (activeComposer) items.push({ id: COMPOSER_ID, desiredY: activeComposer.top })
   const activeId = activeComposer ? COMPOSER_ID : activeThread
   const pos = layoutPins(items, heights, activeId, 12)
+  // Tallest card bottom in the relaxed stack. When a dense cluster pushes this
+  // past the panel height, the panel scrolls to reveal the buried cards (the
+  // document alone can't surface them — they all anchor to the same spot).
+  const maxBottom = items.reduce(
+    (m, it) => Math.max(m, (pos[it.id] ?? it.desiredY) + (heights[it.id] ?? 116)),
+    0,
+  )
+
+  const zoneRef = useRef<HTMLDivElement>(null)
+  // Wheel over the panel scrolls the document (so cards glide with their text),
+  // but the panel consumes the gesture FIRST when it has its own overflow to show
+  // — native scroll-chaining, except the document is a cross-origin iframe so the
+  // hand-off is explicit. preventDefault needs a non-passive listener.
+  useEffect(() => {
+    const el = zoneRef.current
+    if (!el) return
+    const onWheel = (e: WheelEvent) => {
+      const down = e.deltaY > 0
+      const canConsume = down
+        ? el.scrollTop + el.clientHeight < el.scrollHeight - 1
+        : el.scrollTop > 0
+      if (canConsume) return // let the panel scroll natively to the buried cards
+      e.preventDefault()
+      onScrollDoc(e.deltaY)
+    }
+    el.addEventListener("wheel", onWheel, { passive: false })
+    return () => el.removeEventListener("wheel", onWheel)
+  }, [onScrollDoc])
+  // A document scroll re-pins every card to a fresh viewport position, so the
+  // panel's own overflow scroll is no longer meaningful — snap it back to the top.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: re-pin only tracks scrollY changes.
+  useEffect(() => {
+    if (zoneRef.current) zoneRef.current.scrollTop = 0
+  }, [scrollY])
 
   return (
-    <div className="absolute inset-0 overflow-hidden">
+    <div ref={zoneRef} className="absolute inset-0 overflow-y-auto overflow-x-hidden">
+      {/* Spacer gives the absolutely-placed cards a scrollable height. */}
+      <div aria-hidden="true" style={{ height: maxBottom }} />
       {pins.map((p) => {
         const head = p.thread[0]
         if (!head) return null
@@ -136,262 +164,6 @@ export function PinnedZone({
           }}
         >
           <Composer quote={activeComposer.quote} onSubmit={onSubmitNew} onCancel={onCancelNew} />
-        </div>
-      )}
-    </div>
-  )
-}
-
-// A comment's rendered body. In a thread (not compact) a long body is clamped to
-// a few lines with a "Show more" toggle, so one wall of text can't dominate the
-// panel; the rail preview keeps its 2-line clamp. Height is measured after layout
-// (scrollHeight reports the full content even while clamped).
-function CommentBody({ html, compact }: { html: string; compact?: boolean }) {
-  const ref = useRef<HTMLDivElement>(null)
-  const [expanded, setExpanded] = useState(false)
-  const [overflows, setOverflows] = useState(false)
-  const MAX_PX = 168
-  useLayoutEffect(() => {
-    const el = ref.current
-    // Re-measure whenever the rendered body (html) or mode changes.
-    if (compact || !html || !el) {
-      setOverflows(false)
-      return
-    }
-    setOverflows(el.scrollHeight > MAX_PX + 16)
-  }, [html, compact])
-  const clamped = !compact && overflows && !expanded
-  return (
-    <div>
-      <div
-        ref={ref}
-        className={cn(
-          "cmt-body text-sm leading-relaxed [word-break:break-word]",
-          compact && "line-clamp-2",
-          clamped &&
-            "max-h-[168px] overflow-hidden [mask-image:linear-gradient(to_bottom,#000_120px,transparent)]",
-        )}
-        // biome-ignore lint/security/noDangerouslySetInnerHtml: input is escaped first in mdToHtml.
-        dangerouslySetInnerHTML={{ __html: html }}
-      />
-      {!compact && overflows && (
-        <button
-          type="button"
-          data-testid="comment-toggle-length"
-          onClick={(e) => {
-            e.stopPropagation()
-            setExpanded((v) => !v)
-          }}
-          className="mt-1 text-xs font-semibold text-primary hover:underline"
-        >
-          {expanded ? "Show less" : "Show more"}
-        </button>
-      )}
-    </div>
-  )
-}
-
-// Stack a set of cards by desired Y without overlap. The active card is pinned
-// to its exact anchor and its neighbours are pushed up/down to make room.
-export function CommentRow({ c, compact }: { c: Comment; compact?: boolean }) {
-  const A = useActions()
-  const [editing, setEditing] = useState(false)
-  const [draft, setDraft] = useState(c.body_md)
-  const [open, setOpen] = useState<null | "react" | "menu">(null)
-  const mine = !!A.meName && c.author === A.meName
-  const reactions = c.reactions ?? {}
-
-  if (c.deleted)
-    return (
-      <div className={cn("px-3 py-2.5", !compact && "border-b border-border-soft")}>
-        <span className="text-sm italic text-muted-foreground">Comment deleted</span>
-      </div>
-    )
-
-  return (
-    <div
-      data-testid="comment-row"
-      className={cn("group relative px-3 py-2.5", !compact && "border-b border-border-soft")}
-    >
-      <div className="mb-1 flex items-center gap-1.5">
-        <ColoredAvatar name={c.author} />
-        <span className="text-xs font-bold text-foreground">{c.author}</span>
-        <span className="ml-auto font-mono text-2xs text-muted-foreground">
-          {ago(c.created_at)}
-          {c.edited ? " · edited" : ""}
-        </span>
-      </div>
-
-      {editing ? (
-        // biome-ignore lint/a11y/noStaticElementInteractions: stopPropagation wrapper, not an interactive control
-        // biome-ignore lint/a11y/useKeyWithClickEvents: stopPropagation wrapper, not an interactive control
-        <div onClick={(e) => e.stopPropagation()}>
-          <Textarea
-            value={draft}
-            autoFocus
-            data-testid="comment-edit-input"
-            onChange={(e) => setDraft(e.target.value)}
-            className="min-h-[52px] resize-y text-sm"
-            onKeyDown={(e) => {
-              if (e.key === "Escape") {
-                setEditing(false)
-                setDraft(c.body_md)
-              }
-              if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && draft.trim()) {
-                void A.edit(c.id, draft)
-                setEditing(false)
-              }
-            }}
-          />
-          <div className="mt-1.5 flex gap-1.5">
-            <Button
-              variant="primary"
-              size="sm"
-              disabled={!draft.trim()}
-              data-testid="comment-edit-save"
-              onClick={async () => {
-                await A.edit(c.id, draft)
-                setEditing(false)
-              }}
-            >
-              Save
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              data-testid="comment-edit-cancel"
-              onClick={() => {
-                setEditing(false)
-                setDraft(c.body_md)
-              }}
-            >
-              Cancel
-            </Button>
-          </div>
-        </div>
-      ) : (
-        <CommentBody html={mdToHtml(c.body_md, c.mentions)} compact={compact} />
-      )}
-
-      {Object.keys(reactions).length > 0 && (
-        <div className="mt-1.5 flex flex-wrap gap-1">
-          {Object.entries(reactions).map(([emoji, who]) => (
-            <button
-              key={emoji}
-              type="button"
-              data-testid={`reaction-pill-${emoji}`}
-              title={who.join(", ")}
-              onClick={(e) => {
-                e.stopPropagation()
-                A.react(c.id, emoji)
-              }}
-              className={cn(
-                "inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-xs transition-colors",
-                who.includes(A.meName)
-                  ? "border-primary bg-accent font-bold text-primary"
-                  : "border-border bg-card text-muted-foreground hover:border-primary",
-              )}
-            >
-              <span>{emoji}</span>
-              <span className="font-mono text-2xs">{who.length}</span>
-            </button>
-          ))}
-        </div>
-      )}
-
-      {!editing && (
-        // biome-ignore lint/a11y/noStaticElementInteractions: stopPropagation wrapper around the action toolbar, not a control
-        // biome-ignore lint/a11y/useKeyWithClickEvents: stopPropagation wrapper around the action toolbar, not a control
-        <div
-          className={cn(
-            "absolute right-2 top-1.5 z-[6] flex gap-px rounded-[9px] border border-border bg-card p-0.5 shadow-[var(--shadow)] transition-opacity",
-            open
-              ? "opacity-100"
-              : "pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100",
-          )}
-          onClick={(e) => e.stopPropagation()}
-        >
-          <Popover open={open === "react"} onOpenChange={(o) => setOpen(o ? "react" : null)}>
-            <PopoverTrigger asChild>
-              <button
-                type="button"
-                title="React"
-                data-testid="comment-react"
-                className="grid size-6 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-hover hover:text-foreground"
-              >
-                <Icon name="react" size={16} />
-              </button>
-            </PopoverTrigger>
-            <PopoverContent align="end" className="w-auto p-1">
-              <div className="grid grid-cols-4 gap-px">
-                {REACTION_EMOJI.map((em) => (
-                  <button
-                    key={em}
-                    type="button"
-                    data-testid={`react-emoji-${em}`}
-                    onClick={() => {
-                      A.react(c.id, em)
-                      setOpen(null)
-                    }}
-                    className="grid size-[30px] place-items-center rounded-md text-lg hover:bg-hover"
-                  >
-                    {em}
-                  </button>
-                ))}
-              </div>
-            </PopoverContent>
-          </Popover>
-          <Popover open={open === "menu"} onOpenChange={(o) => setOpen(o ? "menu" : null)}>
-            <PopoverTrigger asChild>
-              <button
-                type="button"
-                title="More"
-                data-testid="comment-more"
-                className="grid size-6 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-hover hover:text-foreground"
-              >
-                <Icon name="more" size={16} />
-              </button>
-            </PopoverTrigger>
-            <PopoverContent align="end" className="w-auto min-w-[132px] p-1">
-              {mine && (
-                <button
-                  type="button"
-                  data-testid="comment-edit"
-                  onClick={() => {
-                    setEditing(true)
-                    setOpen(null)
-                  }}
-                  className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-sm font-medium text-foreground transition-colors hover:bg-hover"
-                >
-                  <Icon name="pencil" size={15} /> Edit
-                </button>
-              )}
-              <button
-                type="button"
-                data-testid="comment-copy-link"
-                onClick={() => {
-                  A.copyLink(c.thread_id)
-                  setOpen(null)
-                }}
-                className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-sm font-medium text-foreground transition-colors hover:bg-hover"
-              >
-                <Icon name="link" size={15} /> Copy link
-              </button>
-              {mine && (
-                <button
-                  type="button"
-                  data-testid="comment-delete"
-                  onClick={() => {
-                    A.remove(c.id)
-                    setOpen(null)
-                  }}
-                  className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-sm font-medium text-foreground transition-colors hover:bg-hover hover:text-destructive"
-                >
-                  <Icon name="delete" size={15} /> Delete
-                </button>
-              )}
-            </PopoverContent>
-          </Popover>
         </div>
       )}
     </div>
@@ -667,317 +439,3 @@ export function GeneralSection({
     </div>
   )
 }
-
-// New-comment composer (anchored or general).
-/**
- * A text control with @mention autocomplete. Typing "@" opens a live directory
- * popover (/v1/users); picking inserts "@Name " and records the user's id. The
- * picker — not a server-side @name parse — is the source of mention ids, so the
- * data is unambiguous. Mentions whose inserted "@Name" is later deleted from the
- * text are dropped at submit time. Single-line submits on Enter; multiline on
- * Cmd/Ctrl+Enter (matching the surrounding composer/reply conventions).
- */
-export function MentionField({
-  value,
-  onChange,
-  mentions,
-  onMentions,
-  onSubmit,
-  onCancel,
-  placeholder,
-  autoFocus,
-  multiline,
-  className,
-  style,
-  testId,
-}: {
-  value: string
-  onChange: (v: string) => void
-  mentions: Mention[]
-  onMentions: (m: Mention[]) => void
-  /** Receives the mentions still present in the text (deleted ones pruned). */
-  onSubmit: (resolved: Mention[]) => void
-  onCancel?: () => void
-  placeholder?: string
-  autoFocus?: boolean
-  multiline?: boolean
-  className?: string
-  style?: CSSProperties
-  testId?: string
-}) {
-  const ref = useRef<HTMLTextAreaElement & HTMLInputElement>(null)
-  const { shortId } = useCommentScope()
-  const [menu, setMenu] = useState<{ at: number; end: number; q: string } | null>(null)
-  const [results, setResults] = useState<DirUser[]>([])
-  const [active, setActive] = useState(0)
-  const [emojiOpen, setEmojiOpen] = useState(false)
-
-  // Insert an emoji at the caret (replacing any selection), then restore focus.
-  const insertEmoji = (emo: string) => {
-    const el = ref.current
-    const start = el?.selectionStart ?? value.length
-    const end = el?.selectionEnd ?? start
-    onChange(value.slice(0, start) + emo + value.slice(end))
-    setEmojiOpen(false)
-    const pos = start + emo.length
-    requestAnimationFrame(() => {
-      const e = ref.current
-      if (e) {
-        e.focus()
-        e.setSelectionRange(pos, pos)
-      }
-    })
-  }
-
-  useLayoutEffect(() => {
-    if (autoFocus) ref.current?.focus()
-  }, [autoFocus])
-
-  // Fetch directory matches as the @query under the caret changes.
-  useEffect(() => {
-    if (!menu) {
-      setResults([])
-      return
-    }
-    let cancelled = false
-    api
-      .users(menu.q, shortId ?? undefined)
-      .then((r) => {
-        if (!cancelled) {
-          setResults(r.users.slice(0, 6))
-          setActive(0)
-        }
-      })
-      .catch(() => {})
-    return () => {
-      cancelled = true
-    }
-  }, [menu, shortId])
-
-  // Is the caret sitting at the end of an "@token"? If so, open the popover.
-  const detect = (el: HTMLTextAreaElement | HTMLInputElement) => {
-    const caret = el.selectionStart ?? el.value.length
-    const m = /(?:^|\s)@([\w.-]{0,30})$/.exec(el.value.slice(0, caret))
-    if (m) {
-      const tok = m[1] ?? ""
-      setMenu({ at: caret - tok.length - 1, end: caret, q: tok })
-    } else setMenu(null)
-  }
-
-  const choose = (u: DirUser) => {
-    if (!menu) return
-    const before = value.slice(0, menu.at)
-    const insert = `@${u.name} `
-    onChange(before + insert + value.slice(menu.end))
-    if (!mentions.some((m) => m.id === u.id)) onMentions([...mentions, { id: u.id, name: u.name }])
-    setMenu(null)
-    const pos = before.length + insert.length
-    requestAnimationFrame(() => {
-      const el = ref.current
-      if (el) {
-        el.focus()
-        el.setSelectionRange(pos, pos)
-      }
-    })
-  }
-
-  // Mentions whose "@Name" survived edits are the real ones.
-  const resolve = () => mentions.filter((m) => value.includes(`@${m.name}`))
-  const submit = () => {
-    if (value.trim()) onSubmit(resolve())
-  }
-
-  const onKeyDown = (e: ReactKeyboardEvent) => {
-    if (menu && results.length) {
-      if (e.key === "ArrowDown") {
-        e.preventDefault()
-        setActive((a) => (a + 1) % results.length)
-        return
-      }
-      if (e.key === "ArrowUp") {
-        e.preventDefault()
-        setActive((a) => (a - 1 + results.length) % results.length)
-        return
-      }
-      if (e.key === "Enter" || e.key === "Tab") {
-        e.preventDefault()
-        const sel = results[active]
-        if (sel) choose(sel)
-        return
-      }
-      if (e.key === "Escape") {
-        e.preventDefault()
-        setMenu(null)
-        return
-      }
-    }
-    if (e.key === "Escape") {
-      onCancel?.()
-      return
-    }
-    if (e.key === "Enter" && (!multiline || e.metaKey || e.ctrlKey)) {
-      e.preventDefault()
-      submit()
-    }
-  }
-
-  const shared = {
-    ref,
-    className: cn(
-      "w-full rounded-md border border-input bg-card px-2.5 py-1.5 pr-9 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-accent",
-      className,
-    ),
-    "data-testid": testId,
-    value,
-    placeholder,
-    onChange: (e: { target: HTMLTextAreaElement | HTMLInputElement }) => {
-      onChange(e.target.value)
-      detect(e.target)
-    },
-    onKeyUp: (e: ReactKeyboardEvent<HTMLTextAreaElement | HTMLInputElement>) => {
-      // Caret moves (arrows/click) can leave or re-enter a token.
-      if (e.key.startsWith("Arrow") || e.key === "Home" || e.key === "End") detect(e.currentTarget)
-    },
-    onKeyDown,
-    style,
-  }
-
-  return (
-    <div style={{ position: "relative" }}>
-      {multiline ? (
-        <textarea {...shared} />
-      ) : (
-        <input {...shared} onClick={(e) => e.stopPropagation()} />
-      )}
-
-      {/* Emoji picker: a one-tap grid of the common emoji. Typing :shortcode:
-          works too (rendered on display); this is the no-memorization path. */}
-      <button
-        type="button"
-        data-testid="emoji-trigger"
-        title="Add emoji"
-        aria-label="Add emoji"
-        aria-expanded={emojiOpen}
-        onClick={() => setEmojiOpen((o) => !o)}
-        className="absolute right-1.5 top-1.5 grid size-6 place-items-center rounded text-base leading-none text-muted-foreground transition-colors hover:bg-hover hover:text-foreground"
-      >
-        🙂
-      </button>
-      {emojiOpen && (
-        <>
-          {/* click-catcher to dismiss */}
-          <button
-            type="button"
-            data-testid="emoji-picker-backdrop"
-            aria-label="Close emoji picker"
-            tabIndex={-1}
-            className="fixed inset-0 z-40 cursor-default"
-            onClick={() => setEmojiOpen(false)}
-          />
-          <div
-            data-testid="emoji-picker"
-            className="absolute right-1.5 top-9 z-50 grid w-[244px] grid-cols-8 gap-0.5 rounded-lg border border-border bg-card p-1.5 shadow-[var(--shadow)]"
-          >
-            {PICKER_EMOJI.map((emo) => (
-              <button
-                key={emo}
-                type="button"
-                data-testid="emoji-option"
-                onMouseDown={(e) => {
-                  e.preventDefault()
-                  insertEmoji(emo)
-                }}
-                className="grid size-7 place-items-center rounded text-lg leading-none hover:bg-hover"
-              >
-                {emo}
-              </button>
-            ))}
-          </div>
-        </>
-      )}
-
-      {menu && results.length > 0 && (
-        <div className="absolute inset-x-0 top-[calc(100%+4px)] z-40 max-h-[200px] overflow-auto rounded-lg border border-border bg-card p-1 shadow-[var(--shadow)]">
-          {results.map((u, i) => (
-            <button
-              key={u.id}
-              type="button"
-              data-testid={`mention-option-${u.id}`}
-              onMouseDown={(e) => {
-                e.preventDefault()
-                choose(u)
-              }}
-              onMouseEnter={() => setActive(i)}
-              className={cn(
-                "flex w-full items-baseline gap-2 rounded-md px-2 py-1.5 text-left text-foreground",
-                i === active ? "bg-accent" : "bg-transparent",
-              )}
-            >
-              <span className="text-sm font-semibold">{u.name}</span>
-              <span className="font-mono text-2xs text-muted-foreground">{u.email}</span>
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  )
-}
-
-export function Composer({
-  quote,
-  onSubmit,
-  onCancel,
-}: {
-  quote: string | null
-  onSubmit: (t: string, mentions: Mention[]) => void
-  onCancel: () => void
-}) {
-  const [text, setText] = useState("")
-  const [mentions, setMentions] = useState<Mention[]>([])
-  const submit = (resolved: Mention[]) => {
-    if (text.trim()) onSubmit(text, resolved)
-  }
-  return (
-    <div className="overflow-hidden rounded-lg border border-primary bg-card shadow-[var(--shadow)]">
-      {quote && (
-        <div className="block w-full truncate border-l-[3px] border-primary bg-accent px-2.5 py-1.5 text-left text-xs italic text-foreground">
-          “{quote}”
-        </div>
-      )}
-      <div className="p-2.5">
-        <MentionField
-          multiline
-          autoFocus
-          testId="composer-input"
-          className="min-h-[56px] resize-y"
-          value={text}
-          onChange={setText}
-          mentions={mentions}
-          onMentions={setMentions}
-          onSubmit={submit}
-          onCancel={onCancel}
-          placeholder={
-            quote ? "Comment on the selection… (@ to mention)" : "Add a comment… (@ to mention)"
-          }
-        />
-        <div className="mt-1.5 flex gap-1.5">
-          <Button
-            variant="primary"
-            size="sm"
-            className="flex-1"
-            disabled={!text.trim()}
-            data-testid="composer-submit"
-            onClick={() => submit(mentions.filter((m) => text.includes(`@${m.name}`)))}
-          >
-            Comment
-          </Button>
-          <Button variant="outline" size="sm" data-testid="composer-cancel" onClick={onCancel}>
-            Cancel
-          </Button>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-// Collapsed rail: a thin column of dots, each beside its comment's text.

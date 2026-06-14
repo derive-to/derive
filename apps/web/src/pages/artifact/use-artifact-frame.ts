@@ -53,6 +53,11 @@ export function useArtifactFrame(p: {
     frame.current?.contentWindow?.postMessage({ source: "dock-host", ...msg }, "*")
   }, [])
 
+  // Scroll the document by a pixel delta. The comments aside calls this to forward
+  // wheel gestures over the panel into the doc, so scrolling there moves the page
+  // and the pinned cards glide along with their highlights (Google-Docs feel).
+  const scrollBy = useCallback((dy: number) => post({ type: "scroll-by", dy }), [post])
+
   useEffect(() => {
     const onMsg = (e: MessageEvent) => {
       const d = e.data
@@ -165,6 +170,7 @@ export function useArtifactFrame(p: {
     presentWrap,
     onFrameLoad: () => setFrameReady((n) => n + 1),
     post,
+    scrollBy,
     deck,
     deckCmd,
     toggleFullscreen,

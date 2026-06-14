@@ -98,6 +98,7 @@ export function Artifact() {
     presentWrap,
     onFrameLoad,
     post,
+    scrollBy,
     deck,
     deckCmd,
     toggleFullscreen,
@@ -415,6 +416,8 @@ export function Artifact() {
             panel={panel}
             asideWidth={asideWidth}
             openCount={openCount}
+            scrollY={scrollY}
+            onScrollDoc={scrollBy}
             pinned={pinned}
             general={general}
             resolved={resolvedThreads}

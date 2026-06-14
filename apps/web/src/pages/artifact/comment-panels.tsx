@@ -175,6 +175,8 @@ export function MobileComments({
 
 export function OpenPanel(props: {
   openCount: number
+  scrollY: number
+  onScrollDoc: (dy: number) => void
   pinned: PinItem[]
   general: Comment[][]
   resolved: Comment[][]
@@ -195,6 +197,8 @@ export function OpenPanel(props: {
 }) {
   const {
     openCount,
+    scrollY,
+    onScrollDoc,
     pinned,
     general,
     resolved,
@@ -242,6 +246,8 @@ export function OpenPanel(props: {
             highlighted text, sharing one overlap-free layout. */}
         <PinnedZone
           pins={pinned}
+          scrollY={scrollY}
+          onScrollDoc={onScrollDoc}
           composer={composer}
           activeThread={activeThread}
           hoverThread={hoverThread}

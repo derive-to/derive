@@ -196,6 +196,7 @@ window.addEventListener("message",function(e){
   if(!d||d.source!=="dock-host")return;
   if(d.type==="anchors")applyAnchors(d.anchors||[]);
   else if(d.type==="emphasize")setOn(d.id);
+  else if(d.type==="scroll-by")window.scrollBy(0,d.dy||0);
   else if(d.type==="focus-anchor"){
     var ms=document.querySelectorAll('mark[data-dock-id="'+d.id+'"]');
     if(!ms.length)return;
