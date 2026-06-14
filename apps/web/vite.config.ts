@@ -23,6 +23,10 @@ export default defineConfig({
     alias: { "@": fileURLToPath(new URL("./src", import.meta.url)) },
   },
   build: {
+    // Emit .vite/manifest.json so the bundle budget can tell the eager critical
+    // path (entry + its static-import closure) apart from lazy route chunks, and
+    // gate the two separately (scripts/check-bundle.mjs).
+    manifest: true,
     rollupOptions: {
       output: {
         // Keep React/runtime in its own vendor chunk so app changes don't bust
