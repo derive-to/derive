@@ -52,6 +52,23 @@ describe("auth: token write-gating + per-artifact read-gating", () => {
   })
 })
 
+describe("security: a no-token container is secure (anonymous can't write)", () => {
+  // There is no "open" mode any more: a standalone no-token, no-auth app locks
+  // anonymous callers everywhere. The bug this closes is the old `open = !token`
+  // default that made a no-token container trust the anonymous caller as owner.
+  const locked = createApp({
+    meta,
+    blobs: new FsBlobStore(join(dir, "blobs")),
+    baseUrl: "http://dock.test",
+  })
+
+  it("refuses an anonymous publish on a no-token instance", async () => {
+    const form = new FormData()
+    form.append("file", new Blob([new TextEncoder().encode("<h1>x</h1>")]), "x.html")
+    expect((await locked.request("/v1/artifacts", { method: "POST", body: form })).status).toBe(403)
+  })
+})
+
 describe("permissions: workspace roles gate writes", () => {
   const alice: TestUser = { id: "u_alice", email: "alice@dock.test", name: "Alice" }
   const bob: TestUser = { id: "u_bob", email: "bob@dock.test", name: "Bob" }
