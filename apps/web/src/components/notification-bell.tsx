@@ -54,7 +54,12 @@ export function NotificationBell({ collapsed }: { collapsed?: boolean }) {
         .then((r) => setUnread(r.unread))
         .catch(() => {})
     }
-    nav({ to: "/a/$ref", params: { ref: n.artifact_short_id }, search: { c: n.thread_id } })
+    nav({
+      to: "/a/$ref",
+      params: { ref: n.artifact_short_id },
+      // A share notification has no thread; open the artifact itself.
+      search: n.thread_id ? { c: n.thread_id } : {},
+    })
   }
 
   const markAll = () => {
@@ -130,13 +135,23 @@ export function NotificationBell({ collapsed }: { collapsed?: boolean }) {
                 <span className="min-w-0 flex-1">
                   <span className="block text-sm text-foreground">
                     <strong>{n.actor}</strong>{" "}
-                    {n.kind === "mention" ? "mentioned you" : "commented"}
-                    {n.artifact_title ? (
+                    {n.kind === "share" ? (
                       <>
-                        {" in "}
-                        <strong>{n.artifact_title}</strong>
+                        shared{" "}
+                        {n.artifact_title ? <strong>{n.artifact_title}</strong> : "an artifact"}
+                        {" with you"}
                       </>
-                    ) : null}
+                    ) : (
+                      <>
+                        {n.kind === "mention" ? "mentioned you" : "commented"}
+                        {n.artifact_title ? (
+                          <>
+                            {" in "}
+                            <strong>{n.artifact_title}</strong>
+                          </>
+                        ) : null}
+                      </>
+                    )}
                   </span>
                   <span className="my-px block truncate text-xs text-muted-foreground">
                     {n.preview}

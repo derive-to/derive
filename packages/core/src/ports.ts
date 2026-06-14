@@ -502,7 +502,7 @@ export interface UserDir {
   image: string | null
 }
 
-export type NotificationKind = "mention" | "comment"
+export type NotificationKind = "mention" | "comment" | "share"
 export interface NotificationRecord {
   id: string
   user_id: string
