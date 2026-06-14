@@ -138,10 +138,11 @@ export function ArtifactComments(p: {
           onCancelNew={cancelNew}
         />
       )}
-      {/* The "comment on selection" affordance floats beside the selection in every
-          panel state. Clicking it opens the panel if needed and starts a composer
-          pinned to the selection. Logged-in only. */}
-      {!isAnon && p.docLive && sel && !p.composer && (
+      {/* Desktop: the "comment on selection" pill floats beside the selection (the
+          mouse can reach it and there is no native callout in the way). On phones
+          this would land under iOS's own selection menu, so mobile uses the bottom
+          bar below instead. Clicking opens the panel and starts a pinned composer. */}
+      {!isMobile && !isAnon && p.docLive && sel && !p.composer && (
         <button
           type="button"
           className="fixed z-50 inline-flex items-center gap-2 whitespace-nowrap rounded-full border border-primary bg-card px-3.5 py-2 text-sm font-semibold text-primary shadow-[var(--shadow)] transition-colors hover:bg-primary hover:text-primary-foreground"
@@ -165,6 +166,40 @@ export function ArtifactComments(p: {
         >
           <Icon name="comments" size={16} /> Comment
         </button>
+      )}
+      {/* Phones: a selection (drag) OR a tapped paragraph surfaces this bottom bar,
+          pinned below iOS's own selection menu and big enough to thumb. It shows
+          the quote so you know what you're attaching to; Comment opens the sheet
+          composer, ✕ clears the selection. */}
+      {isMobile && !isAnon && p.docLive && sel && !p.composer && (
+        <div
+          data-testid="mobile-comment-bar"
+          className="fixed inset-x-0 bottom-0 z-[62] flex items-center gap-2.5 border-t border-border bg-card px-3 pb-[max(12px,env(safe-area-inset-bottom))] pt-3 shadow-[0_-12px_36px_-16px_rgba(0,0,0,0.55)]"
+        >
+          <span className="min-w-0 flex-1 truncate border-l-[3px] border-primary bg-accent px-2.5 py-1.5 text-xs italic text-foreground">
+            “{sel.selector.exact}”
+          </span>
+          <button
+            type="button"
+            data-testid="mobile-comment-start"
+            onClick={() => {
+              p.setPanel("open")
+              p.startSelComment()
+            }}
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground"
+          >
+            <Icon name="comments" size={15} /> Comment
+          </button>
+          <button
+            type="button"
+            aria-label="Dismiss selection"
+            data-testid="mobile-comment-dismiss"
+            onClick={() => p.setSel(null)}
+            className="grid size-9 shrink-0 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-hover"
+          >
+            ✕
+          </button>
+        </div>
       )}
     </CommentScopeProvider>
   )

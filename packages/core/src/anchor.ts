@@ -68,7 +68,9 @@ function scrollTop(){return window.scrollY||document.documentElement.scrollTop||
       on-screen rect of the selection, so the host can float a button beside it -- */
 function emitSelection(){
   var s=window.getSelection(),t=s?s.toString().trim():"";
-  if(!t||t.length<2){post({type:"select",selector:null,rect:null});return}
+  // A tap fires a synthesized mouseup with no selection; don't let it clear the
+  // block anchor we just placed (tapGuard, set in the touch handler below).
+  if(!t||t.length<2){if(Date.now()-tapGuard<600)return;post({type:"select",selector:null,rect:null});return}
   var ctx=(s.anchorNode&&s.anchorNode.textContent)||t,i=ctx.indexOf(t);
   var rect=null;try{var r=s.getRangeAt(0).getBoundingClientRect();
     if(r&&(r.height||r.width))rect={top:r.top,bottom:r.bottom,left:r.left,right:r.right}}catch(_){}
@@ -76,8 +78,42 @@ function emitSelection(){
     prefix:i>=0?ctx.slice(Math.max(0,i-24),i):"",
     suffix:i>=0?ctx.slice(i+t.length,i+t.length+24):""}})}
 document.addEventListener("mouseup",function(){setTimeout(emitSelection,0)});
+
+/* Touch makes "select a phrase, then find a tiny floating button" miserable, and
+   iOS pops its own Copy/Look-Up menu over wherever we'd place one. So on touch we
+   (a) emit drag-selections on a debounced selectionchange (they glide as you drag
+   the handles, no mouseup needed) and (b) treat a clean tap on a text block as a
+   coarse "comment on this" anchor. The host shows a bottom bar for both; here we
+   just report. tapGuard keeps the collapse that follows a tap from clearing it. */
+var emitT=0,tapGuard=0,tx=0,ty=0,tMoved=false;
+function scheduleEmit(){if(emitT)clearTimeout(emitT);emitT=setTimeout(emitSelection,120)}
 document.addEventListener("selectionchange",function(){
-  var s=window.getSelection();if(!s||s.isCollapsed)post({type:"select",selector:null,rect:null})});
+  var s=window.getSelection();
+  if(s&&!s.isCollapsed){scheduleEmit();return}
+  if(Date.now()-tapGuard<600)return;
+  post({type:"select",selector:null,rect:null})});
+document.addEventListener("touchstart",function(e){
+  var t=e.touches&&e.touches[0];if(t){tx=t.clientX;ty=t.clientY;tMoved=false}},{passive:true});
+document.addEventListener("touchmove",function(e){
+  var t=e.touches&&e.touches[0];
+  if(t&&(Math.abs(t.clientX-tx)>10||Math.abs(t.clientY-ty)>10))tMoved=true},{passive:true});
+document.addEventListener("touchend",function(e){
+  var s=window.getSelection();
+  if(s&&!s.isCollapsed){setTimeout(emitSelection,0);return}
+  if(tMoved)return;
+  var el=e.target;
+  if(!el||!el.closest||el.closest("a,button,input,textarea,select,label,[data-dock-id]"))return;
+  var b=el.closest("p,li,h1,h2,h3,h4,h5,h6,blockquote,td,th,figcaption,dd,dt,pre");
+  if(!b)return;
+  var txt=(b.textContent||"").trim();
+  if(txt.length<2)return;
+  var r=b.getBoundingClientRect();
+  tapGuard=Date.now();flashBlock(b);
+  post({type:"select",block:true,rect:{top:r.top,bottom:r.bottom,left:r.left,right:r.right},
+    selector:{type:"TextQuoteSelector",exact:txt.slice(0,180),prefix:"",suffix:""}})},{passive:true});
+function flashBlock(b){var bg=b.style.backgroundColor,tr=b.style.transition;
+  b.style.transition="background-color .15s ease";b.style.backgroundColor="rgba(101,89,153,.18)";
+  setTimeout(function(){b.style.backgroundColor=bg;setTimeout(function(){b.style.transition=tr},220)},1000)}
 
 /* -- live cursor: throttled pointer position, DOCUMENT-normalized 0..1 (x by
       width, y by the full document height, including scroll). The host maps it
