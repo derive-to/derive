@@ -271,8 +271,10 @@ export async function approveProposal(
   return version
 }
 
+// Name-first ref: the slug reads first, the short id is the final token. parseRef
+// reverses it (the short id is always the last hyphen segment).
 export const artifactUrl = (baseUrl: string, a: ArtifactRecord): string =>
-  `${baseUrl}/a/${a.short_id}${a.slug ? `-${a.slug}` : ""}`
+  `${baseUrl}/a/${a.slug ? `${a.slug}-` : ""}${a.short_id}`
 
 export const toJson = (baseUrl: string, a: ArtifactRecord, versions: VersionRecord[]) => ({
   short_id: a.short_id,
