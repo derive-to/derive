@@ -148,8 +148,9 @@ export function useArtifactFrame(p: {
     const w = frame.current?.contentWindow
     if (!w) return
     const anchors = groupThreads(comments)
-      .filter((t) => t[0].state === "open")
-      .map((t) => ({ id: t[0].thread_id, sel: parseAnchor(t[0].anchor) }))
+      .map((t) => t[0])
+      .filter((head): head is Comment => head?.state === "open")
+      .map((head) => ({ id: head.thread_id, sel: parseAnchor(head.anchor) }))
       .filter((x): x is { id: string; sel: NonNullable<ReturnType<typeof parseAnchor>> } => !!x.sel)
       .map((x) => ({ id: x.id, exact: x.sel.exact, prefix: x.sel.prefix, suffix: x.sel.suffix }))
     w.postMessage({ source: "dock-host", type: "anchors", anchors }, "*")

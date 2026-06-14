@@ -42,7 +42,9 @@ export function Rail({
       </button>
       <div ref={ref} className="relative flex-1 overflow-hidden">
         {pins.map((p) => {
-          const id = p.thread[0].thread_id
+          const head = p.thread[0]
+          if (!head) return null
+          const id = head.thread_id
           const isActive = active === id
           return (
             <button
@@ -50,8 +52,8 @@ export function Rail({
               key={id}
               data-testid={`comments-rail-dot-${id}`}
               onClick={() => onDot(id)}
-              title={p.thread[0].body_md}
-              aria-label={`Jump to comment: ${p.thread[0].body_md}`}
+              title={head.body_md}
+              aria-label={`Jump to comment: ${head.body_md}`}
               className={cn(
                 "absolute left-1/2 -translate-x-1/2 rounded-full border-2 border-card bg-primary p-0 transition-all",
                 isActive ? "size-3.5 shadow-[0_0_0_3px_var(--ac-soft)]" : "size-2.5",

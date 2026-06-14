@@ -23,20 +23,30 @@ export function layoutPins(
     prevBottom = y + h(it.id)
   }
   const idx = activeId ? sorted.findIndex((s) => s.id === activeId) : -1
-  if (idx >= 0) {
-    const act = sorted[idx]
+  const act = idx >= 0 ? sorted[idx] : undefined
+  if (act) {
     pos[act.id] = act.desiredY
     let limit = act.desiredY
     for (let i = idx - 1; i >= 0; i--) {
       const it = sorted[i]
-      if (pos[it.id] + h(it.id) + gap > limit) pos[it.id] = limit - gap - h(it.id)
-      limit = pos[it.id]
+      if (!it) continue
+      let p = pos[it.id] ?? it.desiredY
+      if (p + h(it.id) + gap > limit) {
+        p = limit - gap - h(it.id)
+        pos[it.id] = p
+      }
+      limit = p
     }
     let top = act.desiredY + h(act.id)
     for (let i = idx + 1; i < sorted.length; i++) {
       const it = sorted[i]
-      if (pos[it.id] < top + gap) pos[it.id] = top + gap
-      top = pos[it.id] + h(it.id)
+      if (!it) continue
+      let p = pos[it.id] ?? it.desiredY
+      if (p < top + gap) {
+        p = top + gap
+        pos[it.id] = p
+      }
+      top = p + h(it.id)
     }
   }
   return pos

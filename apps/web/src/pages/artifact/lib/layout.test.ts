@@ -63,7 +63,7 @@ describe("groupThreads", () => {
     const c = (id: string, thread_id: string) => ({ id, thread_id }) as unknown as Comment
     const groups = groupThreads([c("1", "t1"), c("2", "t2"), c("3", "t1")])
     expect(groups).toHaveLength(2)
-    expect(groups[0].map((x) => x.id)).toEqual(["1", "3"])
-    expect(groups[1].map((x) => x.id)).toEqual(["2"])
+    expect(groups[0]?.map((x) => x.id)).toEqual(["1", "3"])
+    expect(groups[1]?.map((x) => x.id)).toEqual(["2"])
   })
 })

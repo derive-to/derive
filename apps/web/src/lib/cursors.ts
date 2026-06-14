@@ -78,7 +78,11 @@ export const CURSOR_TUNING = {
 export function defaultPrefFor(seed: string): CursorPref {
   let h = 0
   for (const ch of seed) h = (h * 31 + ch.charCodeAt(0)) >>> 0
-  return { color: CURSOR_COLORS[h % CURSOR_COLORS.length], kind: "arrow", emoji: DEFAULT_EMOJI }
+  return {
+    color: CURSOR_COLORS[h % CURSOR_COLORS.length] ?? CURSOR_COLORS[0],
+    kind: "arrow",
+    emoji: DEFAULT_EMOJI,
+  }
 }
 
 /** Coerce a persisted/garbage value into a valid `CursorPref`. */
