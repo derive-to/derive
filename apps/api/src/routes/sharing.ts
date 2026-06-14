@@ -7,7 +7,7 @@ import { fail, readJson } from "../lib/http"
 /** Per-artifact role overrides (a share). Managing shares requires `share`
  *  (editor+, GDocs model); the share's role beats the caller's workspace baseline. */
 export const sharingRoutes = (ctx: AppContext) => {
-  const { meta, defaultRole, anonLocked, authorize, actorFor } = ctx
+  const { meta, defaultRole, anonLocked, authorize, actorFor, actingUser, bus } = ctx
   const app = new Hono()
 
   // A sharer can never grant — or remove — a role above their own. An editor (who
@@ -60,6 +60,29 @@ export const sharingRoutes = (ctx: AppContext) => {
       user_id: user.id,
       role: b.role,
     })
+    // Notify the person you just shared with (bell + live stream), unless that's
+    // you. A share has no comment thread, so the thread/comment ids are empty and
+    // the bell deep-links straight to the artifact.
+    const sharer = await actingUser(c)
+    if (sharer && sharer.id !== user.id) {
+      const row = {
+        id: newId("n"),
+        user_id: user.id,
+        actor: sharer.name,
+        kind: "share" as const,
+        artifact_id: artifact.id,
+        artifact_short_id: artifact.short_id,
+        artifact_title: artifact.title,
+        thread_id: "",
+        comment_id: "",
+        preview: `Shared with you as ${b.role}`,
+      }
+      await meta.createNotification(row)
+      bus.publish(`u:${user.id}`, {
+        type: "notification",
+        notification: { ...row, read: 0, created_at: new Date().toISOString() },
+      })
+    }
     return c.json({ user_id: user.id, email: user.email, name: user.name, role: b.role }, 201)
   })
 
