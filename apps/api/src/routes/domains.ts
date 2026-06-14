@@ -26,8 +26,8 @@ const RESERVED = new Set([
 // A single DNS label: 1-63 chars, a-z0-9 and hyphens, not hyphen-edged.
 const LABEL = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/
 
-/** The artifact's ref (`<short_id>-<slug>`), the path segment in its URLs. */
-const refOf = (a: ArtifactRecord): string => (a.slug ? `${a.short_id}-${a.slug}` : a.short_id)
+/** The artifact's ref (`<slug>-<short_id>`), the path segment in its URLs. */
+const refOf = (a: ArtifactRecord): string => (a.slug ? `${a.slug}-${a.short_id}` : a.short_id)
 
 /**
  * Per-artifact vanity subdomains (`<label>.<base>`, needs DOCK_SUBDOMAIN_BASE): claim,

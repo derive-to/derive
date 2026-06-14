@@ -129,7 +129,7 @@ describe("publish html file", () => {
     expect(res.status).toBe(201)
     const json = await res.json()
     shortId = json.short_id
-    expect(json.url).toBe(`http://dock.test/a/${shortId}-q1-review`)
+    expect(json.url).toBe(`http://dock.test/a/q1-review-${shortId}`)
     expect(json.kind).toBe("file")
     expect(json.current_version).toBe(1)
   })
