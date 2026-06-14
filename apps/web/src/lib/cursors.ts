@@ -13,6 +13,8 @@ export interface CursorPref {
   color: string
   kind: CursorKind
   emoji: string
+  /** Opt out of the live-cursor layer: don't show peers, don't broadcast yours. */
+  hidden: boolean
 }
 
 /** A cursor frame as it arrives over the SSE bus (server-shaped, sans `type`). */
@@ -82,6 +84,7 @@ export function defaultPrefFor(seed: string): CursorPref {
     color: CURSOR_COLORS[h % CURSOR_COLORS.length] ?? CURSOR_COLORS[0],
     kind: "arrow",
     emoji: DEFAULT_EMOJI,
+    hidden: false,
   }
 }
 
@@ -93,5 +96,6 @@ export function normalizePref(raw: unknown, fallback: CursorPref): CursorPref {
     color: typeof r.color === "string" ? r.color : fallback.color,
     kind: r.kind === "emoji" ? "emoji" : "arrow",
     emoji: typeof r.emoji === "string" && r.emoji ? r.emoji : fallback.emoji,
+    hidden: r.hidden === true,
   }
 }
