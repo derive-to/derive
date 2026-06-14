@@ -65,3 +65,41 @@ describe("permissions: password-protected artifacts", () => {
     expect((await app.request(`/v1/artifacts/${shortId}`, { headers: forged })).status).toBe(401)
   })
 })
+
+// Changing general access after publish, from the Share dialog (PATCH visibility).
+describe("permissions: changing general access (visibility)", () => {
+  const app = createApp({
+    meta,
+    blobs: new FsBlobStore(join(dir, "blobs")),
+    baseUrl: "http://dock.test",
+    token: "s3cret",
+  })
+  const owner = { authorization: "Bearer s3cret" }
+  const patch = (id: string, body: object) =>
+    app.request(`/v1/artifacts/${id}/visibility`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json", ...owner },
+      body: JSON.stringify(body),
+    })
+  let shortId = ""
+
+  it("turns a link artifact into a password one (a password is required)", async () => {
+    const form = new FormData()
+    form.append("file", new Blob([new TextEncoder().encode("<h1>x</h1>")]), "x.html")
+    form.append("visibility", "link")
+    shortId = (
+      await (
+        await app.request("/v1/artifacts", { method: "POST", body: form, headers: owner })
+      ).json()
+    ).short_id
+    expect((await app.request(`/v1/artifacts/${shortId}`)).status).toBe(200) // link: anon reads
+    expect((await patch(shortId, { visibility: "password" })).status).toBe(400) // needs a password
+    expect((await patch(shortId, { visibility: "password", password: "sesame" })).status).toBe(200)
+    expect((await app.request(`/v1/artifacts/${shortId}`)).status).toBe(401) // now locked
+  })
+
+  it("turning access back to link clears the password", async () => {
+    expect((await patch(shortId, { visibility: "link" })).status).toBe(200)
+    expect((await app.request(`/v1/artifacts/${shortId}`)).status).toBe(200)
+  })
+})

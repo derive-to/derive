@@ -271,6 +271,32 @@ export const artifactRoutes = (ctx: AppContext) => {
     })
   })
 
+  // Change general access (visibility) after publish — the Share dialog's
+  // "general access" control. Editors+ (share), per the GDocs model. Enabling
+  // `password` needs a password (or keeps the existing one); any other visibility
+  // clears the stored hash.
+  app.patch("/v1/artifacts/:shortId/visibility", async (c) => {
+    const artifact = await meta.getByShortId(c.req.param("shortId"))
+    if (!artifact) return fail(c, 404, "not found")
+    if (!(await authorize(c, "share", artifact))) return fail(c, 403, "forbidden")
+    const b = await readJson(
+      c,
+      z.object({ visibility: z.string(), password: z.string().optional() }),
+    )
+    if (b instanceof Response) return b
+    const visibility = visibilityOf(b.visibility)
+    if (!visibility) return fail(c, 400, "invalid visibility")
+    let passwordHash: string | null = null
+    if (visibility === "password") {
+      if (b.password) passwordHash = hashPassword(b.password)
+      else if (artifact.visibility === "password" && artifact.password_hash)
+        passwordHash = artifact.password_hash
+      else return fail(c, 400, "a password is required for password visibility")
+    }
+    await meta.setVisibility(artifact.id, visibility, passwordHash)
+    return c.json({ visibility })
+  })
+
   // Unlock a `password` artifact: verify the password and drop a cookie whose
   // value is derived from the server-only hash (so it can't be forged and dies if
   // the password changes). Brute force is bounded by the global /v1 rate limiter.

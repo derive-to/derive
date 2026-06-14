@@ -274,6 +274,19 @@ export const api = {
   // cookie and subsequent reads of this artifact succeed.
   unlock: (id: string, password: string): Promise<{ ok: true }> =>
     f(`/v1/artifacts/${id}/unlock`, opts({ password })).then(j),
+  // Change general access (visibility) from the Share dialog. A password is
+  // required when enabling `password` visibility for the first time.
+  setVisibility: (
+    id: string,
+    visibility: string,
+    password?: string,
+  ): Promise<{ visibility: string }> =>
+    f(`/v1/artifacts/${id}/visibility`, {
+      method: "PATCH",
+      credentials: "include",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ visibility, password }),
+    }).then(j),
   diff: (id: string, from: number, to: number): Promise<Diff> =>
     f(`/v1/artifacts/${id}/diff?from=${from}&to=${to}&format=json`, opts()).then(j),
   restore: (id: string, version: number): Promise<Artifact> =>

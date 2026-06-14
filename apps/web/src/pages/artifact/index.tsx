@@ -256,6 +256,7 @@ export function Artifact() {
               <ArtifactTopBar
                 shortId={shortId}
                 myRole={art.my_role}
+                visibility={art.visibility}
                 favorite={!!art.favorite}
                 tags={art.tags ?? []}
                 collections={art.collections ?? []}
