@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "description": "Manage and share AI artifacts. Self-hostable, CLI-first, with permanent versioned URLs.",
-  "license": "Apache-2.0",
+  "license": "FSL-1.1-ALv2",
   "homepage": "https://dock.build",
   "repository": {
     "type": "git",
