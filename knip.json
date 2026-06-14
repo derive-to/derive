@@ -5,7 +5,8 @@
       "entry": ["src/worker.ts", "gen-auth-schema.ts"]
     },
     "apps/web": {
-      "entry": ["src/components/ui/**"]
+      "entry": ["src/components/ui/**"],
+      "ignoreDependencies": ["tslib"]
     }
   },
   "rules": {

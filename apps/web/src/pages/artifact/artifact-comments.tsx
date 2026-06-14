@@ -32,6 +32,8 @@ export function ArtifactComments(p: {
   panel: Panel
   asideWidth: number
   openCount: number
+  scrollY: number
+  onScrollDoc: (dy: number) => void
   pinned: PinItem[]
   general: Comment[][]
   resolved: Comment[][]
@@ -88,6 +90,8 @@ export function ArtifactComments(p: {
           ) : (
             <OpenPanel
               openCount={p.openCount}
+              scrollY={p.scrollY}
+              onScrollDoc={p.onScrollDoc}
               pinned={p.pinned}
               general={p.general}
               resolved={p.resolved}

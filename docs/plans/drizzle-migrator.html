@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Drizzle Migrator Adoption · Dock</title>
+<style>
+  :root{
+    --bg:#0f0f10; --card:#1a1a1d; --card-2:#232327; --line:#2e2e33; --line-soft:#262629;
+    --fg:#ededee; --fg-mut:#9a9aa1; --ac:#a99fe0; --ac-soft:#28243c;
+    --good:#9fb05a; --bad:#e08a6e; --gold:#e0a93a;
+    --mono:ui-monospace,Menlo,Consolas,monospace;
+    --sans:Inter,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--sans);line-height:1.55;
+    -webkit-font-smoothing:antialiased;font-size:14px}
+  .wrap{max-width:880px;margin:0 auto;padding:48px 24px 80px}
+  h1{font-size:26px;letter-spacing:-.02em;margin:0 0 4px;font-weight:700}
+  .kicker{font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--ac);margin:0 0 14px}
+  h2{font-size:13px;text-transform:uppercase;letter-spacing:.12em;color:var(--fg-mut);
+    font-family:var(--mono);font-weight:600;margin:40px 0 14px;display:flex;align-items:center;gap:10px}
+  h2::after{content:"";flex:1;height:1px;background:var(--line)}
+  .sub{color:var(--fg-mut);font-size:14px;margin:0 0 6px;max-width:78ch}
+  .goal{display:block;margin-top:16px;padding:13px 16px;border:1px solid var(--line);
+    border-left:3px solid var(--ac);border-radius:10px;background:var(--card);font-size:13px;color:var(--fg-mut)}
+  .goal b{color:var(--ac)}
+  .mono{font-family:var(--mono)} .mut{color:var(--fg-mut)}
+  code{font-family:var(--mono);font-size:12px;background:var(--card-2);border:1px solid var(--line-soft);
+    border-radius:5px;padding:1px 5px;color:var(--fg)}
+  ul{margin:8px 0 8px;padding-left:20px} li{margin:5px 0;max-width:80ch}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin:14px 0}
+  .stat{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 15px}
+  .stat .k{font-family:var(--mono);font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--fg-mut)}
+  .stat .v{font-size:15px;font-weight:600;margin-top:8px;letter-spacing:-.01em}
+  .stat .d{font-family:var(--mono);font-size:11px;margin-top:6px;color:var(--fg-mut)}
+  .phase{border:1px solid var(--line);border-radius:12px;background:var(--card);padding:16px 18px;margin:12px 0}
+  .phase h3{margin:0 0 6px;font-size:15px;font-weight:600}
+  .phase h3 .n{font-family:var(--mono);font-size:12px;color:var(--ac);margin-right:8px}
+  .tag{font-family:var(--mono);font-size:10px;text-transform:uppercase;letter-spacing:.06em;
+    border:1px solid var(--line);border-radius:20px;padding:2px 8px;color:var(--fg-mut)}
+  .risk{border-left:3px solid var(--bad)} .ok{border-left:3px solid var(--good)}
+  .foot{margin-top:40px;color:var(--fg-mut);font-family:var(--mono);font-size:11px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <p class="kicker">Plan · maintainability follow-up · needs approval</p>
+  <h1>Adopt a Drizzle-kit migrator for the schema</h1>
+  <p class="sub">The review's "a new column touches 5–7 files" and "PG has no conformance guard"
+  both trace to one root cause: <code>drizzle-kit</code> is configured but never run, and the
+  schema is hand-maintained as raw-SQL string arrays. This plan replaces that with the idiomatic
+  Drizzle flow. <b>It changes how production schema is applied, so it ships only on your go.</b></p>
+
+  <div class="goal"><b>Goal.</b> Make the drizzle defs the single source: generate versioned
+  migrations from them, run a migrator at boot for SQLite/Postgres, apply via <code>wrangler</code>
+  for D1. Kill the hand-written <code>SCHEMA_STATEMENTS</code> / <code>PG_SCHEMA_STATEMENTS</code>
+  and the try/catch <code>ALTER</code>s. Net: a column becomes a 1–2 file change with real history.</p>
+
+  <h2>Where we are</h2>
+  <ul>
+    <li><code>drizzle.config.ts</code> exists + <code>drizzle-kit</code> is a devDep, but there is
+      <b>no <code>drizzle/</code> folder</b> and nothing runs <code>generate</code>/<code>migrate</code>.</li>
+    <li>Tables are created at boot from three hand-written arrays: <code>SCHEMA_STATEMENTS</code>
+      (sqlite, <code>CREATE TABLE IF NOT EXISTS</code>), <code>MIGRATION_STATEMENTS</code>
+      (forward <code>ALTER</code>s, try/catch "already applied"), <code>PG_SCHEMA_STATEMENTS</code>
+      (a separate Postgres DDL). D1's <code>.sql</code> is generated from the sqlite set.</li>
+    <li>No migrations log table, so you can't tell what state a DB is in. The drizzle defs are
+      types-only + a conformance guard (sqlite always; pg as of this PR).</li>
+  </ul>
+
+  <h2>Constraints (why it's shaped this way)</h2>
+  <div class="grid">
+    <div class="stat"><div class="k">Drizzle is per-dialect</div><div class="v">Keep two schema files</div>
+      <div class="d">pgTable ≠ sqliteTable by design; you can't share one schema. App already does this right (shared core Records + parity guard).</div></div>
+    <div class="stat"><div class="k">D1 can't self-introspect</div><div class="v">Apply offline via wrangler</div>
+      <div class="d">SQLITE_AUTH blocks the runtime migrator; generated SQL + <code>wrangler d1 migrations apply</code> is the documented path.</div></div>
+    <div class="stat"><div class="k">Existing self-hosts</div><div class="v">Baseline carefully</div>
+      <div class="d">Live SQLite/PG DBs already have the tables; the first migration must be a no-op baseline, not a re-create.</div></div>
+  </div>
+
+  <h2>Plan</h2>
+
+  <div class="phase ok">
+    <h3><span class="n">1</span>Generate, don't hand-write <span class="tag">low risk · no prod change</span></h3>
+    <p class="sub">Two drizzle-kit configs (sqlite-family + pg) pointed at the existing defs.
+    <code>drizzle-kit generate</code> emits versioned SQL into <code>drizzle/{sqlite,pg}/</code>.
+    Commit them. The existing conformance tests stay as the safety net. No runtime change yet, so
+    this is mergeable on its own and de-risks the rest.</p>
+  </div>
+
+  <div class="phase">
+    <h3><span class="n">2</span>Baseline the live schema <span class="tag">the careful bit</span></h3>
+    <p class="sub">Generate an initial migration whose "up" matches today's tables, then mark it
+    <b>already-applied</b> on existing DBs (insert the migration row without running the DDL). Fresh
+    DBs run it normally. This is the one step that can corrupt a live DB if rushed; it gets its own
+    PR + a dry-run against a prod snapshot.</p>
+  </div>
+
+  <div class="phase">
+    <h3><span class="n">3</span>Run the migrator at boot (SQLite + Postgres)</h3>
+    <p class="sub">Replace the <code>CREATE TABLE IF NOT EXISTS</code> + try/catch <code>ALTER</code>
+    loop in <code>sqlite.ts</code> / <code>pg.ts</code> with drizzle's <code>migrate()</code> reading
+    <code>drizzle/&lt;dialect&gt;/</code>. Adds a real <code>__drizzle_migrations</code> log. Behind a
+    feature flag for one release so it can be reverted instantly.</p>
+  </div>
+
+  <div class="phase">
+    <h3><span class="n">4</span>D1 via wrangler</h3>
+    <p class="sub">Point <code>wrangler.toml</code> <code>migrations_dir</code> at
+    <code>drizzle/sqlite/</code>; deploy runs <code>wrangler d1 migrations apply</code>. Drop the
+    bespoke <code>buildD1SchemaSql</code> generator (the d1-schema test becomes "migrations apply
+    cleanly"). D1 and the self-host SQLite now share one migration set.</p>
+  </div>
+
+  <div class="phase risk">
+    <h3><span class="n">5</span>Delete the hand-written DDL</h3>
+    <p class="sub">Once 3–4 are stable in prod for a release: remove <code>SCHEMA_STATEMENTS</code>,
+    <code>MIGRATION_STATEMENTS</code>, <code>PG_SCHEMA_STATEMENTS</code>. The conformance guards retire
+    with them (the migrator + generated SQL are now the source of truth). A column becomes: edit the
+    two drizzle defs → <code>drizzle-kit generate</code>. Done.</p>
+  </div>
+
+  <h2>Open decisions for you</h2>
+  <ul>
+    <li><b>Migrator vs push.</b> Versioned migrations (recommended — gives history + safe prod) vs
+      <code>drizzle-kit push</code> (simpler, no history, riskier on prod). Plan assumes migrations.</li>
+    <li><b>Baseline mechanism.</b> Mark-applied via a tiny script, vs a hand-checked first migration.
+      I'd do mark-applied with a prod-snapshot dry-run.</li>
+    <li><b>Scope now.</b> Ship Phase 1 (generate + commit, zero prod risk) alongside the review fixes,
+      and gate Phases 2–5 behind a separate go? That's my recommendation.</li>
+  </ul>
+
+  <p class="foot">docs/plans/drizzle-migrator.html · companion to the schema-conformance + pg-guard work · not yet started</p>
+</div>
+</body>
+</html>

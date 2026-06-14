@@ -109,9 +109,13 @@ export function artifactActions(p: {
   const reply = (text: string, threadId: string, mentions: Mention[] = []) =>
     addComment(text, { threadId, mentions })
   const submitNew = async (text: string, mentions: Mention[] = []) => {
-    await addComment(text, { anchor: p.composer?.anchor ?? null, mentions })
+    // Close the composer immediately (capturing its anchor first) rather than
+    // after the round-trip: the send feels instant, and the just-typed text never
+    // lingers on screen next to the comment it became.
+    const anchor = p.composer?.anchor ?? null
     p.setComposer(null)
     p.setSel(null)
+    await addComment(text, { anchor, mentions })
   }
   const toggleResolve = async (root: Comment) => {
     await api.resolve(shortId, root.id, root.state === "open" ? "resolved" : "open")
