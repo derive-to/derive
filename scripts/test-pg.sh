@@ -46,3 +46,12 @@ export TEST_DATABASE_URL="$URL"
 echo "→ running apps/api suite against Postgres"
 cd "$ROOT/apps/api"
 pnpm exec vitest run --no-file-parallelism "$@"
+
+# Also run @dock/db's store contract against the same Postgres — the only place
+# pg.ts (the hosted-tier driver) is covered + gated by the db package's own suite.
+# Skipped when a specific api file was requested (debugging one spec).
+if [ "$#" -eq 0 ]; then
+  echo "→ running @dock/db store contract against Postgres"
+  cd "$ROOT"
+  pnpm --filter @dock/db test:pg
+fi
