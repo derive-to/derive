@@ -22,6 +22,7 @@ import { rawRoutes } from "./routes/raw"
 import { realtimeRoutes } from "./routes/realtime"
 import { sessionRoutes } from "./routes/session"
 import { sharingRoutes } from "./routes/sharing"
+import { syncRoutes } from "./routes/sync"
 import { webhookRoutes } from "./routes/webhooks"
 import { workspaceRoutes } from "./routes/workspace"
 import { workspaceDomainRoutes } from "./routes/workspace-domains"
@@ -250,6 +251,7 @@ export function createApp(deps: AppDeps): Hono {
     sharingRoutes,
     favoriteRoutes,
     collectionRoutes,
+    syncRoutes,
     moderationRoutes,
     proposalRoutes,
     commentRoutes,

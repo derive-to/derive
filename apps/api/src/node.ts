@@ -57,7 +57,8 @@ if (cfg.databaseUrl) {
   }
 }
 
-const auth = makeAuth(authDb, cfg.baseUrl, resolveAuthSecret(cfg.dataDir))
+const authSecret = resolveAuthSecret(cfg.dataDir)
+const auth = makeAuth(authDb, cfg.baseUrl, authSecret)
 await migrateAuth(auth)
 
 const defaultOrg = resolveDefaultOrg(cfg.dataDir)
@@ -95,6 +96,8 @@ const app = createApp({
   baseUrl: cfg.baseUrl,
   shell: shellHtml,
   token: cfg.token,
+  // Encrypt stored third-party secrets (GitHub PATs) at rest with the auth secret.
+  encryptionKey: authSecret,
   superAdmins: cfg.superAdmins,
   auth,
   webOrigins: cfg.webOrigins,

@@ -29,6 +29,7 @@ import type {
   NewNotification,
   NewProposal,
   NewReport,
+  NewRepoSource,
   NewVersion,
   NewView,
   NewWebhook,
@@ -37,6 +38,7 @@ import type {
   ProposalState,
   ReportRecord,
   ReportState,
+  RepoSourceRecord,
   Role,
   UserDir,
   VersionRecord,
@@ -67,11 +69,13 @@ import {
   PG_SCHEMA_STATEMENTS,
   proposal,
   report,
+  repoSource,
   version,
   webhook,
   webhookDelivery,
   workspace,
 } from "./pg-schema"
+import { collectManagedIds } from "./repos"
 
 const one = <T>(rows: T[]): T => {
   const r = rows[0]
@@ -97,6 +101,7 @@ const schema = {
   collection,
   collectionItem,
   collectionMember,
+  repoSource,
   domain,
   report,
   auditLog,
@@ -121,6 +126,7 @@ const _schemaShapes: Shapes<typeof schema> = {
   agentMention: true,
   collection: true,
   collectionMember: true,
+  repoSource: true,
   domain: true,
   report: true,
   auditLog: true,
@@ -722,6 +728,42 @@ export class PgMetaStore implements MetaStore {
     return rows.map((r) => r.role)
   }
 
+  // ---- GitHub sync sources -----------------------------------------------
+  async createRepoSource(s: NewRepoSource): Promise<RepoSourceRecord> {
+    const rows = await this.db.insert(repoSource).values(s).returning()
+    return one(rows)
+  }
+  async getRepoSource(id: string, orgId?: string): Promise<RepoSourceRecord | null> {
+    const rows = await this.db
+      .select()
+      .from(repoSource)
+      .where(and(eq(repoSource.id, id), orgId ? eq(repoSource.org_id, orgId) : undefined))
+    return rows[0] ?? null
+  }
+  async listRepoSources(orgId: string): Promise<RepoSourceRecord[]> {
+    return this.db
+      .select()
+      .from(repoSource)
+      .where(eq(repoSource.org_id, orgId))
+      .orderBy(desc(repoSource.created_at))
+  }
+  async updateRepoSourceSync(
+    id: string,
+    fields: { files: string; last_synced_at: string; last_status: string },
+  ): Promise<void> {
+    await this.db.update(repoSource).set(fields).where(eq(repoSource.id, id))
+  }
+  async deleteRepoSource(id: string, orgId: string): Promise<void> {
+    await this.db.delete(repoSource).where(and(eq(repoSource.id, id), eq(repoSource.org_id, orgId)))
+  }
+  async managedArtifactIds(orgId: string): Promise<string[]> {
+    const rows = await this.db
+      .select({ files: repoSource.files })
+      .from(repoSource)
+      .where(eq(repoSource.org_id, orgId))
+    return collectManagedIds(rows)
+  }
+
   // ---- Domains (hostname → artifact) -------------------------------------
   async getDomain(host: string): Promise<DomainRecord | null> {
     const rows = await this.db.select().from(domain).where(eq(domain.host, host))
@@ -930,6 +972,9 @@ export class PgMetaStore implements MetaStore {
   }
   async setArtifactRemoved(id: string, removedAt: string | null): Promise<void> {
     await this.db.update(artifact).set({ removed_at: removedAt }).where(eq(artifact.id, id))
+  }
+  async setArtifactTitle(id: string, title: string): Promise<void> {
+    await this.db.update(artifact).set({ title }).where(eq(artifact.id, id))
   }
   async createAuditLog(a: NewAuditLog): Promise<void> {
     await this.db.insert(auditLog).values(a)

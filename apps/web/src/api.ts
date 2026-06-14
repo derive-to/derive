@@ -45,6 +45,8 @@ export interface Artifact {
   collections?: string[]
   /** Taken down by a moderator: the content is gone (410), the record stays. */
   removed?: boolean
+  /** Mirrored from a GitHub sync source → read-only in Dock (Edit/Propose hidden). */
+  managed?: boolean
 }
 export interface Report {
   id: string
@@ -202,6 +204,27 @@ export interface Delivery {
   attempts: number
   last_error: string | null
   created_at: string
+}
+/** A GitHub repo mirrored into a collection (token redacted, file map collapsed
+ *  to a count by the API). */
+export interface RepoSource {
+  id: string
+  collection_id: string
+  repo: string
+  ref: string
+  includes: string
+  token: string | null
+  last_synced_at: string | null
+  last_status: string | null
+  created_by: string
+  created_at: string
+  file_count: number
+}
+export interface SyncResult {
+  added: number
+  updated: number
+  removed: number
+  skipped: number
 }
 export interface DiffOp {
   t: "ctx" | "add" | "del"
@@ -408,6 +431,19 @@ export const api = {
     f("/v1/agents", opts({ name, role })).then(j),
   deleteAgent: (id: string): Promise<void> =>
     f(`/v1/agents/${id}`, { method: "DELETE", credentials: "include" }).then(() => undefined),
+
+  // GitHub sync: mirror a repo's Markdown/HTML into a collection (one-way).
+  listRepoSources: (): Promise<{ sources: RepoSource[] }> => f("/v1/sync/github", opts()).then(j),
+  connectRepoSource: (input: {
+    repo: string
+    ref?: string
+    includes?: string
+    token?: string
+  }): Promise<RepoSource> => f("/v1/sync/github", opts(input)).then(j),
+  runRepoSync: (id: string): Promise<SyncResult> =>
+    f(`/v1/sync/github/${id}/run`, opts({})).then(j),
+  deleteRepoSource: (id: string): Promise<void> =>
+    f(`/v1/sync/github/${id}`, { method: "DELETE", credentials: "include" }).then(() => undefined),
 
   // Workspace name + members (Admin / Creator / Viewer = owner / editor / commenter)
   getWorkspace: (): Promise<Workspace> => f("/v1/workspace", opts()).then(j),

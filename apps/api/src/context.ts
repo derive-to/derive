@@ -40,6 +40,10 @@ export interface AppDeps {
   baseUrl: string
   /** A static token (CI/agents) authorizes writes + gated reads, alongside a login session. */
   token?: string
+  /** Passphrase for encrypting stored third-party secrets at rest (GitHub PATs).
+   *  The Node + Worker entries pass the auth secret. Unset (e.g. tests) ⇒ tokens
+   *  are stored as-is; set ⇒ AES-256-GCM encrypted (see lib/crypto encryptSecret). */
+  encryptionKey?: string
   /** Operator (instance super-admin) emails: global moderation powers, on top of `token`. */
   superAdmins?: string[]
   /** Better Auth instance — mounts /api/auth/* and provides the session. */

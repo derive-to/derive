@@ -67,6 +67,9 @@ export const proposalRoutes = (ctx: AppContext) => {
     const artifact = await meta.getByShortId(c.req.param("shortId"))
     if (!artifact || artifact.current_version === 0) return fail(c, 404, "not found")
     if (!(await authorize(c, "propose", artifact))) return fail(c, 403, "forbidden")
+    // GitHub-synced artifacts are read-only in Dock; changes belong in the repo.
+    if ((await meta.managedArtifactIds(artifact.org_id)).includes(artifact.id))
+      return fail(c, 409, "managed by GitHub sync — propose this change in the repo")
     const rl = await limited(c, publishLimiter)
     if (rl) return rl
     const len = Number(c.req.header("content-length") ?? 0)

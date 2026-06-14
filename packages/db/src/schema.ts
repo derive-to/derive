@@ -244,6 +244,25 @@ export const collectionMember = sqliteTable(
   (t) => [uniqueIndex("collection_member_uniq").on(t.collection_id, t.user_id)],
 )
 
+// A GitHub repo mirrored into a collection, one-way. `files` is a JSON path→
+// {artifact_id, sha} map so a re-sync skips unchanged files and tombstones gone ones.
+export const repoSource = sqliteTable("repo_source", {
+  id: text("id").primaryKey(),
+  org_id: text("org_id").notNull().default("local"),
+  collection_id: text("collection_id")
+    .notNull()
+    .references(() => collection.id),
+  repo: text("repo").notNull(),
+  ref: text("ref").notNull().default("HEAD"),
+  includes: text("includes").notNull(),
+  token: text("token"),
+  files: text("files").notNull().default("{}"),
+  last_synced_at: text("last_synced_at"),
+  last_status: text("last_status"),
+  created_by: text("created_by").notNull(),
+  created_at: text("created_at").notNull().default(now),
+})
+
 // Domain mode: a hostname that serves an artifact at the root of its own origin.
 // `host` is globally unique (one host → one artifact); `kind` separates a platform
 // subdomain (name.dockd.app) from a customer's own domain.
@@ -510,6 +529,21 @@ export const SCHEMA_STATEMENTS: string[] = [
     UNIQUE (collection_id, user_id)
   )`,
   `CREATE INDEX IF NOT EXISTS collection_member_user ON collection_member (user_id)`,
+  `CREATE TABLE IF NOT EXISTS repo_source (
+    id TEXT PRIMARY KEY,
+    org_id TEXT NOT NULL DEFAULT 'local',
+    collection_id TEXT NOT NULL REFERENCES collection(id),
+    repo TEXT NOT NULL,
+    ref TEXT NOT NULL DEFAULT 'HEAD',
+    includes TEXT NOT NULL,
+    token TEXT,
+    files TEXT NOT NULL DEFAULT '{}',
+    last_synced_at TEXT,
+    last_status TEXT,
+    created_by TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+  )`,
+  `CREATE INDEX IF NOT EXISTS repo_source_org ON repo_source (org_id)`,
   `CREATE TABLE IF NOT EXISTS domain (
     host TEXT PRIMARY KEY,
     artifact_id TEXT REFERENCES artifact(id),

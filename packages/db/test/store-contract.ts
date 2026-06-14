@@ -222,6 +222,56 @@ export function runStoreContract(
     })
   })
 
+  describe(`${label}: github sync sources`, () => {
+    it("creates a source, scopes reads by org, persists the file map, retitles + tombstones, deletes", async () => {
+      const col = await store.createCollection({
+        id: uuid(),
+        org_id: ORG,
+        title: "GitHub: acme/docs",
+        created_by: "amy",
+      })
+      const art = await store.createArtifact(newArtifact({ title: "docs/a.md" }))
+      const src = await store.createRepoSource({
+        id: uuid(),
+        org_id: ORG,
+        collection_id: col.id,
+        repo: "acme/docs",
+        ref: "main",
+        includes: "**/*.md",
+        token: "tok",
+        created_by: "amy",
+      })
+      expect(src.files).toBe("{}")
+      // Org-scoped read: present for its org, absent for another.
+      expect(await store.getRepoSource(src.id, ORG)).toMatchObject({ repo: "acme/docs" })
+      expect(await store.getRepoSource(src.id, `${ORG}_other`)).toBeNull()
+      expect(await store.listRepoSources(ORG)).toHaveLength(1)
+
+      // Record a sync: the path→artifact map drives managedArtifactIds (the gate).
+      await store.updateRepoSourceSync(src.id, {
+        files: JSON.stringify({
+          "docs/a.md": { artifact_id: art.id, short_id: art.short_id, sha: "s1" },
+        }),
+        last_synced_at: "2026-06-14T00:00:00.000Z",
+        last_status: "ok",
+      })
+      expect(await store.managedArtifactIds(ORG)).toContain(art.id)
+
+      // Rename re-homes the artifact: retitle + clear any tombstone.
+      await store.setArtifactRemoved(art.id, "2026-06-14T00:00:00.000Z")
+      await store.setArtifactTitle(art.id, "docs/b.md")
+      await store.setArtifactRemoved(art.id, null)
+      expect(await store.getArtifactById(art.id)).toMatchObject({
+        title: "docs/b.md",
+        removed_at: null,
+      })
+
+      await store.deleteRepoSource(src.id, ORG)
+      expect(await store.getRepoSource(src.id, ORG)).toBeNull()
+      expect(await store.managedArtifactIds(ORG)).not.toContain(art.id)
+    })
+  })
+
   describe(`${label}: proposals (reviews)`, () => {
     it("creates proposals, lists open ones, records a decision", async () => {
       const a = await store.createArtifact(newArtifact())

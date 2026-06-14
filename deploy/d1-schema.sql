@@ -220,6 +220,23 @@ CREATE TABLE IF NOT EXISTS collection_member (
 
 CREATE INDEX IF NOT EXISTS collection_member_user ON collection_member (user_id);
 
+CREATE TABLE IF NOT EXISTS repo_source (
+    id TEXT PRIMARY KEY,
+    org_id TEXT NOT NULL DEFAULT 'local',
+    collection_id TEXT NOT NULL REFERENCES collection(id),
+    repo TEXT NOT NULL,
+    ref TEXT NOT NULL DEFAULT 'HEAD',
+    includes TEXT NOT NULL,
+    token TEXT,
+    files TEXT NOT NULL DEFAULT '{}',
+    last_synced_at TEXT,
+    last_status TEXT,
+    created_by TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+  );
+
+CREATE INDEX IF NOT EXISTS repo_source_org ON repo_source (org_id);
+
 CREATE TABLE IF NOT EXISTS domain (
     host TEXT PRIMARY KEY,
     artifact_id TEXT REFERENCES artifact(id),

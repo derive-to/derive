@@ -82,6 +82,8 @@ export default {
         backplane: createDoBackplane(env.ROOMS),
         baseUrl,
         auth,
+        // Encrypt stored GitHub PATs at rest with the edge auth secret.
+        encryptionKey: secret,
         superAdmins: (env.DOCK_SUPERADMIN_EMAILS ?? "")
           .split(",")
           .map((s) => s.trim().toLowerCase())

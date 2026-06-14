@@ -278,7 +278,7 @@ export function Artifact() {
                 isMobile={isMobile}
                 panelOpen={panel === "open"}
                 openCount={openCount}
-                showEdit={editable && canPropose && !editing}
+                showEdit={editable && canPropose && !editing && !art.managed}
                 editLabel={canPublish ? "Edit source (dev)" : "Propose change (dev)"}
                 onFavorite={(fav) =>
                   qc.setQueryData(artifactQuery(shortId).queryKey, (a) =>

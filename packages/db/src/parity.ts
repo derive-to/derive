@@ -27,6 +27,7 @@ import type {
   NotificationRecord,
   ProposalRecord,
   ReportRecord,
+  RepoSourceRecord,
   VersionRecord,
   WebhookRecord,
   WorkspaceRecord,
@@ -51,6 +52,7 @@ export interface TypedTables {
   agentMention: AgentMentionRecord
   collection: CollectionRecord
   collectionMember: CollectionMemberRecord
+  repoSource: RepoSourceRecord
   domain: DomainRecord
   report: ReportRecord
   auditLog: AuditLogRecord

@@ -231,6 +231,22 @@ export const collectionMember = pgTable(
   },
   (t) => [uniqueIndex("collection_member_uniq").on(t.collection_id, t.user_id)],
 )
+export const repoSource = pgTable("repo_source", {
+  id: text("id").primaryKey(),
+  org_id: text("org_id").notNull().default("local"),
+  collection_id: text("collection_id")
+    .notNull()
+    .references(() => collection.id),
+  repo: text("repo").notNull(),
+  ref: text("ref").notNull().default("HEAD"),
+  includes: text("includes").notNull(),
+  token: text("token"),
+  files: text("files").notNull().default("{}"),
+  last_synced_at: text("last_synced_at"),
+  last_status: text("last_status"),
+  created_by: text("created_by").notNull(),
+  created_at: text("created_at").notNull().$defaultFn(isoNow),
+})
 export const domain = pgTable("domain", {
   host: text("host").primaryKey(),
   artifact_id: text("artifact_id").references(() => artifact.id),
@@ -488,6 +504,21 @@ export const PG_SCHEMA_STATEMENTS: string[] = [
     UNIQUE (collection_id, user_id)
   )`,
   `CREATE INDEX IF NOT EXISTS collection_member_user ON collection_member (user_id)`,
+  `CREATE TABLE IF NOT EXISTS repo_source (
+    id TEXT PRIMARY KEY,
+    org_id TEXT NOT NULL DEFAULT 'local',
+    collection_id TEXT NOT NULL REFERENCES collection(id),
+    repo TEXT NOT NULL,
+    ref TEXT NOT NULL DEFAULT 'HEAD',
+    includes TEXT NOT NULL,
+    token TEXT,
+    files TEXT NOT NULL DEFAULT '{}',
+    last_synced_at TEXT,
+    last_status TEXT,
+    created_by TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT ${isoDefault}
+  )`,
+  `CREATE INDEX IF NOT EXISTS repo_source_org ON repo_source (org_id)`,
   `CREATE TABLE IF NOT EXISTS domain (
     host TEXT PRIMARY KEY,
     artifact_id TEXT REFERENCES artifact(id),

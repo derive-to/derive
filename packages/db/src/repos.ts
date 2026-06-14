@@ -28,6 +28,7 @@ import type {
   NewNotification,
   NewProposal,
   NewReport,
+  NewRepoSource,
   NewVersion,
   NewWebhook,
   NotificationRecord,
@@ -35,6 +36,7 @@ import type {
   ProposalState,
   ReportRecord,
   ReportState,
+  RepoSourceRecord,
   Role,
   VersionRecord,
   Visibility,
@@ -61,6 +63,7 @@ import {
   notification,
   proposal,
   report,
+  repoSource,
   version,
   webhook,
   webhookDelivery,
@@ -86,6 +89,7 @@ export const schema = {
   collection,
   collectionItem,
   collectionMember,
+  repoSource,
   domain,
   report,
   auditLog,
@@ -110,6 +114,7 @@ const _schemaShapes: Shapes<typeof schema> = {
   agentMention: true,
   collection: true,
   collectionMember: true,
+  repoSource: true,
   domain: true,
   report: true,
   auditLog: true,
@@ -128,6 +133,25 @@ export type SqliteDb = BaseSQLiteDatabase<"sync" | "async", unknown, typeof sche
 /** The shape of a `.run()` result across drivers: better-sqlite3 exposes
  *  `changes` directly; D1 nests it under `meta`. */
 type RunResult = { changes?: number; meta?: { changes?: number } }
+
+/** Pull the artifact ids out of repo_source `files` JSON rows. A file map is
+ *  `{ [repoPath]: { artifact_id, sha } }`; a managed artifact is any id therein.
+ *  Shared by both drivers so "is this artifact synced?" reads identically. */
+export const collectManagedIds = (rows: { files: string }[]): string[] => {
+  const ids = new Set<string>()
+  for (const r of rows) {
+    try {
+      const map = JSON.parse(r.files) as Record<string, { artifact_id?: string }>
+      for (const k in map) {
+        const id = map[k]?.artifact_id
+        if (id) ids.add(id)
+      }
+    } catch {
+      // A malformed map shouldn't break the gate; treat it as managing nothing.
+    }
+  }
+  return [...ids]
+}
 
 /**
  * The dialect-agnostic SQLite repository: the bulk of the MetaStore implemented
@@ -260,6 +284,9 @@ export function makeRepos(db: SqliteDb) {
 
   const setArtifactRemoved = async (id: string, removedAt: string | null): Promise<void> => {
     await db.update(artifact).set({ removed_at: removedAt }).where(eq(artifact.id, id)).run()
+  }
+  const setArtifactTitle = async (id: string, title: string): Promise<void> => {
+    await db.update(artifact).set({ title }).where(eq(artifact.id, id)).run()
   }
 
   // ---- Comments + threads ------------------------------------------------
@@ -629,6 +656,42 @@ export function makeRepos(db: SqliteDb) {
         .all()
     ).map((r) => r.role)
 
+  // ---- GitHub sync sources -----------------------------------------------
+  const createRepoSource = async (s: NewRepoSource): Promise<RepoSourceRecord> =>
+    (await db.insert(repoSource).values(s).returning().get()) as RepoSourceRecord
+  const getRepoSource = async (id: string, orgId?: string): Promise<RepoSourceRecord | null> =>
+    (await db
+      .select()
+      .from(repoSource)
+      .where(and(eq(repoSource.id, id), orgId ? eq(repoSource.org_id, orgId) : undefined))
+      .get()) ?? null
+  const listRepoSources = async (orgId: string): Promise<RepoSourceRecord[]> =>
+    db
+      .select()
+      .from(repoSource)
+      .where(eq(repoSource.org_id, orgId))
+      .orderBy(desc(repoSource.created_at))
+      .all()
+  const updateRepoSourceSync = async (
+    id: string,
+    fields: { files: string; last_synced_at: string; last_status: string },
+  ): Promise<void> => {
+    await db.update(repoSource).set(fields).where(eq(repoSource.id, id)).run()
+  }
+  const deleteRepoSource = async (id: string, orgId: string): Promise<void> => {
+    await db
+      .delete(repoSource)
+      .where(and(eq(repoSource.id, id), eq(repoSource.org_id, orgId)))
+      .run()
+  }
+  const managedArtifactIds = async (orgId: string): Promise<string[]> => {
+    const rows = await db
+      .select({ files: repoSource.files })
+      .from(repoSource)
+      .where(eq(repoSource.org_id, orgId))
+      .all()
+    return collectManagedIds(rows)
+  }
   // ---- Domains (hostname → artifact) -------------------------------------
   const getDomain = async (host: string): Promise<DomainRecord | null> =>
     (await db.select().from(domain).where(eq(domain.host, host)).get()) ?? null
@@ -832,6 +895,7 @@ export function makeRepos(db: SqliteDb) {
     storageBytes,
     tagCounts,
     setArtifactRemoved,
+    setArtifactTitle,
     createComment,
     getComment,
     updateComment,
@@ -878,6 +942,12 @@ export function makeRepos(db: SqliteDb) {
     setCollectionMember,
     removeCollectionMember,
     collectionRolesForArtifact,
+    createRepoSource,
+    getRepoSource,
+    listRepoSources,
+    updateRepoSourceSync,
+    deleteRepoSource,
+    managedArtifactIds,
     getDomain,
     setDomain,
     getArtifactDomains,
