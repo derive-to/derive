@@ -83,7 +83,9 @@ const one = <T>(rows: T[]): T => {
   return r
 }
 
-const schema = {
+// Exported so the pg schema-conformance test can diff these defs against the
+// columns PG_SCHEMA_STATEMENTS actually creates in a real Postgres.
+export const schema = {
   artifact,
   version,
   comment,
