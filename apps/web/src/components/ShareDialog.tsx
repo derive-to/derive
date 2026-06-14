@@ -73,12 +73,17 @@ export function ShareButton({
 
   const [copied, setCopied] = useState(false)
 
-  // Domain mode (vanity subdomains). `domainBase` is null when the server has no
-  // base configured, which hides the whole section.
+  // Domain mode. `domainBase` is null when subdomains are off; `cnameTarget` is null
+  // when bring-your-own custom domains are off — each hides its own section.
   const [domains, setDomains] = useState<ArtifactDomain[]>([])
   const [domainBase, setDomainBase] = useState<string | null>(null)
+  const [cnameTarget, setCnameTarget] = useState<string | null>(null)
   const [label, setLabel] = useState("")
   const [claiming, setClaiming] = useState(false)
+  const [customHost, setCustomHost] = useState("")
+  const [addingCustom, setAddingCustom] = useState(false)
+  const subdomains = domains.filter((d) => d.kind === "subdomain")
+  const customDomains = domains.filter((d) => d.kind === "custom")
 
   // GDocs model: owners and editors manage access; everyone else gets view-only.
   const canManage = myRole === "owner" || myRole === "editor"
@@ -167,8 +172,29 @@ export function ShareButton({
       .then((r) => {
         setDomains(r.domains)
         setDomainBase(r.base)
+        setCnameTarget(r.cname_target)
       })
       .catch(() => {})
+  const addCustomDomain = async (e: React.FormEvent) => {
+    e.preventDefault()
+    const host = customHost.trim().toLowerCase()
+    if (!host) return
+    setAddingCustom(true)
+    try {
+      await api.addCustomDomain(shortId, host)
+      setCustomHost("")
+      await loadDomains()
+      toast.success("Domain added — add the DNS records to finish")
+    } catch (x) {
+      toast.error(x instanceof Error ? x.message : "Couldn't add that domain")
+    } finally {
+      setAddingCustom(false)
+    }
+  }
+  const refreshDomain = async (host: string) => {
+    await api.refreshDomain(shortId, host).catch(() => {})
+    await loadDomains()
+  }
   const claimDomain = async (e: React.FormEvent) => {
     e.preventDefault()
     const l = label.trim().toLowerCase()
@@ -434,9 +460,9 @@ export function ShareButton({
                 <div className="mb-1.5 font-mono text-2xs font-semibold uppercase tracking-wide text-muted-foreground">
                   Custom URL
                 </div>
-                {domains.length > 0 ? (
+                {subdomains.length > 0 ? (
                   <div className="flex flex-col gap-1.5">
-                    {domains.map((d) => (
+                    {subdomains.map((d) => (
                       <div key={d.host} className="flex items-center gap-1.5">
                         <Input
                           readOnly
@@ -496,6 +522,107 @@ export function ShareButton({
                 <p className="mt-1.5 font-mono text-2xs text-muted-foreground">
                   A clean URL on {domainBase}, served at its own origin. Works for link- or
                   world-readable artifacts.
+                </p>
+              </div>
+            )}
+
+            {/* Custom domain — bring your own hostname (Cloudflare for SaaS). Shown
+                only when the server has custom domains enabled. */}
+            {cnameTarget && (
+              <div className="mt-4 border-t border-border pt-3.5">
+                <div className="mb-1.5 font-mono text-2xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  Custom domain
+                </div>
+                {customDomains.length > 0 ? (
+                  <div className="flex flex-col gap-2.5">
+                    {customDomains.map((d) => (
+                      <div key={d.host} className="flex flex-col gap-1.5">
+                        <div className="flex items-center gap-1.5">
+                          <span className="flex-1 truncate font-mono text-xs text-foreground">
+                            {d.host}
+                          </span>
+                          <span
+                            data-testid="share-customdomain-status"
+                            className={`rounded px-1.5 py-0.5 font-mono text-2xs ${d.status === "active" ? "bg-primary/10 text-primary" : d.status === "error" ? "bg-destructive/10 text-destructive" : "bg-muted text-muted-foreground"}`}
+                          >
+                            {d.status === "active"
+                              ? "Active"
+                              : d.status === "error"
+                                ? "Error"
+                                : "Pending"}
+                          </span>
+                          {d.status === "active" ? (
+                            <Button variant="outline" onClick={() => copyUrl(d.url)}>
+                              Copy
+                            </Button>
+                          ) : (
+                            canManage && (
+                              <Button
+                                variant="outline"
+                                data-testid="share-customdomain-refresh"
+                                onClick={() => refreshDomain(d.host)}
+                              >
+                                Refresh
+                              </Button>
+                            )
+                          )}
+                          {canManage && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              data-testid="share-customdomain-remove"
+                              className="size-7 text-muted-foreground hover:text-foreground"
+                              onClick={() => dropDomain(d.host)}
+                              aria-label="Remove custom domain"
+                            >
+                              <X />
+                            </Button>
+                          )}
+                        </div>
+                        {d.status !== "active" && d.records && d.records.length > 0 && (
+                          <div className="rounded-md border border-border bg-muted/40 p-2">
+                            <p className="mb-1 font-mono text-2xs text-muted-foreground">
+                              Add these DNS records at your registrar:
+                            </p>
+                            {d.records.map((r) => (
+                              <div
+                                key={`${r.type}-${r.name}`}
+                                className="truncate font-mono text-2xs text-foreground"
+                              >
+                                <span className="text-muted-foreground">{r.type}</span> {r.name} →{" "}
+                                {r.value}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                ) : canManage ? (
+                  <form onSubmit={addCustomDomain} className="flex items-center gap-1.5">
+                    <Input
+                      data-testid="share-customdomain-host"
+                      aria-label="Custom domain"
+                      placeholder="launch.acme.com"
+                      value={customHost}
+                      onChange={(e) => setCustomHost(e.target.value)}
+                      className="flex-1 font-mono text-2xs"
+                    />
+                    <Button
+                      data-testid="share-customdomain-add"
+                      variant="primary"
+                      type="submit"
+                      disabled={addingCustom || !customHost.trim()}
+                    >
+                      {addingCustom ? "…" : "Add"}
+                    </Button>
+                  </form>
+                ) : (
+                  <p className="text-xs text-muted-foreground">No custom domain.</p>
+                )}
+                <p className="mt-1.5 font-mono text-2xs text-muted-foreground">
+                  Point your own domain here. Cloudflare issues the TLS cert; CNAME it to{" "}
+                  <span className="text-foreground">{cnameTarget}</span>.
                 </p>
               </div>
             )}

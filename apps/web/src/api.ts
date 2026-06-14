@@ -88,11 +88,20 @@ export interface ArtifactMember {
   name: string | null
   role: Role
 }
+/** A DNS record the customer adds to validate a custom domain. */
+export interface DomainDnsRecord {
+  type: string
+  name: string
+  value: string
+}
 /** A vanity host serving an artifact (domain mode). */
 export interface ArtifactDomain {
   host: string
   url: string
   kind: string
+  status: string
+  /** DNS records to add while a custom domain is pending (undefined for subdomains). */
+  records?: DomainDnsRecord[]
   created_at: string
 }
 /** The workspace: its name, the caller's role, and the member directory. */
@@ -342,10 +351,20 @@ export const api = {
 
   // Vanity subdomains (domain mode). `base` is null when the server has none set,
   // in which case the Share dialog hides the section.
-  listDomains: (id: string): Promise<{ base: string | null; domains: ArtifactDomain[] }> =>
-    f(`/v1/artifacts/${id}/domains`, opts()).then(j),
+  listDomains: (
+    id: string,
+  ): Promise<{
+    base: string | null
+    custom_enabled: boolean
+    cname_target: string | null
+    domains: ArtifactDomain[]
+  }> => f(`/v1/artifacts/${id}/domains`, opts()).then(j),
   setDomain: (id: string, label: string): Promise<ArtifactDomain> =>
     f(`/v1/artifacts/${id}/domains`, { ...opts({ label }), method: "PUT" }).then(j),
+  addCustomDomain: (id: string, host: string): Promise<ArtifactDomain & { cname_target: string }> =>
+    f(`/v1/artifacts/${id}/custom-domains`, opts({ host })).then(j),
+  refreshDomain: (id: string, host: string): Promise<ArtifactDomain> =>
+    f(`/v1/artifacts/${id}/domains/${host}/refresh`, opts({})).then(j),
   removeDomain: (id: string, host: string): Promise<void> =>
     f(`/v1/artifacts/${id}/domains/${host}`, { method: "DELETE", credentials: "include" }).then(
       () => undefined,

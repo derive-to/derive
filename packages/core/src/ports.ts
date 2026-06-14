@@ -18,6 +18,10 @@ export type Visibility = "public" | "link" | "org" | "password"
 /** A platform subdomain (`name.dockd.app`) or a customer's own domain. */
 export type DomainKind = "subdomain" | "custom"
 
+/** Serving status of a host. Subdomains are `active` immediately; a custom domain
+ *  is `pending` until its TLS cert + ownership validate (then `active`), or `error`. */
+export type DomainStatus = "active" | "pending" | "error"
+
 export interface ArtifactRecord {
   id: string
   short_id: string
@@ -251,6 +255,11 @@ export interface MetaStore {
   setDomain(d: NewDomain): Promise<DomainRecord | null>
   /** Hostnames pointing at an artifact (for the share UI). */
   getArtifactDomains(artifactId: string): Promise<DomainRecord[]>
+  /** Update a custom domain's validation status + the records to display. */
+  updateDomain(
+    host: string,
+    fields: { status?: DomainStatus; verification?: string | null },
+  ): Promise<DomainRecord | null>
   /** Release a hostname, scoped to its owning workspace. */
   deleteDomain(host: string, orgId: string): Promise<void>
 
@@ -532,6 +541,11 @@ export interface DomainRecord {
   artifact_id: string
   org_id: string
   kind: DomainKind
+  status: DomainStatus
+  /** The Cloudflare custom-hostname id, for status refresh + teardown (custom only). */
+  cf_hostname_id: string | null
+  /** JSON-encoded DNS records the customer must add to validate (custom, while pending). */
+  verification: string | null
   created_at: string
 }
 export interface NewDomain {
@@ -539,6 +553,9 @@ export interface NewDomain {
   artifact_id: string
   org_id: string
   kind: DomainKind
+  status?: DomainStatus
+  cf_hostname_id?: string | null
+  verification?: string | null
 }
 export interface CollectionMemberRecord {
   id: string

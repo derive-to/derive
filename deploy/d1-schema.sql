@@ -225,6 +225,9 @@ CREATE TABLE IF NOT EXISTS domain (
     artifact_id TEXT NOT NULL REFERENCES artifact(id),
     org_id TEXT NOT NULL,
     kind TEXT NOT NULL DEFAULT 'subdomain',
+    status TEXT NOT NULL DEFAULT 'active',
+    cf_hostname_id TEXT,
+    verification TEXT,
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
   );
 

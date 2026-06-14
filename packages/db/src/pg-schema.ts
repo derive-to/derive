@@ -5,6 +5,7 @@ import type {
   CommentState,
   DeliveryStatus,
   DomainKind,
+  DomainStatus,
   NotificationKind,
   ProposalState,
   ReportState,
@@ -237,6 +238,9 @@ export const domain = pgTable("domain", {
     .references(() => artifact.id),
   org_id: text("org_id").notNull(),
   kind: text("kind").$type<DomainKind>().notNull().default("subdomain"),
+  status: text("status").$type<DomainStatus>().notNull().default("active"),
+  cf_hostname_id: text("cf_hostname_id"),
+  verification: text("verification"),
   created_at: text("created_at").notNull().$defaultFn(isoNow),
 })
 export const proposal = pgTable("proposal", {
@@ -491,6 +495,9 @@ export const PG_SCHEMA_STATEMENTS: string[] = [
     artifact_id TEXT NOT NULL REFERENCES artifact(id),
     org_id TEXT NOT NULL,
     kind TEXT NOT NULL DEFAULT 'subdomain',
+    status TEXT NOT NULL DEFAULT 'active',
+    cf_hostname_id TEXT,
+    verification TEXT,
     created_at TEXT NOT NULL DEFAULT ${isoDefault}
   )`,
   `CREATE INDEX IF NOT EXISTS domain_artifact ON domain (artifact_id)`,

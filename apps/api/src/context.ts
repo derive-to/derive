@@ -18,6 +18,7 @@ import type { Context } from "hono"
 import { getCookie, setCookie } from "hono/cookie"
 import type { Auth } from "./auth-config"
 import { type Backplane, createInProcessBackplane } from "./bus"
+import type { CustomDomainProvider } from "./lib/cloudflare-saas"
 import { safeEqual, sha256, unlockCookie, unlockToken } from "./lib/crypto"
 import { VIEWER_COOKIE, WS_COOKIE } from "./lib/http"
 import { makeKeyedLimiter } from "./lib/rate-limit"
@@ -122,6 +123,12 @@ export interface AppDeps {
    * the host root (domain mode). Unset = subdomain serving off.
    */
   subdomainBase?: string
+  /**
+   * Bring-your-own custom domains (hosted tier). When set, an owner can attach their
+   * own hostname to an artifact and Cloudflare for SaaS issues + renews the TLS cert.
+   * Unset = custom domains disabled (those endpoints 501). Subdomains work without it.
+   */
+  customDomains?: CustomDomainProvider
   /**
    * The SPA and API are on different sites (hosted split). Makes first-party
    * cookies we set here — currently the anonymous-viewer id — `SameSite=None;

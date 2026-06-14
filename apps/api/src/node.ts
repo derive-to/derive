@@ -11,6 +11,7 @@ import { Pool } from "pg"
 import { createApp } from "./app"
 import { type AuthDb, makeAuth, migrateAuth } from "./auth-config"
 import { loadConfig, resolveAuthSecret, resolveDefaultOrg } from "./config"
+import { customDomainsFromEnv } from "./lib/cloudflare-saas"
 import { mountWeb } from "./lib/serve-web"
 import { log } from "./log"
 import { startWebhookWorker } from "./webhooks"
@@ -109,6 +110,8 @@ const app = createApp({
   crossSite: cfg.crossSite,
   // Vanity subdomains (domain mode): when set, name.<base> serves its artifact.
   subdomainBase: cfg.subdomainBase,
+  // BYO custom domains via Cloudflare for SaaS, when CF_* env is configured.
+  customDomains: customDomainsFromEnv(process.env),
   versionWindowMs: cfg.versionWindowMs,
   // Storage backstops: unset = unlimited (self-host stays open).
   maxArtifacts: cfg.maxArtifacts,
