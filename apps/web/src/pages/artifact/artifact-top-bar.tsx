@@ -64,6 +64,7 @@ export function ArtifactTopBar(props: {
             variant="outline"
             size="icon"
             title="More"
+            aria-label="More actions"
             data-testid="artifact-more"
             className={cn(openProposals > 0 && "border-primary text-primary")}
           >
@@ -101,6 +102,7 @@ export function ArtifactTopBar(props: {
           data-testid="artifact-show-comments"
           onClick={props.onShowComments}
           title="Show comments (c)"
+          aria-label="Show comments"
         >
           <Icon name="comments" size={16} />
           {props.openCount > 0 && <b className="font-bold">{props.openCount}</b>}

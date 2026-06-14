@@ -1,7 +1,7 @@
 import { ANCHOR_CLIENT_JS } from "@dock/core"
 import { Hono } from "hono"
 import type { AppContext } from "../context"
-import { TOMBSTONE } from "../lib/http"
+import { cacheControlFor, TOMBSTONE } from "../lib/http"
 import { serveContent } from "../lib/serve-content"
 
 /** The sandbox: raw artifact + proposal bytes under /raw/*. Served with an
@@ -32,7 +32,15 @@ export const rawRoutes = (ctx: AppContext) => {
 
     const prefix = `/raw/${shortId}/v/${c.req.param("n")}/`
     const path = decodeURIComponent(c.req.path.slice(prefix.length))
-    return serveContent(c, blobs, version, artifact.title, prefix, path)
+    return serveContent(
+      c,
+      blobs,
+      version,
+      artifact.title,
+      prefix,
+      path,
+      cacheControlFor(artifact.visibility),
+    )
   })
 
   // Render a proposed version exactly like a live one, so review is of the
@@ -47,7 +55,9 @@ export const rawRoutes = (ctx: AppContext) => {
 
     const prefix = `/raw/${shortId}/p/${proposal.id}/`
     const path = decodeURIComponent(c.req.path.slice(prefix.length))
-    return serveContent(c, blobs, proposal, artifact.title, prefix, path)
+    // A proposal is in-review, transient content (it can be withdrawn or change);
+    // never let a shared cache hold it, regardless of the artifact's visibility.
+    return serveContent(c, blobs, proposal, artifact.title, prefix, path, "private, no-store")
   })
 
   return app

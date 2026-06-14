@@ -175,3 +175,25 @@
     transform: translate(-50%, -50%) scale(1.9);
   }
 }
+
+/* Honor prefers-reduced-motion: near-zero out CSS animations, transitions, and
+   view transitions for vestibular-sensitive users. These rules are unlayered, so
+   the cascade-layer order above puts them ahead of every Tailwind utility (no
+   !important needed). The live-cursor rAF loop is JS-driven (transforms, not CSS),
+   so it snaps instead of gliding and skips click ripples in code too: see
+   use-live-cursors. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms;
+    animation-iteration-count: 1;
+    transition-duration: 0.01ms;
+    scroll-behavior: auto;
+  }
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation: none;
+  }
+}

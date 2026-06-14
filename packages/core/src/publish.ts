@@ -191,6 +191,8 @@ export interface ProposeInput {
   /** What the proposer is changing, in their words. */
   message?: string
   author?: string
+  /** Stable id of the proposer (user/agent); persisted for withdraw authorization. */
+  author_id?: string | null
 }
 
 export interface ProposeResult {
@@ -231,6 +233,7 @@ export async function propose(
     title: null,
     message: input.message ?? null,
     author: input.author ?? "anonymous",
+    author_id: input.author_id ?? null,
     base_version: artifact.current_version,
   })
   return { artifact, proposal }

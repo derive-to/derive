@@ -115,6 +115,9 @@ export const MAX_UPLOAD_BYTES = 100 * 1024 * 1024
  *  to one recorded view — a refresh or quick re-open doesn't inflate the count. */
 export const VIEW_DEDUP_MS = 30 * 60_000
 
+/** Versioned, fully-public artifact paths are immutable by construction. */
+export const IMMUTABLE_CACHE = "public, max-age=31536000, immutable"
+
 /** Headers for everything inside the artifact sandbox. */
 export const RAW_HEADERS: Record<string, string> = {
   // Opaque origin: scripts run, but can touch no cookies, storage, or APIs.
@@ -125,9 +128,18 @@ export const RAW_HEADERS: Record<string, string> = {
   // Raw artifact bytes are never the indexable surface; keeping them out of
   // search engines also blunts using the host for SEO-spam/phishing.
   "X-Robots-Tag": "noindex",
-  // Versioned paths are immutable by construction.
-  "Cache-Control": "public, max-age=31536000, immutable",
+  "Cache-Control": IMMUTABLE_CACHE,
 }
+
+/**
+ * Cache-Control for an artifact's bytes by access model. Only fully `public`
+ * artifacts are safe to sit in a shared/CDN cache: `link`, `org`, and `password`
+ * are gated (per-identity authorization, or a secret the cache key doesn't carry),
+ * so a shared cache must never store one response and replay it to a viewer who
+ * never passed the gate. Non-public ⇒ `private, no-store`.
+ */
+export const cacheControlFor = (visibility: Visibility): string =>
+  visibility === "public" ? IMMUTABLE_CACHE : "private, no-store"
 
 /** A taken-down artifact: content is gone (410), the record is preserved. */
 export const TOMBSTONE = "This artifact was removed."

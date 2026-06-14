@@ -99,6 +99,13 @@ export const commentRoutes = (ctx: AppContext) => {
   const actorName = async (c: Context): Promise<string | null> =>
     (await actingUser(c))?.name ?? null
 
+  // Authorship is keyed on the stable actor id, never the mutable display name:
+  // renaming your profile to a victim's name must not grant edit/delete rights.
+  // Legacy rows (author_id null, written before this column) fall back to the
+  // name match so their authors don't lose access.
+  const ownsComment = (cm: CommentRecord, acting: { id: string; name: string }): boolean =>
+    cm.author_id ? cm.author_id === acting.id : cm.author === acting.name
+
   // Create a comment (new thread) or a reply (pass thread_id).
   app.post("/v1/artifacts/:shortId/comments", async (c) => {
     const artifact = await meta.getByShortId(c.req.param("shortId"))
@@ -142,6 +149,7 @@ export const commentRoutes = (ctx: AppContext) => {
       anchor,
       body_md: body.body_md,
       author,
+      author_id: acting?.id ?? null,
     })
     // Mentions live in the comment's meta JSON (the picker supplies user ids, so
     // there's no fragile server-side @name parsing); persist them with the row.
@@ -241,8 +249,8 @@ export const commentRoutes = (ctx: AppContext) => {
     if ("error" in r) return r.error
     const { artifact, cm } = r
     if (!(await authorize(c, "comment", artifact))) return fail(c, 403, "forbidden")
-    const actor = await actorName(c)
-    if (actor && cm.author !== actor) return fail(c, 403, "forbidden")
+    const acting = await actingUser(c)
+    if (acting && !ownsComment(cm, acting)) return fail(c, 403, "forbidden")
     const body = await readJson(
       c,
       z.object({ body_md: z.string().refine((s) => s.trim() !== "", "body_md required") }),
@@ -265,8 +273,8 @@ export const commentRoutes = (ctx: AppContext) => {
     if ("error" in r) return r.error
     const { artifact, cm } = r
     if (!(await authorize(c, "comment", artifact))) return fail(c, 403, "forbidden")
-    const actor = await actorName(c)
-    if (actor && cm.author !== actor) return fail(c, 403, "forbidden")
+    const acting = await actingUser(c)
+    if (acting && !ownsComment(cm, acting)) return fail(c, 403, "forbidden")
     const md = parseMeta(cm.meta)
     md.deleted = true
     const updated = await meta.updateComment(cm.id, { meta: JSON.stringify(md) })

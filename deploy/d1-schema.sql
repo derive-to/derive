@@ -43,6 +43,7 @@ CREATE TABLE IF NOT EXISTS comment (
     anchor TEXT,
     body_md TEXT NOT NULL,
     author TEXT NOT NULL,
+    author_id TEXT,
     state TEXT NOT NULL DEFAULT 'open',
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
     meta TEXT
@@ -259,6 +260,7 @@ CREATE TABLE IF NOT EXISTS proposal (
     title TEXT,
     message TEXT,
     author TEXT NOT NULL,
+    author_id TEXT,
     base_version INTEGER NOT NULL,
     state TEXT NOT NULL DEFAULT 'open',
     decided_by TEXT,
