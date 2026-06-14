@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { emojifyShortcodes, EMOJI, PICKER_EMOJI } from "./emoji"
+import { EMOJI, emojifyShortcodes, PICKER_EMOJI } from "./emoji"
 
 describe("emojifyShortcodes", () => {
   it("replaces known shortcodes with their emoji", () => {
