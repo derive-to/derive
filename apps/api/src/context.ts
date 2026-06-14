@@ -218,16 +218,55 @@ export function buildContext(deps: AppDeps) {
   // A registered agent acting via its bearer token (memoized per request). An
   // agent is a workspace principal: same authorization path as a member, with
   // its own identity and (default commenter) role.
+  // The least-privilege role an OAuth-granted scope set maps to: publish/review
+  // earn editor; propose/comment earn commenter; read alone is viewer.
+  const roleFromScopes = (scopes: string[]): Role =>
+    scopes.includes("dock:publish") || scopes.includes("dock:review")
+      ? "editor"
+      : scopes.includes("dock:propose") || scopes.includes("dock:comment")
+        ? "commenter"
+        : "viewer"
+
   const agentCache = new WeakMap<Context, AgentRecord | null>()
   const agentFor = async (c: Context): Promise<AgentRecord | null> => {
     if (agentCache.has(c)) return agentCache.get(c) ?? null
     const b = bearer(c)
-    // Tokens are stored hashed; look up by the hash of the presented bearer.
-    const a =
-      !b || (deps.token && safeEqual(b, deps.token)) ? null : await meta.getAgentByToken(sha256(b))
+    let a: AgentRecord | null = null
+    if (b && !(deps.token && safeEqual(b, deps.token))) {
+      // Either a registered agent token (stored hashed), or an OAuth access token
+      // minted by the browser consent flow, resolved to a scoped agent.
+      a = (await meta.getAgentByToken(sha256(b))) ?? (await oauthAgent(b))
+    }
     agentCache.set(c, a)
     if (a) c.set("actorId", a.id)
     return a
+  }
+
+  // An OAuth access token (granted via the consent screen) acts as a scoped agent:
+  // it runs in the granting user's workspace, authors as the client's name, and
+  // takes a role derived from the granted dock:* scopes. Expired tokens resolve to
+  // nothing — the caller is then anonymous (read-only), never the owner.
+  const oauthAgent = async (token: string): Promise<AgentRecord | null> => {
+    const grant = await meta.getOAuthGrant(token)
+    if (!grant || grant.expiresAt.getTime() <= Date.now()) return null
+    // The agent runs in the granting user's workspace, provisioning it on first
+    // touch exactly as the user's own first request would (multi mode, lazy).
+    const mine = await meta.listWorkspaces(grant.userId)
+    const org =
+      mine[0]?.id ??
+      (await provisionPersonal({
+        id: grant.userId,
+        email: grant.userEmail,
+        name: grant.userName,
+      }))
+    return {
+      id: `oauth:${grant.clientId}`,
+      org_id: org,
+      name: grant.clientName,
+      token: "",
+      role: roleFromScopes(grant.scopes),
+      created_at: new Date().toISOString(),
+    }
   }
 
   // The acting identity (agent or signed-in user) for authorship; null when

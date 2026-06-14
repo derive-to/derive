@@ -1,10 +1,27 @@
 import { createFileRoute } from "@tanstack/react-router"
 import { Login } from "../pages/Login"
 
+// OAuth authorize params the oidc-provider appends when it bounces an
+// unauthenticated /authorize to /login; preserved so login can resume the flow.
+const OAUTH_KEYS = [
+  "client_id",
+  "response_type",
+  "redirect_uri",
+  "scope",
+  "code_challenge",
+  "code_challenge_method",
+  "state",
+] as const
+
 export const Route = createFileRoute("/login")({
   // `?signup` deep-links straight into the create-account form (the anon viral
-  // CTA on a shared artifact links here).
-  validateSearch: (s: Record<string, unknown>): { signup?: boolean } =>
-    s.signup ? { signup: true } : {},
+  // CTA on a shared artifact links here). OAuth params ride through so an agent's
+  // authorize request survives the login round-trip.
+  validateSearch: (s: Record<string, unknown>): Record<string, string | boolean> => {
+    const out: Record<string, string | boolean> = {}
+    if (s.signup) out.signup = true
+    for (const k of OAUTH_KEYS) if (typeof s[k] === "string") out[k] = s[k] as string
+    return out
+  },
   component: Login,
 })

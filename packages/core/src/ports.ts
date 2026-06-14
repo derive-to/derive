@@ -318,6 +318,8 @@ export interface MetaStore {
   listAgents(orgId: string): Promise<AgentRecord[]>
   /** Resolve an agent from its bearer token (the agent's identity). */
   getAgentByToken(token: string): Promise<AgentRecord | null>
+  /** Resolve a live OAuth access token (issued by the consent flow) to its grant. */
+  getOAuthGrant(token: string): Promise<OAuthGrant | null>
   deleteAgent(id: string, orgId: string): Promise<void>
   /** Queue a mention into an agent's pull inbox. */
   createAgentMention(m: NewAgentMention): Promise<void>
@@ -374,6 +376,18 @@ export interface NewReport {
   reason: string
   detail?: string | null
   reporter?: string | null
+}
+
+/** A live OAuth access token resolved to its grant (Better Auth oidc-provider):
+ *  who authorized it, the client, the granted scopes, and when it expires. */
+export interface OAuthGrant {
+  userId: string
+  userEmail: string
+  userName: string | null
+  clientId: string
+  clientName: string
+  scopes: string[]
+  expiresAt: Date
 }
 
 export type AuditAction = "report" | "takedown" | "reinstate" | "dismiss"

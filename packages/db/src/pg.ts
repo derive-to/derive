@@ -34,6 +34,7 @@ import type {
   NewView,
   NewWebhook,
   NotificationRecord,
+  OAuthGrant,
   ProposalRecord,
   ProposalState,
   ReportRecord,
@@ -905,6 +906,46 @@ export class PgMetaStore implements MetaStore {
   async getAgentByToken(token: string): Promise<AgentRecord | null> {
     const rows = await this.db.select().from(agent).where(eq(agent.token, token))
     return rows[0] ?? null
+  }
+  async getOAuthGrant(token: string): Promise<OAuthGrant | null> {
+    // Better Auth oidc-provider tables live in the same pg database; quoted
+    // identifiers preserve their camelCase. The token is bound ($1), not inlined.
+    type GrantRow = {
+      user_id: string
+      user_email: string
+      user_name: string | null
+      client_id: string
+      scopes: string | null
+      expires_at: Date | string | number
+      client_name: string
+    }
+    let row: GrantRow | undefined
+    try {
+      const { rows } = await this.pool.query(
+        `SELECT t."userId" AS user_id, t."clientId" AS client_id, t."scopes" AS scopes,
+                t."accessTokenExpiresAt" AS expires_at, a."name" AS client_name,
+                u."email" AS user_email, u."name" AS user_name
+           FROM "oauthAccessToken" t
+           JOIN "oauthApplication" a ON a."clientId" = t."clientId"
+           JOIN "user" u ON u."id" = t."userId"
+          WHERE t."accessToken" = $1 LIMIT 1`,
+        [token],
+      )
+      row = rows[0] as GrantRow | undefined
+    } catch {
+      // OAuth tables absent (oidc-provider not migrated) or query error: no grant.
+      return null
+    }
+    if (!row) return null
+    return {
+      userId: row.user_id,
+      userEmail: row.user_email,
+      userName: row.user_name,
+      clientId: row.client_id,
+      clientName: row.client_name,
+      scopes: row.scopes ? row.scopes.split(" ").filter(Boolean) : [],
+      expiresAt: row.expires_at instanceof Date ? row.expires_at : new Date(row.expires_at),
+    }
   }
   async deleteAgent(id: string, orgId: string): Promise<void> {
     await this.db.delete(agent).where(and(eq(agent.id, id), eq(agent.org_id, orgId)))

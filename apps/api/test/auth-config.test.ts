@@ -43,22 +43,26 @@ describe("auth-config: optional providers", () => {
     expect(auth.options.socialProviders?.google).toBeUndefined()
   })
 
-  it("registers the generic-OAuth (OIDC) plugin when OIDC_* is set", () => {
+  // The oidc-provider plugin (Dock as an OAuth authorization server for agents) is
+  // always on; the enterprise SSO genericOAuth plugin is the one gated on OIDC_*.
+  const pluginIds = (auth: ReturnType<typeof makeAuth>) =>
+    (auth.options.plugins ?? []).map((p) => p.id)
+
+  it("adds the generic-OAuth SSO plugin alongside oidc-provider when OIDC_* is set", () => {
     process.env.OIDC_ISSUER = "https://issuer.example.com/"
     process.env.OIDC_CLIENT_ID = "oid"
     process.env.OIDC_CLIENT_SECRET = "osecret"
     process.env.OIDC_PROVIDER_ID = "okta"
-    const auth = makeAuth(db(), "http://dock.test", "test-secret-0123456789abcd")
-    // The plugin self-registers an endpoint surface; its presence is the signal.
-    expect(Array.isArray(auth.options.plugins)).toBe(true)
-    expect(auth.options.plugins?.length).toBeGreaterThan(0)
+    const ids = pluginIds(makeAuth(db(), "http://dock.test", "test-secret-0123456789abcd"))
+    expect(ids).toContain("oidc-provider")
+    expect(ids).toHaveLength(2) // genericOAuth + the always-on oidc-provider
   })
 
-  it("omits the OIDC plugin when the OIDC_* trio is incomplete", () => {
+  it("omits the SSO plugin when the OIDC_* trio is incomplete (oidc-provider stays)", () => {
     process.env.OIDC_ISSUER = "https://issuer.example.com/"
     // no client id/secret
-    const auth = makeAuth(db(), "http://dock.test", "test-secret-0123456789abcd")
-    expect(auth.options.plugins ?? []).toHaveLength(0)
+    const ids = pluginIds(makeAuth(db(), "http://dock.test", "test-secret-0123456789abcd"))
+    expect(ids).toEqual(["oidc-provider"])
   })
 
   it("applies SameSite=None;Secure cookies when DOCK_CROSS_SITE=true", () => {

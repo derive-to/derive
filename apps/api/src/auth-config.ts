@@ -1,6 +1,23 @@
 import { type BetterAuthOptions, betterAuth } from "better-auth"
 import { getMigrations } from "better-auth/db/migration"
 import { genericOAuth } from "better-auth/plugins"
+import { oidcProvider } from "better-auth/plugins/oidc-provider"
+import { consentHTML } from "./oauth-consent"
+
+// Scopes an agent can be granted via the OAuth consent. The dock:* scopes map to
+// what the issued token may do; openid/profile/email/offline_access are the
+// standard OIDC set the flow needs. Least-privilege default is propose+comment+read.
+export const OAUTH_SCOPES = [
+  "openid",
+  "profile",
+  "email",
+  "offline_access",
+  "dock:read",
+  "dock:comment",
+  "dock:propose",
+  "dock:publish",
+  "dock:review",
+] as const
 
 const env = (k: string) => process.env[k]
 
@@ -81,7 +98,27 @@ export function makeAuth(db: AuthDb, baseUrl: string, secret: string) {
     emailAndPassword: { enabled: true },
     socialProviders,
     trustedOrigins: trusted,
-    plugins: oidc.length ? [genericOAuth({ config: oidc })] : [],
+    plugins: [
+      ...(oidc.length ? [genericOAuth({ config: oidc })] : []),
+      // Dock as an OAuth 2.1 / OIDC authorization server: agents (MCP clients)
+      // authenticate via a browser consent instead of a pasted token, and get a
+      // scoped, expiring access token. Endpoints land under /api/auth/oauth2/*;
+      // the consent screen is rendered inline (oauth-consent.ts).
+      oidcProvider({
+        loginPage: "/login",
+        getConsentHTML: (props) => consentHTML(props),
+        requirePKCE: true,
+        allowDynamicClientRegistration: true,
+        allowPlainCodeChallengeMethod: false,
+        accessTokenExpiresIn: 60 * 60, // 1h
+        refreshTokenExpiresIn: 60 * 60 * 24 * 7, // 7d
+        codeExpiresIn: 600, // 10m
+        defaultScope: "openid",
+        scopes: [...OAUTH_SCOPES],
+        storeClientSecret: "hashed",
+        __skipDeprecationWarning: true,
+      }),
+    ],
     advanced: {
       // Keep the CSRF origin check on in every environment. Better Auth silently
       // disables it when NODE_ENV=test; pinning it false means a server mistakenly

@@ -1,6 +1,7 @@
 import { type ArtifactRecord, parseRef } from "@dock/core"
 import { type Context, Hono } from "hono"
 import { compress } from "hono/compress"
+import { OAUTH_SCOPES } from "./auth-config"
 import { type AppDeps, buildContext } from "./context"
 import { cacheControlFor, corsFor, fail, TOMBSTONE } from "./lib/http"
 import { observability } from "./lib/observability"
@@ -210,6 +211,37 @@ export function createApp(deps: AppDeps): Hono {
       c.req.method === "GET" || c.req.method === "HEAD" ? next() : writeLimiter(c, next),
     )
   }
+
+  // OAuth 2.0 discovery at the well-known root (RFC 8414 + RFC 9728), mirroring
+  // what the oidc-provider plugin serves under /api/auth — MCP clients and standard
+  // OAuth tooling probe the root. Issuer is the live request origin so it's correct
+  // behind any proxy / on workers.dev without configuration.
+  const asMeta = (c: Context) => {
+    const base = new URL(c.req.url).origin
+    return {
+      issuer: base,
+      authorization_endpoint: `${base}/api/auth/oauth2/authorize`,
+      token_endpoint: `${base}/api/auth/oauth2/token`,
+      registration_endpoint: `${base}/api/auth/oauth2/register`,
+      userinfo_endpoint: `${base}/api/auth/oauth2/userinfo`,
+      jwks_uri: `${base}/api/auth/jwks`,
+      scopes_supported: [...OAUTH_SCOPES],
+      response_types_supported: ["code"],
+      grant_types_supported: ["authorization_code", "refresh_token"],
+      code_challenge_methods_supported: ["S256"],
+      token_endpoint_auth_methods_supported: ["client_secret_basic", "client_secret_post", "none"],
+    }
+  }
+  app.get("/.well-known/oauth-authorization-server", (c) => c.json(asMeta(c)))
+  app.get("/.well-known/oauth-protected-resource", (c) => {
+    const base = new URL(c.req.url).origin
+    return c.json({
+      resource: base,
+      authorization_servers: [base],
+      scopes_supported: [...OAUTH_SCOPES],
+      bearer_methods_supported: ["header"],
+    })
+  })
 
   // Better Auth owns /api/auth/* (sign-up/in/out, OAuth, OIDC/SSO, session).
   if (deps.auth) {
