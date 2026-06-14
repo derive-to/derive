@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react"
+import { toast } from "sonner"
 import { type ArtifactMember, api, type Collection, type Role } from "@/api"
 import { EmptyState } from "@/components/shared/empty-state"
 import { RoleSelect } from "@/components/shared/role-select"
@@ -16,11 +17,9 @@ import { Input } from "@/components/ui/input"
 // every artifact in the collection (the headline of collection-level sharing).
 export function ShareCollectionDialog({
   collection,
-  show,
   onClose,
 }: {
   collection: Collection
-  show: (m: string) => void
   onClose: () => void
 }) {
   const [members, setMembers] = useState<ArtifactMember[]>([])
@@ -48,7 +47,7 @@ export function ShareCollectionDialog({
       setEmail("")
       load()
     } catch (x) {
-      show((x as Error).message)
+      toast.error((x as Error).message)
     } finally {
       setBusy(false)
     }

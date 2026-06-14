@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useState } from "react"
 import { api, type Report } from "@/api"
-import { useToast } from "@/components"
 import { Badge } from "@/components/ui/badge"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { useAuth } from "@/ctx"
@@ -13,7 +12,6 @@ export function Settings() {
   // AppShell (mounted once around the Outlet) gates auth, so `me` is present
   // whenever Settings renders.
   const { me } = useAuth()
-  const { toast, show } = useToast()
   const [reports, setReports] = useState<Report[] | null>(null)
   const [tab, setTab] = useState("workspace")
 
@@ -42,53 +40,50 @@ export function Settings() {
   const hasReports = openReports.length > 0
 
   return (
-    <>
-      <div className="flex-1 overflow-y-auto">
-        <main className="mx-auto max-w-3xl px-5 pb-16 pt-7">
-          <h1 className="font-display text-2xl font-semibold">Settings</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Your workspace, members, and integrations.
-          </p>
+    <div className="flex-1 overflow-y-auto">
+      <main className="mx-auto max-w-3xl px-5 pb-16 pt-7">
+        <h1 className="font-display text-2xl font-semibold">Settings</h1>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Your workspace, members, and integrations.
+        </p>
 
-          <Tabs value={tab} onValueChange={setTab} className="mt-6">
-            <TabsList className="max-w-full overflow-x-auto">
-              <TabsTrigger data-testid="settings-tab-workspace" value="workspace">
-                Workspace
-              </TabsTrigger>
-              <TabsTrigger data-testid="settings-tab-webhooks" value="webhooks">
-                Webhooks
-              </TabsTrigger>
-              <TabsTrigger data-testid="settings-tab-agents" value="agents">
-                Agents
-              </TabsTrigger>
-              {hasReports && (
-                <TabsTrigger data-testid="settings-tab-reports" value="reports">
-                  Reports
-                  <Badge className="border-destructive bg-destructive text-destructive-foreground">
-                    {openReports.length}
-                  </Badge>
-                </TabsTrigger>
-              )}
-            </TabsList>
-
-            <TabsContent value="workspace">
-              <WorkspaceSection meId={me.id} show={show} />
-            </TabsContent>
-            <TabsContent value="webhooks">
-              <WebhooksSection show={show} />
-            </TabsContent>
-            <TabsContent value="agents">
-              <AgentsSection show={show} />
-            </TabsContent>
+        <Tabs value={tab} onValueChange={setTab} className="mt-6">
+          <TabsList className="max-w-full overflow-x-auto">
+            <TabsTrigger data-testid="settings-tab-workspace" value="workspace">
+              Workspace
+            </TabsTrigger>
+            <TabsTrigger data-testid="settings-tab-webhooks" value="webhooks">
+              Webhooks
+            </TabsTrigger>
+            <TabsTrigger data-testid="settings-tab-agents" value="agents">
+              Agents
+            </TabsTrigger>
             {hasReports && (
-              <TabsContent value="reports">
-                <ReportsSection reports={openReports} reload={loadReports} show={show} />
-              </TabsContent>
+              <TabsTrigger data-testid="settings-tab-reports" value="reports">
+                Reports
+                <Badge className="border-destructive bg-destructive text-destructive-foreground">
+                  {openReports.length}
+                </Badge>
+              </TabsTrigger>
             )}
-          </Tabs>
-        </main>
-      </div>
-      {toast}
-    </>
+          </TabsList>
+
+          <TabsContent value="workspace">
+            <WorkspaceSection meId={me.id} />
+          </TabsContent>
+          <TabsContent value="webhooks">
+            <WebhooksSection />
+          </TabsContent>
+          <TabsContent value="agents">
+            <AgentsSection />
+          </TabsContent>
+          {hasReports && (
+            <TabsContent value="reports">
+              <ReportsSection reports={openReports} reload={loadReports} />
+            </TabsContent>
+          )}
+        </Tabs>
+      </main>
+    </div>
   )
 }

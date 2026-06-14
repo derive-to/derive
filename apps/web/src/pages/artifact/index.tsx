@@ -2,8 +2,9 @@ import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useNavigate, useParams } from "@tanstack/react-router"
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react"
 import { createPortal } from "react-dom"
+import { toast } from "sonner"
 import { API_BASE, api, type Comment } from "@/api"
-import { useIsMobile, useToast } from "@/components"
+import { useIsMobile } from "@/components"
 import { Icon } from "@/components/icons"
 import { useTopBarSlot } from "@/components/shell-context"
 import { useAuth } from "@/ctx"
@@ -40,7 +41,6 @@ export function Artifact() {
   const { shortId, version } = parseRef(ref)
   const { me, loading } = useAuth()
   const nav = useNavigate()
-  const { toast, show } = useToast()
   const isMobile = useIsMobile()
   // The persistent shell exposes its top-bar region; this page's header actions
   // are portaled into it (the shell is mounted once, above the route Outlet).
@@ -159,10 +159,10 @@ export function Artifact() {
         onReinstate={async () => {
           try {
             await api.reinstate(shortId)
-            show("Reinstated")
+            toast.success("Reinstated")
             load()
           } catch (e) {
-            show((e as Error).message)
+            toast.error((e as Error).message)
           }
         }}
         onBack={() => nav({ to: "/" })}
@@ -227,7 +227,6 @@ export function Artifact() {
     post,
     load,
     refetchComments,
-    show,
     onRestoredJump: () => nav({ to: "/a/$ref", params: { ref: shortId } }),
     setEditing,
     setSrc,
@@ -276,7 +275,6 @@ export function Artifact() {
                     a ? { ...a, collections } : a,
                   )
                 }
-                onReport={show}
                 onInsights={() => setSurface("insights")}
                 onHistory={() => setSurface("history")}
                 onReview={() => setReviewing(true)}
@@ -415,7 +413,6 @@ export function Artifact() {
             startSelComment={startSelComment}
           />
         </div>
-        {toast}
       </ActionsCtx.Provider>
     </>
   )

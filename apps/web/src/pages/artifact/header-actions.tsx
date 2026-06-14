@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react"
+import { toast } from "sonner"
 import { api, type Collection } from "@/api"
 import { Icon } from "@/components/icons"
 import { Button } from "@/components/ui/button"
@@ -47,13 +48,7 @@ export function StarButton({
 
 // Header report popover: anyone viewing can flag an artifact for moderation.
 // A short reason is required; owners triage the queue in Settings.
-export function ReportButton({
-  shortId,
-  onDone,
-}: {
-  shortId: string
-  onDone: (msg: string) => void
-}) {
+export function ReportButton({ shortId }: { shortId: string }) {
   const [open, setOpen] = useState(false)
   const [reason, setReason] = useState("")
   const [sent, setSent] = useState(false)
@@ -65,9 +60,9 @@ export function ReportButton({
     try {
       await api.report(shortId, r)
       setSent(true)
-      onDone("Reported — thanks for flagging this")
+      toast.success("Reported — thanks for flagging this")
     } catch (e) {
-      onDone((e as Error).message)
+      toast.error((e as Error).message)
     } finally {
       setBusy(false)
     }

@@ -1,17 +1,10 @@
 import { useState } from "react"
+import { toast } from "sonner"
 import { api, type Report } from "@/api"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 
-export function ReportsSection({
-  reports,
-  reload,
-  show,
-}: {
-  reports: Report[]
-  reload: () => void
-  show: (m: string) => void
-}) {
+export function ReportsSection({ reports, reload }: { reports: Report[]; reload: () => void }) {
   return (
     <section>
       <p className="mb-4 text-sm text-muted-foreground">
@@ -24,10 +17,10 @@ export function ReportsSection({
             key={r.id}
             report={r}
             onChanged={(m) => {
-              show(m)
+              toast.success(m)
               reload()
             }}
-            onError={show}
+            onError={(m) => toast.error(m)}
           />
         ))}
       </div>

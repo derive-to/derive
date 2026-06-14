@@ -1,5 +1,6 @@
 import { User } from "lucide-react"
 import { useCallback, useEffect, useState } from "react"
+import { toast } from "sonner"
 import { type ArtifactMember, api, type Role, type Workspace } from "@/api"
 import { Spinner } from "@/components/shared/spinner"
 import { useShell } from "@/components/shell-context"
@@ -17,7 +18,7 @@ import {
 import { Input } from "@/components/ui/input"
 import { roleLabel, roleValue, selectClass, WS_ROLES } from "./roles"
 
-export function WorkspaceSection({ meId, show }: { meId: string; show: (m: string) => void }) {
+export function WorkspaceSection({ meId }: { meId: string }) {
   const { refreshWorkspaces } = useShell()
   const [ws, setWs] = useState<Workspace | null>(null)
   const [name, setName] = useState("")
@@ -54,9 +55,9 @@ export function WorkspaceSection({ meId, show }: { meId: string; show: (m: strin
       setWs((w) => (w ? { ...w, name: r.name } : w))
       // Refresh the shell so the switcher + sidebar pick up the new name immediately.
       refreshWorkspaces()
-      show("Workspace renamed")
+      toast.success("Workspace renamed")
     } catch (e) {
-      show((e as Error).message)
+      toast.error((e as Error).message)
     } finally {
       setSavingName(false)
     }
@@ -72,7 +73,7 @@ export function WorkspaceSection({ meId, show }: { meId: string; show: (m: strin
       await api.deleteWorkspace(ws.id)
       window.location.reload()
     } catch (e) {
-      show((e as Error).message)
+      toast.error((e as Error).message)
       setDeleting(false)
     }
   }
@@ -84,10 +85,10 @@ export function WorkspaceSection({ meId, show }: { meId: string; show: (m: strin
     try {
       await api.addWorkspaceMember(em, addRole)
       setEmail("")
-      show("Member added")
+      toast.success("Member added")
       load()
     } catch (e) {
-      show((e as Error).message)
+      toast.error((e as Error).message)
     } finally {
       setAdding(false)
     }
@@ -101,9 +102,9 @@ export function WorkspaceSection({ meId, show }: { meId: string; show: (m: strin
           ? { ...w, members: w.members.map((m) => (m.user_id === userId ? { ...m, role } : m)) }
           : w,
       )
-      show("Role updated")
+      toast.success("Role updated")
     } catch (e) {
-      show((e as Error).message)
+      toast.error((e as Error).message)
       load()
     }
   }
@@ -113,9 +114,9 @@ export function WorkspaceSection({ meId, show }: { meId: string; show: (m: strin
     try {
       await api.removeWorkspaceMember(m.user_id)
       setWs((w) => (w ? { ...w, members: w.members.filter((x) => x.user_id !== m.user_id) } : w))
-      show("Member removed")
+      toast.success("Member removed")
     } catch (e) {
-      show((e as Error).message)
+      toast.error((e as Error).message)
     }
   }
 
