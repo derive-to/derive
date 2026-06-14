@@ -13,6 +13,7 @@ import { type AuthDb, makeAuth, migrateAuth } from "./auth-config"
 import { loadConfig, resolveAuthSecret, resolveDefaultOrg } from "./config"
 import { customDomainsFromEnv } from "./lib/cloudflare-saas"
 import { mountWeb } from "./lib/serve-web"
+import { makeShutdown } from "./lifecycle"
 import { log } from "./log"
 import { startWebhookWorker } from "./webhooks"
 
@@ -188,39 +189,24 @@ const server = serve({ fetch: app.fetch, port: cfg.port }, () => {
   })
 })
 
-// Graceful shutdown: Fly's auto-stop and every redeploy send SIGTERM. Stop the
-// worker + timers, stop accepting connections and drain in-flight requests, close
-// the datastores, then exit — instead of Node's default of dropping everything.
-let shuttingDown = false
-const shutdown = async (signal: string) => {
-  if (shuttingDown) return
-  shuttingDown = true
-  log.info("shutting down", { signal })
-  // Hard deadline so a hung drain can't wedge the orchestrator forever.
-  setTimeout(() => {
-    log.error("shutdown timed out; forcing exit")
-    process.exit(1)
-  }, 10_000).unref()
-  stopWorker()
-  if (pruneTimer) clearInterval(pruneTimer)
-  // server.close() stops accepting connections and resolves once existing ones end,
-  // but Node never closes IDLE keep-alive sockets on its own — a browser, a load
-  // balancer, or any client holding one keeps close() pending until the hard
-  // deadline force-exits (a 10s stall on every redeploy). closeIdleConnections drops
-  // those now; in-flight requests keep their socket and still drain.
-  const drained = new Promise<void>((resolve) => server.close(() => resolve()))
-  // `in` narrows the http2/https union @hono/node-server returns; our serve() is a
-  // plain http.Server, which has had closeIdleConnections since Node 18.2.
-  if ("closeIdleConnections" in server) server.closeIdleConnections()
-  await drained
-  try {
-    await closeStores()
-  } catch (e) {
-    log.error("error closing datastores", { error: e instanceof Error ? e.message : String(e) })
-  }
-  log.info("shutdown complete")
-  process.exit(0)
-}
+// Graceful shutdown: Fly's auto-stop and every redeploy send SIGTERM. The sequence
+// lives in lifecycle.ts (so it's unit-testable); here we just wire the real server,
+// timers, and datastores to it. `in` narrows the http2/https union @hono/node-server
+// returns to the plain http.Server we create (closeIdleConnections since Node 18.2).
+const shutdown = makeShutdown({
+  server: {
+    close: (cb) => server.close(() => cb()),
+    closeIdleConnections:
+      "closeIdleConnections" in server ? () => server.closeIdleConnections() : undefined,
+  },
+  stopWorker,
+  clearTimers: () => {
+    if (pruneTimer) clearInterval(pruneTimer)
+  },
+  closeStores,
+  log,
+  exit: (code) => process.exit(code),
+})
 process.on("SIGTERM", () => void shutdown("SIGTERM"))
 process.on("SIGINT", () => void shutdown("SIGINT"))
 
