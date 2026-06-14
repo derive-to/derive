@@ -1,5 +1,4 @@
 import { createHmac, randomUUID } from "node:crypto"
-import { lookup } from "node:dns/promises"
 import type { ArtifactRecord, DeliveryRecord, MetaStore } from "@dock/core"
 import type { WebhookEvent } from "./events"
 import { isPrivateAddress } from "./lib/net"
@@ -17,6 +16,38 @@ const MAX_BACKOFF_MS = 60 * 60_000
 // timeout so an in-flight delivery is never re-claimed.
 const CLAIM_LEASE_MS = 60_000
 const DELIVER_TIMEOUT_MS = 15_000
+
+/**
+ * The one runtime-specific seam in webhook delivery: deciding whether a target
+ * URL is safe to deliver to *at delivery time*. The rest of the outbox (claim,
+ * deliver, retry, dead-letter) is identical on every runtime, so this is injected
+ * rather than hardcoded — keeping webhooks.ts free of `node:dns` so it can be
+ * bundled into the Workers/Durable-Object tier.
+ *
+ * Returns a short failure status when the URL must NOT be delivered to, else null.
+ */
+export interface AddressGuard {
+  precheck(url: string): Promise<string | null>
+}
+
+/**
+ * Edge guard (Workers / Durable Objects). DNS isn't available, but it isn't needed:
+ * Cloudflare's egress refuses subrequests to private / loopback / link-local space
+ * and the metadata endpoint, so DNS-rebinding to an internal IP can't land. We only
+ * reject literal private IPs in the URL itself (cheap, synchronous defense in depth).
+ * The full resolve-and-recheck lives in the Node guard, where DNS exists.
+ */
+export const edgeGuard: AddressGuard = {
+  async precheck(url) {
+    let host: string
+    try {
+      host = new URL(url).hostname
+    } catch {
+      return "invalid url"
+    }
+    return isPrivateAddress(host) ? "blocked: resolves to a private address" : null
+  },
+}
 
 /** Normalized payload stored in the outbox (canonical, re-deliverable). */
 export interface EventPayload {
@@ -85,8 +116,13 @@ export function sign(secret: string, body: string): string {
 }
 
 /** Deliver one outbox row. Slack kind sends a Slack message; generic sends the
- *  signed normalized payload. Returns ok + a short status for the delivery log. */
-export async function deliverOnce(d: DeliveryRecord): Promise<{ ok: boolean; status: string }> {
+ *  signed normalized payload. The `guard` re-validates the target host for SSRF at
+ *  delivery time (Node resolves DNS; the edge trusts Cloudflare's egress isolation).
+ *  Returns ok + a short status for the delivery log. */
+export async function deliverOnce(
+  d: DeliveryRecord,
+  guard: AddressGuard,
+): Promise<{ ok: boolean; status: string }> {
   try {
     const payload = JSON.parse(d.payload) as EventPayload
     const isSlack = d.kind === "slack"
@@ -97,20 +133,13 @@ export async function deliverOnce(d: DeliveryRecord): Promise<{ ok: boolean; sta
       "x-dock-event": d.event_type,
     }
     if (!isSlack) headers["x-dock-signature"] = sign(d.secret, body)
-    // Re-validate the target at delivery, not just at registration: a hostname
-    // that was public when the webhook was created can be rebinded to an internal
-    // IP (169.254.169.254 / RFC1918 / loopback) by delivery time (DNS rebinding).
-    // Resolve every address and refuse if any is private. (Undici re-resolves on
-    // the fetch below, leaving a sub-second TOCTOU window; pinning to the
-    // validated IP — which needs an SNI-preserving dispatcher — is the follow-up.)
-    let addrs: { address: string }[]
-    try {
-      addrs = await lookup(new URL(d.url).hostname, { all: true })
-    } catch {
-      return { ok: false, status: "dns lookup failed" }
-    }
-    if (addrs.some((a) => isPrivateAddress(a.address)))
-      return { ok: false, status: "blocked: resolves to a private address" }
+    // Re-validate the target at delivery, not just at registration: a hostname that
+    // was public when the webhook was created can be rebound to an internal IP
+    // (169.254.169.254 / RFC1918 / loopback) by delivery time (DNS rebinding). The
+    // guard is runtime-specific — Node resolves and rejects any private address; the
+    // edge relies on Cloudflare refusing private-space subrequests (see AddressGuard).
+    const blocked = await guard.precheck(d.url)
+    if (blocked) return { ok: false, status: blocked }
     // Do NOT follow redirects: the URL was SSRF-checked at registration, but a
     // 302 to 169.254.169.254 / localhost would bypass that. A redirect is a
     // delivery failure here.
@@ -132,18 +161,20 @@ export async function deliverOnce(d: DeliveryRecord): Promise<{ ok: boolean; sta
   }
 }
 
-/** Find webhooks subscribed to this event for the artifact and enqueue a row each. */
+/** Find webhooks subscribed to this event for the artifact and enqueue a row each.
+ *  Returns the number of deliveries enqueued, so the caller can skip poking an idle
+ *  edge drainer when nothing was queued. */
 export async function enqueueForEvent(
   meta: MetaStore,
   baseUrl: string,
   artifact: ArtifactRecord,
   event: WebhookEvent,
   data: Record<string, unknown>,
-): Promise<void> {
+): Promise<number> {
   const hooks = await meta.activeWebhooks(artifact.id, artifact.org_id)
-  if (hooks.length === 0) return
+  if (hooks.length === 0) return 0
   const subscribed = hooks.filter((h) => h.events === "*" || h.events.split(",").includes(event))
-  if (subscribed.length === 0) return
+  if (subscribed.length === 0) return 0
   const payload = JSON.stringify(buildPayload(baseUrl, artifact, event, data))
   await Promise.all(
     subscribed.map((h) =>
@@ -158,6 +189,7 @@ export async function enqueueForEvent(
       }),
     ),
   )
+  return subscribed.length
 }
 
 const backoff = (attempts: number) => Math.min(MAX_BACKOFF_MS, BASE_BACKOFF_MS * 2 ** attempts)
@@ -166,14 +198,20 @@ const backoff = (attempts: number) => Math.min(MAX_BACKOFF_MS, BASE_BACKOFF_MS *
  * One outbox pass: atomically claim due deliveries, deliver each, record the
  * result (delivered / retry-with-backoff / dead-letter). The claim increments
  * attempts and leases the rows, so this is safe to run concurrently across
- * instances and from a Worker cron — no row is delivered twice.
+ * instances and from a Worker cron — no row is delivered twice. Returns the number
+ * of rows claimed this pass, so a Durable-Object driver can keep ticking while the
+ * outbox is busy and go idle when it drains.
  */
-export async function runDeliveryTick(meta: MetaStore, limit = 20): Promise<void> {
+export async function runDeliveryTick(
+  meta: MetaStore,
+  guard: AddressGuard,
+  limit = 20,
+): Promise<number> {
   const now = new Date()
   const leaseUntil = new Date(now.getTime() + CLAIM_LEASE_MS).toISOString()
   const due = await meta.claimDueDeliveries(now.toISOString(), limit, leaseUntil)
   for (const d of due) {
-    const r = await deliverOnce(d)
+    const r = await deliverOnce(d, guard)
     const attempts = d.attempts // already incremented by the claim
     if (r.ok) {
       await meta.updateDelivery(d.id, {
@@ -199,26 +237,54 @@ export async function runDeliveryTick(meta: MetaStore, limit = 20): Promise<void
       })
     }
   }
+  return due.length
 }
 
-/** The Node outbox worker: run a delivery tick on an interval. Returns a stop fn. */
-export function startWebhookWorker(meta: MetaStore, intervalMs = 1500): () => void {
+/** Drives the Node outbox: `stop` halts the loop for graceful shutdown; `poke` drains
+ *  the outbox immediately (called right after an event is enqueued) so delivery is
+ *  near-instant instead of waiting for the next interval tick. */
+export interface WebhookWorker {
+  stop: () => void
+  poke: () => void
+}
+
+/**
+ * The Node/self-host outbox driver: an in-process interval that runs a delivery tick,
+ * plus a `poke` that drains on demand. The interval is the retry + crash-recovery
+ * backstop; `poke` (wired to the enqueue path) is what makes a fresh event go out
+ * immediately. A `running` flag coalesces an interval tick and a burst of pokes into
+ * one in-flight drain — the leased claim already makes overlap safe, this just avoids
+ * redundant passes. This is the self-host counterpart to the edge `WebhookOutbox` DO;
+ * both share the same `runDeliveryTick` core, so delivery behaves identically.
+ */
+export function startWebhookWorker(
+  meta: MetaStore,
+  guard: AddressGuard,
+  intervalMs = 1500,
+): WebhookWorker {
   let stopped = false
+  let running = false
   const tick = async () => {
-    if (stopped) return
+    if (stopped || running) return
+    running = true
     try {
-      await runDeliveryTick(meta)
+      await runDeliveryTick(meta, guard)
     } catch (err) {
       // A bad tick must not kill the loop, but it must not vanish either —
       // otherwise a persistently failing outbox is invisible.
       log.error("webhook delivery tick failed", {
         error: err instanceof Error ? err.message : String(err),
       })
+    } finally {
+      running = false
     }
   }
   const timer = setInterval(tick, intervalMs)
-  return () => {
-    stopped = true
-    clearInterval(timer)
+  return {
+    stop: () => {
+      stopped = true
+      clearInterval(timer)
+    },
+    poke: () => void tick(),
   }
 }

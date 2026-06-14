@@ -18,9 +18,26 @@ bucket_name = "dock-blobs"
 name = "ROOMS"
 class_name = "ArtifactRoom"
 
+# The webhook outbox drainer (a single named instance). Its alarm delivers queued
+# webhooks with retries + backoff — the edge counterpart to the Node interval worker.
+[[durable_objects.bindings]]
+name = "WEBHOOK_OUTBOX"
+class_name = "WebhookOutbox"
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["ArtifactRoom"]
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["WebhookOutbox"]
+
+# Retry/crash backstop for webhook delivery: the outbox DO self-reschedules while busy
+# and is poked on each new event, then goes idle. This wakes it every minute so a retry
+# scheduled during an idle gap (or a missed poke) still drains. The leased claim makes
+# this safe with the per-event pokes — no delivery fires twice.
+[triggers]
+crons = ["* * * * *"]
 
 # The web SPA (apps/web) ships from this same Worker via Static Assets, so the whole
 # app — login, library, settings, the /a/:ref artifact viewer — lives same-origin with
