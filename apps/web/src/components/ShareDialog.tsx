@@ -1,7 +1,8 @@
 import { useQueryClient } from "@tanstack/react-query"
 import { Lock, Share2, X } from "lucide-react"
 import { useState } from "react"
-import { type ArtifactMember, api, type Role } from "@/api"
+import { toast } from "sonner"
+import { API_BASE, type ArtifactMember, api, type Role } from "@/api"
 import { EmptyState } from "@/components/shared/empty-state"
 import { RoleSelect } from "@/components/shared/role-select"
 import { Button } from "@/components/ui/button"
@@ -69,8 +70,27 @@ export function ShareButton({
   const [pw, setPw] = useState("")
   const [savingVis, setSavingVis] = useState(false)
 
+  const [copied, setCopied] = useState(false)
+
   // GDocs model: owners and editors manage access; everyone else gets view-only.
   const canManage = myRole === "owner" || myRole === "editor"
+
+  // Embed snippet: an iframe of the embeddable view. Same-origin by default; the
+  // split-deploy SPA points at the API origin via API_BASE. The embed only shows
+  // for others when the artifact is link- or world-readable.
+  const origin = API_BASE || (typeof window === "undefined" ? "" : window.location.origin)
+  const embedSnippet = `<iframe src="${origin}/v1/embed/${shortId}" width="100%" height="480" style="border:0;border-radius:12px" loading="lazy" title="Dock artifact" allowfullscreen></iframe>`
+  const linkAccessible = visibility === "public" || visibility === "link"
+  const copyEmbed = async () => {
+    try {
+      await navigator.clipboard.writeText(embedSnippet)
+      setCopied(true)
+      toast.success("Embed code copied")
+      window.setTimeout(() => setCopied(false), 1500)
+    } catch {
+      toast.error("Couldn't copy to clipboard")
+    }
+  }
 
   const saveVisibility = async () => {
     setSavingVis(true)
@@ -321,6 +341,32 @@ export function ShareButton({
               {ACCESS.find((a) => a.value === visibility)?.label ?? visibility}
             </p>
           )}
+        </div>
+
+        {/* Embed — drop the artifact into any page. Shows for anyone who can open
+            the link, so it needs link- or world-readable access. */}
+        <div className="mt-4 border-t border-border pt-3.5">
+          <div className="mb-1.5 font-mono text-2xs font-semibold uppercase tracking-wide text-muted-foreground">
+            Embed
+          </div>
+          <div className="flex gap-1.5">
+            <Input
+              readOnly
+              data-testid="share-embed-snippet"
+              aria-label="Embed code"
+              value={embedSnippet}
+              onFocus={(e) => e.currentTarget.select()}
+              className="flex-1 font-mono text-2xs"
+            />
+            <Button data-testid="share-embed-copy" variant="primary" onClick={copyEmbed}>
+              {copied ? "Copied" : "Copy"}
+            </Button>
+          </div>
+          <p className="mt-1.5 font-mono text-2xs text-muted-foreground">
+            {linkAccessible
+              ? "Paste into any page — Notion, a blog, docs. Live, with a link back to Dock."
+              : "Set access to “Anyone with the link” or “Public” for the embed to load for others."}
+          </p>
         </div>
       </DialogContent>
     </Dialog>

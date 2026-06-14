@@ -88,6 +88,13 @@ export interface AppDeps {
    */
   serveWeb?: boolean
   /**
+   * The SPA shell HTML (index.html), when this process serves the bundled web app.
+   * Lets the server-rendered `/a/:ref` route return the shell with per-artifact
+   * unfurl meta injected, so crawlers (which don't run JS) get OG/Twitter cards.
+   * Unset = no injection (API-only, or the edge Worker where assets serve `/a/*`).
+   */
+  shell?: string
+  /**
    * gzip the responses. On for the Node/Fly entry (Fly's proxy gives HTTP/2 but
    * doesn't compress); left off for the Cloudflare Worker entry, where the edge
    * already compresses (gzip/brotli) and doubling it up wastes CPU.
