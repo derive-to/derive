@@ -79,19 +79,21 @@ document.addEventListener("mouseup",function(){setTimeout(emitSelection,0)});
 document.addEventListener("selectionchange",function(){
   var s=window.getSelection();if(!s||s.isCollapsed)post({type:"select",selector:null,rect:null})});
 
-/* -- live cursor: throttled pointer position, viewport-normalized 0..1, so the
-      host can fan it out to other viewers as a multiplayer cursor. Plus an
-      explicit leave (pointer left the doc / frame blurred / tab hidden) so peers
-      drop us at once instead of waiting the cursor out, and a tap on click so
-      peers can ripple where we acted. -- */
+/* -- live cursor: throttled pointer position, DOCUMENT-normalized 0..1 (x by
+      width, y by the full document height, including scroll). The host maps it
+      back against each viewer's own scroll, so a peer's cursor sits where they
+      are IN THE DOCUMENT — not at a fixed screen spot — and glides as you scroll;
+      peers scrolled out of view collapse into an edge indicator. Plus an explicit
+      leave (pointer left the doc / frame blurred / tab hidden) so peers drop us at
+      once, and a tap on click so peers can ripple where we acted. -- */
 var cT=0;
 document.addEventListener("mousemove",function(e){
   var n=Date.now();if(n-cT<40)return;cT=n;
-  var w=window.innerWidth||1,h=window.innerHeight||1;
-  post({type:"cursor",x:e.clientX/w,y:e.clientY/h})});
+  var w=window.innerWidth||1,dh=document.documentElement.scrollHeight||1;
+  post({type:"cursor",x:e.clientX/w,y:(e.clientY+scrollTop())/dh})});
 document.addEventListener("mousedown",function(e){
-  var w=window.innerWidth||1,h=window.innerHeight||1;
-  post({type:"cursor-tap",x:e.clientX/w,y:e.clientY/h})});
+  var w=window.innerWidth||1,dh=document.documentElement.scrollHeight||1;
+  post({type:"cursor-tap",x:e.clientX/w,y:(e.clientY+scrollTop())/dh})});
 document.addEventListener("mouseleave",function(){post({type:"cursor-leave"})});
 window.addEventListener("blur",function(){post({type:"cursor-leave"})});
 document.addEventListener("visibilitychange",function(){
@@ -145,7 +147,7 @@ function reportRects(){
     if(seen[id])continue;seen[id]=1;tops[id]=ms[i].getBoundingClientRect().top+sy}
   post({type:"anchor-rects",tops:tops,scrollY:sy,viewH:window.innerHeight,
     docH:document.documentElement.scrollHeight})}
-function reportScroll(){post({type:"scroll",scrollY:scrollTop()})}
+function reportScroll(){post({type:"scroll",scrollY:scrollTop(),viewH:window.innerHeight,docH:document.documentElement.scrollHeight})}
 
 function applyAnchors(anchors){
   clearMarks();

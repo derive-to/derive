@@ -8,6 +8,7 @@ import { observability } from "./lib/observability"
 import { makeRateLimiter } from "./lib/rate-limit"
 import { serveContent } from "./lib/serve-content"
 import { log } from "./log"
+import { cliCallbackHTML } from "./oauth-cli-callback"
 import { consentHTML } from "./oauth-consent"
 import { agentRoutes } from "./routes/agents"
 import { analyticsRoutes } from "./routes/analytics"
@@ -276,6 +277,16 @@ export function createApp(deps: AppDeps): Hono {
     const scopes = (c.req.query("scope") ?? "").split(/\s+/).filter(Boolean)
     const clientName = (await ctx.meta.getOAuthClientName(clientId)) || clientId || "An application"
     return c.html(consentHTML({ clientName, scopes, query: new URL(c.req.url).search }))
+  })
+
+  // Hosted callback for the CLI/native OAuth flow (`dock login`). A command-line
+  // client registers this as its redirect_uri instead of localhost; after consent
+  // the browser lands here with the one-time code, which we display for the user to
+  // paste back into the terminal (the PKCE verifier stays on their machine).
+  app.get("/oauth/cli-callback", (c) => {
+    const code = c.req.query("code")
+    const error = c.req.query("error_description") ?? c.req.query("error")
+    return c.html(cliCallbackHTML({ code, error }))
   })
 
   // Better Auth owns /api/auth/* (sign-up/in/out, OAuth, OIDC/SSO, session).

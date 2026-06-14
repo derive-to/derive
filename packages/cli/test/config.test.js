@@ -1,16 +1,19 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { afterEach, describe, expect, it } from "vitest"
+import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import {
   CONFIG_FILE,
   defaultConfig,
   formatComments,
   loadConfig,
+  loadCredentials,
   resolvePublish,
+  saveToken,
   scaffold,
   scaffoldFiles,
   TEMPLATES,
+  tokenFor,
   writeId,
 } from "../src/config.js"
 
@@ -192,5 +195,56 @@ describe("writeId", () => {
     const d = tmp()
     writeId(d, "zz99")
     expect(loadConfig(d).id).toBe("zz99")
+  })
+})
+
+describe("credentials (dock login)", () => {
+  // Isolate the user-level store in a tmp dir, and keep DOCK_TOKEN out of the way.
+  let prevDir
+  let prevToken
+  beforeEach(() => {
+    prevDir = process.env.DOCK_CONFIG_DIR
+    prevToken = process.env.DOCK_TOKEN
+    process.env.DOCK_CONFIG_DIR = tmp()
+    delete process.env.DOCK_TOKEN
+  })
+  const restore = (key, prev) => {
+    if (prev === undefined) delete process.env[key]
+    else process.env[key] = prev
+  }
+  afterEach(() => {
+    restore("DOCK_CONFIG_DIR", prevDir)
+    restore("DOCK_TOKEN", prevToken)
+  })
+
+  it("saves and reads a token per server origin", () => {
+    expect(tokenFor("https://dock.example.com")).toBeNull()
+    saveToken("https://dock.example.com/some/path", "tok_abc")
+    // Stored + read by origin, so a path on the same host resolves the same token.
+    expect(tokenFor("https://dock.example.com")).toBe("tok_abc")
+    expect(tokenFor("https://dock.example.com/other")).toBe("tok_abc")
+    expect(loadCredentials()["https://dock.example.com"].token).toBe("tok_abc")
+  })
+
+  it("keeps separate tokens for different servers", () => {
+    saveToken("https://a.dock.com", "tok_a")
+    saveToken("https://b.dock.com", "tok_b")
+    expect(tokenFor("https://a.dock.com")).toBe("tok_a")
+    expect(tokenFor("https://b.dock.com")).toBe("tok_b")
+  })
+
+  it("resolvePublish uses the saved token for the resolved server", () => {
+    saveToken("https://dock.example.com", "tok_login")
+    const r = resolvePublish({ server: "https://dock.example.com" }, null)
+    expect(r.token).toBe("tok_login")
+  })
+
+  it("explicit --token and DOCK_TOKEN win over the saved token", () => {
+    saveToken("https://dock.example.com", "tok_login")
+    expect(
+      resolvePublish({ server: "https://dock.example.com", token: "tok_flag" }, null).token,
+    ).toBe("tok_flag")
+    process.env.DOCK_TOKEN = "tok_env"
+    expect(resolvePublish({ server: "https://dock.example.com" }, null).token).toBe("tok_env")
   })
 })

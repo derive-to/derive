@@ -23,6 +23,7 @@ import { safeEqual, sha256, unlockCookie, unlockToken } from "./lib/crypto"
 import { VIEWER_COOKIE, WS_COOKIE } from "./lib/http"
 import { makeKeyedLimiter } from "./lib/rate-limit"
 import { log } from "./log"
+import { edgeCtx } from "./realtime-do"
 import { enqueueForEvent, type WebhookEvent } from "./webhooks"
 
 export interface SessionUser {
@@ -188,6 +189,22 @@ export function buildContext(deps: AppDeps) {
         error: err instanceof Error ? err.message : String(err),
       }),
     )
+
+  // Run after-the-response work without blocking the reply. On Workers the request
+  // executionCtx keeps the isolate alive past the sent response via waitUntil; on
+  // Node (and tests) there is no such context, so we await inline — local DBs are
+  // fast and tests need the work finished before they assert. Used to keep slow,
+  // best-effort fan-out (webhook enqueue, mention notifications) off the hot path.
+  const background = async (work: Promise<unknown>): Promise<void> => {
+    const guarded = Promise.resolve(work).catch((err) =>
+      log.error("background task failed", {
+        error: err instanceof Error ? err.message : String(err),
+      }),
+    )
+    const ec = edgeCtx.getStore()
+    if (ec) ec.waitUntil(guarded)
+    else await guarded
+  }
 
   const bearer = (c: Context): string => {
     const h = c.req.header("authorization") ?? ""
@@ -491,6 +508,7 @@ export function buildContext(deps: AppDeps) {
     commentLimiter,
     unlockLimiter,
     notify,
+    background,
     bearer,
     currentUser,
     agentFor,
