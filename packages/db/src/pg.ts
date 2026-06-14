@@ -142,9 +142,22 @@ export class PgMetaStore implements MetaStore {
     private db: NodePgDatabase<typeof schema>,
   ) {}
 
-  /** Connect and apply the schema (idempotent) before first use. */
-  static async create(connectionString: string): Promise<PgMetaStore> {
-    const pool = new Pool({ connectionString })
+  /** Connect and apply the schema (idempotent) before first use. `onError` is
+   *  invoked for idle-pool errors: a DB restart / network blip emits an `'error'`
+   *  on the pool, and without a listener node-postgres turns it into an unhandled
+   *  exception that crashes the whole process. */
+  static async create(
+    connectionString: string,
+    onError?: (err: Error) => void,
+  ): Promise<PgMetaStore> {
+    const pool = new Pool({
+      connectionString,
+      // Bound how long a query / connection acquisition can hang, so a stuck query
+      // can't pin a connection indefinitely and exhaust the pool.
+      statement_timeout: 30_000,
+      connectionTimeoutMillis: 10_000,
+    })
+    pool.on("error", (err) => onError?.(err))
     for (const stmt of PG_SCHEMA_STATEMENTS) await pool.query(stmt)
     return new PgMetaStore(pool, drizzle(pool, { schema }))
   }

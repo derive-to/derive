@@ -148,6 +148,23 @@ export function createApp(deps: AppDeps): Hono {
 
   app.get("/healthz", (c) => c.json({ ok: true }))
 
+  // Readiness (vs /healthz liveness): proves the datastore + blob store are
+  // actually reachable, so an orchestrator stops routing to an instance whose DB
+  // or blob backend is down instead of letting it 500 every request. 503 on any
+  // failure. Point the platform healthcheck here for rollout/traffic gating.
+  app.get("/readyz", async (c) => {
+    try {
+      await deps.meta.getWorkspace(deps.defaultOrgId ?? "default")
+      await deps.blobs.get("__readyz_probe__")
+      return c.json({ ok: true })
+    } catch (err) {
+      log.error("readiness check failed", {
+        error: err instanceof Error ? err.message : String(err),
+      })
+      return c.json({ ok: false }, 503)
+    }
+  })
+
   // A minimal API-origin landing. Skipped when the SPA is bundled in-process
   // (serveWeb) so the app's own home page owns `/`.
   if (!deps.serveWeb)

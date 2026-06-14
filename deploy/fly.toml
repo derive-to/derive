@@ -21,7 +21,9 @@ primary_region = "iad"
 
   [[http_service.checks]]
     method = "GET"
-    path = "/healthz"
+    # Readiness, not liveness: also verifies the DB + blob backend are reachable,
+    # so traffic isn't routed to an instance whose backend is down.
+    path = "/readyz"
     interval = "15s"
     timeout = "2s"
 
