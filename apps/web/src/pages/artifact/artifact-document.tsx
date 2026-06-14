@@ -100,7 +100,12 @@ export function ArtifactDocument({
             className="flex-1 border-0 bg-white"
           />
           {deck && (
-            <DeckBar deck={deck} onPrev={onDeckPrev} onNext={onDeckNext} onFullscreen={onFullscreen} />
+            <DeckBar
+              deck={deck}
+              onPrev={onDeckPrev}
+              onNext={onDeckNext}
+              onFullscreen={onFullscreen}
+            />
           )}
           {/* Live peer cursors (Google-Docs style). The iframe is a separate opaque
               origin, so its anchor script forwards mousemove out via postMessage; we
