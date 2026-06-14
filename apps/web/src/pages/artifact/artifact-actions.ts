@@ -34,6 +34,8 @@ export function artifactActions(p: {
   me: Me
   src: string
   proposeMsg: string
+  message: string
+  format: "md" | "html"
   composer: Composer
   sel: Selection
   post: (msg: Record<string, unknown>) => void
@@ -56,11 +58,13 @@ export function artifactActions(p: {
   }
   const publishEdit = async () => {
     try {
+      // Keep the artifact's format: editing an HTML artifact must stay .html
+      // (publishing it as .md would flip its type and re-render it as markdown).
       const a = await api.publishText(
         shortId,
         p.src,
-        art.title ? `${art.short_id}.md` : "edit.md",
-        "edited in browser",
+        `${art.short_id}.${p.format === "md" ? "md" : "html"}`,
+        p.message.trim() || "Edited in browser",
       )
       toast.success(`Published v${a.current_version}`)
       p.setEditing(false)
@@ -76,7 +80,7 @@ export function artifactActions(p: {
       await api.propose(
         shortId,
         p.src,
-        art.title ? `${art.short_id}.md` : "edit.md",
+        `${art.short_id}.${p.format === "md" ? "md" : "html"}`,
         p.proposeMsg.trim() || "Proposed change",
       )
       toast.success("Proposed — sent for review")

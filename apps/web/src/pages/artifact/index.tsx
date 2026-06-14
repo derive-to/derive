@@ -59,6 +59,7 @@ export function Artifact() {
   // Which "⋯ More" surface is open (large dialog / drawer).
   const [surface, setSurface] = useState<null | "insights" | "history">(null)
   const [proposeMsg, setProposeMsg] = useState("")
+  const [message, setMessage] = useState("")
   const [restoring, setRestoring] = useState(false)
   const [src, setSrc] = useState("")
 
@@ -174,6 +175,11 @@ export function Artifact() {
   const rawSrc = `${API_BASE}/raw/${shortId}/v/${shown}/index.html`
   // Editors publish directly; commenters propose a candidate for review.
   const canPublish = art.my_role === "editor" || art.my_role === "owner"
+  // md vs html drives syntax highlighting + how the live preview renders.
+  const format: "md" | "html" =
+    art.versions.find((v) => v.n === art.current_version)?.content_type === "text/markdown"
+      ? "md"
+      : "html"
   const canPropose = canPublish || art.my_role === "commenter"
   // A logged-out visitor on a public/link artifact: strictly view-only. They get
   // the document + live presence/cursors (Google-Docs style) and nothing else —
@@ -222,6 +228,8 @@ export function Artifact() {
     me,
     src,
     proposeMsg,
+    message,
+    format,
     composer,
     sel,
     post,
@@ -338,9 +346,12 @@ export function Artifact() {
               <SourceEditor
                 canPublish={canPublish}
                 title={art.title ?? shortId}
+                format={format}
                 proposeMsg={proposeMsg}
+                message={message}
                 src={src}
                 onProposeMsg={setProposeMsg}
+                onMessage={setMessage}
                 onSrc={setSrc}
                 onCancel={() => setEditing(false)}
                 onPublish={publishEdit}

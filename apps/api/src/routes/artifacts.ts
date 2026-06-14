@@ -8,6 +8,7 @@ import {
   newId,
   PublishError,
   publish,
+  renderMarkdown,
   toJson,
 } from "@dock/core"
 import { type Context, Hono } from "hono"
@@ -313,6 +314,20 @@ export const artifactRoutes = (ctx: AppContext) => {
     c.header("X-Dock-Version", String(v))
     c.header("X-Dock-Kind", artifact.kind)
     return c.body(src)
+  })
+
+  // Live editor preview: render a markdown draft to the exact published HTML.
+  // Stateless (renders the caller's text, stores nothing) and signed-in only, so
+  // it can't be used as an anonymous render farm. HTML drafts preview in the
+  // browser, so this is markdown-only.
+  app.post("/v1/preview", async (c) => {
+    if (!(await actingUser(c))) return fail(c, 401, "unauthenticated")
+    const body = await readJson(
+      c,
+      z.object({ source: z.string().max(500_000), title: z.string().max(300).nullish() }),
+    )
+    if (body instanceof Response) return body
+    return c.json({ html: await renderMarkdown(body.source, body.title ?? null) })
   })
 
   // Line diff between two versions. Defaults to (current-1 → current).

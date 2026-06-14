@@ -22,6 +22,7 @@ export interface Artifact {
   current_version: number
   versions: {
     n: number
+    content_type?: string
     author: string
     message: string | null
     name: string | null
@@ -259,6 +260,10 @@ export const api = {
     f(`/v1/artifacts/${id}/content${v ? `?v=${v}` : ""}`, { credentials: "include" }).then((r) =>
       r.text(),
     ),
+  // Render a markdown draft to the exact published HTML, for the live editor
+  // preview (markdown only; HTML drafts preview in-browser).
+  renderPreview: (source: string, title: string | null): Promise<{ html: string }> =>
+    f("/v1/preview", opts({ source, title })).then(j),
   diff: (id: string, from: number, to: number): Promise<Diff> =>
     f(`/v1/artifacts/${id}/diff?from=${from}&to=${to}&format=json`, opts()).then(j),
   restore: (id: string, version: number): Promise<Artifact> =>
