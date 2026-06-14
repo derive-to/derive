@@ -56,7 +56,8 @@ jobs:
 
   # Coverage gates (ratchet floors; see each package's vitest.config.ts): the API
   # suite, the data layer (@dock/db), the shared domain logic (@dock/core), the blob
-  # stores (@dock/storage), and the MCP client.
+  # stores (@dock/storage), the MCP client, and the web app's pure logic (@dock/web;
+  # its user flows are covered separately by the Playwright e2e suite).
   coverage:
     runs-on: ubicloud-standard-2
     steps:
@@ -77,6 +78,8 @@ jobs:
         run: pnpm --filter @dock/storage test:coverage
       - name: MCP coverage
         run: pnpm --filter @dock/mcp test:coverage
+      - name: Web coverage
+        run: pnpm --filter @dock/web test:coverage
 
   # Bundle budget: build the web client and fail if the gzipped JS blows past the
   # budget (see scripts/check-bundle.mjs), so phosphor / radix / cmdk weight can't
