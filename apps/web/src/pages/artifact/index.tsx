@@ -103,6 +103,7 @@ export function Artifact() {
     presentWrap,
     onFrameLoad,
     post,
+    scrollBy,
     deck,
     deckCmd,
     toggleFullscreen,
@@ -221,13 +222,15 @@ export function Artifact() {
   // and the collapsed rail dots.
   const docLive = !editing && view === "preview"
   const all = groupThreads(comments)
-  const openThreads = all.filter((t) => t[0].state === "open")
-  const resolvedThreads = all.filter((t) => t[0].state === "resolved")
+  const openThreads = all.filter((t) => t[0]?.state === "open")
+  const resolvedThreads = all.filter((t) => t[0]?.state === "resolved")
   const pinned: PinItem[] = []
   const general: Comment[][] = []
   for (const t of openThreads) {
-    const id = t[0].thread_id
-    const hasAnchor = !!parseAnchor(t[0].anchor)
+    const head = t[0]
+    if (!head) continue
+    const id = head.thread_id
+    const hasAnchor = !!parseAnchor(head.anchor)
     const present = inDoc[id] !== false
     if (docLive && hasAnchor && present) {
       const top = anchorTops[id]
@@ -433,6 +436,8 @@ export function Artifact() {
             panel={panel}
             asideWidth={asideWidth}
             openCount={openCount}
+            scrollY={scrollY}
+            onScrollDoc={scrollBy}
             pinned={pinned}
             general={general}
             resolved={resolvedThreads}

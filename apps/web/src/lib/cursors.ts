@@ -81,7 +81,7 @@ export function defaultPrefFor(seed: string): CursorPref {
   let h = 0
   for (const ch of seed) h = (h * 31 + ch.charCodeAt(0)) >>> 0
   return {
-    color: CURSOR_COLORS[h % CURSOR_COLORS.length],
+    color: CURSOR_COLORS[h % CURSOR_COLORS.length] ?? CURSOR_COLORS[0],
     kind: "arrow",
     emoji: DEFAULT_EMOJI,
     hidden: false,

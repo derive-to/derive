@@ -10,12 +10,12 @@ const AUTHOR_TINTS = [
   "#b08322",
   "#4a63b8",
   "#9a4a6b",
-]
+] as const
 
 export function colorFor(name: string): string {
   let h = 0
   for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0
-  return AUTHOR_TINTS[h % AUTHOR_TINTS.length]
+  return AUTHOR_TINTS[h % AUTHOR_TINTS.length] ?? AUTHOR_TINTS[0]
 }
 
 // Initials avatar tinted by a hash of the author name. The tint is data-driven
