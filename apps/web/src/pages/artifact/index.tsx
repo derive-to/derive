@@ -2,7 +2,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useNavigate, useParams } from "@tanstack/react-router"
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react"
 import { createPortal } from "react-dom"
-import { API_BASE, api, type Comment, type Diff, type Mention } from "@/api"
+import { API_BASE, api, type Comment, type Diff } from "@/api"
 import { useIsMobile, useToast } from "@/components"
 import { Icon } from "@/components/icons"
 import { useTopBarSlot } from "@/components/shell-context"
@@ -11,15 +11,15 @@ import { useAuth } from "@/ctx"
 import { artifactQuery, commentsQuery } from "@/lib/queries"
 import { STORAGE_KEYS } from "@/lib/storage-keys"
 import { cn } from "@/lib/utils"
+import { artifactActions } from "./artifact-actions"
+import { ArtifactDocument } from "./artifact-document"
 import { ArtifactLoading, ArtifactNotFound, ArtifactRemoved } from "./artifact-states"
 import { ArtifactTopBar } from "./artifact-top-bar"
-import { ActionsCtx, type CommentActions } from "./comment-actions"
+import { ActionsCtx } from "./comment-actions"
 import { MobileComments, OpenPanel } from "./comment-panels"
-import { DiffView } from "./diff-view"
 import { clamp, groupThreads, parseAnchor } from "./lib/layout"
-import { toggleReaction } from "./lib/reactions"
 import { parseRef } from "./parse-ref"
-import { DeckBar, Presence, Rail } from "./rail-deck"
+import { Presence, Rail } from "./rail-deck"
 import { SourceEditor } from "./source-editor"
 import type { Panel, PinItem, Sel } from "./types"
 import { useArtifactLive } from "./use-artifact-live"
@@ -357,121 +357,40 @@ export function Artifact() {
   }
   const openCount = openThreads.length
 
-  const startEdit = async () => {
-    setEditing(true)
-    setSrc(await api.getContent(shortId))
-  }
-  const publishEdit = async () => {
-    try {
-      const a = await api.publishText(
-        shortId,
-        src,
-        art.title ? `${art.short_id}.md` : "edit.md",
-        "edited in browser",
-      )
-      show(`Published v${a.current_version}`)
-      setEditing(false)
-      load()
-    } catch (e) {
-      show((e as Error).message)
-    }
-  }
-  // A commenter can't publish; their edit becomes a proposal for review. The
-  // message is the "why" the reviewer reads, so we ask for it before sending.
-  const proposeEdit = async () => {
-    try {
-      await api.propose(
-        shortId,
-        src,
-        art.title ? `${art.short_id}.md` : "edit.md",
-        proposeMsg.trim() || "Proposed change",
-      )
-      show("Proposed — sent for review")
-      setEditing(false)
-      setProposeMsg("")
-      load()
-    } catch (e) {
-      show((e as Error).message)
-    }
-  }
-  const addComment = async (
-    text: string,
-    opts?: { threadId?: string; anchor?: Sel | null; mentions?: Mention[] },
-  ) => {
-    if (!text.trim()) return
-    await api
-      .comment(shortId, {
-        body_md: text,
-        thread_id: opts?.threadId,
-        anchor: opts?.threadId ? undefined : (opts?.anchor ?? undefined),
-        mentions: opts?.mentions?.length ? opts.mentions : undefined,
-      })
-      .catch((e) => show((e as Error).message))
-    refetchComments()
-  }
-  const reply = (text: string, threadId: string, mentions: Mention[] = []) =>
-    addComment(text, { threadId, mentions })
-  const submitNew = async (text: string, mentions: Mention[] = []) => {
-    await addComment(text, { anchor: composer?.anchor ?? null, mentions })
-    setComposer(null)
-    setSel(null)
-  }
-  const toggleResolve = async (root: Comment) => {
-    await api.resolve(shortId, root.id, root.state === "open" ? "resolved" : "open")
-    refetchComments()
-  }
-  const activate = (id: string) => {
-    setActiveThread((cur) => (cur === id ? cur : id))
-    post({ type: "emphasize", id })
-  }
-  const startSelComment = () => {
-    if (!sel) return
-    setComposer({ anchor: sel.selector, top: sel.top })
-    setActiveThread(null)
-  }
-  const actions: CommentActions = {
-    meName: me?.name ?? me?.email ?? "",
-    react: (commentId, emoji) => {
-      // Optimistic: reflect the toggle in the cache immediately, reconcile on
-      // the response.
-      qc.setQueryData(commentsQuery(shortId).queryKey, (cs) =>
-        (cs ?? []).map((c) =>
-          c.id === commentId ? toggleReaction(c, emoji, me?.name ?? me?.email ?? "anonymous") : c,
-        ),
-      )
-      api.react(shortId, commentId, emoji).then(refetchComments).catch(refetchComments)
-    },
-    edit: async (commentId, body) => {
-      await api.editComment(shortId, commentId, body).catch((e) => show((e as Error).message))
-      refetchComments()
-    },
-    remove: (commentId) => {
-      api
-        .deleteComment(shortId, commentId)
-        .then(refetchComments)
-        .catch((e) => show((e as Error).message))
-    },
-    copyLink: (threadId) => {
-      const url = `${window.location.origin}${window.location.pathname}?c=${threadId}`
-      navigator.clipboard
-        ?.writeText(url)
-        .then(() => show("Link copied"))
-        .catch(() => show(url))
-    },
-  }
-  const restore = async (n: number) => {
-    setRestoring(true)
-    try {
-      const a = await api.restore(shortId, n)
-      show(`Restored as v${a.current_version}`)
-      nav({ to: "/a/$ref", params: { ref: shortId } }) // jump to the new current
-      load()
-    } catch (e) {
-      show((e as Error).message)
-    } finally {
-      setRestoring(false)
-    }
-  }
+  const {
+    startEdit,
+    publishEdit,
+    proposeEdit,
+    addComment,
+    reply,
+    submitNew,
+    toggleResolve,
+    activate,
+    startSelComment,
+    actions,
+    restore,
+  } = artifactActions({
+    shortId,
+    art,
+    qc,
+    me,
+    src,
+    proposeMsg,
+    composer,
+    sel,
+    post,
+    load,
+    refetchComments,
+    show,
+    onRestoredJump: () => nav({ to: "/a/$ref", params: { ref: shortId } }),
+    setEditing,
+    setSrc,
+    setProposeMsg,
+    setComposer,
+    setSel,
+    setActiveThread,
+    setRestoring,
+  })
 
   // On phones the comments live in a slide-up sheet, so the in-flow aside has
   // no width and the document gets the full screen.
@@ -584,73 +503,26 @@ export function Artifact() {
                 onPropose={proposeEdit}
               />
             ) : (
-              <>
-                {/* History-viewing banner: only when looking at a past version.
-                  The current version just shows the artifact, no version chrome. */}
-                {shown !== art.current_version && (
-                  <div className="flex flex-wrap items-center gap-2.5 gap-y-1.5 border-b border-border-soft bg-accent px-3.5 py-2 text-sm">
-                    <span className="font-semibold text-primary">Viewing an earlier version</span>
-                    <span className="text-muted-foreground">·</span>
-                    <button
-                      type="button"
-                      data-testid="artifact-toggle-diff"
-                      className="text-primary underline underline-offset-2 hover:opacity-80"
-                      onClick={() => setView(view === "diff" ? "preview" : "diff")}
-                    >
-                      {view === "diff" ? "Hide changes" : "Show changes since this"}
-                    </button>
-                    <span className="flex-1" />
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      data-testid="artifact-restore"
-                      onClick={() => restore(shown)}
-                      disabled={restoring}
-                    >
-                      {restoring ? "Restoring…" : "Restore this version"}
-                    </Button>
-                    <Button
-                      variant="primary"
-                      size="sm"
-                      data-testid="artifact-back-to-current"
-                      onClick={() => nav({ to: "/a/$ref", params: { ref: shortId } })}
-                    >
-                      Back to current
-                    </Button>
-                  </div>
-                )}
-                {view === "diff" && shown !== art.current_version ? (
-                  <DiffView diff={diff} fromLabel={`v${shown}`} toLabel="current" />
-                ) : (
-                  <div ref={presentWrap} className="relative flex min-h-0 flex-1 flex-col bg-white">
-                    <iframe
-                      ref={frame}
-                      onLoad={() => setFrameReady((n) => n + 1)}
-                      title={art.title ?? shortId}
-                      src={rawSrc}
-                      allow="fullscreen"
-                      sandbox="allow-scripts allow-forms allow-popups allow-modals allow-downloads"
-                      className="flex-1 border-0 bg-white"
-                    />
-                    {deck && (
-                      <DeckBar
-                        deck={deck}
-                        onPrev={() => deckCmd("prev")}
-                        onNext={() => deckCmd("next")}
-                        onFullscreen={toggleFullscreen}
-                      />
-                    )}
-                    {/* Live peer cursors (Google-Docs style). The iframe is a
-                        separate opaque origin, so its anchor script forwards
-                        mousemove out via postMessage; we paint the dots here in
-                        the parent, over the frame. Anon viewers see + are seen. */}
-                    <div
-                      ref={live.cursorLayer}
-                      className="pointer-events-none absolute inset-0 z-20 overflow-hidden"
-                    />
-                  </div>
-                )}
-              </>
+              <ArtifactDocument
+                shown={shown}
+                currentVersion={art.current_version}
+                title={art.title ?? shortId}
+                rawSrc={rawSrc}
+                view={view}
+                diff={diff}
+                restoring={restoring}
+                deck={deck}
+                frameRef={frame}
+                presentWrapRef={presentWrap}
+                cursorLayerRef={live.cursorLayer}
+                onFrameLoad={() => setFrameReady((n) => n + 1)}
+                onToggleDiff={() => setView(view === "diff" ? "preview" : "diff")}
+                onRestore={() => restore(shown)}
+                onBackToCurrent={() => nav({ to: "/a/$ref", params: { ref: shortId } })}
+                onDeckPrev={() => deckCmd("prev")}
+                onDeckNext={() => deckCmd("next")}
+                onFullscreen={toggleFullscreen}
+              />
             )}
             {!isAnon && panel === "hidden" && (
               <button

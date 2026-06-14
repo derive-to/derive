@@ -27,7 +27,7 @@ const SCAN = [
 // MAX_LINES. Prefer splitting over allowlisting — only pin genuinely flat files.
 const ALLOWLIST = {
   // React pages worth decomposing (tracked down, not pinned forever):
-  "apps/web/src/pages/artifact/index.tsx": 790, // page orchestration — next: extract the document body + comment/edit handlers
+  "apps/web/src/pages/artifact/index.tsx": 662, // page orchestration — next: the iframe/anchor bridge + the comments aside, to clear 500
   "apps/web/src/pages/artifact/comment-thread.tsx": 803, // comment thread UI — split candidate
   // Irreducibly flat by nature (DDL / a port interface / driver query catalogs):
   "packages/db/src/pg.ts": 883, // Postgres MetaStore: one flat method per query
