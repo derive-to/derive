@@ -66,9 +66,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const dataDir = env.DATA_DIR ?? "./data"
   // Single-container self-host: when the web SPA has been built, this process
   // serves it. DOCK_WEB_DIR overrides; default is the build output beside us.
-  // TanStack Start's SPA build emits `_shell.html` (not index.html).
+  // TanStack Start's SPA build emits `_shell.html`; the edge prep copies it to
+  // `index.html`. Accept either (preferring `index.html`) so the bundled-SPA
+  // server and the Worker agree on one shell, whatever the build left behind.
   const webDir = resolve(env.DOCK_WEB_DIR ?? join(import.meta.dirname, "../../web/dist/client"))
-  const webShell = join(webDir, "_shell.html")
+  const webShell =
+    [join(webDir, "index.html"), join(webDir, "_shell.html")].find(existsSync) ??
+    join(webDir, "_shell.html")
 
   const webOrigins = (env.DOCK_WEB_ORIGIN ?? "")
     .split(",")

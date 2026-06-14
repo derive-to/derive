@@ -6,12 +6,12 @@ import { SqliteMetaStore } from "@dock/db/sqlite"
 import { FsBlobStore } from "@dock/storage/fs"
 import { s3FromUrl } from "@dock/storage/s3"
 import { serve } from "@hono/node-server"
-import { serveStatic } from "@hono/node-server/serve-static"
 import Database from "better-sqlite3"
 import { Pool } from "pg"
 import { createApp } from "./app"
 import { type AuthDb, makeAuth, migrateAuth } from "./auth-config"
 import { loadConfig, resolveAuthSecret, resolveDefaultOrg } from "./config"
+import { mountWeb } from "./lib/serve-web"
 import { log } from "./log"
 import { startWebhookWorker } from "./webhooks"
 
@@ -92,30 +92,14 @@ const app = createApp({
 })
 
 // Serve the bundled SPA from this process (single-container self-host). The API
-// routes above always win; static assets are served by hash (immutable), and any
-// other GET that isn't an API/asset path falls back to index.html so the client
-// router can take over (deep links, refresh). serveStatic roots are cwd-relative.
-if (cfg.serveWeb) {
-  const webRoot = relative(process.cwd(), cfg.webDir) || "."
-  const shellHtml = readFileSync(cfg.webShell, "utf8")
-  // Vite's /assets/* are content-hashed, so the bytes behind a URL never change
-  // — cache them hard (a year, immutable). A new build emits new hashes.
-  app.use(
-    "/assets/*",
-    serveStatic({
-      root: webRoot,
-      onFound: (_path, c) => c.header("Cache-Control", "public, max-age=31536000, immutable"),
-    }),
-  )
-  // Root-level static files Vite emits (favicon, manifest, etc.).
-  app.get("/:file{[^/]+\\.[^/]+}", serveStatic({ root: webRoot }))
-  app.notFound((c) => {
-    const p = c.req.path
-    if (p.startsWith("/v1") || p.startsWith("/api") || p.startsWith("/raw") || p === "/healthz")
-      return c.json({ error: "not found" }, 404)
-    return c.html(shellHtml)
+// routes above always win; the server-owned path set, the immutable-asset caching,
+// and the index.html fallback live in mountWeb, shared as one contract with the
+// edge Worker (wrangler.toml) and the dev proxy (serve-web.test asserts parity).
+if (cfg.serveWeb)
+  mountWeb(app, {
+    webRoot: relative(process.cwd(), cfg.webDir) || ".",
+    shellHtml: readFileSync(cfg.webShell, "utf8"),
   })
-}
 
 // The webhook outbox worker delivers queued events with retries + backoff.
 startWebhookWorker(meta)
