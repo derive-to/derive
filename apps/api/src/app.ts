@@ -207,11 +207,25 @@ export function createApp(deps: AppDeps): Hono {
   if (deps.rateLimit) {
     // Strict on auth (credential brute-force); lenient on mutating API calls.
     app.use("/api/auth/*", makeRateLimiter(60_000, 20))
+    // Anonymous OAuth client registration (open DCR) gets a tighter per-IP cap on
+    // top, so no single source can flood the client table.
+    app.use("/api/auth/oauth2/register", makeRateLimiter(3_600_000, 10))
     const writeLimiter = makeRateLimiter(60_000, 120)
     app.use("/v1/*", (c, next) =>
       c.req.method === "GET" || c.req.method === "HEAD" ? next() : writeLimiter(c, next),
     )
   }
+
+  // After an anonymous registration, opportunistically reap abandoned anonymous
+  // clients (never consented, no tokens, > 1 day old). Best-effort and async so it
+  // never delays the response; runs on both the Node and the (cron-less) edge tier.
+  app.use("/api/auth/oauth2/register", async (c, next) => {
+    await next()
+    if (c.req.method === "POST" && c.res.status < 300) {
+      const cutoff = new Date(Date.now() - 24 * 3_600_000).toISOString()
+      void ctx.meta.pruneStaleOAuthClients(cutoff).catch(() => 0)
+    }
+  })
 
   // OAuth 2.0 discovery at the well-known root (RFC 8414 + RFC 9728), mirroring
   // what the oidc-provider plugin serves under /api/auth — MCP clients and standard

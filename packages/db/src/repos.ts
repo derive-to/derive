@@ -862,6 +862,21 @@ export function makeRepos(db: SqliteDb) {
       return null
     }
   }
+  const pruneStaleOAuthClients = async (cutoffIso: string): Promise<number> => {
+    try {
+      const r = (await db.run(sql`
+        delete from "oauthClient"
+        where "userId" is null
+          and "createdAt" < ${cutoffIso}
+          and "clientId" not in (select "clientId" from "oauthConsent")
+          and "clientId" not in (select "clientId" from "oauthAccessToken")
+      `)) as RunResult
+      return r.changes ?? r.meta?.changes ?? 0
+    } catch {
+      // OAuth tables absent → nothing to reap.
+      return 0
+    }
+  }
   const deleteAgent = async (id: string, orgId: string): Promise<void> => {
     await db
       .delete(agent)
@@ -1037,6 +1052,7 @@ export function makeRepos(db: SqliteDb) {
     getAgentByToken,
     getOAuthGrant,
     getOAuthClientName,
+    pruneStaleOAuthClients,
     deleteAgent,
     createAgentMention,
     listPendingAgentMentions,

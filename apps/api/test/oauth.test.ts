@@ -102,3 +102,38 @@ describe("OAuth access token acts as a scoped agent", () => {
     expect((await publish(app, "tok_exp")).status).toBe(403)
   })
 })
+
+describe("anonymous OAuth client reaper", () => {
+  it("reaps only abandoned anonymous clients (keeps owned / consented / recent / with-token)", async () => {
+    const path = join(dir, "reap.db")
+    const meta = new SqliteMetaStore(path)
+    const db = new Database(path)
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS "oauthClient" (clientId TEXT PRIMARY KEY, userId TEXT, createdAt TEXT);
+      CREATE TABLE IF NOT EXISTS "oauthConsent" (clientId TEXT);
+      CREATE TABLE IF NOT EXISTS "oauthAccessToken" (token TEXT, clientId TEXT);
+    `)
+    const old = "2020-01-01T00:00:00.000Z"
+    const ins = db.prepare(`INSERT INTO "oauthClient"(clientId,userId,createdAt) VALUES(?,?,?)`)
+    ins.run("anon-old", null, old) // the only one that should be reaped
+    ins.run("anon-recent", null, new Date().toISOString()) // too new
+    ins.run("anon-consented", null, old) // a human consented
+    ins.run("owned", "u_1", old) // registered by a signed-in user
+    ins.run("anon-token", null, old) // holds a live token
+    db.prepare(`INSERT INTO "oauthConsent"(clientId) VALUES('anon-consented')`).run()
+    db.prepare(`INSERT INTO "oauthAccessToken"(token,clientId) VALUES('t','anon-token')`).run()
+    db.close()
+
+    const reaped = await meta.pruneStaleOAuthClients("2021-01-01T00:00:00.000Z")
+    expect(reaped).toBe(1)
+
+    const left = new Database(path)
+    const ids = (
+      left.prepare(`SELECT clientId FROM "oauthClient" ORDER BY clientId`).all() as {
+        clientId: string
+      }[]
+    ).map((r) => r.clientId)
+    left.close()
+    expect(ids).toEqual(["anon-consented", "anon-recent", "anon-token", "owned"])
+  })
+})

@@ -958,6 +958,19 @@ export class PgMetaStore implements MetaStore {
       return null
     }
   }
+  async pruneStaleOAuthClients(cutoffIso: string): Promise<number> {
+    try {
+      const res = await this.pool.query(
+        `DELETE FROM "oauthClient" WHERE "userId" IS NULL AND "createdAt" < $1
+           AND "clientId" NOT IN (SELECT "clientId" FROM "oauthConsent")
+           AND "clientId" NOT IN (SELECT "clientId" FROM "oauthAccessToken")`,
+        [cutoffIso],
+      )
+      return res.rowCount ?? 0
+    } catch {
+      return 0
+    }
+  }
   async deleteAgent(id: string, orgId: string): Promise<void> {
     await this.db.delete(agent).where(and(eq(agent.id, id), eq(agent.org_id, orgId)))
   }

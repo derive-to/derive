@@ -152,6 +152,9 @@ export interface MetaStore {
   ): Promise<boolean>
   /** Delete view rows older than `cutoffIso`; returns the count removed (retention). */
   pruneViews(cutoffIso: string): Promise<number>
+  /** Reap abandoned anonymous OAuth clients: registered without a user, never
+   *  consented, holding no tokens, older than the cutoff. Caps open-DCR spam. */
+  pruneStaleOAuthClients(cutoffIso: string): Promise<number>
   /** Delete user-kind view rows whose viewer is in the set (owner self-view cleanup). */
   pruneViewsByViewers(viewers: string[]): Promise<number>
   /** Aggregated view analytics for one artifact. */
