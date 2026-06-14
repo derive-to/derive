@@ -1,4 +1,5 @@
 import type { Mention } from "@/api"
+import { emojifyShortcodes } from "@/lib/emoji"
 
 // Tiny, XSS-safe inline markdown: escape first, then a few transforms. Covers
 // bold, italic, inline code, links/autolinks, @mentions, and line breaks.
@@ -10,7 +11,9 @@ const esc = (s: string) =>
 const escRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
 
 export function mdToHtml(src: string, mentions?: Mention[]): string {
-  let h = esc(src)
+  // Escape first (XSS), then turn :shortcodes: into emoji — the inserted chars
+  // are safe and don't interfere with the mention/markdown passes below.
+  let h = emojifyShortcodes(esc(src))
   // Highlight @mentions from the comment's known set (longest name first so a
   // fuller name wins over a prefix). Names are escaped to match the escaped body.
   if (mentions?.length) {
@@ -22,6 +25,7 @@ export function mdToHtml(src: string, mentions?: Mention[]): string {
   }
   h = h.replace(/`([^`]+)`/g, "<code>$1</code>")
   h = h.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+  h = h.replace(/~~([^~]+)~~/g, "<del>$1</del>")
   h = h.replace(/(^|[^*])\*([^*\n]+)\*/g, "$1<em>$2</em>")
   h = h.replace(
     /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g,

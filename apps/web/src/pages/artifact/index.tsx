@@ -408,6 +408,7 @@ export function Artifact() {
           </div>
 
           <ArtifactComments
+            shortId={shortId}
             isMobile={isMobile}
             isAnon={isAnon}
             docLive={docLive}

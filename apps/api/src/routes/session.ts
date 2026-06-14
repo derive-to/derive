@@ -5,7 +5,7 @@ import { fail } from "../lib/http"
 
 /** Session identity + the workspace member/agent directory for the @mention picker. */
 export const sessionRoutes = (ctx: AppContext) => {
-  const { meta, deps, bearer, currentUser, ensureMembership, activeWorkspace } = ctx
+  const { meta, deps, bearer, currentUser, ensureMembership, activeWorkspace, authorize } = ctx
   const app = new Hono()
 
   app.get("/v1/me", async (c) => {
@@ -15,17 +15,32 @@ export const sessionRoutes = (ctx: AppContext) => {
     return c.json({ user: { ...u, role }, multi: true })
   })
 
-  // Workspace member directory for the @mention picker — people AND agents, so
-  // an agent can be @mentioned like anyone. Authenticated callers only (a signed-in
-  // user or the static token); an anonymous visitor can never enumerate members.
-  // Optional ?q= filters by name/email prefix. Never exposes non-members.
+  // Directory for the @mention picker — people AND agents, so an agent can be
+  // @mentioned like anyone. Authenticated callers only (a signed-in user or the
+  // static token); an anonymous visitor can never enumerate anyone. Optional ?q=
+  // filters by name/email prefix.
+  //
+  // Scope: with ?artifact=<shortId> (and read access to it) the directory is the
+  // people you can actually mention ON THAT THREAD — the artifact's workspace
+  // members, anyone it's directly shared with, AND everyone who has commented on
+  // it — even if they aren't in your active workspace (the @-a-collaborator case).
+  // Without it, the caller's active-workspace members (composing outside a thread).
   app.get("/v1/users", async (c) => {
     if (!(await currentUser(c)) && !safeEqual(bearer(c), deps.token))
       return fail(c, 401, "unauthenticated")
-    const org = await activeWorkspace(c)
-    const members = await meta.listMemberships(org)
-    const users = await meta.getUsers(members.map((m) => m.user_id))
     const q = (c.req.query("q") ?? "").trim().toLowerCase()
+
+    // Resolve the directory's org + the set of user ids in scope.
+    const shortId = c.req.query("artifact")
+    const found = shortId ? await meta.getByShortId(shortId) : null
+    const artifact = found && (await authorize(c, "read", found)) ? found : null
+    const org = artifact ? artifact.org_id : await activeWorkspace(c)
+    const ids = new Set<string>((await meta.listMemberships(org)).map((m) => m.user_id))
+    if (artifact) {
+      for (const m of await meta.listArtifactMembers(artifact.id)) ids.add(m.user_id)
+      for (const cm of await meta.listComments(artifact.id)) if (cm.author_id) ids.add(cm.author_id)
+    }
+    const users = await meta.getUsers([...ids])
     const people = (
       q
         ? users.filter(
