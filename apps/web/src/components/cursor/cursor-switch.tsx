@@ -68,6 +68,34 @@ export function CursorSwitch({ className }: { className?: string }) {
           ))}
         </div>
       )}
+
+      {/* Opt out of the live layer entirely: you stop seeing peers' cursors and
+          stop broadcasting your own. Persisted per browser like the rest. */}
+      <button
+        type="button"
+        data-testid="cursor-hide"
+        aria-pressed={pref.hidden}
+        onClick={() => setPref({ ...pref, hidden: !pref.hidden })}
+        className={cn(
+          "mt-1 flex w-full items-center justify-between gap-2 rounded-md border border-border px-2.5 py-2 text-left text-xs font-medium transition-colors hover:bg-hover",
+          pref.hidden && "border-transparent bg-accent",
+        )}
+      >
+        <span className="flex flex-col">
+          <span>Hide cursors</span>
+          <span className="text-2xs font-normal text-muted-foreground">
+            Don't show others, or share yours
+          </span>
+        </span>
+        <span
+          className={cn(
+            "shrink-0 rounded-full px-2 py-0.5 font-mono text-2xs",
+            pref.hidden ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground",
+          )}
+        >
+          {pref.hidden ? "On" : "Off"}
+        </span>
+      </button>
     </div>
   )
 }
