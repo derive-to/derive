@@ -2,6 +2,7 @@ import type {
   D1Database,
   DurableObjectNamespace,
   ExecutionContext,
+  Fetcher,
   R2Bucket,
 } from "@cloudflare/workers-types"
 import { createD1Store } from "@dock/db/d1"
@@ -33,12 +34,18 @@ export interface Env {
   DB: D1Database
   BUCKET: R2Bucket
   ROOMS: DurableObjectNamespace
+  // The static-assets binding: lets the Worker read the SPA shell to inject unfurl
+  // meta into /a/:ref (the share URL). Declared in wrangler.toml `[assets] binding`.
+  ASSETS: Fetcher
   BASE_URL?: string
   DOCK_AUTH_SECRET?: string
   DOCK_SUPERADMIN_EMAILS?: string
 }
 
 let app: ReturnType<typeof createApp> | null = null
+// The SPA shell, fetched from ASSETS once per isolate and reused (it's immutable for
+// a deployment). Injected with per-artifact unfurl meta on each /a/:ref request.
+let shellCache: string | null = null
 
 export default {
   fetch(req: Request, env: Env, ctx: ExecutionContext): Response | Promise<Response> {
@@ -67,6 +74,18 @@ export default {
           .map((s) => s.trim().toLowerCase())
           .filter(Boolean),
         defaultOrgId: "default",
+        // Read the SPA shell from static assets so /a/:ref can carry unfurl meta.
+        // Cached per isolate; null on any miss leaves the shell untouched.
+        shellFetch: async () => {
+          if (shellCache !== null) return shellCache
+          try {
+            const res = await env.ASSETS.fetch(new URL("/index.html", baseUrl).toString())
+            shellCache = res.ok ? await res.text() : null
+          } catch {
+            shellCache = null
+          }
+          return shellCache
+        },
       })
     }
     // Run within the per-request context so the DO backplane's publish can waitUntil.

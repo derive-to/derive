@@ -128,16 +128,19 @@ export const embedRoutes = (ctx: AppContext) => {
   })
 
   // Server-rendered share URL: the SPA shell with per-artifact unfurl meta injected
-  // into <head> for crawlers. Humans still get the SPA (the meta is inert). Only
-  // mounted when this process serves the web app; the edge Worker serves /a/* as a
-  // static asset (injecting there is a follow-up needing an ASSETS binding).
-  const shell = ctx.deps.shell
-  if (shell)
+  // into <head> for crawlers. Humans still get the SPA (the meta is inert). The shell
+  // comes from `shell` (Node, read at boot) or `shellFetch` (the edge Worker, from its
+  // ASSETS binding). Mounted whenever either is present; the path is worker-first so
+  // the Worker reaches this handler instead of serving the raw static shell.
+  const getShell = async (): Promise<string | null> =>
+    ctx.deps.shell ?? (ctx.deps.shellFetch ? await ctx.deps.shellFetch() : null)
+  if (ctx.deps.shell || ctx.deps.shellFetch)
     app.get("/a/:ref", async (c) => {
+      const shell = await getShell()
+      if (!shell) return c.notFound()
       const artifact = await readable(c, c.req.param("ref"))
       if (!artifact) return c.html(shell)
-      const html = injectHead(shell, unfurlMetaTags(await infoFor(artifact)))
-      return c.html(html)
+      return c.html(injectHead(shell, unfurlMetaTags(await infoFor(artifact))))
     })
 
   return app

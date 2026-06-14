@@ -95,6 +95,13 @@ export interface AppDeps {
    */
   shell?: string
   /**
+   * Async shell provider for runtimes that can't read the SPA shell synchronously:
+   * the edge Worker fetches `index.html` from its static-assets binding. Used to
+   * inject unfurl meta into `/a/:ref` when `shell` (the sync string) isn't set.
+   * Returns null if the shell can't be read (the route then serves it untouched).
+   */
+  shellFetch?: () => Promise<string | null>
+  /**
    * gzip the responses. On for the Node/Fly entry (Fly's proxy gives HTTP/2 but
    * doesn't compress); left off for the Cloudflare Worker entry, where the edge
    * already compresses (gzip/brotli) and doubling it up wastes CPU.

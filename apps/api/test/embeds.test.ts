@@ -102,6 +102,25 @@ describe("unfurl + embed", () => {
     expect(html).toContain("id=root")
   })
 
+  it("injects via an async shell provider (the edge Worker's ASSETS path)", async () => {
+    const a = createApp({
+      meta,
+      blobs: new FsBlobStore(join(dir, "blobs-embed-shellfetch")),
+      baseUrl: "http://dock.test",
+      token: "tok",
+      // No sync `shell`: only the async provider, as the Worker wires it.
+      shellFetch: async () => SHELL,
+    })
+    const short = await idOf(
+      await upload("sf.md", "# Hi", { visibility: "public", title: "Worker Page" }),
+    )
+    const res = await a.request(`/a/${short}`, { headers: { authorization: "Bearer tok" } })
+    expect(res.status).toBe(200)
+    const html = await res.text()
+    expect(html).toContain('property="og:title"')
+    expect(html).toContain("Worker Page")
+  })
+
   it("serves the bare shell (no leaked meta) for a private artifact to anon", async () => {
     const a = createApp({
       meta,
