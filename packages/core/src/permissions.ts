@@ -55,6 +55,8 @@ export interface Actor {
   artifactRole?: Role | null
   /** Baseline role from membership in the artifact's workspace, if any. */
   orgRole?: Role | null
+  /** The caller has entered the correct password for a `password` artifact. */
+  unlocked?: boolean
 }
 
 /**
@@ -68,10 +70,13 @@ export function effectiveRole(actor: Actor, visibility: Visibility): Role | null
     const explicit = actor.artifactRole ?? actor.orgRole
     if (explicit) return explicit
   }
-  // No membership / anonymous: only public + link artifacts are world-readable,
-  // and only as a viewer. There is deliberately no "trusted anonymous" path — an
-  // unauthenticated caller can never be elevated to a writing role.
-  return visibility === "public" || visibility === "link" ? "viewer" : null
+  // No membership / anonymous: public + link are world-readable as a viewer; a
+  // `password` artifact opens to a viewer only once the caller has unlocked it
+  // (entered the password). There is deliberately no "trusted anonymous" path —
+  // an unauthenticated caller can never be elevated to a writing role.
+  if (visibility === "public" || visibility === "link") return "viewer"
+  if (visibility === "password") return actor.unlocked ? "viewer" : null
+  return null
 }
 
 /** The one authorization gate. */

@@ -34,6 +34,7 @@ import type {
   ReportState,
   Role,
   VersionRecord,
+  Visibility,
   WebhookRecord,
   WorkspaceRecord,
 } from "@dock/core"
@@ -138,6 +139,18 @@ export function makeRepos(db: SqliteDb) {
   const createArtifact = async (a: NewArtifact): Promise<ArtifactRecord> => {
     await db.insert(artifact).values(a).run()
     return (await getByShortId(a.short_id)) as ArtifactRecord
+  }
+
+  const setVisibility = async (
+    artifactId: string,
+    visibility: Visibility,
+    passwordHash: string | null,
+  ): Promise<void> => {
+    await db
+      .update(artifact)
+      .set({ visibility, password_hash: passwordHash })
+      .where(eq(artifact.id, artifactId))
+      .run()
   }
 
   const getVersion = async (artifactId: string, n: number): Promise<VersionRecord | null> =>
@@ -755,6 +768,7 @@ export function makeRepos(db: SqliteDb) {
 
   return {
     createArtifact,
+    setVisibility,
     getByShortId,
     addVersion,
     listVersions,
