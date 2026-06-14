@@ -1,7 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { API_BASE } from "@/api"
 import { useCursorPref } from "@/ctx"
-import { CURSOR_FALLBACK, CURSOR_TUNING, type CursorFrame } from "@/lib/cursors"
+import {
+  CURSOR_FALLBACK,
+  CURSOR_TUNING,
+  type CursorFrame,
+  effectiveDocH,
+  placePeer,
+} from "@/lib/cursors"
 
 // All of the live-cursor realtime behaviour, kept out of the page and out of the
 // presence/comments hook:
@@ -40,13 +46,17 @@ export interface CursorLayerHandle {
   roster: PeerView[]
   ripples: Ripple[]
   register: (id: string, el: HTMLElement | null) => void
+  /** Peers whose document position is above / below the visible viewport, shown
+   *  as edge indicators instead of a cursor pinned at the edge. */
+  above: PeerView[]
+  below: PeerView[]
 }
 
 /** Per-peer animation state — lives in a ref, mutated outside React. */
 interface PeerTarget {
-  x: number // latest normalized target (0..1)
+  x: number // latest document-normalized target (0..1): x by width, y by doc height
   y: number
-  cx: number // current eased position, in layer pixels
+  cx: number // current eased position: cx in layer px (x), cy in document px (y)
   cy: number
   color: string
   kind: "arrow" | "emoji"
@@ -71,12 +81,23 @@ export function useLiveCursors(shortId: string): {
   onPointerLeave: () => void
   onTap: (x: number, y: number) => void
   paintFrame: (f: CursorFrame) => void
+  setGeom: (g: { scrollY: number; docH: number; viewH: number }) => void
   layer: CursorLayerHandle
 } {
   const { pref } = useCursorPref()
   // Always send the latest pick without re-binding the send callbacks.
   const prefRef = useRef(pref)
   prefRef.current = pref
+
+  // This viewer's own live iframe geometry (scroll offset + document/visible
+  // height), fed in from the frame bridge. Peers are stored as document-normalized
+  // positions and mapped against THIS every frame, so a peer sits where they are
+  // in the document and glides as we scroll. A ref so the rAF loop reads it without
+  // re-subscribing.
+  const geomRef = useRef({ scrollY: 0, docH: 0, viewH: 0 })
+  const setGeom = useCallback((g: { scrollY: number; docH: number; viewH: number }) => {
+    geomRef.current = g
+  }, [])
 
   // When the viewer prefers reduced motion, peers snap to position (no glide) and
   // click ripples are suppressed. A ref (synced below) so the rAF loop + paintFrame
@@ -103,6 +124,14 @@ export function useLiveCursors(shortId: string): {
   const [roster, setRoster] = useState<PeerView[]>([])
   const [ripples, setRipples] = useState<Ripple[]>([])
   const rosterDirty = useRef(false)
+  // Peers scrolled above / below this viewport, surfaced as edge indicators
+  // (Miro/Figma style). Computed in the rAF loop, pushed to React only when the
+  // membership actually changes (never every frame).
+  const [offscreen, setOffscreen] = useState<{ above: PeerView[]; below: PeerView[] }>({
+    above: [],
+    below: [],
+  })
+  const offscreenKey = useRef("")
 
   // Local send + lifecycle state.
   const xy = useRef<[number, number] | null>(null)
@@ -218,12 +247,14 @@ export function useLiveCursors(shortId: string): {
       const now = Date.now()
       if (!existing) {
         // New peer: seed the eased position at the target so it appears in place.
+        // y is document-normalized, so seed cy in document pixels (eased there).
         const r = layerRef.current?.getBoundingClientRect()
+        const docH = effectiveDocH(geomRef.current.docH, r?.height ?? 0)
         targets.current.set(f.id, {
           x: f.x,
           y: f.y,
           cx: f.x * (r?.width ?? 0),
-          cy: f.y * (r?.height ?? 0),
+          cy: f.y * docH,
           color: f.color ?? CURSOR_FALLBACK,
           kind: f.kind ?? "arrow",
           emoji: f.emoji,
@@ -264,8 +295,10 @@ export function useLiveCursors(shortId: string): {
     setRipples([])
   }, [pref.hidden, sendLeave])
 
-  // The single animation loop: ease every peer toward its target, fade the name
-  // tag on stillness, fade-out and prune anyone who left or went stale.
+  // The single animation loop: ease every peer toward its document position, map
+  // it to a screen position against THIS viewer's scroll (so a peer glides with the
+  // content), fade the name tag on stillness, prune anyone who left, and collect
+  // who's scrolled off-screen for the edge indicators.
   useEffect(() => {
     let raf = 0
     const tick = () => {
@@ -273,15 +306,25 @@ export function useLiveCursors(shortId: string): {
       if (layer) {
         const r = layer.getBoundingClientRect()
         const now = Date.now()
+        // Receiver geometry: a peer's y is a fraction of the document, so map it to
+        // document pixels and subtract our scroll for a screen y. Fall back to
+        // viewport mapping until the frame reports real geometry.
+        const docH = effectiveDocH(geomRef.current.docH, r.height)
+        const scrollY = geomRef.current.scrollY || 0
         let pruned = false
+        const above: PeerView[] = []
+        const below: PeerView[] = []
         for (const [id, t] of targets.current) {
           if ((t.gone && t.fade <= 0.02) || now - t.lastSeen > CURSOR_TUNING.staleMs) {
             targets.current.delete(id)
             pruned = true
             continue
           }
+          // Ease in document space (x by width, y by doc height), then subtract
+          // scroll AFTER easing — so scrolling moves a peer with the content
+          // instantly (no lerp lag); the lerp only smooths the peer's own motion.
           const tx = t.x * r.width
-          const ty = t.y * r.height
+          const ty = t.y * docH
           const moved = Math.abs(tx - t.cx) + Math.abs(ty - t.cy) > 0.5
           // Reduced motion: snap straight to the target (lerp factor 1, no glide).
           const ease = reducedMotion.current ? 1 : CURSOR_TUNING.lerp
@@ -289,14 +332,30 @@ export function useLiveCursors(shortId: string): {
           t.cy += (ty - t.cy) * ease
           if (moved) t.lastMoveAt = now
           if (t.gone) t.fade = Math.max(0, t.fade - 16 / CURSOR_TUNING.leaveFadeMs)
+          const place = placePeer(t.cx, t.cy, { scrollY, docH, viewH: r.height })
           if (t.el) {
-            t.el.style.transform = `translate3d(${t.cx.toFixed(1)}px, ${t.cy.toFixed(1)}px, 0)`
-            t.el.style.opacity = t.gone ? t.fade.toFixed(2) : "1"
+            if (place.onScreen) {
+              t.el.style.transform = `translate3d(${place.x.toFixed(1)}px, ${place.y.toFixed(1)}px, 0)`
+              t.el.style.opacity = t.gone ? t.fade.toFixed(2) : "1"
+            } else {
+              // Off-screen: the edge indicator stands in for this cursor.
+              t.el.style.opacity = "0"
+            }
+          }
+          if (!place.onScreen && !t.gone) {
+            const v: PeerView = { id, color: t.color, kind: t.kind, emoji: t.emoji, name: t.name }
+            ;(place.side === "above" ? above : below).push(v)
           }
           if (t.labelEl) {
             const hideLabel = !t.gone && now - t.lastMoveAt > CURSOR_TUNING.labelIdleMs
             t.labelEl.style.opacity = hideLabel ? "0" : "1"
           }
+        }
+        // Re-render React only when the off-screen membership actually changes.
+        const key = `${above.map((p) => p.id).join(",")}|${below.map((p) => p.id).join(",")}`
+        if (key !== offscreenKey.current) {
+          offscreenKey.current = key
+          setOffscreen({ above, below })
         }
         if (pruned) markRosterDirty()
       }
@@ -342,6 +401,14 @@ export function useLiveCursors(shortId: string): {
     onPointerLeave,
     onTap,
     paintFrame,
-    layer: { ref: layerRef, roster, ripples, register },
+    setGeom,
+    layer: {
+      ref: layerRef,
+      roster,
+      ripples,
+      register,
+      above: offscreen.above,
+      below: offscreen.below,
+    },
   }
 }

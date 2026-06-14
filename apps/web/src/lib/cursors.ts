@@ -99,3 +99,38 @@ export function normalizePref(raw: unknown, fallback: CursorPref): CursorPref {
     hidden: r.hidden === true,
   }
 }
+
+// ---- document-anchored placement ------------------------------------------
+// A peer broadcasts a document-normalized position (x by width, y by the full
+// document height). Each viewer maps it against their OWN live scroll, so a peer
+// sits where they are in the document and glides as you scroll; peers scrolled
+// past an edge become a top/bottom indicator instead of a cursor pinned at the
+// edge. The math lives here, pure and unit-tested; the rAF loop just calls it.
+
+/** This viewer's live geometry inside the artifact iframe. */
+export interface ViewerGeom {
+  scrollY: number
+  docH: number
+  viewH: number
+}
+
+/** Document height to map a peer's normalized y against, falling back to the
+ *  visible height until the frame has reported real geometry (so a peer still
+ *  shows, viewport-mapped, in the first frames after load). Never 0. */
+export const effectiveDocH = (docH: number, layerH: number): number => docH || layerH || 1
+
+export type PeerPlacement =
+  | { onScreen: true; x: number; y: number }
+  | { onScreen: false; side: "above" | "below"; x: number; y: number }
+
+/** Map an eased peer position (`cx` already in layer pixels, `cyDoc` in document
+ *  pixels) to a screen position in this viewer's viewport. Subtracting our scroll
+ *  gives the on-screen y; past the top it's "above", past the visible height it's
+ *  "below" — an off-screen peer for the edge indicator. The top/bottom edges
+ *  (y === 0 and y === viewH) count as on-screen. */
+export function placePeer(cx: number, cyDoc: number, geom: ViewerGeom): PeerPlacement {
+  const y = cyDoc - geom.scrollY
+  if (y < 0) return { onScreen: false, side: "above", x: cx, y }
+  if (y > geom.viewH) return { onScreen: false, side: "below", x: cx, y }
+  return { onScreen: true, x: cx, y }
+}
