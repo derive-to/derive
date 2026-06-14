@@ -112,6 +112,11 @@ export function makeAuth(db: AuthDb, baseUrl: string, secret: string) {
         consentPage: "/oauth/consent",
         requirePKCE: true,
         allowDynamicClientRegistration: true,
+        // Anonymous DCR: a headless MCP client self-registers (RFC 7591) before any
+        // user has logged in, then the user authorizes in the browser. The /register
+        // endpoint is rate-limited (/api/auth/*) and a client is inert until a human
+        // consents, so the only surface is spam client rows.
+        allowUnauthenticatedClientRegistration: true,
         accessTokenExpiresIn: 60 * 60, // 1h
         refreshTokenExpiresIn: 60 * 60 * 24 * 7, // 7d
         scopes: [...OAUTH_SCOPES],
