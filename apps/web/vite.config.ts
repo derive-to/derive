@@ -40,10 +40,15 @@ export default defineConfig({
     // /a is the SPA's own route — only proxy API + raw artifact bytes + the
     // server-rendered OAuth consent page.
     proxy: Object.fromEntries(
-      ["/v1", "/api", "/raw", "/healthz", "/oauth"].map((p) => [
-        p,
-        { target: API, changeOrigin: true },
-      ]),
+      [
+        "/v1",
+        "/api",
+        "/raw",
+        "/healthz",
+        "/oauth",
+        "/.well-known/oauth-authorization-server",
+        "/.well-known/oauth-protected-resource",
+      ].map((p) => [p, { target: API, changeOrigin: true }]),
     ),
   },
   plugins: [

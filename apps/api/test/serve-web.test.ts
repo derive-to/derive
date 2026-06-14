@@ -21,7 +21,14 @@ const quoted = (s: string) => [...s.matchAll(/"([^"]+)"/g)].map((m) => m[1] ?? "
 
 describe("serve-web: SPA vs API path contract", () => {
   it("classifies server-owned vs SPA paths", () => {
-    for (const p of ["/v1/x", "/api/auth/session", "/raw/ab/v/1/index.html", "/healthz"])
+    for (const p of [
+      "/v1/x",
+      "/api/auth/session",
+      "/raw/ab/v/1/index.html",
+      "/healthz",
+      "/.well-known/oauth-authorization-server",
+      "/.well-known/oauth-protected-resource",
+    ])
       expect(isApiPath(p)).toBe(true)
     for (const p of ["/", "/a/abc123", "/login", "/settings/agents", "/library"])
       expect(isApiPath(p)).toBe(false)
