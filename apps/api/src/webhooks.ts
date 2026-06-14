@@ -1,6 +1,8 @@
 import { createHmac, randomUUID } from "node:crypto"
+import { lookup } from "node:dns/promises"
 import type { ArtifactRecord, DeliveryRecord, MetaStore } from "@dock/core"
 import type { WebhookEvent } from "./events"
+import { isPrivateAddress } from "./lib/net"
 import { log } from "./log"
 
 // Event names live in one place (./events) so the webhook list and the bus list
@@ -90,6 +92,20 @@ export async function deliverOnce(d: DeliveryRecord): Promise<{ ok: boolean; sta
       "x-dock-event": d.event_type,
     }
     if (!isSlack) headers["x-dock-signature"] = sign(d.secret, body)
+    // Re-validate the target at delivery, not just at registration: a hostname
+    // that was public when the webhook was created can be rebinded to an internal
+    // IP (169.254.169.254 / RFC1918 / loopback) by delivery time (DNS rebinding).
+    // Resolve every address and refuse if any is private. (Undici re-resolves on
+    // the fetch below, leaving a sub-second TOCTOU window; pinning to the
+    // validated IP — which needs an SNI-preserving dispatcher — is the follow-up.)
+    let addrs: { address: string }[]
+    try {
+      addrs = await lookup(new URL(d.url).hostname, { all: true })
+    } catch {
+      return { ok: false, status: "dns lookup failed" }
+    }
+    if (addrs.some((a) => isPrivateAddress(a.address)))
+      return { ok: false, status: "blocked: resolves to a private address" }
     // Do NOT follow redirects: the URL was SSRF-checked at registration, but a
     // 302 to 169.254.169.254 / localhost would bypass that. A redirect is a
     // delivery failure here.

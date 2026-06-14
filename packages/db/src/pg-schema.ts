@@ -293,6 +293,9 @@ export const PG_SCHEMA_STATEMENTS: string[] = [
     removed_at TEXT
   )`,
   `ALTER TABLE artifact ADD COLUMN IF NOT EXISTS removed_at TEXT`,
+  // Library feed: scope by org_id + keyset order on (created_at, id) desc. One
+  // composite serves both; Postgres backward-scans it for the DESC order.
+  `CREATE INDEX IF NOT EXISTS artifact_org_created ON artifact (org_id, created_at, id)`,
   `CREATE TABLE IF NOT EXISTS version (
     id TEXT PRIMARY KEY,
     artifact_id TEXT NOT NULL REFERENCES artifact(id),

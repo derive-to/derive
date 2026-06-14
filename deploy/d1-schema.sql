@@ -17,6 +17,8 @@ CREATE TABLE IF NOT EXISTS artifact (
     removed_at TEXT
   );
 
+CREATE INDEX IF NOT EXISTS artifact_org_created ON artifact (org_id, created_at, id);
+
 CREATE TABLE IF NOT EXISTS version (
     id TEXT PRIMARY KEY,
     artifact_id TEXT NOT NULL REFERENCES artifact(id),

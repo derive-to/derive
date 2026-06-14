@@ -1,4 +1,5 @@
 import { createRouter } from "@tanstack/react-router"
+import { RouteError, RouteNotFound } from "./components/shared/route-error"
 import { RouteSkeleton } from "./components/shared/route-skeleton"
 import { queryClient } from "./lib/query-client"
 import { routeTree } from "./routeTree.gen"
@@ -27,6 +28,11 @@ export function getRouter() {
     defaultPendingMs: 150,
     defaultPendingMinMs: 300,
     defaultPendingComponent: RouteSkeleton,
+    // A thrown loader/render error or a missing route renders inside the content
+    // area (chrome stays mounted, so the user can always navigate away) instead
+    // of a blank screen or a raw stack trace.
+    defaultErrorComponent: RouteError,
+    defaultNotFoundComponent: RouteNotFound,
     context: { queryClient },
   })
 }
