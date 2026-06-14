@@ -180,7 +180,7 @@ entry is typecheck-covered).
 cd apps/api
 wrangler d1 create dock                     # copy the database_id into wrangler.toml
 wrangler d1 execute dock --remote --file=../../deploy/d1-schema.sql       # app schema
-node --experimental-strip-types gen-auth-schema.ts > /tmp/auth-schema.sql # Better Auth tables
+pnpm exec tsx gen-auth-schema.ts > /tmp/auth-schema.sql                   # Better Auth tables (incl. OAuth)
 wrangler d1 execute dock --remote --file=/tmp/auth-schema.sql
 wrangler r2 bucket create dock-blobs
 pnpm build:web                              # build the SPA + prep dist/client for Workers

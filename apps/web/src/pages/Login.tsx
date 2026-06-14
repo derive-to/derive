@@ -29,9 +29,23 @@ export function Login() {
   const [err, setErr] = useState("")
   const [busy, setBusy] = useState(false)
 
+  // If we arrived from an OAuth authorize request (the agent consent flow bounced
+  // here to sign in), resume it by handing control back to the authorize endpoint
+  // now that there's a session — it then renders the consent screen. Otherwise go
+  // home. Captured from the raw query so it survives the route's search parsing.
+  const afterAuth = () => {
+    const search = typeof window !== "undefined" ? window.location.search : ""
+    if (new URLSearchParams(search).has("client_id")) {
+      window.location.href = `/api/auth/oauth2/authorize${search}`
+    } else {
+      nav({ to: "/" })
+    }
+  }
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: afterAuth only reads nav (stable) + the URL; keyed to the auth state.
   useEffect(() => {
-    if (!loading && me) nav({ to: "/" })
-  }, [loading, me, nav])
+    if (!loading && me) afterAuth()
+  }, [loading, me])
 
   const submit = async (e: FormEvent) => {
     e.preventDefault()
@@ -42,7 +56,7 @@ export function Login() {
       else await api.login(email, password)
       const { user } = await api.me()
       setMe(user)
-      nav({ to: "/" })
+      afterAuth()
     } catch (e) {
       setErr((e as Error).message)
       setBusy(false)

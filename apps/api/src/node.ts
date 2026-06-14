@@ -140,16 +140,22 @@ const stopWorker = startWebhookWorker(meta)
 
 // Analytics retention: views are a rolling window (default 365 days). A daily
 // prune keeps the append-only view table bounded. 0 disables pruning entirely.
+// Daily maintenance: prune the rolling view window (when retention is on) and reap
+// abandoned anonymous OAuth clients (open-DCR rows never consented, holding no
+// tokens, > 1 day old). The reaper runs regardless of view retention.
 let pruneTimer: ReturnType<typeof setInterval> | undefined
-if (cfg.retentionDays > 0) {
-  const prune = () =>
-    meta
+const maintain = async () => {
+  if (cfg.retentionDays > 0)
+    await meta
       .pruneViews(new Date(Date.now() - cfg.retentionDays * 86400_000).toISOString())
       .catch(() => 0)
-  void prune()
-  pruneTimer = setInterval(prune, 24 * 3600_000)
-  pruneTimer.unref?.()
+  await meta
+    .pruneStaleOAuthClients(new Date(Date.now() - 24 * 3600_000).toISOString())
+    .catch(() => 0)
 }
+void maintain()
+pruneTimer = setInterval(maintain, 24 * 3600_000)
+pruneTimer.unref?.()
 
 // One-time cleanup of pre-existing owner self-views (the route no longer records
 // them). Pre-multi-workspace rows were rekeyed from "local" onto defaultOrg above,

@@ -34,6 +34,7 @@ import type {
   NewView,
   NewWebhook,
   NotificationRecord,
+  OAuthGrant,
   ProposalRecord,
   ProposalState,
   ReportRecord,
@@ -75,7 +76,7 @@ import {
   webhookDelivery,
   workspace,
 } from "./pg-schema"
-import { artifactListConditions, collectManagedIds } from "./repos"
+import { artifactListConditions, collectManagedIds, parseOAuthScopes } from "./repos"
 
 const one = <T>(rows: T[]): T => {
   const r = rows[0]
@@ -897,6 +898,70 @@ export class PgMetaStore implements MetaStore {
   async getAgentByToken(token: string): Promise<AgentRecord | null> {
     const rows = await this.db.select().from(agent).where(eq(agent.token, token))
     return rows[0] ?? null
+  }
+  async getOAuthGrant(tokenHash: string): Promise<OAuthGrant | null> {
+    // Better Auth oauth-provider tables live in the same pg database; quoted
+    // identifiers preserve their camelCase. The hash is bound ($1), not inlined.
+    type GrantRow = {
+      user_id: string
+      user_email: string
+      user_name: string | null
+      client_id: string
+      scopes: string | null
+      expires_at: Date | string | number
+      client_name: string
+    }
+    let row: GrantRow | undefined
+    try {
+      const { rows } = await this.pool.query(
+        `SELECT t."userId" AS user_id, t."clientId" AS client_id, t."scopes" AS scopes,
+                t."expiresAt" AS expires_at, c."name" AS client_name,
+                u."email" AS user_email, u."name" AS user_name
+           FROM "oauthAccessToken" t
+           JOIN "oauthClient" c ON c."clientId" = t."clientId"
+           JOIN "user" u ON u."id" = t."userId"
+          WHERE t."token" = $1 LIMIT 1`,
+        [tokenHash],
+      )
+      row = rows[0] as GrantRow | undefined
+    } catch {
+      // OAuth tables absent (oidc-provider not migrated) or query error: no grant.
+      return null
+    }
+    if (!row) return null
+    return {
+      userId: row.user_id,
+      userEmail: row.user_email,
+      userName: row.user_name,
+      clientId: row.client_id,
+      clientName: row.client_name,
+      scopes: parseOAuthScopes(row.scopes),
+      expiresAt: row.expires_at instanceof Date ? row.expires_at : new Date(row.expires_at),
+    }
+  }
+  async getOAuthClientName(clientId: string): Promise<string | null> {
+    try {
+      const { rows } = await this.pool.query(
+        `SELECT "name" AS name FROM "oauthClient" WHERE "clientId" = $1 LIMIT 1`,
+        [clientId],
+      )
+      return (rows[0] as { name?: string | null } | undefined)?.name ?? null
+    } catch {
+      return null
+    }
+  }
+  async pruneStaleOAuthClients(cutoffIso: string): Promise<number> {
+    try {
+      const res = await this.pool.query(
+        `DELETE FROM "oauthClient" WHERE "userId" IS NULL AND "createdAt" < $1
+           AND "clientId" NOT IN (SELECT "clientId" FROM "oauthConsent")
+           AND "clientId" NOT IN (SELECT "clientId" FROM "oauthAccessToken")`,
+        [cutoffIso],
+      )
+      return res.rowCount ?? 0
+    } catch {
+      return 0
+    }
   }
   async deleteAgent(id: string, orgId: string): Promise<void> {
     await this.db.delete(agent).where(and(eq(agent.id, id), eq(agent.org_id, orgId)))

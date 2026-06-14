@@ -15,8 +15,15 @@ import type { Hono } from "hono"
  *  · prefixes match the path and any subpath (`/v1`, `/v1/artifacts`, …)
  *  · exact paths match only themselves (`/healthz`)
  */
-const API_PREFIXES = ["/v1", "/api", "/raw"] as const
-const API_EXACT = ["/healthz"] as const
+const API_PREFIXES = ["/v1", "/api", "/raw", "/oauth"] as const
+// OAuth 2.0 discovery docs (RFC 8414 / RFC 9728) the Worker must answer with JSON.
+// Without these the SPA not_found_handling shadows them with index.html, so MCP
+// clients probing the well-known root get HTML instead of the metadata.
+const API_EXACT = [
+  "/healthz",
+  "/.well-known/oauth-authorization-server",
+  "/.well-known/oauth-protected-resource",
+] as const
 
 // Page prefixes the SERVER renders before handing off to the SPA, but that are NOT
 // API paths: `/a/:ref` is served as the SPA shell with per-artifact unfurl meta

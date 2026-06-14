@@ -32,6 +32,7 @@ import type {
   NewVersion,
   NewWebhook,
   NotificationRecord,
+  OAuthGrant,
   ProposalRecord,
   ProposalState,
   ReportRecord,
@@ -177,6 +178,19 @@ type RunResult = { changes?: number; meta?: { changes?: number } }
 /** Pull the artifact ids out of repo_source `files` JSON rows. A file map is
  *  `{ [repoPath]: { artifact_id, sha } }`; a managed artifact is any id therein.
  *  Shared by both drivers so "is this artifact synced?" reads identically. */
+/** The oauth-provider stores granted scopes as a JSON array string
+ *  (`["openid","dock:publish"]`); tolerate a space-separated form too. */
+export const parseOAuthScopes = (s: string | null): string[] => {
+  if (!s) return []
+  try {
+    const a = JSON.parse(s)
+    if (Array.isArray(a)) return a.filter((x): x is string => typeof x === "string")
+  } catch {
+    // not JSON; fall through to the space-separated form
+  }
+  return s.split(/\s+/).filter(Boolean)
+}
+
 export const collectManagedIds = (rows: { files: string }[]): string[] => {
   const ids = new Set<string>()
   for (const r of rows) {
@@ -822,6 +836,77 @@ export function makeRepos(db: SqliteDb) {
     db.select().from(agent).where(eq(agent.org_id, orgId)).all()
   const getAgentByToken = async (token: string): Promise<AgentRecord | null> =>
     (await db.select().from(agent).where(eq(agent.token, token)).get()) ?? null
+  // Introspect a Better Auth oidc-provider access token (its own tables, same DB).
+  // Quoted camelCase identifiers resolve on better-sqlite3 + D1; the token is bound,
+  // not interpolated. Joined to the app row for the granting client's display name.
+  const getOAuthGrant = async (tokenHash: string): Promise<OAuthGrant | null> => {
+    type GrantRow = {
+      user_id: string
+      user_email: string
+      user_name: string | null
+      client_id: string
+      scopes: string | null
+      expires_at: string | number
+      client_name: string
+    }
+    let row: GrantRow | undefined
+    try {
+      row = (await db.get(sql`
+        select t."userId" as user_id, t."clientId" as client_id, t."scopes" as scopes,
+               t."expiresAt" as expires_at, c."name" as client_name,
+               u."email" as user_email, u."name" as user_name
+        from "oauthAccessToken" t
+        join "oauthClient" c on c."clientId" = t."clientId"
+        join "user" u on u."id" = t."userId"
+        where t."token" = ${tokenHash} limit 1
+      `)) as GrantRow | undefined
+    } catch {
+      // OAuth tables absent (oauth-provider not migrated) or query error: no grant.
+      return null
+    }
+    if (!row) return null
+    // Better Auth may store the expiry as an ISO string or an epoch (s or ms).
+    const ts =
+      typeof row.expires_at === "number"
+        ? row.expires_at < 1e12
+          ? row.expires_at * 1000
+          : row.expires_at
+        : Date.parse(row.expires_at)
+    return {
+      userId: row.user_id,
+      userEmail: row.user_email,
+      userName: row.user_name,
+      clientId: row.client_id,
+      clientName: row.client_name,
+      scopes: parseOAuthScopes(row.scopes),
+      expiresAt: new Date(ts),
+    }
+  }
+  const getOAuthClientName = async (clientId: string): Promise<string | null> => {
+    try {
+      const r = (await db.get(
+        sql`select "name" as name from "oauthClient" where "clientId" = ${clientId} limit 1`,
+      )) as { name?: string | null } | undefined
+      return r?.name ?? null
+    } catch {
+      return null
+    }
+  }
+  const pruneStaleOAuthClients = async (cutoffIso: string): Promise<number> => {
+    try {
+      const r = (await db.run(sql`
+        delete from "oauthClient"
+        where "userId" is null
+          and "createdAt" < ${cutoffIso}
+          and "clientId" not in (select "clientId" from "oauthConsent")
+          and "clientId" not in (select "clientId" from "oauthAccessToken")
+      `)) as RunResult
+      return r.changes ?? r.meta?.changes ?? 0
+    } catch {
+      // OAuth tables absent → nothing to reap.
+      return 0
+    }
+  }
   const deleteAgent = async (id: string, orgId: string): Promise<void> => {
     await db
       .delete(agent)
@@ -995,6 +1080,9 @@ export function makeRepos(db: SqliteDb) {
     createAgent,
     listAgents,
     getAgentByToken,
+    getOAuthGrant,
+    getOAuthClientName,
+    pruneStaleOAuthClients,
     deleteAgent,
     createAgentMention,
     listPendingAgentMentions,

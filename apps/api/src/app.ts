@@ -1,12 +1,14 @@
 import { type ArtifactRecord, parseRef } from "@dock/core"
 import { type Context, Hono } from "hono"
 import { compress } from "hono/compress"
+import { OAUTH_SCOPES } from "./auth-config"
 import { type AppDeps, buildContext } from "./context"
 import { cacheControlFor, corsFor, fail, TOMBSTONE } from "./lib/http"
 import { observability } from "./lib/observability"
 import { makeRateLimiter } from "./lib/rate-limit"
 import { serveContent } from "./lib/serve-content"
 import { log } from "./log"
+import { consentHTML } from "./oauth-consent"
 import { agentRoutes } from "./routes/agents"
 import { analyticsRoutes } from "./routes/analytics"
 import { artifactRoutes } from "./routes/artifacts"
@@ -214,11 +216,66 @@ export function createApp(deps: AppDeps): Hono {
   if (deps.rateLimit) {
     // Strict on auth (credential brute-force); lenient on mutating API calls.
     app.use("/api/auth/*", makeRateLimiter(60_000, 20))
+    // Anonymous OAuth client registration (open DCR) gets a tighter per-IP cap on
+    // top, so no single source can flood the client table.
+    app.use("/api/auth/oauth2/register", makeRateLimiter(3_600_000, 10))
     const writeLimiter = makeRateLimiter(60_000, 120)
     app.use("/v1/*", (c, next) =>
       c.req.method === "GET" || c.req.method === "HEAD" ? next() : writeLimiter(c, next),
     )
   }
+
+  // After an anonymous registration, opportunistically reap abandoned anonymous
+  // clients (never consented, no tokens, > 1 day old). Best-effort and async so it
+  // never delays the response; runs on both the Node and the (cron-less) edge tier.
+  app.use("/api/auth/oauth2/register", async (c, next) => {
+    await next()
+    if (c.req.method === "POST" && c.res.status < 300) {
+      const cutoff = new Date(Date.now() - 24 * 3_600_000).toISOString()
+      void ctx.meta.pruneStaleOAuthClients(cutoff).catch(() => 0)
+    }
+  })
+
+  // OAuth 2.0 discovery at the well-known root (RFC 8414 + RFC 9728), mirroring
+  // what the oidc-provider plugin serves under /api/auth — MCP clients and standard
+  // OAuth tooling probe the root. Issuer is the live request origin so it's correct
+  // behind any proxy / on workers.dev without configuration.
+  const asMeta = (c: Context) => {
+    const base = new URL(c.req.url).origin
+    return {
+      issuer: base,
+      authorization_endpoint: `${base}/api/auth/oauth2/authorize`,
+      token_endpoint: `${base}/api/auth/oauth2/token`,
+      registration_endpoint: `${base}/api/auth/oauth2/register`,
+      userinfo_endpoint: `${base}/api/auth/oauth2/userinfo`,
+      jwks_uri: `${base}/api/auth/jwks`,
+      scopes_supported: [...OAUTH_SCOPES],
+      response_types_supported: ["code"],
+      grant_types_supported: ["authorization_code", "refresh_token"],
+      code_challenge_methods_supported: ["S256"],
+      token_endpoint_auth_methods_supported: ["client_secret_basic", "client_secret_post", "none"],
+    }
+  }
+  app.get("/.well-known/oauth-authorization-server", (c) => c.json(asMeta(c)))
+  app.get("/.well-known/oauth-protected-resource", (c) => {
+    const base = new URL(c.req.url).origin
+    return c.json({
+      resource: base,
+      authorization_servers: [base],
+      scopes_supported: [...OAUTH_SCOPES],
+      bearer_methods_supported: ["header"],
+    })
+  })
+
+  // The consent screen the oauth-provider plugin redirects a signed-in user to
+  // (client_id + scope + code in the query). We render the branded grant page; on
+  // Approve it posts back to /api/auth/oauth2/consent, which completes the flow.
+  app.get("/oauth/consent", async (c) => {
+    const clientId = c.req.query("client_id") ?? ""
+    const scopes = (c.req.query("scope") ?? "").split(/\s+/).filter(Boolean)
+    const clientName = (await ctx.meta.getOAuthClientName(clientId)) || clientId || "An application"
+    return c.html(consentHTML({ clientName, scopes, query: new URL(c.req.url).search }))
+  })
 
   // Better Auth owns /api/auth/* (sign-up/in/out, OAuth, OIDC/SSO, session).
   if (deps.auth) {
