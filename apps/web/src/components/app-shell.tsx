@@ -193,6 +193,14 @@ export function AppShell({ children }: { children: ReactNode }) {
     <ShellCtx.Provider value={value}>
       <TopBarSlotCtx.Provider value={topBarSlot}>
         <div className="flex h-full flex-col">
+          {/* Keyboard users land here first and can jump past the rail + top bar
+              straight to the page. Visually hidden until focused. */}
+          <a
+            href="#main-content"
+            className="sr-only rounded-md bg-primary px-4 py-2 text-primary-foreground focus:not-sr-only focus:absolute focus:left-3 focus:top-3 focus:z-[100]"
+          >
+            Skip to content
+          </a>
           <header className="flex items-center gap-2.5 border-b border-border bg-card px-5.5 py-3 max-sm:flex-wrap max-sm:px-3.5 max-sm:py-2.5">
             <Button
               variant="outline"
@@ -229,7 +237,13 @@ export function AppShell({ children }: { children: ReactNode }) {
               />
             )}
             <NavRail />
-            <main className="flex min-w-0 flex-1 flex-col overflow-hidden">{children}</main>
+            <main
+              id="main-content"
+              tabIndex={-1}
+              className="flex min-w-0 flex-1 flex-col overflow-hidden outline-none"
+            >
+              {children}
+            </main>
           </div>
         </div>
         {paletteOpen && (

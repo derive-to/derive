@@ -464,6 +464,9 @@ export interface ProposalRecord {
   /** What the proposer is changing, in their words. */
   message: string | null
   author: string
+  /** Stable id of the proposer (user/agent); withdraw authorization keys on this,
+   *  not `author`. Null for legacy rows and anonymous proposals. */
+  author_id: string | null
   /** The current_version this candidate was proposed against (for the diff). */
   base_version: number
   state: ProposalState
@@ -486,6 +489,7 @@ export interface NewProposal {
   title?: string | null
   message?: string | null
   author: string
+  author_id?: string | null
   base_version: number
 }
 
@@ -730,6 +734,9 @@ export interface CommentRecord {
   anchor: string | null
   body_md: string
   author: string
+  /** Stable id of the author (user/agent); authorization keys on this, not `author`.
+   *  Null for legacy rows and anonymous comments. */
+  author_id: string | null
   state: CommentState
   created_at: string
   /** JSON blob: { reactions?: {emoji: author[]}, edited_at?: string, deleted?: boolean }. */
@@ -745,6 +752,7 @@ export interface NewComment {
   anchor?: string | null
   body_md: string
   author: string
+  author_id?: string | null
 }
 
 /** A bundle version's blob is this manifest; file versions point at content directly. */

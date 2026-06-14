@@ -30,6 +30,7 @@ export function Rail({
         data-testid="comments-rail-expand"
         onClick={onExpand}
         title="Expand comments (c)"
+        aria-label="Expand comments"
         className="flex h-[38px] w-full shrink-0 items-center justify-center gap-1.5 border-b border-border-soft text-foreground transition-colors hover:bg-hover"
       >
         <span className="text-xs">⟨</span>
@@ -50,6 +51,7 @@ export function Rail({
               data-testid={`comments-rail-dot-${id}`}
               onClick={() => onDot(id)}
               title={p.thread[0].body_md}
+              aria-label={`Jump to comment: ${p.thread[0].body_md}`}
               className={cn(
                 "absolute left-1/2 -translate-x-1/2 rounded-full border-2 border-card bg-primary p-0 transition-all",
                 isActive ? "size-3.5 shadow-[0_0_0_3px_var(--ac-soft)]" : "size-2.5",
@@ -65,6 +67,7 @@ export function Rail({
         data-testid="comments-rail-hide"
         onClick={onHide}
         title="Hide comments"
+        aria-label="Hide comments"
         className="flex h-[38px] w-full shrink-0 items-center justify-center border-t border-border-soft text-muted-foreground transition-colors hover:bg-hover"
       >
         ✕
@@ -89,6 +92,7 @@ export function IconBtn({
       type="button"
       data-testid={testId}
       title={title}
+      aria-label={title}
       onClick={onClick}
       className="grid size-[26px] place-items-center rounded-md text-muted-foreground transition-colors hover:bg-hover hover:text-foreground"
     >

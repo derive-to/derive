@@ -62,6 +62,9 @@ export const comment = pgTable("comment", {
   anchor: text("anchor"),
   body_md: text("body_md").notNull(),
   author: text("author").notNull(),
+  // Stable identity of the author (user or agent id). Authorization keys on this,
+  // never the mutable display `author` name. Nullable for legacy/anonymous rows.
+  author_id: text("author_id"),
   state: text("state").$type<CommentState>().notNull().default("open"),
   created_at: text("created_at").notNull().$defaultFn(isoNow),
   meta: text("meta"),
@@ -268,6 +271,9 @@ export const proposal = pgTable("proposal", {
   title: text("title"),
   message: text("message"),
   author: text("author").notNull(),
+  // Stable identity of the proposer (user or agent id). Withdraw authorization
+  // keys on this, never the mutable display `author` name. Nullable for legacy.
+  author_id: text("author_id"),
   base_version: integer("base_version").notNull(),
   state: text("state").$type<ProposalState>().notNull().default("open"),
   decided_by: text("decided_by"),
@@ -351,11 +357,13 @@ export const PG_SCHEMA_STATEMENTS: string[] = [
     anchor TEXT,
     body_md TEXT NOT NULL,
     author TEXT NOT NULL,
+    author_id TEXT,
     state TEXT NOT NULL DEFAULT 'open',
     created_at TEXT NOT NULL DEFAULT ${isoDefault},
     meta TEXT
   )`,
   `ALTER TABLE comment ADD COLUMN IF NOT EXISTS meta TEXT`,
+  `ALTER TABLE comment ADD COLUMN IF NOT EXISTS author_id TEXT`,
   `CREATE TABLE IF NOT EXISTS principal (
     id TEXT PRIMARY KEY,
     org_id TEXT NOT NULL,
@@ -539,6 +547,7 @@ export const PG_SCHEMA_STATEMENTS: string[] = [
     title TEXT,
     message TEXT,
     author TEXT NOT NULL,
+    author_id TEXT,
     base_version INTEGER NOT NULL,
     state TEXT NOT NULL DEFAULT 'open',
     decided_by TEXT,
@@ -548,6 +557,7 @@ export const PG_SCHEMA_STATEMENTS: string[] = [
     created_at TEXT NOT NULL DEFAULT ${isoDefault}
   )`,
   `ALTER TABLE proposal ADD COLUMN IF NOT EXISTS decision_note TEXT`,
+  `ALTER TABLE proposal ADD COLUMN IF NOT EXISTS author_id TEXT`,
   `CREATE INDEX IF NOT EXISTS proposal_artifact_state ON proposal (artifact_id, state)`,
   `CREATE TABLE IF NOT EXISTS report (
     id TEXT PRIMARY KEY,

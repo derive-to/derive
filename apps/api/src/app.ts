@@ -2,7 +2,7 @@ import { type ArtifactRecord, parseRef } from "@dock/core"
 import { type Context, Hono } from "hono"
 import { compress } from "hono/compress"
 import { type AppDeps, buildContext } from "./context"
-import { corsFor, fail, TOMBSTONE } from "./lib/http"
+import { cacheControlFor, corsFor, fail, TOMBSTONE } from "./lib/http"
 import { observability } from "./lib/observability"
 import { makeRateLimiter } from "./lib/rate-limit"
 import { serveContent } from "./lib/serve-content"
@@ -43,6 +43,30 @@ export function createApp(deps: AppDeps): Hono {
   // Outermost: a per-request id + one structured access-log line (method, path,
   // status, duration, actor, org), so a 500 is correlatable to who/what.
   app.use("*", observability())
+
+  // App-origin security headers. Set after the handler so responses that declare
+  // their own policy keep it: artifact bytes carry the sandbox CSP (serveContent),
+  // and the embed iframe opts into `frame-ancestors *`. HSTS + nosniff are safe on
+  // every response; the clickjacking lock (frame-ancestors 'none' + X-Frame-Options)
+  // covers the app UI + API, but never artifact bytes (/raw), the embed surface
+  // (/v1/embed), a subdomain-served artifact (already carries a CSP), or SSE streams.
+  app.use("*", async (c, next) => {
+    await next()
+    const h = c.res.headers
+    if (!h.has("x-content-type-options")) h.set("X-Content-Type-Options", "nosniff")
+    const proto = (c.req.header("x-forwarded-proto") ?? new URL(c.req.url).protocol).replace(
+      ":",
+      "",
+    )
+    if (proto === "https" && !h.has("strict-transport-security"))
+      h.set("Strict-Transport-Security", "max-age=63072000; includeSubDomains; preload")
+    const path = c.req.path
+    const framable = path.startsWith("/raw/") || path.startsWith("/v1/embed/")
+    if (!framable && !path.endsWith("/events") && !h.has("content-security-policy")) {
+      h.set("Content-Security-Policy", "frame-ancestors 'none'")
+      h.set("X-Frame-Options", "DENY")
+    }
+  })
 
   // gzip everything (Node/Fly entry only — the Worker edge compresses already).
   // Registered first so it wraps every downstream response; honors Accept-Encoding
@@ -125,7 +149,15 @@ export function createApp(deps: AppDeps): Hono {
       if (a.removed_at) return c.text(TOMBSTONE, 410)
       const version = await ctx.meta.getVersion(a.id, n)
       if (!version) return c.text("not found", 404)
-      return serveContent(c, ctx.blobs, version, a.title, prefix, rawPath)
+      return serveContent(
+        c,
+        ctx.blobs,
+        version,
+        a.title,
+        prefix,
+        rawPath,
+        cacheControlFor(a.visibility),
+      )
     }
     app.use("*", async (c, next) => {
       const host = (c.req.header("host") ?? new URL(c.req.url).host).toLowerCase().split(":")[0]

@@ -78,6 +78,22 @@ export function useLiveCursors(shortId: string): {
   const prefRef = useRef(pref)
   prefRef.current = pref
 
+  // When the viewer prefers reduced motion, peers snap to position (no glide) and
+  // click ripples are suppressed. A ref (synced below) so the rAF loop + paintFrame
+  // can read it every frame without re-subscribing. SSR-safe: false until mounted.
+  const reducedMotion = useRef(
+    typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches,
+  )
+  useEffect(() => {
+    const mq = window.matchMedia("(prefers-reduced-motion: reduce)")
+    const sync = () => {
+      reducedMotion.current = mq.matches
+    }
+    sync()
+    mq.addEventListener("change", sync)
+    return () => mq.removeEventListener("change", sync)
+  }, [])
+
   const layerRef = useRef<HTMLDivElement>(null)
   const selfId = useRef("")
   if (!selfId.current) selfId.current = Math.random().toString(36).slice(2, 9)
@@ -179,7 +195,7 @@ export function useLiveCursors(shortId: string): {
     (f: CursorFrame) => {
       if (!f?.id || f.id === selfId.current) return
 
-      if (f.tap) {
+      if (f.tap && !reducedMotion.current) {
         const key = ++rippleKey.current
         setRipples((rs) => [...rs, { key, x: f.x, y: f.y, color: f.color ?? CURSOR_FALLBACK }])
         setTimeout(
@@ -251,8 +267,10 @@ export function useLiveCursors(shortId: string): {
           const tx = t.x * r.width
           const ty = t.y * r.height
           const moved = Math.abs(tx - t.cx) + Math.abs(ty - t.cy) > 0.5
-          t.cx += (tx - t.cx) * CURSOR_TUNING.lerp
-          t.cy += (ty - t.cy) * CURSOR_TUNING.lerp
+          // Reduced motion: snap straight to the target (lerp factor 1, no glide).
+          const ease = reducedMotion.current ? 1 : CURSOR_TUNING.lerp
+          t.cx += (tx - t.cx) * ease
+          t.cy += (ty - t.cy) * ease
           if (moved) t.lastMoveAt = now
           if (t.gone) t.fade = Math.max(0, t.fade - 16 / CURSOR_TUNING.leaveFadeMs)
           if (t.el) {

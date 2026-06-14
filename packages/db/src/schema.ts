@@ -65,6 +65,10 @@ export const comment = sqliteTable("comment", {
   anchor: text("anchor"),
   body_md: text("body_md").notNull(),
   author: text("author").notNull(),
+  // Stable identity of the author (user or agent id). Authorization (edit/delete)
+  // keys on this, never the mutable display `author` name. Nullable for legacy
+  // rows + anonymous comments, which fall back to the name check.
+  author_id: text("author_id"),
   state: text("state").$type<CommentState>().notNull().default("open"),
   created_at: text("created_at").notNull().default(now),
   meta: text("meta"),
@@ -294,6 +298,9 @@ export const proposal = sqliteTable("proposal", {
   title: text("title"),
   message: text("message"),
   author: text("author").notNull(),
+  // Stable identity of the proposer (user or agent id). Withdraw authorization
+  // keys on this, never the mutable display `author` name. Nullable for legacy.
+  author_id: text("author_id"),
   base_version: integer("base_version").notNull(),
   state: text("state").$type<ProposalState>().notNull().default("open"),
   decided_by: text("decided_by"),
@@ -377,6 +384,7 @@ export const SCHEMA_STATEMENTS: string[] = [
     anchor TEXT,
     body_md TEXT NOT NULL,
     author TEXT NOT NULL,
+    author_id TEXT,
     state TEXT NOT NULL DEFAULT 'open',
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
     meta TEXT
@@ -564,6 +572,7 @@ export const SCHEMA_STATEMENTS: string[] = [
     title TEXT,
     message TEXT,
     author TEXT NOT NULL,
+    author_id TEXT,
     base_version INTEGER NOT NULL,
     state TEXT NOT NULL DEFAULT 'open',
     decided_by TEXT,
@@ -605,6 +614,8 @@ export const SCHEMA_STATEMENTS: string[] = [
  */
 export const MIGRATION_STATEMENTS: string[] = [
   `ALTER TABLE comment ADD COLUMN meta TEXT`,
+  `ALTER TABLE comment ADD COLUMN author_id TEXT`,
+  `ALTER TABLE proposal ADD COLUMN author_id TEXT`,
   `ALTER TABLE version ADD COLUMN name TEXT`,
   `ALTER TABLE proposal ADD COLUMN decision_note TEXT`,
   `ALTER TABLE artifact ADD COLUMN removed_at TEXT`,

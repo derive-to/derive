@@ -7,7 +7,7 @@ import {
   SELECTION_SCRIPT,
 } from "@dock/core"
 import type { Context } from "hono"
-import { RAW_HEADERS, rewriteAbsoluteUrls, toBody } from "./http"
+import { IMMUTABLE_CACHE, RAW_HEADERS, rewriteAbsoluteUrls, toBody } from "./http"
 
 /**
  * Serve stored artifact content (a version or a proposal) under `prefix`, resolving
@@ -15,6 +15,10 @@ import { RAW_HEADERS, rewriteAbsoluteUrls, toBody } from "./http"
  * for `/raw/:id/v/:n/` the prefix carries the path; for a vanity host the prefix is
  * `/`, so the absolute-URL rewriting becomes a no-op and the artifact serves at its
  * own origin root. Always carries the opaque-origin CSP (RAW_HEADERS).
+ *
+ * `cacheControl` sets Cache-Control per the artifact's access model (see
+ * `cacheControlFor`): a shared cache must never store a gated artifact's bytes and
+ * replay them to an unauthorized viewer, so only fully-public content is immutable.
  */
 export const serveContent = async (
   c: Context,
@@ -23,7 +27,9 @@ export const serveContent = async (
   title: string | null,
   prefix: string,
   rawPath: string,
+  cacheControl: string = IMMUTABLE_CACHE,
 ) => {
+  const headers = { ...RAW_HEADERS, "Cache-Control": cacheControl }
   let path = rawPath
   if (content.content_type === BUNDLE_CONTENT_TYPE) {
     const manifestBytes = await blobs.get(content.blob_key)
@@ -37,7 +43,7 @@ export const serveContent = async (
     // Pretty URLs (Astro-style dir output), then SPA fallback.
     if (!entry && !/\.[a-z0-9]+$/i.test(lookup)) entry = manifest.files[`${lookup}/index.html`]
     if (!entry && manifest.spa) entry = manifest.files[manifest.entry]
-    if (!entry) return c.text("not found", 404, RAW_HEADERS)
+    if (!entry) return c.text("not found", 404, headers)
 
     const data = await blobs.get(entry.key)
     if (!data) return c.text("blob missing", 500)
@@ -45,9 +51,9 @@ export const serveContent = async (
       const rewritten = rewriteAbsoluteUrls(new TextDecoder().decode(data), prefix.slice(0, -1))
       // Bundle pages get the anchor client too — comments stick everywhere.
       const out = entry.type.startsWith("text/html") ? rewritten + SELECTION_SCRIPT : rewritten
-      return c.body(out, 200, { ...RAW_HEADERS, "Content-Type": entry.type })
+      return c.body(out, 200, { ...headers, "Content-Type": entry.type })
     }
-    return c.body(toBody(data), 200, { ...RAW_HEADERS, "Content-Type": entry.type })
+    return c.body(toBody(data), 200, { ...headers, "Content-Type": entry.type })
   }
 
   const data = await blobs.get(content.blob_key)
@@ -56,18 +62,18 @@ export const serveContent = async (
   if (content.content_type === "text/markdown") {
     if (path === "raw.md")
       return c.body(toBody(data), 200, {
-        ...RAW_HEADERS,
+        ...headers,
         "Content-Type": "text/markdown; charset=utf-8",
       })
     const html = await renderMarkdown(new TextDecoder().decode(data), title)
-    return c.body(html, 200, { ...RAW_HEADERS, "Content-Type": "text/html; charset=utf-8" })
+    return c.body(html, 200, { ...headers, "Content-Type": "text/html; charset=utf-8" })
   }
 
   // html file artifact — any path serves the document (+ selection capture)
   const ct = mimeFor(path || "index.html")
   if (ct.startsWith("text/html")) {
     const html = new TextDecoder().decode(data) + SELECTION_SCRIPT
-    return c.body(html, 200, { ...RAW_HEADERS, "Content-Type": ct })
+    return c.body(html, 200, { ...headers, "Content-Type": ct })
   }
-  return c.body(toBody(data), 200, { ...RAW_HEADERS, "Content-Type": ct })
+  return c.body(toBody(data), 200, { ...headers, "Content-Type": ct })
 }

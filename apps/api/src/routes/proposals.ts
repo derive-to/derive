@@ -100,6 +100,7 @@ export const proposalRoutes = (ctx: AppContext) => {
         spa: body.spa === "true" || body.spa === "1",
         message: str(body.message),
         author,
+        author_id: acting?.id ?? null,
       })
       bus.publish(artifact.id, { type: "proposal.created", proposal_id: proposal.id })
       await notify(artifact, "proposal.created", {
@@ -210,14 +211,17 @@ export const proposalRoutes = (ctx: AppContext) => {
     const r = await loadProposal(c)
     if ("error" in r) return r.error
     const { artifact, proposal } = r
-    const me = await currentUser(c)
-    const who = me ? (me.name ?? me.email) : null
-    const isAuthor = who !== null && who === proposal.author
+    // Authorship keys on the stable proposer id, never the mutable display name.
+    // Legacy rows (author_id null) fall back to the name match.
+    const acting = await actingUser(c)
+    const isAuthor =
+      acting !== null &&
+      (proposal.author_id ? proposal.author_id === acting.id : proposal.author === acting.name)
     if (!isAuthor && !(await authorize(c, "manage", artifact))) return fail(c, 403, "forbidden")
     if (proposal.state !== "open") return fail(c, 409, `proposal is ${proposal.state}`)
     await meta.decideProposal(proposal.id, {
       state: "withdrawn",
-      decided_by: who,
+      decided_by: acting?.name ?? null,
       decided_version: null,
     })
     const fresh = (await meta.getProposal(proposal.id)) as ProposalRecord

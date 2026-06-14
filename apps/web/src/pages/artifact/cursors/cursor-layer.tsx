@@ -10,6 +10,7 @@ export function CursorLayer({ layer }: { layer: CursorLayerHandle }) {
   return (
     <div
       ref={layer.ref}
+      aria-hidden="true"
       className="pointer-events-none absolute inset-0 z-20 overflow-hidden"
       data-testid="cursor-layer"
     >
