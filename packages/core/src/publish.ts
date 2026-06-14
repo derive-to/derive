@@ -25,6 +25,8 @@ export interface PublishInput {
   /** The workspace the new artifact belongs to (multi-workspace). */
   orgId?: string
   visibility?: Visibility
+  /** Salted unlock-password hash, set by the route for `password` visibility. */
+  passwordHash?: string | null
   /** Names this publish a pinned checkpoint (Docs-style). */
   name?: string
 }
@@ -165,6 +167,7 @@ export async function publish(
     slug: input.slug ? slugify(input.slug) : slugify(title) || null,
     title,
     visibility: input.visibility ?? "link",
+    password_hash: input.passwordHash ?? null,
     kind,
     spa: input.spa ? 1 : 0,
   })

@@ -11,7 +11,9 @@ export interface BlobStore {
 }
 
 export type ArtifactKind = "file" | "bundle"
-export type Visibility = "public" | "link" | "org"
+// `password`: world-reachable by URL like `link`, but the bytes stay gated until
+// the visitor enters the password (then a viewer; members/owners see it by role).
+export type Visibility = "public" | "link" | "org" | "password"
 
 export interface ArtifactRecord {
   id: string
@@ -20,6 +22,8 @@ export interface ArtifactRecord {
   slug: string | null
   title: string | null
   visibility: Visibility
+  /** Salted hash of the unlock password for `password` visibility; null otherwise. */
+  password_hash: string | null
   kind: ArtifactKind
   spa: 0 | 1
   current_version: number
@@ -66,6 +70,8 @@ export interface NewArtifact {
   slug: string | null
   title: string | null
   visibility: Visibility
+  /** Salted unlock-password hash; set only for `password` visibility. */
+  password_hash?: string | null
   kind: ArtifactKind
   spa: 0 | 1
 }

@@ -3,7 +3,7 @@ import { useNavigate, useParams } from "@tanstack/react-router"
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react"
 import { createPortal } from "react-dom"
 import { toast } from "sonner"
-import { API_BASE, api, type Comment } from "@/api"
+import { API_BASE, ApiError, api, type Comment } from "@/api"
 import { useIsMobile } from "@/components"
 import { Icon } from "@/components/icons"
 import { useTopBarSlot } from "@/components/shell-context"
@@ -18,6 +18,7 @@ import { ArtifactTopBar } from "./artifact-top-bar"
 import { ActionsCtx } from "./comment-actions"
 import { groupThreads, parseAnchor } from "./lib/layout"
 import { parseRef } from "./parse-ref"
+import { PasswordGate } from "./password-gate"
 import { Presence } from "./rail-deck"
 import { SourceEditor } from "./source-editor"
 import type { PinItem, Sel } from "./types"
@@ -52,8 +53,11 @@ export function Artifact() {
   // click that follows a hover reads straight from cache. Optimistic edits and
   // the SSE live updates below write through the same client.
   const qc = useQueryClient()
-  const { data: art, isError: failed } = useQuery(artifactQuery(shortId))
+  const { data: art, isError: failed, error, refetch } = useQuery(artifactQuery(shortId))
   const { data: comments = [] } = useQuery(commentsQuery(shortId))
+  // A password artifact returns 401 until the visitor unlocks it — show the
+  // password prompt rather than the not-found state or a bounce to login.
+  const locked = failed && error instanceof ApiError && error.status === 401
   const [editing, setEditing] = useState(false)
   const [reviewing, setReviewing] = useState(false)
   // Which "⋯ More" surface is open (large dialog / drawer).
@@ -131,8 +135,8 @@ export function Artifact() {
     // Anonymous can view a public artifact (read-only, with a sign-up CTA). Only
     // bounce to login when it isn't readable for them (private / 404) — then an
     // account is required. A signed-in user with no access bounces the same way.
-    if (!loading && !me && failed) nav({ to: "/login" })
-  }, [loading, me, failed, nav])
+    if (!loading && !me && failed && !locked) nav({ to: "/login" })
+  }, [loading, me, failed, locked, nav])
 
   // Deep link: ?c=<thread> opens the panel, activates that thread, and jumps to
   // its text. Runs once, after comments are in.
@@ -148,6 +152,7 @@ export function Artifact() {
     }
   }, [comments, post, setPanel])
 
+  if (locked) return <PasswordGate shortId={shortId} onUnlocked={() => refetch()} />
   if (failed) return <ArtifactNotFound onBack={() => nav({ to: "/" })} />
   if (!art) return <ArtifactLoading />
   // Removed artifacts show a tombstone instead of the document — content is gone

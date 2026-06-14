@@ -33,6 +33,10 @@ server.registerTool(
       title: z.string().optional(),
       slug: z.string().optional(),
       visibility: z.enum(["public", "link", "org", "password"]).optional(),
+      password: z
+        .string()
+        .optional()
+        .describe("Unlock password; required when visibility is 'password'."),
     },
   },
   async (args) => {

@@ -196,8 +196,19 @@ export const API_BASE = (import.meta.env.VITE_DOCK_API ?? "").replace(/\/$/, "")
 const u = (path: string) => API_BASE + path
 const f = (path: string, init?: RequestInit) => fetch(u(path), init)
 
+// Thrown error carries the HTTP status so callers can branch (e.g. a 401 on a
+// password artifact means "prompt for the password", not "not found").
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message)
+  }
+}
 const j = async (r: Response) => {
-  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error ?? `HTTP ${r.status}`)
+  if (!r.ok)
+    throw new ApiError((await r.json().catch(() => ({}))).error ?? `HTTP ${r.status}`, r.status)
   return r.json()
 }
 const opts = (body?: unknown): RequestInit => ({
@@ -259,6 +270,10 @@ export const api = {
     f(`/v1/artifacts/${id}/content${v ? `?v=${v}` : ""}`, { credentials: "include" }).then((r) =>
       r.text(),
     ),
+  // Verify a password artifact's password; on success the server sets the unlock
+  // cookie and subsequent reads of this artifact succeed.
+  unlock: (id: string, password: string): Promise<{ ok: true }> =>
+    f(`/v1/artifacts/${id}/unlock`, opts({ password })).then(j),
   diff: (id: string, from: number, to: number): Promise<Diff> =>
     f(`/v1/artifacts/${id}/diff?from=${from}&to=${to}&format=json`, opts()).then(j),
   restore: (id: string, version: number): Promise<Artifact> =>
