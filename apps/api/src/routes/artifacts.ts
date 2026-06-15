@@ -412,7 +412,7 @@ export const artifactRoutes = (ctx: AppContext) => {
       // Same blob as the restored version — carry its size so the storage meter
       // stays consistent (and dedup'd, since it reuses the same blob_key).
       size_bytes: src.size_bytes,
-      author: me ? (me.name ?? me.email) : "anonymous",
+      author: me ? (me.name ?? me.username ?? me.email) : "anonymous",
       message: `Restored v${src.n}`,
       name: null,
     })

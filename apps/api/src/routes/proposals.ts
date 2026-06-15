@@ -178,7 +178,7 @@ export const proposalRoutes = (ctx: AppContext) => {
     if (!(await authorize(c, "approve", artifact))) return fail(c, 403, "forbidden")
     if (proposal.state !== "open") return fail(c, 409, `proposal is ${proposal.state}`)
     const me = await currentUser(c)
-    const approver = me ? (me.name ?? me.email) : null
+    const approver = me ? (me.name ?? me.username ?? me.email) : null
     const body = await readJson(c, z.object({ note: z.unknown().optional() }))
     if (body instanceof Response) return body
     try {
@@ -229,7 +229,7 @@ export const proposalRoutes = (ctx: AppContext) => {
     if (!(await authorize(c, "approve", artifact))) return fail(c, 403, "forbidden")
     if (proposal.state !== "open") return fail(c, 409, `proposal is ${proposal.state}`)
     const me = await currentUser(c)
-    const reviewer = me ? (me.name ?? me.email) : null
+    const reviewer = me ? (me.name ?? me.username ?? me.email) : null
     const body = await readJson(c, z.object({ note: z.unknown().optional() }))
     if (body instanceof Response) return body
     await meta.decideProposal(proposal.id, {

@@ -219,3 +219,36 @@ describe("B-020: view-analytics is collaborator-gated + never leaks email", () =
     expect(JSON.stringify(stats)).not.toContain("v20@dock.test")
   })
 })
+
+// B-021: author/actor attribution shown to others (publish + version author byline,
+// comment author, proposal approver/reviewer) must fall back to the public handle
+// when a user has no display name — never the email. The email→handle migration
+// fixed the rosters but missed these byline paths. See bug-hunt B-021.
+describe("B-021: author/actor attribution falls back to handle, never email", () => {
+  // name:null forces the fallback — it must land on the username, not the email.
+  const ghost: TestUser = {
+    id: "u_b21",
+    email: "ghost21@dock.test",
+    name: null,
+    username: "ghost21",
+  }
+
+  it("a name-less user's publish + comment author show the handle, not the email", async () => {
+    const { app } = makeAuthedApp("harden-b21", [ghost])
+    const pub = await (
+      await publishAs(app, "<h1>p</h1>", { title: "B21", visibility: "public" }, as(ghost.email))
+    ).json()
+    // The version author byline (shown publicly) is the handle, and the email is absent.
+    expect(pub.versions[0].author).toBe("ghost21")
+    expect(JSON.stringify(pub)).not.toContain("ghost21@dock.test")
+
+    const cm = await (
+      await app.request(
+        `/v1/artifacts/${pub.short_id}/comments`,
+        jsonAs(as(ghost.email), { body_md: "hi" }),
+      )
+    ).json()
+    expect(cm.author).toBe("ghost21")
+    expect(JSON.stringify(cm)).not.toContain("ghost21@dock.test")
+  })
+})
