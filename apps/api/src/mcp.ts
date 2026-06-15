@@ -9,7 +9,17 @@
 // in exactly that bearer's workspace at that bearer's role. Runs identically on the
 // Node tier and the Cloudflare Workers tier — same `createApp`.
 
-import type { AgentRecord, ArtifactRecord } from "@dock/core"
+import {
+  type AgentRecord,
+  type ArtifactRecord,
+  BUNDLE_CONTENT_TYPE,
+  type BundleManifest,
+  diffLines,
+  formatDiff,
+  PublishError,
+  propose as proposeChange,
+  type VersionRecord,
+} from "@dock/core"
 import { StreamableHTTPTransport } from "@hono/mcp"
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import type { Hono } from "hono"
@@ -36,10 +46,55 @@ const summarizeArtifact = (a: ArtifactRecord) => ({
   removed: !!a.removed_at,
 })
 
+const summarizeVersion = (v: VersionRecord) => ({
+  n: v.n,
+  name: v.name,
+  message: v.message,
+  author: v.author,
+  created_at: v.created_at,
+})
+
+// A version's bundle manifest (null when it isn't a bundle / is unreadable). Lets
+// the loop tools see a multi-page artifact's actual files, not just its entry doc.
+const manifestOf = async (ctx: AppContext, v: VersionRecord): Promise<BundleManifest | null> => {
+  if (v.content_type !== BUNDLE_CONTENT_TYPE) return null
+  const bytes = await ctx.blobs.get(v.blob_key)
+  if (!bytes) return null
+  try {
+    return JSON.parse(new TextDecoder().decode(bytes)) as BundleManifest
+  } catch {
+    return null
+  }
+}
+
+// Bundle manifests store paths with a leading slash (/index.html); present them
+// cleanly to the agent, and accept either form on the way back in.
+const cleanPath = (p: string) => p.replace(/^\//, "")
+
+// Which pages changed between two bundle versions — by comparing each file's
+// content-addressed blob key. This is the "what's new" a coalesced catch-up needs.
+const bundleFileChanges = (from: BundleManifest, to: BundleManifest) => ({
+  added: Object.keys(to.files)
+    .filter((p) => !from.files[p])
+    .map(cleanPath),
+  removed: Object.keys(from.files)
+    .filter((p) => !to.files[p])
+    .map(cleanPath),
+  changed: Object.keys(to.files)
+    .filter((p) => {
+      const f = from.files[p]
+      const t = to.files[p]
+      return f && t && f.key !== t.key
+    })
+    .map(cleanPath),
+})
+
 /**
  * A new MCP server for one request, scoped to `agent` (the OAuth-resolved identity).
- * Phase 0 is read-only — the agent can see what it's working on; the write/loop
- * tools (diff, propose, catch_me_up) land in Phase 1.
+ * Tools act in the bearer's workspace at the bearer's role: reads for anyone, and
+ * `propose` (the human-in-the-loop write) for commenter+ — a proposal never goes
+ * live without a human approving it, so an agent is a safe contributor, not a
+ * publisher.
  */
 function buildServer(ctx: AppContext, agent: AgentRecord): McpServer {
   const server = new McpServer({ name: "dock", version: "1.0.0" })
@@ -149,6 +204,183 @@ function buildServer(ctx: AppContext, agent: AgentRecord): McpServer {
             created_at: v.created_at,
           })),
       })
+    },
+  )
+
+  server.registerTool(
+    "read_section",
+    {
+      description:
+        "Read a specific page of a multi-page artifact (bundle), or the content of a single-file one. Omit `path` to list a bundle's pages first.",
+      inputSchema: {
+        short_id: z.string(),
+        path: z
+          .string()
+          .optional()
+          .describe("A page path within a bundle, e.g. agentic-loop.html. Omit to list pages."),
+        version: z.number().optional().describe("Defaults to the current version."),
+      },
+    },
+    async ({ short_id, path, version }) => {
+      const a = await own(short_id)
+      if (!a) return text(`No artifact "${short_id}" in this workspace.`)
+      const n = version ?? a.current_version
+      const v = await ctx.meta.getVersion(a.id, n)
+      if (!v) return text(`No version ${n} (have 1..${a.current_version}).`)
+      const manifest = await manifestOf(ctx, v)
+      if (!manifest) {
+        const body = await ctx.sourceText(v)
+        return json({ short_id, version: n, path: null, content: clip(body ?? "") })
+      }
+      if (!path)
+        return json({
+          short_id,
+          version: n,
+          entry: cleanPath(manifest.entry),
+          pages: Object.keys(manifest.files).map(cleanPath),
+        })
+      // Accept the page path with or without a leading slash.
+      const file = manifest.files[path] ?? manifest.files[`/${cleanPath(path)}`]
+      if (!file)
+        return text(
+          `No page "${path}". Pages: ${Object.keys(manifest.files).map(cleanPath).join(", ")}`,
+        )
+      const bytes = await ctx.blobs.get(file.key)
+      return json({
+        short_id,
+        version: n,
+        path: cleanPath(path),
+        type: file.type,
+        content: clip(bytes ? new TextDecoder().decode(bytes) : ""),
+      })
+    },
+  )
+
+  server.registerTool(
+    "diff",
+    {
+      description:
+        "What changed between two versions of an artifact: a unified diff of the entry document, plus (for bundles) which pages were added / removed / changed. `to` defaults to the current version.",
+      inputSchema: {
+        short_id: z.string(),
+        from: z.number().describe("The base version number."),
+        to: z.number().optional().describe("Defaults to the current version."),
+      },
+    },
+    async ({ short_id, from, to }) => {
+      const a = await own(short_id)
+      if (!a) return text(`No artifact "${short_id}" in this workspace.`)
+      const toN = to ?? a.current_version
+      const vf = await ctx.meta.getVersion(a.id, from)
+      const vt = await ctx.meta.getVersion(a.id, toN)
+      if (!vf || !vt) return text(`Missing version (have 1..${a.current_version}).`)
+      const [af, at] = [await ctx.sourceText(vf), await ctx.sourceText(vt)]
+      if (af === null || at === null) return text("Version content is missing.")
+      const [mf, mt] = [await manifestOf(ctx, vf), await manifestOf(ctx, vt)]
+      return json({
+        short_id,
+        from,
+        to: toN,
+        pages_changed: mf && mt ? bundleFileChanges(mf, mt) : null,
+        entry_diff: clip(formatDiff(diffLines(af, at))),
+      })
+    },
+  )
+
+  server.registerTool(
+    "catch_me_up",
+    {
+      description:
+        "The coalesced delta since you last looked: every version that landed since `since_version`, which pages changed, a diff of the entry document, and the open comment threads — everything you need to re-sync on the plan in one call. `since_version` defaults to the version before current.",
+      inputSchema: {
+        short_id: z.string(),
+        since_version: z
+          .number()
+          .optional()
+          .describe("The version you last saw. Defaults to current − 1."),
+      },
+    },
+    async ({ short_id, since_version }) => {
+      const a = await own(short_id)
+      if (!a) return text(`No artifact "${short_id}" in this workspace.`)
+      const head = a.current_version
+      const since = Math.min(head, Math.max(1, since_version ?? head - 1))
+      const newVersions = (await ctx.meta.listVersions(a.id)).filter((v) => v.n > since)
+      const vs = await ctx.meta.getVersion(a.id, since)
+      const vh = await ctx.meta.getVersion(a.id, head)
+      let entryDiff: string | null = null
+      let pagesChanged: ReturnType<typeof bundleFileChanges> | null = null
+      if (vs && vh && since < head) {
+        const [as_, ah] = [await ctx.sourceText(vs), await ctx.sourceText(vh)]
+        if (as_ !== null && ah !== null) entryDiff = clip(formatDiff(diffLines(as_, ah)))
+        const [ms, mh] = [await manifestOf(ctx, vs), await manifestOf(ctx, vh)]
+        if (ms && mh) pagesChanged = bundleFileChanges(ms, mh)
+      }
+      const open = await ctx.meta.listComments(a.id, { state: "open" })
+      return json({
+        short_id,
+        since,
+        head,
+        caught_up: since >= head,
+        new_versions: newVersions.map(summarizeVersion),
+        pages_changed: pagesChanged,
+        entry_diff: entryDiff,
+        open_comments: open.map((c) => ({
+          thread: c.thread_id,
+          author: c.author,
+          body: c.body_md,
+        })),
+      })
+    },
+  )
+
+  server.registerTool(
+    "propose",
+    {
+      description:
+        "Propose a revised version of a single-file artifact for human review. It does NOT go live — a reviewer approves it or requests changes. Provide the FULL new content (not a patch) and a rationale. (Multi-page bundles aren't proposable over MCP yet.)",
+      inputSchema: {
+        short_id: z.string(),
+        content: z
+          .string()
+          .describe("The complete new content of the document (HTML or Markdown)."),
+        message: z.string().describe("What you changed and why — shown to the reviewer."),
+        filename: z
+          .string()
+          .optional()
+          .describe("Filename hint for the content type, e.g. index.html or notes.md."),
+      },
+    },
+    async ({ short_id, content, message, filename }) => {
+      const a = await own(short_id)
+      if (!a) return text(`No artifact "${short_id}" in this workspace.`)
+      if (agent.role === "viewer")
+        return text(
+          "Your grant is read-only (dock:read). Re-authorize with dock:propose to propose changes.",
+        )
+      if (a.kind === "bundle")
+        return text(
+          `"${short_id}" is a multi-page bundle; proposing bundle revisions over MCP isn't supported yet (single-file artifacts only).`,
+        )
+      try {
+        const { proposal } = await proposeChange(ctx.meta, ctx.blobs, short_id, {
+          bytes: new TextEncoder().encode(content),
+          filename: filename ?? "index.html",
+          isBundle: false,
+          message,
+          author: agent.name,
+          author_id: agent.id,
+        })
+        return json({
+          proposed: true,
+          proposal_id: proposal.id,
+          base_version: proposal.base_version,
+          note: "Submitted for review — a human approves it or requests changes. It is NOT live yet.",
+        })
+      } catch (e) {
+        const msg = e instanceof PublishError ? e.message : "could not store the proposal"
+        return text(`Propose failed: ${msg}`)
+      }
     },
   )
 

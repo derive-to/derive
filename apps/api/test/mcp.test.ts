@@ -4,6 +4,7 @@ import { join } from "node:path"
 import { SqliteMetaStore } from "@dock/db/sqlite"
 import { FsBlobStore } from "@dock/storage/fs"
 import Database from "better-sqlite3"
+import { zipSync } from "fflate"
 import { afterAll, describe, expect, it } from "vitest"
 import { createApp } from "../src/app"
 import { sha256 } from "../src/lib/crypto"
@@ -125,6 +126,10 @@ describe("remote MCP endpoint (/mcp)", () => {
         "read_artifact",
         "list_comments",
         "list_versions",
+        "read_section",
+        "diff",
+        "catch_me_up",
+        "propose",
       ]),
     )
   })
@@ -160,5 +165,115 @@ describe("remote MCP endpoint (/mcp)", () => {
     const readOut = JSON.parse(toolText(read))
     expect(readOut.title).toBe("My Plan")
     expect(readOut.content).toContain("My Plan")
+  })
+
+  it("diff + catch_me_up report what changed between versions", async () => {
+    const { app, token } = appWithGrant("diff", "openid dock:read dock:publish")
+    const shortId = (await (await publish(app, token, "V1 Title")).json()).short_id
+
+    // Republish a second version with different content.
+    const form = new FormData()
+    form.append("file", new Blob([new TextEncoder().encode("<h1>V2 Title</h1>")]), "index.html")
+    form.append("name", "rev 2")
+    const rep = await app.request(`/v1/artifacts/${shortId}/versions`, {
+      method: "POST",
+      body: form,
+      headers: { authorization: `Bearer ${token}` },
+    })
+    expect(rep.status).toBe(201)
+
+    const d = JSON.parse(
+      toolText(await call(app, token, "diff", { short_id: shortId, from: 1, to: 2 })),
+    )
+    expect(d.entry_diff).toContain("V2 Title")
+
+    const c = JSON.parse(
+      toolText(await call(app, token, "catch_me_up", { short_id: shortId, since_version: 1 })),
+    )
+    expect(c.head).toBe(2)
+    expect(c.new_versions.map((v: { n: number }) => v.n)).toContain(2)
+    expect(c.entry_diff).toContain("V2 Title")
+    expect(c.caught_up).toBe(false)
+  })
+
+  it("read_section + catch_me_up handle multi-page bundles", async () => {
+    const { app, token } = appWithGrant("bundle", "openid dock:read dock:publish")
+    const enc = (s: string) => new TextEncoder().encode(s)
+    const postZip = (
+      files: Record<string, Uint8Array>,
+      fields: Record<string, string>,
+      id?: string,
+    ) => {
+      const form = new FormData()
+      form.append("file", new Blob([zipSync(files)]), "site.zip")
+      for (const [k, v] of Object.entries(fields)) form.append(k, v)
+      return app.request(id ? `/v1/artifacts/${id}/versions` : "/v1/artifacts", {
+        method: "POST",
+        body: form,
+        headers: { authorization: `Bearer ${token}` },
+      })
+    }
+    const pj = await (
+      await postZip(
+        { "index.html": enc("<h1>Home</h1>"), "page.html": enc("<h1>Page</h1>") },
+        { title: "Site", visibility: "link" },
+      )
+    ).json()
+    expect(pj.kind).toBe("bundle")
+    const shortId = pj.short_id
+
+    // No path → lists the bundle's pages.
+    const pages = JSON.parse(
+      toolText(await call(app, token, "read_section", { short_id: shortId })),
+    )
+    expect(pages.pages).toEqual(expect.arrayContaining(["index.html", "page.html"]))
+    // A path → that page's content.
+    const page = JSON.parse(
+      toolText(await call(app, token, "read_section", { short_id: shortId, path: "page.html" })),
+    )
+    expect(page.content).toContain("Page")
+
+    // Republish with a new page; catch_me_up reports it under pages_changed.added.
+    await postZip(
+      {
+        "index.html": enc("<h1>Home</h1>"),
+        "page.html": enc("<h1>Page</h1>"),
+        "new.html": enc("<h1>New</h1>"),
+      },
+      { name: "rev 2" },
+      shortId,
+    )
+    const cu = JSON.parse(
+      toolText(await call(app, token, "catch_me_up", { short_id: shortId, since_version: 1 })),
+    )
+    expect(cu.pages_changed.added).toContain("new.html")
+  })
+
+  it("propose stages a revision for review without going live", async () => {
+    // Editor grant so the setup publish works; over MCP even an editor only gets
+    // `propose` (no direct-publish tool), so the candidate still never auto-goes-live.
+    const { app, token } = appWithGrant("propose", "openid dock:read dock:publish")
+    const shortId = (await (await publish(app, token, "Draft")).json()).short_id
+
+    const p = JSON.parse(
+      toolText(
+        await call(app, token, "propose", {
+          short_id: shortId,
+          content: "<h1>Revised draft</h1>",
+          message: "tightened the intro",
+        }),
+      ),
+    )
+    expect(p.proposed).toBe(true)
+    expect(p.proposal_id).toBeTruthy()
+    expect(p.base_version).toBe(1)
+
+    // The live version is untouched — a proposal is not a publish.
+    const read = JSON.parse(
+      toolText(await call(app, token, "read_artifact", { short_id: shortId })),
+    )
+    expect(read.version).toBe(1)
+    expect(read.content).toContain("Draft")
+    expect(read.content).not.toContain("Revised")
   })
 })
