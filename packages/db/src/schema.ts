@@ -6,6 +6,7 @@ import type {
   DeliveryStatus,
   DomainKind,
   DomainStatus,
+  GeneralRole,
   NotificationKind,
   ProposalState,
   ReportState,
@@ -28,6 +29,10 @@ export const artifact = sqliteTable("artifact", {
   title: text("title"),
   visibility: text("visibility").$type<Visibility>().notNull().default("link"),
   password_hash: text("password_hash"),
+  // The role general access (the link) grants a reacher with no higher explicit
+  // grant. viewer = view-only (default); commenter = authed reachers may comment
+  // (anonymous reachers are always clamped to viewer — see effectiveRole).
+  general_role: text("general_role").$type<GeneralRole>().notNull().default("viewer"),
   kind: text("kind").$type<ArtifactKind>().notNull(),
   spa: integer("spa").$type<0 | 1>().notNull().default(0),
   current_version: integer("current_version").notNull().default(0),
@@ -351,6 +356,7 @@ export const SCHEMA_STATEMENTS: string[] = [
     title TEXT,
     visibility TEXT NOT NULL DEFAULT 'link',
     password_hash TEXT,
+    general_role TEXT NOT NULL DEFAULT 'viewer',
     kind TEXT NOT NULL,
     spa INTEGER NOT NULL DEFAULT 0,
     current_version INTEGER NOT NULL DEFAULT 0,
@@ -620,6 +626,7 @@ export const MIGRATION_STATEMENTS: string[] = [
   `ALTER TABLE proposal ADD COLUMN decision_note TEXT`,
   `ALTER TABLE artifact ADD COLUMN removed_at TEXT`,
   `ALTER TABLE artifact ADD COLUMN password_hash TEXT`,
+  `ALTER TABLE artifact ADD COLUMN general_role TEXT NOT NULL DEFAULT 'viewer'`,
   `ALTER TABLE version ADD COLUMN size_bytes INTEGER NOT NULL DEFAULT 0`,
   `ALTER TABLE webhook ADD COLUMN org_id TEXT NOT NULL DEFAULT 'default'`,
   `ALTER TABLE report ADD COLUMN org_id TEXT NOT NULL DEFAULT 'default'`,

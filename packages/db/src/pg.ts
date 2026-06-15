@@ -12,6 +12,7 @@ import type {
   DeliveryStatus,
   DomainRecord,
   DomainStatus,
+  GeneralRole,
   ListArtifactsOpts,
   MembershipRecord,
   MetaStore,
@@ -183,10 +184,11 @@ export class PgMetaStore implements MetaStore {
     artifactId: string,
     visibility: Visibility,
     passwordHash: string | null,
+    generalRole: GeneralRole,
   ): Promise<void> {
     await this.db
       .update(artifact)
-      .set({ visibility, password_hash: passwordHash })
+      .set({ visibility, password_hash: passwordHash, general_role: generalRole })
       .where(eq(artifact.id, artifactId))
   }
 

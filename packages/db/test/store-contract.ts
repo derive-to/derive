@@ -111,12 +111,20 @@ export function runStoreContract(
       expect(await store.listArtifacts({ ids: [] })).toEqual([])
     })
 
-    it("changes visibility (sets/clears the password hash)", async () => {
+    it("changes visibility + general-access role (sets/clears the password hash)", async () => {
       const a = await store.createArtifact(newArtifact())
-      await store.setVisibility(a.id, "password", "hash123")
+      expect(a.general_role).toBe("viewer") // defaults to view-only
+      await store.setVisibility(a.id, "password", "hash123", "viewer")
       expect(await store.getByShortId(a.short_id)).toMatchObject({ visibility: "password" })
-      await store.setVisibility(a.id, "link", null)
-      expect(await store.getByShortId(a.short_id)).toMatchObject({ visibility: "link" })
+      // Flip to a comment link: visibility + general_role both round-trip.
+      await store.setVisibility(a.id, "link", null, "commenter")
+      expect(await store.getByShortId(a.short_id)).toMatchObject({
+        visibility: "link",
+        general_role: "commenter",
+      })
+      // And back to view-only.
+      await store.setVisibility(a.id, "link", null, "viewer")
+      expect((await store.getByShortId(a.short_id))?.general_role).toBe("viewer")
     })
 
     it("counts storage bytes once per distinct blob (content-addressed)", async () => {

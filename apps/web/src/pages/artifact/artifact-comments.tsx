@@ -28,6 +28,9 @@ export function ArtifactComments(p: {
   shortId: string
   isMobile: boolean
   isAnon: boolean
+  /** May the caller create comments here (commenter+)? Gates every write affordance;
+   *  reading stays open to any authenticated viewer. */
+  canComment: boolean
   docLive: boolean
   panel: Panel
   asideWidth: number
@@ -55,7 +58,7 @@ export function ArtifactComments(p: {
   jumpTo: (threadId: string) => void
   startSelComment: () => void
 }) {
-  const { isMobile, isAnon, panel, sel } = p
+  const { isMobile, isAnon, canComment, panel, sel } = p
   // Focus primer: tapping "Comment" focuses this synchronously, inside the tap
   // gesture, so iOS raises the keyboard; the composer's autofocus then takes over
   // and the keyboard stays up. (iOS won't open the keyboard for a focus that lands
@@ -72,8 +75,8 @@ export function ArtifactComments(p: {
   }
 
   return (
-    <CommentScopeProvider value={{ shortId: p.shortId }}>
-      {isMobile && !isAnon && (
+    <CommentScopeProvider value={{ shortId: p.shortId, canComment }}>
+      {isMobile && canComment && (
         // Always mounted so the Comment tap can focus it synchronously (see `primer`).
         // text-base (16px) avoids iOS's zoom-on-focus.
         <textarea
@@ -159,7 +162,7 @@ export function ArtifactComments(p: {
           mouse can reach it and there is no native callout in the way). On phones
           this would land under iOS's own selection menu, so mobile uses the bottom
           bar below instead. Clicking opens the panel and starts a pinned composer. */}
-      {!isMobile && !isAnon && p.docLive && sel && !p.composer && (
+      {!isMobile && canComment && p.docLive && sel && !p.composer && (
         <button
           type="button"
           className="fixed z-50 inline-flex items-center gap-2 whitespace-nowrap rounded-full border border-primary bg-card px-3.5 py-2 text-sm font-semibold text-primary shadow-[var(--shadow)] transition-colors hover:bg-primary hover:text-primary-foreground"
@@ -188,7 +191,7 @@ export function ArtifactComments(p: {
           pinned below iOS's own selection menu and big enough to thumb. It shows
           the quote so you know what you're attaching to; Comment opens the sheet
           composer, ✕ clears the selection. */}
-      {isMobile && !isAnon && p.docLive && sel && !p.composer && (
+      {isMobile && canComment && p.docLive && sel && !p.composer && (
         <div
           data-testid="mobile-comment-bar"
           className="fixed inset-x-0 bottom-0 z-[62] flex items-center gap-2.5 border-t border-border bg-card px-3 pb-[max(16px,env(safe-area-inset-bottom))] pt-4 shadow-[0_-12px_36px_-16px_rgba(0,0,0,0.55)]"

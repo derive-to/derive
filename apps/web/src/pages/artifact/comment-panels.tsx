@@ -10,6 +10,7 @@ import {
   PinnedZone,
   ResolvedSection,
 } from "./comment-thread"
+import { useCommentScope } from "./lib/comment-scope"
 import { IconBtn } from "./rail-deck"
 import type { PinItem, Sel } from "./types"
 
@@ -50,6 +51,7 @@ export function MobileComments({
   // list). Composing overrides both with a compact composer bar pinned above the
   // keyboard (see the height + `kb` style below), so the box sits flush above the
   // keyboard with the document visible above — no awkward half-height middle state.
+  const { canComment } = useCommentScope()
   const [size, setSize] = useState<"peek" | "full">("peek")
   useEffect(() => {
     if (open) setSize("peek")
@@ -149,17 +151,19 @@ export function MobileComments({
             </span>
           )}
           <span className="flex-1" />
-          <Button
-            variant="outline"
-            size="sm"
-            data-testid="comments-sheet-new"
-            onClick={() => {
-              setSize("full")
-              onNewGeneral()
-            }}
-          >
-            ＋ New
-          </Button>
+          {canComment && (
+            <Button
+              variant="outline"
+              size="sm"
+              data-testid="comments-sheet-new"
+              onClick={() => {
+                setSize("full")
+                onNewGeneral()
+              }}
+            >
+              ＋ New
+            </Button>
+          )}
           <IconBtn
             big
             title={size === "peek" ? "Expand" : "Collapse"}
@@ -282,6 +286,7 @@ export function OpenPanel(props: {
     onSubmitNew,
     onCancelNew,
   } = props
+  const { canComment } = useCommentScope()
   const generalComposer = composer && !composer.anchor
   const empty = openCount === 0 && resolved.length === 0 && !composer
 
@@ -295,9 +300,11 @@ export function OpenPanel(props: {
           </span>
         )}
         <span className="flex-1" />
-        <IconBtn title="New comment" testId="comment-new" onClick={onNewGeneral}>
-          ＋
-        </IconBtn>
+        {canComment && (
+          <IconBtn title="New comment" testId="comment-new" onClick={onNewGeneral}>
+            ＋
+          </IconBtn>
+        )}
         <IconBtn title="Minimize to rail (c)" onClick={onMinimize}>
           ⟩
         </IconBtn>

@@ -2,7 +2,7 @@
  * Core owns the ports; packages/db and packages/storage provide the adapters.
  * Everything here must run on Node AND Cloudflare Workers — no Node APIs.
  */
-import type { Role } from "./permissions"
+import type { GeneralRole, Role } from "./permissions"
 
 export interface BlobStore {
   /** Content-addressed put; returns the sha256 hex key. Idempotent. */
@@ -31,6 +31,10 @@ export interface ArtifactRecord {
   visibility: Visibility
   /** Salted hash of the unlock password for `password` visibility; null otherwise. */
   password_hash: string | null
+  /** The role general access (the link) grants a reacher with no higher explicit grant.
+   *  `viewer` (default) = view-only; `commenter` = authenticated reachers may comment.
+   *  Anonymous reachers are always clamped to `viewer` regardless (see effectiveRole). */
+  general_role: GeneralRole
   kind: ArtifactKind
   spa: 0 | 1
   current_version: number
@@ -79,6 +83,8 @@ export interface NewArtifact {
   visibility: Visibility
   /** Salted unlock-password hash; set only for `password` visibility. */
   password_hash?: string | null
+  /** General-access role; defaults to `viewer` (view-only) when omitted. */
+  general_role?: GeneralRole
   kind: ArtifactKind
   spa: 0 | 1
 }
@@ -95,12 +101,13 @@ export interface NewVersion {
 
 export interface MetaStore {
   createArtifact(a: NewArtifact): Promise<ArtifactRecord>
-  /** Change an artifact's general access (visibility), setting/clearing the unlock
-   *  password hash (null for any non-`password` visibility). */
+  /** Change an artifact's general access: visibility, the unlock password hash (null for
+   *  any non-`password` visibility), and the general-access role (view vs comment). */
   setVisibility(
     artifactId: string,
     visibility: Visibility,
     passwordHash: string | null,
+    generalRole: GeneralRole,
   ): Promise<void>
   getByShortId(shortId: string): Promise<ArtifactRecord | null>
   /** Load an artifact by its internal id (used by domain mode's host lookup). */

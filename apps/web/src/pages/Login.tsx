@@ -21,7 +21,7 @@ const loginRoute = getRouteApi("/login")
 export function Login() {
   const { me, loading, setMe } = useAuth()
   const nav = useNavigate()
-  const { signup: wantSignup } = loginRoute.useSearch()
+  const { signup: wantSignup, return_to: returnTo } = loginRoute.useSearch()
   const [mode, setMode] = useState<"login" | "signup">(wantSignup ? "signup" : "login")
   const [name, setName] = useState("")
   const [email, setEmail] = useState("")
@@ -37,12 +37,16 @@ export function Login() {
     const search = typeof window !== "undefined" ? window.location.search : ""
     if (new URLSearchParams(search).has("client_id")) {
       window.location.href = `/api/auth/oauth2/authorize${search}`
+    } else if (typeof returnTo === "string") {
+      // Back to where sign-in was prompted (e.g. a shared artifact's "sign in to
+      // comment"). Validated same-origin relative by the route, so this is safe.
+      window.location.href = returnTo
     } else {
       nav({ to: "/" })
     }
   }
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: afterAuth only reads nav (stable) + the URL; keyed to the auth state.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: afterAuth reads nav (stable), the URL, and returnTo (stable from search); keyed to the auth state.
   useEffect(() => {
     if (!loading && me) afterAuth()
   }, [loading, me])
