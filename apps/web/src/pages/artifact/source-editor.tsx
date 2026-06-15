@@ -32,6 +32,7 @@ export function SourceEditor({
   onCancel,
   onPublish,
   onPropose,
+  onTitle,
 }: {
   canPublish: boolean
   title: string
@@ -45,6 +46,9 @@ export function SourceEditor({
   onCancel: () => void
   onPublish: () => void
   onPropose: () => void
+  // When set, the title becomes an editable field (the new-artifact flow at /new);
+  // omitted for editing an existing artifact, where the title is shown read-only.
+  onTitle?: (v: string) => void
 }) {
   const [pane, setPane] = useState<"edit" | "preview">("edit")
   // Desktop preview-pane visibility (mobile uses the Edit/Preview tabs instead).
@@ -96,31 +100,45 @@ export function SourceEditor({
     // like in normal viewing — so you can reference comments while editing.
     <div className="flex min-h-0 flex-1 flex-col bg-card">
       <div className="flex flex-wrap items-center gap-2 border-b border-border-soft px-4 py-2.5">
-        <span className="flex items-center gap-2 font-mono text-xs text-muted-foreground">
-          <Icon name="edit" size={16} />
-          <span className="max-w-[40vw] truncate">
-            {canPublish ? `Editing · ${title}` : "Proposing a change"}
-          </span>
-        </span>
-        {canPublish ? (
+        {onTitle ? (
           <Input
-            value={message}
-            onChange={(e) => onMessage(e.target.value)}
-            placeholder="Describe this version (optional)"
-            aria-label="Version description"
-            data-testid="artifact-commit-message"
-            className="order-last h-8 w-full text-sm md:order-none md:w-auto md:max-w-[360px] md:flex-1"
+            value={title}
+            onChange={(e) => onTitle(e.target.value)}
+            placeholder="Untitled"
+            aria-label="Title"
+            data-testid="artifact-title-input"
+            className="h-8 w-full text-sm font-semibold md:w-auto md:max-w-[320px] md:flex-1"
           />
         ) : (
-          <Input
-            value={proposeMsg}
-            onChange={(e) => onProposeMsg(e.target.value)}
-            placeholder="What are you changing, and why?"
-            aria-label="Proposal description"
-            data-testid="artifact-propose-message"
-            className="order-last h-8 w-full text-sm md:order-none md:w-auto md:max-w-[420px] md:flex-1"
-          />
+          <span className="flex items-center gap-2 font-mono text-xs text-muted-foreground">
+            <Icon name="edit" size={16} />
+            <span className="max-w-[40vw] truncate">
+              {canPublish ? `Editing · ${title}` : "Proposing a change"}
+            </span>
+          </span>
         )}
+        {/* Version description / proposal "why" applies to editing an existing
+            artifact; a brand-new one (onTitle set) has no prior version to describe. */}
+        {!onTitle &&
+          (canPublish ? (
+            <Input
+              value={message}
+              onChange={(e) => onMessage(e.target.value)}
+              placeholder="Describe this version (optional)"
+              aria-label="Version description"
+              data-testid="artifact-commit-message"
+              className="order-last h-8 w-full text-sm md:order-none md:w-auto md:max-w-[360px] md:flex-1"
+            />
+          ) : (
+            <Input
+              value={proposeMsg}
+              onChange={(e) => onProposeMsg(e.target.value)}
+              placeholder="What are you changing, and why?"
+              aria-label="Proposal description"
+              data-testid="artifact-propose-message"
+              className="order-last h-8 w-full text-sm md:order-none md:w-auto md:max-w-[420px] md:flex-1"
+            />
+          ))}
         <span className="ml-auto flex items-center gap-2">
           {/* Desktop: show/hide the preview for a full-width editor when you don't
               need it. (Phones use the Edit/Preview tabs below instead.) */}

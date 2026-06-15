@@ -10,6 +10,7 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as SettingsRouteImport } from './routes/settings'
+import { Route as NewRouteImport } from './routes/new'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as UHandleRouteImport } from './routes/u.$handle'
@@ -18,6 +19,11 @@ import { Route as ARefRouteImport } from './routes/a.$ref'
 const SettingsRoute = SettingsRouteImport.update({
   id: '/settings',
   path: '/settings',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const NewRoute = NewRouteImport.update({
+  id: '/new',
+  path: '/new',
   getParentRoute: () => rootRouteImport,
 } as any)
 const LoginRoute = LoginRouteImport.update({
@@ -44,6 +50,7 @@ const ARefRoute = ARefRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
+  '/new': typeof NewRoute
   '/settings': typeof SettingsRoute
   '/a/$ref': typeof ARefRoute
   '/u/$handle': typeof UHandleRoute
@@ -51,6 +58,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
+  '/new': typeof NewRoute
   '/settings': typeof SettingsRoute
   '/a/$ref': typeof ARefRoute
   '/u/$handle': typeof UHandleRoute
@@ -59,21 +67,30 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
+  '/new': typeof NewRoute
   '/settings': typeof SettingsRoute
   '/a/$ref': typeof ARefRoute
   '/u/$handle': typeof UHandleRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/login' | '/settings' | '/a/$ref' | '/u/$handle'
+  fullPaths: '/' | '/login' | '/new' | '/settings' | '/a/$ref' | '/u/$handle'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/login' | '/settings' | '/a/$ref' | '/u/$handle'
-  id: '__root__' | '/' | '/login' | '/settings' | '/a/$ref' | '/u/$handle'
+  to: '/' | '/login' | '/new' | '/settings' | '/a/$ref' | '/u/$handle'
+  id:
+    | '__root__'
+    | '/'
+    | '/login'
+    | '/new'
+    | '/settings'
+    | '/a/$ref'
+    | '/u/$handle'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   LoginRoute: typeof LoginRoute
+  NewRoute: typeof NewRoute
   SettingsRoute: typeof SettingsRoute
   ARefRoute: typeof ARefRoute
   UHandleRoute: typeof UHandleRoute
@@ -86,6 +103,13 @@ declare module '@tanstack/react-router' {
       path: '/settings'
       fullPath: '/settings'
       preLoaderRoute: typeof SettingsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/new': {
+      id: '/new'
+      path: '/new'
+      fullPath: '/new'
+      preLoaderRoute: typeof NewRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/login': {
@@ -122,6 +146,7 @@ declare module '@tanstack/react-router' {
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   LoginRoute: LoginRoute,
+  NewRoute: NewRoute,
   SettingsRoute: SettingsRoute,
   ARefRoute: ARefRoute,
   UHandleRoute: UHandleRoute,
