@@ -46,20 +46,14 @@ export function MobileComments({
   onSubmitNew: (text: string, mentions?: Mention[]) => void
   onCancelNew: () => void
 }) {
-  // Three heights: peek (a slim bar you tap to reopen), half (document visible
-  // above), full. Reset to half on each open; a composer wants room so it expands
-  // to full; and tapping out (the full-height backdrop) collapses to the peek bar
-  // rather than closing outright, so comments stay one tap away.
-  const [size, setSize] = useState<"peek" | "half" | "full">("half")
+  // Two states only: peek (a slim "Comments (N)" bar — the default) and full (the
+  // list). Composing overrides both with a compact composer bar pinned above the
+  // keyboard (see the height + `kb` style below), so the box sits flush above the
+  // keyboard with the document visible above — no awkward half-height middle state.
+  const [size, setSize] = useState<"peek" | "full">("peek")
   useEffect(() => {
-    if (open) setSize("half")
+    if (open) setSize("peek")
   }, [open])
-  // While composing, keep the sheet HALF, not full: a full sheet plus the iOS
-  // keyboard leaves the composer with nowhere to go (iOS shoves the fixed sheet
-  // off the top of the window). Half-height, pinned just above the keyboard (the
-  // `kb` style below), puts the box squarely in the visible band with a sliver of
-  // document above it. The user's resize drives `size` once composing ends.
-  const sheet = composer ? "half" : size
   // iOS keeps `position: fixed` put when the keyboard opens, so a bottom sheet hides
   // behind it. Track the keyboard via visualViewport and pin the sheet into the
   // visible area above it. Measure against the layout viewport (clientHeight is
@@ -101,11 +95,11 @@ export function MobileComments({
     if (!composer) (document.activeElement as HTMLElement | null)?.blur?.()
   }, [composer])
   const empty = openThreads.length === 0 && resolved.length === 0 && !composer
-  // The grip taps bigger; full wraps back to half. The chevron handles peek.
-  const grip = () => setSize((s) => (s === "peek" ? "half" : s === "half" ? "full" : "half"))
-  // Jumping to text: drop to half so the highlight lands in the visible doc.
+  // The grip toggles peek <-> full.
+  const grip = () => setSize((s) => (s === "peek" ? "full" : "peek"))
+  // Jumping to text: drop to the peek bar so the highlight is visible in the doc.
   const jumpToText = (id: string) => {
-    setSize("half")
+    setSize("peek")
     onJump(id)
   }
   return (
@@ -116,11 +110,11 @@ export function MobileComments({
         type="button"
         data-testid="comments-sheet-backdrop"
         aria-label="Collapse comments"
-        tabIndex={open && sheet === "full" ? 0 : -1}
+        tabIndex={open && !composer && size === "full" ? 0 : -1}
         onClick={() => setSize("peek")}
         className={cn(
           "fixed inset-0 z-[60] bg-black/35 transition-opacity",
-          open && sheet === "full" ? "opacity-100" : "pointer-events-none opacity-0",
+          open && !composer && size === "full" ? "opacity-100" : "pointer-events-none opacity-0",
         )}
       />
       <div
@@ -128,7 +122,9 @@ export function MobileComments({
           "fixed inset-x-0 bottom-0 z-[61] flex flex-col rounded-t-[18px] border-t border-border bg-card shadow-[0_-14px_44px_-18px_rgba(0,0,0,0.5)] duration-[260ms]",
           // Don't animate height while the keyboard repositions the sheet.
           kb ? "transition-transform" : "transition-[transform,height]",
-          sheet === "full" ? "h-[88vh]" : sheet === "peek" ? "h-[74px]" : "h-[50vh]",
+          // Composing: a compact bar sized to its content (capped), so the box sits
+          // flush above the keyboard rather than high up in a tall sheet.
+          composer ? "max-h-[80vh]" : size === "full" ? "h-[88vh]" : "h-[74px]",
           open ? "translate-y-0" : "translate-y-full",
         )}
         // While the keyboard is up, lift the sheet's bottom to just above it and cap
@@ -168,7 +164,7 @@ export function MobileComments({
             big
             title={size === "peek" ? "Expand" : "Collapse"}
             testId="comments-sheet-resize"
-            onClick={() => setSize(size === "peek" ? "half" : "peek")}
+            onClick={() => setSize(size === "peek" ? "full" : "peek")}
           >
             <Icon name="caret" size={20} className={size === "peek" ? "rotate-180" : undefined} />
           </IconBtn>
@@ -176,17 +172,24 @@ export function MobileComments({
             <Icon name="close" size={20} />
           </IconBtn>
         </div>
-        {sheet !== "peek" && (
+        {composer ? (
+          // Composing ("half open"): just the composer, so the sheet is a compact bar
+          // pinned above the keyboard with the document visible above. The list
+          // reappears once you send or cancel.
+          <div className="overflow-auto p-3 pb-[max(14px,env(safe-area-inset-bottom))]">
+            <Composer
+              quote={composer.anchor?.exact ?? null}
+              // After posting, open the full list so the new comment is visible (the
+              // sheet would otherwise drop back to the peek bar and hide it).
+              onSubmit={(text, mentions) => {
+                setSize("full")
+                onSubmitNew(text, mentions)
+              }}
+              onCancel={onCancelNew}
+            />
+          </div>
+        ) : size === "full" ? (
           <div className="min-h-0 flex-1 overflow-auto p-3 pb-[max(14px,env(safe-area-inset-bottom))]">
-            {composer && (
-              <div className="mb-3">
-                <Composer
-                  quote={composer.anchor?.exact ?? null}
-                  onSubmit={onSubmitNew}
-                  onCancel={onCancelNew}
-                />
-              </div>
-            )}
             {empty && (
               <div className="grid place-items-center gap-2 p-[34px] text-center">
                 <div className="text-3xl opacity-50">💬</div>
@@ -229,7 +232,7 @@ export function MobileComments({
               />
             )}
           </div>
-        )}
+        ) : null}
       </div>
     </>
   )
