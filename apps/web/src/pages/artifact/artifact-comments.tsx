@@ -174,7 +174,7 @@ export function ArtifactComments(p: {
       {isMobile && !isAnon && p.docLive && sel && !p.composer && (
         <div
           data-testid="mobile-comment-bar"
-          className="fixed inset-x-0 bottom-0 z-[62] flex items-center gap-2.5 border-t border-border bg-card px-3 pb-[max(12px,env(safe-area-inset-bottom))] pt-3 shadow-[0_-12px_36px_-16px_rgba(0,0,0,0.55)]"
+          className="fixed inset-x-0 bottom-0 z-[62] flex items-center gap-2.5 border-t border-border bg-card px-3 pb-[max(16px,env(safe-area-inset-bottom))] pt-4 shadow-[0_-12px_36px_-16px_rgba(0,0,0,0.55)]"
         >
           <span className="min-w-0 flex-1 truncate border-l-[3px] border-primary bg-accent px-2.5 py-1.5 text-xs italic text-foreground">
             “{sel.selector.exact}”

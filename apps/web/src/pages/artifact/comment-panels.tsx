@@ -83,7 +83,7 @@ export function MobileComments({
       <div
         className={cn(
           "fixed inset-x-0 bottom-0 z-[61] flex flex-col rounded-t-[18px] border-t border-border bg-card shadow-[0_-14px_44px_-18px_rgba(0,0,0,0.5)] transition-[transform,height] duration-[260ms]",
-          size === "full" ? "h-[88vh]" : size === "peek" ? "h-[56px]" : "h-[50vh]",
+          size === "full" ? "h-[88vh]" : size === "peek" ? "h-[74px]" : "h-[50vh]",
           open ? "translate-y-0" : "translate-y-full",
         )}
         role="dialog"
@@ -96,7 +96,7 @@ export function MobileComments({
           onClick={grip}
           title="Resize"
         />
-        <div className="flex items-center gap-2 border-b border-border-soft pb-2.5 pl-3.5 pr-2.5 pt-1">
+        <div className="flex items-center gap-2 border-b border-border-soft pb-3 pl-3.5 pr-2.5 pt-2">
           <b className="text-base">Comments</b>
           {openCount > 0 && (
             <span className="rounded-full bg-accent px-2 py-px font-mono text-2xs font-bold text-primary">
