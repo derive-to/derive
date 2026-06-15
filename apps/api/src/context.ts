@@ -16,6 +16,7 @@ import {
 } from "@dock/core"
 import type { Context } from "hono"
 import { getCookie, setCookie } from "hono/cookie"
+import { createRemoteJWKSet, type JWTPayload, jwtVerify } from "jose"
 import type { Auth } from "./auth-config"
 import { type Backplane, createInProcessBackplane } from "./bus"
 import type { CustomDomainProvider } from "./lib/cloudflare-saas"
@@ -287,31 +288,71 @@ export function buildContext(deps: AppDeps) {
     return a
   }
 
+  // The agent runs in the granting user's workspace, provisioned on first touch
+  // exactly as the user's own first request would (multi mode, lazy).
+  const oauthWorkspace = async (
+    userId: string,
+    email: string | null,
+    name: string | null,
+  ): Promise<string> => {
+    const mine = await meta.listWorkspaces(userId)
+    return mine[0]?.id ?? (await provisionPersonal({ id: userId, email: email ?? "", name }))
+  }
+
+  // Our own JWKS (served by the jwt plugin at /api/auth/jwks), fetched + cached by
+  // jose on first verify. Used to verify the JWT access tokens below.
+  const jwks = createRemoteJWKSet(new URL("/api/auth/jwks", deps.baseUrl))
+  const oauthIssuer = new URL("/api/auth", deps.baseUrl).toString()
+
   // An OAuth access token (granted via the consent screen) acts as a scoped agent:
   // it runs in the granting user's workspace, authors as the client's name, and
-  // takes a role derived from the granted dock:* scopes. Expired tokens resolve to
-  // nothing — the caller is then anonymous (read-only), never the owner.
+  // takes a role derived from the granted dock:* scopes. Expired/invalid tokens
+  // resolve to nothing — the caller is then anonymous (read-only), never the owner.
   const oauthAgent = async (token: string): Promise<AgentRecord | null> => {
-    // Opaque access tokens are stored hashed (sha256, same as agent tokens), so
-    // resolve by the hash of the presented bearer.
+    // 1. Opaque access token (the `dock login` flow): stored hashed (sha256, like
+    //    agent tokens), so resolve by the hash of the presented bearer.
     const grant = await meta.getOAuthGrant(sha256(token))
-    if (!grant || grant.expiresAt.getTime() <= Date.now()) return null
-    // The agent runs in the granting user's workspace, provisioning it on first
-    // touch exactly as the user's own first request would (multi mode, lazy).
-    const mine = await meta.listWorkspaces(grant.userId)
-    const org =
-      mine[0]?.id ??
-      (await provisionPersonal({
-        id: grant.userId,
-        email: grant.userEmail,
-        name: grant.userName,
-      }))
+    if (grant) {
+      if (grant.expiresAt.getTime() <= Date.now()) return null
+      const org = await oauthWorkspace(grant.userId, grant.userEmail, grant.userName)
+      return {
+        id: `oauth:${grant.clientId}`,
+        org_id: org,
+        name: grant.clientName,
+        token: "",
+        role: roleFromScopes(grant.scopes),
+        created_at: new Date().toISOString(),
+      }
+    }
+    // 2. JWT access token: the oauth-provider issues a signed JWT (not stored in our
+    //    table) when a client sends an RFC 8707 `resource` indicator — which every
+    //    remote MCP client (Claude Code, claude.ai) does. Verify it against our own
+    //    JWKS and resolve the agent from its claims.
+    if (token.split(".").length === 3) return oauthAgentFromJwt(token)
+    return null
+  }
+
+  const oauthAgentFromJwt = async (token: string): Promise<AgentRecord | null> => {
+    let claims: JWTPayload
+    try {
+      ;({ payload: claims } = await jwtVerify(token, jwks, { issuer: oauthIssuer }))
+    } catch {
+      return null // bad signature, wrong issuer, or expired (jose checks exp)
+    }
+    const userId = typeof claims.sub === "string" ? claims.sub : ""
+    if (!userId) return null
+    const scopes = String(claims.scope ?? "")
+      .split(/\s+/)
+      .filter(Boolean)
+    const clientId = String(claims.azp ?? claims.client_id ?? "")
+    const u = (await meta.getUsers([userId]))[0]
+    const org = await oauthWorkspace(userId, u?.email ?? null, u?.name ?? null)
     return {
-      id: `oauth:${grant.clientId}`,
+      id: `oauth:${clientId}`,
       org_id: org,
-      name: grant.clientName,
+      name: (await meta.getOAuthClientName(clientId)) || clientId || "An agent",
       token: "",
-      role: roleFromScopes(grant.scopes),
+      role: roleFromScopes(scopes),
       created_at: new Date().toISOString(),
     }
   }
