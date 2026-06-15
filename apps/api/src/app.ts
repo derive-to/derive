@@ -260,6 +260,18 @@ export function createApp(deps: AppDeps): Hono {
     }
   }
   app.get("/.well-known/oauth-authorization-server", (c) => c.json(asMeta(c)))
+  // OIDC discovery for standards-compliant OIDC clients. We issue id tokens (jwt
+  // plugin) + advertise the openid scope + a userinfo endpoint, so RPs that probe
+  // /.well-known/openid-configuration must get JSON here — previously this path fell
+  // through to the SPA shell (HTML 200), breaking discovery. Superset of the OAuth AS
+  // metadata with the two OIDC-required fields.
+  app.get("/.well-known/openid-configuration", (c) =>
+    c.json({
+      ...asMeta(c),
+      subject_types_supported: ["public"],
+      id_token_signing_alg_values_supported: ["EdDSA"],
+    }),
+  )
   app.get("/.well-known/oauth-protected-resource", (c) => {
     const base = new URL(c.req.url).origin
     return c.json({

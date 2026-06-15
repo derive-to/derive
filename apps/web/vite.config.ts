@@ -53,6 +53,7 @@ export default defineConfig({
         "/mcp",
         "/.well-known/oauth-authorization-server",
         "/.well-known/oauth-protected-resource",
+        "/.well-known/openid-configuration",
       ].map((p) => [p, { target: API, changeOrigin: true }]),
     ),
   },

@@ -278,6 +278,32 @@ export const artifactRoutes = (ctx: AppContext) => {
       return artifact.visibility === "password"
         ? fail(c, 401, "password required")
         : fail(c, 404, "not found")
+    // Taken down: serve a minimal tombstone, not the full record. A takedown is a
+    // moderation action and the title is often the very thing being removed
+    // (harassment/doxxing), so drop title, author, the slug in the URL, and the
+    // version history — keep only enough for the SPA to render its "removed" state.
+    // (Content already 410s at /raw; the /a unfurl injects no meta for removed.)
+    if (artifact.removed_at)
+      return c.json({
+        short_id: artifact.short_id,
+        url: `${deps.baseUrl.replace(/\/$/, "")}/a/${artifact.short_id}`,
+        title: null,
+        kind: artifact.kind,
+        visibility: artifact.visibility,
+        spa: !!artifact.spa,
+        current_version: artifact.current_version,
+        created_at: artifact.created_at,
+        versions: [],
+        sessions: [],
+        my_role: effectiveRole(actor, artifact.visibility),
+        tags: [],
+        favorite: false,
+        collections: [],
+        open_proposals: 0,
+        proposals_total: 0,
+        removed: true,
+        managed: false,
+      })
     const versions = await meta.listVersions(artifact.id)
     const me = actor.kind === "user" ? actor.userId : null
     const tags = (await meta.tagsForArtifacts([artifact.id]))[artifact.id] ?? []
