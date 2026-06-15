@@ -3,6 +3,7 @@ import { api, type Report } from "@/api"
 import { Badge } from "@/components/ui/badge"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { useAuth } from "@/ctx"
+import { AccountSection } from "./account-section"
 import { AgentsSection } from "./agents-section"
 import { CustomDomainsSection } from "./custom-domains-section"
 import { GithubSection } from "./github-section"
@@ -54,6 +55,9 @@ export function Settings() {
             <TabsTrigger data-testid="settings-tab-workspace" value="workspace">
               Workspace
             </TabsTrigger>
+            <TabsTrigger data-testid="settings-tab-account" value="account">
+              Account
+            </TabsTrigger>
             <TabsTrigger data-testid="settings-tab-webhooks" value="webhooks">
               Webhooks
             </TabsTrigger>
@@ -78,6 +82,9 @@ export function Settings() {
 
           <TabsContent value="workspace">
             <WorkspaceSection meId={me.id} />
+          </TabsContent>
+          <TabsContent value="account">
+            <AccountSection />
           </TabsContent>
           <TabsContent value="webhooks">
             <WebhooksSection />
