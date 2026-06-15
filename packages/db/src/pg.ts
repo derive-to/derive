@@ -882,6 +882,9 @@ export class PgMetaStore implements MetaStore {
       return "taken"
     }
   }
+  async setUserImage(userId: string, image: string): Promise<void> {
+    await this.pool.query(`UPDATE "user" SET image = $1 WHERE id = $2`, [image, userId])
+  }
 
   // ---- Notifications (in-app, one row per recipient) ---------------------
   async createNotification(n: NewNotification): Promise<void> {

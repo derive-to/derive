@@ -159,6 +159,9 @@ export function createD1Store(d1: D1Database): MetaStore {
         return "taken"
       }
     },
+    setUserImage: async (userId: string, image: string): Promise<void> => {
+      await db.run(sql`UPDATE user SET image = ${image} WHERE id = ${userId}`)
+    },
   }
 }
 

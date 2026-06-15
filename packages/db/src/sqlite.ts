@@ -242,6 +242,9 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
         return "taken"
       }
     },
+    setUserImage: async (userId, image): Promise<void> => {
+      raw.prepare(`UPDATE user SET image = ? WHERE id = ?`).run(image, userId)
+    },
 
     close: () => raw.close(),
   }

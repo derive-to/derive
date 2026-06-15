@@ -309,6 +309,18 @@ export const api = {
   // A public profile by handle (no email). Readable without a session.
   profile: (handle: string): Promise<{ user: PublicProfile }> =>
     f(`/v1/users/${encodeURIComponent(handle)}`, { credentials: "include" }).then(j),
+  // Upload a profile picture (raster image; server validates + stores it and sets
+  // user.image to the served URL). Returns the new image URL.
+  uploadAvatar: (file: File): Promise<{ image: string }> => {
+    const fd = new FormData()
+    fd.append("file", file)
+    return f("/v1/me/avatar", {
+      method: "POST",
+      body: fd,
+      credentials: "include",
+      headers: { accept: "application/json" },
+    }).then(j)
+  },
   login: (email: string, password: string): Promise<unknown> =>
     f("/api/auth/sign-in/email", opts({ email, password })).then(authJson),
   signup: (email: string, password: string, name: string): Promise<unknown> =>

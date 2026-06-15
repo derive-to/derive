@@ -85,3 +85,69 @@ describe("usernames + public profiles", () => {
     expect(res.status).toBe(403)
   })
 })
+
+const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3, 4])
+const uploadAvatar = (
+  app: ReturnType<typeof makeAuthedApp>["app"],
+  headers: Record<string, string>,
+  bytes: Uint8Array,
+  type: string,
+  filename: string,
+) => {
+  const fd = new FormData()
+  fd.append("file", new Blob([bytes as BlobPart], { type }), filename)
+  return app.request("/v1/me/avatar", { method: "POST", body: fd, headers })
+}
+
+describe("profile avatars", () => {
+  it("accepts a raster upload, serves it back, and surfaces it on the profile", async () => {
+    const u: TestUser = { id: "u_av", email: "av@dock.test", name: "Ava" }
+    const { app } = makeAuthedApp("avatar-ok", [u])
+    await post(app, as(u.email), "ava") // claim a handle so we can read the profile
+
+    const res = await uploadAvatar(app, as(u.email), PNG, "image/png", "me.png")
+    expect(res.status).toBe(200)
+    const { image } = await res.json()
+    expect(image).toMatch(/\/v1\/avatars\/[0-9a-f]{64}$/)
+
+    // The bytes serve back as a real image (content-type re-derived from bytes).
+    const key = image.split("/").pop() as string
+    const got = await app.request(`/v1/avatars/${key}`)
+    expect(got.status).toBe(200)
+    expect(got.headers.get("content-type")).toBe("image/png")
+
+    // The public profile now carries the avatar URL.
+    const prof = await (await app.request("/v1/users/ava")).json()
+    expect(prof.user.image).toBe(image)
+  })
+
+  it("rejects non-images and SVG (no stored-XSS), and 404s an unknown key", async () => {
+    const u: TestUser = { id: "u_av2", email: "av2@dock.test", name: "Avb" }
+    const { app } = makeAuthedApp("avatar-bad", [u])
+    const enc = (s: string) => new TextEncoder().encode(s)
+    expect((await uploadAvatar(app, as(u.email), enc("hello"), "image/png", "x.png")).status).toBe(
+      400,
+    ) // bytes aren't an image, despite the declared type
+    expect(
+      (
+        await uploadAvatar(
+          app,
+          as(u.email),
+          enc("<svg onload=alert(1)></svg>"),
+          "image/svg+xml",
+          "x.svg",
+        )
+      ).status,
+    ).toBe(400) // SVG is refused outright
+    expect((await app.request("/v1/avatars/deadbeef")).status).toBe(404)
+  })
+
+  it("anonymous callers cannot upload an avatar (write lockdown)", async () => {
+    const { app } = makeAuthedApp("avatar-anon", [
+      { id: "u_av3", email: "av3@dock.test", name: "C" },
+    ])
+    const fd = new FormData()
+    fd.append("file", new Blob([PNG as BlobPart], { type: "image/png" }), "x.png")
+    expect((await app.request("/v1/me/avatar", { method: "POST", body: fd })).status).toBe(403)
+  })
+})

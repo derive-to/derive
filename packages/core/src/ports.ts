@@ -313,6 +313,8 @@ export interface MetaStore {
   /** Claim or replace a user's handle. Returns "taken" when another account
    *  already holds it (the unique index is the hard backstop on a race). */
   setUsername(userId: string, username: string): Promise<"ok" | "taken">
+  /** Set a user's avatar URL (image column on Better Auth's user table). */
+  setUserImage(userId: string, image: string): Promise<void>
 
   // ---- Notifications (in-app, one row per recipient) --------------------
   createNotification(n: NewNotification): Promise<void>
