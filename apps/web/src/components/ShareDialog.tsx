@@ -245,9 +245,11 @@ export function ShareButton({
                 <form onSubmit={add} className="flex gap-1.5">
                   <Input
                     data-testid="share-email"
-                    type="email"
-                    placeholder="teammate@email.com"
-                    aria-label="Email"
+                    type="text"
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                    placeholder="@username or email"
+                    aria-label="Username or email"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     className="flex-1"

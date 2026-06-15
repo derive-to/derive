@@ -21,10 +21,12 @@ describe("sqlite store: user directory (Better Auth `user` table)", () => {
     const fresh = new SqliteMetaStore(":memory:")
     expect(await fresh.findUserByEmail("nobody@x.com")).toBeNull()
     expect(await fresh.getUsers(["x"])).toEqual([])
+    expect(await fresh.getUserByUsername("ghost")).toBeNull()
+    expect(await fresh.searchDiscoverableUsers("a", 10)).toEqual([])
     fresh.close()
   })
 
-  it("resolves seeded users by email and id", async () => {
+  it("resolves users by email/id/handle, sets avatar, and powers opt-in search", async () => {
     const { mkdtempSync, rmSync } = await import("node:fs")
     const { tmpdir } = await import("node:os")
     const { join } = await import("node:path")
@@ -33,15 +35,40 @@ describe("sqlite store: user directory (Better Auth `user` table)", () => {
     const s = new SqliteMetaStore(path)
     const raw = new Database(path)
     raw.exec(
-      `CREATE TABLE IF NOT EXISTS user (id TEXT PRIMARY KEY, email TEXT, name TEXT, image TEXT)`,
+      `CREATE TABLE IF NOT EXISTS user (id TEXT PRIMARY KEY, email TEXT, name TEXT, image TEXT, username TEXT, discoverable INTEGER DEFAULT 0)`,
     )
-    raw
-      .prepare(`INSERT INTO user (id, email, name, image) VALUES (?,?,?,?)`)
-      .run("u1", "amy@x.com", "Amy", null)
+    raw.exec(`CREATE UNIQUE INDEX user_username ON user (username)`)
+    const ins = raw.prepare(`INSERT INTO user (id, email, name) VALUES (?,?,?)`)
+    ins.run("u1", "amy@x.com", "Amy")
+    ins.run("u2", "bo@x.com", "Bo")
     raw.close()
+
+    // Email + id directory.
     expect(await s.findUserByEmail("amy@x.com")).toMatchObject({ id: "u1", name: "Amy" })
     expect((await s.getUsers(["u1"])).map((u) => u.email)).toEqual(["amy@x.com"])
     expect(await s.getUsers([])).toEqual([])
+
+    // Claim a handle; resolve it; reject a clash; own handle re-set is a no-op.
+    expect(await s.setUsername("u1", "amy")).toBe("ok")
+    expect(await s.getUserByUsername("amy")).toMatchObject({ id: "u1", username: "amy" })
+    expect(await s.getUserByUsername("nope")).toBeNull()
+    expect(await s.setUsername("u2", "amy")).toBe("taken")
+    expect(await s.setUsername("u1", "amy")).toBe("ok")
+
+    // Avatar.
+    await s.setUserImage("u1", "https://cdn/x.png")
+    expect((await s.getUserByUsername("amy"))?.image).toBe("https://cdn/x.png")
+
+    // People search: only opted-in users; by handle or name; case-insensitive;
+    // empty query returns nothing; opting back out hides you again.
+    expect(await s.searchDiscoverableUsers("am", 10)).toEqual([]) // not discoverable yet
+    await s.setUserDiscoverable("u1", true)
+    expect((await s.searchDiscoverableUsers("am", 10)).map((u) => u.username)).toEqual(["amy"])
+    expect((await s.searchDiscoverableUsers("AMY", 10)).map((u) => u.id)).toEqual(["u1"])
+    expect(await s.searchDiscoverableUsers("", 10)).toEqual([])
+    await s.setUserDiscoverable("u1", false)
+    expect(await s.searchDiscoverableUsers("am", 10)).toEqual([])
+
     s.close()
     rmSync(dir, { recursive: true, force: true })
   })

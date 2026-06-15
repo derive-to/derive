@@ -37,6 +37,32 @@ export const sessionRoutes = (ctx: AppContext) => {
     return c.json({ username })
   })
 
+  // Opt in/out of people search. Off by default, so you're only findable by
+  // username if you choose to be (signed-in user sets their own).
+  app.post("/v1/me/discoverable", async (c) => {
+    const u = await currentUser(c)
+    if (!u) return fail(c, 401, "unauthenticated")
+    const body = await readJson(c, z.object({ discoverable: z.boolean() }))
+    if (body instanceof Response) return body
+    await meta.setUserDiscoverable(u.id, body.discoverable)
+    return c.json({ discoverable: body.discoverable })
+  })
+
+  // People search: find OPTED-IN accounts by handle or name (GitHub-style "add by
+  // username"). Only users who turned on discoverability appear, and only the
+  // public fields (handle, name, avatar) come back — never email. Signed-in only,
+  // and an empty query returns nothing, so it can't be used to enumerate everyone.
+  // Registered before /v1/users/:handle so "search" isn't read as a handle.
+  app.get("/v1/users/search", async (c) => {
+    if (!(await currentUser(c))) return fail(c, 401, "unauthenticated")
+    const q = (c.req.query("q") ?? "").trim()
+    if (!q) return c.json({ users: [] })
+    const found = await meta.searchDiscoverableUsers(q, 20)
+    return c.json({
+      users: found.map((u) => ({ username: u.username, name: u.name, image: u.image })),
+    })
+  })
+
   // A public profile by handle — the GitHub-style discovery surface. Email is
   // intentionally omitted (private); the handle, name, and avatar are public, so
   // this is readable by anyone (the GET passes the anon lockdown).

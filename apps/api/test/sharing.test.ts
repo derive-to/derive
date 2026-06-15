@@ -41,3 +41,33 @@ describe("artifact share → notification", () => {
     expect(aliceN.unread).toBe(0)
   })
 })
+
+describe("share by username or email", () => {
+  const ann: TestUser = { id: "u_shu_ann", email: "ann@shu.test", name: "Ann" }
+  // Bob has a handle; we'll add him by @handle, not his email.
+  const bob: TestUser = { id: "u_shu_bob", email: "bob@shu.test", name: "Bob", username: "bobby" }
+  const { app } = makeAuthedApp("share-by-username", [ann, bob], "editor")
+
+  const put = (body: Record<string, unknown>, by: string) =>
+    app.request(`/v1/artifacts/${SID}/members`, { ...jsonAs(as(by), body), method: "PUT" })
+  let SID = ""
+
+  it("resolves a @handle, a bare handle, and an email to the same account", async () => {
+    SID = (await (await publishAs(app, "<h1>d</h1>", {}, as(ann.email))).json()).short_id
+
+    // By @handle.
+    const r1 = await put({ user: "@bobby", role: "viewer" }, ann.email)
+    expect(r1.status).toBe(201)
+    expect((await r1.json()).user_id).toBe(bob.id)
+
+    // By bare handle (case-insensitive).
+    expect((await put({ user: "BOBBY", role: "commenter" }, ann.email)).status).toBe(201)
+    // Still by email (back-compat).
+    expect((await put({ email: "bob@shu.test", role: "editor" }, ann.email)).status).toBe(201)
+
+    // An unknown handle is a 404, not a silent no-op.
+    expect((await put({ user: "@nobody", role: "viewer" }, ann.email)).status).toBe(404)
+    // Neither field → 400.
+    expect((await put({ role: "viewer" }, ann.email)).status).toBe(400)
+  })
+})

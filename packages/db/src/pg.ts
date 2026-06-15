@@ -885,6 +885,29 @@ export class PgMetaStore implements MetaStore {
   async setUserImage(userId: string, image: string): Promise<void> {
     await this.pool.query(`UPDATE "user" SET image = $1 WHERE id = $2`, [image, userId])
   }
+  async setUserDiscoverable(userId: string, discoverable: boolean): Promise<void> {
+    await this.pool.query(`UPDATE "user" SET discoverable = $1 WHERE id = $2`, [
+      discoverable,
+      userId,
+    ])
+  }
+  async searchDiscoverableUsers(q: string, limit: number): Promise<UserProfile[]> {
+    const s = q.trim()
+    if (!s) return []
+    try {
+      const like = `%${s}%`
+      const { rows } = await this.pool.query(
+        `SELECT id, name, image, username FROM "user"
+         WHERE discoverable = true AND username IS NOT NULL
+           AND (username ILIKE $1 OR name ILIKE $1)
+         ORDER BY username LIMIT $2`,
+        [like, limit],
+      )
+      return rows as UserProfile[]
+    } catch {
+      return []
+    }
+  }
 
   // ---- Notifications (in-app, one row per recipient) ---------------------
   async createNotification(n: NewNotification): Promise<void> {

@@ -6,6 +6,8 @@ export interface Me {
   username: string | null
   /** Avatar URL; null until a photo is set. */
   image: string | null
+  /** Opt-in: findable in people search when true. */
+  discoverable: boolean
   role: string
 }
 /** A public profile, by handle. Email is private and never returned here. */
@@ -301,6 +303,7 @@ export const api = {
         name: s.user.name ?? null,
         username: s.user.username ?? null,
         image: s.user.image ?? null,
+        discoverable: !!s.user.discoverable,
         role: "member",
       },
     }
@@ -312,6 +315,12 @@ export const api = {
   // A public profile by handle (no email). Readable without a session.
   profile: (handle: string): Promise<{ user: PublicProfile }> =>
     f(`/v1/users/${encodeURIComponent(handle)}`, { credentials: "include" }).then(j),
+  // Opt in/out of people search.
+  setDiscoverable: (discoverable: boolean): Promise<{ discoverable: boolean }> =>
+    f("/v1/me/discoverable", opts({ discoverable })).then(j),
+  // Find opted-in people by @handle or name (signed-in; empty q → []).
+  searchPeople: (q: string): Promise<{ users: PublicProfile[] }> =>
+    f(`/v1/users/search?q=${encodeURIComponent(q)}`, opts()).then(j),
   // Upload a profile picture (raster image; server validates + stores it and sets
   // user.image to the served URL). Returns the new image URL.
   uploadAvatar: (file: File): Promise<{ image: string }> => {
@@ -415,8 +424,9 @@ export const api = {
 
   listMembers: (id: string): Promise<{ default_role: Role; members: ArtifactMember[] }> =>
     f(`/v1/artifacts/${id}/members`, opts()).then(j),
-  setMember: (id: string, email: string, role: Role): Promise<ArtifactMember> =>
-    f(`/v1/artifacts/${id}/members`, { ...opts({ email, role }), method: "PUT" }).then(j),
+  // `user` is a @username or an email; the server resolves either to the account.
+  setMember: (id: string, user: string, role: Role): Promise<ArtifactMember> =>
+    f(`/v1/artifacts/${id}/members`, { ...opts({ user, role }), method: "PUT" }).then(j),
   removeMember: (id: string, userId: string): Promise<void> =>
     f(`/v1/artifacts/${id}/members/${userId}`, { method: "DELETE", credentials: "include" }).then(
       () => undefined,
@@ -494,8 +504,8 @@ export const api = {
   getWorkspace: (): Promise<Workspace> => f("/v1/workspace", opts()).then(j),
   renameWorkspace: (name: string): Promise<{ name: string }> =>
     f("/v1/workspace", { ...opts({ name }), method: "PATCH" }).then(j),
-  addWorkspaceMember: (email: string, role: Role): Promise<ArtifactMember> =>
-    f("/v1/workspace/members", { ...opts({ email, role }), method: "PUT" }).then(j),
+  addWorkspaceMember: (user: string, role: Role): Promise<ArtifactMember> =>
+    f("/v1/workspace/members", { ...opts({ user, role }), method: "PUT" }).then(j),
   setWorkspaceMemberRole: (userId: string, role: Role): Promise<{ user_id: string; role: Role }> =>
     f(`/v1/workspace/members/${userId}`, { ...opts({ role }), method: "PATCH" }).then(j),
   removeWorkspaceMember: (userId: string): Promise<void> =>
@@ -532,8 +542,8 @@ export const api = {
     }).then(() => undefined),
   listCollectionMembers: (id: string): Promise<{ created_by: string; members: ArtifactMember[] }> =>
     f(`/v1/collections/${id}/members`, opts()).then(j),
-  setCollectionMember: (id: string, email: string, role: Role): Promise<ArtifactMember> =>
-    f(`/v1/collections/${id}/members`, { ...opts({ email, role }), method: "PUT" }).then(j),
+  setCollectionMember: (id: string, user: string, role: Role): Promise<ArtifactMember> =>
+    f(`/v1/collections/${id}/members`, { ...opts({ user, role }), method: "PUT" }).then(j),
   removeCollectionMember: (id: string, userId: string): Promise<void> =>
     f(`/v1/collections/${id}/members/${userId}`, {
       method: "DELETE",

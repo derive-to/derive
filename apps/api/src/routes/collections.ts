@@ -11,6 +11,7 @@ import { z } from "zod"
 import type { AppContext } from "../context"
 import { safeEqual } from "../lib/crypto"
 import { fail, readJson } from "../lib/http"
+import { resolveUserRef } from "../lib/resolve-user"
 
 /** Collections: shareable groups of artifacts. A member's role on a collection
  *  propagates to every artifact inside it (see collectionRolesForArtifact). */
@@ -124,14 +125,18 @@ export const collectionRoutes = (ctx: AppContext) => {
     if (!(await canManageCollection(c, col, "manage"))) return fail(c, 403, "forbidden")
     const b = await readJson(
       c,
-      z.object({
-        email: z.string().min(1, "an email is required"),
-        role: z.custom<Role>(isRole, "a valid role is required"),
-      }),
+      z
+        .object({
+          user: z.string().min(1).optional(),
+          email: z.string().min(1).optional(),
+          role: z.custom<Role>(isRole, "a valid role is required"),
+        })
+        .refine((v) => v.user || v.email, "a username or email is required"),
     )
     if (b instanceof Response) return b
-    const user = await meta.findUserByEmail(b.email.trim())
-    if (!user) return fail(c, 404, "no Dock user with that email")
+    const id = await resolveUserRef(meta, (b.user ?? b.email) as string)
+    const [user] = id ? await meta.getUsers([id]) : []
+    if (!user) return fail(c, 404, "no Dock user with that username or email")
     await meta.setCollectionMember({
       id: newId("cm"),
       collection_id: col.id,

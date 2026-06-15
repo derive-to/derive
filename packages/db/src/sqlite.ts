@@ -245,6 +245,26 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
     setUserImage: async (userId, image): Promise<void> => {
       raw.prepare(`UPDATE user SET image = ? WHERE id = ?`).run(image, userId)
     },
+    setUserDiscoverable: async (userId, discoverable): Promise<void> => {
+      raw.prepare(`UPDATE user SET discoverable = ? WHERE id = ?`).run(discoverable ? 1 : 0, userId)
+    },
+    searchDiscoverableUsers: async (q, limit): Promise<UserProfile[]> => {
+      const s = q.trim().toLowerCase()
+      if (!s) return []
+      try {
+        const like = `%${s}%`
+        return raw
+          .prepare(
+            `SELECT id, name, image, username FROM user
+             WHERE discoverable = 1 AND username IS NOT NULL
+               AND (lower(username) LIKE ? OR lower(name) LIKE ?)
+             ORDER BY username LIMIT ?`,
+          )
+          .all(like, like, limit) as UserProfile[]
+      } catch {
+        return []
+      }
+    },
 
     close: () => raw.close(),
   }

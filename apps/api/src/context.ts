@@ -32,6 +32,8 @@ export interface SessionUser {
   name: string | null
   /** Public handle (Profiles & Accounts v1); null until claimed at onboarding. */
   username: string | null
+  /** Opt-in: findable in people search when true. Off by default. */
+  discoverable: boolean
 }
 
 export interface AppDeps {
@@ -221,13 +223,25 @@ export function buildContext(deps: AppDeps) {
   const currentUser = async (c: Context): Promise<SessionUser | null> => {
     if (userCache.has(c)) return userCache.get(c) ?? null
     const s = deps.auth ? await deps.auth.api.getSession({ headers: c.req.raw.headers }) : null
-    // `username` rides the session via Better Auth additionalFields (see
-    // auth-config.ts); read it through a narrow cast since it's an optional extra.
+    // `username`/`discoverable` ride the session via Better Auth additionalFields
+    // (see auth-config.ts); read them through a narrow cast (optional extras).
     const su = s?.user as
-      | { id: string; email: string; name?: string | null; username?: string | null }
+      | {
+          id: string
+          email: string
+          name?: string | null
+          username?: string | null
+          discoverable?: boolean | number | null
+        }
       | undefined
     const u: SessionUser | null = su
-      ? { id: su.id, email: su.email, name: su.name ?? null, username: su.username ?? null }
+      ? {
+          id: su.id,
+          email: su.email,
+          name: su.name ?? null,
+          username: su.username ?? null,
+          discoverable: !!su.discoverable,
+        }
       : null
     userCache.set(c, u)
     if (u) c.set("actorId", u.id) // tag the access log with the resolved actor

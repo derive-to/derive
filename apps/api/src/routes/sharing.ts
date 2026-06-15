@@ -3,6 +3,7 @@ import { type Context, Hono } from "hono"
 import { z } from "zod"
 import type { AppContext } from "../context"
 import { fail, readJson } from "../lib/http"
+import { resolveUserRef } from "../lib/resolve-user"
 
 /** Per-artifact role overrides (a share). Managing shares requires `share`
  *  (editor+, GDocs model); the share's role beats the caller's workspace baseline. */
@@ -44,16 +45,21 @@ export const sharingRoutes = (ctx: AppContext) => {
     if (!(await authorize(c, "share", artifact))) return fail(c, 403, "forbidden")
     const b = await readJson(
       c,
-      z.object({
-        email: z.string().min(1, "an email is required"),
-        role: z.custom<Role>(isRole, "a valid role is required"),
-      }),
+      z
+        .object({
+          // Share by @username or by email — either resolves to the account.
+          user: z.string().min(1).optional(),
+          email: z.string().min(1).optional(),
+          role: z.custom<Role>(isRole, "a valid role is required"),
+        })
+        .refine((v) => v.user || v.email, "a username or email is required"),
     )
     if (b instanceof Response) return b
     if (rank(b.role) > (await callerRank(c, artifact)))
       return fail(c, 403, "you can't grant a role above your own")
-    const user = await meta.findUserByEmail(b.email.trim())
-    if (!user) return fail(c, 404, "no Dock user with that email")
+    const id = await resolveUserRef(meta, (b.user ?? b.email) as string)
+    const [user] = id ? await meta.getUsers([id]) : []
+    if (!user) return fail(c, 404, "no Dock user with that username or email")
     await meta.setArtifactMember({
       id: newId("am"),
       artifact_id: artifact.id,
