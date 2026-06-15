@@ -283,4 +283,50 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(read.content).toContain("Draft")
     expect(read.content).not.toContain("Revised")
   })
+
+  it("surfaces outdated feedback after a republish drops the quoted text", async () => {
+    const { app, token } = appWithGrant("stale", "openid dock:read dock:comment dock:publish")
+    const shortId = (await (await publish(app, token, "alpha beta gamma")).json()).short_id
+
+    // A comment anchored to "beta".
+    await app.request(`/v1/artifacts/${shortId}/comments`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+      body: JSON.stringify({
+        body_md: "tighten this",
+        anchor: { type: "TextQuoteSelector", exact: "beta", prefix: "alpha ", suffix: " gamma" },
+      }),
+    })
+
+    // Republish without "beta" — the sweep should mark the thread outdated.
+    const form = new FormData()
+    form.append(
+      "file",
+      new Blob([new TextEncoder().encode("<h1>alpha gamma delta</h1>")]),
+      "index.html",
+    )
+    form.append("name", "rev 2")
+    await app.request(`/v1/artifacts/${shortId}/versions`, {
+      method: "POST",
+      body: form,
+      headers: { authorization: `Bearer ${token}` },
+    })
+
+    // list_comments reports the new state + the quoted text the thread targets.
+    const all = JSON.parse(toolText(await call(app, token, "list_comments", { short_id: shortId })))
+    expect(all.comments[0].state).toBe("outdated")
+    expect(all.comments[0].quote).toBe("beta")
+    const onlyStale = JSON.parse(
+      toolText(await call(app, token, "list_comments", { short_id: shortId, state: "outdated" })),
+    )
+    expect(onlyStale.count).toBe(1)
+
+    // catch_me_up leads with it so the agent knows its edits touched commented text.
+    const cu = JSON.parse(
+      toolText(await call(app, token, "catch_me_up", { short_id: shortId, since_version: 1 })),
+    )
+    expect(cu.summary).toContain("outdated")
+    expect(cu.outdated_comments).toHaveLength(1)
+    expect(cu.outdated_comments[0].quote).toBe("beta")
+  })
 })

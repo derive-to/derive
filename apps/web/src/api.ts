@@ -164,7 +164,9 @@ export interface Comment {
   anchor: string | null
   body_md: string
   author: string
-  state: "open" | "resolved"
+  // `outdated` = the quoted text this thread anchored to changed in a later
+  // version (set by the server's re-anchor sweep); the feedback may no longer apply.
+  state: "open" | "resolved" | "outdated"
   created_at: string
   anchored?: boolean
   reactions?: Record<string, string[]>

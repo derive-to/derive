@@ -236,7 +236,10 @@ export function Artifact() {
   // and the collapsed rail dots.
   const docLive = !editing && view === "preview"
   const all = groupThreads(comments)
-  const openThreads = all.filter((t) => t[0]?.state === "open")
+  // `outdated` threads (their quoted text changed in a later version) stay in the
+  // active list, not the resolved drawer — their anchor no longer resolves, so
+  // they fall into the general/orphaned bucket below and stay visible to triage.
+  const openThreads = all.filter((t) => t[0] && t[0].state !== "resolved")
   const resolvedThreads = all.filter((t) => t[0]?.state === "resolved")
   const pinned: PinItem[] = []
   const general: Comment[][] = []

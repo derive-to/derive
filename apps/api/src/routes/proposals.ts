@@ -9,6 +9,7 @@ import {
 import { type Context, Hono } from "hono"
 import { z } from "zod"
 import type { AppContext } from "../context"
+import { sweepAnchors } from "../lib/anchor-sweep"
 import { fail, MAX_UPLOAD_BYTES, readJson, str } from "../lib/http"
 
 /** Reviews: a proposal is a candidate version awaiting approval. A commenter
@@ -170,6 +171,14 @@ export const proposalRoutes = (ctx: AppContext) => {
         n: version.n,
         message: version.message,
       })
+      // The approved candidate is now live content — re-anchor existing threads
+      // against it so feedback on changed text flips to `outdated`.
+      for (const t of await sweepAnchors(meta, blobs, artifact.id, version))
+        bus.publish(artifact.id, {
+          type: t.state === "outdated" ? "comment.outdated" : "comment.resolved",
+          thread_id: t.thread_id,
+          state: t.state,
+        })
       await notify(artifact, "proposal.approved", {
         proposal_id: proposal.id,
         version: version.n,
