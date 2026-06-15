@@ -24,20 +24,18 @@ test("tap a paragraph to comment: bar + composer, anchored to the block", async 
   await expect(bar).toBeVisible()
   await expect(bar).toContainText("Second paragraph here")
 
-  // Comment opens the sheet composer, quoting the tapped block. The sheet must
-  // auto-expand to full (a half sheet would sit behind the iOS keyboard with the
-  // box out of view), so the dialog fills most of the viewport.
+  // Comment opens the sheet composer, quoting the tapped block. Composing keeps the
+  // sheet at half (pinned above the keyboard on a real device), so the box is in
+  // view with the document still visible above it — not a full sheet iOS pushes off.
   await page.getByTestId("mobile-comment-start").tap()
   await expect(page.getByTestId("composer-input")).toBeVisible()
   await expect(page.getByText("Second paragraph here", { exact: false }).first()).toBeVisible()
-  // The sheet fills the area above the (emulated) keyboard, so the composer is in
-  // view rather than stuck at half behind it.
   const vvh = await page.evaluate(() => window.visualViewport?.height ?? window.innerHeight)
   await expect
     .poll(
       async () => (await page.getByRole("dialog", { name: "Comments" }).boundingBox())?.height ?? 0,
     )
-    .toBeGreaterThan(vvh * 0.7)
+    .toBeLessThan(vvh * 0.65) // half, not a full-screen sheet
 
   // Posting lands the anchored comment.
   await page.getByTestId("composer-input").fill("Looks good on mobile.")

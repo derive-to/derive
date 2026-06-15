@@ -54,10 +54,12 @@ export function MobileComments({
   useEffect(() => {
     if (open) setSize("half")
   }, [open])
-  // A composer must sit fully above the iOS keyboard, so derive "full" whenever one
-  // is open instead of racing an effect (which could leave the sheet at half, behind
-  // the keyboard, with the box out of view). The user's resize drives `size` after.
-  const sheet = composer ? "full" : size
+  // While composing, keep the sheet HALF, not full: a full sheet plus the iOS
+  // keyboard leaves the composer with nowhere to go (iOS shoves the fixed sheet
+  // off the top of the window). Half-height, pinned just above the keyboard (the
+  // `kb` style below), puts the box squarely in the visible band with a sliver of
+  // document above it. The user's resize drives `size` once composing ends.
+  const sheet = composer ? "half" : size
   // iOS keeps `position: fixed` put when the keyboard opens, so a bottom sheet hides
   // behind it. Track the keyboard via visualViewport and pin the sheet into the
   // visible area above it. Measure against the layout viewport (clientHeight is
@@ -124,15 +126,15 @@ export function MobileComments({
       <div
         className={cn(
           "fixed inset-x-0 bottom-0 z-[61] flex flex-col rounded-t-[18px] border-t border-border bg-card shadow-[0_-14px_44px_-18px_rgba(0,0,0,0.5)] duration-[260ms]",
-          // While the keyboard pins height to the live vv.height, animating height
-          // fights the keyboard slide — transform-only then.
+          // Don't animate height while the keyboard repositions the sheet.
           kb ? "transition-transform" : "transition-[transform,height]",
           sheet === "full" ? "h-[88vh]" : sheet === "peek" ? "h-[74px]" : "h-[50vh]",
           open ? "translate-y-0" : "translate-y-full",
         )}
-        // While the keyboard is up, pin the sheet into the visible area above it
-        // (overrides bottom-0 + the height class) so the composer is never hidden.
-        style={kb ? { bottom: kb.inset, height: kb.height } : undefined}
+        // While the keyboard is up, lift the sheet's bottom to just above it and cap
+        // its height to the visible band — so the half-height composer sits in view
+        // (with a sliver of document above) instead of behind/under the keyboard.
+        style={kb ? { bottom: kb.inset, maxHeight: kb.height } : undefined}
         role="dialog"
         aria-label="Comments"
       >
