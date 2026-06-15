@@ -54,9 +54,29 @@ export function MobileComments({
   useEffect(() => {
     if (open) setSize("half")
   }, [open])
+  // A composer must sit fully above the iOS keyboard, so derive "full" whenever one
+  // is open instead of racing an effect (which could leave the sheet at half, behind
+  // the keyboard, with the box out of view). The user's resize drives `size` after.
+  const sheet = composer ? "full" : size
+  // iOS keeps `position: fixed` put when the keyboard opens, so a bottom sheet hides
+  // behind it. Track the keyboard via visualViewport and pin the sheet into the
+  // visible area above it while one is up (ignore the small URL-bar shrink).
+  const [kb, setKb] = useState<{ inset: number; height: number } | null>(null)
   useEffect(() => {
-    if (open && composer) setSize("full")
-  }, [open, composer])
+    const vv = window.visualViewport
+    if (!vv) return
+    const update = () => {
+      const inset = Math.max(0, window.innerHeight - vv.height - vv.offsetTop)
+      setKb(inset > 80 ? { inset, height: vv.height } : null)
+    }
+    update()
+    vv.addEventListener("resize", update)
+    vv.addEventListener("scroll", update)
+    return () => {
+      vv.removeEventListener("resize", update)
+      vv.removeEventListener("scroll", update)
+    }
+  }, [])
   const empty = openThreads.length === 0 && resolved.length === 0 && !composer
   // The grip taps bigger; full wraps back to half. The chevron handles peek.
   const grip = () => setSize((s) => (s === "peek" ? "half" : s === "half" ? "full" : "half"))
@@ -73,19 +93,22 @@ export function MobileComments({
         type="button"
         data-testid="comments-sheet-backdrop"
         aria-label="Collapse comments"
-        tabIndex={open && size === "full" ? 0 : -1}
+        tabIndex={open && sheet === "full" ? 0 : -1}
         onClick={() => setSize("peek")}
         className={cn(
           "fixed inset-0 z-[60] bg-black/35 transition-opacity",
-          open && size === "full" ? "opacity-100" : "pointer-events-none opacity-0",
+          open && sheet === "full" ? "opacity-100" : "pointer-events-none opacity-0",
         )}
       />
       <div
         className={cn(
           "fixed inset-x-0 bottom-0 z-[61] flex flex-col rounded-t-[18px] border-t border-border bg-card shadow-[0_-14px_44px_-18px_rgba(0,0,0,0.5)] transition-[transform,height] duration-[260ms]",
-          size === "full" ? "h-[88vh]" : size === "peek" ? "h-[74px]" : "h-[50vh]",
+          sheet === "full" ? "h-[88vh]" : sheet === "peek" ? "h-[74px]" : "h-[50vh]",
           open ? "translate-y-0" : "translate-y-full",
         )}
+        // While the keyboard is up, pin the sheet into the visible area above it
+        // (overrides bottom-0 + the height class) so the composer is never hidden.
+        style={kb ? { bottom: kb.inset, height: kb.height } : undefined}
         role="dialog"
         aria-label="Comments"
       >
@@ -127,7 +150,7 @@ export function MobileComments({
             <Icon name="close" size={20} />
           </IconBtn>
         </div>
-        {size !== "peek" && (
+        {sheet !== "peek" && (
           <div className="min-h-0 flex-1 overflow-auto p-3 pb-[max(14px,env(safe-area-inset-bottom))]">
             {composer && (
               <div className="mb-3">

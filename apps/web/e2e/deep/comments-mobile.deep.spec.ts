@@ -24,10 +24,20 @@ test("tap a paragraph to comment: bar + composer, anchored to the block", async 
   await expect(bar).toBeVisible()
   await expect(bar).toContainText("Second paragraph here")
 
-  // Comment opens the sheet composer, quoting the tapped block.
+  // Comment opens the sheet composer, quoting the tapped block. The sheet must
+  // auto-expand to full (a half sheet would sit behind the iOS keyboard with the
+  // box out of view), so the dialog fills most of the viewport.
   await page.getByTestId("mobile-comment-start").tap()
   await expect(page.getByTestId("composer-input")).toBeVisible()
   await expect(page.getByText("Second paragraph here", { exact: false }).first()).toBeVisible()
+  // The sheet fills the area above the (emulated) keyboard, so the composer is in
+  // view rather than stuck at half behind it.
+  const vvh = await page.evaluate(() => window.visualViewport?.height ?? window.innerHeight)
+  await expect
+    .poll(
+      async () => (await page.getByRole("dialog", { name: "Comments" }).boundingBox())?.height ?? 0,
+    )
+    .toBeGreaterThan(vvh * 0.7)
 
   // Posting lands the anchored comment.
   await page.getByTestId("composer-input").fill("Looks good on mobile.")
@@ -64,8 +74,10 @@ test("tapping out collapses the sheet to a peek bar, and it reopens", async ({ p
   await page.getByTestId("composer-submit").tap()
   await expect(page.getByText("First note.")).toBeVisible()
 
-  // Tap out (the dimmed strip above the full-height sheet) -> collapse to the peek
-  // bar: body gone, header bar stays, the resize control flips to Expand.
+  // Expand to full (the sheet drops to half once the composer closes), which shows
+  // the dimmed backdrop. Tapping it -> collapse to the peek bar: body gone, header
+  // bar stays, the resize control flips to Expand.
+  await page.getByTestId("comments-sheet-grip").tap()
   await page.getByTestId("comments-sheet-backdrop").tap({ position: { x: 180, y: 36 } })
   await expect(page.getByText("First note.")).toHaveCount(0)
   await expect(page.getByText("Comments", { exact: true })).toBeVisible()
