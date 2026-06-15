@@ -193,6 +193,12 @@ export const artifactRoutes = (ctx: AppContext) => {
     // republish keeps whatever the artifact already has (publish() never re-creates
     // the artifact, only adds a version, so visibility/password are set-on-create).
     const visibility = visibilityOf(body["visibility"])
+    // An explicitly-provided visibility that isn't a known value is rejected, not
+    // silently coerced. publish() defaults an *absent* visibility to `link`, so a
+    // natural-but-wrong value like "private" would otherwise become URL-readable —
+    // more open than intended, with no error. The enum is closed; surface the typo.
+    if (str(body["visibility"]) && !visibility)
+      return fail(c, 400, "visibility must be one of: public, link, org, password")
     const password = str(body["password"])
     if (!shortId && visibility === "password" && !password)
       return fail(c, 400, "a password is required for password visibility")
@@ -406,7 +412,7 @@ export const artifactRoutes = (ctx: AppContext) => {
       // Same blob as the restored version — carry its size so the storage meter
       // stays consistent (and dedup'd, since it reuses the same blob_key).
       size_bytes: src.size_bytes,
-      author: me ? (me.name ?? me.email) : "anonymous",
+      author: me ? (me.name ?? me.username ?? me.email) : "anonymous",
       message: `Restored v${src.n}`,
       name: null,
     })

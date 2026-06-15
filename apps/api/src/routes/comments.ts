@@ -45,11 +45,22 @@ export const commentRoutes = (ctx: AppContext) => {
     // Registered agents are mentionable too; a mention of an agent lands in its
     // pull inbox instead of a notification bell.
     const agentIds = new Set((await meta.listAgents(a.org_id)).map((ag) => ag.id))
+    // A mention only notifies someone who can actually SEE the artifact: a member
+    // of its workspace or an explicit share recipient (the collaborator set, like
+    // the B-012/B-013 roster gate). The `mentions[]` array is client-supplied, so
+    // without this any user could push a notification carrying attacker-controlled
+    // title/preview to ANY other user — cross-workspace spam/phishing into the bell
+    // + SSE. "Could view a public artifact" is intentionally NOT enough; a real
+    // collaboration mention means a member/share, not a stranger.
+    const collaborators = new Set<string>([
+      ...(await meta.listMemberships(a.org_id)).map((m) => m.user_id),
+      ...(await meta.listArtifactMembers(a.id)).map((r) => r.user_id),
+    ])
     const preview = previewOf(cm.body_md)
     const notified: string[] = []
     for (const m of mentions) {
       if (m.id === actorId) continue
-      if (real.has(m.id)) {
+      if (real.has(m.id) && collaborators.has(m.id)) {
         const row = {
           id: newId("n"),
           user_id: m.id,

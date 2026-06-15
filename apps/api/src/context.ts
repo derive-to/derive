@@ -404,7 +404,10 @@ export function buildContext(deps: AppDeps) {
     const ag = await agentFor(c)
     if (ag) return { id: ag.id, name: ag.name }
     const me = await currentUser(c)
-    return me ? { id: me.id, name: me.name ?? me.email } : null
+    // Display identity feeds the comment/version author byline shown to others, so
+    // fall back to the public handle, never the email (the email→handle migration).
+    // Every account has a username post-migration; email is only a last-ditch guard.
+    return me ? { id: me.id, name: me.name ?? me.username ?? me.email } : null
   }
 
   const ipOf = (c: Context): string =>

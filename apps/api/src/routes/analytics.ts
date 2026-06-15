@@ -7,7 +7,7 @@ import { fail, readJson, VIEW_DEDUP_MS } from "../lib/http"
 
 /** View recording (de-duped, owner self-views excluded) + per-artifact stats. */
 export const analyticsRoutes = (ctx: AppContext) => {
-  const { meta, deps, analyticsOn, currentUser, actorFor, anonLocked, authorize } = ctx
+  const { meta, deps, analyticsOn, currentUser, actorFor, authorize } = ctx
   const app = new Hono()
 
   // Record a view. The viewer is the logged-in user, or a stable anonymous id
@@ -70,17 +70,26 @@ export const analyticsRoutes = (ctx: AppContext) => {
     if (!analyticsOn) return fail(c, 404, "analytics disabled")
     const artifact = await meta.getByShortId(c.req.param("shortId"))
     if (!artifact || !(await authorize(c, "read", artifact))) return fail(c, 404, "not found")
-    // View analytics are for collaborators, not anonymous link-visitors.
-    if (await anonLocked(c, artifact)) return fail(c, 404, "not found")
+    // Who-viewed-this is for COLLABORATORS, not every signed-in reader. `read`
+    // access is satisfied by any signed-in user on a public/link artifact, so the
+    // not-anon check alone would expose the view counts + viewer identities to a
+    // cross-workspace stranger. Require a workspace member / sharee (or token),
+    // exactly like the member-roster gate. See bug-hunt B-020 (and B-013).
+    const actor = await actorFor(c, artifact)
+    const collaborator =
+      actor.kind === "token" ||
+      (actor.kind === "user" && (actor.orgRole != null || actor.artifactRole != null))
+    if (!collaborator) return fail(c, 404, "not found")
     const stats = await meta.viewStats(artifact.id)
-    // Recent user-viewers are stored by id (stable); resolve to name + avatar.
+    // Recent user-viewers are stored by id (stable); resolve to a public handle
+    // (or display name) + avatar — never the email (off the wire, like the rosters).
     const userIds = stats.recent.filter((r) => r.kind === "user").map((r) => r.viewer)
     if (userIds.length) {
       const byId = new Map((await meta.getUsers(userIds)).map((u) => [u.id, u]))
       stats.recent = stats.recent.map((r) => {
         if (r.kind !== "user") return r
         const u = byId.get(r.viewer)
-        return { ...r, viewer: u ? (u.name ?? u.email) : "Someone", avatar: u?.image ?? null }
+        return { ...r, viewer: u?.name ?? u?.username ?? "Someone", avatar: u?.image ?? null }
       })
     }
     return c.json(stats)

@@ -6,6 +6,12 @@ export const REACTIONS = ["👍", "❤️", "🎉", "😄", "👀", "🙏", "�
 /** A resolved @mention captured by the composer: the picked user's id + display name. */
 export type Mention = { id: string; name: string }
 
+/** Upper bound on distinct @mentions per comment. A real comment mentions a
+ *  handful of collaborators; the cap stops one comment from fanning out to a huge
+ *  list (notifications are gated to members/shares, but this bounds the work +
+ *  the blast radius regardless). */
+export const MAX_MENTIONS = 50
+
 export type CommentMeta = {
   reactions?: Record<string, string[]>
   edited_at?: string
@@ -38,6 +44,7 @@ export function parseMentions(input: unknown): Mention[] {
     if (typeof id !== "string" || typeof name !== "string" || !id || seen.has(id)) continue
     seen.add(id)
     out.push({ id, name })
+    if (out.length >= MAX_MENTIONS) break
   }
   return out
 }
