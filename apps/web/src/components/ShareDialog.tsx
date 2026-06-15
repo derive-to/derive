@@ -1,6 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query"
 import { Lock, Share2, X } from "lucide-react"
-import { useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { toast } from "sonner"
 import {
   API_BASE,
@@ -8,10 +8,12 @@ import {
   type ArtifactMember,
   api,
   type GeneralRole,
+  type PublicProfile,
   type Role,
 } from "@/api"
 import { EmptyState } from "@/components/shared/empty-state"
 import { RoleSelect } from "@/components/shared/role-select"
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -23,6 +25,7 @@ import {
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { cn } from "@/lib/utils"
 
 const BLURB: Record<Role, string> = {
   viewer: "Can view",
@@ -70,11 +73,17 @@ export function ShareButton({
 }) {
   const qc = useQueryClient()
   const [members, setMembers] = useState<ArtifactMember[]>([])
-  const [defaultRole, setDefaultRole] = useState<Role>("editor")
   const [email, setEmail] = useState("")
   const [role, setRole] = useState<Role>("editor")
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
+  // GitHub-style handle typeahead for the add-person field. Suggestions come from
+  // the discoverable-people search (handle/name, never email); a non-discoverable
+  // user is still addable by typing their exact @handle/email and clicking Add.
+  const [suggest, setSuggest] = useState<PublicProfile[]>([])
+  const [active, setActive] = useState(-1)
+  // The value we just picked, so the follow-up search for it doesn't reopen the menu.
+  const picked = useRef("")
   // General access draft: visibility + the link's permission (view vs comment), plus a
   // password when enabling/changing password.
   const [vis, setVis] = useState(visibility)
@@ -139,7 +148,6 @@ export function ShareButton({
       .listMembers(shortId)
       .then((r) => {
         setMembers(r.members)
-        setDefaultRole(r.default_role)
       })
       .catch(() => {})
   // After a share change, refresh the local list AND the shared cache: the artifact
@@ -148,6 +156,53 @@ export function ShareButton({
     await load()
     qc.invalidateQueries({ queryKey: ["artifact", shortId] })
     qc.invalidateQueries({ queryKey: ["artifacts"] })
+  }
+
+  // Debounced people-search for the add field. Skip when empty or when the term is
+  // exactly what we just picked (so a pick doesn't immediately reopen the menu).
+  useEffect(() => {
+    const term = email.trim()
+    if (!term || term === picked.current) {
+      setSuggest([])
+      return
+    }
+    let alive = true
+    const t = setTimeout(() => {
+      api
+        .searchPeople(term)
+        .then((r) => alive && (setSuggest(r.users), setActive(-1)))
+        .catch(() => alive && setSuggest([]))
+    }, 180)
+    return () => {
+      alive = false
+      clearTimeout(t)
+    }
+  }, [email])
+
+  const pick = (u: PublicProfile) => {
+    picked.current = `@${u.username}`
+    setEmail(`@${u.username}`)
+    setSuggest([])
+    setActive(-1)
+  }
+  // ↑/↓ to move, Enter to pick the highlighted suggestion, Esc to close the menu.
+  // With no highlight, Enter falls through to the form submit (free-text add).
+  const onAddKeyDown = (e: React.KeyboardEvent) => {
+    if (suggest.length === 0) return
+    if (e.key === "ArrowDown") {
+      e.preventDefault()
+      setActive((i) => Math.min(i + 1, suggest.length - 1))
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault()
+      setActive((i) => Math.max(i - 1, -1))
+    } else if (e.key === "Enter" && active >= 0 && suggest[active]) {
+      e.preventDefault()
+      pick(suggest[active])
+    } else if (e.key === "Escape") {
+      e.preventDefault()
+      e.stopPropagation()
+      setSuggest([])
+    }
   }
 
   const add = async (e: React.FormEvent) => {
@@ -159,6 +214,8 @@ export function ShareButton({
     try {
       await api.setMember(shortId, addr, role)
       setEmail("")
+      picked.current = ""
+      setSuggest([])
       await synced()
     } catch (x) {
       setErr(x instanceof Error ? x.message : "Could not share")
@@ -267,17 +324,60 @@ export function ShareButton({
             {canManage ? (
               <>
                 <form onSubmit={add} className="flex gap-1.5">
-                  <Input
-                    data-testid="share-email"
-                    type="text"
-                    autoCapitalize="none"
-                    autoCorrect="off"
-                    placeholder="@username or email"
-                    aria-label="Username or email"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    className="flex-1"
-                  />
+                  <div className="relative flex-1">
+                    <Input
+                      data-testid="share-email"
+                      type="text"
+                      autoCapitalize="none"
+                      autoCorrect="off"
+                      autoComplete="off"
+                      placeholder="@username or email"
+                      aria-label="Username or email"
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      onKeyDown={onAddKeyDown}
+                      className="w-full"
+                    />
+                    {suggest.length > 0 && (
+                      <div
+                        data-testid="share-suggest"
+                        className="absolute inset-x-0 top-[calc(100%+4px)] z-40 max-h-56 overflow-y-auto rounded-lg border border-border bg-card p-1 shadow-[var(--shadow)]"
+                      >
+                        {suggest.map((u, i) => (
+                          <button
+                            key={u.username}
+                            type="button"
+                            data-testid="share-suggest-item"
+                            // Keep the input focused so the click registers without blurring first.
+                            onMouseDown={(e) => e.preventDefault()}
+                            onClick={() => pick(u)}
+                            onMouseEnter={() => setActive(i)}
+                            className={cn(
+                              "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left",
+                              i === active ? "bg-hover" : "hover:bg-hover",
+                            )}
+                          >
+                            <Avatar className="size-6">
+                              {u.image && <AvatarImage src={u.image} alt={u.name ?? u.username} />}
+                              <AvatarFallback>
+                                {(u.name ?? u.username).slice(0, 2).toUpperCase()}
+                              </AvatarFallback>
+                            </Avatar>
+                            <span className="min-w-0 flex-1">
+                              {u.name && (
+                                <span className="block truncate text-sm font-semibold text-foreground">
+                                  {u.name}
+                                </span>
+                              )}
+                              <span className="block truncate font-mono text-2xs text-muted-foreground">
+                                @{u.username}
+                              </span>
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                   <div data-testid="share-role" className="w-[104px]">
                     <RoleSelect
                       value={role}
@@ -290,9 +390,7 @@ export function ShareButton({
                     {busy ? "…" : "Add"}
                   </Button>
                 </form>
-                <p className="mt-1.5 font-mono text-2xs text-muted-foreground">
-                  {BLURB[role]}. Everyone you don't list is a {defaultRole} by default.
-                </p>
+                <p className="mt-1.5 font-mono text-2xs text-muted-foreground">{BLURB[role]}.</p>
               </>
             ) : (
               <div
