@@ -4,6 +4,7 @@ import type {
   ExecutionContext,
   Fetcher,
   R2Bucket,
+  RateLimit,
   ScheduledController,
 } from "@cloudflare/workers-types"
 import { createD1Store } from "@dock/db/d1"
@@ -12,11 +13,12 @@ import { D1Dialect } from "kysely-d1"
 import { createApp } from "./app"
 import { makeAuth } from "./auth-config"
 import { customDomainsFromEnv } from "./lib/cloudflare-saas"
+import { nativeLimiter } from "./lib/rate-limit"
 import { createDoBackplane, edgeCtx } from "./realtime-do"
 
-// The realtime room Durable Object (one per channel) and the webhook outbox drainer
-// (a single named instance). Exported so the Workers runtime can instantiate the
-// bound classes (see wrangler.toml `durable_objects.bindings`).
+// The bound Durable Object classes — the realtime room (one per channel) and the webhook
+// outbox drainer (a single named instance) — re-exported so the Workers runtime can
+// instantiate them (see wrangler.toml `durable_objects.bindings`).
 export { ArtifactRoom } from "./realtime-do"
 export { WebhookOutbox } from "./webhook-do"
 
@@ -53,6 +55,15 @@ export interface Env {
   ROOMS: DurableObjectNamespace
   // The webhook outbox drainer DO (a single named instance). Declared in wrangler.toml.
   WEBHOOK_OUTBOX: DurableObjectNamespace
+  // Native per-colo rate-limit bindings (limit + 60s window declared in wrangler.toml
+  // [[ratelimits]]). The edge counts against these instead of an in-process Map so a cap
+  // holds across isolates within a location. RL_STRICT is shared by the two tight 3/60
+  // surfaces (unlock + oauth-register), namespaced by key so their counts stay separate.
+  RL_AUTH: RateLimit
+  RL_WRITE: RateLimit
+  RL_PUBLISH: RateLimit
+  RL_COMMENT: RateLimit
+  RL_STRICT: RateLimit
   // The static-assets binding: lets the Worker read the SPA shell to inject unfurl
   // meta into /a/:ref (the share URL). Declared in wrangler.toml `[assets] binding`.
   ASSETS: Fetcher
@@ -110,6 +121,20 @@ export default {
         subdomainBase:
           env.DOCK_SUBDOMAIN_BASE?.toLowerCase().replace(/^\.+|\.+$/g, "") || undefined,
         customDomains: customDomainsFromEnv(env),
+        // Enable rate limiting on the edge, counted by Cloudflare's native per-colo
+        // limiter (a plain in-memory Map would cap per isolate only). The native binding's
+        // window is fixed at 60s, so unlock / oauth-register run a tighter per-minute cap
+        // here than the long-window in-process defaults (see wrangler.toml [[ratelimits]]).
+        rateLimit: true,
+        rateLimiters: {
+          auth: nativeLimiter(env.RL_AUTH, 60),
+          write: nativeLimiter(env.RL_WRITE, 60),
+          publish: nativeLimiter(env.RL_PUBLISH, 60),
+          comment: nativeLimiter(env.RL_COMMENT, 60),
+          // Both ride RL_STRICT (3/60); the prefix keeps their counts separate.
+          unlock: nativeLimiter(env.RL_STRICT, 60, "unlock"),
+          oauthRegister: nativeLimiter(env.RL_STRICT, 60, "oauth-register"),
+        },
         // Deliver freshly enqueued events now: poke the outbox DO so its alarm fires,
         // riding waitUntil so the subrequest isn't cancelled when the response is sent.
         pokeWebhooks: () => {
