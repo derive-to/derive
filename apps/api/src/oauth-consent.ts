@@ -51,6 +51,15 @@ export function consentHTML(props: {
       }</span><span>${esc(SCOPE_LABELS[s] ?? s)}</span></li>`
     })
     .join("")
+  // The card swapped in after Approve — a branded confirmation on the page we own,
+  // shown for a beat before the browser carries the auth code back to the client.
+  const connectedInner = `<div class="brand">${MARK}<span class="name">Dock</span><span class="badge ok">Connected</span></div>
+    <div class="done">
+      <div class="check" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg></div>
+      <h1>You're connected</h1>
+      <p class="sub"><b>${name}</b> can now act in your workspace. Taking you back…</p>
+      <a class="back" id="back" href="#">Return to ${name} now</a>
+    </div>`
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -64,7 +73,7 @@ export function consentHTML(props: {
   :root{
     --paper:#f6f0e3;--panel:#fdf8ec;--panel-2:#f6efe0;--ink:#2a2540;--ink-soft:#46415c;
     --muted:#6b6680;--line:#e4dcc9;--line-2:#eee7d6;--accent:#655999;--accent-ink:#4f447e;
-    --accent-2:#8a7dc0;--accent-soft:#e8e4f1;--good:#6f7a35;--bad:#a04425;
+    --accent-2:#8a7dc0;--accent-soft:#e8e4f1;--good:#6f7a35;--good-soft:#ebedda;--bad:#a04425;
     --display:"Space Grotesk",ui-sans-serif,system-ui,sans-serif;
     --sans:"Inter",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
     --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
@@ -99,6 +108,22 @@ export function consentHTML(props: {
   .btn[disabled]{opacity:.55;cursor:default}
   .foot{color:var(--muted);font-size:12px;text-align:center;margin:16px 0 0}
   .err{color:var(--bad);font-size:12.5px;text-align:center;margin:12px 0 0;min-height:0}
+  .badge.ok{background:var(--good-soft);color:var(--good)}
+  /* The post-approve confirmation: a branded "you're connected" beat on the page
+     we control, before the browser hands the code back to the client. */
+  .done{text-align:center;padding:10px 4px 2px}
+  .check{width:58px;height:58px;margin:6px auto 20px;border-radius:50%;background:var(--good);
+    display:grid;place-items:center;box-shadow:0 10px 26px -10px rgba(111,122,53,.7);
+    animation:pop .36s cubic-bezier(.2,.9,.3,1.4) both}
+  .check svg{width:30px;height:30px;fill:none;stroke:#fff;stroke-width:3;stroke-linecap:round;
+    stroke-linejoin:round;stroke-dasharray:26;stroke-dashoffset:26;animation:draw .4s .14s ease forwards}
+  @keyframes pop{from{transform:scale(.4);opacity:0}to{transform:scale(1);opacity:1}}
+  @keyframes draw{to{stroke-dashoffset:0}}
+  .done h1{margin:0 0 7px}
+  .done .sub{margin:0}
+  .back{display:inline-block;margin-top:20px;color:var(--accent-ink);font-size:13px;
+    text-decoration:none;border-bottom:1px solid var(--line);padding-bottom:1px}
+  .back:hover{color:var(--accent);border-color:var(--accent-2)}
   ::selection{background:var(--accent-soft);color:var(--accent-ink)}
 </style>
 </head>
@@ -117,7 +142,17 @@ export function consentHTML(props: {
   </main>
   <script>
     var query = ${JSON.stringify(props.query)};
+    var CONNECTED = ${JSON.stringify(connectedInner)};
     var allow = document.getElementById("allow"), deny = document.getElementById("deny"), err = document.getElementById("err");
+    // Show our branded "Connected" card, then hand the code back to the client.
+    // The auth code is short-lived but a ~1.1s beat is well within its window.
+    function goConnected(to){
+      var card = document.querySelector("main.card");
+      if (card) card.innerHTML = CONNECTED;
+      var back = document.getElementById("back");
+      if (back) back.setAttribute("href", to);
+      setTimeout(function(){ window.location.href = to; }, 1100);
+    }
     async function decide(accept){
       allow.disabled = deny.disabled = true; err.textContent = "";
       try{
@@ -129,10 +164,13 @@ export function consentHTML(props: {
         // The plugin replies JSON { redirect: true, url: "<redirect_uri>?code=..." }
         // (note: "redirect" is a boolean flag, the destination is "url").
         var loc = r.headers.get("location");
-        if (loc){ window.location.href = loc; return; }
-        var data = await r.json().catch(function(){ return {}; });
-        var to = data && (data.url || data.redirectURI || data.location);
-        if (to){ window.location.href = to; return; }
+        var to = loc;
+        if (!to){
+          var data = await r.json().catch(function(){ return {}; });
+          to = data && (data.url || data.redirectURI || data.location);
+        }
+        // On approve, linger on our confirmation; on deny, bounce straight back.
+        if (to){ if (accept) goConnected(to); else window.location.href = to; return; }
         err.textContent = (data && (data.error_description || data.error)) || "Something went wrong.";
       }catch(e){ err.textContent = "Network error. Try again."; }
       allow.disabled = deny.disabled = false;
