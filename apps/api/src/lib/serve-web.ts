@@ -26,6 +26,7 @@ const API_EXACT = [
   "/mcp",
   "/.well-known/oauth-authorization-server",
   "/.well-known/oauth-protected-resource",
+  "/.well-known/openid-configuration",
 ] as const
 
 // Page prefixes the SERVER renders before handing off to the SPA, but that are NOT
