@@ -1,0 +1,305 @@
+# Dock — full reference for LLMs
+
+> Publish AI-built artifacts — HTML pages, Markdown docs, slide decks — with a permanent URL, version history, and threaded comments anchored to the text.
+
+Dock gives agent-built content a durable home: a real URL on your domain, every revision versioned and addressable, comments anchored to exact text (W3C TextQuoteSelector) that survive rewrites, and a propose -> review -> approve loop so humans stay in control.
+
+Self-hostable (Docker, Fly.io, Railway, Render, Cloudflare Workers). Hosted tier at dock.build.
+
+---
+
+## Artifact types
+
+| Type | File | Renders as |
+|---|---|---|
+| Markdown | .md | Rendered prose: headings, lists, tables, fenced code, task lists, GFM |
+| HTML | .html | The page itself, sandboxed in an opaque origin with CSP: sandbox |
+| HTML deck | .html | Navigable slide deck with nav bar and present mode |
+
+### HTML deck protocol
+
+Slides are `<section class="slide">` elements. Dock detects the protocol and wires up the nav bar automatically. The deck and host communicate via postMessage:
+
+```js
+// Deck -> host: report current position
+parent.postMessage({ source: 'dock-deck', type: 'state', i: 0, total: 8 }, '*')
+
+// Host -> deck: navigate
+parent.postMessage({ source: 'dock-host', type: 'deck', action: 'next' }, '*')
+parent.postMessage({ source: 'dock-host', type: 'deck', action: 'prev' }, '*')
+parent.postMessage({ source: 'dock-host', type: 'deck', action: 'goto', n: 2 }, '*')
+```
+
+### Anchor client protocol
+
+Dock injects `/raw/dock-client.js` into every served artifact. It handles text selection -> comment composer and scroll-to-anchor. It communicates with the host via postMessage:
+
+```js
+// Client -> host: user selected text
+{ source: 'dock', type: 'selection', text, anchor: { exact, prefix, suffix } }
+
+// Host -> client: scroll to anchor
+{ source: 'dock-host', type: 'focus-anchor', anchor: { exact, prefix, suffix }, bias: 0.28 }
+
+// Host -> client: highlight anchor
+{ source: 'dock-host', type: 'mark-anchor', id, anchor, active }
+```
+
+---
+
+## REST API
+
+Base URL: `https://dock.build` (or your self-hosted instance).
+Auth: `Authorization: Bearer $DOCK_TOKEN` for write operations. Public and link-visibility artifacts are readable without auth.
+
+### Publish a new artifact
+
+```
+POST /v1/artifacts
+Content-Type: multipart/form-data
+
+file         required  File blob (name determines type: .md or .html)
+title        optional  Display title (defaults to filename)
+slug         optional  URL slug
+message      optional  Version message
+visibility   optional  public | link | org | password  (default: link)
+password     optional  Required when visibility=password
+spa          optional  true/1 for single-page apps (disables sandbox)
+```
+
+Response:
+
+```json
+{
+  "short_id": "nk0dsral",
+  "url": "https://dock.build/a/nk0dsral",
+  "title": "My page",
+  "kind": "file",
+  "current_version": 1,
+  "versions": [{ "n": 1, "created_at": "...", "message": null }]
+}
+```
+
+### Publish a new version
+
+```
+POST /v1/artifacts/:short_id/versions
+Content-Type: multipart/form-data
+
+file       required  New content
+message    optional  Version message
+resolves   optional  Comma-separated comment IDs to close as part of this publish
+```
+
+### Propose a candidate version (requires human approval)
+
+```
+POST /v1/artifacts/:short_id/proposals
+Content-Type: multipart/form-data
+
+file       required  Proposed content
+message    optional  Rationale shown to the reviewer
+addresses  optional  Comma-separated thread IDs this proposal resolves
+```
+
+Response includes `preview_url` for the reviewer to inspect before approving.
+
+### Read artifact metadata
+
+```
+GET /v1/artifacts/:short_id
+```
+
+Returns full metadata: title, kind, visibility, current_version, versions array, open_proposals count, tags, my_role.
+
+### Read artifact source
+
+```
+GET /v1/artifacts/:short_id/content
+GET /v1/artifacts/:short_id/content?v=2
+```
+
+Returns raw source. Headers include `X-Dock-Version` and `X-Dock-Kind`.
+
+### Version diff
+
+```
+GET /v1/artifacts/:short_id/diff?from=1&to=2
+```
+
+Returns line-level diff operations: `{ op: "add" | "del" | "ctx", text }[]`.
+
+### Restore a past version
+
+```
+POST /v1/artifacts/:short_id/restore
+Content-Type: application/json
+
+{ "version": 1 }
+```
+
+Creates a new version pointing to the old blob. History is never rewritten.
+
+### Comments
+
+```
+GET  /v1/artifacts/:short_id/comments            list threads (state: open | resolved)
+POST /v1/artifacts/:short_id/comments            new thread
+POST /v1/artifacts/:short_id/comments/:id/reply  reply in thread
+POST /v1/artifacts/:short_id/comments/:id/resolve toggle thread state
+```
+
+New thread body:
+```json
+{
+  "body_md": "This section is unclear.",
+  "quote": "exact text from the artifact to anchor the comment"
+}
+```
+
+### Permanent artifact URL
+
+```
+GET /raw/:short_id/v/:n/index.html
+```
+
+Immutable, cacheable, served with `Content-Security-Policy: sandbox`. These URLs never change.
+
+---
+
+## MCP server
+
+```bash
+npx -y @dock/mcp
+```
+
+Env vars: `DOCK_SERVER` (base URL of your Dock instance), `DOCK_TOKEN` (agent token).
+
+### Tools
+
+| Tool | Description |
+|---|---|
+| `publish_artifact` | Publish new HTML or Markdown; returns short_id + URL |
+| `publish_version` | New version of existing artifact (same URL). `resolves: [ids]` closes threads. |
+| `get_artifact` | Read metadata + source for a version (defaults to current) |
+| `list_versions` | Version history with author, message, created_at |
+| `diff_versions` | Line diff between versions (defaults prev -> current) |
+| `restore_version` | Make a past version current (history preserved) |
+| `list_comments` | Feedback queue; filter by state: open or resolved |
+| `add_comment` | New thread; `quote` anchors it to exact text |
+| `reply_comment` | Reply in existing thread via thread_id |
+| `resolve_thread` | Resolve or reopen the thread a comment belongs to |
+| `view_stats` | Total views, unique viewers, per-version + daily breakdown |
+
+### Resource
+
+`dock://guide` — agent workflow guide (same content as packages/mcp/SKILL.md).
+
+### Claude Desktop config
+
+```json
+{
+  "mcpServers": {
+    "dock": {
+      "command": "npx",
+      "args": ["-y", "@dock/mcp"],
+      "env": {
+        "DOCK_SERVER": "https://dock.build",
+        "DOCK_TOKEN": "dk_agt_..."
+      }
+    }
+  }
+}
+```
+
+---
+
+## Comment anchoring
+
+Comments are anchored using W3C Web Annotation TextQuoteSelector: `{ exact, prefix, suffix }`.
+The anchor client re-matches on each render using the exact text with surrounding context as
+disambiguation. Anchors survive rewrites when the quoted text stays recognizable. When the
+exact text is gone, the comment shows "text changed" rather than attaching to the wrong place.
+
+---
+
+## Deployment tiers
+
+| Tier | Runtime | Metadata | Blobs | Realtime |
+|---|---|---|---|---|
+| Lite | Single container | SQLite | Local disk | In-process |
+| Node Basic | Container(s) | Postgres | S3/R2 | In-process |
+| Node Scale | Containers | Postgres | S3/R2 | Redis |
+| Cloudflare Basic | Workers + DO | D1 | R2 | Durable Objects |
+| Cloudflare Scale | Workers + DO | Postgres | R2 | Durable Objects |
+
+### Lite (single container)
+
+```bash
+docker compose -f deploy/compose.yml up -d
+# opens at http://localhost:8080
+```
+
+### Node Basic
+
+Set `DATABASE_URL` (Postgres) and `OBJECT_STORE_URL` (S3/R2). Container becomes stateless.
+
+R2: `s3://<key>:<secret>@<account>.r2.cloudflarestorage.com/<bucket>?region=auto`
+S3: `s3://<key>:<secret>@s3.<region>.amazonaws.com/<bucket>?region=<region>`
+
+### Node Scale
+
+Add `REDIS_URL` for shared pub/sub backplane across multiple container instances (presence, SSE fan-out, caching, webhook drain).
+
+### Cloudflare Basic
+
+```bash
+cd apps/api
+wrangler d1 create dock                                        # put database_id in wrangler.toml
+wrangler d1 execute dock --remote --file=../../deploy/d1-schema.sql
+pnpm exec tsx gen-auth-schema.ts > /tmp/auth-schema.sql
+wrangler d1 execute dock --remote --file=/tmp/auth-schema.sql
+wrangler r2 bucket create dock-blobs
+pnpm build:web && wrangler deploy
+wrangler secret put DOCK_AUTH_SECRET
+```
+
+### Cloudflare Scale
+
+Same as Cloudflare Basic but with `wrangler secret put DATABASE_URL` (Postgres). The Worker uses Postgres instead of D1; Durable Objects stay on the edge.
+
+---
+
+## Environment variables
+
+| Var | Default | Purpose |
+|---|---|---|
+| `BASE_URL` | request origin | Public URL for cookies and share links |
+| `DOCK_AUTH_SECRET` | generated | Session signing key — always set in prod |
+| `PORT` | 8080 | Listen port (Node) |
+| `DATA_DIR` | /data | SQLite + blob dir (Lite) |
+| `DATABASE_URL` | (SQLite) | Postgres connection |
+| `OBJECT_STORE_URL` | (local disk) | S3/R2 blob URL |
+| `REDIS_URL` | (none) | Redis for pub/sub, caching, presence (Node Scale) |
+| `DOCK_WEB_ORIGIN` | (none) | SPA origin for CORS (split CDN deploy) |
+| `DOCK_CROSS_SITE` | false | SameSite=None cookies for cross-origin SPA |
+| `DOCK_TOKEN` | (none) | Static bearer for CI/agents |
+| `DOCK_WEB_DIR` | (auto) | Override bundled SPA path |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | (none) | Google sign-in |
+| `OIDC_ISSUER` / `OIDC_CLIENT_ID` / `OIDC_CLIENT_SECRET` / `OIDC_PROVIDER_ID` | (none) | Enterprise SSO |
+
+---
+
+## Health endpoints
+
+```
+GET /healthz  -> 200 { ok: true }
+GET /readyz   -> 200 { ok: true }
+```
+
+---
+
+## Getting a DOCK_TOKEN
+
+Settings > Agents > New Agent. Name it, copy the `dk_agt_...` token (shown once).
+Use as `Authorization: Bearer $DOCK_TOKEN` in API requests and MCP env config.

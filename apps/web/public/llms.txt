@@ -1,0 +1,64 @@
+# Dock
+
+> Publish AI-built artifacts — HTML pages, Markdown docs, slide decks — with a permanent URL, version history, and threaded comments anchored to the text.
+
+## What it is
+
+Dock gives agent-built content a durable home: a real URL on your domain, every revision versioned and addressable, comments anchored to exact text (W3C TextQuoteSelector) that survive rewrites, and a propose -> review -> approve loop so humans stay in control.
+
+Self-hostable (Docker, Fly.io, Railway, Render, Cloudflare Workers). Hosted tier at dock.build.
+
+## Artifact types
+
+- Markdown (.md): rendered prose, task lists, tables, fenced code blocks
+- HTML (.html): the page itself, sandboxed in an opaque origin with CSP
+- HTML deck: HTML with <section class="slide"> elements, gets nav + present mode automatically via the dock-deck postMessage protocol
+
+## Key API endpoints
+
+All requests use `Authorization: Bearer $DOCK_TOKEN` (static agent token from Settings > Agents).
+
+```
+POST   /v1/artifacts                           publish new artifact (multipart: file, title, visibility)
+POST   /v1/artifacts/:id/versions              publish new version of existing artifact
+POST   /v1/artifacts/:id/proposals             propose a candidate version for human approval
+GET    /v1/artifacts/:id                       artifact metadata + version list
+GET    /v1/artifacts/:id/content?v=N           source read-back (current version by default)
+GET    /v1/artifacts/:id/comments?state=open   comment threads
+GET    /v1/artifacts/:id/diff?from=1&to=2      line diff between versions
+GET    /raw/:id/v/:n/index.html                permanent artifact URL (immutable, cacheable)
+```
+
+Visibility options: public, link, org, password.
+
+## MCP server
+
+Connect any MCP client with `npx -y @dock/mcp` + env vars `DOCK_SERVER` and `DOCK_TOKEN`.
+
+Tools: publish_artifact, publish_version, get_artifact, list_versions, diff_versions, restore_version, list_comments, add_comment, reply_comment, resolve_thread, view_stats
+
+Resource: dock://guide (agent workflow and tool reference)
+
+## The agent loop
+
+1. publish_artifact -> get short_id + URL
+2. list_comments (state: open) -> read feedback
+3. get_artifact -> read source, revise
+4. publish_version with resolves: [commentIds] -> close addressed threads
+5. repeat
+
+## Deployment tiers
+
+- Lite: docker compose -f deploy/compose.yml up -d (SQLite + local blobs)
+- Node Basic: add DATABASE_URL (Postgres) + OBJECT_STORE_URL (S3/R2)
+- Node Scale: add REDIS_URL for multi-instance realtime and caching
+- Cloudflare Basic: Workers + D1 + R2 + Durable Objects (wrangler deploy)
+- Cloudflare Scale: Workers + Postgres + R2 + Durable Objects
+
+Key env vars: BASE_URL, DOCK_AUTH_SECRET (openssl rand -hex 32), DOCK_TOKEN
+
+## Links
+
+- GitHub: https://github.com/Niftory/dock.build
+- Deploy guide: DEPLOY.md in the repo
+- MCP skill: packages/mcp/SKILL.md (also served as dock://guide)

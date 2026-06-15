@@ -1,15 +1,22 @@
 # Deploying Dock
 
-One image, two shapes:
+## Deployment tiers
 
-1. **Single container** (start here): one box runs the API *and* the web app on one
-   origin, with SQLite + local blobs on a mounted volume. No CORS, no external services.
-2. **Scale-out split**: web SPA on a CDN, stateless API containers, managed Postgres,
-   S3/R2 blobs. Same image — just add env vars.
+Pick the tier that matches your scale and infrastructure:
+
+| Tier | Runtime | Metadata | Blobs | Realtime | Good for |
+|---|---|---|---|---|---|
+| **Lite** | Single container | SQLite (built-in) | Local disk | In-process | Personal use, small teams, hobby projects |
+| **Node Basic** | Container(s) | Postgres | S3/R2 | In-process | Production teams, managed hosting |
+| **Node Scale** | Containers + load balancer | Postgres | S3/R2 | Redis | High-traffic, multi-instance, presence at scale |
+| **Cloudflare Basic** | Workers + D1 + DO | D1 (SQLite on edge) | R2 | Durable Objects | Edge-first, global, no infra to manage |
+| **Cloudflare Scale** | Workers + Postgres + DO | Postgres | R2 | Durable Objects | Edge serving + Postgres at scale (D1 limits exceeded) |
+
+All tiers run the same codebase. Tiers are additive: Lite + `DATABASE_URL` = Node Basic; Node Basic + `REDIS_URL` = Node Scale.
 
 ---
 
-## Single container
+## Lite: single container
 
 One command gives you a complete, working Dock — sign-in, publish, comments, reviews,
 notifications, the sandboxed viewer — all served from `http://localhost:8080`.
@@ -106,7 +113,7 @@ https://dock.example.com/api/auth/oauth2/callback/<OIDC_PROVIDER_ID>
 
 ---
 
-## Scale-out split
+## Node Basic: containers + Postgres + S3/R2
 
 When one box isn't enough: put Postgres + object storage behind the API and the
 container holds no state — run as many as you like. Optionally serve the SPA from a CDN
@@ -165,7 +172,31 @@ fly secrets set DOCK_WEB_ORIGIN='https://app.example.com' DOCK_CROSS_SITE='true'
 cross-origin SPA→API request; `DOCK_WEB_ORIGIN` allow-lists the SPA for CORS.
 `apps/web/public/_redirects` already ships the SPA fallback.
 
-## Cloudflare Workers + D1 (experimental)
+## Node Scale: add Redis
+
+When you're running multiple API containers and need shared realtime state across them,
+add Redis. A single container (Lite / Node Basic) uses an in-process event bus for SSE
+and presence — that breaks across multiple instances without a shared backplane.
+
+```bash
+fly secrets set REDIS_URL='redis://...'
+# or with Compose:
+# REDIS_URL=redis://redis:6379 in your env
+```
+
+What Redis adds:
+- **Pub/sub backplane** for SSE events (comments, version publishes, presence) — so any
+  instance receives events published by any other
+- **Presence** — who's viewing what, live cursors, shared reading sessions
+- **Caching** — artifact metadata and source read-back for high-read workloads
+- **Webhook outbox drain** — shared queue across instances so deliveries don't duplicate
+
+Redis is optional at any scale. Start without it; add it when you run more than one
+container or start seeing presence/realtime gaps.
+
+---
+
+## Cloudflare Basic: Workers + D1 + R2 + Durable Objects (experimental)
 
 Dock has a Cloudflare Workers entry (`apps/api/src/worker.ts`) that runs the whole app
 on the edge: D1 for metadata, R2 for blobs, Better Auth on a Kysely D1 dialect, the
@@ -218,3 +249,30 @@ is no CORS or cross-site cookie config. `[assets]` in `wrangler.toml` points at
 while every other path serves a static file or the SPA shell. `pnpm build:web` builds
 apps/web and preps the output (writes `index.html`, drops the Pages-only `_redirects`
 catch-all that otherwise hijacks `/assets/*`); see `scripts/prep-edge-assets.mjs`.
+
+---
+
+## Cloudflare Scale: Workers + Postgres + Durable Objects
+
+When D1 isn't enough (storage limits, regional writes, complex queries), keep Workers and
+Durable Objects on the edge but move metadata to Postgres. R2 stays for blobs.
+
+When to switch: D1 has a 10 GB storage limit per database and single-region writes. If
+your workspace grows beyond that, or you need cross-region write performance, point the
+Worker at a Postgres instance instead.
+
+```bash
+wrangler secret put DATABASE_URL      # postgres://user:pass@host/db
+wrangler r2 bucket create dock-blobs  # if not already created
+wrangler secret put DOCK_AUTH_SECRET
+pnpm build:web
+wrangler deploy
+```
+
+With `DATABASE_URL` set, the Worker uses the Postgres backend (via `packages/db`) instead
+of D1. Durable Objects (`ArtifactRoom`, `WebhookOutbox`) continue handling realtime
+fan-out and the webhook outbox drain — those stay on the edge regardless.
+
+The `[[d1_databases]]` binding in `wrangler.toml` is still required by the Workers runtime
+even when `DATABASE_URL` overrides it at app startup. Leave the binding in place; the D1
+database itself will be idle.
