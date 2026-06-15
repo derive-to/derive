@@ -168,3 +168,54 @@ describe("B-018: publish rejects an unknown visibility", () => {
     expect(def.visibility).toBe("link")
   })
 })
+
+// B-020: view-analytics (who-viewed + counts) is for collaborators, not every
+// signed-in reader. A public artifact's `read` access is satisfied by any
+// signed-in user, so the endpoint must additionally require a member/sharee — and
+// resolve viewers to a handle, never email. See bug-hunt B-020 (and B-013).
+describe("B-020: view-analytics is collaborator-gated + never leaks email", () => {
+  const owner: TestUser = { id: "u_b20_owner", email: "o20@dock.test", name: "Owner20" }
+  // name:null forces the viewer-display fallback — it must land on the handle, not email.
+  const viewer: TestUser = {
+    id: "u_b20_viewer",
+    email: "v20@dock.test",
+    name: null,
+    username: "viewer20",
+  }
+  const outsider: TestUser = { id: "u_b20_out", email: "x20@dock.test", name: "Out20" }
+
+  it("refuses a non-member; serves a member; viewers resolve to handle, never email", async () => {
+    const { app, meta: m } = makeAuthedApp("harden-b20", [owner, viewer, outsider], undefined, {
+      isolated: true,
+    })
+    const { short_id } = await (
+      await publishAs(app, "<h1>p</h1>", { visibility: "public" }, as(owner.email))
+    ).json()
+    const art = await m.getByShortId(short_id)
+    if (!art) throw new Error("artifact not found")
+    // viewer joins the workspace and records a view (non-owner → counts).
+    await m.setMembership({
+      id: "m_b20",
+      org_id: art.org_id,
+      user_id: viewer.id,
+      role: "commenter",
+    })
+    await app.request(`/v1/artifacts/${short_id}/view`, jsonAs(as(viewer.email), {}))
+
+    // A signed-in NON-member stranger is refused, even though the artifact is public.
+    const stranger = await app.request(`/v1/artifacts/${short_id}/analytics`, {
+      headers: as(outsider.email),
+    })
+    expect(stranger.status).toBe(404)
+
+    // The owner (a collaborator) sees the stats; the recent viewer shows by HANDLE
+    // (name is null) and the email never appears anywhere in the payload.
+    const ownerRes = await app.request(`/v1/artifacts/${short_id}/analytics`, {
+      headers: as(owner.email),
+    })
+    expect(ownerRes.status).toBe(200)
+    const stats = await ownerRes.json()
+    expect(stats.recent.map((r: { viewer: string }) => r.viewer)).toContain("viewer20")
+    expect(JSON.stringify(stats)).not.toContain("v20@dock.test")
+  })
+})
