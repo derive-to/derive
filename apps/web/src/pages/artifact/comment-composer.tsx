@@ -347,7 +347,9 @@ export function Composer({
   return (
     <div className="overflow-hidden rounded-lg border border-primary bg-card shadow-[var(--shadow)]">
       {quote && (
-        <div className="block w-full truncate border-l-[3px] border-primary bg-accent px-2.5 py-1.5 text-left text-xs italic text-foreground">
+        // Phones get a longer multi-line preview of what you're commenting on; the
+        // desktop margin composer stays a tight single line.
+        <div className="block w-full break-words border-l-[3px] border-primary bg-accent px-2.5 py-1.5 text-left text-xs italic text-foreground line-clamp-4 md:line-clamp-1">
           “{quote}”
         </div>
       )}
