@@ -117,28 +117,25 @@ export function SourceEditor({
             </span>
           </span>
         )}
-        {/* Version description / proposal "why" applies to editing an existing
-            artifact; a brand-new one (onTitle set) has no prior version to describe. */}
-        {!onTitle &&
-          (canPublish ? (
-            <Input
-              value={message}
-              onChange={(e) => onMessage(e.target.value)}
-              placeholder="Describe this version (optional)"
-              aria-label="Version description"
-              data-testid="artifact-commit-message"
-              className="order-last h-8 w-full text-sm md:order-none md:w-auto md:max-w-[360px] md:flex-1"
-            />
-          ) : (
-            <Input
-              value={proposeMsg}
-              onChange={(e) => onProposeMsg(e.target.value)}
-              placeholder="What are you changing, and why?"
-              aria-label="Proposal description"
-              data-testid="artifact-propose-message"
-              className="order-last h-8 w-full text-sm md:order-none md:w-auto md:max-w-[420px] md:flex-1"
-            />
-          ))}
+        {canPublish ? (
+          <Input
+            value={message}
+            onChange={(e) => onMessage(e.target.value)}
+            placeholder="Describe this version (optional)"
+            aria-label="Version description"
+            data-testid="artifact-commit-message"
+            className="order-last h-8 w-full text-sm md:order-none md:w-auto md:max-w-[360px] md:flex-1"
+          />
+        ) : (
+          <Input
+            value={proposeMsg}
+            onChange={(e) => onProposeMsg(e.target.value)}
+            placeholder="What are you changing, and why?"
+            aria-label="Proposal description"
+            data-testid="artifact-propose-message"
+            className="order-last h-8 w-full text-sm md:order-none md:w-auto md:max-w-[420px] md:flex-1"
+          />
+        )}
         <span className="ml-auto flex items-center gap-2">
           {/* Desktop: show/hide the preview for a full-width editor when you don't
               need it. (Phones use the Edit/Preview tabs below instead.) */}

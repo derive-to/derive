@@ -28,6 +28,7 @@ export function NewArtifact() {
   const nav = useNavigate()
   const [src, setSrc] = useState("")
   const [title, setTitle] = useState("")
+  const [message, setMessage] = useState("")
   const format = detectFormat(src)
 
   const publish = async () => {
@@ -39,10 +40,9 @@ export function NewArtifact() {
       const name = title.trim() || "Untitled"
       const ext = format === "md" ? "md" : "html"
       const type = format === "md" ? "text/markdown" : "text/html"
-      const a = await api.publish(new File([src], `inline.${ext}`, { type }), {
-        title: name,
-        visibility: "org",
-      })
+      const fields: Record<string, string> = { title: name, visibility: "org" }
+      if (message.trim()) fields.message = message.trim()
+      const a = await api.publish(new File([src], `inline.${ext}`, { type }), fields)
       nav({ to: "/a/$ref", params: { ref: a.short_id } })
     } catch (e) {
       toast.error((e as Error).message)
@@ -57,10 +57,10 @@ export function NewArtifact() {
         onTitle={setTitle}
         format={format}
         src={src}
-        message=""
+        message={message}
         proposeMsg=""
         onSrc={setSrc}
-        onMessage={() => {}}
+        onMessage={setMessage}
         onProposeMsg={() => {}}
         onCancel={() => nav({ to: "/" })}
         onPublish={publish}

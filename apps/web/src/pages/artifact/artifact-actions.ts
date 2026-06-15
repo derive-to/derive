@@ -33,6 +33,7 @@ export function artifactActions(p: {
   qc: QueryClient
   me: Me
   src: string
+  title: string
   proposeMsg: string
   message: string
   format: "md" | "html"
@@ -44,6 +45,7 @@ export function artifactActions(p: {
   onRestoredJump: () => void
   setEditing: Dispatch<SetStateAction<boolean>>
   setSrc: Dispatch<SetStateAction<string>>
+  setTitle: Dispatch<SetStateAction<string>>
   setProposeMsg: Dispatch<SetStateAction<string>>
   setComposer: Dispatch<SetStateAction<Composer>>
   setSel: Dispatch<SetStateAction<Selection>>
@@ -54,17 +56,20 @@ export function artifactActions(p: {
 
   const startEdit = async () => {
     p.setEditing(true)
+    p.setTitle(art.title ?? "")
     p.setSrc(await api.getContent(shortId))
   }
   const publishEdit = async () => {
     try {
       // Keep the artifact's format: editing an HTML artifact must stay .html
       // (publishing it as .md would flip its type and re-render it as markdown).
+      // The title rides along, so editing the name renames the artifact.
       const a = await api.publishText(
         shortId,
         p.src,
         `${art.short_id}.${p.format === "md" ? "md" : "html"}`,
         p.message.trim() || "Edited in browser",
+        p.title,
       )
       toast.success(`Published v${a.current_version}`)
       p.setEditing(false)

@@ -606,7 +606,17 @@ export const api = {
       headers: { accept: "application/json" },
     }).then(j)
   },
-  publishText(id: string, text: string, filename: string, message: string): Promise<Artifact> {
-    return this.publish(new File([text], filename), { message }, id)
+  // `title` renames the artifact on this republish (the editor's editable title);
+  // omit it to leave the name unchanged.
+  publishText(
+    id: string,
+    text: string,
+    filename: string,
+    message: string,
+    title?: string,
+  ): Promise<Artifact> {
+    const fields: Record<string, string> = { message }
+    if (title?.trim()) fields.title = title.trim()
+    return this.publish(new File([text], filename), fields, id)
   },
 }

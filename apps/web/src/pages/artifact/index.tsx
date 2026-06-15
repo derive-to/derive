@@ -72,6 +72,9 @@ export function Artifact() {
   const [message, setMessage] = useState("")
   const [restoring, setRestoring] = useState(false)
   const [src, setSrc] = useState("")
+  // Editable title while editing (seeded from the artifact in startEdit); editors
+  // can rename, and it republishes with the new name.
+  const [editTitle, setEditTitle] = useState("")
 
   // Comments UI state shared across the page, the panel, and the iframe bridge.
   const [composer, setComposer] = useState<{ anchor: Sel | null; top: number | null } | null>(null)
@@ -267,6 +270,7 @@ export function Artifact() {
     qc,
     me,
     src,
+    title: editTitle,
     proposeMsg,
     message,
     format,
@@ -278,6 +282,7 @@ export function Artifact() {
     onRestoredJump: () => nav({ to: "/a/$ref", params: { ref: shortId } }),
     setEditing,
     setSrc,
+    setTitle: setEditTitle,
     setProposeMsg,
     setComposer,
     setSel,
@@ -387,7 +392,8 @@ export function Artifact() {
             {editing ? (
               <SourceEditor
                 canPublish={canPublish}
-                title={art.title ?? shortId}
+                title={canPublish ? editTitle : (art.title ?? shortId)}
+                onTitle={canPublish ? setEditTitle : undefined}
                 format={format}
                 proposeMsg={proposeMsg}
                 message={message}
