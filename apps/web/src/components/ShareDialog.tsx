@@ -154,11 +154,21 @@ export function ShareButton({
   }
   const change = async (m: ArtifactMember, next: Role) => {
     if (next === m.role || !m.handle) return
-    await api.setMember(shortId, m.handle, next).catch(() => {})
+    // Surface a failed role change instead of swallowing it (transient-failure
+    // recovery), now keyed on the handle-based identity.
+    try {
+      await api.setMember(shortId, m.handle, next)
+    } catch (x) {
+      toast.error(x instanceof Error ? x.message : "Couldn't update access")
+    }
     await synced()
   }
   const remove = async (m: ArtifactMember) => {
-    await api.removeMember(shortId, m.user_id).catch(() => {})
+    try {
+      await api.removeMember(shortId, m.user_id)
+    } catch (x) {
+      toast.error(x instanceof Error ? x.message : "Couldn't remove member")
+    }
     await synced()
   }
 

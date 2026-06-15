@@ -19,6 +19,8 @@ export function ArtifactDocument({
   rawSrc,
   view,
   diff,
+  diffFailed,
+  onDiffRetry,
   restoring,
   deck,
   frameRef,
@@ -39,6 +41,8 @@ export function ArtifactDocument({
   rawSrc: string
   view: "preview" | "diff"
   diff: Diff | null
+  diffFailed?: boolean
+  onDiffRetry?: () => void
   restoring: boolean
   deck: { i: number; total: number } | null
   frameRef: RefObject<HTMLIFrameElement | null>
@@ -91,7 +95,13 @@ export function ArtifactDocument({
         </div>
       )}
       {view === "diff" && past ? (
-        <DiffView diff={diff} fromLabel={`v${shown}`} toLabel="current" />
+        <DiffView
+          diff={diff}
+          failed={diffFailed}
+          onRetry={onDiffRetry}
+          fromLabel={`v${shown}`}
+          toLabel="current"
+        />
       ) : (
         <div ref={presentWrapRef} className="relative flex min-h-0 flex-1 flex-col bg-white">
           <iframe

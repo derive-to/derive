@@ -176,27 +176,40 @@ as the Node entry, so the app logic is identical.
 Treat it as **experimental**: there is no automated edge integration test in CI yet (the
 entry is typecheck-covered).
 
+First-time setup:
+
 ```bash
 cd apps/api
 wrangler d1 create dock                     # copy the database_id into wrangler.toml
-wrangler d1 execute dock --remote --file=../../deploy/d1-schema.sql       # app schema
 wrangler r2 bucket create dock-blobs
 wrangler secret put DOCK_AUTH_SECRET        # a strong random secret
-pnpm deploy                                 # build:web -> migrate:auth --apply -> wrangler deploy
+pnpm deploy                                 # build:web → app schema → auth schema → wrangler deploy
 ```
 
-D1 forbids the `sqlite_master` introspection Better Auth's migrator runs (`SQLITE_AUTH`),
-so the auth tables are applied to D1 out of band, never at boot. **`pnpm deploy` runs
-`migrate-auth-d1.ts --apply` before `wrangler deploy`**: it derives the desired Better Auth
-schema from the live config (the single source of truth) and reconciles the remote D1 —
-creating missing tables, adding missing columns, and adding missing unique indexes,
-idempotently. This means adding a Better Auth `additionalField` (or a plugin table) can
-never leave D1 behind the deployed Worker again — the gap that broke signup with
-`FAILED_TO_CREATE_USER` (the live `user` table was missing `username`/`discoverable`).
-Inspect the plan any time with `pnpm --filter @dock/api migrate:auth` (dry run).
-`deploy/d1-schema.sql` (the app schema) is still generated from the shared schema —
-regenerate with `pnpm --filter @dock/db gen:d1-schema`. (`gen-auth-schema.ts` remains as a
-one-shot dump of the full auth DDL for a brand-new DB, but routine deploys no longer need it.)
+**Every deploy is just `pnpm deploy`.** It runs `build:web`, then `deploy:schema`
+(`scripts/apply-d1-schema.mjs`, the app schema), then `migrate-auth-d1.ts --apply` (the
+Better Auth schema), then `wrangler deploy`. Both schema steps bring D1 fully current
+before the new Worker goes live, so a deploy can never ship code against a stale schema.
+No one-shot setup SQL is needed: the two steps create the whole schema on a brand-new DB
+and reconcile an existing one.
+
+> Why this runs out of band: D1 forbids the `sqlite_master` introspection Better Auth's
+> migrator runs at boot (`SQLITE_AUTH`), and the edge — unlike the Node tier, which
+> re-applies schema on every boot — can't. So both schemas are applied at deploy time:
+>
+> - **App schema** — `deploy:schema` re-applies `deploy/d1-schema.sql`: it creates new
+>   tables AND adds new columns (a plain `CREATE TABLE IF NOT EXISTS` re-apply never adds
+>   columns to a table that already exists). Idempotent; run standalone with
+>   `pnpm --filter @dock/api deploy:schema`. Regenerate the SQL from the shared schema
+>   with `pnpm --filter @dock/db gen:d1-schema`.
+> - **Auth schema** — `migrate-auth-d1.ts --apply` derives the desired Better Auth schema
+>   from the live config (the single source of truth) and reconciles the remote D1:
+>   missing tables, columns, and unique indexes, idempotently. So adding a Better Auth
+>   `additionalField` (or a plugin table) can never leave D1 behind the deployed Worker —
+>   the gap that broke signup with `FAILED_TO_CREATE_USER` (the live `user` table was
+>   missing `username`/`discoverable`). Inspect the plan with
+>   `pnpm --filter @dock/api migrate:auth` (dry run). (`gen-auth-schema.ts` remains a
+>   one-shot dump of the full auth DDL for a brand-new DB; routine deploys don't need it.)
 
 The worker serves the SPA (login, library, settings) same-origin with the API, so there
 is no CORS or cross-site cookie config. `[assets]` in `wrangler.toml` points at

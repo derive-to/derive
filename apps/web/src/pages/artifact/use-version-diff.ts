@@ -14,6 +14,10 @@ export function useVersionDiff(
 ) {
   const [view, setView] = useState<"preview" | "diff">("preview")
   const [diff, setDiff] = useState<Diff | null>(null)
+  // A failed diff fetch must not leave DiffView spinning forever; track it so the
+  // view can show an error + retry. `nonce` lets retry re-run the effect.
+  const [failed, setFailed] = useState(false)
+  const [nonce, setNonce] = useState(0)
 
   // Switching versions returns to the rendered preview.
   // biome-ignore lint/correctness/useExhaustiveDependencies: resets the view on a version/artifact change.
@@ -21,23 +25,26 @@ export function useVersionDiff(
 
   // In history mode, "show changes" diffs the version being viewed against the
   // current one — what's changed since this older version.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `nonce` is an intentional re-trigger so `retry()` re-runs the fetch; its value isn't read in the body.
   useEffect(() => {
     if (view !== "diff" || !art) return
     const shownN = version ?? art.current_version
     if (shownN >= art.current_version) {
       setDiff(null)
+      setFailed(false)
       return
     }
     setDiff(null)
+    setFailed(false)
     let alive = true
     api
       .diff(shortId, shownN, art.current_version)
       .then((d) => alive && setDiff(d))
-      .catch(() => {})
+      .catch(() => alive && setFailed(true))
     return () => {
       alive = false
     }
-  }, [view, version, art, shortId])
+  }, [view, version, art, shortId, nonce])
 
-  return { view, setView, diff }
+  return { view, setView, diff, failed, retry: () => setNonce((n) => n + 1) }
 }

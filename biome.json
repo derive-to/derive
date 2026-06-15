@@ -82,7 +82,12 @@
       }
     },
     {
-      "includes": ["apps/api/src/log.ts", "apps/api/src/node.ts", "**/*.test.ts"],
+      "includes": [
+        "apps/api/src/log.ts",
+        "apps/api/src/node.ts",
+        "apps/api/scripts/**",
+        "**/*.test.ts"
+      ],
       "linter": { "rules": { "suspicious": { "noConsole": "off" } } }
     },
     {

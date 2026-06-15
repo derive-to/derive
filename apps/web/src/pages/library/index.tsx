@@ -70,7 +70,7 @@ function LibraryBody() {
     favorite: search.f === "favorites" || undefined,
   }
   const listQuery = libraryArtifactsQuery(params)
-  const { data, isPending, isError, fetchNextPage, hasNextPage, isFetchingNextPage } =
+  const { data, isPending, isError, refetch, fetchNextPage, hasNextPage, isFetchingNextPage } =
     useInfiniteQuery(listQuery)
   const items = data?.pages.flatMap((p) => p.artifacts) ?? []
 
@@ -223,7 +223,19 @@ function LibraryBody() {
         {isPending ? (
           <LibrarySkeleton />
         ) : isError ? (
-          <EmptyState>Couldn’t load the library. Check your connection and try again.</EmptyState>
+          <EmptyState>
+            <div className="flex flex-col items-center gap-3">
+              <span>Couldn’t load the library. This is usually temporary.</span>
+              <Button
+                variant="outline"
+                size="sm"
+                data-testid="library-retry"
+                onClick={() => refetch()}
+              >
+                Try again
+              </Button>
+            </div>
+          </EmptyState>
         ) : items.length === 0 ? (
           <EmptyState>{emptyMessage}</EmptyState>
         ) : (
