@@ -144,10 +144,12 @@ export function Artifact() {
     setComposer(null)
   }, [shortId, version])
 
-  // Clicking a thread's quote scrolls the document to its highlight.
+  // Clicking a thread's quote scrolls the document to its highlight. On phones the
+  // bottom ~half is covered by the comments sheet, so bias the scroll to drop the
+  // highlight into the upper band rather than dead-center (behind the sheet).
   const jumpTo = (threadId: string) => {
     setActiveThread(threadId)
-    post({ type: "focus-anchor", id: threadId })
+    post({ type: "focus-anchor", id: threadId, bias: isMobile ? 0.28 : undefined })
   }
 
   useEffect(() => {

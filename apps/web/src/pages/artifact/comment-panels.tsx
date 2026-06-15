@@ -60,23 +60,44 @@ export function MobileComments({
   const sheet = composer ? "full" : size
   // iOS keeps `position: fixed` put when the keyboard opens, so a bottom sheet hides
   // behind it. Track the keyboard via visualViewport and pin the sheet into the
-  // visible area above it while one is up (ignore the small URL-bar shrink).
+  // visible area above it. Measure against the layout viewport (clientHeight is
+  // keyboard-stable on iOS); a >150px shrink is a real keyboard, which rules out the
+  // ~60-115px Safari toolbar collapse that would otherwise false-trigger. rAF-
+  // coalesced and change-guarded so the scroll/resize bursts don't thrash.
   const [kb, setKb] = useState<{ inset: number; height: number } | null>(null)
   useEffect(() => {
     const vv = window.visualViewport
     if (!vv) return
-    const update = () => {
-      const inset = Math.max(0, window.innerHeight - vv.height - vv.offsetTop)
-      setKb(inset > 80 ? { inset, height: vv.height } : null)
+    let raf = 0
+    const measure = () => {
+      const layoutH = document.documentElement.clientHeight
+      const inset = Math.max(0, layoutH - vv.height - vv.offsetTop)
+      const next = inset > 150 ? { inset: Math.round(inset), height: Math.round(vv.height) } : null
+      setKb((prev) => {
+        if (!prev && !next) return prev
+        if (prev && next && prev.inset === next.inset && prev.height === next.height) return prev
+        return next
+      })
     }
-    update()
+    const update = () => {
+      cancelAnimationFrame(raf)
+      raf = requestAnimationFrame(measure)
+    }
+    measure()
     vv.addEventListener("resize", update)
     vv.addEventListener("scroll", update)
     return () => {
+      cancelAnimationFrame(raf)
       vv.removeEventListener("resize", update)
       vv.removeEventListener("scroll", update)
     }
   }, [])
+  // When the composer closes (submit/cancel), drop focus so iOS dismisses the
+  // keyboard instead of leaving it up over an empty sheet (which would keep the
+  // sheet pinned/shrunk via `kb`).
+  useEffect(() => {
+    if (!composer) (document.activeElement as HTMLElement | null)?.blur?.()
+  }, [composer])
   const empty = openThreads.length === 0 && resolved.length === 0 && !composer
   // The grip taps bigger; full wraps back to half. The chevron handles peek.
   const grip = () => setSize((s) => (s === "peek" ? "half" : s === "half" ? "full" : "half"))
@@ -102,7 +123,10 @@ export function MobileComments({
       />
       <div
         className={cn(
-          "fixed inset-x-0 bottom-0 z-[61] flex flex-col rounded-t-[18px] border-t border-border bg-card shadow-[0_-14px_44px_-18px_rgba(0,0,0,0.5)] transition-[transform,height] duration-[260ms]",
+          "fixed inset-x-0 bottom-0 z-[61] flex flex-col rounded-t-[18px] border-t border-border bg-card shadow-[0_-14px_44px_-18px_rgba(0,0,0,0.5)] duration-[260ms]",
+          // While the keyboard pins height to the live vv.height, animating height
+          // fights the keyboard slide — transform-only then.
+          kb ? "transition-transform" : "transition-[transform,height]",
           sheet === "full" ? "h-[88vh]" : sheet === "peek" ? "h-[74px]" : "h-[50vh]",
           open ? "translate-y-0" : "translate-y-full",
         )}
