@@ -53,6 +53,9 @@ export interface ListArtifactsOpts {
   ids?: string[]
   /** Scope to one workspace (multi-workspace). Omitted ⇒ every workspace. */
   orgId?: string
+  /** Only `public` artifacts. Set for anonymous / non-member callers so a workspace
+   *  listing never leaks `org`/`link`/`password` titles to someone who can't open them. */
+  publicOnly?: boolean
 }
 
 export interface VersionRecord {
@@ -543,7 +546,12 @@ export interface NewProposal {
 /** A person, as needed for sharing UIs. Sourced from Better Auth's user table. */
 export interface UserDir {
   id: string
+  /** Internal only (server-side @mention search by email prefix). Never serialize
+   *  to clients — surfaces identify people by `username`, not email. */
   email: string
+  /** Public handle. Every account has one (auto-assigned at creation); null only
+   *  for a legacy row not yet backfilled. This is what the API exposes. */
+  username: string | null
   name: string | null
   /** Profile picture URL (set by OAuth providers; null for password signups). */
   image: string | null

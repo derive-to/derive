@@ -95,10 +95,13 @@ import {
  * once, not in two places (the listArtifacts the review flagged as duplicated).
  */
 export function artifactListConditions(
-  art: { title: Column; created_at: Column; id: Column; org_id: Column },
+  art: { title: Column; created_at: Column; id: Column; org_id: Column; visibility: Column },
   opts?: ListArtifactsOpts,
 ): SQL[] {
   const conds: SQL[] = []
+  // Anonymous / non-member callers only ever see public artifacts in a listing — an
+  // org/link/password title must not leak to someone who can't open it.
+  if (opts?.publicOnly) conds.push(eq(art.visibility, "public"))
   if (opts?.q) conds.push(like(sql`lower(${art.title})`, `%${opts.q.toLowerCase()}%`))
   if (opts?.cursor) {
     const cursor = or(

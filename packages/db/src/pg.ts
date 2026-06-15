@@ -850,7 +850,7 @@ export class PgMetaStore implements MetaStore {
     try {
       const ph = ids.map((_, i) => `$${i + 1}`).join(",")
       const { rows } = await this.pool.query(
-        `SELECT id, email, name, image FROM "user" WHERE id IN (${ph})`,
+        `SELECT id, email, name, image, username FROM "user" WHERE id IN (${ph})`,
         ids,
       )
       return rows as UserDir[]

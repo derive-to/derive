@@ -229,9 +229,6 @@ export function Presence({ viewers, selfId }: { viewers: Viewer[]; selfId?: stri
                   <span className="truncate">{v.name}</span>
                   {v.id === selfId && <span className="text-2xs text-muted-foreground">(you)</span>}
                 </span>
-                <span className="block truncate text-xs text-muted-foreground">
-                  {v.email ?? "Anonymous viewer"}
-                </span>
               </span>
               {v.role && (
                 <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 font-mono text-2xs capitalize text-muted-foreground">

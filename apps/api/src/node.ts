@@ -59,7 +59,9 @@ if (cfg.databaseUrl) {
 }
 
 const authSecret = resolveAuthSecret(cfg.dataDir)
-const auth = makeAuth(authDb, cfg.baseUrl, authSecret)
+const auth = makeAuth(authDb, cfg.baseUrl, authSecret, {
+  usernameTaken: (u) => meta.getUserByUsername(u).then(Boolean),
+})
 await migrateAuth(auth)
 
 const defaultOrg = resolveDefaultOrg(cfg.dataDir)

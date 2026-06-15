@@ -211,7 +211,7 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
       try {
         const ph = ids.map(() => "?").join(",")
         return raw
-          .prepare(`SELECT id, email, name, image FROM user WHERE id IN (${ph})`)
+          .prepare(`SELECT id, email, name, image, username FROM user WHERE id IN (${ph})`)
           .all(...ids) as UserDir[]
       } catch {
         return []
