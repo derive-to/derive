@@ -45,7 +45,9 @@ export function PublishCard() {
   const [mode, setMode] = useState<"upload" | "write">("upload")
   const [busy, setBusy] = useState(false)
   const [dragging, setDragging] = useState(false)
-  const [vis, setVis] = useState("link")
+  // Default to the most private reach (Workspace): a personal workspace is just
+  // you, so new items aren't link-shareable until you widen access deliberately.
+  const [vis, setVis] = useState("org")
   const [pw, setPw] = useState("")
   // Write mode.
   const [text, setText] = useState("")
