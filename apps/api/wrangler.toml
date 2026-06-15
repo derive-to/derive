@@ -35,6 +35,48 @@ new_sqlite_classes = ["ArtifactRoom"]
 tag = "v2"
 new_sqlite_classes = ["WebhookOutbox"]
 
+# Native rate limiting (per-colo). One binding per surface; the worker counts each
+# rate-limited request against the matching binding (apps/api/src/worker.ts). The window
+# (period) can only be 10 or 60s, so the long in-process windows (unlock 5 min, oauth
+# registration 1 hr) become tighter per-minute caps here — the abuse-backstop intent
+# holds, just per-colo. namespace_id is an arbitrary unique id per limiter.
+[[ratelimits]]
+name = "RL_AUTH"
+namespace_id = "1001"
+  [ratelimits.simple]
+  limit = 20
+  period = 60
+
+[[ratelimits]]
+name = "RL_WRITE"
+namespace_id = "1002"
+  [ratelimits.simple]
+  limit = 120
+  period = 60
+
+[[ratelimits]]
+name = "RL_PUBLISH"
+namespace_id = "1003"
+  [ratelimits.simple]
+  limit = 30
+  period = 60
+
+[[ratelimits]]
+name = "RL_COMMENT"
+namespace_id = "1004"
+  [ratelimits.simple]
+  limit = 60
+  period = 60
+
+# Shared by the two tight 3/60 surfaces (unlock + oauth registration); the worker
+# namespaces the key per surface so their counts stay separate.
+[[ratelimits]]
+name = "RL_STRICT"
+namespace_id = "1005"
+  [ratelimits.simple]
+  limit = 3
+  period = 60
+
 # Retry/crash backstop for webhook delivery: the outbox DO self-reschedules while busy
 # and is poked on each new event, then goes idle. This wakes it every minute so a retry
 # scheduled during an idle gap (or a missed poke) still drains. The leased claim makes

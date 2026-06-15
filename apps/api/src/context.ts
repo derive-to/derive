@@ -22,7 +22,7 @@ import { type Backplane, createInProcessBackplane } from "./bus"
 import type { CustomDomainProvider } from "./lib/cloudflare-saas"
 import { safeEqual, sha256, unlockCookie, unlockToken } from "./lib/crypto"
 import { VIEWER_COOKIE, WS_COOKIE } from "./lib/http"
-import { makeKeyedLimiter } from "./lib/rate-limit"
+import { inMemoryRateLimiters, type Limiter, type RateLimiters } from "./lib/rate-limit"
 import { log } from "./log"
 import { edgeCtx } from "./realtime-do"
 import { enqueueForEvent, type WebhookEvent } from "./webhooks"
@@ -74,8 +74,14 @@ export interface AppDeps {
    * one and rekeys any legacy rows onto it.
    */
   defaultOrgId?: string
-  /** In-memory per-IP rate limiting on auth + mutating routes. Off by default. */
+  /** Per-IP / per-actor rate limiting on auth + mutating routes. Off by default. */
   rateLimit?: boolean
+  /**
+   * The rate limiters to enforce. Omit for the in-process default (authoritative on a
+   * single container — Node / self-host — and used by tests). The edge entry supplies a
+   * set backed by Cloudflare's native per-colo limiter (see worker.ts).
+   */
+  rateLimiters?: RateLimiters
   /**
    * Per-workspace storage backstops (abuse gate). Both default to unlimited so
    * self-host stays open; the hosted tier sets them. maxArtifacts caps how many
@@ -179,16 +185,16 @@ export function buildContext(deps: AppDeps) {
   // literal. The Node entry generates + persists one; tests fall back to this.
   const defaultOrg = deps.defaultOrgId ?? "default"
 
-  // Per-actor limiters on the two flood-prone actions, identity-keyed so one
-  // account can't drown the workspace even from many IPs. Active only when
-  // rate limiting is on; the IP middleware is the per-origin backstop.
-  const publishLimiter = deps.rateLimit ? makeKeyedLimiter(60_000, deps.publishRate ?? 30) : null
-  const commentLimiter = deps.rateLimit ? makeKeyedLimiter(60_000, deps.commentRate ?? 60) : null
-  // Password unlock is a credential-guessing surface, so it gets a much tighter
-  // cap than the lenient global /v1 write limiter (120/min) it would otherwise
-  // share: 5 attempts per 5 minutes per caller (IP, when anonymous) — enough for
-  // a legit fat-finger, slow enough that brute force is hopeless.
-  const unlockLimiter = deps.rateLimit ? makeKeyedLimiter(5 * 60_000, 5) : null
+  // Per-actor limiters on the flood-prone actions, identity-keyed so one account can't
+  // drown the workspace even from many IPs. Active only when rate limiting is on; the IP
+  // middleware (app.ts) is the per-origin backstop. The same limiter set backs both call
+  // sites — app.ts resolves it once and passes it in, so it's a single source of truth.
+  // Password unlock is a credential-guessing surface and gets a much tighter cap (5 / 5
+  // min in-process; the edge's native binding caps it to a 60s window — see worker.ts).
+  const limiters = deps.rateLimiters ?? inMemoryRateLimiters(deps)
+  const publishLimiter = deps.rateLimit ? limiters.publish : null
+  const commentLimiter = deps.rateLimit ? limiters.comment : null
+  const unlockLimiter = deps.rateLimit ? limiters.unlock : null
 
   // Fan an event to subscribed webhooks (enqueues to the outbox; the drainer
   // delivers). Awaited so the row is durable before we respond, but never fatal.
@@ -391,12 +397,9 @@ export function buildContext(deps: AppDeps) {
 
   // Apply a keyed limiter to the caller; returns a 429 Response when over, else
   // null to continue. Helper because publish + propose + comment share it.
-  const limited = async (
-    c: Context,
-    limiter: ReturnType<typeof makeKeyedLimiter> | null,
-  ): Promise<Response | null> => {
+  const limited = async (c: Context, limiter: Limiter | null): Promise<Response | null> => {
     if (!limiter) return null
-    const r = limiter(await actorKey(c))
+    const r = await limiter(await actorKey(c))
     if (r.ok) return null
     c.header("Retry-After", String(r.retryAfter))
     return c.json({ error: "rate limit exceeded" }, 429)

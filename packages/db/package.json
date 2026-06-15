@@ -21,6 +21,7 @@
     "test": "vitest run --passWithNoTests",
     "test:coverage": "vitest run --coverage",
     "test:pg": "vitest run --config vitest.pg.config.ts --coverage test/pg-store.test.ts test/pg-schema-conformance.test.ts",
+    "test:d1": "vitest run --config vitest.d1.config.ts test/d1-store.test.ts",
     "gen:d1-schema": "vitest run test/d1-schema.test.ts -u"
   },
   "dependencies": {
@@ -30,6 +31,7 @@
     "pg": "^8.13.1"
   },
   "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.16.15",
     "@cloudflare/workers-types": "^4.20260613.1",
     "@types/better-sqlite3": "^7.6.11",
     "@types/node": "^25.9.3",
