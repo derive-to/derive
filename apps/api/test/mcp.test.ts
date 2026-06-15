@@ -329,4 +329,44 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(cu.outdated_comments).toHaveLength(1)
     expect(cu.outdated_comments[0].quote).toBe("beta")
   })
+
+  it("propose with `addresses` marks the cited threads addressed (pending review)", async () => {
+    const { app, token } = appWithGrant("addr", "openid dock:read dock:comment dock:publish")
+    const shortId = (await (await publish(app, token, "headline to fix")).json()).short_id
+    const cm = await (
+      await app.request(`/v1/artifacts/${shortId}/comments`, {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+        body: JSON.stringify({ body_md: "fix the headline" }),
+      })
+    ).json()
+
+    const p = JSON.parse(
+      toolText(
+        await call(app, token, "propose", {
+          short_id: shortId,
+          content: "<h1>fixed headline</h1>",
+          message: "fixed it",
+          addresses: [cm.thread_id],
+        }),
+      ),
+    )
+    expect(p.proposed).toBe(true)
+    expect(p.addressed).toEqual([cm.thread_id])
+
+    // The thread is now addressed — off the open list, listed under `addressed`.
+    const open = JSON.parse(
+      toolText(await call(app, token, "list_comments", { short_id: shortId, state: "open" })),
+    )
+    expect(open.count).toBe(0)
+    const addr = JSON.parse(
+      toolText(await call(app, token, "list_comments", { short_id: shortId, state: "addressed" })),
+    )
+    expect(addr.count).toBe(1)
+    expect(addr.comments[0].state).toBe("addressed")
+
+    // catch_me_up flags it so the agent won't re-propose the same fix.
+    const cu = JSON.parse(toolText(await call(app, token, "catch_me_up", { short_id: shortId })))
+    expect(cu.summary).toContain("addressed")
+  })
 })

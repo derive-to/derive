@@ -198,7 +198,8 @@ export const commentRoutes = (ctx: AppContext) => {
     // viewer — do, the Google-Docs way. So the gate is "has an account", not the role.
     if (await anonLocked(c, artifact)) return fail(c, 404, "not found")
     const q = c.req.query("state")
-    const state = q === "open" || q === "resolved" || q === "outdated" ? q : undefined
+    const state =
+      q === "open" || q === "resolved" || q === "outdated" || q === "addressed" ? q : undefined
     const comments = await meta.listComments(artifact.id, state ? { state } : undefined)
     // Flag whether each anchor still resolves against the current version.
     const cur = await meta.getVersion(artifact.id, artifact.current_version)

@@ -1,3 +1,5 @@
+import type { CommentState } from "./ports"
+
 /** A W3C Web Annotation TextQuoteSelector — survives republishing. */
 export interface QuoteSelector {
   type: "TextQuoteSelector"
@@ -268,7 +270,7 @@ export function isAnchored(anchorJson: string | null, text: string): boolean {
 export interface AnchorThread {
   thread_id: string
   anchor: string | null
-  state: "open" | "resolved" | "outdated"
+  state: CommentState
 }
 
 /** A state flip the sweep wants applied (always thread-level). */

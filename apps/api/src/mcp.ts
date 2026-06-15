@@ -30,6 +30,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import type { Hono } from "hono"
 import { z } from "zod"
 import type { AppContext } from "./context"
+import { markAddressed } from "./lib/addressed"
 import { cleanPath, manifestOf as sharedManifestOf } from "./lib/bundle"
 import { quoteOf } from "./lib/comments"
 
@@ -109,8 +110,10 @@ function buildServer(ctx: AppContext, agent: AgentRecord): McpServer {
         `with ${agent.role} permissions. Dock hosts living documents and plans with versioned ` +
         `history, text-anchored review comments, and a propose → review → revise loop. ` +
         `Start a session with catch_me_up to re-sync on what changed; use read to view content ` +
-        `(outline first for multi-page bundles); use propose to suggest a revision a human ` +
-        `approves — you cannot publish directly.`,
+        `(outline first for multi-page bundles); work the open threads from list_comments and use ` +
+        `propose to suggest a revision a human approves — you cannot publish directly. When a ` +
+        `proposal fixes specific feedback, pass those thread ids as propose's "addresses" so the ` +
+        `threads show as pending and auto-resolve on approval.`,
     },
   )
   const org = agent.org_id
@@ -181,6 +184,11 @@ function buildServer(ctx: AppContext, agent: AgentRecord): McpServer {
       const outdatedBit = outdated.length
         ? ` ${outdated.length} now outdated (the quoted text changed).`
         : ""
+      // Threads with a proposal already pending — the agent shouldn't re-propose them.
+      const addressed = await ctx.meta.listComments(a.id, { state: "addressed" })
+      const addressedBit = addressed.length
+        ? ` ${addressed.length} addressed (a proposal is pending review).`
+        : ""
       const pageBits =
         pagesChanged && changeCount(pagesChanged)
           ? ` Pages: ${[
@@ -193,8 +201,8 @@ function buildServer(ctx: AppContext, agent: AgentRecord): McpServer {
           : ""
       const summary =
         since >= head
-          ? `You're up to date on "${a.title}" (v${head}); ${open.length} open comment${open.length === 1 ? "" : "s"}.${outdatedBit}`
-          : `"${a.title}": ${newVersions.length} new version${newVersions.length === 1 ? "" : "s"} since v${since} (now v${head}).${pageBits} ${open.length} open comment${open.length === 1 ? "" : "s"}.${outdatedBit}`
+          ? `You're up to date on "${a.title}" (v${head}); ${open.length} open comment${open.length === 1 ? "" : "s"}.${addressedBit}${outdatedBit}`
+          : `"${a.title}": ${newVersions.length} new version${newVersions.length === 1 ? "" : "s"} since v${since} (now v${head}).${pageBits} ${open.length} open comment${open.length === 1 ? "" : "s"}.${addressedBit}${outdatedBit}`
       return json({
         summary,
         short_id,
@@ -324,11 +332,11 @@ function buildServer(ctx: AppContext, agent: AgentRecord): McpServer {
     "list_comments",
     {
       description:
-        "The review feedback on an artifact: comment threads with author, body, the quoted text they're anchored to, the version they were left on, and state. This is your to-do list before proposing — work the `open` threads. State is open (live feedback), resolved (a human marked it done), or outdated (the quoted text changed in a later version, so the feedback may no longer apply — verify before acting). Filter by `state`; default lists all.",
+        "The review feedback on an artifact: comment threads with author, body, the quoted text they're anchored to, the version they were left on, and state. This is your to-do list before proposing — work the `open` threads. State is open (live feedback), addressed (a proposal you/someone made is pending review for it — don't re-propose), resolved (settled), or outdated (the quoted text changed in a later version, so the feedback may no longer apply — verify before acting). Filter by `state`; default lists all.",
       inputSchema: {
         short_id: z.string(),
         state: z
-          .enum(["open", "resolved", "outdated"])
+          .enum(["open", "addressed", "resolved", "outdated"])
           .optional()
           .describe("Filter by thread state. Omit to list every thread."),
       },
@@ -376,7 +384,7 @@ function buildServer(ctx: AppContext, agent: AgentRecord): McpServer {
     "propose",
     {
       description:
-        "Propose a revised version of a single-file artifact for human review. It does NOT go live — a reviewer approves it or requests changes, so you're a safe contributor, not a publisher. Provide the FULL new content (not a patch) and a rationale that tells the reviewer what changed and why. Multi-page bundles aren't proposable over MCP yet.",
+        "Propose a revised version of a single-file artifact for human review. It does NOT go live — a reviewer approves it or requests changes, so you're a safe contributor, not a publisher. Provide the FULL new content (not a patch) and a rationale that tells the reviewer what changed and why. Pass `addresses` with the thread ids (from list_comments) this revision resolves — those threads show as `addressed` (pending review) and auto-resolve when the proposal is approved. Multi-page bundles aren't proposable over MCP yet.",
       inputSchema: {
         short_id: z.string(),
         content: z
@@ -390,9 +398,15 @@ function buildServer(ctx: AppContext, agent: AgentRecord): McpServer {
           .string()
           .optional()
           .describe("Filename hint for the content type, e.g. index.html or notes.md."),
+        addresses: z
+          .array(z.string())
+          .optional()
+          .describe(
+            "Thread ids (from list_comments) this revision resolves. They flip to `addressed` and resolve on approval.",
+          ),
       },
     },
-    async ({ short_id, content, message, filename }) => {
+    async ({ short_id, content, message, filename, addresses }) => {
       const a = await own(short_id)
       if (!a) return notFound(short_id)
       if (agent.role === "viewer")
@@ -412,10 +426,20 @@ function buildServer(ctx: AppContext, agent: AgentRecord): McpServer {
           author: agent.name,
           author_id: agent.id,
         })
+        const addressed = addresses?.length
+          ? await markAddressed(ctx.meta, a.id, proposal.id, addresses)
+          : []
+        for (const threadId of addressed)
+          ctx.bus.publish(a.id, {
+            type: "comment.addressed",
+            thread_id: threadId,
+            state: "addressed",
+          })
         return json({
           proposed: true,
           proposal_id: proposal.id,
           base_version: proposal.base_version,
+          addressed,
           note: "Submitted for review — a human approves it or requests changes. It is NOT live yet.",
         })
       } catch (e) {

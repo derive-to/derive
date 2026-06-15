@@ -9,8 +9,16 @@ import {
 import { type Context, Hono } from "hono"
 import { z } from "zod"
 import type { AppContext } from "../context"
+import { markAddressed, releaseAddressed } from "../lib/addressed"
 import { sweepAnchors } from "../lib/anchor-sweep"
 import { fail, MAX_UPLOAD_BYTES, readJson, str } from "../lib/http"
+
+/** Parse a comma-separated id list (the `addresses` multipart field). */
+const idList = (raw: string | undefined): string[] =>
+  (raw ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean)
 
 /** Reviews: a proposal is a candidate version awaiting approval. A commenter
  *  proposes; an editor approves (it goes live) or requests changes. */
@@ -104,13 +112,27 @@ export const proposalRoutes = (ctx: AppContext) => {
         author_id: acting?.id ?? null,
       })
       bus.publish(artifact.id, { type: "proposal.created", proposal_id: proposal.id })
+      // Threads this revision claims to fix flip to `addressed` (pending review),
+      // tagged with the proposal id so approve/withdraw can release exactly these.
+      const addressed = await markAddressed(
+        meta,
+        artifact.id,
+        proposal.id,
+        idList(str(body.addresses)),
+      )
+      for (const threadId of addressed)
+        bus.publish(artifact.id, {
+          type: "comment.addressed",
+          thread_id: threadId,
+          state: "addressed",
+        })
       await notify(artifact, "proposal.created", {
         proposal_id: proposal.id,
         author: proposal.author,
         message: proposal.message,
         base_version: proposal.base_version,
       })
-      return c.json(proposalJson(artifact, proposal), 201)
+      return c.json({ ...proposalJson(artifact, proposal), addressed }, 201)
     } catch (err) {
       if (err instanceof PublishError) return fail(c, err.statusCode as 400, err.message)
       throw err
@@ -179,6 +201,13 @@ export const proposalRoutes = (ctx: AppContext) => {
           thread_id: t.thread_id,
           state: t.state,
         })
+      // Threads this proposal addressed are now settled — the fix landed.
+      for (const threadId of await releaseAddressed(meta, artifact.id, proposal.id, "resolved"))
+        bus.publish(artifact.id, {
+          type: "comment.addressed",
+          thread_id: threadId,
+          state: "resolved",
+        })
       await notify(artifact, "proposal.approved", {
         proposal_id: proposal.id,
         version: version.n,
@@ -210,6 +239,9 @@ export const proposalRoutes = (ctx: AppContext) => {
       decision_note: str(body.note) ?? null,
     })
     bus.publish(artifact.id, { type: "proposal.changes_requested", proposal_id: proposal.id })
+    // The fix didn't land — reopen the threads it had staged as addressed.
+    for (const threadId of await releaseAddressed(meta, artifact.id, proposal.id, "open"))
+      bus.publish(artifact.id, { type: "comment.addressed", thread_id: threadId, state: "open" })
     await notify(artifact, "proposal.changes_requested", { proposal_id: proposal.id, reviewer })
     const fresh = (await meta.getProposal(proposal.id)) as ProposalRecord
     return c.json(proposalJson(artifact, fresh))
@@ -233,6 +265,9 @@ export const proposalRoutes = (ctx: AppContext) => {
       decided_by: acting?.name ?? null,
       decided_version: null,
     })
+    // Retracting the proposal reopens the threads it had staged as addressed.
+    for (const threadId of await releaseAddressed(meta, artifact.id, proposal.id, "open"))
+      bus.publish(artifact.id, { type: "comment.addressed", thread_id: threadId, state: "open" })
     const fresh = (await meta.getProposal(proposal.id)) as ProposalRecord
     return c.json(proposalJson(artifact, fresh))
   })
