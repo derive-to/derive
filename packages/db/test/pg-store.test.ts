@@ -158,8 +158,10 @@ if (PG_URL) {
     it("resolves users by email/id/handle, sets avatar, powers opt-in search", async () => {
       await inSchema(
         async (boot, schema) => {
+          // No column default: unset `discoverable` is NULL, which search treats as
+          // discoverable (on by default), same as a pre-migration row.
           await boot.query(
-            `CREATE TABLE ${schema}."user" (id text primary key, email text, name text, image text, username text, discoverable boolean default false)`,
+            `CREATE TABLE ${schema}."user" (id text primary key, email text, name text, image text, username text, discoverable boolean)`,
           )
           await boot.query(`CREATE UNIQUE INDEX ON ${schema}."user" (username)`)
           await boot.query(
@@ -175,15 +177,19 @@ if (PG_URL) {
           expect(await store.setUsername("u2", "amy")).toBe("taken")
           await store.setUserImage("u1", "https://cdn/x.png")
           expect((await store.getUserByUsername("amy"))?.image).toBe("https://cdn/x.png")
-          expect(await store.searchDiscoverableUsers("am", 10)).toEqual([]) // not opted in
-          await store.setUserDiscoverable("u1", true)
+          // On by default: amy (NULL discoverable) is found; opting out hides her;
+          // opting back in shows her again. Empty query returns nothing.
           expect((await store.searchDiscoverableUsers("am", 10)).map((x) => x.username)).toEqual([
             "amy",
           ])
           expect((await store.searchDiscoverableUsers("AMY", 10)).map((x) => x.id)).toEqual(["u1"])
-          expect(await store.searchDiscoverableUsers("", 10)).toEqual([])
           await store.setUserDiscoverable("u1", false)
           expect(await store.searchDiscoverableUsers("am", 10)).toEqual([])
+          await store.setUserDiscoverable("u1", true)
+          expect((await store.searchDiscoverableUsers("am", 10)).map((x) => x.username)).toEqual([
+            "amy",
+          ])
+          expect(await store.searchDiscoverableUsers("", 10)).toEqual([])
         },
       )
     })

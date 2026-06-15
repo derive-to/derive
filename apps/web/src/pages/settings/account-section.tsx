@@ -3,8 +3,8 @@ import { api } from "@/api"
 import { Card } from "@/components/ui/card"
 import { useAuth } from "@/ctx"
 
-// Personal account settings (vs the workspace tab). Today: opt-in discoverability,
-// off by default — you're only findable in people search if you turn this on.
+// Personal account settings (vs the workspace tab). Today: discoverability —
+// on by default (GitHub-style), uncheck to hide yourself from people search.
 export function AccountSection() {
   const { me, setMe } = useAuth()
   const [discoverable, setDiscoverable] = useState(!!me?.discoverable)
@@ -35,8 +35,8 @@ export function AccountSection() {
         <span>
           Let people find me by username in search.
           <span className="mt-0.5 block text-xs text-muted-foreground">
-            Off by default. When on, your @{me.username ?? "handle"}, name, and photo show up in
-            people search. Your email always stays private.
+            On by default. Your @{me.username ?? "handle"}, name, and photo show up in people
+            search; uncheck to hide yourself. Your email always stays private.
           </span>
         </span>
       </label>

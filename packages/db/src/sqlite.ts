@@ -255,8 +255,10 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
         const like = `%${s}%`
         return raw
           .prepare(
+            // discoverable IS NOT 0 → true OR unset(null) both match (on by
+            // default); only an explicit 0 (opted out) is excluded.
             `SELECT id, name, image, username FROM user
-             WHERE discoverable = 1 AND username IS NOT NULL
+             WHERE discoverable IS NOT 0 AND username IS NOT NULL
                AND (lower(username) LIKE ? OR lower(name) LIKE ?)
              ORDER BY username LIMIT ?`,
           )

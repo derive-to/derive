@@ -152,42 +152,48 @@ describe("profile avatars", () => {
   })
 })
 
-describe("opt-in discoverability + people search", () => {
+describe("discoverability (on by default) + people search", () => {
+  // Nova never set the flag → discoverable by default (GitHub-style).
   const nova: TestUser = {
     id: "u_disc_nova",
     email: "nova@d.test",
     name: "Nova Star",
     username: "nova",
-    discoverable: true,
   }
-  // Dane has a handle but has NOT opted in.
-  const dane: TestUser = { id: "u_disc_dane", email: "dane@d.test", name: "Dane", username: "dane" }
-  const { app } = makeAuthedApp("discover", [nova, dane])
+  // Dox explicitly opted out.
+  const dox: TestUser = {
+    id: "u_disc_dox",
+    email: "dox@d.test",
+    name: "Dox",
+    username: "dox",
+    discoverable: false,
+  }
+  const { app } = makeAuthedApp("discover", [nova, dox])
   const handles = (r: { users: { username: string }[] }) => r.users.map((u) => u.username)
   const search = async (q: string, by?: string) =>
     (await app.request(`/v1/users/search?q=${q}`, by ? { headers: as(by) } : {})).json()
 
-  it("returns only opted-in users, never email; needs a query + auth", async () => {
-    // Nova opted in → found by handle and by name; Dane (opted out) never appears.
-    expect(handles(await search("nov", dane.email))).toContain("nova")
-    expect(handles(await search("star", dane.email))).toContain("nova")
-    expect((await search("nov", dane.email)).users[0]).not.toHaveProperty("email")
-    expect(handles(await search("dane", nova.email))).toHaveLength(0)
+  it("finds default-on users (never email), hides opt-outs; needs a query + auth", async () => {
+    // Nova is findable without ever opting in; the opted-out Dox never appears.
+    expect(handles(await search("nov", dox.email))).toContain("nova")
+    expect(handles(await search("star", dox.email))).toContain("nova")
+    expect((await search("nov", dox.email)).users[0]).not.toHaveProperty("email")
+    expect(handles(await search("dox", nova.email))).toHaveLength(0)
     // Empty query returns nothing (no full enumeration); anonymous is refused.
     expect(handles(await search("", nova.email))).toHaveLength(0)
     expect((await app.request("/v1/users/search?q=nov")).status).toBe(401)
   })
 
-  it("toggling discoverability on makes you findable, off hides you again", async () => {
-    expect(
-      (await app.request("/v1/me/discoverable", jsonAs(as(dane.email), { discoverable: true })))
-        .status,
-    ).toBe(200)
-    expect(handles(await search("dane", nova.email))).toContain("dane")
-    await app.request("/v1/me/discoverable", jsonAs(as(dane.email), { discoverable: false }))
-    expect(handles(await search("dane", nova.email))).toHaveLength(0)
-    // /v1/me carries the (seeded) flag.
-    const me = await (await app.request("/v1/me", { headers: as(nova.email) })).json()
-    expect(me.user.discoverable).toBe(true)
+  it("opting back in makes you findable; opting out hides you", async () => {
+    // Dox opts in → findable; then a default-on user opts out → hidden.
+    await app.request("/v1/me/discoverable", jsonAs(as(dox.email), { discoverable: true }))
+    expect(handles(await search("dox", nova.email))).toContain("dox")
+    await app.request("/v1/me/discoverable", jsonAs(as(nova.email), { discoverable: false }))
+    expect(handles(await search("nov", dox.email))).toHaveLength(0)
+    // /v1/me: unset → on by default; explicit false → off.
+    const novaMe = await (await app.request("/v1/me", { headers: as(nova.email) })).json()
+    expect(novaMe.user.discoverable).toBe(true) // session is the seeded (unset) flag → default on
+    const doxMe = await (await app.request("/v1/me", { headers: as(dox.email) })).json()
+    expect(doxMe.user.discoverable).toBe(false)
   })
 })
