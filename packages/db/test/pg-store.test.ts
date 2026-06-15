@@ -117,6 +117,77 @@ if (PG_URL) {
       )
     })
   })
+
+  // The user-directory methods read Better Auth's `user` table (created out of
+  // band), so — like the OAuth block — they're seeded + asserted per-dialect here.
+  describe("pg store: user directory (Better Auth `user` table)", () => {
+    const u = url
+    const inSchema = async (
+      seed: (boot: Pool, schema: string) => Promise<void>,
+      run: (store: PgMetaStore) => Promise<void>,
+    ) => {
+      const schema = `t_pguser_${process.pid}_${uuid().replace(/-/g, "")}`
+      const boot = new Pool({ connectionString: u, max: 1 })
+      await boot.query(`CREATE SCHEMA ${schema}`)
+      await seed(boot, schema)
+      await boot.end()
+      const opt = encodeURIComponent(`-c search_path=${schema}`)
+      const store = await PgMetaStore.create(`${u}${u.includes("?") ? "&" : "?"}options=${opt}`)
+      try {
+        await run(store)
+      } finally {
+        await store.close()
+        const drop = new Pool({ connectionString: u, max: 1 })
+        await drop.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`)
+        await drop.end()
+      }
+    }
+
+    it("tolerates the user table being absent", async () => {
+      await inSchema(
+        async () => {},
+        async (store) => {
+          expect(await store.findUserByEmail("x@y.com")).toBeNull()
+          expect(await store.getUsers(["x"])).toEqual([])
+          expect(await store.getUserByUsername("ghost")).toBeNull()
+          expect(await store.searchDiscoverableUsers("a", 10)).toEqual([])
+        },
+      )
+    })
+
+    it("resolves users by email/id/handle, sets avatar, powers opt-in search", async () => {
+      await inSchema(
+        async (boot, schema) => {
+          await boot.query(
+            `CREATE TABLE ${schema}."user" (id text primary key, email text, name text, image text, username text, discoverable boolean default false)`,
+          )
+          await boot.query(`CREATE UNIQUE INDEX ON ${schema}."user" (username)`)
+          await boot.query(
+            `INSERT INTO ${schema}."user"(id,email,name) VALUES('u1','amy@x.com','Amy'),('u2','bo@x.com','Bo')`,
+          )
+        },
+        async (store) => {
+          expect(await store.findUserByEmail("amy@x.com")).toMatchObject({ id: "u1", name: "Amy" })
+          expect((await store.getUsers(["u1"])).map((x) => x.email)).toEqual(["amy@x.com"])
+          expect(await store.setUsername("u1", "amy")).toBe("ok")
+          expect(await store.getUserByUsername("amy")).toMatchObject({ id: "u1", username: "amy" })
+          expect(await store.getUserByUsername("nope")).toBeNull()
+          expect(await store.setUsername("u2", "amy")).toBe("taken")
+          await store.setUserImage("u1", "https://cdn/x.png")
+          expect((await store.getUserByUsername("amy"))?.image).toBe("https://cdn/x.png")
+          expect(await store.searchDiscoverableUsers("am", 10)).toEqual([]) // not opted in
+          await store.setUserDiscoverable("u1", true)
+          expect((await store.searchDiscoverableUsers("am", 10)).map((x) => x.username)).toEqual([
+            "amy",
+          ])
+          expect((await store.searchDiscoverableUsers("AMY", 10)).map((x) => x.id)).toEqual(["u1"])
+          expect(await store.searchDiscoverableUsers("", 10)).toEqual([])
+          await store.setUserDiscoverable("u1", false)
+          expect(await store.searchDiscoverableUsers("am", 10)).toEqual([])
+        },
+      )
+    })
+  })
 } else {
   // Keep the file non-empty for the default (SQLite-only) run.
   describe("pg store", () => {
