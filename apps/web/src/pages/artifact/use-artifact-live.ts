@@ -32,6 +32,8 @@ export function useArtifactLive(opts: {
     })
     ev.addEventListener("comment.created", onComment)
     ev.addEventListener("comment.resolved", onComment)
+    ev.addEventListener("comment.outdated", onComment)
+    ev.addEventListener("comment.addressed", onComment)
     ev.addEventListener("comment.reacted", onComment)
     ev.addEventListener("comment.updated", onComment)
     ev.addEventListener("version.published", onVersion)

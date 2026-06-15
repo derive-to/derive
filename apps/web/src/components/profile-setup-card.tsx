@@ -73,7 +73,7 @@ export function ProfileSetupCard() {
         </div>
         <div className="min-w-[240px] flex-1">
           <UsernameForm
-            initial={suggestUsername(me.name ?? me.email)}
+            initial={suggestUsername(me.email)}
             submitLabel="Save username"
             onClaimed={(username) => setMe({ ...me, username })}
           />

@@ -49,7 +49,7 @@ const makePgStore = (name: string, users: TestUser[], team: Seat[]): TestStore =
         pgSchemas.add(schema)
       }
       await boot.query(
-        `CREATE TABLE IF NOT EXISTS ${schema}."user" (id text primary key, email text, name text, image text, username text, discoverable boolean default false)`,
+        `CREATE TABLE IF NOT EXISTS ${schema}."user" (id text primary key, email text, name text, image text, username text, discoverable boolean)`,
       )
       // Unique handle, mirroring Better Auth's additionalFields(username, unique).
       await boot.query(
@@ -58,7 +58,15 @@ const makePgStore = (name: string, users: TestUser[], team: Seat[]): TestStore =
       for (const u of users)
         await boot.query(
           `INSERT INTO ${schema}."user" (id, email, name, image, username, discoverable) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (id) DO NOTHING`,
-          [u.id, u.email, u.name, u.image ?? null, u.username ?? null, u.discoverable ?? false],
+          // undefined → NULL (unset = discoverable by default), explicit true/false honored.
+          [
+            u.id,
+            u.email,
+            u.name,
+            u.image ?? null,
+            u.username ?? null,
+            u.discoverable === undefined ? null : u.discoverable,
+          ],
         )
     } finally {
       await boot.end()
@@ -96,15 +104,23 @@ const makePgStore = (name: string, users: TestUser[], team: Seat[]): TestStore =
 const seedSqliteUsers = (path: string, users: TestUser[]): void => {
   const raw = new Database(path)
   raw.exec(
-    `CREATE TABLE IF NOT EXISTS user (id TEXT PRIMARY KEY, email TEXT, name TEXT, image TEXT, username TEXT, discoverable INTEGER DEFAULT 0)`,
+    `CREATE TABLE IF NOT EXISTS user (id TEXT PRIMARY KEY, email TEXT, name TEXT, image TEXT, username TEXT, discoverable INTEGER)`,
   )
   // Unique handle, mirroring Better Auth's additionalFields(username, unique).
   raw.exec(`CREATE UNIQUE INDEX IF NOT EXISTS user_username ON user (username)`)
   const ins = raw.prepare(
     `INSERT OR IGNORE INTO user (id, email, name, image, username, discoverable) VALUES (?,?,?,?,?,?)`,
   )
+  // undefined → NULL (unset = discoverable by default), explicit true/false → 1/0.
   for (const u of users)
-    ins.run(u.id, u.email, u.name, u.image ?? null, u.username ?? null, u.discoverable ? 1 : 0)
+    ins.run(
+      u.id,
+      u.email,
+      u.name,
+      u.image ?? null,
+      u.username ?? null,
+      u.discoverable === undefined ? null : u.discoverable ? 1 : 0,
+    )
   raw.close()
 }
 

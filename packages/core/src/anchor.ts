@@ -1,3 +1,5 @@
+import type { CommentState } from "./ports"
+
 /** A W3C Web Annotation TextQuoteSelector — survives republishing. */
 export interface QuoteSelector {
   type: "TextQuoteSelector"
@@ -261,4 +263,37 @@ export function isAnchored(anchorJson: string | null, text: string): boolean {
   } catch {
     return true
   }
+}
+
+/** One thread's anchoring inputs for the re-anchor sweep. `anchor` is the stored
+ *  selector JSON of the thread's root comment (null = a whole-document thread). */
+export interface AnchorThread {
+  thread_id: string
+  anchor: string | null
+  state: CommentState
+}
+
+/** A state flip the sweep wants applied (always thread-level). */
+export interface AnchorTransition {
+  thread_id: string
+  state: "open" | "outdated"
+}
+
+/**
+ * Decide which threads change state when an artifact is republished. Pure — the
+ * caller applies the returned flips.
+ *
+ * - `open` + anchored + no longer resolves → `outdated` (the quoted text changed)
+ * - `outdated` + resolves again            → `open`     (the text came back)
+ * - `resolved` threads and whole-document (un-anchored) threads are never touched.
+ */
+export function planAnchorSweep(threads: AnchorThread[], newText: string): AnchorTransition[] {
+  const out: AnchorTransition[] = []
+  for (const t of threads) {
+    if (!t.anchor) continue // whole-document feedback never goes stale
+    const resolves = isAnchored(t.anchor, newText)
+    if (t.state === "open" && !resolves) out.push({ thread_id: t.thread_id, state: "outdated" })
+    else if (t.state === "outdated" && resolves) out.push({ thread_id: t.thread_id, state: "open" })
+  }
+  return out
 }

@@ -153,9 +153,11 @@ export function ShareButton({
     }
   }
   const change = async (m: ArtifactMember, next: Role) => {
-    if (next === m.role || !m.email) return
+    if (next === m.role || !m.handle) return
+    // Surface a failed role change instead of swallowing it (transient-failure
+    // recovery), now keyed on the handle-based identity.
     try {
-      await api.setMember(shortId, m.email, next)
+      await api.setMember(shortId, m.handle, next)
     } catch (x) {
       toast.error(x instanceof Error ? x.message : "Couldn't update access")
     }
@@ -313,10 +315,10 @@ export function ShareButton({
                     >
                       <div className="min-w-0 flex-1">
                         <div className="truncate text-sm font-semibold text-foreground">
-                          {m.name ?? m.email ?? m.user_id}
+                          {m.name ?? (m.handle ? `@${m.handle}` : m.user_id)}
                         </div>
-                        {m.name && m.email && (
-                          <div className="truncate text-2xs text-muted-foreground">{m.email}</div>
+                        {m.name && m.handle && (
+                          <div className="truncate text-2xs text-muted-foreground">@{m.handle}</div>
                         )}
                       </div>
                       {canManage ? (
@@ -325,7 +327,7 @@ export function ShareButton({
                             <RoleSelect
                               value={m.role}
                               onChange={(next) => change(m, next)}
-                              aria-label={`Role for ${m.name ?? m.email ?? "member"}`}
+                              aria-label={`Role for ${m.name ?? (m.handle ? `@${m.handle}` : "member")}`}
                               className="w-full"
                             />
                           </div>
@@ -335,7 +337,7 @@ export function ShareButton({
                             size="icon"
                             className="size-7 text-muted-foreground hover:text-foreground"
                             onClick={() => remove(m)}
-                            aria-label={`Remove ${m.name ?? m.email ?? "member"}`}
+                            aria-label={`Remove ${m.name ?? (m.handle ? `@${m.handle}` : "member")}`}
                           >
                             <X />
                           </Button>

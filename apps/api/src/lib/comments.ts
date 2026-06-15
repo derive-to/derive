@@ -11,6 +11,10 @@ export type CommentMeta = {
   edited_at?: string
   deleted?: boolean
   mentions?: Mention[]
+  // The id of the open proposal whose revision claims to address this thread.
+  // Set when the thread flips to `addressed`; cleared when that proposal is
+  // approved (→ resolved) or withdrawn / sent back for changes (→ open).
+  addressed_by?: string
 }
 
 export const parseMeta = (m: string | null): CommentMeta => {

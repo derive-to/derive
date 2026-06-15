@@ -139,9 +139,14 @@ export const embedRoutes = (ctx: AppContext) => {
       const shell = await getShell()
       if (!shell) return c.notFound()
       const artifact = await readable(c, c.req.param("ref"))
-      if (!artifact) return c.html(shell)
+      // A taken-down artifact serves the bare shell (the SPA shows a tombstone) and
+      // injects NO unfurl meta, so the removed title doesn't live on for crawlers.
+      if (!artifact || artifact.removed_at) return c.html(shell)
       return c.html(injectHead(shell, unfurlMetaTags(await infoFor(artifact))))
     })
+  // A copy-pasted share link with a trailing slash ("/a/slug-id/") would otherwise
+  // 404; canonicalize it to the no-slash form.
+  app.get("/a/:ref/", (c) => c.redirect(`/a/${c.req.param("ref")}`, 301))
 
   return app
 }

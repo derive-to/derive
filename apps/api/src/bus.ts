@@ -40,12 +40,13 @@ export function createBus(): EventBus {
 }
 
 /** A live viewer of an artifact: server-derived identity + their effective role.
- *  `email` is present for signed-in users, null for an anonymous (rando-handle)
- *  viewer. Identity is never client-supplied (see the presence route). */
+ *  No `email` — presence is broadcast to every co-viewer (incl. anonymous ones on
+ *  a public/link artifact) and relayed over the wildcard-CORS `/events` SSE, so it
+ *  must never carry PII. The "who's viewing" UI only needs a display name + role.
+ *  Identity is never client-supplied (see the presence route). */
 export interface Viewer {
   id: string
   name: string
-  email: string | null
   role: string | null
 }
 

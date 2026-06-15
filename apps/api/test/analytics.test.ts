@@ -137,21 +137,24 @@ describe("live stream (SSE)", () => {
     }
   })
 
-  it("reports presence by server identity: name + email + role; anon gets a rando handle, no email", async () => {
+  it("reports presence by server identity: handle + role, never email; anon gets a rando handle", async () => {
     const jess: TestUser = { id: "u_pres_jess", email: "jess@dock.test", name: "Jess" }
     const { app: a } = makeAuthedApp("presence", [jess])
     const { short_id } = await (
       await publishAs(a, "<h1>p</h1>", { visibility: "public" }, as(jess.email))
     ).json()
-    // Signed-in: identity is server-derived — account name + email + their role on
-    // the artifact (owner here), never a client-supplied label.
+    // Signed-in: identity is server-derived — a handle + their role on the artifact
+    // (owner here), never a client-supplied label and never the email (presence is
+    // broadcast to anonymous co-viewers).
     const signed = await a.request(
       `/v1/artifacts/${short_id}/presence`,
       jsonAs(as(jess.email), { name: "SPOOF" }),
     )
     const signedViewers = (await signed.json()).viewers as Viewer[]
-    const me = signedViewers.find((v) => v.email === "jess@dock.test")
-    expect(me).toMatchObject({ name: "Jess", email: "jess@dock.test", role: "owner" })
+    const me = signedViewers.find((v) => v.id === "u_pres_jess")
+    expect(me).toMatchObject({ role: "owner" })
+    expect(me).not.toHaveProperty("email") // no PII on the wire
+    expect(me?.name).not.toBe("SPOOF") // server-derived, not client-supplied
     expect(signedViewers.some((v) => v.name === "SPOOF")).toBe(false)
     // Anonymous: a stable, friendly handle (helpful-kitty-95 style), never
     // "anonymous", and no email. Public artifact → role "viewer".
@@ -160,7 +163,7 @@ describe("live stream (SSE)", () => {
     expect(viewers.some((v) => v.name === "anonymous")).toBe(false)
     const handle = viewers.find((v) => /^[a-z]+-[a-z]+-\d{1,2}$/.test(v.name))
     expect(handle).toBeDefined()
-    expect(handle?.email).toBeNull()
+    expect(handle).not.toHaveProperty("email")
     expect(handle?.role).toBe("viewer")
   })
 })

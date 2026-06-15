@@ -204,6 +204,8 @@ export function CommentCard({
     setReplyMentions([])
   }
   const resolved = root.state === "resolved"
+  const outdated = root.state === "outdated"
+  const addressed = root.state === "addressed"
   const quote = anchorExact(root.anchor)
   const textPresent = present !== undefined ? present : root.anchored !== false
   const replies = thread.length - 1
@@ -297,12 +299,25 @@ export function CommentCard({
             <span
               className={cn(
                 "rounded-full px-2 py-0.5 font-mono text-2xs font-bold",
-                resolved ? "bg-success/15 text-success" : "bg-accent text-primary",
+                resolved
+                  ? "bg-success/15 text-success"
+                  : outdated
+                    ? "bg-gold/15 text-gold"
+                    : addressed
+                      ? "bg-review/15 text-review"
+                      : "bg-accent text-primary",
               )}
+              title={
+                outdated
+                  ? "The text this thread was attached to changed in a later version — this feedback may no longer apply"
+                  : addressed
+                    ? "A proposed revision addressing this thread is pending review"
+                    : undefined
+              }
             >
-              {resolved ? "resolved" : "open"}
+              {resolved ? "resolved" : outdated ? "outdated" : addressed ? "addressed" : "open"}
             </span>
-            {quote && !textPresent && !resolved && (
+            {quote && !textPresent && !resolved && !outdated && !addressed && (
               <span
                 title="The text this comment was attached to was edited or removed in this version"
                 className="rounded-full bg-accent px-2 py-0.5 font-mono text-2xs font-bold text-primary"

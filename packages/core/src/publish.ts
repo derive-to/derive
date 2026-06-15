@@ -46,6 +46,10 @@ export class PublishError extends Error {
 }
 
 const MAX_BUNDLE_FILES = 2000
+// Cap the TOTAL decompressed size of a bundle, not just the (compressed) upload.
+// `unzipSync` inflates everything into memory at once, so a zip bomb — a small
+// upload that expands to gigabytes — would OOM/CPU-kill the worker without this.
+const MAX_BUNDLE_UNZIPPED_BYTES = 50 * 1024 * 1024 // 50 MB
 
 /** Normalizes a zip entry path; null means skip the entry. */
 const cleanPath = (raw: string): string | null => {
@@ -90,6 +94,13 @@ async function storeContent(
     if (paths.length === 0) throw new PublishError(400, "empty bundle")
     if (paths.length > MAX_BUNDLE_FILES)
       throw new PublishError(400, `bundle exceeds ${MAX_BUNDLE_FILES} files`)
+    // Reject zip bombs: bound the total inflated size, not just the upload size.
+    let unzippedBytes = 0
+    for (const p of paths) {
+      unzippedBytes += unzipped[p]?.byteLength ?? 0
+      if (unzippedBytes > MAX_BUNDLE_UNZIPPED_BYTES)
+        throw new PublishError(413, "bundle is too large once decompressed")
+    }
 
     const files: BundleManifest["files"] = {}
     for (const raw of paths) {

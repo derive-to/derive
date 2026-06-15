@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest"
-import { isAnchored, quoteSelector, reanchor } from "../src/anchor"
+import {
+  type AnchorThread,
+  isAnchored,
+  planAnchorSweep,
+  quoteSelector,
+  reanchor,
+} from "../src/anchor"
 
 const text = "Q1 trended down to mean sentiment 3.1 across all channels this quarter."
 
@@ -40,5 +46,37 @@ describe("isAnchored", () => {
     const sel = JSON.stringify(quoteSelector(text, text.indexOf("3.1"), 3))
     expect(isAnchored(sel, text)).toBe(true)
     expect(isAnchored(sel, "no numbers here")).toBe(false)
+  })
+})
+
+describe("planAnchorSweep", () => {
+  const anchor = (quote: string) =>
+    JSON.stringify(quoteSelector(text, text.indexOf(quote), quote.length))
+  const thread = (over: Partial<AnchorThread> = {}): AnchorThread => ({
+    thread_id: "t1",
+    anchor: anchor("mean sentiment 3.1"),
+    state: "open",
+    ...over,
+  })
+
+  it("outdates an open thread whose quote vanished", () => {
+    const gone = "We switched to median sentiment 3.6 this quarter."
+    expect(planAnchorSweep([thread()], gone)).toEqual([{ thread_id: "t1", state: "outdated" }])
+  })
+
+  it("leaves an open thread alone when its quote survives", () => {
+    expect(planAnchorSweep([thread()], text)).toEqual([])
+  })
+
+  it("reopens an outdated thread when its quote reappears", () => {
+    expect(planAnchorSweep([thread({ state: "outdated" })], text)).toEqual([
+      { thread_id: "t1", state: "open" },
+    ])
+  })
+
+  it("never touches resolved threads or whole-document (un-anchored) threads", () => {
+    const gone = "nothing here"
+    expect(planAnchorSweep([thread({ state: "resolved" })], gone)).toEqual([])
+    expect(planAnchorSweep([thread({ anchor: null })], gone)).toEqual([])
   })
 })

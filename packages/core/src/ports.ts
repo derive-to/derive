@@ -53,6 +53,9 @@ export interface ListArtifactsOpts {
   ids?: string[]
   /** Scope to one workspace (multi-workspace). Omitted ⇒ every workspace. */
   orgId?: string
+  /** Only `public` artifacts. Set for anonymous / non-member callers so a workspace
+   *  listing never leaks `org`/`link`/`password` titles to someone who can't open them. */
+  publicOnly?: boolean
 }
 
 export interface VersionRecord {
@@ -543,7 +546,12 @@ export interface NewProposal {
 /** A person, as needed for sharing UIs. Sourced from Better Auth's user table. */
 export interface UserDir {
   id: string
+  /** Internal only (server-side @mention search by email prefix). Never serialize
+   *  to clients — surfaces identify people by `username`, not email. */
   email: string
+  /** Public handle. Every account has one (auto-assigned at creation); null only
+   *  for a legacy row not yet backfilled. This is what the API exposes. */
+  username: string | null
   name: string | null
   /** Profile picture URL (set by OAuth providers; null for password signups). */
   image: string | null
@@ -779,7 +787,17 @@ export interface ViewStats {
   recent: { viewer: string; kind: "user" | "anon"; at: string; avatar?: string | null }[]
 }
 
-export type CommentState = "open" | "resolved"
+// open      — live feedback awaiting a reply/resolution
+// addressed — a proposed revision that cites this thread is pending review. Set
+//             when an agent/author `propose`s with `addresses`; clears to
+//             `resolved` if that proposal is approved (the fix landed) or back to
+//             `open` if it's withdrawn / sent back for changes.
+// resolved  — a human marked the thread done (or an addressing proposal landed)
+// outdated  — the text this thread anchored to changed or vanished in a later
+//             version, so the feedback may no longer apply. Set automatically by
+//             the re-anchor sweep on every version bump; flips back to `open` if
+//             the quoted text reappears. Never overwrites `resolved`/`addressed`.
+export type CommentState = "open" | "addressed" | "resolved" | "outdated"
 
 export interface CommentRecord {
   id: string

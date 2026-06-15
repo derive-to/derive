@@ -17,7 +17,8 @@
     "start": "tsx src/node.ts",
     "build:web": "pnpm --filter @dock/web build && node scripts/prep-edge-assets.mjs",
     "deploy:schema": "node scripts/apply-d1-schema.mjs",
-    "deploy": "pnpm build:web && pnpm deploy:schema && wrangler deploy",
+    "migrate:auth": "tsx migrate-auth-d1.ts",
+    "deploy": "pnpm build:web && pnpm deploy:schema && tsx migrate-auth-d1.ts --apply && wrangler deploy",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.worker.json",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage"

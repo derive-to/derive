@@ -149,7 +149,8 @@ export function artifactActions(p: {
     await addComment(text, { anchor, mentions })
   }
   const toggleResolve = async (root: Comment) => {
-    await api.resolve(shortId, root.id, root.state === "open" ? "resolved" : "open")
+    // Resolve anything not already resolved (open or outdated); reopen a resolved thread.
+    await api.resolve(shortId, root.id, root.state === "resolved" ? "open" : "resolved")
     refetchComments()
   }
   const activate = (id: string) => {

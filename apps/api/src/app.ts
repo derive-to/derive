@@ -5,7 +5,7 @@ import { OAUTH_SCOPES } from "./auth-config"
 import { type AppDeps, buildContext } from "./context"
 import { cacheControlFor, corsFor, fail, TOMBSTONE } from "./lib/http"
 import { observability } from "./lib/observability"
-import { makeRateLimiter } from "./lib/rate-limit"
+import { inMemoryRateLimiters, ipRateLimit } from "./lib/rate-limit"
 import { serveContent } from "./lib/serve-content"
 import { log } from "./log"
 import { mountMcp } from "./mcp"
@@ -42,7 +42,12 @@ export type { AppDeps }
  * `node.ts` adds static SPA serving around what this returns.
  */
 export function createApp(deps: AppDeps): Hono {
-  const ctx = buildContext(deps)
+  // One limiter set, shared by the IP middleware below and the keyed limiters in
+  // buildContext (resolved here and passed in, so both see the same instance). The edge
+  // entry supplies native per-colo limiters; Node / self-host / tests fall back to the
+  // in-process set (authoritative on one container).
+  const rateLimiters = deps.rateLimiters ?? inMemoryRateLimiters(deps)
+  const ctx = buildContext({ ...deps, rateLimiters })
   const app = new Hono()
 
   // Outermost: a per-request id + one structured access-log line (method, path,
@@ -218,11 +223,11 @@ export function createApp(deps: AppDeps): Hono {
   }
   if (deps.rateLimit) {
     // Strict on auth (credential brute-force); lenient on mutating API calls.
-    app.use("/api/auth/*", makeRateLimiter(60_000, 20))
+    app.use("/api/auth/*", ipRateLimit(rateLimiters.auth))
     // Anonymous OAuth client registration (open DCR) gets a tighter per-IP cap on
     // top, so no single source can flood the client table.
-    app.use("/api/auth/oauth2/register", makeRateLimiter(3_600_000, 10))
-    const writeLimiter = makeRateLimiter(60_000, 120)
+    app.use("/api/auth/oauth2/register", ipRateLimit(rateLimiters.oauthRegister))
+    const writeLimiter = ipRateLimit(rateLimiters.write)
     app.use("/v1/*", (c, next) =>
       c.req.method === "GET" || c.req.method === "HEAD" ? next() : writeLimiter(c, next),
     )
@@ -260,6 +265,18 @@ export function createApp(deps: AppDeps): Hono {
     }
   }
   app.get("/.well-known/oauth-authorization-server", (c) => c.json(asMeta(c)))
+  // OIDC discovery for standards-compliant OIDC clients. We issue id tokens (jwt
+  // plugin) + advertise the openid scope + a userinfo endpoint, so RPs that probe
+  // /.well-known/openid-configuration must get JSON here — previously this path fell
+  // through to the SPA shell (HTML 200), breaking discovery. Superset of the OAuth AS
+  // metadata with the two OIDC-required fields.
+  app.get("/.well-known/openid-configuration", (c) =>
+    c.json({
+      ...asMeta(c),
+      subject_types_supported: ["public"],
+      id_token_signing_alg_values_supported: ["EdDSA"],
+    }),
+  )
   app.get("/.well-known/oauth-protected-resource", (c) => {
     const base = new URL(c.req.url).origin
     return c.json({

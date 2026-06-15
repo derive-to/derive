@@ -113,25 +113,32 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(r.wwwAuth).toContain("oauth-protected-resource")
   })
 
-  it("initializes and lists the read tools for a valid bearer", async () => {
-    const { app, token } = appWithGrant("init", "openid dock:read")
+  it("initializes (identity in instructions) and lists the consolidated tools", async () => {
+    const { app, token } = appWithGrant("init", "openid dock:read dock:publish")
     const init = await rpc(app, token, initBody)
-    expect(init.parsed?.result).toMatchObject({ serverInfo: { name: "dock" } })
+    const result = init.parsed?.result as { serverInfo?: { name: string }; instructions?: string }
+    expect(result.serverInfo).toMatchObject({ name: "dock" })
+    // Identity rides in the server instructions, not a whoami tool.
+    expect(result.instructions).toContain("Claude")
+    expect(result.instructions).toContain("editor")
 
     const list = await rpc(app, token, { jsonrpc: "2.0", id: 2, method: "tools/list" })
-    expect(toolNames(list)).toEqual(
+    const names = toolNames(list)
+    expect(names).toEqual(
       expect.arrayContaining([
-        "whoami",
         "list_artifacts",
-        "read_artifact",
+        "catch_me_up",
+        "read",
+        "diff",
         "list_comments",
         "list_versions",
-        "read_section",
-        "diff",
-        "catch_me_up",
         "propose",
       ]),
     )
+    // Consolidated away: no whoami / read_artifact / read_section.
+    expect(names).not.toContain("whoami")
+    expect(names).not.toContain("read_artifact")
+    expect(names).not.toContain("read_section")
   })
 
   const call = (app: App, token: string, name: string, args: Record<string, unknown> = {}) =>
@@ -142,16 +149,7 @@ describe("remote MCP endpoint (/mcp)", () => {
       params: { name, arguments: args },
     })
 
-  it("whoami reports the bearer's identity, workspace, and role", async () => {
-    const { app, token } = appWithGrant("who", "openid dock:read dock:publish")
-    const r = await call(app, token, "whoami")
-    const id = JSON.parse(toolText(r))
-    expect(id.name).toBe("Claude")
-    expect(id.role).toBe("editor") // dock:publish ⇒ editor
-    expect(id.workspace).toBeTruthy()
-  })
-
-  it("list_artifacts + read_artifact see the agent's own published artifact", async () => {
+  it("list_artifacts + read see the agent's own published artifact", async () => {
     const { app, token } = appWithGrant("read", "openid dock:read dock:publish")
     const pub = await publish(app, token, "My Plan")
     expect(pub.status).toBe(201)
@@ -161,7 +159,7 @@ describe("remote MCP endpoint (/mcp)", () => {
     const listOut = JSON.parse(toolText(list))
     expect(listOut.artifacts.some((a: { short_id: string }) => a.short_id === shortId)).toBe(true)
 
-    const read = await call(app, token, "read_artifact", { short_id: shortId })
+    const read = await call(app, token, "read", { short_id: shortId })
     const readOut = JSON.parse(toolText(read))
     expect(readOut.title).toBe("My Plan")
     expect(readOut.content).toContain("My Plan")
@@ -192,11 +190,24 @@ describe("remote MCP endpoint (/mcp)", () => {
     )
     expect(c.head).toBe(2)
     expect(c.new_versions.map((v: { n: number }) => v.n)).toContain(2)
-    expect(c.entry_diff).toContain("V2 Title")
+    expect(c.summary).toContain("v2") // prose summary up top
     expect(c.caught_up).toBe(false)
+    expect(c.entry_diff).not.toContain("V2 Title") // omitted by default (token-light)
+
+    // 'detailed' includes the line diff inline.
+    const cd = JSON.parse(
+      toolText(
+        await call(app, token, "catch_me_up", {
+          short_id: shortId,
+          since_version: 1,
+          response_format: "detailed",
+        }),
+      ),
+    )
+    expect(cd.entry_diff).toContain("V2 Title")
   })
 
-  it("read_section + catch_me_up handle multi-page bundles", async () => {
+  it("read + catch_me_up handle multi-page bundles", async () => {
     const { app, token } = appWithGrant("bundle", "openid dock:read dock:publish")
     const enc = (s: string) => new TextEncoder().encode(s)
     const postZip = (
@@ -222,14 +233,12 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(pj.kind).toBe("bundle")
     const shortId = pj.short_id
 
-    // No path → lists the bundle's pages.
-    const pages = JSON.parse(
-      toolText(await call(app, token, "read_section", { short_id: shortId })),
-    )
+    // No section → outline (the bundle's pages).
+    const pages = JSON.parse(toolText(await call(app, token, "read", { short_id: shortId })))
     expect(pages.pages).toEqual(expect.arrayContaining(["index.html", "page.html"]))
-    // A path → that page's content.
+    // A section → that page's content.
     const page = JSON.parse(
-      toolText(await call(app, token, "read_section", { short_id: shortId, path: "page.html" })),
+      toolText(await call(app, token, "read", { short_id: shortId, section: "page.html" })),
     )
     expect(page.content).toContain("Page")
 
@@ -269,11 +278,95 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(p.base_version).toBe(1)
 
     // The live version is untouched — a proposal is not a publish.
-    const read = JSON.parse(
-      toolText(await call(app, token, "read_artifact", { short_id: shortId })),
-    )
+    const read = JSON.parse(toolText(await call(app, token, "read", { short_id: shortId })))
     expect(read.version).toBe(1)
     expect(read.content).toContain("Draft")
     expect(read.content).not.toContain("Revised")
+  })
+
+  it("surfaces outdated feedback after a republish drops the quoted text", async () => {
+    const { app, token } = appWithGrant("stale", "openid dock:read dock:comment dock:publish")
+    const shortId = (await (await publish(app, token, "alpha beta gamma")).json()).short_id
+
+    // A comment anchored to "beta".
+    await app.request(`/v1/artifacts/${shortId}/comments`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+      body: JSON.stringify({
+        body_md: "tighten this",
+        anchor: { type: "TextQuoteSelector", exact: "beta", prefix: "alpha ", suffix: " gamma" },
+      }),
+    })
+
+    // Republish without "beta" — the sweep should mark the thread outdated.
+    const form = new FormData()
+    form.append(
+      "file",
+      new Blob([new TextEncoder().encode("<h1>alpha gamma delta</h1>")]),
+      "index.html",
+    )
+    form.append("name", "rev 2")
+    await app.request(`/v1/artifacts/${shortId}/versions`, {
+      method: "POST",
+      body: form,
+      headers: { authorization: `Bearer ${token}` },
+    })
+
+    // list_comments reports the new state + the quoted text the thread targets.
+    const all = JSON.parse(toolText(await call(app, token, "list_comments", { short_id: shortId })))
+    expect(all.comments[0].state).toBe("outdated")
+    expect(all.comments[0].quote).toBe("beta")
+    const onlyStale = JSON.parse(
+      toolText(await call(app, token, "list_comments", { short_id: shortId, state: "outdated" })),
+    )
+    expect(onlyStale.count).toBe(1)
+
+    // catch_me_up leads with it so the agent knows its edits touched commented text.
+    const cu = JSON.parse(
+      toolText(await call(app, token, "catch_me_up", { short_id: shortId, since_version: 1 })),
+    )
+    expect(cu.summary).toContain("outdated")
+    expect(cu.outdated_comments).toHaveLength(1)
+    expect(cu.outdated_comments[0].quote).toBe("beta")
+  })
+
+  it("propose with `addresses` marks the cited threads addressed (pending review)", async () => {
+    const { app, token } = appWithGrant("addr", "openid dock:read dock:comment dock:publish")
+    const shortId = (await (await publish(app, token, "headline to fix")).json()).short_id
+    const cm = await (
+      await app.request(`/v1/artifacts/${shortId}/comments`, {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+        body: JSON.stringify({ body_md: "fix the headline" }),
+      })
+    ).json()
+
+    const p = JSON.parse(
+      toolText(
+        await call(app, token, "propose", {
+          short_id: shortId,
+          content: "<h1>fixed headline</h1>",
+          message: "fixed it",
+          addresses: [cm.thread_id],
+        }),
+      ),
+    )
+    expect(p.proposed).toBe(true)
+    expect(p.addressed).toEqual([cm.thread_id])
+
+    // The thread is now addressed — off the open list, listed under `addressed`.
+    const open = JSON.parse(
+      toolText(await call(app, token, "list_comments", { short_id: shortId, state: "open" })),
+    )
+    expect(open.count).toBe(0)
+    const addr = JSON.parse(
+      toolText(await call(app, token, "list_comments", { short_id: shortId, state: "addressed" })),
+    )
+    expect(addr.count).toBe(1)
+    expect(addr.comments[0].state).toBe("addressed")
+
+    // catch_me_up flags it so the agent won't re-propose the same fix.
+    const cu = JSON.parse(toolText(await call(app, token, "catch_me_up", { short_id: shortId })))
+    expect(cu.summary).toContain("addressed")
   })
 })

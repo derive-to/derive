@@ -137,9 +137,11 @@ export function MentionField({
   const choose = (u: DirUser) => {
     if (!menu) return
     const before = value.slice(0, menu.at)
-    const insert = `@${u.name} `
+    // Mention by handle (the stable public identity); fall back to display name / id.
+    const label = u.handle ?? u.name ?? u.id
+    const insert = `@${label} `
     onChange(before + insert + value.slice(menu.end))
-    if (!mentions.some((m) => m.id === u.id)) onMentions([...mentions, { id: u.id, name: u.name }])
+    if (!mentions.some((m) => m.id === u.id)) onMentions([...mentions, { id: u.id, name: label }])
     setMenu(null)
     const pos = before.length + insert.length
     requestAnimationFrame(() => {
@@ -320,8 +322,12 @@ export function MentionField({
                 i === active ? "bg-accent" : "bg-transparent",
               )}
             >
-              <span className="text-sm font-semibold">{u.name}</span>
-              <span className="font-mono text-2xs text-muted-foreground">{u.email}</span>
+              <span className="text-sm font-semibold">
+                {u.name ?? (u.handle ? `@${u.handle}` : "")}
+              </span>
+              {u.name && u.handle && (
+                <span className="font-mono text-2xs text-muted-foreground">@{u.handle}</span>
+              )}
             </button>
           ))}
         </div>

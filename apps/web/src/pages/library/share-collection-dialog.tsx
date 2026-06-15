@@ -113,10 +113,10 @@ export function ShareCollectionDialog({
               <div key={m.user_id} className="flex items-center gap-2">
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-sm font-semibold">
-                    {m.name ?? m.email ?? m.user_id}
+                    {m.name ?? (m.handle ? `@${m.handle}` : m.user_id)}
                   </div>
-                  {m.name && m.email && (
-                    <div className="truncate text-2xs text-muted-foreground">{m.email}</div>
+                  {m.name && m.handle && (
+                    <div className="truncate text-2xs text-muted-foreground">@{m.handle}</div>
                   )}
                 </div>
                 <span className="font-mono text-xs text-muted-foreground">{m.role}</span>
@@ -127,7 +127,7 @@ export function ShareCollectionDialog({
                   className="size-7 text-muted-foreground hover:text-foreground"
                   onClick={() => remove(m)}
                   title="Remove"
-                  aria-label={`Remove ${m.name ?? m.email ?? "member"}`}
+                  aria-label={`Remove ${m.name ?? (m.handle ? `@${m.handle}` : "member")}`}
                 >
                   ✕
                 </Button>

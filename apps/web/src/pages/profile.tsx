@@ -1,7 +1,6 @@
 import { useQuery } from "@tanstack/react-query"
 import { getRouteApi, useNavigate } from "@tanstack/react-router"
 import { useState } from "react"
-import { toast } from "sonner"
 import { api } from "@/api"
 import { CenteredSpinner } from "@/components/shared/spinner"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
@@ -22,20 +21,6 @@ export function Profile() {
   const { me, setMe } = useAuth()
   const nav = useNavigate()
   const [editing, setEditing] = useState(false)
-  const [discoverable, setDiscoverable] = useState(!!me?.discoverable)
-
-  // Opt in/out of people search (optimistic; revert on failure).
-  const toggleDiscoverable = async () => {
-    const next = !discoverable
-    setDiscoverable(next)
-    try {
-      await api.setDiscoverable(next)
-      if (me) setMe({ ...me, discoverable: next })
-    } catch (e) {
-      setDiscoverable(!next)
-      toast.error(e instanceof Error ? e.message : "Couldn't update discoverability")
-    }
-  }
 
   const { data, isPending, isError } = useQuery({
     queryKey: ["profile", handle],
@@ -96,26 +81,14 @@ export function Profile() {
               />
             </div>
           ) : (
-            <div className="flex flex-col items-center gap-3 pt-1">
-              <Button
-                variant="outline"
-                size="sm"
-                data-testid="profile-edit"
-                onClick={() => setEditing(true)}
-              >
-                Change username
-              </Button>
-              <label className="flex cursor-pointer items-center gap-2 text-sm text-muted-foreground">
-                <input
-                  type="checkbox"
-                  data-testid="profile-discoverable"
-                  checked={discoverable}
-                  onChange={toggleDiscoverable}
-                  className="size-4"
-                />
-                Let people find me by username in search
-              </label>
-            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              data-testid="profile-edit"
+              onClick={() => setEditing(true)}
+            >
+              Change username
+            </Button>
           ))}
       </Card>
     </div>

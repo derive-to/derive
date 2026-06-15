@@ -30,7 +30,7 @@ export function People() {
     <div className="mx-auto w-full max-w-xl p-6 sm:p-10">
       <h1 className="mb-1 font-display text-2xl font-semibold text-foreground">Find people</h1>
       <p className="mb-4 text-sm text-muted-foreground">
-        Search people by username or name. Only those who've made themselves discoverable appear.
+        Search people by username or name. Anyone who hasn't opted out of discovery appears.
       </p>
       <Input
         ref={input}

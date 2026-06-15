@@ -157,13 +157,14 @@ export function useArtifactFrame(p: {
     return () => window.removeEventListener("keydown", onKey)
   }, [deck, deckCmd])
 
-  // Paint highlights for open, anchored threads whenever the doc or comments change.
+  // Paint highlights for active (open or addressed), anchored threads whenever
+  // the doc or comments change. Resolved/outdated threads don't paint.
   const sendAnchors = useCallback(() => {
     const w = frame.current?.contentWindow
     if (!w) return
     const anchors = groupThreads(comments)
       .map((t) => t[0])
-      .filter((head): head is Comment => head?.state === "open")
+      .filter((head): head is Comment => head?.state === "open" || head?.state === "addressed")
       .map((head) => ({ id: head.thread_id, sel: parseAnchor(head.anchor) }))
       .filter((x): x is { id: string; sel: NonNullable<ReturnType<typeof parseAnchor>> } => !!x.sel)
       .map((x) => ({ id: x.id, exact: x.sel.exact, prefix: x.sel.prefix, suffix: x.sel.suffix }))

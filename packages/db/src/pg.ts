@@ -850,7 +850,7 @@ export class PgMetaStore implements MetaStore {
     try {
       const ph = ids.map((_, i) => `$${i + 1}`).join(",")
       const { rows } = await this.pool.query(
-        `SELECT id, email, name, image FROM "user" WHERE id IN (${ph})`,
+        `SELECT id, email, name, image, username FROM "user" WHERE id IN (${ph})`,
         ids,
       )
       return rows as UserDir[]
@@ -897,8 +897,10 @@ export class PgMetaStore implements MetaStore {
     try {
       const like = `%${s}%`
       const { rows } = await this.pool.query(
+        // discoverable IS NOT FALSE → true OR unset(null) both match (on by
+        // default); only an explicit false (opted out) is excluded.
         `SELECT id, name, image, username FROM "user"
-         WHERE discoverable = true AND username IS NOT NULL
+         WHERE discoverable IS NOT FALSE AND username IS NOT NULL
            AND (username ILIKE $1 OR name ILIKE $1)
          ORDER BY username LIMIT $2`,
         [like, limit],
