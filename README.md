@@ -101,31 +101,33 @@ reviews. `dock init` scaffolds the on-ramp straight into your project: a Claude 
 skill (`.claude/skills/dock`) plus a project MCP config (`.mcp.json`), so an agent
 can publish, read comments, revise, and resolve with no extra wiring.
 
-One line to connect Claude Code over MCP:
+One line to connect over MCP — Dock is itself a remote MCP server, OAuth-authenticated
+(no static token):
 
 ```bash
-claude mcp add dock --env DOCK_SERVER=http://localhost:8080 --env DOCK_TOKEN=$DOCK_TOKEN -- npx -y @dock/mcp
+claude mcp add --transport http dock <your-dock-server>/mcp
 ```
 
-Or drive it from the CLI, no MCP needed:
+The first call opens a browser consent; the scope you grant maps to a role. The agent
+then acts **at that role** — an agent granted publish access publishes directly, exactly
+as you would; a lower-scoped one reads and proposes.
+
+Or drive it from the CLI:
 
 ```bash
-npx -y @dock/cli init        # dock.json + a starter + the skill + .mcp.json
-npx -y @dock/cli publish     # share a versioned URL
-npx -y @dock/cli comments    # read the review threads, then revise and publish again
+node packages/cli/bin/dock.js login      # OAuth sign-in
+node packages/cli/bin/dock.js publish    # share a versioned URL
+node packages/cli/bin/dock.js comments   # read the review threads, then revise and publish again
 ```
 
-Both read `DOCK_SERVER` and `DOCK_TOKEN` from the environment. Mint a scoped agent
-token in workspace settings, or set the instance-wide `DOCK_TOKEN` when self-hosting.
+MCP tools: `whoami`, `list_artifacts`, `read_artifact`, `read_section`, `list_versions`,
+`diff`, `list_comments`, `catch_me_up`, `propose` (human-reviewed), and `publish`
+(direct — Creator/Admin role). Publish vs. propose follows your role. Full loop in
+[packages/mcp/SKILL.md](packages/mcp/SKILL.md).
 
-MCP tools: `publish_artifact`, `publish_version` (with `resolves`), `get_artifact`
-(source read-back), `list_versions`, `diff_versions`, `restore_version`,
-`list_comments`, `add_comment` (with a `quote` anchor), `reply_comment`,
-`resolve_thread`, `view_stats`. The `dock://guide` resource serves the full
-publish → review → revise loop (also in [packages/mcp/SKILL.md](packages/mcp/SKILL.md)).
-
-Working in this repo before the packages are published? Run the server directly:
-`DOCK_SERVER=http://localhost:8080 pnpm --filter @dock/mcp start`.
+> The `@dock/cli` / `@dock/mcp` npm packages aren't published yet — run the CLI from the
+> repo (`node packages/cli/bin/dock.js`) and connect agents to the remote `/mcp` endpoint
+> above until they land.
 
 ## Embeds and unfurls
 

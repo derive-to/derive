@@ -18,6 +18,8 @@ import {
   formatDiff,
   PublishError,
   propose as proposeChange,
+  publish as publishVersion,
+  roleAllows,
   type VersionRecord,
 } from "@dock/core"
 import { StreamableHTTPTransport } from "@hono/mcp"
@@ -380,6 +382,62 @@ function buildServer(ctx: AppContext, agent: AgentRecord): McpServer {
       } catch (e) {
         const msg = e instanceof PublishError ? e.message : "could not store the proposal"
         return text(`Propose failed: ${msg}`)
+      }
+    },
+  )
+
+  server.registerTool(
+    "publish",
+    {
+      description:
+        "Publish a revised version of a single-file artifact DIRECTLY — it goes live immediately. Requires publish rights (Creator/Admin role on the workspace); a commenter-level grant should use `propose` instead. Provide the FULL new content (not a patch) and a version message. (Multi-page bundles aren't publishable over MCP yet.)",
+      inputSchema: {
+        short_id: z.string(),
+        content: z
+          .string()
+          .describe("The complete new content of the document (HTML or Markdown)."),
+        message: z.string().describe("What changed — recorded as the version message."),
+        filename: z
+          .string()
+          .optional()
+          .describe("Filename hint for the content type, e.g. index.html or notes.md."),
+      },
+    },
+    async ({ short_id, content, message, filename }) => {
+      const a = await own(short_id)
+      if (!a) return text(`No artifact "${short_id}" in this workspace.`)
+      // Direct publish is gated on the agent's role: Creator/Admin only. A
+      // commenter-level grant is steered to `propose` (human-reviewed), so a
+      // low-privilege agent still can't push live content.
+      if (!roleAllows(agent.role, "publish"))
+        return text(
+          "Your grant can't publish directly (needs a Creator/Admin role). Use `propose` to submit a reviewed change, or re-authorize with a publish scope.",
+        )
+      if (a.kind === "bundle")
+        return text(
+          `"${short_id}" is a multi-page bundle; publishing bundle revisions over MCP isn't supported yet (single-file artifacts only).`,
+        )
+      try {
+        const { version } = await publishVersion(
+          ctx.meta,
+          ctx.blobs,
+          {
+            bytes: new TextEncoder().encode(content),
+            filename: filename ?? "index.html",
+            isBundle: false,
+            message,
+            author: agent.name,
+          },
+          short_id,
+        )
+        return json({
+          published: true,
+          version: version.n,
+          note: "Live now — this published a new current version of the artifact.",
+        })
+      } catch (e) {
+        const msg = e instanceof PublishError ? e.message : "could not publish"
+        return text(`Publish failed: ${msg}`)
       }
     },
   )
