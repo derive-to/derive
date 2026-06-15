@@ -15,12 +15,15 @@ import type { Hono } from "hono"
  *  · prefixes match the path and any subpath (`/v1`, `/v1/artifacts`, …)
  *  · exact paths match only themselves (`/healthz`)
  */
-const API_PREFIXES = ["/v1", "/api", "/raw", "/oauth", "/mcp"] as const
-// OAuth 2.0 discovery docs (RFC 8414 / RFC 9728) the Worker must answer with JSON.
-// Without these the SPA not_found_handling shadows them with index.html, so MCP
-// clients probing the well-known root get HTML instead of the metadata.
+const API_PREFIXES = ["/v1", "/api", "/raw", "/oauth"] as const
+// Exact server-owned paths. The OAuth 2.0 discovery docs (RFC 8414 / RFC 9728) the
+// Worker must answer with JSON, else SPA not_found_handling shadows them. `/mcp` is
+// EXACT, not a prefix: the MCP Streamable-HTTP endpoint is hit at exactly /mcp with
+// no subpath, so a `/mcp/*` worker-first glob misses it and the asset handler 405s
+// the POST. (Trailing-slash/subpath variants aren't used by the transport.)
 const API_EXACT = [
   "/healthz",
+  "/mcp",
   "/.well-known/oauth-authorization-server",
   "/.well-known/oauth-protected-resource",
 ] as const

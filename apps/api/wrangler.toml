@@ -38,7 +38,7 @@ new_sqlite_classes = ["ArtifactRoom"]
 [assets]
 directory = "../web/dist/client"
 binding = "ASSETS"
-run_worker_first = ["/v1/*", "/api/*", "/raw/*", "/oauth/*", "/mcp/*", "/a/*", "/healthz", "/.well-known/oauth-authorization-server", "/.well-known/oauth-protected-resource"]
+run_worker_first = ["/v1/*", "/api/*", "/raw/*", "/oauth/*", "/a/*", "/healthz", "/mcp", "/.well-known/oauth-authorization-server", "/.well-known/oauth-protected-resource"]
 not_found_handling = "single-page-application"
 
 # baseUrl falls back to the request origin when unset. Secured by Better Auth; set
