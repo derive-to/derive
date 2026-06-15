@@ -22,9 +22,16 @@ export const sharingRoutes = (ctx: AppContext) => {
   app.get("/v1/artifacts/:shortId/members", async (c) => {
     const artifact = await meta.getByShortId(c.req.param("shortId"))
     if (!artifact || !(await authorize(c, "read", artifact))) return fail(c, 404, "not found")
-    // The member list (collaborator emails/names) is not public: hide it from
-    // anonymous visitors even on a public link. Authenticated readers still see it.
-    if (await anonLocked(c, artifact)) return fail(c, 404, "not found")
+    // The member roster is for collaborators, not the public. A caller who only has
+    // read access via the artifact's visibility (no membership and no share) gets
+    // nothing — mirrors the collection-members gate, and stops a stranger reading a
+    // public artifact's collaborator list cross-workspace. Identify members by their
+    // public @handle; never expose email.
+    const actor = await actorFor(c, artifact)
+    const collaborator =
+      actor.kind === "token" ||
+      (actor.kind === "user" && (actor.orgRole != null || actor.artifactRole != null))
+    if (!collaborator) return fail(c, 404, "not found")
     const rows = await meta.listArtifactMembers(artifact.id)
     const users = await meta.getUsers(rows.map((r) => r.user_id))
     const byId = new Map(users.map((u) => [u.id, u]))
@@ -32,7 +39,7 @@ export const sharingRoutes = (ctx: AppContext) => {
       default_role: defaultRole,
       members: rows.map((r) => ({
         user_id: r.user_id,
-        email: byId.get(r.user_id)?.email ?? null,
+        handle: byId.get(r.user_id)?.username ?? null,
         name: byId.get(r.user_id)?.name ?? null,
         role: r.role,
       })),
@@ -89,7 +96,9 @@ export const sharingRoutes = (ctx: AppContext) => {
         notification: { ...row, read: 0, created_at: new Date().toISOString() },
       })
     }
-    return c.json({ user_id: user.id, email: user.email, name: user.name, role: b.role }, 201)
+    // Echo the public handle, never the email — otherwise sharing by @handle would
+    // be a handle→email oracle (resolve anyone's email by sharing an artifact with them).
+    return c.json({ user_id: user.id, handle: user.username, name: user.name, role: b.role }, 201)
   })
 
   app.delete("/v1/artifacts/:shortId/members/:userId", async (c) => {

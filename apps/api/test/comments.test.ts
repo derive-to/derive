@@ -162,7 +162,10 @@ describe("@mentions + in-app notifications", () => {
       await app.request("/v1/users?q=bob", { headers: as(alice.email) })
     ).json()
     expect(filtered.users).toHaveLength(1)
-    expect(filtered.users[0]).toMatchObject({ id: bob.id, name: "Bob", email: bob.email })
+    // The directory identifies people by handle + name, never email (you can still
+    // FIND someone by their address via ?q=, but it is never returned).
+    expect(filtered.users[0]).toMatchObject({ id: bob.id, name: "Bob" })
+    expect(filtered.users[0].email).toBeUndefined()
   })
 
   it("stores mentions on the comment and notifies the mentioned user, never the author", async () => {

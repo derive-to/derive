@@ -131,3 +131,41 @@ export const suggestUsername = (nameOrEmail: string): string => {
   if (s.length < USERNAME_MIN) s = `${s || "new"}user`.slice(0, USERNAME_MAX)
   return s
 }
+
+/**
+ * Pick a fresh, valid, AVAILABLE handle from a seed (email or name) for an account
+ * that didn't choose one — so every account has a handle and we never fall back to
+ * exposing an email. Tries clean candidates first (`ada`, `ada2`, `ada3`, …) using
+ * the caller's availability check, then a short random suffix, and finally a fully
+ * random handle. Always resolves to a legal handle and never throws (signup must not
+ * depend on it). `taken` returns true when a handle is already in use.
+ */
+export async function generateUsername(
+  seed: string,
+  taken: (candidate: string) => Promise<boolean>,
+): Promise<string> {
+  const suggested = suggestUsername(seed || "user")
+  const base = usernameError(suggested) ? "user" : suggested
+  const check = async (c: string): Promise<boolean> => {
+    if (usernameError(c)) return false
+    try {
+      return !(await taken(c))
+    } catch {
+      // Availability check failed: treat as available and let the unique index be
+      // the backstop — never block account creation on this.
+      return true
+    }
+  }
+  // 1) clean candidates: base, base2, base3, …
+  for (let i = 0; i < 50; i++) {
+    const cand = i === 0 ? base : `${base.slice(0, USERNAME_MAX - 3)}${i + 1}`
+    if (await check(cand)) return cand
+  }
+  // 2) base + short random suffix (collision-resistant)
+  for (let i = 0; i < 25; i++) {
+    const cand = `${base.slice(0, USERNAME_MAX - 5)}-${Math.random().toString(36).slice(2, 6)}`
+    if (await check(cand)) return cand
+  }
+  // 3) last resort: a fully random handle (legal by construction)
+  return `user-${Math.random().toString(36).slice(2, 8)}`
+}

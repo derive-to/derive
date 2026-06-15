@@ -69,7 +69,9 @@ export const artifactRoutes = (ctx: AppContext) => {
       rawCursor && sep > 0
         ? { created_at: rawCursor.slice(0, sep), id: rawCursor.slice(sep + 1) }
         : undefined
-    const q = c.req.query("q")?.trim() || undefined
+    // Cap the search term: it goes into a SQL LIKE, and an oversized value tripped
+    // an unhandled DB error (a long-q 500). No real title search needs > 200 chars.
+    const q = c.req.query("q")?.trim().slice(0, 200) || undefined
     const tag = c.req.query("tag")?.trim() || undefined
     const collectionId = c.req.query("collection")?.trim() || undefined
     const favOnly = c.req.query("favorite") === "true"
@@ -87,7 +89,14 @@ export const artifactRoutes = (ctx: AppContext) => {
     if (ids && ids.length === 0) return c.json({ artifacts: [], next_cursor: null })
 
     const orgId = await activeWorkspace(c)
-    const rows = await meta.listArtifacts({ limit: limit + 1, cursor, q, ids, orgId })
+    // A listing only shows non-public artifacts to a MEMBER of that workspace (or the
+    // operator token). Anyone else — anonymous, or a signed-in user who isn't a member
+    // — sees public artifacts only, so org/link titles never leak via the list or ?q=.
+    const publicOnly = !(
+      (deps.token && safeEqual(bearer(c), deps.token)) ||
+      (!!me && !!(await meta.getMembership(orgId, me.id)))
+    )
+    const rows = await meta.listArtifacts({ limit: limit + 1, cursor, q, ids, orgId, publicOnly })
     const hasMore = rows.length > limit
     const page = hasMore ? rows.slice(0, limit) : rows
     const last = page[page.length - 1]
@@ -114,6 +123,14 @@ export const artifactRoutes = (ctx: AppContext) => {
     if (!me && deps.token && !safeEqual(bearer(c), deps.token))
       return fail(c, 401, "unauthenticated")
     const org = await activeWorkspace(c)
+    // The sidebar summary (workspace name, total artifact count, tag breakdown) is a
+    // member view. A non-member — including an anonymous caller in open mode — gets an
+    // empty summary with no workspace name, so it can't be used to enumerate a private
+    // workspace's name + size.
+    const isMember =
+      (deps.token && safeEqual(bearer(c), deps.token)) ||
+      (!!me && !!(await meta.getMembership(org, me.id)))
+    if (!isMember) return c.json({ total: 0, favorites: 0, tags: [], workspace: null })
     const [total, tags, favIds, ws] = await Promise.all([
       meta.countArtifacts(org),
       meta.tagCounts(org),

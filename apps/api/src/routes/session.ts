@@ -1,4 +1,4 @@
-import { normalizeUsername, usernameError } from "@dock/core"
+import { can, normalizeUsername, usernameError } from "@dock/core"
 import { Hono } from "hono"
 import { z } from "zod"
 import type { AppContext } from "../context"
@@ -8,8 +8,17 @@ import { MAX_AVATAR_BYTES, sniffImageType } from "../lib/image"
 
 /** Session identity + the workspace member/agent directory for the @mention picker. */
 export const sessionRoutes = (ctx: AppContext) => {
-  const { meta, blobs, deps, bearer, currentUser, ensureMembership, activeWorkspace, authorize } =
-    ctx
+  const {
+    meta,
+    blobs,
+    deps,
+    bearer,
+    currentUser,
+    ensureMembership,
+    activeWorkspace,
+    authorize,
+    actorFor,
+  } = ctx
   const app = new Hono()
 
   app.get("/v1/me", async (c) => {
@@ -121,32 +130,51 @@ export const sessionRoutes = (ctx: AppContext) => {
   // it — even if they aren't in your active workspace (the @-a-collaborator case).
   // Without it, the caller's active-workspace members (composing outside a thread).
   app.get("/v1/users", async (c) => {
-    if (!(await currentUser(c)) && !safeEqual(bearer(c), deps.token))
-      return fail(c, 401, "unauthenticated")
+    const me = await currentUser(c)
+    const isToken = safeEqual(bearer(c), deps.token)
+    if (!me && !isToken) return fail(c, 401, "unauthenticated")
     const q = (c.req.query("q") ?? "").trim().toLowerCase()
 
-    // Resolve the directory's org + the set of user ids in scope.
     const shortId = c.req.query("artifact")
     const found = shortId ? await meta.getByShortId(shortId) : null
     const artifact = found && (await authorize(c, "read", found)) ? found : null
     const org = artifact ? artifact.org_id : await activeWorkspace(c)
-    const ids = new Set<string>((await meta.listMemberships(org)).map((m) => m.user_id))
-    if (artifact) {
+
+    const ids = new Set<string>()
+    if (me) ids.add(me.id) // you can always @mention yourself
+    // The full workspace roster is only for MEMBERS of that workspace — not a stranger
+    // who can merely read one of its public artifacts. Without this, anyone could pull
+    // an entire workspace's member list by passing any public artifact's short id.
+    const isOrgMember = isToken || (!!me && !!(await meta.getMembership(org, me.id)))
+    if (isOrgMember) for (const m of await meta.listMemberships(org)) ids.add(m.user_id)
+    // Thread participants (the artifact's members + people who've commented) are only
+    // exposed to someone who can actually mention on the thread — i.e. has comment
+    // access. A pure read-only viewer gets just themselves.
+    if (artifact && (isToken || can(await actorFor(c, artifact), "comment", artifact.visibility))) {
       for (const m of await meta.listArtifactMembers(artifact.id)) ids.add(m.user_id)
       for (const cm of await meta.listComments(artifact.id)) if (cm.author_id) ids.add(cm.author_id)
     }
+
     const users = await meta.getUsers([...ids])
+    // The picker identifies people by @handle + display name — never email. The
+    // email is still matchable server-side (q) so you can find someone you know by
+    // their address, but it is never returned.
     const people = (
       q
         ? users.filter(
-            (u) => (u.name ?? "").toLowerCase().includes(q) || u.email.toLowerCase().includes(q),
+            (u) =>
+              (u.name ?? "").toLowerCase().includes(q) ||
+              (u.username ?? "").includes(q) ||
+              u.email.toLowerCase().includes(q),
           )
         : users
-    ).map((u) => ({ id: u.id, name: u.name ?? u.email, email: u.email, kind: "user" as const }))
+    ).map((u) => ({ id: u.id, handle: u.username, name: u.name, kind: "user" as const }))
     const agents = (await meta.listAgents(org))
       .filter((ag) => !q || ag.name.toLowerCase().includes(q))
-      .map((ag) => ({ id: ag.id, name: ag.name, email: "", kind: "agent" as const }))
-    const all = [...people, ...agents].sort((a, b) => a.name.localeCompare(b.name))
+      .map((ag) => ({ id: ag.id, handle: null, name: ag.name, kind: "agent" as const }))
+    const all = [...people, ...agents].sort((a, b) =>
+      (a.name ?? a.handle ?? "").localeCompare(b.name ?? b.handle ?? ""),
+    )
     return c.json({ users: all })
   })
 

@@ -1,4 +1,5 @@
 import { oauthProvider } from "@better-auth/oauth-provider"
+import { generateUsername } from "@dock/core"
 import { type BetterAuthOptions, betterAuth } from "better-auth"
 import { getMigrations } from "better-auth/db/migration"
 import { genericOAuth, jwt } from "better-auth/plugins"
@@ -30,7 +31,14 @@ export type AuthDb = BetterAuthOptions["database"]
  * an enterprise OIDC provider (Okta/Entra/etc.) via the generic-OAuth plugin
  * when OIDC_* is set. Owns its own user/session/account tables.
  */
-export function makeAuth(db: AuthDb, baseUrl: string, secret: string) {
+/** Optional integrations the auth layer needs from the surrounding app. */
+export interface AuthHooks {
+  /** Is this handle already taken? Lets the auto-assign hook pick a free one.
+   *  Omitted in schema-gen / tests (no real user table); the unique index backstops. */
+  usernameTaken?: (username: string) => Promise<boolean>
+}
+
+export function makeAuth(db: AuthDb, baseUrl: string, secret: string, hooks: AuthHooks = {}) {
   // The browser sends its own Origin (the web app), which differs from the API's
   // baseURL whenever the SPA and API are on separate origins (dev proxy, or the
   // hosted split of static-web + API container). DOCK_WEB_ORIGIN lists those in
@@ -117,6 +125,28 @@ export function makeAuth(db: AuthDb, baseUrl: string, secret: string) {
     baseURL: baseUrl,
     secret,
     emailAndPassword: { enabled: true },
+    // Every account gets a handle the moment it's created — so the app can identify
+    // people by @handle everywhere and never has to fall back to exposing an email.
+    // Auto-assigned from the email/name (the user can change it later); it never
+    // overrides a handle that's somehow already set. Wrapped so a generation hiccup
+    // can never block account creation (the unique index is the final backstop).
+    databaseHooks: {
+      user: {
+        create: {
+          before: async (user) => {
+            const u = user as typeof user & { username?: string | null; email?: string }
+            if (u.username) return { data: user }
+            try {
+              const taken = hooks.usernameTaken ?? (async () => false)
+              const username = await generateUsername(u.email ?? u.name ?? "user", taken)
+              return { data: { ...user, username } }
+            } catch {
+              return { data: user }
+            }
+          },
+        },
+      },
+    },
     user: {
       additionalFields: {
         // The public handle (Profiles & Accounts v1). Claimed at onboarding via

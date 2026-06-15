@@ -89,13 +89,15 @@ export default {
       if (!secret || secret.length < 16)
         throw new Error("DOCK_AUTH_SECRET (>= 16 chars) is required on the edge")
       const baseUrl = env.BASE_URL ?? new URL(req.url).origin
+      const meta = createD1Store(env.DB)
       const auth = makeAuth(
         { dialect: new D1Dialect({ database: env.DB }), type: "sqlite" },
         baseUrl,
         secret,
+        { usernameTaken: (u) => meta.getUserByUsername(u).then(Boolean) },
       )
       app = createApp({
-        meta: createD1Store(env.DB),
+        meta,
         blobs: new R2BlobStore(env.BUCKET),
         backplane: createDoBackplane(env.ROOMS),
         baseUrl,

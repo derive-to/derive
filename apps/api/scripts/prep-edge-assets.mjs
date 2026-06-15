@@ -28,9 +28,27 @@ if (!existsSync(shell)) {
 copyFileSync(shell, join(dist, "index.html"))
 const redirects = join(dist, "_redirects")
 if (existsSync(redirects)) rmSync(redirects)
+// `_headers` for everything the static layer serves (the SPA shell + /assets/*).
+// The worker sets these on its own routes (/v1, /api, /raw, /a, …), but the SPA
+// shell and assets are served directly by Static Assets and bypass that middleware
+// — so without this the app at `/`, `/login`, `/settings`, … shipped no security
+// headers and was framable (clickjacking). We set only clickjacking + sniffing +
+// transport hardening; deliberately NO script-src/default-src CSP, so the SPA's
+// module scripts, inline theme-boot, and Google Fonts keep working untouched.
 writeFileSync(
   join(dist, "_headers"),
-  "/assets/*\n  Cache-Control: public, max-age=31536000, immutable\n",
+  [
+    "/*",
+    "  X-Frame-Options: DENY",
+    "  Content-Security-Policy: frame-ancestors 'none'",
+    "  X-Content-Type-Options: nosniff",
+    "  Strict-Transport-Security: max-age=63072000; includeSubDomains; preload",
+    "  Referrer-Policy: strict-origin-when-cross-origin",
+    "",
+    "/assets/*",
+    "  Cache-Control: public, max-age=31536000, immutable",
+    "",
+  ].join("\n"),
 )
 process.stdout.write(
   `prepped edge assets in ${dist} (index.html written, _redirects removed, _headers written)\n`,

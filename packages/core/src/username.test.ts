@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { normalizeUsername, suggestUsername, usernameError } from "./username"
+import { generateUsername, normalizeUsername, suggestUsername, usernameError } from "./username"
 
 describe("usernameError", () => {
   it("accepts well-formed handles", () => {
@@ -37,5 +37,33 @@ describe("suggestUsername", () => {
     // Result is always itself a valid handle.
     for (const seed of ["Jane Doe", "a", "!!!", "x".repeat(50), "weird..name"])
       expect(usernameError(suggestUsername(seed))).toBeNull()
+  })
+})
+
+describe("generateUsername", () => {
+  const free = async () => false
+  it("uses the clean base from the seed when available", async () => {
+    expect(await generateUsername("ada@example.com", free)).toBe("ada")
+  })
+  it("appends a number when the base is taken", async () => {
+    const used = new Set(["ada"])
+    expect(await generateUsername("ada@example.com", async (u) => used.has(u))).toBe("ada2")
+  })
+  it("always returns a valid handle and never the email", async () => {
+    for (const seed of ["ada@example.com", "Jane Doe", "!!!", ""]) {
+      const u = await generateUsername(seed, free)
+      expect(usernameError(u)).toBeNull()
+      expect(u).not.toContain("@")
+    }
+  })
+  it("never throws (and stays valid) when the availability check errors", async () => {
+    const u = await generateUsername("ada@example.com", async () => {
+      throw new Error("db down")
+    })
+    expect(usernameError(u)).toBeNull()
+  })
+  it("falls back to a unique-ish handle when every clean candidate is taken", async () => {
+    const u = await generateUsername("ada@example.com", async () => true)
+    expect(usernameError(u)).toBeNull()
   })
 })

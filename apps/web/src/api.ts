@@ -98,7 +98,9 @@ export interface Proposal {
 }
 export interface ArtifactMember {
   user_id: string
-  email: string | null
+  /** Public handle; null only for a legacy account not yet backfilled. No email —
+   *  the member list identifies collaborators by handle, never by address. */
+  handle: string | null
   name: string | null
   role: Role
 }
@@ -176,11 +178,11 @@ export interface Comment {
   deleted?: boolean
   mentions?: Mention[]
 }
-/** A workspace member as offered by the @mention picker. */
+/** A person/agent offered by the @mention picker — identified by @handle, never email. */
 export interface DirUser {
   id: string
-  name: string
-  email: string
+  name: string | null
+  handle: string | null
 }
 export interface Notification {
   id: string
@@ -212,12 +214,12 @@ export interface Agent {
   role: Role
   created_at: string
 }
-/** A live viewer of an artifact (presence). `email` is present for signed-in
- *  users, null for an anonymous viewer; `role` is their effective role here. */
+/** A live viewer of an artifact (presence). Identified by a handle-style `name`
+ *  (never email — presence is broadcast to anonymous co-viewers); `role` is their
+ *  effective role here. */
 export interface Viewer {
   id: string
   name: string
-  email: string | null
   role: string | null
 }
 export interface Delivery {

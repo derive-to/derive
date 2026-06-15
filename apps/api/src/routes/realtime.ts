@@ -57,8 +57,11 @@ export const realtimeRoutes = (ctx: AppContext) => {
     const me = await currentUser(c)
     const role = effectiveRole(await actorFor(c, artifact), artifact.visibility)
     const viewer: Viewer = me
-      ? { id: me.id, name: me.name ?? me.email, email: me.email, role }
-      : { id: anonViewerId(c), name: anonName(anonViewerId(c)), email: null, role }
+      ? // Handle-based identity, never PII: presence reaches anonymous co-viewers and
+        // rides the wildcard-CORS /events SSE. Prefer the public @handle; fall back to
+        // the email's local-part (not the full address) for an unclaimed handle.
+        { id: me.id, name: me.username ?? me.email.split("@")[0] ?? "someone", role }
+      : { id: anonViewerId(c), name: anonName(anonViewerId(c)), role }
     const viewers = await presence.heartbeat(artifact.id, viewer, Date.now())
     bus.publish(artifact.id, { type: "presence", viewers })
     return c.json({ viewers })
