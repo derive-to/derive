@@ -18,7 +18,6 @@
 import {
   type AgentRecord,
   type ArtifactRecord,
-  BUNDLE_CONTENT_TYPE,
   type BundleManifest,
   diffLines,
   formatDiff,
@@ -31,6 +30,8 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import type { Hono } from "hono"
 import { z } from "zod"
 import type { AppContext } from "./context"
+import { cleanPath, manifestOf as sharedManifestOf } from "./lib/bundle"
+import { quoteOf } from "./lib/comments"
 
 const text = (s: string) => ({ content: [{ type: "text" as const, text: s }] })
 const json = (v: unknown) => text(JSON.stringify(v, null, 2))
@@ -66,22 +67,9 @@ const summarizeVersion = (v: VersionRecord) => ({
   created_at: v.created_at,
 })
 
-// A version's bundle manifest (null when it isn't a bundle / is unreadable). Lets
-// the loop tools see a multi-page artifact's actual files, not just its entry doc.
-const manifestOf = async (ctx: AppContext, v: VersionRecord): Promise<BundleManifest | null> => {
-  if (v.content_type !== BUNDLE_CONTENT_TYPE) return null
-  const bytes = await ctx.blobs.get(v.blob_key)
-  if (!bytes) return null
-  try {
-    return JSON.parse(new TextDecoder().decode(bytes)) as BundleManifest
-  } catch {
-    return null
-  }
-}
-
-// Bundle manifests store paths with a leading slash (/index.html); present them
-// cleanly to the agent, and accept either form on the way back in.
-const cleanPath = (p: string) => p.replace(/^\//, "")
+// A version's bundle manifest, presented cleanly. Lets the loop tools see a
+// multi-page artifact's actual files, not just its entry doc.
+const manifestOf = (ctx: AppContext, v: VersionRecord) => sharedManifestOf(ctx.blobs, v)
 
 // Which pages changed between two bundle versions — by comparing each file's
 // content-addressed blob key. This is the "what's new" a coalesced catch-up needs.
@@ -186,6 +174,13 @@ function buildServer(ctx: AppContext, agent: AgentRecord): McpServer {
         }
       }
       const open = await ctx.meta.listComments(a.id, { state: "open" })
+      // Threads whose quoted text changed in a landed version — feedback that may
+      // no longer apply. Surfacing the count tells the agent its (or someone's)
+      // edits touched commented passages.
+      const outdated = await ctx.meta.listComments(a.id, { state: "outdated" })
+      const outdatedBit = outdated.length
+        ? ` ${outdated.length} now outdated (the quoted text changed).`
+        : ""
       const pageBits =
         pagesChanged && changeCount(pagesChanged)
           ? ` Pages: ${[
@@ -198,8 +193,8 @@ function buildServer(ctx: AppContext, agent: AgentRecord): McpServer {
           : ""
       const summary =
         since >= head
-          ? `You're up to date on "${a.title}" (v${head}); ${open.length} open comment${open.length === 1 ? "" : "s"}.`
-          : `"${a.title}": ${newVersions.length} new version${newVersions.length === 1 ? "" : "s"} since v${since} (now v${head}).${pageBits} ${open.length} open comment${open.length === 1 ? "" : "s"}.`
+          ? `You're up to date on "${a.title}" (v${head}); ${open.length} open comment${open.length === 1 ? "" : "s"}.${outdatedBit}`
+          : `"${a.title}": ${newVersions.length} new version${newVersions.length === 1 ? "" : "s"} since v${since} (now v${head}).${pageBits} ${open.length} open comment${open.length === 1 ? "" : "s"}.${outdatedBit}`
       return json({
         summary,
         short_id,
@@ -217,8 +212,20 @@ function buildServer(ctx: AppContext, agent: AgentRecord): McpServer {
         open_comments: open.map((c) => ({
           thread: c.thread_id,
           author: c.author,
+          quote: quoteOf(c.anchor),
           body: c.body_md,
         })),
+        // Only included when non-empty, to keep the common response lean.
+        ...(outdated.length
+          ? {
+              outdated_comments: outdated.map((c) => ({
+                thread: c.thread_id,
+                author: c.author,
+                quote: quoteOf(c.anchor),
+                body: c.body_md,
+              })),
+            }
+          : {}),
       })
     },
   )
@@ -317,10 +324,13 @@ function buildServer(ctx: AppContext, agent: AgentRecord): McpServer {
     "list_comments",
     {
       description:
-        "The review feedback on an artifact: comment threads with author, body, state, and the version they were left on. This is your to-do list before proposing. Filter by `state`.",
+        "The review feedback on an artifact: comment threads with author, body, the quoted text they're anchored to, the version they were left on, and state. This is your to-do list before proposing — work the `open` threads. State is open (live feedback), resolved (a human marked it done), or outdated (the quoted text changed in a later version, so the feedback may no longer apply — verify before acting). Filter by `state`; default lists all.",
       inputSchema: {
         short_id: z.string(),
-        state: z.enum(["open", "resolved"]).optional().describe("Filter by thread state."),
+        state: z
+          .enum(["open", "resolved", "outdated"])
+          .optional()
+          .describe("Filter by thread state. Omit to list every thread."),
       },
     },
     async ({ short_id, state }) => {
@@ -334,6 +344,10 @@ function buildServer(ctx: AppContext, agent: AgentRecord): McpServer {
           author: c.author,
           state: c.state,
           base_version: c.base_version,
+          // The quoted text the thread is anchored to (null for whole-document
+          // feedback) — tells the agent WHERE in the artifact the note applies.
+          quote: quoteOf(c.anchor),
+          path: c.path,
           body: c.body_md,
         })),
       })

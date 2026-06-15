@@ -779,7 +779,13 @@ export interface ViewStats {
   recent: { viewer: string; kind: "user" | "anon"; at: string; avatar?: string | null }[]
 }
 
-export type CommentState = "open" | "resolved"
+// open      — live feedback awaiting a reply/resolution
+// resolved  — a human marked the thread done
+// outdated  — the text this thread anchored to changed or vanished in a later
+//             version, so the feedback may no longer apply. Set automatically by
+//             the re-anchor sweep on every version bump; flips back to `open` if
+//             the quoted text reappears. Never overwrites `resolved`.
+export type CommentState = "open" | "resolved" | "outdated"
 
 export interface CommentRecord {
   id: string

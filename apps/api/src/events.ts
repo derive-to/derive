@@ -10,6 +10,7 @@ export const DOMAIN_EVENTS = [
   "comment.created",
   "comment.mention",
   "comment.resolved",
+  "comment.outdated",
   "comment.reacted",
   "comment.updated",
   "version.published",

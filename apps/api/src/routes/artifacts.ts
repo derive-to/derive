@@ -15,6 +15,7 @@ import { type Context, Hono } from "hono"
 import { setCookie } from "hono/cookie"
 import { z } from "zod"
 import type { AppContext } from "../context"
+import { sweepAnchors } from "../lib/anchor-sweep"
 import { hashPassword, safeEqual, unlockCookie, unlockToken, verifyPassword } from "../lib/crypto"
 import {
   DEFAULT_WORKSPACE_NAME,
@@ -229,6 +230,14 @@ export const artifactRoutes = (ctx: AppContext) => {
           }
         }
       }
+      // Re-anchor existing threads against the new version: feedback whose quoted
+      // text changed flips to `outdated` (and back to `open` if it reappears).
+      for (const t of await sweepAnchors(meta, blobs, artifact.id, version))
+        bus.publish(artifact.id, {
+          type: t.state === "outdated" ? "comment.outdated" : "comment.resolved",
+          thread_id: t.thread_id,
+          state: t.state,
+        })
       const versions = await meta.listVersions(artifact.id)
       return c.json({ ...toJson(deps.baseUrl, artifact, versions), published: version.n }, 201)
     } catch (err) {
@@ -364,6 +373,13 @@ export const artifactRoutes = (ctx: AppContext) => {
       author: version.author,
     })
     bus.publish(artifact.id, { type: "version.published", n: version.n, message: version.message })
+    // Restoring an old blob is a content change too — re-anchor threads against it.
+    for (const t of await sweepAnchors(meta, blobs, artifact.id, version))
+      bus.publish(artifact.id, {
+        type: t.state === "outdated" ? "comment.outdated" : "comment.resolved",
+        thread_id: t.thread_id,
+        state: t.state,
+      })
     const fresh = (await meta.getByShortId(artifact.short_id)) as ArtifactRecord
     const versions = await meta.listVersions(artifact.id)
     return c.json(

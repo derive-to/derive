@@ -102,6 +102,48 @@ describe("anchored comments", () => {
   })
 })
 
+describe("the outdated state machine (re-anchor sweep on republish)", () => {
+  const anchor = { type: "TextQuoteSelector", exact: "beta", prefix: "alpha ", suffix: " gamma" }
+  const republish = (sid: string, body: string, message: string) => {
+    const fd = new FormData()
+    fd.append("file", new Blob([new TextEncoder().encode(body)]), "a.md")
+    fd.append("message", message)
+    return app.request(`/v1/artifacts/${sid}/versions`, { method: "POST", body: fd })
+  }
+  const byState = async (sid: string, state: string) =>
+    (await (await app.request(`/v1/artifacts/${sid}/comments?state=${state}`)).json()).comments
+
+  it("flips open→outdated when the quote vanishes, and back to open when it returns", async () => {
+    const sid = (await (await upload("a.md", "alpha beta gamma", { title: "A" })).json()).short_id
+    await app.request(`/v1/artifacts/${sid}/comments`, json({ body_md: "on beta", anchor }))
+    expect(await byState(sid, "open")).toHaveLength(1)
+
+    // v2 drops "beta" → the thread is now outdated (persisted, not just a flag).
+    await republish(sid, "alpha gamma delta", "v2 drops beta")
+    expect(await byState(sid, "open")).toHaveLength(0)
+    const outdated = await byState(sid, "outdated")
+    expect(outdated).toHaveLength(1)
+    expect(outdated[0].state).toBe("outdated")
+
+    // v3 brings "beta" back → the thread reopens automatically.
+    await republish(sid, "alpha beta gamma again", "v3 restores beta")
+    expect(await byState(sid, "outdated")).toHaveLength(0)
+    expect(await byState(sid, "open")).toHaveLength(1)
+  })
+
+  it("never resurrects a resolved thread, even if its quote later vanishes", async () => {
+    const sid = (await (await upload("a.md", "alpha beta gamma", { title: "A" })).json()).short_id
+    const cm = await (
+      await app.request(`/v1/artifacts/${sid}/comments`, json({ body_md: "on beta", anchor }))
+    ).json()
+    await app.request(`/v1/artifacts/${sid}/comments/${cm.id}/resolve`, { method: "POST" })
+
+    await republish(sid, "alpha gamma delta", "v2 drops beta")
+    expect(await byState(sid, "resolved")).toHaveLength(1)
+    expect(await byState(sid, "outdated")).toHaveLength(0)
+  })
+})
+
 describe("@mentions + in-app notifications", () => {
   const alice: TestUser = { id: "u_m_alice", email: "ma@dock.test", name: "Alice" }
   const bob: TestUser = { id: "u_m_bob", email: "mb@dock.test", name: "Bob" }
