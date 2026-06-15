@@ -16,7 +16,7 @@ import {
 } from "@dock/core"
 import type { Context } from "hono"
 import { getCookie, setCookie } from "hono/cookie"
-import { createRemoteJWKSet, type JWTPayload, jwtVerify } from "jose"
+import { createLocalJWKSet, type JWTPayload, jwtVerify } from "jose"
 import type { Auth } from "./auth-config"
 import { type Backplane, createInProcessBackplane } from "./bus"
 import type { CustomDomainProvider } from "./lib/cloudflare-saas"
@@ -313,10 +313,18 @@ export function buildContext(deps: AppDeps) {
     return mine[0]?.id ?? (await provisionPersonal({ id: userId, email: email ?? "", name }))
   }
 
-  // Our own JWKS (served by the jwt plugin at /api/auth/jwks), fetched + cached by
-  // jose on first verify. Used to verify the JWT access tokens below.
-  const jwks = createRemoteJWKSet(new URL("/api/auth/jwks", deps.baseUrl))
+  // Our own JWKS (served by the jwt plugin at /api/auth/jwks), read straight from
+  // Better Auth's store on this instance — NOT an HTTP self-fetch, which a
+  // Cloudflare Worker can't do against its own hostname. The local key set is
+  // cached per isolate, rebuilt on a verify miss (a rotated signing key).
   const oauthIssuer = new URL("/api/auth", deps.baseUrl).toString()
+  let jwksCache: ReturnType<typeof createLocalJWKSet> | null = null
+  const loadJwks = async () => {
+    const res = (await deps.auth?.api.getJwks()) as
+      | Parameters<typeof createLocalJWKSet>[0]
+      | undefined
+    return res?.keys?.length ? createLocalJWKSet(res) : null
+  }
 
   // An OAuth access token (granted via the consent screen) acts as a scoped agent:
   // it runs in the granting user's workspace, authors as the client's name, and
@@ -347,12 +355,25 @@ export function buildContext(deps: AppDeps) {
   }
 
   const oauthAgentFromJwt = async (token: string): Promise<AgentRecord | null> => {
-    let claims: JWTPayload
-    try {
-      ;({ payload: claims } = await jwtVerify(token, jwks, { issuer: oauthIssuer }))
-    } catch {
-      return null // bad signature, wrong issuer, or expired (jose checks exp)
+    const verify = async (): Promise<JWTPayload | null> => {
+      jwksCache ??= await loadJwks()
+      if (!jwksCache) return null
+      return (await jwtVerify(token, jwksCache, { issuer: oauthIssuer })).payload
     }
+    let claims: JWTPayload | null
+    try {
+      claims = await verify()
+    } catch {
+      // Bad signature/issuer/expiry — or a rotated key the cache misses. Rebuild
+      // the key set once and retry before giving up.
+      jwksCache = null
+      try {
+        claims = await verify()
+      } catch {
+        return null
+      }
+    }
+    if (!claims) return null
     const userId = typeof claims.sub === "string" ? claims.sub : ""
     if (!userId) return null
     const scopes = String(claims.scope ?? "")
