@@ -5,6 +5,7 @@ import { SqliteMetaStore } from "@dock/db/sqlite"
 import { FsBlobStore } from "@dock/storage/fs"
 import Database from "better-sqlite3"
 import { zipSync } from "fflate"
+import { exportJWK, generateKeyPair, SignJWT } from "jose"
 import { afterAll, describe, expect, it } from "vitest"
 import { createApp } from "../src/app"
 import { sha256 } from "../src/lib/crypto"
@@ -368,5 +369,73 @@ describe("remote MCP endpoint (/mcp)", () => {
     // catch_me_up flags it so the agent won't re-propose the same fix.
     const cu = JSON.parse(toolText(await call(app, token, "catch_me_up", { short_id: shortId })))
     expect(cu.summary).toContain("addressed")
+  })
+
+  // Regression guard for the "Needs Auth" outage: a remote MCP client (Claude
+  // Code / claude.ai), because it sends an RFC 8707 `resource` indicator, gets a
+  // SIGNED JWT access token rather than the opaque token. The server must verify
+  // it against the JWKS read from Better Auth's store on this instance — NOT by
+  // HTTP-fetching its own /api/auth/jwks, which a Cloudflare Worker can't do.
+  // This mints a real JWT, exposes the public key via a getJwks() stub, and
+  // asserts /mcp accepts it. It FAILS against a createRemoteJWKSet (self-fetch)
+  // implementation, so it pins the verification path in place.
+  it("authenticates an OAuth JWT access token via the local JWKS", async () => {
+    const { publicKey, privateKey } = await generateKeyPair("EdDSA", { extractable: true })
+    const kid = "test-jwt-kid"
+    const jwk = { ...(await exportJWK(publicKey)), kid, alg: "EdDSA", use: "sig" }
+
+    // Seed the granting user + client the JWT claims will resolve to, then build
+    // an app whose auth exposes the matching public JWKS (no network).
+    const path = join(dir, "jwtauth.db")
+    const meta = new SqliteMetaStore(path)
+    const seed = new Database(path)
+    seed.exec(`
+      CREATE TABLE IF NOT EXISTS "user" (id TEXT PRIMARY KEY, email TEXT, name TEXT, image TEXT);
+      CREATE TABLE IF NOT EXISTS "oauthClient" (clientId TEXT PRIMARY KEY, name TEXT);
+    `)
+    seed
+      .prepare(`INSERT OR IGNORE INTO "user"(id,email,name) VALUES('u_jwt','j@x.test','Jay')`)
+      .run()
+    seed.prepare(`INSERT OR IGNORE INTO "oauthClient"(clientId,name) VALUES('cli','Claude')`).run()
+    seed.close()
+
+    const app = createApp({
+      meta,
+      blobs: new FsBlobStore(join(dir, "jwtauth-blobs")),
+      baseUrl: "http://dock.test",
+      token: "tok",
+      auth: {
+        handler: async () => new Response(null, { status: 404 }),
+        api: { getJwks: async () => ({ keys: [jwk] }) },
+      } as unknown as Parameters<typeof createApp>[0]["auth"],
+    })
+
+    const mint = (over: Record<string, unknown> = {}) =>
+      new SignJWT({ scope: "openid dock:read dock:publish", azp: "cli", ...over })
+        .setProtectedHeader({ alg: "EdDSA", kid })
+        .setSubject("u_jwt")
+        .setIssuer("http://dock.test/api/auth")
+        .setExpirationTime("1h")
+        .sign(privateKey)
+
+    // A valid JWT authenticates and resolves the agent's role from its scopes.
+    const ok = await rpc(app, await mint(), initBody)
+    expect(ok.status).toBe(200)
+    expect((ok.parsed?.result as { instructions?: string }).instructions).toContain("editor")
+
+    // A tampered signature is rejected (401), not silently trusted.
+    const good = await mint()
+    const tampered = `${good.slice(0, -6)}AAAAAA`
+    const bad = await rpc(app, tampered, initBody)
+    expect(bad.status).toBe(401)
+
+    // Wrong issuer is rejected too (the verify pins `issuer`).
+    const wrongIss = await new SignJWT({ scope: "openid dock:read", azp: "cli" })
+      .setProtectedHeader({ alg: "EdDSA", kid })
+      .setSubject("u_jwt")
+      .setIssuer("http://evil.test/api/auth")
+      .setExpirationTime("1h")
+      .sign(privateKey)
+    expect((await rpc(app, wrongIss, initBody)).status).toBe(401)
   })
 })
