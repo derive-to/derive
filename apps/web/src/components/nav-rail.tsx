@@ -240,21 +240,6 @@ export function NavRail() {
           testId="sidebar-favorites"
           onClick={closeDrawer}
         />
-        <Link
-          to="/people"
-          title="Find people"
-          aria-label="Find people"
-          data-testid="sidebar-people"
-          aria-current={loc.pathname === "/people" ? "page" : undefined}
-          onClick={closeDrawer}
-          className={cn(ROW_BASE, loc.pathname === "/people" && ROW_ACTIVE, railMode && ROW_RAIL)}
-        >
-          <span className="flex w-[18px] shrink-0 items-center justify-center">
-            <Icon name="user" size={18} />
-          </span>
-          {!railMode && <span className="overflow-hidden text-ellipsis">Find people</span>}
-        </Link>
-
         {!railMode && (
           <SideLabel
             action={

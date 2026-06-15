@@ -1,6 +1,7 @@
 import { useNavigate } from "@tanstack/react-router"
 import { useCallback, useEffect, useState } from "react"
-import { type Artifact, api } from "@/api"
+import { type Artifact, api, type PublicProfile } from "@/api"
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import {
   Command,
   CommandDialog,
@@ -24,11 +25,15 @@ export function CommandPalette() {
   const prefetch = usePrefetchArtifact()
   const [query, setQuery] = useState("")
   const [results, setResults] = useState<Artifact[]>([])
+  const [people, setPeople] = useState<PublicProfile[]>([])
   const [loading, setLoading] = useState(false)
 
   // Fresh query each open.
   useEffect(() => {
-    if (paletteOpen) setQuery("")
+    if (paletteOpen) {
+      setQuery("")
+      setPeople([])
+    }
   }, [paletteOpen])
 
   // Debounced server search for artifacts while open.
@@ -42,6 +47,28 @@ export function CommandPalette() {
         .then((r) => alive && setResults(r.artifacts))
         .catch(() => alive && setResults([]))
         .finally(() => alive && setLoading(false))
+    }, 180)
+    return () => {
+      alive = false
+      clearTimeout(t)
+    }
+  }, [query, paletteOpen])
+
+  // Debounced people search (discoverable accounts) — only with a query, so an
+  // empty palette never enumerates people.
+  useEffect(() => {
+    if (!paletteOpen) return
+    const term = query.trim()
+    if (!term) {
+      setPeople([])
+      return
+    }
+    let alive = true
+    const t = setTimeout(() => {
+      api
+        .searchPeople(term)
+        .then((r) => alive && setPeople(r.users))
+        .catch(() => alive && setPeople([]))
     }, 180)
     return () => {
       alive = false
@@ -73,7 +100,7 @@ export function CommandPalette() {
         <CommandInput
           value={query}
           onValueChange={setQuery}
-          placeholder="Search artifacts, collections, workspaces…"
+          placeholder="Search artifacts, people, collections…"
         />
         <CommandList>
           <CommandEmpty>{loading ? "Searching…" : "No results."}</CommandEmpty>
@@ -114,6 +141,29 @@ export function CommandPalette() {
                   <span className="font-mono text-2xs text-muted-foreground">
                     v{a.current_version}
                   </span>
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          )}
+
+          {people.length > 0 && (
+            <CommandGroup heading="People">
+              {people.map((u) => (
+                <CommandItem
+                  key={u.username}
+                  value={`person-${u.username}`}
+                  onSelect={() =>
+                    go(() => nav({ to: "/u/$handle", params: { handle: u.username } }))
+                  }
+                >
+                  <Avatar className="size-5">
+                    {u.image && <AvatarImage src={u.image} alt={u.name ?? u.username} />}
+                    <AvatarFallback>
+                      {(u.name ?? u.username).slice(0, 2).toUpperCase()}
+                    </AvatarFallback>
+                  </Avatar>
+                  <span className="flex-1 truncate">{u.name ?? u.username}</span>
+                  <span className="font-mono text-2xs text-muted-foreground">@{u.username}</span>
                 </CommandItem>
               ))}
             </CommandGroup>
