@@ -24,9 +24,8 @@ test("tap a paragraph to comment: bar + composer, anchored to the block", async 
   await expect(bar).toBeVisible()
   await expect(bar).toContainText("Second paragraph here")
 
-  // Comment opens the sheet composer, quoting the tapped block. Composing keeps the
-  // sheet at half (pinned above the keyboard on a real device), so the box is in
-  // view with the document still visible above it — not a full sheet iOS pushes off.
+  // Comment opens a COMPACT composer bar (pinned above the keyboard on a real
+  // device) with the quote — the document stays visible above it, not a full sheet.
   await page.getByTestId("mobile-comment-start").tap()
   await expect(page.getByTestId("composer-input")).toBeVisible()
   await expect(page.getByText("Second paragraph here", { exact: false }).first()).toBeVisible()
@@ -35,9 +34,9 @@ test("tap a paragraph to comment: bar + composer, anchored to the block", async 
     .poll(
       async () => (await page.getByRole("dialog", { name: "Comments" }).boundingBox())?.height ?? 0,
     )
-    .toBeLessThan(vvh * 0.65) // half, not a full-screen sheet
+    .toBeLessThan(vvh * 0.6) // a compact bar, not a full/half-screen sheet
 
-  // Posting lands the anchored comment.
+  // Posting lands the anchored comment and opens the full list to show it.
   await page.getByTestId("composer-input").fill("Looks good on mobile.")
   await page.getByTestId("composer-submit").tap()
   await expect(page.getByText("Looks good on mobile.")).toBeVisible()
@@ -59,29 +58,27 @@ test("the bottom bar dismisses without commenting", async ({ page }) => {
   await expect(page.getByTestId("mobile-comment-bar")).toHaveCount(0)
 })
 
-test("tapping out collapses the sheet to a peek bar, and it reopens", async ({ page }) => {
+test("collapse the full list to a peek bar, and reopen", async ({ page }) => {
   await signUp(page)
   const shortId = await publishArtifact(page, "m.md", "# Doc\n\nA paragraph to comment on here.")
   await page.goto(`/a/${shortId}`)
   await page.waitForTimeout(2000)
 
-  // Comment on a paragraph and post, so the (full-height) sheet holds a card.
+  // Post a comment; the sheet opens to the full list so the new comment shows.
   await page.frameLocator("iframe").getByText("A paragraph to comment").tap()
   await page.getByTestId("mobile-comment-start").tap()
   await page.getByTestId("composer-input").fill("First note.")
   await page.getByTestId("composer-submit").tap()
   await expect(page.getByText("First note.")).toBeVisible()
 
-  // Expand to full (the sheet drops to half once the composer closes), which shows
-  // the dimmed backdrop. Tapping it -> collapse to the peek bar: body gone, header
-  // bar stays, the resize control flips to Expand.
-  await page.getByTestId("comments-sheet-grip").tap()
+  // Tap the dimmed strip above the full sheet -> collapse to the peek bar: the list
+  // is gone, the header bar stays, and the resize control flips to Expand.
   await page.getByTestId("comments-sheet-backdrop").tap({ position: { x: 180, y: 36 } })
   await expect(page.getByText("First note.")).toHaveCount(0)
   await expect(page.getByText("Comments", { exact: true })).toBeVisible()
   await expect(page.getByTestId("comments-sheet-resize")).toHaveAttribute("title", "Expand")
 
-  // Tap the peek bar's expand control -> the list comes back.
+  // Tap the peek bar's expand control -> the full list returns.
   await page.getByTestId("comments-sheet-resize").tap()
   await expect(page.getByText("First note.")).toBeVisible()
 })
