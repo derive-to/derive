@@ -32,6 +32,7 @@ export function SourceEditor({
   onCancel,
   onPublish,
   onPropose,
+  onTitle,
 }: {
   canPublish: boolean
   title: string
@@ -45,6 +46,9 @@ export function SourceEditor({
   onCancel: () => void
   onPublish: () => void
   onPropose: () => void
+  // When set, the title becomes an editable field (the new-artifact flow at /new);
+  // omitted for editing an existing artifact, where the title is shown read-only.
+  onTitle?: (v: string) => void
 }) {
   const [pane, setPane] = useState<"edit" | "preview">("edit")
   // Desktop preview-pane visibility (mobile uses the Edit/Preview tabs instead).
@@ -96,12 +100,23 @@ export function SourceEditor({
     // like in normal viewing — so you can reference comments while editing.
     <div className="flex min-h-0 flex-1 flex-col bg-card">
       <div className="flex flex-wrap items-center gap-2 border-b border-border-soft px-4 py-2.5">
-        <span className="flex items-center gap-2 font-mono text-xs text-muted-foreground">
-          <Icon name="edit" size={16} />
-          <span className="max-w-[40vw] truncate">
-            {canPublish ? `Editing · ${title}` : "Proposing a change"}
+        {onTitle ? (
+          <Input
+            value={title}
+            onChange={(e) => onTitle(e.target.value)}
+            placeholder="Untitled"
+            aria-label="Title"
+            data-testid="artifact-title-input"
+            className="h-8 w-full text-sm font-semibold md:w-auto md:max-w-[320px] md:flex-1"
+          />
+        ) : (
+          <span className="flex items-center gap-2 font-mono text-xs text-muted-foreground">
+            <Icon name="edit" size={16} />
+            <span className="max-w-[40vw] truncate">
+              {canPublish ? `Editing · ${title}` : "Proposing a change"}
+            </span>
           </span>
-        </span>
+        )}
         {canPublish ? (
           <Input
             value={message}

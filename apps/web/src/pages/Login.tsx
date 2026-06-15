@@ -98,7 +98,8 @@ export function Login() {
         </p>
       </aside>
 
-      {/* Auth form */}
+      {/* Auth form — kept lean; profile setup (username + photo) happens on the home
+          page once you're in, not as a gate here. */}
       <main className="flex items-center justify-center p-6">
         <div className="w-full max-w-sm">
           <div className="mb-6 flex flex-col items-center gap-1 text-center lg:hidden">

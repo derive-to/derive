@@ -49,12 +49,16 @@ const makePgStore = (name: string, users: TestUser[], team: Seat[]): TestStore =
         pgSchemas.add(schema)
       }
       await boot.query(
-        `CREATE TABLE IF NOT EXISTS ${schema}."user" (id text primary key, email text, name text, image text)`,
+        `CREATE TABLE IF NOT EXISTS ${schema}."user" (id text primary key, email text, name text, image text, username text)`,
+      )
+      // Unique handle, mirroring Better Auth's additionalFields(username, unique).
+      await boot.query(
+        `CREATE UNIQUE INDEX IF NOT EXISTS ${schema}_user_username ON ${schema}."user" (username)`,
       )
       for (const u of users)
         await boot.query(
-          `INSERT INTO ${schema}."user" (id, email, name, image) VALUES ($1, $2, $3, $4) ON CONFLICT (id) DO NOTHING`,
-          [u.id, u.email, u.name, u.image ?? null],
+          `INSERT INTO ${schema}."user" (id, email, name, image, username) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (id) DO NOTHING`,
+          [u.id, u.email, u.name, u.image ?? null, u.username ?? null],
         )
     } finally {
       await boot.end()
@@ -92,10 +96,14 @@ const makePgStore = (name: string, users: TestUser[], team: Seat[]): TestStore =
 const seedSqliteUsers = (path: string, users: TestUser[]): void => {
   const raw = new Database(path)
   raw.exec(
-    `CREATE TABLE IF NOT EXISTS user (id TEXT PRIMARY KEY, email TEXT, name TEXT, image TEXT)`,
+    `CREATE TABLE IF NOT EXISTS user (id TEXT PRIMARY KEY, email TEXT, name TEXT, image TEXT, username TEXT)`,
   )
-  const ins = raw.prepare(`INSERT OR IGNORE INTO user (id, email, name, image) VALUES (?,?,?,?)`)
-  for (const u of users) ins.run(u.id, u.email, u.name, u.image ?? null)
+  // Unique handle, mirroring Better Auth's additionalFields(username, unique).
+  raw.exec(`CREATE UNIQUE INDEX IF NOT EXISTS user_username ON user (username)`)
+  const ins = raw.prepare(
+    `INSERT OR IGNORE INTO user (id, email, name, image, username) VALUES (?,?,?,?,?)`,
+  )
+  for (const u of users) ins.run(u.id, u.email, u.name, u.image ?? null, u.username ?? null)
   raw.close()
 }
 
@@ -210,7 +218,13 @@ export const json = (obj: unknown) => ({
 // (so the share route can resolve email→id) and stand in a fake `auth` whose
 // session is chosen by an `x-test-user` header (the user's email). A static
 // token keeps the instance secured, so an unauthenticated caller is NOT owner.
-export type TestUser = { id: string; email: string; name: string | null; image?: string | null }
+export type TestUser = {
+  id: string
+  email: string
+  name: string | null
+  image?: string | null
+  username?: string | null
+}
 
 const fakeAuth = (users: TestUser[]): AppDeps["auth"] =>
   ({

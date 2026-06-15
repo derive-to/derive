@@ -1,11 +1,15 @@
+import { normalizeUsername, usernameError } from "@dock/core"
 import { Hono } from "hono"
+import { z } from "zod"
 import type { AppContext } from "../context"
 import { safeEqual } from "../lib/crypto"
-import { fail } from "../lib/http"
+import { fail, IMMUTABLE_CACHE, readJson, toBody } from "../lib/http"
+import { MAX_AVATAR_BYTES, sniffImageType } from "../lib/image"
 
 /** Session identity + the workspace member/agent directory for the @mention picker. */
 export const sessionRoutes = (ctx: AppContext) => {
-  const { meta, deps, bearer, currentUser, ensureMembership, activeWorkspace, authorize } = ctx
+  const { meta, blobs, deps, bearer, currentUser, ensureMembership, activeWorkspace, authorize } =
+    ctx
   const app = new Hono()
 
   app.get("/v1/me", async (c) => {
@@ -13,6 +17,71 @@ export const sessionRoutes = (ctx: AppContext) => {
     if (!u) return fail(c, 401, "unauthenticated")
     const role = await ensureMembership(await activeWorkspace(c), u.id) // provisions on first load
     return c.json({ user: { ...u, role }, multi: true })
+  })
+
+  // Claim or change your handle (Profiles & Accounts v1) — the prompt shown at
+  // onboarding, and re-runnable to rename later. Server-validated (shape +
+  // reserved words) and lowercased before storage; a clash with another account
+  // is a 409. Only the signed-in user can set their own (the anon-write lockdown
+  // already blocks unauthenticated POSTs).
+  app.post("/v1/me/username", async (c) => {
+    const u = await currentUser(c)
+    if (!u) return fail(c, 401, "unauthenticated")
+    const body = await readJson(c, z.object({ username: z.string() }))
+    if (body instanceof Response) return body
+    const username = normalizeUsername(body.username)
+    const err = usernameError(username)
+    if (err) return fail(c, 400, err)
+    const res = await meta.setUsername(u.id, username)
+    if (res === "taken") return fail(c, 409, "That username is taken.")
+    return c.json({ username })
+  })
+
+  // A public profile by handle — the GitHub-style discovery surface. Email is
+  // intentionally omitted (private); the handle, name, and avatar are public, so
+  // this is readable by anyone (the GET passes the anon lockdown).
+  app.get("/v1/users/:handle", async (c) => {
+    const handle = normalizeUsername(c.req.param("handle"))
+    const p = await meta.getUserByUsername(handle)
+    if (!p) return fail(c, 404, "no profile with that username")
+    return c.json({ user: { username: p.username, name: p.name, image: p.image } })
+  })
+
+  // Upload your profile picture. We take only raster images (identified by their
+  // magic bytes, not the client content-type) and store them content-addressed in
+  // the blob store, pointing `user.image` at the served URL. Signed-in only (the
+  // anon write-lockdown already blocks unauthenticated POSTs).
+  app.post("/v1/me/avatar", async (c) => {
+    const u = await currentUser(c)
+    if (!u) return fail(c, 401, "unauthenticated")
+    const len = Number(c.req.header("content-length") ?? 0)
+    if (len > MAX_AVATAR_BYTES + 4096) return fail(c, 413, "image too large (max 2MB)")
+    const body = await c.req.parseBody()
+    const file = body.file
+    if (!(file instanceof File)) return fail(c, 400, "multipart field 'file' required")
+    const bytes = new Uint8Array(await file.arrayBuffer())
+    if (bytes.byteLength > MAX_AVATAR_BYTES) return fail(c, 413, "image too large (max 2MB)")
+    // Trust the bytes, not the declared type — and reject anything that isn't a
+    // plain raster image (no SVG: it could carry script served from our origin).
+    if (!sniffImageType(bytes))
+      return fail(c, 400, "unsupported image (use PNG, JPEG, GIF, or WebP)")
+    const key = await blobs.put(bytes)
+    // Absolute URL so it resolves from the API origin even when the SPA is served
+    // from a separate origin (hosted split); the bytes never touch the app cookie.
+    const image = `${deps.baseUrl.replace(/\/$/, "")}/v1/avatars/${key}`
+    await meta.setUserImage(u.id, image)
+    return c.json({ image })
+  })
+
+  // Serve an avatar blob. Public (avatars show on public profiles) and immutable
+  // (the key is the content hash). Content-type is re-derived from the bytes, so
+  // only the validated raster types we stored can ever come back out.
+  app.get("/v1/avatars/:key", async (c) => {
+    const bytes = await blobs.get(c.req.param("key"))
+    if (!bytes) return fail(c, 404, "not found")
+    const type = sniffImageType(bytes)
+    if (!type) return fail(c, 404, "not found")
+    return c.body(toBody(bytes), 200, { "Content-Type": type, "Cache-Control": IMMUTABLE_CACHE })
   })
 
   // Directory for the @mention picker — people AND agents, so an agent can be

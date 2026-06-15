@@ -30,6 +30,8 @@ export interface SessionUser {
   id: string
   email: string
   name: string | null
+  /** Public handle (Profiles & Accounts v1); null until claimed at onboarding. */
+  username: string | null
 }
 
 export interface AppDeps {
@@ -219,7 +221,14 @@ export function buildContext(deps: AppDeps) {
   const currentUser = async (c: Context): Promise<SessionUser | null> => {
     if (userCache.has(c)) return userCache.get(c) ?? null
     const s = deps.auth ? await deps.auth.api.getSession({ headers: c.req.raw.headers }) : null
-    const u = s?.user ? { id: s.user.id, email: s.user.email, name: s.user.name ?? null } : null
+    // `username` rides the session via Better Auth additionalFields (see
+    // auth-config.ts); read it through a narrow cast since it's an optional extra.
+    const su = s?.user as
+      | { id: string; email: string; name?: string | null; username?: string | null }
+      | undefined
+    const u: SessionUser | null = su
+      ? { id: su.id, email: su.email, name: su.name ?? null, username: su.username ?? null }
+      : null
     userCache.set(c, u)
     if (u) c.set("actorId", u.id) // tag the access log with the resolved actor
     return u
@@ -338,7 +347,11 @@ export function buildContext(deps: AppDeps) {
   }
 
   // A signed-in user's own workspace, created on demand (multi mode, first login).
-  const provisionPersonal = async (me: SessionUser): Promise<string> => {
+  const provisionPersonal = async (me: {
+    id: string
+    email: string
+    name: string | null
+  }): Promise<string> => {
     const id = newId("ws")
     const base = (me.name ?? me.email).split("@")[0] || "My"
     await meta.setWorkspace(id, `${base}'s Workspace`)

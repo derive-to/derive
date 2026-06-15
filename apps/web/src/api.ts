@@ -2,7 +2,17 @@ export interface Me {
   id: string
   email: string
   name: string | null
+  /** Public handle; null until claimed (Profiles & Accounts v1). */
+  username: string | null
+  /** Avatar URL; null until a photo is set. */
+  image: string | null
   role: string
+}
+/** A public profile, by handle. Email is private and never returned here. */
+export interface PublicProfile {
+  username: string
+  name: string | null
+  image: string | null
 }
 export interface VersionSession {
   n: number
@@ -285,8 +295,34 @@ export const api = {
     )
     if (!s?.user) throw new Error("unauthenticated")
     return {
-      user: { id: s.user.id, email: s.user.email, name: s.user.name ?? null, role: "member" },
+      user: {
+        id: s.user.id,
+        email: s.user.email,
+        name: s.user.name ?? null,
+        username: s.user.username ?? null,
+        image: s.user.image ?? null,
+        role: "member",
+      },
     }
+  },
+  // Claim or change your handle (onboarding + rename). 409 when taken, 400 on a
+  // bad shape — both surface their message via ApiError.
+  setUsername: (username: string): Promise<{ username: string }> =>
+    f("/v1/me/username", opts({ username })).then(j),
+  // A public profile by handle (no email). Readable without a session.
+  profile: (handle: string): Promise<{ user: PublicProfile }> =>
+    f(`/v1/users/${encodeURIComponent(handle)}`, { credentials: "include" }).then(j),
+  // Upload a profile picture (raster image; server validates + stores it and sets
+  // user.image to the served URL). Returns the new image URL.
+  uploadAvatar: (file: File): Promise<{ image: string }> => {
+    const fd = new FormData()
+    fd.append("file", file)
+    return f("/v1/me/avatar", {
+      method: "POST",
+      body: fd,
+      credentials: "include",
+      headers: { accept: "application/json" },
+    }).then(j)
   },
   login: (email: string, password: string): Promise<unknown> =>
     f("/api/auth/sign-in/email", opts({ email, password })).then(authJson),
@@ -570,7 +606,17 @@ export const api = {
       headers: { accept: "application/json" },
     }).then(j)
   },
-  publishText(id: string, text: string, filename: string, message: string): Promise<Artifact> {
-    return this.publish(new File([text], filename), { message }, id)
+  // `title` renames the artifact on this republish (the editor's editable title);
+  // omit it to leave the name unchanged.
+  publishText(
+    id: string,
+    text: string,
+    filename: string,
+    message: string,
+    title?: string,
+  ): Promise<Artifact> {
+    const fields: Record<string, string> = { message }
+    if (title?.trim()) fields.title = title.trim()
+    return this.publish(new File([text], filename), fields, id)
   },
 }

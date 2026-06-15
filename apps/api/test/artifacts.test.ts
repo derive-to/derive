@@ -234,6 +234,20 @@ describe("api surface", () => {
     expect(meta.versions[1].message).toBe("tweak")
   })
 
+  it("renames on republish when a title is sent, keeps it otherwise; short_id is stable", async () => {
+    const { short_id, title } = await (await upload("ren.md", "v1", { title: "First name" })).json()
+    expect(title).toBe("First name")
+    // The in-browser editor republishes with the (editable) title → rename.
+    const v2 = await (await upload("ren.md", "v2", { title: "Renamed" }, short_id)).json()
+    expect(v2.title).toBe("Renamed")
+    expect(v2.current_version).toBe(2)
+    // A republish without a title (e.g. a plain CLI `dock publish --id`) leaves it.
+    const v3 = await (await upload("ren.md", "v3", {}, short_id)).json()
+    expect(v3.title).toBe("Renamed")
+    // The short_id never changes, so every old link still resolves after a rename.
+    expect(v3.short_id).toBe(short_id)
+  })
+
   it("reads back source content for any version", async () => {
     const res = await upload("read.md", "# one", { title: "Read" })
     const { short_id } = await res.json()

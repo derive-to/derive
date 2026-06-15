@@ -156,6 +156,10 @@ export async function publish(
       message: input.message ?? null,
       name: input.name ?? null,
     })
+    // Rename on republish only when a title is explicitly supplied (the in-browser
+    // editor sends it; a CLI republish without --title leaves the name untouched).
+    const newTitle = input.title?.trim()
+    if (newTitle && newTitle !== artifact.title) await meta.setArtifactTitle(artifact.id, newTitle)
     return { artifact: (await meta.getByShortId(shortId)) as ArtifactRecord, version }
   }
 
