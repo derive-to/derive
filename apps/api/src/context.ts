@@ -427,7 +427,15 @@ export function buildContext(deps: AppDeps) {
     const ag = await agentFor(c)
     if (ag) {
       const am = await meta.getArtifactMember(a.id, ag.id)
-      return { kind: "user", userId: ag.id, artifactRole: am?.role ?? null, orgRole: ag.role }
+      // An agent (registered token or OAuth-consent grant) carries its role ONLY
+      // within its OWN workspace, never onto an artifact owned by another one — it
+      // can resolve any artifact by its global short_id, so binding here is the
+      // gate. Mirrors the human branch below: orgRole is scoped to the ARTIFACT's
+      // workspace; on a foreign artifact it drops to the visibility floor while its
+      // own per-artifact shares (artifactRole) still apply. Without this an agent's
+      // home-workspace editor role would let it publish/share/mutate anything.
+      const orgRole = ag.org_id === a.org_id ? ag.role : null
+      return { kind: "user", userId: ag.id, artifactRole: am?.role ?? null, orgRole }
     }
     const me = await currentUser(c)
     if (!me) return { kind: "anon", unlocked }
