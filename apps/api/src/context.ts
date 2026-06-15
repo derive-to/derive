@@ -144,6 +144,13 @@ export interface AppDeps {
    * Secure` so they survive the cross-site request, matching the session cookie.
    */
   crossSite?: boolean
+  /**
+   * Wake the webhook outbox drainer right after an event is enqueued, so delivery is
+   * near-instant instead of waiting for the next poll/alarm. Node wires it to the
+   * in-process worker's `poke`; the edge entry wires it to the `WebhookOutbox` DO.
+   * Unset (e.g. tests) = no poke; the interval/cron backstop still drains the outbox.
+   */
+  pokeWebhooks?: () => void
 }
 
 /**
@@ -182,18 +189,24 @@ export function buildContext(deps: AppDeps) {
   // a legit fat-finger, slow enough that brute force is hopeless.
   const unlockLimiter = deps.rateLimit ? makeKeyedLimiter(5 * 60_000, 5) : null
 
-  // Fan an event to subscribed webhooks (enqueues to the outbox; the worker
+  // Fan an event to subscribed webhooks (enqueues to the outbox; the drainer
   // delivers). Awaited so the row is durable before we respond, but never fatal.
+  // When something was enqueued, poke the drainer so it goes out now instead of on
+  // the next interval/alarm tick.
   const notify = (a: ArtifactRecord, event: WebhookEvent, data: Record<string, unknown>) =>
-    enqueueForEvent(meta, deps.baseUrl, a, event, data).catch((err) =>
-      // Non-fatal (the request still succeeds), but a dropped enqueue means the
-      // webhook silently never fires — log it rather than swallow.
-      log.error("webhook enqueue failed", {
-        event,
-        artifact: a.short_id,
-        error: err instanceof Error ? err.message : String(err),
-      }),
-    )
+    enqueueForEvent(meta, deps.baseUrl, a, event, data)
+      .then((queued) => {
+        if (queued > 0) deps.pokeWebhooks?.()
+      })
+      .catch((err) =>
+        // Non-fatal (the request still succeeds), but a dropped enqueue means the
+        // webhook silently never fires — log it rather than swallow.
+        log.error("webhook enqueue failed", {
+          event,
+          artifact: a.short_id,
+          error: err instanceof Error ? err.message : String(err),
+        }),
+      )
 
   // Run after-the-response work without blocking the reply. On Workers the request
   // executionCtx keeps the isolate alive past the sent response via waitUntil; on

@@ -4,6 +4,7 @@ import type {
   ExecutionContext,
   Fetcher,
   R2Bucket,
+  ScheduledController,
 } from "@cloudflare/workers-types"
 import { createD1Store } from "@dock/db/d1"
 import { R2BlobStore } from "@dock/storage"
@@ -13,9 +14,15 @@ import { makeAuth } from "./auth-config"
 import { customDomainsFromEnv } from "./lib/cloudflare-saas"
 import { createDoBackplane, edgeCtx } from "./realtime-do"
 
-// The realtime room Durable Object (one per channel). Exported so the Workers
-// runtime can instantiate the bound class.
+// The realtime room Durable Object (one per channel) and the webhook outbox drainer
+// (a single named instance). Exported so the Workers runtime can instantiate the
+// bound classes (see wrangler.toml `durable_objects.bindings`).
 export { ArtifactRoom } from "./realtime-do"
+export { WebhookOutbox } from "./webhook-do"
+
+// The webhook outbox DO is a singleton: every isolate pokes the same instance by a
+// fixed name, so one alarm loop drains the shared outbox.
+const OUTBOX_NAME = "outbox"
 
 /**
  * Cloudflare Workers entry (experimental edge tier). The same runtime-agnostic
@@ -29,18 +36,23 @@ export { ArtifactRoom } from "./realtime-do"
  * not at runtime: D1 forbids the sqlite_master introspection Better Auth's migrator
  * needs (SQLITE_AUTH); generate that DDL with gen-auth-schema.ts. See DEPLOY.md.
  *
- * LIMITATION: the webhook outbox worker is NOT run on this tier. Delivery depends on
- * node:dns (SSRF re-validation in webhooks.ts), which Workers don't provide, so a
- * `scheduled()` drain would need an edge-native delivery path first. Webhooks enqueue
- * but are not delivered on the Workers tier (experimental); the Node/Fly tier drains
- * them. Tracked as a follow-up for the edge tier.
+ * Webhook delivery runs on this tier via the `WebhookOutbox` Durable Object (the edge
+ * counterpart to the Node interval worker): the app enqueues to the shared outbox and
+ * pokes the DO, whose alarm drains it; a 1-minute cron (`scheduled` below) is the
+ * retry/crash backstop. SSRF re-validation uses the edge guard (Cloudflare egress
+ * blocks private-space subrequests), so no `node:dns` is pulled into this bundle.
  *
- * NEVER import node.ts / config.ts / @dock/storage/fs here — those pull Node built-ins.
+ * Edge/Node separation: this entry imports ONLY `webhook-do` (edge-safe). The Node
+ * SSRF guard lives in `webhooks-node` (`node:dns`) and is imported solely by node.ts;
+ * `webhooks.ts` itself is runtime-neutral. NEVER import node.ts / config.ts /
+ * @dock/storage/fs / webhooks-node here — those pull Node built-ins.
  */
 export interface Env {
   DB: D1Database
   BUCKET: R2Bucket
   ROOMS: DurableObjectNamespace
+  // The webhook outbox drainer DO (a single named instance). Declared in wrangler.toml.
+  WEBHOOK_OUTBOX: DurableObjectNamespace
   // The static-assets binding: lets the Worker read the SPA shell to inject unfurl
   // meta into /a/:ref (the share URL). Declared in wrangler.toml `[assets] binding`.
   ASSETS: Fetcher
@@ -53,6 +65,12 @@ export interface Env {
   CF_API_TOKEN?: string
   CF_ZONE_ID?: string
   CF_SAAS_FALLBACK_ORIGIN?: string
+}
+
+/** Poke the singleton outbox DO so it drains now (a fresh event) or self-heals (cron). */
+function pokeOutbox(env: Env): Promise<unknown> {
+  const stub = env.WEBHOOK_OUTBOX.get(env.WEBHOOK_OUTBOX.idFromName(OUTBOX_NAME))
+  return stub.fetch("https://outbox/poke", { method: "POST" }).catch(() => {})
 }
 
 let app: ReturnType<typeof createApp> | null = null
@@ -92,6 +110,14 @@ export default {
         subdomainBase:
           env.DOCK_SUBDOMAIN_BASE?.toLowerCase().replace(/^\.+|\.+$/g, "") || undefined,
         customDomains: customDomainsFromEnv(env),
+        // Deliver freshly enqueued events now: poke the outbox DO so its alarm fires,
+        // riding waitUntil so the subrequest isn't cancelled when the response is sent.
+        pokeWebhooks: () => {
+          const p = pokeOutbox(env)
+          const c = edgeCtx.getStore()
+          if (c) c.waitUntil(p)
+          else void p
+        },
         // Read the SPA shell from static assets so /a/:ref can carry unfurl meta.
         // Cached per isolate; null on any miss leaves the shell untouched.
         shellFetch: async () => {
@@ -112,5 +138,14 @@ export default {
     // Run within the per-request context so the DO backplane's publish can waitUntil.
     const ready = app
     return edgeCtx.run(ctx, () => ready.fetch(req))
+  },
+
+  // Cron backstop (wrangler.toml `[triggers] crons`): the outbox DO goes idle once it
+  // drains, so a retry scheduled during an idle gap (or a missed poke) would wait. This
+  // wakes the DO every minute to pick those up — the durable outbox is the source of
+  // truth, so this only ever bounds worst-case retry latency; it never double-delivers
+  // (the leased claim guarantees that).
+  scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext): void {
+    ctx.waitUntil(pokeOutbox(env))
   },
 }

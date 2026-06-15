@@ -16,6 +16,7 @@ import { mountWeb } from "./lib/serve-web"
 import { makeShutdown } from "./lifecycle"
 import { log } from "./log"
 import { startWebhookWorker } from "./webhooks"
+import { nodeDnsGuard } from "./webhooks-node"
 
 const cfg = loadConfig()
 mkdirSync(join(cfg.dataDir, "blobs"), { recursive: true })
@@ -90,6 +91,13 @@ const blobs: BlobStore = cfg.objectStoreUrl
 // meta) and to mountWeb (the client-router fallback). Only when serving the web.
 const shellHtml = cfg.serveWeb ? readFileSync(cfg.webShell, "utf8") : undefined
 
+// The webhook outbox drainer: an interval delivers queued events with retries +
+// backoff, and `poke` (wired into the app below) drains on demand so a fresh event
+// goes out immediately. `nodeDnsGuard` re-resolves each target at delivery time and
+// refuses private/internal addresses — the SSRF defense that matters most on an
+// internal corporate network, where a webhook URL could point at a private service.
+const webhookWorker = startWebhookWorker(meta, nodeDnsGuard)
+
 const app = createApp({
   meta,
   blobs,
@@ -123,6 +131,8 @@ const app = createApp({
   // Per-actor write rate limits (per minute); unset = built-in defaults.
   publishRate: cfg.publishRate,
   commentRate: cfg.commentRate,
+  // Deliver freshly enqueued events immediately instead of on the next interval.
+  pokeWebhooks: webhookWorker.poke,
 })
 
 // Serve the bundled SPA from this process (single-container self-host). The API
@@ -134,9 +144,6 @@ if (cfg.serveWeb && shellHtml !== undefined)
     webRoot: relative(process.cwd(), cfg.webDir) || ".",
     shellHtml,
   })
-
-// The webhook outbox worker delivers queued events with retries + backoff.
-const stopWorker = startWebhookWorker(meta)
 
 // Analytics retention: views are a rolling window (default 365 days). A daily
 // prune keeps the append-only view table bounded. 0 disables pruning entirely.
@@ -208,7 +215,7 @@ const shutdown = makeShutdown({
     closeIdleConnections:
       "closeIdleConnections" in server ? () => server.closeIdleConnections() : undefined,
   },
-  stopWorker,
+  stopWorker: webhookWorker.stop,
   clearTimers: () => {
     if (pruneTimer) clearInterval(pruneTimer)
   },
