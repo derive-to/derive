@@ -8,6 +8,7 @@ import { observability } from "./lib/observability"
 import { makeRateLimiter } from "./lib/rate-limit"
 import { serveContent } from "./lib/serve-content"
 import { log } from "./log"
+import { mountMcp } from "./mcp"
 import { cliCallbackHTML } from "./oauth-cli-callback"
 import { consentHTML } from "./oauth-consent"
 import { agentRoutes } from "./routes/agents"
@@ -381,6 +382,9 @@ export function createApp(deps: AppDeps): Hono {
     workspaceDomainRoutes,
   ])
     app.route("/", routes(ctx))
+
+  // The remote MCP endpoint — Streamable HTTP, bearer-gated by the agent bridge.
+  mountMcp(app, ctx)
 
   return app
 }

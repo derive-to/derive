@@ -50,6 +50,7 @@ export default defineConfig({
         "/raw",
         "/healthz",
         "/oauth",
+        "/mcp",
         "/.well-known/oauth-authorization-server",
         "/.well-known/oauth-protected-resource",
       ].map((p) => [p, { target: API, changeOrigin: true }]),
