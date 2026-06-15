@@ -18,6 +18,7 @@
 import {
   type AgentRecord,
   type ArtifactRecord,
+  artifactUrl,
   type BundleManifest,
   diffLines,
   formatDiff,
@@ -104,6 +105,14 @@ const changeCount = (c: ReturnType<typeof bundleFileChanges>) =>
  * tool — it's a one-shot fact, not a per-call action.
  */
 function buildServer(ctx: AppContext, agent: AgentRecord): McpServer {
+  // Steer the write guidance by what this grant can actually do: a publish-capable
+  // grant gets the create/publish path; a lower grant is pointed at propose only.
+  const writeGuidance = roleAllows(agent.role, "publish")
+    ? `Use publish to create a new artifact (omit short_id) or push a new version of one you own — ` +
+      `it goes live immediately in your workspace. Use propose to suggest changes to artifacts you ` +
+      `don't own, which a human approves. `
+    : `Work the open threads from list_comments and use propose to suggest a revision a human ` +
+      `approves — you cannot publish directly. `
   const server = new McpServer(
     { name: "dock", version: "1.0.0" },
     {
@@ -112,8 +121,7 @@ function buildServer(ctx: AppContext, agent: AgentRecord): McpServer {
         `with ${agent.role} permissions. Dock hosts living documents and plans with versioned ` +
         `history, text-anchored review comments, and a propose → review → revise loop. ` +
         `Start a session with catch_me_up to re-sync on what changed; use read to view content ` +
-        `(outline first for multi-page bundles); work the open threads from list_comments and use ` +
-        `propose to suggest a revision a human approves — you cannot publish directly. When a ` +
+        `(outline first for multi-page bundles). ${writeGuidance}When a ` +
         `proposal fixes specific feedback, pass those thread ids as propose's "addresses" so the ` +
         `threads show as pending and auto-resolve on approval.`,
     },
@@ -456,22 +464,35 @@ function buildServer(ctx: AppContext, agent: AgentRecord): McpServer {
     "publish",
     {
       description:
-        "Publish a revised version of a single-file artifact DIRECTLY — it goes live immediately. Requires publish rights (Creator/Admin role on the workspace); a commenter-level grant should use `propose` instead. Provide the FULL new content (not a patch) and a version message. (Multi-page bundles aren't publishable over MCP yet.)",
+        "Publish a single-file artifact to your workspace DIRECTLY — it goes live immediately, no review. OMIT short_id to create a NEW artifact (a first publish) — `title` is then required. PASS short_id to publish a new version of one you already own. Requires publish rights (Creator/Admin role on the workspace); a commenter-level grant should use `propose` instead. Provide the FULL content (not a patch). (Multi-page bundles aren't publishable over MCP yet.)",
       inputSchema: {
-        short_id: z.string(),
-        content: z
+        content: z.string().describe("The complete document content (HTML or Markdown)."),
+        title: z
           .string()
-          .describe("The complete new content of the document (HTML or Markdown)."),
-        message: z.string().describe("What changed — recorded as the version message."),
+          .optional()
+          .describe(
+            "Title for a NEW artifact (required when creating). On republish, renames only if provided.",
+          ),
+        short_id: z
+          .string()
+          .optional()
+          .describe(
+            "Omit to create a new artifact; pass it to publish a new version of one you own.",
+          ),
+        visibility: z
+          .enum(["workspace", "link", "public"])
+          .optional()
+          .describe(
+            "Who can see a NEW artifact: workspace (your team, default), link (anyone with the link), or public (discoverable). Ignored on republish.",
+          ),
+        message: z.string().optional().describe("What changed — recorded as the version message."),
         filename: z
           .string()
           .optional()
           .describe("Filename hint for the content type, e.g. index.html or notes.md."),
       },
     },
-    async ({ short_id, content, message, filename }) => {
-      const a = await own(short_id)
-      if (!a) return text(`No artifact "${short_id}" in this workspace.`)
+    async ({ content, title, short_id, visibility, message, filename }) => {
       // Direct publish is gated on the agent's role: Creator/Admin only. A
       // commenter-level grant is steered to `propose` (human-reviewed), so a
       // low-privilege agent still can't push live content.
@@ -479,27 +500,44 @@ function buildServer(ctx: AppContext, agent: AgentRecord): McpServer {
         return text(
           "Your grant can't publish directly (needs a Creator/Admin role). Use `propose` to submit a reviewed change, or re-authorize with a publish scope.",
         )
-      if (a.kind === "bundle")
-        return text(
-          `"${short_id}" is a multi-page bundle; publishing bundle revisions over MCP isn't supported yet (single-file artifacts only).`,
-        )
+      if (short_id) {
+        const a = await own(short_id)
+        if (!a) return text(`No artifact "${short_id}" in this workspace.`)
+        if (a.kind === "bundle")
+          return text(
+            `"${short_id}" is a multi-page bundle; publishing bundle revisions over MCP isn't supported yet (single-file artifacts only).`,
+          )
+      } else if (!title?.trim()) {
+        return text("Creating a new artifact needs a `title`.")
+      }
       try {
-        const { version } = await publishVersion(
+        const { artifact, version } = await publishVersion(
           ctx.meta,
           ctx.blobs,
           {
             bytes: new TextEncoder().encode(content),
             filename: filename ?? "index.html",
             isBundle: false,
+            title: title?.trim(),
             message,
             author: agent.name,
+            // New artifacts land in the granting user's workspace, private to the
+            // team by default (never link-public unless they ask).
+            orgId: agent.org_id,
+            visibility: visibility === "link" ? "link" : visibility === "public" ? "public" : "org",
           },
           short_id,
         )
         return json({
           published: true,
+          short_id: artifact.short_id,
           version: version.n,
-          note: "Live now — this published a new current version of the artifact.",
+          url: artifactUrl(ctx.deps.baseUrl, artifact),
+          title: artifact.title,
+          visibility: artifact.visibility,
+          note: short_id
+            ? "Live now — published a new current version."
+            : "Live now — created a new artifact in your workspace.",
         })
       } catch (e) {
         const msg = e instanceof PublishError ? e.message : "could not publish"

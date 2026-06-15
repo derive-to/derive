@@ -438,4 +438,62 @@ describe("remote MCP endpoint (/mcp)", () => {
       .sign(privateKey)
     expect((await rpc(app, wrongIss, initBody)).status).toBe(401)
   })
+
+  it("publish creates a NEW artifact (first publish) and then a new version of it", async () => {
+    const { app, token } = appWithGrant("pub", "openid dock:read dock:publish")
+
+    // First publish — no short_id, so it creates a brand-new artifact.
+    const created = JSON.parse(
+      toolText(
+        await call(app, token, "publish", {
+          title: "My First Doc",
+          content: "<h1>hello world</h1>",
+        }),
+      ),
+    )
+    expect(created.published).toBe(true)
+    expect(created.version).toBe(1)
+    expect(created.title).toBe("My First Doc")
+    expect(created.short_id).toBeTruthy()
+    expect(created.url).toContain(created.short_id)
+    expect(created.visibility).toBe("org") // workspace-private by default
+
+    // It's really there: list_artifacts + read see it live.
+    const list = JSON.parse(toolText(await call(app, token, "list_artifacts")))
+    expect(list.artifacts.some((a: { short_id: string }) => a.short_id === created.short_id)).toBe(
+      true,
+    )
+    const read = JSON.parse(
+      toolText(await call(app, token, "read", { short_id: created.short_id })),
+    )
+    expect(read.content).toContain("hello world")
+
+    // Publishing again WITH the short_id pushes a new version (not a second artifact).
+    const v2 = JSON.parse(
+      toolText(
+        await call(app, token, "publish", {
+          short_id: created.short_id,
+          content: "<h1>hello again</h1>",
+          message: "tweak",
+        }),
+      ),
+    )
+    expect(v2.short_id).toBe(created.short_id)
+    expect(v2.version).toBe(2)
+  })
+
+  it("publish needs a title to create, and a publish-capable grant", async () => {
+    // A new-artifact publish with no title is refused.
+    const { app, token } = appWithGrant("pub2", "openid dock:read dock:publish")
+    const noTitle = await call(app, token, "publish", { content: "<h1>x</h1>" })
+    expect(toolText(noTitle)).toContain("title")
+
+    // A comment-only grant can't publish at all — steered to propose.
+    const weak = appWithGrant("pub3", "openid dock:read dock:comment")
+    const denied = await call(weak.app, weak.token, "publish", {
+      title: "Nope",
+      content: "<h1>x</h1>",
+    })
+    expect(toolText(denied)).toContain("propose")
+  })
 })
