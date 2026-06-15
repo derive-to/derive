@@ -780,12 +780,16 @@ export interface ViewStats {
 }
 
 // open      — live feedback awaiting a reply/resolution
-// resolved  — a human marked the thread done
+// addressed — a proposed revision that cites this thread is pending review. Set
+//             when an agent/author `propose`s with `addresses`; clears to
+//             `resolved` if that proposal is approved (the fix landed) or back to
+//             `open` if it's withdrawn / sent back for changes.
+// resolved  — a human marked the thread done (or an addressing proposal landed)
 // outdated  — the text this thread anchored to changed or vanished in a later
 //             version, so the feedback may no longer apply. Set automatically by
 //             the re-anchor sweep on every version bump; flips back to `open` if
-//             the quoted text reappears. Never overwrites `resolved`.
-export type CommentState = "open" | "resolved" | "outdated"
+//             the quoted text reappears. Never overwrites `resolved`/`addressed`.
+export type CommentState = "open" | "addressed" | "resolved" | "outdated"
 
 export interface CommentRecord {
   id: string
