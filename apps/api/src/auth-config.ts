@@ -44,6 +44,27 @@ export function makeAuth(db: AuthDb, baseUrl: string, secret: string) {
     : []
   const staticTrusted = [...new Set([baseUrl, ...webOrigins, ...devOrigins])]
 
+  // RFC 8707 resource indicators an MCP client binds its token to. The spec requires
+  // the client to send `resource` at authorize + token, and the oauth-provider 400s
+  // ("requested resource invalid") unless that value is an accepted audience — its
+  // default is only the auth server's own base URL. MCP clients send the SERVER
+  // (Claude Code sends the origin with a trailing slash; others may send the /mcp
+  // endpoint), so accept the origin and /mcp in both slash forms.
+  const origin = (() => {
+    try {
+      return new URL(baseUrl).origin
+    } catch {
+      return baseUrl.replace(/\/+$/, "")
+    }
+  })()
+  // A superset of the plugin's default ([baseUrl]) so no previously-valid audience
+  // is narrowed; resource validation only runs at all when a client sends `resource`
+  // (MCP clients do; dock login and the browser consent flow don't), so other flows
+  // are untouched.
+  const mcpAudiences = [
+    ...new Set([baseUrl, origin, `${origin}/`, `${origin}/mcp`, `${origin}/mcp/`]),
+  ]
+
   // Also trust a request whose Origin equals the origin it was actually served on
   // (its own Host). A same-origin request is never CSRF, so this is safe: a
   // cross-site attacker's Origin can never equal the victim browser's Host. It
@@ -134,6 +155,8 @@ export function makeAuth(db: AuthDb, baseUrl: string, secret: string) {
         accessTokenExpiresIn: 60 * 60, // 1h
         refreshTokenExpiresIn: 60 * 60 * 24 * 7, // 7d
         scopes: [...OAUTH_SCOPES],
+        // Accept the resource indicators MCP clients send (else token exchange 400s).
+        validAudiences: mcpAudiences,
         storeTokens: { hash: async (token) => sha256(token) },
       }),
     ],
