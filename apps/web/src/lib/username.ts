@@ -1,12 +1,12 @@
 /**
  * Client mirror of packages/core/src/username.ts — kept separate so the SPA
  * bundle doesn't pull in @dock/core (same reasoning as lib/parse-ref). The server
- * is authoritative (POST /v1/me/username re-validates); this is for instant form
- * feedback + a starting suggestion. Keep the rules in sync with core.
+ * is authoritative (POST /v1/me/username re-validates); this is just for instant
+ * inline feedback while renaming. Keep the rules in sync with core.
  */
 
-export const USERNAME_MIN = 2
-export const USERNAME_MAX = 30
+const USERNAME_MIN = 2
+const USERNAME_MAX = 30
 
 const USERNAME_RE = /^[a-z0-9](?:[a-z0-9]|[-_](?=[a-z0-9])){1,29}$/
 
@@ -87,7 +87,7 @@ const RESERVED = new Set([
   "followers",
 ])
 
-export const normalizeUsername = (raw: string): string => raw.trim().toLowerCase()
+const normalizeUsername = (raw: string): string => raw.trim().toLowerCase()
 
 /** null when legal + available-shaped, else a short human message. */
 export const usernameError = (raw: string): string | null => {
@@ -97,19 +97,4 @@ export const usernameError = (raw: string): string | null => {
   if (!USERNAME_RE.test(u)) return "Use letters, numbers, and single - or _ between them."
   if (RESERVED.has(u)) return "That username is reserved."
   return null
-}
-
-/** A starting suggestion from a display name or email local-part. Best-effort. */
-export const suggestUsername = (nameOrEmail: string): string => {
-  const base = nameOrEmail.split("@")[0] ?? ""
-  let s = base
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^[-_]+|[-_]+$/g, "")
-    .slice(0, USERNAME_MAX)
-    .replace(/[-_]+$/g, "")
-  // Pad a too-short stem past the minimum, and never collapse an all-punctuation
-  // input to a bare reserved word ("" → "newuser", not "user").
-  if (s.length < USERNAME_MIN) s = `${s || "new"}user`.slice(0, USERNAME_MAX)
-  return s
 }

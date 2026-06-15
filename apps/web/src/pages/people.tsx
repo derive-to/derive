@@ -12,7 +12,6 @@ export function People() {
   const [debounced, setDebounced] = useState("")
   const input = useRef<HTMLInputElement>(null)
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: mount-only focus.
   useEffect(() => input.current?.focus(), [])
   useEffect(() => {
     const t = setTimeout(() => setDebounced(q.trim()), 250)

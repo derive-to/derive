@@ -291,23 +291,12 @@ const authJson = async (r: Response) => {
 }
 
 export const api = {
+  // /v1/me is the single identity resolver: it provisions the personal workspace
+  // and auto-assigns a handle from email on first load, then returns the full user
+  // (handle, avatar, discoverability). Throws on 401 (caller treats as signed-out).
   async me(): Promise<{ user: Me }> {
-    const s = await f("/api/auth/get-session", { credentials: "include" }).then((r) =>
-      r.ok ? r.json() : null,
-    )
-    if (!s?.user) throw new Error("unauthenticated")
-    return {
-      user: {
-        id: s.user.id,
-        email: s.user.email,
-        name: s.user.name ?? null,
-        username: s.user.username ?? null,
-        image: s.user.image ?? null,
-        // On by default: discoverable unless explicitly opted out.
-        discoverable: s.user.discoverable !== false,
-        role: "member",
-      },
-    }
+    const { user } = await f("/v1/me", opts()).then(j)
+    return { user: user as Me }
   },
   // Claim or change your handle (onboarding + rename). 409 when taken, 400 on a
   // bad shape — both surface their message via ApiError.

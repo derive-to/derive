@@ -30,9 +30,12 @@ export interface SessionUser {
   id: string
   email: string
   name: string | null
-  /** Public handle (Profiles & Accounts v1); null until claimed at onboarding. */
+  /** Public handle (Profiles & Accounts v1); auto-assigned from email on first
+   *  load if unset (see ensureUsername in /v1/me), editable thereafter. */
   username: string | null
-  /** Opt-in: findable in people search when true. Off by default. */
+  /** Avatar URL; null until a photo is set. */
+  image: string | null
+  /** Findable in people search (on by default; opt out in Settings). */
   discoverable: boolean
 }
 
@@ -230,6 +233,7 @@ export function buildContext(deps: AppDeps) {
           id: string
           email: string
           name?: string | null
+          image?: string | null
           username?: string | null
           discoverable?: boolean | number | null
         }
@@ -239,6 +243,7 @@ export function buildContext(deps: AppDeps) {
           id: su.id,
           email: su.email,
           name: su.name ?? null,
+          image: su.image ?? null,
           username: su.username ?? null,
           // Discoverable unless explicitly opted out (on by default; unset = on).
           discoverable: su.discoverable !== false,

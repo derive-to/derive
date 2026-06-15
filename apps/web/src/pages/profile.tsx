@@ -1,6 +1,6 @@
-import { useQuery } from "@tanstack/react-query"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { getRouteApi, useNavigate } from "@tanstack/react-router"
-import { useState } from "react"
+import { useRef, useState } from "react"
 import { api } from "@/api"
 import { CenteredSpinner } from "@/components/shared/spinner"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
@@ -15,18 +15,35 @@ const route = getRouteApi("/u/$handle")
 // @handle. Email stays private. The richer profile (your public artifacts,
 // following, a customizable page) is intentionally out of scope here — this is
 // the identity card the rest of that work builds on. When it's your own profile,
-// you can rename your handle inline.
+// you can change your photo (click the avatar) and rename your handle inline.
 export function Profile() {
   const { handle } = route.useParams()
   const { me, setMe } = useAuth()
   const nav = useNavigate()
+  const qc = useQueryClient()
   const [editing, setEditing] = useState(false)
+  const [uploading, setUploading] = useState(false)
+  const fileRef = useRef<HTMLInputElement>(null)
 
   const { data, isPending, isError } = useQuery({
     queryKey: ["profile", handle],
     queryFn: () => api.profile(handle).then((r) => r.user),
     retry: false,
   })
+
+  const pickPhoto = async (f: File | null) => {
+    if (!f) return
+    setUploading(true)
+    try {
+      const { image } = await api.uploadAvatar(f)
+      if (me) setMe({ ...me, image })
+      qc.invalidateQueries({ queryKey: ["profile", handle] })
+    } catch {
+      /* surfaced elsewhere; non-blocking */
+    } finally {
+      setUploading(false)
+    }
+  }
 
   if (isPending) return <CenteredSpinner />
 
@@ -49,10 +66,39 @@ export function Profile() {
   return (
     <div className="mx-auto w-full max-w-xl p-6 sm:p-10">
       <Card className="flex flex-col items-center gap-4 p-8 text-center" data-testid="profile-card">
-        <Avatar className="size-20">
-          {data.image && <AvatarImage src={data.image} alt={data.name ?? data.username} />}
-          <AvatarFallback className="text-lg">{initials}</AvatarFallback>
-        </Avatar>
+        {isMe ? (
+          <>
+            <button
+              type="button"
+              data-testid="profile-avatar-upload"
+              onClick={() => fileRef.current?.click()}
+              disabled={uploading}
+              className="group relative size-20 overflow-hidden rounded-full"
+              aria-label="Change your photo"
+            >
+              <Avatar className="size-full">
+                {data.image && <AvatarImage src={data.image} alt={data.name ?? data.username} />}
+                <AvatarFallback className="text-lg">{initials}</AvatarFallback>
+              </Avatar>
+              <span className="absolute inset-x-0 bottom-0 hidden bg-foreground/70 py-1 text-2xs font-medium text-background group-hover:block">
+                {uploading ? "…" : "Edit"}
+              </span>
+            </button>
+            <input
+              ref={fileRef}
+              type="file"
+              accept="image/png,image/jpeg,image/gif,image/webp"
+              data-testid="profile-avatar-input"
+              className="hidden"
+              onChange={(e) => pickPhoto(e.target.files?.[0] ?? null)}
+            />
+          </>
+        ) : (
+          <Avatar className="size-20">
+            {data.image && <AvatarImage src={data.image} alt={data.name ?? data.username} />}
+            <AvatarFallback className="text-lg">{initials}</AvatarFallback>
+          </Avatar>
+        )}
         <div className="min-w-0">
           {data.name && (
             <h1
