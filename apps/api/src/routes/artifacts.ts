@@ -193,6 +193,12 @@ export const artifactRoutes = (ctx: AppContext) => {
     // republish keeps whatever the artifact already has (publish() never re-creates
     // the artifact, only adds a version, so visibility/password are set-on-create).
     const visibility = visibilityOf(body["visibility"])
+    // An explicitly-provided visibility that isn't a known value is rejected, not
+    // silently coerced. publish() defaults an *absent* visibility to `link`, so a
+    // natural-but-wrong value like "private" would otherwise become URL-readable —
+    // more open than intended, with no error. The enum is closed; surface the typo.
+    if (str(body["visibility"]) && !visibility)
+      return fail(c, 400, "visibility must be one of: public, link, org, password")
     const password = str(body["password"])
     if (!shortId && visibility === "password" && !password)
       return fail(c, 400, "a password is required for password visibility")

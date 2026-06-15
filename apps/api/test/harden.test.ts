@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest"
-import { as, makeAuthedApp, publishAs, type TestUser } from "./helpers"
+import { MAX_MENTIONS, parseMentions } from "../src/lib/comments"
+import { as, jsonAs, makeAuthedApp, publishAs, type TestUser } from "./helpers"
 
 // Coverage for the read-path hardening: a non-member / anonymous caller gets only
 // content they're entitled to (public artifacts) — never an org/link title, a member
@@ -81,5 +82,89 @@ describe("read-path exposure hardening", () => {
     const body = await res.json()
     expect(body).not.toHaveProperty("email")
     expect(body.role).toBe("viewer")
+  })
+})
+
+// B-019: @mentions are client-supplied; a mention must only notify someone who can
+// actually SEE the artifact (a workspace member or an explicit sharee). Otherwise any
+// user could push an attacker-controlled title/preview into ANY user's bell + SSE —
+// cross-workspace spam/phishing. See bug-hunt B-019.
+describe("B-019: @mention notifies only collaborators", () => {
+  const owner: TestUser = { id: "u_b19_owner", email: "o19@dock.test", name: "Owner19" }
+  const member: TestUser = { id: "u_b19_member", email: "m19@dock.test", name: "Member19" }
+  const sharee: TestUser = { id: "u_b19_sharee", email: "s19@dock.test", name: "Sharee19" }
+  const outsider: TestUser = { id: "u_b19_out", email: "x19@dock.test", name: "Out19" }
+
+  it("notifies a workspace member + an artifact sharee, but NEVER a non-member", async () => {
+    const { app, meta: m } = makeAuthedApp(
+      "harden-b19",
+      [owner, member, sharee, outsider],
+      undefined,
+      { isolated: true },
+    )
+    // Owner provisions their workspace by publishing an org-private artifact.
+    const { short_id } = await (
+      await publishAs(app, "<h1>p</h1>", { title: "B19", visibility: "org" }, as(owner.email))
+    ).json()
+    const art = await m.getByShortId(short_id)
+    if (!art) throw new Error("artifact not found")
+    // member joins the workspace; sharee gets an explicit share; outsider stays a stranger.
+    await m.setMembership({ id: "m_b19", org_id: art.org_id, user_id: member.id, role: "editor" })
+    await m.setArtifactMember({
+      id: "am_b19",
+      artifact_id: art.id,
+      user_id: sharee.id,
+      role: "viewer",
+    })
+
+    // Owner @mentions all three (attacker-controlled body, as in the live repro).
+    const res = await app.request(
+      `/v1/artifacts/${short_id}/comments`,
+      jsonAs(as(owner.email), {
+        body_md: "CLICK http://evil.example",
+        mentions: [
+          { id: member.id, name: "Member19" },
+          { id: sharee.id, name: "Sharee19" },
+          { id: outsider.id, name: "Out19" },
+        ],
+      }),
+    )
+    expect(res.status).toBe(201)
+
+    // Collaborators are notified; the non-member is not (the spam/phishing is blocked).
+    expect((await m.listNotifications(member.id, 50)).length).toBe(1)
+    expect((await m.listNotifications(sharee.id, 50)).length).toBe(1)
+    expect((await m.listNotifications(outsider.id, 50)).length).toBe(0)
+  })
+
+  it("caps the number of distinct mentions parsed per comment", () => {
+    const many = Array.from({ length: MAX_MENTIONS + 25 }, (_, i) => ({
+      id: `u${i}`,
+      name: `n${i}`,
+    }))
+    expect(parseMentions(many)).toHaveLength(MAX_MENTIONS)
+  })
+})
+
+// B-018: an explicitly-provided visibility that isn't a known value is rejected, not
+// silently coerced to `link` (URL-readable). Absent visibility still defaults to link.
+describe("B-018: publish rejects an unknown visibility", () => {
+  const owner: TestUser = { id: "u_b18_owner", email: "o18@dock.test", name: "Owner18" }
+
+  it("400s on an unknown visibility; valid values store; absent defaults to link", async () => {
+    const { app } = makeAuthedApp("harden-b18", [owner])
+    const bad = await publishAs(
+      app,
+      "<h1>x</h1>",
+      { title: "v", visibility: "private" },
+      as(owner.email),
+    )
+    expect(bad.status).toBe(400)
+    const org = await (
+      await publishAs(app, "<h1>x</h1>", { title: "v2", visibility: "org" }, as(owner.email))
+    ).json()
+    expect(org.visibility).toBe("org")
+    const def = await (await publishAs(app, "<h1>x</h1>", { title: "v3" }, as(owner.email))).json()
+    expect(def.visibility).toBe("link")
   })
 })
