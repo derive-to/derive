@@ -11,7 +11,6 @@ import { NavRail } from "./nav-rail"
 import { Logo } from "./shared/logo"
 import { CenteredSpinner } from "./shared/spinner"
 import { ShellCtx, type ShellValue, type Summary, TopBarSlotCtx } from "./shell-context"
-import { UsernameOnboarding } from "./username-onboarding"
 
 // The ⌘K palette pulls in cmdk; it's only needed once the user opens it, so keep
 // it (and cmdk) out of the shared bundle every route pays for. Loads on first open.
@@ -191,10 +190,9 @@ export function AppShell({ children }: { children: ReactNode }) {
   // anon visitors, so don't gate those on a session.
   if (loading || (!me && !publicView)) return <CenteredSpinner />
 
-  // A signed-in user with no handle yet claims one before entering the app (new
-  // account, or an existing one from before usernames). Public views are exempt,
-  // so they can still read a shared artifact / profile while un-onboarded.
-  if (me && !me.username && !publicView) return <UsernameOnboarding />
+  // Note: a handle-less user is NOT gated here. Profile setup (username + photo)
+  // lives as a pinned card on the home page (ProfileSetupCard), above where you
+  // create your first artifact and see what's shared with you.
 
   return (
     <ShellCtx.Provider value={value}>

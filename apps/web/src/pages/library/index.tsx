@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react"
 import { toast } from "sonner"
 import { type Artifact, api } from "@/api"
 import { Icon } from "@/components/icons"
+import { ProfileSetupCard } from "@/components/profile-setup-card"
 import { EmptyState } from "@/components/shared/empty-state"
 import { useShell } from "@/components/shell-context"
 import { Button } from "@/components/ui/button"
@@ -153,6 +154,9 @@ function LibraryBody() {
   return (
     <div ref={scrollRef} className="flex-1 overflow-y-auto">
       <div className="mx-auto max-w-[1000px] px-5.5 pb-16 pt-5.5">
+        {/* Pinned until a handle is claimed: profile setup lives here, on top of
+            where you create + see shared artifacts, not as a blocking gate. */}
+        {me && !me.username && <ProfileSetupCard />}
         {showGreeting && (
           <div className="mb-4" data-testid="library-greeting">
             <h1 className="font-display text-2xl font-semibold text-foreground">

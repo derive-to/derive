@@ -2,8 +2,10 @@ export interface Me {
   id: string
   email: string
   name: string | null
-  /** Public handle; null until claimed at onboarding (Profiles & Accounts v1). */
+  /** Public handle; null until claimed (Profiles & Accounts v1). */
   username: string | null
+  /** Avatar URL; null until a photo is set. */
+  image: string | null
   role: string
 }
 /** A public profile, by handle. Email is private and never returned here. */
@@ -298,6 +300,7 @@ export const api = {
         email: s.user.email,
         name: s.user.name ?? null,
         username: s.user.username ?? null,
+        image: s.user.image ?? null,
         role: "member",
       },
     }
