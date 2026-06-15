@@ -176,22 +176,33 @@ as the Node entry, so the app logic is identical.
 Treat it as **experimental**: there is no automated edge integration test in CI yet (the
 entry is typecheck-covered).
 
+First-time setup:
+
 ```bash
 cd apps/api
 wrangler d1 create dock                     # copy the database_id into wrangler.toml
-wrangler d1 execute dock --remote --file=../../deploy/d1-schema.sql       # app schema
+wrangler r2 bucket create dock-blobs
 pnpm exec tsx gen-auth-schema.ts > /tmp/auth-schema.sql                   # Better Auth tables (incl. OAuth)
 wrangler d1 execute dock --remote --file=/tmp/auth-schema.sql
-wrangler r2 bucket create dock-blobs
-pnpm build:web                              # build the SPA + prep dist/client for Workers
-wrangler deploy                             # or `pnpm deploy` to do build:web + deploy
 wrangler secret put DOCK_AUTH_SECRET        # a strong random secret
+pnpm deploy                                 # build:web → apply app schema → wrangler deploy
 ```
 
-D1 forbids the `sqlite_master` introspection Better Auth's migrator runs (`SQLITE_AUTH`),
-so the auth tables are generated offline (`gen-auth-schema.ts`) and applied with
-`wrangler d1 execute`, never at boot. `deploy/d1-schema.sql` is generated from the shared
-schema; regenerate with `pnpm --filter @dock/db gen:d1-schema`.
+**Every deploy after that is just `pnpm deploy`.** It runs `build:web`, then
+`deploy:schema` (`scripts/apply-d1-schema.mjs`), then `wrangler deploy`. The schema step
+brings D1 fully current first — it creates any new tables AND adds any new columns (a
+plain `CREATE TABLE IF NOT EXISTS` re-apply never adds columns to a table that already
+exists), so a deploy can't ship code against a stale schema. It's idempotent; run it
+standalone any time with `pnpm --filter @dock/api deploy:schema`.
+
+> Why this matters: the edge applies schema out of band because D1 forbids the
+> `sqlite_master` introspection Better Auth's migrator runs at boot (`SQLITE_AUTH`) — the
+> Node tier re-applies the schema on every boot, the edge cannot. `deploy:schema` is that
+> missing step. `deploy/d1-schema.sql` is generated from the shared schema; regenerate
+> with `pnpm --filter @dock/db gen:d1-schema`.
+>
+> The Better Auth tables (above) are applied once at setup; re-run the `gen-auth-schema` +
+> `d1 execute` pair only when you upgrade Better Auth (its schema changes are rare).
 
 The worker serves the SPA (login, library, settings) same-origin with the API, so there
 is no CORS or cross-site cookie config. `[assets]` in `wrangler.toml` points at

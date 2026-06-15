@@ -16,7 +16,8 @@
     "dev": "tsx watch src/node.ts",
     "start": "tsx src/node.ts",
     "build:web": "pnpm --filter @dock/web build && node scripts/prep-edge-assets.mjs",
-    "deploy": "pnpm build:web && wrangler deploy",
+    "deploy:schema": "node scripts/apply-d1-schema.mjs",
+    "deploy": "pnpm build:web && pnpm deploy:schema && wrangler deploy",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.worker.json",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage"
