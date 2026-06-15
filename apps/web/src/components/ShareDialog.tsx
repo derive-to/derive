@@ -154,11 +154,19 @@ export function ShareButton({
   }
   const change = async (m: ArtifactMember, next: Role) => {
     if (next === m.role || !m.email) return
-    await api.setMember(shortId, m.email, next).catch(() => {})
+    try {
+      await api.setMember(shortId, m.email, next)
+    } catch (x) {
+      toast.error(x instanceof Error ? x.message : "Couldn't update access")
+    }
     await synced()
   }
   const remove = async (m: ArtifactMember) => {
-    await api.removeMember(shortId, m.user_id).catch(() => {})
+    try {
+      await api.removeMember(shortId, m.user_id)
+    } catch (x) {
+      toast.error(x instanceof Error ? x.message : "Couldn't remove member")
+    }
     await synced()
   }
 

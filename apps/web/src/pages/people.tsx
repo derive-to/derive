@@ -19,7 +19,7 @@ export function People() {
     return () => clearTimeout(t)
   }, [q])
 
-  const { data, isFetching } = useQuery({
+  const { data, isFetching, isError } = useQuery({
     queryKey: ["people", debounced],
     queryFn: () => api.searchPeople(debounced).then((r) => r.users),
     enabled: debounced.length > 0,
@@ -43,7 +43,12 @@ export function People() {
         aria-label="Search people"
       />
       <div className="mt-4 flex flex-col gap-1">
-        {debounced && users.length === 0 && !isFetching && (
+        {debounced && isError && !isFetching && (
+          <p className="px-2 text-sm text-muted-foreground" data-testid="people-error">
+            Couldn't search right now. Try again in a moment.
+          </p>
+        )}
+        {debounced && !isError && users.length === 0 && !isFetching && (
           <p className="px-2 text-sm text-muted-foreground" data-testid="people-empty">
             No one found for "{debounced}".
           </p>

@@ -54,6 +54,9 @@ export function SourceEditor({
   // Desktop preview-pane visibility (mobile uses the Edit/Preview tabs instead).
   const [previewOpen, setPreviewOpen] = useState(true)
   const [preview, setPreview] = useState("")
+  // True when the last render failed: the pane still shows the previous good HTML,
+  // so flag it stale rather than silently freezing on an out-of-date preview.
+  const [previewStale, setPreviewStale] = useState(false)
 
   // Debounced, faithful preview. HTML renders in-browser as-is; markdown is
   // rendered by the server's real renderer (the same one publish uses), so what
@@ -65,14 +68,22 @@ export function SourceEditor({
     const t = setTimeout(() => {
       if (format === "html") {
         setPreview(src)
+        setPreviewStale(false)
         return
       }
       api
         .renderPreview(src, title)
         .then(({ html }) => {
-          if (!cancelled) setPreview(html)
+          if (!cancelled) {
+            setPreview(html)
+            setPreviewStale(false)
+          }
         })
-        .catch(() => {})
+        .catch(() => {
+          // Keep the last good preview on screen, but mark it stale so the writer
+          // knows their latest edit didn't render (network blip / render error).
+          if (!cancelled) setPreviewStale(true)
+        })
     }, 200)
     return () => {
       cancelled = true
@@ -208,6 +219,14 @@ export function SourceEditor({
             previewOpen ? "md:flex" : "md:hidden",
           )}
         >
+          {previewStale && (
+            <div
+              data-testid="preview-stale"
+              className="shrink-0 border-b border-border-soft bg-secondary px-3 py-1.5 text-xs text-muted-foreground"
+            >
+              Preview unavailable. Showing your last successful render.
+            </div>
+          )}
           <iframe
             title="Live preview"
             data-testid="artifact-preview"

@@ -132,7 +132,13 @@ export function Artifact() {
 
   // Preview vs. line-diff for the shown version, plus the fetched diff. See
   // use-version-diff.
-  const { view, setView, diff } = useVersionDiff(art, shortId, version)
+  const {
+    view,
+    setView,
+    diff,
+    failed: diffFailed,
+    retry: retryDiff,
+  } = useVersionDiff(art, shortId, version)
 
   // Feed our live iframe geometry to the cursor layer, so peers render at their
   // document position (mapped against our scroll) and scrolled-off peers collapse
@@ -415,6 +421,8 @@ export function Artifact() {
                 rawSrc={rawSrc}
                 view={view}
                 diff={diff}
+                diffFailed={diffFailed}
+                onDiffRetry={retryDiff}
                 restoring={restoring}
                 deck={deck}
                 frameRef={frame}

@@ -1,8 +1,9 @@
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { api, type Proposal, type Role } from "@/api"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { useFocusTrap } from "@/lib/use-focus-trap"
 import { cn } from "@/lib/utils"
 import { ReviewBody } from "./body"
 import { ReviewDecisionBar } from "./decision-bar"
@@ -38,6 +39,8 @@ export function ReviewOverlay({
   onApplied: () => void
 }) {
   const narrow = useNarrow()
+  const dialogRef = useRef<HTMLDivElement>(null)
+  useFocusTrap(dialogRef, true)
   const [proposals, setProposals] = useState<Proposal[]>([])
   const [activeId, setActiveId] = useState<string | null>(null)
   const [active, setActive] = useState<Proposal | null>(null)
@@ -145,6 +148,7 @@ export function ReviewOverlay({
 
   return (
     <div
+      ref={dialogRef}
       role="dialog"
       aria-modal="true"
       aria-label="Review proposed changes"

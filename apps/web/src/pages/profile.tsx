@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query"
 import { getRouteApi, useNavigate } from "@tanstack/react-router"
 import { useState } from "react"
+import { toast } from "sonner"
 import { api } from "@/api"
 import { CenteredSpinner } from "@/components/shared/spinner"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
@@ -30,8 +31,9 @@ export function Profile() {
     try {
       await api.setDiscoverable(next)
       if (me) setMe({ ...me, discoverable: next })
-    } catch {
+    } catch (e) {
       setDiscoverable(!next)
+      toast.error(e instanceof Error ? e.message : "Couldn't update discoverability")
     }
   }
 

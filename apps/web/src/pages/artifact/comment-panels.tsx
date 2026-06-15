@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import type { Comment, Mention } from "@/api"
 import { Icon } from "@/components/icons"
 import { Button } from "@/components/ui/button"
+import { useFocusTrap } from "@/lib/use-focus-trap"
 import { cn } from "@/lib/utils"
 import {
   CommentCard,
@@ -51,6 +52,8 @@ export function MobileComments({
   // keyboard (see the height + `kb` style below), so the box sits flush above the
   // keyboard with the document visible above — no awkward half-height middle state.
   const [size, setSize] = useState<"peek" | "full">("peek")
+  const sheetRef = useRef<HTMLDivElement>(null)
+  useFocusTrap(sheetRef, open)
   useEffect(() => {
     if (open) setSize("peek")
   }, [open])
@@ -118,6 +121,7 @@ export function MobileComments({
         )}
       />
       <div
+        ref={sheetRef}
         className={cn(
           "fixed inset-x-0 bottom-0 z-[61] flex flex-col rounded-t-[18px] border-t border-border bg-card shadow-[0_-14px_44px_-18px_rgba(0,0,0,0.5)] duration-[260ms]",
           // Don't animate height while the keyboard repositions the sheet.

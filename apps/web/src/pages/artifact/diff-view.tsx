@@ -1,16 +1,32 @@
 import type { Diff } from "@/api"
 import { Spinner } from "@/components/shared/spinner"
+import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 
 export function DiffView({
   diff,
   fromLabel,
   toLabel,
+  failed,
+  onRetry,
 }: {
   diff: Diff | null
   fromLabel?: string
   toLabel?: string
+  failed?: boolean
+  onRetry?: () => void
 }) {
+  if (failed)
+    return (
+      <div className="grid flex-1 place-items-center gap-2.5 text-center">
+        <div className="text-sm text-muted-foreground">Couldn't load the changes.</div>
+        {onRetry && (
+          <Button variant="outline" size="sm" data-testid="diff-retry" onClick={onRetry}>
+            Try again
+          </Button>
+        )}
+      </div>
+    )
   if (!diff)
     return (
       <div className="grid flex-1 place-items-center">

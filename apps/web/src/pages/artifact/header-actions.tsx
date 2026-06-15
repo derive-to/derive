@@ -153,8 +153,9 @@ export function CollectionsMenu({
     try {
       if (isIn) await api.removeFromCollection(col.id, shortId)
       else await api.addToCollection(col.id, shortId)
-    } catch {
+    } catch (e) {
       onChange(inCollections)
+      toast.error(e instanceof Error ? e.message : "Couldn't update collections")
     }
   }
   const create = async () => {
@@ -166,8 +167,8 @@ export function CollectionsMenu({
       await api.addToCollection(col.id, shortId)
       setAll((a) => [col, ...a])
       onChange([...inCollections, col.id])
-    } catch {
-      /* ignore */
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Couldn't create collection")
     }
   }
   return (
@@ -259,8 +260,8 @@ export function TagsMenu({
     try {
       const r = await api.setTags(shortId, next)
       onChange(r.tags)
-    } catch {
-      /* keep the optimistic value */
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Couldn't save tags")
     }
   }
   const add = () => {

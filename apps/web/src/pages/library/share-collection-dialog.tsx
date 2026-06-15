@@ -53,7 +53,11 @@ export function ShareCollectionDialog({
     }
   }
   const remove = async (m: ArtifactMember) => {
-    await api.removeCollectionMember(collection.id, m.user_id).catch(() => {})
+    try {
+      await api.removeCollectionMember(collection.id, m.user_id)
+    } catch (x) {
+      toast.error(x instanceof Error ? x.message : "Couldn't remove member")
+    }
     load()
   }
 
