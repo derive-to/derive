@@ -128,7 +128,7 @@ export function createD1Store(d1: D1Database): MetaStore {
           sql`, `,
         )
         return (await db.all(
-          sql`SELECT id, email, name, image FROM user WHERE id IN (${list})`,
+          sql`SELECT id, email, name, image, username FROM user WHERE id IN (${list})`,
         )) as UserDir[]
       } catch {
         return []

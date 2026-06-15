@@ -69,7 +69,9 @@ export const artifactRoutes = (ctx: AppContext) => {
       rawCursor && sep > 0
         ? { created_at: rawCursor.slice(0, sep), id: rawCursor.slice(sep + 1) }
         : undefined
-    const q = c.req.query("q")?.trim() || undefined
+    // Cap the search term: it goes into a SQL LIKE, and an oversized value tripped
+    // an unhandled DB error (a long-q 500). No real title search needs > 200 chars.
+    const q = c.req.query("q")?.trim().slice(0, 200) || undefined
     const tag = c.req.query("tag")?.trim() || undefined
     const collectionId = c.req.query("collection")?.trim() || undefined
     const favOnly = c.req.query("favorite") === "true"
@@ -87,7 +89,14 @@ export const artifactRoutes = (ctx: AppContext) => {
     if (ids && ids.length === 0) return c.json({ artifacts: [], next_cursor: null })
 
     const orgId = await activeWorkspace(c)
-    const rows = await meta.listArtifacts({ limit: limit + 1, cursor, q, ids, orgId })
+    // A listing only shows non-public artifacts to a MEMBER of that workspace (or the
+    // operator token). Anyone else — anonymous, or a signed-in user who isn't a member
+    // — sees public artifacts only, so org/link titles never leak via the list or ?q=.
+    const publicOnly = !(
+      (deps.token && safeEqual(bearer(c), deps.token)) ||
+      (!!me && !!(await meta.getMembership(orgId, me.id)))
+    )
+    const rows = await meta.listArtifacts({ limit: limit + 1, cursor, q, ids, orgId, publicOnly })
     const hasMore = rows.length > limit
     const page = hasMore ? rows.slice(0, limit) : rows
     const last = page[page.length - 1]
@@ -114,6 +123,14 @@ export const artifactRoutes = (ctx: AppContext) => {
     if (!me && deps.token && !safeEqual(bearer(c), deps.token))
       return fail(c, 401, "unauthenticated")
     const org = await activeWorkspace(c)
+    // The sidebar summary (workspace name, total artifact count, tag breakdown) is a
+    // member view. A non-member — including an anonymous caller in open mode — gets an
+    // empty summary with no workspace name, so it can't be used to enumerate a private
+    // workspace's name + size.
+    const isMember =
+      (deps.token && safeEqual(bearer(c), deps.token)) ||
+      (!!me && !!(await meta.getMembership(org, me.id)))
+    if (!isMember) return c.json({ total: 0, favorites: 0, tags: [], workspace: null })
     const [total, tags, favIds, ws] = await Promise.all([
       meta.countArtifacts(org),
       meta.tagCounts(org),
@@ -261,6 +278,32 @@ export const artifactRoutes = (ctx: AppContext) => {
       return artifact.visibility === "password"
         ? fail(c, 401, "password required")
         : fail(c, 404, "not found")
+    // Taken down: serve a minimal tombstone, not the full record. A takedown is a
+    // moderation action and the title is often the very thing being removed
+    // (harassment/doxxing), so drop title, author, the slug in the URL, and the
+    // version history — keep only enough for the SPA to render its "removed" state.
+    // (Content already 410s at /raw; the /a unfurl injects no meta for removed.)
+    if (artifact.removed_at)
+      return c.json({
+        short_id: artifact.short_id,
+        url: `${deps.baseUrl.replace(/\/$/, "")}/a/${artifact.short_id}`,
+        title: null,
+        kind: artifact.kind,
+        visibility: artifact.visibility,
+        spa: !!artifact.spa,
+        current_version: artifact.current_version,
+        created_at: artifact.created_at,
+        versions: [],
+        sessions: [],
+        my_role: effectiveRole(actor, artifact.visibility),
+        tags: [],
+        favorite: false,
+        collections: [],
+        open_proposals: 0,
+        proposals_total: 0,
+        removed: true,
+        managed: false,
+      })
     const versions = await meta.listVersions(artifact.id)
     const me = actor.kind === "user" ? actor.userId : null
     const tags = (await meta.tagsForArtifacts([artifact.id]))[artifact.id] ?? []

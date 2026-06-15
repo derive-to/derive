@@ -33,9 +33,17 @@ export const collectionRoutes = (ctx: AppContext) => {
     roleAllows((await collectionRole(c, col)) ?? "viewer", action)
 
   app.get("/v1/collections", async (c) => {
-    if (!(await currentUser(c)) && deps.token && !safeEqual(bearer(c), deps.token))
+    const me = await currentUser(c)
+    if (!me && deps.token && !safeEqual(bearer(c), deps.token))
       return fail(c, 401, "unauthenticated")
-    return c.json({ collections: await meta.listCollections(await activeWorkspace(c)) })
+    const org = await activeWorkspace(c)
+    // Collections are a workspace-internal organizer — only members (or the operator
+    // token) see them. A non-member (incl. anon in open mode) gets an empty list, so
+    // a workspace's collections can't be enumerated via a public artifact's workspace.
+    const isMember =
+      (deps.token && safeEqual(bearer(c), deps.token)) ||
+      (!!me && !!(await meta.getMembership(org, me.id)))
+    return c.json({ collections: isMember ? await meta.listCollections(org) : [] })
   })
   app.post("/v1/collections", async (c) => {
     if (!(await workspaceCan(c, "comment"))) return fail(c, 403, "forbidden")
@@ -113,7 +121,7 @@ export const collectionRoutes = (ctx: AppContext) => {
       created_by: col.created_by,
       members: rows.map((r) => ({
         user_id: r.user_id,
-        email: byId.get(r.user_id)?.email ?? null,
+        handle: byId.get(r.user_id)?.username ?? null,
         name: byId.get(r.user_id)?.name ?? null,
         role: r.role,
       })),
@@ -143,7 +151,7 @@ export const collectionRoutes = (ctx: AppContext) => {
       user_id: user.id,
       role: b.role,
     })
-    return c.json({ user_id: user.id, email: user.email, name: user.name, role: b.role }, 201)
+    return c.json({ user_id: user.id, handle: user.username, name: user.name, role: b.role }, 201)
   })
   app.delete("/v1/collections/:id/members/:userId", async (c) => {
     const col = await meta.getCollection(c.req.param("id"))

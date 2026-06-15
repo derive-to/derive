@@ -25,7 +25,7 @@ describe("event bus", () => {
 })
 
 describe("presence", () => {
-  const v = (id: string): Viewer => ({ id, name: id, email: null, role: "viewer" })
+  const v = (id: string): Viewer => ({ id, name: id, role: "viewer" })
   it("tracks live viewers (keyed by id) and prunes stale ones past the TTL", () => {
     const p = new Presence(1000)
     expect(p.heartbeat("a", v("jess"), 0)).toEqual([v("jess")])
@@ -41,8 +41,8 @@ describe("presence", () => {
 
   it("upserts by id, so a viewer's later heartbeat replaces (not duplicates) the row", () => {
     const p = new Presence(1000)
-    p.heartbeat("a", { id: "u1", name: "Old", email: null, role: "viewer" }, 0)
-    const out = p.heartbeat("a", { id: "u1", name: "New", email: "u1@x.test", role: "owner" }, 100)
-    expect(out).toEqual([{ id: "u1", name: "New", email: "u1@x.test", role: "owner" }])
+    p.heartbeat("a", { id: "u1", name: "Old", role: "viewer" }, 0)
+    const out = p.heartbeat("a", { id: "u1", name: "New", role: "owner" }, 100)
+    expect(out).toEqual([{ id: "u1", name: "New", role: "owner" }])
   })
 })

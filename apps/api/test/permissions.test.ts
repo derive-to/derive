@@ -160,8 +160,10 @@ describe("permissions: a per-artifact share overrides the workspace role", () =>
     ).json()
     expect(list.default_role).toBe("viewer")
     expect(list.members).toContainEqual(
-      expect.objectContaining({ email: carol.email, role: "editor" }),
+      expect.objectContaining({ user_id: carol.id, role: "editor" }),
     )
+    // The member list identifies people by handle, never email.
+    expect(list.members.every((m: { email?: unknown }) => m.email === undefined)).toBe(true)
   })
 })
 

@@ -123,7 +123,12 @@ export function WorkspaceSection({ meId }: { meId: string }) {
   }
 
   const removeMember = async (m: ArtifactMember) => {
-    if (!confirm(`Remove ${m.name ?? m.email ?? "this member"} from the workspace?`)) return
+    if (
+      !confirm(
+        `Remove ${m.name ?? (m.handle ? `@${m.handle}` : "this member")} from the workspace?`,
+      )
+    )
+      return
     try {
       await api.removeWorkspaceMember(m.user_id)
       setWs((w) => (w ? { ...w, members: w.members.filter((x) => x.user_id !== m.user_id) } : w))
@@ -271,19 +276,19 @@ export function WorkspaceSection({ meId }: { meId: string }) {
               </span>
               <div className="min-w-0 flex-1">
                 <div className="text-sm font-semibold text-foreground">
-                  {m.name ?? m.email ?? m.user_id}
+                  {m.name ?? (m.handle ? `@${m.handle}` : m.user_id)}
                   {m.user_id === meId && (
                     <span className="font-normal text-muted-foreground"> (you)</span>
                   )}
                 </div>
-                {m.email && m.name && (
-                  <div className="text-2xs text-muted-foreground">{m.email}</div>
+                {m.handle && m.name && (
+                  <div className="text-2xs text-muted-foreground">@{m.handle}</div>
                 )}
               </div>
               {isAdmin ? (
                 <select
                   data-testid={`member-role-${m.user_id}`}
-                  aria-label={`Role for ${m.name ?? m.email ?? "member"}`}
+                  aria-label={`Role for ${m.name ?? (m.handle ? `@${m.handle}` : "member")}`}
                   value={roleValue(m.role)}
                   onChange={(e) => changeRole(m.user_id, e.target.value as Role)}
                   className={`${selectClass} w-[120px]`}

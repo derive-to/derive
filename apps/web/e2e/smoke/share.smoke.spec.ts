@@ -14,5 +14,8 @@ test("owner shares an artifact and the member appears", async ({ owner, secondUs
 
   const row = owner.locator('[data-testid^="share-member-row-"]')
   await expect(row).toHaveCount(1)
-  await expect(row).toContainText(secondUser.email)
+  // You still share BY email (the input above), but the member row identifies people
+  // by name / @handle and never echoes the email back (read-path PII hardening).
+  await expect(row).toContainText("Second User")
+  await expect(row).not.toContainText(secondUser.email)
 })
