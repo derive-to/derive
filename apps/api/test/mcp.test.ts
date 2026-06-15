@@ -129,6 +129,7 @@ describe("remote MCP endpoint (/mcp)", () => {
         "read_section",
         "diff",
         "catch_me_up",
+        "propose",
       ]),
     )
   })
@@ -246,5 +247,33 @@ describe("remote MCP endpoint (/mcp)", () => {
       toolText(await call(app, token, "catch_me_up", { short_id: shortId, since_version: 1 })),
     )
     expect(cu.pages_changed.added).toContain("new.html")
+  })
+
+  it("propose stages a revision for review without going live", async () => {
+    // Editor grant so the setup publish works; over MCP even an editor only gets
+    // `propose` (no direct-publish tool), so the candidate still never auto-goes-live.
+    const { app, token } = appWithGrant("propose", "openid dock:read dock:publish")
+    const shortId = (await (await publish(app, token, "Draft")).json()).short_id
+
+    const p = JSON.parse(
+      toolText(
+        await call(app, token, "propose", {
+          short_id: shortId,
+          content: "<h1>Revised draft</h1>",
+          message: "tightened the intro",
+        }),
+      ),
+    )
+    expect(p.proposed).toBe(true)
+    expect(p.proposal_id).toBeTruthy()
+    expect(p.base_version).toBe(1)
+
+    // The live version is untouched — a proposal is not a publish.
+    const read = JSON.parse(
+      toolText(await call(app, token, "read_artifact", { short_id: shortId })),
+    )
+    expect(read.version).toBe(1)
+    expect(read.content).toContain("Draft")
+    expect(read.content).not.toContain("Revised")
   })
 })

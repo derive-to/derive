@@ -16,6 +16,8 @@ import {
   type BundleManifest,
   diffLines,
   formatDiff,
+  PublishError,
+  propose as proposeChange,
   type VersionRecord,
 } from "@dock/core"
 import { StreamableHTTPTransport } from "@hono/mcp"
@@ -89,8 +91,10 @@ const bundleFileChanges = (from: BundleManifest, to: BundleManifest) => ({
 
 /**
  * A new MCP server for one request, scoped to `agent` (the OAuth-resolved identity).
- * Phase 0 is read-only — the agent can see what it's working on; the write/loop
- * tools (diff, propose, catch_me_up) land in Phase 1.
+ * Tools act in the bearer's workspace at the bearer's role: reads for anyone, and
+ * `propose` (the human-in-the-loop write) for commenter+ — a proposal never goes
+ * live without a human approving it, so an agent is a safe contributor, not a
+ * publisher.
  */
 function buildServer(ctx: AppContext, agent: AgentRecord): McpServer {
   const server = new McpServer({ name: "dock", version: "1.0.0" })
@@ -327,6 +331,56 @@ function buildServer(ctx: AppContext, agent: AgentRecord): McpServer {
           body: c.body_md,
         })),
       })
+    },
+  )
+
+  server.registerTool(
+    "propose",
+    {
+      description:
+        "Propose a revised version of a single-file artifact for human review. It does NOT go live — a reviewer approves it or requests changes. Provide the FULL new content (not a patch) and a rationale. (Multi-page bundles aren't proposable over MCP yet.)",
+      inputSchema: {
+        short_id: z.string(),
+        content: z
+          .string()
+          .describe("The complete new content of the document (HTML or Markdown)."),
+        message: z.string().describe("What you changed and why — shown to the reviewer."),
+        filename: z
+          .string()
+          .optional()
+          .describe("Filename hint for the content type, e.g. index.html or notes.md."),
+      },
+    },
+    async ({ short_id, content, message, filename }) => {
+      const a = await own(short_id)
+      if (!a) return text(`No artifact "${short_id}" in this workspace.`)
+      if (agent.role === "viewer")
+        return text(
+          "Your grant is read-only (dock:read). Re-authorize with dock:propose to propose changes.",
+        )
+      if (a.kind === "bundle")
+        return text(
+          `"${short_id}" is a multi-page bundle; proposing bundle revisions over MCP isn't supported yet (single-file artifacts only).`,
+        )
+      try {
+        const { proposal } = await proposeChange(ctx.meta, ctx.blobs, short_id, {
+          bytes: new TextEncoder().encode(content),
+          filename: filename ?? "index.html",
+          isBundle: false,
+          message,
+          author: agent.name,
+          author_id: agent.id,
+        })
+        return json({
+          proposed: true,
+          proposal_id: proposal.id,
+          base_version: proposal.base_version,
+          note: "Submitted for review — a human approves it or requests changes. It is NOT live yet.",
+        })
+      } catch (e) {
+        const msg = e instanceof PublishError ? e.message : "could not store the proposal"
+        return text(`Propose failed: ${msg}`)
+      }
     },
   )
 
