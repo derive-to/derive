@@ -34,8 +34,10 @@ describe("sqlite store: user directory (Better Auth `user` table)", () => {
     const path = join(dir, "store.db")
     const s = new SqliteMetaStore(path)
     const raw = new Database(path)
+    // No column default: an unset `discoverable` is NULL, which search treats as
+    // discoverable (on by default), same as a pre-migration row.
     raw.exec(
-      `CREATE TABLE IF NOT EXISTS user (id TEXT PRIMARY KEY, email TEXT, name TEXT, image TEXT, username TEXT, discoverable INTEGER DEFAULT 0)`,
+      `CREATE TABLE IF NOT EXISTS user (id TEXT PRIMARY KEY, email TEXT, name TEXT, image TEXT, username TEXT, discoverable INTEGER)`,
     )
     raw.exec(`CREATE UNIQUE INDEX user_username ON user (username)`)
     const ins = raw.prepare(`INSERT INTO user (id, email, name) VALUES (?,?,?)`)
@@ -59,15 +61,16 @@ describe("sqlite store: user directory (Better Auth `user` table)", () => {
     await s.setUserImage("u1", "https://cdn/x.png")
     expect((await s.getUserByUsername("amy"))?.image).toBe("https://cdn/x.png")
 
-    // People search: only opted-in users; by handle or name; case-insensitive;
-    // empty query returns nothing; opting back out hides you again.
-    expect(await s.searchDiscoverableUsers("am", 10)).toEqual([]) // not discoverable yet
-    await s.setUserDiscoverable("u1", true)
+    // People search: on by default. amy (discoverable unset/NULL) is found right
+    // away; opting out hides her; opting back in shows her. Case-insensitive on
+    // handle or name; an empty query returns nothing.
     expect((await s.searchDiscoverableUsers("am", 10)).map((u) => u.username)).toEqual(["amy"])
     expect((await s.searchDiscoverableUsers("AMY", 10)).map((u) => u.id)).toEqual(["u1"])
-    expect(await s.searchDiscoverableUsers("", 10)).toEqual([])
     await s.setUserDiscoverable("u1", false)
-    expect(await s.searchDiscoverableUsers("am", 10)).toEqual([])
+    expect(await s.searchDiscoverableUsers("am", 10)).toEqual([]) // opted out
+    await s.setUserDiscoverable("u1", true)
+    expect((await s.searchDiscoverableUsers("am", 10)).map((u) => u.username)).toEqual(["amy"])
+    expect(await s.searchDiscoverableUsers("", 10)).toEqual([])
 
     s.close()
     rmSync(dir, { recursive: true, force: true })

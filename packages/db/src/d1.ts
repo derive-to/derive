@@ -171,8 +171,10 @@ export function createD1Store(d1: D1Database): MetaStore {
       try {
         const like = `%${s}%`
         return (await db.all(
+          // discoverable IS NOT 0 → true OR unset(null) both match (on by default);
+          // only an explicit 0 (opted out) is excluded.
           sql`SELECT id, name, image, username FROM user
-              WHERE discoverable = 1 AND username IS NOT NULL
+              WHERE discoverable IS NOT 0 AND username IS NOT NULL
                 AND (lower(username) LIKE ${like} OR lower(name) LIKE ${like})
               ORDER BY username LIMIT ${limit}`,
         )) as UserProfile[]

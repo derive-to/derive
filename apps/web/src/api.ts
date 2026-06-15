@@ -303,7 +303,8 @@ export const api = {
         name: s.user.name ?? null,
         username: s.user.username ?? null,
         image: s.user.image ?? null,
-        discoverable: !!s.user.discoverable,
+        // On by default: discoverable unless explicitly opted out.
+        discoverable: s.user.discoverable !== false,
         role: "member",
       },
     }

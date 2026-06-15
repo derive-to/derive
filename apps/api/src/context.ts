@@ -254,7 +254,8 @@ export function buildContext(deps: AppDeps) {
           email: su.email,
           name: su.name ?? null,
           username: su.username ?? null,
-          discoverable: !!su.discoverable,
+          // Discoverable unless explicitly opted out (on by default; unset = on).
+          discoverable: su.discoverable !== false,
         }
       : null
     userCache.set(c, u)
