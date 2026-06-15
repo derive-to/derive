@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react"
 import type { Comment, Mention } from "@/api"
+import { Icon } from "@/components/icons"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import {
@@ -120,10 +121,10 @@ export function MobileComments({
             testId="comments-sheet-resize"
             onClick={() => setSize(size === "peek" ? "half" : "peek")}
           >
-            {size === "peek" ? "▴" : "▾"}
+            <Icon name="caret" size={20} className={size === "peek" ? "rotate-180" : undefined} />
           </IconBtn>
           <IconBtn big title="Close comments" onClick={onClose}>
-            ✕
+            <Icon name="close" size={20} />
           </IconBtn>
         </div>
         {size !== "peek" && (

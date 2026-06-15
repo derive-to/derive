@@ -195,9 +195,9 @@ export function ArtifactComments(p: {
             aria-label="Dismiss selection"
             data-testid="mobile-comment-dismiss"
             onClick={() => p.setSel(null)}
-            className="grid size-9 shrink-0 place-items-center rounded-md text-lg text-muted-foreground transition-colors hover:bg-hover"
+            className="grid size-9 shrink-0 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-hover"
           >
-            ✕
+            <Icon name="close" size={20} />
           </button>
         </div>
       )}
