@@ -26,6 +26,6 @@
     "fflate": "^0.8.2"
   },
   "devDependencies": {
-    "vitest": "^4.1.8"
+    "vitest": "^4.1.9"
   }
 }
