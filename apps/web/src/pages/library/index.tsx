@@ -1,6 +1,6 @@
 import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query"
 import { useNavigate, useSearch } from "@tanstack/react-router"
-import { Plus, X } from "lucide-react"
+import { X } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
 import { toast } from "sonner"
 import { type Artifact, api } from "@/api"
@@ -8,24 +8,16 @@ import { Icon } from "@/components/icons"
 import { EmptyState } from "@/components/shared/empty-state"
 import { useShell } from "@/components/shell-context"
 import { Button } from "@/components/ui/button"
-import { Card } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
+import { useAuth } from "@/ctx"
 import { type LibraryParams, libraryArtifactsQuery } from "@/lib/queries"
 import { usePrefetchArtifact } from "@/lib/use-prefetch-artifact"
-import { cn } from "@/lib/utils"
 import { ArtifactGrid } from "./artifact-grid"
 import { CollectionBar } from "./collection-bar"
 import { LibrarySkeleton } from "./library-skeleton"
+import { PublishCard } from "./publish-card"
 import { ShareCollectionDialog } from "./share-collection-dialog"
 import type { Filter } from "./types"
-
-// General access (visibility) options for a new artifact, decreasing reach.
-const VISIBILITIES = [
-  { value: "public", label: "Public" },
-  { value: "link", label: "Anyone with link" },
-  { value: "org", label: "Workspace" },
-  { value: "password", label: "Password" },
-]
 
 // Route component for "/". The persistent AppShell (mounted once around the
 // router Outlet) owns the rail/pod and the auth gate, so this just renders the
@@ -38,18 +30,13 @@ export function Library() {
 function LibraryBody() {
   const nav = useNavigate()
   const search = useSearch({ from: "/" })
+  const { me } = useAuth()
   const { summary, collections, refreshSummary } = useShell()
   const prefetch = usePrefetchArtifact()
   const qc = useQueryClient()
-  const file = useRef<HTMLInputElement>(null)
   // The library is the scroll container; the virtualized grid windows against it.
   const scrollRef = useRef<HTMLDivElement>(null)
 
-  const [busy, setBusy] = useState(false)
-  const [dragging, setDragging] = useState(false)
-  // General access for the next publish; a password when "Password" is chosen.
-  const [vis, setVis] = useState("link")
-  const [pw, setPw] = useState("")
   const [shareCol, setShareCol] = useState<(typeof collections)[number] | null>(null)
   const [query, setQuery] = useState(search.q ?? "")
   const [debouncedQ, setDebouncedQ] = useState((search.q ?? "").trim())
@@ -85,30 +72,6 @@ function LibraryBody() {
   const { data, isPending, isError, fetchNextPage, hasNextPage, isFetchingNextPage } =
     useInfiniteQuery(listQuery)
   const items = data?.pages.flatMap((p) => p.artifacts) ?? []
-
-  // One publish path, fed by either a drag-drop or the native picker. Carries the
-  // chosen visibility (+ password) so a "Password" publish is gated from the start.
-  const publishFile = async (f: File) => {
-    if (vis === "password" && !pw.trim()) {
-      toast.error("Enter a password for password-protected visibility.")
-      return
-    }
-    setBusy(true)
-    try {
-      const fields: Record<string, string> = {
-        title: f.name.replace(/\.[^.]+$/, ""),
-        visibility: vis,
-      }
-      if (vis === "password") fields.password = pw.trim()
-      const a = await api.publish(f, fields)
-      nav({ to: "/a/$ref", params: { ref: a.short_id } })
-    } catch (e) {
-      toast.error((e as Error).message)
-      setBusy(false)
-    }
-  }
-  // The "Publish" button opens the OS picker; choosing a file uploads immediately.
-  const pickFile = () => file.current?.click()
 
   // Star toggle is optimistic across every cached page; in the Favorites view an
   // un-star drops the card. Reconcile against the server on failure.
@@ -177,9 +140,33 @@ function LibraryBody() {
           ? "This collection is empty. Open an artifact and add it from its Collections menu."
           : "Nothing yet. Publish above, or run dock publish ./file."
 
+  // A personal header on the (otherwise bare) home view: lead with the user's
+  // first name, falling back to their handle. Only on the unfiltered "all" list,
+  // not while searching or inside a filter/collection.
+  const firstName =
+    me?.name?.trim().split(/\s+/)[0] ||
+    (me?.username ? `@${me.username}` : me?.email?.split("@")[0]) ||
+    "there"
+  const totalCount = summary?.total ?? items.length
+  const showGreeting = filter.kind === "all" && !debouncedQ
+
   return (
     <div ref={scrollRef} className="flex-1 overflow-y-auto">
       <div className="mx-auto max-w-[1000px] px-5.5 pb-16 pt-5.5">
+        {showGreeting && (
+          <div className="mb-4" data-testid="library-greeting">
+            <h1 className="font-display text-2xl font-semibold text-foreground">
+              {totalCount === 0 ? `Welcome to Dock, ${firstName}.` : `Welcome back, ${firstName}.`}
+            </h1>
+            <p className="mt-0.5 text-sm text-muted-foreground">
+              Your artifacts live here. Publish one below, or run{" "}
+              <code className="rounded bg-muted px-1.5 py-px font-mono text-[0.86em]">
+                dock publish
+              </code>
+              .
+            </p>
+          </div>
+        )}
         <div className="mb-[18px] flex flex-wrap items-center gap-2.5">
           <Input
             placeholder="Search by title…"
@@ -212,87 +199,7 @@ function LibraryBody() {
           )}
         </div>
 
-        {filter.kind !== "collection" && (
-          // The whole card is the drop target; the button opens the picker. One
-          // affordance each — no stray native "Browse… no file selected" input.
-          <Card
-            className={cn(
-              "mb-5.5 flex flex-wrap items-center gap-3.5 border-dashed p-4 transition-colors",
-              dragging && "border-primary bg-primary/5",
-            )}
-            onDragOver={(e) => {
-              e.preventDefault()
-              if (!dragging) setDragging(true)
-            }}
-            onDragLeave={() => setDragging(false)}
-            onDrop={(e) => {
-              e.preventDefault()
-              setDragging(false)
-              const f = e.dataTransfer.files?.[0]
-              if (f) publishFile(f)
-            }}
-          >
-            <div className="min-w-[220px] flex-1">
-              <div className="font-display text-lg font-semibold">Publish an artifact</div>
-              <div className="text-sm text-muted-foreground">
-                Drop an HTML or Markdown file here, or run{" "}
-                <code className="rounded bg-muted px-1.5 py-px font-mono text-[0.86em]">
-                  dock publish
-                </code>
-                .
-              </div>
-            </div>
-            <input
-              ref={file}
-              type="file"
-              data-testid="library-file-input"
-              accept=".html,.htm,.md,.markdown,.zip"
-              className="hidden"
-              onChange={(e) => {
-                const f = e.target.files?.[0]
-                if (f) publishFile(f)
-              }}
-            />
-            <select
-              aria-label="Visibility"
-              data-testid="library-visibility"
-              value={vis}
-              onChange={(e) => setVis(e.target.value)}
-              className="rounded-md border border-input bg-card px-2 py-2 text-sm text-foreground outline-none transition-colors focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring"
-            >
-              {VISIBILITIES.map((v) => (
-                <option key={v.value} value={v.value}>
-                  {v.label}
-                </option>
-              ))}
-            </select>
-            {vis === "password" && (
-              <Input
-                type="password"
-                data-testid="library-visibility-password"
-                placeholder="Password"
-                aria-label="Password"
-                value={pw}
-                onChange={(e) => setPw(e.target.value)}
-                className="w-[150px]"
-              />
-            )}
-            <Button
-              variant="primary"
-              data-testid="library-publish"
-              onClick={pickFile}
-              disabled={busy}
-            >
-              {busy ? (
-                "Publishing…"
-              ) : (
-                <>
-                  <Plus /> Publish
-                </>
-              )}
-            </Button>
-          </Card>
-        )}
+        {filter.kind !== "collection" && <PublishCard />}
 
         {filter.kind === "collection" ? (
           <CollectionBar
