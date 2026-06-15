@@ -238,7 +238,11 @@ window.addEventListener("message",function(e){
   else if(d.type==="focus-anchor"){
     var ms=document.querySelectorAll('mark[data-dock-id="'+d.id+'"]');
     if(!ms.length)return;
-    ms[0].scrollIntoView({behavior:"smooth",block:"center"});
+    /* bias (0..1) places the highlight at that fraction of the viewport instead of
+       dead-center — phones pass ~0.28 so it lands above the comments sheet. */
+    if(typeof d.bias==="number"){var br=ms[0].getBoundingClientRect();
+      window.scrollTo({top:scrollTop()+br.top-window.innerHeight*d.bias,behavior:"smooth"})}
+    else ms[0].scrollIntoView({behavior:"smooth",block:"center"});
     for(var i=0;i<ms.length;i++){ms[i].classList.remove("dock-hl-flash");void ms[i].offsetWidth;ms[i].classList.add("dock-hl-flash")}
     setTimeout(reportScroll,360)}
 });

@@ -1,4 +1,4 @@
-import type { Dispatch, SetStateAction } from "react"
+import { type Dispatch, type SetStateAction, useRef } from "react"
 import type { Comment, Mention } from "@/api"
 import { Icon } from "@/components/icons"
 import { cn } from "@/lib/utils"
@@ -56,6 +56,12 @@ export function ArtifactComments(p: {
   startSelComment: () => void
 }) {
   const { isMobile, isAnon, panel, sel } = p
+  // Focus primer: tapping "Comment" focuses this synchronously, inside the tap
+  // gesture, so iOS raises the keyboard; the composer's autofocus then takes over
+  // and the keyboard stays up. (iOS won't open the keyboard for a focus that lands
+  // after the React commit, outside the gesture — that's why the box came up with
+  // no keyboard.)
+  const primer = useRef<HTMLTextAreaElement>(null)
   const newGeneral = () => {
     p.setComposer({ anchor: null, top: null })
     p.setActiveThread(null)
@@ -67,6 +73,17 @@ export function ArtifactComments(p: {
 
   return (
     <CommentScopeProvider value={{ shortId: p.shortId }}>
+      {isMobile && !isAnon && (
+        // Always mounted so the Comment tap can focus it synchronously (see `primer`).
+        // text-base (16px) avoids iOS's zoom-on-focus.
+        <textarea
+          ref={primer}
+          aria-hidden
+          tabIndex={-1}
+          data-testid="compose-primer"
+          className="pointer-events-none fixed bottom-0 left-0 -z-10 size-px resize-none border-0 bg-transparent p-0 text-lg opacity-0"
+        />
+      )}
       {!isMobile && !isAnon && (
         <aside
           className={cn(
@@ -183,6 +200,7 @@ export function ArtifactComments(p: {
             type="button"
             data-testid="mobile-comment-start"
             onClick={() => {
+              primer.current?.focus()
               p.setPanel("open")
               p.startSelComment()
             }}

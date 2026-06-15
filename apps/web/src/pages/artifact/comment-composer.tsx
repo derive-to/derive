@@ -194,7 +194,9 @@ export function MentionField({
   // The field's text is transparent; the highlight backdrop paints the same text
   // (with lit-up mentions) directly underneath, so a tag glows live as you type or
   // pick someone. Both share `textBox` exactly, or the highlight drifts off the caret.
-  const textBox = cn("px-2.5 py-1.5 pr-9 text-sm leading-relaxed", className)
+  // 16px on phones so iOS doesn't zoom the page when the field focuses; the usual
+  // 12.5px from md up. Backdrop + field share this, so the highlight stays aligned.
+  const textBox = cn("px-2.5 py-1.5 pr-9 text-lg leading-relaxed md:text-sm", className)
   const handlers = {
     ref,
     "data-testid": testId,
