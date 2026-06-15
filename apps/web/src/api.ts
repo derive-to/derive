@@ -2,7 +2,15 @@ export interface Me {
   id: string
   email: string
   name: string | null
+  /** Public handle; null until claimed at onboarding (Profiles & Accounts v1). */
+  username: string | null
   role: string
+}
+/** A public profile, by handle. Email is private and never returned here. */
+export interface PublicProfile {
+  username: string
+  name: string | null
+  image: string | null
 }
 export interface VersionSession {
   n: number
@@ -285,9 +293,22 @@ export const api = {
     )
     if (!s?.user) throw new Error("unauthenticated")
     return {
-      user: { id: s.user.id, email: s.user.email, name: s.user.name ?? null, role: "member" },
+      user: {
+        id: s.user.id,
+        email: s.user.email,
+        name: s.user.name ?? null,
+        username: s.user.username ?? null,
+        role: "member",
+      },
     }
   },
+  // Claim or change your handle (onboarding + rename). 409 when taken, 400 on a
+  // bad shape — both surface their message via ApiError.
+  setUsername: (username: string): Promise<{ username: string }> =>
+    f("/v1/me/username", opts({ username })).then(j),
+  // A public profile by handle (no email). Readable without a session.
+  profile: (handle: string): Promise<{ user: PublicProfile }> =>
+    f(`/v1/users/${encodeURIComponent(handle)}`, { credentials: "include" }).then(j),
   login: (email: string, password: string): Promise<unknown> =>
     f("/api/auth/sign-in/email", opts({ email, password })).then(authJson),
   signup: (email: string, password: string, name: string): Promise<unknown> =>

@@ -1,5 +1,5 @@
 import type { D1Database } from "@cloudflare/workers-types"
-import type { MetaStore, NewView, UserDir, ViewStats } from "@dock/core"
+import type { MetaStore, NewView, UserDir, UserProfile, ViewStats } from "@dock/core"
 import { sql } from "drizzle-orm"
 import { drizzle } from "drizzle-orm/d1"
 import { makeRepos, schema } from "./repos"
@@ -132,6 +132,31 @@ export function createD1Store(d1: D1Database): MetaStore {
         )) as UserDir[]
       } catch {
         return []
+      }
+    },
+    getUserByUsername: async (username: string): Promise<UserProfile | null> => {
+      try {
+        return (
+          ((await db.get(
+            sql`SELECT id, name, image, username FROM user WHERE username = ${username}`,
+          )) as UserProfile) ?? null
+        )
+      } catch {
+        return null
+      }
+    },
+    setUsername: async (userId: string, username: string): Promise<"ok" | "taken"> => {
+      // Handles are stored lowercased, so a plain equality check finds the holder.
+      const holder = (await db.get(sql`SELECT id FROM user WHERE username = ${username}`)) as
+        | { id: string }
+        | undefined
+      if (holder && holder.id !== userId) return "taken"
+      try {
+        await db.run(sql`UPDATE user SET username = ${username} WHERE id = ${userId}`)
+        return "ok"
+      } catch {
+        // Unique-index race: claimed between the check and the write.
+        return "taken"
       }
     },
   }

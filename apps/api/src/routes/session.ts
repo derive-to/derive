@@ -1,7 +1,9 @@
+import { normalizeUsername, usernameError } from "@dock/core"
 import { Hono } from "hono"
+import { z } from "zod"
 import type { AppContext } from "../context"
 import { safeEqual } from "../lib/crypto"
-import { fail } from "../lib/http"
+import { fail, readJson } from "../lib/http"
 
 /** Session identity + the workspace member/agent directory for the @mention picker. */
 export const sessionRoutes = (ctx: AppContext) => {
@@ -13,6 +15,34 @@ export const sessionRoutes = (ctx: AppContext) => {
     if (!u) return fail(c, 401, "unauthenticated")
     const role = await ensureMembership(await activeWorkspace(c), u.id) // provisions on first load
     return c.json({ user: { ...u, role }, multi: true })
+  })
+
+  // Claim or change your handle (Profiles & Accounts v1) — the prompt shown at
+  // onboarding, and re-runnable to rename later. Server-validated (shape +
+  // reserved words) and lowercased before storage; a clash with another account
+  // is a 409. Only the signed-in user can set their own (the anon-write lockdown
+  // already blocks unauthenticated POSTs).
+  app.post("/v1/me/username", async (c) => {
+    const u = await currentUser(c)
+    if (!u) return fail(c, 401, "unauthenticated")
+    const body = await readJson(c, z.object({ username: z.string() }))
+    if (body instanceof Response) return body
+    const username = normalizeUsername(body.username)
+    const err = usernameError(username)
+    if (err) return fail(c, 400, err)
+    const res = await meta.setUsername(u.id, username)
+    if (res === "taken") return fail(c, 409, "That username is taken.")
+    return c.json({ username })
+  })
+
+  // A public profile by handle — the GitHub-style discovery surface. Email is
+  // intentionally omitted (private); the handle, name, and avatar are public, so
+  // this is readable by anyone (the GET passes the anon lockdown).
+  app.get("/v1/users/:handle", async (c) => {
+    const handle = normalizeUsername(c.req.param("handle"))
+    const p = await meta.getUserByUsername(handle)
+    if (!p) return fail(c, 404, "no profile with that username")
+    return c.json({ user: { username: p.username, name: p.name, image: p.image } })
   })
 
   // Directory for the @mention picker — people AND agents, so an agent can be

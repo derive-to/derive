@@ -96,6 +96,16 @@ export function makeAuth(db: AuthDb, baseUrl: string, secret: string) {
     baseURL: baseUrl,
     secret,
     emailAndPassword: { enabled: true },
+    user: {
+      additionalFields: {
+        // The public handle (Profiles & Accounts v1). Claimed at onboarding via
+        // POST /v1/me/username, so it's server-controlled and never accepted
+        // straight from a sign-up payload (input:false). Unique so two accounts
+        // can't share one; nullable until claimed. Better Auth's migration adds
+        // the column + unique index, and getSession returns it on the user.
+        username: { type: "string", required: false, unique: true, input: false },
+      },
+    },
     socialProviders,
     trustedOrigins: trusted,
     plugins: [

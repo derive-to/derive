@@ -43,6 +43,7 @@ import type {
   Role,
   TakedownInput,
   UserDir,
+  UserProfile,
   VersionRecord,
   ViewStats,
   Visibility,
@@ -855,6 +856,30 @@ export class PgMetaStore implements MetaStore {
       return rows as UserDir[]
     } catch {
       return []
+    }
+  }
+  async getUserByUsername(username: string): Promise<UserProfile | null> {
+    try {
+      const { rows } = await this.pool.query(
+        `SELECT id, name, image, username FROM "user" WHERE username = $1`,
+        [username],
+      )
+      return (rows[0] as UserProfile) ?? null
+    } catch {
+      return null
+    }
+  }
+  async setUsername(userId: string, username: string): Promise<"ok" | "taken"> {
+    // Handles are stored lowercased, so a plain equality check finds the holder.
+    const { rows } = await this.pool.query(`SELECT id FROM "user" WHERE username = $1`, [username])
+    const holder = rows[0] as { id: string } | undefined
+    if (holder && holder.id !== userId) return "taken"
+    try {
+      await this.pool.query(`UPDATE "user" SET username = $1 WHERE id = $2`, [username, userId])
+      return "ok"
+    } catch {
+      // Unique-index race: claimed between the check and the write.
+      return "taken"
     }
   }
 

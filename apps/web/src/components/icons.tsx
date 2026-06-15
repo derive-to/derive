@@ -38,6 +38,7 @@ import {
   StarIcon,
   TagIcon,
   TrashIcon,
+  UserIcon,
   XIcon,
 } from "@phosphor-icons/react"
 import { cn } from "@/lib/utils"
@@ -57,6 +58,7 @@ const REG = {
   search: [MagnifyingGlassIcon, "text-muted-foreground"],
   settings: [GearIcon, "text-muted-foreground"],
   // pod / workspace
+  user: [UserIcon, "text-primary"],
   workspace: [BuildingsIcon, "text-primary"],
   squares: [SquaresFourIcon, "text-primary"],
   check: [CheckIcon, "text-primary"],

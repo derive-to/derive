@@ -43,6 +43,11 @@ export function UserPod({
     setOpen(false)
     nav({ to: "/settings" })
   }
+  const goProfile = () => {
+    if (!me.username) return
+    setOpen(false)
+    nav({ to: "/u/$handle", params: { handle: me.username } })
+  }
   const signOut = async () => {
     setOpen(false)
     await api.logout().catch(() => {})
@@ -90,10 +95,26 @@ export function UserPod({
           </Avatar>
           <span className="min-w-0">
             <span className="block truncate text-sm font-semibold">{me.name ?? me.email}</span>
-            <span className="block truncate text-2xs text-muted-foreground">{me.email}</span>
+            {/* Lead with the public handle, not the (private) email. */}
+            <span
+              className="block truncate text-2xs text-muted-foreground"
+              data-testid="user-handle"
+            >
+              {me.username ? `@${me.username}` : me.email}
+            </span>
           </span>
         </div>
         <div className="my-1 h-px bg-border-soft" />
+
+        {me.username && (
+          <>
+            <button type="button" data-testid="menu-profile" onClick={goProfile} className={ROW}>
+              <Icon name="user" size={16} />
+              <span className="truncate">View profile</span>
+            </button>
+            <div className="my-1 h-px bg-border-soft" />
+          </>
+        )}
 
         {multi ? (
           <>

@@ -1,4 +1,11 @@
-import type { MetaStore, NewVersion, UserDir, VersionRecord, ViewStats } from "@dock/core"
+import type {
+  MetaStore,
+  NewVersion,
+  UserDir,
+  UserProfile,
+  VersionRecord,
+  ViewStats,
+} from "@dock/core"
 import Database from "better-sqlite3"
 import { and, eq } from "drizzle-orm"
 import { drizzle } from "drizzle-orm/better-sqlite3"
@@ -208,6 +215,31 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
           .all(...ids) as UserDir[]
       } catch {
         return []
+      }
+    },
+    getUserByUsername: async (username): Promise<UserProfile | null> => {
+      try {
+        return (
+          (raw
+            .prepare(`SELECT id, name, image, username FROM user WHERE username = ?`)
+            .get(username) as UserProfile) ?? null
+        )
+      } catch {
+        return null
+      }
+    },
+    setUsername: async (userId, username): Promise<"ok" | "taken"> => {
+      // Handles are stored lowercased, so a plain equality check finds the holder.
+      const holder = raw.prepare(`SELECT id FROM user WHERE username = ?`).get(username) as
+        | { id: string }
+        | undefined
+      if (holder && holder.id !== userId) return "taken"
+      try {
+        raw.prepare(`UPDATE user SET username = ? WHERE id = ?`).run(username, userId)
+        return "ok"
+      } catch {
+        // Unique-index race: claimed between the check and the write.
+        return "taken"
       }
     },
 

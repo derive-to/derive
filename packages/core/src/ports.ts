@@ -308,6 +308,11 @@ export interface MetaStore {
   // ---- User directory (reads Better Auth's `user` table) ----------------
   findUserByEmail(email: string): Promise<UserDir | null>
   getUsers(ids: string[]): Promise<UserDir[]>
+  /** Resolve a public profile by its handle (username); null if unclaimed. */
+  getUserByUsername(username: string): Promise<UserProfile | null>
+  /** Claim or replace a user's handle. Returns "taken" when another account
+   *  already holds it (the unique index is the hard backstop on a race). */
+  setUsername(userId: string, username: string): Promise<"ok" | "taken">
 
   // ---- Notifications (in-app, one row per recipient) --------------------
   createNotification(n: NewNotification): Promise<void>
@@ -534,6 +539,15 @@ export interface UserDir {
   email: string
   name: string | null
   /** Profile picture URL (set by OAuth providers; null for password signups). */
+  image: string | null
+}
+
+/** A public profile, keyed by handle. Email is intentionally absent — it stays
+ *  private; the handle is the public identifier (Profiles & Accounts v1). */
+export interface UserProfile {
+  id: string
+  username: string
+  name: string | null
   image: string | null
 }
 

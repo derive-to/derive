@@ -11,6 +11,7 @@ import { NavRail } from "./nav-rail"
 import { Logo } from "./shared/logo"
 import { CenteredSpinner } from "./shared/spinner"
 import { ShellCtx, type ShellValue, type Summary, TopBarSlotCtx } from "./shell-context"
+import { UsernameOnboarding } from "./username-onboarding"
 
 // The ⌘K palette pulls in cmdk; it's only needed once the user opens it, so keep
 // it (and cmdk) out of the shared bundle every route pays for. Loads on first open.
@@ -45,10 +46,11 @@ export function AppShell({ children }: { children: ReactNode }) {
   // The top bar's right region; a page portals its actions here (see useTopBarSlot).
   const [topBarSlot, setTopBarSlot] = useState<HTMLElement | null>(null)
 
-  // Public artifact pages (/a/:ref) render for anonymous visitors too — read-only,
-  // with a sign-up CTA (the viral path). Every other route requires a session.
+  // Public pages render for anonymous visitors too: artifact pages (/a/:ref,
+  // read-only with a sign-up CTA — the viral path) and profiles (/u/:handle,
+  // GitHub-style shareable). Every other route requires a session.
   const pathname = useRouterState({ select: (s) => s.location.pathname })
-  const publicView = pathname.startsWith("/a/")
+  const publicView = pathname.startsWith("/a/") || pathname.startsWith("/u/")
 
   // Auth gate: bounce to /login on auth-only routes once we know there's no session.
   useEffect(() => {
@@ -185,9 +187,14 @@ export function AppShell({ children }: { children: ReactNode }) {
   )
 
   // Until the session resolves, hold the frame rather than flashing the rail
-  // (and the redirect above handles the signed-out case). Public artifact pages
-  // render for anon visitors, so don't gate those on a session.
+  // (and the redirect above handles the signed-out case). Public pages render for
+  // anon visitors, so don't gate those on a session.
   if (loading || (!me && !publicView)) return <CenteredSpinner />
+
+  // A signed-in user with no handle yet claims one before entering the app (new
+  // account, or an existing one from before usernames). Public views are exempt,
+  // so they can still read a shared artifact / profile while un-onboarded.
+  if (me && !me.username && !publicView) return <UsernameOnboarding />
 
   return (
     <ShellCtx.Provider value={value}>
