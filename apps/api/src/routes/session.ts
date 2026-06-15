@@ -1,7 +1,7 @@
-import { normalizeUsername, suggestUsername, usernameError } from "@dock/core"
+import { normalizeUsername, usernameError } from "@dock/core"
 import { Hono } from "hono"
 import { z } from "zod"
-import type { AppContext, SessionUser } from "../context"
+import type { AppContext } from "../context"
 import { safeEqual } from "../lib/crypto"
 import { fail, IMMUTABLE_CACHE, readJson, toBody } from "../lib/http"
 import { MAX_AVATAR_BYTES, sniffImageType } from "../lib/image"
@@ -12,32 +12,11 @@ export const sessionRoutes = (ctx: AppContext) => {
     ctx
   const app = new Hono()
 
-  // Everyone gets a handle (GitHub-style): if you don't have one yet, mint one from
-  // your email's local part on first load — `ada@x.com` → `ada`, with a numeric
-  // suffix on a clash (`ada-2`). Deterministic, so re-running lands on the same
-  // handle (a candidate already owned by you is a no-op success), which makes it
-  // idempotent and backfills accounts created before usernames existed. You can
-  // rename it afterward.
-  const ensureUsername = async (u: SessionUser): Promise<string | null> => {
-    if (u.username) return u.username
-    let base = suggestUsername(u.email)
-      .slice(0, 26)
-      .replace(/[-_]+$/, "")
-    if (!base || usernameError(base)) base = "user"
-    for (let i = 0; i < 60; i++) {
-      const candidate = i === 0 ? base : `${base}-${i + 1}`
-      if (usernameError(candidate)) continue
-      if ((await meta.setUsername(u.id, candidate)) === "ok") return candidate
-    }
-    return null
-  }
-
   app.get("/v1/me", async (c) => {
     const u = await currentUser(c)
     if (!u) return fail(c, 401, "unauthenticated")
     const role = await ensureMembership(await activeWorkspace(c), u.id) // provisions on first load
-    const username = u.username ?? (await ensureUsername(u))
-    return c.json({ user: { ...u, username, role }, multi: true })
+    return c.json({ user: { ...u, role }, multi: true })
   })
 
   // Claim or change your handle (Profiles & Accounts v1) — the prompt shown at
@@ -58,8 +37,8 @@ export const sessionRoutes = (ctx: AppContext) => {
     return c.json({ username })
   })
 
-  // Opt in/out of people search (on by default; you set your own). Pass false to
-  // hide yourself, true to opt back in.
+  // Opt in/out of people search. Off by default, so you're only findable by
+  // username if you choose to be (signed-in user sets their own).
   app.post("/v1/me/discoverable", async (c) => {
     const u = await currentUser(c)
     if (!u) return fail(c, 401, "unauthenticated")

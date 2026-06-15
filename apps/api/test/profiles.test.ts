@@ -197,23 +197,3 @@ describe("discoverability (on by default) + people search", () => {
     expect(doxMe.user.discoverable).toBe(false)
   })
 })
-
-describe("auto-assigned handle from email", () => {
-  // Neither has a handle; both emails start with "ada" → a clash to resolve.
-  const ax: TestUser = { id: "u_ax", email: "ada@x.com", name: "Ada" }
-  const ay: TestUser = { id: "u_ay", email: "ada@y.com", name: "Ada Y" }
-  const { app } = makeAuthedApp("auto-handle", [ax, ay])
-  const meHandle = async (email: string) =>
-    (await (await app.request("/v1/me", { headers: as(email) })).json()).user.username
-
-  it("mints a handle from the email local-part on first load, collision-safe + idempotent", async () => {
-    // First load assigns from the email's local part; the clash gets a -2 suffix.
-    expect(await meHandle("ada@x.com")).toBe("ada")
-    expect(await meHandle("ada@y.com")).toBe("ada-2")
-    // Idempotent — a second load returns the same handle, never a fresh one.
-    expect(await meHandle("ada@x.com")).toBe("ada")
-    expect(await meHandle("ada@y.com")).toBe("ada-2")
-    // It's a real, persisted, public handle.
-    expect((await (await app.request("/v1/users/ada")).json()).user.name).toBe("Ada")
-  })
-})
