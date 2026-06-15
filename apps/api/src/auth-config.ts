@@ -104,6 +104,10 @@ export function makeAuth(db: AuthDb, baseUrl: string, secret: string) {
         // can't share one; nullable until claimed. Better Auth's migration adds
         // the column + unique index, and getSession returns it on the user.
         username: { type: "string", required: false, unique: true, input: false },
+        // Opt-in discoverability: when true, the account shows up in people search
+        // (GET /v1/users/search). Off by default (input:false, server-set via
+        // POST /v1/me/discoverable), so you're only findable if you choose to be.
+        discoverable: { type: "boolean", required: false, defaultValue: false, input: false },
       },
     },
     socialProviders,

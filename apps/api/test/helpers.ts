@@ -49,7 +49,7 @@ const makePgStore = (name: string, users: TestUser[], team: Seat[]): TestStore =
         pgSchemas.add(schema)
       }
       await boot.query(
-        `CREATE TABLE IF NOT EXISTS ${schema}."user" (id text primary key, email text, name text, image text, username text)`,
+        `CREATE TABLE IF NOT EXISTS ${schema}."user" (id text primary key, email text, name text, image text, username text, discoverable boolean default false)`,
       )
       // Unique handle, mirroring Better Auth's additionalFields(username, unique).
       await boot.query(
@@ -57,8 +57,8 @@ const makePgStore = (name: string, users: TestUser[], team: Seat[]): TestStore =
       )
       for (const u of users)
         await boot.query(
-          `INSERT INTO ${schema}."user" (id, email, name, image, username) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (id) DO NOTHING`,
-          [u.id, u.email, u.name, u.image ?? null, u.username ?? null],
+          `INSERT INTO ${schema}."user" (id, email, name, image, username, discoverable) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (id) DO NOTHING`,
+          [u.id, u.email, u.name, u.image ?? null, u.username ?? null, u.discoverable ?? false],
         )
     } finally {
       await boot.end()
@@ -96,14 +96,15 @@ const makePgStore = (name: string, users: TestUser[], team: Seat[]): TestStore =
 const seedSqliteUsers = (path: string, users: TestUser[]): void => {
   const raw = new Database(path)
   raw.exec(
-    `CREATE TABLE IF NOT EXISTS user (id TEXT PRIMARY KEY, email TEXT, name TEXT, image TEXT, username TEXT)`,
+    `CREATE TABLE IF NOT EXISTS user (id TEXT PRIMARY KEY, email TEXT, name TEXT, image TEXT, username TEXT, discoverable INTEGER DEFAULT 0)`,
   )
   // Unique handle, mirroring Better Auth's additionalFields(username, unique).
   raw.exec(`CREATE UNIQUE INDEX IF NOT EXISTS user_username ON user (username)`)
   const ins = raw.prepare(
-    `INSERT OR IGNORE INTO user (id, email, name, image, username) VALUES (?,?,?,?,?)`,
+    `INSERT OR IGNORE INTO user (id, email, name, image, username, discoverable) VALUES (?,?,?,?,?,?)`,
   )
-  for (const u of users) ins.run(u.id, u.email, u.name, u.image ?? null, u.username ?? null)
+  for (const u of users)
+    ins.run(u.id, u.email, u.name, u.image ?? null, u.username ?? null, u.discoverable ? 1 : 0)
   raw.close()
 }
 
@@ -224,6 +225,7 @@ export type TestUser = {
   name: string | null
   image?: string | null
   username?: string | null
+  discoverable?: boolean
 }
 
 const fakeAuth = (users: TestUser[]): AppDeps["auth"] =>

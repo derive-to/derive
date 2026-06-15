@@ -162,6 +162,24 @@ export function createD1Store(d1: D1Database): MetaStore {
     setUserImage: async (userId: string, image: string): Promise<void> => {
       await db.run(sql`UPDATE user SET image = ${image} WHERE id = ${userId}`)
     },
+    setUserDiscoverable: async (userId: string, discoverable: boolean): Promise<void> => {
+      await db.run(sql`UPDATE user SET discoverable = ${discoverable ? 1 : 0} WHERE id = ${userId}`)
+    },
+    searchDiscoverableUsers: async (q: string, limit: number): Promise<UserProfile[]> => {
+      const s = q.trim().toLowerCase()
+      if (!s) return []
+      try {
+        const like = `%${s}%`
+        return (await db.all(
+          sql`SELECT id, name, image, username FROM user
+              WHERE discoverable = 1 AND username IS NOT NULL
+                AND (lower(username) LIKE ${like} OR lower(name) LIKE ${like})
+              ORDER BY username LIMIT ${limit}`,
+        )) as UserProfile[]
+      } catch {
+        return []
+      }
+    },
   }
 }
 

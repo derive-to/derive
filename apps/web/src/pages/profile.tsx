@@ -21,6 +21,19 @@ export function Profile() {
   const { me, setMe } = useAuth()
   const nav = useNavigate()
   const [editing, setEditing] = useState(false)
+  const [discoverable, setDiscoverable] = useState(!!me?.discoverable)
+
+  // Opt in/out of people search (optimistic; revert on failure).
+  const toggleDiscoverable = async () => {
+    const next = !discoverable
+    setDiscoverable(next)
+    try {
+      await api.setDiscoverable(next)
+      if (me) setMe({ ...me, discoverable: next })
+    } catch {
+      setDiscoverable(!next)
+    }
+  }
 
   const { data, isPending, isError } = useQuery({
     queryKey: ["profile", handle],
@@ -81,14 +94,26 @@ export function Profile() {
               />
             </div>
           ) : (
-            <Button
-              variant="outline"
-              size="sm"
-              data-testid="profile-edit"
-              onClick={() => setEditing(true)}
-            >
-              Change username
-            </Button>
+            <div className="flex flex-col items-center gap-3 pt-1">
+              <Button
+                variant="outline"
+                size="sm"
+                data-testid="profile-edit"
+                onClick={() => setEditing(true)}
+              >
+                Change username
+              </Button>
+              <label className="flex cursor-pointer items-center gap-2 text-sm text-muted-foreground">
+                <input
+                  type="checkbox"
+                  data-testid="profile-discoverable"
+                  checked={discoverable}
+                  onChange={toggleDiscoverable}
+                  className="size-4"
+                />
+                Let people find me by username in search
+              </label>
+            </div>
           ))}
       </Card>
     </div>

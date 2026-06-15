@@ -220,8 +220,10 @@ export function WorkspaceSection({ meId }: { meId: string }) {
           <div className="flex flex-wrap gap-2">
             <Input
               data-testid="member-email"
-              aria-label="Email of a Dock user"
-              placeholder="Email of a Dock user"
+              autoCapitalize="none"
+              autoCorrect="off"
+              aria-label="Username or email of a Dock user"
+              placeholder="@username or email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && addMember()}

@@ -315,6 +315,11 @@ export interface MetaStore {
   setUsername(userId: string, username: string): Promise<"ok" | "taken">
   /** Set a user's avatar URL (image column on Better Auth's user table). */
   setUserImage(userId: string, image: string): Promise<void>
+  /** Opt a user in/out of people search (discoverable column). */
+  setUserDiscoverable(userId: string, discoverable: boolean): Promise<void>
+  /** People search: opted-in (discoverable) profiles matching `q` on username or
+   *  name, capped to `limit`. Empty `q` returns nothing (no full enumeration). */
+  searchDiscoverableUsers(q: string, limit: number): Promise<UserProfile[]>
 
   // ---- Notifications (in-app, one row per recipient) --------------------
   createNotification(n: NewNotification): Promise<void>

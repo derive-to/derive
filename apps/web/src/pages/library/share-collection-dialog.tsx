@@ -75,10 +75,12 @@ export function ShareCollectionDialog({
 
         <form onSubmit={add} className="mb-3 flex gap-1.5">
           <Input
-            type="email"
+            type="text"
+            autoCapitalize="none"
+            autoCorrect="off"
             data-testid="collection-share-email"
-            placeholder="teammate@email.com"
-            aria-label="Email"
+            placeholder="@username or email"
+            aria-label="Username or email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             className="flex-1"

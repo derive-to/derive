@@ -3,6 +3,7 @@ import { Hono } from "hono"
 import { z } from "zod"
 import type { AppContext } from "../context"
 import { DEFAULT_WORKSPACE_NAME, fail, isWorkspaceRole, readJson } from "../lib/http"
+import { resolveUserRef } from "../lib/resolve-user"
 
 /** The workspace itself: name + members (Admin-managed), plus multi-workspace
  *  list / create / switch. A workspace always keeps at least one Admin. */
@@ -62,14 +63,18 @@ export const workspaceRoutes = (ctx: AppContext) => {
     if (!(await workspaceCan(c, "manage"))) return fail(c, 403, "forbidden")
     const b = await readJson(
       c,
-      z.object({
-        email: z.string().min(1, "an email is required"),
-        role: z.custom<Role>(isWorkspaceRole, "a valid role is required"),
-      }),
+      z
+        .object({
+          user: z.string().min(1).optional(),
+          email: z.string().min(1).optional(),
+          role: z.custom<Role>(isWorkspaceRole, "a valid role is required"),
+        })
+        .refine((v) => v.user || v.email, "a username or email is required"),
     )
     if (b instanceof Response) return b
-    const user = await meta.findUserByEmail(b.email.trim())
-    if (!user) return fail(c, 404, "no Dock user with that email")
+    const id = await resolveUserRef(meta, (b.user ?? b.email) as string)
+    const [user] = id ? await meta.getUsers([id]) : []
+    if (!user) return fail(c, 404, "no Dock user with that username or email")
     const org = await activeWorkspace(c)
     // This route both adds and re-roles, so it must honor the same last-Admin
     // guard as PATCH — otherwise an Admin could demote the sole Admin via PUT.
