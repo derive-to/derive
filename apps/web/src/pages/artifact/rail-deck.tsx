@@ -85,11 +85,14 @@ export function IconBtn({
   onClick,
   children,
   testId,
+  big,
 }: {
   title: string
   onClick: () => void
   children: React.ReactNode
   testId?: string
+  /** A bigger target + glyph for thumbs (the mobile sheet controls). */
+  big?: boolean
 }) {
   return (
     <button
@@ -98,7 +101,10 @@ export function IconBtn({
       title={title}
       aria-label={title}
       onClick={onClick}
-      className="grid size-[26px] place-items-center rounded-md text-muted-foreground transition-colors hover:bg-hover hover:text-foreground"
+      className={cn(
+        "grid place-items-center rounded-md text-muted-foreground transition-colors hover:bg-hover hover:text-foreground",
+        big ? "size-9 text-lg" : "size-[26px]",
+      )}
     >
       {children}
     </button>

@@ -188,14 +188,14 @@ export function ArtifactComments(p: {
             }}
             className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground"
           >
-            <Icon name="comments" size={15} /> Comment
+            <Icon name="comments" size={17} /> Comment
           </button>
           <button
             type="button"
             aria-label="Dismiss selection"
             data-testid="mobile-comment-dismiss"
             onClick={() => p.setSel(null)}
-            className="grid size-9 shrink-0 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-hover"
+            className="grid size-9 shrink-0 place-items-center rounded-md text-lg text-muted-foreground transition-colors hover:bg-hover"
           >
             ✕
           </button>

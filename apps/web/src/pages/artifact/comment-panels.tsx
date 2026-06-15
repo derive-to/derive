@@ -115,13 +115,14 @@ export function MobileComments({
             ＋ New
           </Button>
           <IconBtn
+            big
             title={size === "peek" ? "Expand" : "Collapse"}
             testId="comments-sheet-resize"
             onClick={() => setSize(size === "peek" ? "half" : "peek")}
           >
             {size === "peek" ? "▴" : "▾"}
           </IconBtn>
-          <IconBtn title="Close comments" onClick={onClose}>
+          <IconBtn big title="Close comments" onClick={onClose}>
             ✕
           </IconBtn>
         </div>
