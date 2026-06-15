@@ -61,7 +61,9 @@ export function makeAuth(db: AuthDb, baseUrl: string, secret: string) {
   // is narrowed; resource validation only runs at all when a client sends `resource`
   // (MCP clients do; dock login and the browser consent flow don't), so other flows
   // are untouched.
-  const mcpAudiences = [...new Set([baseUrl, origin, `${origin}/`, `${origin}/mcp`, `${origin}/mcp/`])]
+  const mcpAudiences = [
+    ...new Set([baseUrl, origin, `${origin}/`, `${origin}/mcp`, `${origin}/mcp/`]),
+  ]
 
   // Also trust a request whose Origin equals the origin it was actually served on
   // (its own Host). A same-origin request is never CSRF, so this is safe: a
