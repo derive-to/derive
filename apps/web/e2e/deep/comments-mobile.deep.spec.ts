@@ -50,3 +50,28 @@ test("the bottom bar dismisses without commenting", async ({ page }) => {
   await page.getByTestId("mobile-comment-dismiss").tap()
   await expect(page.getByTestId("mobile-comment-bar")).toHaveCount(0)
 })
+
+test("tapping out collapses the sheet to a peek bar, and it reopens", async ({ page }) => {
+  await signUp(page)
+  const shortId = await publishArtifact(page, "m.md", "# Doc\n\nA paragraph to comment on here.")
+  await page.goto(`/a/${shortId}`)
+  await page.waitForTimeout(2000)
+
+  // Comment on a paragraph and post, so the (full-height) sheet holds a card.
+  await page.frameLocator("iframe").getByText("A paragraph to comment").tap()
+  await page.getByTestId("mobile-comment-start").tap()
+  await page.getByTestId("composer-input").fill("First note.")
+  await page.getByTestId("composer-submit").tap()
+  await expect(page.getByText("First note.")).toBeVisible()
+
+  // Tap out (the dimmed strip above the full-height sheet) -> collapse to the peek
+  // bar: body gone, header bar stays, the resize control flips to Expand.
+  await page.getByTestId("comments-sheet-backdrop").tap({ position: { x: 180, y: 36 } })
+  await expect(page.getByText("First note.")).toHaveCount(0)
+  await expect(page.getByText("Comments", { exact: true })).toBeVisible()
+  await expect(page.getByTestId("comments-sheet-resize")).toHaveAttribute("title", "Expand")
+
+  // Tap the peek bar's expand control -> the list comes back.
+  await page.getByTestId("comments-sheet-resize").tap()
+  await expect(page.getByText("First note.")).toBeVisible()
+})

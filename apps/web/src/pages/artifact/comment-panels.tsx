@@ -45,19 +45,23 @@ export function MobileComments({
   onSubmitNew: (text: string, mentions?: Mention[]) => void
   onCancelNew: () => void
 }) {
-  // Half by default (document visible above). Reset to half each time it opens;
-  // a composer wants room, so expand to full automatically.
-  const [full, setFull] = useState(false)
+  // Three heights: peek (a slim bar you tap to reopen), half (document visible
+  // above), full. Reset to half on each open; a composer wants room so it expands
+  // to full; and tapping out (the full-height backdrop) collapses to the peek bar
+  // rather than closing outright, so comments stay one tap away.
+  const [size, setSize] = useState<"peek" | "half" | "full">("half")
   useEffect(() => {
-    if (open) setFull(false)
+    if (open) setSize("half")
   }, [open])
   useEffect(() => {
-    if (open && composer) setFull(true)
+    if (open && composer) setSize("full")
   }, [open, composer])
   const empty = openThreads.length === 0 && resolved.length === 0 && !composer
-  // Jumping to text: collapse to half so the highlight lands in the visible doc.
+  // The grip taps bigger; full wraps back to half. The chevron handles peek.
+  const grip = () => setSize((s) => (s === "peek" ? "half" : s === "half" ? "full" : "half"))
+  // Jumping to text: drop to half so the highlight lands in the visible doc.
   const jumpToText = (id: string) => {
-    setFull(false)
+    setSize("half")
     onJump(id)
   }
   return (
@@ -67,28 +71,29 @@ export function MobileComments({
       <button
         type="button"
         data-testid="comments-sheet-backdrop"
-        aria-label="Close comments"
-        tabIndex={open && full ? 0 : -1}
-        onClick={onClose}
+        aria-label="Collapse comments"
+        tabIndex={open && size === "full" ? 0 : -1}
+        onClick={() => setSize("peek")}
         className={cn(
           "fixed inset-0 z-[60] bg-black/35 transition-opacity",
-          open && full ? "opacity-100" : "pointer-events-none opacity-0",
+          open && size === "full" ? "opacity-100" : "pointer-events-none opacity-0",
         )}
       />
       <div
         className={cn(
           "fixed inset-x-0 bottom-0 z-[61] flex flex-col rounded-t-[18px] border-t border-border bg-card shadow-[0_-14px_44px_-18px_rgba(0,0,0,0.5)] transition-[transform,height] duration-[260ms]",
-          full ? "h-[88vh]" : "h-[50vh]",
+          size === "full" ? "h-[88vh]" : size === "peek" ? "h-[56px]" : "h-[50vh]",
           open ? "translate-y-0" : "translate-y-full",
         )}
         role="dialog"
         aria-label="Comments"
       >
-        {/* biome-ignore lint/a11y/useKeyWithClickEvents lint/a11y/noStaticElementInteractions: grip toggles height; ✕ closes. */}
+        {/* biome-ignore lint/a11y/useKeyWithClickEvents lint/a11y/noStaticElementInteractions: grip resizes the sheet; ✕ closes. */}
         <div
+          data-testid="comments-sheet-grip"
           className="mx-auto mb-1 mt-[9px] h-1 w-10 shrink-0 cursor-grab rounded-full bg-border"
-          onClick={() => setFull((f) => !f)}
-          title={full ? "Collapse" : "Expand"}
+          onClick={grip}
+          title="Resize"
         />
         <div className="flex items-center gap-2 border-b border-border-soft pb-2.5 pl-3.5 pr-2.5 pt-1">
           <b className="text-base">Comments</b>
@@ -103,71 +108,77 @@ export function MobileComments({
             size="sm"
             data-testid="comments-sheet-new"
             onClick={() => {
-              setFull(true)
+              setSize("full")
               onNewGeneral()
             }}
           >
             ＋ New
           </Button>
-          <IconBtn title={full ? "Collapse" : "Expand"} onClick={() => setFull((f) => !f)}>
-            {full ? "▾" : "▴"}
+          <IconBtn
+            title={size === "peek" ? "Expand" : "Collapse"}
+            testId="comments-sheet-resize"
+            onClick={() => setSize(size === "peek" ? "half" : "peek")}
+          >
+            {size === "peek" ? "▴" : "▾"}
           </IconBtn>
           <IconBtn title="Close comments" onClick={onClose}>
             ✕
           </IconBtn>
         </div>
-        <div className="min-h-0 flex-1 overflow-auto p-3 pb-[max(14px,env(safe-area-inset-bottom))]">
-          {composer && (
-            <div className="mb-3">
-              <Composer
-                quote={composer.anchor?.exact ?? null}
-                onSubmit={onSubmitNew}
-                onCancel={onCancelNew}
-              />
-            </div>
-          )}
-          {empty && (
-            <div className="grid place-items-center gap-2 p-[34px] text-center">
-              <div className="text-3xl opacity-50">💬</div>
-              <div className="text-sm leading-relaxed text-muted-foreground">
-                No comments yet.
-                <br />
-                Select text in the document to start one.
-              </div>
-            </div>
-          )}
-          {openThreads.map((t) => {
-            const head = t[0]
-            if (!head) return null
-            return (
-              <div key={head.thread_id} className="mb-2.5">
-                <CommentCard
-                  thread={t}
-                  active={activeThread === head.thread_id}
-                  hovered={false}
-                  present={inDoc[head.thread_id]}
-                  onActivate={onActivate}
-                  onHover={() => {}}
-                  onResolve={onResolve}
-                  onReply={onReply}
-                  onJump={jumpToText}
+        {size !== "peek" && (
+          <div className="min-h-0 flex-1 overflow-auto p-3 pb-[max(14px,env(safe-area-inset-bottom))]">
+            {composer && (
+              <div className="mb-3">
+                <Composer
+                  quote={composer.anchor?.exact ?? null}
+                  onSubmit={onSubmitNew}
+                  onCancel={onCancelNew}
                 />
               </div>
-            )
-          })}
-          {resolved.length > 0 && (
-            <ResolvedSection
-              threads={resolved}
-              activeThread={activeThread}
-              hoverThread={null}
-              onActivate={onActivate}
-              onHover={() => {}}
-              onResolve={onResolve}
-              onReply={onReply}
-              onJump={jumpToText}
-            />
-          )}
-        </div>
+            )}
+            {empty && (
+              <div className="grid place-items-center gap-2 p-[34px] text-center">
+                <div className="text-3xl opacity-50">💬</div>
+                <div className="text-sm leading-relaxed text-muted-foreground">
+                  No comments yet.
+                  <br />
+                  Select text in the document to start one.
+                </div>
+              </div>
+            )}
+            {openThreads.map((t) => {
+              const head = t[0]
+              if (!head) return null
+              return (
+                <div key={head.thread_id} className="mb-2.5">
+                  <CommentCard
+                    thread={t}
+                    active={activeThread === head.thread_id}
+                    hovered={false}
+                    present={inDoc[head.thread_id]}
+                    onActivate={onActivate}
+                    onHover={() => {}}
+                    onResolve={onResolve}
+                    onReply={onReply}
+                    onJump={jumpToText}
+                  />
+                </div>
+              )
+            })}
+            {resolved.length > 0 && (
+              <ResolvedSection
+                threads={resolved}
+                activeThread={activeThread}
+                hoverThread={null}
+                onActivate={onActivate}
+                onHover={() => {}}
+                onResolve={onResolve}
+                onReply={onReply}
+                onJump={jumpToText}
+              />
+            )}
+          </div>
+        )}
       </div>
     </>
   )
