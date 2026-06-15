@@ -144,9 +144,9 @@ export const embedRoutes = (ctx: AppContext) => {
       if (!artifact || artifact.removed_at) return c.html(shell)
       return c.html(injectHead(shell, unfurlMetaTags(await infoFor(artifact))))
     })
-    // A copy-pasted share link with a trailing slash ("/a/slug-id/") would otherwise
-    // 404; canonicalize it to the no-slash form.
-    app.get("/a/:ref/", (c) => c.redirect(`/a/${c.req.param("ref")}`, 301))
+  // A copy-pasted share link with a trailing slash ("/a/slug-id/") would otherwise
+  // 404; canonicalize it to the no-slash form.
+  app.get("/a/:ref/", (c) => c.redirect(`/a/${c.req.param("ref")}`, 301))
 
   return app
 }
