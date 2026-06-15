@@ -12,6 +12,7 @@ import type {
   DeliveryStatus,
   DomainRecord,
   DomainStatus,
+  GeneralRole,
   ListArtifactsOpts,
   MembershipRecord,
   NewAgent,
@@ -235,10 +236,11 @@ export function makeRepos(db: SqliteDb) {
     artifactId: string,
     visibility: Visibility,
     passwordHash: string | null,
+    generalRole: GeneralRole,
   ): Promise<void> => {
     await db
       .update(artifact)
-      .set({ visibility, password_hash: passwordHash })
+      .set({ visibility, password_hash: passwordHash, general_role: generalRole })
       .where(eq(artifact.id, artifactId))
       .run()
   }

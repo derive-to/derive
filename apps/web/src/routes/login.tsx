@@ -20,6 +20,15 @@ export const Route = createFileRoute("/login")({
   validateSearch: (s: Record<string, unknown>): Record<string, string | boolean> => {
     const out: Record<string, string | boolean> = {}
     if (s.signup) out.signup = true
+    // Where to land after sign-in (e.g. the shared artifact whose "sign in to comment"
+    // CTA sent us here). Same-origin relative paths only — never `//host` or an absolute
+    // URL — so it can't be weaponized into an open redirect.
+    if (
+      typeof s.return_to === "string" &&
+      s.return_to.startsWith("/") &&
+      !s.return_to.startsWith("//")
+    )
+      out.return_to = s.return_to
     for (const k of OAUTH_KEYS) if (typeof s[k] === "string") out[k] = s[k] as string
     return out
   },

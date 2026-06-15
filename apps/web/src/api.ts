@@ -25,12 +25,17 @@ export interface VersionSession {
   created_at: string
 }
 export type Role = "viewer" | "commenter" | "editor" | "owner"
+/** What general access (the link) grants a reacher: view-only or comment. */
+export type GeneralRole = "viewer" | "commenter"
 export interface Artifact {
   short_id: string
   url: string
   title: string | null
   kind: "file" | "bundle"
   visibility: string
+  /** The role the general-access link grants (view vs comment). Anonymous reachers are
+   *  always clamped to view regardless; commenting requires signing in. */
+  general_role?: GeneralRole
   current_version: number
   versions: {
     n: number
@@ -384,18 +389,20 @@ export const api = {
   // cookie and subsequent reads of this artifact succeed.
   unlock: (id: string, password: string): Promise<{ ok: true }> =>
     f(`/v1/artifacts/${id}/unlock`, opts({ password })).then(j),
-  // Change general access (visibility) from the Share dialog. A password is
-  // required when enabling `password` visibility for the first time.
+  // Change general access from the Share dialog: visibility + the general-access role
+  // (view vs comment). A password is required when enabling `password` visibility for
+  // the first time. Anonymous reachers stay view-only regardless of generalRole.
   setVisibility: (
     id: string,
     visibility: string,
+    generalRole?: GeneralRole,
     password?: string,
-  ): Promise<{ visibility: string }> =>
+  ): Promise<{ visibility: string; general_role: GeneralRole }> =>
     f(`/v1/artifacts/${id}/visibility`, {
       method: "PATCH",
       credentials: "include",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ visibility, password }),
+      body: JSON.stringify({ visibility, generalRole, password }),
     }).then(j),
   diff: (id: string, from: number, to: number): Promise<Diff> =>
     f(`/v1/artifacts/${id}/diff?from=${from}&to=${to}&format=json`, opts()).then(j),

@@ -547,9 +547,11 @@ export function buildContext(deps: AppDeps) {
     return { kind: "user", userId: me.id, artifactRole, orgRole, unlocked }
   }
 
-  /** Authorize an action against a specific artifact. */
+  /** Authorize an action against a specific artifact. The artifact's general-access role
+   *  is threaded in so an authenticated link-reacher can earn `comment` while an anonymous
+   *  one stays clamped to view (see effectiveRole). */
   const authorize = (c: Context, action: Action, a: ArtifactRecord): Promise<boolean> =>
-    actorFor(c, a).then((actor) => can(actor, action, a.visibility))
+    actorFor(c, a).then((actor) => can(actor, action, a.visibility, a.general_role))
 
   /**
    * True when the caller is an anonymous visitor — they may view public content

@@ -2,7 +2,14 @@ import { useQueryClient } from "@tanstack/react-query"
 import { Lock, Share2, X } from "lucide-react"
 import { useState } from "react"
 import { toast } from "sonner"
-import { API_BASE, type ArtifactDomain, type ArtifactMember, api, type Role } from "@/api"
+import {
+  API_BASE,
+  type ArtifactDomain,
+  type ArtifactMember,
+  api,
+  type GeneralRole,
+  type Role,
+} from "@/api"
 import { EmptyState } from "@/components/shared/empty-state"
 import { RoleSelect } from "@/components/shared/role-select"
 import { Button } from "@/components/ui/button"
@@ -54,10 +61,12 @@ export function ShareButton({
   shortId,
   myRole,
   visibility,
+  generalRole,
 }: {
   shortId: string
   myRole?: Role | null
   visibility: string
+  generalRole?: GeneralRole
 }) {
   const qc = useQueryClient()
   const [members, setMembers] = useState<ArtifactMember[]>([])
@@ -66,8 +75,10 @@ export function ShareButton({
   const [role, setRole] = useState<Role>("editor")
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
-  // General access (visibility) draft + a password when enabling/changing password.
+  // General access draft: visibility + the link's permission (view vs comment), plus a
+  // password when enabling/changing password.
   const [vis, setVis] = useState(visibility)
+  const [genRole, setGenRole] = useState<GeneralRole>(generalRole ?? "viewer")
   const [pw, setPw] = useState("")
   const [savingVis, setSavingVis] = useState(false)
 
@@ -101,11 +112,14 @@ export function ShareButton({
     }
   }
 
+  // Reach visibilities (anyone with the link / public / password) carry a general-access
+  // permission; "workspace only" does not, so the view/comment control hides for it.
+  const reach = vis === "link" || vis === "public" || vis === "password"
   const saveVisibility = async () => {
     setSavingVis(true)
     setErr(null)
     try {
-      await api.setVisibility(shortId, vis, vis === "password" && pw ? pw : undefined)
+      await api.setVisibility(shortId, vis, genRole, vis === "password" && pw ? pw : undefined)
       setPw("")
       // Refresh the artifact (drives the toolbar/visibility) and the library.
       qc.invalidateQueries({ queryKey: ["artifact", shortId] })
@@ -118,7 +132,7 @@ export function ShareButton({
   }
   // Enabling password needs a password; an unchanged selection has nothing to save.
   const needsPw = vis === "password" && visibility !== "password" && !pw
-  const visUnchanged = vis === visibility && !pw
+  const visUnchanged = vis === visibility && genRole === (generalRole ?? "viewer") && !pw
 
   const load = () =>
     api
@@ -377,6 +391,18 @@ export function ShareButton({
                         </option>
                       ))}
                     </select>
+                    {reach && (
+                      <select
+                        aria-label="Link permission"
+                        data-testid="share-general-role"
+                        value={genRole}
+                        onChange={(e) => setGenRole(e.target.value as GeneralRole)}
+                        className="rounded-md border border-input bg-card px-2 py-2 text-sm text-foreground outline-none transition-colors focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring"
+                      >
+                        <option value="viewer">Can view</option>
+                        <option value="commenter">Can comment</option>
+                      </select>
+                    )}
                     <Button
                       data-testid="share-visibility-save"
                       variant="primary"
@@ -403,6 +429,7 @@ export function ShareButton({
                   )}
                   <p className="mt-1.5 font-mono text-2xs text-muted-foreground">
                     {ACCESS.find((a) => a.value === vis)?.blurb}
+                    {reach && genRole === "commenter" && " Signed-in visitors can comment."}
                   </p>
                 </>
               ) : (

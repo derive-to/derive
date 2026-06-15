@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { Composer, MentionField } from "./comment-composer"
 import { CommentRow } from "./comment-row"
+import { useCommentScope } from "./lib/comment-scope"
 import { anchorExact, COMPOSER_ID, layoutPins } from "./lib/layout"
 import type { PinItem, Sel } from "./types"
 
@@ -193,6 +194,7 @@ export function CommentCard({
   onReply: (text: string, threadId: string, mentions?: Mention[]) => void
   onJump: (id: string) => void
 }) {
+  const { canComment } = useCommentScope()
   const [reply, setReply] = useState("")
   const [replyMentions, setReplyMentions] = useState<Mention[]>([])
   const root = thread[0]
@@ -267,34 +269,36 @@ export function CommentCard({
               <CommentRow key={c.id} c={c} />
             ))}
           </div>
-          <div className="flex gap-1.5 border-t border-border-soft px-3 py-2">
-            {/* biome-ignore lint/a11y/noStaticElementInteractions: stopPropagation wrapper, not an interactive control */}
-            {/* biome-ignore lint/a11y/useKeyWithClickEvents: stopPropagation wrapper, not an interactive control */}
-            <div className="flex-1" onClick={(e) => e.stopPropagation()}>
-              <MentionField
-                testId="comment-reply-input"
-                value={reply}
-                onChange={setReply}
-                mentions={replyMentions}
-                onMentions={setReplyMentions}
-                onSubmit={sendReply}
-                placeholder="Reply… (@ to mention)"
-                autoFocus
-              />
+          {canComment && (
+            <div className="flex gap-1.5 border-t border-border-soft px-3 py-2">
+              {/* biome-ignore lint/a11y/noStaticElementInteractions: stopPropagation wrapper, not an interactive control */}
+              {/* biome-ignore lint/a11y/useKeyWithClickEvents: stopPropagation wrapper, not an interactive control */}
+              <div className="flex-1" onClick={(e) => e.stopPropagation()}>
+                <MentionField
+                  testId="comment-reply-input"
+                  value={reply}
+                  onChange={setReply}
+                  mentions={replyMentions}
+                  onMentions={setReplyMentions}
+                  onSubmit={sendReply}
+                  placeholder="Reply… (@ to mention)"
+                  autoFocus
+                />
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={!reply.trim()}
+                data-testid="comment-reply-send"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  sendReply(replyMentions.filter((m) => reply.includes(`@${m.name}`)))
+                }}
+              >
+                Reply
+              </Button>
             </div>
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={!reply.trim()}
-              data-testid="comment-reply-send"
-              onClick={(e) => {
-                e.stopPropagation()
-                sendReply(replyMentions.filter((m) => reply.includes(`@${m.name}`)))
-              }}
-            >
-              Reply
-            </Button>
-          </div>
+          )}
           <div className="flex items-center gap-1.5 bg-secondary px-3 py-1.5">
             <span
               className={cn(

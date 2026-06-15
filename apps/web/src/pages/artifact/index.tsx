@@ -22,6 +22,7 @@ import {
 } from "./artifact-states"
 import { ArtifactTopBar } from "./artifact-top-bar"
 import { ActionsCtx } from "./comment-actions"
+import { canCommentWithRole, shouldPromptSignInToComment } from "./lib/comment-access"
 import { groupThreads, parseAnchor } from "./lib/layout"
 import { parseRef } from "./parse-ref"
 import { PasswordGate } from "./password-gate"
@@ -236,6 +237,12 @@ export function Artifact() {
   // The API gates every one of those for anon (anonLocked); hiding them here keeps
   // the chrome honest so there's no dead/forbidden affordance to bump into.
   const isAnon = !me
+  // Commenting needs commenter+ (matches the API's `comment` gate). A signed-in viewer
+  // reading via a view-only link sees comments but gets no write affordance. An
+  // anonymous visitor never qualifies — on a comment-enabled link they get a "sign in
+  // to comment" prompt instead (auth is the gate; see the access matrix).
+  const canComment = canCommentWithRole(art.my_role)
+  const promptSignInToComment = shouldPromptSignInToComment(isAnon, art.general_role, !!art.removed)
 
   // Sort threads into pinned (anchored & present in this live doc), general
   // (unanchored or orphaned), and resolved. Pins drive both the margin cards
@@ -317,6 +324,7 @@ export function Artifact() {
                 shortId={shortId}
                 myRole={art.my_role}
                 visibility={art.visibility}
+                generalRole={art.general_role}
                 favorite={!!art.favorite}
                 tags={art.tags ?? []}
                 collections={art.collections ?? []}
@@ -455,12 +463,27 @@ export function Artifact() {
                   : "Show comments"}
               </button>
             )}
+            {/* Anonymous visitor on a comment-enabled link: commenting forces auth (anon
+                stays view-only). Offer sign-in, returning here afterward. */}
+            {promptSignInToComment && (
+              <button
+                type="button"
+                onClick={() => nav({ to: "/login", search: { return_to: `/a/${shortId}` } })}
+                title="Sign in to comment"
+                data-testid="sign-in-to-comment"
+                className="absolute bottom-[18px] right-[18px] flex h-11 items-center gap-2 rounded-full border border-border bg-card px-4 text-sm font-semibold text-foreground shadow-[var(--shadow)]"
+              >
+                <Icon name="comments" size={18} />
+                Sign in to comment
+              </button>
+            )}
           </div>
 
           <ArtifactComments
             shortId={shortId}
             isMobile={isMobile}
             isAnon={isAnon}
+            canComment={canComment}
             docLive={docLive}
             panel={panel}
             asideWidth={asideWidth}

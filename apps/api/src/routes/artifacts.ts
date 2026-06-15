@@ -278,7 +278,7 @@ export const artifactRoutes = (ctx: AppContext) => {
     // an anonymous probe can't learn anything (a non-member gets no access).
     const actor = await actorFor(c, artifact ?? ({ id: "", visibility: "org" } as ArtifactRecord))
     if (!artifact) return fail(c, 404, "not found")
-    if (!can(actor, "read", artifact.visibility))
+    if (!can(actor, "read", artifact.visibility, artifact.general_role))
       // A password artifact isn't hidden, it's lockable: tell the client to prompt
       // for the password (401) rather than claim it doesn't exist (404).
       return artifact.visibility === "password"
@@ -324,7 +324,7 @@ export const artifactRoutes = (ctx: AppContext) => {
     return c.json({
       ...toJson(deps.baseUrl, artifact, versions),
       sessions: groupSessions(versions, versionWindowMs),
-      my_role: effectiveRole(actor, artifact.visibility),
+      my_role: effectiveRole(actor, artifact.visibility, artifact.general_role),
       tags,
       favorite,
       collections,
@@ -339,21 +339,28 @@ export const artifactRoutes = (ctx: AppContext) => {
     })
   })
 
-  // Change general access (visibility) after publish — the Share dialog's
-  // "general access" control. Editors+ (share), per the GDocs model. Enabling
-  // `password` needs a password (or keeps the existing one); any other visibility
-  // clears the stored hash.
+  // Change general access (visibility + the general-access role) after publish — the
+  // Share dialog's "general access" control. Editors+ (share), per the GDocs model.
+  // `generalRole` is the floor the link grants a reacher (viewer = view-only, commenter =
+  // authenticated reachers may comment; anonymous stays view-only regardless). Enabling
+  // `password` needs a password (or keeps the existing one); any other visibility clears
+  // the stored hash.
   app.patch("/v1/artifacts/:shortId/visibility", async (c) => {
     const artifact = await meta.getByShortId(c.req.param("shortId"))
     if (!artifact) return fail(c, 404, "not found")
     if (!(await authorize(c, "share", artifact))) return fail(c, 403, "forbidden")
     const b = await readJson(
       c,
-      z.object({ visibility: z.string(), password: z.string().optional() }),
+      z.object({
+        visibility: z.string(),
+        password: z.string().optional(),
+        generalRole: z.enum(["viewer", "commenter"]).optional(),
+      }),
     )
     if (b instanceof Response) return b
     const visibility = visibilityOf(b.visibility)
     if (!visibility) return fail(c, 400, "invalid visibility")
+    const generalRole = b.generalRole ?? "viewer"
     let passwordHash: string | null = null
     if (visibility === "password") {
       if (b.password) passwordHash = hashPassword(b.password)
@@ -361,8 +368,8 @@ export const artifactRoutes = (ctx: AppContext) => {
         passwordHash = artifact.password_hash
       else return fail(c, 400, "a password is required for password visibility")
     }
-    await meta.setVisibility(artifact.id, visibility, passwordHash)
-    return c.json({ visibility })
+    await meta.setVisibility(artifact.id, visibility, passwordHash, generalRole)
+    return c.json({ visibility, general_role: generalRole })
   })
 
   // Unlock a `password` artifact: verify the password and drop a cookie whose

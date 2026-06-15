@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS artifact (
     title TEXT,
     visibility TEXT NOT NULL DEFAULT 'link',
     password_hash TEXT,
+    general_role TEXT NOT NULL DEFAULT 'viewer',
     kind TEXT NOT NULL,
     spa INTEGER NOT NULL DEFAULT 0,
     current_version INTEGER NOT NULL DEFAULT 0,

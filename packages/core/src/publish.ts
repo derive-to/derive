@@ -300,6 +300,7 @@ export const toJson = (baseUrl: string, a: ArtifactRecord, versions: VersionReco
   title: a.title,
   kind: a.kind,
   visibility: a.visibility,
+  general_role: a.general_role,
   spa: !!a.spa,
   current_version: a.current_version,
   created_at: a.created_at,

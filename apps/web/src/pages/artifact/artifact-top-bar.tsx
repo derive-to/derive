@@ -1,4 +1,4 @@
-import type { Role } from "@/api"
+import type { GeneralRole, Role } from "@/api"
 import { Icon } from "@/components/icons"
 import { ShareButton } from "@/components/ShareDialog"
 import { Button } from "@/components/ui/button"
@@ -21,6 +21,7 @@ export function ArtifactTopBar(props: {
   shortId: string
   myRole?: Role | null
   visibility: string
+  generalRole?: GeneralRole
   favorite: boolean
   tags: string[]
   collections: string[]
@@ -56,7 +57,12 @@ export function ArtifactTopBar(props: {
         inCollections={props.collections}
         onChange={props.onCollections}
       />
-      <ShareButton shortId={shortId} myRole={props.myRole} visibility={props.visibility} />
+      <ShareButton
+        shortId={shortId}
+        myRole={props.myRole}
+        visibility={props.visibility}
+        generalRole={props.generalRole}
+      />
       <ReportButton shortId={shortId} />
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
