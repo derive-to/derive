@@ -56,6 +56,24 @@ export interface InstallationToken {
   expiresAt: string
 }
 
+/**
+ * Fetch the App's own record (GET /app, App-JWT auth). Used to confirm a stored
+ * App still exists on GitHub — if it was deleted, this 404s, and the caller treats
+ * the stored credentials as stale so the UI can offer re-setup. Returns the live
+ * slug (it can drift if the App was renamed) so callers can self-heal it.
+ */
+export async function getAppInfo(
+  appId: string,
+  privateKeyPem: string,
+): Promise<{ slug: string; html_url: string }> {
+  const res = await fetch(`${API}/app`, {
+    headers: ghHeaders(`Bearer ${appJwt(appId, privateKeyPem)}`),
+  })
+  if (!res.ok) return raise(res, "reading the GitHub App")
+  const d = (await res.json()) as { slug?: string; html_url?: string }
+  return { slug: d.slug ?? "", html_url: d.html_url ?? "" }
+}
+
 // Per-isolate cache so a burst of syncs against one installation mints one token.
 // Re-minted 60s before expiry. Cleared implicitly when the isolate recycles.
 const tokenCache = new Map<string, InstallationToken>()

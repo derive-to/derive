@@ -5,7 +5,12 @@ import { z } from "zod"
 import type { AppContext } from "../context"
 import { decryptSecret, encryptSecret, signState, verifyState } from "../lib/crypto"
 import { GitHubError, parseRepo } from "../lib/github"
-import { installationToken, listInstallationRepos, verifyWebhookSignature } from "../lib/github-app"
+import {
+  getAppInfo,
+  installationToken,
+  listInstallationRepos,
+  verifyWebhookSignature,
+} from "../lib/github-app"
 import { fail, MAX_UPLOAD_BYTES, readJson } from "../lib/http"
 import { runSync } from "../lib/sync"
 import { log } from "../log"
@@ -69,6 +74,32 @@ export const syncRoutes = (ctx: AppContext) => {
     }
   }
 
+  // Is the stored App still live on GitHub? An App the owner deleted on GitHub
+  // leaves a stale row here, which would strand the UI on "Install" pointing at a
+  // dead slug with no way back. We verify against GitHub (GET /app) and cache the
+  // verdict ~5min per isolate so this isn't a per-request call. On success we also
+  // self-heal the slug if it drifted (the App was renamed). A network blip is
+  // treated as "live" (fail-open) so a transient error never hides a good App.
+  const appLiveCache = new Map<string, { ok: boolean; at: number }>()
+  const appIsLive = async (loaded: { app: GitHubAppRecord; pem: string }): Promise<boolean> => {
+    const cached = appLiveCache.get(loaded.app.app_id)
+    if (cached && Date.now() - cached.at < 5 * 60_000) return cached.ok
+    try {
+      const info = await getAppInfo(loaded.app.app_id, loaded.pem)
+      if (info.slug && info.slug !== loaded.app.slug)
+        await meta.setGithubApp({ ...loaded.app, slug: info.slug })
+      appLiveCache.set(loaded.app.app_id, { ok: true, at: Date.now() })
+      return true
+    } catch (err) {
+      // 404/401 → deleted or revoked: definitively dead. Anything else (network,
+      // 5xx) → keep trusting the stored App rather than hide a working setup.
+      const dead = err instanceof GitHubError && (err.status === 404 || err.status === 401)
+      if (!dead) return true
+      appLiveCache.set(loaded.app.app_id, { ok: false, at: Date.now() })
+      return false
+    }
+  }
+
   // The effective read token for a source: a freshly-minted installation token
   // (App path) or the decrypted PAT (BYO path). Null when neither applies (a
   // public repo synced without either).
@@ -101,12 +132,15 @@ export const syncRoutes = (ctx: AppContext) => {
       meta.listGithubInstallations(org),
       loadApp(),
     ])
+    // A configured App that GitHub no longer knows about (deleted) reports as
+    // unconfigured, so the UI shows "Set up" again instead of a dead Install link.
+    const live = loaded ? await appIsLive(loaded) : false
     return c.json({
       sources: sources.map(toJson),
-      // What the UI needs to pick its entry point: is an App set up (→ Connect
+      // What the UI needs to pick its entry point: is a live App set up (→ Connect
       // button + slug for the install link), and which installations this
       // workspace already has (→ jump straight to the repo picker).
-      app: loaded ? { configured: true, slug: loaded.app.slug } : { configured: false },
+      app: loaded && live ? { configured: true, slug: loaded.app.slug } : { configured: false },
       installations: installs.map((i) => ({
         installation_id: i.installation_id,
         account_login: i.account_login,

@@ -34,7 +34,7 @@ const API_EXACT = [
 // injected (crawlers don't run JS). The edge Worker must run first on these to
 // inject; the dev proxy and `isApiPath` deliberately ignore them (in dev the SPA
 // owns the page, and an unmatched one still falls back to the shell, never JSON).
-const SERVER_PAGE_PREFIXES = ["/a"] as const
+const SERVER_PAGE_PREFIXES = ["/a", "/settings/github"] as const
 
 /** Server-owned path tokens in declaration order (as the dev proxy lists them). */
 export const API_PATHS: readonly string[] = [...API_PREFIXES, ...API_EXACT]

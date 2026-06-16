@@ -57,9 +57,10 @@ ${STYLE}</head>
 ${body}</main></body></html>`
 
 /** The GitHub App manifest: what permissions/events/URLs the new App is born with.
- *  contents+metadata read-only (mirror docs, nothing more); push/installation
- *  events drive auto-sync and connection state. */
-const manifest = (baseUrl: string, host: string) => ({
+ *  contents+metadata read-only (mirror docs, nothing more); push drives auto-sync.
+ *  Exported so a test can lock the exact shape GitHub accepts (we regressed on
+ *  default_events, public, and setup_url during the live rollout). */
+export const buildManifest = (baseUrl: string, host: string) => ({
   name: `Dock · ${host}`,
   url: baseUrl,
   // Where GitHub sends the browser after the App is CREATED (manifest → code).
@@ -95,7 +96,7 @@ export function manifestFormHTML(props: { baseUrl: string; state: string }): str
     }
   })()
   const action = `https://github.com/settings/apps/new?state=${encodeURIComponent(props.state)}`
-  const manifestJson = JSON.stringify(manifest(baseUrl, host))
+  const manifestJson = JSON.stringify(buildManifest(baseUrl, host))
   return SHELL(
     "Set up GitHub App",
     "",

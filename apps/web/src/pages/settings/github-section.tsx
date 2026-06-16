@@ -180,6 +180,14 @@ function ConnectViaApp({
           {busy ? "Opening GitHub…" : "Install on GitHub"}
         </Button>
       </div>
+      <div className="border-t border-border pt-2">
+        <a
+          href="/settings/github/app/new"
+          className="text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+        >
+          Replace GitHub App
+        </a>
+      </div>
       {status.installations.length > 0 && (
         <div className="flex flex-wrap items-center gap-2 border-t border-border pt-3">
           <span className="text-xs text-muted-foreground">Already installed:</span>

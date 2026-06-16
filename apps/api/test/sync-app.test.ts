@@ -1,7 +1,15 @@
-import { createHmac } from "node:crypto"
-import { describe, expect, it } from "vitest"
-import { encryptSecret } from "../src/lib/crypto"
+import { createHmac, generateKeyPairSync } from "node:crypto"
+import { afterEach, describe, expect, it, vi } from "vitest"
+import { encryptSecret, signState } from "../src/lib/crypto"
 import { quotaApp, TEST_TOKEN } from "./helpers"
+
+// A real RSA key (PKCS#1, as GitHub's manifest returns) so appJwt/getAppInfo can
+// actually sign during the auto-heal check.
+const { privateKey: RSA_PEM } = generateKeyPairSync("rsa", {
+  modulusLength: 2048,
+  privateKeyEncoding: { type: "pkcs1", format: "pem" },
+  publicKeyEncoding: { type: "spki", format: "pem" },
+})
 
 const AUTH = { authorization: `Bearer ${TEST_TOKEN}` }
 
@@ -108,5 +116,75 @@ describe("github app status + install gating", () => {
       body: "{}",
     })
     expect(install.status).toBe(409)
+  })
+})
+
+// The post-install handshake: GitHub redirects the browser to our callback with
+// installation_id + the state we signed at the start. The binding to a workspace
+// comes from that signed state, never the session.
+describe("github app install callback", () => {
+  it("records the installation from signed state and redirects to the picker", async () => {
+    const { app, meta } = quotaApp("ghcb", { encryptionKey: KEY })
+    const state = signState({ org: "default", uid: "u1" }, KEY)
+    const res = await app.request(
+      `/v1/sync/github/callback?installation_id=991&state=${encodeURIComponent(state)}`,
+    )
+    expect(res.status).toBe(302)
+    const loc = res.headers.get("location") ?? ""
+    expect(loc).toContain("/settings?tab=github")
+    expect(loc).toContain("gh_install=991")
+    expect(await meta.getGithubInstallation("991")).toMatchObject({ org_id: "default" })
+  })
+
+  it("rejects a forged/expired state without recording anything", async () => {
+    const { app, meta } = quotaApp("ghcb2", { encryptionKey: KEY })
+    const res = await app.request("/v1/sync/github/callback?installation_id=992&state=bogus")
+    expect(res.status).toBe(302)
+    expect(res.headers.get("location") ?? "").toContain("gh_error=install_expired")
+    expect(await meta.getGithubInstallation("992")).toBeNull()
+  })
+})
+
+// Auto-heal: a configured App the owner deleted on GitHub must report as
+// unconfigured so the UI re-offers setup instead of a dead Install link.
+describe("github app auto-heal (GET /app verification)", () => {
+  afterEach(() => vi.unstubAllGlobals())
+  const seedLiveApp = (meta: ReturnType<typeof quotaApp>["meta"]) =>
+    meta.setGithubApp({
+      id: "default",
+      app_id: "55",
+      slug: "dock-test",
+      client_id: "x",
+      client_secret: encryptSecret("cs", KEY),
+      private_key: encryptSecret(RSA_PEM, KEY),
+      webhook_secret: encryptSecret(WHSEC, KEY),
+      created_at: "2026-06-15T00:00:00.000Z",
+    })
+  const stubGetApp = (status: number) =>
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string | URL) =>
+        String(url).endsWith("/app")
+          ? new Response(JSON.stringify({ slug: "dock-test", html_url: "x" }), { status })
+          : new Response("nf", { status: 404 }),
+      ),
+    )
+  const statusApp = async (app: ReturnType<typeof quotaApp>["app"]) =>
+    (await (await app.request("/v1/sync/github", { headers: AUTH })).json()) as {
+      app: { configured: boolean; slug?: string }
+    }
+
+  it("stays configured while GitHub still has the App", async () => {
+    const { app, meta } = quotaApp("ghheal", { encryptionKey: KEY })
+    await seedLiveApp(meta)
+    stubGetApp(200)
+    expect((await statusApp(app)).app).toEqual({ configured: true, slug: "dock-test" })
+  })
+
+  it("reports unconfigured once the App is deleted on GitHub (404)", async () => {
+    const { app, meta } = quotaApp("ghheal2", { encryptionKey: KEY })
+    await seedLiveApp(meta)
+    stubGetApp(404)
+    expect((await statusApp(app)).app).toEqual({ configured: false })
   })
 })
