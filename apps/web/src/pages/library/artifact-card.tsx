@@ -95,9 +95,9 @@ export function ArtifactCard({
         onMouseEnter={onPrefetch}
         onFocus={onPrefetch}
         aria-label={`Open ${a.title ?? a.short_id}`}
-        className="flex w-full flex-col gap-1.5 text-left outline-none after:absolute after:inset-0 after:z-[1] after:rounded-lg after:content-[''] focus-visible:after:outline-2 focus-visible:after:-outline-offset-2 focus-visible:after:outline-ring"
+        className="flex w-full min-w-0 flex-col gap-1.5 text-left outline-none after:absolute after:inset-0 after:z-[1] after:rounded-lg after:content-[''] focus-visible:after:outline-2 focus-visible:after:-outline-offset-2 focus-visible:after:outline-ring"
       >
-        <span className="font-display text-lg font-semibold text-foreground transition-colors group-hover:text-primary">
+        <span className="truncate font-display text-lg font-semibold text-foreground transition-colors group-hover:text-primary">
           {a.title ?? a.short_id}
         </span>
         <span className="flex items-center gap-2 font-mono text-xs text-muted-foreground">

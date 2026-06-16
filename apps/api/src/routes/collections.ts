@@ -16,19 +16,18 @@ import { resolveUserRef } from "../lib/resolve-user"
 /** Collections: shareable groups of artifacts. A member's role on a collection
  *  propagates to every artifact inside it (see collectionRolesForArtifact). */
 export const collectionRoutes = (ctx: AppContext) => {
-  const { meta, deps, bearer, currentUser, activeWorkspace, workspaceCan, authorize } = ctx
+  const {
+    meta,
+    deps,
+    bearer,
+    currentUser,
+    activeWorkspace,
+    workspaceCan,
+    authorize,
+    collectionRole,
+  } = ctx
   const app = new Hono()
 
-  // A user's role on a collection: the static token is owner; otherwise the
-  // creator/member role. Anonymous (no session) has no role — never elevated.
-  const collectionRole = async (c: Context, col: CollectionRecord): Promise<Role | null> => {
-    if (deps.token && safeEqual(bearer(c), deps.token)) return "owner"
-    const me = await currentUser(c)
-    if (!me) return null
-    if (col.created_by === me.id) return "owner"
-    const m = await meta.getCollectionMember(col.id, me.id)
-    return m?.role ?? null
-  }
   const canManageCollection = async (c: Context, col: CollectionRecord, action: Action) =>
     roleAllows((await collectionRole(c, col)) ?? "viewer", action)
 

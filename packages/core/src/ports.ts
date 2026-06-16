@@ -239,8 +239,9 @@ export interface MetaStore {
   removeArtifactMember(artifactId: string, userId: string): Promise<void>
 
   // ---- Favorites (per-user stars) + tags (browse metadata) ---------------
-  /** Artifact ids this user has starred. */
-  listUserFavoriteIds(userId: string): Promise<string[]>
+  /** Artifact ids this user has starred. With `orgId`, scoped to that workspace's
+   *  live (non-removed) artifacts — for the workspace-scoped favorites count. */
+  listUserFavoriteIds(userId: string, orgId?: string): Promise<string[]>
   setFavorite(artifactId: string, userId: string): Promise<void>
   removeFavorite(artifactId: string, userId: string): Promise<void>
   /** Tags per artifact, batched (no N+1). Missing ids map to no entry. */
