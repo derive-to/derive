@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { UsernameForm } from "@/components/username-form"
 import { useAuth } from "@/ctx"
+import { cn } from "@/lib/utils"
 
 // Set once the user finishes (or skips) onboarding, so the post-signup redirect
 // (app-shell.tsx) doesn't bounce them back here on every visit.
@@ -182,44 +183,41 @@ export function Welcome() {
 
         {/* 3 — Connect your tools (paste-into-an-agent) */}
         <Card className="mt-4 p-5">
-          <div className="text-2xs font-semibold uppercase tracking-wide text-muted-foreground">
-            Step 3 · Connect your tools
+          <div className="flex items-center justify-between gap-3">
+            <div className="text-2xs font-semibold uppercase tracking-wide text-muted-foreground">
+              Step 3 · Connect your tools
+            </div>
+            {/* Compact Dev mode switch — swaps the snippet in place for the run-it-
+                yourself path. Most people never touch it. */}
+            <label className="flex shrink-0 cursor-pointer items-center gap-1.5 text-2xs font-medium text-muted-foreground">
+              <span title="Self-hosting or running Dock locally">Dev mode</span>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={devMode}
+                aria-label="Dev mode (self-hosting)"
+                data-testid="welcome-dev-toggle"
+                onClick={() => setDevMode((v) => !v)}
+                className={cn(
+                  "flex h-[18px] w-8 items-center rounded-full p-[3px] transition-colors",
+                  devMode ? "justify-end bg-primary" : "justify-start bg-foreground/15",
+                )}
+              >
+                <span className="size-3 rounded-full bg-white shadow-sm" />
+              </button>
+            </label>
           </div>
           <p className="mb-3 mt-1 text-sm text-muted-foreground">
-            Paste this into Claude Code, Codex, ChatGPT, or any agent. It connects Dock so the agent
-            can publish, review, and revise for you — one line, then a quick browser sign-in.
+            {devMode
+              ? "Spin up your own Dock, then connect your agent to it. Paste this into Claude Code, Codex, or any agent."
+              : "Paste this into Claude Code, Codex, ChatGPT, or any agent — it connects Dock so the agent can publish, review, and revise for you."}
           </p>
 
-          {/* One block; Dev mode swaps it in place. Most people never touch the toggle —
-              they just copy the connect snippet. Dev mode is the run-it-yourself path. */}
           <PromptBlock
             key={devMode ? "dev" : "hosted"}
             text={devMode ? devText : hostedText}
             testid="welcome-prompt"
           />
-
-          <label className="mt-3 flex w-fit cursor-pointer items-center gap-2 text-2xs text-muted-foreground">
-            <button
-              type="button"
-              role="switch"
-              aria-checked={devMode}
-              data-testid="welcome-dev-toggle"
-              onClick={() => setDevMode((v) => !v)}
-              className={`relative h-5 w-9 shrink-0 rounded-full transition-colors ${
-                devMode ? "bg-primary" : "bg-input"
-              }`}
-            >
-              <span
-                className={`absolute top-0.5 size-4 rounded-full bg-white shadow-sm transition-transform ${
-                  devMode ? "translate-x-4" : "translate-x-0.5"
-                }`}
-              />
-            </button>
-            <span>
-              <span className="font-medium text-foreground">Dev mode</span> — self-hosting or running
-              Dock locally
-            </span>
-          </label>
         </Card>
 
         <div className="mt-6 flex items-center justify-between gap-3">
