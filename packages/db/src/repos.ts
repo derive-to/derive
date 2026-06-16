@@ -245,6 +245,10 @@ export function makeRepos(db: SqliteDb) {
       .run()
   }
 
+  const setLocked = async (artifactId: string, locked: 0 | 1): Promise<void> => {
+    await db.update(artifact).set({ locked }).where(eq(artifact.id, artifactId)).run()
+  }
+
   const getVersion = async (artifactId: string, n: number): Promise<VersionRecord | null> =>
     (await db
       .select()
@@ -267,7 +271,11 @@ export function makeRepos(db: SqliteDb) {
       .insert(version)
       .values({ ...v, artifact_id: artifactId, n })
       .run()
-    await db.update(artifact).set({ current_version: n }).where(eq(artifact.id, artifactId)).run()
+    await db
+      .update(artifact)
+      .set({ current_version: n, current_content_type: v.content_type })
+      .where(eq(artifact.id, artifactId))
+      .run()
     return (await getVersion(artifactId, n)) as VersionRecord
   }
 
@@ -1044,6 +1052,7 @@ export function makeRepos(db: SqliteDb) {
   return {
     createArtifact,
     setVisibility,
+    setLocked,
     getByShortId,
     getArtifactById,
     addVersion,

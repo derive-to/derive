@@ -5,23 +5,34 @@ and wires up a nav bar and present mode — no configuration needed.
 
 ---
 
-## Detection
+## What makes a deck
 
-A deck is an HTML artifact with `<section class="slide">` elements. Dock detects this
-pattern and overlays the deck nav bar. No special doctype, no extra attributes, no
-JavaScript required to trigger it.
+Dock labels an artifact a **Deck** — and overlays the nav bar + present mode — when its
+HTML speaks the `dock-deck` protocol (it posts its slide position to the host). Two
+ingredients:
+
+1. **Slide elements**, one per slide, each with a stable index:
+   `<section class="slide" data-dock-slide="0">`. Document order is the slide order.
+2. **The protocol**: your script posts `{ source: 'dock-deck', type: 'state', i, total }`
+   on every slide change and listens for the host's `next` / `prev` / `goto` commands
+   (below). Posting that message once is what flips the artifact to a Deck.
 
 ```html
-<section class="slide">
+<section class="slide" data-dock-slide="0">
   <h1>First slide</h1>
   <p>Content here.</p>
 </section>
 
-<section class="slide">
+<section class="slide" data-dock-slide="1">
   <h2>Second slide</h2>
   <p>More content.</p>
 </section>
 ```
+
+`data-dock-slide="N"` is each slide's stable identity — it's what keeps comments and
+cursors pinned to the right slide (see "Comments land on the right slide" below). Plain
+`<section class="slide">` still works (document order is used as the index); the explicit
+attribute is what keeps comments correct when slides are added, removed, or reordered.
 
 ---
 
@@ -112,11 +123,11 @@ document.addEventListener('click', function(e) {
 </head>
 <body>
 <main class="deck" id="deck">
-  <section class="slide">
+  <section class="slide" data-dock-slide="0">
     <h1>First slide</h1>
     <p>Opening line here.</p>
   </section>
-  <section class="slide">
+  <section class="slide" data-dock-slide="1">
     <h1>Second slide</h1>
     <p>Next idea here.</p>
   </section>
@@ -169,11 +180,27 @@ document.addEventListener('click', function(e) {
 
 ---
 
-## Commenting on decks
+## Comments land on the right slide
 
-Comments on a deck anchor to the text of whichever slide the text appears on.
-The same TextQuoteSelector mechanism applies — keep key phrases stable across revisions
-for comments to stay live.
+Reviewers comment on any slide, and Dock keeps each comment tied to its slide:
+
+- A comment made on slide 3 pins beside its text **only while slide 3 is showing**. On
+  other slides it waits in the comments drawer with a "Slide 3" badge; clicking it flips
+  the deck to slide 3 and opens the thread.
+- Live cursors are scoped per slide — you see a collaborator's cursor only while you're
+  both on the same slide.
+- If you republish and a commented phrase has moved to a different slide, the comment
+  follows its text to the new slide and is flagged "moved" so you can re-confirm it.
+
+This works because each comment is anchored to its slide's `data-dock-slide` index, then
+to the quoted text within that slide — so the same phrase on two slides never collides.
+Two things keep comments live across edits:
+
+- Give every slide a stable `data-dock-slide="N"` (don't renumber existing slides when
+  you insert one in the middle — append the new index instead).
+- Keep the commented phrases themselves stable; the anchor re-matches on the surrounding
+  text (a TextQuoteSelector), so small wording changes are fine but rewriting the
+  sentence orphans the thread.
 
 ---
 

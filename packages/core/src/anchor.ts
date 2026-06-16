@@ -6,6 +6,10 @@ export interface QuoteSelector {
   exact: string
   prefix?: string
   suffix?: string
+  /** Deck artifacts only: the 0-based slide the comment was made on. Undefined on
+   *  ordinary documents. Resolution scopes to this slide first, then falls back to
+   *  the whole document (so a comment survives text moving between slides). */
+  slide?: number
 }
 
 const CONTEXT = 24
@@ -46,7 +50,7 @@ export function reanchor(sel: QuoteSelector, text: string): Reanchor {
  * The frame has an opaque origin, so everything rides postMessage:
  *
  *  frame → host:  select            (user selected text — a quote selector + screen rect)
- *                 anchors-resolved  (which anchor ids matched this document)
+ *                 anchors-resolved  (which ids matched, and the slide each landed in)
  *                 anchor-rects      (doc-absolute top of every painted highlight)
  *                 scroll            (live scroll offset — cards track their text)
  *                 anchor-click      (user clicked a highlight)
@@ -55,6 +59,7 @@ export function reanchor(sel: QuoteSelector, text: string): Reanchor {
  *                 cursor-tap        (a click — peers ripple at this point)
  *                 cursor-leave      (pointer left / frame blurred — drop our cursor)
  *  host → frame:  anchors           (paint highlights for these anchors)
+ *                 remeasure         (re-report highlight rects — e.g. after a slide flip)
  *                 focus-anchor      (scroll to + flash one anchor)
  *                 emphasize         (lift one anchor's highlight — host card hover)
  *
@@ -145,8 +150,8 @@ st.textContent="mark.dock-hl{background:rgba(124,108,189,.20);color:inherit;bord
 "@keyframes dockflash{50%{background:rgba(124,108,189,.7)}}";
 (document.head||document.documentElement).appendChild(st);
 
-function textNodes(){
-  var w=document.createTreeWalker(document.body,NodeFilter.SHOW_TEXT,{acceptNode:function(n){
+function textNodes(root){
+  var w=document.createTreeWalker(root||document.body,NodeFilter.SHOW_TEXT,{acceptNode:function(n){
     var p=n.parentNode?n.parentNode.nodeName:"";
     return p==="SCRIPT"||p==="STYLE"||p==="NOSCRIPT"?NodeFilter.FILTER_REJECT:NodeFilter.FILTER_ACCEPT}});
   var out=[],n;while((n=w.nextNode()))out.push(n);return out}
@@ -160,9 +165,9 @@ function find(full,a){
   var pre=a.prefix||"",suf=a.suffix||"",ctx=pre+a.exact+suf;
   if(ctx!==a.exact){var i=full.indexOf(ctx);if(i>=0)return i+pre.length}
   return full.indexOf(a.exact)}
-/* wrap [s,e) of the concatenated text in marks; reverse order keeps offsets valid */
-function wrap(id,s,e){
-  var nodes=textNodes(),offs=[],full="";
+/* wrap [s,e) of root's concatenated text in marks; reverse order keeps offsets valid */
+function wrapIn(root,id,s,e){
+  var nodes=textNodes(root),offs=[],full="";
   for(var i=0;i<nodes.length;i++){offs.push(full.length);full+=nodes[i].nodeValue}
   var segs=[];
   for(var i=0;i<nodes.length;i++){
@@ -176,6 +181,23 @@ function wrap(id,s,e){
     var mk=document.createElement("mark");
     mk.setAttribute("data-dock-id",id);mk.className="dock-hl";mk.title="View comment";
     t.parentNode.insertBefore(mk,mid);mk.appendChild(mid)}}
+/* root's concatenated-text offset for an anchor (context match first, then exact) */
+function findIn(root,a){
+  var nodes=textNodes(root),full="";
+  for(var i=0;i<nodes.length;i++)full+=nodes[i].nodeValue;
+  return find(full,a)}
+/* deck slides, ordered: explicit [data-dock-slide] (sorted) else .slide in document
+   order. Empty on a non-deck artifact — then anchors resolve against the whole doc. */
+function slideEls(){
+  var ex=document.querySelectorAll("[data-dock-slide]");
+  if(ex.length)return [].slice.call(ex).sort(function(a,b){
+    return (+a.getAttribute("data-dock-slide"))-(+b.getAttribute("data-dock-slide"))});
+  return [].slice.call(document.querySelectorAll(".slide"))}
+/* which slide an already-painted anchor landed in (its mark's nearest slide ancestor) */
+function slideOf(id,slides){
+  var m=document.querySelector('mark[data-dock-id="'+id+'"]');
+  for(var s=m;s;s=s.parentElement){var k=slides.indexOf(s);if(k>=0)return k}
+  return null}
 
 /* doc-absolute top of each anchor's first highlight — the host pins cards to these */
 function reportRects(){
@@ -187,18 +209,24 @@ function reportRects(){
     docH:document.documentElement.scrollHeight})}
 function reportScroll(){post({type:"scroll",scrollY:scrollTop(),viewH:window.innerHeight,docH:document.documentElement.scrollHeight})}
 
+/* Resolve each anchor, scoping a deck comment to its recorded slide FIRST (so the
+   same phrase on two slides can't collide), then falling back to a whole-document
+   search if the text has moved off that slide. Reports, per id, whether it resolved
+   and which slide it actually landed in (null = outside any slide / non-deck). */
 function applyAnchors(anchors){
   clearMarks();
-  var res={};
+  var slides=slideEls(),resolved={},landed={};
   for(var k=0;k<anchors.length;k++){
-    var a=anchors[k];
-    /* recompute the text walk per anchor — earlier wraps split text nodes */
-    var nodes=textNodes(),full="";
-    for(var i=0;i<nodes.length;i++)full+=nodes[i].nodeValue;
-    var s=find(full,a);
-    res[a.id]=s>=0;
-    if(s>=0)wrap(a.id,s,s+a.exact.length)}
-  post({type:"anchors-resolved",resolved:res});
+    var a=anchors[k],placed=false,where=null;
+    if(a.slide!=null&&slides[a.slide]){
+      var s1=findIn(slides[a.slide],a);
+      if(s1>=0){wrapIn(slides[a.slide],a.id,s1,s1+a.exact.length);placed=true;where=a.slide}}
+    if(!placed){
+      var s2=findIn(document.body,a);
+      if(s2>=0){wrapIn(document.body,a.id,s2,s2+a.exact.length);placed=true;
+        where=slides.length?slideOf(a.id,slides):null}}
+    resolved[a.id]=placed;landed[a.id]=where}
+  post({type:"anchors-resolved",resolved:resolved,slides:landed});
   reportRects()}
 
 /* live scroll + resize, rAF-throttled so cards glide with the text */
@@ -235,6 +263,7 @@ window.addEventListener("message",function(e){
   var d=e.data;
   if(!d||d.source!=="dock-host")return;
   if(d.type==="anchors")applyAnchors(d.anchors||[]);
+  else if(d.type==="remeasure")reportRects();
   else if(d.type==="emphasize")setOn(d.id);
   else if(d.type==="scroll-by")window.scrollBy(0,d.dy||0);
   else if(d.type==="focus-anchor"){

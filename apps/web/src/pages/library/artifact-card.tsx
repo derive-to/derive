@@ -9,6 +9,15 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { cn } from "@/lib/utils"
 
+function artifactTypeLabel(a: Artifact): string {
+  if (a.kind === "bundle") return "Site"
+  const ct = a.current_content_type
+  if (ct === "text/x-dock-deck") return "Deck"
+  if (ct === "text/markdown") return "MD"
+  if (ct?.startsWith("text/html")) return "HTML"
+  return "Doc"
+}
+
 // One card in the library grid. Stretched-link pattern: the open button's
 // ::after covers the whole card so a click anywhere (thumbnail included) opens
 // it, while the star + tag chips sit above (z-20) and stay independently
@@ -93,7 +102,7 @@ export function ArtifactCard({
         </span>
         <span className="flex items-center gap-2 font-mono text-xs text-muted-foreground">
           <span className="rounded-[5px] border border-border-soft bg-secondary px-1.5 py-px">
-            {a.kind}
+            {artifactTypeLabel(a)}
           </span>
           <span>v{a.current_version}</span>
           {a.views !== undefined && a.views > 0 && (

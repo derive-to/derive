@@ -333,19 +333,19 @@ const starterSlides = (title) => `<!doctype html>
 </head>
 <body>
 <div class="deck">
-  <section class="slide on">
+  <section class="slide on" data-dock-slide="0">
     <h1>${title}</h1>
     <p class="lede">Pure-HTML slides. <kbd>→</kbd> / <kbd>Space</kbd> advance, <kbd>←</kbd> back, <kbd>F</kbd> fullscreen.</p>
   </section>
-  <section class="slide">
+  <section class="slide" data-dock-slide="1">
     <h2>One idea per slide</h2>
     <ul>
-      <li>Write each slide as a <code>&lt;section class="slide"&gt;</code>.</li>
+      <li>Write each slide as a <code>&lt;section class="slide" data-dock-slide="N"&gt;</code>.</li>
       <li>Publish with <code>dock publish</code>; reviewers comment on any slide.</li>
       <li>Every publish is a new version at the same URL.</li>
     </ul>
   </section>
-  <section class="slide">
+  <section class="slide" data-dock-slide="2">
     <h2>Make it yours</h2>
     <p class="lede">Edit the markup and styles. It's just HTML.</p>
   </section>

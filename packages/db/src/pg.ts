@@ -192,6 +192,10 @@ export class PgMetaStore implements MetaStore {
       .where(eq(artifact.id, artifactId))
   }
 
+  async setLocked(artifactId: string, locked: 0 | 1): Promise<void> {
+    await this.db.update(artifact).set({ locked }).where(eq(artifact.id, artifactId))
+  }
+
   async getByShortId(shortId: string): Promise<ArtifactRecord | null> {
     const rows = await this.db.select().from(artifact).where(eq(artifact.short_id, shortId))
     return rows[0] ?? null
@@ -211,7 +215,10 @@ export class PgMetaStore implements MetaStore {
       if (!cur[0]) throw new Error(`artifact not found: ${artifactId}`)
       const n = cur[0].cv + 1
       await tx.insert(version).values({ ...v, artifact_id: artifactId, n })
-      await tx.update(artifact).set({ current_version: n }).where(eq(artifact.id, artifactId))
+      await tx
+        .update(artifact)
+        .set({ current_version: n, current_content_type: v.content_type })
+        .where(eq(artifact.id, artifactId))
       const rows = await tx
         .select()
         .from(version)

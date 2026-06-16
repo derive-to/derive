@@ -57,6 +57,10 @@ export function ArtifactComments(p: {
   submitNew: (text: string, mentions?: Mention[]) => void
   jumpTo: (threadId: string) => void
   startSelComment: () => void
+  /** Deck artifacts: the slide being viewed, and where each thread's text resolved.
+   *  Used by comment cards to show a "Slide N" / "moved" badge. */
+  currentSlide?: number | null
+  landedSlides?: Record<string, number | null>
 }) {
   const { isMobile, isAnon, canComment, panel, sel } = p
   // Focus primer: tapping "Comment" focuses this synchronously, inside the tap
@@ -75,7 +79,14 @@ export function ArtifactComments(p: {
   }
 
   return (
-    <CommentScopeProvider value={{ shortId: p.shortId, canComment }}>
+    <CommentScopeProvider
+      value={{
+        shortId: p.shortId,
+        canComment,
+        currentSlide: p.currentSlide,
+        landedSlides: p.landedSlides,
+      }}
+    >
       {isMobile && canComment && (
         // Always mounted so the Comment tap can focus it synchronously (see `primer`).
         // text-base (16px) avoids iOS's zoom-on-focus.

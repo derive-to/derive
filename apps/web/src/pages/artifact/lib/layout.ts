@@ -54,11 +54,18 @@ export function layoutPins(
 
 export function parseAnchor(
   a: string | null,
-): { exact: string; prefix?: string; suffix?: string } | null {
+): { exact: string; prefix?: string; suffix?: string; slide?: number } | null {
   if (!a) return null
   try {
-    const s = JSON.parse(a) as { exact?: string; prefix?: string; suffix?: string }
-    return s.exact ? { exact: s.exact, prefix: s.prefix, suffix: s.suffix } : null
+    const s = JSON.parse(a) as {
+      exact?: string
+      prefix?: string
+      suffix?: string
+      slide?: number
+    }
+    return s.exact
+      ? { exact: s.exact, prefix: s.prefix, suffix: s.suffix, slide: s.slide }
+      : null
   } catch {
     return null
   }

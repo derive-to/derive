@@ -37,7 +37,11 @@ export interface ArtifactRecord {
   general_role: GeneralRole
   kind: ArtifactKind
   spa: 0 | 1
+  /** Locked: direct publishes are rejected; changes must go through a proposal. */
+  locked: 0 | 1
   current_version: number
+  /** Denormalized from the current version row — updated on every publish. */
+  current_content_type: string | null
   created_at: string
   /** A takedown tombstone: when set, the content is gone (410) but the record stays. */
   removed_at: string | null
@@ -112,6 +116,8 @@ export interface MetaStore {
     passwordHash: string | null,
     generalRole: GeneralRole,
   ): Promise<void>
+  /** Toggle the change-lock: when locked, direct publishes are rejected. */
+  setLocked(artifactId: string, locked: 0 | 1): Promise<void>
   getByShortId(shortId: string): Promise<ArtifactRecord | null>
   /** Load an artifact by its internal id (used by domain mode's host lookup). */
   getArtifactById(id: string): Promise<ArtifactRecord | null>

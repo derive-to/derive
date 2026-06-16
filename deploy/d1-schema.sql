@@ -14,7 +14,9 @@ CREATE TABLE IF NOT EXISTS artifact (
     general_role TEXT NOT NULL DEFAULT 'viewer',
     kind TEXT NOT NULL,
     spa INTEGER NOT NULL DEFAULT 0,
+    locked INTEGER NOT NULL DEFAULT 0,
     current_version INTEGER NOT NULL DEFAULT 0,
+    current_content_type TEXT,
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
     removed_at TEXT
   );

@@ -5,7 +5,7 @@ import { cn } from "@/lib/utils"
 import { Composer, MentionField } from "./comment-composer"
 import { CommentRow } from "./comment-row"
 import { useCommentScope } from "./lib/comment-scope"
-import { anchorExact, COMPOSER_ID, layoutPins } from "./lib/layout"
+import { anchorExact, COMPOSER_ID, layoutPins, parseAnchor } from "./lib/layout"
 import type { PinItem, Sel } from "./types"
 
 // Composer is consumed by comment-panels through this module; re-export so its
@@ -194,7 +194,7 @@ export function CommentCard({
   onReply: (text: string, threadId: string, mentions?: Mention[]) => void
   onJump: (id: string) => void
 }) {
-  const { canComment } = useCommentScope()
+  const { canComment, currentSlide, landedSlides } = useCommentScope()
   const [reply, setReply] = useState("")
   const [replyMentions, setReplyMentions] = useState<Mention[]>([])
   const root = thread[0]
@@ -211,6 +211,15 @@ export function CommentCard({
   const quote = anchorExact(root.anchor)
   const textPresent = present !== undefined ? present : root.anchored !== false
   const replies = thread.length - 1
+  // Deck context (from CommentScope): the slide this comment belongs to — where its
+  // text resolved (landed), else the slide it was written on — and whether the text
+  // has since moved to a different slide than it was anchored on.
+  const onDeck = currentSlide != null
+  const recordedSlide = parseAnchor(root.anchor)?.slide
+  const landedSlide = landedSlides?.[root.thread_id]
+  const slideNum = landedSlide != null ? landedSlide : recordedSlide
+  const slideMoved =
+    recordedSlide != null && landedSlide != null && landedSlide !== recordedSlide
 
   return (
     // biome-ignore lint/a11y/noStaticElementInteractions: click-to-activate convenience; the card's own buttons are keyboard-accessible
@@ -230,6 +239,25 @@ export function CommentCard({
         resolved && !active && "opacity-60",
       )}
     >
+      {onDeck && slideNum != null && (
+        <div className="flex items-center gap-1.5 px-2.5 pb-0.5 pt-1.5">
+          <span
+            data-testid={`comment-slide-${root.thread_id}`}
+            className="rounded-full bg-secondary px-1.5 py-px font-mono text-2xs font-medium text-muted-foreground"
+          >
+            Slide {slideNum + 1}
+          </span>
+          {slideMoved && (
+            <span
+              data-testid={`comment-moved-${root.thread_id}`}
+              title="The text this comment anchors to moved to a different slide since it was written"
+              className="rounded-full bg-secondary px-1.5 py-px font-mono text-2xs font-medium text-gold"
+            >
+              moved
+            </span>
+          )}
+        </div>
+      )}
       {quote &&
         (textPresent && !resolved ? (
           <button

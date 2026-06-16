@@ -161,6 +161,10 @@ export const artifactRoutes = (ctx: AppContext) => {
       // Edit it in the repo instead.
       if ((await meta.managedArtifactIds(existing.org_id)).includes(existing.id))
         return fail(c, 409, "managed by GitHub sync — edit this file in the repo")
+      // Locked: even an editor can't publish directly — changes go through review.
+      // The web client routes editors to "propose" when locked, so this is the
+      // backstop (and the answer for API/CLI callers).
+      if (existing.locked) return fail(c, 409, "artifact is locked — propose a change for review")
     } else if (!(await workspaceCan(c, "publish"))) {
       return fail(c, 403, "forbidden")
     }
@@ -370,6 +374,19 @@ export const artifactRoutes = (ctx: AppContext) => {
     }
     await meta.setVisibility(artifact.id, visibility, passwordHash, generalRole)
     return c.json({ visibility, general_role: generalRole })
+  })
+
+  // Lock / unlock an artifact. Any editor (publish rights) can flip it. While
+  // locked, direct publishes are rejected (handlePublish) so changes must go through
+  // the proposal → approval flow; the web UI routes editors to "propose".
+  app.patch("/v1/artifacts/:shortId/locked", async (c) => {
+    const artifact = await meta.getByShortId(c.req.param("shortId"))
+    if (!artifact) return fail(c, 404, "not found")
+    if (!(await authorize(c, "publish", artifact))) return fail(c, 403, "forbidden")
+    const b = await readJson(c, z.object({ locked: z.boolean() }))
+    if (b instanceof Response) return b
+    await meta.setLocked(artifact.id, b.locked ? 1 : 0)
+    return c.json({ locked: b.locked })
   })
 
   // Permanently delete an artifact and all its dependents (versions, comments,

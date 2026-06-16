@@ -30,9 +30,9 @@ export function useArtifactFrame(p: {
   shortId: string
   version: number | undefined
   hoverThread: string | null
-  onPointerMove: (x: number, y: number) => void
+  onPointerMove: (x: number, y: number, slide?: number) => void
   onPointerLeave: () => void
-  onTap: (x: number, y: number) => void
+  onTap: (x: number, y: number, slide?: number) => void
   setHoverThread: Dispatch<SetStateAction<string | null>>
   setActiveThread: Dispatch<SetStateAction<string | null>>
   setPanel: Dispatch<SetStateAction<Panel>>
@@ -44,6 +44,10 @@ export function useArtifactFrame(p: {
   const [frameReady, setFrameReady] = useState(0)
   const [sel, setSel] = useState<Selection>(null)
   const [inDoc, setInDoc] = useState<Record<string, boolean>>({})
+  // Per-thread: the slide its anchor actually resolved on (null = not in any slide,
+  // or non-deck). The frame reports this so a comment pins on the slide its text
+  // really lives on — even after a republish moved the text to a different slide.
+  const [landedSlides, setLandedSlides] = useState<Record<string, number | null>>({})
   const [anchorTops, setAnchorTops] = useState<Record<string, number>>({})
   const [scrollY, setScrollY] = useState(0)
   // The frame's own document height + visible height, reported alongside scroll.
@@ -53,6 +57,10 @@ export function useArtifactFrame(p: {
   const [viewH, setViewH] = useState(0)
   // Set when the artifact announces itself as a deck (dock-deck protocol).
   const [deck, setDeck] = useState<{ i: number; total: number } | null>(null)
+  // The deck position read inside the message handler (a stable closure that never
+  // re-subscribes), so selection-capture and cursor-tagging see the CURRENT slide
+  // rather than the stale value `deck` would be frozen at. Kept in sync below.
+  const deckRef = useRef<{ i: number; total: number } | null>(null)
 
   const post = useCallback((msg: Record<string, unknown>) => {
     frame.current?.contentWindow?.postMessage({ source: "dock-host", ...msg }, "*")
@@ -69,7 +77,9 @@ export function useArtifactFrame(p: {
       if (!d) return
       // A slide deck reporting its position (any HTML that speaks the protocol).
       if (d.source === "dock-deck" && d.type === "state") {
-        setDeck({ i: d.i ?? 0, total: d.total ?? 1 })
+        const next = { i: d.i ?? 0, total: d.total ?? 1 }
+        deckRef.current = next
+        setDeck(next)
         return
       }
       if (d.source !== "dock") return
@@ -78,8 +88,12 @@ export function useArtifactFrame(p: {
           const fr = frame.current?.getBoundingClientRect()
           const ft = fr?.top ?? 0
           const fl = fr?.left ?? 0
+          // On a deck, stamp the current slide onto the anchor so the comment is
+          // pinned to the slide it was made on. Captured here at selection time.
+          const cur = deckRef.current
+          const selector = cur ? { ...d.selector, slide: cur.i } : d.selector
           setSel({
-            selector: d.selector,
+            selector,
             top: d.rect.top,
             vTop: ft + d.rect.top,
             vBottom: ft + d.rect.bottom,
@@ -89,8 +103,12 @@ export function useArtifactFrame(p: {
             vRight: fl + (d.rect.right ?? d.rect.left ?? 0),
           })
         } else setSel(null)
-      } else if (d.type === "anchors-resolved") setInDoc(d.resolved ?? {})
-      else if (d.type === "anchor-rects") {
+      } else if (d.type === "anchors-resolved") {
+        setInDoc(d.resolved ?? {})
+        // Older clients omit `slides`; default to empty so the page falls back to
+        // each comment's recorded slide.
+        setLandedSlides(d.slides ?? {})
+      } else if (d.type === "anchor-rects") {
         setAnchorTops(d.tops ?? {})
         if (typeof d.scrollY === "number") setScrollY(d.scrollY)
         if (typeof d.docH === "number") setDocH(d.docH)
@@ -104,9 +122,9 @@ export function useArtifactFrame(p: {
         setActiveThread(d.id)
         setPanel((cur) => (cur === "open" ? cur : "open"))
       } else if (d.type === "cursor" && typeof d.x === "number" && typeof d.y === "number") {
-        onPointerMove(d.x, d.y)
+        onPointerMove(d.x, d.y, deckRef.current?.i)
       } else if (d.type === "cursor-tap" && typeof d.x === "number" && typeof d.y === "number") {
-        onTap(d.x, d.y)
+        onTap(d.x, d.y, deckRef.current?.i)
       } else if (d.type === "cursor-leave") {
         onPointerLeave()
       }
@@ -142,8 +160,16 @@ export function useArtifactFrame(p: {
   // biome-ignore lint/correctness/useExhaustiveDependencies: keyed to the artifact/version change, not to anything the callbacks read.
   useEffect(() => {
     setDeck(null)
+    deckRef.current = null
     setSel(null)
+    setLandedSlides({})
   }, [shortId, version])
+  // A slide flip toggles element visibility without a scroll or resize, so the
+  // frame won't re-measure on its own — ping it to re-report highlight rects so the
+  // now-visible slide's pins land at the right Y.
+  useEffect(() => {
+    if (deck) post({ type: "remeasure" })
+  }, [deck, post])
   // Arrow keys drive the deck from the host (when not typing in a field).
   useEffect(() => {
     if (!deck) return
@@ -167,7 +193,14 @@ export function useArtifactFrame(p: {
       .filter((head): head is Comment => head?.state === "open" || head?.state === "addressed")
       .map((head) => ({ id: head.thread_id, sel: parseAnchor(head.anchor) }))
       .filter((x): x is { id: string; sel: NonNullable<ReturnType<typeof parseAnchor>> } => !!x.sel)
-      .map((x) => ({ id: x.id, exact: x.sel.exact, prefix: x.sel.prefix, suffix: x.sel.suffix }))
+      .map((x) => ({
+        id: x.id,
+        exact: x.sel.exact,
+        prefix: x.sel.prefix,
+        suffix: x.sel.suffix,
+        // The frame scopes resolution to this slide first (deck artifacts only).
+        slide: x.sel.slide,
+      }))
     w.postMessage({ source: "dock-host", type: "anchors", anchors }, "*")
   }, [comments])
   // biome-ignore lint/correctness/useExhaustiveDependencies: frameReady is an intentional repaint trigger (re-send anchors when the iframe reloads).
@@ -187,6 +220,7 @@ export function useArtifactFrame(p: {
     sel,
     setSel,
     inDoc,
+    landedSlides,
     anchorTops,
     scrollY,
     docH,

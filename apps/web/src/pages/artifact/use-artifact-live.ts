@@ -81,6 +81,7 @@ export function useArtifactLive(opts: {
     onPointerLeave: cursors.onPointerLeave,
     onTap: cursors.onTap,
     setGeom: cursors.setGeom,
+    setViewSlide: cursors.setViewSlide,
     cursor: cursors.layer,
   }
 }
