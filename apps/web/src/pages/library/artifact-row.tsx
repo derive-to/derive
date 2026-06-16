@@ -33,7 +33,7 @@ export function ArtifactRow({
   onPrefetch?: () => void
 }) {
   const isOwner = a.my_role === "owner"
-  const updated = a.updated_at ?? a.versions[0]?.created_at
+  const updated = a.updated_at ?? a.created_at ?? a.versions[0]?.created_at
   const dir = a.source_path ? dirOf(a.source_path) : ""
   const tags = a.tags ?? []
 

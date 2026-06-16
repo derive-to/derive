@@ -43,9 +43,9 @@ export interface ArtifactRecord {
   /** Denormalized from the current version row — updated on every publish. */
   current_content_type: string | null
   created_at: string
-  /** Bumped on every new version (publish/sync); equals created_at until first revised.
-   *  Drives "most recently updated" ordering + the "updated X ago" label. */
-  updated_at: string
+  /** Set on every new version (publish/sync); null until first versioned (read it as
+   *  `updated_at ?? created_at`). Drives "most recently updated" sort + the label. */
+  updated_at: string | null
   /** A takedown tombstone: when set, the content is gone (410) but the record stays. */
   removed_at: string | null
   /** For a GitHub-synced artifact: its path within the repo (e.g. "docs/plans/foo.md").

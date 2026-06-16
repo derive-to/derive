@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS artifact (
   current_version INTEGER NOT NULL DEFAULT 0,
   current_content_type TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at TEXT,
   removed_at TEXT,
   source_path TEXT
 );

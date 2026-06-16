@@ -116,8 +116,10 @@ export function ArtifactCard({
           <span className="rounded-[5px] border border-border-soft bg-secondary px-1.5 py-px">
             {artifactTypeLabel(a)}
           </span>
-          {(a.updated_at ?? a.versions[0]?.created_at) && (
-            <span>updated {ago(a.updated_at ?? a.versions[0]?.created_at ?? "")}</span>
+          {(a.updated_at ?? a.created_at ?? a.versions[0]?.created_at) && (
+            <span>
+              updated {ago(a.updated_at ?? a.created_at ?? a.versions[0]?.created_at ?? "")}
+            </span>
           )}
           {a.views !== undefined && a.views > 0 && (
             <span className="ml-auto inline-flex items-center gap-1" title={`${a.views} viewers`}>

@@ -42,10 +42,11 @@ export const artifact = sqliteTable("artifact", {
   current_version: integer("current_version").notNull().default(0),
   current_content_type: text("current_content_type"),
   created_at: text("created_at").notNull().default(now),
-  // Bumped on every new version (publish/sync). Drives "most recently updated"
-  // ordering + the "updated X ago" label. Defaults to the create time, so a
-  // never-revised artifact reads created == updated.
-  updated_at: text("updated_at").notNull().default(now),
+  // Set on every new version (publish/sync); null until first versioned. Drives the
+  // "most recently updated" sort + the "updated X ago" label, coalescing to created_at
+  // when null. Nullable + no default so it adds cleanly via ALTER ADD COLUMN on
+  // existing DBs (SQLite forbids a non-constant default there).
+  updated_at: text("updated_at"),
   removed_at: text("removed_at"),
   source_path: text("source_path"),
 })

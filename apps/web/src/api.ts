@@ -79,8 +79,9 @@ export interface Artifact {
   source_path?: string | null
   /** First-published time. */
   created_at?: string
-  /** Last-updated time (bumped on each new version); drives recency sort + the label. */
-  updated_at?: string
+  /** Last-updated time (set on each new version; null until versioned). Read as
+   *  `updated_at ?? created_at`. Drives the recency sort + the "updated X" label. */
+  updated_at?: string | null
 }
 export interface Report {
   id: string
