@@ -2,14 +2,20 @@ import { useNavigate } from "@tanstack/react-router"
 import { Camera, Check, Copy } from "lucide-react"
 import { useMemo, useRef, useState } from "react"
 import { toast } from "sonner"
-import { api } from "@/api"
-import { ProfileFields } from "@/components/profile-fields"
+import { ApiError, api } from "@/api"
+import { PROFESSIONS } from "@/components/profile-fields"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
-import { UsernameForm } from "@/components/username-form"
+import { Input, Textarea } from "@/components/ui/input"
 import { useAuth } from "@/ctx"
+import { usernameError } from "@/lib/username"
 import { cn } from "@/lib/utils"
+import { selectClass } from "@/pages/settings/roles"
+
+const OTHER = "Other"
+const PRESET_VALUES = PROFESSIONS.map((p) => p.value)
+const presetFor = (p: string | null): string => (!p ? "" : PRESET_VALUES.includes(p) ? p : OTHER)
 
 // Set once the user finishes (or skips) onboarding, so the post-signup redirect
 // (app-shell.tsx) doesn't bounce them back here on every visit.
@@ -68,10 +74,8 @@ Please:
 Then you can publish, read review comments, and run the propose -> review -> revise loop over MCP.`
 
 export function Welcome() {
-  const { me, setMe } = useAuth()
+  const { me } = useAuth()
   const nav = useNavigate()
-  const fileRef = useRef<HTMLInputElement>(null)
-  const [uploading, setUploading] = useState(false)
   // Dev mode swaps the connect snippet for self-host / run-it-yourself instructions.
   const [devMode, setDevMode] = useState(false)
 
@@ -85,20 +89,6 @@ export function Welcome() {
   if (!me) return null
 
   const firstName = (me.name ?? me.username ?? me.email).split(/[@\s]/)[0]
-  const initials = (me.name ?? me.email).slice(0, 2).toUpperCase()
-
-  const pickPhoto = async (f: File | null) => {
-    if (!f) return
-    setUploading(true)
-    try {
-      const { image } = await api.uploadAvatar(f)
-      setMe({ ...me, image })
-    } catch {
-      /* non-blocking */
-    } finally {
-      setUploading(false)
-    }
-  }
 
   const finish = () => {
     markOnboarded()
@@ -118,74 +108,19 @@ export function Welcome() {
           </p>
         </div>
 
-        {/* 1 — Profile: photo + handle */}
+        {/* 1 — Profile: photo + handle + role + bio, one block, one save */}
         <Card className="p-5">
           <div className="text-2xs font-semibold uppercase tracking-wide text-muted-foreground">
-            Step 1 · You
+            Step 1 · Your profile
           </div>
-          <div className="mt-3 flex flex-wrap items-start gap-4">
-            <div className="flex flex-col items-center gap-1">
-              <button
-                type="button"
-                data-testid="welcome-avatar"
-                onClick={() => fileRef.current?.click()}
-                disabled={uploading}
-                className="group relative size-16 overflow-hidden rounded-full border border-dashed border-input transition-colors hover:border-primary disabled:opacity-60"
-                aria-label="Add a profile photo"
-              >
-                <Avatar className="size-full rounded-full">
-                  {me.image && <AvatarImage src={me.image} alt="Your avatar" />}
-                  <AvatarFallback className="rounded-full bg-card text-muted-foreground">
-                    {me.name ? (
-                      <span className="font-display text-xl font-semibold">{initials}</span>
-                    ) : (
-                      <Camera className="size-5" aria-hidden />
-                    )}
-                  </AvatarFallback>
-                </Avatar>
-              </button>
-              <span className="text-2xs text-muted-foreground">
-                {uploading ? "Uploading…" : me.image ? "Change" : "Add a photo"}
-              </span>
-              <input
-                ref={fileRef}
-                type="file"
-                accept="image/png,image/jpeg,image/gif,image/webp"
-                data-testid="welcome-avatar-input"
-                className="hidden"
-                onChange={(e) => pickPhoto(e.target.files?.[0] ?? null)}
-              />
-            </div>
-            <div className="min-w-[240px] flex-1">
-              <div className="mb-1 text-2xs font-medium text-muted-foreground">Username</div>
-              <UsernameForm
-                initial={me.username ?? ""}
-                submitLabel={me.username ? "Update username" : "Save username"}
-                onClaimed={(username) => setMe({ ...me, username })}
-              />
-              <p className="mt-2 text-2xs text-muted-foreground">
-                <span className="font-medium text-foreground">{me.email}</span> stays private.
-              </p>
-            </div>
-          </div>
+          <WelcomeProfile />
         </Card>
 
-        {/* 2 — Role + what you do */}
-        <Card className="mt-4 p-5">
-          <div className="text-2xs font-semibold uppercase tracking-wide text-muted-foreground">
-            Step 2 · Your role
-          </div>
-          <p className="mb-3 mt-1 text-sm text-muted-foreground">
-            So teammates and agents know who they're working with.
-          </p>
-          <ProfileFields />
-        </Card>
-
-        {/* 3 — Connect your tools (paste-into-an-agent) */}
+        {/* 2 — Connect your tools (paste-into-an-agent) */}
         <Card className="mt-4 p-5">
           <div className="flex items-center justify-between gap-3">
             <div className="text-2xs font-semibold uppercase tracking-wide text-muted-foreground">
-              Step 3 · Connect your tools
+              Step 2 · Connect your tools
             </div>
             {/* Compact Dev mode switch — swaps the snippet in place for the run-it-
                 yourself path. Most people never touch it. */}
@@ -232,6 +167,199 @@ export function Welcome() {
           <Button variant="primary" data-testid="welcome-continue" onClick={finish}>
             Continue to Dock
           </Button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// Profile photo (left) + handle, role, and a one-line bio (right), saved together
+// with a single button. Handle is validated client-side; the server stays
+// authoritative (409 on a clash). Empty role/bio just clears those fields.
+function WelcomeProfile() {
+  const { me, setMe } = useAuth()
+  const fileRef = useRef<HTMLInputElement>(null)
+  const [uploading, setUploading] = useState(false)
+  const [handle, setHandle] = useState(me?.username ?? "")
+  const [preset, setPreset] = useState(presetFor(me?.profession ?? null))
+  const [custom, setCustom] = useState(
+    me?.profession && presetFor(me.profession) === OTHER ? me.profession : "",
+  )
+  const [about, setAbout] = useState(me?.about ?? "")
+  const [saving, setSaving] = useState(false)
+  const [err, setErr] = useState("")
+  if (!me) return null
+
+  const initials = (me.name ?? me.email).slice(0, 2).toUpperCase()
+  const normalized = handle.trim().toLowerCase()
+  const handleErr = normalized ? usernameError(normalized) : null
+  const profession = preset === OTHER ? custom.trim() : preset
+
+  const pickPhoto = async (f: File | null) => {
+    if (!f) return
+    setUploading(true)
+    try {
+      const { image } = await api.uploadAvatar(f)
+      setMe({ ...me, image })
+    } catch {
+      /* non-blocking */
+    } finally {
+      setUploading(false)
+    }
+  }
+
+  const save = async () => {
+    if (handleErr) return
+    setSaving(true)
+    setErr("")
+    try {
+      let username = me.username
+      // Only claim when it actually changed (claiming your own handle is a no-op,
+      // but skipping avoids a needless round-trip).
+      if (normalized && normalized !== me.username) {
+        const r = await api.setUsername(normalized)
+        username = r.username
+      }
+      const res = await api.setProfile({ profession, about: about.trim() })
+      setMe({ ...me, username, profession: res.profession, about: res.about })
+      toast.success("Profile saved")
+    } catch (caught) {
+      setErr(caught instanceof ApiError ? caught.message : "Could not save your profile.")
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="mt-3 flex flex-wrap items-start gap-4">
+      {/* Avatar (left) */}
+      <div className="flex flex-col items-center gap-1">
+        <button
+          type="button"
+          data-testid="welcome-avatar"
+          onClick={() => fileRef.current?.click()}
+          disabled={uploading}
+          className="group relative size-16 overflow-hidden rounded-full border border-dashed border-input transition-colors hover:border-primary disabled:opacity-60"
+          aria-label="Add a profile photo"
+        >
+          <Avatar className="size-full rounded-full">
+            {me.image && <AvatarImage src={me.image} alt="Your avatar" />}
+            <AvatarFallback className="rounded-full bg-card text-muted-foreground">
+              {me.name ? (
+                <span className="font-display text-xl font-semibold">{initials}</span>
+              ) : (
+                <Camera className="size-5" aria-hidden />
+              )}
+            </AvatarFallback>
+          </Avatar>
+        </button>
+        <span className="text-2xs text-muted-foreground">
+          {uploading ? "Uploading…" : me.image ? "Change" : "Add a photo"}
+        </span>
+        <input
+          ref={fileRef}
+          type="file"
+          accept="image/png,image/jpeg,image/gif,image/webp"
+          data-testid="welcome-avatar-input"
+          className="hidden"
+          onChange={(e) => pickPhoto(e.target.files?.[0] ?? null)}
+        />
+      </div>
+
+      {/* Handle + role (one row), description (below), one save */}
+      <div className="min-w-[260px] flex-1">
+        <div className="flex flex-wrap gap-2">
+          <div className="min-w-[150px] flex-1">
+            <div className="mb-1 text-2xs font-medium text-muted-foreground">Username</div>
+            <div
+              className={cn(
+                "flex items-center rounded-md border border-input bg-card transition-colors",
+                "focus-within:border-primary focus-within:ring-2 focus-within:ring-accent",
+                handleErr && "border-destructive",
+              )}
+            >
+              <span className="select-none pl-3 text-sm font-medium text-muted-foreground">@</span>
+              <input
+                data-testid="welcome-username"
+                aria-label="Username"
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
+                value={handle}
+                onChange={(e) => {
+                  setHandle(e.target.value)
+                  setErr("")
+                }}
+                placeholder="yourname"
+                className="h-9 w-full rounded-md bg-transparent pl-1 pr-3 text-sm text-foreground outline-none placeholder:text-muted-foreground"
+              />
+            </div>
+          </div>
+          <div className="w-[150px]">
+            <div className="mb-1 text-2xs font-medium text-muted-foreground">Role</div>
+            <select
+              data-testid="welcome-role"
+              aria-label="Your role"
+              value={preset}
+              onChange={(e) => setPreset(e.target.value)}
+              className={`${selectClass} w-full`}
+            >
+              <option value="">Not set</option>
+              {PROFESSIONS.map((p) => (
+                <option key={p.value} value={p.value}>
+                  {p.value}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        {preset === OTHER && (
+          <Input
+            data-testid="welcome-role-other"
+            value={custom}
+            maxLength={40}
+            placeholder="e.g. Data, Sales, Ops…"
+            onChange={(e) => setCustom(e.target.value)}
+            className="mt-2"
+          />
+        )}
+
+        <div className="mt-2">
+          <div className="mb-1 text-2xs font-medium text-muted-foreground">What you do</div>
+          <Textarea
+            data-testid="welcome-about"
+            value={about}
+            maxLength={280}
+            rows={2}
+            placeholder="A line about what you work on, so teammates and agents know who you are."
+            onChange={(e) => setAbout(e.target.value)}
+          />
+        </div>
+
+        {(err || handleErr) && (
+          <p
+            role="alert"
+            data-testid="welcome-profile-error"
+            className="mt-1.5 text-xs text-destructive"
+          >
+            {err || handleErr}
+          </p>
+        )}
+
+        <div className="mt-3 flex items-center gap-3">
+          <Button
+            variant="primary"
+            size="sm"
+            data-testid="welcome-profile-save"
+            onClick={save}
+            disabled={saving || !!handleErr}
+          >
+            {saving ? "Saving…" : "Save profile"}
+          </Button>
+          <span className="text-2xs text-muted-foreground">
+            <span className="font-medium text-foreground">{me.email}</span> stays private.
+          </span>
         </div>
       </div>
     </div>
