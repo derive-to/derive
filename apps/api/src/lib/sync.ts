@@ -40,6 +40,9 @@ export interface SyncResult {
   /** Matching docs still needing work after this run (>0 when a batch hit maxFiles).
    *  The caller re-runs until it reaches 0 to finish a large repo across batches. */
   remaining: number
+  /** Removals withheld this run by the mass-removal safety guard (a suspect listing
+   *  that would have tombstoned too large a fraction of the tracked files). */
+  removalsSkipped?: number
 }
 
 /** Optional guards, mirroring the publish route: a per-file byte cap and a
@@ -51,6 +54,11 @@ export interface SyncLimits {
    *  work so a huge repo can't exceed the runtime's request/CPU budget — the rest
    *  carry forward and finish on the next run. Omitted ⇒ unbounded (Node/tests). */
   maxFiles?: number
+  /** Mass-removal circuit breaker. A run never tombstones more than `removalRatio`
+   *  of the tracked files once the count exceeds `removalFloor` — so a glitchy/empty
+   *  listing can't wipe a collection. Defaults: floor 10, ratio 0.5. */
+  removalFloor?: number
+  removalRatio?: number
 }
 
 const basename = (path: string): string => path.split("/").pop() || path
@@ -408,13 +416,38 @@ export async function runSync(
     // deleted), capped (we didn't process the whole repo this run), or consumed by
     // a rename. A path that became a bundle asset is NOT here (its standalone entry
     // was intentionally left out of `next` above, so it tombstones — correct).
-    if (!truncated && !capped)
-      for (const path in prev) {
-        const ent = prev[path]
-        if (!ent || next[path] || renamedAway.has(path)) continue
-        await meta.setArtifactRemoved(ent.artifact_id, now)
-        res.removed++
+    //
+    // SAFETY (mass-removal circuit breaker): a one-way mirror must never wipe a
+    // collection because a single listing came back wrong — a transient GitHub
+    // error, a misconfigured branch/glob, or a repo that momentarily lists few/no
+    // files (and isn't flagged `truncated`). If a run would tombstone a large
+    // FRACTION of everything we track, treat the listing as suspect: skip the
+    // removals, carry those entries forward (so they aren't dropped/re-created),
+    // and flag it. Re-running on a genuinely-smaller repo removes them gradually
+    // (each run can only ever remove up to the ratio), so nothing is permanently
+    // lost and a glitch can't nuke the workspace.
+    if (!truncated && !capped) {
+      const vanished = Object.keys(prev).filter((p) => prev[p] && !next[p] && !renamedAway.has(p))
+      const tracked = Object.keys(prev).length
+      // Allow small removals freely; above the floor, never remove more than the
+      // ratio of what we track in one run. Tunable via SyncLimits.
+      const floor = limits?.removalFloor ?? 10
+      const ratio = limits?.removalRatio ?? 0.5
+      const massRemoval = vanished.length > floor && vanished.length > tracked * ratio
+      if (massRemoval) {
+        // Suspect listing — keep the artifacts (no tombstone), carry them forward.
+        for (const path of vanished) {
+          const ent = prev[path]
+          if (ent) next[path] = ent
+        }
+        res.removalsSkipped = vanished.length
+      } else {
+        for (const path of vanished) {
+          await meta.setArtifactRemoved((prev[path] as SyncedFile).artifact_id, now)
+          res.removed++
+        }
       }
+    }
 
     // On a capped/truncated run, keep un-processed entries so they aren't dropped
     // (and re-created) — the next run continues from here.
@@ -440,6 +473,8 @@ export async function runSync(
         ? "ok (repo tree truncated; some files not listed)"
         : "ok"
     if (tooLarge.length) status += ` (${tooLarge.length} file(s) skipped: too large or over quota)`
+    if (res.removalsSkipped)
+      status += ` · ⚠ withheld ${res.removalsSkipped} removal(s): listing returned far fewer files than tracked (re-run to confirm)`
     await persist(status)
     // Still "mirroring" while batches remain; "done" once the repo is fully synced.
     await writeProgress(res.remaining > 0 ? "mirroring" : "done")
