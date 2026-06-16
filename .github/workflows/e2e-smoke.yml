@@ -1,24 +1,24 @@
 name: e2e smoke
 
 # The fast critical-path suite: one happy path per surface (sign up, publish →
-# comment → resolve, library, share, settings, theme, review) — runs in well
-# under two minutes.
+# comment → resolve, library, share, settings, theme, review).
 #
-# Runs on every PR (the pre-merge gate, so a broken critical path can't land),
-# on every push to main (the post-merge backstop), and on demand. Fast enough
-# (~2 min) that it gates a PR without slowing review.
+# NOT a PR gate yet — the suite still flakes under CI CPU contention (multi-context
+# owner+member specs starving on a small runner), so it must not block merges. It runs
+# POST-DEPLOY instead: `pnpm run deploy` triggers it on a successful deploy, and it can
+# be run on demand (workflow_dispatch). Re-add `pull_request:` once it's reliably green.
 on:
   workflow_dispatch:
-  pull_request:
-  push:
-    branches: [main]
 
 permissions:
   contents: read
 
 jobs:
   smoke:
-    runs-on: ubicloud-standard-2
+    # 4 vCPU + 2 workers: the review/share specs each drive two browser contexts
+    # (owner + member), so 4 workers on a 2-vCPU box oversubscribed the CPU and the UI
+    # didn't paint within the expect timeout — the toBeVisible() flakes. Right-size it.
+    runs-on: ubicloud-standard-4
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
       - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
@@ -33,7 +33,7 @@ jobs:
         run: pnpm --filter @dock/web exec playwright install --with-deps chromium
 
       - name: Smoke suite
-        run: pnpm --filter @dock/web test:e2e:smoke
+        run: pnpm --filter @dock/web test:e2e:smoke -- --workers=2
 
       - name: Upload Playwright report
         if: ${{ !cancelled() }}
