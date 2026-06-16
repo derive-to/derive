@@ -7,6 +7,7 @@ import { ProfileFields } from "@/components/profile-fields"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { UsernameForm } from "@/components/username-form"
 import { useAuth } from "@/ctx"
 
@@ -22,38 +23,62 @@ export const markOnboarded = () => {
   }
 }
 
-// The paste-into-an-agent setup prompt. Dock is itself a remote MCP server, so the
-// fastest on-ramp is to hand an agent (Claude Code, Codex, ChatGPT, …) one block of
-// text and let it wire MCP + the CLI. The server origin is injected live.
-const setupPrompt = (origin: string) =>
-  `Set up Dock for me in this project. Dock is a living-docs tool: it hosts pages/docs at permanent, versioned URLs with inline review comments, and it's itself a remote MCP server.
+// The public origin to hand an agent. A deployed Dock instance's own origin IS its
+// public URL, so that's what we embed — except in local dev (localhost), where we
+// fall back to a clearly-editable placeholder so nobody copies an unreachable URL.
+const PLACEHOLDER_URL = "https://your-dock-server.com"
+const publicUrlOf = (origin: string) =>
+  /localhost|127\.0\.0\.1|\[::1\]/.test(origin) ? PLACEHOLDER_URL : origin
 
-Dock server: ${origin}
-MCP endpoint: ${origin}/mcp  (remote, OAuth — the first call opens a browser consent; the scope I grant maps to my Dock role)
+// Hosted: Dock is already running (this instance, or any you point at). The fastest
+// on-ramp — Dock is itself a remote MCP server, so one line connects an agent and it
+// gets every Dock tool. No CLI needed for the publish/review loop.
+const hostedPrompt = (url: string) =>
+  `Connect me to Dock, a living-docs tool that hosts pages/docs at permanent, versioned URLs with inline review comments. Dock is a remote MCP server.
+
+Dock is running at: ${url}
 
 Please:
-1. Connect over MCP. In Claude Code run:
-     claude mcp add --transport http dock ${origin}/mcp
-   In another harness, add an HTTP/streamable MCP server named "dock" at ${origin}/mcp.
-2. Scaffold the project on-ramp (a Claude Code skill + .mcp.json) by running:
-     npx -y @dock/cli init
-   Set DOCK_SERVER=${origin}. (Until @dock/cli is published, run it from the Dock repo: node packages/cli/bin/dock.js init.)
-3. Verify by calling the "whoami" MCP tool, then "list_artifacts".
+1. Add it over MCP. In Claude Code run:
+     claude mcp add --transport http dock ${url}/mcp
+   In another harness, add an HTTP/streamable MCP server named "dock" at ${url}/mcp.
+   The first call opens a browser consent (OAuth); the scope I grant maps to my Dock role.
+2. Confirm it's connected by calling the "whoami" MCP tool, then "list_artifacts".
 
-Once connected you can publish a page, read its review comments, and run the propose -> review -> revise loop.`
+Once connected you can publish a page, read its review comments, and run the propose -> review -> revise loop — all over MCP.`
+
+// Self-host: run Dock yourself first, then connect. Mirrors DEPLOY.md's single-
+// container quickstart; the MCP endpoint is always <your BASE_URL>/mcp.
+const selfHostPrompt = () =>
+  `Set up a self-hosted Dock for me, then connect this agent to it. Dock is an open-source living-docs tool (permanent versioned URLs + inline review comments) that is itself a remote MCP server.
+
+Please:
+1. From a Dock checkout (the directory with deploy/Dockerfile), run the single-container image (state lives in the dock_data volume):
+     docker build -f deploy/Dockerfile -t dock .
+     docker run -d -p 8080:8080 -v dock_data:/data \\
+       -e DOCK_AUTH_SECRET="$(openssl rand -hex 32)" \\
+       -e BASE_URL="https://dock.example.com" \\
+       dock
+   Set BASE_URL to the public https URL I'll actually reach it at (behind a TLS proxy — not localhost). For a quick local-only trial, BASE_URL=http://localhost:8080 works.
+2. Connect over MCP, using that same BASE_URL:
+     claude mcp add --transport http dock <BASE_URL>/mcp
+   The first call opens a browser consent (OAuth).
+3. Confirm by calling the "whoami" MCP tool, then "list_artifacts".
+
+Then you can publish, read review comments, and run the propose -> review -> revise loop over MCP.`
 
 export function Welcome() {
   const { me, setMe } = useAuth()
   const nav = useNavigate()
   const fileRef = useRef<HTMLInputElement>(null)
   const [uploading, setUploading] = useState(false)
-  const [copied, setCopied] = useState(false)
 
-  const origin = useMemo(
-    () => (typeof window !== "undefined" ? window.location.origin : "https://your-dock-server"),
+  const publicUrl = useMemo(
+    () => (typeof window !== "undefined" ? publicUrlOf(window.location.origin) : PLACEHOLDER_URL),
     [],
   )
-  const prompt = useMemo(() => setupPrompt(origin), [origin])
+  const hosted = useMemo(() => hostedPrompt(publicUrl), [publicUrl])
+  const selfHost = useMemo(() => selfHostPrompt(), [])
 
   if (!me) return null
 
@@ -70,17 +95,6 @@ export function Welcome() {
       /* non-blocking */
     } finally {
       setUploading(false)
-    }
-  }
-
-  const copyPrompt = async () => {
-    try {
-      await navigator.clipboard.writeText(prompt)
-      setCopied(true)
-      toast.success("Copied — paste it into your agent")
-      setTimeout(() => setCopied(false), 2000)
-    } catch {
-      toast.error("Couldn't copy; select the text and copy it manually")
     }
   }
 
@@ -171,27 +185,31 @@ export function Welcome() {
             Step 3 · Connect your tools
           </div>
           <p className="mb-3 mt-1 text-sm text-muted-foreground">
-            Paste this into Claude Code, Codex, ChatGPT, or any agent and it'll wire up Dock's MCP
-            server and CLI for you.
+            Paste this into Claude Code, Codex, ChatGPT, or any agent and it'll connect Dock's MCP
+            server so the agent can publish, review, and revise for you.
           </p>
-          <div className="relative">
-            <pre
-              data-testid="welcome-setup-prompt"
-              className="max-h-56 overflow-auto whitespace-pre-wrap rounded-lg border border-border bg-secondary/40 p-3 pr-12 font-mono text-xs leading-relaxed text-foreground"
-            >
-              {prompt}
-            </pre>
-            <Button
-              variant="outline"
-              size="icon"
-              data-testid="welcome-copy"
-              aria-label="Copy setup prompt"
-              className="absolute right-2 top-2"
-              onClick={copyPrompt}
-            >
-              {copied ? <Check className="size-4" /> : <Copy className="size-4" />}
-            </Button>
-          </div>
+          <Tabs defaultValue="hosted">
+            <TabsList>
+              <TabsTrigger value="hosted" data-testid="welcome-tab-hosted">
+                Hosted
+              </TabsTrigger>
+              <TabsTrigger value="self-host" data-testid="welcome-tab-self-host">
+                Self-host
+              </TabsTrigger>
+            </TabsList>
+            <TabsContent value="hosted">
+              <p className="mb-2 text-2xs text-muted-foreground">
+                Connect an agent to the Dock you're already on — one line, then a browser consent.
+              </p>
+              <PromptBlock text={hosted} testid="welcome-prompt-hosted" />
+            </TabsContent>
+            <TabsContent value="self-host">
+              <p className="mb-2 text-2xs text-muted-foreground">
+                Spin up your own Dock first (single container), then point the agent at it.
+              </p>
+              <PromptBlock text={selfHost} testid="welcome-prompt-self-host" />
+            </TabsContent>
+          </Tabs>
         </Card>
 
         <div className="mt-6 flex items-center justify-between gap-3">
@@ -208,6 +226,42 @@ export function Welcome() {
           </Button>
         </div>
       </div>
+    </div>
+  )
+}
+
+// A copyable prompt block: the scrollable text + a copy button that owns its own
+// "copied" tick, so each tab's block has independent state.
+function PromptBlock({ text, testid }: { text: string; testid: string }) {
+  const [copied, setCopied] = useState(false)
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(text)
+      setCopied(true)
+      toast.success("Copied — paste it into your agent")
+      setTimeout(() => setCopied(false), 2000)
+    } catch {
+      toast.error("Couldn't copy; select the text and copy it manually")
+    }
+  }
+  return (
+    <div className="relative">
+      <pre
+        data-testid={testid}
+        className="max-h-64 overflow-auto whitespace-pre-wrap rounded-lg border border-border bg-secondary/40 p-3 pr-12 font-mono text-xs leading-relaxed text-foreground"
+      >
+        {text}
+      </pre>
+      <Button
+        variant="outline"
+        size="icon"
+        data-testid={`${testid}-copy`}
+        aria-label="Copy setup prompt"
+        className="absolute right-2 top-2"
+        onClick={copy}
+      >
+        {copied ? <Check className="size-4" /> : <Copy className="size-4" />}
+      </Button>
     </div>
   )
 }
