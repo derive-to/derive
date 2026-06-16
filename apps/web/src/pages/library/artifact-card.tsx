@@ -58,6 +58,7 @@ export function ArtifactCard({
             <DropdownMenuTrigger asChild>
               <button
                 type="button"
+                data-testid={`artifact-card-more-${a.short_id}`}
                 aria-label="More actions"
                 onClick={(e) => e.stopPropagation()}
                 className="absolute left-2.5 top-2.5 z-20 grid size-7 place-items-center rounded-md border border-border bg-card text-muted-foreground opacity-0 transition hover:border-primary group-hover:opacity-100 focus:opacity-100"
