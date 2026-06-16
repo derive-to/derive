@@ -20,6 +20,11 @@ export async function signUp(page: Page, name = "E2E Tester"): Promise<string> {
   await page.getByTestId("login-password").fill("e2e-pass-1234")
   await page.getByTestId("login-submit").click()
   await expect(page).not.toHaveURL(/\/login/, { timeout: 15_000 })
+  // A fresh account is routed to the dedicated onboarding step (/welcome, chrome-
+  // less). Skip it so this helper returns with the app shell ready; tests that
+  // exercise onboarding itself drive /welcome explicitly. The click auto-waits for
+  // the step to render, absorbing the post-signup redirect timing.
+  await page.getByTestId("welcome-skip").click()
   // Authenticated chrome is up (the header user menu renders on every page once
   // `me` resolves) — a deterministic "signed in and the app shell is ready" gate.
   await expect(page.getByTestId("user-menu-trigger")).toBeVisible()

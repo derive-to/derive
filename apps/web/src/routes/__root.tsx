@@ -82,8 +82,11 @@ function RootComponent() {
 // mounted once here, so navigating between pages morphs only the content — the
 // rail never remounts. /login is the one chrome-less route.
 function AppFrame() {
-  const isLogin = useRouterState({ select: (s) => s.location.pathname === "/login" })
-  return isLogin ? (
+  // /login and /welcome (first-run onboarding) render chrome-less — no rail/top bar.
+  const chromeless = useRouterState({
+    select: (s) => s.location.pathname === "/login" || s.location.pathname === "/welcome",
+  })
+  return chromeless ? (
     <Outlet />
   ) : (
     <AppShell>

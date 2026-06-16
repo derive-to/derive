@@ -327,6 +327,12 @@ export interface MetaStore {
   setUserImage(userId: string, image: string): Promise<void>
   /** Opt a user in/out of people search (discoverable column). */
   setUserDiscoverable(userId: string, discoverable: boolean): Promise<void>
+  /** Set a user's team role + "what you do" blurb (profession/about columns). An
+   *  undefined field is left untouched; null clears it. */
+  setUserProfile(
+    userId: string,
+    fields: { profession?: string | null; about?: string | null },
+  ): Promise<void>
   /** People search: opted-in (discoverable) profiles matching `q` on username or
    *  name, capped to `limit`. Empty `q` returns nothing (no full enumeration). */
   searchDiscoverableUsers(q: string, limit: number): Promise<UserProfile[]>
@@ -562,6 +568,10 @@ export interface UserDir {
   name: string | null
   /** Profile picture URL (set by OAuth providers; null for password signups). */
   image: string | null
+  /** Coarse team role (Product / Engineering / Design / Marketing / …); null if unset. */
+  profession?: string | null
+  /** One-line "what you do" blurb; null if unset. */
+  about?: string | null
 }
 
 /** A public profile, keyed by handle. Email is intentionally absent — it stays
@@ -571,6 +581,10 @@ export interface UserProfile {
   username: string
   name: string | null
   image: string | null
+  /** Coarse team role; null if unset. Shown on the public profile + people search. */
+  profession?: string | null
+  /** One-line "what you do" blurb; null if unset. */
+  about?: string | null
 }
 
 export type NotificationKind = "mention" | "comment" | "share"

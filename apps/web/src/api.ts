@@ -9,12 +9,20 @@ export interface Me {
   /** Opt-in: findable in people search when true. */
   discoverable: boolean
   role: string
+  /** Coarse team role (Product / Engineering / Design / Marketing / …); null if unset. */
+  profession: string | null
+  /** One-line "what you do" blurb; null if unset. */
+  about: string | null
 }
 /** A public profile, by handle. Email is private and never returned here. */
 export interface PublicProfile {
   username: string
   name: string | null
   image: string | null
+  /** Coarse team role; null if unset. (People-search results omit `about`.) */
+  profession?: string | null
+  /** One-line "what you do" blurb; only present on the full /u/:handle profile. */
+  about?: string | null
 }
 export interface VersionSession {
   n: number
@@ -107,6 +115,9 @@ export interface ArtifactMember {
    *  the member list identifies collaborators by handle, never by address. */
   handle: string | null
   name: string | null
+  /** Coarse team role (Product / Engineering / …); null if unset. Shown in member
+   *  lists; absent on artifact/collection member payloads that don't join it. */
+  profession?: string | null
   role: Role
 }
 /** A DNS record the customer adds to validate a custom domain. */
@@ -316,6 +327,8 @@ export const api = {
         // On by default: discoverable unless explicitly opted out.
         discoverable: s.user.discoverable !== false,
         role: "member",
+        profession: s.user.profession ?? null,
+        about: s.user.about ?? null,
       },
     }
   },
@@ -326,6 +339,13 @@ export const api = {
   // A public profile by handle (no email). Readable without a session.
   profile: (handle: string): Promise<{ user: PublicProfile }> =>
     f(`/v1/users/${encodeURIComponent(handle)}`, { credentials: "include" }).then(j),
+  // Set your team role + "what you do" blurb (onboarding + Settings → Profile).
+  // Omitted fields are left untouched; "" clears a field.
+  setProfile: (fields: {
+    profession?: string
+    about?: string
+  }): Promise<{ profession: string | null; about: string | null }> =>
+    f("/v1/me/profile", opts(fields)).then(j),
   // Opt in/out of people search.
   setDiscoverable: (discoverable: boolean): Promise<{ discoverable: boolean }> =>
     f("/v1/me/discoverable", opts({ discoverable })).then(j),

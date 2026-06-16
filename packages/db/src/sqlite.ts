@@ -211,7 +211,9 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
       try {
         const ph = ids.map(() => "?").join(",")
         return raw
-          .prepare(`SELECT id, email, name, image, username FROM user WHERE id IN (${ph})`)
+          .prepare(
+            `SELECT id, email, name, image, username, profession, about FROM user WHERE id IN (${ph})`,
+          )
           .all(...ids) as UserDir[]
       } catch {
         return []
@@ -221,7 +223,9 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
       try {
         return (
           (raw
-            .prepare(`SELECT id, name, image, username FROM user WHERE username = ?`)
+            .prepare(
+              `SELECT id, name, image, username, profession, about FROM user WHERE username = ?`,
+            )
             .get(username) as UserProfile) ?? null
         )
       } catch {
@@ -248,6 +252,21 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
     setUserDiscoverable: async (userId, discoverable): Promise<void> => {
       raw.prepare(`UPDATE user SET discoverable = ? WHERE id = ?`).run(discoverable ? 1 : 0, userId)
     },
+    setUserProfile: async (userId, fields): Promise<void> => {
+      // Patch only the fields provided (undefined = leave as-is; null = clear).
+      const sets: string[] = []
+      const args: (string | null)[] = []
+      if (fields.profession !== undefined) {
+        sets.push("profession = ?")
+        args.push(fields.profession)
+      }
+      if (fields.about !== undefined) {
+        sets.push("about = ?")
+        args.push(fields.about)
+      }
+      if (sets.length === 0) return
+      raw.prepare(`UPDATE user SET ${sets.join(", ")} WHERE id = ?`).run(...args, userId)
+    },
     searchDiscoverableUsers: async (q, limit): Promise<UserProfile[]> => {
       const s = q.trim().toLowerCase()
       if (!s) return []
@@ -257,7 +276,7 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
           .prepare(
             // discoverable IS NOT 0 → true OR unset(null) both match (on by
             // default); only an explicit 0 (opted out) is excluded.
-            `SELECT id, name, image, username FROM user
+            `SELECT id, name, image, username, profession, about FROM user
              WHERE discoverable IS NOT 0 AND username IS NOT NULL
                AND (lower(username) LIKE ? OR lower(name) LIKE ?)
              ORDER BY username LIMIT ?`,

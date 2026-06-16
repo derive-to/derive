@@ -65,7 +65,21 @@ export function Profile() {
           <p className="text-sm font-medium text-muted-foreground" data-testid="profile-username">
             @{data.username}
           </p>
+          {data.profession && (
+            <p
+              className="mt-1 text-sm font-medium text-accent-foreground"
+              data-testid="profile-role"
+            >
+              {data.profession}
+            </p>
+          )}
         </div>
+
+        {data.about && (
+          <p className="max-w-sm text-sm text-muted-foreground" data-testid="profile-about">
+            {data.about}
+          </p>
+        )}
 
         {isMe &&
           (editing ? (
