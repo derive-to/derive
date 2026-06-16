@@ -7,7 +7,7 @@ import { serveContent } from "../lib/serve-content"
 /** The sandbox: raw artifact + proposal bytes under /raw/*. Served with an
  *  opaque-origin CSP; a proposal renders exactly like the live version will. */
 export const rawRoutes = (ctx: AppContext) => {
-  const { meta, blobs, authorize } = ctx
+  const { meta, blobs, authorize, background } = ctx
   const app = new Hono()
 
   // The comment-anchor client, referenced by URL from artifact HTML. Artifact
@@ -40,6 +40,11 @@ export const rawRoutes = (ctx: AppContext) => {
       prefix,
       path,
       cacheControlFor(artifact.visibility),
+      // Self-heal: this view just proved the bytes are HTML under a markdown label.
+      // Fix the stored type off the hot path (waitUntil on edge, inline in tests) so
+      // every view repairs it — the publish-time sniff stops new ones, this drains
+      // the backlog as artifacts are opened, with no manual maintenance step needed.
+      () => background(meta.reclassifyVersion(artifact.id, n, "text/html")),
     )
   })
 
