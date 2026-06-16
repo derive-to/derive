@@ -10,23 +10,23 @@ import { useShell } from "@/components/shell-context"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { useAuth } from "@/ctx"
-import { cn } from "@/lib/utils"
 import { type LibraryParams, libraryArtifactsQuery, sharedArtifactsQuery } from "@/lib/queries"
 import { usePrefetchArtifact } from "@/lib/use-prefetch-artifact"
+import { cn } from "@/lib/utils"
 import { ArtifactCard } from "./artifact-card"
 import { ArtifactGrid } from "./artifact-grid"
 import { ArtifactRow, byRecency } from "./artifact-row"
 import { CollectionBar } from "./collection-bar"
 import { FolderGroups } from "./folder-groups"
-
-// Remember the folder view preference across visits (off by default: a flat,
-// most-recently-updated list is the default for a synced collection).
-const FOLDERS_KEY = "dock:show-folders"
 import { HowItWorks } from "./how-it-works"
 import { LibrarySkeleton } from "./library-skeleton"
 import { PublishCard } from "./publish-card"
 import { ShareCollectionDialog } from "./share-collection-dialog"
 import type { Filter } from "./types"
+
+// Remember the folder view preference across visits (off by default: a flat,
+// most-recently-updated list is the default for a synced collection).
+const FOLDERS_KEY = "dock:show-folders"
 
 // Route component for "/". The persistent AppShell (mounted once around the
 // router Outlet) owns the rail/pod and the auth gate, so this just renders the

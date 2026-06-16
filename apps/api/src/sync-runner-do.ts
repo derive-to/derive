@@ -2,8 +2,8 @@ import type { D1Database, DurableObjectState, R2Bucket } from "@cloudflare/worke
 import type { BlobStore, MetaStore } from "@dock/core"
 import { createD1Store } from "@dock/db/d1"
 import { R2BlobStore } from "@dock/storage"
-import { log } from "./log"
 import { runSourceBatch } from "./lib/sync-runner"
+import { log } from "./log"
 
 // While a source still has files to mirror, re-run on this cadence so a large repo
 // drains batch-by-batch without any one alarm holding a long-running task (the
