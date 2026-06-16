@@ -12,8 +12,8 @@ test("owner manages workspace, webhooks, and agents through the tabs", async ({
 
   await owner.goto("/settings")
 
-  // --- Workspace tab (default) ---
-  await expect(owner.getByTestId("settings-tab-workspace")).toBeVisible()
+  // --- Workspace tab (Profile is the default now; switch to Workspace) ---
+  await owner.getByTestId("settings-tab-workspace").click()
   await owner.getByTestId("workspace-name").fill("Acme HQ")
   await owner.getByTestId("workspace-save").click()
   await expect(owner.getByTestId("workspace-name")).toHaveValue("Acme HQ")

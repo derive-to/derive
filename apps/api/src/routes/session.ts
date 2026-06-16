@@ -46,6 +46,29 @@ export const sessionRoutes = (ctx: AppContext) => {
     return c.json({ username })
   })
 
+  // Set your team role + "what you do" blurb (Settings → Profile, and onboarding).
+  // A coarse role (free string so "Other" can be anything) plus a one-line bio,
+  // both optional. Server-set only (signed-in user edits their own). An omitted
+  // field is left untouched; an empty string clears it.
+  app.post("/v1/me/profile", async (c) => {
+    const u = await currentUser(c)
+    if (!u) return fail(c, 401, "unauthenticated")
+    const body = await readJson(
+      c,
+      z.object({
+        profession: z.string().trim().max(40).optional(),
+        about: z.string().trim().max(280).optional(),
+      }),
+    )
+    if (body instanceof Response) return body
+    // Normalize "" → null (clear) so the column is never an empty string.
+    const patch: { profession?: string | null; about?: string | null } = {}
+    if (body.profession !== undefined) patch.profession = body.profession || null
+    if (body.about !== undefined) patch.about = body.about || null
+    await meta.setUserProfile(u.id, patch)
+    return c.json({ profession: patch.profession ?? null, about: patch.about ?? null })
+  })
+
   // Opt in/out of people search. Off by default, so you're only findable by
   // username if you choose to be (signed-in user sets their own).
   app.post("/v1/me/discoverable", async (c) => {
@@ -68,7 +91,12 @@ export const sessionRoutes = (ctx: AppContext) => {
     if (!q) return c.json({ users: [] })
     const found = await meta.searchDiscoverableUsers(q, 20)
     return c.json({
-      users: found.map((u) => ({ username: u.username, name: u.name, image: u.image })),
+      users: found.map((u) => ({
+        username: u.username,
+        name: u.name,
+        image: u.image,
+        profession: u.profession ?? null,
+      })),
     })
   })
 
@@ -79,7 +107,15 @@ export const sessionRoutes = (ctx: AppContext) => {
     const handle = normalizeUsername(c.req.param("handle"))
     const p = await meta.getUserByUsername(handle)
     if (!p) return fail(c, 404, "no profile with that username")
-    return c.json({ user: { username: p.username, name: p.name, image: p.image } })
+    return c.json({
+      user: {
+        username: p.username,
+        name: p.name,
+        image: p.image,
+        profession: p.profession ?? null,
+        about: p.about ?? null,
+      },
+    })
   })
 
   // Upload your profile picture. We take only raster images (identified by their
@@ -168,10 +204,24 @@ export const sessionRoutes = (ctx: AppContext) => {
               u.email.toLowerCase().includes(q),
           )
         : users
-    ).map((u) => ({ id: u.id, handle: u.username, name: u.name, kind: "user" as const }))
+    ).map((u) => ({
+      id: u.id,
+      handle: u.username,
+      name: u.name,
+      kind: "user" as const,
+      // Role rides the directory so the @mention picker (and agents reading it)
+      // know who's who; the bio is reserved for the full profile, not this list.
+      profession: u.profession ?? null,
+    }))
     const agents = (await meta.listAgents(org))
       .filter((ag) => !q || ag.name.toLowerCase().includes(q))
-      .map((ag) => ({ id: ag.id, handle: null, name: ag.name, kind: "agent" as const }))
+      .map((ag) => ({
+        id: ag.id,
+        handle: null,
+        name: ag.name,
+        kind: "agent" as const,
+        profession: null,
+      }))
     const all = [...people, ...agents].sort((a, b) =>
       (a.name ?? a.handle ?? "").localeCompare(b.name ?? b.handle ?? ""),
     )

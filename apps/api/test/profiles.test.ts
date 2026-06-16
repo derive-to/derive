@@ -17,11 +17,17 @@ describe("usernames + public profiles", () => {
     expect((await claim.json()).username).toBe("nia")
 
     // Anyone (even anonymous — no header) can read the public profile by handle,
-    // and it carries name + avatar but never the email.
+    // and it carries name + avatar + role (null until set) but never the email.
     const prof = await app.request("/v1/users/nia")
     expect(prof.status).toBe(200)
     const { user } = await prof.json()
-    expect(user).toEqual({ username: "nia", name: "Nia", image: "x.png" })
+    expect(user).toEqual({
+      username: "nia",
+      name: "Nia",
+      image: "x.png",
+      profession: null,
+      about: null,
+    })
     expect(user).not.toHaveProperty("email")
 
     // The route normalizes the handle, so an upper-cased URL resolves too.
@@ -33,6 +39,42 @@ describe("usernames + public profiles", () => {
     const { app } = makeAuthedApp("profiles-me", [pat])
     const me = await (await app.request("/v1/me", { headers: as(pat.email) })).json()
     expect(me.user.username).toBe("pat")
+  })
+
+  it("sets a role + bio that surface on the public profile (and trims/caps input)", async () => {
+    const ravi: TestUser = { id: "u_ravi", email: "ravi@dock.test", name: "Ravi", username: "ravi" }
+    const { app } = makeAuthedApp("profiles-role", [ravi])
+
+    // Set a role + blurb; whitespace is trimmed.
+    const res = await app.request(
+      "/v1/me/profile",
+      jsonAs(as(ravi.email), { profession: " Builder ", about: "  ship features + docs  " }),
+    )
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ profession: "Builder", about: "ship features + docs" })
+
+    // They come back on the public profile.
+    const { user } = await (await app.request("/v1/users/ravi")).json()
+    expect(user).toMatchObject({ profession: "Builder", about: "ship features + docs" })
+
+    // An empty string clears a field; an omitted field is left untouched.
+    const cleared = await app.request("/v1/me/profile", jsonAs(as(ravi.email), { profession: "" }))
+    expect(await cleared.json()).toEqual({ profession: null, about: null })
+    const after = await (await app.request("/v1/users/ravi")).json()
+    expect(after.user.profession).toBeNull()
+    expect(after.user.about).toBe("ship features + docs") // untouched
+
+    // Over-long values are rejected (role max 40, bio max 280).
+    const tooLong = await app.request(
+      "/v1/me/profile",
+      jsonAs(as(ravi.email), { profession: "x".repeat(41) }),
+    )
+    expect(tooLong.status).toBe(400)
+
+    // Anonymous callers can't set a profile (the anon-write lockdown blocks it 403).
+    expect((await app.request("/v1/me/profile", jsonAs({}, { profession: "Design" }))).status).toBe(
+      403,
+    )
   })
 
   it("404s an unclaimed handle", async () => {

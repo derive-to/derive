@@ -558,6 +558,15 @@ export class PgMetaStore implements MetaStore {
   listArtifactMembers(artifactId: string): Promise<ArtifactMemberRecord[]> {
     return this.db.select().from(artifactMember).where(eq(artifactMember.artifact_id, artifactId))
   }
+  // Artifacts explicitly shared with a user (per-artifact membership) — can span
+  // workspaces; drives the home's "Shared with you" section.
+  async artifactIdsSharedWith(userId: string): Promise<string[]> {
+    const rows = await this.db
+      .select({ id: artifactMember.artifact_id })
+      .from(artifactMember)
+      .where(eq(artifactMember.user_id, userId))
+    return rows.map((r) => r.id)
+  }
   async setArtifactMember(m: NewArtifactMember): Promise<ArtifactMemberRecord> {
     const rows = await this.db
       .insert(artifactMember)
@@ -859,7 +868,7 @@ export class PgMetaStore implements MetaStore {
     try {
       const ph = ids.map((_, i) => `$${i + 1}`).join(",")
       const { rows } = await this.pool.query(
-        `SELECT id, email, name, image, username FROM "user" WHERE id IN (${ph})`,
+        `SELECT id, email, name, image, username, profession, about FROM "user" WHERE id IN (${ph})`,
         ids,
       )
       return rows as UserDir[]
@@ -870,7 +879,7 @@ export class PgMetaStore implements MetaStore {
   async getUserByUsername(username: string): Promise<UserProfile | null> {
     try {
       const { rows } = await this.pool.query(
-        `SELECT id, name, image, username FROM "user" WHERE username = $1`,
+        `SELECT id, name, image, username, profession, about FROM "user" WHERE username = $1`,
         [username],
       )
       return (rows[0] as UserProfile) ?? null
@@ -900,6 +909,25 @@ export class PgMetaStore implements MetaStore {
       userId,
     ])
   }
+  async setUserProfile(
+    userId: string,
+    fields: { profession?: string | null; about?: string | null },
+  ): Promise<void> {
+    // Patch only the fields provided (undefined = leave as-is; null = clear).
+    const sets: string[] = []
+    const args: (string | null)[] = []
+    if (fields.profession !== undefined) {
+      args.push(fields.profession)
+      sets.push(`profession = $${args.length}`)
+    }
+    if (fields.about !== undefined) {
+      args.push(fields.about)
+      sets.push(`about = $${args.length}`)
+    }
+    if (sets.length === 0) return
+    args.push(userId)
+    await this.pool.query(`UPDATE "user" SET ${sets.join(", ")} WHERE id = $${args.length}`, args)
+  }
   async searchDiscoverableUsers(q: string, limit: number): Promise<UserProfile[]> {
     const s = q.trim()
     if (!s) return []
@@ -908,7 +936,7 @@ export class PgMetaStore implements MetaStore {
       const { rows } = await this.pool.query(
         // discoverable IS NOT FALSE → true OR unset(null) both match (on by
         // default); only an explicit false (opted out) is excluded.
-        `SELECT id, name, image, username FROM "user"
+        `SELECT id, name, image, username, profession, about FROM "user"
          WHERE discoverable IS NOT FALSE AND username IS NOT NULL
            AND (username ILIKE $1 OR name ILIKE $1)
          ORDER BY username LIMIT $2`,

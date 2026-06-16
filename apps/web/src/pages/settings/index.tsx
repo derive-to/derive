@@ -3,10 +3,10 @@ import { api, type Report } from "@/api"
 import { Badge } from "@/components/ui/badge"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { useAuth } from "@/ctx"
-import { AccountSection } from "./account-section"
 import { AgentsSection } from "./agents-section"
 import { CustomDomainsSection } from "./custom-domains-section"
 import { GithubSection } from "./github-section"
+import { ProfileSection } from "./profile-section"
 import { ReportsSection } from "./reports-section"
 import { WebhooksSection } from "./webhooks-section"
 import { WorkspaceSection } from "./workspace-section"
@@ -16,7 +16,7 @@ export function Settings() {
   // whenever Settings renders.
   const { me } = useAuth()
   const [reports, setReports] = useState<Report[] | null>(null)
-  const [tab, setTab] = useState("workspace")
+  const [tab, setTab] = useState("profile")
 
   const loadReports = useCallback(
     () =>
@@ -30,10 +30,10 @@ export function Settings() {
     if (me) loadReports()
   }, [me, loadReports])
   // The Reports tab only exists while there are open reports. If the last one is
-  // cleared while it's the active tab, fall back to Workspace so the content
-  // panel never strands blank with no tab selected.
+  // cleared while it's the active tab, fall back to Profile so the content panel
+  // never strands blank with no tab selected.
   useEffect(() => {
-    if ((reports?.length ?? 0) === 0 && tab === "reports") setTab("workspace")
+    if ((reports?.length ?? 0) === 0 && tab === "reports") setTab("profile")
   }, [reports, tab])
 
   if (!me) return null
@@ -47,16 +47,16 @@ export function Settings() {
       <main className="mx-auto max-w-3xl px-5 pb-16 pt-7">
         <h1 className="font-display text-2xl font-semibold">Settings</h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          Your workspace, members, and integrations.
+          Your profile, workspace, and integrations.
         </p>
 
         <Tabs value={tab} onValueChange={setTab} className="mt-6">
           <TabsList className="max-w-full overflow-x-auto">
+            <TabsTrigger data-testid="settings-tab-profile" value="profile">
+              Profile
+            </TabsTrigger>
             <TabsTrigger data-testid="settings-tab-workspace" value="workspace">
               Workspace
-            </TabsTrigger>
-            <TabsTrigger data-testid="settings-tab-account" value="account">
-              Account
             </TabsTrigger>
             <TabsTrigger data-testid="settings-tab-webhooks" value="webhooks">
               Webhooks
@@ -80,11 +80,11 @@ export function Settings() {
             )}
           </TabsList>
 
+          <TabsContent value="profile">
+            <ProfileSection />
+          </TabsContent>
           <TabsContent value="workspace">
             <WorkspaceSection meId={me.id} />
-          </TabsContent>
-          <TabsContent value="account">
-            <AccountSection />
           </TabsContent>
           <TabsContent value="webhooks">
             <WebhooksSection />

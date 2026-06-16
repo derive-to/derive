@@ -24,6 +24,15 @@ export const libraryArtifactsQuery = (params: LibraryParams) =>
     placeholderData: keepPreviousData,
   })
 
+// "Shared with you": artifacts explicitly shared with the caller (can span
+// workspaces). A flat first page (no infinite scroll) — the home section shows a
+// handful; opening one is the deep path.
+export const sharedArtifactsQuery = () =>
+  queryOptions({
+    queryKey: ["artifacts", "shared"] as const,
+    queryFn: () => api.listArtifacts({ scope: "shared", limit: 12 }).then((r) => r.artifacts),
+  })
+
 // Typed query options shared by route loaders (ensureQueryData, for intent
 // preloading) and components (useQuery). One source of truth for keys +
 // fetchers, so a preloaded route and the page that renders it resolve to the

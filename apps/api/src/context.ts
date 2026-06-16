@@ -35,6 +35,10 @@ export interface SessionUser {
   username: string | null
   /** Opt-in: findable in people search when true. Off by default. */
   discoverable: boolean
+  /** Coarse team role (free string: Product / Engineering / Design / Marketing / …). */
+  profession: string | null
+  /** One-line "what you do" blurb shown on the profile + member directory. */
+  about: string | null
 }
 
 export interface AppDeps {
@@ -252,6 +256,8 @@ export function buildContext(deps: AppDeps) {
           name?: string | null
           username?: string | null
           discoverable?: boolean | number | null
+          profession?: string | null
+          about?: string | null
         }
       | undefined
     const u: SessionUser | null = su
@@ -262,6 +268,8 @@ export function buildContext(deps: AppDeps) {
           username: su.username ?? null,
           // Discoverable unless explicitly opted out (on by default; unset = on).
           discoverable: su.discoverable !== false,
+          profession: su.profession ?? null,
+          about: su.about ?? null,
         }
       : null
     userCache.set(c, u)
