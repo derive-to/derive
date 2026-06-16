@@ -56,6 +56,9 @@ export interface TreeEntry {
   path: string
   sha: string
   type: "blob" | "tree"
+  /** Blob byte size (GitHub includes it on tree entries) — lets the batch fetcher
+   *  skip oversized blobs (GraphQL won't return their text) and pack batches by size. */
+  size?: number
 }
 
 /**
@@ -104,6 +107,55 @@ export async function fetchBlob(
   const res = await fetchRetrying(url, { headers: headers(token, "application/vnd.github.raw") })
   if (!res.ok) return raise(res, "reading a file")
   return new Uint8Array(await res.arrayBuffer())
+}
+
+const GRAPHQL = `${API}/graphql`
+
+/**
+ * Fetch many TEXT blobs in ONE GraphQL request, aliased by git oid (the tree shas).
+ * Returns sha → bytes for the text blobs only; binary blobs, blobs too large for
+ * GraphQL to return `text`, and any whole-query failure are omitted, so the caller
+ * falls back to the per-blob REST endpoint for those (correctness-preserving). A
+ * 25-file query is ~1 rate-limit point and one round-trip instead of 25 of each —
+ * the cheap, GitHub-preferred way to read many files (vs. fanning out single GETs).
+ */
+export async function fetchBlobsBatch(
+  repo: RepoRef,
+  shas: readonly string[],
+  token: string | null,
+): Promise<Map<string, Uint8Array>> {
+  const out = new Map<string, Uint8Array>()
+  const unique = [...new Set(shas)]
+  if (unique.length === 0) return out
+  // One aliased Blob per oid: a0: object(oid:"…") { ... on Blob { text isBinary } }
+  const fields = unique
+    .map((sha, i) => `a${i}:object(oid:${JSON.stringify(sha)}){...on Blob{text isBinary}}`)
+    .join(" ")
+  const query = `query($o:String!,$n:String!){repository(owner:$o,name:$n){${fields}}}`
+  let res: Response
+  try {
+    res = await fetchRetrying(GRAPHQL, {
+      method: "POST",
+      headers: { ...headers(token, "application/json"), "content-type": "application/json" },
+      body: JSON.stringify({ query, variables: { o: repo.owner, n: repo.name } }),
+    })
+  } catch {
+    return out // network blip — the lazy REST path re-fetches these
+  }
+  if (!res.ok) return out
+  const json = (await res.json().catch(() => null)) as {
+    data?: {
+      repository?: Record<string, { text?: string | null; isBinary?: boolean | null } | null>
+    }
+  } | null
+  const repository = json?.data?.repository
+  if (!repository) return out
+  const enc = new TextEncoder()
+  unique.forEach((sha, i) => {
+    const blob = repository[`a${i}`]
+    if (blob && !blob.isBinary && typeof blob.text === "string") out.set(sha, enc.encode(blob.text))
+  })
+  return out
 }
 
 /**
