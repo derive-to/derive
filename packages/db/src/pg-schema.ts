@@ -40,20 +40,27 @@ export const artifact = pgTable("artifact", {
   removed_at: text("removed_at"),
 })
 
-export const version = pgTable("version", {
-  id: text("id").primaryKey(),
-  artifact_id: text("artifact_id")
-    .notNull()
-    .references(() => artifact.id),
-  n: integer("n").notNull(),
-  blob_key: text("blob_key").notNull(),
-  content_type: text("content_type").notNull(),
-  size_bytes: integer("size_bytes").notNull().default(0),
-  author: text("author").notNull(),
-  message: text("message"),
-  name: text("name"),
-  created_at: text("created_at").notNull().$defaultFn(isoNow),
-})
+export const version = pgTable(
+  "version",
+  {
+    id: text("id").primaryKey(),
+    artifact_id: text("artifact_id")
+      .notNull()
+      .references(() => artifact.id),
+    n: integer("n").notNull(),
+    blob_key: text("blob_key").notNull(),
+    content_type: text("content_type").notNull(),
+    size_bytes: integer("size_bytes").notNull().default(0),
+    author: text("author").notNull(),
+    message: text("message"),
+    name: text("name"),
+    created_at: text("created_at").notNull().$defaultFn(isoNow),
+  },
+  // (artifact_id, n) is unique — addVersion relies on it to turn a concurrent
+  // version-number race into a clean constraint error. The SQLite def declares the
+  // same; previously the pg DDL had it inline but this drizzle def didn't.
+  (t) => [uniqueIndex("version_artifact_n").on(t.artifact_id, t.n)],
+)
 
 export const comment = pgTable("comment", {
   id: text("id").primaryKey(),
@@ -396,13 +403,22 @@ const createTable = (table: Col): string => {
 /** Build the boot DDL from the drizzle table defs + the explicit (non-drizzle)
  *  placeholder tables and indexes. Pure; exported for the conformance test. */
 export const buildPgSchemaStatements = (): string[] => {
-  const tables: string[] = []
+  const out: string[] = []
   for (const t of TABLES) {
     const cfg = getTableConfig(t)
-    tables.push(createTable(t))
-    for (const c of cfg.columns) tables.push(addColumn(cfg.name, c))
+    out.push(createTable(t))
+    for (const c of cfg.columns) out.push(addColumn(cfg.name, c))
+    // Unique indexes render inline in CREATE (above); a non-unique drizzle index
+    // becomes a CREATE INDEX so it can't be silently dropped if one is ever added.
+    for (const idx of cfg.indexes)
+      if (!idx.config.unique)
+        out.push(
+          `CREATE INDEX IF NOT EXISTS ${idx.config.name} ON ${cfg.name} (${idx.config.columns
+            .map((x: Col) => x.name)
+            .join(", ")})`,
+        )
   }
-  return [...tables, ...PLACEHOLDER_TABLES, ...INDEXES]
+  return [...out, ...PLACEHOLDER_TABLES, ...INDEXES]
 }
 
 // Tables created up front but not yet queried (no drizzle def), so migrations stay

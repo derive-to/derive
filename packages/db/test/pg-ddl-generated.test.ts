@@ -1,4 +1,6 @@
 import { getTableColumns, getTableName } from "drizzle-orm"
+// biome-ignore lint/suspicious/noExplicitAny: drizzle column runtime shape (.default) isn't exported.
+type AnyCol = any
 import { describe, expect, it } from "vitest"
 import { schema } from "../src/pg"
 import { buildPgSchemaStatements } from "../src/pg-schema"
@@ -27,4 +29,19 @@ describe("pg DDL is generated from the drizzle schema", () => {
       }
     })
   }
+
+  // The generator maps every $defaultFn column (hasDefault, no literal value) to the
+  // ISO-timestamp SQL backstop — correct only because all of them are timestamps.
+  // If a non-timestamp $defaultFn is ever added, this fails so the generator's
+  // default handling gets revisited instead of silently emitting a wrong default.
+  it("only known timestamp columns use the $defaultFn timestamp backstop", () => {
+    const known = new Set(["created_at", "next_attempt_at"])
+    for (const table of Object.values(schema))
+      for (const col of Object.values(getTableColumns(table)) as AnyCol[])
+        if (col.hasDefault && col.default === undefined)
+          expect(
+            known.has(col.name),
+            `column "${col.name}" uses $defaultFn but isn't a known timestamp backstop`,
+          ).toBe(true)
+  })
 })
