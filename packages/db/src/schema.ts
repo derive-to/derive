@@ -579,6 +579,7 @@ export const SCHEMA_STATEMENTS: string[] = [
     ref TEXT NOT NULL DEFAULT 'HEAD',
     includes TEXT NOT NULL,
     token TEXT,
+    installation_id TEXT,
     files TEXT NOT NULL DEFAULT '{}',
     last_synced_at TEXT,
     last_status TEXT,

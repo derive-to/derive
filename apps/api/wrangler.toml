@@ -97,7 +97,7 @@ crons = ["* * * * *"]
 [assets]
 directory = "../web/dist/client"
 binding = "ASSETS"
-run_worker_first = ["/v1/*", "/api/*", "/raw/*", "/oauth/*", "/a/*", "/healthz", "/mcp", "/.well-known/oauth-authorization-server", "/.well-known/oauth-protected-resource", "/.well-known/openid-configuration"]
+run_worker_first = ["/v1/*", "/api/*", "/raw/*", "/oauth/*", "/settings/github/*", "/a/*", "/healthz", "/mcp", "/.well-known/oauth-authorization-server", "/.well-known/oauth-protected-resource", "/.well-known/openid-configuration"]
 not_found_handling = "single-page-application"
 
 # baseUrl falls back to the request origin when unset. Secured by Better Auth; set
