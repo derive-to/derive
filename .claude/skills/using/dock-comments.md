@@ -37,6 +37,11 @@ The anchor re-matches on each render using `exact` + surrounding context. It sur
 edits when the quoted text stays recognizable. If the exact text is deleted, the comment
 shows "text changed" — it never attaches to the wrong place.
 
+On a **slide deck**, the anchor also carries `"slide": N` (0-based) — the slide the comment
+was made on. Dock resolves the quote within that slide first, so the same phrase on two
+slides doesn't collide, and pins the comment to that slide. If the text later moves to a
+different slide, the comment follows it and is flagged "moved". See `formats/dock-deck.md`.
+
 ---
 
 ## Listing comments

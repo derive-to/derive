@@ -89,6 +89,7 @@ export const realtimeRoutes = (ctx: AppContext) => {
         emoji: z.string().max(16).optional(),
         gone: z.boolean().optional(),
         tap: z.boolean().optional(),
+        slide: z.number().int().min(0).optional(),
         x: z.number(),
         y: z.number(),
       }),
@@ -112,6 +113,8 @@ export const realtimeRoutes = (ctx: AppContext) => {
       // or it isn't — peers branch on truthiness without inspecting the value.
       gone: body.gone === true ? true : undefined,
       tap: body.tap === true ? true : undefined,
+      // Deck slide the viewer is on, so peers hide cursors that aren't on this slide.
+      slide: body.slide,
       x: clamp(body.x),
       y: clamp(body.y),
     })

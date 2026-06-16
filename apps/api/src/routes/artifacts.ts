@@ -83,6 +83,13 @@ export const artifactRoutes = (ctx: AppContext) => {
     const narrow = (next: string[]) => {
       ids = ids ? ids.filter((id) => next.includes(id)) : next
     }
+    // scope=shared → artifacts explicitly shared with me (a per-artifact membership),
+    // which can live in other workspaces. Drives the home's "Shared with you" section.
+    const shared = c.req.query("scope") === "shared"
+    if (shared) {
+      if (!me) return c.json({ artifacts: [], next_cursor: null })
+      narrow(await meta.artifactIdsSharedWith(me.id))
+    }
     if (tag) narrow(await meta.artifactIdsByTag(tag))
     if (collectionId) narrow(await meta.collectionArtifactIds(collectionId))
     if (favOnly) narrow(favIds)
@@ -96,7 +103,16 @@ export const artifactRoutes = (ctx: AppContext) => {
       (deps.token && safeEqual(bearer(c), deps.token)) ||
       (!!me && !!(await meta.getMembership(orgId, me.id)))
     )
-    const rows = await meta.listArtifacts({ limit: limit + 1, cursor, q, ids, orgId, publicOnly })
+    const rows = await meta.listArtifacts({
+      limit: limit + 1,
+      cursor,
+      q,
+      ids,
+      // Shared-with-me spans workspaces; an explicit member can always see them, so
+      // drop the workspace + public-only restrictions for that scope.
+      orgId: shared ? undefined : orgId,
+      publicOnly: shared ? false : publicOnly,
+    })
     const hasMore = rows.length > limit
     const page = hasMore ? rows.slice(0, limit) : rows
     const last = page[page.length - 1]
@@ -161,6 +177,10 @@ export const artifactRoutes = (ctx: AppContext) => {
       // Edit it in the repo instead.
       if ((await meta.managedArtifactIds(existing.org_id)).includes(existing.id))
         return fail(c, 409, "managed by GitHub sync — edit this file in the repo")
+      // Locked: even an editor can't publish directly — changes go through review.
+      // The web client routes editors to "propose" when locked, so this is the
+      // backstop (and the answer for API/CLI callers).
+      if (existing.locked) return fail(c, 409, "artifact is locked — propose a change for review")
     } else if (!(await workspaceCan(c, "publish"))) {
       return fail(c, 403, "forbidden")
     }
@@ -370,6 +390,29 @@ export const artifactRoutes = (ctx: AppContext) => {
     }
     await meta.setVisibility(artifact.id, visibility, passwordHash, generalRole)
     return c.json({ visibility, general_role: generalRole })
+  })
+
+  // Lock / unlock an artifact. Any editor (publish rights) can flip it. While
+  // locked, direct publishes are rejected (handlePublish) so changes must go through
+  // the proposal → approval flow; the web UI routes editors to "propose".
+  app.patch("/v1/artifacts/:shortId/locked", async (c) => {
+    const artifact = await meta.getByShortId(c.req.param("shortId"))
+    if (!artifact) return fail(c, 404, "not found")
+    if (!(await authorize(c, "publish", artifact))) return fail(c, 403, "forbidden")
+    const b = await readJson(c, z.object({ locked: z.boolean() }))
+    if (b instanceof Response) return b
+    await meta.setLocked(artifact.id, b.locked ? 1 : 0)
+    return c.json({ locked: b.locked })
+  })
+
+  // Permanently delete an artifact and all its dependents (versions, comments,
+  // proposals, memberships, etc.). Owner-only: gated by the `manage` action.
+  app.delete("/v1/artifacts/:shortId", async (c) => {
+    const artifact = await meta.getByShortId(c.req.param("shortId"))
+    if (!artifact) return fail(c, 404, "not found")
+    if (!(await authorize(c, "manage", artifact))) return fail(c, 403, "forbidden")
+    await meta.deleteArtifact(artifact.id, artifact.org_id)
+    return new Response(null, { status: 204 })
   })
 
   // Unlock a `password` artifact: verify the password and drop a cookie whose

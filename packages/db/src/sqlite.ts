@@ -11,13 +11,20 @@ import { and, eq } from "drizzle-orm"
 import { drizzle } from "drizzle-orm/better-sqlite3"
 import { makeRepos, schema } from "./repos"
 import {
+  agentMention,
   artifact,
+  artifactFavorite,
+  artifactMember,
   artifactTag,
   auditLog,
   collection,
   collectionItem,
   collectionMember,
+  comment,
+  domain,
   MIGRATION_STATEMENTS,
+  notification,
+  proposal,
   report,
   SCHEMA_STATEMENTS,
   version,
@@ -70,7 +77,11 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
         tx.insert(version)
           .values({ ...v, artifact_id: artifactId, n: next })
           .run()
-        tx.update(artifact).set({ current_version: next }).where(eq(artifact.id, artifactId)).run()
+        tx
+          .update(artifact)
+          .set({ current_version: next, current_content_type: v.content_type })
+          .where(eq(artifact.id, artifactId))
+          .run()
         return next
       })
       return (await repos.getVersion(artifactId, n)) as VersionRecord
@@ -91,6 +102,24 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
         db.delete(collectionItem).where(eq(collectionItem.collection_id, id)).run()
         db.delete(collectionMember).where(eq(collectionMember.collection_id, id)).run()
         db.delete(collection).where(eq(collection.id, id)).run()
+      })()
+    },
+
+    // Atomic delete: all FK-dependent rows and the artifact itself commit together.
+    deleteArtifact: async (id: string): Promise<void> => {
+      raw.transaction(() => {
+        db.delete(version).where(eq(version.artifact_id, id)).run()
+        db.delete(comment).where(eq(comment.artifact_id, id)).run()
+        db.delete(artifactMember).where(eq(artifactMember.artifact_id, id)).run()
+        db.delete(artifactFavorite).where(eq(artifactFavorite.artifact_id, id)).run()
+        db.delete(artifactTag).where(eq(artifactTag.artifact_id, id)).run()
+        db.delete(collectionItem).where(eq(collectionItem.artifact_id, id)).run()
+        db.delete(domain).where(eq(domain.artifact_id, id)).run()
+        db.delete(proposal).where(eq(proposal.artifact_id, id)).run()
+        db.delete(report).where(eq(report.artifact_id, id)).run()
+        db.delete(notification).where(eq(notification.artifact_id, id)).run()
+        db.delete(agentMention).where(eq(agentMention.artifact_id, id)).run()
+        db.delete(artifact).where(eq(artifact.id, id)).run()
       })()
     },
 
@@ -211,7 +240,9 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
       try {
         const ph = ids.map(() => "?").join(",")
         return raw
-          .prepare(`SELECT id, email, name, image, username FROM user WHERE id IN (${ph})`)
+          .prepare(
+            `SELECT id, email, name, image, username, profession, about FROM user WHERE id IN (${ph})`,
+          )
           .all(...ids) as UserDir[]
       } catch {
         return []
@@ -221,7 +252,9 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
       try {
         return (
           (raw
-            .prepare(`SELECT id, name, image, username FROM user WHERE username = ?`)
+            .prepare(
+              `SELECT id, name, image, username, profession, about FROM user WHERE username = ?`,
+            )
             .get(username) as UserProfile) ?? null
         )
       } catch {
@@ -248,6 +281,21 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
     setUserDiscoverable: async (userId, discoverable): Promise<void> => {
       raw.prepare(`UPDATE user SET discoverable = ? WHERE id = ?`).run(discoverable ? 1 : 0, userId)
     },
+    setUserProfile: async (userId, fields): Promise<void> => {
+      // Patch only the fields provided (undefined = leave as-is; null = clear).
+      const sets: string[] = []
+      const args: (string | null)[] = []
+      if (fields.profession !== undefined) {
+        sets.push("profession = ?")
+        args.push(fields.profession)
+      }
+      if (fields.about !== undefined) {
+        sets.push("about = ?")
+        args.push(fields.about)
+      }
+      if (sets.length === 0) return
+      raw.prepare(`UPDATE user SET ${sets.join(", ")} WHERE id = ?`).run(...args, userId)
+    },
     searchDiscoverableUsers: async (q, limit): Promise<UserProfile[]> => {
       const s = q.trim().toLowerCase()
       if (!s) return []
@@ -257,7 +305,7 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
           .prepare(
             // discoverable IS NOT 0 → true OR unset(null) both match (on by
             // default); only an explicit 0 (opted out) is excluded.
-            `SELECT id, name, image, username FROM user
+            `SELECT id, name, image, username, profession, about FROM user
              WHERE discoverable IS NOT 0 AND username IS NOT NULL
                AND (lower(username) LIKE ? OR lower(name) LIKE ?)
              ORDER BY username LIMIT ?`,

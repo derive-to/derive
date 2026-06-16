@@ -14,7 +14,8 @@ import type {
   Visibility,
   WebhookKind,
 } from "@dock/core"
-import { integer, pgTable, text, uniqueIndex } from "drizzle-orm/pg-core"
+import { getTableConfig, integer, pgTable, text, uniqueIndex } from "drizzle-orm/pg-core"
+import { generateDdl, PERF_INDEXES, placeholderTables } from "./ddl"
 
 // Postgres drizzle schema — the query source of truth, dialect-paired with the
 // SQLite defs in schema.ts. created_at is ISO-8601 text so record shapes and
@@ -33,26 +34,35 @@ export const artifact = pgTable("artifact", {
   general_role: text("general_role").$type<GeneralRole>().notNull().default("viewer"),
   kind: text("kind").$type<ArtifactKind>().notNull(),
   spa: integer("spa").$type<0 | 1>().notNull().default(0),
+  locked: integer("locked").$type<0 | 1>().notNull().default(0),
   current_version: integer("current_version").notNull().default(0),
+  current_content_type: text("current_content_type"),
   created_at: text("created_at").notNull().$defaultFn(isoNow),
   removed_at: text("removed_at"),
   source_path: text("source_path"),
 })
 
-export const version = pgTable("version", {
-  id: text("id").primaryKey(),
-  artifact_id: text("artifact_id")
-    .notNull()
-    .references(() => artifact.id),
-  n: integer("n").notNull(),
-  blob_key: text("blob_key").notNull(),
-  content_type: text("content_type").notNull(),
-  size_bytes: integer("size_bytes").notNull().default(0),
-  author: text("author").notNull(),
-  message: text("message"),
-  name: text("name"),
-  created_at: text("created_at").notNull().$defaultFn(isoNow),
-})
+export const version = pgTable(
+  "version",
+  {
+    id: text("id").primaryKey(),
+    artifact_id: text("artifact_id")
+      .notNull()
+      .references(() => artifact.id),
+    n: integer("n").notNull(),
+    blob_key: text("blob_key").notNull(),
+    content_type: text("content_type").notNull(),
+    size_bytes: integer("size_bytes").notNull().default(0),
+    author: text("author").notNull(),
+    message: text("message"),
+    name: text("name"),
+    created_at: text("created_at").notNull().$defaultFn(isoNow),
+  },
+  // (artifact_id, n) is unique — addVersion relies on it to turn a concurrent
+  // version-number race into a clean constraint error. The SQLite def declares the
+  // same; previously the pg DDL had it inline but this drizzle def didn't.
+  (t) => [uniqueIndex("version_artifact_n").on(t.artifact_id, t.n)],
+)
 
 export const comment = pgTable("comment", {
   id: text("id").primaryKey(),
@@ -331,301 +341,48 @@ export const auditLog = pgTable("audit_log", {
 // same core Record types the sqlite dialect uses, so the two dialects can't
 // disagree. See ./parity.
 
-// Boot DDL (idempotent). created_at uses a SQL default as a server-side backstop.
-const isoDefault = `to_char((now() at time zone 'utc'), 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')`
+// Boot DDL, generated from the drizzle tables above (see ./ddl) so the pg schema
+// can't drift from the table defs and stays in lockstep with the SQLite + D1 DDL.
+// created_at / next_attempt_at use an app-side $defaultFn; this mirrors it as a SQL
+// backstop so a non-drizzle insert still gets a timestamp.
+const PG_TIMESTAMP_DEFAULT = `to_char((now() at time zone 'utc'), 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')`
 
-export const PG_SCHEMA_STATEMENTS: string[] = [
-  `CREATE TABLE IF NOT EXISTS artifact (
-    id TEXT PRIMARY KEY,
-    short_id TEXT NOT NULL UNIQUE,
-    org_id TEXT NOT NULL DEFAULT 'local',
-    slug TEXT,
-    title TEXT,
-    visibility TEXT NOT NULL DEFAULT 'link',
-    password_hash TEXT,
-    general_role TEXT NOT NULL DEFAULT 'viewer',
-    kind TEXT NOT NULL,
-    spa INTEGER NOT NULL DEFAULT 0,
-    current_version INTEGER NOT NULL DEFAULT 0,
-    created_at TEXT NOT NULL DEFAULT ${isoDefault},
-    removed_at TEXT,
-    source_path TEXT
-  )`,
-  `ALTER TABLE artifact ADD COLUMN IF NOT EXISTS removed_at TEXT`,
-  `ALTER TABLE artifact ADD COLUMN IF NOT EXISTS source_path TEXT`,
-  `ALTER TABLE artifact ADD COLUMN IF NOT EXISTS password_hash TEXT`,
-  `ALTER TABLE artifact ADD COLUMN IF NOT EXISTS general_role TEXT NOT NULL DEFAULT 'viewer'`,
-  // Library feed: scope by org_id + keyset order on (created_at, id) desc. One
-  // composite serves both; Postgres backward-scans it for the DESC order.
-  `CREATE INDEX IF NOT EXISTS artifact_org_created ON artifact (org_id, created_at, id)`,
-  `CREATE TABLE IF NOT EXISTS version (
-    id TEXT PRIMARY KEY,
-    artifact_id TEXT NOT NULL REFERENCES artifact(id),
-    n INTEGER NOT NULL,
-    blob_key TEXT NOT NULL,
-    content_type TEXT NOT NULL,
-    size_bytes INTEGER NOT NULL DEFAULT 0,
-    author TEXT NOT NULL,
-    message TEXT,
-    name TEXT,
-    created_at TEXT NOT NULL DEFAULT ${isoDefault},
-    UNIQUE (artifact_id, n)
-  )`,
-  `ALTER TABLE version ADD COLUMN IF NOT EXISTS name TEXT`,
-  `ALTER TABLE version ADD COLUMN IF NOT EXISTS size_bytes INTEGER NOT NULL DEFAULT 0`,
-  `CREATE TABLE IF NOT EXISTS comment (
-    id TEXT PRIMARY KEY,
-    artifact_id TEXT NOT NULL REFERENCES artifact(id),
-    thread_id TEXT NOT NULL,
-    base_version INTEGER NOT NULL,
-    path TEXT,
-    anchor TEXT,
-    body_md TEXT NOT NULL,
-    author TEXT NOT NULL,
-    author_id TEXT,
-    state TEXT NOT NULL DEFAULT 'open',
-    created_at TEXT NOT NULL DEFAULT ${isoDefault},
-    meta TEXT
-  )`,
-  `ALTER TABLE comment ADD COLUMN IF NOT EXISTS meta TEXT`,
-  `ALTER TABLE comment ADD COLUMN IF NOT EXISTS author_id TEXT`,
-  `CREATE TABLE IF NOT EXISTS principal (
-    id TEXT PRIMARY KEY,
-    org_id TEXT NOT NULL,
-    email TEXT,
-    kind TEXT NOT NULL DEFAULT 'human',
-    created_at TEXT NOT NULL DEFAULT ${isoDefault}
-  )`,
-  `CREATE TABLE IF NOT EXISTS acl (
-    artifact_id TEXT PRIMARY KEY REFERENCES artifact(id),
-    visibility TEXT NOT NULL,
-    password_hash TEXT,
-    org_gate TEXT
-  )`,
-  `CREATE TABLE IF NOT EXISTS view (
-    id TEXT PRIMARY KEY,
-    artifact_id TEXT NOT NULL REFERENCES artifact(id),
-    version INTEGER NOT NULL,
-    viewer TEXT NOT NULL,
-    viewer_kind TEXT NOT NULL DEFAULT 'anon',
-    created_at TEXT NOT NULL DEFAULT ${isoDefault}
-  )`,
-  `CREATE INDEX IF NOT EXISTS view_artifact_time ON view (artifact_id, created_at)`,
-  `CREATE TABLE IF NOT EXISTS webhook (
-    id TEXT PRIMARY KEY,
-    org_id TEXT NOT NULL DEFAULT 'default',
-    artifact_id TEXT REFERENCES artifact(id),
-    url TEXT NOT NULL,
-    secret TEXT NOT NULL,
-    kind TEXT NOT NULL DEFAULT 'generic',
-    events TEXT NOT NULL DEFAULT '*',
-    label TEXT,
-    active INTEGER NOT NULL DEFAULT 1,
-    created_at TEXT NOT NULL DEFAULT ${isoDefault}
-  )`,
-  `CREATE TABLE IF NOT EXISTS webhook_delivery (
-    id TEXT PRIMARY KEY,
-    webhook_id TEXT NOT NULL,
-    url TEXT NOT NULL,
-    secret TEXT NOT NULL,
-    kind TEXT NOT NULL,
-    event_type TEXT NOT NULL,
-    payload TEXT NOT NULL,
-    status TEXT NOT NULL DEFAULT 'pending',
-    attempts INTEGER NOT NULL DEFAULT 0,
-    last_error TEXT,
-    next_attempt_at TEXT NOT NULL DEFAULT ${isoDefault},
-    created_at TEXT NOT NULL DEFAULT ${isoDefault}
-  )`,
-  `CREATE INDEX IF NOT EXISTS delivery_due ON webhook_delivery (status, next_attempt_at)`,
-  `CREATE TABLE IF NOT EXISTS membership (
-    id TEXT PRIMARY KEY,
-    org_id TEXT NOT NULL,
-    user_id TEXT NOT NULL,
-    role TEXT NOT NULL,
-    created_at TEXT NOT NULL DEFAULT ${isoDefault},
-    UNIQUE (org_id, user_id)
-  )`,
-  `CREATE TABLE IF NOT EXISTS workspace (
-    id TEXT PRIMARY KEY,
-    name TEXT NOT NULL,
-    created_at TEXT NOT NULL DEFAULT ${isoDefault}
-  )`,
-  `CREATE TABLE IF NOT EXISTS artifact_member (
-    id TEXT PRIMARY KEY,
-    artifact_id TEXT NOT NULL REFERENCES artifact(id),
-    user_id TEXT NOT NULL,
-    role TEXT NOT NULL,
-    created_at TEXT NOT NULL DEFAULT ${isoDefault},
-    UNIQUE (artifact_id, user_id)
-  )`,
-  `CREATE TABLE IF NOT EXISTS notification (
-    id TEXT PRIMARY KEY,
-    user_id TEXT NOT NULL,
-    actor TEXT NOT NULL,
-    kind TEXT NOT NULL,
-    artifact_id TEXT NOT NULL,
-    artifact_short_id TEXT NOT NULL,
-    artifact_title TEXT,
-    thread_id TEXT NOT NULL,
-    comment_id TEXT NOT NULL,
-    preview TEXT NOT NULL,
-    read INTEGER NOT NULL DEFAULT 0,
-    created_at TEXT NOT NULL DEFAULT ${isoDefault}
-  )`,
-  `CREATE INDEX IF NOT EXISTS notification_user_time ON notification (user_id, created_at)`,
-  `CREATE TABLE IF NOT EXISTS agent (
-    id TEXT PRIMARY KEY,
-    org_id TEXT NOT NULL,
-    name TEXT NOT NULL,
-    token TEXT NOT NULL,
-    role TEXT NOT NULL DEFAULT 'commenter',
-    created_at TEXT NOT NULL DEFAULT ${isoDefault},
-    UNIQUE (token),
-    UNIQUE (org_id, name)
-  )`,
-  `CREATE TABLE IF NOT EXISTS agent_mention (
-    id TEXT PRIMARY KEY,
-    agent_id TEXT NOT NULL,
-    artifact_id TEXT NOT NULL,
-    artifact_short_id TEXT NOT NULL,
-    comment_id TEXT NOT NULL,
-    thread_id TEXT NOT NULL,
-    body TEXT NOT NULL,
-    author TEXT NOT NULL,
-    state TEXT NOT NULL DEFAULT 'pending',
-    created_at TEXT NOT NULL DEFAULT ${isoDefault}
-  )`,
-  `CREATE INDEX IF NOT EXISTS agent_mention_inbox ON agent_mention (agent_id, state, created_at)`,
-  `CREATE TABLE IF NOT EXISTS artifact_favorite (
-    id TEXT PRIMARY KEY,
-    artifact_id TEXT NOT NULL REFERENCES artifact(id),
-    user_id TEXT NOT NULL,
-    created_at TEXT NOT NULL DEFAULT ${isoDefault},
-    UNIQUE (artifact_id, user_id)
-  )`,
-  `CREATE INDEX IF NOT EXISTS favorite_user ON artifact_favorite (user_id)`,
-  `CREATE TABLE IF NOT EXISTS artifact_tag (
-    id TEXT PRIMARY KEY,
-    artifact_id TEXT NOT NULL REFERENCES artifact(id),
-    tag TEXT NOT NULL,
-    created_at TEXT NOT NULL DEFAULT ${isoDefault},
-    UNIQUE (artifact_id, tag)
-  )`,
-  `CREATE INDEX IF NOT EXISTS tag_name ON artifact_tag (tag)`,
-  `CREATE TABLE IF NOT EXISTS collection (
-    id TEXT PRIMARY KEY,
-    org_id TEXT NOT NULL DEFAULT 'local',
-    title TEXT NOT NULL,
-    created_by TEXT NOT NULL,
-    created_at TEXT NOT NULL DEFAULT ${isoDefault}
-  )`,
-  `CREATE TABLE IF NOT EXISTS collection_item (
-    id TEXT PRIMARY KEY,
-    collection_id TEXT NOT NULL REFERENCES collection(id),
-    artifact_id TEXT NOT NULL REFERENCES artifact(id),
-    created_at TEXT NOT NULL DEFAULT ${isoDefault},
-    UNIQUE (collection_id, artifact_id)
-  )`,
-  `CREATE INDEX IF NOT EXISTS collection_item_artifact ON collection_item (artifact_id)`,
-  `CREATE TABLE IF NOT EXISTS collection_member (
-    id TEXT PRIMARY KEY,
-    collection_id TEXT NOT NULL REFERENCES collection(id),
-    user_id TEXT NOT NULL,
-    role TEXT NOT NULL,
-    created_at TEXT NOT NULL DEFAULT ${isoDefault},
-    UNIQUE (collection_id, user_id)
-  )`,
-  `CREATE INDEX IF NOT EXISTS collection_member_user ON collection_member (user_id)`,
-  `CREATE TABLE IF NOT EXISTS repo_source (
-    id TEXT PRIMARY KEY,
-    org_id TEXT NOT NULL DEFAULT 'local',
-    collection_id TEXT NOT NULL REFERENCES collection(id),
-    repo TEXT NOT NULL,
-    ref TEXT NOT NULL DEFAULT 'HEAD',
-    includes TEXT NOT NULL,
-    token TEXT,
-    files TEXT NOT NULL DEFAULT '{}',
-    last_synced_at TEXT,
-    last_status TEXT,
-    created_by TEXT NOT NULL,
-    created_at TEXT NOT NULL DEFAULT ${isoDefault}
-  )`,
-  `CREATE INDEX IF NOT EXISTS repo_source_org ON repo_source (org_id)`,
-  `ALTER TABLE repo_source ADD COLUMN IF NOT EXISTS installation_id TEXT`,
-  `CREATE TABLE IF NOT EXISTS github_app (
-    id TEXT PRIMARY KEY,
-    app_id TEXT NOT NULL,
-    slug TEXT NOT NULL,
-    client_id TEXT NOT NULL,
-    client_secret TEXT NOT NULL,
-    private_key TEXT NOT NULL,
-    webhook_secret TEXT NOT NULL,
-    created_at TEXT NOT NULL DEFAULT ${isoDefault}
-  )`,
-  `CREATE TABLE IF NOT EXISTS github_installation (
-    installation_id TEXT PRIMARY KEY,
-    org_id TEXT NOT NULL,
-    account_login TEXT,
-    created_by TEXT NOT NULL,
-    created_at TEXT NOT NULL DEFAULT ${isoDefault}
-  )`,
-  `CREATE INDEX IF NOT EXISTS github_installation_org ON github_installation (org_id)`,
-  `CREATE TABLE IF NOT EXISTS domain (
-    host TEXT PRIMARY KEY,
-    artifact_id TEXT REFERENCES artifact(id),
-    org_id TEXT NOT NULL,
-    kind TEXT NOT NULL DEFAULT 'subdomain',
-    status TEXT NOT NULL DEFAULT 'active',
-    cf_hostname_id TEXT,
-    verification TEXT,
-    created_at TEXT NOT NULL DEFAULT ${isoDefault}
-  )`,
-  `CREATE INDEX IF NOT EXISTS domain_artifact ON domain (artifact_id)`,
-  `CREATE TABLE IF NOT EXISTS proposal (
-    id TEXT PRIMARY KEY,
-    artifact_id TEXT NOT NULL REFERENCES artifact(id),
-    blob_key TEXT NOT NULL,
-    content_type TEXT NOT NULL,
-    kind TEXT NOT NULL,
-    title TEXT,
-    message TEXT,
-    author TEXT NOT NULL,
-    author_id TEXT,
-    base_version INTEGER NOT NULL,
-    state TEXT NOT NULL DEFAULT 'open',
-    decided_by TEXT,
-    decided_version INTEGER,
-    decision_note TEXT,
-    decided_at TEXT,
-    created_at TEXT NOT NULL DEFAULT ${isoDefault}
-  )`,
-  `ALTER TABLE proposal ADD COLUMN IF NOT EXISTS decision_note TEXT`,
-  `ALTER TABLE proposal ADD COLUMN IF NOT EXISTS author_id TEXT`,
-  `CREATE INDEX IF NOT EXISTS proposal_artifact_state ON proposal (artifact_id, state)`,
-  `CREATE TABLE IF NOT EXISTS report (
-    id TEXT PRIMARY KEY,
-    org_id TEXT NOT NULL DEFAULT 'default',
-    artifact_id TEXT NOT NULL,
-    artifact_short_id TEXT NOT NULL,
-    reason TEXT NOT NULL,
-    detail TEXT,
-    reporter TEXT,
-    state TEXT NOT NULL DEFAULT 'open',
-    created_at TEXT NOT NULL DEFAULT ${isoDefault}
-  )`,
-  `CREATE INDEX IF NOT EXISTS report_state ON report (state, created_at)`,
-  `CREATE TABLE IF NOT EXISTS audit_log (
-    id TEXT PRIMARY KEY,
-    org_id TEXT NOT NULL DEFAULT 'default',
-    action TEXT NOT NULL,
-    artifact_id TEXT,
-    actor TEXT NOT NULL,
-    detail TEXT,
-    created_at TEXT NOT NULL DEFAULT ${isoDefault}
-  )`,
-  `CREATE INDEX IF NOT EXISTS audit_artifact ON audit_log (artifact_id, created_at)`,
-  `ALTER TABLE webhook ADD COLUMN IF NOT EXISTS org_id TEXT NOT NULL DEFAULT 'default'`,
-  `ALTER TABLE report ADD COLUMN IF NOT EXISTS org_id TEXT NOT NULL DEFAULT 'default'`,
-  `ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS org_id TEXT NOT NULL DEFAULT 'default'`,
+// Drizzle tables, in FK-dependency order (a referenced table is created first).
+const TABLES = [
+  artifact,
+  version,
+  comment,
+  webhook,
+  webhookDelivery,
+  membership,
+  workspace,
+  artifactMember,
+  notification,
+  agent,
+  agentMention,
+  artifactFavorite,
+  artifactTag,
+  collection,
+  collectionItem,
+  collectionMember,
+  repoSource,
+  githubApp,
+  githubInstallation,
+  domain,
+  proposal,
+  report,
+  auditLog,
 ]
+
+/** Build the Postgres boot DDL: generated table/index CREATEs + placeholder tables
+ *  + perf indexes, then the idempotent ADD COLUMN IF NOT EXISTS migrations. Pure;
+ *  exported for the conformance test. */
+export const buildPgSchemaStatements = (): string[] => {
+  const { creates, alters } = generateDdl(TABLES, getTableConfig, {
+    ifNotExists: true,
+    timestampDefault: PG_TIMESTAMP_DEFAULT,
+  })
+  return [...creates, ...placeholderTables(PG_TIMESTAMP_DEFAULT), ...PERF_INDEXES, ...alters]
+}
+
+export const PG_SCHEMA_STATEMENTS: string[] = buildPgSchemaStatements()

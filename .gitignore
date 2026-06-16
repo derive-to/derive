@@ -14,3 +14,7 @@ playwright-report/
 # ad-hoc local data dirs
 .data-*
 **/.data-*
+
+# Local dev/test API data (sqlite DB + blobs)
+apps/api/.ab-data/
+apps/api/.e2e-data/

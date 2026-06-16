@@ -114,6 +114,7 @@ export function Artifact() {
     sel,
     setSel,
     inDoc,
+    landedSlides,
     anchorTops,
     scrollY,
     docH,
@@ -148,16 +149,33 @@ export function Artifact() {
     live.setGeom({ scrollY, docH, viewH })
   }, [live.setGeom, scrollY, docH, viewH])
 
+  // Tell the cursor layer which slide we're viewing, so peers on other slides are
+  // hidden. null on a plain document → everyone shows (no filtering).
+  useEffect(() => {
+    live.setViewSlide(deck?.i ?? null)
+  }, [live.setViewSlide, deck?.i])
+
   // biome-ignore lint/correctness/useExhaustiveDependencies: clears the active thread + composer when the artifact/version changes (the iframe bridge clears its own selection).
   useEffect(() => {
     setActiveThread(null)
     setComposer(null)
   }, [shortId, version])
 
-  // Clicking a thread's quote scrolls the document to its highlight. On phones the
-  // bottom ~half is covered by the comments sheet, so bias the scroll to drop the
-  // highlight into the upper band rather than dead-center (behind the sheet).
+  // Navigate the deck to the slide a comment lives on: its resolved slide, falling
+  // back to the slide it was made on. No-op off a deck or already on that slide.
+  const goToCommentSlide = (threadId: string) => {
+    if (!deck) return
+    const a = parseAnchor(comments.find((c) => c.thread_id === threadId)?.anchor ?? null)
+    const landed = landedSlides[threadId]
+    const target = landed != null ? landed : a?.slide
+    if (target != null && target !== deck.i) deckCmd("goto", target)
+  }
+
+  // Clicking a thread's quote scrolls the document to its highlight (on a deck, first
+  // flips to its slide). On phones the bottom ~half is covered by the comments sheet,
+  // so bias the scroll to drop the highlight into the upper band (not behind it).
   const jumpTo = (threadId: string) => {
+    goToCommentSlide(threadId)
     setActiveThread(threadId)
     post({ type: "focus-anchor", id: threadId, bias: isMobile ? 0.28 : undefined })
   }
@@ -231,6 +249,11 @@ export function Artifact() {
       ? "md"
       : "html"
   const canPropose = canPublish || art.my_role === "commenter"
+  // Lock: any editor can toggle it (advanced menu). While locked, even an editor
+  // must propose — `effectiveCanPublish` flips the edit flow to the propose path.
+  const canLock = canPublish
+  const isLocked = !!art.locked
+  const effectiveCanPublish = canPublish && !isLocked
   // A logged-out visitor on a public/link artifact: strictly view-only. They get
   // the document + live presence/cursors (Google-Docs style) and nothing else —
   // no favorite, tags, collections, share, report, comments, or version tools.
@@ -256,15 +279,27 @@ export function Artifact() {
   const resolvedThreads = all.filter((t) => t[0]?.state === "resolved")
   const pinned: PinItem[] = []
   const general: Comment[][] = []
+  const pinHere = (t: Comment[], id: string) => {
+    const top = anchorTops[id]
+    pinned.push({ thread: t, desiredY: top != null ? top - scrollY : 0, located: top != null })
+  }
   for (const t of openThreads) {
     const head = t[0]
     if (!head) continue
     const id = head.thread_id
-    const hasAnchor = !!parseAnchor(head.anchor)
+    const a = parseAnchor(head.anchor)
     const present = inDoc[id] !== false
-    if (docLive && hasAnchor && present) {
-      const top = anchorTops[id]
-      pinned.push({ thread: t, desiredY: top != null ? top - scrollY : 0, located: top != null })
+    if (deck && a) {
+      // Deck: a comment belongs to the slide its text actually resolved on (landed),
+      // or, until that's known, the slide it was made on (recorded). Pin it only on
+      // that slide; otherwise it waits in the drawer with a "Slide N" badge.
+      const landed = landedSlides[id]
+      const effSlide = landed != null ? landed : a.slide
+      if (effSlide != null && effSlide !== deck.i) general.push(t)
+      else if (docLive && present) pinHere(t, id)
+      else general.push(t)
+    } else if (docLive && a && present) {
+      pinHere(t, id)
     } else {
       general.push(t)
     }
@@ -308,6 +343,13 @@ export function Artifact() {
     setRestoring,
   })
 
+  // Activating a thread from the panel/rail: on a deck, first flip to the slide it
+  // lives on so its highlight is visible, then open it.
+  const activateThread = (id: string) => {
+    goToCommentSlide(id)
+    activate(id)
+  }
+
   // On phones the comments live in a slide-up sheet, so the in-flow aside has
   // no width and the document gets the full screen.
   const asideWidth = isMobile ? 0 : panel === "open" ? 340 : panel === "rail" ? 50 : 0
@@ -335,7 +377,26 @@ export function Artifact() {
                 panelOpen={panel === "open"}
                 openCount={openCount}
                 showEdit={editable && canPropose && !editing && !art.managed}
-                editLabel={canPublish ? "Edit source (dev)" : "Propose change (dev)"}
+                editLabel={effectiveCanPublish ? "Edit source (dev)" : "Propose change (dev)"}
+                isDeck={!!deck || art.current_content_type === "text/x-dock-deck"}
+                canLock={canLock}
+                locked={isLocked}
+                onPresent={toggleFullscreen}
+                onLockToggle={async () => {
+                  const next = !isLocked
+                  // Optimistic flip; roll back if the server rejects.
+                  qc.setQueryData(artifactQuery(shortId).queryKey, (a) =>
+                    a ? { ...a, locked: next } : a,
+                  )
+                  try {
+                    await api.setLocked(shortId, next)
+                  } catch (e) {
+                    qc.setQueryData(artifactQuery(shortId).queryKey, (a) =>
+                      a ? { ...a, locked: !next } : a,
+                    )
+                    toast.error((e as Error).message)
+                  }
+                }}
                 onFavorite={(fav) =>
                   qc.setQueryData(artifactQuery(shortId).queryKey, (a) =>
                     a ? { ...a, favorite: fav } : a,
@@ -410,9 +471,9 @@ export function Artifact() {
           >
             {editing ? (
               <SourceEditor
-                canPublish={canPublish}
-                title={canPublish ? editTitle : (art.title ?? shortId)}
-                onTitle={canPublish ? setEditTitle : undefined}
+                canPublish={effectiveCanPublish}
+                title={effectiveCanPublish ? editTitle : (art.title ?? shortId)}
+                onTitle={effectiveCanPublish ? setEditTitle : undefined}
                 format={format}
                 proposeMsg={proposeMsg}
                 message={message}
@@ -504,12 +565,14 @@ export function Artifact() {
             setSel={setSel}
             setActiveThread={setActiveThread}
             setHoverThread={setHoverThread}
-            activate={activate}
+            activate={activateThread}
             toggleResolve={toggleResolve}
             reply={reply}
             submitNew={submitNew}
             jumpTo={jumpTo}
             startSelComment={startSelComment}
+            currentSlide={deck?.i ?? null}
+            landedSlides={landedSlides}
           />
         </div>
       </ActionsCtx.Provider>

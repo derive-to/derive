@@ -35,6 +35,7 @@ describe("parseRef", () => {
 describe("kindLabel", () => {
   it("labels by content type and bundle flag", () => {
     expect(kindLabel("text/markdown", false)).toBe("Markdown")
+    expect(kindLabel("text/x-dock-deck", false)).toBe("Deck")
     expect(kindLabel("text/html; charset=utf-8", false)).toBe("HTML")
     expect(kindLabel("text/html", true)).toBe("Site")
     expect(kindLabel(null, false)).toBe("Document")

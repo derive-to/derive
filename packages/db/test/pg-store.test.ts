@@ -161,7 +161,7 @@ if (PG_URL) {
           // No column default: unset `discoverable` is NULL, which search treats as
           // discoverable (on by default), same as a pre-migration row.
           await boot.query(
-            `CREATE TABLE ${schema}."user" (id text primary key, email text, name text, image text, username text, discoverable boolean)`,
+            `CREATE TABLE ${schema}."user" (id text primary key, email text, name text, image text, username text, discoverable boolean, profession text, about text)`,
           )
           await boot.query(`CREATE UNIQUE INDEX ON ${schema}."user" (username)`)
           await boot.query(

@@ -20,11 +20,12 @@ export const workspaceRoutes = (ctx: AppContext) => {
 
   const memberJson = (
     m: { user_id: string; role: Role },
-    dir: Map<string, { username: string | null; name: string | null }>,
+    dir: Map<string, { username: string | null; name: string | null; profession?: string | null }>,
   ) => ({
     user_id: m.user_id,
     handle: dir.get(m.user_id)?.username ?? null,
     name: dir.get(m.user_id)?.name ?? null,
+    profession: dir.get(m.user_id)?.profession ?? null,
     role: m.role,
   })
 
@@ -87,7 +88,16 @@ export const workspaceRoutes = (ctx: AppContext) => {
       user_id: user.id,
       role: b.role,
     })
-    return c.json({ user_id: user.id, handle: user.username, name: user.name, role: b.role }, 201)
+    return c.json(
+      {
+        user_id: user.id,
+        handle: user.username,
+        name: user.name,
+        profession: user.profession ?? null,
+        role: b.role,
+      },
+      201,
+    )
   })
 
   // Change a member's role (Admin only; can't strip the last Admin).

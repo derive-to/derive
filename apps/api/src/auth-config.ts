@@ -167,6 +167,13 @@ export function makeAuth(db: AuthDb, baseUrl: string, secret: string, hooks: Aut
         // as discoverable too, so accounts from before this column are findable
         // without a backfill. input:false, server-set only.
         discoverable: { type: "boolean", required: false, defaultValue: true, input: false },
+        // Who you are on the team: a coarse role (Product / Engineering / Design /
+        // Marketing / Other, free string) and a one-line "what you do" blurb. Set at
+        // onboarding and editable in Settings → Profile; shown on your public profile,
+        // the @mention/member directory, and fed into agent context. input:false,
+        // server-set via POST /v1/me/profile. Better Auth's migration adds the columns.
+        profession: { type: "string", required: false, input: false },
+        about: { type: "string", required: false, input: false },
       },
     },
     socialProviders,

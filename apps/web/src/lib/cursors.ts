@@ -28,6 +28,8 @@ export interface CursorFrame {
   gone?: boolean
   /** The viewer clicked — pulse a ripple at (x, y). */
   tap?: boolean
+  /** Deck artifacts: the slide the peer is on. Peers on other slides aren't shown. */
+  slide?: number
   x: number
   y: number
 }

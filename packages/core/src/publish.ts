@@ -126,11 +126,17 @@ async function storeContent(
       kind: "bundle",
     }
   }
-  return {
-    blobKey: await blobs.put(bytes),
-    contentType: /\.(md|markdown)$/i.test(filename) ? "text/markdown" : "text/html",
-    kind: "file",
+  let contentType: string
+  if (/\.(md|markdown)$/i.test(filename)) {
+    contentType = "text/markdown"
+  } else if (new TextDecoder().decode(bytes).includes("dock-deck")) {
+    // Speaks the dock-deck protocol → it's a slide deck. Match the bare protocol
+    // name so either quote style (source:'dock-deck' / "dock-deck") is detected.
+    contentType = "text/x-dock-deck"
+  } else {
+    contentType = "text/html"
   }
+  return { blobKey: await blobs.put(bytes), contentType, kind: "file" }
 }
 
 /**
@@ -299,9 +305,11 @@ export const toJson = (baseUrl: string, a: ArtifactRecord, versions: VersionReco
   url: artifactUrl(baseUrl, a),
   title: a.title,
   kind: a.kind,
+  current_content_type: a.current_content_type,
   visibility: a.visibility,
   general_role: a.general_role,
   spa: !!a.spa,
+  locked: !!a.locked,
   current_version: a.current_version,
   created_at: a.created_at,
   /** Repo path for a GitHub-synced artifact (drives the folder view); null otherwise. */

@@ -1,12 +1,27 @@
 import type { Artifact } from "@/api"
 import { Icon } from "@/components/icons"
 import { Thumb } from "@/components/shared/thumb"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import { ago } from "@/lib/time"
 import { cn } from "@/lib/utils"
 
 const dirOf = (path: string): string => {
   const i = path.lastIndexOf("/")
   return i < 0 ? "" : path.slice(0, i)
+}
+
+function artifactTypeLabel(a: Artifact): string {
+  if (a.kind === "bundle") return "Site"
+  const ct = a.current_content_type
+  if (ct === "text/x-dock-deck") return "Deck"
+  if (ct === "text/markdown") return "MD"
+  if (ct?.startsWith("text/html")) return "HTML"
+  return "Doc"
 }
 
 // One card in the library grid. Stretched-link pattern: the open button's
@@ -18,16 +33,20 @@ export function ArtifactCard({
   onOpen,
   onToggleFavorite,
   onPickTag,
+  onDelete,
   onPrefetch,
 }: {
   artifact: Artifact
   onOpen: () => void
   onToggleFavorite: () => void
   onPickTag: (tag: string) => void
+  onDelete?: () => void
   // Warm the artifact (metadata + comments + rendered HTML) when the card is
   // hovered or focused, so the click that follows opens instantly.
   onPrefetch?: () => void
 }) {
+  const isOwner = a.my_role === "owner"
+
   return (
     <div className="group relative flex cursor-pointer flex-col gap-2 rounded-lg border border-border bg-card p-3.5 transition-all motion-safe:hover:-translate-y-0.5 hover:border-primary hover:shadow-[var(--shadow)] active:translate-y-0">
       <div className="relative">
@@ -49,6 +68,31 @@ export function ArtifactCard({
         >
           <Icon name="star" size={14} className={cn(!a.favorite && "text-muted-foreground")} />
         </button>
+        {isOwner && onDelete && (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                type="button"
+                data-testid={`artifact-card-more-${a.short_id}`}
+                aria-label="More actions"
+                onClick={(e) => e.stopPropagation()}
+                className="absolute left-2.5 top-2.5 z-20 grid size-7 place-items-center rounded-md border border-border bg-card text-muted-foreground opacity-0 transition hover:border-primary group-hover:opacity-100 focus:opacity-100"
+              >
+                <Icon name="more" size={14} />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent onClick={(e) => e.stopPropagation()}>
+              <DropdownMenuItem
+                data-testid={`artifact-card-delete-${a.short_id}`}
+                className="text-destructive focus:text-destructive"
+                onSelect={() => onDelete()}
+              >
+                <Icon name="delete" size={16} />
+                Delete
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
       </div>
       <button
         type="button"
@@ -70,7 +114,7 @@ export function ArtifactCard({
         )}
         <span className="flex items-center gap-2 font-mono text-xs text-muted-foreground">
           <span className="rounded-[5px] border border-border-soft bg-secondary px-1.5 py-px">
-            {a.kind}
+            {artifactTypeLabel(a)}
           </span>
           {a.versions[0]?.created_at && <span>updated {ago(a.versions[0].created_at)}</span>}
           {a.views !== undefined && a.views > 0 && (

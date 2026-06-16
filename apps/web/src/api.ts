@@ -9,12 +9,20 @@ export interface Me {
   /** Opt-in: findable in people search when true. */
   discoverable: boolean
   role: string
+  /** Coarse team role (Product / Engineering / Design / Marketing / …); null if unset. */
+  profession: string | null
+  /** One-line "what you do" blurb; null if unset. */
+  about: string | null
 }
 /** A public profile, by handle. Email is private and never returned here. */
 export interface PublicProfile {
   username: string
   name: string | null
   image: string | null
+  /** Coarse team role; null if unset. (People-search results omit `about`.) */
+  profession?: string | null
+  /** One-line "what you do" blurb; only present on the full /u/:handle profile. */
+  about?: string | null
 }
 export interface VersionSession {
   n: number
@@ -32,6 +40,9 @@ export interface Artifact {
   url: string
   title: string | null
   kind: "file" | "bundle"
+  current_content_type?: string | null
+  /** Locked: direct publishes are rejected; even editors must propose changes. */
+  locked?: boolean
   visibility: string
   /** The role the general-access link grants (view vs comment). Anonymous reachers are
    *  always clamped to view regardless; commenting requires signing in. */
@@ -109,6 +120,9 @@ export interface ArtifactMember {
    *  the member list identifies collaborators by handle, never by address. */
   handle: string | null
   name: string | null
+  /** Coarse team role (Product / Engineering / …); null if unset. Shown in member
+   *  lists; absent on artifact/collection member payloads that don't join it. */
+  profession?: string | null
   role: Role
 }
 /** A DNS record the customer adds to validate a custom domain. */
@@ -344,6 +358,8 @@ export const api = {
         // On by default: discoverable unless explicitly opted out.
         discoverable: s.user.discoverable !== false,
         role: "member",
+        profession: s.user.profession ?? null,
+        about: s.user.about ?? null,
       },
     }
   },
@@ -354,6 +370,13 @@ export const api = {
   // A public profile by handle (no email). Readable without a session.
   profile: (handle: string): Promise<{ user: PublicProfile }> =>
     f(`/v1/users/${encodeURIComponent(handle)}`, { credentials: "include" }).then(j),
+  // Set your team role + "what you do" blurb (onboarding + Settings → Profile).
+  // Omitted fields are left untouched; "" clears a field.
+  setProfile: (fields: {
+    profession?: string
+    about?: string
+  }): Promise<{ profession: string | null; about: string | null }> =>
+    f("/v1/me/profile", opts(fields)).then(j),
   // Opt in/out of people search.
   setDiscoverable: (discoverable: boolean): Promise<{ discoverable: boolean }> =>
     f("/v1/me/discoverable", opts({ discoverable })).then(j),
@@ -392,6 +415,8 @@ export const api = {
     tag?: string
     collection?: string
     favorite?: boolean
+    /** "shared" → only artifacts explicitly shared with you (across workspaces). */
+    scope?: "shared"
     cursor?: string
     limit?: number
   }): Promise<{ artifacts: Artifact[]; next_cursor: string | null }> => {
@@ -400,6 +425,7 @@ export const api = {
     if (params?.tag) qs.set("tag", params.tag)
     if (params?.collection) qs.set("collection", params.collection)
     if (params?.favorite) qs.set("favorite", "true")
+    if (params?.scope) qs.set("scope", params.scope)
     if (params?.cursor) qs.set("cursor", params.cursor)
     if (params?.limit) qs.set("limit", String(params.limit))
     const s = qs.toString()
@@ -439,6 +465,13 @@ export const api = {
       credentials: "include",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ visibility, generalRole, password }),
+    }).then(j),
+  setLocked: (id: string, locked: boolean): Promise<{ locked: boolean }> =>
+    f(`/v1/artifacts/${id}/locked`, {
+      method: "PATCH",
+      credentials: "include",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ locked }),
     }).then(j),
   diff: (id: string, from: number, to: number): Promise<Diff> =>
     f(`/v1/artifacts/${id}/diff?from=${from}&to=${to}&format=json`, opts()).then(j),
@@ -519,6 +552,9 @@ export const api = {
     f(`/v1/artifacts/${id}/favorite`, { ...opts(), method: on ? "PUT" : "DELETE" }).then(j),
   setTags: (id: string, tags: string[]): Promise<{ tags: string[] }> =>
     f(`/v1/artifacts/${id}/tags`, { ...opts({ tags }), method: "PUT" }).then(j),
+
+  deleteArtifact: (id: string): Promise<void> =>
+    f(`/v1/artifacts/${id}`, { method: "DELETE", credentials: "include" }).then(() => undefined),
 
   report: (id: string, reason: string, detail?: string): Promise<{ ok: boolean }> =>
     f(`/v1/artifacts/${id}/report`, opts({ reason, detail })).then(j),

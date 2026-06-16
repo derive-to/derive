@@ -200,6 +200,10 @@ export class PgMetaStore implements MetaStore {
       .where(eq(artifact.id, artifactId))
   }
 
+  async setLocked(artifactId: string, locked: 0 | 1): Promise<void> {
+    await this.db.update(artifact).set({ locked }).where(eq(artifact.id, artifactId))
+  }
+
   async getByShortId(shortId: string): Promise<ArtifactRecord | null> {
     const rows = await this.db.select().from(artifact).where(eq(artifact.short_id, shortId))
     return rows[0] ?? null
@@ -219,7 +223,10 @@ export class PgMetaStore implements MetaStore {
       if (!cur[0]) throw new Error(`artifact not found: ${artifactId}`)
       const n = cur[0].cv + 1
       await tx.insert(version).values({ ...v, artifact_id: artifactId, n })
-      await tx.update(artifact).set({ current_version: n }).where(eq(artifact.id, artifactId))
+      await tx
+        .update(artifact)
+        .set({ current_version: n, current_content_type: v.content_type })
+        .where(eq(artifact.id, artifactId))
       const rows = await tx
         .select()
         .from(version)
@@ -558,6 +565,15 @@ export class PgMetaStore implements MetaStore {
   }
   listArtifactMembers(artifactId: string): Promise<ArtifactMemberRecord[]> {
     return this.db.select().from(artifactMember).where(eq(artifactMember.artifact_id, artifactId))
+  }
+  // Artifacts explicitly shared with a user (per-artifact membership) — can span
+  // workspaces; drives the home's "Shared with you" section.
+  async artifactIdsSharedWith(userId: string): Promise<string[]> {
+    const rows = await this.db
+      .select({ id: artifactMember.artifact_id })
+      .from(artifactMember)
+      .where(eq(artifactMember.user_id, userId))
+    return rows.map((r) => r.id)
   }
   async setArtifactMember(m: NewArtifactMember): Promise<ArtifactMemberRecord> {
     const rows = await this.db
@@ -907,7 +923,7 @@ export class PgMetaStore implements MetaStore {
     try {
       const ph = ids.map((_, i) => `$${i + 1}`).join(",")
       const { rows } = await this.pool.query(
-        `SELECT id, email, name, image, username FROM "user" WHERE id IN (${ph})`,
+        `SELECT id, email, name, image, username, profession, about FROM "user" WHERE id IN (${ph})`,
         ids,
       )
       return rows as UserDir[]
@@ -918,7 +934,7 @@ export class PgMetaStore implements MetaStore {
   async getUserByUsername(username: string): Promise<UserProfile | null> {
     try {
       const { rows } = await this.pool.query(
-        `SELECT id, name, image, username FROM "user" WHERE username = $1`,
+        `SELECT id, name, image, username, profession, about FROM "user" WHERE username = $1`,
         [username],
       )
       return (rows[0] as UserProfile) ?? null
@@ -948,6 +964,25 @@ export class PgMetaStore implements MetaStore {
       userId,
     ])
   }
+  async setUserProfile(
+    userId: string,
+    fields: { profession?: string | null; about?: string | null },
+  ): Promise<void> {
+    // Patch only the fields provided (undefined = leave as-is; null = clear).
+    const sets: string[] = []
+    const args: (string | null)[] = []
+    if (fields.profession !== undefined) {
+      args.push(fields.profession)
+      sets.push(`profession = $${args.length}`)
+    }
+    if (fields.about !== undefined) {
+      args.push(fields.about)
+      sets.push(`about = $${args.length}`)
+    }
+    if (sets.length === 0) return
+    args.push(userId)
+    await this.pool.query(`UPDATE "user" SET ${sets.join(", ")} WHERE id = $${args.length}`, args)
+  }
   async searchDiscoverableUsers(q: string, limit: number): Promise<UserProfile[]> {
     const s = q.trim()
     if (!s) return []
@@ -956,7 +991,7 @@ export class PgMetaStore implements MetaStore {
       const { rows } = await this.pool.query(
         // discoverable IS NOT FALSE → true OR unset(null) both match (on by
         // default); only an explicit false (opted out) is excluded.
-        `SELECT id, name, image, username FROM "user"
+        `SELECT id, name, image, username, profession, about FROM "user"
          WHERE discoverable IS NOT FALSE AND username IS NOT NULL
            AND (username ILIKE $1 OR name ILIKE $1)
          ORDER BY username LIMIT $2`,
@@ -1150,6 +1185,24 @@ export class PgMetaStore implements MetaStore {
   async createAuditLog(a: NewAuditLog): Promise<void> {
     await this.db.insert(auditLog).values(a)
   }
+  // Atomic delete: all FK-dependent rows and the artifact row commit together.
+  async deleteArtifact(id: string): Promise<void> {
+    await this.db.transaction(async (tx) => {
+      await tx.delete(version).where(eq(version.artifact_id, id))
+      await tx.delete(comment).where(eq(comment.artifact_id, id))
+      await tx.delete(artifactMember).where(eq(artifactMember.artifact_id, id))
+      await tx.delete(artifactFavorite).where(eq(artifactFavorite.artifact_id, id))
+      await tx.delete(artifactTag).where(eq(artifactTag.artifact_id, id))
+      await tx.delete(collectionItem).where(eq(collectionItem.artifact_id, id))
+      await tx.delete(domain).where(eq(domain.artifact_id, id))
+      await tx.delete(proposal).where(eq(proposal.artifact_id, id))
+      await tx.delete(report).where(eq(report.artifact_id, id))
+      await tx.delete(notification).where(eq(notification.artifact_id, id))
+      await tx.delete(agentMention).where(eq(agentMention.artifact_id, id))
+      await tx.delete(artifact).where(eq(artifact.id, id))
+    })
+  }
+
   // Atomic takedown: tombstone + bulk open-report resolution + audit entry in one
   // transaction, so a failure mid-way rolls back instead of leaving a half-applied
   // takedown. The single bulk UPDATE replaces the route's per-report loop (N+1).

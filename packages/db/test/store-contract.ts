@@ -545,6 +545,40 @@ export function runStoreContract(
     })
   })
 
+  describe(`${label}: deleteArtifact`, () => {
+    it("hard-deletes the artifact row and all FK-dependent rows", async () => {
+      const a = await store.createArtifact(newArtifact())
+      const thread = uuid()
+      await store.addVersion(a.id, newVersion())
+      await store.createComment({
+        id: uuid(),
+        artifact_id: a.id,
+        thread_id: thread,
+        base_version: 1,
+        body_md: "hi",
+        author: "amy",
+      })
+      await store.setArtifactMember({
+        id: uuid(),
+        artifact_id: a.id,
+        user_id: "bob",
+        role: "viewer",
+      })
+      await store.setFavorite(a.id, "amy")
+      await store.setArtifactTags(a.id, ["del-tag"])
+
+      await store.deleteArtifact(a.id, ORG)
+
+      expect(await store.getByShortId(a.short_id)).toBeNull()
+      expect(await store.getArtifactById(a.id)).toBeNull()
+      expect(await store.listVersions(a.id)).toHaveLength(0)
+      expect(await store.listComments(a.id)).toHaveLength(0)
+      expect(await store.getArtifactMember(a.id, "bob")).toBeNull()
+      expect(await store.listUserFavoriteIds("amy")).not.toContain(a.id)
+      expect(await store.artifactIdsByTag("del-tag")).not.toContain(a.id)
+    })
+  })
+
   describe(`${label}: moderation (reports, takedown, audit)`, () => {
     it("files a report, transitions it, takes down an artifact, logs the action", async () => {
       const a = await store.createArtifact(newArtifact())

@@ -6,6 +6,7 @@ import { useAuth } from "@/ctx"
 import { STORAGE_KEYS } from "@/lib/storage-keys"
 import { useIsMobile } from "@/lib/use-is-mobile"
 import { cn } from "@/lib/utils"
+import { ONBOARDED_KEY } from "@/pages/welcome"
 import { Icon } from "./icons"
 import { NavRail } from "./nav-rail"
 import { Logo } from "./shared/logo"
@@ -54,6 +55,21 @@ export function AppShell({ children }: { children: ReactNode }) {
   // Auth gate: bounce to /login on auth-only routes once we know there's no session.
   useEffect(() => {
     if (!loading && !me && !publicView) nav({ to: "/login" })
+  }, [loading, me, publicView, nav])
+
+  // First-run onboarding gate: a signed-in user who hasn't set a role yet (and
+  // hasn't finished/skipped onboarding) gets the dedicated /welcome step. A role
+  // being set, or the onboarded flag, clears it — so it shows once after signup,
+  // never loops. Public views (/a, /u) are left alone.
+  useEffect(() => {
+    if (loading || !me || publicView) return
+    let onboarded = false
+    try {
+      onboarded = localStorage.getItem(ONBOARDED_KEY) === "1"
+    } catch {
+      /* private mode — fall through, role check still gates it */
+    }
+    if (!me.profession && !onboarded) nav({ to: "/welcome" })
   }, [loading, me, publicView, nav])
 
   useEffect(() => {
@@ -190,9 +206,10 @@ export function AppShell({ children }: { children: ReactNode }) {
   // anon visitors, so don't gate those on a session.
   if (loading || (!me && !publicView)) return <CenteredSpinner />
 
-  // Note: a handle-less user is NOT gated here. Profile setup (username + photo)
-  // lives as a pinned card on the home page (ProfileSetupCard), above where you
-  // create your first artifact and see what's shared with you.
+  // Note: profile setup isn't gated *inside* the shell — the onboarding effect
+  // above redirects a new user to the dedicated /welcome step (handle + role +
+  // connect-your-tools) instead, so the shell only ever renders for onboarded or
+  // skipped users.
 
   return (
     <ShellCtx.Provider value={value}>

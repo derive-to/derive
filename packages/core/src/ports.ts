@@ -37,7 +37,11 @@ export interface ArtifactRecord {
   general_role: GeneralRole
   kind: ArtifactKind
   spa: 0 | 1
+  /** Locked: direct publishes are rejected; changes must go through a proposal. */
+  locked: 0 | 1
   current_version: number
+  /** Denormalized from the current version row — updated on every publish. */
+  current_content_type: string | null
   created_at: string
   /** A takedown tombstone: when set, the content is gone (410) but the record stays. */
   removed_at: string | null
@@ -116,6 +120,8 @@ export interface MetaStore {
     passwordHash: string | null,
     generalRole: GeneralRole,
   ): Promise<void>
+  /** Toggle the change-lock: when locked, direct publishes are rejected. */
+  setLocked(artifactId: string, locked: 0 | 1): Promise<void>
   getByShortId(shortId: string): Promise<ArtifactRecord | null>
   /** Load an artifact by its internal id (used by domain mode's host lookup). */
   getArtifactById(id: string): Promise<ArtifactRecord | null>
@@ -229,6 +235,9 @@ export interface MetaStore {
 
   getArtifactMember(artifactId: string, userId: string): Promise<ArtifactMemberRecord | null>
   listArtifactMembers(artifactId: string): Promise<ArtifactMemberRecord[]>
+  /** Artifact ids explicitly shared with a user (they hold a per-artifact
+   *  membership) — the "Shared with you" set; can span workspaces. */
+  artifactIdsSharedWith(userId: string): Promise<string[]>
   /** Insert or update a per-artifact role override (a share). */
   setArtifactMember(m: NewArtifactMember): Promise<ArtifactMemberRecord>
   removeArtifactMember(artifactId: string, userId: string): Promise<void>
@@ -345,6 +354,12 @@ export interface MetaStore {
   setUserImage(userId: string, image: string): Promise<void>
   /** Opt a user in/out of people search (discoverable column). */
   setUserDiscoverable(userId: string, discoverable: boolean): Promise<void>
+  /** Set a user's team role + "what you do" blurb (profession/about columns). An
+   *  undefined field is left untouched; null clears it. */
+  setUserProfile(
+    userId: string,
+    fields: { profession?: string | null; about?: string | null },
+  ): Promise<void>
   /** People search: opted-in (discoverable) profiles matching `q` on username or
    *  name, capped to `limit`. Empty `q` returns nothing (no full enumeration). */
   searchDiscoverableUsers(q: string, limit: number): Promise<UserProfile[]>
@@ -385,6 +400,11 @@ export interface MetaStore {
   ): Promise<ReportRecord[]>
   countOpenReports(orgId: string | undefined): Promise<number>
   setReportState(id: string, state: ReportState, orgId?: string): Promise<void>
+  /** Hard-delete an artifact and all its dependent rows (versions, comments,
+   *  proposals, memberships, favorites, tags, collection items, domains, etc.).
+   *  Ownership check is the caller's responsibility. For moderation takedowns
+   *  use setArtifactRemoved() instead — that tombstones without deleting. */
+  deleteArtifact(id: string, orgId: string): Promise<void>
   /** Set or clear an artifact's takedown tombstone (the record is never deleted). */
   setArtifactRemoved(id: string, removedAt: string | null): Promise<void>
   /** Take an artifact down atomically: tombstone the artifact, resolve every open
@@ -582,6 +602,10 @@ export interface UserDir {
   name: string | null
   /** Profile picture URL (set by OAuth providers; null for password signups). */
   image: string | null
+  /** Coarse team role (Product / Engineering / Design / Marketing / …); null if unset. */
+  profession?: string | null
+  /** One-line "what you do" blurb; null if unset. */
+  about?: string | null
 }
 
 /** A public profile, keyed by handle. Email is intentionally absent — it stays
@@ -591,6 +615,10 @@ export interface UserProfile {
   username: string
   name: string | null
   image: string | null
+  /** Coarse team role; null if unset. Shown on the public profile + people search. */
+  profession?: string | null
+  /** One-line "what you do" blurb; null if unset. */
+  about?: string | null
 }
 
 export type NotificationKind = "mention" | "comment" | "share"

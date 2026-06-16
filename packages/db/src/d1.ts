@@ -128,7 +128,7 @@ export function createD1Store(d1: D1Database): MetaStore {
           sql`, `,
         )
         return (await db.all(
-          sql`SELECT id, email, name, image, username FROM user WHERE id IN (${list})`,
+          sql`SELECT id, email, name, image, username, profession, about FROM user WHERE id IN (${list})`,
         )) as UserDir[]
       } catch {
         return []
@@ -138,7 +138,7 @@ export function createD1Store(d1: D1Database): MetaStore {
       try {
         return (
           ((await db.get(
-            sql`SELECT id, name, image, username FROM user WHERE username = ${username}`,
+            sql`SELECT id, name, image, username, profession, about FROM user WHERE username = ${username}`,
           )) as UserProfile) ?? null
         )
       } catch {
@@ -165,6 +165,13 @@ export function createD1Store(d1: D1Database): MetaStore {
     setUserDiscoverable: async (userId: string, discoverable: boolean): Promise<void> => {
       await db.run(sql`UPDATE user SET discoverable = ${discoverable ? 1 : 0} WHERE id = ${userId}`)
     },
+    setUserProfile: async (userId, fields): Promise<void> => {
+      // Patch only the fields provided (undefined = leave as-is; null = clear).
+      if (fields.profession !== undefined)
+        await db.run(sql`UPDATE user SET profession = ${fields.profession} WHERE id = ${userId}`)
+      if (fields.about !== undefined)
+        await db.run(sql`UPDATE user SET about = ${fields.about} WHERE id = ${userId}`)
+    },
     searchDiscoverableUsers: async (q: string, limit: number): Promise<UserProfile[]> => {
       const s = q.trim().toLowerCase()
       if (!s) return []
@@ -173,7 +180,7 @@ export function createD1Store(d1: D1Database): MetaStore {
         return (await db.all(
           // discoverable IS NOT 0 → true OR unset(null) both match (on by default);
           // only an explicit 0 (opted out) is excluded.
-          sql`SELECT id, name, image, username FROM user
+          sql`SELECT id, name, image, username, profession, about FROM user
               WHERE discoverable IS NOT 0 AND username IS NOT NULL
                 AND (lower(username) LIKE ${like} OR lower(name) LIKE ${like})
               ORDER BY username LIMIT ${limit}`,

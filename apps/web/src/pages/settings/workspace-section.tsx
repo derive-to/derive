@@ -1,9 +1,10 @@
 import { User } from "lucide-react"
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { toast } from "sonner"
-import { type ArtifactMember, api, type Role, type Workspace } from "@/api"
+import { type ArtifactMember, api, type PublicProfile, type Role, type Workspace } from "@/api"
 import { Spinner } from "@/components/shared/spinner"
 import { useShell } from "@/components/shell-context"
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
@@ -16,6 +17,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
+import { cn } from "@/lib/utils"
 import { roleLabel, roleValue, selectClass, WS_ROLES } from "./roles"
 
 export function WorkspaceSection({ meId }: { meId: string }) {
@@ -28,6 +30,12 @@ export function WorkspaceSection({ meId }: { meId: string }) {
   const [email, setEmail] = useState("")
   const [addRole, setAddRole] = useState<Role>("commenter")
   const [adding, setAdding] = useState(false)
+  // Discoverable-people typeahead for the add field — find teammates by @handle or
+  // name (only those who left people-search on), mirroring ShareDialog. Free-text
+  // (a full email for someone not discoverable) still works via the Add button.
+  const [suggest, setSuggest] = useState<PublicProfile[]>([])
+  const [active, setActive] = useState(-1)
+  const picked = useRef("")
   const [delName, setDelName] = useState("")
   const [deleting, setDeleting] = useState(false)
 
@@ -91,6 +99,65 @@ export function WorkspaceSection({ meId }: { meId: string }) {
     }
   }
 
+  // Debounced people-search; skip when empty or when the term is exactly what we
+  // just picked (so a pick doesn't immediately reopen the menu).
+  useEffect(() => {
+    const term = email.trim()
+    if (!term || term === picked.current) {
+      setSuggest([])
+      return
+    }
+    let alive = true
+    const t = setTimeout(() => {
+      api
+        .searchPeople(term)
+        .then((r) => {
+          if (!alive) return
+          setSuggest(r.users)
+          setActive(-1)
+        })
+        .catch(() => {
+          if (alive) setSuggest([])
+        })
+    }, 180)
+    return () => {
+      alive = false
+      clearTimeout(t)
+    }
+  }, [email])
+
+  const pick = (u: PublicProfile) => {
+    picked.current = `@${u.username}`
+    setEmail(`@${u.username}`)
+    setSuggest([])
+    setActive(-1)
+  }
+
+  // ↑/↓ to move, Enter to pick the highlighted suggestion, Esc to close. With no
+  // highlight, Enter falls through to the free-text add.
+  const onAddKeyDown = (e: React.KeyboardEvent) => {
+    if (suggest.length === 0) {
+      if (e.key === "Enter") addMember()
+      return
+    }
+    if (e.key === "ArrowDown") {
+      e.preventDefault()
+      setActive((i) => Math.min(i + 1, suggest.length - 1))
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault()
+      setActive((i) => Math.max(i - 1, -1))
+    } else if (e.key === "Enter" && active >= 0 && suggest[active]) {
+      e.preventDefault()
+      pick(suggest[active])
+    } else if (e.key === "Enter") {
+      addMember()
+    } else if (e.key === "Escape") {
+      e.preventDefault()
+      setSuggest([])
+      setActive(-1)
+    }
+  }
+
   const addMember = async () => {
     const em = email.trim()
     if (!em) return
@@ -98,6 +165,7 @@ export function WorkspaceSection({ meId }: { meId: string }) {
     try {
       await api.addWorkspaceMember(em, addRole)
       setEmail("")
+      setSuggest([])
       toast.success("Member added")
       load()
     } catch (e) {
@@ -223,17 +291,59 @@ export function WorkspaceSection({ meId }: { meId: string }) {
       {isAdmin && (
         <Card className="mb-3.5 p-4">
           <div className="flex flex-wrap gap-2">
-            <Input
-              data-testid="member-email"
-              autoCapitalize="none"
-              autoCorrect="off"
-              aria-label="Username or email of a Dock user"
-              placeholder="@username or email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && addMember()}
-              className="min-w-[200px] flex-1"
-            />
+            <div className="relative min-w-[200px] flex-1">
+              <Input
+                data-testid="member-email"
+                autoCapitalize="none"
+                autoCorrect="off"
+                autoComplete="off"
+                aria-label="Username or email of a Dock user"
+                placeholder="@username or email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                onKeyDown={onAddKeyDown}
+                className="w-full"
+              />
+              {suggest.length > 0 && (
+                <div
+                  data-testid="member-suggest"
+                  className="absolute inset-x-0 top-[calc(100%+4px)] z-40 max-h-56 overflow-y-auto rounded-lg border border-border bg-card p-1 shadow-[var(--shadow)]"
+                >
+                  {suggest.map((u, i) => (
+                    <button
+                      key={u.username}
+                      type="button"
+                      data-testid="member-suggest-item"
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => pick(u)}
+                      onMouseEnter={() => setActive(i)}
+                      className={cn(
+                        "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left",
+                        i === active ? "bg-hover" : "hover:bg-hover",
+                      )}
+                    >
+                      <Avatar className="size-6">
+                        {u.image && <AvatarImage src={u.image} alt={u.name ?? u.username} />}
+                        <AvatarFallback>
+                          {(u.name ?? u.username).slice(0, 2).toUpperCase()}
+                        </AvatarFallback>
+                      </Avatar>
+                      <span className="min-w-0 flex-1">
+                        {u.name && (
+                          <span className="block truncate text-sm font-semibold text-foreground">
+                            {u.name}
+                          </span>
+                        )}
+                        <span className="block truncate font-mono text-2xs text-muted-foreground">
+                          @{u.username}
+                          {u.profession ? ` · ${u.profession}` : ""}
+                        </span>
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
             <select
               data-testid="member-role"
               aria-label="Role for new member"
@@ -282,7 +392,10 @@ export function WorkspaceSection({ meId }: { meId: string }) {
                   )}
                 </div>
                 {m.handle && m.name && (
-                  <div className="text-2xs text-muted-foreground">@{m.handle}</div>
+                  <div className="text-2xs text-muted-foreground">
+                    @{m.handle}
+                    {m.profession ? ` · ${m.profession}` : ""}
+                  </div>
                 )}
               </div>
               {isAdmin ? (

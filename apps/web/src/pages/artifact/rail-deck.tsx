@@ -140,7 +140,10 @@ export function DeckBar({
       >
         ‹
       </button>
-      <span className="min-w-[52px] text-center font-mono text-sm text-muted-foreground">
+      <span
+        data-testid="deck-position"
+        className="min-w-[52px] text-center font-mono text-sm text-muted-foreground"
+      >
         {deck.i + 1} / {deck.total}
       </span>
       <button

@@ -71,3 +71,33 @@ describe("share by username or email", () => {
     expect((await put({ role: "viewer" }, ann.email)).status).toBe(400)
   })
 })
+
+// GET /v1/artifacts?scope=shared returns only artifacts explicitly shared with the
+// caller (a per-artifact membership) — the home's "Shared with you" set.
+describe("scope=shared listing", () => {
+  const owner: TestUser = { id: "u_sc_owner", email: "owner@sc.test", name: "Owner" }
+  const viewer: TestUser = { id: "u_sc_viewer", email: "viewer@sc.test", name: "Viewer" }
+  const stranger: TestUser = { id: "u_sc_stranger", email: "stranger@sc.test", name: "Stranger" }
+  const { app } = makeAuthedApp("scope-shared", [owner, viewer, stranger], "editor")
+
+  const sharedFor = async (email: string): Promise<{ short_id: string }[]> => {
+    const res = await app.request("/v1/artifacts?scope=shared", { headers: as(email) })
+    return (await res.json()).artifacts
+  }
+
+  it("lists only what's shared with the caller, and never leaks to others", async () => {
+    const sid = (await (await publishAs(app, "<h1>shared</h1>", {}, as(owner.email))).json())
+      .short_id
+    await app.request(`/v1/artifacts/${sid}/members`, {
+      ...jsonAs(as(owner.email), { email: viewer.email, role: "commenter" }),
+      method: "PUT",
+    })
+
+    // The viewer sees it under scope=shared…
+    expect((await sharedFor(viewer.email)).map((a) => a.short_id)).toContain(sid)
+    // …the owner doesn't (they own it, it isn't *shared with* them)…
+    expect((await sharedFor(owner.email)).map((a) => a.short_id)).not.toContain(sid)
+    // …and a stranger it was never shared with sees nothing.
+    expect(await sharedFor(stranger.email)).toEqual([])
+  })
+})
