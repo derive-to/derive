@@ -62,30 +62,20 @@ async function republishDeck(
 
 // Post an anchored comment straight through the API (the same path the UI takes),
 // so we control the exact slide + quoted text the resolver is handed.
+// Post an anchored comment and return its thread_id (the create response carries
+// it directly, so we never depend on the list endpoint's shape).
 async function anchorComment(
   page: import("@playwright/test").Page,
   shortId: string,
   body: string,
   exact: string,
   slide: number,
-): Promise<void> {
+): Promise<string> {
   const res = await page.request.post(`/v1/artifacts/${shortId}/comments`, {
     data: { body_md: body, anchor: { type: "TextQuoteSelector", exact, slide } },
   })
   expect(res.ok(), `comment failed: ${res.status()}`).toBeTruthy()
-}
-
-// The thread_id equals the root comment id; fetch them so we can target testids.
-async function threadIdByBody(
-  page: import("@playwright/test").Page,
-  shortId: string,
-  body: string,
-): Promise<string> {
-  const res = await page.request.get(`/v1/artifacts/${shortId}/comments`)
-  const rows = (await res.json()) as { thread_id: string; body_md: string }[]
-  const hit = rows.find((r) => r.body_md === body)
-  if (!hit) throw new Error(`no comment with body ${body}`)
-  return hit.thread_id
+  return ((await res.json()) as { thread_id: string }).thread_id
 }
 
 test.describe("deck comments — slide-scoped anchoring", () => {
@@ -103,16 +93,12 @@ test.describe("deck comments — slide-scoped anchoring", () => {
         "Appendix with extra details.",
       ]),
     )
-    await anchorComment(owner, shortId, "on-slide-0", "Welcome keynote", 0)
-    await anchorComment(owner, shortId, "dup-on-slide-2", "Shared phrase alpha", 2)
-    await anchorComment(owner, shortId, "on-slide-1", "Roadmap for the year", 1)
+    const s0 = await anchorComment(owner, shortId, "on-slide-0", "Welcome keynote", 0)
+    const dup = await anchorComment(owner, shortId, "dup-on-slide-2", "Shared phrase alpha", 2)
+    const s1 = await anchorComment(owner, shortId, "on-slide-1", "Roadmap for the year", 1)
 
     await owner.goto(`/a/${shortId}`)
     await expect(owner.getByTestId("deck-position")).toHaveText("1 / 5")
-
-    const dup = await threadIdByBody(owner, shortId, "dup-on-slide-2")
-    const s0 = await threadIdByBody(owner, shortId, "on-slide-0")
-    const s1 = await threadIdByBody(owner, shortId, "on-slide-1")
 
     // The crux: the duplicate-text comment resolves to slide 2 → "Slide 3", NOT the
     // slide-0 occurrence ("Slide 1").
@@ -138,13 +124,11 @@ test.describe("deck comments — slide-scoped anchoring", () => {
         "Appendix with extra details.",
       ]),
     )
-    await anchorComment(owner, shortId, "moved-comment", "Closing thoughts", 1)
+    const moved = await anchorComment(owner, shortId, "moved-comment", "Closing thoughts", 1)
     // Out-of-range slide index → global fallback still finds the text (slide 4).
-    await anchorComment(owner, shortId, "oob-comment", "Appendix with extra", 99)
+    const oob = await anchorComment(owner, shortId, "oob-comment", "Appendix with extra", 99)
 
     await owner.goto(`/a/${shortId}`)
-    const moved = await threadIdByBody(owner, shortId, "moved-comment")
-    const oob = await threadIdByBody(owner, shortId, "oob-comment")
 
     await expect(owner.getByTestId(`comment-slide-${moved}`)).toHaveText("Slide 4")
     await expect(owner.getByTestId(`comment-moved-${moved}`)).toBeVisible()
@@ -169,10 +153,9 @@ test.describe("deck comments — slide-scoped anchoring", () => {
   test("re-pins a comment after a republish moves its text to another slide", async ({ owner }) => {
     const v1 = ["Alpha intro.", "Beta roadmap unique line.", "Gamma outro."]
     const shortId = await publishDeck(owner, deckHtml(v1))
-    await anchorComment(owner, shortId, "follows-text", "Beta roadmap unique line", 1)
+    const id = await anchorComment(owner, shortId, "follows-text", "Beta roadmap unique line", 1)
 
     await owner.goto(`/a/${shortId}`)
-    const id = await threadIdByBody(owner, shortId, "follows-text")
     await expect(owner.getByTestId(`comment-slide-${id}`)).toHaveText("Slide 2")
     await expect(owner.getByTestId(`comment-moved-${id}`)).toHaveCount(0)
 
@@ -198,9 +181,8 @@ function show(n){i=Math.max(0,Math.min(s.length-1,n));s.forEach(function(x,k){x.
 window.addEventListener('message',function(e){var d=e.data;if(!d||d.source!=='dock-host'||d.type!=='deck')return;
 if(d.action==='next')show(i+1);else if(d.action==='prev')show(i-1);else if(d.action==='goto')show(d.n)});show(0);r()})();</script></body></html>`
     const shortId = await publishDeck(owner, html)
-    await anchorComment(owner, shortId, "doc-order", "Two beta unique", 1)
+    const id = await anchorComment(owner, shortId, "doc-order", "Two beta unique", 1)
     await owner.goto(`/a/${shortId}`)
-    const id = await threadIdByBody(owner, shortId, "doc-order")
     await expect(owner.getByTestId(`comment-slide-${id}`)).toHaveText("Slide 2")
   })
 })
