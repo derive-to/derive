@@ -3,12 +3,11 @@ import { Hono } from "hono"
 import { z } from "zod"
 import type { AppContext } from "../context"
 import { fail, readJson, str } from "../lib/http"
-import { repairHtmlMistypedAsMarkdown } from "../lib/repair-content-types"
 
 /** Abuse reports (public) + takedown / reinstate / audit (Admin). A taken-down
  *  artifact keeps its record but serves no content (410). */
 export const moderationRoutes = (ctx: AppContext) => {
-  const { meta, blobs, actingUser, workspaceCan, activeWorkspace, isSuperAdmin } = ctx
+  const { meta, actingUser, workspaceCan, activeWorkspace, isSuperAdmin } = ctx
   const app = new Hono()
 
   // Anyone can report a public artifact for abuse. Rate-limited by the global
@@ -136,18 +135,6 @@ export const moderationRoutes = (ctx: AppContext) => {
       detail: rep.id,
     })
     return c.json({ ok: true })
-  })
-
-  // Maintenance: reclassify any single-file versions stored as text/markdown whose
-  // bytes are actually a full HTML document (they render blank). A workspace Admin
-  // repairs their active workspace; a super-admin operator repairs every workspace
-  // (orgId omitted). Idempotent — safe to re-run; only promotes markdown→html on a
-  // genuine HTML document. The publish-time sniff prevents new occurrences.
-  app.post("/v1/maintenance/repair-content-types", async (c) => {
-    if (!(await workspaceCan(c, "manage"))) return fail(c, 403, "forbidden")
-    const orgId = (await isSuperAdmin(c)) ? undefined : await activeWorkspace(c)
-    const report = await repairHtmlMistypedAsMarkdown(meta, blobs, { orgId })
-    return c.json(report)
   })
 
   return app
