@@ -383,7 +383,13 @@ export const api = {
     scope?: "shared"
     cursor?: string
     limit?: number
-  }): Promise<{ artifacts: Artifact[]; next_cursor: string | null }> => {
+  }): Promise<{
+    artifacts: Artifact[]
+    next_cursor: string | null
+    /** Present when listing by `collection` — the collection's id + title, so the
+     *  view can label itself even for a collection in another workspace. */
+    collection?: { id: string; title: string }
+  }> => {
     const qs = new URLSearchParams()
     if (params?.q) qs.set("q", params.q)
     if (params?.tag) qs.set("tag", params.tag)

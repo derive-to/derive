@@ -137,6 +137,11 @@ function LibraryBody() {
 
   const activeCollection =
     filter.kind === "collection" ? collections.find((c) => c.id === filter.id) : undefined
+  // The collection's name from the sidebar list, falling back to the title the list
+  // response carries — so a collection in another workspace still shows its real name
+  // (not the generic "Collection") rather than relying on the active-workspace list.
+  const collectionTitle =
+    activeCollection?.title ?? data?.pages?.[0]?.collection?.title ?? "Collection"
   const heading =
     filter.kind === "all"
       ? "All artifacts"
@@ -144,7 +149,7 @@ function LibraryBody() {
         ? "Favorites"
         : filter.kind === "tag"
           ? `#${filter.tag}`
-          : filter.title
+          : collectionTitle
   const headingCount = debouncedQ
     ? items.length
     : filter.kind === "all"
@@ -259,7 +264,7 @@ function LibraryBody() {
                 `#${filter.tag}`
               ) : (
                 <>
-                  <Icon name="collection" size={15} /> {filter.title}
+                  <Icon name="collection" size={15} /> {collectionTitle}
                 </>
               )}
               <X />

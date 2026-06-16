@@ -49,8 +49,11 @@ describe("workspace scoping: collections + favorites", () => {
     // listing must scope to wsB (it used to scope to the active ws → empty).
     const res = await app.request(`/v1/artifacts?collection=${colId}`, { headers: as(owner.email) })
     expect(res.status).toBe(200)
-    const ids = (await res.json()).artifacts.map((a: { short_id: string }) => a.short_id)
-    expect(ids).toContain("binb01")
+    const body = await res.json()
+    expect(body.artifacts.map((a: { short_id: string }) => a.short_id)).toContain("binb01")
+    // The response carries the collection's title so the view can label itself even
+    // for a collection in another workspace (not in the active sidebar list).
+    expect(body.collection).toMatchObject({ id: colId, title: "B Collection" })
 
     // in-collection search (?q=) works the same way.
     const res2 = await app.request(`/v1/artifacts?collection=${colId}&q=Doc%20in%20B`, {

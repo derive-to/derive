@@ -100,11 +100,15 @@ export const artifactRoutes = (ctx: AppContext) => {
     // empty. Unknown collection ⇒ nothing.
     let listOrg = await activeWorkspace(c)
     let collectionAccess = false
+    // Carry the collection's title so the client can label the view even when the
+    // collection lives in another workspace (it's absent from the local sidebar list).
+    let collectionInfo: { id: string; title: string } | undefined
     if (collectionId) {
       const col = await meta.getCollection(collectionId)
       if (!col) return c.json({ artifacts: [], next_cursor: null })
       narrow(await meta.collectionArtifactIds(collectionId))
       listOrg = col.org_id
+      collectionInfo = { id: col.id, title: col.title }
       collectionAccess =
         (deps.token && safeEqual(bearer(c), deps.token)) ||
         (!!me && !!(await meta.getMembership(col.org_id, me.id))) ||
@@ -148,6 +152,7 @@ export const artifactRoutes = (ctx: AppContext) => {
         favorite: favorites.has(a.id),
       })),
       next_cursor,
+      ...(collectionInfo ? { collection: collectionInfo } : {}),
     })
   })
 
