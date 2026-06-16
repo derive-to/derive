@@ -105,7 +105,7 @@ const globToRe = (glob: string): RegExp => {
         if (glob[i + 1] === "/") i++
       } else re += "[^/]*"
     } else if (c === "?") re += "[^/]"
-    else if (".+^${}()|[]\\".includes(c)) re += `\\${c}`
+    else if (".+^(){}|[]$\\".includes(c)) re += `\\${c}`
     else re += c
   }
   return new RegExp(`^${re}$`, "i")

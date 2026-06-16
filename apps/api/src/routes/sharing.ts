@@ -8,7 +8,7 @@ import { resolveUserRef } from "../lib/resolve-user"
 /** Per-artifact role overrides (a share). Managing shares requires `share`
  *  (editor+, GDocs model); the share's role beats the caller's workspace baseline. */
 export const sharingRoutes = (ctx: AppContext) => {
-  const { meta, defaultRole, anonLocked, authorize, actorFor, actingUser, bus } = ctx
+  const { meta, defaultRole, authorize, actorFor, actingUser, bus } = ctx
   const app = new Hono()
 
   // A sharer can never grant — or remove — a role above their own. An editor (who

@@ -189,7 +189,7 @@ export function createApp(deps: AppDeps): Hono {
       const record = await ctx.meta.getDomain(host)
       // Unknown subdomain → 404 (clearly ours); unknown/pending custom host → fall
       // through so an unregistered host pointed at us never serves stale content.
-      if (!record || record.status !== "active") return isSub ? c.text("not found", 404) : next()
+      if (record?.status !== "active") return isSub ? c.text("not found", 404) : next()
       if (record.artifact_id) {
         // Artifact-bound host (subdomain today): serve that one artifact at the root.
         const a = await ctx.meta.getArtifactById(record.artifact_id)

@@ -170,7 +170,12 @@ export function ShareButton({
     const t = setTimeout(() => {
       api
         .searchPeople(term)
-        .then((r) => alive && (setSuggest(r.users), setActive(-1)))
+        .then((r) => {
+          if (alive) {
+            setSuggest(r.users)
+            setActive(-1)
+          }
+        })
         .catch(() => alive && setSuggest([]))
     }, 180)
     return () => {

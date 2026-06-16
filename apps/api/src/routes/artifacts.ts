@@ -424,7 +424,7 @@ export const artifactRoutes = (ctx: AppContext) => {
     const over = await limited(c, unlockLimiter)
     if (over) return over
     const artifact = await meta.getByShortId(c.req.param("shortId"))
-    if (!artifact || artifact.visibility !== "password" || !artifact.password_hash)
+    if (artifact?.visibility !== "password" || !artifact.password_hash)
       return fail(c, 404, "not found")
     const b = await readJson(c, z.object({ password: z.string().min(1) }))
     if (b instanceof Response) return b
