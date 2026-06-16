@@ -70,7 +70,11 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
         tx.insert(version)
           .values({ ...v, artifact_id: artifactId, n: next })
           .run()
-        tx.update(artifact).set({ current_version: next }).where(eq(artifact.id, artifactId)).run()
+        tx
+          .update(artifact)
+          .set({ current_version: next, current_content_type: v.content_type })
+          .where(eq(artifact.id, artifactId))
+          .run()
         return next
       })
       return (await repos.getVersion(artifactId, n)) as VersionRecord

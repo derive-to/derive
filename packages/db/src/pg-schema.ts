@@ -34,6 +34,7 @@ export const artifact = pgTable("artifact", {
   kind: text("kind").$type<ArtifactKind>().notNull(),
   spa: integer("spa").$type<0 | 1>().notNull().default(0),
   current_version: integer("current_version").notNull().default(0),
+  current_content_type: text("current_content_type"),
   created_at: text("created_at").notNull().$defaultFn(isoNow),
   removed_at: text("removed_at"),
 })

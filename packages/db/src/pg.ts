@@ -211,7 +211,10 @@ export class PgMetaStore implements MetaStore {
       if (!cur[0]) throw new Error(`artifact not found: ${artifactId}`)
       const n = cur[0].cv + 1
       await tx.insert(version).values({ ...v, artifact_id: artifactId, n })
-      await tx.update(artifact).set({ current_version: n }).where(eq(artifact.id, artifactId))
+      await tx
+        .update(artifact)
+        .set({ current_version: n, current_content_type: v.content_type })
+        .where(eq(artifact.id, artifactId))
       const rows = await tx
         .select()
         .from(version)

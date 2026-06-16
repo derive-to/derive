@@ -36,6 +36,7 @@ export const artifact = sqliteTable("artifact", {
   kind: text("kind").$type<ArtifactKind>().notNull(),
   spa: integer("spa").$type<0 | 1>().notNull().default(0),
   current_version: integer("current_version").notNull().default(0),
+  current_content_type: text("current_content_type"),
   created_at: text("created_at").notNull().default(now),
   removed_at: text("removed_at"),
 })
@@ -360,6 +361,7 @@ export const SCHEMA_STATEMENTS: string[] = [
     kind TEXT NOT NULL,
     spa INTEGER NOT NULL DEFAULT 0,
     current_version INTEGER NOT NULL DEFAULT 0,
+    current_content_type TEXT,
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
     removed_at TEXT
   )`,
@@ -627,6 +629,7 @@ export const MIGRATION_STATEMENTS: string[] = [
   `ALTER TABLE artifact ADD COLUMN removed_at TEXT`,
   `ALTER TABLE artifact ADD COLUMN password_hash TEXT`,
   `ALTER TABLE artifact ADD COLUMN general_role TEXT NOT NULL DEFAULT 'viewer'`,
+  `ALTER TABLE artifact ADD COLUMN current_content_type TEXT`,
   `ALTER TABLE version ADD COLUMN size_bytes INTEGER NOT NULL DEFAULT 0`,
   `ALTER TABLE webhook ADD COLUMN org_id TEXT NOT NULL DEFAULT 'default'`,
   `ALTER TABLE report ADD COLUMN org_id TEXT NOT NULL DEFAULT 'default'`,

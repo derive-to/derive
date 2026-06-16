@@ -267,7 +267,11 @@ export function makeRepos(db: SqliteDb) {
       .insert(version)
       .values({ ...v, artifact_id: artifactId, n })
       .run()
-    await db.update(artifact).set({ current_version: n }).where(eq(artifact.id, artifactId)).run()
+    await db
+      .update(artifact)
+      .set({ current_version: n, current_content_type: v.content_type })
+      .where(eq(artifact.id, artifactId))
+      .run()
     return (await getVersion(artifactId, n)) as VersionRecord
   }
 

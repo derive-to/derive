@@ -4,6 +4,7 @@ import { escapeHtml } from "./md"
 export const kindLabel = (contentType: string | null | undefined, isBundle: boolean): string => {
   if (isBundle) return "Site"
   if (contentType === "text/markdown") return "Markdown"
+  if (contentType === "text/x-dock-deck") return "Deck"
   if (contentType?.startsWith("text/html")) return "HTML"
   return "Document"
 }

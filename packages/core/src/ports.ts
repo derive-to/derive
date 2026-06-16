@@ -38,6 +38,8 @@ export interface ArtifactRecord {
   kind: ArtifactKind
   spa: 0 | 1
   current_version: number
+  /** Denormalized from the current version row — updated on every publish. */
+  current_content_type: string | null
   created_at: string
   /** A takedown tombstone: when set, the content is gone (410) but the record stays. */
   removed_at: string | null

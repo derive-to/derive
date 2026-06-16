@@ -62,6 +62,7 @@ interface PeerTarget {
   kind: "arrow" | "emoji"
   emoji?: string
   name: string
+  slide?: number // deck slide the peer is on (undefined on non-deck artifacts)
   gone: boolean
   fade: number // opacity while leaving (1 → 0)
   lastSeen: number
@@ -77,11 +78,12 @@ const styleChanged = (t: PeerTarget, f: CursorFrame) =>
   t.name !== (f.name ?? t.name)
 
 export function useLiveCursors(shortId: string): {
-  onPointerMove: (x: number, y: number) => void
+  onPointerMove: (x: number, y: number, slide?: number) => void
   onPointerLeave: () => void
-  onTap: (x: number, y: number) => void
+  onTap: (x: number, y: number, slide?: number) => void
   paintFrame: (f: CursorFrame) => void
   setGeom: (g: { scrollY: number; docH: number; viewH: number }) => void
+  setViewSlide: (slide: number | null) => void
   layer: CursorLayerHandle
 } {
   const { pref } = useCursorPref()
@@ -118,6 +120,19 @@ export function useLiveCursors(shortId: string): {
   const layerRef = useRef<HTMLDivElement>(null)
   const selfId = useRef("")
   if (!selfId.current) selfId.current = Math.random().toString(36).slice(2, 9)
+
+  // Deck slide context (refs so the send path + paint loop read them without
+  // re-subscribing): `mySlide` is the slide WE'RE on (tagged onto every frame we
+  // send); `viewSlide` is the slide we're VIEWING (peers on a different slide are
+  // hidden). Both null/undefined on non-deck artifacts, so nothing is filtered.
+  const mySlide = useRef<number | undefined>(undefined)
+  const viewSlide = useRef<number | null>(null)
+  const setViewSlide = useCallback((s: number | null) => {
+    viewSlide.current = s
+    // Fade any peer we're showing who isn't on our new slide (instant, not on TTL).
+    if (s == null) return
+    for (const t of targets.current.values()) if (t.slide != null && t.slide !== s) t.gone = true
+  }, [])
 
   // Peer animation state (ref) + the React-visible roster/ripples (state).
   const targets = useRef(new Map<string, PeerTarget>())
@@ -167,7 +182,13 @@ export function useLiveCursors(shortId: string): {
         headers: { "content-type": "application/json" },
         credentials: "include",
         keepalive: true, // so a leave fired at unload still flushes
-        body: JSON.stringify({ id: selfId.current, x: pt[0], y: pt[1], ...extra }),
+        body: JSON.stringify({
+          id: selfId.current,
+          x: pt[0],
+          y: pt[1],
+          slide: mySlide.current,
+          ...extra,
+        }),
       }).catch(() => {})
     },
     [shortId],
@@ -192,9 +213,10 @@ export function useLiveCursors(shortId: string): {
   }, [send])
 
   const onPointerMove = useCallback(
-    (x: number, y: number) => {
+    (x: number, y: number, slide?: number) => {
       if (prefRef.current.hidden) return
       xy.current = [x, y]
+      mySlide.current = slide
       live.current = true
       if (idleTimer.current) clearTimeout(idleTimer.current)
       idleTimer.current = setTimeout(sendLeave, CURSOR_TUNING.idleMs)
@@ -206,9 +228,10 @@ export function useLiveCursors(shortId: string): {
   const onPointerLeave = useCallback(() => sendLeave(), [sendLeave])
 
   const onTap = useCallback(
-    (x: number, y: number) => {
+    (x: number, y: number, slide?: number) => {
       if (prefRef.current.hidden) return
       xy.current = [x, y]
+      mySlide.current = slide
       live.current = true
       send({ ...look(), tap: true })
     },
@@ -228,6 +251,14 @@ export function useLiveCursors(shortId: string): {
       if (!f?.id || f.id === selfId.current) return
       // Viewer opted out of the cursor layer — ignore every incoming peer.
       if (prefRef.current.hidden) return
+      // Deck: only show peers on the slide we're viewing. A peer who navigated away
+      // fades out; a non-deck frame (slide undefined) is never filtered.
+      const vs = viewSlide.current
+      if (vs != null && f.slide != null && f.slide !== vs) {
+        const ex = targets.current.get(f.id)
+        if (ex) ex.gone = true
+        return
+      }
 
       if (f.tap && !reducedMotion.current) {
         const key = ++rippleKey.current
@@ -259,6 +290,7 @@ export function useLiveCursors(shortId: string): {
           kind: f.kind ?? "arrow",
           emoji: f.emoji,
           name: f.name ?? "Guest",
+          slide: f.slide,
           gone: false,
           fade: 1,
           lastSeen: now,
@@ -277,6 +309,7 @@ export function useLiveCursors(shortId: string): {
       existing.kind = f.kind ?? existing.kind
       existing.emoji = f.emoji
       existing.name = f.name ?? existing.name
+      existing.slide = f.slide
       existing.gone = false
       existing.fade = 1
       existing.lastSeen = now
@@ -402,6 +435,7 @@ export function useLiveCursors(shortId: string): {
     onTap,
     paintFrame,
     setGeom,
+    setViewSlide,
     layer: {
       ref: layerRef,
       roster,

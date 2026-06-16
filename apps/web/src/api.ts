@@ -32,6 +32,7 @@ export interface Artifact {
   url: string
   title: string | null
   kind: "file" | "bundle"
+  current_content_type?: string | null
   visibility: string
   /** The role the general-access link grants (view vs comment). Anonymous reachers are
    *  always clamped to view regardless; commenting requires signing in. */
