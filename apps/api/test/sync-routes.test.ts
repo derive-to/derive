@@ -48,6 +48,14 @@ describe("sync routes", () => {
     collectionId = body.collection_id
   })
 
+  it("dedups: re-connecting the same repo returns the existing source, not a duplicate", async () => {
+    const res = await postJson("/v1/sync/github", { repo: "acme/docs" })
+    expect(res.status).toBe(200) // not 201 — nothing new created
+    const body = (await res.json()) as { id: string; collection_id: string }
+    expect(body.id).toBe(id) // same source
+    expect(body.collection_id).toBe(collectionId) // same collection, no second "GitHub: acme/docs"
+  })
+
   it("rejects an invalid repo", async () => {
     const res = await postJson("/v1/sync/github", { repo: "not-a-repo" })
     expect(res.status).toBe(400)

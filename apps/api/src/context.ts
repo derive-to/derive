@@ -6,6 +6,7 @@ import {
   type BlobStore,
   BUNDLE_CONTENT_TYPE,
   type BundleManifest,
+  type CollectionRecord,
   can,
   DEFAULT_VERSION_WINDOW_MS,
   type MetaStore,
@@ -620,6 +621,17 @@ export function buildContext(deps: AppDeps) {
     return data ? new TextDecoder().decode(data) : null
   }
 
+  // A caller's role on a collection: the static token is owner; otherwise the
+  // creator, else their explicit collection-member role, else null (no access).
+  // Shared by the collections routes and the artifact listing (collection scoping).
+  const collectionRole = async (c: Context, col: CollectionRecord): Promise<Role | null> => {
+    if (deps.token && safeEqual(bearer(c), deps.token)) return "owner"
+    const me = await currentUser(c)
+    if (!me) return null
+    if (col.created_by === me.id) return "owner"
+    return (await meta.getCollectionMember(col.id, me.id))?.role ?? null
+  }
+
   return {
     deps,
     meta,
@@ -655,6 +667,7 @@ export function buildContext(deps: AppDeps) {
     isSuperAdmin,
     workspaceRole,
     workspaceCan,
+    collectionRole,
     sourceText,
   }
 }

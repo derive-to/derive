@@ -43,6 +43,7 @@ export const artifact = sqliteTable("artifact", {
   current_content_type: text("current_content_type"),
   created_at: text("created_at").notNull().default(now),
   removed_at: text("removed_at"),
+  source_path: text("source_path"),
 })
 
 export const version = sqliteTable(
@@ -270,9 +271,37 @@ export const repoSource = sqliteTable("repo_source", {
   ref: text("ref").notNull().default("HEAD"),
   includes: text("includes").notNull(),
   token: text("token"),
+  // GitHub App installation backing this source. When set, sync mints a
+  // short-lived installation token instead of using `token` (the PAT path).
+  installation_id: text("installation_id"),
   files: text("files").notNull().default("{}"),
   last_synced_at: text("last_synced_at"),
   last_status: text("last_status"),
+  created_by: text("created_by").notNull(),
+  created_at: text("created_at").notNull().default(now),
+})
+
+// The instance's GitHub App credentials, captured once via the manifest flow
+// (one-click "Set up GitHub App"). A single row, id = 'default'. The three
+// secret columns are AES-GCM encrypted at rest (see lib/crypto).
+export const githubApp = sqliteTable("github_app", {
+  id: text("id").primaryKey(),
+  app_id: text("app_id").notNull(),
+  slug: text("slug").notNull(),
+  client_id: text("client_id").notNull(),
+  client_secret: text("client_secret").notNull(),
+  private_key: text("private_key").notNull(),
+  webhook_secret: text("webhook_secret").notNull(),
+  created_at: text("created_at").notNull().default(now),
+})
+
+// A GitHub App installation a workspace connected — the binding between a GitHub
+// account's selected repos and a Dock workspace. One installation backs many
+// repo_source rows; sync mints installation tokens against installation_id.
+export const githubInstallation = sqliteTable("github_installation", {
+  installation_id: text("installation_id").primaryKey(),
+  org_id: text("org_id").notNull(),
+  account_login: text("account_login"),
   created_by: text("created_by").notNull(),
   created_at: text("created_at").notNull().default(now),
 })
@@ -372,6 +401,8 @@ const TABLES = [
   collectionItem,
   collectionMember,
   repoSource,
+  githubApp,
+  githubInstallation,
   domain,
   proposal,
   report,

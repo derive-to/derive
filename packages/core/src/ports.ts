@@ -45,6 +45,10 @@ export interface ArtifactRecord {
   created_at: string
   /** A takedown tombstone: when set, the content is gone (410) but the record stays. */
   removed_at: string | null
+  /** For a GitHub-synced artifact: its path within the repo (e.g. "docs/plans/foo.md").
+   *  The structural "location" — drives the folder/tree view — kept distinct from the
+   *  human `title`. Null for artifacts not mirrored from a repo. */
+  source_path: string | null
 }
 
 export interface ListArtifactsOpts {
@@ -239,8 +243,9 @@ export interface MetaStore {
   removeArtifactMember(artifactId: string, userId: string): Promise<void>
 
   // ---- Favorites (per-user stars) + tags (browse metadata) ---------------
-  /** Artifact ids this user has starred. */
-  listUserFavoriteIds(userId: string): Promise<string[]>
+  /** Artifact ids this user has starred. With `orgId`, scoped to that workspace's
+   *  live (non-removed) artifacts — for the workspace-scoped favorites count. */
+  listUserFavoriteIds(userId: string, orgId?: string): Promise<string[]>
   setFavorite(artifactId: string, userId: string): Promise<void>
   removeFavorite(artifactId: string, userId: string): Promise<void>
   /** Tags per artifact, batched (no N+1). Missing ids map to no entry. */
@@ -282,9 +287,23 @@ export interface MetaStore {
     fields: { files: string; last_synced_at: string; last_status: string },
   ): Promise<void>
   deleteRepoSource(id: string, orgId: string): Promise<void>
+  /** Every source backed by a GitHub App installation, across workspaces — the
+   *  webhook router resolves push/repo events to the sources to re-sync. */
+  listRepoSourcesByInstallation(installationId: string): Promise<RepoSourceRecord[]>
   /** Ids of every artifact mirrored from a sync source in this workspace —
    *  drives the read-only gate + the `managed` flag (synced docs aren't editable). */
   managedArtifactIds(orgId: string): Promise<string[]>
+  // ---- GitHub App (instance credentials + per-workspace installations) -----
+  /** The instance's GitHub App credentials, or null before the manifest setup. */
+  getGithubApp(): Promise<GitHubAppRecord | null>
+  /** Upsert the single instance App row (id = "default"). */
+  setGithubApp(a: GitHubAppRecord): Promise<void>
+  /** Record (or refresh) a workspace's App installation. */
+  upsertGithubInstallation(i: GitHubInstallationRecord): Promise<GitHubInstallationRecord>
+  getGithubInstallation(installationId: string): Promise<GitHubInstallationRecord | null>
+  /** A workspace's installations, newest first. */
+  listGithubInstallations(orgId: string): Promise<GitHubInstallationRecord[]>
+  deleteGithubInstallation(installationId: string): Promise<void>
   // ---- Domain mode: a hostname serving artifact(s) at its own origin ------
   // A domain row is either bound to one artifact (`artifact_id` set: a vanity
   // subdomain today, a per-artifact custom domain later — served at the host root)
@@ -398,6 +417,8 @@ export interface MetaStore {
   /** Update an artifact's display title (used when a GitHub-synced file is renamed —
    *  the title tracks the repo path; the artifact + its comments are preserved). */
   setArtifactTitle(id: string, title: string): Promise<void>
+  /** Set the repo path of a GitHub-synced artifact (its folder/tree "location"). */
+  setArtifactSourcePath(id: string, sourcePath: string | null): Promise<void>
   createAuditLog(a: NewAuditLog): Promise<void>
   /** Moderation history, newest first. One workspace's, or — super-admin, orgId
    *  undefined — the whole instance's. Optionally narrowed to one artifact. */
@@ -718,6 +739,9 @@ export interface RepoSourceRecord {
   /** Comma-separated include globs, e.g. "**\/*.md,**\/*.html". */
   includes: string
   token: string | null
+  /** GitHub App installation backing this source. When set, sync mints a
+   *  short-lived installation token; `token` (a PAT) is the fallback path. */
+  installation_id: string | null
   /** JSON: { [repoPath]: { artifact_id: string; sha: string } }. */
   files: string
   last_synced_at: string | null
@@ -734,7 +758,37 @@ export interface NewRepoSource {
   ref: string
   includes: string
   token?: string | null
+  installation_id?: string | null
   created_by: string
+}
+
+/** The instance's GitHub App credentials (single row, id = "default"), captured
+ *  via the one-click manifest flow. The three secret columns are encrypted at
+ *  rest by the route layer before they reach the store. */
+export interface GitHubAppRecord {
+  id: string
+  /** Numeric GitHub App id, stored as text. */
+  app_id: string
+  /** App slug, for the install URL github.com/apps/<slug>. */
+  slug: string
+  client_id: string
+  client_secret: string
+  /** PEM private key (encrypted at rest). */
+  private_key: string
+  webhook_secret: string
+  created_at: string
+}
+
+/** A GitHub App installation a workspace connected: the binding between a GitHub
+ *  account's selected repos and a Dock workspace. */
+export interface GitHubInstallationRecord {
+  /** Numeric GitHub installation id, stored as text (PK). */
+  installation_id: string
+  org_id: string
+  /** The GitHub account (org/user login) the App is installed on. */
+  account_login: string | null
+  created_by: string
+  created_at: string
 }
 
 export interface ArtifactMemberRecord {

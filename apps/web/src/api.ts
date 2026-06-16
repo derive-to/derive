@@ -75,6 +75,8 @@ export interface Artifact {
   removed?: boolean
   /** Mirrored from a GitHub sync source → read-only in Dock (Edit/Propose hidden). */
   managed?: boolean
+  /** Repo path for a synced artifact (e.g. "docs/plans/foo.md") — drives the folder view. */
+  source_path?: string | null
 }
 export interface Report {
   id: string
@@ -258,17 +260,43 @@ export interface RepoSource {
   ref: string
   includes: string
   token: string | null
+  installation_id: string | null
   last_synced_at: string | null
   last_status: string | null
   created_by: string
   created_at: string
   file_count: number
 }
+export interface GithubInstallation {
+  installation_id: string
+  account_login: string | null
+}
+export interface GithubSyncStatus {
+  sources: RepoSource[]
+  app: { configured: boolean; slug?: string }
+  installations: GithubInstallation[]
+}
+export interface InstallationRepo {
+  full_name: string
+  private: boolean
+  default_branch: string
+}
+/** A repo+scope preview: how many docs would mirror, split by type. */
+export interface SyncPreview {
+  total: number
+  md: number
+  html: number
+  other: number
+  truncated: boolean
+}
 export interface SyncResult {
   added: number
   updated: number
   removed: number
+  renamed: number
   skipped: number
+  /** Matching docs still pending after this batch (>0 → call run again). */
+  remaining: number
 }
 export interface DiffOp {
   t: "ctx" | "add" | "del"
@@ -372,7 +400,15 @@ export const api = {
   signup: (email: string, password: string, name: string): Promise<unknown> =>
     f("/api/auth/sign-up/email", opts({ email, password, name: name || email })).then(authJson),
   logout: () => f("/api/auth/sign-out", opts({})).then((r) => r.json().catch(() => ({}))),
-  googleUrl: u("/api/auth/sign-in/social?provider=google"),
+  // Which social providers are configured server-side (drives the login buttons).
+  authProviders: (): Promise<{ google: boolean; github: boolean }> =>
+    f("/v1/auth/providers", opts()).then(j),
+  // Better Auth social sign-in: POST returns the provider authorize URL, then we
+  // navigate there. callbackURL is where the provider lands the user afterwards.
+  async socialSignIn(provider: "google" | "github", callbackURL = "/app/home"): Promise<void> {
+    const data = await f("/api/auth/sign-in/social", opts({ provider, callbackURL })).then(authJson)
+    if (data?.url) window.location.href = data.url
+  },
 
   listArtifacts: (params?: {
     q?: string
@@ -383,7 +419,13 @@ export const api = {
     scope?: "shared"
     cursor?: string
     limit?: number
-  }): Promise<{ artifacts: Artifact[]; next_cursor: string | null }> => {
+  }): Promise<{
+    artifacts: Artifact[]
+    next_cursor: string | null
+    /** Present when listing by `collection` — the collection's id + title, so the
+     *  view can label itself even for a collection in another workspace. */
+    collection?: { id: string; title: string }
+  }> => {
     const qs = new URLSearchParams()
     if (params?.q) qs.set("q", params.q)
     if (params?.tag) qs.set("tag", params.tag)
@@ -537,13 +579,27 @@ export const api = {
     f(`/v1/agents/${id}`, { method: "DELETE", credentials: "include" }).then(() => undefined),
 
   // GitHub sync: mirror a repo's Markdown/HTML into a collection (one-way).
-  listRepoSources: (): Promise<{ sources: RepoSource[] }> => f("/v1/sync/github", opts()).then(j),
+  // Status carries the connected sources, whether the instance GitHub App is set
+  // up, and this workspace's installations (so the UI can jump to the picker).
+  githubSync: (): Promise<GithubSyncStatus> => f("/v1/sync/github", opts()).then(j),
   connectRepoSource: (input: {
     repo: string
     ref?: string
     includes?: string
     token?: string
+    installation_id?: string
   }): Promise<RepoSource> => f("/v1/sync/github", opts(input)).then(j),
+  // The GitHub App install URL; navigate the browser there to pick repos.
+  githubInstallUrl: (): Promise<{ url: string }> => f("/v1/sync/github/install", opts({})).then(j),
+  // Repos a given installation can mirror (drives the repo picker).
+  listInstallationRepos: (installationId: string): Promise<{ repos: InstallationRepo[] }> =>
+    f(`/v1/sync/github/installations/${installationId}/repos`, opts()).then(j),
+  // How many docs a repo+scope would mirror (live count in the picker).
+  previewRepo: (installationId: string, repo: string, includes?: string): Promise<SyncPreview> => {
+    const qs = new URLSearchParams({ repo })
+    if (includes) qs.set("includes", includes)
+    return f(`/v1/sync/github/installations/${installationId}/preview?${qs}`, opts()).then(j)
+  },
   runRepoSync: (id: string): Promise<SyncResult> =>
     f(`/v1/sync/github/${id}/run`, opts({})).then(j),
   deleteRepoSource: (id: string): Promise<void> =>
