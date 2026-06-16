@@ -593,7 +593,23 @@ export class PgMetaStore implements MetaStore {
   }
 
   // ---- Favorites + tags --------------------------------------------------
-  async listUserFavoriteIds(userId: string): Promise<string[]> {
+  async listUserFavoriteIds(userId: string, orgId?: string): Promise<string[]> {
+    // With orgId, join to the artifact so the count reflects only live artifacts in
+    // that workspace (a favorite of a removed or other-workspace artifact is dropped).
+    if (orgId !== undefined) {
+      const rows = await this.db
+        .select({ id: artifactFavorite.artifact_id })
+        .from(artifactFavorite)
+        .innerJoin(artifact, eq(artifact.id, artifactFavorite.artifact_id))
+        .where(
+          and(
+            eq(artifactFavorite.user_id, userId),
+            eq(artifact.org_id, orgId),
+            isNull(artifact.removed_at),
+          ),
+        )
+      return rows.map((r) => r.id)
+    }
     const rows = await this.db
       .select({ id: artifactFavorite.artifact_id })
       .from(artifactFavorite)

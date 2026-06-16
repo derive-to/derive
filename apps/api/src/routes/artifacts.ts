@@ -45,6 +45,7 @@ export const artifactRoutes = (ctx: AppContext) => {
     actorFor,
     authorize,
     workspaceCan,
+    collectionRole,
     limited,
     overStorage,
     publishLimiter,
@@ -91,18 +92,40 @@ export const artifactRoutes = (ctx: AppContext) => {
       narrow(await meta.artifactIdsSharedWith(me.id))
     }
     if (tag) narrow(await meta.artifactIdsByTag(tag))
-    if (collectionId) narrow(await meta.collectionArtifactIds(collectionId))
     if (favOnly) narrow(favIds)
+
+    // A collection's artifacts live in the COLLECTION's workspace, not necessarily
+    // your active one — so scope the listing to the collection's org (gated by
+    // access), or a direct/cold link to a collection in another workspace reads as
+    // empty. Unknown collection ⇒ nothing.
+    let listOrg = await activeWorkspace(c)
+    let collectionAccess = false
+    // Carry the collection's title so the client can label the view even when the
+    // collection lives in another workspace (it's absent from the local sidebar list).
+    let collectionInfo: { id: string; title: string } | undefined
+    if (collectionId) {
+      const col = await meta.getCollection(collectionId)
+      if (!col) return c.json({ artifacts: [], next_cursor: null })
+      narrow(await meta.collectionArtifactIds(collectionId))
+      listOrg = col.org_id
+      collectionInfo = { id: col.id, title: col.title }
+      collectionAccess =
+        (deps.token && safeEqual(bearer(c), deps.token)) ||
+        (!!me && !!(await meta.getMembership(col.org_id, me.id))) ||
+        (await collectionRole(c, col)) !== null
+    }
     if (ids && ids.length === 0) return c.json({ artifacts: [], next_cursor: null })
 
-    const orgId = await activeWorkspace(c)
     // A listing only shows non-public artifacts to a MEMBER of that workspace (or the
     // operator token). Anyone else — anonymous, or a signed-in user who isn't a member
     // — sees public artifacts only, so org/link titles never leak via the list or ?q=.
-    const publicOnly = !(
-      (deps.token && safeEqual(bearer(c), deps.token)) ||
-      (!!me && !!(await meta.getMembership(orgId, me.id)))
-    )
+    // For a collection, collection access (member/creator/share) also unlocks it.
+    const publicOnly = collectionId
+      ? !collectionAccess
+      : !(
+          (deps.token && safeEqual(bearer(c), deps.token)) ||
+          (!!me && !!(await meta.getMembership(listOrg, me.id)))
+        )
     const rows = await meta.listArtifacts({
       limit: limit + 1,
       cursor,
@@ -110,7 +133,7 @@ export const artifactRoutes = (ctx: AppContext) => {
       ids,
       // Shared-with-me spans workspaces; an explicit member can always see them, so
       // drop the workspace + public-only restrictions for that scope.
-      orgId: shared ? undefined : orgId,
+      orgId: shared ? undefined : listOrg,
       publicOnly: shared ? false : publicOnly,
     })
     const hasMore = rows.length > limit
@@ -129,6 +152,7 @@ export const artifactRoutes = (ctx: AppContext) => {
         favorite: favorites.has(a.id),
       })),
       next_cursor,
+      ...(collectionInfo ? { collection: collectionInfo } : {}),
     })
   })
 
@@ -150,7 +174,10 @@ export const artifactRoutes = (ctx: AppContext) => {
     const [total, tags, favIds, ws] = await Promise.all([
       meta.countArtifacts(org),
       meta.tagCounts(org),
-      me ? meta.listUserFavoriteIds(me.id) : Promise.resolve([]),
+      // Scope the favorites count to THIS workspace's live artifacts — the favorites
+      // view is workspace-scoped, so a favorite of an artifact in another workspace
+      // must not inflate the count (otherwise "Favorites · 1" with an empty list).
+      me ? meta.listUserFavoriteIds(me.id, org) : Promise.resolve([]),
       meta.getWorkspace(org),
     ])
     tags.sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag))

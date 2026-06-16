@@ -570,14 +570,32 @@ export function makeRepos(db: SqliteDb) {
   }
 
   // ---- Favorites + tags --------------------------------------------------
-  const listUserFavoriteIds = async (userId: string): Promise<string[]> =>
-    (
+  const listUserFavoriteIds = async (userId: string, orgId?: string): Promise<string[]> => {
+    // With orgId, join to the artifact so the count reflects only live artifacts in
+    // that workspace (a favorite of a removed or other-workspace artifact is dropped).
+    if (orgId !== undefined) {
+      const rows = await db
+        .select({ id: artifactFavorite.artifact_id })
+        .from(artifactFavorite)
+        .innerJoin(artifact, eq(artifact.id, artifactFavorite.artifact_id))
+        .where(
+          and(
+            eq(artifactFavorite.user_id, userId),
+            eq(artifact.org_id, orgId),
+            isNull(artifact.removed_at),
+          ),
+        )
+        .all()
+      return rows.map((r) => r.id)
+    }
+    return (
       await db
         .select({ id: artifactFavorite.artifact_id })
         .from(artifactFavorite)
         .where(eq(artifactFavorite.user_id, userId))
         .all()
     ).map((r) => r.id)
+  }
   const setFavorite = async (artifactId: string, userId: string): Promise<void> => {
     await db
       .insert(artifactFavorite)
