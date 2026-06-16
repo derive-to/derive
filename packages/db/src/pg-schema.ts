@@ -15,6 +15,7 @@ import type {
   WebhookKind,
 } from "@dock/core"
 import { getTableConfig, integer, pgTable, text, uniqueIndex } from "drizzle-orm/pg-core"
+import { generateDdl, PERF_INDEXES, placeholderTables } from "./ddl"
 
 // Postgres drizzle schema — the query source of truth, dialect-paired with the
 // SQLite defs in schema.ts. created_at is ISO-8601 text so record shapes and
@@ -321,16 +322,11 @@ export const auditLog = pgTable("audit_log", {
 // same core Record types the sqlite dialect uses, so the two dialects can't
 // disagree. See ./parity.
 
-// Boot DDL is GENERATED from the drizzle tables above (see buildPgSchemaStatements):
-// every CREATE TABLE's column list is derived from the table's own definition, so a
-// column added above can't be missing here — the cross-dialect drift that previously
-// shipped a broken Postgres schema (current_content_type) is now structurally
-// impossible. Only the index list and the not-yet-queried placeholder tables
-// (principal/acl/view), which have no drizzle def, stay explicit.
-
-// created_at / next_attempt_at use an app-side $defaultFn (Date.now()); mirror it as
-// a SQL backstop so a non-drizzle insert still gets a timestamp.
-const isoDefault = `to_char((now() at time zone 'utc'), 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')`
+// Boot DDL, generated from the drizzle tables above (see ./ddl) so the pg schema
+// can't drift from the table defs and stays in lockstep with the SQLite + D1 DDL.
+// created_at / next_attempt_at use an app-side $defaultFn; this mirrors it as a SQL
+// backstop so a non-drizzle insert still gets a timestamp.
+const PG_TIMESTAMP_DEFAULT = `to_char((now() at time zone 'utc'), 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')`
 
 // Drizzle tables, in FK-dependency order (a referenced table is created first).
 const TABLES = [
@@ -357,115 +353,15 @@ const TABLES = [
   auditLog,
 ]
 
-// biome-ignore lint/suspicious/noExplicitAny: drizzle's column/index runtime shapes aren't exported as a stable type.
-type Col = any
-const sqlType = (c: Col): string => c.getSQLType().toUpperCase() // text/integer → TEXT/INTEGER
-const sqlDefault = (c: Col): string | null => {
-  if (c.default !== undefined)
-    return typeof c.default === "string" ? `'${c.default}'` : `${c.default}`
-  // $defaultFn columns report hasDefault with no literal value → use the SQL backstop.
-  return c.hasDefault ? isoDefault : null
-}
-const columnDef = (c: Col): string => {
-  const parts = [c.name, sqlType(c)]
-  if (c.primary) parts.push("PRIMARY KEY")
-  else if (c.notNull) parts.push("NOT NULL")
-  if (c.isUnique && !c.primary) parts.push("UNIQUE")
-  const def = sqlDefault(c)
-  if (def) parts.push(`DEFAULT ${def}`)
-  return parts.join(" ")
-}
-// Forward-compat for an existing DB missing a newly-added column. Idempotent; a
-// no-op once the column exists. Omits PK/UNIQUE/FK (those only matter at CREATE).
-const addColumn = (table: string, c: Col): string => {
-  const parts = [`ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS ${c.name} ${sqlType(c)}`]
-  if (c.notNull && !c.primary) parts.push("NOT NULL")
-  const def = sqlDefault(c)
-  if (def) parts.push(`DEFAULT ${def}`)
-  return parts.join(" ")
-}
-const createTable = (table: Col): string => {
-  const cfg = getTableConfig(table)
-  const lines = cfg.columns.map(columnDef)
-  for (const idx of cfg.indexes)
-    if (idx.config.unique)
-      lines.push(`UNIQUE (${idx.config.columns.map((x: Col) => x.name).join(", ")})`)
-  for (const fk of cfg.foreignKeys) {
-    const r = fk.reference()
-    const local = r.columns.map((x: Col) => x.name).join(", ")
-    const target = getTableConfig(r.foreignTable).name
-    const cols = r.foreignColumns.map((x: Col) => x.name).join(", ")
-    lines.push(`FOREIGN KEY (${local}) REFERENCES ${target}(${cols})`)
-  }
-  return `CREATE TABLE IF NOT EXISTS ${cfg.name} (\n  ${lines.join(",\n  ")}\n)`
-}
-
-/** Build the boot DDL from the drizzle table defs + the explicit (non-drizzle)
- *  placeholder tables and indexes. Pure; exported for the conformance test. */
+/** Build the Postgres boot DDL: generated table/index CREATEs + placeholder tables
+ *  + perf indexes, then the idempotent ADD COLUMN IF NOT EXISTS migrations. Pure;
+ *  exported for the conformance test. */
 export const buildPgSchemaStatements = (): string[] => {
-  const out: string[] = []
-  for (const t of TABLES) {
-    const cfg = getTableConfig(t)
-    out.push(createTable(t))
-    for (const c of cfg.columns) out.push(addColumn(cfg.name, c))
-    // Unique indexes render inline in CREATE (above); a non-unique drizzle index
-    // becomes a CREATE INDEX so it can't be silently dropped if one is ever added.
-    for (const idx of cfg.indexes)
-      if (!idx.config.unique)
-        out.push(
-          `CREATE INDEX IF NOT EXISTS ${idx.config.name} ON ${cfg.name} (${idx.config.columns
-            .map((x: Col) => x.name)
-            .join(", ")})`,
-        )
-  }
-  return [...out, ...PLACEHOLDER_TABLES, ...INDEXES]
+  const { creates, alters } = generateDdl(TABLES, getTableConfig, {
+    ifNotExists: true,
+    timestampDefault: PG_TIMESTAMP_DEFAULT,
+  })
+  return [...creates, ...placeholderTables(PG_TIMESTAMP_DEFAULT), ...PERF_INDEXES, ...alters]
 }
-
-// Tables created up front but not yet queried (no drizzle def), so migrations stay
-// forward-only. They reference `artifact`, which the generated tables create first.
-const PLACEHOLDER_TABLES: string[] = [
-  `CREATE TABLE IF NOT EXISTS principal (
-    id TEXT PRIMARY KEY,
-    org_id TEXT NOT NULL,
-    email TEXT,
-    kind TEXT NOT NULL DEFAULT 'human',
-    created_at TEXT NOT NULL DEFAULT ${isoDefault}
-  )`,
-  `CREATE TABLE IF NOT EXISTS acl (
-    artifact_id TEXT PRIMARY KEY REFERENCES artifact(id),
-    visibility TEXT NOT NULL,
-    password_hash TEXT,
-    org_gate TEXT
-  )`,
-  `CREATE TABLE IF NOT EXISTS view (
-    id TEXT PRIMARY KEY,
-    artifact_id TEXT NOT NULL REFERENCES artifact(id),
-    version INTEGER NOT NULL,
-    viewer TEXT NOT NULL,
-    viewer_kind TEXT NOT NULL DEFAULT 'anon',
-    created_at TEXT NOT NULL DEFAULT ${isoDefault}
-  )`,
-]
-
-// Performance indexes (not unique — the unique ones are inline UNIQUE constraints
-// generated from each table's uniqueIndex defs). Applied after every table exists.
-const INDEXES: string[] = [
-  // Library feed: scope by org_id + keyset order on (created_at, id) desc. One
-  // composite serves both; Postgres backward-scans it for the DESC order.
-  `CREATE INDEX IF NOT EXISTS artifact_org_created ON artifact (org_id, created_at, id)`,
-  `CREATE INDEX IF NOT EXISTS view_artifact_time ON view (artifact_id, created_at)`,
-  `CREATE INDEX IF NOT EXISTS delivery_due ON webhook_delivery (status, next_attempt_at)`,
-  `CREATE INDEX IF NOT EXISTS notification_user_time ON notification (user_id, created_at)`,
-  `CREATE INDEX IF NOT EXISTS agent_mention_inbox ON agent_mention (agent_id, state, created_at)`,
-  `CREATE INDEX IF NOT EXISTS favorite_user ON artifact_favorite (user_id)`,
-  `CREATE INDEX IF NOT EXISTS tag_name ON artifact_tag (tag)`,
-  `CREATE INDEX IF NOT EXISTS collection_item_artifact ON collection_item (artifact_id)`,
-  `CREATE INDEX IF NOT EXISTS collection_member_user ON collection_member (user_id)`,
-  `CREATE INDEX IF NOT EXISTS repo_source_org ON repo_source (org_id)`,
-  `CREATE INDEX IF NOT EXISTS domain_artifact ON domain (artifact_id)`,
-  `CREATE INDEX IF NOT EXISTS proposal_artifact_state ON proposal (artifact_id, state)`,
-  `CREATE INDEX IF NOT EXISTS report_state ON report (state, created_at)`,
-  `CREATE INDEX IF NOT EXISTS audit_artifact ON audit_log (artifact_id, created_at)`,
-]
 
 export const PG_SCHEMA_STATEMENTS: string[] = buildPgSchemaStatements()
