@@ -7,7 +7,13 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import { ago } from "@/lib/time"
 import { cn } from "@/lib/utils"
+
+const dirOf = (path: string): string => {
+  const i = path.lastIndexOf("/")
+  return i < 0 ? "" : path.slice(0, i)
+}
 
 function artifactTypeLabel(a: Artifact): string {
   if (a.kind === "bundle") return "Site"
@@ -100,11 +106,17 @@ export function ArtifactCard({
         <span className="font-display text-lg font-semibold text-foreground transition-colors group-hover:text-primary">
           {a.title ?? a.short_id}
         </span>
+        {/* For a synced file: its folder location (the path lives in source_path). */}
+        {a.source_path && dirOf(a.source_path) && (
+          <span className="truncate font-mono text-2xs text-muted-foreground" title={a.source_path}>
+            {dirOf(a.source_path)}/
+          </span>
+        )}
         <span className="flex items-center gap-2 font-mono text-xs text-muted-foreground">
           <span className="rounded-[5px] border border-border-soft bg-secondary px-1.5 py-px">
             {artifactTypeLabel(a)}
           </span>
-          <span>v{a.current_version}</span>
+          {a.versions[0]?.created_at && <span>updated {ago(a.versions[0].created_at)}</span>}
           {a.views !== undefined && a.views > 0 && (
             <span className="ml-auto inline-flex items-center gap-1" title={`${a.views} viewers`}>
               <Icon name="views" size={13} />{" "}

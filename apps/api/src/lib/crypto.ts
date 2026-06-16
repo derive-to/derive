@@ -2,11 +2,49 @@ import {
   createCipheriv,
   createDecipheriv,
   createHash,
+  createHmac,
   randomBytes,
   timingSafeEqual,
 } from "node:crypto"
 
 export const sha256 = (s: string): string => createHash("sha256").update(s).digest("hex")
+
+// --- signed, expiring state tokens -----------------------------------------
+// A tamper-proof `state` we hand to GitHub at the start of the App install flow
+// and read back on the callback: it binds the install to the workspace + user
+// who started it (so the callback can't be replayed into another workspace) and
+// expires. Format: `<base64url(json)>.<hmac>`, keyed off the server auth secret.
+const stateKey = (secret: string): string => `dock-oauth-state:${secret}`
+
+export const signState = (
+  payload: Record<string, unknown>,
+  secret: string,
+  nowMs: number = Date.now(),
+): string => {
+  const body = Buffer.from(JSON.stringify({ ...payload, iat: nowMs })).toString("base64url")
+  const sig = createHmac("sha256", stateKey(secret)).update(body).digest("base64url")
+  return `${body}.${sig}`
+}
+
+export const verifyState = <T>(
+  token: string,
+  secret: string,
+  maxAgeMs: number = 15 * 60 * 1000,
+  nowMs: number = Date.now(),
+): T | null => {
+  const [body, sig] = token.split(".")
+  if (!body || !sig) return null
+  const expected = createHmac("sha256", stateKey(secret)).update(body).digest("base64url")
+  if (!safeEqual(sig, expected)) return null
+  try {
+    const obj = JSON.parse(Buffer.from(body, "base64url").toString("utf8")) as { iat?: number }
+    if (typeof obj.iat !== "number" || nowMs - obj.iat > maxAgeMs || obj.iat > nowMs + 60_000)
+      return null
+    return obj as T
+  } catch {
+    return null
+  }
+}
 
 // --- symmetric encryption for secrets at rest (e.g. GitHub PATs) ------------
 // AES-256-GCM with a key derived (domain-separated) from a server passphrase.

@@ -1,12 +1,30 @@
-import { type BlobStore, type MetaStore, publish, type RepoSourceRecord } from "@dock/core"
+import {
+  type ArtifactRecord,
+  type BlobStore,
+  type MetaStore,
+  publish,
+  type RepoSourceRecord,
+} from "@dock/core"
+import { zipSync } from "fflate"
+import { type BundlePlan, commonDir, planBundle } from "./bundle-from-repo"
+import { sha256 } from "./crypto"
 import { fetchBlob, listTree, matchesGlobs, parseRepo } from "./github"
 
 /** Per-path mirror state, persisted as JSON in repo_source.files. */
 export interface SyncedFile {
   artifact_id: string
   short_id: string
-  /** The git blob sha last mirrored — a re-sync skips a file whose sha is unchanged. */
+  /**
+   * The fingerprint a re-sync compares to decide "unchanged → skip". For a single
+   * file it's the git blob sha; for a bundle it's a composite hash of every member
+   * sha, so a change to ANY member (incl. a shared stylesheet) re-syncs the page.
+   */
   sha: string
+  /** "file" (default, omitted on legacy rows) or "bundle". */
+  kind?: "file" | "bundle"
+  /** For a bundle: each member's repo path → its blob sha, so we can tell which
+   *  members changed and reconstruct the bundle without re-scanning when stable. */
+  members?: Record<string, string>
 }
 type FileMap = Record<string, SyncedFile>
 
@@ -18,6 +36,9 @@ export interface SyncResult {
   renamed: number
   /** Unchanged, or skipped this run because too large / over the storage quota. */
   skipped: number
+  /** Matching docs still needing work after this run (>0 when a batch hit maxFiles).
+   *  The caller re-runs until it reaches 0 to finish a large repo across batches. */
+  remaining: number
 }
 
 /** Optional guards, mirroring the publish route: a per-file byte cap and a
@@ -25,9 +46,51 @@ export interface SyncResult {
 export interface SyncLimits {
   maxBytes: number
   overStorage: (incoming: number) => Promise<boolean>
+  /** Max NEW/changed docs to publish in one run (skips don't count). Bounds the
+   *  work so a huge repo can't exceed the runtime's request/CPU budget — the rest
+   *  carry forward and finish on the next run. Omitted ⇒ unbounded (Node/tests). */
+  maxFiles?: number
 }
 
 const basename = (path: string): string => path.split("/").pop() || path
+const isHtml = (path: string): boolean => /\.html?$/i.test(path)
+const stripExt = (path: string): string => {
+  const b = basename(path)
+  const dot = b.lastIndexOf(".")
+  return dot > 0 ? b.slice(0, dot) : b
+}
+
+/**
+ * A human display title for a synced file: the doc's own heading, so the library
+ * shows "Taxonomy System" not "packages/core/ai-services/TAXONOMY.md" (the path
+ * lives in `source_path`). Markdown → first ATX `#` heading; HTML → `<title>` then
+ * first `<h1>`; otherwise the basename without extension.
+ */
+const extractTitle = (bytes: Uint8Array, path: string): string => {
+  const clean = (s: string) =>
+    s
+      .replace(/<[^>]+>/g, "")
+      .replace(/[`*_]/g, "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 200)
+  const text = new TextDecoder().decode(bytes)
+  if (isHtml(path)) {
+    const title = text.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1]
+    const h1 = text.match(/<h1[^>]*>([\s\S]*?)<\/h1>/i)?.[1]
+    const got = clean(title || h1 || "")
+    if (got) return got
+  } else if (/\.(md|markdown)$/i.test(path)) {
+    for (const line of text.split("\n").slice(0, 60)) {
+      const m = line.match(/^\s{0,3}#{1,6}\s+(.+?)\s*#*\s*$/)
+      if (m?.[1]) {
+        const got = clean(m[1])
+        if (got) return got
+      }
+    }
+  }
+  return stripExt(path)
+}
 const parseMap = (json: string): FileMap => {
   try {
     return JSON.parse(json || "{}") as FileMap
@@ -36,18 +99,27 @@ const parseMap = (json: string): FileMap => {
   }
 }
 
+/** A composite fingerprint over a bundle's members (path:sha pairs, order-stable). */
+const compositeSha = (memberShas: Record<string, string>): string =>
+  sha256(
+    Object.keys(memberShas)
+      .sort()
+      .map((p) => `${p}:${memberShas[p]}`)
+      .join("|"),
+  )
+
 /**
  * Mirror one repo source into its collection, one-way. Lists the tree, keeps the
- * docs matching the include globs, and for each: skips it if its sha is
- * unchanged, detects a pure rename (same sha, new path) and re-homes the existing
- * artifact, publishes a new artifact if it's genuinely new, or appends a version
- * if it changed. Files that vanished are tombstoned (the 410 path).
+ * docs matching the include globs, and for each: skips it if unchanged, detects a
+ * pure rename and re-homes the existing artifact, publishes a new artifact if
+ * genuinely new, or appends a version if it changed. An HTML doc that references
+ * local repo assets (CSS/JS/images) is mirrored as a *bundle* (entry + assets) so
+ * it renders styled; everything else is a single file. Vanished files are
+ * tombstoned (the 410 path).
  *
- * The path→artifact map is persisted on the way out of EVERY exit — success or a
- * thrown GitHub/publish error — carrying forward un-processed entries. So a
- * mid-run failure leaves an idempotent map: a retry treats already-mirrored paths
- * as updates/skips and never re-creates duplicate artifacts. GitHub failures
- * still propagate (after the partial map is saved) so the caller can surface them.
+ * The path→artifact map is persisted on EVERY exit — success or a thrown
+ * GitHub/publish error — carrying forward un-processed entries, so a mid-run
+ * failure leaves an idempotent map and a retry never re-creates duplicates.
  */
 export async function runSync(
   meta: MetaStore,
@@ -65,16 +137,14 @@ export async function runSync(
 
   const prev = parseMap(source.files)
   const next: FileMap = {}
-  const res: SyncResult = { added: 0, updated: 0, removed: 0, renamed: 0, skipped: 0 }
-  // Old paths consumed by a rename — never carried forward or tombstoned (their
-  // artifact now lives under the new path).
+  const res: SyncResult = { added: 0, updated: 0, removed: 0, renamed: 0, skipped: 0, remaining: 0 }
   const renamedAway = new Set<string>()
   const tooLarge: string[] = []
+  // Per-run work budget: how many publishes we've done, and whether we stopped
+  // early because we hit maxFiles (the rest carry forward to the next run).
+  let processed = 0
+  let capped = false
 
-  // Keep un-processed prev entries mapped. Used ONLY when we can't trust "absent
-  // means deleted": a truncated tree (unlisted ≠ gone) or a mid-run failure
-  // (didn't reach them). On a clean full sync, next is authoritative and a
-  // genuinely-deleted file is correctly absent (it was tombstoned, not carried).
   const carryForward = () => {
     for (const path in prev) {
       const ent = prev[path]
@@ -88,81 +158,230 @@ export async function runSync(
       last_status: status,
     })
   }
+  // Count a publish and, every PROGRESS_EVERY, flush the partial map + a live
+  // "syncing N…" status. This makes the run incrementally durable (a killed run
+  // leaves a consistent map, never orphan artifacts) AND lets the UI poll progress.
+  const PROGRESS_EVERY = 15
+  const onPublished = async () => {
+    processed++
+    if (processed % PROGRESS_EVERY === 0) await persist(`syncing ${processed} files…`)
+  }
 
   try {
     const { entries, truncated } = await listTree(repo, source.ref, source.token)
+    const shaByPath = new Map(entries.map((e) => [e.path, e.sha]))
     const docs = entries.filter((e) => matchesGlobs(e.path, globs))
     const docPaths = new Set(docs.map((d) => d.path))
 
-    // Vanished prev paths indexed by sha → rename candidates (same content moved
-    // to a new path). Skipped when truncated (we can't trust "absent"). First
-    // vanished per sha wins.
+    // Fetch + cache repo bytes by path (one fetch per blob across both phases).
+    const byteCache = new Map<string, Uint8Array>()
+    const fetchBytes = async (path: string): Promise<Uint8Array> => {
+      const cached = byteCache.get(path)
+      if (cached) return cached
+      const sha = shaByPath.get(path)
+      if (sha === undefined) throw new Error(`missing tree entry: ${path}`)
+      const data = await fetchBlob(repo, sha, source.token)
+      byteCache.set(path, data)
+      return data
+    }
+    const fetchText = async (path: string): Promise<string | null> => {
+      try {
+        return new TextDecoder().decode(await fetchBytes(path))
+      } catch {
+        return null
+      }
+    }
+
+    // ---- Phase A: plan bundles for HTML docs --------------------------------
+    // For each HTML doc, decide whether it's a bundle (references local assets,
+    // transitively through its stylesheets) and which files it owns. Unchanged
+    // bundles reuse their stored membership (no fetch); only new/changed HTML is
+    // read + scanned. `consumed` collects the asset paths a bundle owns, so a
+    // shared CSS is never ALSO mirrored standalone.
+    const plans = new Map<string, BundlePlan>()
+    const consumed = new Set<string>()
+    for (const e of docs) {
+      if (!isHtml(e.path)) continue
+      const before = prev[e.path]
+      // Stable bundle: the entry blob is unchanged AND every stored member still
+      // exists with the same sha → reuse the stored plan, no fetch or re-scan.
+      const stable =
+        before?.kind === "bundle" &&
+        before.members?.[e.path] === e.sha &&
+        Object.entries(before.members).every(([p, s]) => shaByPath.get(p) === s)
+      if (stable && before?.members) {
+        const memberPaths = Object.keys(before.members)
+        const root = commonDir(memberPaths)
+        const rel = (p: string) => (root ? p.slice(root.length + 1) : p)
+        plans.set(e.path, {
+          entryPath: e.path,
+          root,
+          entryRel: rel(e.path),
+          members: memberPaths.map((repoPath) => ({ repoPath, rel: rel(repoPath) })),
+        })
+      } else {
+        const html = await fetchText(e.path)
+        const plan = html
+          ? await planBundle(e.path, html, (p) => shaByPath.has(p), fetchText)
+          : null
+        if (plan) plans.set(e.path, plan)
+      }
+      const plan = plans.get(e.path)
+      if (plan) for (const m of plan.members) if (m.repoPath !== e.path) consumed.add(m.repoPath)
+    }
+
+    // Rename candidates: vanished single-file paths indexed by sha. Bundles don't
+    // participate (their composite sha never equals a blob sha).
     const vanishedBySha = new Map<string, { path: string; entry: SyncedFile }>()
     if (!truncated)
       for (const path in prev) {
         const ent = prev[path]
-        if (ent && !docPaths.has(path) && !vanishedBySha.has(ent.sha))
+        if (ent && ent.kind !== "bundle" && !docPaths.has(path) && !vanishedBySha.has(ent.sha))
           vanishedBySha.set(ent.sha, { path, entry: ent })
       }
 
+    // Republish helper that survives a kind change (file⇄bundle): an artifact's
+    // kind is immutable, so when it flips we tombstone the old one and create new.
+    // `repoPath` is the file's path in the repo — the file-map key + the artifact's
+    // `source_path` (structural location). `title` is the human display name
+    // (extracted from the content). They're distinct: the map keys on the path, the
+    // UI shows the title.
+    const publishDoc = async (
+      before: SyncedFile | undefined,
+      bytes: Uint8Array,
+      filename: string,
+      isBundle: boolean,
+      repoPath: string,
+      title: string,
+      sha: string,
+      members?: Record<string, string>,
+    ) => {
+      const kind: SyncedFile["kind"] = isBundle ? "bundle" : "file"
+      const input = {
+        bytes,
+        filename,
+        isBundle,
+        title,
+        author: "GitHub sync",
+        message: `sync ${source.ref}@${sha.slice(0, 7)}`,
+        orgId: source.org_id,
+      }
+      const reuse = before && (before.kind ?? "file") === kind
+      let artifact: ArtifactRecord
+      if (reuse && before) {
+        artifact = (await publish(meta, blobs, input, before.short_id)).artifact
+        res.updated++
+      } else {
+        if (before) await meta.setArtifactRemoved(before.artifact_id, now) // old kind retired
+        artifact = (await publish(meta, blobs, input)).artifact
+        await meta.addCollectionItem(source.collection_id, artifact.id)
+        res.added++
+      }
+      await meta.setArtifactRemoved(artifact.id, null)
+      await meta.setArtifactSourcePath(artifact.id, repoPath)
+      next[repoPath] = { artifact_id: artifact.id, short_id: artifact.short_id, sha, kind, members }
+      await onPublished()
+    }
+
+    // ---- Phase B: mirror each doc ------------------------------------------
     for (const e of docs) {
+      // Owned by another doc's bundle → never a standalone artifact (and if it was
+      // one before, leaving it out of `next` tombstones the standalone copy).
+      if (consumed.has(e.path)) continue
+      // Hit the per-run work budget → stop; the rest carry forward to the next run.
+      if (limits?.maxFiles && processed >= limits.maxFiles) {
+        capped = true
+        break
+      }
+
       const before = prev[e.path]
-      if (before && before.sha === e.sha) {
+      const plan = plans.get(e.path)
+
+      if (plan) {
+        // Bundle. Composite sha over current member shas drives the skip.
+        const memberShas: Record<string, string> = {}
+        for (const m of plan.members) memberShas[m.repoPath] = shaByPath.get(m.repoPath) ?? ""
+        const composite = compositeSha(memberShas)
+        if (before?.kind === "bundle" && before.sha === composite) {
+          next[e.path] = before
+          res.skipped++
+          continue
+        }
+        // Assemble the zip from member bytes, then publish through the normal
+        // bundle path (manifest, validation, read-only "managed" treatment).
+        const zipFiles: Record<string, Uint8Array> = {}
+        let total = 0
+        for (const m of plan.members) {
+          const bytes = await fetchBytes(m.repoPath)
+          zipFiles[m.rel] = bytes
+          total += bytes.length
+        }
+        if (limits && (total > limits.maxBytes || (await limits.overStorage(total)))) {
+          if (before) next[e.path] = before
+          tooLarge.push(e.path)
+          res.skipped++
+          continue
+        }
+        const zipped = zipSync(zipFiles)
+        const entryTitle = extractTitle(zipFiles[plan.entryRel] ?? new Uint8Array(), plan.entryPath)
+        await publishDoc(
+          before,
+          zipped,
+          basename(plan.entryRel),
+          true,
+          e.path,
+          entryTitle,
+          composite,
+          memberShas,
+        )
+        continue
+      }
+
+      // Single file. Unchanged → skip; pure rename → re-home; else publish.
+      if (before && before.kind !== "bundle" && before.sha === e.sha) {
         next[e.path] = before
         res.skipped++
         continue
       }
-      // Pure rename: a new path whose sha matches a vanished one is the same file
-      // moved. Re-home the existing artifact (keep its comments) — retitle, clear
-      // any tombstone, ensure it's in the collection. No blob fetch, no version.
       if (!before) {
         const moved = vanishedBySha.get(e.sha)
         if (moved && !renamedAway.has(moved.path)) {
           renamedAway.add(moved.path)
           vanishedBySha.delete(e.sha)
-          await meta.setArtifactTitle(moved.entry.artifact_id, e.path)
+          // Pure rename: content unchanged, so the display title stays; only the
+          // structural location (source_path) moves to the new path.
+          await meta.setArtifactSourcePath(moved.entry.artifact_id, e.path)
           await meta.setArtifactRemoved(moved.entry.artifact_id, null)
           await meta.addCollectionItem(source.collection_id, moved.entry.artifact_id)
           next[e.path] = { ...moved.entry, sha: e.sha }
           res.renamed++
+          await onPublished()
           continue
         }
       }
-      const bytes = await fetchBlob(repo, e.sha, source.token)
-      // Guard the publish path the same way the manual route does: a per-file byte
-      // cap + the workspace storage quota. An offending file is skipped (the prior
-      // version, if any, stays mapped), never published.
+      const bytes = await fetchBytes(e.path)
       if (limits && (bytes.length > limits.maxBytes || (await limits.overStorage(bytes.length)))) {
         if (before) next[e.path] = before
         tooLarge.push(e.path)
         res.skipped++
         continue
       }
-      const input = {
+      await publishDoc(
+        before,
         bytes,
-        filename: basename(e.path),
-        isBundle: false,
-        title: e.path,
-        author: "GitHub sync",
-        message: `sync ${source.ref}@${e.sha.slice(0, 7)}`,
-        orgId: source.org_id,
-      }
-      if (before) {
-        const { artifact } = await publish(meta, blobs, input, before.short_id)
-        await meta.setArtifactRemoved(artifact.id, null)
-        next[e.path] = { artifact_id: artifact.id, short_id: artifact.short_id, sha: e.sha }
-        res.updated++
-      } else {
-        const { artifact } = await publish(meta, blobs, input)
-        await meta.addCollectionItem(source.collection_id, artifact.id)
-        next[e.path] = { artifact_id: artifact.id, short_id: artifact.short_id, sha: e.sha }
-        res.added++
-      }
+        basename(e.path),
+        false,
+        e.path,
+        extractTitle(bytes, e.path),
+        e.sha,
+      )
     }
 
-    // Tombstone files that truly disappeared from the repo. Skipped when the tree
-    // was truncated (absent ≠ deleted) or when the path was consumed by a rename.
-    if (!truncated)
+    // Tombstone files that truly disappeared. Skipped when truncated (absent ≠
+    // deleted), capped (we didn't process the whole repo this run), or consumed by
+    // a rename. A path that became a bundle asset is NOT here (its standalone entry
+    // was intentionally left out of `next` above, so it tombstones — correct).
+    if (!truncated && !capped)
       for (const path in prev) {
         const ent = prev[path]
         if (!ent || next[path] || renamedAway.has(path)) continue
@@ -170,13 +389,34 @@ export async function runSync(
         res.removed++
       }
 
-    if (truncated) carryForward() // don't drop (and later re-create) unlisted files
-    let status = truncated ? "ok (repo tree truncated; some files not listed)" : "ok"
+    // On a capped/truncated run, keep un-processed entries so they aren't dropped
+    // (and re-created) — the next run continues from here.
+    if (truncated || capped) carryForward()
+
+    // Docs still needing work: not consumed, and not already current in `next`.
+    res.remaining = docs.filter((e) => {
+      if (consumed.has(e.path)) return false
+      const n = next[e.path]
+      if (!n) return true
+      const plan = plans.get(e.path)
+      if (plan) {
+        const ms: Record<string, string> = {}
+        for (const m of plan.members) ms[m.repoPath] = shaByPath.get(m.repoPath) ?? ""
+        return n.kind !== "bundle" || n.sha !== compositeSha(ms)
+      }
+      return n.kind === "bundle" || n.sha !== e.sha
+    }).length
+
+    let status = capped
+      ? `synced ${processed} this run · ${res.remaining} pending`
+      : truncated
+        ? "ok (repo tree truncated; some files not listed)"
+        : "ok"
     if (tooLarge.length) status += ` (${tooLarge.length} file(s) skipped: too large or over quota)`
     await persist(status)
     return res
   } catch (err) {
-    carryForward() // a retry sees mirrored paths as updates, never re-creates them
+    carryForward()
     await persist(`error: ${err instanceof Error ? err.message : String(err)}`.slice(0, 300))
     throw err
   }

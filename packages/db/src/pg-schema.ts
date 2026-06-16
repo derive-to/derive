@@ -39,6 +39,7 @@ export const artifact = pgTable("artifact", {
   current_content_type: text("current_content_type"),
   created_at: text("created_at").notNull().$defaultFn(isoNow),
   removed_at: text("removed_at"),
+  source_path: text("source_path"),
 })
 
 export const version = pgTable(
@@ -256,9 +257,27 @@ export const repoSource = pgTable("repo_source", {
   ref: text("ref").notNull().default("HEAD"),
   includes: text("includes").notNull(),
   token: text("token"),
+  installation_id: text("installation_id"),
   files: text("files").notNull().default("{}"),
   last_synced_at: text("last_synced_at"),
   last_status: text("last_status"),
+  created_by: text("created_by").notNull(),
+  created_at: text("created_at").notNull().$defaultFn(isoNow),
+})
+export const githubApp = pgTable("github_app", {
+  id: text("id").primaryKey(),
+  app_id: text("app_id").notNull(),
+  slug: text("slug").notNull(),
+  client_id: text("client_id").notNull(),
+  client_secret: text("client_secret").notNull(),
+  private_key: text("private_key").notNull(),
+  webhook_secret: text("webhook_secret").notNull(),
+  created_at: text("created_at").notNull().$defaultFn(isoNow),
+})
+export const githubInstallation = pgTable("github_installation", {
+  installation_id: text("installation_id").primaryKey(),
+  org_id: text("org_id").notNull(),
+  account_login: text("account_login"),
   created_by: text("created_by").notNull(),
   created_at: text("created_at").notNull().$defaultFn(isoNow),
 })
@@ -347,6 +366,8 @@ const TABLES = [
   collectionItem,
   collectionMember,
   repoSource,
+  githubApp,
+  githubInstallation,
   domain,
   proposal,
   report,

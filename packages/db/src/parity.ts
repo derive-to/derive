@@ -23,6 +23,8 @@ import type {
   CommentRecord,
   DeliveryRecord,
   DomainRecord,
+  GitHubAppRecord,
+  GitHubInstallationRecord,
   MembershipRecord,
   NotificationRecord,
   ProposalRecord,
@@ -53,6 +55,8 @@ export interface TypedTables {
   collection: CollectionRecord
   collectionMember: CollectionMemberRecord
   repoSource: RepoSourceRecord
+  githubApp: GitHubAppRecord
+  githubInstallation: GitHubInstallationRecord
   domain: DomainRecord
   report: ReportRecord
   auditLog: AuditLogRecord

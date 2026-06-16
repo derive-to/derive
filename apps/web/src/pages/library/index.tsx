@@ -15,6 +15,7 @@ import { usePrefetchArtifact } from "@/lib/use-prefetch-artifact"
 import { ArtifactCard } from "./artifact-card"
 import { ArtifactGrid } from "./artifact-grid"
 import { CollectionBar } from "./collection-bar"
+import { FolderGroups } from "./folder-groups"
 import { HowItWorks } from "./how-it-works"
 import { LibrarySkeleton } from "./library-skeleton"
 import { PublishCard } from "./publish-card"
@@ -333,6 +334,18 @@ function LibraryBody() {
           ) : (
             <EmptyState>{emptyMessage}</EmptyState>
           )
+        ) : filter.kind === "collection" && items.some((a) => a.source_path) ? (
+          // A mirrored repo: browse it as a folder tree instead of a flat grid.
+          <FolderGroups
+            items={items}
+            hasNextPage={!!hasNextPage}
+            isFetchingNextPage={isFetchingNextPage}
+            onLoadMore={() => fetchNextPage()}
+            onOpen={(a) => nav({ to: "/a/$ref", params: { ref: a.short_id } })}
+            onToggleFavorite={toggleFav}
+            onPickTag={(tag) => nav({ to: "/", search: { tag } })}
+            onPrefetch={(a) => prefetch(a.short_id, a.current_version)}
+          />
         ) : (
           <>
             <ArtifactGrid
