@@ -1099,6 +1099,24 @@ export class PgMetaStore implements MetaStore {
   async createAuditLog(a: NewAuditLog): Promise<void> {
     await this.db.insert(auditLog).values(a)
   }
+  // Atomic delete: all FK-dependent rows and the artifact row commit together.
+  async deleteArtifact(id: string): Promise<void> {
+    await this.db.transaction(async (tx) => {
+      await tx.delete(version).where(eq(version.artifact_id, id))
+      await tx.delete(comment).where(eq(comment.artifact_id, id))
+      await tx.delete(artifactMember).where(eq(artifactMember.artifact_id, id))
+      await tx.delete(artifactFavorite).where(eq(artifactFavorite.artifact_id, id))
+      await tx.delete(artifactTag).where(eq(artifactTag.artifact_id, id))
+      await tx.delete(collectionItem).where(eq(collectionItem.artifact_id, id))
+      await tx.delete(domain).where(eq(domain.artifact_id, id))
+      await tx.delete(proposal).where(eq(proposal.artifact_id, id))
+      await tx.delete(report).where(eq(report.artifact_id, id))
+      await tx.delete(notification).where(eq(notification.artifact_id, id))
+      await tx.delete(agentMention).where(eq(agentMention.artifact_id, id))
+      await tx.delete(artifact).where(eq(artifact.id, id))
+    })
+  }
+
   // Atomic takedown: tombstone + bulk open-report resolution + audit entry in one
   // transaction, so a failure mid-way rolls back instead of leaving a half-applied
   // takedown. The single bulk UPDATE replaces the route's per-report loop (N+1).

@@ -17,6 +17,22 @@ export function PublishCard() {
   const [dragging, setDragging] = useState(false)
 
   const publishFile = async (f: File) => {
+    // Warn about local stylesheet references in HTML files before uploading.
+    if (/\.html?$/i.test(f.name)) {
+      const text = await f.text()
+      const localLinks = [
+        ...text.matchAll(/<link[^>]+rel=["']stylesheet["'][^>]*href=["']([^"']+)["']/gi),
+      ]
+        .flatMap((m): string[] => (m[1] ? [m[1]] : []))
+        .filter((h) => !/^(https?:\/\/|\/\/|data:)/i.test(h))
+      if (localLinks.length > 0) {
+        const names = localLinks.map((h) => h.split("/").pop()).join(", ")
+        toast.warning(
+          `This file links to ${localLinks.length === 1 ? "a local stylesheet" : "local stylesheets"} (${names}) that won't load here — it was probably on your computer. Try embedding styles inline before uploading.`,
+          { duration: 8000 },
+        )
+      }
+    }
     setBusy(true)
     try {
       const a = await api.publish(f, { title: f.name.replace(/\.[^.]+$/, ""), visibility: "org" })

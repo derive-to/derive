@@ -11,13 +11,20 @@ import { and, eq } from "drizzle-orm"
 import { drizzle } from "drizzle-orm/better-sqlite3"
 import { makeRepos, schema } from "./repos"
 import {
+  agentMention,
   artifact,
+  artifactFavorite,
+  artifactMember,
   artifactTag,
   auditLog,
   collection,
   collectionItem,
   collectionMember,
+  comment,
+  domain,
   MIGRATION_STATEMENTS,
+  notification,
+  proposal,
   report,
   SCHEMA_STATEMENTS,
   version,
@@ -95,6 +102,24 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
         db.delete(collectionItem).where(eq(collectionItem.collection_id, id)).run()
         db.delete(collectionMember).where(eq(collectionMember.collection_id, id)).run()
         db.delete(collection).where(eq(collection.id, id)).run()
+      })()
+    },
+
+    // Atomic delete: all FK-dependent rows and the artifact itself commit together.
+    deleteArtifact: async (id: string): Promise<void> => {
+      raw.transaction(() => {
+        db.delete(version).where(eq(version.artifact_id, id)).run()
+        db.delete(comment).where(eq(comment.artifact_id, id)).run()
+        db.delete(artifactMember).where(eq(artifactMember.artifact_id, id)).run()
+        db.delete(artifactFavorite).where(eq(artifactFavorite.artifact_id, id)).run()
+        db.delete(artifactTag).where(eq(artifactTag.artifact_id, id)).run()
+        db.delete(collectionItem).where(eq(collectionItem.artifact_id, id)).run()
+        db.delete(domain).where(eq(domain.artifact_id, id)).run()
+        db.delete(proposal).where(eq(proposal.artifact_id, id)).run()
+        db.delete(report).where(eq(report.artifact_id, id)).run()
+        db.delete(notification).where(eq(notification.artifact_id, id)).run()
+        db.delete(agentMention).where(eq(agentMention.artifact_id, id)).run()
+        db.delete(artifact).where(eq(artifact.id, id)).run()
       })()
     },
 

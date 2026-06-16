@@ -389,6 +389,16 @@ export const artifactRoutes = (ctx: AppContext) => {
     return c.json({ locked: b.locked })
   })
 
+  // Permanently delete an artifact and all its dependents (versions, comments,
+  // proposals, memberships, etc.). Owner-only: gated by the `manage` action.
+  app.delete("/v1/artifacts/:shortId", async (c) => {
+    const artifact = await meta.getByShortId(c.req.param("shortId"))
+    if (!artifact) return fail(c, 404, "not found")
+    if (!(await authorize(c, "manage", artifact))) return fail(c, 403, "forbidden")
+    await meta.deleteArtifact(artifact.id, artifact.org_id)
+    return new Response(null, { status: 204 })
+  })
+
   // Unlock a `password` artifact: verify the password and drop a cookie whose
   // value is derived from the server-only hash (so it can't be forged and dies if
   // the password changes). Brute force is bounded by a dedicated tight limiter

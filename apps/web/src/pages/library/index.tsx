@@ -111,6 +111,29 @@ function LibraryBody() {
     nav({ to: "/", search: {} })
   }
 
+  const deleteArtifact = async (a: Artifact) => {
+    if (!confirm(`Permanently delete "${a.title ?? a.short_id}"? This cannot be undone.`)) return
+    qc.setQueryData(listQuery.queryKey, (old) =>
+      old
+        ? {
+            ...old,
+            pages: old.pages.map((pg) => ({
+              ...pg,
+              artifacts: pg.artifacts.filter((x) => x.short_id !== a.short_id),
+            })),
+          }
+        : old,
+    )
+    try {
+      await api.deleteArtifact(a.short_id)
+      refreshSummary()
+      toast.success("Artifact deleted")
+    } catch (e) {
+      toast.error((e as Error).message)
+      qc.invalidateQueries({ queryKey: listQuery.queryKey })
+    }
+  }
+
   const activeCollection =
     filter.kind === "collection" ? collections.find((c) => c.id === filter.id) : undefined
   const heading =
@@ -249,6 +272,7 @@ function LibraryBody() {
               onOpen={(a) => nav({ to: "/a/$ref", params: { ref: a.short_id } })}
               onToggleFavorite={toggleFav}
               onPickTag={(tag) => nav({ to: "/", search: { tag } })}
+              onDelete={deleteArtifact}
               onPrefetch={(a) => prefetch(a.short_id, a.current_version)}
             />
             {isFetchingNextPage && (
