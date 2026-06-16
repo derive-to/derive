@@ -1,14 +1,13 @@
 import { ChevronRight, Folder } from "lucide-react"
-import { useEffect, useMemo, useState } from "react"
+import { useMemo, useState } from "react"
 import type { Artifact } from "@/api"
 import { cn } from "@/lib/utils"
-import { ArtifactCard } from "./artifact-card"
+import { ArtifactRow } from "./artifact-row"
 
 const dirOf = (p: string): string => {
   const i = p.lastIndexOf("/")
   return i < 0 ? "" : p.slice(0, i)
 }
-const sortKey = (a: Artifact) => a.source_path ?? a.title ?? a.short_id
 
 interface Handlers {
   onOpen: (a: Artifact) => void
@@ -18,16 +17,15 @@ interface Handlers {
 }
 
 /**
- * A mirrored repo is a file tree, so its collection renders grouped by folder
- * (from each artifact's `source_path`) rather than one flat grid. Folders are
- * collapsible; the whole collection is loaded up front so the grouping is
- * complete (collections are finite, and scoping keeps them small).
+ * The opt-in folder view for a mirrored repo: artifacts grouped by their `source_path`
+ * folder, the tree ordered alphabetically (a file-explorer mental model) while items
+ * within a folder keep the incoming order (most-recently-updated first). Collapsible.
+ * The parent loads the whole collection up front, so every folder is complete.
  */
 export function FolderGroups({
   items,
   hasNextPage,
   isFetchingNextPage,
-  onLoadMore,
   ...handlers
 }: {
   items: Artifact[]
@@ -35,11 +33,6 @@ export function FolderGroups({
   isFetchingNextPage: boolean
   onLoadMore: () => void
 } & Handlers) {
-  // Pull the remaining pages so every folder is fully populated.
-  useEffect(() => {
-    if (hasNextPage && !isFetchingNextPage) onLoadMore()
-  }, [hasNextPage, isFetchingNextPage, onLoadMore])
-
   const groups = useMemo(() => {
     const m = new Map<string, Artifact[]>()
     for (const a of items) {
@@ -48,11 +41,12 @@ export function FolderGroups({
       if (arr) arr.push(a)
       else m.set(key, [a])
     }
+    // Folders alphabetical (structural tree); items keep the incoming recency order.
     return [...m.entries()]
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([dir, arts]) => ({
         dir,
-        items: arts.sort((x, y) => sortKey(x).localeCompare(sortKey(y))),
+        items: arts,
       }))
   }, [items])
 
@@ -90,9 +84,9 @@ function FolderSection({ dir, items, ...handlers }: { dir: string; items: Artifa
         <span className="font-mono text-xs text-muted-foreground">· {items.length}</span>
       </button>
       {open && (
-        <div className="ml-6 mt-1.5 grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-3">
+        <div className="ml-6 mt-1.5 flex flex-col gap-2">
           {items.map((a) => (
-            <ArtifactCard
+            <ArtifactRow
               key={a.short_id}
               artifact={a}
               onOpen={() => handlers.onOpen(a)}

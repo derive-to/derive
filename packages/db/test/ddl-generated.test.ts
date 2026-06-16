@@ -53,7 +53,7 @@ for (const [dialect, { schema, statements }] of Object.entries(dialects)) {
     // dialect timestamp default — correct only because all of them are timestamps. A
     // non-timestamp $defaultFn fails here so the default handling gets revisited.
     it("only known timestamp columns use the non-constant default backstop", () => {
-      const known = new Set(["created_at", "next_attempt_at"])
+      const known = new Set(["created_at", "updated_at", "next_attempt_at"])
       for (const table of Object.values(schema as Record<string, Table>))
         for (const col of Object.values(getTableColumns(table)) as AnyCol[])
           if (isTimestampDefault(col))

@@ -312,6 +312,8 @@ export const toJson = (baseUrl: string, a: ArtifactRecord, versions: VersionReco
   locked: !!a.locked,
   current_version: a.current_version,
   created_at: a.created_at,
+  /** Bumped on each new version; drives "most recently updated" sort + the label. */
+  updated_at: a.updated_at,
   /** Repo path for a GitHub-synced artifact (drives the folder view); null otherwise. */
   source_path: a.source_path,
   versions: versions.map((v) => ({

@@ -77,6 +77,10 @@ export interface Artifact {
   managed?: boolean
   /** Repo path for a synced artifact (e.g. "docs/plans/foo.md") — drives the folder view. */
   source_path?: string | null
+  /** First-published time. */
+  created_at?: string
+  /** Last-updated time (bumped on each new version); drives recency sort + the label. */
+  updated_at?: string
 }
 export interface Report {
   id: string

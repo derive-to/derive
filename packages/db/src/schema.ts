@@ -42,6 +42,10 @@ export const artifact = sqliteTable("artifact", {
   current_version: integer("current_version").notNull().default(0),
   current_content_type: text("current_content_type"),
   created_at: text("created_at").notNull().default(now),
+  // Bumped on every new version (publish/sync). Drives "most recently updated"
+  // ordering + the "updated X ago" label. Defaults to the create time, so a
+  // never-revised artifact reads created == updated.
+  updated_at: text("updated_at").notNull().default(now),
   removed_at: text("removed_at"),
   source_path: text("source_path"),
 })

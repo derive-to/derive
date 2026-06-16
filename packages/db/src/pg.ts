@@ -225,7 +225,11 @@ export class PgMetaStore implements MetaStore {
       await tx.insert(version).values({ ...v, artifact_id: artifactId, n })
       await tx
         .update(artifact)
-        .set({ current_version: n, current_content_type: v.content_type })
+        .set({
+          current_version: n,
+          current_content_type: v.content_type,
+          updated_at: new Date().toISOString(),
+        })
         .where(eq(artifact.id, artifactId))
       const rows = await tx
         .select()

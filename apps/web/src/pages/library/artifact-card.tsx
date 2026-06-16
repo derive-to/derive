@@ -10,12 +10,12 @@ import {
 import { ago } from "@/lib/time"
 import { cn } from "@/lib/utils"
 
-const dirOf = (path: string): string => {
+export const dirOf = (path: string): string => {
   const i = path.lastIndexOf("/")
   return i < 0 ? "" : path.slice(0, i)
 }
 
-function artifactTypeLabel(a: Artifact): string {
+export function artifactTypeLabel(a: Artifact): string {
   if (a.kind === "bundle") return "Site"
   const ct = a.current_content_type
   if (ct === "text/x-dock-deck") return "Deck"
@@ -116,7 +116,9 @@ export function ArtifactCard({
           <span className="rounded-[5px] border border-border-soft bg-secondary px-1.5 py-px">
             {artifactTypeLabel(a)}
           </span>
-          {a.versions[0]?.created_at && <span>updated {ago(a.versions[0].created_at)}</span>}
+          {(a.updated_at ?? a.versions[0]?.created_at) && (
+            <span>updated {ago(a.updated_at ?? a.versions[0]?.created_at ?? "")}</span>
+          )}
           {a.views !== undefined && a.views > 0 && (
             <span className="ml-auto inline-flex items-center gap-1" title={`${a.views} viewers`}>
               <Icon name="views" size={13} />{" "}

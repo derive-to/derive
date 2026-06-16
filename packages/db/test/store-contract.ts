@@ -103,11 +103,16 @@ export function runStoreContract(
 
     it("appends versions, bumps current_version, lists newest data", async () => {
       const a = await store.createArtifact(newArtifact())
+      // A fresh artifact carries an updated_at (set to ~create time; the recency key).
+      expect(a.updated_at).toBeTruthy()
       const v1 = await store.addVersion(a.id, newVersion({ message: "first" }))
       const v2 = await store.addVersion(a.id, newVersion({ message: "second" }))
       expect(v1.n).toBe(1)
       expect(v2.n).toBe(2)
-      expect((await store.getByShortId(a.short_id))?.current_version).toBe(2)
+      const after = await store.getByShortId(a.short_id)
+      expect(after?.current_version).toBe(2)
+      // A new version bumps updated_at forward (drives the recency sort + label).
+      expect(after?.updated_at && after.updated_at >= a.created_at).toBe(true)
       expect(await store.listVersions(a.id)).toHaveLength(2)
       expect((await store.getVersion(a.id, 1))?.message).toBe("first")
       expect(await store.getVersion(a.id, 99)).toBeNull()
