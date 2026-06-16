@@ -407,4 +407,60 @@ describe("GitHub sync engine", () => {
     ) as SyncProgress | null
     expect(prog?.phase).toBe("error")
   })
+
+  // Safety: a one-way mirror must not wipe a collection because a single listing
+  // came back wrong (transient error / bad branch / momentarily-empty tree that
+  // isn't flagged truncated). A run that would tombstone a large fraction of the
+  // tracked files withholds the removals and flags it — nothing is lost.
+  it("mass-removal guard: a suspect (tiny) listing withholds removals", async () => {
+    const col = await meta.createCollection({
+      id: newId("col"),
+      org_id: "local",
+      title: "GitHub: acme/big",
+      created_by: "u1",
+    })
+    let src = await meta.createRepoSource({
+      id: newId("rs"),
+      org_id: "local",
+      collection_id: col.id,
+      repo: "acme/big",
+      ref: "main",
+      includes: "**/*.md",
+      created_by: "u1",
+    })
+    // First sync: 15 docs.
+    tree = Array.from({ length: 15 }, (_, i) => ({
+      path: `d${i}.md`,
+      sha: `big-${i}`,
+      type: "blob" as const,
+    }))
+    for (let i = 0; i < 15; i++) blobs[`big-${i}`] = `# Doc ${i}`
+    expect((await runSync(meta, blobStore, src, NOW)).added).toBe(15)
+    src = (await meta.getRepoSource(src.id)) as RepoSourceRecord
+
+    // Next listing returns only 1 file (not truncated) — would tombstone 14/15.
+    tree = [{ path: "d0.md", sha: "big-0", type: "blob" }]
+    const res = await runSync(meta, blobStore, src, NOW)
+
+    // Removals withheld, not applied.
+    expect(res.removed).toBe(0)
+    expect(res.removalsSkipped).toBe(14)
+    // All 15 artifacts survive (none tombstoned) and stay tracked in the map.
+    const map = JSON.parse((await meta.getRepoSource(src.id))?.files ?? "{}") as FileMap
+    expect(Object.keys(map).filter((p) => /^d\d+\.md$/.test(p)).length).toBe(15)
+    const live = await meta.listArtifacts({ orgId: "local" })
+    const myIds = new Set(Object.values(map).map((e) => e.artifact_id))
+    expect(live.filter((a) => myIds.has(a.id) && a.removed_at).length).toBe(0) // none tombstoned
+
+    // A SMALL removal (below the floor) still tombstones normally: drop one file.
+    src = (await meta.getRepoSource(src.id)) as RepoSourceRecord
+    tree = Array.from({ length: 14 }, (_, i) => ({
+      path: `d${i}.md`,
+      sha: `big-${i}`,
+      type: "blob" as const,
+    })) // d14 removed
+    const res2 = await runSync(meta, blobStore, src, NOW)
+    expect(res2.removed).toBe(1)
+    expect(res2.removalsSkipped).toBeUndefined()
+  })
 })
