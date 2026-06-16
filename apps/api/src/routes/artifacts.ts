@@ -83,6 +83,13 @@ export const artifactRoutes = (ctx: AppContext) => {
     const narrow = (next: string[]) => {
       ids = ids ? ids.filter((id) => next.includes(id)) : next
     }
+    // scope=shared → artifacts explicitly shared with me (a per-artifact membership),
+    // which can live in other workspaces. Drives the home's "Shared with you" section.
+    const shared = c.req.query("scope") === "shared"
+    if (shared) {
+      if (!me) return c.json({ artifacts: [], next_cursor: null })
+      narrow(await meta.artifactIdsSharedWith(me.id))
+    }
     if (tag) narrow(await meta.artifactIdsByTag(tag))
     if (collectionId) narrow(await meta.collectionArtifactIds(collectionId))
     if (favOnly) narrow(favIds)
@@ -96,7 +103,16 @@ export const artifactRoutes = (ctx: AppContext) => {
       (deps.token && safeEqual(bearer(c), deps.token)) ||
       (!!me && !!(await meta.getMembership(orgId, me.id)))
     )
-    const rows = await meta.listArtifacts({ limit: limit + 1, cursor, q, ids, orgId, publicOnly })
+    const rows = await meta.listArtifacts({
+      limit: limit + 1,
+      cursor,
+      q,
+      ids,
+      // Shared-with-me spans workspaces; an explicit member can always see them, so
+      // drop the workspace + public-only restrictions for that scope.
+      orgId: shared ? undefined : orgId,
+      publicOnly: shared ? false : publicOnly,
+    })
     const hasMore = rows.length > limit
     const page = hasMore ? rows.slice(0, limit) : rows
     const last = page[page.length - 1]

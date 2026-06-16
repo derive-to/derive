@@ -376,6 +376,8 @@ export const api = {
     tag?: string
     collection?: string
     favorite?: boolean
+    /** "shared" → only artifacts explicitly shared with you (across workspaces). */
+    scope?: "shared"
     cursor?: string
     limit?: number
   }): Promise<{ artifacts: Artifact[]; next_cursor: string | null }> => {
@@ -384,6 +386,7 @@ export const api = {
     if (params?.tag) qs.set("tag", params.tag)
     if (params?.collection) qs.set("collection", params.collection)
     if (params?.favorite) qs.set("favorite", "true")
+    if (params?.scope) qs.set("scope", params.scope)
     if (params?.cursor) qs.set("cursor", params.cursor)
     if (params?.limit) qs.set("limit", String(params.limit))
     const s = qs.toString()

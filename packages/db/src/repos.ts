@@ -523,6 +523,16 @@ export function makeRepos(db: SqliteDb) {
       .get()) ?? null
   const listArtifactMembers = async (artifactId: string): Promise<ArtifactMemberRecord[]> =>
     db.select().from(artifactMember).where(eq(artifactMember.artifact_id, artifactId)).all()
+  // Artifacts explicitly shared with a user (they hold a per-artifact membership) —
+  // the "Shared with you" set, which can span workspaces.
+  const artifactIdsSharedWith = async (userId: string): Promise<string[]> =>
+    (
+      await db
+        .select({ id: artifactMember.artifact_id })
+        .from(artifactMember)
+        .where(eq(artifactMember.user_id, userId))
+        .all()
+    ).map((r) => r.id)
   const setArtifactMember = async (m: NewArtifactMember): Promise<ArtifactMemberRecord> =>
     (await db
       .insert(artifactMember)
@@ -1064,6 +1074,7 @@ export function makeRepos(db: SqliteDb) {
     listWorkspaces,
     getArtifactMember,
     listArtifactMembers,
+    artifactIdsSharedWith,
     setArtifactMember,
     removeArtifactMember,
     listUserFavoriteIds,

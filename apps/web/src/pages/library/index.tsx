@@ -1,4 +1,4 @@
-import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query"
+import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useNavigate, useSearch } from "@tanstack/react-router"
 import { X } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
@@ -10,8 +10,9 @@ import { useShell } from "@/components/shell-context"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { useAuth } from "@/ctx"
-import { type LibraryParams, libraryArtifactsQuery } from "@/lib/queries"
+import { type LibraryParams, libraryArtifactsQuery, sharedArtifactsQuery } from "@/lib/queries"
 import { usePrefetchArtifact } from "@/lib/use-prefetch-artifact"
+import { ArtifactCard } from "./artifact-card"
 import { ArtifactGrid } from "./artifact-grid"
 import { CollectionBar } from "./collection-bar"
 import { HowItWorks } from "./how-it-works"
@@ -151,10 +152,31 @@ function LibraryBody() {
   const totalCount = summary?.total ?? items.length
   const showGreeting = filter.kind === "all" && !debouncedQ
   const wsName = workspaces?.workspaces.find((w) => w.id === workspaces.active)?.name
-  // A brand-new, never-published home: lead with the publisher, then a visual guide
-  // (instead of a bare "nothing here" box).
+
+  // "Shared with you": things explicitly shared, surfaced on the unfiltered home
+  // above your own list. Only fetched there.
+  const homeView = filter.kind === "all" && !debouncedQ
+  const { data: sharedData } = useQuery({ ...sharedArtifactsQuery(), enabled: homeView })
+  const sharedItems = homeView ? (sharedData ?? []) : []
+
+  const openShared = async (a: Artifact) => {
+    const on = !a.favorite
+    qc.setQueryData(sharedArtifactsQuery().queryKey, (old) =>
+      old?.map((x) => (x.short_id === a.short_id ? { ...x, favorite: on } : x)),
+    )
+    try {
+      await api.favorite(a.short_id, on)
+      refreshSummary()
+    } catch (e) {
+      toast.error((e as Error).message)
+      qc.invalidateQueries({ queryKey: sharedArtifactsQuery().queryKey })
+    }
+  }
+
+  // The "how it works" guide is for a truly blank slate: nothing of your own AND
+  // nothing shared with you. If something's shared, that section carries the home.
   const emptyHome =
-    filter.kind === "all" && !debouncedQ && !isPending && !isError && items.length === 0
+    homeView && !isPending && !isError && items.length === 0 && sharedItems.length === 0
 
   return (
     <div ref={scrollRef} className="flex-1 overflow-y-auto">
@@ -223,6 +245,29 @@ function LibraryBody() {
         </div>
 
         {filter.kind !== "collection" && <PublishCard />}
+
+        {sharedItems.length > 0 && (
+          <section className="mb-6" data-testid="shared-with-you">
+            <h2 className="mb-3.5 font-display text-lg font-semibold">
+              Shared with you{" "}
+              <span className="text-base font-normal text-muted-foreground">
+                · {sharedItems.length}
+              </span>
+            </h2>
+            <div className="grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-3.5">
+              {sharedItems.map((a) => (
+                <ArtifactCard
+                  key={a.short_id}
+                  artifact={a}
+                  onOpen={() => nav({ to: "/a/$ref", params: { ref: a.short_id } })}
+                  onToggleFavorite={() => openShared(a)}
+                  onPickTag={(tag) => nav({ to: "/", search: { tag } })}
+                  onPrefetch={() => prefetch(a.short_id, a.current_version)}
+                />
+              ))}
+            </div>
+          </section>
+        )}
 
         {filter.kind === "collection" ? (
           <CollectionBar

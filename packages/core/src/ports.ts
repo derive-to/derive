@@ -225,6 +225,9 @@ export interface MetaStore {
 
   getArtifactMember(artifactId: string, userId: string): Promise<ArtifactMemberRecord | null>
   listArtifactMembers(artifactId: string): Promise<ArtifactMemberRecord[]>
+  /** Artifact ids explicitly shared with a user (they hold a per-artifact
+   *  membership) — the "Shared with you" set; can span workspaces. */
+  artifactIdsSharedWith(userId: string): Promise<string[]>
   /** Insert or update a per-artifact role override (a share). */
   setArtifactMember(m: NewArtifactMember): Promise<ArtifactMemberRecord>
   removeArtifactMember(artifactId: string, userId: string): Promise<void>

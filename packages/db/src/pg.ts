@@ -551,6 +551,15 @@ export class PgMetaStore implements MetaStore {
   listArtifactMembers(artifactId: string): Promise<ArtifactMemberRecord[]> {
     return this.db.select().from(artifactMember).where(eq(artifactMember.artifact_id, artifactId))
   }
+  // Artifacts explicitly shared with a user (per-artifact membership) — can span
+  // workspaces; drives the home's "Shared with you" section.
+  async artifactIdsSharedWith(userId: string): Promise<string[]> {
+    const rows = await this.db
+      .select({ id: artifactMember.artifact_id })
+      .from(artifactMember)
+      .where(eq(artifactMember.user_id, userId))
+    return rows.map((r) => r.id)
+  }
   async setArtifactMember(m: NewArtifactMember): Promise<ArtifactMemberRecord> {
     const rows = await this.db
       .insert(artifactMember)
