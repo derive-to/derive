@@ -2,6 +2,7 @@ import {
   type BlobStore,
   BUNDLE_CONTENT_TYPE,
   type BundleManifest,
+  looksLikeHtmlDocument,
   mimeFor,
   renderMarkdown,
   SELECTION_SCRIPT,
@@ -28,6 +29,10 @@ export const serveContent = async (
   prefix: string,
   rawPath: string,
   cacheControl: string = IMMUTABLE_CACHE,
+  /** Called when the bytes contradict a `text/markdown` label (they're actually a
+   *  full HTML document). The caller uses this to self-heal the stored content_type
+   *  so the mislabel is fixed permanently, not just rendered-around each view. */
+  onMismatch?: () => void,
 ) => {
   const headers = { ...RAW_HEADERS, "Cache-Control": cacheControl }
   let path = rawPath
@@ -65,7 +70,21 @@ export const serveContent = async (
         ...headers,
         "Content-Type": "text/markdown; charset=utf-8",
       })
-    const html = await renderMarkdown(new TextDecoder().decode(data), title)
+    const text = new TextDecoder().decode(data)
+    // Redundancy against a mislabeled blob: a version stored as text/markdown whose
+    // bytes are actually a full HTML document renders blank through the markdown path
+    // (it strips <head>/<style>/scripts) — the white screen we must never produce.
+    // Detect it and serve the HTML verbatim, and signal the caller to self-heal the
+    // stored type. The renderer never emits a blank page from real content, whatever
+    // the label says — the type sniff is a hint, this is the backstop.
+    if (looksLikeHtmlDocument(text)) {
+      onMismatch?.()
+      return c.body(text + SELECTION_SCRIPT, 200, {
+        ...headers,
+        "Content-Type": "text/html; charset=utf-8",
+      })
+    }
+    const html = await renderMarkdown(text, title)
     return c.body(html, 200, { ...headers, "Content-Type": "text/html; charset=utf-8" })
   }
 
