@@ -15,7 +15,8 @@ import type {
   WebhookKind,
 } from "@dock/core"
 import { sql } from "drizzle-orm"
-import { integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core"
+import { getTableConfig, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core"
+import { generateDdl, PERF_INDEXES, placeholderTables } from "./ddl"
 
 const now = sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`
 
@@ -346,300 +347,62 @@ export const auditLog = sqliteTable("audit_log", {
 // user/session/account/verification tables are owned and migrated by Better Auth
 // (see apps/api/src/auth-config.ts) — not declared here.
 
+// Boot DDL, generated from the drizzle tables above (see ./ddl) so the SQLite
+// schema can't drift from the defs and stays in lockstep with the Postgres + D1 DDL.
+// SQLite's created_at default is strftime, and ADD COLUMN has no IF NOT EXISTS, so
+// MIGRATION_STATEMENTS run in a boot try/catch ("duplicate column" = already applied).
+const SQLITE_TIMESTAMP_DEFAULT = `(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`
+
+// Drizzle tables, in FK-dependency order (a referenced table is created first).
+const TABLES = [
+  artifact,
+  version,
+  comment,
+  webhook,
+  webhookDelivery,
+  membership,
+  workspace,
+  artifactMember,
+  notification,
+  agent,
+  agentMention,
+  artifactFavorite,
+  artifactTag,
+  collection,
+  collectionItem,
+  collectionMember,
+  repoSource,
+  domain,
+  proposal,
+  report,
+  auditLog,
+]
+
+const ddl = generateDdl(TABLES, getTableConfig, {
+  ifNotExists: false,
+  timestampDefault: SQLITE_TIMESTAMP_DEFAULT,
+})
+
 /**
- * Raw DDL run at boot for the self-host SQLite default (zero-config), and used
- * to seed D1 (deploy/d1-schema.sql). Tables not yet queried (comment, principal,
- * acl) are created here up front so migrations stay forward-only.
+ * Raw DDL run at boot for the self-host SQLite default (zero-config), and used to
+ * seed D1 (deploy/d1-schema.sql). Table/index CREATEs come from the drizzle defs;
+ * the not-yet-queried placeholder tables (principal/acl/view) and the perf indexes
+ * have no drizzle def and stay explicit (see ./ddl).
  */
 export const SCHEMA_STATEMENTS: string[] = [
-  `CREATE TABLE IF NOT EXISTS artifact (
-    id TEXT PRIMARY KEY,
-    short_id TEXT NOT NULL UNIQUE,
-    org_id TEXT NOT NULL DEFAULT 'local',
-    slug TEXT,
-    title TEXT,
-    visibility TEXT NOT NULL DEFAULT 'link',
-    password_hash TEXT,
-    general_role TEXT NOT NULL DEFAULT 'viewer',
-    kind TEXT NOT NULL,
-    spa INTEGER NOT NULL DEFAULT 0,
-    locked INTEGER NOT NULL DEFAULT 0,
-    current_version INTEGER NOT NULL DEFAULT 0,
-    current_content_type TEXT,
-    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-    removed_at TEXT
-  )`,
-  // The library feed: filter by org_id, order by (created_at, id) desc (keyset
-  // pagination). Composite index serves both the scope and the sort; SQLite/D1
-  // reverse-scan it for the DESC order. Without it every workspace list is a
-  // full table scan + filesort.
-  `CREATE INDEX IF NOT EXISTS artifact_org_created ON artifact (org_id, created_at, id)`,
-  `CREATE TABLE IF NOT EXISTS version (
-    id TEXT PRIMARY KEY,
-    artifact_id TEXT NOT NULL REFERENCES artifact(id),
-    n INTEGER NOT NULL,
-    blob_key TEXT NOT NULL,
-    content_type TEXT NOT NULL,
-    size_bytes INTEGER NOT NULL DEFAULT 0,
-    author TEXT NOT NULL,
-    message TEXT,
-    name TEXT,
-    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-    UNIQUE (artifact_id, n)
-  )`,
-  `CREATE TABLE IF NOT EXISTS comment (
-    id TEXT PRIMARY KEY,
-    artifact_id TEXT NOT NULL REFERENCES artifact(id),
-    thread_id TEXT NOT NULL,
-    base_version INTEGER NOT NULL,
-    path TEXT,
-    anchor TEXT,
-    body_md TEXT NOT NULL,
-    author TEXT NOT NULL,
-    author_id TEXT,
-    state TEXT NOT NULL DEFAULT 'open',
-    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-    meta TEXT
-  )`,
-  `CREATE TABLE IF NOT EXISTS principal (
-    id TEXT PRIMARY KEY,
-    org_id TEXT NOT NULL,
-    email TEXT,
-    kind TEXT NOT NULL DEFAULT 'human',
-    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
-  )`,
-  `CREATE TABLE IF NOT EXISTS acl (
-    artifact_id TEXT PRIMARY KEY REFERENCES artifact(id),
-    visibility TEXT NOT NULL,
-    password_hash TEXT,
-    org_gate TEXT
-  )`,
-  `CREATE TABLE IF NOT EXISTS view (
-    id TEXT PRIMARY KEY,
-    artifact_id TEXT NOT NULL REFERENCES artifact(id),
-    version INTEGER NOT NULL,
-    viewer TEXT NOT NULL,
-    viewer_kind TEXT NOT NULL DEFAULT 'anon',
-    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
-  )`,
-  `CREATE INDEX IF NOT EXISTS view_artifact_time ON view (artifact_id, created_at)`,
-  `CREATE TABLE IF NOT EXISTS webhook (
-    id TEXT PRIMARY KEY,
-    org_id TEXT NOT NULL DEFAULT 'default',
-    artifact_id TEXT REFERENCES artifact(id),
-    url TEXT NOT NULL,
-    secret TEXT NOT NULL,
-    kind TEXT NOT NULL DEFAULT 'generic',
-    events TEXT NOT NULL DEFAULT '*',
-    label TEXT,
-    active INTEGER NOT NULL DEFAULT 1,
-    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
-  )`,
-  `CREATE TABLE IF NOT EXISTS webhook_delivery (
-    id TEXT PRIMARY KEY,
-    webhook_id TEXT NOT NULL,
-    url TEXT NOT NULL,
-    secret TEXT NOT NULL,
-    kind TEXT NOT NULL,
-    event_type TEXT NOT NULL,
-    payload TEXT NOT NULL,
-    status TEXT NOT NULL DEFAULT 'pending',
-    attempts INTEGER NOT NULL DEFAULT 0,
-    last_error TEXT,
-    next_attempt_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
-  )`,
-  `CREATE INDEX IF NOT EXISTS delivery_due ON webhook_delivery (status, next_attempt_at)`,
-  `CREATE TABLE IF NOT EXISTS membership (
-    id TEXT PRIMARY KEY,
-    org_id TEXT NOT NULL,
-    user_id TEXT NOT NULL,
-    role TEXT NOT NULL,
-    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-    UNIQUE (org_id, user_id)
-  )`,
-  `CREATE TABLE IF NOT EXISTS workspace (
-    id TEXT PRIMARY KEY,
-    name TEXT NOT NULL,
-    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
-  )`,
-  `CREATE TABLE IF NOT EXISTS artifact_member (
-    id TEXT PRIMARY KEY,
-    artifact_id TEXT NOT NULL REFERENCES artifact(id),
-    user_id TEXT NOT NULL,
-    role TEXT NOT NULL,
-    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-    UNIQUE (artifact_id, user_id)
-  )`,
-  `CREATE TABLE IF NOT EXISTS notification (
-    id TEXT PRIMARY KEY,
-    user_id TEXT NOT NULL,
-    actor TEXT NOT NULL,
-    kind TEXT NOT NULL,
-    artifact_id TEXT NOT NULL,
-    artifact_short_id TEXT NOT NULL,
-    artifact_title TEXT,
-    thread_id TEXT NOT NULL,
-    comment_id TEXT NOT NULL,
-    preview TEXT NOT NULL,
-    read INTEGER NOT NULL DEFAULT 0,
-    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
-  )`,
-  `CREATE INDEX IF NOT EXISTS notification_user_time ON notification (user_id, created_at)`,
-  `CREATE TABLE IF NOT EXISTS agent (
-    id TEXT PRIMARY KEY,
-    org_id TEXT NOT NULL,
-    name TEXT NOT NULL,
-    token TEXT NOT NULL,
-    role TEXT NOT NULL DEFAULT 'commenter',
-    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-    UNIQUE (token),
-    UNIQUE (org_id, name)
-  )`,
-  `CREATE TABLE IF NOT EXISTS agent_mention (
-    id TEXT PRIMARY KEY,
-    agent_id TEXT NOT NULL,
-    artifact_id TEXT NOT NULL,
-    artifact_short_id TEXT NOT NULL,
-    comment_id TEXT NOT NULL,
-    thread_id TEXT NOT NULL,
-    body TEXT NOT NULL,
-    author TEXT NOT NULL,
-    state TEXT NOT NULL DEFAULT 'pending',
-    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
-  )`,
-  `CREATE INDEX IF NOT EXISTS agent_mention_inbox ON agent_mention (agent_id, state, created_at)`,
-  `CREATE TABLE IF NOT EXISTS artifact_favorite (
-    id TEXT PRIMARY KEY,
-    artifact_id TEXT NOT NULL REFERENCES artifact(id),
-    user_id TEXT NOT NULL,
-    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-    UNIQUE (artifact_id, user_id)
-  )`,
-  `CREATE INDEX IF NOT EXISTS favorite_user ON artifact_favorite (user_id)`,
-  `CREATE TABLE IF NOT EXISTS artifact_tag (
-    id TEXT PRIMARY KEY,
-    artifact_id TEXT NOT NULL REFERENCES artifact(id),
-    tag TEXT NOT NULL,
-    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-    UNIQUE (artifact_id, tag)
-  )`,
-  `CREATE INDEX IF NOT EXISTS tag_name ON artifact_tag (tag)`,
-  `CREATE TABLE IF NOT EXISTS collection (
-    id TEXT PRIMARY KEY,
-    org_id TEXT NOT NULL DEFAULT 'local',
-    title TEXT NOT NULL,
-    created_by TEXT NOT NULL,
-    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
-  )`,
-  `CREATE TABLE IF NOT EXISTS collection_item (
-    id TEXT PRIMARY KEY,
-    collection_id TEXT NOT NULL REFERENCES collection(id),
-    artifact_id TEXT NOT NULL REFERENCES artifact(id),
-    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-    UNIQUE (collection_id, artifact_id)
-  )`,
-  `CREATE INDEX IF NOT EXISTS collection_item_artifact ON collection_item (artifact_id)`,
-  `CREATE TABLE IF NOT EXISTS collection_member (
-    id TEXT PRIMARY KEY,
-    collection_id TEXT NOT NULL REFERENCES collection(id),
-    user_id TEXT NOT NULL,
-    role TEXT NOT NULL,
-    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-    UNIQUE (collection_id, user_id)
-  )`,
-  `CREATE INDEX IF NOT EXISTS collection_member_user ON collection_member (user_id)`,
-  `CREATE TABLE IF NOT EXISTS repo_source (
-    id TEXT PRIMARY KEY,
-    org_id TEXT NOT NULL DEFAULT 'local',
-    collection_id TEXT NOT NULL REFERENCES collection(id),
-    repo TEXT NOT NULL,
-    ref TEXT NOT NULL DEFAULT 'HEAD',
-    includes TEXT NOT NULL,
-    token TEXT,
-    files TEXT NOT NULL DEFAULT '{}',
-    last_synced_at TEXT,
-    last_status TEXT,
-    created_by TEXT NOT NULL,
-    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
-  )`,
-  `CREATE INDEX IF NOT EXISTS repo_source_org ON repo_source (org_id)`,
-  `CREATE TABLE IF NOT EXISTS domain (
-    host TEXT PRIMARY KEY,
-    artifact_id TEXT REFERENCES artifact(id),
-    org_id TEXT NOT NULL,
-    kind TEXT NOT NULL DEFAULT 'subdomain',
-    status TEXT NOT NULL DEFAULT 'active',
-    cf_hostname_id TEXT,
-    verification TEXT,
-    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
-  )`,
-  `CREATE INDEX IF NOT EXISTS domain_artifact ON domain (artifact_id)`,
-  `CREATE TABLE IF NOT EXISTS proposal (
-    id TEXT PRIMARY KEY,
-    artifact_id TEXT NOT NULL REFERENCES artifact(id),
-    blob_key TEXT NOT NULL,
-    content_type TEXT NOT NULL,
-    kind TEXT NOT NULL,
-    title TEXT,
-    message TEXT,
-    author TEXT NOT NULL,
-    author_id TEXT,
-    base_version INTEGER NOT NULL,
-    state TEXT NOT NULL DEFAULT 'open',
-    decided_by TEXT,
-    decided_version INTEGER,
-    decision_note TEXT,
-    decided_at TEXT,
-    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
-  )`,
-  `CREATE INDEX IF NOT EXISTS proposal_artifact_state ON proposal (artifact_id, state)`,
-  `CREATE TABLE IF NOT EXISTS report (
-    id TEXT PRIMARY KEY,
-    org_id TEXT NOT NULL DEFAULT 'default',
-    artifact_id TEXT NOT NULL,
-    artifact_short_id TEXT NOT NULL,
-    reason TEXT NOT NULL,
-    detail TEXT,
-    reporter TEXT,
-    state TEXT NOT NULL DEFAULT 'open',
-    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
-  )`,
-  `CREATE INDEX IF NOT EXISTS report_state ON report (state, created_at)`,
-  `CREATE TABLE IF NOT EXISTS audit_log (
-    id TEXT PRIMARY KEY,
-    org_id TEXT NOT NULL DEFAULT 'default',
-    action TEXT NOT NULL,
-    artifact_id TEXT,
-    actor TEXT NOT NULL,
-    detail TEXT,
-    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
-  )`,
-  `CREATE INDEX IF NOT EXISTS audit_artifact ON audit_log (artifact_id, created_at)`,
-  // user/session/account/verification are owned and migrated by Better Auth.
+  ...ddl.creates,
+  ...placeholderTables(SQLITE_TIMESTAMP_DEFAULT),
+  ...PERF_INDEXES,
 ]
 
 /**
- * Forward-only column adds for tables that predate them. SQLite has no
- * `ADD COLUMN IF NOT EXISTS`, so each runs inside a try/catch at boot and a
- * "duplicate column" error is the success path. Keep statements idempotent.
+ * Forward-only column adds for existing DBs. SQLite has no ADD COLUMN IF NOT EXISTS,
+ * so each runs inside a try/catch at boot and a "duplicate column" throw is the
+ * success path (see sqlite.ts). Generated from the drizzle columns that can be added
+ * to a populated table (nullable or constant-default), so a new column can't be
+ * forgotten here.
  */
-export const MIGRATION_STATEMENTS: string[] = [
-  `ALTER TABLE comment ADD COLUMN meta TEXT`,
-  `ALTER TABLE comment ADD COLUMN author_id TEXT`,
-  `ALTER TABLE proposal ADD COLUMN author_id TEXT`,
-  `ALTER TABLE version ADD COLUMN name TEXT`,
-  `ALTER TABLE proposal ADD COLUMN decision_note TEXT`,
-  `ALTER TABLE artifact ADD COLUMN removed_at TEXT`,
-  `ALTER TABLE artifact ADD COLUMN password_hash TEXT`,
-  `ALTER TABLE artifact ADD COLUMN general_role TEXT NOT NULL DEFAULT 'viewer'`,
-  `ALTER TABLE artifact ADD COLUMN current_content_type TEXT`,
-  `ALTER TABLE artifact ADD COLUMN locked INTEGER NOT NULL DEFAULT 0`,
-  `ALTER TABLE version ADD COLUMN size_bytes INTEGER NOT NULL DEFAULT 0`,
-  `ALTER TABLE webhook ADD COLUMN org_id TEXT NOT NULL DEFAULT 'default'`,
-  `ALTER TABLE report ADD COLUMN org_id TEXT NOT NULL DEFAULT 'default'`,
-  `ALTER TABLE audit_log ADD COLUMN org_id TEXT NOT NULL DEFAULT 'default'`,
-]
+export const MIGRATION_STATEMENTS: string[] = ddl.alters
 
 // Schema parity is enforced in repos.ts, where the shared `schema` object lives:
 // `Exhaustive`/`Shapes` (./parity) force every table to be classified and every
