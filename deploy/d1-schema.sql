@@ -16,7 +16,8 @@ CREATE TABLE IF NOT EXISTS artifact (
     spa INTEGER NOT NULL DEFAULT 0,
     current_version INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-    removed_at TEXT
+    removed_at TEXT,
+    source_path TEXT
   );
 
 CREATE INDEX IF NOT EXISTS artifact_org_created ON artifact (org_id, created_at, id);

@@ -83,7 +83,7 @@ describe("GitHub sync engine", () => {
     blobs["sha-guide-1"] = "<h1>Guide</h1>"
 
     const res = await runSync(meta, blobStore, source, NOW)
-    expect(res).toEqual({ added: 2, updated: 0, removed: 0, renamed: 0, skipped: 0 })
+    expect(res).toEqual({ added: 2, updated: 0, removed: 0, renamed: 0, skipped: 0, remaining: 0 })
 
     const ids = await meta.collectionArtifactIds(source.collection_id)
     expect(ids).toHaveLength(2)
@@ -94,13 +94,15 @@ describe("GitHub sync engine", () => {
     expect(Object.keys(map).sort()).toEqual(["docs/intro.md", "guide.html"])
     // The markdown file keeps its repo path as the title.
     const art = await meta.getByShortId(map["docs/intro.md"]?.short_id ?? "")
-    expect(art?.title).toBe("docs/intro.md")
+    // Title now comes from the doc's heading ("# Intro"); the path lives in source_path.
+    expect(art?.title).toBe("Intro")
+    expect(art?.source_path).toBe("docs/intro.md")
   })
 
   it("re-sync with no changes: everything skipped, no new versions", async () => {
     source = await reload()
     const res = await runSync(meta, blobStore, source, NOW)
-    expect(res).toEqual({ added: 0, updated: 0, removed: 0, renamed: 0, skipped: 2 })
+    expect(res).toEqual({ added: 0, updated: 0, removed: 0, renamed: 0, skipped: 2, remaining: 0 })
   })
 
   it("changed file (new sha): appends a version, doesn't duplicate the artifact", async () => {
@@ -110,7 +112,7 @@ describe("GitHub sync engine", () => {
     blobs["sha-intro-2"] = "# Intro v2"
 
     const res = await runSync(meta, blobStore, source, NOW)
-    expect(res).toEqual({ added: 0, updated: 1, removed: 0, renamed: 0, skipped: 1 })
+    expect(res).toEqual({ added: 0, updated: 1, removed: 0, renamed: 0, skipped: 1, remaining: 0 })
 
     const after = fileMap(await reload())["docs/intro.md"]
     expect(after?.artifact_id).toBe(before?.artifact_id) // same artifact
@@ -181,7 +183,8 @@ describe("GitHub sync engine", () => {
     expect(map["a.md"]).toBeUndefined()
     expect(map["b.md"]?.artifact_id).toBe(artId) // same artifact, comments intact
     const art = await meta.getByShortId(map["b.md"]?.short_id ?? "")
-    expect(art?.title).toBe("b.md") // retitled to the new path
+    expect(art?.title).toBe("A") // content unchanged → title stays
+    expect(art?.source_path).toBe("b.md") // location moved to the new path
     expect(art?.removed_at).toBeFalsy() // not tombstoned
   })
 
@@ -227,5 +230,77 @@ describe("GitHub sync engine", () => {
     const s2 = await meta.getRepoSource(s0.id)
     if (!s2) throw new Error("gone")
     expect((JSON.parse(s2.files) as FileMap)["x.md"]?.artifact_id).toBe(xId) // same artifact
+  })
+
+  it("extracts a human title from content and keeps the path in source_path", async () => {
+    const col = await meta.createCollection({
+      id: newId("col"),
+      org_id: "local",
+      title: "titles",
+      created_by: "u",
+    })
+    const src = await meta.createRepoSource({
+      id: newId("rs"),
+      org_id: "local",
+      collection_id: col.id,
+      repo: "acme/titles",
+      ref: "main",
+      includes: "**/*.md,**/*.html",
+      created_by: "u",
+    })
+    tree = [
+      { path: "docs/plans/foo.md", sha: "t-md", type: "blob" },
+      { path: "page.html", sha: "t-html", type: "blob" },
+      { path: "notitle.md", sha: "t-plain", type: "blob" },
+    ]
+    blobs["t-md"] = "---\nx: 1\n---\n# Taxonomy System\n\nbody"
+    blobs["t-html"] = "<html><head><title>The Page</title></head><body><h1>x</h1></body></html>"
+    blobs["t-plain"] = "no heading here, just prose"
+    await runSync(meta, blobStore, src, NOW)
+    const map = JSON.parse((await meta.getRepoSource(src.id))?.files ?? "{}") as FileMap
+    const md = await meta.getByShortId(map["docs/plans/foo.md"]?.short_id ?? "")
+    expect(md?.title).toBe("Taxonomy System")
+    expect(md?.source_path).toBe("docs/plans/foo.md")
+    const html = await meta.getByShortId(map["page.html"]?.short_id ?? "")
+    expect(html?.title).toBe("The Page")
+    const plain = await meta.getByShortId(map["notitle.md"]?.short_id ?? "")
+    expect(plain?.title).toBe("notitle") // no heading → basename without extension
+  })
+
+  it("caps each run at maxFiles and finishes a large repo across batches", async () => {
+    const col = await meta.createCollection({
+      id: newId("col"),
+      org_id: "local",
+      title: "big",
+      created_by: "u",
+    })
+    const src = await meta.createRepoSource({
+      id: newId("rs"),
+      org_id: "local",
+      collection_id: col.id,
+      repo: "acme/big",
+      ref: "main",
+      includes: "**/*.md",
+      created_by: "u",
+    })
+    tree = Array.from({ length: 5 }, (_, i) => ({
+      path: `f${i}.md`,
+      sha: `big-${i}`,
+      type: "blob" as const,
+    }))
+    for (let i = 0; i < 5; i++) blobs[`big-${i}`] = `# F${i}`
+    const limits = { maxBytes: 1e9, maxFiles: 2, overStorage: async () => false }
+
+    let r = await runSync(meta, blobStore, src, NOW, limits)
+    expect(r).toMatchObject({ added: 2, remaining: 3 }) // first batch bounded
+    let guard = 0
+    while (r.remaining > 0 && guard++ < 10) {
+      const s = await meta.getRepoSource(src.id)
+      if (!s) throw new Error("gone")
+      r = await runSync(meta, blobStore, s, NOW, limits)
+    }
+    expect(r.remaining).toBe(0)
+    const map = JSON.parse((await meta.getRepoSource(src.id))?.files ?? "{}") as FileMap
+    expect(Object.keys(map).length).toBe(5) // every file mirrored, no duplicates
   })
 })

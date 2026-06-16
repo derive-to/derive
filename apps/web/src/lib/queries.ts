@@ -22,6 +22,10 @@ export const libraryArtifactsQuery = (params: LibraryParams) =>
     // Keep showing the current results while a new filter/search loads, so
     // switching views doesn't flash the skeleton.
     placeholderData: keepPreviousData,
+    // Always revalidate when a view is (re)mounted — navigating back to a
+    // collection must never strand a stale/empty cached page (the blank-collection
+    // bug: a collection cached empty mid-sync, then shown empty on return).
+    refetchOnMount: "always",
   })
 
 // Typed query options shared by route loaders (ensureQueryData, for intent

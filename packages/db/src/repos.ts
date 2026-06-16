@@ -346,6 +346,9 @@ export function makeRepos(db: SqliteDb) {
   const setArtifactTitle = async (id: string, title: string): Promise<void> => {
     await db.update(artifact).set({ title }).where(eq(artifact.id, id)).run()
   }
+  const setArtifactSourcePath = async (id: string, sourcePath: string | null): Promise<void> => {
+    await db.update(artifact).set({ source_path: sourcePath }).where(eq(artifact.id, id)).run()
+  }
 
   // ---- Comments + threads ------------------------------------------------
   const getComment = async (id: string): Promise<CommentRecord | null> =>
@@ -1097,6 +1100,7 @@ export function makeRepos(db: SqliteDb) {
     tagCounts,
     setArtifactRemoved,
     setArtifactTitle,
+    setArtifactSourcePath,
     createComment,
     getComment,
     updateComment,

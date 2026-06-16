@@ -36,6 +36,7 @@ export const artifact = pgTable("artifact", {
   current_version: integer("current_version").notNull().default(0),
   created_at: text("created_at").notNull().$defaultFn(isoNow),
   removed_at: text("removed_at"),
+  source_path: text("source_path"),
 })
 
 export const version = pgTable("version", {
@@ -347,9 +348,11 @@ export const PG_SCHEMA_STATEMENTS: string[] = [
     spa INTEGER NOT NULL DEFAULT 0,
     current_version INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT ${isoDefault},
-    removed_at TEXT
+    removed_at TEXT,
+    source_path TEXT
   )`,
   `ALTER TABLE artifact ADD COLUMN IF NOT EXISTS removed_at TEXT`,
+  `ALTER TABLE artifact ADD COLUMN IF NOT EXISTS source_path TEXT`,
   `ALTER TABLE artifact ADD COLUMN IF NOT EXISTS password_hash TEXT`,
   `ALTER TABLE artifact ADD COLUMN IF NOT EXISTS general_role TEXT NOT NULL DEFAULT 'viewer'`,
   // Library feed: scope by org_id + keyset order on (created_at, id) desc. One

@@ -55,6 +55,14 @@ describe("htmlAssetRefs", () => {
     expect(refs).toContain("https://cdn/ext.js") // extracted; the caller filters non-local
     expect(refs).not.toContain("other.html") // <a> links are never pulled
   })
+
+  it("handles unquoted attribute values (valid HTML5 / minified)", () => {
+    const html = `<link rel=stylesheet href=style.css><script src=app.js></script><img src=logo.png>`
+    const refs = htmlAssetRefs(html)
+    expect(refs).toContain("style.css")
+    expect(refs).toContain("app.js")
+    expect(refs).toContain("logo.png")
+  })
 })
 
 describe("cssAssetRefs", () => {

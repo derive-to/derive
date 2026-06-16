@@ -38,6 +38,7 @@ export const artifact = sqliteTable("artifact", {
   current_version: integer("current_version").notNull().default(0),
   created_at: text("created_at").notNull().default(now),
   removed_at: text("removed_at"),
+  source_path: text("source_path"),
 })
 
 export const version = sqliteTable(
@@ -389,7 +390,8 @@ export const SCHEMA_STATEMENTS: string[] = [
     spa INTEGER NOT NULL DEFAULT 0,
     current_version INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-    removed_at TEXT
+    removed_at TEXT,
+    source_path TEXT
   )`,
   // The library feed: filter by org_id, order by (created_at, id) desc (keyset
   // pagination). Composite index serves both the scope and the sort; SQLite/D1
@@ -672,6 +674,7 @@ export const MIGRATION_STATEMENTS: string[] = [
   `ALTER TABLE version ADD COLUMN name TEXT`,
   `ALTER TABLE proposal ADD COLUMN decision_note TEXT`,
   `ALTER TABLE artifact ADD COLUMN removed_at TEXT`,
+  `ALTER TABLE artifact ADD COLUMN source_path TEXT`,
   `ALTER TABLE artifact ADD COLUMN password_hash TEXT`,
   `ALTER TABLE artifact ADD COLUMN general_role TEXT NOT NULL DEFAULT 'viewer'`,
   `ALTER TABLE version ADD COLUMN size_bytes INTEGER NOT NULL DEFAULT 0`,

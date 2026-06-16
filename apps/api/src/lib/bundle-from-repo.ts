@@ -53,22 +53,28 @@ export const isLocalRef = (ref: string): boolean => {
  * whole site.
  */
 export const htmlAssetRefs = (html: string): string[] => {
-  const refs: string[] = []
-  const push = (re: RegExp, group = 1) => {
+  // Pull an attribute's value from the given tags, tolerating quoted ("x"/'x') AND
+  // unquoted (=x) values — both are valid HTML and appear in minified/hand-written
+  // pages. The three alternatives capture into groups 1/2/3.
+  const attrVals = (tags: string, attr: string): string[] => {
+    const re = new RegExp(
+      `<(?:${tags})\\b[^>]*?\\b${attr}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s">]+))`,
+      "gi",
+    )
+    const out: string[] = []
     for (const m of html.matchAll(re)) {
-      const v = m[group]
-      if (v) refs.push(v)
+      const v = m[1] ?? m[2] ?? m[3]
+      if (v) out.push(v)
     }
+    return out
   }
-  // <link href> (stylesheets, icons, preload), <script src>, media src.
-  push(/<link\b[^>]*?\bhref\s*=\s*["']([^"']+)["']/gi)
-  push(
-    /<(?:script|img|source|video|audio|track|embed|iframe)\b[^>]*?\bsrc\s*=\s*["']([^"']+)["']/gi,
-  )
-  // srcset: comma-separated "url descriptor" — keep the url of each candidate.
-  for (const m of html.matchAll(/<(?:img|source)\b[^>]*?\bsrcset\s*=\s*["']([^"']+)["']/gi)) {
-    const set = m[1]
-    if (!set) continue
+  const refs: string[] = [
+    // <link href> (stylesheets, icons, preload) — but NOT <a href> page links.
+    ...attrVals("link", "href"),
+    ...attrVals("script|img|source|video|audio|track|embed|iframe", "src"),
+  ]
+  // srcset: comma-separated "url descriptor" — keep each candidate's url.
+  for (const set of attrVals("img|source", "srcset")) {
     for (const cand of set.split(",")) {
       const url = cand.trim().split(/\s+/)[0]
       if (url) refs.push(url)

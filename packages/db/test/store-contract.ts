@@ -90,6 +90,17 @@ export function runStoreContract(
       expect(await store.countArtifacts(ORG)).toBeGreaterThan(0)
     })
 
+    it("sets source_path (the synced-file location) independently of the title", async () => {
+      const a = await store.createArtifact(newArtifact({ title: "Taxonomy System" }))
+      expect((await store.getArtifactById(a.id))?.source_path).toBeNull() // null by default
+      await store.setArtifactSourcePath(a.id, "packages/core/ai-services/TAXONOMY.md")
+      const got = await store.getArtifactById(a.id)
+      expect(got?.source_path).toBe("packages/core/ai-services/TAXONOMY.md")
+      expect(got?.title).toBe("Taxonomy System") // title untouched
+      await store.setArtifactSourcePath(a.id, null)
+      expect((await store.getArtifactById(a.id))?.source_path).toBeNull()
+    })
+
     it("appends versions, bumps current_version, lists newest data", async () => {
       const a = await store.createArtifact(newArtifact())
       const v1 = await store.addVersion(a.id, newVersion({ message: "first" }))

@@ -4,7 +4,7 @@ import { Hono } from "hono"
 import { z } from "zod"
 import type { AppContext } from "../context"
 import { decryptSecret, encryptSecret, signState, verifyState } from "../lib/crypto"
-import { GitHubError, parseRepo } from "../lib/github"
+import { GitHubError, listTree, matchesGlobs, parseRepo } from "../lib/github"
 import {
   getAppInfo,
   installationToken,
@@ -16,6 +16,9 @@ import { runSync } from "../lib/sync"
 import { log } from "../log"
 
 const DEFAULT_INCLUDES = "**/*.md,**/*.html"
+// Publishes per "Sync now" call. Bounds one batch to the Worker request budget;
+// the UI loops on `remaining` until the whole repo is mirrored.
+const SYNC_BATCH = 50
 
 /** Client-safe view of a source: the token is redacted and the (potentially
  *  large) file map collapses to a count. */
@@ -114,12 +117,15 @@ export const syncRoutes = (ctx: AppContext) => {
       : source.token
   }
 
-  // Run one source now. Shared by the manual "Sync now" button and the webhook's
-  // push auto-sync. runSync persists its own status + partial file map, so a
+  // Run one source now (ONE bounded batch). Shared by the manual "Sync now" button
+  // and the webhook's push auto-sync. `maxFiles` caps the publishes per call so a
+  // huge repo can't exceed the Worker request budget; the result's `remaining` tells
+  // the caller to run again. runSync persists its partial map incrementally, so a
   // mid-run failure can't orphan artifacts.
   const syncOne = (source: RepoSourceRecord, token: string | null) =>
     runSync(meta, deps.blobs, { ...source, token }, new Date().toISOString(), {
       maxBytes: MAX_UPLOAD_BYTES,
+      maxFiles: SYNC_BATCH,
       overStorage: (n) => overStorage(source.org_id, n),
     })
 
@@ -215,6 +221,46 @@ export const syncRoutes = (ctx: AppContext) => {
     }
   })
 
+  // ---- Preview: how many docs a repo+scope would mirror -----------------
+  // Lists the tree (no blob fetches) and counts matching files by type, so the
+  // picker can show "~396 files · 360 MD · 36 HTML" before you commit + scope.
+  app.get("/v1/sync/github/installations/:id/preview", async (c) => {
+    if (!(await workspaceCan(c, "publish"))) return fail(c, 403, "forbidden")
+    const org = await activeWorkspace(c)
+    const installationId = c.req.param("id")
+    const inst = await meta.getGithubInstallation(installationId)
+    if (!inst || inst.org_id !== org) return fail(c, 404, "not found")
+    const parsed = parseRepo(c.req.query("repo") ?? "")
+    if (!parsed) return fail(c, 400, "repo must be owner/name")
+    const globs = (c.req.query("includes")?.trim() || DEFAULT_INCLUDES)
+      .split(",")
+      .map((g) => g.trim())
+      .filter(Boolean)
+    const loaded = await loadApp()
+    if (!loaded) return fail(c, 409, "GitHub App is not set up yet")
+    try {
+      const token = await installationToken(loaded.app.app_id, loaded.pem, installationId)
+      const { entries, truncated } = await listTree(
+        parsed,
+        c.req.query("ref")?.trim() || "HEAD",
+        token,
+      )
+      const matched = entries.filter((e) => matchesGlobs(e.path, globs))
+      const md = matched.filter((e) => /\.(md|markdown)$/i.test(e.path)).length
+      const html = matched.filter((e) => /\.html?$/i.test(e.path)).length
+      return c.json({
+        total: matched.length,
+        md,
+        html,
+        other: matched.length - md - html,
+        truncated,
+      })
+    } catch (err) {
+      const userError = err instanceof GitHubError && err.status < 500
+      return fail(c, userError ? 400 : 502, err instanceof Error ? err.message : "preview failed")
+    }
+  })
+
   // ---- Connect a repo (App installation OR a PAT) -----------------------
   app.post("/v1/sync/github", async (c) => {
     if (!(await workspaceCan(c, "publish"))) return fail(c, 403, "forbidden")
@@ -234,6 +280,12 @@ export const syncRoutes = (ctx: AppContext) => {
     const repo = `${parsed.owner}/${parsed.name}`
     const org = await activeWorkspace(c)
     const createdBy = (await currentUser(c))?.id ?? "anon"
+
+    // Dedup: one source (and one collection) per repo in a workspace. Re-connecting
+    // an already-connected repo returns the existing source instead of spawning a
+    // duplicate collection — the bug that produced two "GitHub: <repo>" collections.
+    const existing = (await meta.listRepoSources(org)).find((s) => s.repo === repo)
+    if (existing) return c.json(toJson(existing))
 
     // An installation-backed source: validate the installation belongs to this
     // workspace so a source can't be pinned to someone else's install.

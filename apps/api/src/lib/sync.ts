@@ -1,4 +1,10 @@
-import { type BlobStore, type MetaStore, publish, type RepoSourceRecord } from "@dock/core"
+import {
+  type ArtifactRecord,
+  type BlobStore,
+  type MetaStore,
+  publish,
+  type RepoSourceRecord,
+} from "@dock/core"
 import { zipSync } from "fflate"
 import { type BundlePlan, commonDir, planBundle } from "./bundle-from-repo"
 import { sha256 } from "./crypto"
@@ -30,6 +36,9 @@ export interface SyncResult {
   renamed: number
   /** Unchanged, or skipped this run because too large / over the storage quota. */
   skipped: number
+  /** Matching docs still needing work after this run (>0 when a batch hit maxFiles).
+   *  The caller re-runs until it reaches 0 to finish a large repo across batches. */
+  remaining: number
 }
 
 /** Optional guards, mirroring the publish route: a per-file byte cap and a
@@ -37,10 +46,51 @@ export interface SyncResult {
 export interface SyncLimits {
   maxBytes: number
   overStorage: (incoming: number) => Promise<boolean>
+  /** Max NEW/changed docs to publish in one run (skips don't count). Bounds the
+   *  work so a huge repo can't exceed the runtime's request/CPU budget — the rest
+   *  carry forward and finish on the next run. Omitted ⇒ unbounded (Node/tests). */
+  maxFiles?: number
 }
 
 const basename = (path: string): string => path.split("/").pop() || path
 const isHtml = (path: string): boolean => /\.html?$/i.test(path)
+const stripExt = (path: string): string => {
+  const b = basename(path)
+  const dot = b.lastIndexOf(".")
+  return dot > 0 ? b.slice(0, dot) : b
+}
+
+/**
+ * A human display title for a synced file: the doc's own heading, so the library
+ * shows "Taxonomy System" not "packages/core/ai-services/TAXONOMY.md" (the path
+ * lives in `source_path`). Markdown → first ATX `#` heading; HTML → `<title>` then
+ * first `<h1>`; otherwise the basename without extension.
+ */
+const extractTitle = (bytes: Uint8Array, path: string): string => {
+  const clean = (s: string) =>
+    s
+      .replace(/<[^>]+>/g, "")
+      .replace(/[`*_]/g, "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 200)
+  const text = new TextDecoder().decode(bytes)
+  if (isHtml(path)) {
+    const title = text.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1]
+    const h1 = text.match(/<h1[^>]*>([\s\S]*?)<\/h1>/i)?.[1]
+    const got = clean(title || h1 || "")
+    if (got) return got
+  } else if (/\.(md|markdown)$/i.test(path)) {
+    for (const line of text.split("\n").slice(0, 60)) {
+      const m = line.match(/^\s{0,3}#{1,6}\s+(.+?)\s*#*\s*$/)
+      if (m?.[1]) {
+        const got = clean(m[1])
+        if (got) return got
+      }
+    }
+  }
+  return stripExt(path)
+}
 const parseMap = (json: string): FileMap => {
   try {
     return JSON.parse(json || "{}") as FileMap
@@ -87,9 +137,13 @@ export async function runSync(
 
   const prev = parseMap(source.files)
   const next: FileMap = {}
-  const res: SyncResult = { added: 0, updated: 0, removed: 0, renamed: 0, skipped: 0 }
+  const res: SyncResult = { added: 0, updated: 0, removed: 0, renamed: 0, skipped: 0, remaining: 0 }
   const renamedAway = new Set<string>()
   const tooLarge: string[] = []
+  // Per-run work budget: how many publishes we've done, and whether we stopped
+  // early because we hit maxFiles (the rest carry forward to the next run).
+  let processed = 0
+  let capped = false
 
   const carryForward = () => {
     for (const path in prev) {
@@ -103,6 +157,14 @@ export async function runSync(
       last_synced_at: now,
       last_status: status,
     })
+  }
+  // Count a publish and, every PROGRESS_EVERY, flush the partial map + a live
+  // "syncing N…" status. This makes the run incrementally durable (a killed run
+  // leaves a consistent map, never orphan artifacts) AND lets the UI poll progress.
+  const PROGRESS_EVERY = 15
+  const onPublished = async () => {
+    processed++
+    if (processed % PROGRESS_EVERY === 0) await persist(`syncing ${processed} files…`)
   }
 
   try {
@@ -180,11 +242,16 @@ export async function runSync(
 
     // Republish helper that survives a kind change (file⇄bundle): an artifact's
     // kind is immutable, so when it flips we tombstone the old one and create new.
+    // `repoPath` is the file's path in the repo — the file-map key + the artifact's
+    // `source_path` (structural location). `title` is the human display name
+    // (extracted from the content). They're distinct: the map keys on the path, the
+    // UI shows the title.
     const publishDoc = async (
       before: SyncedFile | undefined,
       bytes: Uint8Array,
       filename: string,
       isBundle: boolean,
+      repoPath: string,
       title: string,
       sha: string,
       members?: Record<string, string>,
@@ -200,18 +267,20 @@ export async function runSync(
         orgId: source.org_id,
       }
       const reuse = before && (before.kind ?? "file") === kind
+      let artifact: ArtifactRecord
       if (reuse && before) {
-        const { artifact } = await publish(meta, blobs, input, before.short_id)
-        await meta.setArtifactRemoved(artifact.id, null)
-        next[title] = { artifact_id: artifact.id, short_id: artifact.short_id, sha, kind, members }
+        artifact = (await publish(meta, blobs, input, before.short_id)).artifact
         res.updated++
       } else {
         if (before) await meta.setArtifactRemoved(before.artifact_id, now) // old kind retired
-        const { artifact } = await publish(meta, blobs, input)
+        artifact = (await publish(meta, blobs, input)).artifact
         await meta.addCollectionItem(source.collection_id, artifact.id)
-        next[title] = { artifact_id: artifact.id, short_id: artifact.short_id, sha, kind, members }
         res.added++
       }
+      await meta.setArtifactRemoved(artifact.id, null)
+      await meta.setArtifactSourcePath(artifact.id, repoPath)
+      next[repoPath] = { artifact_id: artifact.id, short_id: artifact.short_id, sha, kind, members }
+      await onPublished()
     }
 
     // ---- Phase B: mirror each doc ------------------------------------------
@@ -219,6 +288,11 @@ export async function runSync(
       // Owned by another doc's bundle → never a standalone artifact (and if it was
       // one before, leaving it out of `next` tombstones the standalone copy).
       if (consumed.has(e.path)) continue
+      // Hit the per-run work budget → stop; the rest carry forward to the next run.
+      if (limits?.maxFiles && processed >= limits.maxFiles) {
+        capped = true
+        break
+      }
 
       const before = prev[e.path]
       const plan = plans.get(e.path)
@@ -249,12 +323,14 @@ export async function runSync(
           continue
         }
         const zipped = zipSync(zipFiles)
+        const entryTitle = extractTitle(zipFiles[plan.entryRel] ?? new Uint8Array(), plan.entryPath)
         await publishDoc(
           before,
           zipped,
           basename(plan.entryRel),
           true,
           e.path,
+          entryTitle,
           composite,
           memberShas,
         )
@@ -272,11 +348,14 @@ export async function runSync(
         if (moved && !renamedAway.has(moved.path)) {
           renamedAway.add(moved.path)
           vanishedBySha.delete(e.sha)
-          await meta.setArtifactTitle(moved.entry.artifact_id, e.path)
+          // Pure rename: content unchanged, so the display title stays; only the
+          // structural location (source_path) moves to the new path.
+          await meta.setArtifactSourcePath(moved.entry.artifact_id, e.path)
           await meta.setArtifactRemoved(moved.entry.artifact_id, null)
           await meta.addCollectionItem(source.collection_id, moved.entry.artifact_id)
           next[e.path] = { ...moved.entry, sha: e.sha }
           res.renamed++
+          await onPublished()
           continue
         }
       }
@@ -287,14 +366,22 @@ export async function runSync(
         res.skipped++
         continue
       }
-      await publishDoc(before, bytes, basename(e.path), false, e.path, e.sha)
+      await publishDoc(
+        before,
+        bytes,
+        basename(e.path),
+        false,
+        e.path,
+        extractTitle(bytes, e.path),
+        e.sha,
+      )
     }
 
     // Tombstone files that truly disappeared. Skipped when truncated (absent ≠
-    // deleted) or consumed by a rename. A path that became a bundle asset is NOT
-    // here (its standalone entry was intentionally left out of `next` above, so it
-    // tombstones — correct, the bundle owns it now).
-    if (!truncated)
+    // deleted), capped (we didn't process the whole repo this run), or consumed by
+    // a rename. A path that became a bundle asset is NOT here (its standalone entry
+    // was intentionally left out of `next` above, so it tombstones — correct).
+    if (!truncated && !capped)
       for (const path in prev) {
         const ent = prev[path]
         if (!ent || next[path] || renamedAway.has(path)) continue
@@ -302,8 +389,29 @@ export async function runSync(
         res.removed++
       }
 
-    if (truncated) carryForward()
-    let status = truncated ? "ok (repo tree truncated; some files not listed)" : "ok"
+    // On a capped/truncated run, keep un-processed entries so they aren't dropped
+    // (and re-created) — the next run continues from here.
+    if (truncated || capped) carryForward()
+
+    // Docs still needing work: not consumed, and not already current in `next`.
+    res.remaining = docs.filter((e) => {
+      if (consumed.has(e.path)) return false
+      const n = next[e.path]
+      if (!n) return true
+      const plan = plans.get(e.path)
+      if (plan) {
+        const ms: Record<string, string> = {}
+        for (const m of plan.members) ms[m.repoPath] = shaByPath.get(m.repoPath) ?? ""
+        return n.kind !== "bundle" || n.sha !== compositeSha(ms)
+      }
+      return n.kind === "bundle" || n.sha !== e.sha
+    }).length
+
+    let status = capped
+      ? `synced ${processed} this run · ${res.remaining} pending`
+      : truncated
+        ? "ok (repo tree truncated; some files not listed)"
+        : "ok"
     if (tooLarge.length) status += ` (${tooLarge.length} file(s) skipped: too large or over quota)`
     await persist(status)
     return res

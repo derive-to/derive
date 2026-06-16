@@ -64,6 +64,8 @@ export interface Artifact {
   removed?: boolean
   /** Mirrored from a GitHub sync source → read-only in Dock (Edit/Propose hidden). */
   managed?: boolean
+  /** Repo path for a synced artifact (e.g. "docs/plans/foo.md") — drives the folder view. */
+  source_path?: string | null
 }
 export interface Report {
   id: string
@@ -265,11 +267,22 @@ export interface InstallationRepo {
   private: boolean
   default_branch: string
 }
+/** A repo+scope preview: how many docs would mirror, split by type. */
+export interface SyncPreview {
+  total: number
+  md: number
+  html: number
+  other: number
+  truncated: boolean
+}
 export interface SyncResult {
   added: number
   updated: number
   removed: number
+  renamed: number
   skipped: number
+  /** Matching docs still pending after this batch (>0 → call run again). */
+  remaining: number
 }
 export interface DiffOp {
   t: "ctx" | "add" | "del"
@@ -539,6 +552,12 @@ export const api = {
   // Repos a given installation can mirror (drives the repo picker).
   listInstallationRepos: (installationId: string): Promise<{ repos: InstallationRepo[] }> =>
     f(`/v1/sync/github/installations/${installationId}/repos`, opts()).then(j),
+  // How many docs a repo+scope would mirror (live count in the picker).
+  previewRepo: (installationId: string, repo: string, includes?: string): Promise<SyncPreview> => {
+    const qs = new URLSearchParams({ repo })
+    if (includes) qs.set("includes", includes)
+    return f(`/v1/sync/github/installations/${installationId}/preview?${qs}`, opts()).then(j)
+  },
   runRepoSync: (id: string): Promise<SyncResult> =>
     f(`/v1/sync/github/${id}/run`, opts({})).then(j),
   deleteRepoSource: (id: string): Promise<void> =>

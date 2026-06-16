@@ -304,6 +304,8 @@ export const toJson = (baseUrl: string, a: ArtifactRecord, versions: VersionReco
   spa: !!a.spa,
   current_version: a.current_version,
   created_at: a.created_at,
+  /** Repo path for a GitHub-synced artifact (drives the folder view); null otherwise. */
+  source_path: a.source_path,
   versions: versions.map((v) => ({
     n: v.n,
     sha256: v.blob_key,

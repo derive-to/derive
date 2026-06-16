@@ -41,6 +41,10 @@ export interface ArtifactRecord {
   created_at: string
   /** A takedown tombstone: when set, the content is gone (410) but the record stays. */
   removed_at: string | null
+  /** For a GitHub-synced artifact: its path within the repo (e.g. "docs/plans/foo.md").
+   *  The structural "location" — drives the folder/tree view — kept distinct from the
+   *  human `title`. Null for artifacts not mirrored from a repo. */
+  source_path: string | null
 }
 
 export interface ListArtifactsOpts {
@@ -392,6 +396,8 @@ export interface MetaStore {
   /** Update an artifact's display title (used when a GitHub-synced file is renamed —
    *  the title tracks the repo path; the artifact + its comments are preserved). */
   setArtifactTitle(id: string, title: string): Promise<void>
+  /** Set the repo path of a GitHub-synced artifact (its folder/tree "location"). */
+  setArtifactSourcePath(id: string, sourcePath: string | null): Promise<void>
   createAuditLog(a: NewAuditLog): Promise<void>
   /** Moderation history, newest first. One workspace's, or — super-admin, orgId
    *  undefined — the whole instance's. Optionally narrowed to one artifact. */
