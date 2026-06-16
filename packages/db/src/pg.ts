@@ -13,6 +13,8 @@ import type {
   DomainRecord,
   DomainStatus,
   GeneralRole,
+  GitHubAppRecord,
+  GitHubInstallationRecord,
   ListArtifactsOpts,
   MembershipRecord,
   MetaStore,
@@ -68,6 +70,8 @@ import {
   collectionMember,
   comment,
   domain,
+  githubApp,
+  githubInstallation,
   membership,
   notification,
   PG_SCHEMA_STATEMENTS,
@@ -108,6 +112,8 @@ export const schema = {
   collectionItem,
   collectionMember,
   repoSource,
+  githubApp,
+  githubInstallation,
   domain,
   report,
   auditLog,
@@ -133,6 +139,8 @@ const _schemaShapes: Shapes<typeof schema> = {
   collection: true,
   collectionMember: true,
   repoSource: true,
+  githubApp: true,
+  githubInstallation: true,
   domain: true,
   report: true,
   auditLog: true,
@@ -759,6 +767,53 @@ export class PgMetaStore implements MetaStore {
       .from(repoSource)
       .where(eq(repoSource.org_id, orgId))
     return collectManagedIds(rows)
+  }
+  async listRepoSourcesByInstallation(installationId: string): Promise<RepoSourceRecord[]> {
+    return this.db
+      .select()
+      .from(repoSource)
+      .where(eq(repoSource.installation_id, installationId))
+      .orderBy(desc(repoSource.created_at))
+  }
+
+  // ---- GitHub App (instance credentials + per-workspace installations) -----
+  async getGithubApp(): Promise<GitHubAppRecord | null> {
+    const rows = await this.db.select().from(githubApp).where(eq(githubApp.id, "default"))
+    return rows[0] ?? null
+  }
+  async setGithubApp(a: GitHubAppRecord): Promise<void> {
+    const { id: _id, created_at: _created, ...set } = a
+    await this.db.insert(githubApp).values(a).onConflictDoUpdate({ target: githubApp.id, set })
+  }
+  async upsertGithubInstallation(i: GitHubInstallationRecord): Promise<GitHubInstallationRecord> {
+    const rows = await this.db
+      .insert(githubInstallation)
+      .values(i)
+      .onConflictDoUpdate({
+        target: githubInstallation.installation_id,
+        set: { org_id: i.org_id, account_login: i.account_login, created_by: i.created_by },
+      })
+      .returning()
+    return one(rows)
+  }
+  async getGithubInstallation(installationId: string): Promise<GitHubInstallationRecord | null> {
+    const rows = await this.db
+      .select()
+      .from(githubInstallation)
+      .where(eq(githubInstallation.installation_id, installationId))
+    return rows[0] ?? null
+  }
+  async listGithubInstallations(orgId: string): Promise<GitHubInstallationRecord[]> {
+    return this.db
+      .select()
+      .from(githubInstallation)
+      .where(eq(githubInstallation.org_id, orgId))
+      .orderBy(desc(githubInstallation.created_at))
+  }
+  async deleteGithubInstallation(installationId: string): Promise<void> {
+    await this.db
+      .delete(githubInstallation)
+      .where(eq(githubInstallation.installation_id, installationId))
   }
 
   // ---- Domains (hostname → artifact) -------------------------------------

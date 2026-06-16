@@ -246,9 +246,27 @@ export const repoSource = pgTable("repo_source", {
   ref: text("ref").notNull().default("HEAD"),
   includes: text("includes").notNull(),
   token: text("token"),
+  installation_id: text("installation_id"),
   files: text("files").notNull().default("{}"),
   last_synced_at: text("last_synced_at"),
   last_status: text("last_status"),
+  created_by: text("created_by").notNull(),
+  created_at: text("created_at").notNull().$defaultFn(isoNow),
+})
+export const githubApp = pgTable("github_app", {
+  id: text("id").primaryKey(),
+  app_id: text("app_id").notNull(),
+  slug: text("slug").notNull(),
+  client_id: text("client_id").notNull(),
+  client_secret: text("client_secret").notNull(),
+  private_key: text("private_key").notNull(),
+  webhook_secret: text("webhook_secret").notNull(),
+  created_at: text("created_at").notNull().$defaultFn(isoNow),
+})
+export const githubInstallation = pgTable("github_installation", {
+  installation_id: text("installation_id").primaryKey(),
+  org_id: text("org_id").notNull(),
+  account_login: text("account_login"),
   created_by: text("created_by").notNull(),
   created_at: text("created_at").notNull().$defaultFn(isoNow),
 })
@@ -531,6 +549,25 @@ export const PG_SCHEMA_STATEMENTS: string[] = [
     created_at TEXT NOT NULL DEFAULT ${isoDefault}
   )`,
   `CREATE INDEX IF NOT EXISTS repo_source_org ON repo_source (org_id)`,
+  `ALTER TABLE repo_source ADD COLUMN IF NOT EXISTS installation_id TEXT`,
+  `CREATE TABLE IF NOT EXISTS github_app (
+    id TEXT PRIMARY KEY,
+    app_id TEXT NOT NULL,
+    slug TEXT NOT NULL,
+    client_id TEXT NOT NULL,
+    client_secret TEXT NOT NULL,
+    private_key TEXT NOT NULL,
+    webhook_secret TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT ${isoDefault}
+  )`,
+  `CREATE TABLE IF NOT EXISTS github_installation (
+    installation_id TEXT PRIMARY KEY,
+    org_id TEXT NOT NULL,
+    account_login TEXT,
+    created_by TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT ${isoDefault}
+  )`,
+  `CREATE INDEX IF NOT EXISTS github_installation_org ON github_installation (org_id)`,
   `CREATE TABLE IF NOT EXISTS domain (
     host TEXT PRIMARY KEY,
     artifact_id TEXT REFERENCES artifact(id),

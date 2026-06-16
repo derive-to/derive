@@ -3,6 +3,9 @@ import { type Context, Hono } from "hono"
 import { compress } from "hono/compress"
 import { OAUTH_SCOPES } from "./auth-config"
 import { type AppDeps, buildContext } from "./context"
+import { manifestFormHTML, setupResultHTML } from "./github-app-setup"
+import { encryptSecret, signState, verifyState } from "./lib/crypto"
+import { convertManifestCode } from "./lib/github-app"
 import { cacheControlFor, corsFor, fail, TOMBSTONE } from "./lib/http"
 import { observability } from "./lib/observability"
 import { inMemoryRateLimiters, ipRateLimit } from "./lib/rate-limit"
@@ -307,6 +310,55 @@ export function createApp(deps: AppDeps): Hono {
     return c.html(cliCallbackHTML({ code, error }))
   })
 
+  // ---- One-click GitHub App registration (manifest flow) ----------------
+  // /new renders the auto-submitting manifest form (admins only); GitHub creates
+  // the App and redirects to /created with a temporary code we trade for the
+  // App's credentials. Both are top-level navigations (not the /v1 API), bound by
+  // a signed `state` carrying the initiating user. Needs an encryptionKey — App
+  // secrets are never stored in the clear.
+  app.get("/settings/github/app/new", async (c) => {
+    if (!deps.encryptionKey)
+      return c.html(
+        setupResultHTML({ ok: false, error: "Server is missing an encryption key." }),
+        500,
+      )
+    if (!(await ctx.workspaceCan(c, "publish")))
+      return c.redirect("/login?return_to=/settings/github/app/new")
+    const uid = (await ctx.currentUser(c))?.id ?? "anon"
+    const state = signState({ kind: "app-manifest", uid }, deps.encryptionKey)
+    return c.html(manifestFormHTML({ baseUrl: deps.baseUrl, state }))
+  })
+
+  app.get("/settings/github/app/created", async (c) => {
+    const code = c.req.query("code")
+    const stateRaw = c.req.query("state") ?? ""
+    if (!deps.encryptionKey || !code)
+      return c.html(setupResultHTML({ ok: false, error: "Missing setup code." }), 400)
+    const state = verifyState<{ kind?: string }>(stateRaw, deps.encryptionKey)
+    if (!state || state.kind !== "app-manifest")
+      return c.html(setupResultHTML({ ok: false, error: "This setup link has expired." }), 400)
+    try {
+      const conv = await convertManifestCode(code)
+      const key = deps.encryptionKey
+      await ctx.meta.setGithubApp({
+        id: "default",
+        app_id: conv.app_id,
+        slug: conv.slug,
+        client_id: conv.client_id,
+        client_secret: encryptSecret(conv.client_secret, key),
+        private_key: encryptSecret(conv.pem, key),
+        webhook_secret: encryptSecret(conv.webhook_secret, key),
+        created_at: new Date().toISOString(),
+      })
+      return c.html(setupResultHTML({ ok: true, slug: conv.slug }))
+    } catch (err) {
+      log.error("github app manifest conversion failed", {
+        error: err instanceof Error ? err.message : String(err),
+      })
+      return c.html(setupResultHTML({ ok: false, error: "Could not create the GitHub App." }), 502)
+    }
+  })
+
   // Better Auth owns /api/auth/* (sign-up/in/out, OAuth, OIDC/SSO, session).
   if (deps.auth) {
     const auth = deps.auth
@@ -314,6 +366,15 @@ export function createApp(deps: AppDeps): Hono {
   }
 
   app.get("/healthz", (c) => c.json({ ok: true }))
+
+  // Which social sign-in providers are configured (env-gated in auth-config), so
+  // the login page only renders buttons that actually work. Public + read-only.
+  app.get("/v1/auth/providers", (c) =>
+    c.json({
+      google: !!(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET),
+      github: !!(process.env.GITHUB_LOGIN_CLIENT_ID && process.env.GITHUB_LOGIN_CLIENT_SECRET),
+    }),
+  )
 
   // Readiness (vs /healthz liveness): proves the datastore + blob store are
   // actually reachable, so an orchestrator stops routing to an instance whose DB
@@ -365,6 +426,7 @@ export function createApp(deps: AppDeps): Hono {
     /^\/v1\/artifacts\/[^/]+\/view$/, // de-duped, anonymous-safe view counter
     /^\/v1\/artifacts\/[^/]+\/unlock$/, // password unlock — the password is the gate
     /^\/v1\/vitals$/, // anonymous Core Web Vitals beacon (telemetry, no state)
+    /^\/v1\/sync\/github\/webhook$/, // GitHub App webhook — HMAC signature is the gate
   ]
   app.use("/v1/*", async (c, next) => {
     const m = c.req.method

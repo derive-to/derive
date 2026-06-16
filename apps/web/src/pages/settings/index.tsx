@@ -16,7 +16,13 @@ export function Settings() {
   // whenever Settings renders.
   const { me } = useAuth()
   const [reports, setReports] = useState<Report[] | null>(null)
-  const [tab, setTab] = useState("workspace")
+  // Open straight to a tab when the URL asks for one (?tab=github) — the GitHub
+  // App install flow redirects back here with ?tab=github&gh_install=… so the
+  // section can finish in the repo picker.
+  const [tab, setTab] = useState(() => {
+    if (typeof window === "undefined") return "workspace"
+    return new URLSearchParams(window.location.search).get("tab") || "workspace"
+  })
 
   const loadReports = useCallback(
     () =>

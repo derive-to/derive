@@ -278,6 +278,82 @@ export function runStoreContract(
       expect(await store.getRepoSource(src.id, ORG)).toBeNull()
       expect(await store.managedArtifactIds(ORG)).not.toContain(art.id)
     })
+
+    it("backs a source with a GitHub App installation and routes by it", async () => {
+      const col = await store.createCollection({
+        id: uuid(),
+        org_id: ORG,
+        title: "GitHub: acme/site",
+        created_by: "amy",
+      })
+      const inst = await store.upsertGithubInstallation({
+        installation_id: "4242",
+        org_id: ORG,
+        account_login: "acme",
+        created_by: "amy",
+        created_at: "2026-06-15T00:00:00.000Z",
+      })
+      expect(inst.account_login).toBe("acme")
+      // Upsert is idempotent on installation_id (re-install refreshes, no dupe).
+      await store.upsertGithubInstallation({
+        installation_id: "4242",
+        org_id: ORG,
+        account_login: "acme-renamed",
+        created_by: "amy",
+        created_at: "2026-06-15T00:00:00.000Z",
+      })
+      expect(await store.getGithubInstallation("4242")).toMatchObject({
+        account_login: "acme-renamed",
+      })
+      expect(await store.listGithubInstallations(ORG)).toHaveLength(1)
+
+      const src = await store.createRepoSource({
+        id: uuid(),
+        org_id: ORG,
+        collection_id: col.id,
+        repo: "acme/site",
+        ref: "main",
+        includes: "**/*.md",
+        installation_id: "4242",
+        created_by: "amy",
+      })
+      expect(src.installation_id).toBe("4242")
+      expect(src.token).toBeNull()
+      // The webhook router resolves an installation id → its sources, cross-org.
+      const byInst = await store.listRepoSourcesByInstallation("4242")
+      expect(byInst.map((s) => s.id)).toContain(src.id)
+
+      await store.deleteRepoSource(src.id, ORG)
+      await store.deleteGithubInstallation("4242")
+      expect(await store.getGithubInstallation("4242")).toBeNull()
+    })
+
+    it("stores the instance GitHub App credentials as a single upserted row", async () => {
+      expect(await store.getGithubApp()).toBeNull()
+      await store.setGithubApp({
+        id: "default",
+        app_id: "111",
+        slug: "dock-on-acme",
+        client_id: "Iv1.abc",
+        client_secret: "enc-secret",
+        private_key: "enc-pem",
+        webhook_secret: "enc-whsec",
+        created_at: "2026-06-15T00:00:00.000Z",
+      })
+      expect(await store.getGithubApp()).toMatchObject({ app_id: "111", slug: "dock-on-acme" })
+      // Re-setup overwrites in place (still one row).
+      await store.setGithubApp({
+        id: "default",
+        app_id: "222",
+        slug: "dock-on-acme-2",
+        client_id: "Iv1.def",
+        client_secret: "enc-secret-2",
+        private_key: "enc-pem-2",
+        webhook_secret: "enc-whsec-2",
+        created_at: "2026-06-15T00:00:00.000Z",
+      })
+      expect(await store.getGithubApp()).toMatchObject({ app_id: "222" })
+    })
   })
 
   describe(`${label}: proposals (reviews)`, () => {

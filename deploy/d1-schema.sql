@@ -239,6 +239,27 @@ CREATE TABLE IF NOT EXISTS repo_source (
 
 CREATE INDEX IF NOT EXISTS repo_source_org ON repo_source (org_id);
 
+CREATE TABLE IF NOT EXISTS github_app (
+    id TEXT PRIMARY KEY,
+    app_id TEXT NOT NULL,
+    slug TEXT NOT NULL,
+    client_id TEXT NOT NULL,
+    client_secret TEXT NOT NULL,
+    private_key TEXT NOT NULL,
+    webhook_secret TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+  );
+
+CREATE TABLE IF NOT EXISTS github_installation (
+    installation_id TEXT PRIMARY KEY,
+    org_id TEXT NOT NULL,
+    account_login TEXT,
+    created_by TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+  );
+
+CREATE INDEX IF NOT EXISTS github_installation_org ON github_installation (org_id);
+
 CREATE TABLE IF NOT EXISTS domain (
     host TEXT PRIMARY KEY,
     artifact_id TEXT REFERENCES artifact(id),

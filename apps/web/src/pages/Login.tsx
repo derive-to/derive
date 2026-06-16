@@ -28,6 +28,27 @@ export function Login() {
   const [password, setPassword] = useState("")
   const [err, setErr] = useState("")
   const [busy, setBusy] = useState(false)
+  // Which social providers the server has configured (so we only show buttons
+  // that actually work). Null while loading.
+  const [providers, setProviders] = useState<{ google: boolean; github: boolean } | null>(null)
+  useEffect(() => {
+    api
+      .authProviders()
+      .then(setProviders)
+      .catch(() => setProviders({ google: false, github: false }))
+  }, [])
+
+  // Hand off to the provider; afterwards Better Auth lands the user back where
+  // sign-in was prompted (an OAuth authorize resume, a return_to, or home).
+  const social = (provider: "google" | "github") => {
+    const search = typeof window !== "undefined" ? window.location.search : ""
+    const callbackURL = new URLSearchParams(search).has("client_id")
+      ? `/login${search}`
+      : typeof returnTo === "string"
+        ? returnTo
+        : "/app/home"
+    api.socialSignIn(provider, callbackURL).catch((e) => setErr((e as Error).message))
+  }
 
   // If we arrived from an OAuth authorize request (the agent consent flow bounced
   // here to sign in), resume it by handing control back to the authorize endpoint
@@ -124,6 +145,43 @@ export function Login() {
               </CardDescription>
             </CardHeader>
             <CardContent className="flex flex-col gap-3">
+              {(providers?.google || providers?.github) && (
+                <>
+                  <div className="flex flex-col gap-2">
+                    {providers.google && (
+                      <Button
+                        data-testid="login-google"
+                        variant="outline"
+                        size="lg"
+                        type="button"
+                        className="w-full"
+                        onClick={() => social("google")}
+                      >
+                        Continue with Google
+                      </Button>
+                    )}
+                    {providers.github && (
+                      <Button
+                        data-testid="login-github"
+                        variant="outline"
+                        size="lg"
+                        type="button"
+                        className="w-full"
+                        onClick={() => social("github")}
+                      >
+                        Continue with GitHub
+                      </Button>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-3 py-0.5">
+                    <span className="h-px flex-1 bg-border" />
+                    <span className="text-2xs uppercase tracking-wide text-muted-foreground">
+                      or
+                    </span>
+                    <span className="h-px flex-1 bg-border" />
+                  </div>
+                </>
+              )}
               <form onSubmit={submit} className="flex flex-col gap-3">
                 {err && (
                   <div
