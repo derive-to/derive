@@ -192,6 +192,10 @@ export class PgMetaStore implements MetaStore {
       .where(eq(artifact.id, artifactId))
   }
 
+  async setLocked(artifactId: string, locked: 0 | 1): Promise<void> {
+    await this.db.update(artifact).set({ locked }).where(eq(artifact.id, artifactId))
+  }
+
   async getByShortId(shortId: string): Promise<ArtifactRecord | null> {
     const rows = await this.db.select().from(artifact).where(eq(artifact.short_id, shortId))
     return rows[0] ?? null

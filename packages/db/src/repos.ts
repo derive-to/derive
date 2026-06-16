@@ -245,6 +245,10 @@ export function makeRepos(db: SqliteDb) {
       .run()
   }
 
+  const setLocked = async (artifactId: string, locked: 0 | 1): Promise<void> => {
+    await db.update(artifact).set({ locked }).where(eq(artifact.id, artifactId)).run()
+  }
+
   const getVersion = async (artifactId: string, n: number): Promise<VersionRecord | null> =>
     (await db
       .select()
@@ -1031,6 +1035,7 @@ export function makeRepos(db: SqliteDb) {
   return {
     createArtifact,
     setVisibility,
+    setLocked,
     getByShortId,
     getArtifactById,
     addVersion,

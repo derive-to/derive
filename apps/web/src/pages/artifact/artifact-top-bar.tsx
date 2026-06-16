@@ -33,6 +33,12 @@ export function ArtifactTopBar(props: {
   openCount: number
   showEdit: boolean
   editLabel: string
+  /** This artifact is a slide deck — show the Present (fullscreen) button. */
+  isDeck: boolean
+  /** Caller may toggle the change-lock (editor/owner). */
+  canLock: boolean
+  /** Whether the artifact is currently locked (changes go through approval). */
+  locked: boolean
   onFavorite: (fav: boolean) => void
   onTags: (tags: string[]) => void
   onCollections: (ids: string[]) => void
@@ -41,6 +47,8 @@ export function ArtifactTopBar(props: {
   onReview: () => void
   onStartEdit: () => void
   onShowComments: () => void
+  onPresent: () => void
+  onLockToggle: () => void
 }) {
   const { shortId, openProposals, proposalsTotal } = props
   return (
@@ -96,8 +104,29 @@ export function ArtifactTopBar(props: {
               {props.editLabel}
             </DropdownMenuItem>
           )}
+          {props.canLock && (
+            <DropdownMenuItem data-testid="artifact-lock" onSelect={props.onLockToggle}>
+              <Icon name={props.locked ? "unlock" : "lock"} size={16} />
+              {props.locked ? "Unlock changes" : "Lock changes"}
+            </DropdownMenuItem>
+          )}
         </DropdownMenuContent>
       </DropdownMenu>
+      {/* Decks get a one-tap Present (fullscreen) affordance in the chrome, not just
+          the small ⛶ on the floating deck bar. */}
+      {props.isDeck && (
+        <Button
+          variant="outline"
+          size="sm"
+          className="gap-1.5"
+          data-testid="artifact-present"
+          onClick={props.onPresent}
+          title="Present (fullscreen)"
+          aria-label="Present"
+        >
+          <Icon name="present" size={16} /> Present
+        </Button>
+      )}
       {/* On phones the bottom-right FAB opens comments, so the header button would
           just be a redundant extra wrap-row. */}
       {!props.isMobile && !props.panelOpen && (

@@ -309,6 +309,7 @@ export const toJson = (baseUrl: string, a: ArtifactRecord, versions: VersionReco
   visibility: a.visibility,
   general_role: a.general_role,
   spa: !!a.spa,
+  locked: !!a.locked,
   current_version: a.current_version,
   created_at: a.created_at,
   versions: versions.map((v) => ({

@@ -33,6 +33,8 @@ export interface Artifact {
   title: string | null
   kind: "file" | "bundle"
   current_content_type?: string | null
+  /** Locked: direct publishes are rejected; even editors must propose changes. */
+  locked?: boolean
   visibility: string
   /** The role the general-access link grants (view vs comment). Anonymous reachers are
    *  always clamped to view regardless; commenting requires signing in. */
@@ -404,6 +406,13 @@ export const api = {
       credentials: "include",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ visibility, generalRole, password }),
+    }).then(j),
+  setLocked: (id: string, locked: boolean): Promise<{ locked: boolean }> =>
+    f(`/v1/artifacts/${id}/locked`, {
+      method: "PATCH",
+      credentials: "include",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ locked }),
     }).then(j),
   diff: (id: string, from: number, to: number): Promise<Diff> =>
     f(`/v1/artifacts/${id}/diff?from=${from}&to=${to}&format=json`, opts()).then(j),

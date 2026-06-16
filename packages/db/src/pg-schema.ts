@@ -33,6 +33,7 @@ export const artifact = pgTable("artifact", {
   general_role: text("general_role").$type<GeneralRole>().notNull().default("viewer"),
   kind: text("kind").$type<ArtifactKind>().notNull(),
   spa: integer("spa").$type<0 | 1>().notNull().default(0),
+  locked: integer("locked").$type<0 | 1>().notNull().default(0),
   current_version: integer("current_version").notNull().default(0),
   current_content_type: text("current_content_type"),
   created_at: text("created_at").notNull().$defaultFn(isoNow),
@@ -328,13 +329,17 @@ export const PG_SCHEMA_STATEMENTS: string[] = [
     general_role TEXT NOT NULL DEFAULT 'viewer',
     kind TEXT NOT NULL,
     spa INTEGER NOT NULL DEFAULT 0,
+    locked INTEGER NOT NULL DEFAULT 0,
     current_version INTEGER NOT NULL DEFAULT 0,
+    current_content_type TEXT,
     created_at TEXT NOT NULL DEFAULT ${isoDefault},
     removed_at TEXT
   )`,
   `ALTER TABLE artifact ADD COLUMN IF NOT EXISTS removed_at TEXT`,
   `ALTER TABLE artifact ADD COLUMN IF NOT EXISTS password_hash TEXT`,
   `ALTER TABLE artifact ADD COLUMN IF NOT EXISTS general_role TEXT NOT NULL DEFAULT 'viewer'`,
+  `ALTER TABLE artifact ADD COLUMN IF NOT EXISTS current_content_type TEXT`,
+  `ALTER TABLE artifact ADD COLUMN IF NOT EXISTS locked INTEGER NOT NULL DEFAULT 0`,
   // Library feed: scope by org_id + keyset order on (created_at, id) desc. One
   // composite serves both; Postgres backward-scans it for the DESC order.
   `CREATE INDEX IF NOT EXISTS artifact_org_created ON artifact (org_id, created_at, id)`,

@@ -249,6 +249,11 @@ export function Artifact() {
       ? "md"
       : "html"
   const canPropose = canPublish || art.my_role === "commenter"
+  // Lock: any editor can toggle it (advanced menu). While locked, even an editor
+  // must propose — `effectiveCanPublish` flips the edit flow to the propose path.
+  const canLock = canPublish
+  const isLocked = !!art.locked
+  const effectiveCanPublish = canPublish && !isLocked
   // A logged-out visitor on a public/link artifact: strictly view-only. They get
   // the document + live presence/cursors (Google-Docs style) and nothing else —
   // no favorite, tags, collections, share, report, comments, or version tools.
@@ -372,7 +377,26 @@ export function Artifact() {
                 panelOpen={panel === "open"}
                 openCount={openCount}
                 showEdit={editable && canPropose && !editing && !art.managed}
-                editLabel={canPublish ? "Edit source (dev)" : "Propose change (dev)"}
+                editLabel={effectiveCanPublish ? "Edit source (dev)" : "Propose change (dev)"}
+                isDeck={!!deck || art.current_content_type === "text/x-dock-deck"}
+                canLock={canLock}
+                locked={isLocked}
+                onPresent={toggleFullscreen}
+                onLockToggle={async () => {
+                  const next = !isLocked
+                  // Optimistic flip; roll back if the server rejects.
+                  qc.setQueryData(artifactQuery(shortId).queryKey, (a) =>
+                    a ? { ...a, locked: next } : a,
+                  )
+                  try {
+                    await api.setLocked(shortId, next)
+                  } catch (e) {
+                    qc.setQueryData(artifactQuery(shortId).queryKey, (a) =>
+                      a ? { ...a, locked: !next } : a,
+                    )
+                    toast.error((e as Error).message)
+                  }
+                }}
                 onFavorite={(fav) =>
                   qc.setQueryData(artifactQuery(shortId).queryKey, (a) =>
                     a ? { ...a, favorite: fav } : a,
@@ -447,9 +471,9 @@ export function Artifact() {
           >
             {editing ? (
               <SourceEditor
-                canPublish={canPublish}
-                title={canPublish ? editTitle : (art.title ?? shortId)}
-                onTitle={canPublish ? setEditTitle : undefined}
+                canPublish={effectiveCanPublish}
+                title={effectiveCanPublish ? editTitle : (art.title ?? shortId)}
+                onTitle={effectiveCanPublish ? setEditTitle : undefined}
                 format={format}
                 proposeMsg={proposeMsg}
                 message={message}
