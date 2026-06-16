@@ -496,4 +496,91 @@ describe("remote MCP endpoint (/mcp)", () => {
     })
     expect(toolText(denied)).toContain("propose")
   })
+
+  it("publish creates and republishes a multi-page bundle via the files map", async () => {
+    const { app, token } = appWithGrant("pubbundle", "openid dock:read dock:publish")
+
+    // A files map (no short_id) creates a new BUNDLE — index.html is the entry.
+    const created = JSON.parse(
+      toolText(
+        await call(app, token, "publish", {
+          title: "My Site",
+          files: {
+            "index.html": "<h1>Home</h1>",
+            "about.html": "<h1>About</h1>",
+            "nav.js": "/* nav */",
+          },
+        }),
+      ),
+    )
+    expect(created.published).toBe(true)
+    expect(created.kind).toBe("bundle")
+    const shortId = created.short_id
+
+    // read returns the outline (its pages), and a section returns that page.
+    const outline = JSON.parse(toolText(await call(app, token, "read", { short_id: shortId })))
+    expect(outline.pages).toEqual(expect.arrayContaining(["index.html", "about.html", "nav.js"]))
+    const about = JSON.parse(
+      toolText(await call(app, token, "read", { short_id: shortId, section: "about.html" })),
+    )
+    expect(about.content).toContain("About")
+
+    // Republishing the full files map (with an added page) pushes version 2.
+    const v2 = JSON.parse(
+      toolText(
+        await call(app, token, "publish", {
+          short_id: shortId,
+          files: {
+            "index.html": "<h1>Home</h1>",
+            "about.html": "<h1>About</h1>",
+            "nav.js": "/* nav */",
+            "new.html": "<h1>New</h1>",
+          },
+          message: "add new page",
+        }),
+      ),
+    )
+    expect(v2.version).toBe(2)
+    const cu = JSON.parse(
+      toolText(await call(app, token, "catch_me_up", { short_id: shortId, since_version: 1 })),
+    )
+    expect(cu.pages_changed.added).toContain("new.html")
+  })
+
+  it("publish steers between content and files by kind", async () => {
+    const { app, token } = appWithGrant("pubkind", "openid dock:read dock:publish")
+
+    // content + files together is rejected.
+    const both = await call(app, token, "publish", {
+      title: "x",
+      content: "<h1>x</h1>",
+      files: { "index.html": "<h1>x</h1>" },
+    })
+    expect(toolText(both)).toContain("not both")
+
+    // A single-file artifact can't be republished as a bundle.
+    const file = JSON.parse(
+      toolText(await call(app, token, "publish", { title: "Doc", content: "<h1>doc</h1>" })),
+    )
+    const asBundle = await call(app, token, "publish", {
+      short_id: file.short_id,
+      files: { "index.html": "<h1>doc</h1>" },
+    })
+    expect(toolText(asBundle)).toContain("single-file")
+
+    // A bundle can't be republished with a single `content` string.
+    const bundle = JSON.parse(
+      toolText(
+        await call(app, token, "publish", {
+          title: "Site",
+          files: { "index.html": "<h1>home</h1>" },
+        }),
+      ),
+    )
+    const asFile = await call(app, token, "publish", {
+      short_id: bundle.short_id,
+      content: "<h1>home</h1>",
+    })
+    expect(toolText(asFile)).toContain("bundle")
+  })
 })
