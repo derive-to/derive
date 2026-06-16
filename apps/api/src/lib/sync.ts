@@ -2,6 +2,7 @@ import {
   type ArtifactRecord,
   type BlobStore,
   type MetaStore,
+  mapPoolSettled,
   publish,
   type RepoSourceRecord,
   type SyncProgress,
@@ -9,7 +10,17 @@ import {
 import { zipSync } from "fflate"
 import { type BundlePlan, commonDir, planBundle } from "./bundle-from-repo"
 import { sha256 } from "./crypto"
-import { fetchBlob, listTree, matchesGlobs, parseRepo } from "./github"
+import { fetchBlob, fetchBlobsBatch, listTree, matchesGlobs, parseRepo } from "./github"
+
+// Pre-warm the byte cache via BATCHED GraphQL reads rather than one GET per file:
+// GitHub bills an aliased multi-blob query at ~1 rate-limit point (vs 1 per file) and
+// it's one round-trip per chunk, so a few hundred docs fetch in a handful of cheap
+// requests — far under the secondary limits (100 concurrent / 900 points/min) and
+// aligned with GitHub's "prefer serial" guidance.
+const GRAPHQL_BATCH = 20 // max blobs per GraphQL query
+const GRAPHQL_MAX_RESPONSE = 2 * 1024 * 1024 // and cap a chunk's summed text at ~2MB
+const GRAPHQL_MAX_BLOB = 512 * 1024 // blobs bigger than this skip GraphQL (no text) → REST
+const GRAPHQL_CONCURRENCY = 4 // a few queries in flight; each is ~1 point
 
 /** Per-path mirror state, persisted as JSON in repo_source.files. */
 export interface SyncedFile {
@@ -203,6 +214,7 @@ export async function runSync(
     if (Object.keys(prev).length === 0) await writeProgress("listing")
     const { entries, truncated } = await listTree(repo, source.ref, source.token)
     const shaByPath = new Map(entries.map((e) => [e.path, e.sha]))
+    const sizeByPath = new Map(entries.map((e) => [e.path, e.size ?? 0]))
     const docs = entries.filter((e) => matchesGlobs(e.path, globs))
     const docPaths = new Set(docs.map((d) => d.path))
     total = docs.length
@@ -227,12 +239,72 @@ export async function runSync(
       }
     }
 
+    // Warm the byte cache for `paths` in as few requests as possible: small text blobs
+    // ride ONE batched GraphQL query per chunk (the bulk of a docs sync); blobs too big
+    // for GraphQL to return text are left for the lazy REST fetch. Chunks are bounded by
+    // count and summed size. A cache miss always falls back to fetchBytes, so an
+    // incomplete prewarm is a perf miss, never a correctness bug.
+    const prewarm = async (paths: Iterable<string>): Promise<void> => {
+      const small: { path: string; sha: string }[] = []
+      for (const path of paths) {
+        const sha = shaByPath.get(path)
+        if (sha === undefined || byteCache.has(path)) continue
+        if ((sizeByPath.get(path) ?? 0) > GRAPHQL_MAX_BLOB) continue // too big for GraphQL text
+        small.push({ path, sha })
+      }
+      const chunks: { path: string; sha: string }[][] = []
+      let cur: { path: string; sha: string }[] = []
+      let curBytes = 0
+      for (const it of small) {
+        const sz = sizeByPath.get(it.path) ?? 0
+        if (
+          cur.length >= GRAPHQL_BATCH ||
+          (cur.length > 0 && curBytes + sz > GRAPHQL_MAX_RESPONSE)
+        ) {
+          chunks.push(cur)
+          cur = []
+          curBytes = 0
+        }
+        cur.push(it)
+        curBytes += sz
+      }
+      if (cur.length) chunks.push(cur)
+      await mapPoolSettled(chunks, GRAPHQL_CONCURRENCY, async (chunk) => {
+        const bySha = await fetchBlobsBatch(
+          repo,
+          chunk.map((c) => c.sha),
+          source.token,
+        )
+        for (const c of chunk) {
+          const bytes = bySha.get(c.sha)
+          if (bytes) byteCache.set(c.path, bytes)
+        }
+      })
+    }
+
     // ---- Phase A: plan bundles for HTML docs --------------------------------
     // For each HTML doc, decide whether it's a bundle (references local assets,
     // transitively through its stylesheets) and which files it owns. Unchanged
     // bundles reuse their stored membership (no fetch); only new/changed HTML is
     // read + scanned. `consumed` collects the asset paths a bundle owns, so a
     // shared CSS is never ALSO mirrored standalone.
+    //
+    // First, batch-prewarm the byte cache for the HTML Phase A will actually read (the
+    // non-stable entries, exactly what the loop below fetches). Markdown-only repos
+    // warm nothing here; the win is Phase B below.
+    const htmlToWarm = docs
+      .filter((e) => {
+        if (!isHtml(e.path)) return false
+        const before = prev[e.path]
+        const stable =
+          before?.kind === "bundle" &&
+          before.members?.[e.path] === e.sha &&
+          Object.entries(before.members).every(([p, s]) => shaByPath.get(p) === s)
+        return !stable
+      })
+      .map((e) => e.path)
+    await prewarm(htmlToWarm)
+
     const plans = new Map<string, BundlePlan>()
     const consumed = new Set<string>()
     for (const e of docs) {
@@ -317,6 +389,33 @@ export async function runSync(
       next[repoPath] = { artifact_id: artifact.id, short_id: artifact.short_id, sha, kind, members }
       await onPublished()
     }
+
+    // Batch-prewarm the byte cache for everything Phase B will fetch: the changed
+    // single files + the members of changed bundles. Mirrors the skip/rename logic
+    // below so we never fetch bytes the loop won't use (skips, unchanged files, and
+    // pure renames fetch nothing), and is bounded by the same per-run cap so a huge
+    // repo doesn't prewarm beyond one batch. This is the dominant speedup.
+    const toWarm = new Set<string>()
+    let warmBudget = limits?.maxFiles ?? Number.POSITIVE_INFINITY
+    for (const e of docs) {
+      if (warmBudget <= 0) break
+      if (consumed.has(e.path)) continue
+      const before = prev[e.path]
+      const plan = plans.get(e.path)
+      if (plan) {
+        const memberShas: Record<string, string> = {}
+        for (const m of plan.members) memberShas[m.repoPath] = shaByPath.get(m.repoPath) ?? ""
+        if (before?.kind === "bundle" && before.sha === compositeSha(memberShas)) continue
+        for (const m of plan.members) toWarm.add(m.repoPath)
+        warmBudget--
+      } else {
+        if (before && before.kind !== "bundle" && before.sha === e.sha) continue
+        if (!before && vanishedBySha.has(e.sha)) continue
+        toWarm.add(e.path)
+        warmBudget--
+      }
+    }
+    await prewarm(toWarm)
 
     // ---- Phase B: mirror each doc ------------------------------------------
     for (const e of docs) {

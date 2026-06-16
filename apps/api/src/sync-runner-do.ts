@@ -9,13 +9,17 @@ import { log } from "./log"
 // drains batch-by-batch without any one alarm holding a long-running task (the
 // per-batch file cap keeps each tick inside the Workers CPU budget). The engine
 // persists its file-map + progress every batch, so the DB row is the source of
-// truth and losing the DO only delays the next batch to the cron backstop.
-const TICK_MS = 1_200
+// truth and losing the DO only delays the next batch to the cron backstop. Kept
+// small: the gap between successful batches is pure latency, not a throttle.
+const TICK_MS = 50
 // A `/start` poke schedules the first batch almost immediately.
 const POKE_DELAY_MS = 200
-// A batch that throws (a GitHub blip mid-mirror) is retried with linear backoff;
-// the engine already persisted phase="error", so a recovering retry flips it back
-// to mirroring/done. Past this we stop and leave the error visible for the user.
+// A batch that THROWS (a GitHub blip / secondary rate limit mid-mirror) backs off
+// before retrying — distinct from TICK_MS so collapsing the success gap doesn't also
+// collapse the cooldown a transient error needs. The engine already persisted
+// phase="error", so a recovering retry flips it back to mirroring/done.
+const RETRY_BACKOFF_MS = 1_200
+// Past this many consecutive throws we stop and leave the error visible for the user.
 const MAX_RETRIES = 4
 
 /** The env the sync runner DO needs: D1 (MetaStore) + R2 (blobs) + the at-rest key. */
@@ -102,7 +106,7 @@ export class RepoSyncRunner {
       }
       // Linear backoff; a recovering batch overwrites progress back to mirroring/done.
       await this.state.storage.put("retries", retries + 1)
-      await this.state.storage.setAlarm(Date.now() + TICK_MS * (retries + 1))
+      await this.state.storage.setAlarm(Date.now() + RETRY_BACKOFF_MS * (retries + 1))
     }
   }
 
