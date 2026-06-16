@@ -62,10 +62,17 @@ ${body}</main></body></html>`
 const manifest = (baseUrl: string, host: string) => ({
   name: `Dock · ${host}`,
   url: baseUrl,
+  // Where GitHub sends the browser after the App is CREATED (manifest → code).
   redirect_url: new URL("/settings/github/app/created", baseUrl).toString(),
   hook_attributes: { url: new URL("/v1/sync/github/webhook", baseUrl).toString(), active: true },
-  setup_url: new URL("/app/settings?tab=github", baseUrl).toString(),
-  public: false,
+  // Where GitHub sends the browser after the App is INSTALLED — our callback
+  // records the installation (with the signed state) then bounces to the picker.
+  setup_url: new URL("/v1/sync/github/callback", baseUrl).toString(),
+  // Public so it can be installed on organizations too, not just the owner's
+  // personal account (GitHub restricts a private App to its owner account). It's
+  // read-only, and an installation only matters once bound to a workspace via our
+  // signed-state callback, so a stray direct install is inert.
+  public: true,
   default_permissions: { contents: "read", metadata: "read" },
   // Only permission-backed events go in default_events (push needs contents). The
   // installation + installation_repositories lifecycle events are delivered to
@@ -119,6 +126,6 @@ export function setupResultHTML(props: { ok: boolean; slug?: string; error?: str
     `<span class="badge ok">Connected</span>`,
     `<h1>Your GitHub App is ready</h1>
     <p class="sub">${props.slug ? `<code>${esc(props.slug)}</code> ` : ""}is set up. Head back to Settings to install it on your repos.</p>
-    <p class="foot"><a class="btn" href="/app/settings?tab=github">Back to Settings</a></p>`,
+    <p class="foot"><a class="btn" href="/settings?tab=github">Back to Settings</a></p>`,
   )
 }

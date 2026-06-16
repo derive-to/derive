@@ -46,7 +46,7 @@ export function Login() {
       ? `/login${search}`
       : typeof returnTo === "string"
         ? returnTo
-        : "/app/home"
+        : "/"
     api.socialSignIn(provider, callbackURL).catch((e) => setErr((e as Error).message))
   }
 

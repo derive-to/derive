@@ -137,7 +137,7 @@ export const syncRoutes = (ctx: AppContext) => {
   app.get("/v1/sync/github/callback", async (c) => {
     const installationId = c.req.query("installation_id")
     const stateRaw = c.req.query("state") ?? ""
-    const settingsUrl = new URL("/app/settings?tab=github", deps.baseUrl)
+    const settingsUrl = new URL("/settings?tab=github", deps.baseUrl)
     if (!deps.encryptionKey || !installationId) {
       settingsUrl.searchParams.set("gh_error", "install_failed")
       return c.redirect(settingsUrl.toString())
