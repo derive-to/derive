@@ -132,6 +132,10 @@ export interface MetaStore {
   addVersion(artifactId: string, v: NewVersion): Promise<VersionRecord>
   listVersions(artifactId: string): Promise<VersionRecord[]>
   getVersion(artifactId: string, n: number): Promise<VersionRecord | null>
+  /** Correct a version's stored content_type in place (no new version). Also
+   *  updates the artifact's current_content_type when n is the current version.
+   *  Used to repair mis-classified content (e.g. HTML that was tagged markdown). */
+  reclassifyVersion(artifactId: string, n: number, contentType: string): Promise<void>
 
   createComment(c: NewComment): Promise<CommentRecord>
   listComments(artifactId: string, opts?: { state?: CommentState }): Promise<CommentRecord[]>
