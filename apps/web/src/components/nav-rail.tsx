@@ -11,6 +11,7 @@ import { Icon, type IconName } from "./icons"
 import { NotificationBell } from "./notification-bell"
 import { Logo } from "./shared/logo"
 import { useShell } from "./shell-context"
+import { SyncChip } from "./sync-chip"
 import { UserPod } from "./user-pod"
 
 // Shared nav-row look (also used by NotificationBell + the Settings link so the
@@ -310,6 +311,7 @@ export function NavRail() {
       </div>
 
       <div className="mt-auto flex flex-col gap-px border-t border-border-soft pt-2">
+        <SyncChip collapsed={railMode} />
         <NotificationBell collapsed={railMode} />
         <Link
           to="/settings"

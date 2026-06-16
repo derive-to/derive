@@ -103,11 +103,16 @@ export function runStoreContract(
 
     it("appends versions, bumps current_version, lists newest data", async () => {
       const a = await store.createArtifact(newArtifact())
+      // updated_at is null until first versioned (read as updated_at ?? created_at).
+      expect(a.updated_at).toBeNull()
       const v1 = await store.addVersion(a.id, newVersion({ message: "first" }))
       const v2 = await store.addVersion(a.id, newVersion({ message: "second" }))
       expect(v1.n).toBe(1)
       expect(v2.n).toBe(2)
-      expect((await store.getByShortId(a.short_id))?.current_version).toBe(2)
+      const after = await store.getByShortId(a.short_id)
+      expect(after?.current_version).toBe(2)
+      // A new version sets updated_at (>= create time) — drives recency sort + label.
+      expect(after?.updated_at && after.updated_at >= a.created_at).toBe(true)
       expect(await store.listVersions(a.id)).toHaveLength(2)
       expect((await store.getVersion(a.id, 1))?.message).toBe("first")
       expect(await store.getVersion(a.id, 99)).toBeNull()
@@ -275,6 +280,26 @@ export function runStoreContract(
         last_status: "ok",
       })
       expect(await store.managedArtifactIds(ORG)).toContain(art.id)
+
+      // Live progress: a cheap JSON column the engine writes every batch (the UI bar
+      // polls it). Null until a sync starts; listed cross-org so the Node entry can
+      // resume mid-flight syncs on boot; cleared back to null when done.
+      expect((await store.getRepoSource(src.id, ORG))?.progress).toBeNull()
+      expect(await store.listSyncingRepoSources()).toHaveLength(0)
+      await store.setRepoSourceProgress(
+        src.id,
+        JSON.stringify({
+          phase: "mirroring",
+          done: 3,
+          total: 10,
+          updatedAt: "2026-06-14T00:00:00.000Z",
+        }),
+      )
+      expect((await store.getRepoSource(src.id, ORG))?.progress).toContain('"phase":"mirroring"')
+      expect((await store.listSyncingRepoSources()).map((s) => s.id)).toContain(src.id)
+      await store.setRepoSourceProgress(src.id, null)
+      expect((await store.getRepoSource(src.id, ORG))?.progress).toBeNull()
+      expect(await store.listSyncingRepoSources()).toHaveLength(0)
 
       // Rename re-homes the artifact: retitle + clear any tombstone.
       await store.setArtifactRemoved(art.id, "2026-06-14T00:00:00.000Z")

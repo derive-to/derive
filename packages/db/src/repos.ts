@@ -56,6 +56,7 @@ import {
   desc,
   eq,
   inArray,
+  isNotNull,
   isNull,
   like,
   lt,
@@ -281,7 +282,11 @@ export function makeRepos(db: SqliteDb) {
       .run()
     await db
       .update(artifact)
-      .set({ current_version: n, current_content_type: v.content_type })
+      .set({
+        current_version: n,
+        current_content_type: v.content_type,
+        updated_at: new Date().toISOString(),
+      })
       .where(eq(artifact.id, artifactId))
       .run()
     return (await getVersion(artifactId, n)) as VersionRecord
@@ -775,6 +780,9 @@ export function makeRepos(db: SqliteDb) {
   ): Promise<void> => {
     await db.update(repoSource).set(fields).where(eq(repoSource.id, id)).run()
   }
+  const setRepoSourceProgress = async (id: string, progress: string | null): Promise<void> => {
+    await db.update(repoSource).set({ progress }).where(eq(repoSource.id, id)).run()
+  }
   const deleteRepoSource = async (id: string, orgId: string): Promise<void> => {
     await db
       .delete(repoSource)
@@ -798,6 +806,8 @@ export function makeRepos(db: SqliteDb) {
       .where(eq(repoSource.installation_id, installationId))
       .orderBy(desc(repoSource.created_at))
       .all()
+  const listSyncingRepoSources = async (): Promise<RepoSourceRecord[]> =>
+    db.select().from(repoSource).where(isNotNull(repoSource.progress)).all()
 
   // ---- GitHub App (instance credentials + per-workspace installations) -----
   const getGithubApp = async (): Promise<GitHubAppRecord | null> =>
@@ -1207,8 +1217,10 @@ export function makeRepos(db: SqliteDb) {
     getRepoSource,
     listRepoSources,
     updateRepoSourceSync,
+    setRepoSourceProgress,
     deleteRepoSource,
     listRepoSourcesByInstallation,
+    listSyncingRepoSources,
     managedArtifactIds,
     getGithubApp,
     setGithubApp,

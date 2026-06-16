@@ -38,6 +38,8 @@ export const artifact = pgTable("artifact", {
   current_version: integer("current_version").notNull().default(0),
   current_content_type: text("current_content_type"),
   created_at: text("created_at").notNull().$defaultFn(isoNow),
+  // Set on every new version; null until first versioned (coalesces to created_at).
+  updated_at: text("updated_at"),
   removed_at: text("removed_at"),
   source_path: text("source_path"),
 })
@@ -261,6 +263,7 @@ export const repoSource = pgTable("repo_source", {
   files: text("files").notNull().default("{}"),
   last_synced_at: text("last_synced_at"),
   last_status: text("last_status"),
+  progress: text("progress"),
   created_by: text("created_by").notNull(),
   created_at: text("created_at").notNull().$defaultFn(isoNow),
 })

@@ -75,9 +75,12 @@ describe("sync routes", () => {
     ]
     blobs.r1 = "# Readme"
     const res = await postJson(`/v1/sync/github/${id}/run`, {})
+    // No background runner wired in tests → /run mirrors inline and returns the synced
+    // source: status 200, file_count reflects the one mirrored doc.
     expect(res.status).toBe(200)
-    const r = (await res.json()) as { added: number }
-    expect(r.added).toBe(1)
+    const r = (await res.json()) as { file_count: number; last_status: string }
+    expect(r.file_count).toBe(1)
+    expect(r.last_status).toBe("ok")
     expect(await meta.collectionArtifactIds(collectionId)).toHaveLength(1)
   })
 
@@ -93,6 +96,44 @@ describe("sync routes", () => {
     expect(detail.managed).toBe(true)
     const republish = await upload("readme.md", "# edited in Dock", {}, shortId)
     expect(republish.status).toBe(409)
+  })
+
+  it("status endpoint returns the live progress + file count (cheap poll)", async () => {
+    const res = await app.request(`/v1/sync/github/${id}/status`)
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as {
+      id: string
+      file_count: number
+      last_status: string | null
+      progress: string | null
+    }
+    expect(body.id).toBe(id)
+    expect(body.file_count).toBe(1) // the one doc mirrored by "Sync now" above
+    expect(body.last_status).toBe("ok")
+  })
+
+  it("active endpoint lists only sources mid-sync", async () => {
+    // Idle after the completed sync → not listed.
+    const idle = (await (await app.request("/v1/sync/github/active")).json()) as {
+      active: { id: string }[]
+    }
+    expect(idle.active.find((s) => s.id === id)).toBeUndefined()
+    // Mark it mirroring → now listed (drives the global chip); clear → gone again.
+    await meta.setRepoSourceProgress(
+      id,
+      JSON.stringify({
+        phase: "mirroring",
+        done: 1,
+        total: 5,
+        updatedAt: "2026-06-14T00:00:00.000Z",
+      }),
+    )
+    const busy = (await (await app.request("/v1/sync/github/active")).json()) as {
+      active: { id: string; progress: string | null }[]
+    }
+    const found = busy.active.find((s) => s.id === id)
+    expect(found?.progress).toContain('"phase":"mirroring"')
+    await meta.setRepoSourceProgress(id, null)
   })
 
   it("disconnects but keeps the mirrored docs", async () => {

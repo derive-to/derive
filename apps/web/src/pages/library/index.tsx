@@ -1,7 +1,7 @@
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useNavigate, useSearch } from "@tanstack/react-router"
-import { X } from "lucide-react"
-import { useEffect, useRef, useState } from "react"
+import { FolderTree, List, X } from "lucide-react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { toast } from "sonner"
 import { type Artifact, api } from "@/api"
 import { Icon } from "@/components/icons"
@@ -12,8 +12,10 @@ import { Input } from "@/components/ui/input"
 import { useAuth } from "@/ctx"
 import { type LibraryParams, libraryArtifactsQuery, sharedArtifactsQuery } from "@/lib/queries"
 import { usePrefetchArtifact } from "@/lib/use-prefetch-artifact"
+import { cn } from "@/lib/utils"
 import { ArtifactCard } from "./artifact-card"
 import { ArtifactGrid } from "./artifact-grid"
+import { ArtifactRow, byRecency } from "./artifact-row"
 import { CollectionBar } from "./collection-bar"
 import { FolderGroups } from "./folder-groups"
 import { HowItWorks } from "./how-it-works"
@@ -21,6 +23,10 @@ import { LibrarySkeleton } from "./library-skeleton"
 import { PublishCard } from "./publish-card"
 import { ShareCollectionDialog } from "./share-collection-dialog"
 import type { Filter } from "./types"
+
+// Remember the folder view preference across visits (off by default: a flat,
+// most-recently-updated list is the default for a synced collection).
+const FOLDERS_KEY = "dock:show-folders"
 
 // Route component for "/". The persistent AppShell (mounted once around the
 // router Outlet) owns the rail/pod and the auth gate, so this just renders the
@@ -43,6 +49,14 @@ function LibraryBody() {
   const [shareCol, setShareCol] = useState<(typeof collections)[number] | null>(null)
   const [query, setQuery] = useState(search.q ?? "")
   const [debouncedQ, setDebouncedQ] = useState((search.q ?? "").trim())
+  // Folder vs flat-list view (synced collections). Off by default; remembered.
+  const [showFolders, setShowFolders] = useState(
+    () => typeof window !== "undefined" && localStorage.getItem(FOLDERS_KEY) === "1",
+  )
+  const toggleFolders = (on: boolean) => {
+    setShowFolders(on)
+    localStorage.setItem(FOLDERS_KEY, on ? "1" : "0")
+  }
 
   // Derive the active filter from the URL search params.
   const filter: Filter =
@@ -75,6 +89,21 @@ function LibraryBody() {
   const { data, isPending, isError, refetch, fetchNextPage, hasNextPage, isFetchingNextPage } =
     useInfiniteQuery(listQuery)
   const items = data?.pages.flatMap((p) => p.artifacts) ?? []
+
+  // A synced repo collection (artifacts carry a source_path) gets the folder/flat
+  // treatment: a flat, most-recently-updated list by default, with an optional folder
+  // view. Other lists (home, tags, favorites, hand-built collections) keep the grid.
+  const isSyncedCollection = filter.kind === "collection" && items.some((a) => a.source_path)
+  // Pull the whole collection so the sort + grouping see every doc (collections are
+  // finite and scoping keeps them small) — same as the folder view always did.
+  useEffect(() => {
+    if (isSyncedCollection && hasNextPage && !isFetchingNextPage) fetchNextPage()
+  }, [isSyncedCollection, hasNextPage, isFetchingNextPage, fetchNextPage])
+  // Default order everywhere a synced collection renders: most recently updated first.
+  const recencyItems = useMemo(
+    () => (isSyncedCollection ? [...items].sort(byRecency) : items),
+    [isSyncedCollection, items],
+  )
 
   // Star toggle is optimistic across every cached page; in the Favorites view an
   // un-star drops the card. Reconcile against the server on failure.
@@ -339,18 +368,72 @@ function LibraryBody() {
           ) : (
             <EmptyState>{emptyMessage}</EmptyState>
           )
-        ) : filter.kind === "collection" && items.some((a) => a.source_path) ? (
-          // A mirrored repo: browse it as a folder tree instead of a flat grid.
-          <FolderGroups
-            items={items}
-            hasNextPage={!!hasNextPage}
-            isFetchingNextPage={isFetchingNextPage}
-            onLoadMore={() => fetchNextPage()}
-            onOpen={(a) => nav({ to: "/a/$ref", params: { ref: a.short_id } })}
-            onToggleFavorite={toggleFav}
-            onPickTag={(tag) => nav({ to: "/", search: { tag } })}
-            onPrefetch={(a) => prefetch(a.short_id, a.current_version)}
-          />
+        ) : isSyncedCollection ? (
+          // A mirrored repo. Default to a flat, most-recently-updated list; folders are
+          // there as a toggle (off by default) so the tree is available but not forced.
+          <div className="flex flex-col gap-3">
+            <div className="flex items-center gap-1 self-end rounded-lg border border-border bg-card p-0.5">
+              <button
+                type="button"
+                data-testid="library-view-list"
+                onClick={() => toggleFolders(false)}
+                aria-pressed={!showFolders}
+                className={cn(
+                  "inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition-colors",
+                  !showFolders
+                    ? "bg-accent text-accent-foreground"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                <List className="size-3.5" aria-hidden /> List
+              </button>
+              <button
+                type="button"
+                data-testid="library-view-folders"
+                onClick={() => toggleFolders(true)}
+                aria-pressed={showFolders}
+                className={cn(
+                  "inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition-colors",
+                  showFolders
+                    ? "bg-accent text-accent-foreground"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                <FolderTree className="size-3.5" aria-hidden /> Folders
+              </button>
+            </div>
+            {showFolders ? (
+              <FolderGroups
+                items={recencyItems}
+                hasNextPage={!!hasNextPage}
+                isFetchingNextPage={isFetchingNextPage}
+                onLoadMore={() => fetchNextPage()}
+                onOpen={(a) => nav({ to: "/a/$ref", params: { ref: a.short_id } })}
+                onToggleFavorite={toggleFav}
+                onPickTag={(tag) => nav({ to: "/", search: { tag } })}
+                onPrefetch={(a) => prefetch(a.short_id, a.current_version)}
+              />
+            ) : (
+              <div className="flex flex-col gap-2" data-testid="library-flat-list">
+                {recencyItems.map((a) => (
+                  <ArtifactRow
+                    key={a.short_id}
+                    artifact={a}
+                    onOpen={() => nav({ to: "/a/$ref", params: { ref: a.short_id } })}
+                    onToggleFavorite={() => toggleFav(a)}
+                    onPickTag={(tag) => nav({ to: "/", search: { tag } })}
+                    onDelete={() => deleteArtifact(a)}
+                    onPrefetch={() => prefetch(a.short_id, a.current_version)}
+                  />
+                ))}
+                {(hasNextPage || isFetchingNextPage) && (
+                  <div className="py-2 text-center text-sm text-muted-foreground">
+                    Loading the rest…
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
         ) : (
           <>
             <ArtifactGrid

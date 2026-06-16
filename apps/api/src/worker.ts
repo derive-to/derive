@@ -16,10 +16,12 @@ import { customDomainsFromEnv } from "./lib/cloudflare-saas"
 import { nativeLimiter } from "./lib/rate-limit"
 import { createDoBackplane, edgeCtx } from "./realtime-do"
 
-// The bound Durable Object classes — the realtime room (one per channel) and the webhook
-// outbox drainer (a single named instance) — re-exported so the Workers runtime can
-// instantiate them (see wrangler.toml `durable_objects.bindings`).
+// The bound Durable Object classes — the realtime room (one per channel), the webhook
+// outbox drainer (a single named instance), and the GitHub-sync runner (one per source)
+// — re-exported so the Workers runtime can instantiate them (see wrangler.toml
+// `durable_objects.bindings`).
 export { ArtifactRoom } from "./realtime-do"
+export { RepoSyncRunner } from "./sync-runner-do"
 export { WebhookOutbox } from "./webhook-do"
 
 // The webhook outbox DO is a singleton: every isolate pokes the same instance by a
@@ -55,6 +57,10 @@ export interface Env {
   ROOMS: DurableObjectNamespace
   // The webhook outbox drainer DO (a single named instance). Declared in wrangler.toml.
   WEBHOOK_OUTBOX: DurableObjectNamespace
+  // The GitHub-sync runner DO (one instance per source, by name). Declared in
+  // wrangler.toml. Drives a triggered sync to completion server-side so it survives
+  // the user navigating away — the edge counterpart to the Node detached loop.
+  SYNC_RUNNER: DurableObjectNamespace
   // Native per-colo rate-limit bindings (limit + 60s window declared in wrangler.toml
   // [[ratelimits]]). The edge counts against these instead of an in-process Map so a cap
   // holds across isolates within a location. RL_STRICT is shared by the two tight 3/60
@@ -82,6 +88,14 @@ export interface Env {
 function pokeOutbox(env: Env): Promise<unknown> {
   const stub = env.WEBHOOK_OUTBOX.get(env.WEBHOOK_OUTBOX.idFromName(OUTBOX_NAME))
   return stub.fetch("https://outbox/poke", { method: "POST" }).catch(() => {})
+}
+
+/** Poke the per-source sync runner DO so it starts (or resumes) mirroring on our
+ *  servers — tab-independent, so the user can close the page mid-sync. */
+function pokeSync(env: Env, sourceId: string): Promise<unknown> {
+  const stub = env.SYNC_RUNNER.get(env.SYNC_RUNNER.idFromName(`sync:${sourceId}`))
+  const url = `https://sync/start?source=${encodeURIComponent(sourceId)}`
+  return stub.fetch(url, { method: "POST" }).catch(() => {})
 }
 
 let app: ReturnType<typeof createApp> | null = null
@@ -141,6 +155,15 @@ export default {
         // riding waitUntil so the subrequest isn't cancelled when the response is sent.
         pokeWebhooks: () => {
           const p = pokeOutbox(env)
+          const c = edgeCtx.getStore()
+          if (c) c.waitUntil(p)
+          else void p
+        },
+        // Run a triggered GitHub sync server-side: poke the per-source runner DO so
+        // it mirrors to completion on our servers (tab-independent). waitUntil keeps
+        // the poke subrequest alive past the 202 response.
+        startSync: (sourceId) => {
+          const p = pokeSync(env, sourceId)
           const c = edgeCtx.getStore()
           if (c) c.waitUntil(p)
           else void p

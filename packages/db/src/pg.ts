@@ -53,7 +53,7 @@ import type {
   WebhookRecord,
   WorkspaceRecord,
 } from "@dock/core"
-import { and, asc, count, desc, eq, inArray, isNull, lte, or, sql } from "drizzle-orm"
+import { and, asc, count, desc, eq, inArray, isNotNull, isNull, lte, or, sql } from "drizzle-orm"
 import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres"
 import { Pool } from "pg"
 import type { Exhaustive, Shapes } from "./parity"
@@ -225,7 +225,11 @@ export class PgMetaStore implements MetaStore {
       await tx.insert(version).values({ ...v, artifact_id: artifactId, n })
       await tx
         .update(artifact)
-        .set({ current_version: n, current_content_type: v.content_type })
+        .set({
+          current_version: n,
+          current_content_type: v.content_type,
+          updated_at: new Date().toISOString(),
+        })
         .where(eq(artifact.id, artifactId))
       const rows = await tx
         .select()
@@ -790,6 +794,9 @@ export class PgMetaStore implements MetaStore {
   ): Promise<void> {
     await this.db.update(repoSource).set(fields).where(eq(repoSource.id, id))
   }
+  async setRepoSourceProgress(id: string, progress: string | null): Promise<void> {
+    await this.db.update(repoSource).set({ progress }).where(eq(repoSource.id, id))
+  }
   async deleteRepoSource(id: string, orgId: string): Promise<void> {
     await this.db.delete(repoSource).where(and(eq(repoSource.id, id), eq(repoSource.org_id, orgId)))
   }
@@ -806,6 +813,9 @@ export class PgMetaStore implements MetaStore {
       .from(repoSource)
       .where(eq(repoSource.installation_id, installationId))
       .orderBy(desc(repoSource.created_at))
+  }
+  async listSyncingRepoSources(): Promise<RepoSourceRecord[]> {
+    return this.db.select().from(repoSource).where(isNotNull(repoSource.progress))
   }
 
   // ---- GitHub App (instance credentials + per-workspace installations) -----

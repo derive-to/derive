@@ -15,6 +15,7 @@ import { customDomainsFromEnv } from "./lib/cloudflare-saas"
 import { mountWeb } from "./lib/serve-web"
 import { makeShutdown } from "./lifecycle"
 import { log } from "./log"
+import { createNodeSyncRunner } from "./node-sync"
 import { startWebhookWorker } from "./webhooks"
 import { nodeDnsGuard } from "./webhooks-node"
 
@@ -115,6 +116,11 @@ const shellHtml = cfg.serveWeb ? readFileSync(cfg.webShell, "utf8") : undefined
 // internal corporate network, where a webhook URL could point at a private service.
 const webhookWorker = startWebhookWorker(meta, nodeDnsGuard)
 
+// GitHub-sync runner: drives a triggered sync to completion in-process (detached from
+// the request) so it survives the user navigating away — the self-host counterpart to
+// the edge `RepoSyncRunner` DO. Resumed below on boot + a short interval.
+const syncRunner = createNodeSyncRunner(meta, blobs, authSecret)
+
 const app = createApp({
   meta,
   blobs,
@@ -150,6 +156,8 @@ const app = createApp({
   commentRate: cfg.commentRate,
   // Deliver freshly enqueued events immediately instead of on the next interval.
   pokeWebhooks: webhookWorker.poke,
+  // Run a triggered GitHub sync in the background so it survives a closed tab.
+  startSync: syncRunner.start,
 })
 
 // Serve the bundled SPA from this process (single-container self-host). The API
@@ -180,6 +188,14 @@ const maintain = async () => {
 void maintain()
 pruneTimer = setInterval(maintain, 24 * 3600_000)
 pruneTimer.unref?.()
+
+// Resume any GitHub sync left mid-flight: once on boot (a restart mid-sync) and on a
+// short interval (a self-heal backstop, mirroring the edge cron). The persisted
+// file-map makes resume idempotent, and the runner dedupes already-running loops, so
+// this is safe to call repeatedly. unref'd so it never holds the process open.
+void syncRunner.resumeStalled()
+const syncResumeTimer = setInterval(() => void syncRunner.resumeStalled(), 60_000)
+syncResumeTimer.unref?.()
 
 // One-time cleanup of pre-existing owner self-views (the route no longer records
 // them). Pre-multi-workspace rows were rekeyed from "local" onto defaultOrg above,
@@ -235,6 +251,7 @@ const shutdown = makeShutdown({
   stopWorker: webhookWorker.stop,
   clearTimers: () => {
     if (pruneTimer) clearInterval(pruneTimer)
+    clearInterval(syncResumeTimer)
   },
   closeStores,
   log,

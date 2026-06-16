@@ -4,6 +4,7 @@ import {
   type MetaStore,
   publish,
   type RepoSourceRecord,
+  type SyncProgress,
 } from "@dock/core"
 import { zipSync } from "fflate"
 import { type BundlePlan, commonDir, planBundle } from "./bundle-from-repo"
@@ -158,20 +159,46 @@ export async function runSync(
       last_status: status,
     })
   }
-  // Count a publish and, every PROGRESS_EVERY, flush the partial map + a live
-  // "syncing N…" status. This makes the run incrementally durable (a killed run
-  // leaves a consistent map, never orphan artifacts) AND lets the UI poll progress.
+  // Live, pollable progress (the UI bar + global chip). `total` is set once the
+  // tree is listed; `done` is the size of the (incrementally persisted) map. Floored
+  // at the carried-forward count so a multi-batch sync never bounces backward: each
+  // batch starts with `next` empty but `prev` already holding the prior batches'
+  // work, so without the floor the bar would snap 50→0→100→0 between batches.
+  const prevCount = Object.keys(prev).length
+  let total = 0
+  const writeProgress = (phase: SyncProgress["phase"], message?: string) =>
+    meta.setRepoSourceProgress(
+      source.id,
+      JSON.stringify({
+        phase,
+        done: Math.max(Object.keys(next).length, prevCount),
+        total,
+        ...(message ? { message } : {}),
+        updatedAt: now,
+      } satisfies SyncProgress),
+    )
+
+  // Count a publish and, every PROGRESS_EVERY, flush the partial map + live status
+  // + progress. Incrementally durable (a killed run leaves a consistent map, never
+  // orphan artifacts) AND lets the UI poll a precise bar.
   const PROGRESS_EVERY = 15
   const onPublished = async () => {
     processed++
-    if (processed % PROGRESS_EVERY === 0) await persist(`syncing ${processed} files…`)
+    if (processed % PROGRESS_EVERY === 0) {
+      await persist(`syncing ${processed} files…`)
+      await writeProgress("mirroring")
+    }
   }
 
   try {
+    // First batch of a fresh source: show "connecting/listing" before the count.
+    if (Object.keys(prev).length === 0) await writeProgress("listing")
     const { entries, truncated } = await listTree(repo, source.ref, source.token)
     const shaByPath = new Map(entries.map((e) => [e.path, e.sha]))
     const docs = entries.filter((e) => matchesGlobs(e.path, globs))
     const docPaths = new Set(docs.map((d) => d.path))
+    total = docs.length
+    await writeProgress("mirroring")
 
     // Fetch + cache repo bytes by path (one fetch per blob across both phases).
     const byteCache = new Map<string, Uint8Array>()
@@ -414,10 +441,14 @@ export async function runSync(
         : "ok"
     if (tooLarge.length) status += ` (${tooLarge.length} file(s) skipped: too large or over quota)`
     await persist(status)
+    // Still "mirroring" while batches remain; "done" once the repo is fully synced.
+    await writeProgress(res.remaining > 0 ? "mirroring" : "done")
     return res
   } catch (err) {
     carryForward()
-    await persist(`error: ${err instanceof Error ? err.message : String(err)}`.slice(0, 300))
+    const message = err instanceof Error ? err.message : String(err)
+    await persist(`error: ${message}`.slice(0, 300))
+    await writeProgress("error", message.slice(0, 300))
     throw err
   }
 }

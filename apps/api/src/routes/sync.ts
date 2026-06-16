@@ -1,4 +1,4 @@
-import type { GitHubAppRecord, RepoSourceRecord } from "@dock/core"
+import type { GitHubAppRecord, RepoSourceRecord, SyncProgress } from "@dock/core"
 import { newId } from "@dock/core"
 import { Hono } from "hono"
 import { z } from "zod"
@@ -11,17 +11,15 @@ import {
   listInstallationRepos,
   verifyWebhookSignature,
 } from "../lib/github-app"
-import { fail, MAX_UPLOAD_BYTES, readJson } from "../lib/http"
-import { runSync } from "../lib/sync"
+import { fail, readJson } from "../lib/http"
+import { isSyncing, runToCompletion } from "../lib/sync-runner"
 import { log } from "../log"
 
 const DEFAULT_INCLUDES = "**/*.md,**/*.html"
-// Publishes per "Sync now" call. Bounds one batch to the Worker request budget;
-// the UI loops on `remaining` until the whole repo is mirrored.
-const SYNC_BATCH = 50
 
-/** Client-safe view of a source: the token is redacted and the (potentially
- *  large) file map collapses to a count. */
+/** Client-safe view of a source: the token is redacted and the (potentially large)
+ *  file map collapses to a count. The live `progress` JSON rides through in `...rest`
+ *  so the UI can render the bar straight off the list/status response. */
 const toJson = (s: RepoSourceRecord) => {
   let file_count = 0
   try {
@@ -32,6 +30,11 @@ const toJson = (s: RepoSourceRecord) => {
   const { token, files: _files, ...rest } = s
   return { ...rest, token: token ? "•••" : null, file_count }
 }
+
+/** The initial "queued" progress, written the instant a sync is triggered so the UI
+ *  shows the bar at once — before the first batch even lists the tree. */
+const queuedProgress = (now: string): string =>
+  JSON.stringify({ phase: "queued", done: 0, total: 0, updatedAt: now } satisfies SyncProgress)
 
 /** A GitHub redirect bound to the workspace + user who started the install. */
 interface InstallState {
@@ -55,7 +58,7 @@ interface GitHubWebhookPayload {
  * connection, the App install handshake, and drives the engine (lib/sync).
  */
 export const syncRoutes = (ctx: AppContext) => {
-  const { meta, deps, currentUser, activeWorkspace, workspaceCan, overStorage, background } = ctx
+  const { meta, deps, currentUser, activeWorkspace, workspaceCan, background } = ctx
   const app = new Hono()
 
   // The instance App, with its three secret columns decrypted for use. Null when
@@ -103,31 +106,21 @@ export const syncRoutes = (ctx: AppContext) => {
     }
   }
 
-  // The effective read token for a source: a freshly-minted installation token
-  // (App path) or the decrypted PAT (BYO path). Null when neither applies (a
-  // public repo synced without either).
-  const tokenForSource = async (source: RepoSourceRecord): Promise<string | null> => {
-    if (source.installation_id) {
-      const loaded = await loadApp()
-      if (!loaded) throw new GitHubError(400, "GitHub App is not configured on this instance")
-      return installationToken(loaded.app.app_id, loaded.pem, source.installation_id)
-    }
-    return source.token && deps.encryptionKey
-      ? decryptSecret(source.token, deps.encryptionKey)
-      : source.token
+  // Trigger a sync on the SERVER, not in the browser — so it survives the user
+  // closing the tab (their #1 complaint). Marks the source `queued` (the UI shows the
+  // bar immediately) and hands off to the background runner: the per-source
+  // `RepoSyncRunner` Durable Object on the edge, or the detached batch-loop on Node
+  // (both via `deps.startSync`). Token minting + the per-batch engine loop live in
+  // lib/sync-runner, shared by every tier. When no runner is wired (tests/dev),
+  // `inlineFallback` runs the whole sync in the background instead, so a self-host
+  // without a runner still mirrors. The engine persists progress every batch, polled
+  // by the UI.
+  const launch = async (source: RepoSourceRecord, inlineFallback: boolean): Promise<void> => {
+    await meta.setRepoSourceProgress(source.id, queuedProgress(new Date().toISOString()))
+    if (deps.startSync) deps.startSync(source.id)
+    else if (inlineFallback)
+      background(runToCompletion(meta, deps.blobs, deps.encryptionKey, source.id))
   }
-
-  // Run one source now (ONE bounded batch). Shared by the manual "Sync now" button
-  // and the webhook's push auto-sync. `maxFiles` caps the publishes per call so a
-  // huge repo can't exceed the Worker request budget; the result's `remaining` tells
-  // the caller to run again. runSync persists its partial map incrementally, so a
-  // mid-run failure can't orphan artifacts.
-  const syncOne = (source: RepoSourceRecord, token: string | null) =>
-    runSync(meta, deps.blobs, { ...source, token }, new Date().toISOString(), {
-      maxBytes: MAX_UPLOAD_BYTES,
-      maxFiles: SYNC_BATCH,
-      overStorage: (n) => overStorage(source.org_id, n),
-    })
 
   // ---- List + connection status -----------------------------------------
   app.get("/v1/sync/github", async (c) => {
@@ -325,10 +318,19 @@ export const syncRoutes = (ctx: AppContext) => {
       installation_id: installationId,
       created_by: createdBy,
     })
-    return c.json(toJson(source), 201)
+    // Kick the first sync server-side right away, so connecting a repo immediately
+    // shows the live bar (no separate "Sync now" needed). No inline fallback here —
+    // a no-runner env starts mirroring on the explicit /run instead.
+    await launch(source, false)
+    const fresh = (await meta.getRepoSource(source.id, org)) ?? source
+    return c.json(toJson(fresh), 201)
   })
 
   // ---- Manual "Sync now" ------------------------------------------------
+  // Triggers a server-side sync and returns at once (202) — the work runs on our
+  // servers (DO / Node loop), so the user can close the tab. The UI polls /status for
+  // the live bar. Without a runner wired (tests/dev), runs inline to completion and
+  // returns the finished source instead, so a self-host still mirrors synchronously.
   app.post("/v1/sync/github/:id/run", async (c) => {
     if (!(await workspaceCan(c, "publish"))) return fail(c, 403, "forbidden")
     const org = await activeWorkspace(c)
@@ -336,14 +338,52 @@ export const syncRoutes = (ctx: AppContext) => {
     if (!source) return fail(c, 404, "not found")
     if (deps.maxArtifacts && (await meta.countArtifacts(org)) >= deps.maxArtifacts)
       return fail(c, 409, "artifact quota reached")
+    if (deps.startSync) {
+      await launch(source, false)
+      const fresh = (await meta.getRepoSource(source.id, org)) ?? source
+      return c.json(toJson(fresh), 202)
+    }
     try {
       // A GitHub <500 is a bad repo/token/install (the caller's to fix → 400); else 502.
-      const token = await tokenForSource(source)
-      return c.json(await syncOne(source, token))
+      await meta.setRepoSourceProgress(source.id, queuedProgress(new Date().toISOString()))
+      await runToCompletion(meta, deps.blobs, deps.encryptionKey, source.id)
     } catch (err) {
       const userError = err instanceof GitHubError && err.status < 500
       return fail(c, userError ? 400 : 502, err instanceof Error ? err.message : "sync failed")
     }
+    const fresh = (await meta.getRepoSource(source.id, org)) ?? source
+    return c.json(toJson(fresh))
+  })
+
+  // ---- Status poll (drives the big progress bar) ------------------------
+  // Deliberately cheap: no GitHub round-trip (unlike the list endpoint's appIsLive
+  // check), just the persisted progress + status + count — so the UI polls it every
+  // ~1.5s while a sync runs without hammering GitHub.
+  app.get("/v1/sync/github/:id/status", async (c) => {
+    if (!(await workspaceCan(c, "comment"))) return fail(c, 403, "forbidden")
+    const org = await activeWorkspace(c)
+    const source = await meta.getRepoSource(c.req.param("id"), org)
+    if (!source) return fail(c, 404, "not found")
+    const view = toJson(source)
+    return c.json({
+      id: source.id,
+      repo: source.repo,
+      progress: view.progress ?? null,
+      last_status: source.last_status,
+      last_synced_at: source.last_synced_at,
+      file_count: view.file_count,
+    })
+  })
+
+  // ---- Active syncs in this workspace (drives the global chip) ----------
+  // Every source mid-sync (progress phase queued/listing/mirroring), so the app-shell
+  // chip can show "Syncing <repo> · 47/190" from any page. Static path, so it never
+  // collides with the `:id` routes above.
+  app.get("/v1/sync/github/active", async (c) => {
+    if (!(await workspaceCan(c, "comment"))) return fail(c, 403, "forbidden")
+    const org = await activeWorkspace(c)
+    const active = (await meta.listRepoSources(org)).filter(isSyncing).map(toJson)
+    return c.json({ active })
   })
 
   // ---- Disconnect -------------------------------------------------------
@@ -391,18 +431,10 @@ export const syncRoutes = (ctx: AppContext) => {
             s.repo.toLowerCase() === fullName.toLowerCase() &&
             (s.ref === branch || (s.ref === "HEAD" && branch === defaultBranch)),
         )
-        // Re-sync each match off the hot path; failures are persisted per-source.
-        for (const s of matched)
-          background(
-            tokenForSource(s)
-              .then((tok) => syncOne(s, tok))
-              .catch((err) =>
-                log.error("push auto-sync failed", {
-                  repo: s.repo,
-                  error: err instanceof Error ? err.message : String(err),
-                }),
-              ),
-          )
+        // Re-sync each match on the server (DO / Node loop), same as a manual run —
+        // so a push mirrors tab-independently and the bar shows up if anyone's looking.
+        // Progress + failures are persisted per-source by the engine.
+        for (const s of matched) await launch(s, true)
         if (matched.length) log.info("push auto-sync queued", { repo: fullName, n: matched.length })
       }
     } else if (event === "installation" && payload.action === "deleted") {

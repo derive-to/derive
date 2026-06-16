@@ -77,6 +77,11 @@ export interface Artifact {
   managed?: boolean
   /** Repo path for a synced artifact (e.g. "docs/plans/foo.md") — drives the folder view. */
   source_path?: string | null
+  /** First-published time. */
+  created_at?: string
+  /** Last-updated time (set on each new version; null until versioned). Read as
+   *  `updated_at ?? created_at`. Drives the recency sort + the "updated X" label. */
+  updated_at?: string | null
 }
 export interface Report {
   id: string
@@ -265,6 +270,35 @@ export interface RepoSource {
   last_status: string | null
   created_by: string
   created_at: string
+  file_count: number
+  /** Live sync state as a JSON string (parse with `parseProgress`); null when idle. */
+  progress: string | null
+}
+/** Live, pollable sync progress — the engine writes this every batch; the UI bar +
+ *  global chip read it. `done`/`total` are doc counts; `phase` drives the wording. */
+export interface SyncProgress {
+  phase: "queued" | "listing" | "mirroring" | "done" | "error"
+  done: number
+  total: number
+  message?: string
+  updatedAt: string
+}
+/** Parse a RepoSource.progress / SyncStatus.progress string; null if absent/malformed. */
+export const parseProgress = (raw: string | null | undefined): SyncProgress | null => {
+  if (!raw) return null
+  try {
+    return JSON.parse(raw) as SyncProgress
+  } catch {
+    return null
+  }
+}
+/** The cheap status-poll response (no GitHub round-trip) that drives the progress bar. */
+export interface SyncStatus {
+  id: string
+  repo: string
+  progress: string | null
+  last_status: string | null
+  last_synced_at: string | null
   file_count: number
 }
 export interface GithubInstallation {
@@ -600,8 +634,15 @@ export const api = {
     if (includes) qs.set("includes", includes)
     return f(`/v1/sync/github/installations/${installationId}/preview?${qs}`, opts()).then(j)
   },
-  runRepoSync: (id: string): Promise<SyncResult> =>
+  // Trigger a sync. The work runs on the server (a Durable Object on the edge, a
+  // detached loop on Node), so this returns at once — poll `syncStatus` for the bar.
+  runRepoSync: (id: string): Promise<RepoSource> =>
     f(`/v1/sync/github/${id}/run`, opts({})).then(j),
+  // Cheap status poll for the live progress bar (no GitHub round-trip).
+  syncStatus: (id: string): Promise<SyncStatus> =>
+    f(`/v1/sync/github/${id}/status`, opts()).then(j),
+  // Sources currently mid-sync in this workspace (drives the global progress chip).
+  activeSyncs: (): Promise<{ active: RepoSource[] }> => f("/v1/sync/github/active", opts()).then(j),
   deleteRepoSource: (id: string): Promise<void> =>
     f(`/v1/sync/github/${id}`, { method: "DELETE", credentials: "include" }).then(() => undefined),
 

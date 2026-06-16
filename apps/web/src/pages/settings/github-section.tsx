@@ -1,13 +1,16 @@
 import { useQueryClient } from "@tanstack/react-query"
-import { CheckCircle2 } from "lucide-react"
-import { useCallback, useEffect, useState } from "react"
+import { AlertTriangle, CheckCircle2, Loader2 } from "lucide-react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { toast } from "sonner"
 import {
   api,
   type GithubSyncStatus,
   type InstallationRepo,
+  parseProgress,
   type RepoSource,
   type SyncPreview,
+  type SyncProgress,
+  type SyncStatus,
 } from "@/api"
 import { EmptyState } from "@/components/shared/empty-state"
 import { Spinner } from "@/components/shared/spinner"
@@ -121,8 +124,8 @@ export function GithubSection() {
           GitHub App, or a one-off public repo). */}
       <AdvancedPat
         onCreated={() => {
-          toast.success("Repo connected — hit Sync now")
-          load()
+          toast.success("Repo connected — syncing")
+          refresh()
         }}
         onError={(m) => toast.error(m)}
       />
@@ -414,6 +417,37 @@ function RepoPicker({
   )
 }
 
+// Exact, human wording for each phase. The user wants zero guessing about what's
+// happening, so every state is spelled out — headline + a detail line.
+const phaseHeadline = (p: SyncProgress, repo: string): string => {
+  switch (p.phase) {
+    case "queued":
+      return "Starting on our servers…"
+    case "listing":
+      return "Connecting to GitHub, listing files…"
+    case "mirroring":
+      return p.total > 0 ? `Mirroring ${repo}` : "Mirroring files…"
+    case "done":
+      return "Sync complete"
+    case "error":
+      return "Sync failed"
+  }
+}
+const phaseDetail = (p: SyncProgress): string => {
+  switch (p.phase) {
+    case "queued":
+      return "Queued — the server is picking this up"
+    case "listing":
+      return "Scanning the repository tree"
+    case "mirroring":
+      return p.total > 0 ? `${p.done} of ${p.total} files mirrored` : "Fetching the file list…"
+    case "done":
+      return `${p.total || p.done} doc${(p.total || p.done) === 1 ? "" : "s"} mirrored`
+    case "error":
+      return p.message ?? "Unknown error"
+  }
+}
+
 function RepoSourceRow({
   source,
   onChanged,
@@ -423,37 +457,69 @@ function RepoSourceRow({
   onChanged: (m: string) => void
   onError: (m: string) => void
 }) {
-  const [busy, setBusy] = useState(false)
-  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null)
-  // Drive the sync in bounded batches: call run repeatedly until nothing remains,
-  // surfacing a live "done/total" so a large repo shows progress instead of hanging.
-  const sync = useCallback(async () => {
-    setBusy(true)
-    let done = 0
-    let total = 0
-    try {
-      for (;;) {
-        const r = await api.runRepoSync(source.id)
-        done += r.added + r.updated + r.skipped + r.renamed
-        if (total === 0) total = done + r.remaining
-        setProgress({ done: Math.min(done, total), total })
-        if (r.remaining === 0) break
+  // Local live status, seeded from the source's persisted progress so the bar renders
+  // instantly — even on a fresh page load mid-sync (the tab-independence proof). The
+  // poll overwrites it every ~1.5s while a sync runs.
+  const [status, setStatus] = useState<SyncStatus>(() => ({
+    id: source.id,
+    repo: source.repo,
+    progress: source.progress,
+    last_status: source.last_status,
+    last_synced_at: source.last_synced_at,
+    file_count: source.file_count,
+  }))
+  const prog = parseProgress(status.progress)
+  const phase = prog?.phase
+  const active = phase === "queued" || phase === "listing" || phase === "mirroring"
+  const errored = phase === "error" || (!active && (status.last_status ?? "").startsWith("error"))
+
+  // Poll the cheap status endpoint while a sync is active; stop on done/error. The
+  // server runs the sync (a Durable Object on the edge, a detached loop on Node), so
+  // this only reads progress — closing the tab never stops the work.
+  useEffect(() => {
+    if (!active) return
+    let alive = true
+    const iv = setInterval(async () => {
+      try {
+        const s = await api.syncStatus(source.id)
+        if (alive) setStatus(s)
+      } catch {
+        // transient network blip — keep polling; a real failure lands as phase=error
       }
-      onChanged(`Synced ${source.repo}: ${total} doc${total === 1 ? "" : "s"}`)
+    }, 1500)
+    return () => {
+      alive = false
+      clearInterval(iv)
+    }
+  }, [active, source.id])
+
+  // Fire the parent refresh exactly once when a sync finishes (active → done/error),
+  // so the library's collection count updates and a toast confirms the outcome.
+  const wasActive = useRef(active)
+  useEffect(() => {
+    if (wasActive.current && !active) {
+      if (phase === "done") onChanged(`Synced ${source.repo}`)
+      else if (phase === "error") onError(prog?.message ?? "Sync failed")
+    }
+    wasActive.current = active
+  }, [active, phase, prog?.message, source.repo, onChanged, onError])
+
+  const sync = async () => {
+    try {
+      // Trigger + adopt the server's state. With a runner this returns "queued" (the
+      // poll takes over); without one (self-host) it returns the finished source.
+      const r = await api.runRepoSync(source.id)
+      setStatus((s) => ({
+        ...s,
+        progress: r.progress,
+        last_status: r.last_status,
+        last_synced_at: r.last_synced_at,
+        file_count: r.file_count,
+      }))
     } catch (e) {
       onError((e as Error).message)
-    } finally {
-      setBusy(false)
-      setProgress(null)
     }
-  }, [source.id, source.repo, onChanged, onError])
-
-  // Auto-start the first sync when a freshly-connected repo appears. Run once on
-  // mount only — re-running on every sync()/last_synced_at change would loop.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional run-once
-  useEffect(() => {
-    if (!source.last_synced_at) sync()
-  }, [])
+  }
 
   const remove = async () => {
     try {
@@ -463,57 +529,115 @@ function RepoSourceRow({
       onError((e as Error).message)
     }
   }
-  const status = source.last_status ?? "never synced"
-  const errored = status.startsWith("error")
-  const pct =
-    progress && progress.total > 0 ? Math.round((progress.done / progress.total) * 100) : 0
+
+  const pct = prog && prog.total > 0 ? Math.min(100, Math.round((prog.done / prog.total) * 100)) : 0
+  // Queued / listing have no count yet → an indeterminate, pulsing bar.
+  const indeterminate = active && (!prog || prog.total === 0)
+
   return (
-    <Card data-testid={`github-row-${source.id}`} className="flex items-center gap-2.5 p-3.5">
-      <div className="min-w-0 flex-1">
-        <div className="truncate font-mono text-xs text-foreground">
-          {source.repo}
-          <span className="text-muted-foreground"> · {source.ref}</span>
-          {source.installation_id && <span className="text-muted-foreground"> · app</span>}
-        </div>
-        {progress ? (
-          <div
-            className="mt-1 flex items-center gap-2"
-            data-testid={`github-progress-${source.id}`}
-          >
-            <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-secondary">
-              <div className="h-full bg-primary transition-all" style={{ width: `${pct}%` }} />
+    <Card data-testid={`github-row-${source.id}`} className="flex flex-col gap-3 p-3.5">
+      <div className="flex items-center gap-2.5">
+        <div className="min-w-0 flex-1">
+          <div className="truncate font-mono text-xs text-foreground">
+            {source.repo}
+            <span className="text-muted-foreground"> · {source.ref}</span>
+            {source.installation_id && <span className="text-muted-foreground"> · app</span>}
+          </div>
+          {!active && !errored && (
+            <div className="mt-px flex items-center gap-1 truncate font-mono text-2xs text-muted-foreground">
+              {(status.last_status?.startsWith("ok") || status.last_synced_at) && (
+                <CheckCircle2 className="size-3 shrink-0 text-success" aria-hidden />
+              )}
+              {status.file_count} doc{status.file_count === 1 ? "" : "s"}
+              {status.last_synced_at
+                ? ` · synced ${ago(status.last_synced_at)}`
+                : " · never synced"}
             </div>
-            <span className="shrink-0 font-mono text-2xs text-muted-foreground">
-              {progress.done}/{progress.total}
-            </span>
-          </div>
-        ) : (
-          <div
-            className={`mt-px truncate font-mono text-2xs ${errored ? "text-destructive" : "text-muted-foreground"}`}
-          >
-            {source.file_count} doc{source.file_count === 1 ? "" : "s"} · {status}
-            {source.last_synced_at && ` · synced ${ago(source.last_synced_at)}`}
-          </div>
-        )}
+          )}
+        </div>
+        <Button
+          data-testid={`github-sync-${source.id}`}
+          variant="default"
+          size="sm"
+          onClick={sync}
+          disabled={active}
+        >
+          {active ? "Syncing…" : "Sync now"}
+        </Button>
+        <Button
+          data-testid={`github-remove-${source.id}`}
+          variant="ghost"
+          size="sm"
+          className="text-destructive hover:text-destructive"
+          onClick={remove}
+        >
+          Disconnect
+        </Button>
       </div>
-      <Button
-        data-testid={`github-sync-${source.id}`}
-        variant="default"
-        size="sm"
-        onClick={sync}
-        disabled={busy}
-      >
-        {busy ? "Syncing…" : "Sync now"}
-      </Button>
-      <Button
-        data-testid={`github-remove-${source.id}`}
-        variant="ghost"
-        size="sm"
-        className="text-destructive hover:text-destructive"
-        onClick={remove}
-      >
-        Disconnect
-      </Button>
+
+      {/* ACTIVE — the giant, explicit progress block. Every phase named, live counts,
+          a clear %, and a standing reassurance that it runs on the server. */}
+      {active && prog && (
+        <div
+          className="flex flex-col gap-2 rounded-lg border border-primary/30 bg-primary/5 p-3"
+          data-testid={`github-progress-${source.id}`}
+        >
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex min-w-0 items-center gap-2 text-sm font-semibold text-foreground">
+              <Loader2 className="size-4 shrink-0 animate-spin text-primary" aria-hidden />
+              <span className="truncate">{phaseHeadline(prog, source.repo)}</span>
+            </div>
+            {!indeterminate && (
+              <span className="shrink-0 font-mono text-sm font-semibold tabular-nums text-primary">
+                {pct}%
+              </span>
+            )}
+          </div>
+
+          <div className="h-2.5 w-full overflow-hidden rounded-full bg-secondary">
+            <div
+              className={`h-full rounded-full bg-primary transition-all duration-500 ${indeterminate ? "w-1/3 animate-pulse" : ""}`}
+              style={indeterminate ? undefined : { width: `${pct}%` }}
+            />
+          </div>
+
+          <div
+            className="font-mono text-2xs text-muted-foreground"
+            data-testid={`github-progress-detail-${source.id}`}
+          >
+            {phaseDetail(prog)}
+          </div>
+
+          <div className="flex items-center gap-1.5 text-2xs text-muted-foreground">
+            <CheckCircle2 className="size-3 shrink-0 text-success" aria-hidden />
+            Running on our servers — you can close this tab, it’ll keep going.
+          </div>
+        </div>
+      )}
+
+      {/* ERROR — red block with the message and a one-click retry. */}
+      {errored && !active && (
+        <div
+          className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 p-3"
+          data-testid={`github-error-${source.id}`}
+        >
+          <AlertTriangle className="mt-0.5 size-4 shrink-0 text-destructive" aria-hidden />
+          <div className="min-w-0 flex-1">
+            <div className="text-sm font-semibold text-destructive">Sync failed</div>
+            <div className="mt-0.5 break-words font-mono text-2xs text-muted-foreground">
+              {prog?.message ?? status.last_status ?? "Unknown error"}
+            </div>
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={sync}
+            data-testid={`github-retry-${source.id}`}
+          >
+            Try again
+          </Button>
+        </div>
+      )}
     </Card>
   )
 }
