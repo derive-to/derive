@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { newId, type RepoSourceRecord } from "@dock/core"
+import { newId, type RepoSourceRecord, type SyncProgress } from "@dock/core"
 import { SqliteMetaStore } from "@dock/db/sqlite"
 import { FsBlobStore } from "@dock/storage/fs"
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest"
@@ -302,5 +302,109 @@ describe("GitHub sync engine", () => {
     expect(r.remaining).toBe(0)
     const map = JSON.parse((await meta.getRepoSource(src.id))?.files ?? "{}") as FileMap
     expect(Object.keys(map).length).toBe(5) // every file mirrored, no duplicates
+  })
+
+  // ---- Live progress (the giant UI bar reads this) ----------------------
+  // setRepoSourceProgress is always called with a JSON string by the engine.
+  const progressPhases = (calls: [string, string | null][]): SyncProgress[] =>
+    calls.map(([, json]) => JSON.parse(json ?? "{}") as SyncProgress)
+
+  it("writes pollable progress through the phases (listing → mirroring → done)", async () => {
+    const col = await meta.createCollection({
+      id: newId("col"),
+      org_id: "local",
+      title: "prog",
+      created_by: "u",
+    })
+    const src = await meta.createRepoSource({
+      id: newId("rs"),
+      org_id: "local",
+      collection_id: col.id,
+      repo: "acme/prog",
+      ref: "main",
+      includes: "**/*.md",
+      created_by: "u",
+    })
+    tree = [
+      { path: "a.md", sha: "pg-a", type: "blob" },
+      { path: "b.md", sha: "pg-b", type: "blob" },
+    ]
+    blobs["pg-a"] = "# A"
+    blobs["pg-b"] = "# B"
+    const spy = vi.spyOn(meta, "setRepoSourceProgress")
+    await runSync(meta, blobStore, src, NOW)
+    const phases = progressPhases(spy.mock.calls)
+    spy.mockRestore()
+    // Fresh source → first a "listing" (before the count is known), then "mirroring",
+    // then a terminal "done" carrying the full count.
+    expect(phases[0]?.phase).toBe("listing")
+    expect(phases.some((p) => p.phase === "mirroring")).toBe(true)
+    const last = phases.at(-1)
+    expect(last).toMatchObject({ phase: "done", done: 2, total: 2 })
+  })
+
+  it("progress is monotonic across batches (never snaps backward)", async () => {
+    const col = await meta.createCollection({
+      id: newId("col"),
+      org_id: "local",
+      title: "mono",
+      created_by: "u",
+    })
+    const src = await meta.createRepoSource({
+      id: newId("rs"),
+      org_id: "local",
+      collection_id: col.id,
+      repo: "acme/mono",
+      ref: "main",
+      includes: "**/*.md",
+      created_by: "u",
+    })
+    tree = Array.from({ length: 5 }, (_, i) => ({
+      path: `m${i}.md`,
+      sha: `mono-${i}`,
+      type: "blob" as const,
+    }))
+    for (let i = 0; i < 5; i++) blobs[`mono-${i}`] = `# M${i}`
+    const limits = { maxBytes: 1e9, maxFiles: 2, overStorage: async () => false }
+    const spy = vi.spyOn(meta, "setRepoSourceProgress")
+    let s = (await meta.getRepoSource(src.id)) as RepoSourceRecord
+    let r = await runSync(meta, blobStore, s, NOW, limits)
+    let guard = 0
+    while (r.remaining > 0 && guard++ < 10) {
+      s = (await meta.getRepoSource(src.id)) as RepoSourceRecord
+      r = await runSync(meta, blobStore, s, NOW, limits)
+    }
+    const dones = progressPhases(spy.mock.calls).map((p) => p.done)
+    spy.mockRestore()
+    // The floor at the carried-forward count means `done` never drops between the
+    // batches — without it the bar would snap 2→0→4→0 at each batch's listTree.
+    for (let i = 1; i < dones.length; i++)
+      expect(dones[i]).toBeGreaterThanOrEqual(dones[i - 1] as number)
+    expect(dones.at(-1)).toBe(5)
+  })
+
+  it("error path sets progress phase=error", async () => {
+    const col = await meta.createCollection({
+      id: newId("col"),
+      org_id: "local",
+      title: "perr",
+      created_by: "u",
+    })
+    const src = await meta.createRepoSource({
+      id: newId("rs"),
+      org_id: "local",
+      collection_id: col.id,
+      repo: "acme/perr",
+      ref: "main",
+      includes: "**/*.md",
+      created_by: "u",
+    })
+    tree = [{ path: "z.md", sha: "perr-z", type: "blob" }]
+    delete blobs["perr-z"] // missing blob → fetchBlob 404 → runSync throws
+    await expect(runSync(meta, blobStore, src, NOW)).rejects.toThrow()
+    const prog = JSON.parse(
+      (await meta.getRepoSource(src.id))?.progress ?? "null",
+    ) as SyncProgress | null
+    expect(prog?.phase).toBe("error")
   })
 })

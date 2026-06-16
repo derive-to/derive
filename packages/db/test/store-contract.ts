@@ -276,6 +276,26 @@ export function runStoreContract(
       })
       expect(await store.managedArtifactIds(ORG)).toContain(art.id)
 
+      // Live progress: a cheap JSON column the engine writes every batch (the UI bar
+      // polls it). Null until a sync starts; listed cross-org so the Node entry can
+      // resume mid-flight syncs on boot; cleared back to null when done.
+      expect((await store.getRepoSource(src.id, ORG))?.progress).toBeNull()
+      expect(await store.listSyncingRepoSources()).toHaveLength(0)
+      await store.setRepoSourceProgress(
+        src.id,
+        JSON.stringify({
+          phase: "mirroring",
+          done: 3,
+          total: 10,
+          updatedAt: "2026-06-14T00:00:00.000Z",
+        }),
+      )
+      expect((await store.getRepoSource(src.id, ORG))?.progress).toContain('"phase":"mirroring"')
+      expect((await store.listSyncingRepoSources()).map((s) => s.id)).toContain(src.id)
+      await store.setRepoSourceProgress(src.id, null)
+      expect((await store.getRepoSource(src.id, ORG))?.progress).toBeNull()
+      expect(await store.listSyncingRepoSources()).toHaveLength(0)
+
       // Rename re-homes the artifact: retitle + clear any tombstone.
       await store.setArtifactRemoved(art.id, "2026-06-14T00:00:00.000Z")
       await store.setArtifactTitle(art.id, "docs/b.md")

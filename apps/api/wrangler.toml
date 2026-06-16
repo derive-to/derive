@@ -27,6 +27,13 @@ class_name = "ArtifactRoom"
 name = "WEBHOOK_OUTBOX"
 class_name = "WebhookOutbox"
 
+# The GitHub-sync runner (one instance per source, addressed by name). Its alarm
+# mirrors a repo batch-by-batch to completion server-side, so a sync survives the
+# user closing the tab — the edge counterpart to the Node detached batch-loop.
+[[durable_objects.bindings]]
+name = "SYNC_RUNNER"
+class_name = "RepoSyncRunner"
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["ArtifactRoom"]
@@ -34,6 +41,10 @@ new_sqlite_classes = ["ArtifactRoom"]
 [[migrations]]
 tag = "v2"
 new_sqlite_classes = ["WebhookOutbox"]
+
+[[migrations]]
+tag = "v3"
+new_sqlite_classes = ["RepoSyncRunner"]
 
 # Native rate limiting (per-colo). One binding per surface; the worker counts each
 # rate-limited request against the matching binding (apps/api/src/worker.ts). The window

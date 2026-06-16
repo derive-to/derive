@@ -163,6 +163,13 @@ export interface AppDeps {
    * Unset (e.g. tests) = no poke; the interval/cron backstop still drains the outbox.
    */
   pokeWebhooks?: () => void
+  /**
+   * Run a triggered GitHub sync server-side so it survives the user closing the tab.
+   * The edge entry pokes the per-source `RepoSyncRunner` Durable Object; the Node entry
+   * kicks a detached batch-loop. Unset (e.g. tests) ⇒ the route falls back to running
+   * the sync inline to completion, so a "Sync now" still finishes within the request.
+   */
+  startSync?: (sourceId: string) => void
 }
 
 /**

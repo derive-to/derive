@@ -277,6 +277,7 @@ export const repoSource = sqliteTable("repo_source", {
   files: text("files").notNull().default("{}"),
   last_synced_at: text("last_synced_at"),
   last_status: text("last_status"),
+  progress: text("progress"),
   created_by: text("created_by").notNull(),
   created_at: text("created_at").notNull().default(now),
 })

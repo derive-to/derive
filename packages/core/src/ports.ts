@@ -286,10 +286,16 @@ export interface MetaStore {
     id: string,
     fields: { files: string; last_synced_at: string; last_status: string },
   ): Promise<void>
+  /** Write just the live `progress` JSON (cheap, frequent — drives the UI bar). */
+  setRepoSourceProgress(id: string, progress: string | null): Promise<void>
   deleteRepoSource(id: string, orgId: string): Promise<void>
   /** Every source backed by a GitHub App installation, across workspaces — the
    *  webhook router resolves push/repo events to the sources to re-sync. */
   listRepoSourcesByInstallation(installationId: string): Promise<RepoSourceRecord[]>
+  /** Every source with a non-null `progress`, across workspaces — the Node entry
+   *  resumes any left mid-sync on boot (a process restart) so it finishes
+   *  server-side. The caller filters to the still-running phases. */
+  listSyncingRepoSources(): Promise<RepoSourceRecord[]>
   /** Ids of every artifact mirrored from a sync source in this workspace —
    *  drives the read-only gate + the `managed` flag (synced docs aren't editable). */
   managedArtifactIds(orgId: string): Promise<string[]>
@@ -728,6 +734,20 @@ export interface NewCollectionMember {
  * tombstone vanished ones. The token is a read-only PAT (null for public repos)
  * and is never returned to clients (redacted in list responses).
  */
+/** Live, pollable progress for one repo sync (stored as JSON in repo_source.progress).
+ *  `phase` runs queued → listing → mirroring → done|error. The UI renders done/total. */
+export interface SyncProgress {
+  phase: "queued" | "listing" | "mirroring" | "done" | "error"
+  /** Docs mirrored so far. */
+  done: number
+  /** Total matching docs this run (0 until the tree is listed). */
+  total: number
+  /** Error text when phase === "error". */
+  message?: string
+  /** ISO time of this update (drives a "stalled?" check + resume on Node restart). */
+  updatedAt: string
+}
+
 export interface RepoSourceRecord {
   id: string
   org_id: string
@@ -747,6 +767,9 @@ export interface RepoSourceRecord {
   last_synced_at: string | null
   /** "ok" or "error: …" from the last run. */
   last_status: string | null
+  /** Live sync progress as JSON (see SyncProgress): phase + done/total, written
+   *  frequently during a run so the UI can poll a precise bar. Null = never run. */
+  progress: string | null
   created_by: string
   created_at: string
 }
