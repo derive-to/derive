@@ -76,7 +76,7 @@ Then you can publish, read review comments, and run the propose -> review -> rev
 export function Welcome() {
   const { me } = useAuth()
   const nav = useNavigate()
-  // Dev mode swaps the connect snippet for self-host / run-it-yourself instructions.
+  // Self-host mode swaps the connect snippet for run-it-yourself instructions.
   const [devMode, setDevMode] = useState(false)
 
   const publicUrl = useMemo(
@@ -122,15 +122,15 @@ export function Welcome() {
             <div className="text-2xs font-semibold uppercase tracking-wide text-muted-foreground">
               Step 2 · Connect your tools
             </div>
-            {/* Compact Dev mode switch — swaps the snippet in place for the run-it-
-                yourself path. Most people never touch it. */}
+            {/* Compact Self-host mode switch — swaps the snippet in place for the
+                run-it-yourself path. Most people never touch it. */}
             <label className="flex shrink-0 cursor-pointer items-center gap-1.5 text-2xs font-medium text-muted-foreground">
-              <span title="Self-hosting or running Dock locally">Dev mode</span>
+              <span title="Running your own Dock instance">Self-host mode</span>
               <button
                 type="button"
                 role="switch"
                 aria-checked={devMode}
-                aria-label="Dev mode (self-hosting)"
+                aria-label="Self-host mode"
                 data-testid="welcome-dev-toggle"
                 onClick={() => setDevMode((v) => !v)}
                 className={cn(
@@ -302,11 +302,13 @@ function WelcomeProfile() {
               aria-label="Your role"
               value={preset}
               onChange={(e) => setPreset(e.target.value)}
-              className={`${selectClass} w-full`}
+              className={cn(selectClass, "w-full", preset === "" && "text-muted-foreground")}
             >
-              <option value="">Not set</option>
+              <option value="" disabled hidden>
+                Who are you?
+              </option>
               {PROFESSIONS.map((p) => (
-                <option key={p.value} value={p.value}>
+                <option key={p.value} value={p.value} className="text-foreground">
                   {p.value}
                 </option>
               ))}
