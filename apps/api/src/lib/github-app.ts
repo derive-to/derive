@@ -13,8 +13,11 @@ const API_VERSION = "2022-11-28"
 
 const b64url = (b: Buffer | string): string => Buffer.from(b).toString("base64url")
 
-const ghHeaders = (auth: string): Record<string, string> => ({
-  authorization: auth,
+// `auth` is omitted for the manifest-conversion call: that endpoint is
+// unauthenticated (the one-time code is the credential), and sending a bogus
+// Authorization header makes GitHub 401 with "Bad credentials".
+const ghHeaders = (auth?: string): Record<string, string> => ({
+  ...(auth ? { authorization: auth } : {}),
   accept: "application/vnd.github+json",
   "user-agent": UA,
   "x-github-api-version": API_VERSION,
@@ -123,7 +126,7 @@ export interface ManifestConversion {
 export async function convertManifestCode(code: string): Promise<ManifestConversion> {
   const res = await fetch(`${API}/app-manifests/${encodeURIComponent(code)}/conversions`, {
     method: "POST",
-    headers: ghHeaders(`Bearer none`),
+    headers: ghHeaders(),
   })
   if (!res.ok) return raise(res, "creating the GitHub App")
   const d = (await res.json()) as {

@@ -352,10 +352,12 @@ export function createApp(deps: AppDeps): Hono {
       })
       return c.html(setupResultHTML({ ok: true, slug: conv.slug }))
     } catch (err) {
-      log.error("github app manifest conversion failed", {
-        error: err instanceof Error ? err.message : String(err),
-      })
-      return c.html(setupResultHTML({ ok: false, error: "Could not create the GitHub App." }), 502)
+      const detail = err instanceof Error ? err.message : String(err)
+      log.error("github app manifest conversion failed", { error: detail })
+      return c.html(
+        setupResultHTML({ ok: false, error: `Could not create the GitHub App. ${detail}` }),
+        502,
+      )
     }
   })
 
