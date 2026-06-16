@@ -10,8 +10,12 @@ import { installationToken } from "./github-app"
 import { MAX_UPLOAD_BYTES } from "./http"
 import { runSync, type SyncResult } from "./sync"
 
-/** Publishes per batch — bounds one run to a Worker/alarm budget. */
-export const SYNC_BATCH = 50
+/** Publishes per batch — bounds one run to a Worker/alarm budget. With concurrent
+ *  blob prefetch the per-batch wall-clock is no longer fetch-bound, so a larger batch
+ *  is safe: fewer batches means the repo tree is re-listed fewer times and fewer
+ *  inter-alarm gaps. 150 keeps a worst-case all-changed batch under the Workers
+ *  1000-subrequests/invocation ceiling (drop to 100 if that proves tight). */
+export const SYNC_BATCH = 150
 
 /** No-op storage gate (background runs skip the workspace byte cap; the per-file
  *  cap + the artifact-count cap at trigger time still apply). */

@@ -2,6 +2,7 @@ import {
   type ArtifactRecord,
   type BlobStore,
   type MetaStore,
+  mapPoolSettled,
   publish,
   type RepoSourceRecord,
   type SyncProgress,
@@ -10,6 +11,12 @@ import { zipSync } from "fflate"
 import { type BundlePlan, commonDir, planBundle } from "./bundle-from-repo"
 import { sha256 } from "./crypto"
 import { fetchBlob, listTree, matchesGlobs, parseRepo } from "./github"
+
+// How many blob fetches to run concurrently when pre-warming the byte cache. The
+// fetches are the sync's dominant cost; 8-wide collapses ~135s of serial GETs into
+// ~17s while staying well under GitHub's secondary-rate-limit (~100 concurrent) and
+// the Workers per-invocation subrequest ceiling.
+const PREFETCH_CONCURRENCY = 8
 
 /** Per-path mirror state, persisted as JSON in repo_source.files. */
 export interface SyncedFile {
@@ -233,6 +240,23 @@ export async function runSync(
     // bundles reuse their stored membership (no fetch); only new/changed HTML is
     // read + scanned. `consumed` collects the asset paths a bundle owns, so a
     // shared CSS is never ALSO mirrored standalone.
+    // Pre-warm the byte cache (concurrently) for the HTML Phase A will actually read:
+    // the non-stable entries, exactly what the loop below fetches. A cache miss just
+    // falls back to a lazy fetch, so an incomplete prewarm costs latency, never
+    // correctness. (Markdown-only repos warm nothing here; the win is Phase B below.)
+    const htmlToWarm = docs
+      .filter((e) => {
+        if (!isHtml(e.path)) return false
+        const before = prev[e.path]
+        const stable =
+          before?.kind === "bundle" &&
+          before.members?.[e.path] === e.sha &&
+          Object.entries(before.members).every(([p, s]) => shaByPath.get(p) === s)
+        return !stable
+      })
+      .map((e) => e.path)
+    await mapPoolSettled(htmlToWarm, PREFETCH_CONCURRENCY, fetchBytes)
+
     const plans = new Map<string, BundlePlan>()
     const consumed = new Set<string>()
     for (const e of docs) {
@@ -317,6 +341,33 @@ export async function runSync(
       next[repoPath] = { artifact_id: artifact.id, short_id: artifact.short_id, sha, kind, members }
       await onPublished()
     }
+
+    // Pre-warm the byte cache (concurrently) for everything Phase B will fetch: the
+    // changed single files + the members of changed bundles. Mirrors the skip/rename
+    // logic below so we never fetch bytes the loop won't use (skips, unchanged files,
+    // and pure renames fetch nothing), and is bounded by the same per-run cap so a
+    // huge repo doesn't prewarm beyond one batch. This is the dominant speedup.
+    const toWarm = new Set<string>()
+    let warmBudget = limits?.maxFiles ?? Number.POSITIVE_INFINITY
+    for (const e of docs) {
+      if (warmBudget <= 0) break
+      if (consumed.has(e.path)) continue
+      const before = prev[e.path]
+      const plan = plans.get(e.path)
+      if (plan) {
+        const memberShas: Record<string, string> = {}
+        for (const m of plan.members) memberShas[m.repoPath] = shaByPath.get(m.repoPath) ?? ""
+        if (before?.kind === "bundle" && before.sha === compositeSha(memberShas)) continue
+        for (const m of plan.members) toWarm.add(m.repoPath)
+        warmBudget--
+      } else {
+        if (before && before.kind !== "bundle" && before.sha === e.sha) continue
+        if (!before && vanishedBySha.has(e.sha)) continue
+        toWarm.add(e.path)
+        warmBudget--
+      }
+    }
+    await mapPoolSettled([...toWarm], PREFETCH_CONCURRENCY, fetchBytes)
 
     // ---- Phase B: mirror each doc ------------------------------------------
     for (const e of docs) {

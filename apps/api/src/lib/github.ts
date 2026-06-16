@@ -76,6 +76,24 @@ export async function listTree(
   return { entries, truncated: !!data.truncated }
 }
 
+// GitHub's secondary rate limit under concurrency is transient (403/429): honor
+// Retry-After when present, else exponential backoff with jitter, a few attempts,
+// then fall through to the caller's `raise` so error semantics are unchanged. Used
+// by fetchBlob — the hot path that the concurrent prefetch fans out.
+const RETRYABLE = new Set([403, 429])
+const fetchRetrying = async (url: string, init: RequestInit, attempts = 3): Promise<Response> => {
+  for (let attempt = 0; ; attempt++) {
+    const res = await fetch(url, init)
+    if (res.ok || !RETRYABLE.has(res.status) || attempt >= attempts - 1) return res
+    const retryAfter = Number(res.headers.get("retry-after"))
+    const waitMs =
+      Number.isFinite(retryAfter) && retryAfter > 0
+        ? retryAfter * 1000
+        : 300 * 2 ** attempt + Math.floor(Math.random() * 200)
+    await new Promise((resolve) => setTimeout(resolve, waitMs))
+  }
+}
+
 /** Raw bytes of one blob by its git sha. */
 export async function fetchBlob(
   repo: RepoRef,
@@ -83,7 +101,7 @@ export async function fetchBlob(
   token: string | null,
 ): Promise<Uint8Array> {
   const url = `${API}/repos/${repo.owner}/${repo.name}/git/blobs/${sha}`
-  const res = await fetch(url, { headers: headers(token, "application/vnd.github.raw") })
+  const res = await fetchRetrying(url, { headers: headers(token, "application/vnd.github.raw") })
   if (!res.ok) return raise(res, "reading a file")
   return new Uint8Array(await res.arrayBuffer())
 }
