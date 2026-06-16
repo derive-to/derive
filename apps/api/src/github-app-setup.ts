@@ -67,7 +67,10 @@ const manifest = (baseUrl: string, host: string) => ({
   setup_url: new URL("/app/settings?tab=github", baseUrl).toString(),
   public: false,
   default_permissions: { contents: "read", metadata: "read" },
-  default_events: ["push", "installation", "installation_repositories"],
+  // Only permission-backed events go in default_events (push needs contents). The
+  // installation + installation_repositories lifecycle events are delivered to
+  // every App automatically — listing them here is rejected by GitHub.
+  default_events: ["push"],
 })
 
 /**
