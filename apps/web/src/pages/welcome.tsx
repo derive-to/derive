@@ -1,5 +1,5 @@
 import { useNavigate } from "@tanstack/react-router"
-import { Camera, Check, Copy } from "lucide-react"
+import { Camera, Check, ChevronRight, Copy } from "lucide-react"
 import { useMemo, useRef, useState } from "react"
 import { toast } from "sonner"
 import { api } from "@/api"
@@ -7,7 +7,6 @@ import { ProfileFields } from "@/components/profile-fields"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { UsernameForm } from "@/components/username-form"
 import { useAuth } from "@/ctx"
 
@@ -185,31 +184,27 @@ export function Welcome() {
             Step 3 · Connect your tools
           </div>
           <p className="mb-3 mt-1 text-sm text-muted-foreground">
-            Paste this into Claude Code, Codex, ChatGPT, or any agent and it'll connect Dock's MCP
-            server so the agent can publish, review, and revise for you.
+            Paste this into Claude Code, Codex, ChatGPT, or any agent. It connects Dock so the agent
+            can publish, review, and revise for you — one line, then a quick browser sign-in.
           </p>
-          <Tabs defaultValue="hosted">
-            <TabsList>
-              <TabsTrigger value="hosted" data-testid="welcome-tab-hosted">
-                Hosted
-              </TabsTrigger>
-              <TabsTrigger value="self-host" data-testid="welcome-tab-self-host">
-                Self-host
-              </TabsTrigger>
-            </TabsList>
-            <TabsContent value="hosted">
-              <p className="mb-2 text-2xs text-muted-foreground">
-                Connect an agent to the Dock you're already on — one line, then a browser consent.
-              </p>
-              <PromptBlock text={hosted} testid="welcome-prompt-hosted" />
-            </TabsContent>
-            <TabsContent value="self-host">
-              <p className="mb-2 text-2xs text-muted-foreground">
-                Spin up your own Dock first (single container), then point the agent at it.
-              </p>
-              <PromptBlock text={selfHost} testid="welcome-prompt-self-host" />
-            </TabsContent>
-          </Tabs>
+          <PromptBlock text={hosted} testid="welcome-prompt-hosted" />
+
+          {/* Self-hosting is the exception, not the choice — tucked under Advanced so
+              a first-time, non-technical user isn't asked "hosted or self-host?". */}
+          <details className="group mt-3" data-testid="welcome-advanced">
+            <summary className="flex w-fit cursor-pointer list-none items-center gap-1 text-2xs font-medium text-muted-foreground transition-colors hover:text-foreground [&::-webkit-details-marker]:hidden">
+              <ChevronRight
+                className="size-3 transition-transform group-open:rotate-90"
+                aria-hidden
+              />
+              Running your own Dock instead? (advanced)
+            </summary>
+            <p className="mb-2 mt-2 text-2xs text-muted-foreground">
+              Most people don't need this. If you host Dock yourself, this spins it up first, then
+              connects the agent to your instance.
+            </p>
+            <PromptBlock text={selfHost} testid="welcome-prompt-self-host" />
+          </details>
         </Card>
 
         <div className="mt-6 flex items-center justify-between gap-3">
