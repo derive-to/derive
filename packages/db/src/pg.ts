@@ -250,6 +250,18 @@ export class PgMetaStore implements MetaStore {
       .where(and(eq(version.artifact_id, artifactId), eq(version.n, n)))
     return rows[0] ?? null
   }
+  async reclassifyVersion(artifactId: string, n: number, contentType: string): Promise<void> {
+    await this.db
+      .update(version)
+      .set({ content_type: contentType })
+      .where(and(eq(version.artifact_id, artifactId), eq(version.n, n)))
+    // Keep the artifact's denormalized current_content_type in sync when the fixed
+    // version is the current one (the field the viewer reads to pick render mode).
+    await this.db
+      .update(artifact)
+      .set({ current_content_type: contentType })
+      .where(and(eq(artifact.id, artifactId), eq(artifact.current_version, n)))
+  }
 
   async createComment(c: NewComment): Promise<CommentRecord> {
     const rows = await this.db.insert(comment).values(c).returning()

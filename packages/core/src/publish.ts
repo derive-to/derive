@@ -13,6 +13,18 @@ import {
   type Visibility,
 } from "./ports"
 
+/**
+ * Does this content begin like a full HTML document? Used to classify a payload as
+ * text/html even if it carries a .md name (a self-contained HTML report committed
+ * as Markdown would otherwise render blank). Conservative on purpose — it must
+ * START with the doctype/`<html>` marker, so ordinary Markdown that merely embeds
+ * some inline HTML is NOT misclassified.
+ */
+export const looksLikeHtmlDocument = (text: string): boolean => {
+  const head = text.replace(/^﻿/, "").trimStart().slice(0, 256).toLowerCase()
+  return head.startsWith("<!doctype html") || head.startsWith("<html")
+}
+
 export interface PublishInput {
   bytes: Uint8Array
   filename: string
@@ -126,10 +138,17 @@ async function storeContent(
       kind: "bundle",
     }
   }
+  const text = new TextDecoder().decode(bytes)
   let contentType: string
-  if (/\.(md|markdown)$/i.test(filename)) {
+  if (looksLikeHtmlDocument(text)) {
+    // A full HTML document is HTML even when committed with a .md name (common for
+    // self-contained reports synced from a repo). Without this it's tagged
+    // text/markdown and the markdown renderer strips its <head>/<style>/scripts —
+    // i.e. it renders blank. Checked before the extension so the body wins.
+    contentType = "text/html"
+  } else if (/\.(md|markdown)$/i.test(filename)) {
     contentType = "text/markdown"
-  } else if (new TextDecoder().decode(bytes).includes("dock-deck")) {
+  } else if (text.includes("dock-deck")) {
     // Speaks the dock-deck protocol → it's a slide deck. Match the bare protocol
     // name so either quote style (source:'dock-deck' / "dock-deck") is detected.
     contentType = "text/x-dock-deck"
