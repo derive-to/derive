@@ -157,10 +157,15 @@ export function makeAuth(db: AuthDb, baseUrl: string, secret: string, hooks: Aut
       additionalFields: {
         // The public handle (Profiles & Accounts v1). Claimed at onboarding via
         // POST /v1/me/username, so it's server-controlled and never accepted
-        // straight from a sign-up payload (input:false). Unique so two accounts
-        // can't share one; nullable until claimed. Better Auth's migration adds
-        // the column + unique index, and getSession returns it on the user.
-        username: { type: "string", required: false, unique: true, input: false },
+        // straight from a sign-up payload (input:false). Nullable until claimed.
+        // NOT declared `unique` here: Better Auth would render that as a column
+        // constraint, and on an existing DB its migration emits
+        // `ALTER TABLE user ADD COLUMN username TEXT UNIQUE`, which SQLite rejects
+        // ("Cannot add a UNIQUE column"). Instead Better Auth adds a plain column
+        // and ensureAuthIndexes() creates the `user_username` UNIQUE INDEX after
+        // migration — valid on both dialects (multiple NULLs are allowed), and the
+        // hard backstop behind the usernameTaken assignment hook.
+        username: { type: "string", required: false, input: false },
         // Discoverability: when true, the account shows up in people search
         // (GET /v1/users/search). ON by default (GitHub-style — a claimed handle is
         // findable); opt out via POST /v1/me/discoverable. Search treats unset/null

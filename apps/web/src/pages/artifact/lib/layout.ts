@@ -63,9 +63,7 @@ export function parseAnchor(
       suffix?: string
       slide?: number
     }
-    return s.exact
-      ? { exact: s.exact, prefix: s.prefix, suffix: s.suffix, slide: s.slide }
-      : null
+    return s.exact ? { exact: s.exact, prefix: s.prefix, suffix: s.suffix, slide: s.slide } : null
   } catch {
     return null
   }

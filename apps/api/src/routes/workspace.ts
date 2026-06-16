@@ -193,7 +193,7 @@ export const workspaceRoutes = (ctx: AppContext) => {
     if (!me) return fail(c, 401, "unauthenticated")
     const id = c.req.param("id")
     const mem = await meta.getMembership(id, me.id)
-    if (!mem || mem.role !== "owner") return fail(c, 403, "only an admin can delete this workspace")
+    if (mem?.role !== "owner") return fail(c, 403, "only an admin can delete this workspace")
     const mine = await meta.listWorkspaces(me.id)
     if (mine.length <= 1) return fail(c, 409, "you need at least one workspace")
     if ((await meta.countArtifacts(id)) > 0)

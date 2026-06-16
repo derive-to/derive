@@ -51,7 +51,11 @@ console.log(`[d1] applying schema to "${DB}" (${TARGET})`)
 wrangler(["--file", schemaPath])
 
 // 2. Find which columns the live DB is missing (D1 caps compound SELECT, so chunk).
-const chunk = (a, n) => a.reduce((r, _, i) => (i % n ? r : [...r, a.slice(i, i + n)]), [])
+const chunk = (a, n) => {
+  const out = []
+  for (let i = 0; i < a.length; i += n) out.push(a.slice(i, i + n))
+  return out
+}
 const live = {}
 for (const batch of chunk(Object.keys(expected), 5)) {
   const union = batch
@@ -73,7 +77,7 @@ if (alters.length === 0) {
   console.log("[d1] columns already current — nothing to add")
 } else {
   console.log(`[d1] adding ${alters.length} missing column(s):`)
-  for (const a of alters) console.log("  " + a)
+  for (const a of alters) console.log(`  ${a}`)
   wrangler(["--command", alters.join(" ")])
 }
 console.log("[d1] schema up to date")

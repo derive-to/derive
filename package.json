@@ -13,7 +13,7 @@
     "url": "https://github.com/Niftory/dock.build/issues"
   },
   "engines": {
-    "node": ">=22"
+    "node": ">=24"
   },
   "packageManager": "pnpm@10.26.1",
   "pnpm": {
