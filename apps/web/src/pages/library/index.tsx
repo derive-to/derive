@@ -14,6 +14,7 @@ import { type LibraryParams, libraryArtifactsQuery } from "@/lib/queries"
 import { usePrefetchArtifact } from "@/lib/use-prefetch-artifact"
 import { ArtifactGrid } from "./artifact-grid"
 import { CollectionBar } from "./collection-bar"
+import { HowItWorks } from "./how-it-works"
 import { LibrarySkeleton } from "./library-skeleton"
 import { PublishCard } from "./publish-card"
 import { ShareCollectionDialog } from "./share-collection-dialog"
@@ -31,7 +32,7 @@ function LibraryBody() {
   const nav = useNavigate()
   const search = useSearch({ from: "/" })
   const { me } = useAuth()
-  const { summary, collections, refreshSummary } = useShell()
+  const { summary, collections, refreshSummary, workspaces } = useShell()
   const prefetch = usePrefetchArtifact()
   const qc = useQueryClient()
   // The library is the scroll container; the virtualized grid windows against it.
@@ -149,22 +150,44 @@ function LibraryBody() {
     "there"
   const totalCount = summary?.total ?? items.length
   const showGreeting = filter.kind === "all" && !debouncedQ
+  const wsName = workspaces?.workspaces.find((w) => w.id === workspaces.active)?.name
+  // A brand-new, never-published home: lead with the publisher, then a visual guide
+  // (instead of a bare "nothing here" box).
+  const emptyHome =
+    filter.kind === "all" && !debouncedQ && !isPending && !isError && items.length === 0
 
   return (
     <div ref={scrollRef} className="flex-1 overflow-y-auto">
       <div className="mx-auto max-w-[1000px] px-5.5 pb-16 pt-5.5">
         {showGreeting && (
-          <div className="mb-4" data-testid="library-greeting">
-            <h1 className="font-display text-2xl font-semibold text-foreground">
-              {totalCount === 0 ? `Welcome to Dock, ${firstName}.` : `Welcome back, ${firstName}.`}
-            </h1>
-            <p className="mt-0.5 text-sm text-muted-foreground">
-              Your artifacts live here. Publish one below, or run{" "}
-              <code className="rounded bg-muted px-1.5 py-px font-mono text-[0.86em]">
-                dock publish
-              </code>
-              .
-            </p>
+          <div
+            className="mb-4 flex flex-wrap items-start justify-between gap-2"
+            data-testid="library-greeting"
+          >
+            <div>
+              <h1 className="font-display text-2xl font-semibold text-foreground">
+                {totalCount === 0
+                  ? `Welcome to Dock, ${firstName}.`
+                  : `Welcome back, ${firstName}.`}
+              </h1>
+              <p className="mt-0.5 text-sm text-muted-foreground">
+                Your artifacts live here. Publish one below, or run{" "}
+                <code className="rounded bg-muted px-1.5 py-px font-mono text-[0.86em]">
+                  dock publish
+                </code>
+                .
+              </p>
+            </div>
+            {(me?.username || wsName) && (
+              <div className="flex shrink-0 items-center gap-2 pt-1 text-2xs text-muted-foreground">
+                {me?.username && (
+                  <span className="font-medium text-foreground">@{me.username}</span>
+                )}
+                {wsName && (
+                  <span className="rounded-full border border-border px-2 py-0.5">{wsName}</span>
+                )}
+              </div>
+            )}
           </div>
         )}
         <div className="mb-[18px] flex flex-wrap items-center gap-2.5">
@@ -210,10 +233,14 @@ function LibraryBody() {
             onDelete={() => deleteCollection(filter.id)}
           />
         ) : (
-          <h2 className="mb-3.5 font-display text-lg font-semibold">
-            {heading}{" "}
-            <span className="text-base font-normal text-muted-foreground">· {headingCount}</span>
-          </h2>
+          // Hide the "All artifacts · 0" heading on a brand-new empty home — the
+          // visual guide carries it instead.
+          !emptyHome && (
+            <h2 className="mb-3.5 font-display text-lg font-semibold">
+              {heading}{" "}
+              <span className="text-base font-normal text-muted-foreground">· {headingCount}</span>
+            </h2>
+          )
         )}
 
         {isPending ? (
@@ -233,7 +260,11 @@ function LibraryBody() {
             </div>
           </EmptyState>
         ) : items.length === 0 ? (
-          <EmptyState>{emptyMessage}</EmptyState>
+          emptyHome ? (
+            <HowItWorks />
+          ) : (
+            <EmptyState>{emptyMessage}</EmptyState>
+          )
         ) : (
           <>
             <ArtifactGrid

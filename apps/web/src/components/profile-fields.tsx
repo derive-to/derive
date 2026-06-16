@@ -30,8 +30,8 @@ const presetFor = (p: string | null): string => {
   return PRESET_VALUES.includes(p) ? p : OTHER
 }
 
-// Role + "what you do" editor, shared by onboarding (ProfileSetupCard) and
-// Settings → Profile. Self-contained: reads the current values off `me`, saves via
+// Role + "what you do" editor used in Settings → Profile (onboarding has its own
+// unified form). Self-contained: reads the current values off `me`, saves via
 // POST /v1/me/profile, and pushes the result back into the auth context. Both
 // fields are optional — saving with everything blank simply clears them.
 export function ProfileFields({ onSaved }: { onSaved?: () => void }) {
