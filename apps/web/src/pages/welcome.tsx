@@ -1,5 +1,5 @@
 import { useNavigate } from "@tanstack/react-router"
-import { Camera, Check, ChevronRight, Copy } from "lucide-react"
+import { Camera, Check, Copy } from "lucide-react"
 import { useMemo, useRef, useState } from "react"
 import { toast } from "sonner"
 import { api } from "@/api"
@@ -71,13 +71,15 @@ export function Welcome() {
   const nav = useNavigate()
   const fileRef = useRef<HTMLInputElement>(null)
   const [uploading, setUploading] = useState(false)
+  // Dev mode swaps the connect snippet for self-host / run-it-yourself instructions.
+  const [devMode, setDevMode] = useState(false)
 
   const publicUrl = useMemo(
     () => (typeof window !== "undefined" ? publicUrlOf(window.location.origin) : PLACEHOLDER_URL),
     [],
   )
-  const hosted = useMemo(() => hostedPrompt(publicUrl), [publicUrl])
-  const selfHost = useMemo(() => selfHostPrompt(), [])
+  const hostedText = useMemo(() => hostedPrompt(publicUrl), [publicUrl])
+  const devText = useMemo(() => selfHostPrompt(), [])
 
   if (!me) return null
 
@@ -187,24 +189,37 @@ export function Welcome() {
             Paste this into Claude Code, Codex, ChatGPT, or any agent. It connects Dock so the agent
             can publish, review, and revise for you — one line, then a quick browser sign-in.
           </p>
-          <PromptBlock text={hosted} testid="welcome-prompt-hosted" />
 
-          {/* Self-hosting is the exception, not the choice — tucked under Advanced so
-              a first-time, non-technical user isn't asked "hosted or self-host?". */}
-          <details className="group mt-3" data-testid="welcome-advanced">
-            <summary className="flex w-fit cursor-pointer list-none items-center gap-1 text-2xs font-medium text-muted-foreground transition-colors hover:text-foreground [&::-webkit-details-marker]:hidden">
-              <ChevronRight
-                className="size-3 transition-transform group-open:rotate-90"
-                aria-hidden
+          {/* One block; Dev mode swaps it in place. Most people never touch the toggle —
+              they just copy the connect snippet. Dev mode is the run-it-yourself path. */}
+          <PromptBlock
+            key={devMode ? "dev" : "hosted"}
+            text={devMode ? devText : hostedText}
+            testid="welcome-prompt"
+          />
+
+          <label className="mt-3 flex w-fit cursor-pointer items-center gap-2 text-2xs text-muted-foreground">
+            <button
+              type="button"
+              role="switch"
+              aria-checked={devMode}
+              data-testid="welcome-dev-toggle"
+              onClick={() => setDevMode((v) => !v)}
+              className={`relative h-5 w-9 shrink-0 rounded-full transition-colors ${
+                devMode ? "bg-primary" : "bg-input"
+              }`}
+            >
+              <span
+                className={`absolute top-0.5 size-4 rounded-full bg-white shadow-sm transition-transform ${
+                  devMode ? "translate-x-4" : "translate-x-0.5"
+                }`}
               />
-              Running your own Dock instead? (advanced)
-            </summary>
-            <p className="mb-2 mt-2 text-2xs text-muted-foreground">
-              Most people don't need this. If you host Dock yourself, this spins it up first, then
-              connects the agent to your instance.
-            </p>
-            <PromptBlock text={selfHost} testid="welcome-prompt-self-host" />
-          </details>
+            </button>
+            <span>
+              <span className="font-medium text-foreground">Dev mode</span> — self-hosting or running
+              Dock locally
+            </span>
+          </label>
         </Card>
 
         <div className="mt-6 flex items-center justify-between gap-3">
