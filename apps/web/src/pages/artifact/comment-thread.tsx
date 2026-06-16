@@ -218,8 +218,7 @@ export function CommentCard({
   const recordedSlide = parseAnchor(root.anchor)?.slide
   const landedSlide = landedSlides?.[root.thread_id]
   const slideNum = landedSlide != null ? landedSlide : recordedSlide
-  const slideMoved =
-    recordedSlide != null && landedSlide != null && landedSlide !== recordedSlide
+  const slideMoved = recordedSlide != null && landedSlide != null && landedSlide !== recordedSlide
 
   return (
     // biome-ignore lint/a11y/noStaticElementInteractions: click-to-activate convenience; the card's own buttons are keyboard-accessible

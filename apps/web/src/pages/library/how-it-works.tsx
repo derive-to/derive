@@ -40,7 +40,7 @@ export function HowItWorks() {
             <div className="rounded-md border border-border bg-background p-2">
               <div className="flex items-center justify-between gap-2">
                 <div className="h-1.5 w-12 rounded-full bg-foreground/70" />
-                <span className="rounded bg-primary/15 px-1.5 py-0.5 text-[9px] font-medium text-primary">
+                <span className="rounded bg-primary/15 px-1.5 py-0.5 text-2xs font-medium text-primary">
                   Share
                 </span>
               </div>
@@ -65,11 +65,11 @@ export function HowItWorks() {
                 <span className="h-1 flex-1 rounded-full bg-foreground/15" />
               </div>
               <div className="mt-1.5 flex items-center gap-1">
-                <span className="rounded-md border border-border bg-card px-1.5 py-0.5 text-[9px] text-muted-foreground">
+                <span className="rounded-md border border-border bg-card px-1.5 py-0.5 text-2xs text-muted-foreground">
                   💬 @priya
                 </span>
                 <ArrowRight className="size-2.5 text-muted-foreground" aria-hidden />
-                <span className="rounded bg-foreground/10 px-1.5 py-0.5 font-mono text-[9px] text-foreground">
+                <span className="rounded bg-foreground/10 px-1.5 py-0.5 font-mono text-2xs text-foreground">
                   v2
                 </span>
               </div>
@@ -111,7 +111,7 @@ const Mock = ({ children }: { children: ReactNode }) => (
 )
 
 const Chip = ({ children }: { children: ReactNode }) => (
-  <span className="rounded-full bg-accent/15 px-1.5 py-0.5 text-[9px] font-medium text-accent-foreground">
+  <span className="rounded-full bg-accent/15 px-1.5 py-0.5 text-2xs font-medium text-accent-foreground">
     {children}
   </span>
 )

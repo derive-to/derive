@@ -77,8 +77,7 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
         tx.insert(version)
           .values({ ...v, artifact_id: artifactId, n: next })
           .run()
-        tx
-          .update(artifact)
+        tx.update(artifact)
           .set({ current_version: next, current_content_type: v.content_type })
           .where(eq(artifact.id, artifactId))
           .run()

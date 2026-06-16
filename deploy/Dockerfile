@@ -1,7 +1,7 @@
 # Dock — one self-contained container: the publish API, comment + review loops,
 # the sandboxed artifact viewer, AND the web app, all on one origin. Point a
 # domain at it and you have a working Dock. (Scale-out split: see DEPLOY.md.)
-FROM node:22-slim AS base
+FROM node:24-slim AS base
 ENV CI=true
 RUN corepack enable
 WORKDIR /app
