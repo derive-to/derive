@@ -367,6 +367,11 @@ export interface MetaStore {
   ): Promise<ReportRecord[]>
   countOpenReports(orgId: string | undefined): Promise<number>
   setReportState(id: string, state: ReportState, orgId?: string): Promise<void>
+  /** Hard-delete an artifact and all its dependent rows (versions, comments,
+   *  proposals, memberships, favorites, tags, collection items, domains, etc.).
+   *  Ownership check is the caller's responsibility. For moderation takedowns
+   *  use setArtifactRemoved() instead — that tombstones without deleting. */
+  deleteArtifact(id: string, orgId: string): Promise<void>
   /** Set or clear an artifact's takedown tombstone (the record is never deleted). */
   setArtifactRemoved(id: string, removedAt: string | null): Promise<void>
   /** Take an artifact down atomically: tombstone the artifact, resolve every open

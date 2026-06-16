@@ -484,6 +484,9 @@ export const api = {
   setTags: (id: string, tags: string[]): Promise<{ tags: string[] }> =>
     f(`/v1/artifacts/${id}/tags`, { ...opts({ tags }), method: "PUT" }).then(j),
 
+  deleteArtifact: (id: string): Promise<void> =>
+    f(`/v1/artifacts/${id}`, { method: "DELETE", credentials: "include" }).then(() => undefined),
+
   report: (id: string, reason: string, detail?: string): Promise<{ ok: boolean }> =>
     f(`/v1/artifacts/${id}/report`, opts({ reason, detail })).then(j),
   listReports: (): Promise<{ reports: Report[]; open: number }> => f("/v1/reports", opts()).then(j),

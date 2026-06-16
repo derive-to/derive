@@ -985,6 +985,23 @@ export function makeRepos(db: SqliteDb) {
   const createAuditLog = async (a: NewAuditLog): Promise<void> => {
     await db.insert(auditLog).values(a).run()
   }
+  // Sequential cascade (used by D1). better-sqlite3 + pg override with a transaction.
+  const deleteArtifact = async (id: string): Promise<void> => {
+    // Delete FK-referencing tables before the artifact row itself.
+    await db.delete(version).where(eq(version.artifact_id, id)).run()
+    await db.delete(comment).where(eq(comment.artifact_id, id)).run()
+    await db.delete(artifactMember).where(eq(artifactMember.artifact_id, id)).run()
+    await db.delete(artifactFavorite).where(eq(artifactFavorite.artifact_id, id)).run()
+    await db.delete(artifactTag).where(eq(artifactTag.artifact_id, id)).run()
+    await db.delete(collectionItem).where(eq(collectionItem.artifact_id, id)).run()
+    await db.delete(domain).where(eq(domain.artifact_id, id)).run()
+    await db.delete(proposal).where(eq(proposal.artifact_id, id)).run()
+    await db.delete(report).where(eq(report.artifact_id, id)).run()
+    await db.delete(notification).where(eq(notification.artifact_id, id)).run()
+    await db.delete(agentMention).where(eq(agentMention.artifact_id, id)).run()
+    await db.delete(artifact).where(eq(artifact.id, id)).run()
+  }
+
   // Sequential takedown (used by D1, which has no multi-statement transaction in
   // this driver). better-sqlite3 + pg override this with a real transaction; the
   // single bulk report UPDATE (vs the old per-report loop) is the same here.
@@ -1037,6 +1054,7 @@ export function makeRepos(db: SqliteDb) {
     countArtifacts,
     storageBytes,
     tagCounts,
+    deleteArtifact,
     setArtifactRemoved,
     setArtifactTitle,
     createComment,
