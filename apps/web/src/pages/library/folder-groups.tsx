@@ -74,6 +74,7 @@ function FolderSection({ dir, items, ...handlers }: { dir: string; items: Artifa
     <div>
       <button
         type="button"
+        data-testid={`folder-toggle-${dir}`}
         onClick={() => setOpen((o) => !o)}
         className="flex w-full items-center gap-2 rounded-md py-1.5 text-left hover:text-foreground"
       >

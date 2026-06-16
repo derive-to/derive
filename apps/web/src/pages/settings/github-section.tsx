@@ -155,7 +155,7 @@ function SetUpApp() {
           mirror. No tokens to paste, and pushes sync automatically.
         </p>
       </div>
-      <Button variant="primary" asChild>
+      <Button variant="primary" asChild data-testid="github-setup-app">
         <a href="/settings/github/app/new">Set up GitHub App</a>
       </Button>
     </Card>
@@ -187,7 +187,7 @@ function ConnectViaApp({
   return (
     <Card className="flex flex-col gap-3 p-4">
       <div className="flex items-start gap-3">
-        <CheckCircle2 className="mt-0.5 size-5 shrink-0 text-green-500" aria-hidden />
+        <CheckCircle2 className="mt-0.5 size-5 shrink-0 text-success" aria-hidden />
         <div className="flex-1">
           <div className="text-sm font-semibold text-foreground">GitHub connected</div>
           <p className="mt-0.5 text-sm text-muted-foreground">
@@ -211,6 +211,7 @@ function ConnectViaApp({
           {status.installations.map((i) => (
             <Button
               key={i.installation_id}
+              data-testid="github-pick-installation"
               variant="primary"
               size="sm"
               onClick={() => onPick(i.installation_id)}
@@ -327,6 +328,7 @@ function RepoPicker({
                     <input
                       type="radio"
                       name="gh-repo"
+                      data-testid="github-repo-radio"
                       checked={repo === r.full_name}
                       onChange={() => setRepo(r.full_name)}
                     />
@@ -348,16 +350,27 @@ function RepoPicker({
             <div className="flex flex-wrap items-center gap-3">
               <span className="text-xs font-medium text-muted-foreground">Include:</span>
               <label className="flex cursor-pointer items-center gap-1.5 text-sm">
-                <input type="checkbox" checked={md} onChange={(e) => setMd(e.target.checked)} />{" "}
+                <input
+                  type="checkbox"
+                  data-testid="github-include-md"
+                  checked={md}
+                  onChange={(e) => setMd(e.target.checked)}
+                />{" "}
                 Markdown
               </label>
               <label className="flex cursor-pointer items-center gap-1.5 text-sm">
-                <input type="checkbox" checked={html} onChange={(e) => setHtml(e.target.checked)} />{" "}
+                <input
+                  type="checkbox"
+                  data-testid="github-include-html"
+                  checked={html}
+                  onChange={(e) => setHtml(e.target.checked)}
+                />{" "}
                 HTML
               </label>
             </div>
             <Input
               aria-label="Folder to scope to"
+              data-testid="github-folder"
               value={folder}
               onChange={(e) => setFolder(e.target.value)}
               placeholder="folder (optional, e.g. docs) — blank = whole repo"
@@ -384,7 +397,7 @@ function RepoPicker({
         )}
 
         <div className="mt-2 flex justify-end gap-2">
-          <Button variant="ghost" onClick={onClose} disabled={busy}>
+          <Button variant="ghost" data-testid="github-cancel" onClick={onClose} disabled={busy}>
             Cancel
           </Button>
           <Button
@@ -544,7 +557,12 @@ function AdvancedPat({
   }
   return (
     <div className="mt-4">
-      <Button variant="link" className="h-auto p-0 text-xs" onClick={() => setOpen((o) => !o)}>
+      <Button
+        variant="link"
+        data-testid="github-advanced-toggle"
+        className="h-auto p-0 text-xs"
+        onClick={() => setOpen((o) => !o)}
+      >
         {open ? "Hide advanced" : "Advanced: connect with a token or a public repo"}
       </Button>
       {open && (

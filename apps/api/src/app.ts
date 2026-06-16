@@ -335,7 +335,7 @@ export function createApp(deps: AppDeps): Hono {
     if (!deps.encryptionKey || !code)
       return c.html(setupResultHTML({ ok: false, error: "Missing setup code." }), 400)
     const state = verifyState<{ kind?: string }>(stateRaw, deps.encryptionKey)
-    if (!state || state.kind !== "app-manifest")
+    if (state?.kind !== "app-manifest")
       return c.html(setupResultHTML({ ok: false, error: "This setup link has expired." }), 400)
     try {
       const conv = await convertManifestCode(code)
