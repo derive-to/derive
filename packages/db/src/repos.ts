@@ -300,6 +300,25 @@ export function makeRepos(db: SqliteDb) {
       .orderBy(asc(version.n))
       .all()
 
+  const reclassifyVersion = async (
+    artifactId: string,
+    n: number,
+    contentType: string,
+  ): Promise<void> => {
+    await db
+      .update(version)
+      .set({ content_type: contentType })
+      .where(and(eq(version.artifact_id, artifactId), eq(version.n, n)))
+      .run()
+    // Keep the artifact's denormalized current_content_type in sync when the fixed
+    // version is the current one (it's the field the viewer reads to pick render mode).
+    await db
+      .update(artifact)
+      .set({ current_content_type: contentType })
+      .where(and(eq(artifact.id, artifactId), eq(artifact.current_version, n)))
+      .run()
+  }
+
   const listArtifacts = async (opts?: ListArtifactsOpts): Promise<ArtifactRecord[]> => {
     if (opts?.ids && opts.ids.length === 0) return []
     const conds = artifactListConditions(artifact, opts)
@@ -1157,6 +1176,7 @@ export function makeRepos(db: SqliteDb) {
     addVersion,
     listVersions,
     getVersion,
+    reclassifyVersion,
     listArtifacts,
     artifactIdsByTag,
     countArtifacts,
