@@ -64,6 +64,21 @@ const auth = makeAuth(authDb, cfg.baseUrl, authSecret, {
 })
 await migrateAuth(auth)
 
+// Better Auth adds the `username` column but can't make it UNIQUE on an existing
+// table: its migration would emit `ALTER TABLE user ADD COLUMN username TEXT UNIQUE`,
+// which SQLite rejects ("Cannot add a UNIQUE column"). Create the unique index here
+// instead — idempotent, both dialects, and NULL-tolerant so unclaimed handles don't
+// collide. This is the hard backstop behind the usernameTaken assignment hook.
+if (cfg.databaseUrl) {
+  await (authDb as Pool).query(
+    `CREATE UNIQUE INDEX IF NOT EXISTS user_username ON "user" (username)`,
+  )
+} else {
+  ;(authDb as Database.Database)
+    .prepare(`CREATE UNIQUE INDEX IF NOT EXISTS user_username ON "user" (username)`)
+    .run()
+}
+
 const defaultOrg = resolveDefaultOrg(cfg.dataDir)
 
 // One-time rekey of the pre-multi-workspace "local" sentinel onto the real
