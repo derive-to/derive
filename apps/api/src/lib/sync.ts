@@ -10,7 +10,14 @@ import {
 import { zipSync } from "fflate"
 import { type BundlePlan, commonDir, planBundle } from "./bundle-from-repo"
 import { sha256 } from "./crypto"
-import { fetchBlob, fetchBlobsBatch, lastCommitDate, listTree, matchesGlobs, parseRepo } from "./github"
+import {
+  fetchBlob,
+  fetchBlobsBatch,
+  lastCommitDate,
+  listTree,
+  matchesGlobs,
+  parseRepo,
+} from "./github"
 
 // Pre-warm the byte cache via BATCHED GraphQL reads rather than one GET per file:
 // GitHub bills an aliased multi-blob query at ~1 rate-limit point (vs 1 per file) and
