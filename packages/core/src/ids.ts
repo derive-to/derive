@@ -32,3 +32,15 @@ export const parseRef = (ref: string): { shortId: string; version?: number } => 
   const shortId = id.test(last) ? last : id.test(first) ? first : base
   return { shortId, version: v ? Number(v) : undefined }
 }
+
+/** Build a readable `/a/:ref`: `<name>-<shortId>`, the name from an explicit slug or
+ *  the current title. Decorative — `parseRef` resolves by the trailing short id, so
+ *  renames and stale names still resolve. */
+export const refFor = (a: {
+  short_id: string
+  slug?: string | null
+  title?: string | null
+}): string => {
+  const name = a.slug || (a.title ? slugify(a.title) : "")
+  return name ? `${name}-${a.short_id}` : a.short_id
+}

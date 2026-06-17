@@ -13,3 +13,22 @@ export const parseRef = (ref: string): { shortId: string; version?: number } => 
   const shortId = id.test(last) ? last : id.test(first) ? first : base
   return { shortId, version: v ? Number(v) : undefined }
 }
+
+// Mirrors core's slugify (kept local so the client bundle doesn't pull in core).
+const slugify = (s: string): string =>
+  s
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 48)
+
+/** Readable `/a/:ref`: `<name>-<shortId>`. Name from an explicit slug or the current
+ *  title; decorative (parseRef resolves by the short id), so renames still work. */
+export const refFor = (a: {
+  short_id: string
+  slug?: string | null
+  title?: string | null
+}): string => {
+  const name = a.slug || (a.title ? slugify(a.title) : "")
+  return name ? `${name}-${a.short_id}` : a.short_id
+}

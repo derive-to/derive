@@ -1,5 +1,5 @@
 import { createHmac, randomUUID } from "node:crypto"
-import type { ArtifactRecord, DeliveryRecord, MetaStore } from "@dock/core"
+import { type ArtifactRecord, artifactUrl, type DeliveryRecord, type MetaStore } from "@dock/core"
 import type { WebhookEvent } from "./events"
 import { isPrivateAddress } from "./lib/net"
 import { log } from "./log"
@@ -69,7 +69,7 @@ export function buildPayload(
     artifact: {
       short_id: artifact.short_id,
       title: artifact.title,
-      url: `${baseUrl}/a/${artifact.short_id}`,
+      url: artifactUrl(baseUrl, artifact),
     },
     data,
   }

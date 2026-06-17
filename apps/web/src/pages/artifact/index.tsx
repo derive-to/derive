@@ -24,7 +24,7 @@ import { ArtifactTopBar } from "./artifact-top-bar"
 import { ActionsCtx } from "./comment-actions"
 import { canCommentWithRole, shouldPromptSignInToComment } from "./lib/comment-access"
 import { groupThreads, parseAnchor } from "./lib/layout"
-import { parseRef } from "./parse-ref"
+import { parseRef, refFor } from "./parse-ref"
 import { PasswordGate } from "./password-gate"
 import { Presence } from "./rail-deck"
 import { SourceEditor } from "./source-editor"
@@ -332,7 +332,8 @@ export function Artifact() {
     post,
     load,
     refetchComments,
-    onRestoredJump: () => nav({ to: "/a/$ref", params: { ref: shortId } }),
+    onRestoredJump: () =>
+      nav({ to: "/a/$ref", params: { ref: refFor({ short_id: shortId, title: art.title }) } }),
     setEditing,
     setSrc,
     setTitle: setEditTitle,
@@ -448,12 +449,13 @@ export function Artifact() {
             <HistoryDrawer
               art={art}
               shown={shown}
-              goTo={(n) =>
+              goTo={(n) => {
+                const base = refFor({ short_id: shortId, title: art.title })
                 nav({
                   to: "/a/$ref",
-                  params: { ref: n === art.current_version ? shortId : `${shortId}@v${n}` },
+                  params: { ref: n === art.current_version ? base : `${base}@v${n}` },
                 })
-              }
+              }}
               open
               onOpenChange={(o) => setSurface(o ? "history" : null)}
             />
@@ -504,7 +506,12 @@ export function Artifact() {
                 onFrameLoad={onFrameLoad}
                 onToggleDiff={() => setView(view === "diff" ? "preview" : "diff")}
                 onRestore={() => restore(shown)}
-                onBackToCurrent={() => nav({ to: "/a/$ref", params: { ref: shortId } })}
+                onBackToCurrent={() =>
+                  nav({
+                    to: "/a/$ref",
+                    params: { ref: refFor({ short_id: shortId, title: art.title }) },
+                  })
+                }
                 onDeckPrev={() => deckCmd("prev")}
                 onDeckNext={() => deckCmd("next")}
                 onFullscreen={toggleFullscreen}
@@ -529,7 +536,12 @@ export function Artifact() {
             {promptSignInToComment && (
               <button
                 type="button"
-                onClick={() => nav({ to: "/login", search: { return_to: `/a/${shortId}` } })}
+                onClick={() =>
+                  nav({
+                    to: "/login",
+                    search: { return_to: `/a/${refFor({ short_id: shortId, title: art.title })}` },
+                  })
+                }
                 title="Sign in to comment"
                 data-testid="sign-in-to-comment"
                 className="absolute bottom-[18px] right-[18px] flex h-11 items-center gap-2 rounded-full border border-border bg-card px-4 text-sm font-semibold text-foreground shadow-[var(--shadow)]"

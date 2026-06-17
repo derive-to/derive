@@ -13,6 +13,7 @@ import { useAuth } from "@/ctx"
 import { type LibraryParams, libraryArtifactsQuery, sharedArtifactsQuery } from "@/lib/queries"
 import { usePrefetchArtifact } from "@/lib/use-prefetch-artifact"
 import { cn } from "@/lib/utils"
+import { refFor } from "../artifact/parse-ref"
 import { ArtifactCard } from "./artifact-card"
 import { ArtifactGrid } from "./artifact-grid"
 import { ArtifactRow, byRecency } from "./artifact-row"
@@ -317,7 +318,7 @@ function LibraryBody() {
                 <ArtifactCard
                   key={a.short_id}
                   artifact={a}
-                  onOpen={() => nav({ to: "/a/$ref", params: { ref: a.short_id } })}
+                  onOpen={() => nav({ to: "/a/$ref", params: { ref: refFor(a) } })}
                   onToggleFavorite={() => openShared(a)}
                   onPickTag={(tag) => nav({ to: "/", search: { tag } })}
                   onPrefetch={() => prefetch(a.short_id, a.current_version)}
@@ -408,7 +409,7 @@ function LibraryBody() {
                 hasNextPage={!!hasNextPage}
                 isFetchingNextPage={isFetchingNextPage}
                 onLoadMore={() => fetchNextPage()}
-                onOpen={(a) => nav({ to: "/a/$ref", params: { ref: a.short_id } })}
+                onOpen={(a) => nav({ to: "/a/$ref", params: { ref: refFor(a) } })}
                 onToggleFavorite={toggleFav}
                 onPickTag={(tag) => nav({ to: "/", search: { tag } })}
                 onPrefetch={(a) => prefetch(a.short_id, a.current_version)}
@@ -419,7 +420,7 @@ function LibraryBody() {
                   <ArtifactRow
                     key={a.short_id}
                     artifact={a}
-                    onOpen={() => nav({ to: "/a/$ref", params: { ref: a.short_id } })}
+                    onOpen={() => nav({ to: "/a/$ref", params: { ref: refFor(a) } })}
                     onToggleFavorite={() => toggleFav(a)}
                     onPickTag={(tag) => nav({ to: "/", search: { tag } })}
                     onDelete={() => deleteArtifact(a)}
@@ -442,7 +443,7 @@ function LibraryBody() {
               hasNextPage={!!hasNextPage}
               isFetchingNextPage={isFetchingNextPage}
               onLoadMore={() => fetchNextPage()}
-              onOpen={(a) => nav({ to: "/a/$ref", params: { ref: a.short_id } })}
+              onOpen={(a) => nav({ to: "/a/$ref", params: { ref: refFor(a) } })}
               onToggleFavorite={toggleFav}
               onPickTag={(tag) => nav({ to: "/", search: { tag } })}
               onDelete={deleteArtifact}
