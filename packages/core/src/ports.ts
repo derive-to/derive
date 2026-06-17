@@ -436,6 +436,10 @@ export interface MetaStore {
   setArtifactTitle(id: string, title: string): Promise<void>
   /** Set the repo path of a GitHub-synced artifact (its folder/tree "location"). */
   setArtifactSourcePath(id: string, sourcePath: string | null): Promise<void>
+  /** Override "updated_at" with an external timestamp (a synced file's last-commit
+   *  date), so the card's "updated" reflects the SOURCE's last change, not when Dock
+   *  ingested it. Publish bumps updated_at to now; the sync calls this after to correct it. */
+  setArtifactUpdatedAt(id: string, updatedAt: string): Promise<void>
   createAuditLog(a: NewAuditLog): Promise<void>
   /** Moderation history, newest first. One workspace's, or — super-admin, orgId
    *  undefined — the whole instance's. Optionally narrowed to one artifact. */

@@ -76,6 +76,31 @@ export async function listTree(
   return { entries, truncated: !!data.truncated }
 }
 
+/**
+ * The committer date of the most recent commit that touched `path` on `ref` — the
+ * file's true last-change time, which drives a synced artifact's "updated" (the git
+ * tree carries no dates, so this is a separate call). Best-effort: returns null on any
+ * error or an empty history so a date lookup can never fail a sync.
+ */
+export async function lastCommitDate(
+  repo: RepoRef,
+  path: string,
+  ref: string,
+  token: string | null,
+): Promise<string | null> {
+  const url = `${API}/repos/${repo.owner}/${repo.name}/commits?path=${encodeURIComponent(
+    path,
+  )}&sha=${encodeURIComponent(ref)}&per_page=1`
+  try {
+    const res = await fetch(url, { headers: headers(token, "application/vnd.github+json") })
+    if (!res.ok) return null
+    const data = (await res.json()) as { commit?: { committer?: { date?: string } } }[]
+    return data[0]?.commit?.committer?.date ?? null
+  } catch {
+    return null
+  }
+}
+
 /** Raw bytes of one blob by its git sha. */
 export async function fetchBlob(
   repo: RepoRef,

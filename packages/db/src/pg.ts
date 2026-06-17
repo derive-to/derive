@@ -1245,6 +1245,9 @@ export class PgMetaStore implements MetaStore {
   async setArtifactSourcePath(id: string, sourcePath: string | null): Promise<void> {
     await this.db.update(artifact).set({ source_path: sourcePath }).where(eq(artifact.id, id))
   }
+  async setArtifactUpdatedAt(id: string, updatedAt: string): Promise<void> {
+    await this.db.update(artifact).set({ updated_at: updatedAt }).where(eq(artifact.id, id))
+  }
   async createAuditLog(a: NewAuditLog): Promise<void> {
     await this.db.insert(auditLog).values(a)
   }
