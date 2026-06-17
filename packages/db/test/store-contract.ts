@@ -226,6 +226,13 @@ export function runStoreContract(
       expect(await store.collectionIdsForArtifact(a.id)).toContain(col.id)
       expect((await store.listCollections(ORG)).find((c) => c.id === col.id)?.count).toBe(1)
 
+      // listArtifacts scopes to a collection by JOIN (not an id IN(...) of every member):
+      // it returns only members, and an artifact outside the collection is excluded.
+      const outside = await store.createArtifact(newArtifact())
+      const inCol = await store.listArtifacts({ collectionId: col.id, orgId: ORG })
+      expect(inCol.map((x) => x.id)).toContain(a.id)
+      expect(inCol.map((x) => x.id)).not.toContain(outside.id)
+
       await store.setCollectionMember({
         id: uuid(),
         collection_id: col.id,

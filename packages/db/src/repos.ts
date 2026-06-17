@@ -55,6 +55,7 @@ import {
   count,
   desc,
   eq,
+  getTableColumns,
   inArray,
   isNotNull,
   isNull,
@@ -322,6 +323,18 @@ export function makeRepos(db: SqliteDb) {
   const listArtifacts = async (opts?: ListArtifactsOpts): Promise<ArtifactRecord[]> => {
     if (opts?.ids && opts.ids.length === 0) return []
     const conds = artifactListConditions(artifact, opts)
+    // Collection scope is a JOIN, never an `id IN (…members)`: a big collection would
+    // otherwise bind one parameter per member and trip D1's 100-param cap (a 500).
+    if (opts?.collectionId) {
+      conds.push(eq(collectionItem.collection_id, opts.collectionId))
+      const rows = db
+        .select(getTableColumns(artifact))
+        .from(artifact)
+        .innerJoin(collectionItem, eq(collectionItem.artifact_id, artifact.id))
+        .where(and(...conds))
+        .orderBy(desc(artifact.created_at), desc(artifact.id))
+      return opts.limit ? rows.limit(opts.limit).all() : rows.all()
+    }
     const rows = db
       .select()
       .from(artifact)
