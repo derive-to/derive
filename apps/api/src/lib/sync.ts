@@ -10,7 +10,7 @@ import {
 import { zipSync } from "fflate"
 import { type BundlePlan, commonDir, planBundle } from "./bundle-from-repo"
 import { sha256 } from "./crypto"
-import { fetchBlob, fetchBlobsBatch, listTree, matchesGlobs, parseRepo } from "./github"
+import { fetchBlob, fetchBlobsBatch, lastCommitDate, listTree, matchesGlobs, parseRepo } from "./github"
 
 // Pre-warm the byte cache via BATCHED GraphQL reads rather than one GET per file:
 // GitHub bills an aliased multi-blob query at ~1 rate-limit point (vs 1 per file) and
@@ -37,6 +37,11 @@ export interface SyncedFile {
   /** For a bundle: each member's repo path → its blob sha, so we can tell which
    *  members changed and reconstruct the bundle without re-scanning when stable. */
   members?: Record<string, string>
+  /** The source file's last-commit date, mirrored into the artifact's `updated_at`
+   *  (so the card shows the SOURCE's last change, not Dock's ingest time). Set the
+   *  first time we resolve it; `""` records an attempt that found none (so we don't
+   *  retry forever); absent means not yet sourced → the date backfill will fill it. */
+  updatedAt?: string
 }
 type FileMap = Record<string, SyncedFile>
 
@@ -207,6 +212,28 @@ export async function runSync(
       await persist(`syncing ${processed} files…`)
       await writeProgress("mirroring")
     }
+  }
+
+  // Mirror the source file's last-commit date into the artifact's `updated_at`, so the
+  // card shows when the SOURCE last changed, not when Dock ingested it (the git tree
+  // carries no dates — this is one extra Commits API call per file). Records the result
+  // on the map entry: a real date, or `""` when none resolved, so a re-sync never
+  // re-fetches a file it already sourced. Best-effort — a null leaves publish's `now()`.
+  const stampDate = async (artifactId: string, repoPath: string, entry: SyncedFile) => {
+    const date = await lastCommitDate(repo, repoPath, source.ref, source.token)
+    if (date) await meta.setArtifactUpdatedAt(artifactId, date)
+    entry.updatedAt = date ?? ""
+  }
+  // The existing tracked files were synced before dates were sourced (`updatedAt`
+  // absent). Backfill them lazily — bounded per run so one sync doesn't make hundreds
+  // of Commits calls; the leftover counts as `remaining`, so the runner continues until
+  // every file is dated. Unbounded in tests (no `limits`).
+  const DATE_BACKFILL_PER_RUN = limits ? 150 : Number.POSITIVE_INFINITY
+  let datesBackfilled = 0
+  const backfillDate = async (entry: SyncedFile, repoPath: string) => {
+    if (entry.updatedAt !== undefined || datesBackfilled >= DATE_BACKFILL_PER_RUN) return
+    datesBackfilled++
+    await stampDate(entry.artifact_id, repoPath, entry)
   }
 
   try {
@@ -386,7 +413,17 @@ export async function runSync(
       }
       await meta.setArtifactRemoved(artifact.id, null)
       await meta.setArtifactSourcePath(artifact.id, repoPath)
-      next[repoPath] = { artifact_id: artifact.id, short_id: artifact.short_id, sha, kind, members }
+      const entry: SyncedFile = {
+        artifact_id: artifact.id,
+        short_id: artifact.short_id,
+        sha,
+        kind,
+        members,
+      }
+      // A changed/new file: source its last-commit date now (this is the forward fix;
+      // a fresh full sync dates everything as it publishes, within the maxFiles batch).
+      await stampDate(artifact.id, repoPath, entry)
+      next[repoPath] = entry
       await onPublished()
     }
 
@@ -437,6 +474,7 @@ export async function runSync(
         for (const m of plan.members) memberShas[m.repoPath] = shaByPath.get(m.repoPath) ?? ""
         const composite = compositeSha(memberShas)
         if (before?.kind === "bundle" && before.sha === composite) {
+          await backfillDate(before, e.path) // source its date if it predates the feature
           next[e.path] = before
           res.skipped++
           continue
@@ -473,6 +511,7 @@ export async function runSync(
 
       // Single file. Unchanged → skip; pure rename → re-home; else publish.
       if (before && before.kind !== "bundle" && before.sha === e.sha) {
+        await backfillDate(before, e.path) // source its date if it predates the feature
         next[e.path] = before
         res.skipped++
         continue
@@ -553,7 +592,7 @@ export async function runSync(
     if (truncated || capped) carryForward()
 
     // Docs still needing work: not consumed, and not already current in `next`.
-    res.remaining = docs.filter((e) => {
+    const publishRemaining = docs.filter((e) => {
       if (consumed.has(e.path)) return false
       const n = next[e.path]
       if (!n) return true
@@ -565,6 +604,10 @@ export async function runSync(
       }
       return n.kind === "bundle" || n.sha !== e.sha
     }).length
+    // Files not yet date-sourced (the backfill hit its per-run cap) keep the run
+    // "remaining" so the runner re-invokes until every artifact carries a real date.
+    const dateRemaining = Object.values(next).filter((n) => n.updatedAt === undefined).length
+    res.remaining = publishRemaining + dateRemaining
 
     let status = capped
       ? `synced ${processed} this run · ${res.remaining} pending`
