@@ -106,7 +106,9 @@ export const artifactRoutes = (ctx: AppContext) => {
     if (collectionId) {
       const col = await meta.getCollection(collectionId)
       if (!col) return c.json({ artifacts: [], next_cursor: null })
-      narrow(await meta.collectionArtifactIds(collectionId))
+      // Scope to the collection via a JOIN in listArtifacts (below), NOT by expanding
+      // its members into an id IN(): a large collection (hundreds of items) would blow
+      // D1's 100-bound-parameter cap and 500 the whole listing.
       listOrg = col.org_id
       collectionInfo = { id: col.id, title: col.title }
       collectionAccess =
@@ -131,6 +133,7 @@ export const artifactRoutes = (ctx: AppContext) => {
       cursor,
       q,
       ids,
+      collectionId,
       // Shared-with-me spans workspaces; an explicit member can always see them, so
       // drop the workspace + public-only restrictions for that scope.
       orgId: shared ? undefined : listOrg,

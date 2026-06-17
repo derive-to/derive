@@ -53,7 +53,20 @@ import type {
   WebhookRecord,
   WorkspaceRecord,
 } from "@dock/core"
-import { and, asc, count, desc, eq, inArray, isNotNull, isNull, lte, or, sql } from "drizzle-orm"
+import {
+  and,
+  asc,
+  count,
+  desc,
+  eq,
+  getTableColumns,
+  inArray,
+  isNotNull,
+  isNull,
+  lte,
+  or,
+  sql,
+} from "drizzle-orm"
 import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres"
 import { Pool } from "pg"
 import type { Exhaustive, Shapes } from "./parity"
@@ -304,6 +317,18 @@ export class PgMetaStore implements MetaStore {
   listArtifacts(opts?: ListArtifactsOpts): Promise<ArtifactRecord[]> {
     if (opts?.ids && opts.ids.length === 0) return Promise.resolve([])
     const conds = artifactListConditions(artifact, opts)
+    // Collection scope is a JOIN, not an `id IN (…members)` — mirrors the SQLite/D1
+    // path in repos.ts so behavior matches across dialects (and never trips a param cap).
+    if (opts?.collectionId) {
+      conds.push(eq(collectionItem.collection_id, opts.collectionId))
+      const q = this.db
+        .select(getTableColumns(artifact))
+        .from(artifact)
+        .innerJoin(collectionItem, eq(collectionItem.artifact_id, artifact.id))
+        .where(and(...conds))
+        .orderBy(desc(artifact.created_at), desc(artifact.id))
+      return opts.limit ? q.limit(opts.limit) : q
+    }
     const q = this.db
       .select()
       .from(artifact)

@@ -66,6 +66,10 @@ export interface ListArtifactsOpts {
   q?: string
   /** Restrict to these artifact ids (tag / favorite filters resolve to ids). Empty ⇒ none. */
   ids?: string[]
+  /** Scope to a collection by JOINing its membership rather than materializing every
+   *  member id into an `IN (...)`. A large collection (hundreds of items) would blow
+   *  D1's 100-bound-parameter cap and 500 — the join binds one parameter regardless. */
+  collectionId?: string
   /** Scope to one workspace (multi-workspace). Omitted ⇒ every workspace. */
   orgId?: string
   /** Only `public` artifacts. Set for anonymous / non-member callers so a workspace
