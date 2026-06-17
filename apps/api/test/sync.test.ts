@@ -14,6 +14,8 @@ type FileMap = Record<string, SyncedFile>
 let tree: { path: string; sha: string; type: "blob" | "tree" }[] = []
 let truncated = false
 const blobs: Record<string, string> = {}
+// repo path → the last-commit date the Commits API reports for it.
+const commitDates: Record<string, string> = {}
 
 const dir = mkdtempSync(join(tmpdir(), "dock-sync-test-"))
 const meta = new SqliteMetaStore(join(dir, "sync.db"))
@@ -27,6 +29,13 @@ beforeAll(() => {
       const s = String(url)
       if (s.includes("/git/trees/"))
         return new Response(JSON.stringify({ tree, truncated }), { status: 200 })
+      if (s.includes("/commits?")) {
+        const path = new URL(s).searchParams.get("path") ?? ""
+        const date = commitDates[path]
+        return new Response(JSON.stringify(date ? [{ commit: { committer: { date } } }] : []), {
+          status: 200,
+        })
+      }
       const m = s.match(/\/git\/blobs\/([^/?]+)/)
       if (m) {
         const body = blobs[m[1] as string]
@@ -302,6 +311,51 @@ describe("GitHub sync engine", () => {
     expect(r.remaining).toBe(0)
     const map = JSON.parse((await meta.getRepoSource(src.id))?.files ?? "{}") as FileMap
     expect(Object.keys(map).length).toBe(5) // every file mirrored, no duplicates
+  })
+
+  // ---- Source date → artifact.updated_at -------------------------------
+  it("stamps updated_at from the source file's last-commit date, and backfills legacy entries", async () => {
+    const col = await meta.createCollection({
+      id: newId("col"),
+      org_id: "local",
+      title: "dates",
+      created_by: "u",
+    })
+    const src = await meta.createRepoSource({
+      id: newId("rs"),
+      org_id: "local",
+      collection_id: col.id,
+      repo: "acme/dates",
+      ref: "main",
+      includes: "**/*.md",
+      created_by: "u",
+    })
+    tree = [{ path: "dated.md", sha: "dt-1", type: "blob" }]
+    blobs["dt-1"] = "# Dated"
+    commitDates["dated.md"] = "2025-01-02T03:04:05Z"
+
+    const load = async () => (await meta.getRepoSource(src.id)) as RepoSourceRecord
+
+    // Forward: a freshly published file carries the SOURCE date, not the sync `NOW`.
+    await runSync(meta, blobStore, src, NOW)
+    const map = JSON.parse((await load()).files) as FileMap
+    const sid = map["dated.md"]?.short_id as string
+    expect((await meta.getByShortId(sid))?.updated_at).toBe("2025-01-02T03:04:05Z")
+    expect(map["dated.md"]?.updatedAt).toBe("2025-01-02T03:04:05Z")
+
+    // Backfill: simulate a legacy entry synced before dates existed (updatedAt absent)
+    // by stripping it from the map + resetting the row, then re-sync (sha unchanged).
+    const legacy = { ...map["dated.md"] } as SyncedFile
+    legacy.updatedAt = undefined
+    await meta.updateRepoSourceSync(src.id, {
+      files: JSON.stringify({ "dated.md": legacy }),
+      last_synced_at: NOW,
+      last_status: "ok",
+    })
+    await meta.setArtifactUpdatedAt(legacy.artifact_id, NOW) // wrong (ingest-time) date
+    commitDates["dated.md"] = "2024-09-09T09:09:09Z"
+    await runSync(meta, blobStore, await load(), NOW)
+    expect((await meta.getByShortId(sid))?.updated_at).toBe("2024-09-09T09:09:09Z")
   })
 
   // ---- Live progress (the giant UI bar reads this) ----------------------
