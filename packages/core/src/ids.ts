@@ -33,6 +33,20 @@ export const parseRef = (ref: string): { shortId: string; version?: number } => 
   return { shortId, version: v ? Number(v) : undefined }
 }
 
+/** Ordered, de-duped short-id candidates for a `/a/:ref`: the trailing token first
+ *  (name-first links), then the leading token (legacy short-id-first). Resolve by
+ *  trying each in order so any link form finds the right artifact — even a name whose
+ *  tail looks like an id. Falls back to the whole base when neither token is id-shaped. */
+export const candidateShortIds = (ref: string): string[] => {
+  const base = ref.split("@v")[0] ?? ""
+  const parts = base.split("-")
+  const id = /^[0-9a-z]{6,12}$/
+  const out: string[] = []
+  for (const c of [parts[parts.length - 1] ?? "", parts[0] ?? ""])
+    if (id.test(c) && !out.includes(c)) out.push(c)
+  return out.length ? out : [base]
+}
+
 /** Build a readable `/a/:ref`: `<name>-<shortId>`, the name from an explicit slug or
  *  the current title. Decorative — `parseRef` resolves by the trailing short id, so
  *  renames and stale names still resolve. */

@@ -77,6 +77,19 @@ export function Artifact() {
   // can rename, and it republishes with the new name.
   const [editTitle, setEditTitle] = useState("")
 
+  // Canonicalise the URL client-side: once the artifact is loaded, rewrite any
+  // non-canonical ref (bare id, stale name, legacy order) to /a/<name>-<shortId> so
+  // the browser holds the readable URL. replace:true so Back doesn't bounce through
+  // the old ref; preserves the @vN suffix and the current search.
+  useEffect(() => {
+    if (!art || art.removed) return
+    const canonical = version
+      ? `${refFor({ short_id: shortId, title: art.title })}@v${version}`
+      : refFor({ short_id: shortId, title: art.title })
+    if (ref !== canonical)
+      nav({ to: "/a/$ref", params: { ref: canonical }, search: (s) => s, replace: true })
+  }, [art, ref, version, shortId, nav])
+
   // Comments UI state shared across the page, the panel, and the iframe bridge.
   const [composer, setComposer] = useState<{ anchor: Sel | null; top: number | null } | null>(null)
   const [activeThread, setActiveThread] = useState<string | null>(null)
