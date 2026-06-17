@@ -9,10 +9,10 @@ import type {
 } from "@cloudflare/workers-types"
 import { createD1Store } from "@dock/db/d1"
 import { R2BlobStore } from "@dock/storage"
-import { D1Dialect } from "kysely-d1"
 import { createApp } from "./app"
 import { makeAuth } from "./auth-config"
 import { customDomainsFromEnv } from "./lib/cloudflare-saas"
+import { D1NoTxDialect } from "./lib/d1-dialect"
 import { nativeLimiter } from "./lib/rate-limit"
 import { createDoBackplane, edgeCtx } from "./realtime-do"
 
@@ -116,7 +116,7 @@ export default {
       const baseUrl = env.BASE_URL ?? new URL(req.url).origin
       const meta = createD1Store(env.DB)
       const auth = makeAuth(
-        { dialect: new D1Dialect({ database: env.DB }), type: "sqlite" },
+        { dialect: new D1NoTxDialect({ database: env.DB }), type: "sqlite" },
         baseUrl,
         secret,
         { usernameTaken: (u) => meta.getUserByUsername(u).then(Boolean) },
