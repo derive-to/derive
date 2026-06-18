@@ -16,6 +16,7 @@ import { execFileSync } from "node:child_process"
 import { readFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
+import { parseExpectedColumns, planColumnAdds } from "./d1-schema-plan.mjs"
 
 const DB = process.env.DOCK_D1_NAME ?? "dock"
 const TARGET = process.argv.includes("--local") ? "--local" : "--remote"
@@ -31,20 +32,7 @@ const wrangler = (args, capture = false) =>
 
 // Parse expected columns (+ their full definitions) per table from the generated schema.
 const sql = readFileSync(schemaPath, "utf8")
-const expected = {}
-const re = /CREATE TABLE IF NOT EXISTS (\w+) \(([\s\S]*?)\n\s*\);/g
-let m = re.exec(sql)
-while (m) {
-  const cols = {}
-  for (const raw of m[2].split("\n")) {
-    const line = raw.trim().replace(/,$/, "")
-    if (!line || /^(UNIQUE|PRIMARY|FOREIGN|CHECK|CONSTRAINT)\b/i.test(line)) continue
-    const col = line.split(/\s+/)[0]
-    if (/^\w+$/.test(col)) cols[col] = line
-  }
-  expected[m[1]] = cols
-  m = re.exec(sql)
-}
+const expected = parseExpectedColumns(sql)
 
 console.log(`[d1] applying schema to "${DB}" (${TARGET})`)
 // 1. Create any missing tables/indexes. IF NOT EXISTS → no-op for existing ones.
@@ -68,10 +56,21 @@ for (const batch of chunk(Object.keys(expected), 5)) {
   }
 }
 
-const alters = []
-for (const [tbl, cols] of Object.entries(expected))
-  for (const [col, def] of Object.entries(cols))
-    if (live[tbl] && !live[tbl].has(col)) alters.push(`ALTER TABLE ${tbl} ADD COLUMN ${def};`)
+const { alters, unsafe } = planColumnAdds(expected, live)
+
+// Dock's schema policy is additive-only: a column added to an existing table must be
+// nullable or carry a constant DEFAULT (SQLite/D1 reject ADD COLUMN of a NOT NULL column
+// with no default on populated rows). Abort BEFORE running any ALTER so a policy slip
+// fails the deploy cleanly with an actionable message instead of half-applying the batch.
+if (unsafe.length) {
+  console.error(`[d1] refusing to add ${unsafe.length} NOT NULL column(s) without a default:`)
+  for (const u of unsafe) console.error(`  ${u.tbl}.${u.col}  →  ${u.def}`)
+  console.error(
+    "[d1] make the column nullable or give it a constant DEFAULT (additive-only schema\n" +
+      "     policy — see CONTRIBUTING.md → Database migrations). Database left untouched.",
+  )
+  process.exit(1)
+}
 
 if (alters.length === 0) {
   console.log("[d1] columns already current — nothing to add")

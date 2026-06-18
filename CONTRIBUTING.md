@@ -143,7 +143,18 @@ you miss.
   `PG_SCHEMA_STATEMENTS` mirrors it with `CREATE TABLE IF NOT EXISTS` + `ALTER TABLE …
   ADD COLUMN IF NOT EXISTS`.
 - **D1**: `deploy/d1-schema.sql` is generated from `SCHEMA_STATEMENTS` — never hand-edit it;
-  run `pnpm --filter @dock/db gen:d1-schema`.
+  run `pnpm --filter @dock/db gen:d1-schema`. D1 can't apply schema at boot (the edge forbids
+  the `sqlite_master` introspection the Node tier uses), so `pnpm deploy` runs
+  [apply-d1-schema.mjs](apps/api/scripts/apply-d1-schema.mjs) first: it creates missing
+  tables/indexes, then diffs each live table's columns and `ADD COLUMN`s the missing ones — so
+  an existing D1 (yours or a self-hoster's) picks up new columns on the next deploy.
+
+**A new column must be nullable or carry a constant `DEFAULT`.** SQLite/D1 reject `ADD COLUMN`
+of a `NOT NULL` column with no default on a populated table, so a `NOT NULL`-without-default add
+would break every existing database. `apply-d1-schema.mjs` refuses such an add and aborts the
+deploy before touching the DB (planning logic + tests:
+[d1-schema-plan.mjs](apps/api/scripts/d1-schema-plan.mjs)). Need a non-null column? Add it
+nullable (optionally backfill, then tighten in a later, separately-reviewed change).
 
 **Adding a column:**
 
