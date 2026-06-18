@@ -23,6 +23,9 @@
     "overrides": {
       "esbuild": ">=0.25.0",
       "drizzle-orm": "0.45.2"
+    },
+    "patchedDependencies": {
+      "@better-auth/oauth-provider@1.6.19": "patches/@better-auth__oauth-provider@1.6.19.patch"
     }
   },
   "scripts": {
