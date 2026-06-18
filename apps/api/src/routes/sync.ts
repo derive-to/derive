@@ -4,7 +4,7 @@ import { Hono } from "hono"
 import { z } from "zod"
 import type { AppContext } from "../context"
 import { decryptSecret, encryptSecret, signState, verifyState } from "../lib/crypto"
-import { GitHubError, listTree, matchesGlobs, parseRepo } from "../lib/github"
+import { GitHubError, listPullFiles, listTree, matchesGlobs, parseRepo } from "../lib/github"
 import {
   getAppInfo,
   installationToken,
@@ -12,7 +12,7 @@ import {
   verifyWebhookSignature,
 } from "../lib/github-app"
 import { fail, readJson } from "../lib/http"
-import { isSyncing, runToCompletion } from "../lib/sync-runner"
+import { effectiveToken, isSyncing, runToCompletion } from "../lib/sync-runner"
 import { log } from "../log"
 
 const DEFAULT_INCLUDES = "**/*.md,**/*.html"
@@ -48,6 +48,14 @@ interface GitHubWebhookPayload {
   ref?: string
   installation?: { id?: number }
   repository?: { full_name?: string; default_branch?: string }
+  // `pull_request` events (PR previews). `head.sha` is the ref we mirror at; `number`
+  // + `title` name the preview collection. `head.ref`/`base.ref` are unused today.
+  pull_request?: {
+    number?: number
+    title?: string
+    head?: { sha?: string; ref?: string }
+    base?: { ref?: string }
+  }
 }
 
 /**
@@ -122,6 +130,74 @@ export const syncRoutes = (ctx: AppContext) => {
       background(runToCompletion(meta, deps.blobs, deps.encryptionKey, source.id))
   }
 
+  // ---- PR previews ------------------------------------------------------
+  // A PR preview is an ephemeral, READ-ONLY repo_source (`pr_number` set, `ref` = the
+  // PR head sha) into its own collection ("PR #<n>: <title>"). It inherits the branch
+  // source's installation + include globs, and the engine scopes the mirror to just the
+  // PR's changed docs (off `pr_number`). Created on open/synchronize, torn down on close.
+  // Upsert a preview to the PR's current head. An existing preview is re-pointed at the
+  // new head sha (its file map is kept, so the engine updates artifacts in place and
+  // tombstones docs the PR no longer touches); a missing one is created fresh.
+  const upsertPrPreview = async (
+    branch: RepoSourceRecord,
+    existing: RepoSourceRecord | undefined,
+    prNumber: number,
+    prTitle: string,
+    headSha: string,
+  ): Promise<void> => {
+    const title = `PR #${prNumber}: ${prTitle.trim() || "(untitled)"}`.slice(0, 200)
+    if (existing) {
+      await meta.updateRepoSourceSync(existing.id, { ref: headSha })
+      await meta.updateCollection(existing.collection_id, { title })
+      await launch(existing, true)
+      return
+    }
+    const col = await meta.createCollection({
+      id: newId("col"),
+      org_id: branch.org_id,
+      title,
+      created_by: branch.created_by,
+    })
+    await meta.setCollectionMember({
+      id: newId("cm"),
+      collection_id: col.id,
+      user_id: branch.created_by,
+      role: "owner",
+    })
+    const source = await meta.createRepoSource({
+      id: newId("rs"),
+      org_id: branch.org_id,
+      collection_id: col.id,
+      repo: branch.repo,
+      ref: headSha,
+      includes: branch.includes,
+      token: null,
+      installation_id: branch.installation_id,
+      pr_number: prNumber,
+      created_by: branch.created_by,
+    })
+    await launch(source, true)
+  }
+
+  // Tear down a PR preview: tombstone its mirrored artifacts, then drop the source +
+  // its collection. Called on PR close/merge (merged docs reappear in the main
+  // collection on the merge push) or when a PR stops changing any docs.
+  const removePrPreview = async (preview: RepoSourceRecord): Promise<void> => {
+    let artifactIds: string[] = []
+    try {
+      const map = JSON.parse(preview.files || "{}") as Record<string, { artifact_id?: string }>
+      artifactIds = Object.values(map)
+        .map((f) => f?.artifact_id)
+        .filter((id): id is string => !!id)
+    } catch {
+      // A malformed map → nothing to tombstone; still drop the source + collection.
+    }
+    const removedAt = new Date().toISOString()
+    for (const id of artifactIds) await meta.setArtifactRemoved(id, removedAt)
+    await meta.deleteRepoSource(preview.id, preview.org_id)
+    await meta.deleteCollection(preview.collection_id)
+  }
+
   // ---- List + connection status -----------------------------------------
   app.get("/v1/sync/github", async (c) => {
     if (!(await workspaceCan(c, "comment"))) return fail(c, 403, "forbidden")
@@ -134,8 +210,18 @@ export const syncRoutes = (ctx: AppContext) => {
     // A configured App that GitHub no longer knows about (deleted) reports as
     // unconfigured, so the UI shows "Set up" again instead of a dead Install link.
     const live = loaded ? await appIsLive(loaded) : false
+    // Split branch mirrors from PR previews — the UI lists them in separate groups.
+    // A preview carries its PR number; its collection title ("PR #<n>: <title>") names it.
+    const branchSources = sources.filter((s) => s.pr_number == null)
+    const previews = sources.filter((s) => s.pr_number != null)
+    const previewCols = await Promise.all(previews.map((s) => meta.getCollection(s.collection_id)))
     return c.json({
-      sources: sources.map(toJson),
+      sources: branchSources.map(toJson),
+      prs: previews.map((s, i) => ({
+        ...toJson(s),
+        pr_number: s.pr_number,
+        title: previewCols[i]?.title ?? `PR #${s.pr_number}`,
+      })),
       // What the UI needs to pick its entry point: is a live App set up (→ Connect
       // button + slug for the install link), and which installations this
       // workspace already has (→ jump straight to the repo picker).
@@ -274,10 +360,14 @@ export const syncRoutes = (ctx: AppContext) => {
     const org = await activeWorkspace(c)
     const createdBy = (await currentUser(c))?.id ?? "anon"
 
-    // Dedup: one source (and one collection) per repo in a workspace. Re-connecting
-    // an already-connected repo returns the existing source instead of spawning a
-    // duplicate collection — the bug that produced two "GitHub: <repo>" collections.
-    const existing = (await meta.listRepoSources(org)).find((s) => s.repo === repo)
+    // Dedup: one BRANCH source (and one collection) per repo in a workspace.
+    // Re-connecting an already-connected repo returns the existing source instead of
+    // spawning a duplicate collection — the bug that produced two "GitHub: <repo>"
+    // collections. PR previews (`pr_number` set) are excluded — they're per-PR, not
+    // the repo's canonical mirror.
+    const existing = (await meta.listRepoSources(org)).find(
+      (s) => s.repo === repo && s.pr_number == null,
+    )
     if (existing) return c.json(toJson(existing))
 
     // An installation-backed source: validate the installation belongs to this
@@ -426,8 +516,12 @@ export const syncRoutes = (ctx: AppContext) => {
       const defaultBranch = payload.repository?.default_branch
       if (installationId && fullName && branch) {
         const sources = await meta.listRepoSourcesByInstallation(installationId)
+        // BRANCH sources only (`pr_number == null`). PR previews are driven by the
+        // `pull_request` event below — a same-repo branch push must not double-trigger
+        // them (and a PR preview's `ref` is a head sha, not a branch name, anyway).
         const matched = sources.filter(
           (s) =>
+            s.pr_number == null &&
             s.repo.toLowerCase() === fullName.toLowerCase() &&
             (s.ref === branch || (s.ref === "HEAD" && branch === defaultBranch)),
         )
@@ -436,6 +530,72 @@ export const syncRoutes = (ctx: AppContext) => {
         // Progress + failures are persisted per-source by the engine.
         for (const s of matched) await launch(s, true)
         if (matched.length) log.info("push auto-sync queued", { repo: fullName, n: matched.length })
+      }
+    } else if (event === "pull_request") {
+      // PR PREVIEWS. Only repos already connected for branch sync get one — the branch
+      // source (the one with no `pr_number`) binds the preview to a workspace and the
+      // include globs. Open/reopen/synchronize → mirror the PR's changed docs at the
+      // head; close/merge → tear the preview down.
+      const installationId = payload.installation?.id ? String(payload.installation.id) : null
+      const fullName = payload.repository?.full_name
+      const prNumber = payload.pull_request?.number
+      const action = payload.action
+      if (installationId && fullName && prNumber) {
+        const sources = await meta.listRepoSourcesByInstallation(installationId)
+        const lc = fullName.toLowerCase()
+        const branch = sources.find((s) => s.pr_number == null && s.repo.toLowerCase() === lc)
+        const preview = sources.find((s) => s.pr_number === prNumber && s.repo.toLowerCase() === lc)
+        if (branch) {
+          if (action === "closed") {
+            // Primary cleanup path. A dropped `closed` delivery would orphan a preview;
+            // for now it's removable from the UI (DELETE /v1/sync/github/:id) — an
+            // automated reconciler (sweep previews whose PR is no longer open) is a
+            // follow-up, not wired here.
+            if (preview) await removePrPreview(preview)
+            log.info("pr preview closed", { repo: fullName, pr: prNumber })
+          } else if (action === "opened" || action === "reopened" || action === "synchronize") {
+            const headSha = payload.pull_request?.head?.sha
+            const parsed = parseRepo(fullName)
+            if (headSha && parsed) {
+              // Mirror only the PR's changed DOCS (changed files ∩ the branch source's
+              // include globs). No matching docs → no preview (and clean up one that
+              // emptied out). Best-effort: a GitHub hiccup just skips this delivery;
+              // the next `synchronize` retries.
+              try {
+                const token = await effectiveToken(meta, deps.encryptionKey, branch)
+                const globs = branch.includes
+                  .split(",")
+                  .map((g) => g.trim())
+                  .filter(Boolean)
+                const changedDocs = (await listPullFiles(parsed, prNumber, token)).filter((p) =>
+                  matchesGlobs(p, globs),
+                )
+                if (changedDocs.length === 0) {
+                  if (preview) await removePrPreview(preview)
+                } else {
+                  await upsertPrPreview(
+                    branch,
+                    preview,
+                    prNumber,
+                    payload.pull_request?.title ?? "",
+                    headSha,
+                  )
+                  log.info("pr preview queued", {
+                    repo: fullName,
+                    pr: prNumber,
+                    docs: changedDocs.length,
+                  })
+                }
+              } catch (err) {
+                log.warn("pr preview skipped", {
+                  repo: fullName,
+                  pr: prNumber,
+                  error: err instanceof Error ? err.message : String(err),
+                })
+              }
+            }
+          }
+        }
       }
     } else if (event === "installation" && payload.action === "deleted") {
       // The App was uninstalled: drop our installation row. Synced docs are kept

@@ -1,4 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query"
+import { Link } from "@tanstack/react-router"
 import { AlertTriangle, CheckCircle2, Loader2 } from "lucide-react"
 import { useCallback, useEffect, useRef, useState } from "react"
 import { toast } from "sonner"
@@ -6,6 +7,7 @@ import {
   api,
   type GithubSyncStatus,
   type InstallationRepo,
+  type PrPreview,
   parseProgress,
   type RepoSource,
   type SyncPreview,
@@ -62,7 +64,9 @@ export function GithubSection() {
       api
         .githubSync()
         .then(setStatus)
-        .catch(() => setStatus({ sources: [], app: { configured: false }, installations: [] })),
+        .catch(() =>
+          setStatus({ sources: [], prs: [], app: { configured: false }, installations: [] }),
+        ),
     [],
   )
   // After a sync/connect, the mirrored collection changed → drop the library's
@@ -119,6 +123,20 @@ export function GithubSection() {
             ))
           ))}
       </div>
+
+      {/* PR previews — read-only mirrors of the docs an OPEN pull request changes,
+          each in its own "PR #<n>" collection. Created automatically as PRs open; they
+          disappear when the PR closes/merges. Review the plan in Dock during the PR. */}
+      {status !== null && status.prs.length > 0 && (
+        <div className="mt-6">
+          <div className="mb-2 text-xs font-semibold text-foreground">Pull request previews</div>
+          <div className="flex flex-col gap-2.5">
+            {status.prs.map((pr) => (
+              <PrPreviewRow key={pr.id} pr={pr} />
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* The PAT path stays available as an advanced fallback (self-host without a
           GitHub App, or a one-off public repo). */}
@@ -446,6 +464,50 @@ const phaseDetail = (p: SyncProgress): string => {
     case "error":
       return p.message ?? "Unknown error"
   }
+}
+
+// One PR preview: links out to the GitHub PR and into the mirrored Dock collection
+// (read-only, like any synced doc). The engine syncs server-side; this reflects state.
+function PrPreviewRow({ pr }: { pr: PrPreview }) {
+  const prog = parseProgress(pr.progress)
+  const active =
+    prog?.phase === "queued" || prog?.phase === "listing" || prog?.phase === "mirroring"
+  return (
+    <Card data-testid={`github-pr-${pr.pr_number}`} className="flex items-center gap-2.5 p-3.5">
+      <div className="min-w-0 flex-1">
+        <div className="truncate text-xs font-medium text-foreground">{pr.title}</div>
+        <div className="mt-px flex items-center gap-1 truncate font-mono text-2xs text-muted-foreground">
+          <span className="truncate">{pr.repo}</span>
+          <span aria-hidden>·</span>
+          {active ? (
+            <span className="inline-flex items-center gap-1">
+              <Loader2 className="size-3 shrink-0 animate-spin" aria-hidden />
+              syncing…
+            </span>
+          ) : (
+            <span>
+              {pr.file_count} doc{pr.file_count === 1 ? "" : "s"}
+              {pr.last_synced_at ? ` · synced ${ago(pr.last_synced_at)}` : ""}
+            </span>
+          )}
+        </div>
+      </div>
+      <Button data-testid={`github-pr-link-${pr.pr_number}`} variant="ghost" size="sm" asChild>
+        <a
+          href={`https://github.com/${pr.repo}/pull/${pr.pr_number}`}
+          target="_blank"
+          rel="noreferrer"
+        >
+          PR #{pr.pr_number}
+        </a>
+      </Button>
+      <Button data-testid={`github-pr-view-${pr.pr_number}`} variant="default" size="sm" asChild>
+        <Link to="/" search={{ collection: pr.collection_id }}>
+          View
+        </Link>
+      </Button>
+    </Card>
+  )
 }
 
 function RepoSourceRow({

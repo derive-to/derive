@@ -312,6 +312,11 @@ export const repoSource = sqliteTable("repo_source", {
   // GitHub App installation backing this source. When set, sync mints a
   // short-lived installation token instead of using `token` (the PAT path).
   installation_id: text("installation_id"),
+  // When set, this source is a read-only PREVIEW of an open pull request: `ref` is
+  // the PR head sha and the source mirrors only the PR's changed docs into its own
+  // collection ("PR #<pr_number>: <title>"). NULL = an ordinary branch mirror. This
+  // is the discriminator that keeps PR previews out of the per-repo dedup + push matcher.
+  pr_number: integer("pr_number"),
   files: text("files").notNull().default("{}"),
   last_synced_at: text("last_synced_at"),
   last_status: text("last_status"),
