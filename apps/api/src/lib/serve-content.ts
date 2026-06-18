@@ -33,8 +33,14 @@ export const serveContent = async (
    *  full HTML document). The caller uses this to self-heal the stored content_type
    *  so the mislabel is fixed permanently, not just rendered-around each view. */
   onMismatch?: () => void,
+  /** Serve-time rewrite applied to every HTML body this produces (a raw HTML file,
+   *  markdown-rendered output, or a mislabeled-HTML markdown blob) before the anchor
+   *  client is appended. Resolves a synced artifact's relative cross-document links
+   *  into in-app navigations; omitted ⇒ identity. */
+  transformHtml?: (html: string) => Promise<string>,
 ) => {
   const headers = { ...RAW_HEADERS, "Cache-Control": cacheControl }
+  const tx = (doc: string) => (transformHtml ? transformHtml(doc) : Promise.resolve(doc))
   let path = rawPath
   if (content.content_type === BUNDLE_CONTENT_TYPE) {
     const manifestBytes = await blobs.get(content.blob_key)
@@ -79,19 +85,19 @@ export const serveContent = async (
     // the label says — the type sniff is a hint, this is the backstop.
     if (looksLikeHtmlDocument(text)) {
       onMismatch?.()
-      return c.body(text + SELECTION_SCRIPT, 200, {
+      return c.body((await tx(text)) + SELECTION_SCRIPT, 200, {
         ...headers,
         "Content-Type": "text/html; charset=utf-8",
       })
     }
-    const html = await renderMarkdown(text, title)
+    const html = await tx(await renderMarkdown(text, title))
     return c.body(html, 200, { ...headers, "Content-Type": "text/html; charset=utf-8" })
   }
 
   // html file artifact — any path serves the document (+ selection capture)
   const ct = mimeFor(path || "index.html")
   if (ct.startsWith("text/html")) {
-    const html = new TextDecoder().decode(data) + SELECTION_SCRIPT
+    const html = (await tx(new TextDecoder().decode(data))) + SELECTION_SCRIPT
     return c.body(html, 200, { ...headers, "Content-Type": ct })
   }
   return c.body(toBody(data), 200, { ...headers, "Content-Type": ct })

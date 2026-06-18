@@ -130,6 +130,12 @@ export function Artifact() {
     setHoverThread,
     setActiveThread,
     setPanel,
+    onNavigate: (ref, newTab) => {
+      // Same-origin SPA route. A modified/middle click opens it un-sandboxed in a new
+      // tab (the frame's own new tab would inherit the sandbox and break the app).
+      if (newTab) window.open(`/a/${ref}`, "_blank", "noopener")
+      else nav({ to: "/a/$ref", params: { ref } })
+    },
   })
 
   // Preview vs. line-diff for the shown version, plus the fetched diff. See

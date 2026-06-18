@@ -1,4 +1,5 @@
 export * from "./anchor"
+export * from "./cross-doc"
 export * from "./diff"
 export * from "./hash"
 export * from "./ids"

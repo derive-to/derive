@@ -226,6 +226,28 @@ export class PgMetaStore implements MetaStore {
     return rows[0] ?? null
   }
 
+  async siblingsBySourcePaths(
+    orgId: string,
+    paths: string[],
+  ): Promise<{ short_id: string; slug: string | null; source_path: string }[]> {
+    if (paths.length === 0) return []
+    const rows = await this.db
+      .select({
+        short_id: artifact.short_id,
+        slug: artifact.slug,
+        source_path: artifact.source_path,
+      })
+      .from(artifact)
+      .where(
+        and(
+          eq(artifact.org_id, orgId),
+          inArray(artifact.source_path, paths),
+          isNull(artifact.removed_at),
+        ),
+      )
+    return rows.filter((r): r is typeof r & { source_path: string } => r.source_path != null)
+  }
+
   async addVersion(artifactId: string, v: NewVersion): Promise<VersionRecord> {
     return this.db.transaction(async (tx) => {
       const cur = await tx
