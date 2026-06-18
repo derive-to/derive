@@ -93,7 +93,12 @@ describe("unfurl + embed", () => {
     const short = await idOf(
       await upload("s.md", "# Hi", { visibility: "public", title: "Shared Page" }),
     )
-    const res = await a.request(`/a/${short}`, { headers: { authorization: "Bearer tok" } })
+    // A bare ref 302s to the canonical name-first URL; the unfurl meta lives there.
+    const bare = await a.request(`/a/${short}`, { headers: { authorization: "Bearer tok" } })
+    expect(bare.status).toBe(302)
+    const res = await a.request(bare.headers.get("location") ?? "", {
+      headers: { authorization: "Bearer tok" },
+    })
     expect(res.status).toBe(200)
     const html = await res.text()
     expect(html).toContain('property="og:title"')
@@ -115,7 +120,12 @@ describe("unfurl + embed", () => {
     const short = await idOf(
       await upload("sf.md", "# Hi", { visibility: "public", title: "Worker Page" }),
     )
-    const res = await a.request(`/a/${short}`, { headers: { authorization: "Bearer tok" } })
+    // A bare ref 302s to the canonical name-first URL; the unfurl meta lives there.
+    const bare = await a.request(`/a/${short}`, { headers: { authorization: "Bearer tok" } })
+    expect(bare.status).toBe(302)
+    const res = await a.request(bare.headers.get("location") ?? "", {
+      headers: { authorization: "Bearer tok" },
+    })
     expect(res.status).toBe(200)
     const html = await res.text()
     expect(html).toContain('property="og:title"')

@@ -1,5 +1,5 @@
 import { unzipSync } from "fflate"
-import { newId, newShortId, slugify } from "./ids"
+import { newId, newShortId, refFor, slugify } from "./ids"
 import { mimeFor } from "./mime"
 import {
   type ArtifactKind,
@@ -330,7 +330,7 @@ export async function approveProposal(
 // Name-first ref: the slug reads first, the short id is the final token. parseRef
 // reverses it (the short id is always the last hyphen segment).
 export const artifactUrl = (baseUrl: string, a: ArtifactRecord): string =>
-  `${baseUrl}/a/${a.slug ? `${a.slug}-` : ""}${a.short_id}`
+  `${baseUrl}/a/${refFor(a)}`
 
 export const toJson = (baseUrl: string, a: ArtifactRecord, versions: VersionRecord[]) => ({
   short_id: a.short_id,

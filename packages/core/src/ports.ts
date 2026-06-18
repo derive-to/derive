@@ -151,6 +151,14 @@ export interface MetaStore {
   getByShortId(shortId: string): Promise<ArtifactRecord | null>
   /** Load an artifact by its internal id (used by domain mode's host lookup). */
   getArtifactById(id: string): Promise<ArtifactRecord | null>
+  /** GitHub-synced artifacts in `orgId` whose `source_path` is one of `paths` —
+   *  resolves relative cross-document links (a sibling `.html`/`.md`) to the
+   *  artifact each points at. Returns only what the link rewrite needs. Empty
+   *  `paths` ⇒ none. */
+  siblingsBySourcePaths(
+    orgId: string,
+    paths: string[],
+  ): Promise<{ short_id: string; slug: string | null; source_path: string }[]>
   /** Appends the next version and bumps current_version. */
   addVersion(artifactId: string, v: NewVersion): Promise<VersionRecord>
   listVersions(artifactId: string): Promise<VersionRecord[]>

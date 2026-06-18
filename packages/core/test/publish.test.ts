@@ -282,10 +282,16 @@ describe("publish: URL + JSON helpers", () => {
     created_at: "t",
   } as unknown as ArtifactRecord
 
-  it("artifactUrl prepends the slug when present, omits it otherwise", () => {
-    // Name-first refs (#130): <slug>-<short_id>.
+  it("artifactUrl is name-first: explicit slug, else slug-from-title, else bare", () => {
+    // Name-first refs (#130): <name>-<short_id>.
     expect(artifactUrl("https://dock.test", artifact)).toBe("https://dock.test/a/my-doc-abc123")
+    // No explicit slug → derive the name from the current title (so links stay readable
+    // and rename-safe without a backfill).
     expect(artifactUrl("https://dock.test", { ...artifact, slug: null })).toBe(
+      "https://dock.test/a/my-doc-abc123",
+    )
+    // No slug and no title → the bare short id.
+    expect(artifactUrl("https://dock.test", { ...artifact, slug: null, title: null })).toBe(
       "https://dock.test/a/abc123",
     )
   })

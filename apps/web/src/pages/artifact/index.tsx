@@ -24,7 +24,7 @@ import { ArtifactTopBar } from "./artifact-top-bar"
 import { ActionsCtx } from "./comment-actions"
 import { canCommentWithRole, shouldPromptSignInToComment } from "./lib/comment-access"
 import { groupThreads, parseAnchor } from "./lib/layout"
-import { parseRef } from "./parse-ref"
+import { parseRef, refFor } from "./parse-ref"
 import { PasswordGate } from "./password-gate"
 import { Presence } from "./rail-deck"
 import { SourceEditor } from "./source-editor"
@@ -76,6 +76,19 @@ export function Artifact() {
   // Editable title while editing (seeded from the artifact in startEdit); editors
   // can rename, and it republishes with the new name.
   const [editTitle, setEditTitle] = useState("")
+
+  // Canonicalise the URL client-side: once the artifact is loaded, rewrite any
+  // non-canonical ref (bare id, stale name, legacy order) to /a/<name>-<shortId> so
+  // the browser holds the readable URL. replace:true so Back doesn't bounce through
+  // the old ref; preserves the @vN suffix and the current search.
+  useEffect(() => {
+    if (!art || art.removed) return
+    const canonical = version
+      ? `${refFor({ short_id: shortId, title: art.title })}@v${version}`
+      : refFor({ short_id: shortId, title: art.title })
+    if (ref !== canonical)
+      nav({ to: "/a/$ref", params: { ref: canonical }, search: (s) => s, replace: true })
+  }, [art, ref, version, shortId, nav])
 
   // Comments UI state shared across the page, the panel, and the iframe bridge.
   const [composer, setComposer] = useState<{ anchor: Sel | null; top: number | null } | null>(null)
@@ -130,6 +143,12 @@ export function Artifact() {
     setHoverThread,
     setActiveThread,
     setPanel,
+    onNavigate: (ref, newTab) => {
+      // Same-origin SPA route. A modified/middle click opens it un-sandboxed in a new
+      // tab (the frame's own new tab would inherit the sandbox and break the app).
+      if (newTab) window.open(`/a/${ref}`, "_blank", "noopener")
+      else nav({ to: "/a/$ref", params: { ref } })
+    },
   })
 
   // Preview vs. line-diff for the shown version, plus the fetched diff. See
@@ -332,7 +351,8 @@ export function Artifact() {
     post,
     load,
     refetchComments,
-    onRestoredJump: () => nav({ to: "/a/$ref", params: { ref: shortId } }),
+    onRestoredJump: () =>
+      nav({ to: "/a/$ref", params: { ref: refFor({ short_id: shortId, title: art.title }) } }),
     setEditing,
     setSrc,
     setTitle: setEditTitle,
@@ -448,12 +468,13 @@ export function Artifact() {
             <HistoryDrawer
               art={art}
               shown={shown}
-              goTo={(n) =>
+              goTo={(n) => {
+                const base = refFor({ short_id: shortId, title: art.title })
                 nav({
                   to: "/a/$ref",
-                  params: { ref: n === art.current_version ? shortId : `${shortId}@v${n}` },
+                  params: { ref: n === art.current_version ? base : `${base}@v${n}` },
                 })
-              }
+              }}
               open
               onOpenChange={(o) => setSurface(o ? "history" : null)}
             />
@@ -504,7 +525,12 @@ export function Artifact() {
                 onFrameLoad={onFrameLoad}
                 onToggleDiff={() => setView(view === "diff" ? "preview" : "diff")}
                 onRestore={() => restore(shown)}
-                onBackToCurrent={() => nav({ to: "/a/$ref", params: { ref: shortId } })}
+                onBackToCurrent={() =>
+                  nav({
+                    to: "/a/$ref",
+                    params: { ref: refFor({ short_id: shortId, title: art.title }) },
+                  })
+                }
                 onDeckPrev={() => deckCmd("prev")}
                 onDeckNext={() => deckCmd("next")}
                 onFullscreen={toggleFullscreen}
@@ -529,7 +555,12 @@ export function Artifact() {
             {promptSignInToComment && (
               <button
                 type="button"
-                onClick={() => nav({ to: "/login", search: { return_to: `/a/${shortId}` } })}
+                onClick={() =>
+                  nav({
+                    to: "/login",
+                    search: { return_to: `/a/${refFor({ short_id: shortId, title: art.title })}` },
+                  })
+                }
                 title="Sign in to comment"
                 data-testid="sign-in-to-comment"
                 className="absolute bottom-[18px] right-[18px] flex h-11 items-center gap-2 rounded-full border border-border bg-card px-4 text-sm font-semibold text-foreground shadow-[var(--shadow)]"

@@ -25,7 +25,12 @@ describe("webhook formatting + signing", () => {
   it("builds a normalized payload", () => {
     const p = buildPayload("http://h", sampleArtifact, "comment.created", { author: "ann" })
     expect(p.event).toBe("comment.created")
-    expect(p.artifact).toEqual({ short_id: "sample00", title: "Spec", url: "http://h/a/sample00" })
+    // The URL is now name-first (slug from the title) + short id.
+    expect(p.artifact).toEqual({
+      short_id: "sample00",
+      title: "Spec",
+      url: "http://h/a/spec-sample00",
+    })
     expect(p.data.author).toBe("ann")
   })
 

@@ -12,6 +12,7 @@ import {
   CommandList,
 } from "@/components/ui/command"
 import { usePrefetchArtifact } from "@/lib/use-prefetch-artifact"
+import { refFor } from "@/pages/artifact/parse-ref"
 import { Icon } from "./icons"
 import { useShell } from "./shell-context"
 
@@ -132,7 +133,7 @@ export function CommandPalette() {
                 <CommandItem
                   key={a.short_id}
                   value={`artifact-${a.short_id}`}
-                  onSelect={() => go(() => nav({ to: "/a/$ref", params: { ref: a.short_id } }))}
+                  onSelect={() => go(() => nav({ to: "/a/$ref", params: { ref: refFor(a) } }))}
                   onMouseEnter={() => prefetch(a.short_id, a.current_version)}
                   onFocus={() => prefetch(a.short_id, a.current_version)}
                 >

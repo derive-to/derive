@@ -30,6 +30,7 @@ import {
 } from "@dock/core"
 import { StreamableHTTPTransport } from "@hono/mcp"
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
+import { zipSync } from "fflate"
 import type { Hono } from "hono"
 import { z } from "zod"
 import type { AppContext } from "./context"
@@ -39,6 +40,16 @@ import { quoteOf } from "./lib/comments"
 
 const text = (s: string) => ({ content: [{ type: "text" as const, text: s }] })
 const json = (v: unknown) => text(JSON.stringify(v, null, 2))
+
+// Pack a {path: content} map into a zip the core publish path can ingest exactly
+// like an HTTP bundle upload (it re-validates size, paths, and entry point). Text
+// pages only — binary assets still go through the multipart/zip HTTP route.
+const zipFromFiles = (files: Record<string, string>): Uint8Array => {
+  const enc = new TextEncoder()
+  const entries: Record<string, Uint8Array> = {}
+  for (const [path, content] of Object.entries(files)) entries[path] = enc.encode(content)
+  return zipSync(entries)
+}
 // An actionable error the model can recover from (per the MCP spec, isError text is
 // fed back to the agent so it self-corrects), rather than an opaque failure.
 const err = (s: string) => ({
@@ -464,9 +475,20 @@ function buildServer(ctx: AppContext, agent: AgentRecord): McpServer {
     "publish",
     {
       description:
-        "Publish a single-file artifact to your workspace DIRECTLY — it goes live immediately, no review. OMIT short_id to create a NEW artifact (a first publish) — `title` is then required. PASS short_id to publish a new version of one you already own. Requires publish rights (Creator/Admin role on the workspace); a commenter-level grant should use `propose` instead. Provide the FULL content (not a patch). (Multi-page bundles aren't publishable over MCP yet.)",
+        "Publish an artifact to your workspace DIRECTLY — it goes live immediately, no review. Provide `content` for a SINGLE-FILE artifact, or `files` (a map of page path → content) for a MULTI-PAGE BUNDLE. OMIT short_id to create a NEW artifact (a first publish) — `title` is then required. PASS short_id to publish a new version of one you already own, matching its kind: a bundle takes `files`, a single file takes `content`. A bundle republish REPLACES the whole bundle, so include EVERY page. Requires publish rights (Creator/Admin role on the workspace); a commenter-level grant should use `propose` instead. Provide the FULL content (not a patch).",
       inputSchema: {
-        content: z.string().describe("The complete document content (HTML or Markdown)."),
+        content: z
+          .string()
+          .optional()
+          .describe(
+            "The complete content for a SINGLE-FILE artifact (HTML or Markdown). Use this OR `files`, not both.",
+          ),
+        files: z
+          .record(z.string(), z.string())
+          .optional()
+          .describe(
+            'A MULTI-PAGE bundle as a map of page path → content, e.g. {"index.html":"…","about.html":"…","nav.js":"…"}. The root index.html (else the shallowest .html) becomes the entry page. A republish REPLACES the bundle, so include every page. Text pages only — zip-upload via the HTTP API for binary assets.',
+          ),
         title: z
           .string()
           .optional()
@@ -485,14 +507,22 @@ function buildServer(ctx: AppContext, agent: AgentRecord): McpServer {
           .describe(
             "Who can see a NEW artifact: workspace (your team, default), link (anyone with the link), or public (discoverable). Ignored on republish.",
           ),
+        spa: z
+          .boolean()
+          .optional()
+          .describe(
+            "For a NEW bundle only: serve unknown paths from the entry page (single-page-app routing). Default false.",
+          ),
         message: z.string().optional().describe("What changed — recorded as the version message."),
         filename: z
           .string()
           .optional()
-          .describe("Filename hint for the content type, e.g. index.html or notes.md."),
+          .describe(
+            "Filename hint for the content type of a single file, e.g. index.html or notes.md.",
+          ),
       },
     },
-    async ({ content, title, short_id, visibility, message, filename }) => {
+    async ({ content, files, title, short_id, visibility, spa, message, filename }) => {
       // Direct publish is gated on the agent's role: Creator/Admin only. A
       // commenter-level grant is steered to `propose` (human-reviewed), so a
       // low-privilege agent still can't push live content.
@@ -500,13 +530,23 @@ function buildServer(ctx: AppContext, agent: AgentRecord): McpServer {
         return text(
           "Your grant can't publish directly (needs a Creator/Admin role). Use `propose` to submit a reviewed change, or re-authorize with a publish scope.",
         )
+      // Exactly one of content / files. `files` (a page map) means a bundle.
+      const isBundle = !!files && Object.keys(files).length > 0
+      if (isBundle && content !== undefined)
+        return text("Provide `content` (single file) OR `files` (a bundle), not both.")
+      if (!isBundle && (content === undefined || content === ""))
+        return text("Provide `content` (single file) or `files` (a multi-page bundle).")
       if (short_id) {
         const a = await own(short_id)
         if (!a) return text(`No artifact "${short_id}" in this workspace.`)
-        if (a.kind === "bundle")
+        // Kind can't change on republish; steer to the right field instead of
+        // bubbling the core's 409.
+        if (a.kind === "bundle" && !isBundle)
           return text(
-            `"${short_id}" is a multi-page bundle; publishing bundle revisions over MCP isn't supported yet (single-file artifacts only).`,
+            `"${short_id}" is a multi-page bundle — pass \`files\` (every page) to republish it.`,
           )
+        if (a.kind === "file" && isBundle)
+          return text(`"${short_id}" is a single-file artifact — pass \`content\`, not \`files\`.`)
       } else if (!title?.trim()) {
         return text("Creating a new artifact needs a `title`.")
       }
@@ -515,9 +555,12 @@ function buildServer(ctx: AppContext, agent: AgentRecord): McpServer {
           ctx.meta,
           ctx.blobs,
           {
-            bytes: new TextEncoder().encode(content),
-            filename: filename ?? "index.html",
-            isBundle: false,
+            bytes: isBundle
+              ? zipFromFiles(files as Record<string, string>)
+              : new TextEncoder().encode(content as string),
+            filename: isBundle ? `${title?.trim() || "bundle"}.zip` : (filename ?? "index.html"),
+            isBundle,
+            spa: isBundle ? !!spa : undefined,
             title: title?.trim(),
             message,
             author: agent.name,
@@ -531,6 +574,7 @@ function buildServer(ctx: AppContext, agent: AgentRecord): McpServer {
         return json({
           published: true,
           short_id: artifact.short_id,
+          kind: artifact.kind,
           version: version.n,
           url: artifactUrl(ctx.deps.baseUrl, artifact),
           title: artifact.title,
