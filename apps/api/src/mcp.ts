@@ -30,26 +30,20 @@ import {
 } from "@dock/core"
 import { StreamableHTTPTransport } from "@hono/mcp"
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
-import { zipSync } from "fflate"
 import type { Hono } from "hono"
 import { z } from "zod"
 import type { AppContext } from "./context"
 import { markAddressed } from "./lib/addressed"
-import { cleanPath, manifestOf as sharedManifestOf } from "./lib/bundle"
+import {
+  cleanPath,
+  mergeBundleZip,
+  manifestOf as sharedManifestOf,
+  zipBundleFiles,
+} from "./lib/bundle"
 import { quoteOf } from "./lib/comments"
 
 const text = (s: string) => ({ content: [{ type: "text" as const, text: s }] })
 const json = (v: unknown) => text(JSON.stringify(v, null, 2))
-
-// Pack a {path: content} map into a zip the core publish path can ingest exactly
-// like an HTTP bundle upload (it re-validates size, paths, and entry point). Text
-// pages only — binary assets still go through the multipart/zip HTTP route.
-const zipFromFiles = (files: Record<string, string>): Uint8Array => {
-  const enc = new TextEncoder()
-  const entries: Record<string, Uint8Array> = {}
-  for (const [path, content] of Object.entries(files)) entries[path] = enc.encode(content)
-  return zipSync(entries)
-}
 // An actionable error the model can recover from (per the MCP spec, isError text is
 // fed back to the agent so it self-corrects), rather than an opaque failure.
 const err = (s: string) => ({
@@ -475,7 +469,7 @@ function buildServer(ctx: AppContext, agent: AgentRecord): McpServer {
     "publish",
     {
       description:
-        "Publish an artifact to your workspace DIRECTLY — it goes live immediately, no review. Provide `content` for a SINGLE-FILE artifact, or `files` (a map of page path → content) for a MULTI-PAGE BUNDLE. OMIT short_id to create a NEW artifact (a first publish) — `title` is then required. PASS short_id to publish a new version of one you already own, matching its kind: a bundle takes `files`, a single file takes `content`. A bundle republish REPLACES the whole bundle, so include EVERY page. Requires publish rights (Creator/Admin role on the workspace); a commenter-level grant should use `propose` instead. Provide the FULL content (not a patch).",
+        "Publish an artifact to your workspace DIRECTLY — it goes live immediately, no review. Provide `content` for a SINGLE-FILE artifact, or `files` (a map of page path → content) for a MULTI-PAGE BUNDLE — a whole site, with images and any other binary asset. OMIT short_id to create a NEW artifact (a first publish) — `title` is then required. PASS short_id to publish a new version of one you already own, matching its kind: a bundle takes `files`, a single file takes `content`. A bundle republish REPLACES the whole bundle, so include EVERY page and asset. Requires publish rights (Creator/Admin role on the workspace); a commenter-level grant should use `propose` instead. Provide the FULL content (not a patch).",
       inputSchema: {
         content: z
           .string()
@@ -487,7 +481,7 @@ function buildServer(ctx: AppContext, agent: AgentRecord): McpServer {
           .record(z.string(), z.string())
           .optional()
           .describe(
-            'A MULTI-PAGE bundle as a map of page path → content, e.g. {"index.html":"…","about.html":"…","nav.js":"…"}. The root index.html (else the shallowest .html) becomes the entry page. A republish REPLACES the bundle, so include every page. Text pages only — zip-upload via the HTTP API for binary assets.',
+            'A MULTI-PAGE bundle as a map of path → content — the whole site. Text pages are plain strings; binary assets (screenshots, images, fonts) are base64 data: URIs, e.g. {"index.html":"<img src=shot.png>","styles.css":"…","shot.png":"data:image/png;base64,iVBORw0K…","logo.svg":"…"}. The root index.html (else the shallowest .html) becomes the entry page; pages reference assets by relative path. Served content-type comes from the file extension, so give binary entries a real extension (.png/.jpg/.svg/.woff2). A plain republish REPLACES the bundle (include every page and asset). The map travels in one call, so keep each call to a few MB; for a large or image-heavy site, publish the pages first, then add assets in batches with `merge` (below).',
           ),
         title: z
           .string()
@@ -513,6 +507,12 @@ function buildServer(ctx: AppContext, agent: AgentRecord): McpServer {
           .describe(
             "For a NEW bundle only: serve unknown paths from the entry page (single-page-app routing). Default false.",
           ),
+        merge: z
+          .boolean()
+          .optional()
+          .describe(
+            "Add/overwrite the given `files` INTO the existing bundle instead of replacing it (default false). Build a large site across several calls without re-sending it: publish the pages first, then merge in batches of assets — each call carries only the new files. Requires `short_id` of a bundle; same-path files overwrite, the rest are kept.",
+          ),
         message: z.string().optional().describe("What changed — recorded as the version message."),
         filename: z
           .string()
@@ -522,7 +522,7 @@ function buildServer(ctx: AppContext, agent: AgentRecord): McpServer {
           ),
       },
     },
-    async ({ content, files, title, short_id, visibility, spa, message, filename }) => {
+    async ({ content, files, title, short_id, visibility, spa, merge, message, filename }) => {
       // Direct publish is gated on the agent's role: Creator/Admin only. A
       // commenter-level grant is steered to `propose` (human-reviewed), so a
       // low-privilege agent still can't push live content.
@@ -536,31 +536,55 @@ function buildServer(ctx: AppContext, agent: AgentRecord): McpServer {
         return text("Provide `content` (single file) OR `files` (a bundle), not both.")
       if (!isBundle && (content === undefined || content === ""))
         return text("Provide `content` (single file) or `files` (a multi-page bundle).")
-      if (short_id) {
-        const a = await own(short_id)
-        if (!a) return text(`No artifact "${short_id}" in this workspace.`)
+      const existing = short_id ? await own(short_id) : null
+      if (short_id && !existing) return text(`No artifact "${short_id}" in this workspace.`)
+      if (existing) {
         // Kind can't change on republish; steer to the right field instead of
         // bubbling the core's 409.
-        if (a.kind === "bundle" && !isBundle)
+        if (existing.kind === "bundle" && !isBundle)
           return text(
             `"${short_id}" is a multi-page bundle — pass \`files\` (every page) to republish it.`,
           )
-        if (a.kind === "file" && isBundle)
+        if (existing.kind === "file" && isBundle)
           return text(`"${short_id}" is a single-file artifact — pass \`content\`, not \`files\`.`)
       } else if (!title?.trim()) {
         return text("Creating a new artifact needs a `title`.")
       }
+      // `merge` folds the given files into the existing bundle (add/overwrite by path)
+      // instead of replacing it — how a large site is grown across calls without
+      // re-sending it. Only meaningful for an existing bundle.
+      if (merge) {
+        if (!isBundle) return text("`merge` adds files to a bundle — pass `files`, not `content`.")
+        if (!existing) return text("`merge` needs the `short_id` of an existing bundle to add to.")
+        if (existing.kind !== "bundle")
+          return text(
+            `"${short_id}" is a single-file artifact — \`merge\` only applies to bundles.`,
+          )
+      }
       try {
+        let bytes: Uint8Array
+        // A merge keeps the bundle's existing SPA routing (the caller isn't redeclaring it).
+        let bundleSpa = isBundle ? !!spa : undefined
+        if (!isBundle) {
+          bytes = new TextEncoder().encode(content as string)
+        } else if (merge && existing) {
+          const v = await ctx.meta.getVersion(existing.id, existing.current_version)
+          const manifest = v && (await manifestOf(ctx, v))
+          if (!manifest)
+            return text(`Couldn't read the current bundle for "${short_id}" to merge into.`)
+          bytes = await mergeBundleZip(ctx.blobs, manifest, files as Record<string, string>)
+          bundleSpa = manifest.spa
+        } else {
+          bytes = zipBundleFiles(files as Record<string, string>)
+        }
         const { artifact, version } = await publishVersion(
           ctx.meta,
           ctx.blobs,
           {
-            bytes: isBundle
-              ? zipFromFiles(files as Record<string, string>)
-              : new TextEncoder().encode(content as string),
+            bytes,
             filename: isBundle ? `${title?.trim() || "bundle"}.zip` : (filename ?? "index.html"),
             isBundle,
-            spa: isBundle ? !!spa : undefined,
+            spa: bundleSpa,
             title: title?.trim(),
             message,
             author: agent.name,
@@ -579,9 +603,11 @@ function buildServer(ctx: AppContext, agent: AgentRecord): McpServer {
           url: artifactUrl(ctx.deps.baseUrl, artifact),
           title: artifact.title,
           visibility: artifact.visibility,
-          note: short_id
-            ? "Live now — published a new current version."
-            : "Live now — created a new artifact in your workspace.",
+          note: merge
+            ? `Live now — merged ${Object.keys(files as Record<string, string>).length} file(s) into the bundle (new current version).`
+            : short_id
+              ? "Live now — published a new current version."
+              : "Live now — created a new artifact in your workspace.",
         })
       } catch (e) {
         const msg = e instanceof PublishError ? e.message : "could not publish"
