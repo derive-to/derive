@@ -7,6 +7,7 @@ import type {
   CollectionMemberRecord,
   CollectionRecord,
   CommentRecord,
+  CommentSignals,
   CommentState,
   DeliveryRecord,
   DeliveryStatus,
@@ -504,6 +505,86 @@ export function makeRepos(db: SqliteDb) {
       .where(and(eq(comment.artifact_id, artifactId), eq(comment.thread_id, threadId)))
       .run()) as RunResult
     return res.changes ?? res.meta?.changes ?? 0
+  }
+
+  // Does this comment's meta JSON tag `userId`? Mentions live in meta.mentions
+  // (a {id,name}[]), so they can't be filtered in SQL cheaply — matched in code.
+  const commentMentionsUser = (metaJson: string | null, userId: string): boolean => {
+    if (!metaJson) return false
+    try {
+      const m = JSON.parse(metaJson) as { mentions?: { id?: string }[] }
+      return Array.isArray(m.mentions) && m.mentions.some((x) => x?.id === userId)
+    } catch {
+      return false
+    }
+  }
+
+  // Per-artifact comment signals for a viewer over a page of artifacts. ONE query;
+  // state is filtered in code (not SQL) so the bound-parameter count stays at the page
+  // size — D1 caps it at 100 and tagsForArtifacts already rides that edge. open_threads
+  // counts distinct OPEN threads; the flags drive "needs your feedback" featuring.
+  const commentSignals = async (
+    artifactIds: string[],
+    userId: string | null,
+  ): Promise<Record<string, CommentSignals>> => {
+    const out: Record<string, CommentSignals> = {}
+    if (artifactIds.length === 0) return out
+    const rows = await db
+      .select({
+        artifact_id: comment.artifact_id,
+        thread_id: comment.thread_id,
+        state: comment.state,
+        author_id: comment.author_id,
+        meta: comment.meta,
+      })
+      .from(comment)
+      .where(inArray(comment.artifact_id, artifactIds))
+      .all()
+    const threads: Record<string, Set<string>> = {}
+    for (const r of rows) {
+      if (r.state !== "open") continue
+      let sig = out[r.artifact_id]
+      if (!sig) {
+        sig = { open_threads: 0, mentions_me: false, i_participated: false }
+        out[r.artifact_id] = sig
+      }
+      let set = threads[r.artifact_id]
+      if (!set) {
+        set = new Set()
+        threads[r.artifact_id] = set
+      }
+      set.add(r.thread_id)
+      if (userId) {
+        if (r.author_id === userId) sig.i_participated = true
+        if (!sig.mentions_me && commentMentionsUser(r.meta, userId)) sig.mentions_me = true
+      }
+    }
+    for (const [id, set] of Object.entries(threads)) {
+      const sig = out[id]
+      if (sig) sig.open_threads = set.size
+    }
+    return out
+  }
+
+  // Artifact ids in `orgId` with an OPEN thread the viewer is tagged in or authored —
+  // the "needs your feedback" set. Scans the workspace's open comments (bounded by
+  // open-comment volume) and reduces in code, since the mention match is JSON.
+  const artifactIdsNeedingFeedback = async (userId: string, orgId: string): Promise<string[]> => {
+    const rows = await db
+      .select({
+        artifact_id: comment.artifact_id,
+        author_id: comment.author_id,
+        meta: comment.meta,
+      })
+      .from(comment)
+      .innerJoin(artifact, eq(artifact.id, comment.artifact_id))
+      .where(and(eq(comment.state, "open"), eq(artifact.org_id, orgId)))
+      .all()
+    const ids = new Set<string>()
+    for (const r of rows) {
+      if (r.author_id === userId || commentMentionsUser(r.meta, userId)) ids.add(r.artifact_id)
+    }
+    return [...ids]
   }
 
   // ---- Webhooks + outbox -------------------------------------------------
@@ -1354,6 +1435,8 @@ export function makeRepos(db: SqliteDb) {
     updateComment,
     listComments,
     setThreadState,
+    commentSignals,
+    artifactIdsNeedingFeedback,
     createWebhook,
     listWebhooks,
     getWebhook,

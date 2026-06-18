@@ -178,6 +178,17 @@ export interface MetaStore {
   ): Promise<CommentRecord | null>
   /** Flips every comment in a thread to a state; returns the count updated. */
   setThreadState(artifactId: string, threadId: string, state: CommentState): Promise<number>
+  /** Per-artifact comment signals for `userId` over a set of artifact ids, in one
+   *  query: open-thread count plus whether the viewer is tagged in or has authored an
+   *  open thread (drives the "needs your feedback" featuring). A null userId gets
+   *  counts only. */
+  commentSignals(
+    artifactIds: string[],
+    userId: string | null,
+  ): Promise<Record<string, CommentSignals>>
+  /** Artifact ids in `orgId` with an open thread the user is tagged in or authored —
+   *  the "needs your feedback" set the home section is built from. */
+  artifactIdsNeedingFeedback(userId: string, orgId: string): Promise<string[]>
 
   /**
    * Newest-first artifact page. `cursor` is keyset pagination on created_at
@@ -1019,6 +1030,16 @@ export interface ViewStats {
 //             the re-anchor sweep on every version bump; flips back to `open` if
 //             the quoted text reappears. Never overwrites `resolved`/`addressed`.
 export type CommentState = "open" | "addressed" | "resolved" | "outdated"
+
+/** Per-artifact comment signals for a viewer (see `MetaStore.commentSignals`).
+ *  `open_threads` is the count of distinct OPEN threads; `mentions_me` / `i_participated`
+ *  flag that the viewer is tagged in or has authored an open thread on this artifact —
+ *  the two things that make it "need your feedback". */
+export interface CommentSignals {
+  open_threads: number
+  mentions_me: boolean
+  i_participated: boolean
+}
 
 export interface CommentRecord {
   id: string

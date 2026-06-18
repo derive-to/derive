@@ -42,6 +42,15 @@ export const sharedArtifactsQuery = () =>
     queryFn: () => api.listArtifacts({ scope: "shared", limit: 12 }).then((r) => r.artifacts),
   })
 
+// Artifacts that need YOUR feedback: an open comment thread you're tagged in or have
+// commented on. Surfaced as a promoted strip at the top of the unfiltered home.
+export const needsFeedbackArtifactsQuery = () =>
+  queryOptions({
+    queryKey: ["artifacts", "needs_feedback"] as const,
+    queryFn: () =>
+      api.listArtifacts({ scope: "needs_feedback", limit: 12 }).then((r) => r.artifacts),
+  })
+
 // The caller's follows (GitHub authors + repo path prefixes) for the active
 // workspace. Drives the Following-feed empty state, the manage strip, and the
 // isFollowing* sets that toggle the Follow buttons. One source of truth: every
