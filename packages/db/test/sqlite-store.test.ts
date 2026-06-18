@@ -75,6 +75,54 @@ describe("sqlite store: user directory (Better Auth `user` table)", () => {
     s.close()
     rmSync(dir, { recursive: true, force: true })
   })
+
+  it("maps GitHub account ids to Dock users (account → user join); tolerates absent tables", async () => {
+    // Absent Better Auth tables → graceful empty (fresh store); empty input short-circuits.
+    const fresh = new SqliteMetaStore(":memory:")
+    expect(await fresh.usersByGithubIds(["4242"])).toEqual([])
+    expect(await fresh.usersByGithubIds([])).toEqual([])
+    fresh.close()
+
+    const { mkdtempSync, rmSync } = await import("node:fs")
+    const { tmpdir } = await import("node:os")
+    const { join } = await import("node:path")
+    const dir = mkdtempSync(join(tmpdir(), "dock-db-gh-"))
+    const path = join(dir, "store.db")
+    const s = new SqliteMetaStore(path)
+    const raw = new Database(path)
+    raw.exec(
+      `CREATE TABLE user (id TEXT PRIMARY KEY, email TEXT, name TEXT, image TEXT, username TEXT, discoverable INTEGER, profession TEXT, about TEXT)`,
+    )
+    // Better Auth's account table: camelCase columns, one row per linked provider.
+    raw.exec(
+      `CREATE TABLE account (id TEXT PRIMARY KEY, "accountId" TEXT, "providerId" TEXT, "userId" TEXT)`,
+    )
+    raw
+      .prepare(`INSERT INTO user (id, name, image, username) VALUES (?,?,?,?)`)
+      .run("u1", "Ada", "https://cdn/ada.png", "ada-handle")
+    raw
+      .prepare(`INSERT INTO account (id, "accountId", "providerId", "userId") VALUES (?,?,?,?)`)
+      .run("acc-gh", "4242", "github", "u1")
+    // A non-GitHub provider for the same user must NOT match.
+    raw
+      .prepare(`INSERT INTO account (id, "accountId", "providerId", "userId") VALUES (?,?,?,?)`)
+      .run("acc-goog", "g-1", "google", "u1")
+    raw.close()
+
+    expect(await s.usersByGithubIds(["4242", "missing"])).toEqual([
+      {
+        gh_id: "4242",
+        id: "u1",
+        name: "Ada",
+        image: "https://cdn/ada.png",
+        username: "ada-handle",
+      },
+    ])
+    expect(await s.usersByGithubIds([])).toEqual([])
+
+    s.close()
+    rmSync(dir, { recursive: true, force: true })
+  })
 })
 
 // Scope strings reach us two ways: Better Auth's oauth-provider stores a JSON array,
