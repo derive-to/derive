@@ -6,6 +6,7 @@ import type {
   DeliveryStatus,
   DomainKind,
   DomainStatus,
+  FollowKind,
   GeneralRole,
   NotificationKind,
   ProposalState,
@@ -227,6 +228,22 @@ export const artifactFavorite = sqliteTable(
   (t) => [uniqueIndex("artifact_favorite_user").on(t.artifact_id, t.user_id)],
 )
 
+// Per-user follows. One row per (user, org, kind, target); a follow tracks either a
+// GitHub author (kind="author", target=login) or a repo path prefix (kind="path",
+// target=path prefix). Drives the "following" activity feed. Idempotent on the tuple.
+export const follow = sqliteTable(
+  "follow",
+  {
+    id: text("id").primaryKey(),
+    org_id: text("org_id").notNull(),
+    user_id: text("user_id").notNull(),
+    kind: text("kind").$type<FollowKind>().notNull(),
+    target: text("target").notNull(),
+    created_at: text("created_at").notNull().default(now),
+  },
+  (t) => [uniqueIndex("follow_user_target").on(t.user_id, t.org_id, t.kind, t.target)],
+)
+
 // Browse tags. One row per (artifact, tag); workspace-wide, not per-user.
 export const artifactTag = sqliteTable(
   "artifact_tag",
@@ -418,6 +435,7 @@ const TABLES = [
   agent,
   agentMention,
   artifactFavorite,
+  follow,
   artifactTag,
   collection,
   collectionItem,

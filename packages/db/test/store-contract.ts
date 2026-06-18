@@ -286,6 +286,166 @@ export function runStoreContract(
     })
   })
 
+  describe(`${label}: follows (authors + paths)`, () => {
+    it("adds (idempotent), lists, and removes a follow", async () => {
+      const user = `u_${uuid()}`
+      const a1 = await store.addFollow({
+        id: uuid(),
+        org_id: ORG,
+        user_id: user,
+        kind: "author",
+        target: "ada",
+      })
+      expect(a1).toMatchObject({ kind: "author", target: "ada", org_id: ORG, user_id: user })
+      // A repeat add on the same (user, org, kind, target) is a no-op that returns the
+      // SAME row (idempotent on the unique key, like setFavorite).
+      const a2 = await store.addFollow({
+        id: uuid(),
+        org_id: ORG,
+        user_id: user,
+        kind: "author",
+        target: "ada",
+      })
+      expect(a2.id).toBe(a1.id)
+      const p1 = await store.addFollow({
+        id: uuid(),
+        org_id: ORG,
+        user_id: user,
+        kind: "path",
+        target: "docs/plans",
+      })
+      const list = await store.listFollows(user, ORG)
+      expect(list.map((f) => `${f.kind}:${f.target}`).sort()).toEqual([
+        "author:ada",
+        "path:docs/plans",
+      ])
+      // Removing one leaves the other; removing by the wrong kind is a no-op.
+      await store.removeFollow(user, ORG, "author", "nobody")
+      expect(await store.listFollows(user, ORG)).toHaveLength(2)
+      await store.removeFollow(user, ORG, "author", "ada")
+      const after = await store.listFollows(user, ORG)
+      expect(after.map((f) => f.id)).toEqual([p1.id])
+    })
+
+    it("returns [] from followedArtifactIds when the user follows nothing", async () => {
+      expect(await store.followedArtifactIds(`u_${uuid()}`, ORG)).toEqual([])
+    })
+
+    it("matches artifacts by followed author (case-insensitive) and by path prefix, org-scoped", async () => {
+      const user = `u_${uuid()}`
+      // An artifact authored by "Ada" (login "ada").
+      const byAda = await store.createArtifact(newArtifact())
+      await store.addVersion(byAda.id, newVersion({ author: "Ada", author_login: "Ada" }))
+      // An artifact under docs/plans/ (a followed path prefix), authored by someone else.
+      const inPlans = await store.createArtifact(newArtifact())
+      await store.addVersion(inPlans.id, newVersion({ author: "bob", author_login: "bob" }))
+      await store.setArtifactSourcePath(inPlans.id, "docs/plans/q3.md")
+      // A non-matching artifact: different author, path outside the followed prefix.
+      const other = await store.createArtifact(newArtifact())
+      await store.addVersion(other.id, newVersion({ author: "carol", author_login: "carol" }))
+      await store.setArtifactSourcePath(other.id, "src/index.ts")
+      // The same author + path in ANOTHER org (must be excluded by the org scope).
+      const otherOrg = `${ORG}_feed_other`
+      const elsewhere = await store.createArtifact(newArtifact({ org_id: otherOrg }))
+      await store.addVersion(elsewhere.id, newVersion({ author: "Ada", author_login: "ada" }))
+      await store.setArtifactSourcePath(elsewhere.id, "docs/plans/elsewhere.md")
+
+      // Follow author "ada" (lowercased target) + path prefix "docs/plans".
+      await store.addFollow({
+        id: uuid(),
+        org_id: ORG,
+        user_id: user,
+        kind: "author",
+        target: "ada",
+      })
+      await store.addFollow({
+        id: uuid(),
+        org_id: ORG,
+        user_id: user,
+        kind: "path",
+        target: "docs/plans",
+      })
+
+      const ids = await store.followedArtifactIds(user, ORG)
+      expect(ids).toContain(byAda.id) // author match, case-insensitive (login "Ada")
+      expect(ids).toContain(inPlans.id) // path-prefix match
+      expect(ids).not.toContain(other.id) // neither author nor path matches
+      expect(ids).not.toContain(elsewhere.id) // matches but in another org
+
+      // Author-only follow set: no path follow → only the author match comes back.
+      const authorOnly = `u_${uuid()}`
+      await store.addFollow({
+        id: uuid(),
+        org_id: ORG,
+        user_id: authorOnly,
+        kind: "author",
+        target: "ada",
+      })
+      const authorIds = await store.followedArtifactIds(authorOnly, ORG)
+      expect(authorIds).toContain(byAda.id)
+      expect(authorIds).not.toContain(inPlans.id)
+
+      // Path-only follow set: no author follow → only the path match comes back.
+      const pathOnly = `u_${uuid()}`
+      await store.addFollow({
+        id: uuid(),
+        org_id: ORG,
+        user_id: pathOnly,
+        kind: "path",
+        target: "docs/plans",
+      })
+      const pathIds = await store.followedArtifactIds(pathOnly, ORG)
+      expect(pathIds).toContain(inPlans.id)
+      expect(pathIds).not.toContain(byAda.id)
+
+      // A removed (tombstoned) artifact drops out of the feed.
+      await store.setArtifactRemoved(byAda.id, new Date().toISOString())
+      expect(await store.followedArtifactIds(authorOnly, ORG)).not.toContain(byAda.id)
+      await store.setArtifactRemoved(byAda.id, null)
+    })
+
+    it("treats a path follow as a literal prefix: respects folder boundaries + escapes LIKE metachars", async () => {
+      // A folder follow (trailing slash) matches files INSIDE the folder…
+      const user = `u_${uuid()}`
+      const inside = await store.createArtifact(newArtifact())
+      await store.addVersion(inside.id, newVersion())
+      await store.setArtifactSourcePath(inside.id, "docs/plans/q3.md")
+      // …but NOT a sibling folder that merely shares the prefix string.
+      const sibling = await store.createArtifact(newArtifact())
+      await store.addVersion(sibling.id, newVersion())
+      await store.setArtifactSourcePath(sibling.id, "docs/plans2/x.md")
+      await store.addFollow({
+        id: uuid(),
+        org_id: ORG,
+        user_id: user,
+        kind: "path",
+        target: "docs/plans/",
+      })
+      const ids = await store.followedArtifactIds(user, ORG)
+      expect(ids).toContain(inside.id)
+      expect(ids).not.toContain(sibling.id) // "docs/plans2/…" is not under "docs/plans/"
+
+      // A "_" in the prefix is matched literally, not as the LIKE single-char wildcard.
+      const esc = `u_${uuid()}`
+      const literal = await store.createArtifact(newArtifact())
+      await store.addVersion(literal.id, newVersion())
+      await store.setArtifactSourcePath(literal.id, "a_b/notes.md")
+      const wildcardish = await store.createArtifact(newArtifact())
+      await store.addVersion(wildcardish.id, newVersion())
+      await store.setArtifactSourcePath(wildcardish.id, "axb/notes.md")
+      await store.addFollow({
+        id: uuid(),
+        org_id: ORG,
+        user_id: esc,
+        kind: "path",
+        target: "a_b/",
+      })
+      const escIds = await store.followedArtifactIds(esc, ORG)
+      expect(escIds).toContain(literal.id)
+      expect(escIds).not.toContain(wildcardish.id) // "_" escaped → literal, not "any char"
+    })
+  })
+
   describe(`${label}: collections`, () => {
     it("creates a collection, adds/removes items, tracks membership roles", async () => {
       const a = await store.createArtifact(newArtifact())

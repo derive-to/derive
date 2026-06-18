@@ -123,6 +123,17 @@ export interface Collection {
   created_at: string
   count: number
 }
+export type FollowKind = "author" | "path"
+/** A per-user follow: a GitHub author (kind="author", target=login) or a repo path
+ *  prefix (kind="path", target=path prefix). Drives the `scope=following` feed. */
+export interface Follow {
+  id: string
+  org_id: string
+  user_id: string
+  kind: FollowKind
+  target: string
+  created_at: string
+}
 export type ProposalState = "open" | "approved" | "changes_requested" | "withdrawn"
 export interface Proposal {
   id: string
@@ -474,8 +485,10 @@ export const api = {
     favorite?: boolean
     /** Narrow to artifacts last changed by this GitHub login. */
     author?: string
-    /** "shared" → only artifacts explicitly shared with you (across workspaces). */
-    scope?: "shared"
+    /** "shared" → only artifacts explicitly shared with you (across workspaces).
+     *  "following" → artifacts in the active workspace matching your follows
+     *  (followed GitHub authors + repo path prefixes) — the activity feed. */
+    scope?: "shared" | "following"
     cursor?: string
     limit?: number
   }): Promise<{
@@ -618,6 +631,17 @@ export const api = {
     f(`/v1/artifacts/${id}/favorite`, { ...opts(), method: on ? "PUT" : "DELETE" }).then(j),
   setTags: (id: string, tags: string[]): Promise<{ tags: string[] }> =>
     f(`/v1/artifacts/${id}/tags`, { ...opts({ tags }), method: "PUT" }).then(j),
+
+  // Follows (track GitHub authors + repo path prefixes) — the activity feed is
+  // listArtifacts({ scope: "following" }). All scoped to the active workspace.
+  listFollows: (): Promise<{ follows: Follow[] }> => f("/v1/follows", opts()).then(j),
+  addFollow: (kind: FollowKind, target: string): Promise<{ follow: Follow }> =>
+    f("/v1/follows", opts({ kind, target })).then(j),
+  removeFollow: (kind: FollowKind, target: string): Promise<void> =>
+    f("/v1/follows", {
+      ...opts({ kind, target }),
+      method: "DELETE",
+    }).then(() => undefined),
 
   deleteArtifact: (id: string): Promise<void> =>
     f(`/v1/artifacts/${id}`, { method: "DELETE", credentials: "include" }).then(() => undefined),

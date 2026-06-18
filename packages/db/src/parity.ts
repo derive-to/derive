@@ -23,6 +23,7 @@ import type {
   CommentRecord,
   DeliveryRecord,
   DomainRecord,
+  FollowRecord,
   GitHubAppRecord,
   GitHubInstallationRecord,
   MembershipRecord,
@@ -49,6 +50,7 @@ export interface TypedTables {
   workspace: WorkspaceRecord
   artifactMember: ArtifactMemberRecord
   notification: NotificationRecord
+  follow: FollowRecord
   proposal: ProposalRecord
   agent: AgentRecord
   agentMention: AgentMentionRecord

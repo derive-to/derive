@@ -12,6 +12,8 @@ import type {
   DeliveryStatus,
   DomainRecord,
   DomainStatus,
+  FollowKind,
+  FollowRecord,
   GeneralRole,
   GitHubAppRecord,
   GitHubInstallationRecord,
@@ -30,6 +32,7 @@ import type {
   NewComment,
   NewDelivery,
   NewDomain,
+  NewFollow,
   NewMembership,
   NewNotification,
   NewProposal,
@@ -85,6 +88,7 @@ import {
   collectionMember,
   comment,
   domain,
+  follow,
   githubApp,
   githubInstallation,
   membership,
@@ -119,6 +123,7 @@ export const schema = {
   artifactMember,
   notification,
   artifactFavorite,
+  follow,
   artifactTag,
   proposal,
   agent,
@@ -148,6 +153,7 @@ const _schemaShapes: Shapes<typeof schema> = {
   workspace: true,
   artifactMember: true,
   notification: true,
+  follow: true,
   proposal: true,
   agent: true,
   agentMention: true,
@@ -712,6 +718,74 @@ export class PgMetaStore implements MetaStore {
       .where(
         and(eq(artifactFavorite.artifact_id, artifactId), eq(artifactFavorite.user_id, userId)),
       )
+  }
+
+  // ---- Follows (track GitHub authors + repo path prefixes) ---------------
+  // Mirrors the sqlite path: insert-or-ignore on the unique key, then read back.
+  async addFollow(f: NewFollow): Promise<FollowRecord> {
+    await this.db
+      .insert(follow)
+      .values(f)
+      .onConflictDoNothing({
+        target: [follow.user_id, follow.org_id, follow.kind, follow.target],
+      })
+    const rows = await this.db
+      .select()
+      .from(follow)
+      .where(
+        and(
+          eq(follow.user_id, f.user_id),
+          eq(follow.org_id, f.org_id),
+          eq(follow.kind, f.kind),
+          eq(follow.target, f.target),
+        ),
+      )
+    return one(rows)
+  }
+  async removeFollow(
+    userId: string,
+    orgId: string,
+    kind: FollowKind,
+    target: string,
+  ): Promise<void> {
+    await this.db
+      .delete(follow)
+      .where(
+        and(
+          eq(follow.user_id, userId),
+          eq(follow.org_id, orgId),
+          eq(follow.kind, kind),
+          eq(follow.target, target),
+        ),
+      )
+  }
+  listFollows(userId: string, orgId: string): Promise<FollowRecord[]> {
+    return this.db
+      .select()
+      .from(follow)
+      .where(and(eq(follow.user_id, userId), eq(follow.org_id, orgId)))
+      .orderBy(desc(follow.created_at), desc(follow.id))
+  }
+  // The "following" feed id set: live artifacts whose current author is a followed
+  // login (case-insensitive) OR whose source_path starts with a followed path prefix.
+  // Mirrors the sqlite path exactly (split → OR of inArray + escaped LIKE).
+  async followedArtifactIds(userId: string, orgId: string): Promise<string[]> {
+    const follows = await this.listFollows(userId, orgId)
+    const logins = follows.filter((f) => f.kind === "author").map((f) => f.target.toLowerCase())
+    const prefixes = follows.filter((f) => f.kind === "path").map((f) => f.target)
+    if (logins.length === 0 && prefixes.length === 0) return []
+    const conds = []
+    if (logins.length > 0) conds.push(inArray(sql`lower(${artifact.author_login})`, logins))
+    for (const p of prefixes) {
+      const escaped = p.replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_")
+      conds.push(sql`${artifact.source_path} like ${`${escaped}%`} escape '\\'`)
+    }
+    const match = conds.length === 1 ? conds[0] : or(...conds)
+    const rows = await this.db
+      .select({ id: artifact.id })
+      .from(artifact)
+      .where(and(eq(artifact.org_id, orgId), isNull(artifact.removed_at), match))
+    return rows.map((r) => r.id)
   }
   async tagsForArtifacts(artifactIds: string[]): Promise<Record<string, string[]>> {
     if (artifactIds.length === 0) return {}

@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { useAuth } from "@/ctx"
 import { type LibraryParams, libraryArtifactsQuery, sharedArtifactsQuery } from "@/lib/queries"
+import { useFollows } from "@/lib/use-follows"
 import { usePrefetchArtifact } from "@/lib/use-prefetch-artifact"
 import { cn } from "@/lib/utils"
 import { refFor } from "../artifact/parse-ref"
@@ -19,6 +20,7 @@ import { ArtifactGrid } from "./artifact-grid"
 import { ArtifactRow, byRecency } from "./artifact-row"
 import { CollectionBar } from "./collection-bar"
 import { FolderGroups } from "./folder-groups"
+import { FollowingStrip } from "./following-strip"
 import { HowItWorks } from "./how-it-works"
 import { LibrarySkeleton } from "./library-skeleton"
 import { PublishCard } from "./publish-card"
@@ -63,15 +65,17 @@ function LibraryBody() {
   const filter: Filter =
     search.f === "favorites"
       ? { kind: "favorites" }
-      : search.tag
-        ? { kind: "tag", tag: search.tag }
-        : search.collection
-          ? {
-              kind: "collection",
-              id: search.collection,
-              title: collections.find((c) => c.id === search.collection)?.title ?? "Collection",
-            }
-          : { kind: "all" }
+      : search.scope === "following"
+        ? { kind: "following" }
+        : search.tag
+          ? { kind: "tag", tag: search.tag }
+          : search.collection
+            ? {
+                kind: "collection",
+                id: search.collection,
+                title: collections.find((c) => c.id === search.collection)?.title ?? "Collection",
+              }
+            : { kind: "all" }
 
   useEffect(() => {
     const t = setTimeout(() => setDebouncedQ(query.trim()), 280)
@@ -86,6 +90,7 @@ function LibraryBody() {
     collection: search.collection,
     favorite: search.f === "favorites" || undefined,
     author: search.author,
+    scope: filter.kind === "following" ? "following" : undefined,
   }
   const listQuery = libraryArtifactsQuery(params)
   const { data, isPending, isError, refetch, fetchNextPage, hasNextPage, isFetchingNextPage } =
@@ -187,9 +192,11 @@ function LibraryBody() {
       ? "All artifacts"
       : filter.kind === "favorites"
         ? "Favorites"
-        : filter.kind === "tag"
-          ? `#${filter.tag}`
-          : collectionTitle
+        : filter.kind === "following"
+          ? "Following"
+          : filter.kind === "tag"
+            ? `#${filter.tag}`
+            : collectionTitle
   const headingCount = debouncedQ
     ? items.length
     : filter.kind === "all"
@@ -198,17 +205,21 @@ function LibraryBody() {
         ? (summary?.favorites ?? items.length)
         : filter.kind === "tag"
           ? (summary?.tags.find((t) => t.tag === filter.tag)?.count ?? items.length)
-          : (activeCollection?.count ?? items.length)
+          : filter.kind === "collection"
+            ? (activeCollection?.count ?? items.length)
+            : items.length
 
   const emptyMessage = debouncedQ
     ? `No artifacts match “${debouncedQ}”.`
     : filter.kind === "favorites"
       ? "No favorites yet. Tap the star on any artifact to save it."
-      : filter.kind === "tag"
-        ? `Nothing tagged #${filter.tag} yet.`
-        : filter.kind === "collection"
-          ? "This collection is empty. Open an artifact and add it from its Collections menu."
-          : "Nothing yet. Publish above, or run dock publish ./file."
+      : filter.kind === "following"
+        ? "Follow authors or folders to see their recent changes here."
+        : filter.kind === "tag"
+          ? `Nothing tagged #${filter.tag} yet.`
+          : filter.kind === "collection"
+            ? "This collection is empty. Open an artifact and add it from its Collections menu."
+            : "Nothing yet. Publish above, or run dock publish ./file."
 
   // A personal header on the (otherwise bare) home view: lead with the user's
   // first name, falling back to their handle. Only on the unfiltered "all" list,
@@ -226,6 +237,11 @@ function LibraryBody() {
   const homeView = filter.kind === "all" && !debouncedQ
   const { data: sharedData } = useQuery({ ...sharedArtifactsQuery(), enabled: homeView })
   const sharedItems = homeView ? (sharedData ?? []) : []
+
+  // The caller's follows: drives the Following feed's manage strip + empty state,
+  // and the Follow/Following toggle on the active author-filter pill.
+  const { follows, isFollowingAuthor, toggleAuthor, unfollow } = useFollows()
+  const followingAuthor = !!search.author && isFollowingAuthor(search.author)
 
   const openShared = async (a: Artifact) => {
     const on = !a.favorite
@@ -300,6 +316,10 @@ function LibraryBody() {
                 <>
                   <Icon name="favorites" size={15} /> Favorites
                 </>
+              ) : filter.kind === "following" ? (
+                <>
+                  <Icon name="following" size={15} /> Following
+                </>
               ) : filter.kind === "tag" ? (
                 `#${filter.tag}`
               ) : (
@@ -311,22 +331,53 @@ function LibraryBody() {
             </Button>
           )}
           {/* Active author filter — independent of the tag/collection filter, so it
-              gets its own clearable pill. */}
+              gets its own clearable pill, plus a Follow toggle for that author. */}
           {search.author && (
-            <Button
-              variant="outline"
-              size="sm"
-              data-testid="library-author-filter-clear"
-              title={`Clear author filter: ${search.author}`}
-              onClick={clearAuthor}
-            >
-              <Icon name="user" size={15} /> {search.author}
-              <X />
-            </Button>
+            <>
+              <Button
+                variant="outline"
+                size="sm"
+                data-testid="library-author-filter-clear"
+                title={`Clear author filter: ${search.author}`}
+                onClick={clearAuthor}
+              >
+                <Icon name="user" size={15} /> {search.author}
+                <X />
+              </Button>
+              <Button
+                variant={followingAuthor ? "secondary" : "primary"}
+                size="sm"
+                data-testid={`library-follow-author-${search.author}`}
+                aria-pressed={followingAuthor}
+                title={
+                  followingAuthor
+                    ? `Unfollow @${search.author}`
+                    : `Follow @${search.author} to see their changes in your feed`
+                }
+                onClick={() => search.author && toggleAuthor(search.author)}
+              >
+                {followingAuthor ? (
+                  <>
+                    <Icon name="check" size={15} /> Following
+                  </>
+                ) : (
+                  <>
+                    <Icon name="following" size={15} /> Follow @{search.author}
+                  </>
+                )}
+              </Button>
+            </>
           )}
         </div>
 
-        {filter.kind !== "collection" && <PublishCard />}
+        {/* Following feed: the manage strip of current follows (authors + paths),
+            each unfollowable, sits above the heading so it reads as the feed's
+            controls. Hidden (returns null) when you follow nothing. */}
+        {filter.kind === "following" && (
+          <FollowingStrip follows={follows} onUnfollow={(kind, target) => unfollow(kind, target)} />
+        )}
+
+        {filter.kind !== "collection" && filter.kind !== "following" && <PublishCard />}
 
         {sharedItems.length > 0 && (
           <section className="mb-6" data-testid="shared-with-you">

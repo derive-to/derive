@@ -163,6 +163,16 @@ CREATE TABLE IF NOT EXISTS artifact_favorite (
   FOREIGN KEY (artifact_id) REFERENCES artifact(id)
 );
 
+CREATE TABLE IF NOT EXISTS follow (
+  id TEXT PRIMARY KEY,
+  org_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  target TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  UNIQUE (user_id, org_id, kind, target)
+);
+
 CREATE TABLE IF NOT EXISTS artifact_tag (
   id TEXT PRIMARY KEY,
   artifact_id TEXT NOT NULL,
