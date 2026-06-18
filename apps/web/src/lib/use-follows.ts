@@ -23,14 +23,16 @@ export function useFollows() {
   const qc = useQueryClient()
   const { data: follows = [] } = useQuery(followsQuery())
 
-  const { authors, paths } = useMemo(() => {
+  const { authors, paths, users } = useMemo(() => {
     const authors = new Set<string>()
     const paths = new Set<string>()
+    const users = new Set<string>()
     for (const fol of follows) {
       if (fol.kind === "author") authors.add(fol.target)
+      else if (fol.kind === "user") users.add(fol.target)
       else paths.add(fol.target)
     }
-    return { authors, paths }
+    return { authors, paths, users }
   }, [follows])
 
   const invalidate = () => qc.invalidateQueries({ queryKey: followsQuery().queryKey })
@@ -52,6 +54,14 @@ export function useFollows() {
     follows,
     isFollowingAuthor: (login: string) => authors.has(normalizeAuthor(login)),
     isFollowingPath: (path: string) => paths.has(normalizePath(path)),
+    // Whether the caller follows a Dock person (by @handle; stored lowercased).
+    isFollowingUser: (handle: string) => users.has(handle.toLowerCase()),
+    // Flip the follow state for a Dock person (by @handle).
+    toggleUser: (handle: string) => {
+      const target = handle.toLowerCase()
+      if (users.has(target)) remove.mutate({ kind: "user", target })
+      else add.mutate({ kind: "user", target })
+    },
     // Flip the follow state for an author (by GitHub login).
     toggleAuthor: (login: string) => {
       const target = normalizeAuthor(login)

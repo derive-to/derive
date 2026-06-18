@@ -564,6 +564,9 @@ function buildServer(ctx: AppContext, agent: AgentRecord): McpServer {
             title: title?.trim(),
             message,
             author: agent.name,
+            // Attribute to the human behind the agent so "follow a person" surfaces
+            // what they published over MCP (the byline still reads the agent's name).
+            authorId: agent.userId ?? null,
             // New artifacts land in the granting user's workspace, private to the
             // team by default (never link-public unless they ask).
             orgId: agent.org_id,

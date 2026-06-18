@@ -844,12 +844,27 @@ export class PgMetaStore implements MetaStore {
     const follows = await this.listFollows(userId, orgId)
     const logins = follows.filter((f) => f.kind === "author").map((f) => f.target.toLowerCase())
     const prefixes = follows.filter((f) => f.kind === "path").map((f) => f.target)
-    if (logins.length === 0 && prefixes.length === 0) return []
+    const handles = follows.filter((f) => f.kind === "user").map((f) => f.target.toLowerCase())
+    if (logins.length === 0 && prefixes.length === 0 && handles.length === 0) return []
     const conds = []
     if (logins.length > 0) conds.push(inArray(sql`lower(${artifact.author_login})`, logins))
     for (const p of prefixes) {
       const escaped = p.replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_")
       conds.push(sql`${artifact.source_path} like ${`${escaped}%`} escape '\\'`)
+    }
+    // A followed Dock person's work: artifacts they published (author_id) OR authored
+    // via GitHub sync (author_gh_id → their linked account). Mirrors the sqlite path.
+    if (handles.length > 0) {
+      const hs = sql.join(
+        handles.map((h) => sql`${h}`),
+        sql`, `,
+      )
+      conds.push(
+        sql`${artifact.author_id} in (select id from "user" where lower(username) in (${hs}))`,
+      )
+      conds.push(
+        sql`${artifact.author_gh_id} in (select a."accountId" from "account" a join "user" u on u.id = a."userId" where a."providerId" = 'github' and lower(u.username) in (${hs}))`,
+      )
     }
     const match = conds.length === 1 ? conds[0] : or(...conds)
     const rows = await this.db

@@ -19,7 +19,7 @@ export function FollowingStrip({
         Following
       </span>
       {follows.map((fol) => {
-        const label = fol.kind === "author" ? `@${fol.target}` : fol.target
+        const label = fol.kind === "author" || fol.kind === "user" ? `@${fol.target}` : fol.target
         return (
           <span
             key={`${fol.kind}:${fol.target}`}

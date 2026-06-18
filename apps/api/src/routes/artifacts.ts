@@ -41,6 +41,7 @@ export const artifactRoutes = (ctx: AppContext) => {
     bearer,
     currentUser,
     actingUser,
+    actingUserId,
     activeWorkspace,
     actorFor,
     authorize,
@@ -334,6 +335,9 @@ export const artifactRoutes = (ctx: AppContext) => {
           // always attributed to a real principal (the token's optional `author`
           // label is the one headless exception).
           author: (await actingUser(c))?.name ?? str(body["author"]),
+          // Attribute the artifact to the publishing Dock user (the human behind a
+          // CLI/MCP agent too) so "follow a person" surfaces hand-published work.
+          authorId: await actingUserId(c),
           name: str(body["name"]),
           orgId: org,
           visibility,

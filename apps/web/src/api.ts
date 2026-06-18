@@ -129,7 +129,7 @@ export interface Collection {
   created_at: string
   count: number
 }
-export type FollowKind = "author" | "path"
+export type FollowKind = "author" | "path" | "user"
 /** A per-user follow: a GitHub author (kind="author", target=login) or a repo path
  *  prefix (kind="path", target=path prefix). Drives the `scope=following` feed. */
 export interface Follow {

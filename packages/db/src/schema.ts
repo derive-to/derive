@@ -59,6 +59,12 @@ export const artifact = sqliteTable("artifact", {
   author_login: text("author_login"),
   author_avatar: text("author_avatar"),
   author_gh_id: text("author_gh_id"),
+  // The DOCK user who created this artifact (the publishing principal's user id), so
+  // "follow a person" can surface their work even when it was hand-published and has no
+  // GitHub author_gh_id. Nullable: legacy rows, anonymous/agent publishes, and synced
+  // artifacts (matched via author_gh_id instead) leave it null. Set on create; adds
+  // cleanly via ALTER ADD COLUMN on existing DBs (no default).
+  author_id: text("author_id"),
 })
 
 export const version = sqliteTable(

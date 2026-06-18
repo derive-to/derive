@@ -366,6 +366,7 @@ export function buildContext(deps: AppDeps) {
         token: "",
         role: roleFromScopes(grant.scopes),
         created_at: new Date().toISOString(),
+        userId: grant.userId,
       }
     }
     // 2. JWT access token: the oauth-provider issues a signed JWT (not stored in our
@@ -411,6 +412,7 @@ export function buildContext(deps: AppDeps) {
       token: "",
       role: roleFromScopes(scopes),
       created_at: new Date().toISOString(),
+      userId,
     }
   }
 
@@ -424,6 +426,16 @@ export function buildContext(deps: AppDeps) {
     // fall back to the public handle, never the email (the email→handle migration).
     // Every account has a username post-migration; email is only a last-ditch guard.
     return me ? { id: me.id, name: me.name ?? me.username ?? me.email } : null
+  }
+
+  // The underlying Dock USER to attribute a publish to (for "follow a person"): the
+  // signed-in user, else the human behind an OAuth agent (CLI / MCP). Null for an
+  // anonymous publish or an ownerless registered agent. Distinct from actingUser,
+  // whose `id` is the agent id ("oauth:…") used for the display byline.
+  const actingUserId = async (c: Context): Promise<string | null> => {
+    const me = await currentUser(c)
+    if (me) return me.id
+    return (await agentFor(c))?.userId ?? null
   }
 
   const ipOf = (c: Context): string =>
@@ -660,6 +672,7 @@ export function buildContext(deps: AppDeps) {
     currentUser,
     agentFor,
     actingUser,
+    actingUserId,
     limited,
     overStorage,
     ensureMembership,

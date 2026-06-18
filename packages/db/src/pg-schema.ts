@@ -50,6 +50,9 @@ export const artifact = pgTable("artifact", {
   author_login: text("author_login"),
   author_avatar: text("author_avatar"),
   author_gh_id: text("author_gh_id"),
+  // The Dock user who created this artifact (set on publish) — drives "follow a person"
+  // for hand-published work. Nullable; mirrors schema.ts.
+  author_id: text("author_id"),
 })
 
 export const version = pgTable(

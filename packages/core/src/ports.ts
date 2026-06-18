@@ -61,6 +61,9 @@ export interface ArtifactRecord {
   author_login: string | null
   author_avatar: string | null
   author_gh_id: string | null
+  /** The Dock user who created this artifact (set on publish), so "follow a person"
+   *  surfaces hand-published work. Null for legacy/anonymous/agent/synced rows. */
+  author_id: string | null
 }
 
 export interface ListArtifactsOpts {
@@ -120,6 +123,9 @@ export interface NewArtifact {
   general_role?: GeneralRole
   kind: ArtifactKind
   spa: 0 | 1
+  /** The creating Dock user (set on a logged-in publish); null/omitted for
+   *  anonymous, agent, or sync-created artifacts. Drives follow-a-person. */
+  author_id?: string | null
 }
 
 export interface NewVersion {
@@ -513,7 +519,7 @@ export interface MetaStore {
 
 /** What a user follows: a GitHub author (`target` = the login) or a repo path
  *  prefix (`target` = a path prefix, e.g. "docs/plans"). */
-export type FollowKind = "author" | "path"
+export type FollowKind = "author" | "path" | "user"
 /** A per-user follow — the same shape of relation as a favorite, but keyed on a
  *  (kind, target) pair instead of an artifact id. Drives the "following" feed. */
 export interface FollowRecord {
@@ -612,6 +618,10 @@ export interface AgentRecord {
   token: string
   role: Role
   created_at: string
+  /** The Dock user this agent acts on behalf of — the human who consented (OAuth
+   *  grant) — used to attribute the agent's publishes to a person. Absent for
+   *  registered workspace agents with no single owner. */
+  userId?: string | null
 }
 export interface NewAgent {
   id: string

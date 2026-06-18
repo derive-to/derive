@@ -11,13 +11,13 @@ export const followRoutes = (ctx: AppContext) => {
   const { meta, currentUser, activeWorkspace } = ctx
   const app = new Hono()
 
-  // Author targets are normalized to lowercase so they match the (lowercased)
-  // author_login comparison in followedArtifactIds; path targets are kept verbatim.
+  // Author (GitHub login) + user (Dock handle) targets are lowercased to match the
+  // lowercased comparisons in followedArtifactIds; path targets are kept verbatim.
   const normalizeTarget = (kind: FollowKind, target: string): string =>
-    kind === "author" ? target.trim().toLowerCase() : target.trim()
+    kind === "path" ? target.trim() : target.trim().toLowerCase()
 
   const followBody = z.object({
-    kind: z.enum(["author", "path"]),
+    kind: z.enum(["author", "path", "user"]),
     target: z.string().min(1, "target is required"),
   })
 

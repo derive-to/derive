@@ -41,6 +41,10 @@ export interface PublishInput {
   authorLogin?: string | null
   authorAvatar?: string | null
   authorGhId?: string | null
+  /** The creating Dock user's id (a logged-in publish). Recorded on the artifact so
+   *  "follow a person" surfaces their work even when it's hand-published (no GitHub
+   *  authorGhId). Omitted for anonymous/agent/sync publishes. Set on create only. */
+  authorId?: string | null
   /** The workspace the new artifact belongs to (multi-workspace). */
   orgId?: string
   visibility?: Visibility
@@ -220,6 +224,7 @@ export async function publish(
     password_hash: input.passwordHash ?? null,
     kind,
     spa: input.spa ? 1 : 0,
+    author_id: input.authorId ?? null,
   })
   const version = await meta.addVersion(artifact.id, {
     id: newId("v"),
