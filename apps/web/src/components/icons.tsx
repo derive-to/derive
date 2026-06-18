@@ -42,6 +42,7 @@ import {
   TagIcon,
   TrashIcon,
   UserIcon,
+  UsersThreeIcon,
   XIcon,
 } from "@phosphor-icons/react"
 import { cn } from "@/lib/utils"
@@ -55,6 +56,8 @@ const REG = {
   home: [HouseIcon, "text-primary"],
   all: [StackIcon, "text-primary"],
   favorites: [StarIcon, "text-gold"],
+  // The activity feed of followed authors + repo paths.
+  following: [UsersThreeIcon, "text-primary"],
   collections: [FoldersIcon, "text-collection"],
   collection: [FolderSimpleIcon, "text-collection"],
   tag: [TagIcon, "text-tag"],

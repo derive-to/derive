@@ -12,6 +12,8 @@ import type {
   DeliveryStatus,
   DomainRecord,
   DomainStatus,
+  FollowKind,
+  FollowRecord,
   GeneralRole,
   GitHubAppRecord,
   GitHubInstallationRecord,
@@ -28,6 +30,7 @@ import type {
   NewComment,
   NewDelivery,
   NewDomain,
+  NewFollow,
   NewMembership,
   NewNotification,
   NewProposal,
@@ -82,6 +85,7 @@ import {
   collectionMember,
   comment,
   domain,
+  follow,
   githubApp,
   githubInstallation,
   membership,
@@ -135,6 +139,7 @@ export const schema = {
   artifactMember,
   notification,
   artifactFavorite,
+  follow,
   artifactTag,
   proposal,
   agent,
@@ -164,6 +169,7 @@ const _schemaShapes: Shapes<typeof schema> = {
   workspace: true,
   artifactMember: true,
   notification: true,
+  follow: true,
   proposal: true,
   agent: true,
   agentMention: true,
@@ -713,6 +719,81 @@ export function makeRepos(db: SqliteDb) {
       )
       .run()
   }
+
+  // ---- Follows (track GitHub authors + repo path prefixes) ---------------
+  // Insert-or-ignore on the (user, org, kind, target) unique key (idempotent, like
+  // setFavorite), then read the row back so the caller always gets the persisted follow.
+  const addFollow = async (f: NewFollow): Promise<FollowRecord> => {
+    await db
+      .insert(follow)
+      .values(f)
+      .onConflictDoNothing({
+        target: [follow.user_id, follow.org_id, follow.kind, follow.target],
+      })
+      .run()
+    return (await db
+      .select()
+      .from(follow)
+      .where(
+        and(
+          eq(follow.user_id, f.user_id),
+          eq(follow.org_id, f.org_id),
+          eq(follow.kind, f.kind),
+          eq(follow.target, f.target),
+        ),
+      )
+      .get()) as FollowRecord
+  }
+  const removeFollow = async (
+    userId: string,
+    orgId: string,
+    kind: FollowKind,
+    target: string,
+  ): Promise<void> => {
+    await db
+      .delete(follow)
+      .where(
+        and(
+          eq(follow.user_id, userId),
+          eq(follow.org_id, orgId),
+          eq(follow.kind, kind),
+          eq(follow.target, target),
+        ),
+      )
+      .run()
+  }
+  const listFollows = async (userId: string, orgId: string): Promise<FollowRecord[]> =>
+    db
+      .select()
+      .from(follow)
+      .where(and(eq(follow.user_id, userId), eq(follow.org_id, orgId)))
+      .orderBy(desc(follow.created_at), desc(follow.id))
+      .all()
+  // The "following" feed's id set: live artifacts in the workspace whose CURRENT author
+  // is a followed login (case-insensitive) OR whose source_path starts with a followed
+  // path prefix. Splits the follows into the two sub-conditions and ORs them.
+  const followedArtifactIds = async (userId: string, orgId: string): Promise<string[]> => {
+    const follows = await listFollows(userId, orgId)
+    const logins = follows.filter((f) => f.kind === "author").map((f) => f.target.toLowerCase())
+    const prefixes = follows.filter((f) => f.kind === "path").map((f) => f.target)
+    if (logins.length === 0 && prefixes.length === 0) return []
+    const conds: SQL[] = []
+    if (logins.length > 0) conds.push(inArray(sql`lower(${artifact.author_login})`, logins))
+    // A path prefix is a LIKE 'prefix%'. Escape LIKE metacharacters in the prefix and
+    // declare the escape char so a path that happens to contain % or _ matches literally.
+    for (const p of prefixes) {
+      const escaped = p.replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_")
+      conds.push(sql`${artifact.source_path} like ${`${escaped}%`} escape '\\'`)
+    }
+    const match = conds.length === 1 ? conds[0] : or(...conds)
+    const rows = await db
+      .select({ id: artifact.id })
+      .from(artifact)
+      .where(and(eq(artifact.org_id, orgId), isNull(artifact.removed_at), match))
+      .all()
+    return rows.map((r) => r.id)
+  }
+
   const tagsForArtifacts = async (artifactIds: string[]): Promise<Record<string, string[]>> => {
     if (artifactIds.length === 0) return {}
     const rows = await db
@@ -1299,6 +1380,10 @@ export function makeRepos(db: SqliteDb) {
     listUserFavoriteIds,
     setFavorite,
     removeFavorite,
+    addFollow,
+    removeFollow,
+    listFollows,
+    followedArtifactIds,
     tagsForArtifacts,
     setArtifactTags,
     createCollection,

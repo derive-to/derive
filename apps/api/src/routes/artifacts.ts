@@ -123,6 +123,13 @@ export const artifactRoutes = (ctx: AppContext) => {
       if (!me) return c.json({ artifacts: [], next_cursor: null })
       narrow(await meta.artifactIdsSharedWith(me.id))
     }
+    // scope=following → artifacts in the active workspace whose current author or repo
+    // path matches one of my follows (authors + path prefixes). The activity feed.
+    const following = c.req.query("scope") === "following"
+    if (following) {
+      if (!me) return c.json({ artifacts: [], next_cursor: null })
+      narrow(await meta.followedArtifactIds(me.id, await activeWorkspace(c)))
+    }
     if (tag) narrow(await meta.artifactIdsByTag(tag))
     if (favOnly) narrow(favIds)
 

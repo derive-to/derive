@@ -13,6 +13,9 @@ export type LibraryParams = {
   favorite?: boolean
   // Narrow to artifacts last changed by this GitHub login.
   author?: string
+  // "following" → the activity feed: artifacts in the active workspace matching
+  // your follows (followed authors + repo path prefixes).
+  scope?: "following"
 }
 export const libraryArtifactsQuery = (params: LibraryParams) =>
   infiniteQueryOptions({
@@ -37,6 +40,16 @@ export const sharedArtifactsQuery = () =>
   queryOptions({
     queryKey: ["artifacts", "shared"] as const,
     queryFn: () => api.listArtifacts({ scope: "shared", limit: 12 }).then((r) => r.artifacts),
+  })
+
+// The caller's follows (GitHub authors + repo path prefixes) for the active
+// workspace. Drives the Following-feed empty state, the manage strip, and the
+// isFollowing* sets that toggle the Follow buttons. One source of truth: every
+// add/remove invalidates this key so the toggles + strip refetch.
+export const followsQuery = () =>
+  queryOptions({
+    queryKey: ["follows"] as const,
+    queryFn: () => api.listFollows().then((r) => r.follows),
   })
 
 // Typed query options shared by route loaders (ensureQueryData, for intent

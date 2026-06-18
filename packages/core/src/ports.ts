@@ -289,6 +289,18 @@ export interface MetaStore {
   listUserFavoriteIds(userId: string, orgId?: string): Promise<string[]>
   setFavorite(artifactId: string, userId: string): Promise<void>
   removeFavorite(artifactId: string, userId: string): Promise<void>
+
+  // ---- Follows (per-user: track GitHub authors + repo path prefixes) -----
+  /** Record a follow (idempotent on (user, org, kind, target)); returns the row. */
+  addFollow(f: NewFollow): Promise<FollowRecord>
+  removeFollow(userId: string, orgId: string, kind: FollowKind, target: string): Promise<void>
+  /** A user's follows in a workspace, newest first. */
+  listFollows(userId: string, orgId: string): Promise<FollowRecord[]>
+  /** Artifact ids in `orgId` (not removed) whose current author_login is one of the
+   *  user's followed logins (case-insensitive) OR whose source_path starts with one of
+   *  the user's followed path prefixes — the activity feed. Empty when the user follows
+   *  nothing. */
+  followedArtifactIds(userId: string, orgId: string): Promise<string[]>
   /** Tags per artifact, batched (no N+1). Missing ids map to no entry. */
   tagsForArtifacts(artifactIds: string[]): Promise<Record<string, string[]>>
   /** Replace an artifact's full tag set (deduped, trimmed, lowercased upstream). */
@@ -486,6 +498,28 @@ export interface MetaStore {
     orgId: string | undefined,
     opts?: { artifactId?: string; limit?: number },
   ): Promise<AuditLogRecord[]>
+}
+
+/** What a user follows: a GitHub author (`target` = the login) or a repo path
+ *  prefix (`target` = a path prefix, e.g. "docs/plans"). */
+export type FollowKind = "author" | "path"
+/** A per-user follow — the same shape of relation as a favorite, but keyed on a
+ *  (kind, target) pair instead of an artifact id. Drives the "following" feed. */
+export interface FollowRecord {
+  id: string
+  org_id: string
+  user_id: string
+  kind: FollowKind
+  /** For `author`: the GitHub login (stored lowercased). For `path`: a repo path prefix. */
+  target: string
+  created_at: string
+}
+export interface NewFollow {
+  id: string
+  org_id: string
+  user_id: string
+  kind: FollowKind
+  target: string
 }
 
 export type ReportState = "open" | "actioned" | "dismissed"

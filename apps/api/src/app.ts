@@ -22,6 +22,7 @@ import { commentRoutes } from "./routes/comments"
 import { domainRoutes } from "./routes/domains"
 import { embedRoutes } from "./routes/embeds"
 import { favoriteRoutes } from "./routes/favorites"
+import { followRoutes } from "./routes/follows"
 import { moderationRoutes } from "./routes/moderation"
 import { notificationRoutes } from "./routes/notifications"
 import { proposalRoutes } from "./routes/proposals"
@@ -447,6 +448,7 @@ export function createApp(deps: AppDeps): Hono {
     artifactRoutes,
     sharingRoutes,
     favoriteRoutes,
+    followRoutes,
     collectionRoutes,
     syncRoutes,
     vitalsRoutes,

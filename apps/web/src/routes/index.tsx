@@ -7,6 +7,7 @@ export const Route = createFileRoute("/")({
   // them from any page and a filtered/searched library is shareable.
   validateSearch: (s: Record<string, unknown>): LibrarySearch => ({
     f: s.f === "favorites" ? "favorites" : undefined,
+    scope: s.scope === "following" ? "following" : undefined,
     tag: typeof s.tag === "string" ? s.tag : undefined,
     collection: typeof s.collection === "string" ? s.collection : undefined,
     q: typeof s.q === "string" ? s.q : undefined,

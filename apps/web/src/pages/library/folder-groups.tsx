@@ -1,6 +1,8 @@
 import { ChevronRight, Folder } from "lucide-react"
 import { useMemo, useState } from "react"
 import type { Artifact } from "@/api"
+import { Icon } from "@/components/icons"
+import { useFollows } from "@/lib/use-follows"
 import { cn } from "@/lib/utils"
 import { ArtifactRow } from "./artifact-row"
 
@@ -34,6 +36,9 @@ export function FolderGroups({
   isFetchingNextPage: boolean
   onLoadMore: () => void
 } & Handlers) {
+  // Follow state for the per-folder toggle: one query for the whole tree, derived
+  // into the isFollowingPath check + the togglePath action each header drives.
+  const { isFollowingPath, togglePath } = useFollows()
   const groups = useMemo(() => {
     const m = new Map<string, Artifact[]>()
     for (const a of items) {
@@ -54,7 +59,14 @@ export function FolderGroups({
   return (
     <div className="flex flex-col gap-3">
       {groups.map((g) => (
-        <FolderSection key={g.dir} dir={g.dir} items={g.items} {...handlers} />
+        <FolderSection
+          key={g.dir}
+          dir={g.dir}
+          items={g.items}
+          following={isFollowingPath(g.dir)}
+          onToggleFollow={() => togglePath(g.dir)}
+          {...handlers}
+        />
       ))}
       {(hasNextPage || isFetchingNextPage) && (
         <div className="py-2 text-center text-sm text-muted-foreground">Loading the rest…</div>
@@ -63,27 +75,63 @@ export function FolderGroups({
   )
 }
 
-function FolderSection({ dir, items, ...handlers }: { dir: string; items: Artifact[] } & Handlers) {
+function FolderSection({
+  dir,
+  items,
+  following,
+  onToggleFollow,
+  ...handlers
+}: {
+  dir: string
+  items: Artifact[]
+  following: boolean
+  onToggleFollow: () => void
+} & Handlers) {
   const [open, setOpen] = useState(true)
+  // Only a real repo path prefix is followable — the "/" repo-root and the "Other"
+  // bucket (non-synced artifacts) aren't path prefixes the feed can match.
+  const followable = dir !== "/" && dir !== "Other"
   return (
-    <div>
-      <button
-        type="button"
-        data-testid={`folder-toggle-${dir}`}
-        onClick={() => setOpen((o) => !o)}
-        className="flex w-full items-center gap-2 rounded-md py-1.5 text-left hover:text-foreground"
-      >
-        <ChevronRight
-          className={cn(
-            "size-4 shrink-0 text-muted-foreground transition-transform",
-            open && "rotate-90",
-          )}
-          aria-hidden
-        />
-        <Folder className="size-4 shrink-0 text-primary" aria-hidden />
-        <span className="truncate font-mono text-sm font-medium text-foreground">{dir}</span>
-        <span className="font-mono text-xs text-muted-foreground">· {items.length}</span>
-      </button>
+    <div className="group/folder">
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          data-testid={`folder-toggle-${dir}`}
+          onClick={() => setOpen((o) => !o)}
+          className="flex min-w-0 flex-1 items-center gap-2 rounded-md py-1.5 text-left hover:text-foreground"
+        >
+          <ChevronRight
+            className={cn(
+              "size-4 shrink-0 text-muted-foreground transition-transform",
+              open && "rotate-90",
+            )}
+            aria-hidden
+          />
+          <Folder className="size-4 shrink-0 text-primary" aria-hidden />
+          <span className="truncate font-mono text-sm font-medium text-foreground">{dir}</span>
+          <span className="font-mono text-xs text-muted-foreground">· {items.length}</span>
+        </button>
+        {followable && (
+          <button
+            type="button"
+            data-testid={`folder-follow-${dir}`}
+            aria-pressed={following}
+            title={
+              following ? `Unfollow ${dir}/` : `Follow ${dir}/ to see its changes in your feed`
+            }
+            onClick={onToggleFollow}
+            className={cn(
+              "inline-flex shrink-0 items-center gap-1 rounded-md border px-2 py-1 font-mono text-2xs transition-colors",
+              following
+                ? "border-primary text-primary"
+                : "border-border text-muted-foreground opacity-0 hover:text-foreground group-hover/folder:opacity-100 focus-visible:opacity-100",
+            )}
+          >
+            <Icon name={following ? "check" : "following"} size={13} />
+            {following ? "Following" : "Follow"}
+          </button>
+        )}
+      </div>
       {open && (
         <div className="ml-6 mt-1.5 flex flex-col gap-2">
           {items.map((a) => (

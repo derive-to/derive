@@ -102,8 +102,9 @@ export function NavRail() {
   const loc = useLocation()
   const search = loc.search as LibrarySearch
   const onLibrary = loc.pathname === "/"
-  const isAll = onLibrary && !search.f && !search.tag && !search.collection
+  const isAll = onLibrary && !search.f && !search.scope && !search.tag && !search.collection
   const isFav = onLibrary && search.f === "favorites"
+  const isFollowing = onLibrary && search.scope === "following"
   const tags = summary?.tags ?? []
   // Full content in the mobile drawer; only the avatar in the collapsed desktop rail.
   const railMode = collapsed && !isMobile
@@ -239,6 +240,15 @@ export function NavRail() {
           active={isFav}
           collapsed={railMode}
           testId="sidebar-favorites"
+          onClick={closeDrawer}
+        />
+        <SideItem
+          icon="following"
+          label="Following"
+          search={{ scope: "following" }}
+          active={isFollowing}
+          collapsed={railMode}
+          testId="nav-following"
           onClick={closeDrawer}
         />
         {!railMode && (
