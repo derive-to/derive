@@ -133,7 +133,10 @@ export function NavRail() {
     "flex flex-col gap-px overflow-y-auto border-r border-border bg-card py-3.5 transition-[transform,flex-basis,width] duration-200",
     isMobile
       ? cn(
-          "fixed inset-y-0 left-0 z-[61] w-[266px] basis-[266px] px-2.5 shadow-[0_0_44px_-10px_rgba(0,0,0,0.45)]",
+          // Sits BELOW the Radix overlay layer (z-50) so menus opened from inside the
+          // drawer — the workspace switcher, the command palette — render above it, not
+          // behind it. Still above page content + the backdrop.
+          "fixed inset-y-0 left-0 z-[45] w-[266px] basis-[266px] px-2.5 shadow-[0_0_44px_-10px_rgba(0,0,0,0.45)]",
           drawerOpen ? "translate-x-0" : "-translate-x-[105%]",
         )
       : collapsed
