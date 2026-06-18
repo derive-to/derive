@@ -203,7 +203,10 @@ export function makeAuth(db: AuthDb, baseUrl: string, secret: string, hooks: Aut
         // consents, so the only surface is spam client rows.
         allowUnauthenticatedClientRegistration: true,
         accessTokenExpiresIn: 60 * 60, // 1h
-        refreshTokenExpiresIn: 60 * 60 * 24 * 7, // 7d
+        // Refresh tokens rotate + reset their window on every use (see createUserTokens),
+        // so this is an INACTIVITY timeout, not a hard cap: active clients (MCP, browser)
+        // never re-auth; you only re-consent after 30 days of no use.
+        refreshTokenExpiresIn: 60 * 60 * 24 * 30, // 30d (idle)
         scopes: [...OAUTH_SCOPES],
         // Accept the resource indicators MCP clients send (else token exchange 400s).
         validAudiences: mcpAudiences,
