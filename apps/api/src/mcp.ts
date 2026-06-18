@@ -30,26 +30,15 @@ import {
 } from "@dock/core"
 import { StreamableHTTPTransport } from "@hono/mcp"
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
-import { zipSync } from "fflate"
 import type { Hono } from "hono"
 import { z } from "zod"
 import type { AppContext } from "./context"
 import { markAddressed } from "./lib/addressed"
-import { cleanPath, manifestOf as sharedManifestOf } from "./lib/bundle"
+import { cleanPath, manifestOf as sharedManifestOf, zipBundleFiles } from "./lib/bundle"
 import { quoteOf } from "./lib/comments"
 
 const text = (s: string) => ({ content: [{ type: "text" as const, text: s }] })
 const json = (v: unknown) => text(JSON.stringify(v, null, 2))
-
-// Pack a {path: content} map into a zip the core publish path can ingest exactly
-// like an HTTP bundle upload (it re-validates size, paths, and entry point). Text
-// pages only — binary assets still go through the multipart/zip HTTP route.
-const zipFromFiles = (files: Record<string, string>): Uint8Array => {
-  const enc = new TextEncoder()
-  const entries: Record<string, Uint8Array> = {}
-  for (const [path, content] of Object.entries(files)) entries[path] = enc.encode(content)
-  return zipSync(entries)
-}
 // An actionable error the model can recover from (per the MCP spec, isError text is
 // fed back to the agent so it self-corrects), rather than an opaque failure.
 const err = (s: string) => ({
@@ -475,7 +464,7 @@ function buildServer(ctx: AppContext, agent: AgentRecord): McpServer {
     "publish",
     {
       description:
-        "Publish an artifact to your workspace DIRECTLY — it goes live immediately, no review. Provide `content` for a SINGLE-FILE artifact, or `files` (a map of page path → content) for a MULTI-PAGE BUNDLE. OMIT short_id to create a NEW artifact (a first publish) — `title` is then required. PASS short_id to publish a new version of one you already own, matching its kind: a bundle takes `files`, a single file takes `content`. A bundle republish REPLACES the whole bundle, so include EVERY page. Requires publish rights (Creator/Admin role on the workspace); a commenter-level grant should use `propose` instead. Provide the FULL content (not a patch).",
+        "Publish an artifact to your workspace DIRECTLY — it goes live immediately, no review. Provide `content` for a SINGLE-FILE artifact, or `files` (a map of page path → content) for a MULTI-PAGE BUNDLE — a whole site, with images and any other binary asset. OMIT short_id to create a NEW artifact (a first publish) — `title` is then required. PASS short_id to publish a new version of one you already own, matching its kind: a bundle takes `files`, a single file takes `content`. A bundle republish REPLACES the whole bundle, so include EVERY page and asset. Requires publish rights (Creator/Admin role on the workspace); a commenter-level grant should use `propose` instead. Provide the FULL content (not a patch).",
       inputSchema: {
         content: z
           .string()
@@ -487,7 +476,7 @@ function buildServer(ctx: AppContext, agent: AgentRecord): McpServer {
           .record(z.string(), z.string())
           .optional()
           .describe(
-            'A MULTI-PAGE bundle as a map of page path → content, e.g. {"index.html":"…","about.html":"…","nav.js":"…"}. The root index.html (else the shallowest .html) becomes the entry page. A republish REPLACES the bundle, so include every page. Text pages only — zip-upload via the HTTP API for binary assets.',
+            'A MULTI-PAGE bundle as a map of path → content — the whole site. Text pages are plain strings; binary assets (screenshots, images, fonts) are base64 data: URIs, e.g. {"index.html":"<img src=shot.png>","styles.css":"…","shot.png":"data:image/png;base64,iVBORw0K…","logo.svg":"…"}. The root index.html (else the shallowest .html) becomes the entry page; pages reference assets by relative path. Served content-type comes from the file extension, so give binary entries a real extension (.png/.jpg/.svg/.woff2). A republish REPLACES the bundle, so include every page and asset. The whole map travels in one call, so keep total content to a few MB — compress/resize screenshots rather than shipping originals.',
           ),
         title: z
           .string()
@@ -556,7 +545,7 @@ function buildServer(ctx: AppContext, agent: AgentRecord): McpServer {
           ctx.blobs,
           {
             bytes: isBundle
-              ? zipFromFiles(files as Record<string, string>)
+              ? zipBundleFiles(files as Record<string, string>)
               : new TextEncoder().encode(content as string),
             filename: isBundle ? `${title?.trim() || "bundle"}.zip` : (filename ?? "index.html"),
             isBundle,

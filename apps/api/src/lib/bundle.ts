@@ -4,10 +4,53 @@ import {
   type BundleManifest,
   type VersionRecord,
 } from "@dock/core"
+import { zipSync } from "fflate"
 
 // Bundle manifests store paths with a leading slash (/index.html); present them
 // cleanly to callers, and accept either form on the way back in.
 export const cleanPath = (p: string): string => p.replace(/^\//, "")
+
+// A base64 data: URI — data:image/png;base64,…. The mediatype is optional and may
+// carry parameters (;charset=…), so match through to the required `;base64,` marker.
+const DATA_URI_BASE64 = /^data:[\w.+-]*\/?[\w.+-]*(?:;[\w.+-]+=[\w.+-]+)*;base64,/i
+
+const base64ToBytes = (b64: string): Uint8Array => {
+  const bin = atob(b64.replace(/\s+/g, ""))
+  const out = new Uint8Array(bin.length)
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i)
+  return out
+}
+
+/**
+ * Pack a {path: content} map into a zip the core publish path ingests exactly like
+ * an HTTP bundle upload (it re-validates size, file count, paths, and entry point).
+ *
+ * A value is stored as raw bytes when it is a base64 data: URI
+ * (`data:image/png;base64,…`) and as UTF-8 text otherwise — so screenshots, fonts,
+ * and any binary asset that makes up a site ride the SAME map as the HTML/CSS/JS
+ * pages, carried over MCP without inlining multi-MB base64 into one HTML string. The
+ * served content-type comes from the path extension (mimeFor), so binary entries
+ * must be named with a real extension (shot.png, logo.svg, font.woff2).
+ *
+ * Throws if a value looks like a base64 data: URI but isn't decodable.
+ */
+export const zipBundleFiles = (files: Record<string, string>): Uint8Array => {
+  const enc = new TextEncoder()
+  const entries: Record<string, Uint8Array> = {}
+  for (const [path, value] of Object.entries(files)) {
+    const marker = DATA_URI_BASE64.exec(value)
+    if (!marker) {
+      entries[path] = enc.encode(value)
+      continue
+    }
+    try {
+      entries[path] = base64ToBytes(value.slice(marker[0].length))
+    } catch {
+      throw new Error(`invalid base64 data URI for "${path}"`)
+    }
+  }
+  return zipSync(entries)
+}
 
 // A version's bundle manifest (null when it isn't a bundle / is unreadable).
 export async function manifestOf(
