@@ -49,6 +49,15 @@ export const artifact = sqliteTable("artifact", {
   updated_at: text("updated_at"),
   removed_at: text("removed_at"),
   source_path: text("source_path"),
+  // The CURRENT (last) author, denormalized from the latest version row for the list
+  // view + author filtering. For a GitHub-synced artifact these mirror the last commit's
+  // author: `author_name`/`author_login`/`author_avatar` are the display name, GitHub
+  // login, and avatar URL; `author_gh_id` is the GitHub numeric user id (text) used to
+  // map back to a Dock account. All nullable (legacy/anonymous/non-synced rows).
+  author_name: text("author_name"),
+  author_login: text("author_login"),
+  author_avatar: text("author_avatar"),
+  author_gh_id: text("author_gh_id"),
 })
 
 export const version = sqliteTable(
@@ -63,6 +72,13 @@ export const version = sqliteTable(
     content_type: text("content_type").notNull(),
     size_bytes: integer("size_bytes").notNull().default(0),
     author: text("author").notNull(),
+    // The GitHub identity behind this version, when it came from a sync: the commit
+    // author's login, avatar URL, and numeric user id (text). All nullable — a manual
+    // publish, an anonymous one, or a commit GitHub can't map to an account leaves them
+    // null and `author` carries the display name (commit author name / "GitHub sync").
+    author_login: text("author_login"),
+    author_avatar: text("author_avatar"),
+    author_gh_id: text("author_gh_id"),
     message: text("message"),
     name: text("name"),
     created_at: text("created_at").notNull().default(now),

@@ -342,6 +342,12 @@ describe("GitHub sync engine", () => {
     const sid = map["dated.md"]?.short_id as string
     expect((await meta.getByShortId(sid))?.updated_at).toBe("2025-01-02T03:04:05Z")
     expect(map["dated.md"]?.updatedAt).toBe("2025-01-02T03:04:05Z")
+    // This mock returns only a committer date (no author) → the author falls back to the
+    // legacy "GitHub sync" display name and the GitHub fields stay null. The author is
+    // marked sourced so a re-sync won't re-fetch.
+    expect((await meta.getByShortId(sid))?.author_name).toBe("GitHub sync")
+    expect((await meta.getByShortId(sid))?.author_login).toBeNull()
+    expect(map["dated.md"]?.authorSourced).toBe(true)
 
     // Backfill: simulate a legacy entry synced before dates existed (updatedAt absent)
     // by stripping it from the map + resetting the row, then re-sync (sha unchanged).

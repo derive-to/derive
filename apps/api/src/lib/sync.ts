@@ -1,6 +1,7 @@
 import {
   type ArtifactRecord,
   type BlobStore,
+  type GithubAuthor,
   type MetaStore,
   mapPoolSettled,
   publish,
@@ -11,9 +12,10 @@ import { zipSync } from "fflate"
 import { type BundlePlan, commonDir, planBundle } from "./bundle-from-repo"
 import { sha256 } from "./crypto"
 import {
+  type CommitAuthor,
   fetchBlob,
   fetchBlobsBatch,
-  lastCommitDate,
+  lastCommit,
   listTree,
   matchesGlobs,
   parseRepo,
@@ -49,6 +51,11 @@ export interface SyncedFile {
    *  first time we resolve it; `""` records an attempt that found none (so we don't
    *  retry forever); absent means not yet sourced → the date backfill will fill it. */
   updatedAt?: string
+  /** Whether the source file's last-commit AUTHOR has been sourced (mirrored into the
+   *  artifact's author_* columns). Mirrors `updatedAt`'s semantics: `true` once attempted
+   *  (a real author or none), absent means not yet sourced → the author backfill fills it.
+   *  Date + author are fetched in a single Commits call, so the two sentinels move together. */
+  authorSourced?: boolean
 }
 type FileMap = Record<string, SyncedFile>
 
@@ -221,26 +228,49 @@ export async function runSync(
     }
   }
 
-  // Mirror the source file's last-commit date into the artifact's `updated_at`, so the
-  // card shows when the SOURCE last changed, not when Dock ingested it (the git tree
-  // carries no dates — this is one extra Commits API call per file). Records the result
-  // on the map entry: a real date, or `""` when none resolved, so a re-sync never
-  // re-fetches a file it already sourced. Best-effort — a null leaves publish's `now()`.
-  const stampDate = async (artifactId: string, repoPath: string, entry: SyncedFile) => {
-    const date = await lastCommitDate(repo, repoPath, source.ref, source.token)
-    if (date) await meta.setArtifactUpdatedAt(artifactId, date)
-    entry.updatedAt = date ?? ""
+  // A commit author becomes the artifact's denormalized author only when GitHub gave us
+  // *something* to attribute to (a login or a git author name); a fully-empty commit
+  // author leaves the columns null. The display name prefers the GitHub login, then the
+  // raw git author name.
+  const toGithubAuthor = (a: CommitAuthor | null): GithubAuthor | null => {
+    if (!a || (!a.login && !a.name)) return null
+    return { name: a.name ?? a.login, login: a.login, avatar: a.avatar, ghId: a.ghId }
   }
-  // The existing tracked files were synced before dates were sourced (`updatedAt`
+
+  // Mirror the source file's last-commit date AND author into the artifact (the card's
+  // "updated" + "who last changed this"). The git tree carries neither, so this is one
+  // Commits API call per file — fetched ONCE here and reused for both. Records the result
+  // on the map entry (date sentinel + authorSourced) so a re-sync never re-fetches a file
+  // it already sourced. Best-effort: a null date leaves publish's now(); a null author
+  // clears the columns. Returns the resolved author so the publish path can store it
+  // per-version too without a second call.
+  const stampCommit = async (
+    artifactId: string,
+    repoPath: string,
+    entry: SyncedFile,
+  ): Promise<GithubAuthor | null> => {
+    const { date, author } = await lastCommit(repo, repoPath, source.ref, source.token)
+    if (date) await meta.setArtifactUpdatedAt(artifactId, date)
+    const gh = toGithubAuthor(author)
+    await meta.setArtifactAuthor(artifactId, gh)
+    entry.updatedAt = date ?? ""
+    entry.authorSourced = true
+    return gh
+  }
+  // The existing tracked files were synced before date/author were sourced (`updatedAt`
   // absent). Backfill them lazily — bounded per run so one sync doesn't make hundreds
   // of Commits calls; the leftover counts as `remaining`, so the runner continues until
-  // every file is dated. Unbounded in tests (no `limits`).
+  // every file is sourced. Unbounded in tests (no `limits`).
   const DATE_BACKFILL_PER_RUN = limits ? 150 : Number.POSITIVE_INFINITY
   let datesBackfilled = 0
-  const backfillDate = async (entry: SyncedFile, repoPath: string) => {
-    if (entry.updatedAt !== undefined || datesBackfilled >= DATE_BACKFILL_PER_RUN) return
+  const backfillCommit = async (entry: SyncedFile, repoPath: string) => {
+    // Fetch when EITHER sentinel is unset: a brand-new entry (neither set) or a legacy
+    // one dated before authors existed (`updatedAt` set, `authorSourced` absent). The
+    // single Commits call fills both, so they converge after one backfill.
+    const needs = entry.updatedAt === undefined || entry.authorSourced === undefined
+    if (!needs || datesBackfilled >= DATE_BACKFILL_PER_RUN) return
     datesBackfilled++
-    await stampDate(entry.artifact_id, repoPath, entry)
+    await stampCommit(entry.artifact_id, repoPath, entry)
   }
 
   try {
@@ -398,12 +428,23 @@ export async function runSync(
       members?: Record<string, string>,
     ) => {
       const kind: SyncedFile["kind"] = isBundle ? "bundle" : "file"
+      // Source the commit ONCE up front: its author is recorded on the version + the
+      // artifact at publish time (replacing the literal "GitHub sync"), and its date is
+      // reused for the updated_at stamp below — no second Commits call. Best-effort.
+      const { date, author } = await lastCommit(repo, repoPath, source.ref, source.token)
+      const gh = toGithubAuthor(author)
+      // Display name: the GitHub login, else the git author name, else "GitHub sync" when
+      // GitHub gave us no identity at all (keeps the prior behavior for unmappable commits).
+      const displayName = gh?.login ?? gh?.name ?? "GitHub sync"
       const input = {
         bytes,
         filename,
         isBundle,
         title,
-        author: "GitHub sync",
+        author: displayName,
+        authorLogin: gh?.login ?? null,
+        authorAvatar: gh?.avatar ?? null,
+        authorGhId: gh?.ghId ?? null,
         message: `sync ${source.ref}@${sha.slice(0, 7)}`,
         orgId: source.org_id,
       }
@@ -420,17 +461,19 @@ export async function runSync(
       }
       await meta.setArtifactRemoved(artifact.id, null)
       await meta.setArtifactSourcePath(artifact.id, repoPath)
-      const entry: SyncedFile = {
+      // A changed/new file: stamp its last-commit date now (the forward fix; a fresh full
+      // sync dates everything as it publishes, within the maxFiles batch). The author is
+      // already on the artifact (denormalized by addVersion) + the version row.
+      if (date) await meta.setArtifactUpdatedAt(artifact.id, date)
+      next[repoPath] = {
         artifact_id: artifact.id,
         short_id: artifact.short_id,
         sha,
         kind,
         members,
+        updatedAt: date ?? "",
+        authorSourced: true,
       }
-      // A changed/new file: source its last-commit date now (this is the forward fix;
-      // a fresh full sync dates everything as it publishes, within the maxFiles batch).
-      await stampDate(artifact.id, repoPath, entry)
-      next[repoPath] = entry
       await onPublished()
     }
 
@@ -481,7 +524,7 @@ export async function runSync(
         for (const m of plan.members) memberShas[m.repoPath] = shaByPath.get(m.repoPath) ?? ""
         const composite = compositeSha(memberShas)
         if (before?.kind === "bundle" && before.sha === composite) {
-          await backfillDate(before, e.path) // source its date if it predates the feature
+          await backfillCommit(before, e.path) // source its date + author if it predates the feature
           next[e.path] = before
           res.skipped++
           continue
@@ -518,7 +561,7 @@ export async function runSync(
 
       // Single file. Unchanged → skip; pure rename → re-home; else publish.
       if (before && before.kind !== "bundle" && before.sha === e.sha) {
-        await backfillDate(before, e.path) // source its date if it predates the feature
+        await backfillCommit(before, e.path) // source its date + author if it predates the feature
         next[e.path] = before
         res.skipped++
         continue
@@ -611,9 +654,12 @@ export async function runSync(
       }
       return n.kind === "bundle" || n.sha !== e.sha
     }).length
-    // Files not yet date-sourced (the backfill hit its per-run cap) keep the run
-    // "remaining" so the runner re-invokes until every artifact carries a real date.
-    const dateRemaining = Object.values(next).filter((n) => n.updatedAt === undefined).length
+    // Files not yet commit-sourced (the backfill hit its per-run cap) keep the run
+    // "remaining" so the runner re-invokes until every artifact carries a real date +
+    // author. Either sentinel missing counts (they're filled together).
+    const dateRemaining = Object.values(next).filter(
+      (n) => n.updatedAt === undefined || n.authorSourced === undefined,
+    ).length
     res.remaining = publishRemaining + dateRemaining
 
     let status = capped

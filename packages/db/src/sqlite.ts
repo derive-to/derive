@@ -1,4 +1,5 @@
 import type {
+  GithubUserMapping,
   MetaStore,
   NewVersion,
   UserDir,
@@ -82,6 +83,11 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
             current_version: next,
             current_content_type: v.content_type,
             updated_at: new Date().toISOString(),
+            // Denormalize the new version's author onto the artifact (its CURRENT author).
+            author_name: v.author,
+            author_login: v.author_login ?? null,
+            author_avatar: v.author_avatar ?? null,
+            author_gh_id: v.author_gh_id ?? null,
           })
           .where(eq(artifact.id, artifactId))
           .run()
@@ -247,6 +253,24 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
             `SELECT id, email, name, image, username, profession, about FROM user WHERE id IN (${ph})`,
           )
           .all(...ids) as UserDir[]
+      } catch {
+        return []
+      }
+    },
+    // Map GitHub numeric user ids to the Dock accounts that signed in with GitHub:
+    // account.accountId (the stringified GitHub id) → user. providerId='github' scopes
+    // it to the social provider. Best-effort — [] when the Better Auth tables are absent.
+    usersByGithubIds: async (ghIds): Promise<GithubUserMapping[]> => {
+      if (ghIds.length === 0) return []
+      try {
+        const ph = ghIds.map(() => "?").join(",")
+        return raw
+          .prepare(
+            `SELECT a.accountId gh_id, u.id, u.name, u.image, u.username
+             FROM account a JOIN user u ON u.id = a.userId
+             WHERE a.providerId = 'github' AND a.accountId IN (${ph})`,
+          )
+          .all(...ghIds) as GithubUserMapping[]
       } catch {
         return []
       }

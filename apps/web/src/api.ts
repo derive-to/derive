@@ -52,6 +52,14 @@ export interface Artifact {
     n: number
     content_type?: string
     author: string
+    /** The GitHub identity behind this version (sync only): login, avatar URL, numeric
+     *  user id (text). Null for manual/anonymous/unmappable publishes. */
+    author_login?: string | null
+    author_avatar?: string | null
+    author_gh_id?: string | null
+    /** The Dock handle of this version's GitHub author, when they signed in with GitHub
+     *  (single-artifact detail only); null otherwise. */
+    handle?: string | null
     message: string | null
     name: string | null
     created_at: string
@@ -82,6 +90,21 @@ export interface Artifact {
   /** Last-updated time (set on each new version; null until versioned). Read as
    *  `updated_at ?? created_at`. Drives the recency sort + the "updated X" label. */
   updated_at?: string | null
+  /** The CURRENT (last) author, denormalized — for a GitHub-synced artifact these mirror
+   *  the last commit's author. Drives "who last changed this" + the ?author= filter. */
+  author_name?: string | null
+  author_login?: string | null
+  author_avatar?: string | null
+  author_gh_id?: string | null
+  /** The current author resolved to a profile: the raw GitHub identity plus the Dock
+   *  `handle` (username) when the committer signed in with GitHub. Null when there's no
+   *  recorded author. Prefer this over the raw fields for rendering. */
+  author?: {
+    name: string | null
+    login: string | null
+    avatar: string | null
+    handle: string | null
+  } | null
 }
 export interface Report {
   id: string
@@ -449,6 +472,8 @@ export const api = {
     tag?: string
     collection?: string
     favorite?: boolean
+    /** Narrow to artifacts last changed by this GitHub login. */
+    author?: string
     /** "shared" → only artifacts explicitly shared with you (across workspaces). */
     scope?: "shared"
     cursor?: string
@@ -465,6 +490,7 @@ export const api = {
     if (params?.tag) qs.set("tag", params.tag)
     if (params?.collection) qs.set("collection", params.collection)
     if (params?.favorite) qs.set("favorite", "true")
+    if (params?.author) qs.set("author", params.author)
     if (params?.scope) qs.set("scope", params.scope)
     if (params?.cursor) qs.set("cursor", params.cursor)
     if (params?.limit) qs.set("limit", String(params.limit))

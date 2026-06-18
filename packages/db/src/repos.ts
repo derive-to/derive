@@ -15,6 +15,7 @@ import type {
   GeneralRole,
   GitHubAppRecord,
   GitHubInstallationRecord,
+  GithubAuthor,
   ListArtifactsOpts,
   MembershipRecord,
   NewAgent,
@@ -310,6 +311,13 @@ export function makeRepos(db: SqliteDb) {
         current_version: n,
         current_content_type: v.content_type,
         updated_at: new Date().toISOString(),
+        // Denormalize the new version's author onto the artifact (its CURRENT author),
+        // for the list view + author filter. `author_name` is always the display name;
+        // the GitHub fields are null for a manual/anonymous publish.
+        author_name: v.author,
+        author_login: v.author_login ?? null,
+        author_avatar: v.author_avatar ?? null,
+        author_gh_id: v.author_gh_id ?? null,
       })
       .where(eq(artifact.id, artifactId))
       .run()
@@ -375,6 +383,22 @@ export function makeRepos(db: SqliteDb) {
         .all()
     ).map((r) => r.id)
 
+  // Author filter for the list (mirrors artifactIdsByTag). Case-insensitive match on the
+  // denormalized current author_login, scoped to the workspace.
+  const artifactIdsByAuthor = async (orgId: string, login: string): Promise<string[]> =>
+    (
+      await db
+        .select({ id: artifact.id })
+        .from(artifact)
+        .where(
+          and(
+            eq(artifact.org_id, orgId),
+            eq(sql`lower(${artifact.author_login})`, login.toLowerCase()),
+          ),
+        )
+        .all()
+    ).map((r) => r.id)
+
   const countArtifacts = async (orgId?: string): Promise<number> => {
     const q = db.select({ c: count() }).from(artifact)
     return (await (orgId ? q.where(eq(artifact.org_id, orgId)) : q).get())?.c ?? 0
@@ -419,6 +443,21 @@ export function makeRepos(db: SqliteDb) {
   }
   const setArtifactUpdatedAt = async (id: string, updatedAt: string): Promise<void> => {
     await db.update(artifact).set({ updated_at: updatedAt }).where(eq(artifact.id, id)).run()
+  }
+  const setArtifactAuthor = async (
+    artifactId: string,
+    author: GithubAuthor | null,
+  ): Promise<void> => {
+    await db
+      .update(artifact)
+      .set({
+        author_name: author?.name ?? null,
+        author_login: author?.login ?? null,
+        author_avatar: author?.avatar ?? null,
+        author_gh_id: author?.ghId ?? null,
+      })
+      .where(eq(artifact.id, artifactId))
+      .run()
   }
 
   // ---- Comments + threads ------------------------------------------------
@@ -1219,6 +1258,7 @@ export function makeRepos(db: SqliteDb) {
     reclassifyVersion,
     listArtifacts,
     artifactIdsByTag,
+    artifactIdsByAuthor,
     countArtifacts,
     storageBytes,
     tagCounts,
@@ -1227,6 +1267,7 @@ export function makeRepos(db: SqliteDb) {
     setArtifactTitle,
     setArtifactSourcePath,
     setArtifactUpdatedAt,
+    setArtifactAuthor,
     createComment,
     getComment,
     updateComment,

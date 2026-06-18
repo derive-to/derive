@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react"
 import { type Analytics, type Artifact as Art, api } from "@/api"
+import { AuthorChip } from "@/components/author-chip"
 import { Icon } from "@/components/icons"
 import { ColoredAvatar } from "@/components/shared/colored-avatar"
 import { Spinner } from "@/components/shared/spinner"
@@ -189,6 +190,10 @@ export function HistoryDrawer({
         name: v.name,
         created_at: v.created_at,
       }))
+  // A session is the latest version in a time group; its `n` is that version, so
+  // we resolve the rich author identity (avatar, login, the Dock handle for the
+  // profile link) from the matching version.
+  const versionByN = new Map(art.versions.map((v) => [v.n, v]))
   let lastDay = ""
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -210,47 +215,66 @@ export function HistoryDrawer({
                     {header}
                   </div>
                 )}
-                <button
-                  type="button"
-                  data-testid={`history-version-${s.n}`}
-                  onClick={() => {
-                    goTo(s.n)
-                    onOpenChange(false)
-                  }}
+                {/* Stretched-link row: the select button covers the row (::after) while
+                    the author chip sits above it (z-20) so its profile link stays
+                    independently clickable — no anchor nested in a button. */}
+                <div
                   className={cn(
-                    "mb-px block w-full rounded-md px-2 py-2 text-left transition-colors hover:bg-hover",
+                    "group relative mb-px rounded-md px-2 py-2 transition-colors hover:bg-hover",
                     cur && "bg-accent",
                   )}
                 >
-                  <div className="flex items-center gap-1.5">
-                    {s.name ? (
-                      <Icon name="pin" size={13} />
-                    ) : (
-                      <span className="size-1.5 shrink-0 rounded-full bg-muted-foreground" />
-                    )}
-                    <span
-                      className={cn(
-                        "truncate text-sm font-semibold",
-                        cur ? "text-primary" : "text-foreground",
+                  <button
+                    type="button"
+                    data-testid={`history-version-${s.n}`}
+                    onClick={() => {
+                      goTo(s.n)
+                      onOpenChange(false)
+                    }}
+                    className="block w-full text-left outline-none after:absolute after:inset-0 after:z-[1] after:rounded-md after:content-[''] focus-visible:after:outline-2 focus-visible:after:-outline-offset-2 focus-visible:after:outline-ring"
+                  >
+                    <div className="flex items-center gap-1.5">
+                      {s.name ? (
+                        <Icon name="pin" size={13} />
+                      ) : (
+                        <span className="size-1.5 shrink-0 rounded-full bg-muted-foreground" />
                       )}
-                    >
-                      {s.name ?? clock(s.created_at)}
-                    </span>
-                    {s.n === art.current_version && (
-                      <span className="rounded-full bg-success/15 px-1.5 py-px font-mono text-2xs font-bold text-success">
-                        current
+                      <span
+                        className={cn(
+                          "truncate text-sm font-semibold",
+                          cur ? "text-primary" : "text-foreground",
+                        )}
+                      >
+                        {s.name ?? clock(s.created_at)}
                       </span>
-                    )}
-                    {s.count > 1 && (
-                      <span className="ml-auto font-mono text-2xs text-muted-foreground">
-                        {s.count} edits
-                      </span>
-                    )}
-                  </div>
-                  <div className="mt-0.5 pl-[18px] font-mono text-2xs text-muted-foreground">
-                    {s.author}
-                  </div>
-                </button>
+                      {s.n === art.current_version && (
+                        <span className="rounded-full bg-success/15 px-1.5 py-px font-mono text-2xs font-bold text-success">
+                          current
+                        </span>
+                      )}
+                      {s.count > 1 && (
+                        <span className="ml-auto font-mono text-2xs text-muted-foreground">
+                          {s.count} edits
+                        </span>
+                      )}
+                    </div>
+                  </button>
+                  {(() => {
+                    const v = versionByN.get(s.n)
+                    return (
+                      <div className="relative z-20 mt-0.5 flex pl-[18px]">
+                        <AuthorChip
+                          name={s.author || v?.author || null}
+                          login={v?.author_login ?? null}
+                          avatar={v?.author_avatar ?? null}
+                          handle={v?.handle ?? null}
+                          size="xs"
+                          data-testid={`history-version-author-${s.n}`}
+                        />
+                      </div>
+                    )
+                  })()}
+                </div>
               </div>
             )
           })}

@@ -42,6 +42,13 @@ export const artifact = pgTable("artifact", {
   updated_at: text("updated_at"),
   removed_at: text("removed_at"),
   source_path: text("source_path"),
+  // The CURRENT (last) author, denormalized from the latest version for the list view +
+  // author filtering. For a GitHub-synced artifact these mirror the last commit's author.
+  // All nullable (legacy/anonymous/non-synced rows). Mirrors schema.ts.
+  author_name: text("author_name"),
+  author_login: text("author_login"),
+  author_avatar: text("author_avatar"),
+  author_gh_id: text("author_gh_id"),
 })
 
 export const version = pgTable(
@@ -56,6 +63,12 @@ export const version = pgTable(
     content_type: text("content_type").notNull(),
     size_bytes: integer("size_bytes").notNull().default(0),
     author: text("author").notNull(),
+    // The GitHub identity behind this version, when synced (login / avatar / numeric
+    // user id as text). All nullable — manual/anonymous/unmappable publishes leave them
+    // null and `author` carries the display name. Mirrors schema.ts.
+    author_login: text("author_login"),
+    author_avatar: text("author_avatar"),
+    author_gh_id: text("author_gh_id"),
     message: text("message"),
     name: text("name"),
     created_at: text("created_at").notNull().$defaultFn(isoNow),

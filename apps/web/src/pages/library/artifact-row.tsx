@@ -1,5 +1,6 @@
 import { Folder } from "lucide-react"
 import type { Artifact } from "@/api"
+import { AuthorChip } from "@/components/author-chip"
 import { Icon } from "@/components/icons"
 import {
   DropdownMenu,
@@ -22,6 +23,7 @@ export function ArtifactRow({
   onOpen,
   onToggleFavorite,
   onPickTag,
+  onPickAuthor,
   onDelete,
   onPrefetch,
 }: {
@@ -29,6 +31,9 @@ export function ArtifactRow({
   onOpen: () => void
   onToggleFavorite: () => void
   onPickTag: (tag: string) => void
+  // Clicking the author filters the list by their GitHub login. Omit to render
+  // the author as a non-filtering chip (still links to a known profile).
+  onPickAuthor?: (login: string) => void
   onDelete?: () => void
   onPrefetch?: () => void
 }) {
@@ -36,6 +41,11 @@ export function ArtifactRow({
   const updated = a.updated_at ?? a.created_at ?? a.versions[0]?.created_at
   const dir = a.source_path ? dirOf(a.source_path) : ""
   const tags = a.tags ?? []
+  // "Who last changed this": prefer the resolved author (carries the Dock handle),
+  // fall back to the denormalized fields. Present only for synced artifacts.
+  const author = a.author ?? null
+  const authorLogin = author?.login ?? a.author_login ?? null
+  const hasAuthor = !!(author?.name || authorLogin || a.author_name)
 
   return (
     <div className="group relative flex items-center gap-3 rounded-lg border border-border bg-card px-3.5 py-2.5 transition-colors hover:border-primary hover:bg-hover">
@@ -72,6 +82,21 @@ export function ArtifactRow({
           )}
         </span>
       </button>
+
+      {/* "Who last changed this" — above the stretched link so the click-to-filter
+          button (and the profile link) stay independently clickable. */}
+      {hasAuthor && (
+        <div className="relative z-20 hidden shrink-0 items-center sm:flex">
+          <AuthorChip
+            name={author?.name ?? a.author_name ?? null}
+            login={authorLogin}
+            avatar={author?.avatar ?? a.author_avatar ?? null}
+            handle={author?.handle ?? null}
+            onClick={onPickAuthor && authorLogin ? () => onPickAuthor(authorLogin) : undefined}
+            data-testid={`artifact-row-author-${a.short_id}`}
+          />
+        </div>
+      )}
 
       {/* Tags sit above the stretched link so they stay independently clickable. */}
       {tags.length > 0 && (

@@ -52,6 +52,15 @@ export interface ArtifactRecord {
    *  The structural "location" — drives the folder/tree view — kept distinct from the
    *  human `title`. Null for artifacts not mirrored from a repo. */
   source_path: string | null
+  /** The CURRENT (last) author, denormalized from the latest version row for the list
+   *  view + author filtering. `author_name` is the display name (commit author name,
+   *  "GitHub sync", or a user display name); `author_login`/`author_avatar`/`author_gh_id`
+   *  carry the GitHub login, avatar URL, and numeric user id (text) for a synced version.
+   *  All null for legacy/anonymous/non-synced rows. */
+  author_name: string | null
+  author_login: string | null
+  author_avatar: string | null
+  author_gh_id: string | null
 }
 
 export interface ListArtifactsOpts {
@@ -86,6 +95,12 @@ export interface VersionRecord {
   /** Byte length of the uploaded payload, summed per workspace for storage quotas. */
   size_bytes: number
   author: string
+  /** The GitHub identity behind this version, when it came from a sync: the commit
+   *  author's login, avatar URL, and numeric user id (text). All null for a manual or
+   *  anonymous publish, or a commit GitHub can't map to an account. */
+  author_login: string | null
+  author_avatar: string | null
+  author_gh_id: string | null
   message: string | null
   /** A named checkpoint (Docs-style). Null = an ordinary auto-saved revision. */
   name: string | null
@@ -113,6 +128,10 @@ export interface NewVersion {
   content_type: string
   size_bytes?: number
   author: string
+  /** The GitHub identity behind this version (sync only); null/omitted otherwise. */
+  author_login?: string | null
+  author_avatar?: string | null
+  author_gh_id?: string | null
   message: string | null
   name?: string | null
 }
@@ -169,6 +188,9 @@ export interface MetaStore {
   listArtifacts(opts?: ListArtifactsOpts): Promise<ArtifactRecord[]>
   /** Artifact ids carrying a tag (server-side tag filtering). */
   artifactIdsByTag(tag: string): Promise<string[]>
+  /** Artifact ids in a workspace whose current author_login matches `login`
+   *  (case-insensitive) — the author list-filter. Empty when nothing matches. */
+  artifactIdsByAuthor(orgId: string, login: string): Promise<string[]>
   /** Total artifact count, scoped to a workspace when orgId is given. */
   countArtifacts(orgId?: string): Promise<number>
   /**
@@ -371,6 +393,11 @@ export interface MetaStore {
   // ---- User directory (reads Better Auth's `user` table) ----------------
   findUserByEmail(email: string): Promise<UserDir | null>
   getUsers(ids: string[]): Promise<UserDir[]>
+  /** Map GitHub numeric user ids (as strings) to the Dock accounts that signed in with
+   *  GitHub — joins Better Auth's `account` (providerId='github', accountId IN ids) to
+   *  `user`. Lets a synced artifact's commit author resolve to a Dock profile/handle.
+   *  Returns [] for empty input or when the auth tables are absent. */
+  usersByGithubIds(ghIds: string[]): Promise<GithubUserMapping[]>
   /** Resolve a public profile by its handle (username); null if unclaimed. */
   getUserByUsername(username: string): Promise<UserProfile | null>
   /** Claim or replace a user's handle. Returns "taken" when another account
@@ -448,6 +475,10 @@ export interface MetaStore {
    *  date), so the card's "updated" reflects the SOURCE's last change, not when Dock
    *  ingested it. Publish bumps updated_at to now; the sync calls this after to correct it. */
   setArtifactUpdatedAt(id: string, updatedAt: string): Promise<void>
+  /** Set the artifact's denormalized current author (its author_* columns). Used by the
+   *  sync backfill path to stamp an existing tracked artifact's author from its last
+   *  commit without republishing. `null` clears all four columns. */
+  setArtifactAuthor(artifactId: string, author: GithubAuthor | null): Promise<void>
   createAuditLog(a: NewAuditLog): Promise<void>
   /** Moderation history, newest first. One workspace's, or — super-admin, orgId
    *  undefined — the whole instance's. Optionally narrowed to one artifact. */
@@ -618,6 +649,27 @@ export interface NewProposal {
   author: string
   author_id?: string | null
   base_version: number
+}
+
+/** A GitHub commit author, denormalized onto an artifact / stored per version.
+ *  `name` is the display name; `login`/`avatar` are the GitHub handle + avatar URL;
+ *  `ghId` is the numeric GitHub user id as a string (matches account.accountId). Any
+ *  field may be null when GitHub can't map the commit email to an account. */
+export interface GithubAuthor {
+  name: string | null
+  login: string | null
+  avatar: string | null
+  ghId: string | null
+}
+
+/** A GitHub numeric user id resolved to the Dock account that signed in with it
+ *  (Better Auth `account` joined to `user`). `username` is the public handle. */
+export interface GithubUserMapping {
+  gh_id: string
+  id: string
+  name: string | null
+  image: string | null
+  username: string | null
 }
 
 /** A person, as needed for sharing UIs. Sourced from Better Auth's user table. */

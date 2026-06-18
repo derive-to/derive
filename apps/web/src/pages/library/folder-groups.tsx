@@ -13,6 +13,7 @@ interface Handlers {
   onOpen: (a: Artifact) => void
   onToggleFavorite: (a: Artifact) => void
   onPickTag: (tag: string) => void
+  onPickAuthor: (login: string) => void
   onPrefetch: (a: Artifact) => void
 }
 
@@ -92,6 +93,7 @@ function FolderSection({ dir, items, ...handlers }: { dir: string; items: Artifa
               onOpen={() => handlers.onOpen(a)}
               onToggleFavorite={() => handlers.onToggleFavorite(a)}
               onPickTag={handlers.onPickTag}
+              onPickAuthor={handlers.onPickAuthor}
               onPrefetch={() => handlers.onPrefetch(a)}
             />
           ))}

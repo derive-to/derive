@@ -54,6 +54,36 @@ export const artifactRoutes = (ctx: AppContext) => {
   } = ctx
   const app = new Hono()
 
+  // Resolve a set of GitHub numeric user ids to Dock handles (usernames) in ONE batched
+  // query — gh_id → handle, only for committers who signed in with GitHub. Empty set ⇒ {}.
+  const resolveHandles = async (ghIds: string[]): Promise<Record<string, string | null>> => {
+    const out: Record<string, string | null> = {}
+    if (ghIds.length === 0) return out
+    for (const u of await meta.usersByGithubIds(ghIds)) out[u.gh_id] = u.username
+    return out
+  }
+
+  // The artifact's current author as a resolved profile: name/login/avatar from the
+  // denormalized columns, plus the Dock `handle` when the committer is a known user.
+  // Null when the artifact has no recorded author at all.
+  const authorProfile = (
+    a: ArtifactRecord,
+    handleByGhId: Record<string, string | null>,
+  ): {
+    name: string | null
+    login: string | null
+    avatar: string | null
+    handle: string | null
+  } | null => {
+    if (!a.author_name && !a.author_login && !a.author_gh_id) return null
+    return {
+      name: a.author_name,
+      login: a.author_login,
+      avatar: a.author_avatar,
+      handle: a.author_gh_id ? (handleByGhId[a.author_gh_id] ?? null) : null,
+    }
+  }
+
   // Newest-first, keyset-paginated (?cursor=<created_at>&limit=N), with optional
   // server-side ?q= (title search), ?tag=, and ?favorite=true. Returns
   // { artifacts, next_cursor }. tag/favorite resolve to an id set first.
@@ -76,6 +106,8 @@ export const artifactRoutes = (ctx: AppContext) => {
     const tag = c.req.query("tag")?.trim() || undefined
     const collectionId = c.req.query("collection")?.trim() || undefined
     const favOnly = c.req.query("favorite") === "true"
+    // ?author=<github login> narrows to artifacts whose current author is that login.
+    const author = c.req.query("author")?.trim().slice(0, 100) || undefined
 
     const favIds = me ? await meta.listUserFavoriteIds(me.id) : []
     const favorites = new Set(favIds)
@@ -116,6 +148,9 @@ export const artifactRoutes = (ctx: AppContext) => {
         (!!me && !!(await meta.getMembership(col.org_id, me.id))) ||
         (await collectionRole(c, col)) !== null
     }
+    // Author filter narrows to artifacts last changed by a GitHub login, scoped to the
+    // listing's workspace (after collection scope has settled listOrg). Mirrors ?tag=.
+    if (author) narrow(await meta.artifactIdsByAuthor(listOrg, author))
     if (ids && ids.length === 0) return c.json({ artifacts: [], next_cursor: null })
 
     // A listing only shows non-public artifacts to a MEMBER of that workspace (or the
@@ -147,12 +182,20 @@ export const artifactRoutes = (ctx: AppContext) => {
     const pageIds = page.map((a) => a.id)
     const counts = analyticsOn ? await meta.viewCounts(pageIds) : {}
     const tags = await meta.tagsForArtifacts(pageIds)
+    // Resolve the page's distinct author gh_ids to Dock handles in ONE batched query (no
+    // N+1) so each row can show "who last changed this" with a link to the Dock profile.
+    const handleByGhId = await resolveHandles([
+      ...new Set(page.map((a) => a.author_gh_id).filter((x): x is string => !!x)),
+    ])
     return c.json({
       artifacts: page.map((a) => ({
         ...toJson(deps.baseUrl, a, []),
         views: counts[a.id] ?? 0,
         tags: tags[a.id] ?? [],
         favorite: favorites.has(a.id),
+        // The current author as a resolved profile (name/login/avatar + Dock handle), so
+        // the list can render the last editor + filter by them.
+        author: authorProfile(a, handleByGhId),
       })),
       next_cursor,
       ...(collectionInfo ? { collection: collectionInfo } : {}),
@@ -366,13 +409,30 @@ export const artifactRoutes = (ctx: AppContext) => {
     const favorite = me ? (await meta.listUserFavoriteIds(me)).includes(artifact.id) : false
     const collections = await meta.collectionIdsForArtifact(artifact.id)
     const proposals = await meta.listProposals(artifact.id)
+    // Resolve the GitHub author(s) to Dock profiles: collect every distinct gh_id on the
+    // artifact + its versions, map them in ONE query, and attach a `handle` (the Dock
+    // username) when the committer signed in with GitHub. Additive — the raw author_*
+    // fields stay on the response regardless.
+    const ghIds = new Set<string>()
+    if (artifact.author_gh_id) ghIds.add(artifact.author_gh_id)
+    for (const v of versions) if (v.author_gh_id) ghIds.add(v.author_gh_id)
+    const handleByGhId = await resolveHandles([...ghIds])
+    const base = toJson(deps.baseUrl, artifact, versions)
     // `versions` stays at revision granularity (machines/agents); `sessions` is
     // the time-grouped view the UI shows by default. `my_role` tells the client
     // which actions to surface; `open_proposals` badges the review queue while
     // `proposals_total` (everything but withdrawn) gates the Proposals entry so a
     // proposer can return to read feedback after their candidate leaves the queue.
     return c.json({
-      ...toJson(deps.baseUrl, artifact, versions),
+      ...base,
+      // Resolved author profile for the current author (null when there's none, or the
+      // committer never signed in with GitHub — then `handle` is null but name/login/avatar
+      // still describe the GitHub identity). The frontend prefers this over the raw fields.
+      author: authorProfile(artifact, handleByGhId),
+      versions: base.versions.map((v) => ({
+        ...v,
+        handle: v.author_gh_id ? (handleByGhId[v.author_gh_id] ?? null) : null,
+      })),
       sessions: groupSessions(versions, versionWindowMs),
       my_role: effectiveRole(actor, artifact.visibility, artifact.general_role),
       tags,

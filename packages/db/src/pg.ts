@@ -15,6 +15,8 @@ import type {
   GeneralRole,
   GitHubAppRecord,
   GitHubInstallationRecord,
+  GithubAuthor,
+  GithubUserMapping,
   ListArtifactsOpts,
   MembershipRecord,
   MetaStore,
@@ -264,6 +266,11 @@ export class PgMetaStore implements MetaStore {
           current_version: n,
           current_content_type: v.content_type,
           updated_at: new Date().toISOString(),
+          // Denormalize the new version's author onto the artifact (its CURRENT author).
+          author_name: v.author,
+          author_login: v.author_login ?? null,
+          author_avatar: v.author_avatar ?? null,
+          author_gh_id: v.author_gh_id ?? null,
         })
         .where(eq(artifact.id, artifactId))
       const rows = await tx
@@ -363,6 +370,20 @@ export class PgMetaStore implements MetaStore {
       .select({ id: artifactTag.artifact_id })
       .from(artifactTag)
       .where(eq(artifactTag.tag, tag))
+    return rows.map((r) => r.id)
+  }
+  // Author filter (mirrors artifactIdsByTag + the SQLite path). Case-insensitive match
+  // on the denormalized current author_login, scoped to the workspace.
+  async artifactIdsByAuthor(orgId: string, login: string): Promise<string[]> {
+    const rows = await this.db
+      .select({ id: artifact.id })
+      .from(artifact)
+      .where(
+        and(
+          eq(artifact.org_id, orgId),
+          eq(sql`lower(${artifact.author_login})`, login.toLowerCase()),
+        ),
+      )
     return rows.map((r) => r.id)
   }
   async countArtifacts(orgId?: string): Promise<number> {
@@ -1016,6 +1037,23 @@ export class PgMetaStore implements MetaStore {
       return []
     }
   }
+  // Map GitHub numeric user ids to Dock accounts ("account".accountId → "user"), scoped
+  // to the github social provider. Best-effort — [] when the Better Auth tables are absent.
+  async usersByGithubIds(ghIds: string[]): Promise<GithubUserMapping[]> {
+    if (ghIds.length === 0) return []
+    try {
+      const ph = ghIds.map((_, i) => `$${i + 1}`).join(",")
+      const { rows } = await this.pool.query(
+        `SELECT a."accountId" gh_id, u.id, u.name, u.image, u.username
+         FROM "account" a JOIN "user" u ON u.id = a."userId"
+         WHERE a."providerId" = 'github' AND a."accountId" IN (${ph})`,
+        ghIds,
+      )
+      return rows as GithubUserMapping[]
+    } catch {
+      return []
+    }
+  }
   async getUserByUsername(username: string): Promise<UserProfile | null> {
     try {
       const { rows } = await this.pool.query(
@@ -1269,6 +1307,17 @@ export class PgMetaStore implements MetaStore {
   }
   async setArtifactUpdatedAt(id: string, updatedAt: string): Promise<void> {
     await this.db.update(artifact).set({ updated_at: updatedAt }).where(eq(artifact.id, id))
+  }
+  async setArtifactAuthor(artifactId: string, author: GithubAuthor | null): Promise<void> {
+    await this.db
+      .update(artifact)
+      .set({
+        author_name: author?.name ?? null,
+        author_login: author?.login ?? null,
+        author_avatar: author?.avatar ?? null,
+        author_gh_id: author?.ghId ?? null,
+      })
+      .where(eq(artifact.id, artifactId))
   }
   async createAuditLog(a: NewAuditLog): Promise<void> {
     await this.db.insert(auditLog).values(a)

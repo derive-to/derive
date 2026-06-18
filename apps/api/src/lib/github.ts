@@ -97,11 +97,81 @@ const fetchRetrying = async (url: string, init: RequestInit, attempts = 3): Prom
   }
 }
 
+/** A GitHub commit's author, as far as the Commits API reveals it. `login`/`ghId`/
+ *  `avatar` come from the TOP-LEVEL `author` (the GitHub account; null when GitHub can't
+ *  map the commit email to one); `name`/`email` come from `commit.author` (the raw git
+ *  identity, always present). All fields nullable so a partial commit never throws. */
+export interface CommitAuthor {
+  login: string | null
+  ghId: string | null
+  name: string | null
+  email: string | null
+  avatar: string | null
+}
+
+/** The shape of one element of the Commits API list response (the bits we read). */
+interface CommitListEntry {
+  commit?: {
+    committer?: { date?: string }
+    author?: { name?: string; email?: string }
+  }
+  author?: { login?: string; id?: number; avatar_url?: string } | null
+}
+
+/** Pure parser: turn the Commits API list response into the committer date + author.
+ *  Exported for unit testing the extraction without a network round-trip. Empty/missing
+ *  history → { date: null, author: null }. */
+export function parseLastCommit(data: CommitListEntry[] | null | undefined): {
+  date: string | null
+  author: CommitAuthor | null
+} {
+  const head = data?.[0]
+  if (!head) return { date: null, author: null }
+  const date = head.commit?.committer?.date ?? null
+  const top = head.author ?? null
+  const git = head.commit?.author ?? null
+  // No identity at all (neither the GitHub account nor the raw git author) → null author.
+  if (!top && !git?.name && !git?.email) return { date, author: null }
+  return {
+    date,
+    author: {
+      login: top?.login ?? null,
+      ghId: top?.id != null ? String(top.id) : null,
+      avatar: top?.avatar_url ?? null,
+      name: git?.name ?? null,
+      email: git?.email ?? null,
+    },
+  }
+}
+
 /**
- * The committer date of the most recent commit that touched `path` on `ref` — the
- * file's true last-change time, which drives a synced artifact's "updated" (the git
- * tree carries no dates, so this is a separate call). Best-effort: returns null on any
- * error or an empty history so a date lookup can never fail a sync.
+ * The most recent commit that touched `path` on `ref`: its committer date (the file's
+ * true last-change time, driving a synced artifact's "updated") AND its author. The git
+ * tree carries neither, so this is a separate Commits API call. Best-effort: returns
+ * { date: null, author: null } on any error or an empty history so a sync never fails.
+ */
+export async function lastCommit(
+  repo: RepoRef,
+  path: string,
+  ref: string,
+  token: string | null,
+): Promise<{ date: string | null; author: CommitAuthor | null }> {
+  const url = `${API}/repos/${repo.owner}/${repo.name}/commits?path=${encodeURIComponent(
+    path,
+  )}&sha=${encodeURIComponent(ref)}&per_page=1`
+  try {
+    const res = await fetchRetrying(url, { headers: headers(token, "application/vnd.github+json") })
+    if (!res.ok) return { date: null, author: null }
+    return parseLastCommit((await res.json()) as CommitListEntry[])
+  } catch {
+    return { date: null, author: null }
+  }
+}
+
+/**
+ * The committer date of the most recent commit that touched `path` on `ref` — a thin
+ * wrapper over {@link lastCommit} kept for callers that only need the date. Best-effort:
+ * null on any error or empty history.
  */
 export async function lastCommitDate(
   repo: RepoRef,
@@ -109,17 +179,7 @@ export async function lastCommitDate(
   ref: string,
   token: string | null,
 ): Promise<string | null> {
-  const url = `${API}/repos/${repo.owner}/${repo.name}/commits?path=${encodeURIComponent(
-    path,
-  )}&sha=${encodeURIComponent(ref)}&per_page=1`
-  try {
-    const res = await fetchRetrying(url, { headers: headers(token, "application/vnd.github+json") })
-    if (!res.ok) return null
-    const data = (await res.json()) as { commit?: { committer?: { date?: string } } }[]
-    return data[0]?.commit?.committer?.date ?? null
-  } catch {
-    return null
-  }
+  return (await lastCommit(repo, path, ref, token)).date
 }
 
 /** Raw bytes of one blob by its git sha. */
