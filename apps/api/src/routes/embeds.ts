@@ -73,7 +73,8 @@ export const embedRoutes = (ctx: AppContext) => {
 
   // The OG card image. SVG: zero-dep and identical on Node + Worker. A gated or
   // missing artifact gets a generic locked card (no title leak), still 200 so the
-  // unfurl shows something. Short cache: the card carries live version/comment counts.
+  // unfurl shows something. Cached hard (see the Cache-Control below) — the live
+  // version/comment counts on the card are allowed to lag for an unfurl preview.
   app.get("/v1/og/:ref", async (c) => {
     const artifact = await readable(c, c.req.param("ref"))
     const svg = artifact
@@ -87,7 +88,12 @@ export const embedRoutes = (ctx: AppContext) => {
         })
     return c.body(svg, 200, {
       "Content-Type": "image/svg+xml; charset=utf-8",
-      "Cache-Control": "public, max-age=600",
+      // Cache the thumbnail hard: only anon crawlers hit this (the app never does), and
+      // a gated artifact renders a title-less locked card, so there's nothing private to
+      // cache at the shared edge. 1 day fresh + a week of serve-stale-while-revalidate
+      // keeps regenerations rare while the card still refreshes in the background. The
+      // live version/comment counts can lag up to a day here — fine for an unfurl.
+      "Cache-Control": "public, max-age=86400, stale-while-revalidate=604800",
       "X-Content-Type-Options": "nosniff",
     })
   })
