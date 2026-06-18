@@ -102,6 +102,13 @@ export const artifactRoutes = (ctx: AppContext) => {
       if (!me) return c.json({ artifacts: [], next_cursor: null })
       narrow(await meta.followedArtifactIds(me.id, await activeWorkspace(c)))
     }
+    // scope=needs_feedback → artifacts in the active workspace with an open thread you're
+    // tagged in or have commented on. Drives the home's "Needs your feedback" section.
+    const needsFeedback = c.req.query("scope") === "needs_feedback"
+    if (needsFeedback) {
+      if (!me) return c.json({ artifacts: [], next_cursor: null })
+      narrow(await meta.artifactIdsNeedingFeedback(me.id, await activeWorkspace(c)))
+    }
     if (tag) narrow(await meta.artifactIdsByTag(tag))
     if (favOnly) narrow(favIds)
 
@@ -169,6 +176,9 @@ export const artifactRoutes = (ctx: AppContext) => {
     const handleByGhId = await resolveHandles(meta, [
       ...new Set(page.map((a) => a.author_gh_id).filter((x): x is string => !!x)),
     ])
+    // Per-artifact comment signals for the viewer (open-thread count + tagged/authored
+    // flags) — drives the inline comment badge and the "needs your feedback" featuring.
+    const feedback = me ? await meta.commentSignals(pageIds, me.id) : {}
     return c.json({
       artifacts: page.map((a) => ({
         ...toJson(deps.baseUrl, a, []),
@@ -178,6 +188,8 @@ export const artifactRoutes = (ctx: AppContext) => {
         // The current author as a resolved profile (name/login/avatar + Dock handle), so
         // the list can render the last editor + filter by them.
         author: authorProfile(a, handleByGhId),
+        // open_threads + mentions_me + i_participated (defaults for anon / no signals).
+        ...(feedback[a.id] ?? { open_threads: 0, mentions_me: false, i_participated: false }),
       })),
       next_cursor,
       ...(collectionInfo ? { collection: collectionInfo } : {}),

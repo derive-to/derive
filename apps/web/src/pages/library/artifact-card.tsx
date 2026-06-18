@@ -10,6 +10,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { ago } from "@/lib/time"
 import { cn } from "@/lib/utils"
+import { CommentSignal } from "./comment-signal"
 
 export const dirOf = (path: string): string => {
   const i = path.lastIndexOf("/")
@@ -52,7 +53,16 @@ export function ArtifactCard({
   const hasAuthor = !!(author?.name || author?.login || a.author_login || a.author_name)
 
   return (
-    <div className="group relative flex cursor-pointer flex-col gap-2 rounded-lg border border-border bg-card p-3.5 transition-all motion-safe:hover:-translate-y-0.5 hover:border-primary hover:shadow-[var(--shadow)] active:translate-y-0">
+    <div
+      className={cn(
+        "group relative flex cursor-pointer flex-col gap-2 rounded-lg border border-border bg-card p-3.5 transition-all motion-safe:hover:-translate-y-0.5 hover:border-primary hover:shadow-[var(--shadow)] active:translate-y-0",
+        // Needs-your-feedback items stand out in the grid: a tagged item gets the full
+        // accent + ring; one you're just in the thread on gets a softer accent border.
+        a.mentions_me
+          ? "border-primary ring-1 ring-primary/30"
+          : a.i_participated && "border-primary/60",
+      )}
+    >
       <div className="relative">
         <Thumb id={a.short_id} v={a.current_version} />
         <button
@@ -125,13 +135,16 @@ export function ArtifactCard({
               updated {ago(a.updated_at ?? a.created_at ?? a.versions[0]?.created_at ?? "")}
             </span>
           )}
-          {a.views !== undefined && a.views > 0 && (
-            <span className="ml-auto inline-flex items-center gap-1" title={`${a.views} viewers`}>
-              <Icon name="views" size={13} />{" "}
-              {a.views > 999 ? `${(a.views / 1000).toFixed(1)}k` : a.views}
-              <span className="sr-only"> views</span>
-            </span>
-          )}
+          <span className="ml-auto inline-flex items-center gap-2">
+            <CommentSignal artifact={a} />
+            {a.views !== undefined && a.views > 0 && (
+              <span className="inline-flex items-center gap-1" title={`${a.views} viewers`}>
+                <Icon name="views" size={13} />{" "}
+                {a.views > 999 ? `${(a.views / 1000).toFixed(1)}k` : a.views}
+                <span className="sr-only"> views</span>
+              </span>
+            )}
+          </span>
         </span>
       </button>
       {hasAuthor && (
