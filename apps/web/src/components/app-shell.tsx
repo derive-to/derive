@@ -253,7 +253,8 @@ export function AppShell({ children }: { children: ReactNode }) {
                 tabIndex={drawerOpen ? 0 : -1}
                 onClick={() => setDrawerOpen(false)}
                 className={cn(
-                  "fixed inset-0 z-[60] bg-black/35 transition-opacity",
+                  // Below the drawer (z-45) and the overlay layer (z-50); above page content.
+                  "fixed inset-0 z-[44] bg-black/35 transition-opacity",
                   drawerOpen ? "opacity-100" : "pointer-events-none opacity-0",
                 )}
               />
