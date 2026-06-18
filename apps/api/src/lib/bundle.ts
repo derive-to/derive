@@ -2,6 +2,7 @@ import {
   type BlobStore,
   BUNDLE_CONTENT_TYPE,
   type BundleManifest,
+  PublishError,
   type VersionRecord,
 } from "@dock/core"
 import { zipSync } from "fflate"
@@ -22,19 +23,16 @@ const base64ToBytes = (b64: string): Uint8Array => {
 }
 
 /**
- * Pack a {path: content} map into a zip the core publish path ingests exactly like
- * an HTTP bundle upload (it re-validates size, file count, paths, and entry point).
- *
- * A value is stored as raw bytes when it is a base64 data: URI
- * (`data:image/png;base64,…`) and as UTF-8 text otherwise — so screenshots, fonts,
- * and any binary asset that makes up a site ride the SAME map as the HTML/CSS/JS
- * pages, carried over MCP without inlining multi-MB base64 into one HTML string. The
- * served content-type comes from the path extension (mimeFor), so binary entries
- * must be named with a real extension (shot.png, logo.svg, font.woff2).
+ * Decode a {path: content} map to {path: bytes}: a value that is a base64 data: URI
+ * (`data:image/png;base64,…`) becomes raw bytes, everything else is UTF-8 text — so
+ * screenshots, fonts, and any binary asset that makes up a site ride the SAME map as
+ * the HTML/CSS/JS pages, carried over MCP without inlining multi-MB base64 into one
+ * HTML string. The served content-type comes from the path extension (mimeFor), so
+ * binary entries must be named with a real extension (shot.png, logo.svg, font.woff2).
  *
  * Throws if a value looks like a base64 data: URI but isn't decodable.
  */
-export const zipBundleFiles = (files: Record<string, string>): Uint8Array => {
+export const decodeBundleFiles = (files: Record<string, string>): Record<string, Uint8Array> => {
   const enc = new TextEncoder()
   const entries: Record<string, Uint8Array> = {}
   for (const [path, value] of Object.entries(files)) {
@@ -46,8 +44,40 @@ export const zipBundleFiles = (files: Record<string, string>): Uint8Array => {
     try {
       entries[path] = base64ToBytes(value.slice(marker[0].length))
     } catch {
-      throw new Error(`invalid base64 data URI for "${path}"`)
+      throw new PublishError(400, `invalid base64 data URI for "${path}"`)
     }
+  }
+  return entries
+}
+
+/**
+ * Pack a {path: content} map into a zip the core publish path ingests exactly like an
+ * HTTP bundle upload (it re-validates size, file count, paths, and entry point).
+ */
+export const zipBundleFiles = (files: Record<string, string>): Uint8Array =>
+  zipSync(decodeBundleFiles(files))
+
+/**
+ * Build the zip for an INCREMENTAL bundle publish: every file already in the bundle
+ * (read back from its blob) with `newFiles` overlaid on top by path — same path
+ * overwrites, others are kept. Lets a caller add or replace a few files without
+ * re-sending the whole site; the core publish path then republishes the union as one
+ * new version, re-running all its size/file-count/entry-point checks. Paths are
+ * normalised (leading slash stripped) so a new "shot.png" overwrites an existing
+ * "/shot.png" rather than duplicating it.
+ */
+export const mergeBundleZip = async (
+  blobs: BlobStore,
+  manifest: BundleManifest,
+  newFiles: Record<string, string>,
+): Promise<Uint8Array> => {
+  const entries: Record<string, Uint8Array> = {}
+  for (const [path, entry] of Object.entries(manifest.files)) {
+    const bytes = await blobs.get(entry.key)
+    if (bytes) entries[cleanPath(path)] = bytes
+  }
+  for (const [path, bytes] of Object.entries(decodeBundleFiles(newFiles))) {
+    entries[cleanPath(path)] = bytes
   }
   return zipSync(entries)
 }

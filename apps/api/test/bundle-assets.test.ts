@@ -1,12 +1,12 @@
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { publish } from "@dock/core"
+import { type BundleManifest, publish } from "@dock/core"
 import { SqliteMetaStore } from "@dock/db/sqlite"
 import { FsBlobStore } from "@dock/storage/fs"
 import { unzipSync } from "fflate"
 import { afterAll, describe, expect, it } from "vitest"
-import { manifestOf, zipBundleFiles } from "../src/lib/bundle"
+import { manifestOf, mergeBundleZip, zipBundleFiles } from "../src/lib/bundle"
 
 // MCP `publish` builds its bundle zip from a {path: content} map. Pages are text,
 // but a real site also has images, fonts, etc. — binary that UTF-8 encoding would
@@ -81,5 +81,54 @@ describe("a binary bundle publishes and serves the asset with the right type", (
     expect(manifest?.entry).toBe("/index.html")
     const html = new TextDecoder().decode((await blobs.get(entry?.key as string)) as Uint8Array)
     expect(html).toContain("<img src=shot.png>")
+  })
+})
+
+describe("incremental merge grows a bundle without re-sending it", () => {
+  it("keeps existing files, adds new ones, overwrites same-path, bumps the version", async () => {
+    const meta = new SqliteMetaStore(join(dir, "merge.db"))
+    const blobs = new FsBlobStore(join(dir, "merge-blobs"))
+
+    // First publish: an index page + one screenshot.
+    const first = await publish(meta, blobs, {
+      bytes: zipBundleFiles({
+        "index.html": "<img src=a.png>",
+        "a.png": `data:image/png;base64,${PNG_B64}`,
+      }),
+      filename: "site.zip",
+      isBundle: true,
+      title: "Site",
+      author: "t",
+    })
+    const m1 = (await manifestOf(blobs, first.version)) as BundleManifest
+    expect(Object.keys(m1.files).sort()).toEqual(["/a.png", "/index.html"])
+
+    // The incremental call carries ONLY the delta — a new b.png plus an updated
+    // index.html. a.png is never re-sent; mergeBundleZip reads it back from its blob.
+    const unionZip = await mergeBundleZip(blobs, m1, {
+      "index.html": "<img src=a.png><img src=b.png>",
+      "b.png": `data:image/png;base64,${PNG_B64}`,
+    })
+    const second = await publish(
+      meta,
+      blobs,
+      { bytes: unionZip, filename: "site.zip", isBundle: true, author: "t" },
+      first.artifact.short_id,
+    )
+    const m2 = (await manifestOf(blobs, second.version)) as BundleManifest
+
+    // Existing asset preserved, new asset added, page overwritten — one new version.
+    expect(Object.keys(m2.files).sort()).toEqual(["/a.png", "/b.png", "/index.html"])
+    expect(m2.files["/b.png"]?.type).toBe("image/png")
+    expect(second.version.n).toBe(2)
+
+    // a.png bytes are intact (came back from its blob, never re-sent over the wire).
+    const aBytes = (await blobs.get(m2.files["/a.png"]?.key as string)) as Uint8Array
+    expect(new Uint8Array(aBytes)).toEqual(PNG_BYTES)
+    // index.html reflects the overwrite.
+    const html = new TextDecoder().decode(
+      (await blobs.get(m2.files["/index.html"]?.key as string)) as Uint8Array,
+    )
+    expect(html).toContain("b.png")
   })
 })
