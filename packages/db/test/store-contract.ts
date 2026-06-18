@@ -403,6 +403,47 @@ export function runStoreContract(
       expect(await store.followedArtifactIds(authorOnly, ORG)).not.toContain(byAda.id)
       await store.setArtifactRemoved(byAda.id, null)
     })
+
+    it("treats a path follow as a literal prefix: respects folder boundaries + escapes LIKE metachars", async () => {
+      // A folder follow (trailing slash) matches files INSIDE the folder…
+      const user = `u_${uuid()}`
+      const inside = await store.createArtifact(newArtifact())
+      await store.addVersion(inside.id, newVersion())
+      await store.setArtifactSourcePath(inside.id, "docs/plans/q3.md")
+      // …but NOT a sibling folder that merely shares the prefix string.
+      const sibling = await store.createArtifact(newArtifact())
+      await store.addVersion(sibling.id, newVersion())
+      await store.setArtifactSourcePath(sibling.id, "docs/plans2/x.md")
+      await store.addFollow({
+        id: uuid(),
+        org_id: ORG,
+        user_id: user,
+        kind: "path",
+        target: "docs/plans/",
+      })
+      const ids = await store.followedArtifactIds(user, ORG)
+      expect(ids).toContain(inside.id)
+      expect(ids).not.toContain(sibling.id) // "docs/plans2/…" is not under "docs/plans/"
+
+      // A "_" in the prefix is matched literally, not as the LIKE single-char wildcard.
+      const esc = `u_${uuid()}`
+      const literal = await store.createArtifact(newArtifact())
+      await store.addVersion(literal.id, newVersion())
+      await store.setArtifactSourcePath(literal.id, "a_b/notes.md")
+      const wildcardish = await store.createArtifact(newArtifact())
+      await store.addVersion(wildcardish.id, newVersion())
+      await store.setArtifactSourcePath(wildcardish.id, "axb/notes.md")
+      await store.addFollow({
+        id: uuid(),
+        org_id: ORG,
+        user_id: esc,
+        kind: "path",
+        target: "a_b/",
+      })
+      const escIds = await store.followedArtifactIds(esc, ORG)
+      expect(escIds).toContain(literal.id)
+      expect(escIds).not.toContain(wildcardish.id) // "_" escaped → literal, not "any char"
+    })
   })
 
   describe(`${label}: collections`, () => {
