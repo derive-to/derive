@@ -2,6 +2,7 @@ import { useNavigate } from "@tanstack/react-router"
 import { useState } from "react"
 import { toast } from "sonner"
 import { api } from "@/api"
+import { refFor } from "./artifact/parse-ref"
 import { SourceEditor } from "./artifact/source-editor"
 
 // Guess Markdown vs HTML from the content, so paste just works (the editor drives
@@ -43,7 +44,7 @@ export function NewArtifact() {
       const fields: Record<string, string> = { title: name, visibility: "org" }
       if (message.trim()) fields.message = message.trim()
       const a = await api.publish(new File([src], `inline.${ext}`, { type }), fields)
-      nav({ to: "/a/$ref", params: { ref: a.short_id } })
+      nav({ to: "/a/$ref", params: { ref: refFor(a) } })
     } catch (e) {
       toast.error((e as Error).message)
     }

@@ -1,12 +1,14 @@
 import {
   type ArtifactRecord,
   artifactUrl,
+  candidateShortIds,
   escapeHtml,
   injectHead,
   kindLabel,
   oembedResponse,
   ogCardSvg,
   parseRef,
+  refFor,
   type UnfurlInfo,
   unfurlDescription,
   unfurlMetaTags,
@@ -60,7 +62,11 @@ export const embedRoutes = (ctx: AppContext) => {
   // Resolve `:ref` → an artifact the *request actor* may read. `null` means "render
   // a generic card" (missing, removed, or gated to an anonymous crawler).
   const readable = async (c: Context, ref: string): Promise<ArtifactRecord | null> => {
-    const artifact = await meta.getByShortId(parseRef(ref).shortId)
+    let artifact: ArtifactRecord | null = null
+    for (const id of candidateShortIds(ref)) {
+      artifact = await meta.getByShortId(id)
+      if (artifact) break
+    }
     if (!artifact || artifact.removed_at) return null
     return (await authorize(c, "read", artifact)) ? artifact : null
   }
@@ -138,10 +144,19 @@ export const embedRoutes = (ctx: AppContext) => {
     app.get("/a/:ref", async (c) => {
       const shell = await getShell()
       if (!shell) return c.notFound()
-      const artifact = await readable(c, c.req.param("ref"))
+      const ref = c.req.param("ref")
+      const artifact = await readable(c, ref)
       // A taken-down artifact serves the bare shell (the SPA shows a tombstone) and
       // injects NO unfurl meta, so the removed title doesn't live on for crawlers.
       if (!artifact || artifact.removed_at) return c.html(shell)
+      // Canonicalise any non-canonical ref (bare id, stale name, legacy order) to
+      // /a/<name>-<shortId> so the browser/crawler holds the readable URL. 302 (not 301)
+      // so a later rename re-canonicalises instead of being cached. Only ever for an
+      // artifact the actor may read (readable() already authorised), so a gated title
+      // can't leak via the redirect. Preserves the @vN suffix and the query string.
+      const { version } = parseRef(ref)
+      const canonical = version ? `${refFor(artifact)}@v${version}` : refFor(artifact)
+      if (ref !== canonical) return c.redirect(`/a/${canonical}${new URL(c.req.url).search}`, 302)
       return c.html(injectHead(shell, unfurlMetaTags(await infoFor(artifact))))
     })
   // A copy-pasted share link with a trailing slash ("/a/slug-id/") would otherwise

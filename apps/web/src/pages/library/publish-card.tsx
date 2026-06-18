@@ -6,6 +6,7 @@ import { api } from "@/api"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { cn } from "@/lib/utils"
+import { refFor } from "../artifact/parse-ref"
 
 // The home launcher. "Write or paste" opens /new — the same editor as edit mode
 // (paste/write Markdown or HTML with a live preview). Dropping or choosing a file
@@ -36,7 +37,7 @@ export function PublishCard() {
     setBusy(true)
     try {
       const a = await api.publish(f, { title: f.name.replace(/\.[^.]+$/, ""), visibility: "org" })
-      nav({ to: "/a/$ref", params: { ref: a.short_id } })
+      nav({ to: "/a/$ref", params: { ref: refFor(a) } })
     } catch (e) {
       toast.error((e as Error).message)
       setBusy(false)

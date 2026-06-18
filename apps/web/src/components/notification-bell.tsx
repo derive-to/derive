@@ -5,6 +5,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { useAuth } from "@/ctx"
 import { ago } from "@/lib/time"
 import { cn } from "@/lib/utils"
+import { refFor } from "@/pages/artifact/parse-ref"
 import { Icon } from "./icons"
 
 // Nav-rail row classes (kept in sync with NavRail's SideItem so notifications +
@@ -56,7 +57,7 @@ export function NotificationBell({ collapsed }: { collapsed?: boolean }) {
     }
     nav({
       to: "/a/$ref",
-      params: { ref: n.artifact_short_id },
+      params: { ref: refFor({ short_id: n.artifact_short_id, title: n.artifact_title }) },
       // A share notification has no thread; open the artifact itself.
       search: n.thread_id ? { c: n.thread_id } : {},
     })

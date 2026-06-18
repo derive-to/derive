@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router"
 import { artifactQuery, commentsQuery, prefetchArtifactRaw } from "../lib/queries"
 import { Artifact } from "../pages/artifact"
-import { parseRef } from "../pages/artifact/parse-ref"
+import { candidateShortIds, parseRef } from "../pages/artifact/parse-ref"
 
 export const Route = createFileRoute("/a/$ref")({
   // `c` deep-links to a comment thread (opens the panel + focuses its anchor).
@@ -12,10 +12,15 @@ export const Route = createFileRoute("/a/$ref")({
   // auth redirect and the not-found / removed states, so a failed fetch here
   // must not surface as a route error — hence the catch.
   loader: async ({ context: { queryClient }, params }) => {
-    const { shortId, version } = parseRef(params.ref)
-    const art = await queryClient.ensureQueryData(artifactQuery(shortId)).catch(() => null)
-    queryClient.prefetchQuery(commentsQuery(shortId))
-    if (art && !art.removed) prefetchArtifactRaw(shortId, version ?? art.current_version)
+    const { version } = parseRef(params.ref)
+    for (const id of candidateShortIds(params.ref)) {
+      const art = await queryClient.ensureQueryData(artifactQuery(id)).catch(() => null)
+      if (art) {
+        queryClient.prefetchQuery(commentsQuery(id))
+        if (!art.removed) prefetchArtifactRaw(id, version ?? art.current_version)
+        return
+      }
+    }
   },
   component: Artifact,
 })
