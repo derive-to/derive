@@ -153,6 +153,81 @@ export function runStoreContract(
     })
   })
 
+  describe(`${label}: author attribution (GitHub-synced)`, () => {
+    it("denormalizes the version author onto the artifact, clearing GitHub fields on a non-GitHub edit", async () => {
+      const a = await store.createArtifact(newArtifact())
+      const v1 = await store.addVersion(
+        a.id,
+        newVersion({
+          author: "Ada Lovelace",
+          author_login: "ada",
+          author_avatar: "https://avatars/ada.png",
+          author_gh_id: "4242",
+        }),
+      )
+      // The version row carries the full GitHub author…
+      expect(v1).toMatchObject({
+        author: "Ada Lovelace",
+        author_login: "ada",
+        author_avatar: "https://avatars/ada.png",
+        author_gh_id: "4242",
+      })
+      // …and it's denormalized onto the artifact as the current author.
+      expect(await store.getByShortId(a.short_id)).toMatchObject({
+        author_name: "Ada Lovelace",
+        author_login: "ada",
+        author_avatar: "https://avatars/ada.png",
+        author_gh_id: "4242",
+      })
+
+      // A later edit with no GitHub identity overwrites the current author and clears
+      // the GitHub fields (the `?? null` denormalization branches).
+      await store.addVersion(a.id, newVersion({ author: "bob" }))
+      expect(await store.getByShortId(a.short_id)).toMatchObject({
+        author_name: "bob",
+        author_login: null,
+        author_avatar: null,
+        author_gh_id: null,
+      })
+      // The historical v1 keeps its own author; v2 has none.
+      expect((await store.getVersion(a.id, 1))?.author_login).toBe("ada")
+      expect((await store.getVersion(a.id, 2))?.author_login).toBeNull()
+    })
+
+    it("filters artifacts by author login (case-insensitive, org-scoped)", async () => {
+      const mine = await store.createArtifact(newArtifact())
+      await store.addVersion(mine.id, newVersion({ author: "Ada", author_login: "ada" }))
+      expect(await store.artifactIdsByAuthor(ORG, "ada")).toContain(mine.id)
+      expect(await store.artifactIdsByAuthor(ORG, "ADA")).toContain(mine.id) // case-insensitive
+      expect(await store.artifactIdsByAuthor(ORG, "grace")).not.toContain(mine.id) // other login
+      expect(await store.artifactIdsByAuthor(`${ORG}_other`, "ada")).not.toContain(mine.id) // other org
+    })
+
+    it("sets and clears the current author directly (the backfill path)", async () => {
+      const a = await store.createArtifact(newArtifact())
+      await store.setArtifactAuthor(a.id, {
+        name: "Grace Hopper",
+        login: "grace",
+        avatar: "https://avatars/grace.png",
+        ghId: "99",
+      })
+      expect(await store.getByShortId(a.short_id)).toMatchObject({
+        author_name: "Grace Hopper",
+        author_login: "grace",
+        author_avatar: "https://avatars/grace.png",
+        author_gh_id: "99",
+      })
+      // Null clears every author field.
+      await store.setArtifactAuthor(a.id, null)
+      expect(await store.getByShortId(a.short_id)).toMatchObject({
+        author_name: null,
+        author_login: null,
+        author_avatar: null,
+        author_gh_id: null,
+      })
+    })
+  })
+
   describe(`${label}: comments + threads`, () => {
     it("creates comments, filters by state, resolves a whole thread", async () => {
       const a = await store.createArtifact(newArtifact())
