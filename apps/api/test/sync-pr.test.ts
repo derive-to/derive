@@ -53,13 +53,22 @@ const postWebhook = (action: string, pr: Record<string, unknown>) => {
 
 // What `GET /pulls/:n/files` returns — mutated per test to drive different change sets.
 let prFiles: { filename: string; status: string }[] = []
-// The repo tree at any ref: two markdown docs + one non-doc (excluded by the globs).
+// The repo tree at any ref: markdown docs + one non-doc (excluded by the globs).
+// promote-me.md / edit-me.md back the merge-graduation tests.
 const tree = [
   { path: "docs/guide.md", sha: "g1", type: "blob" as const },
   { path: "docs/other.md", sha: "o1", type: "blob" as const },
+  { path: "docs/promote-me.md", sha: "pm1", type: "blob" as const },
+  { path: "docs/edit-me.md", sha: "e1", type: "blob" as const },
   { path: "src/x.ts", sha: "x1", type: "blob" as const },
 ]
-const blobs: Record<string, string> = { g1: "# Guide", o1: "# Other", x1: "const x = 1" }
+const blobs: Record<string, string> = {
+  g1: "# Guide",
+  o1: "# Other",
+  pm1: "# New plan",
+  e1: "# Edit me",
+  x1: "const x = 1",
+}
 
 beforeAll(async () => {
   vi.stubGlobal(
@@ -138,6 +147,18 @@ const mirrored = async (prNumber: number): Promise<string[]> => {
   return Object.keys(JSON.parse(p?.files ?? "{}")).sort()
 }
 
+type FileMap = Record<string, { artifact_id?: string }>
+// The artifact id a PR preview currently mirrors at a path (from its files map).
+const previewArtifactAt = async (prNumber: number, path: string): Promise<string | undefined> => {
+  const p = await preview(prNumber)
+  return (JSON.parse(p?.files ?? "{}") as FileMap)[path]?.artifact_id
+}
+// The artifact id the BRANCH mirror owns at a path.
+const branchArtifactAt = async (path: string): Promise<string | undefined> => {
+  const b = await meta.getRepoSource("rs_branch", ORG)
+  return (JSON.parse(b?.files ?? "{}") as FileMap)[path]?.artifact_id
+}
+
 describe("github pr previews", () => {
   it("opened: mirrors ONLY the PR's changed docs into a 'PR #<n>' collection", async () => {
     // The PR changes one doc + one non-doc; the unchanged doc must stay out.
@@ -194,5 +215,73 @@ describe("github pr previews", () => {
     const res = await postWebhook("opened", { number: 9, title: "Code only", head: { sha: "c1" } })
     expect(res.status).toBe(200)
     expect(await preview(9)).toBeUndefined()
+  })
+
+  it("merged (new doc): promotes the reviewed artifact into the main collection", async () => {
+    // A doc the branch mirror doesn't own yet → PROMOTE on merge.
+    prFiles = [{ filename: "docs/promote-me.md", status: "added" }]
+    await postWebhook("opened", { number: 11, title: "New plan", head: { sha: "p1" } })
+    const p = await preview(11)
+    if (!p) throw new Error("no preview")
+    await sync(p.id)
+    const artId = await previewArtifactAt(11, "docs/promote-me.md")
+    if (!artId) throw new Error("preview didn't mirror the doc")
+
+    await postWebhook("closed", {
+      number: 11,
+      title: "New plan",
+      merged: true,
+      head: { sha: "p1" },
+    })
+
+    expect(await preview(11)).toBeUndefined() // preview shell gone
+    // The SAME artifact you reviewed is now canonical: alive, in the main collection,
+    // owned by the branch source.
+    expect(await meta.getArtifactById(artId)).not.toBeNull()
+    expect(await meta.collectionArtifactIds("col_branch")).toContain(artId)
+    expect(await branchArtifactAt("docs/promote-me.md")).toBe(artId)
+  })
+
+  it("merged (edited doc): folds the PR's versions + comments into the canonical doc", async () => {
+    // Make the branch mirror own the docs first, so an edit folds rather than promotes.
+    await sync("rs_branch")
+    const canonicalId = await branchArtifactAt("docs/edit-me.md")
+    if (!canonicalId) throw new Error("branch didn't mirror edit-me.md")
+    const before = await meta.getArtifactById(canonicalId)
+    const beforeVersion = before?.current_version ?? 0
+
+    // A PR edits that doc; reviewer leaves a comment on the preview.
+    prFiles = [{ filename: "docs/edit-me.md", status: "modified" }]
+    await postWebhook("opened", { number: 12, title: "Edit plan", head: { sha: "e2" } })
+    const p = await preview(12)
+    if (!p) throw new Error("no preview")
+    await sync(p.id)
+    const previewArtId = await previewArtifactAt(12, "docs/edit-me.md")
+    if (!previewArtId) throw new Error("preview didn't mirror the doc")
+    await meta.createComment({
+      id: "cm_fold_root",
+      artifact_id: previewArtId,
+      thread_id: "cm_fold_root",
+      base_version: 1,
+      path: null,
+      anchor: null,
+      body_md: "ship it",
+      author: "reviewer",
+      author_id: "rev1",
+    })
+
+    await postWebhook("closed", {
+      number: 12,
+      title: "Edit plan",
+      merged: true,
+      head: { sha: "e2" },
+    })
+
+    expect(await preview(12)).toBeUndefined() // preview shell gone
+    expect(await meta.getArtifactById(previewArtId)).toBeNull() // preview copy deleted
+    const after = await meta.getArtifactById(canonicalId)
+    expect(after?.current_version ?? 0).toBeGreaterThan(beforeVersion) // PR version folded in
+    const comments = await meta.listComments(canonicalId)
+    expect(comments.some((c) => c.body_md === "ship it")).toBe(true) // review carried over
   })
 })
