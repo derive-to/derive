@@ -2,12 +2,14 @@ import { useQuery } from "@tanstack/react-query"
 import { getRouteApi, useNavigate } from "@tanstack/react-router"
 import { useState } from "react"
 import { api } from "@/api"
+import { Icon } from "@/components/icons"
 import { CenteredSpinner } from "@/components/shared/spinner"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { UsernameForm } from "@/components/username-form"
 import { useAuth } from "@/ctx"
+import { useFollows } from "@/lib/use-follows"
 
 const route = getRouteApi("/u/$handle")
 
@@ -20,6 +22,7 @@ export function Profile() {
   const { handle } = route.useParams()
   const { me, setMe } = useAuth()
   const nav = useNavigate()
+  const { isFollowingUser, toggleUser } = useFollows()
   const [editing, setEditing] = useState(false)
 
   const { data, isPending, isError } = useQuery({
@@ -80,6 +83,35 @@ export function Profile() {
             {data.about}
           </p>
         )}
+
+        {!isMe &&
+          (() => {
+            const following = isFollowingUser(data.username)
+            return (
+              <Button
+                variant={following ? "secondary" : "primary"}
+                size="sm"
+                data-testid="profile-follow"
+                aria-pressed={following}
+                title={
+                  following
+                    ? `Unfollow @${data.username}`
+                    : `Follow @${data.username} to see their work in your feed`
+                }
+                onClick={() => toggleUser(data.username)}
+              >
+                {following ? (
+                  <>
+                    <Icon name="check" size={15} /> Following
+                  </>
+                ) : (
+                  <>
+                    <Icon name="following" size={15} /> Follow
+                  </>
+                )}
+              </Button>
+            )
+          })()}
 
         {isMe &&
           (editing ? (

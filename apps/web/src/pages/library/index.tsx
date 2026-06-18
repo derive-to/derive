@@ -28,7 +28,6 @@ import { FolderGroups } from "./folder-groups"
 import { FollowingStrip } from "./following-strip"
 import { HowItWorks } from "./how-it-works"
 import { LibrarySkeleton } from "./library-skeleton"
-import { PeopleFinder } from "./people-finder"
 import { PublishCard } from "./publish-card"
 import { ShareCollectionDialog } from "./share-collection-dialog"
 import type { Filter } from "./types"
@@ -220,7 +219,7 @@ function LibraryBody() {
     : filter.kind === "favorites"
       ? "No favorites yet. Tap the star on any artifact to save it."
       : filter.kind === "following"
-        ? "Search for people above to follow them — or follow authors and folders — to see their recent changes here."
+        ? "Find people with ⌘K (or follow an author or folder) and follow them to see their recent changes here."
         : filter.kind === "tag"
           ? `Nothing tagged #${filter.tag} yet.`
           : filter.kind === "collection"
@@ -403,13 +402,7 @@ function LibraryBody() {
             each unfollowable, sits above the heading so it reads as the feed's
             controls. Hidden (returns null) when you follow nothing. */}
         {filter.kind === "following" && (
-          <>
-            <PeopleFinder />
-            <FollowingStrip
-              follows={follows}
-              onUnfollow={(kind, target) => unfollow(kind, target)}
-            />
-          </>
+          <FollowingStrip follows={follows} onUnfollow={(kind, target) => unfollow(kind, target)} />
         )}
 
         {filter.kind !== "collection" && filter.kind !== "following" && <PublishCard />}
