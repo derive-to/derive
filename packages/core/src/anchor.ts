@@ -249,8 +249,21 @@ document.addEventListener("mouseout",function(e){
 /* clicking a highlight focuses its thread in the host */
 document.addEventListener("click",function(e){
   var el=e.target,m=el&&el.closest?el.closest("mark[data-dock-id]"):null;
-  if(m)post({type:"anchor-click",id:m.getAttribute("data-dock-id")})
+  if(m){post({type:"anchor-click",id:m.getAttribute("data-dock-id")});return}
+  navLink(e)
 },true);
+/* Cross-document links: a relative <a> the server resolved to a sibling artifact
+   (data-dock-nav="<ref>"). The sandboxed frame can't navigate the host, so hand the
+   click off for an in-app transition (or a new tab on a modified / middle click —
+   the host opens that un-sandboxed). preventDefault stops the frame loading /a/… into
+   itself. Only marked links are touched; ordinary and in-page links are untouched. */
+function navLink(e){
+  var a=e.target&&e.target.closest?e.target.closest("a[data-dock-nav]"):null;
+  if(!a)return;
+  e.preventDefault();
+  post({type:"navigate",ref:a.getAttribute("data-dock-nav"),
+    newTab:!!(e.metaKey||e.ctrlKey||e.shiftKey||e.button===1)})}
+document.addEventListener("auxclick",function(e){if(e.button===1)navLink(e)},true);
 
 function setOn(id){
   var on=document.querySelectorAll("mark.dock-hl-on");

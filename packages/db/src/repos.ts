@@ -237,6 +237,29 @@ export function makeRepos(db: SqliteDb) {
   const getArtifactById = async (id: string): Promise<ArtifactRecord | null> =>
     (await db.select().from(artifact).where(eq(artifact.id, id)).get()) ?? null
 
+  const siblingsBySourcePaths = async (
+    orgId: string,
+    paths: string[],
+  ): Promise<{ short_id: string; slug: string | null; source_path: string }[]> => {
+    if (paths.length === 0) return []
+    const rows = await db
+      .select({
+        short_id: artifact.short_id,
+        slug: artifact.slug,
+        source_path: artifact.source_path,
+      })
+      .from(artifact)
+      .where(
+        and(
+          eq(artifact.org_id, orgId),
+          inArray(artifact.source_path, paths),
+          isNull(artifact.removed_at),
+        ),
+      )
+      .all()
+    return rows.filter((r): r is typeof r & { source_path: string } => r.source_path != null)
+  }
+
   const createArtifact = async (a: NewArtifact): Promise<ArtifactRecord> => {
     await db.insert(artifact).values(a).run()
     return (await getByShortId(a.short_id)) as ArtifactRecord
@@ -1189,6 +1212,7 @@ export function makeRepos(db: SqliteDb) {
     setLocked,
     getByShortId,
     getArtifactById,
+    siblingsBySourcePaths,
     addVersion,
     listVersions,
     getVersion,

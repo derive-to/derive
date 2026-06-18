@@ -36,9 +36,13 @@ export function useArtifactFrame(p: {
   setHoverThread: Dispatch<SetStateAction<string | null>>
   setActiveThread: Dispatch<SetStateAction<string | null>>
   setPanel: Dispatch<SetStateAction<Panel>>
+  // A cross-document link inside the frame was clicked: the server resolved it to a
+  // sibling artifact `ref`. The frame is sandboxed and can't navigate the host, so it
+  // hands the click here for an SPA transition (or a new tab on a modified click).
+  onNavigate: (ref: string, newTab: boolean) => void
 }) {
   const { comments, shortId, version, hoverThread, onPointerMove, onPointerLeave, onTap } = p
-  const { setHoverThread, setActiveThread, setPanel } = p
+  const { setHoverThread, setActiveThread, setPanel, onNavigate } = p
   const frame = useRef<HTMLIFrameElement>(null)
   const presentWrap = useRef<HTMLDivElement>(null)
   const [frameReady, setFrameReady] = useState(0)
@@ -127,11 +131,13 @@ export function useArtifactFrame(p: {
         onTap(d.x, d.y, deckRef.current?.i)
       } else if (d.type === "cursor-leave") {
         onPointerLeave()
+      } else if (d.type === "navigate" && typeof d.ref === "string") {
+        onNavigate(d.ref, !!d.newTab)
       }
     }
     window.addEventListener("message", onMsg)
     return () => window.removeEventListener("message", onMsg)
-  }, [onPointerMove, onPointerLeave, onTap, setHoverThread, setActiveThread, setPanel])
+  }, [onPointerMove, onPointerLeave, onTap, setHoverThread, setActiveThread, setPanel, onNavigate])
 
   // Two-way hover: emphasize the matching highlight in the doc when a comment
   // card is hovered (the inbound anchor-hover sets the same state the other way).
