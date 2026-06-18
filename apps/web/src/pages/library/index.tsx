@@ -84,6 +84,7 @@ function LibraryBody() {
     tag: search.tag,
     collection: search.collection,
     favorite: search.f === "favorites" || undefined,
+    author: search.author,
   }
   const listQuery = libraryArtifactsQuery(params)
   const { data, isPending, isError, refetch, fetchNextPage, hasNextPage, isFetchingNextPage } =
@@ -163,6 +164,14 @@ function LibraryBody() {
       toast.error((e as Error).message)
       qc.invalidateQueries({ queryKey: listQuery.queryKey })
     }
+  }
+
+  // Filter by author. Keep the collection context (you're narrowing the synced
+  // repo you're already in) and drop it again via the clear pill.
+  const pickAuthor = (login: string) => nav({ to: "/", search: { ...search, author: login } })
+  const clearAuthor = () => {
+    const { author: _drop, ...rest } = search
+    nav({ to: "/", search: rest })
   }
 
   const activeCollection =
@@ -300,6 +309,20 @@ function LibraryBody() {
               <X />
             </Button>
           )}
+          {/* Active author filter — independent of the tag/collection filter, so it
+              gets its own clearable pill. */}
+          {search.author && (
+            <Button
+              variant="outline"
+              size="sm"
+              data-testid="library-author-filter-clear"
+              title={`Clear author filter: ${search.author}`}
+              onClick={clearAuthor}
+            >
+              <Icon name="user" size={15} /> {search.author}
+              <X />
+            </Button>
+          )}
         </div>
 
         {filter.kind !== "collection" && <PublishCard />}
@@ -411,6 +434,7 @@ function LibraryBody() {
                 onOpen={(a) => nav({ to: "/a/$ref", params: { ref: a.short_id } })}
                 onToggleFavorite={toggleFav}
                 onPickTag={(tag) => nav({ to: "/", search: { tag } })}
+                onPickAuthor={pickAuthor}
                 onPrefetch={(a) => prefetch(a.short_id, a.current_version)}
               />
             ) : (
@@ -422,6 +446,7 @@ function LibraryBody() {
                     onOpen={() => nav({ to: "/a/$ref", params: { ref: a.short_id } })}
                     onToggleFavorite={() => toggleFav(a)}
                     onPickTag={(tag) => nav({ to: "/", search: { tag } })}
+                    onPickAuthor={pickAuthor}
                     onDelete={() => deleteArtifact(a)}
                     onPrefetch={() => prefetch(a.short_id, a.current_version)}
                   />

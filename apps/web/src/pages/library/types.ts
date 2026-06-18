@@ -23,4 +23,6 @@ export type LibrarySearch = {
   tag?: string
   collection?: string
   q?: string
+  // Narrow to artifacts last changed by this GitHub login (synced collections).
+  author?: string
 }

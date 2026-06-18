@@ -11,6 +11,8 @@ export type LibraryParams = {
   tag?: string
   collection?: string
   favorite?: boolean
+  // Narrow to artifacts last changed by this GitHub login.
+  author?: string
 }
 export const libraryArtifactsQuery = (params: LibraryParams) =>
   infiniteQueryOptions({

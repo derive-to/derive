@@ -1,4 +1,5 @@
 import type { Artifact } from "@/api"
+import { AuthorChip } from "@/components/author-chip"
 import { Icon } from "@/components/icons"
 import { Thumb } from "@/components/shared/thumb"
 import {
@@ -46,6 +47,9 @@ export function ArtifactCard({
   onPrefetch?: () => void
 }) {
   const isOwner = a.my_role === "owner"
+  // "Who last changed this" — only synced artifacts carry an author.
+  const author = a.author ?? null
+  const hasAuthor = !!(author?.name || author?.login || a.author_login || a.author_name)
 
   return (
     <div className="group relative flex cursor-pointer flex-col gap-2 rounded-lg border border-border bg-card p-3.5 transition-all motion-safe:hover:-translate-y-0.5 hover:border-primary hover:shadow-[var(--shadow)] active:translate-y-0">
@@ -130,6 +134,17 @@ export function ArtifactCard({
           )}
         </span>
       </button>
+      {hasAuthor && (
+        <div className="relative z-20 flex min-w-0">
+          <AuthorChip
+            name={author?.name ?? a.author_name ?? null}
+            login={author?.login ?? a.author_login ?? null}
+            avatar={author?.avatar ?? a.author_avatar ?? null}
+            handle={author?.handle ?? null}
+            data-testid={`artifact-card-author-${a.short_id}`}
+          />
+        </div>
+      )}
       {(a.tags ?? []).length > 0 && (
         <div className="relative z-20 flex flex-wrap gap-1.5">
           {(a.tags ?? []).slice(0, 6).map((t) => (

@@ -1,5 +1,12 @@
 import type { D1Database } from "@cloudflare/workers-types"
-import type { MetaStore, NewView, UserDir, UserProfile, ViewStats } from "@dock/core"
+import type {
+  GithubUserMapping,
+  MetaStore,
+  NewView,
+  UserDir,
+  UserProfile,
+  ViewStats,
+} from "@dock/core"
 import { sql } from "drizzle-orm"
 import { drizzle } from "drizzle-orm/d1"
 import { makeRepos, schema } from "./repos"
@@ -130,6 +137,24 @@ export function createD1Store(d1: D1Database): MetaStore {
         return (await db.all(
           sql`SELECT id, email, name, image, username, profession, about FROM user WHERE id IN (${list})`,
         )) as UserDir[]
+      } catch {
+        return []
+      }
+    },
+    // Map GitHub numeric user ids to Dock accounts (account.accountId → user), scoped to
+    // the github social provider. Best-effort — [] when the Better Auth tables are absent.
+    usersByGithubIds: async (ghIds: string[]): Promise<GithubUserMapping[]> => {
+      if (ghIds.length === 0) return []
+      try {
+        const list = sql.join(
+          ghIds.map((id) => sql`${id}`),
+          sql`, `,
+        )
+        return (await db.all(
+          sql`SELECT a.accountId gh_id, u.id, u.name, u.image, u.username
+              FROM account a JOIN user u ON u.id = a.userId
+              WHERE a.providerId = 'github' AND a.accountId IN (${list})`,
+        )) as GithubUserMapping[]
       } catch {
         return []
       }

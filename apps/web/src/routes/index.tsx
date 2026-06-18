@@ -10,6 +10,7 @@ export const Route = createFileRoute("/")({
     tag: typeof s.tag === "string" ? s.tag : undefined,
     collection: typeof s.collection === "string" ? s.collection : undefined,
     q: typeof s.q === "string" ? s.q : undefined,
+    author: typeof s.author === "string" ? s.author : undefined,
   }),
   component: Library,
 })

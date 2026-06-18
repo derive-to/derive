@@ -34,6 +34,13 @@ export interface PublishInput {
   spa?: boolean
   message?: string
   author?: string
+  /** The GitHub identity behind this publish (sync only): the commit author's login,
+   *  avatar URL, and numeric user id (text). Stored per-version and denormalized as the
+   *  artifact's current author. Omitted/null for a manual or anonymous publish — then
+   *  only the `author` display name is recorded. */
+  authorLogin?: string | null
+  authorAvatar?: string | null
+  authorGhId?: string | null
   /** The workspace the new artifact belongs to (multi-workspace). */
   orgId?: string
   visibility?: Visibility
@@ -189,6 +196,9 @@ export async function publish(
       content_type: contentType,
       size_bytes: input.bytes.length,
       author,
+      author_login: input.authorLogin ?? null,
+      author_avatar: input.authorAvatar ?? null,
+      author_gh_id: input.authorGhId ?? null,
       message: input.message ?? null,
       name: input.name ?? null,
     })
@@ -217,6 +227,9 @@ export async function publish(
     content_type: contentType,
     size_bytes: input.bytes.length,
     author,
+    author_login: input.authorLogin ?? null,
+    author_avatar: input.authorAvatar ?? null,
+    author_gh_id: input.authorGhId ?? null,
     message: input.message ?? "first publish",
     name: input.name ?? null,
   })
@@ -335,11 +348,23 @@ export const toJson = (baseUrl: string, a: ArtifactRecord, versions: VersionReco
   updated_at: a.updated_at,
   /** Repo path for a GitHub-synced artifact (drives the folder view); null otherwise. */
   source_path: a.source_path,
+  /** The CURRENT (last) author, denormalized — drives "who last changed this" + the
+   *  author filter in the list. For a GitHub-synced artifact these mirror the last
+   *  commit's author; null for legacy/anonymous/non-synced rows. The route may attach a
+   *  resolved `author` profile object (with the Dock handle) on top of these. */
+  author_name: a.author_name,
+  author_login: a.author_login,
+  author_avatar: a.author_avatar,
+  author_gh_id: a.author_gh_id,
   versions: versions.map((v) => ({
     n: v.n,
     sha256: v.blob_key,
     content_type: v.content_type,
     author: v.author,
+    /** The GitHub identity behind this version (sync only); null otherwise. */
+    author_login: v.author_login,
+    author_avatar: v.author_avatar,
+    author_gh_id: v.author_gh_id,
     message: v.message,
     name: v.name,
     created_at: v.created_at,
