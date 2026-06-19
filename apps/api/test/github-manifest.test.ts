@@ -9,16 +9,20 @@ import { buildManifest } from "../src/github-app-setup"
 describe("GitHub App manifest", () => {
   const m = buildManifest("https://dock.example.com", "dock.example.com")
 
-  it("subscribes only to permission-backed events (push)", () => {
-    expect(m.default_events).toEqual(["push"])
+  it("subscribes to permission-backed events (push + pull_request)", () => {
+    expect(m.default_events).toEqual(["push", "pull_request"])
   })
 
   it("is public so it can install on organizations, not just the owner", () => {
     expect(m.public).toBe(true)
   })
 
-  it("requests read-only contents + metadata, nothing more", () => {
-    expect(m.default_permissions).toEqual({ contents: "read", metadata: "read" })
+  it("requests read-only contents + metadata + pull_requests, nothing more", () => {
+    expect(m.default_permissions).toEqual({
+      contents: "read",
+      metadata: "read",
+      pull_requests: "read",
+    })
   })
 
   it("points setup_url at the install callback and redirect_url at app creation", () => {

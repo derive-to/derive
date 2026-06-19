@@ -57,9 +57,11 @@ ${STYLE}</head>
 ${body}</main></body></html>`
 
 /** The GitHub App manifest: what permissions/events/URLs the new App is born with.
- *  contents+metadata read-only (mirror docs, nothing more); push drives auto-sync.
- *  Exported so a test can lock the exact shape GitHub accepts (we regressed on
- *  default_events, public, and setup_url during the live rollout). */
+ *  All READ-ONLY: contents+metadata mirror docs; pull_requests (read) lets us list a
+ *  PR's changed files and receive `pull_request` events so we can preview PR docs.
+ *  push + pull_request drive auto-sync. Exported so a test can lock the exact shape
+ *  GitHub accepts (we regressed on default_events, public, and setup_url during the
+ *  live rollout). NOTE: adding a permission re-prompts existing installs to approve. */
 export const buildManifest = (baseUrl: string, host: string) => ({
   name: `Dock · ${host}`,
   url: baseUrl,
@@ -74,11 +76,12 @@ export const buildManifest = (baseUrl: string, host: string) => ({
   // read-only, and an installation only matters once bound to a workspace via our
   // signed-state callback, so a stray direct install is inert.
   public: true,
-  default_permissions: { contents: "read", metadata: "read" },
-  // Only permission-backed events go in default_events (push needs contents). The
-  // installation + installation_repositories lifecycle events are delivered to
-  // every App automatically — listing them here is rejected by GitHub.
-  default_events: ["push"],
+  default_permissions: { contents: "read", metadata: "read", pull_requests: "read" },
+  // Only permission-backed events go in default_events (push needs contents,
+  // pull_request needs pull_requests). The installation + installation_repositories
+  // lifecycle events are delivered to every App automatically — listing them here is
+  // rejected by GitHub.
+  default_events: ["push", "pull_request"],
 })
 
 /**

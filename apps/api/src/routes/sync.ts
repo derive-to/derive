@@ -1,10 +1,11 @@
-import type { GitHubAppRecord, RepoSourceRecord, SyncProgress } from "@dock/core"
+import type { GitHubAppRecord, RepoSourceRecord, SyncProgress, VersionRecord } from "@dock/core"
 import { newId } from "@dock/core"
 import { Hono } from "hono"
 import { z } from "zod"
 import type { AppContext } from "../context"
+import { sweepAnchors } from "../lib/anchor-sweep"
 import { decryptSecret, encryptSecret, signState, verifyState } from "../lib/crypto"
-import { GitHubError, listTree, matchesGlobs, parseRepo } from "../lib/github"
+import { GitHubError, listPullFiles, listTree, matchesGlobs, parseRepo } from "../lib/github"
 import {
   getAppInfo,
   installationToken,
@@ -12,7 +13,7 @@ import {
   verifyWebhookSignature,
 } from "../lib/github-app"
 import { fail, readJson } from "../lib/http"
-import { isSyncing, runToCompletion } from "../lib/sync-runner"
+import { effectiveToken, isSyncing, runToCompletion } from "../lib/sync-runner"
 import { log } from "../log"
 
 const DEFAULT_INCLUDES = "**/*.md,**/*.html"
@@ -48,6 +49,16 @@ interface GitHubWebhookPayload {
   ref?: string
   installation?: { id?: number }
   repository?: { full_name?: string; default_branch?: string }
+  // `pull_request` events (PR previews). `head.sha` is the ref we mirror at; `number`
+  // + `title` name the preview collection; `merged` decides graduate vs teardown on
+  // close. `head.ref`/`base.ref` are unused today.
+  pull_request?: {
+    number?: number
+    title?: string
+    merged?: boolean
+    head?: { sha?: string; ref?: string }
+    base?: { ref?: string }
+  }
 }
 
 /**
@@ -122,6 +133,197 @@ export const syncRoutes = (ctx: AppContext) => {
       background(runToCompletion(meta, deps.blobs, deps.encryptionKey, source.id))
   }
 
+  // ---- PR previews ------------------------------------------------------
+  // A PR preview is an ephemeral, READ-ONLY repo_source (`pr_number` set, `ref` = the
+  // PR head sha) into its own collection ("PR #<n>: <title>"). It inherits the branch
+  // source's installation + include globs, and the engine scopes the mirror to just the
+  // PR's changed docs (off `pr_number`). Created on open/synchronize, torn down on close.
+  // Upsert a preview to the PR's current head. An existing preview is re-pointed at the
+  // new head sha (its file map is kept, so the engine updates artifacts in place and
+  // tombstones docs the PR no longer touches); a missing one is created fresh.
+  const upsertPrPreview = async (
+    branch: RepoSourceRecord,
+    existing: RepoSourceRecord | undefined,
+    prNumber: number,
+    prTitle: string,
+    headSha: string,
+  ): Promise<void> => {
+    const title = `PR #${prNumber}: ${prTitle.trim() || "(untitled)"}`.slice(0, 200)
+    if (existing) {
+      await meta.updateRepoSourceSync(existing.id, { ref: headSha })
+      await meta.updateCollection(existing.collection_id, { title })
+      await launch(existing, true)
+      return
+    }
+    const col = await meta.createCollection({
+      id: newId("col"),
+      org_id: branch.org_id,
+      title,
+      created_by: branch.created_by,
+    })
+    await meta.setCollectionMember({
+      id: newId("cm"),
+      collection_id: col.id,
+      user_id: branch.created_by,
+      role: "owner",
+    })
+    const source = await meta.createRepoSource({
+      id: newId("rs"),
+      org_id: branch.org_id,
+      collection_id: col.id,
+      repo: branch.repo,
+      ref: headSha,
+      includes: branch.includes,
+      token: null,
+      installation_id: branch.installation_id,
+      pr_number: prNumber,
+      created_by: branch.created_by,
+    })
+    await launch(source, true)
+  }
+
+  // Tear down a preview WITHOUT graduating it: tombstone its artifacts, drop the source
+  // + collection. Used when a PR is CLOSED-without-merge (nothing landed) or stops
+  // changing any docs. A MERGED PR goes through graduatePreview instead.
+  const removePrPreview = async (preview: RepoSourceRecord): Promise<void> => {
+    let artifactIds: string[] = []
+    try {
+      const map = JSON.parse(preview.files || "{}") as Record<string, { artifact_id?: string }>
+      artifactIds = Object.values(map)
+        .map((f) => f?.artifact_id)
+        .filter((id): id is string => !!id)
+    } catch {
+      // A malformed map → nothing to tombstone; still drop the source + collection.
+    }
+    const removedAt = new Date().toISOString()
+    for (const id of artifactIds) await meta.setArtifactRemoved(id, removedAt)
+    await meta.deleteRepoSource(preview.id, preview.org_id)
+    await meta.deleteCollection(preview.collection_id)
+  }
+
+  type PreviewFile = { artifact_id?: string } & Record<string, unknown>
+  const parseFileMap = (s: string): Record<string, PreviewFile> => {
+    try {
+      return JSON.parse(s || "{}") as Record<string, PreviewFile>
+    } catch {
+      return {}
+    }
+  }
+
+  // Fold a preview artifact into the canonical doc that already exists for its path,
+  // then delete the preview copy. The PR's versions APPEND onto the canonical (blob keys
+  // are content-addressed, so this is cheap and addVersion bumps current_version), so
+  // they become part of its history. Comment threads are re-cloned onto the canonical
+  // with fresh ids (preserving the root==thread_id invariant + the thread state) and
+  // re-anchored against the new current version, so review carries over.
+  const foldIntoCanonical = async (
+    preview: RepoSourceRecord,
+    previewId: string,
+    canonicalId: string,
+  ): Promise<void> => {
+    const prefix = `PR #${preview.pr_number}`
+    let latest: VersionRecord | null = null
+    for (const v of await meta.listVersions(previewId)) {
+      latest = await meta.addVersion(canonicalId, {
+        id: newId("ver"),
+        blob_key: v.blob_key,
+        content_type: v.content_type,
+        size_bytes: v.size_bytes,
+        author: v.author,
+        author_login: v.author_login,
+        author_avatar: v.author_avatar,
+        author_gh_id: v.author_gh_id,
+        message: v.message ? `${prefix}: ${v.message}` : prefix,
+        name: v.name,
+      })
+    }
+    const comments = await meta.listComments(previewId)
+    const threads = new Map<string, typeof comments>()
+    for (const cm of comments) {
+      const arr = threads.get(cm.thread_id)
+      if (arr) arr.push(cm)
+      else threads.set(cm.thread_id, [cm])
+    }
+    const baseVersion = latest?.n ?? 1
+    for (const group of threads.values()) {
+      const root = group.find((c) => c.id === c.thread_id) ?? group[0]
+      if (!root) continue
+      const newThreadId = newId("cmt")
+      for (const cm of [root, ...group.filter((c) => c !== root)]) {
+        await meta.createComment({
+          id: cm === root ? newThreadId : newId("cmt"),
+          artifact_id: canonicalId,
+          thread_id: newThreadId,
+          base_version: baseVersion,
+          path: cm.path,
+          anchor: cm.anchor,
+          body_md: cm.body_md,
+          author: cm.author,
+          author_id: cm.author_id,
+        })
+      }
+      if (root.state !== "open") await meta.setThreadState(canonicalId, newThreadId, root.state)
+    }
+    // Re-anchor the canonical doc's threads (incl. the migrated ones) against its new
+    // current version — quoted text that survived the merge stays anchored, the rest flips
+    // to `outdated` (Dock's normal post-version-bump behavior).
+    if (latest) await sweepAnchors(meta, deps.blobs, canonicalId, latest)
+    // The preview copy is now redundant — hard-delete it (cascades its versions + comments).
+    await meta.deleteArtifact(previewId, preview.org_id)
+  }
+
+  // On MERGE, GRADUATE the preview into the canonical collection instead of dropping it:
+  // the docs you reviewed live on in "GitHub: <repo>" with their comments + the PR's
+  // versions folded into history. Per path the preview owns: a doc the main mirror
+  // doesn't track yet (the PR ADDS it) is PROMOTED — re-homed into the main collection and
+  // handed to the branch source, keeping its artifact + versions + comments; a doc the
+  // main mirror already owns (the PR EDITS it) is FOLDED into that canonical artifact.
+  // Best-effort per path: one bad path is logged + skipped, never aborting the rest.
+  const graduatePreview = async (preview: RepoSourceRecord): Promise<void> => {
+    const branch = (await meta.listRepoSourcesByInstallation(preview.installation_id ?? "")).find(
+      (s) => s.pr_number == null && s.repo.toLowerCase() === preview.repo.toLowerCase(),
+    )
+    // The branch mirror was disconnected mid-PR — nothing to graduate into; just tear down.
+    if (!branch) return removePrPreview(preview)
+
+    const previewMap = parseFileMap(preview.files)
+    // Re-read the branch source for the freshest file map — the merge-commit push may be
+    // syncing it concurrently; read-modify-write shrinks (not eliminates) that window.
+    const freshBranch = (await meta.getRepoSource(branch.id, branch.org_id)) ?? branch
+    const branchMap = parseFileMap(freshBranch.files)
+
+    for (const [path, pf] of Object.entries(previewMap)) {
+      if (!pf.artifact_id) continue
+      try {
+        const canonicalId = branchMap[path]?.artifact_id
+        if (canonicalId && canonicalId !== pf.artifact_id) {
+          await foldIntoCanonical(preview, pf.artifact_id, canonicalId)
+          // The canonical doc now carries the merged content; mark the path current (with
+          // the PR head sha) so the merge-push sync sees no change and skips it.
+          branchMap[path] = { ...branchMap[path], ...pf }
+        } else {
+          // PROMOTE: re-home the artifact into the main collection + transfer ownership.
+          await meta.removeCollectionItem(preview.collection_id, pf.artifact_id)
+          await meta.addCollectionItem(branch.collection_id, pf.artifact_id)
+          await meta.setArtifactSourcePath(pf.artifact_id, path)
+          branchMap[path] = pf
+        }
+      } catch (err) {
+        log.warn("pr graduate path skipped", {
+          repo: preview.repo,
+          pr: preview.pr_number,
+          path,
+          error: err instanceof Error ? err.message : String(err),
+        })
+      }
+    }
+    await meta.updateRepoSourceSync(branch.id, { files: JSON.stringify(branchMap) })
+    // Drop the preview shell. Folded artifacts are already deleted; promoted ones were
+    // moved out of this collection, so deleting it leaves the graduated docs untouched.
+    await meta.deleteRepoSource(preview.id, preview.org_id)
+    await meta.deleteCollection(preview.collection_id)
+  }
+
   // ---- List + connection status -----------------------------------------
   app.get("/v1/sync/github", async (c) => {
     if (!(await workspaceCan(c, "comment"))) return fail(c, 403, "forbidden")
@@ -134,8 +336,18 @@ export const syncRoutes = (ctx: AppContext) => {
     // A configured App that GitHub no longer knows about (deleted) reports as
     // unconfigured, so the UI shows "Set up" again instead of a dead Install link.
     const live = loaded ? await appIsLive(loaded) : false
+    // Split branch mirrors from PR previews — the UI lists them in separate groups.
+    // A preview carries its PR number; its collection title ("PR #<n>: <title>") names it.
+    const branchSources = sources.filter((s) => s.pr_number == null)
+    const previews = sources.filter((s) => s.pr_number != null)
+    const previewCols = await Promise.all(previews.map((s) => meta.getCollection(s.collection_id)))
     return c.json({
-      sources: sources.map(toJson),
+      sources: branchSources.map(toJson),
+      prs: previews.map((s, i) => ({
+        ...toJson(s),
+        pr_number: s.pr_number,
+        title: previewCols[i]?.title ?? `PR #${s.pr_number}`,
+      })),
       // What the UI needs to pick its entry point: is a live App set up (→ Connect
       // button + slug for the install link), and which installations this
       // workspace already has (→ jump straight to the repo picker).
@@ -274,10 +486,14 @@ export const syncRoutes = (ctx: AppContext) => {
     const org = await activeWorkspace(c)
     const createdBy = (await currentUser(c))?.id ?? "anon"
 
-    // Dedup: one source (and one collection) per repo in a workspace. Re-connecting
-    // an already-connected repo returns the existing source instead of spawning a
-    // duplicate collection — the bug that produced two "GitHub: <repo>" collections.
-    const existing = (await meta.listRepoSources(org)).find((s) => s.repo === repo)
+    // Dedup: one BRANCH source (and one collection) per repo in a workspace.
+    // Re-connecting an already-connected repo returns the existing source instead of
+    // spawning a duplicate collection — the bug that produced two "GitHub: <repo>"
+    // collections. PR previews (`pr_number` set) are excluded — they're per-PR, not
+    // the repo's canonical mirror.
+    const existing = (await meta.listRepoSources(org)).find(
+      (s) => s.repo === repo && s.pr_number == null,
+    )
     if (existing) return c.json(toJson(existing))
 
     // An installation-backed source: validate the installation belongs to this
@@ -426,8 +642,12 @@ export const syncRoutes = (ctx: AppContext) => {
       const defaultBranch = payload.repository?.default_branch
       if (installationId && fullName && branch) {
         const sources = await meta.listRepoSourcesByInstallation(installationId)
+        // BRANCH sources only (`pr_number == null`). PR previews are driven by the
+        // `pull_request` event below — a same-repo branch push must not double-trigger
+        // them (and a PR preview's `ref` is a head sha, not a branch name, anyway).
         const matched = sources.filter(
           (s) =>
+            s.pr_number == null &&
             s.repo.toLowerCase() === fullName.toLowerCase() &&
             (s.ref === branch || (s.ref === "HEAD" && branch === defaultBranch)),
         )
@@ -436,6 +656,74 @@ export const syncRoutes = (ctx: AppContext) => {
         // Progress + failures are persisted per-source by the engine.
         for (const s of matched) await launch(s, true)
         if (matched.length) log.info("push auto-sync queued", { repo: fullName, n: matched.length })
+      }
+    } else if (event === "pull_request") {
+      // PR PREVIEWS. Only repos already connected for branch sync get one — the branch
+      // source (the one with no `pr_number`) binds the preview to a workspace and the
+      // include globs. Open/reopen/synchronize → mirror the PR's changed docs at the
+      // head; close/merge → tear the preview down.
+      const installationId = payload.installation?.id ? String(payload.installation.id) : null
+      const fullName = payload.repository?.full_name
+      const prNumber = payload.pull_request?.number
+      const action = payload.action
+      if (installationId && fullName && prNumber) {
+        const sources = await meta.listRepoSourcesByInstallation(installationId)
+        const lc = fullName.toLowerCase()
+        const branch = sources.find((s) => s.pr_number == null && s.repo.toLowerCase() === lc)
+        const preview = sources.find((s) => s.pr_number === prNumber && s.repo.toLowerCase() === lc)
+        if (branch) {
+          if (action === "closed") {
+            // MERGED → graduate the preview into the canonical collection (docs live on
+            // with their comments + the PR's versions in history). CLOSED-without-merge →
+            // just tear it down (nothing landed). A dropped `closed` delivery would orphan
+            // a preview; it's removable from the UI today (DELETE /v1/sync/github/:id) —
+            // an automated reconciler is a noted follow-up.
+            const merged = !!payload.pull_request?.merged
+            if (preview) await (merged ? graduatePreview(preview) : removePrPreview(preview))
+            log.info("pr preview closed", { repo: fullName, pr: prNumber, merged })
+          } else if (action === "opened" || action === "reopened" || action === "synchronize") {
+            const headSha = payload.pull_request?.head?.sha
+            const parsed = parseRepo(fullName)
+            if (headSha && parsed) {
+              // Mirror only the PR's changed DOCS (changed files ∩ the branch source's
+              // include globs). No matching docs → no preview (and clean up one that
+              // emptied out). Best-effort: a GitHub hiccup just skips this delivery;
+              // the next `synchronize` retries.
+              try {
+                const token = await effectiveToken(meta, deps.encryptionKey, branch)
+                const globs = branch.includes
+                  .split(",")
+                  .map((g) => g.trim())
+                  .filter(Boolean)
+                const changedDocs = (await listPullFiles(parsed, prNumber, token)).filter((p) =>
+                  matchesGlobs(p, globs),
+                )
+                if (changedDocs.length === 0) {
+                  if (preview) await removePrPreview(preview)
+                } else {
+                  await upsertPrPreview(
+                    branch,
+                    preview,
+                    prNumber,
+                    payload.pull_request?.title ?? "",
+                    headSha,
+                  )
+                  log.info("pr preview queued", {
+                    repo: fullName,
+                    pr: prNumber,
+                    docs: changedDocs.length,
+                  })
+                }
+              } catch (err) {
+                log.warn("pr preview skipped", {
+                  repo: fullName,
+                  pr: prNumber,
+                  error: err instanceof Error ? err.message : String(err),
+                })
+              }
+            }
+          }
+        }
       }
     } else if (event === "installation" && payload.action === "deleted") {
       // The App was uninstalled: drop our installation row. Synced docs are kept

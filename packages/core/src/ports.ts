@@ -334,10 +334,17 @@ export interface MetaStore {
   getRepoSource(id: string, orgId?: string): Promise<RepoSourceRecord | null>
   /** A workspace's sync sources, newest first. */
   listRepoSources(orgId: string): Promise<RepoSourceRecord[]>
-  /** Persist the post-sync state: the path→artifact map, time, and status. */
+  /** Persist post-sync state — the path→artifact map, time, and status — and/or
+   *  re-point a PR preview at a new head (`ref`). Fields are partial; only those
+   *  given are written. */
   updateRepoSourceSync(
     id: string,
-    fields: { files: string; last_synced_at: string; last_status: string },
+    fields: Partial<{
+      files: string
+      last_synced_at: string
+      last_status: string
+      ref: string
+    }>,
   ): Promise<void>
   /** Write just the live `progress` JSON (cheap, frequent — drives the UI bar). */
   setRepoSourceProgress(id: string, progress: string | null): Promise<void>
@@ -871,6 +878,11 @@ export interface RepoSourceRecord {
   /** GitHub App installation backing this source. When set, sync mints a
    *  short-lived installation token; `token` (a PAT) is the fallback path. */
   installation_id: string | null
+  /** When set, this source is a read-only PREVIEW of that pull request: `ref` is the
+   *  PR head sha and it mirrors only the PR's changed docs into its own collection.
+   *  NULL = an ordinary branch mirror. Keeps PR previews out of the per-repo dedup
+   *  and the push auto-sync matcher. */
+  pr_number: number | null
   /** JSON: { [repoPath]: { artifact_id: string; sha: string } }. */
   files: string
   last_synced_at: string | null
@@ -891,6 +903,8 @@ export interface NewRepoSource {
   includes: string
   token?: string | null
   installation_id?: string | null
+  /** Set only for a PR-preview source (the PR number); omit for a branch mirror. */
+  pr_number?: number | null
   created_by: string
 }
 

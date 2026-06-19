@@ -288,6 +288,9 @@ export const repoSource = pgTable("repo_source", {
   includes: text("includes").notNull(),
   token: text("token"),
   installation_id: text("installation_id"),
+  // PR preview discriminator — see schema.ts (sqlite) for the contract. NULL = a
+  // normal branch mirror; set = a read-only preview of that PR's changed docs.
+  pr_number: integer("pr_number"),
   files: text("files").notNull().default("{}"),
   last_synced_at: text("last_synced_at"),
   last_status: text("last_status"),

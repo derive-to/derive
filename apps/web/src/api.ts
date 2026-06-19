@@ -339,8 +339,22 @@ export interface GithubInstallation {
   installation_id: string
   account_login: string | null
 }
+/** A read-only preview of an open pull request's changed docs, mirrored into its own
+ *  collection ("PR #<n>: <title>"). Links out to the PR and into the Dock collection. */
+export interface PrPreview {
+  id: string
+  collection_id: string
+  repo: string
+  pr_number: number
+  title: string
+  last_status: string | null
+  last_synced_at: string | null
+  file_count: number
+  progress: string | null
+}
 export interface GithubSyncStatus {
   sources: RepoSource[]
+  prs: PrPreview[]
   app: { configured: boolean; slug?: string }
   installations: GithubInstallation[]
 }

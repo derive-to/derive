@@ -219,6 +219,7 @@ CREATE TABLE IF NOT EXISTS repo_source (
   includes TEXT NOT NULL,
   token TEXT,
   installation_id TEXT,
+  pr_number INTEGER,
   files TEXT NOT NULL DEFAULT '{}',
   last_synced_at TEXT,
   last_status TEXT,

@@ -16,6 +16,7 @@ import {
   fetchBlob,
   fetchBlobsBatch,
   lastCommit,
+  listPullFiles,
   listTree,
   matchesGlobs,
   parseRepo,
@@ -279,7 +280,20 @@ export async function runSync(
     const { entries, truncated } = await listTree(repo, source.ref, source.token)
     const shaByPath = new Map(entries.map((e) => [e.path, e.sha]))
     const sizeByPath = new Map(entries.map((e) => [e.path, e.size ?? 0]))
-    const docs = entries.filter((e) => matchesGlobs(e.path, globs))
+    const matchedDocs = entries.filter((e) => matchesGlobs(e.path, globs))
+    // A PR PREVIEW (source.pr_number set) mirrors ONLY the docs this PR changed —
+    // not the whole repo at the head — so the preview shows exactly what the PR
+    // touches. The changed set is re-derived from GitHub each run (PRs are small,
+    // usually one batch). Bundle assets still resolve over the FULL tree via
+    // shaByPath, so editing a bundle's entry page mirrors the whole bundle; a change
+    // to an asset alone mirrors it standalone (acceptable for a preview). On a failed
+    // listPullFiles this throws and the batch retries — fail closed, never mirror the
+    // whole repo into a PR collection.
+    let docs = matchedDocs
+    if (source.pr_number != null) {
+      const changed = new Set(await listPullFiles(repo, source.pr_number, source.token))
+      docs = matchedDocs.filter((e) => changed.has(e.path))
+    }
     const docPaths = new Set(docs.map((d) => d.path))
     total = docs.length
     await writeProgress("mirroring")

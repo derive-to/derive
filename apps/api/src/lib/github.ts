@@ -194,6 +194,36 @@ export async function fetchBlob(
   return new Uint8Array(await res.arrayBuffer())
 }
 
+/** One entry of the Pull Request Files API (the bits we read). */
+interface PullFileEntry {
+  filename?: string
+  status?: string
+}
+
+/**
+ * The paths a pull request changes that STILL EXIST on its head — added, modified,
+ * renamed-to, or copied; `removed` files are dropped because a preview only mirrors
+ * what's present on the head. Read-only, needs the `pull_requests: read` permission.
+ * Paginated 100/page; capped at ~1000 changed files (GitHub itself caps the list at
+ * 3000). Errors flow through `raise` for a clean, caller-facing message.
+ */
+export async function listPullFiles(
+  repo: RepoRef,
+  prNumber: number,
+  token: string | null,
+): Promise<string[]> {
+  const out: string[] = []
+  for (let page = 1; page <= 10; page++) {
+    const url = `${API}/repos/${repo.owner}/${repo.name}/pulls/${prNumber}/files?per_page=100&page=${page}`
+    const res = await fetchRetrying(url, { headers: headers(token, "application/vnd.github+json") })
+    if (!res.ok) return raise(res, "listing pull request files")
+    const data = (await res.json()) as PullFileEntry[]
+    for (const f of data) if (f.status !== "removed" && f.filename) out.push(f.filename)
+    if (data.length < 100) break
+  }
+  return out
+}
+
 const GRAPHQL = `${API}/graphql`
 
 /**
