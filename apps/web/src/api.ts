@@ -689,6 +689,9 @@ export const api = {
   }): Promise<RepoSource> => f("/v1/sync/github", opts(input)).then(j),
   // The GitHub App install URL; navigate the browser there to pick repos.
   githubInstallUrl: (): Promise<{ url: string }> => f("/v1/sync/github/install", opts({})).then(j),
+  // Patch the stored App's permissions + events in-place (no reinstall needed).
+  patchAppPermissions: (): Promise<{ ok: boolean }> =>
+    f("/v1/sync/github/app/patch-permissions", opts({})).then(j),
   // Repos a given installation can mirror (drives the repo picker).
   listInstallationRepos: (installationId: string): Promise<{ repos: InstallationRepo[] }> =>
     f(`/v1/sync/github/installations/${installationId}/repos`, opts()).then(j),
