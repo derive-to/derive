@@ -149,9 +149,12 @@ export interface InstallationRepo {
   full_name: string
   private: boolean
   default_branch: string
+  /** Last push (ISO); drives the picker's most-recent-first ordering. */
+  pushed_at: string | null
 }
 
-/** Every repo the installation can read (paginated, capped at 1000). */
+/** Every repo the installation can read (paginated, capped at 1000), sorted
+ *  most-recently-pushed first so the picker surfaces active repos at the top. */
 export async function listInstallationRepos(token: string): Promise<InstallationRepo[]> {
   const out: InstallationRepo[] = []
   for (let page = 1; page <= 10; page++) {
@@ -159,18 +162,22 @@ export async function listInstallationRepos(token: string): Promise<Installation
       headers: ghHeaders(`Bearer ${token}`),
     })
     if (!res.ok) return raise(res, "listing installation repositories")
-    const data = (await res.json()) as { repositories?: InstallationRepo[] }
+    const data = (await res.json()) as {
+      repositories?: (InstallationRepo & { pushed_at?: string | null })[]
+    }
     const repos = data.repositories ?? []
     out.push(
       ...repos.map((r) => ({
         full_name: r.full_name,
         private: r.private,
         default_branch: r.default_branch,
+        pushed_at: r.pushed_at ?? null,
       })),
     )
     if (repos.length < 100) break
   }
-  return out
+  // Most-recently-pushed first; repos without a timestamp sink to the bottom.
+  return out.sort((a, b) => (b.pushed_at ?? "").localeCompare(a.pushed_at ?? ""))
 }
 
 export interface ManifestConversion {

@@ -373,6 +373,8 @@ export interface InstallationRepo {
   full_name: string
   private: boolean
   default_branch: string
+  /** Last push (ISO), or null. Server returns repos sorted most-recent-first. */
+  pushed_at: string | null
 }
 /** A repo+scope preview: how many docs would mirror, split by type. */
 export interface SyncPreview {

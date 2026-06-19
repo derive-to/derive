@@ -419,6 +419,7 @@ function RepoPicker({
 }) {
   const [repos, setRepos] = useState<InstallationRepo[] | null>(null)
   const [repo, setRepo] = useState<string | null>(null)
+  const [query, setQuery] = useState("")
   const [md, setMd] = useState(true)
   const [html, setHtml] = useState(true)
   const [folder, setFolder] = useState("")
@@ -435,6 +436,10 @@ function RepoPicker({
         setRepos([])
       })
   }, [installationId, onError])
+
+  // Filter the (already most-recent-first) list by a case-insensitive substring.
+  const q = query.trim().toLowerCase()
+  const shown = repos?.filter((r) => !q || r.full_name.toLowerCase().includes(q)) ?? null
 
   // Live preview count, debounced on repo/scope change.
   useEffect(() => {
@@ -475,6 +480,18 @@ function RepoPicker({
           </DialogDescription>
         </DialogHeader>
 
+        {repos && repos.length > 0 && (
+          <Input
+            aria-label="Search repositories"
+            data-testid="github-repo-search"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search repositories…"
+            className="mb-2"
+            autoFocus
+          />
+        )}
+
         <div className="max-h-[34vh] overflow-y-auto">
           {repos === null ? (
             <div className="flex h-24 items-center justify-center">
@@ -482,9 +499,11 @@ function RepoPicker({
             </div>
           ) : repos.length === 0 ? (
             <EmptyState>This installation has no repositories Dock can read.</EmptyState>
+          ) : shown && shown.length === 0 ? (
+            <EmptyState>No repositories match “{query.trim()}”.</EmptyState>
           ) : (
             <ul className="flex flex-col gap-1">
-              {repos.map((r) => (
+              {shown?.map((r) => (
                 <li key={r.full_name}>
                   <label className="flex cursor-pointer items-center gap-2.5 rounded-md px-2 py-1.5 hover:bg-hover">
                     <input
@@ -498,6 +517,11 @@ function RepoPicker({
                     {r.private && (
                       <span className="text-2xs uppercase tracking-wide text-muted-foreground">
                         private
+                      </span>
+                    )}
+                    {r.pushed_at && (
+                      <span className="ml-auto shrink-0 text-2xs text-muted-foreground">
+                        {ago(r.pushed_at)}
                       </span>
                     )}
                   </label>
