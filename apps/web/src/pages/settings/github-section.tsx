@@ -100,12 +100,7 @@ export function GithubSection() {
           <Spinner />
         </div>
       ) : appConfigured ? (
-        <ConnectViaApp
-          status={status}
-          onPick={setPickerInstall}
-          onError={(m) => toast.error(m)}
-          onMessage={(m) => toast.success(m)}
-        />
+        <ConnectViaApp status={status} onPick={setPickerInstall} onError={(m) => toast.error(m)} />
       ) : (
         <SetUpApp />
       )}
@@ -197,15 +192,12 @@ function ConnectViaApp({
   status,
   onPick,
   onError,
-  onMessage,
 }: {
   status: GithubSyncStatus
   onPick: (installationId: string) => void
   onError: (m: string) => void
-  onMessage: (m: string) => void
 }) {
   const [busy, setBusy] = useState(false)
-  const [patching, setPatching] = useState(false)
   const install = async () => {
     setBusy(true)
     try {
@@ -216,30 +208,18 @@ function ConnectViaApp({
       setBusy(false)
     }
   }
-  const patchPermissions = async () => {
-    setPatching(true)
-    try {
-      await api.patchAppPermissions()
-      onMessage(
-        "Permissions updated — GitHub will prompt each installer to accept the new permissions.",
-      )
-    } catch (e) {
-      onError((e as Error).message)
-    } finally {
-      setPatching(false)
-    }
-  }
   const installed = status.installations.length > 0
+  const slug = "app" in status && (status.app as { slug?: string }).slug
   return (
     <Card className="flex flex-col gap-3 p-4">
       <div className="flex items-start gap-3">
         <CheckCircle2 className="mt-0.5 size-5 shrink-0 text-success" aria-hidden />
         <div className="flex-1">
-          <div className="text-sm font-semibold text-foreground">GitHub connected</div>
+          <div className="text-sm font-semibold text-foreground">GitHub App connected</div>
           <p className="mt-0.5 text-sm text-muted-foreground">
             {installed
               ? "Pick the repositories to mirror — or install Dock on more accounts."
-              : "Last step is on GitHub: install Dock on the repositories you want to mirror, then pick them."}
+              : "Last step: install Dock on the repos you want to mirror, then pick them here."}
           </p>
         </div>
         <Button
@@ -267,17 +247,23 @@ function ConnectViaApp({
           ))}
         </div>
       )}
-      <div className="border-t border-border pt-2">
-        <Button
-          data-testid="github-patch-permissions"
-          variant="link"
-          className="h-auto p-0 text-xs text-muted-foreground"
-          disabled={patching}
-          onClick={patchPermissions}
-        >
-          {patching ? "Updating…" : "Update App permissions"}
-        </Button>
-      </div>
+      {slug && (
+        <div className="flex items-center gap-1.5 border-t border-border pt-2">
+          <a
+            href={`https://github.com/settings/apps/${slug}`}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground hover:underline"
+            data-testid="github-app-settings-link"
+          >
+            Manage App on GitHub
+            <ExternalLink className="size-3" aria-hidden />
+          </a>
+          <span className="text-xs text-muted-foreground">
+            — update permissions, webhooks, or uninstall
+          </span>
+        </div>
+      )}
     </Card>
   )
 }
