@@ -689,6 +689,9 @@ export const api = {
   }): Promise<RepoSource> => f("/v1/sync/github", opts(input)).then(j),
   // The GitHub App install URL; navigate the browser there to pick repos.
   githubInstallUrl: (): Promise<{ url: string }> => f("/v1/sync/github/install", opts({})).then(j),
+  // Re-seed github_installation rows from GitHub's live install list (recovery path).
+  resyncInstallations: (): Promise<{ synced: number }> =>
+    f("/v1/sync/github/resync-installations", opts({})).then(j),
   // Repos a given installation can mirror (drives the repo picker).
   listInstallationRepos: (installationId: string): Promise<{ repos: InstallationRepo[] }> =>
     f(`/v1/sync/github/installations/${installationId}/repos`, opts()).then(j),

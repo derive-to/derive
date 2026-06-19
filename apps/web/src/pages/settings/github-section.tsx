@@ -100,7 +100,12 @@ export function GithubSection() {
           <Spinner />
         </div>
       ) : appConfigured ? (
-        <ConnectViaApp status={status} onPick={setPickerInstall} onError={(m) => toast.error(m)} />
+        <ConnectViaApp
+          status={status}
+          onPick={setPickerInstall}
+          onError={(m) => toast.error(m)}
+          onRefresh={load}
+        />
       ) : (
         <SetUpApp />
       )}
@@ -192,10 +197,12 @@ function ConnectViaApp({
   status,
   onPick,
   onError,
+  onRefresh,
 }: {
   status: GithubSyncStatus
   onPick: (installationId: string) => void
   onError: (m: string) => void
+  onRefresh: () => void
 }) {
   const [busy, setBusy] = useState(false)
   const install = async () => {
@@ -208,6 +215,20 @@ function ConnectViaApp({
       setBusy(false)
     }
   }
+  // On mount (and whenever installations list is empty), fetch from GitHub and seed
+  // any existing installations the DB might be missing — covers the recovery case
+  // where rows were lost without a full GitHub re-install.
+  useEffect(() => {
+    if (status.installations.length > 0) return
+    api
+      .resyncInstallations()
+      .then(({ synced }) => {
+        if (synced > 0) onRefresh()
+      })
+      .catch(() => {
+        // silent — the Install button is still available as fallback
+      })
+  }, [status.installations.length, onRefresh])
   const installed = status.installations.length > 0
   const slug = "app" in status && (status.app as { slug?: string }).slug
   return (

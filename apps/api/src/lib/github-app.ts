@@ -98,6 +98,38 @@ export async function installationToken(
   return data.token
 }
 
+export interface AppInstallation {
+  id: number
+  account: { login: string; type: string } | null
+}
+
+/** All installations of this App across GitHub accounts (App-JWT auth, paginated). */
+export async function listAppInstallations(
+  appId: string,
+  privateKeyPem: string,
+): Promise<AppInstallation[]> {
+  const out: AppInstallation[] = []
+  for (let page = 1; page <= 20; page++) {
+    const res = await fetch(`${API}/app/installations?per_page=100&page=${page}`, {
+      headers: ghHeaders(`Bearer ${appJwt(appId, privateKeyPem)}`),
+    })
+    if (!res.ok) return raise(res, "listing App installations")
+    const data = (await res.json()) as {
+      id?: number
+      account?: { login?: string; type?: string }
+    }[]
+    if (!data.length) break
+    out.push(
+      ...data.map((i) => ({
+        id: i.id ?? 0,
+        account: i.account ? { login: i.account.login ?? "", type: i.account.type ?? "" } : null,
+      })),
+    )
+    if (data.length < 100) break
+  }
+  return out
+}
+
 export interface InstallationRepo {
   full_name: string
   private: boolean

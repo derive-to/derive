@@ -9,6 +9,7 @@ import { GitHubError, listPullFiles, listTree, matchesGlobs, parseRepo } from ".
 import {
   getAppInfo,
   installationToken,
+  listAppInstallations,
   listInstallationRepos,
   verifyWebhookSignature,
 } from "../lib/github-app"
@@ -47,7 +48,7 @@ interface InstallState {
 interface GitHubWebhookPayload {
   action?: string
   ref?: string
-  installation?: { id?: number }
+  installation?: { id?: number; account?: { login?: string } }
   repository?: { full_name?: string; default_branch?: string }
   // `pull_request` events (PR previews). `head.sha` is the ref we mirror at; `number`
   // + `title` name the preview collection; `merged` decides graduate vs teardown on
@@ -323,6 +324,33 @@ export const syncRoutes = (ctx: AppContext) => {
     await meta.deleteRepoSource(preview.id, preview.org_id)
     await meta.deleteCollection(preview.collection_id)
   }
+
+  // ---- Resync installations from GitHub ---------------------------------
+  // Fetches all installations of this App from GitHub and upserts them into the
+  // current workspace. Useful for recovery when the `github_installation` table
+  // loses rows (e.g. after a DB wipe) without needing to re-click through GitHub.
+  app.post("/v1/sync/github/resync-installations", async (c) => {
+    if (!(await workspaceCan(c, "publish"))) return fail(c, 403, "forbidden")
+    const loaded = await loadApp()
+    if (!loaded) return fail(c, 409, "GitHub App is not set up yet")
+    const org = await activeWorkspace(c)
+    const uid = (await currentUser(c))?.id ?? "anon"
+    try {
+      const installs = await listAppInstallations(loaded.app.app_id, loaded.pem)
+      for (const inst of installs) {
+        await meta.upsertGithubInstallation({
+          installation_id: String(inst.id),
+          org_id: org,
+          account_login: inst.account?.login ?? null,
+          created_by: uid,
+          created_at: new Date().toISOString(),
+        })
+      }
+      return c.json({ synced: installs.length })
+    } catch (err) {
+      return fail(c, 502, err instanceof Error ? err.message : "resync failed")
+    }
+  })
 
   // ---- List + connection status -----------------------------------------
   app.get("/v1/sync/github", async (c) => {
@@ -736,11 +764,28 @@ export const syncRoutes = (ctx: AppContext) => {
           }
         }
       }
-    } else if (event === "installation" && payload.action === "deleted") {
-      // The App was uninstalled: drop our installation row. Synced docs are kept
-      // (same as a manual disconnect); the sources just stop updating.
-      if (payload.installation?.id)
-        await meta.deleteGithubInstallation(String(payload.installation.id))
+    } else if (event === "installation") {
+      const installationId = payload.installation?.id ? String(payload.installation.id) : null
+      if (payload.action === "deleted") {
+        // Uninstalled: drop our row. Synced docs stay (same as manual disconnect).
+        if (installationId) await meta.deleteGithubInstallation(installationId)
+      } else if (
+        (payload.action === "created" || payload.action === "new_permissions_accepted") &&
+        installationId
+      ) {
+        // New installation or permission upgrade: record/update the row. We don't know
+        // which Dock workspace to assign it to from the webhook alone, so we upsert
+        // against any existing row (re-using its org_id) or create under a sentinel
+        // org so the next `resync-installations` call from the UI can claim it.
+        const existing = await meta.getGithubInstallation(installationId)
+        await meta.upsertGithubInstallation({
+          installation_id: installationId,
+          org_id: existing?.org_id ?? "pending",
+          account_login: payload.installation?.account?.login ?? null,
+          created_by: "webhook",
+          created_at: new Date().toISOString(),
+        })
+      }
     }
     // installation_repositories (repos added/removed) needs no action here: a
     // removed repo's source just errors on its next sync, and an added repo is
