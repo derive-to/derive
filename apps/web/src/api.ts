@@ -355,7 +355,18 @@ export interface PrPreview {
 export interface GithubSyncStatus {
   sources: RepoSource[]
   prs: PrPreview[]
-  app: { configured: boolean; slug?: string }
+  app: {
+    configured: boolean
+    slug?: string
+    /** False when the live App lacks a permission/event Dock now requires. */
+    upToDate?: boolean
+    /** The scopes/events still to grant: { permissions: {scope: level}, events: [] }. */
+    missing?: { permissions: Record<string, string>; events: string[] }
+    /** Deep-link to the App's GitHub permissions editor (owner toggles + saves). */
+    permissionsUrl?: string
+    /** Deep-link that surfaces the pending-approval prompt on an existing install. */
+    approveUrl?: string
+  }
   installations: GithubInstallation[]
 }
 export interface InstallationRepo {

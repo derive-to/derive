@@ -3,6 +3,7 @@ import { newId } from "@dock/core"
 import { Hono } from "hono"
 import { z } from "zod"
 import type { AppContext } from "../context"
+import { REQUIRED_EVENTS, REQUIRED_PERMISSIONS } from "../github-app-setup"
 import { sweepAnchors } from "../lib/anchor-sweep"
 import { decryptSecret, encryptSecret, signState, verifyState } from "../lib/crypto"
 import { GitHubError, listPullFiles, listTree, matchesGlobs, parseRepo } from "../lib/github"
@@ -92,30 +93,57 @@ export const syncRoutes = (ctx: AppContext) => {
     }
   }
 
-  // Is the stored App still live on GitHub? An App the owner deleted on GitHub
-  // leaves a stale row here, which would strand the UI on "Install" pointing at a
-  // dead slug with no way back. We verify against GitHub (GET /app) and cache the
-  // verdict ~5min per isolate so this isn't a per-request call. On success we also
+  // Is the stored App still live on GitHub, and what permissions/events does it
+  // currently hold? An App the owner deleted on GitHub leaves a stale row here,
+  // which would strand the UI on "Install" pointing at a dead slug with no way
+  // back. We verify against GitHub (GET /app) and cache the verdict + live spec
+  // ~5min per isolate so this isn't a per-request call. On success we also
   // self-heal the slug if it drifted (the App was renamed). A network blip is
-  // treated as "live" (fail-open) so a transient error never hides a good App.
-  const appLiveCache = new Map<string, { ok: boolean; at: number }>()
-  const appIsLive = async (loaded: { app: GitHubAppRecord; pem: string }): Promise<boolean> => {
+  // treated as "live" (fail-open) so a transient error never hides a good App;
+  // its permissions are unknown then, so the diff treats it as up-to-date.
+  type AppLive = { ok: boolean; permissions?: Record<string, string>; events?: string[] }
+  const appLiveCache = new Map<string, AppLive & { at: number }>()
+  const appIsLive = async (loaded: { app: GitHubAppRecord; pem: string }): Promise<AppLive> => {
     const cached = appLiveCache.get(loaded.app.app_id)
-    if (cached && Date.now() - cached.at < 5 * 60_000) return cached.ok
+    if (cached && Date.now() - cached.at < 5 * 60_000) return cached
     try {
       const info = await getAppInfo(loaded.app.app_id, loaded.pem)
       if (info.slug && info.slug !== loaded.app.slug)
         await meta.setGithubApp({ ...loaded.app, slug: info.slug })
-      appLiveCache.set(loaded.app.app_id, { ok: true, at: Date.now() })
-      return true
+      const live: AppLive = { ok: true, permissions: info.permissions, events: info.events }
+      appLiveCache.set(loaded.app.app_id, { ...live, at: Date.now() })
+      return live
     } catch (err) {
       // 404/401 → deleted or revoked: definitively dead. Anything else (network,
       // 5xx) → keep trusting the stored App rather than hide a working setup.
       const dead = err instanceof GitHubError && (err.status === 404 || err.status === 401)
-      if (!dead) return true
-      appLiveCache.set(loaded.app.app_id, { ok: false, at: Date.now() })
-      return false
+      if (!dead) return { ok: true }
+      const live: AppLive = { ok: false }
+      appLiveCache.set(loaded.app.app_id, { ...live, at: Date.now() })
+      return live
     }
+  }
+
+  // Diff Dock's REQUIRED spec against the App's live permissions/events. A scope is
+  // "missing" if absent OR weaker than required (read < write < admin). When the live
+  // spec is unknown (a fail-open network blip), report nothing missing rather than
+  // nag spuriously. Drives the in-app "update permissions" banner.
+  const permRank: Record<string, number> = { read: 1, write: 2, admin: 3 }
+  const diffAppSpec = (
+    live: AppLive,
+  ): { permissions: Record<string, string>; events: string[] } => {
+    const permissions: Record<string, string> = {}
+    const events: string[] = []
+    if (live.permissions) {
+      for (const [scope, level] of Object.entries(REQUIRED_PERMISSIONS)) {
+        const have = live.permissions[scope]
+        if (!have || (permRank[level] ?? 0) > (permRank[have] ?? 0)) permissions[scope] = level
+      }
+    }
+    if (live.events) {
+      for (const ev of REQUIRED_EVENTS) if (!live.events.includes(ev)) events.push(ev)
+    }
+    return { permissions, events }
   }
 
   // Trigger a sync on the SERVER, not in the browser — so it survives the user
@@ -363,7 +391,7 @@ export const syncRoutes = (ctx: AppContext) => {
     ])
     // A configured App that GitHub no longer knows about (deleted) reports as
     // unconfigured, so the UI shows "Set up" again instead of a dead Install link.
-    const live = loaded ? await appIsLive(loaded) : false
+    const live = loaded ? await appIsLive(loaded) : { ok: false }
     // Split branch mirrors from PR previews — the UI lists them in separate groups.
     // A preview carries its PR number; its collection title ("PR #<n>: <title>") names it.
     const branchSources = sources.filter((s) => s.pr_number == null)
@@ -377,9 +405,25 @@ export const syncRoutes = (ctx: AppContext) => {
         title: previewCols[i]?.title ?? `PR #${s.pr_number}`,
       })),
       // What the UI needs to pick its entry point: is a live App set up (→ Connect
-      // button + slug for the install link), and which installations this
-      // workspace already has (→ jump straight to the repo picker).
-      app: loaded && live ? { configured: true, slug: loaded.app.slug } : { configured: false },
+      // button + slug for the install link), which permissions still need granting
+      // (→ the update-permissions banner), and which installations this workspace
+      // already has (→ jump straight to the repo picker).
+      app:
+        loaded && live.ok
+          ? (() => {
+              const missing = diffAppSpec(live)
+              const upToDate =
+                Object.keys(missing.permissions).length === 0 && missing.events.length === 0
+              return {
+                configured: true,
+                slug: loaded.app.slug,
+                upToDate,
+                missing,
+                permissionsUrl: `https://github.com/settings/apps/${loaded.app.slug}/permissions`,
+                approveUrl: `https://github.com/apps/${loaded.app.slug}/installations/new`,
+              }
+            })()
+          : { configured: false },
       installations: installs.map((i) => ({
         installation_id: i.installation_id,
         account_login: i.account_login,
@@ -404,9 +448,11 @@ export const syncRoutes = (ctx: AppContext) => {
   })
 
   // ---- App install callback (GitHub → browser redirect) -----------------
-  // GET, so it passes the anonymous-write lockdown; the binding to a workspace
-  // comes from the signed state, never the session, so it can't be replayed into
-  // someone else's workspace.
+  // GET, so it passes the anonymous-write lockdown. Primary auth is the signed
+  // state Dock embeds in the install URL — it carries the workspace. Fallback:
+  // when state is missing (user installed via GitHub directly or the App's
+  // setup_url was hit without our state), use the active session's workspace so
+  // the install is never silently dropped.
   app.get("/v1/sync/github/callback", async (c) => {
     const installationId = c.req.query("installation_id")
     const stateRaw = c.req.query("state") ?? ""
@@ -416,17 +462,22 @@ export const syncRoutes = (ctx: AppContext) => {
       return c.redirect(settingsUrl.toString())
     }
     const state = verifyState<InstallState>(stateRaw, deps.encryptionKey)
-    if (!state) {
-      settingsUrl.searchParams.set("gh_error", "install_expired")
+    // Fallback: no signed state → try to read the workspace from the session
+    // cookie (present because the browser just came back from GitHub). This
+    // handles direct installs via github.com/apps/{slug}/installations/new.
+    const org = state?.org ?? (await activeWorkspace(c).catch(() => null))
+    const uid = state?.uid ?? (await currentUser(c).catch(() => null))?.id ?? "github"
+    if (!org) {
+      settingsUrl.searchParams.set("gh_error", "install_failed")
       return c.redirect(settingsUrl.toString())
     }
-    // Record the installation against the workspace that started the flow. The
-    // account login is best-effort (filled in by the repo list / webhook later).
+    // Record the installation against the workspace. Account login is filled in
+    // by the repo list / webhook later.
     await meta.upsertGithubInstallation({
       installation_id: installationId,
-      org_id: state.org,
+      org_id: org,
       account_login: null,
-      created_by: state.uid,
+      created_by: uid,
       created_at: new Date().toISOString(),
     })
     // Land back on the repo picker for this fresh installation.

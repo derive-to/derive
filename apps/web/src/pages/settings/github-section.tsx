@@ -39,6 +39,30 @@ const validRepo = (raw: string): boolean =>
       .replace(/\/+$/, ""),
   )
 
+// Human labels for the GitHub App permission/event diff (the banner). Keys mirror
+// the scopes/events in the server's REQUIRED_PERMISSIONS / REQUIRED_EVENTS.
+const PERMISSION_LABELS: Record<string, string> = {
+  contents: "Contents",
+  metadata: "Metadata",
+  pull_requests: "Pull requests",
+  issues: "Issues",
+  checks: "Checks",
+  statuses: "Commit statuses",
+  members: "Members",
+}
+const EVENT_LABELS: Record<string, string> = {
+  push: "Push",
+  pull_request: "Pull request",
+  issues: "Issues",
+  issue_comment: "Issue comment",
+  check_run: "Check run",
+}
+const LEVEL_LABELS: Record<string, string> = {
+  read: "Read-only",
+  write: "Read & write",
+  admin: "Admin",
+}
+
 // Read (and clear) the one-shot query params the App install flow lands back on.
 const takeInstallParams = (): { install?: string; error?: string } => {
   if (typeof window === "undefined") return {}
@@ -230,62 +254,144 @@ function ConnectViaApp({
       })
   }, [status.installations.length, onRefresh])
   const installed = status.installations.length > 0
-  const slug = "app" in status && (status.app as { slug?: string }).slug
+  const { slug, upToDate, missing, permissionsUrl, approveUrl } = status.app
+  const needsPerms =
+    upToDate === false &&
+    !!missing &&
+    (Object.keys(missing.permissions).length > 0 || missing.events.length > 0)
   return (
-    <Card className="flex flex-col gap-3 p-4">
-      <div className="flex items-start gap-3">
-        <CheckCircle2 className="mt-0.5 size-5 shrink-0 text-success" aria-hidden />
-        <div className="flex-1">
-          <div className="text-sm font-semibold text-foreground">GitHub App connected</div>
-          <p className="mt-0.5 text-sm text-muted-foreground">
-            {installed
-              ? "Pick the repositories to mirror — or install Dock on more accounts."
-              : "Last step: install Dock on the repos you want to mirror, then pick them here."}
-          </p>
-        </div>
-        <Button
-          data-testid="github-install"
-          variant={installed ? "outline" : "primary"}
-          onClick={install}
-          disabled={busy}
+    <>
+      {needsPerms && missing && (
+        <Card
+          className="mb-3 flex flex-col gap-3 border-gold/40 bg-gold/10 p-4"
+          data-testid="github-perms-banner"
         >
-          {busy ? "Opening GitHub…" : installed ? "Install on more" : "Install on GitHub"}
-        </Button>
-      </div>
-      {installed && (
-        <div className="flex flex-wrap items-center gap-2 border-t border-border pt-3">
-          <span className="text-xs text-muted-foreground">Pick repositories:</span>
-          {status.installations.map((i) => (
+          <div className="flex items-start gap-2.5">
+            <AlertTriangle className="mt-0.5 size-5 shrink-0 text-gold" aria-hidden />
+            <div className="min-w-0 flex-1">
+              <div className="text-sm font-semibold text-foreground">
+                Dock needs updated GitHub permissions
+              </div>
+              <p className="mt-0.5 text-sm text-muted-foreground">
+                A new feature needs access GitHub hasn't granted this App yet. Update it on GitHub,
+                save, then approve on your installation.
+              </p>
+              <ul className="mt-2 flex flex-col gap-1 text-xs text-foreground">
+                {Object.entries(missing.permissions).map(([scope, level]) => (
+                  <li key={scope} className="flex items-center gap-1.5">
+                    <span className="size-1 rounded-full bg-gold" aria-hidden />
+                    <span className="font-medium">{PERMISSION_LABELS[scope] ?? scope}</span>
+                    <span className="text-muted-foreground">→ {LEVEL_LABELS[level] ?? level}</span>
+                  </li>
+                ))}
+                {missing.events.map((ev) => (
+                  <li key={ev} className="flex items-center gap-1.5">
+                    <span className="size-1 rounded-full bg-gold" aria-hidden />
+                    <span className="text-muted-foreground">Subscribe to</span>
+                    <span className="font-medium">{EVENT_LABELS[ev] ?? ev}</span>
+                    <span className="text-muted-foreground">events</span>
+                  </li>
+                ))}
+              </ul>
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                {permissionsUrl && (
+                  <Button variant="primary" size="sm" data-testid="github-perms-update" asChild>
+                    <a href={permissionsUrl} target="_blank" rel="noreferrer">
+                      Update on GitHub →
+                    </a>
+                  </Button>
+                )}
+                {approveUrl && (
+                  <Button variant="outline" size="sm" data-testid="github-perms-approve" asChild>
+                    <a href={approveUrl} target="_blank" rel="noreferrer">
+                      Approve on installation →
+                    </a>
+                  </Button>
+                )}
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  data-testid="github-perms-recheck"
+                  onClick={onRefresh}
+                >
+                  Re-check
+                </Button>
+              </div>
+            </div>
+          </div>
+        </Card>
+      )}
+      <Card className="flex flex-col gap-3 p-4">
+        <div className="flex items-start gap-2.5">
+          <CheckCircle2 className="mt-0.5 size-5 shrink-0 text-success" aria-hidden />
+          <div className="min-w-0 flex-1">
+            <div className="text-sm font-semibold text-foreground">GitHub App connected</div>
+            {installed ? (
+              <p className="mt-0.5 text-sm text-muted-foreground">
+                Pick a repository to mirror into Dock, or install on more accounts.
+              </p>
+            ) : (
+              <>
+                <p className="mt-0.5 text-sm text-muted-foreground">
+                  Install Dock on the GitHub repos you want to mirror — then pick them here.
+                </p>
+                <Button
+                  data-testid="github-install"
+                  variant="primary"
+                  className="mt-3"
+                  onClick={install}
+                  disabled={busy}
+                >
+                  {busy ? "Opening GitHub…" : "Install on GitHub →"}
+                </Button>
+              </>
+            )}
+          </div>
+          {installed && (
             <Button
-              key={i.installation_id}
-              data-testid="github-pick-installation"
-              variant="primary"
+              data-testid="github-install"
+              variant="outline"
               size="sm"
-              onClick={() => onPick(i.installation_id)}
+              onClick={install}
+              disabled={busy}
             >
-              {i.account_login ? `${i.account_login} →` : "Choose repos →"}
+              {busy ? "Opening…" : "Install on more"}
             </Button>
-          ))}
+          )}
         </div>
-      )}
-      {slug && (
-        <div className="flex items-center gap-1.5 border-t border-border pt-2">
-          <a
-            href={`https://github.com/settings/apps/${slug}`}
-            target="_blank"
-            rel="noreferrer"
-            className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground hover:underline"
-            data-testid="github-app-settings-link"
-          >
-            Manage App on GitHub
-            <ExternalLink className="size-3" aria-hidden />
-          </a>
-          <span className="text-xs text-muted-foreground">
-            — update permissions, webhooks, or uninstall
-          </span>
-        </div>
-      )}
-    </Card>
+        {installed && (
+          <div className="flex flex-wrap items-center gap-2 border-t border-border pt-3">
+            <span className="text-xs text-muted-foreground">Pick a repository:</span>
+            {status.installations.map((i) => (
+              <Button
+                key={i.installation_id}
+                data-testid="github-pick-installation"
+                variant="primary"
+                size="sm"
+                onClick={() => onPick(i.installation_id)}
+              >
+                {i.account_login ? `${i.account_login} →` : "Choose repos →"}
+              </Button>
+            ))}
+          </div>
+        )}
+        {slug && (
+          <div className="flex items-center gap-1.5 border-t border-border pt-2">
+            <a
+              href={`https://github.com/settings/apps/${slug}`}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground hover:underline"
+              data-testid="github-app-settings-link"
+            >
+              Manage App on GitHub
+              <ExternalLink className="size-3" aria-hidden />
+            </a>
+            <span className="text-xs text-muted-foreground">— update permissions or uninstall</span>
+          </div>
+        )}
+      </Card>
+    </>
   )
 }
 

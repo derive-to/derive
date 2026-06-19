@@ -65,13 +65,28 @@ export interface InstallationToken {
 export async function getAppInfo(
   appId: string,
   privateKeyPem: string,
-): Promise<{ slug: string; html_url: string }> {
+): Promise<{
+  slug: string
+  html_url: string
+  permissions: Record<string, string>
+  events: string[]
+}> {
   const res = await fetch(`${API}/app`, {
     headers: ghHeaders(`Bearer ${appJwt(appId, privateKeyPem)}`),
   })
   if (!res.ok) return raise(res, "reading the GitHub App")
-  const d = (await res.json()) as { slug?: string; html_url?: string }
-  return { slug: d.slug ?? "", html_url: d.html_url ?? "" }
+  const d = (await res.json()) as {
+    slug?: string
+    html_url?: string
+    permissions?: Record<string, string>
+    events?: string[]
+  }
+  return {
+    slug: d.slug ?? "",
+    html_url: d.html_url ?? "",
+    permissions: d.permissions ?? {},
+    events: d.events ?? [],
+  }
 }
 
 // Per-isolate cache so a burst of syncs against one installation mints one token.

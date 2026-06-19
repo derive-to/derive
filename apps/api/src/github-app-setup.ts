@@ -56,12 +56,35 @@ ${STYLE}</head>
 <body><main class="card"><div class="brand">${MARK}<span class="name">Dock</span>${badge}</div>
 ${body}</main></body></html>`
 
+// ---- The permission/event spec Dock's CURRENT code needs ------------------
+// SINGLE SOURCE OF TRUTH. The manifest is born with these, and the live App is
+// diffed against these on every settings load (routes/sync.ts) — a gap surfaces
+// the in-app "update permissions" banner. To request a NEW permission as a feature
+// lands, add ONE line here, deploy, and the banner walks the owner through it.
+//
+// GitHub has NO API to change a live App's permissions (the whole Apps REST API is
+// read-only for app config — PATCH /app doesn't exist). The owner toggles + saves
+// once on github.com/settings/apps/{slug}/permissions, then each install approves;
+// the `installation`/`new_permissions_accepted` webhook + a live GET /app re-check
+// confirm it. So this constant drives "what we want"; GitHub holds "what we have".
+//
+// All current scopes READ-ONLY: contents+metadata mirror docs; pull_requests(read)
+// lists a PR's changed files + receives `pull_request` events to preview PR docs.
+// push + pull_request drive auto-sync.
+export const REQUIRED_PERMISSIONS: Record<string, string> = {
+  contents: "read",
+  metadata: "read",
+  pull_requests: "read",
+}
+// Only permission-backed events belong here (push needs contents, pull_request needs
+// pull_requests). The installation + installation_repositories lifecycle events are
+// delivered to every App automatically — listing them here is rejected by GitHub.
+export const REQUIRED_EVENTS = ["push", "pull_request"]
+
 /** The GitHub App manifest: what permissions/events/URLs the new App is born with.
- *  All READ-ONLY: contents+metadata mirror docs; pull_requests (read) lets us list a
- *  PR's changed files and receive `pull_request` events so we can preview PR docs.
- *  push + pull_request drive auto-sync. Exported so a test can lock the exact shape
- *  GitHub accepts (we regressed on default_events, public, and setup_url during the
- *  live rollout). NOTE: adding a permission re-prompts existing installs to approve. */
+ *  Consumes REQUIRED_PERMISSIONS/REQUIRED_EVENTS so a fresh App is always current.
+ *  Exported so a test can lock the exact shape GitHub accepts (we regressed on
+ *  default_events, public, and setup_url during the live rollout). */
 export const buildManifest = (baseUrl: string, host: string) => ({
   name: `Dock · ${host}`,
   url: baseUrl,
@@ -76,12 +99,8 @@ export const buildManifest = (baseUrl: string, host: string) => ({
   // read-only, and an installation only matters once bound to a workspace via our
   // signed-state callback, so a stray direct install is inert.
   public: true,
-  default_permissions: { contents: "read", metadata: "read", pull_requests: "read" },
-  // Only permission-backed events go in default_events (push needs contents,
-  // pull_request needs pull_requests). The installation + installation_repositories
-  // lifecycle events are delivered to every App automatically — listing them here is
-  // rejected by GitHub.
-  default_events: ["push", "pull_request"],
+  default_permissions: REQUIRED_PERMISSIONS,
+  default_events: REQUIRED_EVENTS,
 })
 
 /**
