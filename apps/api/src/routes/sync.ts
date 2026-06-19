@@ -10,6 +10,7 @@ import {
   getAppInfo,
   installationToken,
   listInstallationRepos,
+  patchAppPermissions,
   verifyWebhookSignature,
 } from "../lib/github-app"
 import { fail, readJson } from "../lib/http"
@@ -357,6 +358,28 @@ export const syncRoutes = (ctx: AppContext) => {
         account_login: i.account_login,
       })),
     })
+  })
+
+  // ---- Update App permissions in-place ---------------------------------
+  // Patches the stored App's permissions + events via GitHub's PATCH /app so
+  // installers get a "Accept new permissions" prompt on GitHub without needing
+  // to delete + recreate the App. Idempotent: safe to call even when already
+  // up to date (GitHub ignores no-ops).
+  app.post("/v1/sync/github/app/patch-permissions", async (c) => {
+    if (!(await workspaceCan(c, "publish"))) return fail(c, 403, "forbidden")
+    const loaded = await loadApp()
+    if (!loaded) return fail(c, 409, "GitHub App is not set up yet")
+    try {
+      await patchAppPermissions(
+        loaded.app.app_id,
+        loaded.pem,
+        { contents: "read", metadata: "read", pull_requests: "read" },
+        ["push", "pull_request"],
+      )
+      return c.json({ ok: true })
+    } catch (err) {
+      return fail(c, 502, err instanceof Error ? err.message : "patch failed")
+    }
   })
 
   // ---- App install: hand back the GitHub install URL --------------------

@@ -74,6 +74,29 @@ export async function getAppInfo(
   return { slug: d.slug ?? "", html_url: d.html_url ?? "" }
 }
 
+/**
+ * Patch the App's permissions + events in-place (PATCH /app, App-JWT auth).
+ * GitHub notifies all installers to review the new permissions — they click
+ * "Accept new permissions" once and the App starts receiving the added events.
+ * Use this to upgrade an existing App rather than delete + recreate it.
+ */
+export async function patchAppPermissions(
+  appId: string,
+  privateKeyPem: string,
+  permissions: Record<string, string>,
+  events: string[],
+): Promise<void> {
+  const res = await fetch(`${API}/app`, {
+    method: "PATCH",
+    headers: {
+      ...ghHeaders(`Bearer ${appJwt(appId, privateKeyPem)}`),
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({ default_permissions: permissions, default_events: events }),
+  })
+  if (!res.ok) return raise(res, "updating the GitHub App")
+}
+
 // Per-isolate cache so a burst of syncs against one installation mints one token.
 // Re-minted 60s before expiry. Cleared implicitly when the isolate recycles.
 const tokenCache = new Map<string, InstallationToken>()

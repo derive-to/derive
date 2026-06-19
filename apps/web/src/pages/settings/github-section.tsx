@@ -100,7 +100,12 @@ export function GithubSection() {
           <Spinner />
         </div>
       ) : appConfigured ? (
-        <ConnectViaApp status={status} onPick={setPickerInstall} onError={(m) => toast.error(m)} />
+        <ConnectViaApp
+          status={status}
+          onPick={setPickerInstall}
+          onError={(m) => toast.error(m)}
+          onMessage={(m) => toast.success(m)}
+        />
       ) : (
         <SetUpApp />
       )}
@@ -192,12 +197,15 @@ function ConnectViaApp({
   status,
   onPick,
   onError,
+  onMessage,
 }: {
   status: GithubSyncStatus
   onPick: (installationId: string) => void
   onError: (m: string) => void
+  onMessage: (m: string) => void
 }) {
   const [busy, setBusy] = useState(false)
+  const [patching, setPatching] = useState(false)
   const install = async () => {
     setBusy(true)
     try {
@@ -206,6 +214,19 @@ function ConnectViaApp({
     } catch (e) {
       onError((e as Error).message)
       setBusy(false)
+    }
+  }
+  const patchPermissions = async () => {
+    setPatching(true)
+    try {
+      await api.patchAppPermissions()
+      onMessage(
+        "Permissions updated — GitHub will prompt each installer to accept the new permissions.",
+      )
+    } catch (e) {
+      onError((e as Error).message)
+    } finally {
+      setPatching(false)
     }
   }
   const installed = status.installations.length > 0
@@ -247,12 +268,15 @@ function ConnectViaApp({
         </div>
       )}
       <div className="border-t border-border pt-2">
-        <a
-          href="/settings/github/app/new"
-          className="text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+        <Button
+          data-testid="github-patch-permissions"
+          variant="link"
+          className="h-auto p-0 text-xs text-muted-foreground"
+          disabled={patching}
+          onClick={patchPermissions}
         >
-          Replace GitHub App
-        </a>
+          {patching ? "Updating…" : "Update App permissions"}
+        </Button>
       </div>
     </Card>
   )
