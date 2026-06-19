@@ -593,12 +593,19 @@ function RepoSourceRow({
     }
   }
 
-  const remove = async () => {
+  const [disconnectDialog, setDisconnectDialog] = useState(false)
+  const [wipeBusy, setWipeBusy] = useState(false)
+
+  const remove = async (wipe: boolean) => {
+    setWipeBusy(true)
     try {
-      await api.deleteRepoSource(source.id)
-      onChanged("Repo disconnected (docs kept)")
+      await api.deleteRepoSource(source.id, wipe)
+      setDisconnectDialog(false)
+      onChanged(wipe ? "Repo disconnected and docs deleted" : "Repo disconnected (docs kept)")
     } catch (e) {
       onError((e as Error).message)
+    } finally {
+      setWipeBusy(false)
     }
   }
 
@@ -641,11 +648,43 @@ function RepoSourceRow({
           variant="ghost"
           size="sm"
           className="text-destructive hover:text-destructive"
-          onClick={remove}
+          onClick={() => setDisconnectDialog(true)}
         >
           Disconnect
         </Button>
       </div>
+
+      {disconnectDialog && (
+        <Dialog open onOpenChange={(o) => !o && setDisconnectDialog(false)}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Disconnect {source.repo}?</DialogTitle>
+              <DialogDescription>
+                Choose what happens to the {status.file_count} synced doc
+                {status.file_count === 1 ? "" : "s"}.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="mt-2 flex flex-col gap-2">
+              <Button
+                variant="outline"
+                disabled={wipeBusy}
+                data-testid={`github-disconnect-keep-${source.id}`}
+                onClick={() => remove(false)}
+              >
+                Keep docs — stop syncing, docs stay readable
+              </Button>
+              <Button
+                variant="destructive"
+                disabled={wipeBusy}
+                data-testid={`github-disconnect-wipe-${source.id}`}
+                onClick={() => remove(true)}
+              >
+                {wipeBusy ? "Deleting…" : "Delete docs — remove all synced content"}
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
+      )}
 
       {/* ACTIVE — the giant, explicit progress block. Every phase named, live counts,
           a clear %, and a standing reassurance that it runs on the server. */}
