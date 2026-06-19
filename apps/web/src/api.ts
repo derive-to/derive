@@ -707,8 +707,11 @@ export const api = {
     f(`/v1/sync/github/${id}/status`, opts()).then(j),
   // Sources currently mid-sync in this workspace (drives the global progress chip).
   activeSyncs: (): Promise<{ active: RepoSource[] }> => f("/v1/sync/github/active", opts()).then(j),
-  deleteRepoSource: (id: string): Promise<void> =>
-    f(`/v1/sync/github/${id}`, { method: "DELETE", credentials: "include" }).then(() => undefined),
+  deleteRepoSource: (id: string, wipe?: boolean): Promise<void> =>
+    f(`/v1/sync/github/${id}${wipe ? "?wipe=true" : ""}`, {
+      method: "DELETE",
+      credentials: "include",
+    }).then(() => undefined),
 
   // Workspace name + members (Admin / Creator / Viewer = owner / editor / commenter)
   getWorkspace: (): Promise<Workspace> => f("/v1/workspace", opts()).then(j),

@@ -608,8 +608,19 @@ export const syncRoutes = (ctx: AppContext) => {
     const org = await activeWorkspace(c)
     const source = await meta.getRepoSource(c.req.param("id"), org)
     if (!source) return fail(c, 404, "not found")
-    // Disconnect only: keep the collection + mirrored artifacts so the docs stay
-    // readable. They simply stop updating.
+    if (c.req.query("wipe") === "true") {
+      // Delete every artifact this source manages, then its collection.
+      try {
+        const map = JSON.parse(source.files || "{}") as Record<string, { artifact_id?: string }>
+        for (const entry of Object.values(map)) {
+          if (entry.artifact_id) await meta.deleteArtifact(entry.artifact_id, org)
+        }
+      } catch {
+        /* malformed files map — skip */
+      }
+      await meta.deleteCollection(source.collection_id)
+    }
+    // Default: keep the collection + artifacts so the docs stay readable.
     await meta.deleteRepoSource(source.id, org)
     return c.body(null, 204)
   })
