@@ -41,7 +41,7 @@ export const enqueueSlackComment = async (
   const { meta, baseUrl } = deps
   if (parseMeta(cm.meta).slack) return // came from Slack — don't echo back
   const install = await meta.getSlackInstall(artifact.org_id)
-  if (!install || !install.default_channel) return
+  if (!install?.default_channel) return
   const link = `${baseUrl.replace(/\/$/, "")}/a/${artifact.short_id}?c=${encodeURIComponent(cm.thread_id)}`
   const payload: SlackCommentPayload = {
     orgId: artifact.org_id,
@@ -77,7 +77,7 @@ export const makeSlackSender =
   async (d: DeliveryRecord): Promise<ChannelSendResult> => {
     const p = JSON.parse(d.payload) as SlackCommentPayload
     const install = await meta.getSlackInstall(p.orgId)
-    if (!install || !install.default_channel || !encryptionKey)
+    if (!install?.default_channel || !encryptionKey)
       return { ok: true, status: "skipped: slack not connected" }
     const token = decryptSecret(install.bot_token, encryptionKey)
     const existing = await meta.getSlackThreadLinkByThread(p.threadId)
