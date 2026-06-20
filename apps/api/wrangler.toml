@@ -46,6 +46,15 @@ new_sqlite_classes = ["WebhookOutbox"]
 tag = "v3"
 new_sqlite_classes = ["RepoSyncRunner"]
 
+# Notification email (Cloudflare Email Service). Left commented because the binding only
+# resolves once the account has Email Service enabled and a sending domain verified — an
+# unprovisioned binding fails `wrangler deploy`. The code no-ops email when SEND_EMAIL is
+# unbound, so leaving this off is safe. To turn email on: enable Email Service, verify the
+# dock.build sending domain, uncomment this block, and set EMAIL_FROM under [vars] (e.g.
+# "Dock <notifications@dock.build>").
+# [[send_email]]
+# name = "SEND_EMAIL"
+
 # Native rate limiting (per-colo). One binding per surface; the worker counts each
 # rate-limited request against the matching binding (apps/api/src/worker.ts). The window
 # (period) can only be 10 or 60s, so the long in-process windows (unlock 5 min, oauth

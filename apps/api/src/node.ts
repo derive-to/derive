@@ -12,11 +12,12 @@ import { createApp } from "./app"
 import { type AuthDb, makeAuth, migrateAuth } from "./auth-config"
 import { loadConfig, resolveAuthSecret, resolveDefaultOrg } from "./config"
 import { customDomainsFromEnv } from "./lib/cloudflare-saas"
+import { emailDeliverySender, logEmailSender, resendEmailSender } from "./lib/email"
 import { mountWeb } from "./lib/serve-web"
 import { makeShutdown } from "./lifecycle"
 import { log } from "./log"
 import { createNodeSyncRunner } from "./node-sync"
-import { startWebhookWorker } from "./webhooks"
+import { type ChannelSenders, startWebhookWorker } from "./webhooks"
 import { nodeDnsGuard } from "./webhooks-node"
 
 const cfg = loadConfig()
@@ -114,7 +115,17 @@ const shellHtml = cfg.serveWeb ? readFileSync(cfg.webShell, "utf8") : undefined
 // goes out immediately. `nodeDnsGuard` re-resolves each target at delivery time and
 // refuses private/internal addresses — the SSRF defense that matters most on an
 // internal corporate network, where a webhook URL could point at a private service.
-const webhookWorker = startWebhookWorker(meta, nodeDnsGuard)
+// First-party channel senders for the Node tier. Email uses Resend (over fetch) when
+// RESEND_API_KEY is set, else the log sender (visible in dev, no transport needed).
+// The edge tier wires the Cloudflare Email Service binding instead (see webhook-do.ts).
+const channelSenders: ChannelSenders = {
+  email: emailDeliverySender(
+    cfg.resendApiKey && cfg.emailFrom
+      ? resendEmailSender(cfg.resendApiKey, cfg.emailFrom)
+      : logEmailSender(),
+  ),
+}
+const webhookWorker = startWebhookWorker(meta, nodeDnsGuard, channelSenders)
 
 // GitHub-sync runner: drives a triggered sync to completion in-process (detached from
 // the request) so it survives the user navigating away — the self-host counterpart to

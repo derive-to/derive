@@ -1,6 +1,8 @@
 import type { D1Database, DurableObjectState } from "@cloudflare/workers-types"
 import { createD1Store } from "@dock/db/d1"
-import { edgeGuard, runDeliveryTick } from "./webhooks"
+import { cloudflareEmailSender, type SendEmailBinding } from "./email-cf"
+import { emailDeliverySender } from "./lib/email"
+import { type ChannelSenders, edgeGuard, runDeliveryTick } from "./webhooks"
 
 // While the outbox has work, re-tick on this cadence so a burst drains promptly and
 // near-term retries fire on time — mirroring the Node interval worker. When a tick
@@ -11,9 +13,13 @@ const TICK_MS = 1_500
 // ~this long rather than waiting up to a cron tick.
 const POKE_DELAY_MS = 250
 
-/** The env the outbox DO needs: just the D1 binding it builds a MetaStore from. */
+/** The env the outbox DO needs: the D1 binding it builds a MetaStore from, plus the
+ *  optional Cloudflare Email Service binding + from-address used to deliver email-kind
+ *  rows (absent ⇒ email rows are a delivered no-op on this tier). */
 export interface WebhookOutboxEnv {
   DB: D1Database
+  SEND_EMAIL?: SendEmailBinding
+  EMAIL_FROM?: string
 }
 
 /**
@@ -31,12 +37,18 @@ export interface WebhookOutboxEnv {
  */
 export class WebhookOutbox {
   private store: ReturnType<typeof createD1Store>
+  private senders: ChannelSenders
 
   constructor(
     private state: DurableObjectState,
     env: WebhookOutboxEnv,
   ) {
     this.store = createD1Store(env.DB)
+    // Email delivery for this tier, when the Cloudflare Email Service binding is bound.
+    this.senders =
+      env.SEND_EMAIL && env.EMAIL_FROM
+        ? { email: emailDeliverySender(cloudflareEmailSender(env.SEND_EMAIL, env.EMAIL_FROM)) }
+        : {}
   }
 
   // The Worker pokes this (and the cron backstop hits it) to wake the drainer. Arm the
@@ -52,7 +64,7 @@ export class WebhookOutbox {
   // alarm — on failure, reschedule so the loop self-heals.
   async alarm(): Promise<void> {
     try {
-      const claimed = await runDeliveryTick(this.store, edgeGuard)
+      const claimed = await runDeliveryTick(this.store, edgeGuard, this.senders)
       if (claimed > 0) await this.state.storage.setAlarm(Date.now() + TICK_MS)
     } catch {
       await this.state.storage.setAlarm(Date.now() + TICK_MS)

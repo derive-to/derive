@@ -12,11 +12,13 @@ import {
   REACTIONS,
 } from "../lib/comments"
 import { fail, readJson } from "../lib/http"
+import { enqueueCommentEmails } from "../lib/notify-email"
 
 /** Comments: threaded, anchored to text quotes, with reactions, edits, and soft
  *  deletes. @mentions notify people (bell) or land in an agent's pull inbox. */
 export const commentRoutes = (ctx: AppContext) => {
   const {
+    deps,
     meta,
     bus,
     notify,
@@ -201,6 +203,12 @@ export const commentRoutes = (ctx: AppContext) => {
             quote: quoteOf(created.anchor),
             thread_id: created.thread_id,
           })
+        // Email the eligible recipients (mentioned / in-thread / workspace owners),
+        // pre-rendered onto the same retrying outbox as webhooks.
+        await enqueueCommentEmails({ meta, baseUrl: deps.baseUrl }, artifact, created, {
+          mentionIds: new Set(mentions.map((m) => m.id)),
+          actorId: acting?.id ?? null,
+        })
       })(),
     )
     return c.json(commentJson(created), 201)

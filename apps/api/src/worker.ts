@@ -14,6 +14,7 @@ import { drizzle } from "drizzle-orm/d1"
 import { createApp } from "./app"
 import { makeAuth } from "./auth-config"
 import { authSchema } from "./auth-schema"
+import type { SendEmailBinding } from "./email-cf"
 import { customDomainsFromEnv } from "./lib/cloudflare-saas"
 import { nativeLimiter } from "./lib/rate-limit"
 import { liveD1, requestD1 } from "./lib/request-d1"
@@ -85,6 +86,11 @@ export interface Env {
   CF_API_TOKEN?: string
   CF_ZONE_ID?: string
   CF_SAAS_FALLBACK_ORIGIN?: string
+  // Cloudflare Email Service: notification email transport (declared in wrangler.toml
+  // `[[send_email]]`). EMAIL_FROM is the verified from-address. Both unset ⇒ email
+  // notifications are skipped on the edge (a delivered no-op in the outbox).
+  SEND_EMAIL?: SendEmailBinding
+  EMAIL_FROM?: string
 }
 
 /** Poke the singleton outbox DO so it drains now (a fresh event) or self-heals (cron). */
