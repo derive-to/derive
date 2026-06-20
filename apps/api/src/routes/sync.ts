@@ -449,10 +449,11 @@ export const syncRoutes = (ctx: AppContext) => {
 
   // ---- App install callback (GitHub → browser redirect) -----------------
   // GET, so it passes the anonymous-write lockdown. Primary auth is the signed
-  // state Dock embeds in the install URL — it carries the workspace. Fallback:
-  // when state is missing (user installed via GitHub directly or the App's
-  // setup_url was hit without our state), use the active session's workspace so
-  // the install is never silently dropped.
+  // state Dock embeds in the install URL — it carries the workspace. A present-
+  // but-invalid state (tampered or expired) is REJECTED — that's the CSRF guard.
+  // An ABSENT state is the legitimate "installed directly on GitHub" path (the
+  // App's setup_url fires with no state); there we fall back to the session's
+  // active workspace so the install is recorded rather than silently dropped.
   app.get("/v1/sync/github/callback", async (c) => {
     const installationId = c.req.query("installation_id")
     const stateRaw = c.req.query("state") ?? ""
@@ -462,9 +463,12 @@ export const syncRoutes = (ctx: AppContext) => {
       return c.redirect(settingsUrl.toString())
     }
     const state = verifyState<InstallState>(stateRaw, deps.encryptionKey)
-    // Fallback: no signed state → try to read the workspace from the session
-    // cookie (present because the browser just came back from GitHub). This
-    // handles direct installs via github.com/apps/{slug}/installations/new.
+    // State was sent but doesn't verify → tampering/expiry, not a direct install.
+    if (stateRaw && !state) {
+      settingsUrl.searchParams.set("gh_error", "install_expired")
+      return c.redirect(settingsUrl.toString())
+    }
+    // Signed state binds the workspace; absent state → the session's workspace.
     const org = state?.org ?? (await activeWorkspace(c).catch(() => null))
     const uid = state?.uid ?? (await currentUser(c).catch(() => null))?.id ?? "github"
     if (!org) {

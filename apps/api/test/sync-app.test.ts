@@ -143,6 +143,17 @@ describe("github app install callback", () => {
     expect(res.headers.get("location") ?? "").toContain("gh_error=install_expired")
     expect(await meta.getGithubInstallation("992")).toBeNull()
   })
+
+  // Direct install on GitHub (setup_url fires with NO state): fall back to the
+  // session's workspace so the install is still recorded, not dropped.
+  it("records a stateless (direct GitHub) install against the session workspace", async () => {
+    const { app, meta } = quotaApp("ghcb3", { encryptionKey: KEY })
+    const res = await app.request("/v1/sync/github/callback?installation_id=993")
+    expect(res.status).toBe(302)
+    const loc = res.headers.get("location") ?? ""
+    expect(loc).toContain("gh_install=993")
+    expect(await meta.getGithubInstallation("993")).toMatchObject({ org_id: "default" })
+  })
 })
 
 // Auto-heal: a configured App the owner deleted on GitHub must report as
@@ -160,25 +171,56 @@ describe("github app auto-heal (GET /app verification)", () => {
       webhook_secret: encryptSecret(WHSEC, KEY),
       created_at: "2026-06-15T00:00:00.000Z",
     })
-  const stubGetApp = (status: number) =>
+  // GET /app stub. `perms`/`events` default to Dock's full required set so a
+  // healthy App reports upToDate; pass partial sets to exercise the diff.
+  const stubGetApp = (
+    status: number,
+    perms: Record<string, string> = {
+      contents: "read",
+      metadata: "read",
+      pull_requests: "read",
+    },
+    events: string[] = ["push", "pull_request"],
+  ) =>
     vi.stubGlobal(
       "fetch",
       vi.fn(async (url: string | URL) =>
         String(url).endsWith("/app")
-          ? new Response(JSON.stringify({ slug: "dock-test", html_url: "x" }), { status })
+          ? new Response(
+              JSON.stringify({ slug: "dock-test", html_url: "x", permissions: perms, events }),
+              { status },
+            )
           : new Response("nf", { status: 404 }),
       ),
     )
   const statusApp = async (app: ReturnType<typeof quotaApp>["app"]) =>
     (await (await app.request("/v1/sync/github", { headers: AUTH })).json()) as {
-      app: { configured: boolean; slug?: string }
+      app: {
+        configured: boolean
+        slug?: string
+        upToDate?: boolean
+        missing?: { permissions: Record<string, string>; events: string[] }
+      }
     }
 
-  it("stays configured while GitHub still has the App", async () => {
+  it("stays configured + up to date while GitHub has the App with all perms", async () => {
     const { app, meta } = quotaApp("ghheal", { encryptionKey: KEY })
     await seedLiveApp(meta)
     stubGetApp(200)
-    expect((await statusApp(app)).app).toEqual({ configured: true, slug: "dock-test" })
+    const { app: a } = await statusApp(app)
+    expect(a).toMatchObject({ configured: true, slug: "dock-test", upToDate: true })
+    expect(a.missing).toEqual({ permissions: {}, events: [] })
+  })
+
+  it("flags a missing permission/event in the diff", async () => {
+    const { app, meta } = quotaApp("ghheal-diff", { encryptionKey: KEY })
+    await seedLiveApp(meta)
+    // App only has metadata:read — missing contents, pull_requests, both events.
+    stubGetApp(200, { metadata: "read" }, [])
+    const { app: a } = await statusApp(app)
+    expect(a.upToDate).toBe(false)
+    expect(a.missing?.permissions).toMatchObject({ contents: "read", pull_requests: "read" })
+    expect(a.missing?.events).toEqual(["push", "pull_request"])
   })
 
   it("reports unconfigured once the App is deleted on GitHub (404)", async () => {
