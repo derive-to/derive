@@ -221,6 +221,10 @@ export const commentRoutes = (ctx: AppContext) => {
         // Post to the connected Slack workspace (no-op when Slack isn't connected).
         if (settings.slackPost)
           await enqueueSlackComment({ meta, baseUrl: deps.baseUrl }, artifact, created)
+        // Drain the outbox now: the channel enqueues above (email / Slack / GitHub) don't
+        // go through notify()'s poke, so without this they'd wait for the cron backstop
+        // (up to a minute on the edge) instead of delivering promptly.
+        deps.pokeWebhooks?.()
       })(),
     )
     return c.json(commentJson(created), 201)
