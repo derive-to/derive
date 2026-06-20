@@ -164,6 +164,93 @@ export interface OgCard {
   reveal?: boolean
 }
 
+// ---- Profile unfurl (people pages: /u/:handle) -----------------------------
+
+/** Everything a profile unfurl card / meta block needs about one person. */
+export interface ProfileCard {
+  username: string
+  name: string | null
+  profession: string | null
+  works: number
+  followers: number
+}
+
+/** One-line profile description: "Engineering · 12 works · 48 followers · on Dock". */
+export const profileSummary = (c: ProfileCard): string => {
+  const parts: string[] = []
+  if (c.profession) parts.push(c.profession)
+  parts.push(plural(c.works, "work"))
+  parts.push(plural(c.followers, "follower"))
+  return `${parts.join(" · ")} · on Dock`
+}
+
+/** Initials for the avatar disc — first+last of the name, else the first two chars. */
+const profileInitials = (name: string | null, username: string): string => {
+  const src = (name?.trim() || username).trim()
+  const parts = src.split(/\s+/).filter(Boolean)
+  const chars =
+    parts.length >= 2 ? `${parts[0]?.[0] ?? ""}${parts.at(-1)?.[0] ?? ""}` : src.slice(0, 2)
+  return chars.toUpperCase() || "?"
+}
+
+/** The OG/Twitter `<head>` tags for a public profile. og:type=profile; values escaped. */
+export const profileMetaTags = (i: {
+  username: string
+  name: string | null
+  description: string
+  pageUrl: string
+  imageUrl: string
+}): string => {
+  const title = escapeHtml(i.name ? `${i.name} (@${i.username})` : `@${i.username}`)
+  const d = escapeHtml(i.description)
+  const url = escapeHtml(i.pageUrl)
+  const img = escapeHtml(i.imageUrl)
+  return [
+    `<meta property="og:type" content="profile">`,
+    `<meta property="og:site_name" content="Dock">`,
+    `<meta property="profile:username" content="${escapeHtml(i.username)}">`,
+    `<meta property="og:title" content="${title}">`,
+    `<meta property="og:description" content="${d}">`,
+    `<meta property="og:url" content="${url}">`,
+    `<meta property="og:image" content="${img}">`,
+    `<meta property="og:image:width" content="1200">`,
+    `<meta property="og:image:height" content="630">`,
+    `<meta name="twitter:card" content="summary_large_image">`,
+    `<meta name="twitter:title" content="${title}">`,
+    `<meta name="twitter:description" content="${d}">`,
+    `<meta name="twitter:image" content="${img}">`,
+  ].join("\n")
+}
+
+/** The profile OG card as a standalone SVG (1200x630, Dock palette). Self-contained —
+ *  an initials disc, not a remote avatar — so it renders identically on every crawler. */
+export const ogProfileCardSvg = (card: ProfileCard): string => {
+  const sans = "Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
+  const mono = "'SF Mono', ui-monospace, Menlo, Consolas, monospace"
+  const name = svgEscape(card.name?.trim() || `@${card.username}`)
+  const handle = svgEscape(`@${card.username}`)
+  const initials = svgEscape(profileInitials(card.name, card.username))
+  const summary = svgEscape(profileSummary(card))
+  const cx = 200
+  const cy = 320
+  const r = 110
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${OG_W}" height="${OG_H}" viewBox="0 0 ${OG_W} ${OG_H}" role="img" aria-label="${name}">
+  <rect width="${OG_W}" height="${OG_H}" fill="#f6f0e3"/>
+  <rect x="0" y="0" width="${OG_W}" height="10" fill="#655999"/>
+  <g font-family="${mono}" font-size="26" fill="#4f447e" font-weight="600">
+    <rect x="90" y="74" width="42" height="42" rx="10" fill="#2a2540"/>
+    <path d="M111 84l13 13v18h-8.5v-10.4h-9V115H94v-18z" fill="none" stroke="#8a7dc0" stroke-width="2.6" stroke-linejoin="round"/>
+    <text x="150" y="105" letter-spacing="1">DOCK</text>
+  </g>
+  <circle cx="${cx}" cy="${cy}" r="${r}" fill="#2a2540"/>
+  <text x="${cx}" y="${cy + 28}" text-anchor="middle" font-family="${sans}" font-size="84" font-weight="700" fill="#cabffb" letter-spacing="2">${initials}</text>
+  <text x="350" y="300" font-family="${sans}" font-size="68" font-weight="700" fill="#2a2540" letter-spacing="-1">${name}</text>
+  <text x="350" y="360" font-family="${mono}" font-size="32" fill="#655999">${handle}</text>
+  <text x="350" y="430" font-family="${mono}" font-size="28" fill="#6b6680">${summary}</text>
+  <text x="${OG_W - 90}" y="105" text-anchor="end" font-family="${mono}" font-size="24" fill="#928da3">dock.build</text>
+</svg>`
+}
+
 /** The OG card as a standalone SVG document string. */
 export const ogCardSvg = (card: OgCard): string => {
   const reveal = card.reveal !== false

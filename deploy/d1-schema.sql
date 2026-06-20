@@ -24,7 +24,8 @@ CREATE TABLE IF NOT EXISTS artifact (
   author_name TEXT,
   author_login TEXT,
   author_avatar TEXT,
-  author_gh_id TEXT
+  author_gh_id TEXT,
+  author_id TEXT
 );
 
 CREATE TABLE IF NOT EXISTS version (
@@ -38,6 +39,7 @@ CREATE TABLE IF NOT EXISTS version (
   author_login TEXT,
   author_avatar TEXT,
   author_gh_id TEXT,
+  author_id TEXT,
   message TEXT,
   name TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),

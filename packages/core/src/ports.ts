@@ -61,6 +61,11 @@ export interface ArtifactRecord {
   author_login: string | null
   author_avatar: string | null
   author_gh_id: string | null
+  /** The Dock user who last published this artifact by hand (the signed-in publisher).
+   *  Null for GitHub-synced versions (attributed via `author_gh_id` instead), bare
+   *  static-token publishes, and legacy rows. Lets a person's profile + people-follow
+   *  surface their hand-published work. */
+  author_id: string | null
 }
 
 export interface ListArtifactsOpts {
@@ -84,6 +89,11 @@ export interface ListArtifactsOpts {
   /** Only `public` artifacts. Set for anonymous / non-member callers so a workspace
    *  listing never leaks `org`/`link`/`password` titles to someone who can't open them. */
   publicOnly?: boolean
+  /** Profile work-list visibility gate: a row is included when it is `public` OR its
+   *  `org_id` is in this set (the workspaces the viewer shares with the profile owner).
+   *  An empty/omitted set with a profile query ⇒ public-only. Used by `listUserWorks`
+   *  so a person's profile never leaks non-public work the viewer can't open. */
+  visibleOrgIds?: string[]
 }
 
 export interface VersionRecord {
@@ -101,6 +111,8 @@ export interface VersionRecord {
   author_login: string | null
   author_avatar: string | null
   author_gh_id: string | null
+  /** The Dock user who published this version by hand; null for sync/anon/legacy. */
+  author_id: string | null
   message: string | null
   /** A named checkpoint (Docs-style). Null = an ordinary auto-saved revision. */
   name: string | null
@@ -132,6 +144,8 @@ export interface NewVersion {
   author_login?: string | null
   author_avatar?: string | null
   author_gh_id?: string | null
+  /** The Dock user who published this version by hand; null/omitted for sync/anon. */
+  author_id?: string | null
   message: string | null
   name?: string | null
 }
@@ -290,17 +304,28 @@ export interface MetaStore {
   setFavorite(artifactId: string, userId: string): Promise<void>
   removeFavorite(artifactId: string, userId: string): Promise<void>
 
-  // ---- Follows (per-user: track GitHub authors + repo path prefixes) -----
+  // ---- Follows (per-user: track GitHub authors, repo paths, and people) --
   /** Record a follow (idempotent on (user, org, kind, target)); returns the row. */
   addFollow(f: NewFollow): Promise<FollowRecord>
   removeFollow(userId: string, orgId: string, kind: FollowKind, target: string): Promise<void>
-  /** A user's follows in a workspace, newest first. */
+  /** A user's follows for the Following management UI: their `author`/`path` follows in
+   *  `orgId` PLUS their global `user` (people) follows (org_id = "*"), newest first. */
   listFollows(userId: string, orgId: string): Promise<FollowRecord[]>
-  /** Artifact ids in `orgId` (not removed) whose current author_login is one of the
-   *  user's followed logins (case-insensitive) OR whose source_path starts with one of
-   *  the user's followed path prefixes — the activity feed. Empty when the user follows
-   *  nothing. */
+  /** Artifact ids in `orgId` (not removed) surfaced by this user's follows — the activity
+   *  feed. A row qualifies when its current author_login is a followed login
+   *  (case-insensitive), its source_path starts with a followed path prefix, OR its
+   *  author (by `author_id` or linked GitHub id) is a followed person. Empty when the
+   *  user follows nothing. Stays scoped to `orgId`, so private cross-workspace work a
+   *  followed person did never enters the feed. */
   followedArtifactIds(userId: string, orgId: string): Promise<string[]>
+  /** How many people follow this user (kind='user', target=userId). */
+  countFollowers(userId: string): Promise<number>
+  /** How many people this user follows (kind='user', user_id=userId). */
+  countFollowing(userId: string): Promise<number>
+  /** People who follow this user, as public profiles, newest follow first. */
+  listFollowers(userId: string, limit: number): Promise<UserProfile[]>
+  /** People this user follows, as public profiles, newest follow first. */
+  listFollowing(userId: string, limit: number): Promise<UserProfile[]>
   /** Tags per artifact, batched (no N+1). Missing ids map to no entry. */
   tagsForArtifacts(artifactIds: string[]): Promise<Record<string, string[]>>
   /** Replace an artifact's full tag set (deduped, trimmed, lowercased upstream). */
@@ -417,6 +442,24 @@ export interface MetaStore {
    *  `user`. Lets a synced artifact's commit author resolve to a Dock profile/handle.
    *  Returns [] for empty input or when the auth tables are absent. */
   usersByGithubIds(ghIds: string[]): Promise<GithubUserMapping[]>
+  /** The GitHub numeric user ids (account.accountId, as strings) a Dock user has linked
+   *  via Better Auth's `account` (providerId='github'). Inverse of `usersByGithubIds`.
+   *  Returns [] when none or the auth tables are absent. */
+  githubIdsForUser(userId: string): Promise<string[]>
+  /** A Dock user's GitHub login, derived from any artifact whose `author_gh_id` is one of
+   *  their linked GitHub ids (we don't store the login on `account`). Null when unknown —
+   *  used only to show a GitHub link on the profile. */
+  githubLoginForUser(userId: string, ghIds: string[]): Promise<string | null>
+  /** Org ids where BOTH users hold a membership — the shared-workspace set that widens a
+   *  viewer's profile visibility beyond public. Empty for an anonymous viewer. */
+  sharedOrgIds(viewerId: string, targetUserId: string): Promise<string[]>
+  /** A person's work for their profile: artifacts (not removed) authored by them — either
+   *  `author_id = userId` OR `author_gh_id ∈ ghIds` (their linked GitHub commits) — gated
+   *  by `visibleOrgIds` (public OR a shared workspace). Newest first, keyset-paginated via
+   *  `opts.cursor`/`opts.limit`. */
+  listUserWorks(userId: string, ghIds: string[], opts: ListArtifactsOpts): Promise<ArtifactRecord[]>
+  /** Count of a person's visible work (same predicate as `listUserWorks`) for the stats row. */
+  countUserWorks(userId: string, ghIds: string[], opts: ListArtifactsOpts): Promise<number>
   /** Resolve a public profile by its handle (username); null if unclaimed. */
   getUserByUsername(username: string): Promise<UserProfile | null>
   /** Claim or replace a user's handle. Returns "taken" when another account
@@ -507,9 +550,14 @@ export interface MetaStore {
   ): Promise<AuditLogRecord[]>
 }
 
-/** What a user follows: a GitHub author (`target` = the login) or a repo path
- *  prefix (`target` = a path prefix, e.g. "docs/plans"). */
-export type FollowKind = "author" | "path"
+/** What a user follows: a GitHub author (`target` = the login), a repo path prefix
+ *  (`target` = a path prefix, e.g. "docs/plans"), or a Dock person (`target` = their
+ *  user id). `author`/`path` follows are workspace-scoped; `user` follows are global
+ *  (stored with `org_id = "*"`) since a person's work spans workspaces. */
+export type FollowKind = "author" | "path" | "user"
+/** Sentinel org_id for `user` (people) follows — they are global, not workspace-scoped,
+ *  so a person's work surfaces regardless of which workspace the follower is viewing. */
+export const GLOBAL_FOLLOW_ORG = "*"
 /** A per-user follow — the same shape of relation as a favorite, but keyed on a
  *  (kind, target) pair instead of an artifact id. Drives the "following" feed. */
 export interface FollowRecord {
@@ -517,7 +565,8 @@ export interface FollowRecord {
   org_id: string
   user_id: string
   kind: FollowKind
-  /** For `author`: the GitHub login (stored lowercased). For `path`: a repo path prefix. */
+  /** For `author`: the GitHub login (stored lowercased). For `path`: a repo path prefix.
+   *  For `user`: the followed Dock user id (verbatim). */
   target: string
   created_at: string
 }
@@ -744,7 +793,10 @@ export interface UserProfile {
   about?: string | null
 }
 
-export type NotificationKind = "mention" | "comment" | "share"
+/** `mention`/`comment`/`share` are artifact-anchored. `follow` (someone followed you)
+ *  and `publish` (someone you follow published) are the social kinds — `follow` carries
+ *  no artifact (its artifact_* fields are ""), `publish` points at the new artifact. */
+export type NotificationKind = "mention" | "comment" | "share" | "follow" | "publish"
 export interface NotificationRecord {
   id: string
   user_id: string

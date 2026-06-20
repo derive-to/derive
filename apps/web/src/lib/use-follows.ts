@@ -28,12 +28,19 @@ export function useFollows() {
     const paths = new Set<string>()
     for (const fol of follows) {
       if (fol.kind === "author") authors.add(fol.target)
-      else paths.add(fol.target)
+      else if (fol.kind === "path") paths.add(fol.target)
+      // `user` follows store a user id (not a username) and drive `followed_by_me` on
+      // the profile response instead — they aren't keyed here.
     }
     return { authors, paths }
   }, [follows])
 
-  const invalidate = () => qc.invalidateQueries({ queryKey: followsQuery().queryKey })
+  // A follow change shifts both the manage strip (follows) and any open profile (its
+  // stats + followed_by_me), so refresh both.
+  const invalidate = () => {
+    qc.invalidateQueries({ queryKey: followsQuery().queryKey })
+    qc.invalidateQueries({ queryKey: ["profile"] })
+  }
 
   const add = useMutation({
     mutationFn: ({ kind, target }: { kind: FollowKind; target: string }) =>
@@ -64,6 +71,14 @@ export function useFollows() {
       if (paths.has(target)) remove.mutate({ kind: "path", target })
       else add.mutate({ kind: "path", target })
     },
+    // Flip the follow state for a person. The current state comes from the profile's
+    // `followed_by_me` (people-follows store a user id, not the username we send here).
+    toggleUser: (username: string, isFollowing: boolean) => {
+      if (isFollowing) remove.mutate({ kind: "user", target: username })
+      else add.mutate({ kind: "user", target: username })
+    },
+    // True while a follow mutation is in flight (disable the button).
+    pendingFollow: add.isPending || remove.isPending,
     // Drop a follow directly (the manage strip's × buttons).
     unfollow: (kind: FollowKind, target: string) => remove.mutate({ kind, target }),
   }

@@ -122,3 +122,72 @@ describe("follows route", () => {
     expect((await bobFeed.json()).artifacts).toEqual([])
   })
 })
+
+// People-follow: bob follows Amy by handle, her hand-published (author_id) public work
+// flows into his feed, and the profile reflects follower/following + followed_by_me.
+describe("people follow", () => {
+  // Publish a PUBLIC artifact authored by a Dock user (stamps author_id), via the store.
+  const publishByUser = async (title: string, userId: string): Promise<string> => {
+    const a = await meta.createArtifact({
+      id: newId("a"),
+      short_id: newId("s"),
+      org_id: "default",
+      slug: null,
+      title,
+      visibility: "public",
+      kind: "file",
+      spa: 0,
+    })
+    await meta.addVersion(a.id, {
+      id: newId("v"),
+      blob_key: `blob_${newId("b")}`,
+      content_type: "text/markdown",
+      size_bytes: 1,
+      author: "Amy",
+      author_id: userId,
+      message: null,
+    })
+    return a.short_id
+  }
+
+  it("rejects self-follow (400) and an unknown handle (404)", async () => {
+    expect((await post(as(amy.email), { kind: "user", target: "amy" })).status).toBe(400)
+    expect((await post(as(amy.email), { kind: "user", target: "ghost" })).status).toBe(404)
+  })
+
+  it("follows a person by handle; their public work enters the follower's feed", async () => {
+    const amyWork = await publishByUser("Amy's plan", amy.id)
+
+    // bob follows amy (by username; stored as her id, globally).
+    const r = await post(as(bob.email), { kind: "user", target: "Amy" })
+    expect(r.status).toBe(201)
+    expect((await r.json()).follow).toMatchObject({ kind: "user", target: amy.id, org_id: "*" })
+
+    // Amy's public work now shows in bob's activity feed.
+    const feed = await app.request("/v1/artifacts?scope=following&limit=100", {
+      headers: as(bob.email),
+    })
+    const ids = (await feed.json()).artifacts.map((a: { short_id: string }) => a.short_id)
+    expect(ids).toContain(amyWork)
+
+    // The profile reflects it: amy has 1 follower; bob (the viewer) follows her.
+    const amyProfile = await (await app.request("/v1/users/amy", { headers: as(bob.email) })).json()
+    expect(amyProfile.user.stats.followers).toBe(1)
+    expect(amyProfile.user.followed_by_me).toBe(true)
+
+    // amy sees a "follow" notification from bob (by his handle).
+    const notifs = await (await app.request("/v1/notifications", { headers: as(amy.email) })).json()
+    expect(notifs.notifications[0]).toMatchObject({ kind: "follow", actor: "bob" })
+
+    // Unfollow removes it (and the follower count drops back).
+    const del = await app.request("/v1/follows", {
+      method: "DELETE",
+      headers: { "content-type": "application/json", ...as(bob.email) },
+      body: JSON.stringify({ kind: "user", target: "amy" }),
+    })
+    expect(del.status).toBe(204)
+    const after = await (await app.request("/v1/users/amy", { headers: as(bob.email) })).json()
+    expect(after.user.stats.followers).toBe(0)
+    expect(after.user.followed_by_me).toBe(false)
+  })
+})

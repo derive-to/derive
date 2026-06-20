@@ -1,8 +1,9 @@
 import { join } from "node:path"
+import { newId } from "@dock/core"
 import { FsBlobStore } from "@dock/storage/fs"
 import { describe, expect, it } from "vitest"
 import { createApp } from "../src/app"
-import { anonApp, app, dir, meta, upload } from "./helpers"
+import { anonApp, app, dir, makeAuthedApp, meta, type TestUser, upload } from "./helpers"
 
 const idOf = async (res: Response): Promise<string> => (await res.json()).short_id
 const SHELL =
@@ -147,5 +148,84 @@ describe("unfurl + embed", () => {
     const html = await res.text()
     expect(html).not.toContain("og:title")
     expect(html).not.toContain("Private Page")
+  })
+})
+
+describe("profile unfurl (/u/:handle)", () => {
+  const nia: TestUser = {
+    id: "u_og_nia",
+    email: "ognia@d.test",
+    name: "Nia Okoye",
+    username: "niao",
+  }
+  const { app: authed, meta: m } = makeAuthedApp("og-profile", [nia])
+
+  // One public artifact authored by Nia, so the card/stats show "1 work".
+  const seedWork = async () => {
+    const art = await m.createArtifact({
+      id: newId("a"),
+      short_id: newId("s"),
+      org_id: "default",
+      slug: null,
+      title: "Nia's doc",
+      visibility: "public",
+      kind: "file",
+      spa: 0,
+    })
+    await m.addVersion(art.id, {
+      id: newId("v"),
+      blob_key: `blob_${newId("b")}`,
+      content_type: "text/markdown",
+      size_bytes: 1,
+      author: "Nia Okoye",
+      author_id: nia.id,
+      message: null,
+    })
+  }
+
+  it("renders the profile OG card SVG (name + work count)", async () => {
+    await seedWork()
+    const res = await authed.request("/v1/og/u/niao")
+    expect(res.status).toBe(200)
+    expect(res.headers.get("content-type")).toContain("image/svg+xml")
+    const svg = await res.text()
+    expect(svg).toContain("<svg")
+    expect(svg).toContain("Nia Okoye")
+    expect(svg).toContain("@niao")
+    expect(svg).toContain("1 work")
+  })
+
+  it("injects profile OG meta into the /u/:handle shell for crawlers", async () => {
+    const a = createApp({
+      meta: m,
+      blobs: new FsBlobStore(join(dir, "blobs-og-profile-shell")),
+      baseUrl: "http://dock.test",
+      token: "tok",
+      auth: undefined,
+      shell: SHELL,
+      defaultOrgId: "default",
+    })
+    const res = await a.request("/u/niao")
+    expect(res.status).toBe(200)
+    const html = await res.text()
+    expect(html).toContain('property="og:type" content="profile"')
+    expect(html).toContain("Nia Okoye (@niao)")
+    expect(html).toContain("/v1/og/u/niao")
+    expect(html).toContain("id=root") // still the SPA shell for humans
+  })
+
+  it("serves a generic card + bare shell for an unclaimed handle (no leak)", async () => {
+    const svg = await (await app.request("/v1/og/u/ghosthandle")).text()
+    expect(svg).toContain("<svg")
+    const a = createApp({
+      meta,
+      blobs: new FsBlobStore(join(dir, "blobs-og-profile-ghost")),
+      baseUrl: "http://dock.test",
+      token: "tok",
+      shell: SHELL,
+    })
+    const html = await (await a.request("/u/ghosthandle")).text()
+    expect(html).not.toContain("og:type")
+    expect(html).toContain("id=root")
   })
 })

@@ -1,3 +1,4 @@
+import { newId } from "@dock/core"
 import { describe, expect, it } from "vitest"
 import { as, jsonAs, makeAuthedApp, type TestUser } from "./helpers"
 
@@ -27,6 +28,10 @@ describe("usernames + public profiles", () => {
       image: "x.png",
       profession: null,
       about: null,
+      // Enriched profile: GitHub link (none here), stats, and viewer follow state.
+      github_login: null,
+      stats: { works: 0, followers: 0, following: 0 },
+      followed_by_me: false,
     })
     expect(user).not.toHaveProperty("email")
 
@@ -191,6 +196,84 @@ describe("profile avatars", () => {
     const fd = new FormData()
     fd.append("file", new Blob([PNG as BlobPart], { type: "image/png" }), "x.png")
     expect((await app.request("/v1/me/avatar", { method: "POST", body: fd })).status).toBe(403)
+  })
+})
+
+describe("profile work-list (visibility-scoped)", () => {
+  const amy: TestUser = { id: "u_pw_amy", email: "pwamy@d.test", name: "Amy W", username: "amyw" }
+  const carl: TestUser = {
+    id: "u_pw_carl",
+    email: "pwcarl@d.test",
+    name: "Carl",
+    username: "carlw",
+  }
+  // amy + carl share the "default" workspace (amy owner, carl editor).
+  const { app, meta } = makeAuthedApp("profile-works", [amy, carl])
+
+  // A hand-published artifact authored by `userId` (stamps author_id), at a visibility.
+  const work = async (title: string, userId: string, visibility: "public" | "link") => {
+    const a = await meta.createArtifact({
+      id: newId("a"),
+      short_id: newId("s"),
+      org_id: "default",
+      slug: null,
+      title,
+      visibility,
+      kind: "file",
+      spa: 0,
+    })
+    await meta.addVersion(a.id, {
+      id: newId("v"),
+      blob_key: `blob_${newId("b")}`,
+      content_type: "text/markdown",
+      size_bytes: 1,
+      author: "Amy W",
+      author_id: userId,
+      message: null,
+    })
+    return a.short_id
+  }
+
+  it("shows public work to anyone; non-public only to a shared-workspace viewer", async () => {
+    const pub = await work("Amy public", amy.id, "public")
+    const priv = await work("Amy link-only", amy.id, "link")
+
+    // Anonymous viewer: public work only (the link-only title never leaks).
+    const anon = await (await app.request("/v1/users/amyw/artifacts")).json()
+    const anonIds = anon.artifacts.map((a: { short_id: string }) => a.short_id)
+    expect(anonIds).toContain(pub)
+    expect(anonIds).not.toContain(priv)
+
+    // Carl shares the workspace with amy → he also sees the link-only work.
+    const shared = await (
+      await app.request("/v1/users/amyw/artifacts", { headers: as(carl.email) })
+    ).json()
+    const sharedIds = shared.artifacts.map((a: { short_id: string }) => a.short_id)
+    expect(sharedIds).toContain(pub)
+    expect(sharedIds).toContain(priv)
+
+    // Stats track the same gate: 1 public work for anon, 2 for the shared viewer.
+    const anonProfile = await (await app.request("/v1/users/amyw")).json()
+    expect(anonProfile.user.stats.works).toBe(1)
+    const carlProfile = await (
+      await app.request("/v1/users/amyw", { headers: as(carl.email) })
+    ).json()
+    expect(carlProfile.user.stats.works).toBe(2)
+  })
+
+  it("exposes follower/following lists as public profiles (no ids/email)", async () => {
+    // carl follows amy.
+    await app.request("/v1/follows", {
+      method: "POST",
+      headers: { "content-type": "application/json", ...as(carl.email) },
+      body: JSON.stringify({ kind: "user", target: "amyw" }),
+    })
+    const followers = await (await app.request("/v1/users/amyw/followers")).json()
+    expect(followers.users.map((u: { username: string }) => u.username)).toContain("carlw")
+    expect(followers.users[0]).not.toHaveProperty("email")
+    expect(followers.users[0]).not.toHaveProperty("id")
+    const following = await (await app.request("/v1/users/carlw/following")).json()
+    expect(following.users.map((u: { username: string }) => u.username)).toContain("amyw")
   })
 })
 
