@@ -529,6 +529,87 @@ export function runStoreContract(
     })
   })
 
+  describe(`${label}: people profiles (works, shared orgs, follower counts)`, () => {
+    it("lists + counts a person's work, gated by visibility (public always; shared orgs widen)", async () => {
+      const author = `u_author_${uuid()}`
+      const homeOrg = `${ORG}_pp_home_${uuid()}`
+      const ghId = `gh-${uuid()}` // distinctive, unused by any other test
+      // Public work, hand-authored (author_id) in the author's workspace.
+      const pub = await store.createArtifact(newArtifact({ org_id: homeOrg, visibility: "public" }))
+      await store.addVersion(pub.id, newVersion({ author: "Author", author_id: author }))
+      // Org-visible (non-public) work by the same author.
+      const orgWork = await store.createArtifact(
+        newArtifact({ org_id: homeOrg, visibility: "org" }),
+      )
+      await store.addVersion(orgWork.id, newVersion({ author: "Author", author_id: author }))
+      // Public work attributed by a linked GitHub id (no author_id) — matched via ghIds.
+      const ghWork = await store.createArtifact(
+        newArtifact({ org_id: homeOrg, visibility: "public" }),
+      )
+      await store.addVersion(
+        ghWork.id,
+        newVersion({ author: "Gh", author_login: "gh", author_gh_id: ghId }),
+      )
+
+      // Anonymous viewer (no shared orgs): public work only — both author_id + gh-id matches.
+      const anon = await store.listUserWorks(author, [ghId], {})
+      const anonIds = anon.map((a) => a.id)
+      expect(anonIds).toContain(pub.id)
+      expect(anonIds).toContain(ghWork.id)
+      expect(anonIds).not.toContain(orgWork.id) // non-public, no shared workspace
+      expect(await store.countUserWorks(author, [ghId], {})).toBe(anon.length)
+
+      // A viewer who shares the author's workspace also sees the org-visible work.
+      const shared = await store.listUserWorks(author, [], { visibleOrgIds: [homeOrg] })
+      expect(shared.map((a) => a.id)).toContain(orgWork.id)
+      expect(await store.countUserWorks(author, [], { visibleOrgIds: [homeOrg] })).toBe(
+        shared.length,
+      )
+
+      // No author_id match and no linked gh ids → nothing.
+      expect(await store.listUserWorks(`u_${uuid()}`, [], {})).toEqual([])
+    })
+
+    it("computes the shared-workspace set between two users", async () => {
+      const a = `u_${uuid()}`
+      const b = `u_${uuid()}`
+      const shared = `${ORG}_shared_${uuid()}`
+      const onlyA = `${ORG}_onlyA_${uuid()}`
+      await store.setMembership({ id: uuid(), org_id: shared, user_id: a, role: "editor" })
+      await store.setMembership({ id: uuid(), org_id: shared, user_id: b, role: "viewer" })
+      await store.setMembership({ id: uuid(), org_id: onlyA, user_id: a, role: "owner" })
+      const orgs = await store.sharedOrgIds(a, b)
+      expect(orgs).toContain(shared)
+      expect(orgs).not.toContain(onlyA) // only `a` is a member there
+    })
+
+    it("derives a user's GitHub login from their authored artifacts (null when unknown)", async () => {
+      const gh = await store.createArtifact(newArtifact())
+      await store.addVersion(
+        gh.id,
+        newVersion({ author: "Octo", author_login: "octocat", author_gh_id: "583231-pp" }),
+      )
+      expect(await store.githubLoginForUser(`u_${uuid()}`, ["583231-pp"])).toBe("octocat")
+      expect(await store.githubLoginForUser(`u_${uuid()}`, [])).toBeNull() // no linked ids
+      expect(await store.githubLoginForUser(`u_${uuid()}`, ["no-such-gh"])).toBeNull() // no match
+    })
+
+    it("counts a person's followers and following (people-follows only)", async () => {
+      const maya = `u_maya_${uuid()}`
+      const f1 = `u_${uuid()}`
+      const f2 = `u_${uuid()}`
+      await store.addFollow({ id: uuid(), org_id: "*", user_id: f1, kind: "user", target: maya })
+      await store.addFollow({ id: uuid(), org_id: "*", user_id: f2, kind: "user", target: maya })
+      await store.addFollow({ id: uuid(), org_id: "*", user_id: maya, kind: "user", target: f1 })
+      expect(await store.countFollowers(maya)).toBe(2)
+      expect(await store.countFollowing(maya)).toBe(1)
+      // listFollowers/Following resolve names via Better Auth's user table, which this
+      // contract store doesn't provision — they degrade to [] safely (no throw).
+      expect(Array.isArray(await store.listFollowers(maya, 50))).toBe(true)
+      expect(Array.isArray(await store.listFollowing(maya, 50))).toBe(true)
+    })
+  })
+
   describe(`${label}: collections`, () => {
     it("creates a collection, adds/removes items, tracks membership roles", async () => {
       const a = await store.createArtifact(newArtifact())
