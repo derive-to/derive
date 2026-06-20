@@ -71,6 +71,8 @@ export interface Config {
   /** Resend API key for self-host email delivery over fetch (no SDK). Unset ⇒ the
    *  log sender. The edge uses the Cloudflare Email Service binding instead. */
   resendApiKey?: string
+  /** Slack App credentials (connect flow + Events API). All three set ⇒ Slack on. */
+  slack?: { clientId: string; clientSecret: string; signingSecret: string }
 }
 
 /**
@@ -143,6 +145,14 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     objectStoreUrl: urlOr("OBJECT_STORE_URL", env.OBJECT_STORE_URL),
     emailFrom: env.EMAIL_FROM,
     resendApiKey: env.RESEND_API_KEY,
+    slack:
+      env.SLACK_CLIENT_ID && env.SLACK_CLIENT_SECRET && env.SLACK_SIGNING_SECRET
+        ? {
+            clientId: env.SLACK_CLIENT_ID,
+            clientSecret: env.SLACK_CLIENT_SECRET,
+            signingSecret: env.SLACK_SIGNING_SECRET,
+          }
+        : undefined,
     webDir,
     webShell,
     serveWeb: existsSync(webShell),

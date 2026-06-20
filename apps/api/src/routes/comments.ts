@@ -14,6 +14,7 @@ import {
 import { enqueueGithubPrComment } from "../lib/github-comments"
 import { fail, readJson } from "../lib/http"
 import { enqueueCommentEmails } from "../lib/notify-email"
+import { enqueueSlackComment } from "../lib/slack-comments"
 
 /** Comments: threaded, anchored to text quotes, with reactions, edits, and soft
  *  deletes. @mentions notify people (bell) or land in an agent's pull inbox. */
@@ -217,6 +218,9 @@ export const commentRoutes = (ctx: AppContext) => {
         // Mirror onto the PR when this artifact is PR-sourced (no-op otherwise).
         if (settings.githubPostComments)
           await enqueueGithubPrComment({ meta, blobs, baseUrl: deps.baseUrl }, artifact, created)
+        // Post to the connected Slack workspace (no-op when Slack isn't connected).
+        if (settings.slackPost)
+          await enqueueSlackComment({ meta, baseUrl: deps.baseUrl }, artifact, created)
       })(),
     )
     return c.json(commentJson(created), 201)

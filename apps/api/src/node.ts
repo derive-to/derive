@@ -15,6 +15,7 @@ import { customDomainsFromEnv } from "./lib/cloudflare-saas"
 import { emailDeliverySender, logEmailSender, resendEmailSender } from "./lib/email"
 import { makeGithubCommentSender } from "./lib/github-comments"
 import { mountWeb } from "./lib/serve-web"
+import { makeSlackSender } from "./lib/slack-comments"
 import { makeShutdown } from "./lifecycle"
 import { log } from "./log"
 import { createNodeSyncRunner } from "./node-sync"
@@ -129,6 +130,8 @@ const channelSenders: ChannelSenders = {
   // stored App (encrypted with the auth secret).
   github_review_comment: makeGithubCommentSender(meta, authSecret),
   github_issue_comment: makeGithubCommentSender(meta, authSecret),
+  // Slack App posting (bot token decrypted with the auth secret per delivery).
+  slack_app: makeSlackSender(meta, authSecret),
 }
 const webhookWorker = startWebhookWorker(meta, nodeDnsGuard, channelSenders)
 
@@ -146,6 +149,7 @@ const app = createApp({
   // Encrypt stored third-party secrets (GitHub PATs) at rest with the auth secret.
   encryptionKey: authSecret,
   superAdmins: cfg.superAdmins,
+  slack: cfg.slack,
   auth,
   webOrigins: cfg.webOrigins,
   analytics: cfg.analytics,

@@ -47,6 +47,8 @@ import type {
   ReportState,
   RepoSourceRecord,
   Role,
+  SlackInstallRecord,
+  SlackThreadLinkRecord,
   TakedownInput,
   VersionRecord,
   Visibility,
@@ -96,6 +98,8 @@ import {
   proposal,
   report,
   repoSource,
+  slackInstall,
+  slackThreadLink,
   version,
   webhook,
   webhookDelivery,
@@ -1017,6 +1021,47 @@ export function makeRepos(db: SqliteDb) {
       })
       .run()
   }
+
+  // ---- Slack App ----------------------------------------------------------
+  const getSlackInstall = async (orgId: string): Promise<SlackInstallRecord | null> =>
+    (await db.select().from(slackInstall).where(eq(slackInstall.org_id, orgId)).get()) ?? null
+  const setSlackInstall = async (s: SlackInstallRecord): Promise<void> => {
+    const { org_id: _o, created_at: _c, ...set } = s
+    await db
+      .insert(slackInstall)
+      .values(s)
+      .onConflictDoUpdate({ target: slackInstall.org_id, set })
+      .run()
+  }
+  const deleteSlackInstall = async (orgId: string): Promise<void> => {
+    await db.delete(slackInstall).where(eq(slackInstall.org_id, orgId)).run()
+  }
+  const getSlackThreadLinkByThread = async (
+    threadId: string,
+  ): Promise<SlackThreadLinkRecord | null> =>
+    (await db
+      .select()
+      .from(slackThreadLink)
+      .where(eq(slackThreadLink.thread_id, threadId))
+      .get()) ?? null
+  const getSlackThreadLinkByTs = async (
+    channel: string,
+    ts: string,
+  ): Promise<SlackThreadLinkRecord | null> =>
+    (await db
+      .select()
+      .from(slackThreadLink)
+      .where(and(eq(slackThreadLink.channel, channel), eq(slackThreadLink.message_ts, ts)))
+      .get()) ?? null
+  const setSlackThreadLink = async (l: SlackThreadLinkRecord): Promise<void> => {
+    const { thread_id: _t, created_at: _c, ...set } = l
+    await db
+      .insert(slackThreadLink)
+      .values(l)
+      .onConflictDoUpdate({ target: slackThreadLink.thread_id, set })
+      .run()
+  }
+
   const upsertGithubInstallation = async (
     i: GitHubInstallationRecord,
   ): Promise<GitHubInstallationRecord> =>
@@ -1436,6 +1481,12 @@ export function makeRepos(db: SqliteDb) {
     setGithubApp,
     getOrgSettings,
     setOrgSettings,
+    getSlackInstall,
+    setSlackInstall,
+    deleteSlackInstall,
+    getSlackThreadLinkByThread,
+    getSlackThreadLinkByTs,
+    setSlackThreadLink,
     upsertGithubInstallation,
     getGithubInstallation,
     listGithubInstallations,

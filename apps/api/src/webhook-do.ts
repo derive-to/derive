@@ -3,6 +3,7 @@ import { createD1Store } from "@dock/db/d1"
 import { cloudflareEmailSender, type SendEmailBinding } from "./email-cf"
 import { emailDeliverySender } from "./lib/email"
 import { makeGithubCommentSender } from "./lib/github-comments"
+import { makeSlackSender } from "./lib/slack-comments"
 import { type ChannelSenders, edgeGuard, runDeliveryTick } from "./webhooks"
 
 // While the outbox has work, re-tick on this cadence so a burst drains promptly and
@@ -57,6 +58,7 @@ export class WebhookOutbox {
         : {}),
       github_review_comment: makeGithubCommentSender(this.store, env.DOCK_AUTH_SECRET),
       github_issue_comment: makeGithubCommentSender(this.store, env.DOCK_AUTH_SECRET),
+      slack_app: makeSlackSender(this.store, env.DOCK_AUTH_SECRET),
     }
   }
 

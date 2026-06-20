@@ -50,6 +50,8 @@ import type {
   ReportState,
   RepoSourceRecord,
   Role,
+  SlackInstallRecord,
+  SlackThreadLinkRecord,
   TakedownInput,
   UserDir,
   UserProfile,
@@ -100,6 +102,8 @@ import {
   proposal,
   report,
   repoSource,
+  slackInstall,
+  slackThreadLink,
   version,
   webhook,
   webhookDelivery,
@@ -1000,6 +1004,43 @@ export class PgMetaStore implements MetaStore {
         target: orgSettings.org_id,
         set: { settings: JSON.stringify(settings) },
       })
+  }
+
+  // ---- Slack App ----------------------------------------------------------
+  async getSlackInstall(orgId: string): Promise<SlackInstallRecord | null> {
+    const rows = await this.db.select().from(slackInstall).where(eq(slackInstall.org_id, orgId))
+    return rows[0] ?? null
+  }
+  async setSlackInstall(s: SlackInstallRecord): Promise<void> {
+    const { org_id: _o, created_at: _c, ...set } = s
+    await this.db
+      .insert(slackInstall)
+      .values(s)
+      .onConflictDoUpdate({ target: slackInstall.org_id, set })
+  }
+  async deleteSlackInstall(orgId: string): Promise<void> {
+    await this.db.delete(slackInstall).where(eq(slackInstall.org_id, orgId))
+  }
+  async getSlackThreadLinkByThread(threadId: string): Promise<SlackThreadLinkRecord | null> {
+    const rows = await this.db
+      .select()
+      .from(slackThreadLink)
+      .where(eq(slackThreadLink.thread_id, threadId))
+    return rows[0] ?? null
+  }
+  async getSlackThreadLinkByTs(channel: string, ts: string): Promise<SlackThreadLinkRecord | null> {
+    const rows = await this.db
+      .select()
+      .from(slackThreadLink)
+      .where(and(eq(slackThreadLink.channel, channel), eq(slackThreadLink.message_ts, ts)))
+    return rows[0] ?? null
+  }
+  async setSlackThreadLink(l: SlackThreadLinkRecord): Promise<void> {
+    const { thread_id: _t, created_at: _c, ...set } = l
+    await this.db
+      .insert(slackThreadLink)
+      .values(l)
+      .onConflictDoUpdate({ target: slackThreadLink.thread_id, set })
   }
   async upsertGithubInstallation(i: GitHubInstallationRecord): Promise<GitHubInstallationRecord> {
     const rows = await this.db

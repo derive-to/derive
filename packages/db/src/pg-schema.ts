@@ -304,6 +304,31 @@ export const orgSettings = pgTable("org_settings", {
   settings: text("settings").notNull().default("{}"),
   created_at: text("created_at").notNull().$defaultFn(isoNow),
 })
+export const slackInstall = pgTable("slack_install", {
+  org_id: text("org_id").primaryKey(),
+  team_id: text("team_id").notNull(),
+  team_name: text("team_name"),
+  bot_token: text("bot_token").notNull(),
+  bot_user_id: text("bot_user_id"),
+  default_channel: text("default_channel"),
+  created_at: text("created_at").notNull().$defaultFn(isoNow),
+})
+export const slackThreadLink = pgTable(
+  "slack_thread_link",
+  {
+    id: text("id").primaryKey(),
+    org_id: text("org_id").notNull(),
+    artifact_id: text("artifact_id").notNull(),
+    thread_id: text("thread_id").notNull(),
+    channel: text("channel").notNull(),
+    message_ts: text("message_ts").notNull(),
+    created_at: text("created_at").notNull().$defaultFn(isoNow),
+  },
+  (t) => [
+    uniqueIndex("slack_thread_link_thread").on(t.thread_id),
+    uniqueIndex("slack_thread_link_msg").on(t.channel, t.message_ts),
+  ],
+)
 export const githubApp = pgTable("github_app", {
   id: text("id").primaryKey(),
   app_id: text("app_id").notNull(),
@@ -408,6 +433,8 @@ const TABLES = [
   collectionMember,
   repoSource,
   orgSettings,
+  slackInstall,
+  slackThreadLink,
   githubApp,
   githubInstallation,
   domain,

@@ -376,6 +376,19 @@ export interface MetaStore {
   getOrgSettings(orgId: string): Promise<OrgSettings>
   /** Persist the workspace's integration preferences (full object; upsert by org). */
   setOrgSettings(orgId: string, settings: OrgSettings): Promise<void>
+  // ---- Slack App (connected workspace + thread links) ---------------------
+  /** The Slack workspace connected to this Dock workspace, or null. */
+  getSlackInstall(orgId: string): Promise<SlackInstallRecord | null>
+  /** Upsert (connect / reconnect) the Slack install for a workspace. */
+  setSlackInstall(s: SlackInstallRecord): Promise<void>
+  /** Disconnect Slack for a workspace. */
+  deleteSlackInstall(orgId: string): Promise<void>
+  /** The Slack message a Dock thread is mirrored to (for threading replies), or null. */
+  getSlackThreadLinkByThread(threadId: string): Promise<SlackThreadLinkRecord | null>
+  /** The Dock thread a Slack message maps to (for reply-back), or null. */
+  getSlackThreadLinkByTs(channel: string, ts: string): Promise<SlackThreadLinkRecord | null>
+  /** Record the Slack message ↔ Dock thread mapping (idempotent on thread_id). */
+  setSlackThreadLink(l: SlackThreadLinkRecord): Promise<void>
   // ---- Domain mode: a hostname serving artifact(s) at its own origin ------
   // A domain row is either bound to one artifact (`artifact_id` set: a vanity
   // subdomain today, a per-artifact custom domain later — served at the host root)
@@ -937,6 +950,31 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
   githubPostComments: true,
   githubMirrorComments: true,
   slackPost: true,
+}
+
+/** A connected Slack workspace (one per Dock workspace). `bot_token` is the OAuth bot
+ *  token, AES-encrypted at rest. `default_channel` is where Dock posts when an artifact
+ *  has no more specific channel. */
+export interface SlackInstallRecord {
+  org_id: string
+  team_id: string
+  team_name: string | null
+  bot_token: string
+  bot_user_id: string | null
+  default_channel: string | null
+  created_at: string
+}
+
+/** Links a Dock comment thread to the Slack message Dock posted for it, so replies
+ *  thread under it (Dock→Slack) and Slack thread replies map back (Slack→Dock). */
+export interface SlackThreadLinkRecord {
+  id: string
+  org_id: string
+  artifact_id: string
+  thread_id: string
+  channel: string
+  message_ts: string
+  created_at: string
 }
 
 export interface GitHubAppRecord {
