@@ -479,6 +479,10 @@ export interface MetaStore {
   /** People search: opted-in (discoverable) profiles matching `q` on username or
    *  name, capped to `limit`. Empty `q` returns nothing (no full enumeration). */
   searchDiscoverableUsers(q: string, limit: number): Promise<UserProfile[]>
+  /** Browse the people directory: opted-in (discoverable) profiles with a claimed handle,
+   *  ordered by handle, capped to `limit`. The browse counterpart to
+   *  searchDiscoverableUsers — powers the People page's default view. */
+  listDiscoverableUsers(limit: number): Promise<UserProfile[]>
 
   // ---- Notifications (in-app, one row per recipient) --------------------
   createNotification(n: NewNotification): Promise<void>
@@ -542,6 +546,13 @@ export interface MetaStore {
    *  sync backfill path to stamp an existing tracked artifact's author from its last
    *  commit without republishing. `null` clears all four columns. */
   setArtifactAuthor(artifactId: string, author: GithubAuthor | null): Promise<void>
+  /** One-shot, idempotent: fill `artifact.author_id` for rows that predate the column,
+   *  where the artifact's `author_gh_id` maps to a Dock account (Better Auth `account`,
+   *  providerId='github'). Only touches rows with a null author_id and a known mapping;
+   *  a no-op once applied. Returns the number of rows updated. Best-effort (0 if the auth
+   *  tables are absent). Pre-feature hand-published work without a GitHub identity has no
+   *  recoverable author and is left null. */
+  backfillAuthorIds(): Promise<number>
   createAuditLog(a: NewAuditLog): Promise<void>
   /** Moderation history, newest first. One workspace's, or — super-admin, orgId
    *  undefined — the whole instance's. Optionally narrowed to one artifact. */

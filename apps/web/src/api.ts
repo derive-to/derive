@@ -513,6 +513,10 @@ export const api = {
   // Find opted-in people by @handle or name (signed-in; empty q → []).
   searchPeople: (q: string): Promise<{ users: PublicProfile[] }> =>
     f(`/v1/users/search?q=${encodeURIComponent(q)}`, opts()).then(j),
+  // The People directory: browse opted-in people (empty q) or search them (signed-in).
+  // Unlike searchPeople, an empty query BROWSES the discoverable set.
+  people: (q?: string): Promise<{ users: PublicProfile[] }> =>
+    f(`/v1/people${q ? `?q=${encodeURIComponent(q)}` : ""}`, opts()).then(j),
   // Upload a profile picture (raster image; server validates + stores it and sets
   // user.image to the served URL). Returns the new image URL.
   uploadAvatar: (file: File): Promise<{ image: string }> => {

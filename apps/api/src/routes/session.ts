@@ -102,6 +102,27 @@ export const sessionRoutes = (ctx: AppContext) => {
     })
   })
 
+  // The People directory — browse opted-in (discoverable) people to find someone to
+  // follow, the home the search backend never got. With `?q=` it searches; without, it
+  // BROWSES (the deliberate difference from /v1/users/search, which never enumerates).
+  // Discoverable is opt-in, so browsing only surfaces people who chose to be found.
+  // Signed-in only; public fields only (handle/name/avatar/role) — never email.
+  app.get("/v1/people", async (c) => {
+    if (!(await currentUser(c))) return fail(c, 401, "unauthenticated")
+    const q = (c.req.query("q") ?? "").trim()
+    const found = q
+      ? await meta.searchDiscoverableUsers(q, 60)
+      : await meta.listDiscoverableUsers(60)
+    return c.json({
+      users: found.map((u) => ({
+        username: u.username,
+        name: u.name,
+        image: u.image,
+        profession: u.profession ?? null,
+      })),
+    })
+  })
+
   // A public profile by handle — the GitHub-style discovery surface. Email is
   // intentionally omitted (private); the handle, name, avatar, stats, GitHub link, and
   // (for a signed-in viewer) whether they already follow are public. Readable by anyone.

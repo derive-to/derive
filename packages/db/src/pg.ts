@@ -1278,6 +1278,23 @@ export class PgMetaStore implements MetaStore {
       return []
     }
   }
+  // Idempotent backfill (see sqlite.ts) — stamp author_id from a known author_gh_id→user mapping.
+  async backfillAuthorIds(): Promise<number> {
+    try {
+      const res = await this.pool.query(
+        `UPDATE "artifact" SET author_id = (
+           SELECT u.id FROM "account" a JOIN "user" u ON u.id = a."userId"
+           WHERE a."providerId" = 'github' AND a."accountId" = "artifact".author_gh_id LIMIT 1)
+         WHERE author_id IS NULL AND author_gh_id IS NOT NULL
+           AND EXISTS (
+             SELECT 1 FROM "account" a JOIN "user" u ON u.id = a."userId"
+             WHERE a."providerId" = 'github' AND a."accountId" = "artifact".author_gh_id)`,
+      )
+      return res.rowCount ?? 0
+    } catch {
+      return 0
+    }
+  }
   async getUserByUsername(username: string): Promise<UserProfile | null> {
     try {
       const { rows } = await this.pool.query(
@@ -1334,7 +1351,9 @@ export class PgMetaStore implements MetaStore {
     const s = q.trim()
     if (!s) return []
     try {
-      const like = `%${s}%`
+      // Escape ILIKE metacharacters so a literal %/_/\ in the query matches itself —
+      // a search for "%" finds nothing, not everyone.
+      const like = `%${s.replace(/[\\%_]/g, (ch) => `\\${ch}`)}%`
       const { rows } = await this.pool.query(
         // discoverable IS NOT FALSE → true OR unset(null) both match (on by
         // default); only an explicit false (opted out) is excluded.
@@ -1343,6 +1362,19 @@ export class PgMetaStore implements MetaStore {
            AND (username ILIKE $1 OR name ILIKE $1)
          ORDER BY username LIMIT $2`,
         [like, limit],
+      )
+      return rows as UserProfile[]
+    } catch {
+      return []
+    }
+  }
+  async listDiscoverableUsers(limit: number): Promise<UserProfile[]> {
+    try {
+      const { rows } = await this.pool.query(
+        `SELECT id, name, image, username, profession, about FROM "user"
+         WHERE discoverable IS NOT FALSE AND username IS NOT NULL
+         ORDER BY username LIMIT $1`,
+        [limit],
       )
       return rows as UserProfile[]
     } catch {

@@ -159,6 +159,23 @@ export function createD1Store(d1: D1Database): MetaStore {
         return []
       }
     },
+    // Idempotent backfill (see sqlite.ts) — stamp author_id from a known author_gh_id→user mapping.
+    backfillAuthorIds: async (): Promise<number> => {
+      try {
+        const r = (await db.run(
+          sql`UPDATE artifact SET author_id = (
+                SELECT u.id FROM account a JOIN user u ON u.id = a.userId
+                WHERE a.providerId = 'github' AND a.accountId = artifact.author_gh_id LIMIT 1)
+              WHERE author_id IS NULL AND author_gh_id IS NOT NULL
+                AND EXISTS (
+                  SELECT 1 FROM account a JOIN user u ON u.id = a.userId
+                  WHERE a.providerId = 'github' AND a.accountId = artifact.author_gh_id)`,
+        )) as { meta?: { changes?: number } }
+        return r.meta?.changes ?? 0
+      } catch {
+        return 0
+      }
+    },
     getUserByUsername: async (username: string): Promise<UserProfile | null> => {
       try {
         return (
@@ -201,13 +218,25 @@ export function createD1Store(d1: D1Database): MetaStore {
       const s = q.trim().toLowerCase()
       if (!s) return []
       try {
-        const like = `%${s}%`
+        // Escape LIKE metacharacters so a literal %/_/\ matches itself, not "anything".
+        const like = `%${s.replace(/[\\%_]/g, (ch) => `\\${ch}`)}%`
         return (await db.all(
           // discoverable IS NOT 0 → true OR unset(null) both match (on by default);
           // only an explicit 0 (opted out) is excluded.
           sql`SELECT id, name, image, username, profession, about FROM user
               WHERE discoverable IS NOT 0 AND username IS NOT NULL
-                AND (lower(username) LIKE ${like} OR lower(name) LIKE ${like})
+                AND (lower(username) LIKE ${like} ESCAPE '\\' OR lower(name) LIKE ${like} ESCAPE '\\')
+              ORDER BY username LIMIT ${limit}`,
+        )) as UserProfile[]
+      } catch {
+        return []
+      }
+    },
+    listDiscoverableUsers: async (limit: number): Promise<UserProfile[]> => {
+      try {
+        return (await db.all(
+          sql`SELECT id, name, image, username, profession, about FROM user
+              WHERE discoverable IS NOT 0 AND username IS NOT NULL
               ORDER BY username LIMIT ${limit}`,
         )) as UserProfile[]
       } catch {
