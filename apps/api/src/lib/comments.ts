@@ -21,6 +21,14 @@ export type CommentMeta = {
   // Set when the thread flips to `addressed`; cleared when that proposal is
   // approved (→ resolved) or withdrawn / sent back for changes (→ open).
   addressed_by?: string
+  // Provenance for cross-channel sync. Set when a comment ORIGINATED in GitHub
+  // (mirrored in) or, once Dock has posted a comment OUT to GitHub, the id GitHub
+  // assigned it. Either presence means "don't re-post this comment to GitHub" —
+  // the loop-prevention marker for bidirectional PR comment sync.
+  github?: { comment_id: number; kind: "issue" | "review" }
+  // Likewise for the connected Slack App: a comment that came FROM a Slack thread
+  // reply (so it isn't echoed back), or the Slack message ts a Dock comment produced.
+  slack?: { ts: string; channel: string }
 }
 
 export const parseMeta = (m: string | null): CommentMeta => {

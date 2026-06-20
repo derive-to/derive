@@ -43,6 +43,7 @@ import type {
   NewWebhook,
   NotificationRecord,
   OAuthGrant,
+  OrgSettings,
   ProposalRecord,
   ProposalState,
   ReportRecord,
@@ -58,6 +59,7 @@ import type {
   WebhookRecord,
   WorkspaceRecord,
 } from "@dock/core"
+import { DEFAULT_ORG_SETTINGS } from "@dock/core"
 import {
   and,
   asc,
@@ -93,6 +95,7 @@ import {
   githubInstallation,
   membership,
   notification,
+  orgSettings,
   PG_SCHEMA_STATEMENTS,
   proposal,
   report,
@@ -980,6 +983,23 @@ export class PgMetaStore implements MetaStore {
   async setGithubApp(a: GitHubAppRecord): Promise<void> {
     const { id: _id, created_at: _created, ...set } = a
     await this.db.insert(githubApp).values(a).onConflictDoUpdate({ target: githubApp.id, set })
+  }
+  async getOrgSettings(orgId: string): Promise<OrgSettings> {
+    const rows = await this.db.select().from(orgSettings).where(eq(orgSettings.org_id, orgId))
+    let parsed: Partial<OrgSettings> = {}
+    try {
+      if (rows[0]?.settings) parsed = JSON.parse(rows[0].settings) as Partial<OrgSettings>
+    } catch {}
+    return { ...DEFAULT_ORG_SETTINGS, ...parsed }
+  }
+  async setOrgSettings(orgId: string, settings: OrgSettings): Promise<void> {
+    await this.db
+      .insert(orgSettings)
+      .values({ org_id: orgId, settings: JSON.stringify(settings) })
+      .onConflictDoUpdate({
+        target: orgSettings.org_id,
+        set: { settings: JSON.stringify(settings) },
+      })
   }
   async upsertGithubInstallation(i: GitHubInstallationRecord): Promise<GitHubInstallationRecord> {
     const rows = await this.db

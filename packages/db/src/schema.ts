@@ -329,6 +329,14 @@ export const repoSource = sqliteTable("repo_source", {
 // The instance's GitHub App credentials, captured once via the manifest flow
 // (one-click "Set up GitHub App"). A single row, id = 'default'. The three
 // secret columns are AES-GCM encrypted at rest (see lib/crypto).
+// Per-workspace integration switches (email / GitHub post + mirror / Slack). One row
+// per org; `settings` is a JSON OrgSettings blob. Absent row ⇒ defaults (all on).
+export const orgSettings = sqliteTable("org_settings", {
+  org_id: text("org_id").primaryKey(),
+  settings: text("settings").notNull().default("{}"),
+  created_at: text("created_at").notNull().default(now),
+})
+
 export const githubApp = sqliteTable("github_app", {
   id: text("id").primaryKey(),
   app_id: text("app_id").notNull(),
@@ -447,6 +455,7 @@ const TABLES = [
   collectionItem,
   collectionMember,
   repoSource,
+  orgSettings,
   githubApp,
   githubInstallation,
   domain,

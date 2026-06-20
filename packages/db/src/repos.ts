@@ -40,6 +40,7 @@ import type {
   NewWebhook,
   NotificationRecord,
   OAuthGrant,
+  OrgSettings,
   ProposalRecord,
   ProposalState,
   ReportRecord,
@@ -52,6 +53,7 @@ import type {
   WebhookRecord,
   WorkspaceRecord,
 } from "@dock/core"
+import { DEFAULT_ORG_SETTINGS } from "@dock/core"
 import {
   and,
   asc,
@@ -90,6 +92,7 @@ import {
   githubInstallation,
   membership,
   notification,
+  orgSettings,
   proposal,
   report,
   repoSource,
@@ -994,6 +997,26 @@ export function makeRepos(db: SqliteDb) {
     const { id: _id, created_at: _created, ...set } = a
     await db.insert(githubApp).values(a).onConflictDoUpdate({ target: githubApp.id, set }).run()
   }
+
+  // ---- Workspace integration settings -------------------------------------
+  const getOrgSettings = async (orgId: string): Promise<OrgSettings> => {
+    const row = await db.select().from(orgSettings).where(eq(orgSettings.org_id, orgId)).get()
+    let parsed: Partial<OrgSettings> = {}
+    try {
+      if (row?.settings) parsed = JSON.parse(row.settings) as Partial<OrgSettings>
+    } catch {}
+    return { ...DEFAULT_ORG_SETTINGS, ...parsed }
+  }
+  const setOrgSettings = async (orgId: string, settings: OrgSettings): Promise<void> => {
+    await db
+      .insert(orgSettings)
+      .values({ org_id: orgId, settings: JSON.stringify(settings) })
+      .onConflictDoUpdate({
+        target: orgSettings.org_id,
+        set: { settings: JSON.stringify(settings) },
+      })
+      .run()
+  }
   const upsertGithubInstallation = async (
     i: GitHubInstallationRecord,
   ): Promise<GitHubInstallationRecord> =>
@@ -1411,6 +1434,8 @@ export function makeRepos(db: SqliteDb) {
     managedArtifactIds,
     getGithubApp,
     setGithubApp,
+    getOrgSettings,
+    setOrgSettings,
     upsertGithubInstallation,
     getGithubInstallation,
     listGithubInstallations,

@@ -299,6 +299,11 @@ export const repoSource = pgTable("repo_source", {
   created_by: text("created_by").notNull(),
   created_at: text("created_at").notNull().$defaultFn(isoNow),
 })
+export const orgSettings = pgTable("org_settings", {
+  org_id: text("org_id").primaryKey(),
+  settings: text("settings").notNull().default("{}"),
+  created_at: text("created_at").notNull().$defaultFn(isoNow),
+})
 export const githubApp = pgTable("github_app", {
   id: text("id").primaryKey(),
   app_id: text("app_id").notNull(),
@@ -402,6 +407,7 @@ const TABLES = [
   collectionItem,
   collectionMember,
   repoSource,
+  orgSettings,
   githubApp,
   githubInstallation,
   domain,

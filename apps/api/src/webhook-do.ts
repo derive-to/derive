@@ -2,6 +2,7 @@ import type { D1Database, DurableObjectState } from "@cloudflare/workers-types"
 import { createD1Store } from "@dock/db/d1"
 import { cloudflareEmailSender, type SendEmailBinding } from "./email-cf"
 import { emailDeliverySender } from "./lib/email"
+import { makeGithubCommentSender } from "./lib/github-comments"
 import { type ChannelSenders, edgeGuard, runDeliveryTick } from "./webhooks"
 
 // While the outbox has work, re-tick on this cadence so a burst drains promptly and
@@ -20,6 +21,9 @@ export interface WebhookOutboxEnv {
   DB: D1Database
   SEND_EMAIL?: SendEmailBinding
   EMAIL_FROM?: string
+  // The auth secret doubles as the at-rest encryption key for stored GitHub App
+  // credentials — the GitHub comment sender needs it to mint installation tokens.
+  DOCK_AUTH_SECRET?: string
 }
 
 /**
@@ -44,11 +48,16 @@ export class WebhookOutbox {
     env: WebhookOutboxEnv,
   ) {
     this.store = createD1Store(env.DB)
-    // Email delivery for this tier, when the Cloudflare Email Service binding is bound.
-    this.senders =
-      env.SEND_EMAIL && env.EMAIL_FROM
+    // First-party channel senders for this tier. Email when the Cloudflare Email
+    // Service binding is bound; GitHub PR comment write-back when the auth secret
+    // (the App-credential encryption key) is present.
+    this.senders = {
+      ...(env.SEND_EMAIL && env.EMAIL_FROM
         ? { email: emailDeliverySender(cloudflareEmailSender(env.SEND_EMAIL, env.EMAIL_FROM)) }
-        : {}
+        : {}),
+      github_review_comment: makeGithubCommentSender(this.store, env.DOCK_AUTH_SECRET),
+      github_issue_comment: makeGithubCommentSender(this.store, env.DOCK_AUTH_SECRET),
+    }
   }
 
   // The Worker pokes this (and the cron backstop hits it) to wake the drainer. Arm the

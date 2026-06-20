@@ -14,6 +14,7 @@ import {
   listInstallationRepos,
   verifyWebhookSignature,
 } from "../lib/github-app"
+import { ingestGithubPrComment } from "../lib/github-comments"
 import { fail, readJson } from "../lib/http"
 import { effectiveToken, isSyncing, runToCompletion } from "../lib/sync-runner"
 import { log } from "../log"
@@ -61,6 +62,17 @@ interface GitHubWebhookPayload {
     head?: { sha?: string; ref?: string }
     base?: { ref?: string }
   }
+  // `issue_comment` (PR conversation) + `pull_request_review_comment` (inline) — mirrored
+  // back into the Dock artifact. `issue.pull_request` presence confirms a PR (not a plain
+  // issue); the review-comment variant carries `path`/`diff_hunk` for anchoring.
+  issue?: { number?: number; pull_request?: unknown }
+  comment?: {
+    id?: number
+    body?: string
+    path?: string
+    diff_hunk?: string
+    user?: { login?: string; type?: string }
+  }
 }
 
 /**
@@ -71,7 +83,7 @@ interface GitHubWebhookPayload {
  * connection, the App install handshake, and drives the engine (lib/sync).
  */
 export const syncRoutes = (ctx: AppContext) => {
-  const { meta, deps, currentUser, activeWorkspace, workspaceCan, background } = ctx
+  const { meta, deps, bus, currentUser, activeWorkspace, workspaceCan, background } = ctx
   const app = new Hono()
 
   // The instance App, with its three secret columns decrypted for use. Null when
@@ -817,6 +829,43 @@ export const syncRoutes = (ctx: AppContext) => {
               }
             }
           }
+        }
+      }
+    } else if (event === "issue_comment" || event === "pull_request_review_comment") {
+      // Mirror a PR comment made on GitHub back into the Dock artifact (the inbound half
+      // of bidirectional comment sync). Only `created`; only for PRs that Dock previews.
+      const installationId = payload.installation?.id ? String(payload.installation.id) : null
+      const fullName = payload.repository?.full_name
+      const prNumber =
+        event === "issue_comment" ? payload.issue?.number : payload.pull_request?.number
+      const isPr = event === "pull_request_review_comment" || !!payload.issue?.pull_request
+      const cmt = payload.comment
+      if (
+        payload.action === "created" &&
+        installationId &&
+        fullName &&
+        prNumber &&
+        isPr &&
+        cmt?.id &&
+        cmt.body
+      ) {
+        const lc = fullName.toLowerCase()
+        const preview = (await meta.listRepoSourcesByInstallation(installationId)).find(
+          (s) => s.pr_number === prNumber && s.repo.toLowerCase() === lc,
+        )
+        // Respect the workspace toggle; skip silently when the PR isn't mirrored in Dock.
+        if (preview && (await meta.getOrgSettings(preview.org_id)).githubMirrorComments) {
+          const created = await ingestGithubPrComment(meta, preview, {
+            ghCommentId: cmt.id,
+            kind: event === "pull_request_review_comment" ? "review" : "issue",
+            authorLogin: cmt.user?.login ?? "github",
+            authorType: cmt.user?.type,
+            body: cmt.body,
+            path: cmt.path,
+            diffHunk: cmt.diff_hunk,
+          })
+          // Signal-only realtime nudge: open viewers refetch the (account-gated) comments.
+          if (created) bus.publish(created.artifact_id, { type: "comment.created" })
         }
       }
     } else if (event === "installation") {

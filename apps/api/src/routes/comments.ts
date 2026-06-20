@@ -11,6 +11,7 @@ import {
   quoteOf,
   REACTIONS,
 } from "../lib/comments"
+import { enqueueGithubPrComment } from "../lib/github-comments"
 import { fail, readJson } from "../lib/http"
 import { enqueueCommentEmails } from "../lib/notify-email"
 
@@ -20,6 +21,7 @@ export const commentRoutes = (ctx: AppContext) => {
   const {
     deps,
     meta,
+    blobs,
     bus,
     notify,
     background,
@@ -203,12 +205,18 @@ export const commentRoutes = (ctx: AppContext) => {
             quote: quoteOf(created.anchor),
             thread_id: created.thread_id,
           })
+        // Channel fan-out is gated per workspace (Settings → integrations toggles).
+        const settings = await meta.getOrgSettings(artifact.org_id)
         // Email the eligible recipients (mentioned / in-thread / workspace owners),
         // pre-rendered onto the same retrying outbox as webhooks.
-        await enqueueCommentEmails({ meta, baseUrl: deps.baseUrl }, artifact, created, {
-          mentionIds: new Set(mentions.map((m) => m.id)),
-          actorId: acting?.id ?? null,
-        })
+        if (settings.emailNotifications)
+          await enqueueCommentEmails({ meta, baseUrl: deps.baseUrl }, artifact, created, {
+            mentionIds: new Set(mentions.map((m) => m.id)),
+            actorId: acting?.id ?? null,
+          })
+        // Mirror onto the PR when this artifact is PR-sourced (no-op otherwise).
+        if (settings.githubPostComments)
+          await enqueueGithubPrComment({ meta, blobs, baseUrl: deps.baseUrl }, artifact, created)
       })(),
     )
     return c.json(commentJson(created), 201)

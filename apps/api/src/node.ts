@@ -13,6 +13,7 @@ import { type AuthDb, makeAuth, migrateAuth } from "./auth-config"
 import { loadConfig, resolveAuthSecret, resolveDefaultOrg } from "./config"
 import { customDomainsFromEnv } from "./lib/cloudflare-saas"
 import { emailDeliverySender, logEmailSender, resendEmailSender } from "./lib/email"
+import { makeGithubCommentSender } from "./lib/github-comments"
 import { mountWeb } from "./lib/serve-web"
 import { makeShutdown } from "./lifecycle"
 import { log } from "./log"
@@ -124,6 +125,10 @@ const channelSenders: ChannelSenders = {
       ? resendEmailSender(cfg.resendApiKey, cfg.emailFrom)
       : logEmailSender(),
   ),
+  // GitHub PR comment write-back mints an installation token per delivery from the
+  // stored App (encrypted with the auth secret).
+  github_review_comment: makeGithubCommentSender(meta, authSecret),
+  github_issue_comment: makeGithubCommentSender(meta, authSecret),
 }
 const webhookWorker = startWebhookWorker(meta, nodeDnsGuard, channelSenders)
 

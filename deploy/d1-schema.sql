@@ -229,6 +229,12 @@ CREATE TABLE IF NOT EXISTS repo_source (
   FOREIGN KEY (collection_id) REFERENCES collection(id)
 );
 
+CREATE TABLE IF NOT EXISTS org_settings (
+  org_id TEXT PRIMARY KEY,
+  settings TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+
 CREATE TABLE IF NOT EXISTS github_app (
   id TEXT PRIMARY KEY,
   app_id TEXT NOT NULL,

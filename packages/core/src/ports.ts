@@ -370,6 +370,12 @@ export interface MetaStore {
   /** A workspace's installations, newest first. */
   listGithubInstallations(orgId: string): Promise<GitHubInstallationRecord[]>
   deleteGithubInstallation(installationId: string): Promise<void>
+  // ---- Workspace integration settings (enable/disable each channel) --------
+  /** The workspace's integration preferences, merged over defaults (so a workspace
+   *  that never saved any returns all-enabled). */
+  getOrgSettings(orgId: string): Promise<OrgSettings>
+  /** Persist the workspace's integration preferences (full object; upsert by org). */
+  setOrgSettings(orgId: string, settings: OrgSettings): Promise<void>
   // ---- Domain mode: a hostname serving artifact(s) at its own origin ------
   // A domain row is either bound to one artifact (`artifact_id` set: a vanity
   // subdomain today, a per-artifact custom domain later — served at the host root)
@@ -911,6 +917,28 @@ export interface NewRepoSource {
 /** The instance's GitHub App credentials (single row, id = "default"), captured
  *  via the one-click manifest flow. The three secret columns are encrypted at
  *  rest by the route layer before they reach the store. */
+/** Per-workspace integration switches: each channel behaviour the workspace can turn
+ *  on or off. Stored as one JSON row per org; absent keys fall back to the defaults
+ *  below (everything on), so connecting an integration "just works" until toggled. */
+export interface OrgSettings {
+  /** Send notification emails on comments/mentions. */
+  emailNotifications: boolean
+  /** Post a Dock comment to the PR (inline review or top-level) when it's on a
+   *  PR-sourced artifact. */
+  githubPostComments: boolean
+  /** Mirror PR comments made on GitHub back into the Dock artifact. */
+  githubMirrorComments: boolean
+  /** Post Dock activity to the connected Slack workspace. */
+  slackPost: boolean
+}
+
+export const DEFAULT_ORG_SETTINGS: OrgSettings = {
+  emailNotifications: true,
+  githubPostComments: true,
+  githubMirrorComments: true,
+  slackPost: true,
+}
+
 export interface GitHubAppRecord {
   id: string
   /** Numeric GitHub App id, stored as text. */
