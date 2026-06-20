@@ -954,6 +954,24 @@ export interface NewArtifactMember {
 export type WebhookKind = "generic" | "slack"
 export type DeliveryStatus = "pending" | "delivered" | "dead"
 
+/**
+ * What an outbox row delivers to. `generic`/`slack` are user-configured webhooks
+ * (a `webhook` row). The rest are first-party channels Dock fans out to directly —
+ * email (Cloudflare Email Service), a connected Slack App (`chat.postMessage`), and
+ * GitHub PR comments (inline review or top-level issue comment). Internal-channel
+ * rows carry `webhook_id = "internal"` (no backing `webhook` row); the per-kind
+ * sender knows how to build credentials + destination from the payload.
+ */
+export type DeliveryKind =
+  | WebhookKind
+  | "slack_app"
+  | "github_review_comment"
+  | "github_issue_comment"
+  | "email"
+
+/** Sentinel `webhook_id` for outbox rows not tied to a configured `webhook` row. */
+export const INTERNAL_DELIVERY = "internal"
+
 export interface WebhookRecord {
   id: string
   org_id: string
@@ -980,10 +998,14 @@ export interface NewWebhook {
 
 export interface DeliveryRecord {
   id: string
+  /** A `webhook` row id, or `INTERNAL_DELIVERY` for a first-party channel row. */
   webhook_id: string
+  /** Destination URL for HTTP kinds; a per-kind hint (or empty) for channel kinds. */
   url: string
+  /** Signing/bearer secret for HTTP kinds; empty for channel kinds (the sender
+   *  resolves credentials from the org/payload at delivery time). */
   secret: string
-  kind: WebhookKind
+  kind: DeliveryKind
   event_type: string
   payload: string
   status: DeliveryStatus
@@ -997,7 +1019,7 @@ export interface NewDelivery {
   webhook_id: string
   url: string
   secret: string
-  kind: WebhookKind
+  kind: DeliveryKind
   event_type: string
   payload: string
 }
