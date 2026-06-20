@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest"
-import { needsReflow, reflowHtml } from "./reflow"
+import { renderDocShell, sanitizeHtml } from "./md"
+import { extractTitle, needsReflow, readerView, reflowHtml } from "./reflow"
 
 describe("needsReflow", () => {
   it("flags a document with no viewport meta", () => {
@@ -65,5 +66,30 @@ describe("reflowHtml", () => {
     const out = reflowHtml("<body>fragment</body>")
     expect(out.startsWith('<meta name="viewport"')).toBe(true)
     expect(out).toContain("fragment")
+  })
+})
+
+describe("readerView", () => {
+  const reader = (html: string) => readerView(html, renderDocShell, sanitizeHtml)
+
+  it("strips author layout/scripts/styles and re-renders in the responsive shell", () => {
+    const src =
+      "<!doctype html><html><head><title>Spec</title><style>.p{width:1100px}</style></head>" +
+      '<body><div class="p" style="width:1100px"><h2>Overview</h2><p>hello world</p>' +
+      "<script>alert(1)</script></div></body></html>"
+    const out = reader(src)
+    expect(out).toContain("width=device-width") // responsive shell
+    expect(out).toContain("<main>")
+    expect(out).toContain("Overview")
+    expect(out).toContain("hello world")
+    expect(out).not.toContain("1100px") // author fixed width is gone (inline + <style>)
+    expect(out).not.toContain("alert(1)") // script stripped
+    expect(out).not.toContain('class="p"') // author classes dropped by sanitize
+  })
+
+  it("derives the title from <title>, falling back to the first <h1>", () => {
+    expect(extractTitle("<html><head><title>  My Doc </title></head></html>")).toBe("My Doc")
+    expect(extractTitle("<body><h1>Heading <b>X</b></h1></body>")).toBe("Heading X")
+    expect(extractTitle("<body><p>no title here</p></body>")).toBe(null)
   })
 })

@@ -50,9 +50,13 @@ const PAGE_CSS = `
   hr{border:0;border-top:1px solid var(--line);margin:2.2em 0}
 `
 
-export async function renderMarkdown(source: string, title: string | null): Promise<string> {
-  const body = sanitizer.process(await marked.parse(source, { gfm: true }))
-  return `<!doctype html>
+/** XSS-sanitize an HTML fragment with Dock's content whitelist (drops scripts, styles,
+ *  inline style/class attributes — so re-rendered content can't carry layout or JS). */
+export const sanitizeHtml = (html: string): string => sanitizer.process(html)
+
+/** Wrap clean body HTML in Dock's responsive document shell (the same mobile-safe
+ *  typography the markdown renderer uses). Shared by renderMarkdown + Reader view. */
+export const renderDocShell = (bodyHtml: string, title: string | null): string => `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -60,8 +64,11 @@ export async function renderMarkdown(source: string, title: string | null): Prom
 <title>${escapeHtml(title ?? "Document")}</title>
 <style>${PAGE_CSS}</style>
 </head>
-<body><main>${body}</main>${SELECTION_SCRIPT}</body>
+<body><main>${bodyHtml}</main>${SELECTION_SCRIPT}</body>
 </html>`
+
+export async function renderMarkdown(source: string, title: string | null): Promise<string> {
+  return renderDocShell(sanitizeHtml(await marked.parse(source, { gfm: true })), title)
 }
 
 export const escapeHtml = (s: string): string =>
