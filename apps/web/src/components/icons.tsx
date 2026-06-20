@@ -6,6 +6,7 @@
 // exactly one place.
 import {
   BellIcon,
+  BookOpenIcon,
   BuildingsIcon,
   CaretDownIcon,
   ChartBarIcon,
@@ -87,6 +88,7 @@ const REG = {
   review: [GitPullRequestIcon, "text-review"],
   pin: [PushPinIcon, "text-gold"],
   views: [EyeIcon, "text-muted-foreground"],
+  reader: [BookOpenIcon, "text-primary"],
   removed: [ProhibitIcon, "text-muted-foreground"],
   present: [CornersOutIcon, "text-primary"],
   lock: [LockSimpleIcon, "text-muted-foreground"],
