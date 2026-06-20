@@ -249,6 +249,57 @@ export function runStoreContract(
       expect(await store.listComments(a.id, { state: "open" })).toHaveLength(0)
       expect(await store.listComments(a.id, { state: "resolved" })).toHaveLength(1)
     })
+
+    it("computes per-artifact comment signals for a viewer (open threads, mentions, participation)", async () => {
+      const me = `u_${uuid()}`
+      const other = `u_${uuid()}`
+      const a = await store.createArtifact(newArtifact())
+      const mention = JSON.stringify({ mentions: [{ id: me, name: "Me" }] })
+      // t1: OPEN, authored by other, @mentions me → mentions_me.
+      const c1 = await store.createComment({
+        id: uuid(),
+        artifact_id: a.id,
+        thread_id: "t1",
+        base_version: 1,
+        body_md: "hi",
+        author: "other",
+        author_id: other,
+      })
+      await store.updateComment(c1.id, { meta: mention })
+      // t2: OPEN, authored by me → i_participated.
+      await store.createComment({
+        id: uuid(),
+        artifact_id: a.id,
+        thread_id: "t2",
+        base_version: 1,
+        body_md: "mine",
+        author: "me",
+        author_id: me,
+      })
+      // t3: RESOLVED, mentions me → must NOT count (only open threads signal).
+      const c3 = await store.createComment({
+        id: uuid(),
+        artifact_id: a.id,
+        thread_id: "t3",
+        base_version: 1,
+        body_md: "done",
+        author: "other",
+        author_id: other,
+      })
+      await store.updateComment(c3.id, { meta: mention })
+      await store.setThreadState(a.id, "t3", "resolved")
+
+      // The viewer sees 2 open threads, is mentioned, and participated.
+      const sig = (await store.commentSignals([a.id], me))[a.id]
+      expect(sig).toEqual({ open_threads: 2, mentions_me: true, i_participated: true })
+      // An anonymous viewer gets the thread count but no personal flags.
+      const anon = (await store.commentSignals([a.id], null))[a.id]
+      expect(anon).toEqual({ open_threads: 2, mentions_me: false, i_participated: false })
+      // Empty input ⇒ {}; an artifact with no comments has no entry.
+      expect(await store.commentSignals([], me)).toEqual({})
+      const blank = await store.createArtifact(newArtifact())
+      expect((await store.commentSignals([blank.id], me))[blank.id]).toBeUndefined()
+    })
   })
 
   describe(`${label}: shares, favorites, tags`, () => {
