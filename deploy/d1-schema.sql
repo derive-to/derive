@@ -352,6 +352,8 @@ CREATE INDEX IF NOT EXISTS domain_artifact ON domain (artifact_id);
 
 CREATE INDEX IF NOT EXISTS proposal_artifact_state ON proposal (artifact_id, state);
 
+CREATE INDEX IF NOT EXISTS comment_artifact_state ON comment (artifact_id, state);
+
 CREATE INDEX IF NOT EXISTS report_state ON report (state, created_at);
 
 CREATE INDEX IF NOT EXISTS audit_artifact ON audit_log (artifact_id, created_at);
