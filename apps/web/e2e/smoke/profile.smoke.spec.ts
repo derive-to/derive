@@ -45,6 +45,29 @@ test("follow a person → their public work shows on the profile and in the foll
   await expect(bob.getByTestId(`follow-${maya.username}`)).toHaveAttribute("aria-pressed", "true")
 })
 
+// Ambient follow: you can follow a person straight from the command-palette people
+// search, without going to their profile first.
+test("follow a person from the command-palette people search", async ({ owner, secondUser }) => {
+  const bob = secondUser.page
+  const maya = (await (await owner.request.get("/v1/me")).json()).user as { username: string }
+
+  await bob.goto("/")
+  await bob.getByTestId("open-command-palette").click()
+  // Owner's display name is "E2E Tester" (secondUser is "Second User"), so "Tester"
+  // resolves to exactly one discoverable person.
+  await bob.getByPlaceholder(/Search artifacts, people/).fill("Tester")
+
+  const followBtn = bob.getByTestId(`follow-${maya.username}`)
+  await expect(followBtn).toBeVisible()
+  await expect(followBtn).toHaveAttribute("aria-pressed", "false")
+  await followBtn.click()
+  await expect(followBtn).toHaveAttribute("aria-pressed", "true")
+
+  // And the follow really landed: it shows on the person's profile.
+  await bob.goto(`/u/${maya.username}`)
+  await expect(bob.getByTestId(`follow-${maya.username}`)).toHaveAttribute("aria-pressed", "true")
+})
+
 // A person can't follow themselves: the Follow button never renders on your own profile.
 test("the Follow button is absent on your own profile", async ({ owner }) => {
   const me = (await (await owner.request.get("/v1/me")).json()).user as { username: string }
