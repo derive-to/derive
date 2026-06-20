@@ -80,6 +80,16 @@ if (cfg.databaseUrl) {
     .run()
 }
 
+// Backfill author_id on artifacts that predate the column: where a GitHub-synced
+// artifact's commit author (author_gh_id) maps to a Dock account, attribute it to that
+// user so their synced work surfaces on their profile + feed by author_id directly.
+// Idempotent — only fills nulls that have a known GitHub→user mapping; a no-op once done.
+// Runs after the auth tables exist. Hand-published pre-feature work without a GitHub
+// identity has no recoverable author and stays null (it re-stamps on its next publish).
+void meta.backfillAuthorIds().then((n) => {
+  if (n > 0) log.info(`backfilled author_id on ${n} artifact(s)`)
+})
+
 const defaultOrg = resolveDefaultOrg(cfg.dataDir)
 
 // One-time rekey of the pre-multi-workspace "local" sentinel onto the real

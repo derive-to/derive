@@ -105,6 +105,7 @@ export function NavRail() {
   const isAll = onLibrary && !search.f && !search.scope && !search.tag && !search.collection
   const isFav = onLibrary && search.f === "favorites"
   const isFollowing = onLibrary && search.scope === "following"
+  const onPeople = loc.pathname === "/people"
   const tags = summary?.tags ?? []
   // Full content in the mobile drawer; only the avatar in the collapsed desktop rail.
   const railMode = collapsed && !isMobile
@@ -254,6 +255,22 @@ export function NavRail() {
           testId="nav-following"
           onClick={closeDrawer}
         />
+        {/* People directory — a real route, not a library filter, so it's its own Link
+            (SideItem always links to "/"). Find + follow discoverable people. */}
+        <Link
+          to="/people"
+          title="People"
+          aria-label="People"
+          data-testid="nav-people"
+          aria-current={onPeople ? "page" : undefined}
+          onClick={closeDrawer}
+          className={cn(ROW_BASE, onPeople && ROW_ACTIVE, railMode && ROW_RAIL)}
+        >
+          <span className="flex w-[18px] shrink-0 items-center justify-center">
+            <Icon name="user" size={18} />
+          </span>
+          {!railMode && <span className="overflow-hidden text-ellipsis">People</span>}
+        </Link>
         {!railMode && (
           <SideLabel
             action={

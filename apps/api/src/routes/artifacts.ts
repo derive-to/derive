@@ -39,6 +39,7 @@ export const artifactRoutes = (ctx: AppContext) => {
     versionWindowMs,
     bus,
     notify,
+    background,
     bearer,
     currentUser,
     actingUser,
@@ -279,11 +280,12 @@ export const artifactRoutes = (ctx: AppContext) => {
     const passwordHash = visibility === "password" && password ? hashPassword(password) : undefined
 
     try {
-      // The authenticated principal behind this publish (signed-in user or agent).
-      // Resolved once: `name` is the display author; `id` attributes the version to a
-      // Dock user so it shows on their profile + flows to their followers. A bare
-      // static-token publish has no principal → null id (stays off any human profile).
+      // The authenticated principal behind this publish (signed-in user or agent) — its
+      // `name` is the display author. The Dock-USER behind it (null for an agent / bare
+      // static token) is what we attribute work to: `author_id` keys a person's profile
+      // + their followers' feed, so it must be a real user id, never an agent principal.
       const actor = await actingUser(c)
+      const user = await currentUser(c)
       const { artifact, version } = await publish(
         meta,
         blobs,
@@ -301,7 +303,7 @@ export const artifactRoutes = (ctx: AppContext) => {
           // always attributed to a real principal (the token's optional `author`
           // label is the one headless exception).
           author: actor?.name ?? str(body["author"]),
-          authorId: actor?.id ?? null,
+          authorId: user?.id ?? null,
           name: str(body["name"]),
           orgId: org,
           visibility,
@@ -319,25 +321,33 @@ export const artifactRoutes = (ctx: AppContext) => {
         message: version.message,
         author: version.author,
       })
-      // Fan out to the publisher's followers: "someone you follow published X". Only for
-      // a real signed-in user (agent/token publishes have no human followers) and only
-      // for publicly-visible work, so a follow never leaks a private title. Bounded list.
-      if (actor?.id && artifact.visibility === "public") {
-        for (const follower of await meta.listFollowers(actor.id, 100)) {
-          if (follower.id === actor.id) continue
-          await meta.createNotification({
-            id: newId("ntf"),
-            user_id: follower.id,
-            actor: actor.name ?? "Someone",
-            kind: "publish",
-            artifact_id: artifact.id,
-            artifact_short_id: artifact.short_id,
-            artifact_title: artifact.title,
-            thread_id: "",
-            comment_id: "",
-            preview: artifact.title ?? "published an update",
-          })
-        }
+      // Fan out to the publisher's followers: "someone you follow published X". Gated to:
+      // a real signed-in USER (agents/tokens have no human followers), a publicly-visible
+      // artifact (a follow never surfaces a private title), and a NEW artifact only —
+      // `shortId` means a republish/new version, which would otherwise spam followers on
+      // every edit. Done in the background so a popular author's fan-out never adds to
+      // publish latency (it's off the response path, like the comment-mention fan-out).
+      if (!shortId && user?.id && artifact.visibility === "public") {
+        const author = user
+        background(
+          (async () => {
+            for (const follower of await meta.listFollowers(author.id, 200)) {
+              if (follower.id === author.id) continue
+              await meta.createNotification({
+                id: newId("ntf"),
+                user_id: follower.id,
+                actor: author.name ?? author.username ?? "Someone",
+                kind: "publish",
+                artifact_id: artifact.id,
+                artifact_short_id: artifact.short_id,
+                artifact_title: artifact.title,
+                thread_id: "",
+                comment_id: "",
+                preview: artifact.title ?? "published something new",
+              })
+            }
+          })(),
+        )
       }
       // Republish can resolve comment threads in the same call.
       const resolves = body["resolves"]
