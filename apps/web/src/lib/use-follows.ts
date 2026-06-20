@@ -23,17 +23,26 @@ export function useFollows() {
   const qc = useQueryClient()
   const { data: follows = [] } = useQuery(followsQuery())
 
-  const { authors, paths } = useMemo(() => {
+  const { authors, paths, users } = useMemo(() => {
     const authors = new Set<string>()
     const paths = new Set<string>()
+    // People-follows store a user id in `target`, but the API resolves `handle` for them,
+    // so we key follow-state by the (lowercased) username — what every Follow button has.
+    const users = new Set<string>()
     for (const fol of follows) {
       if (fol.kind === "author") authors.add(fol.target)
-      else paths.add(fol.target)
+      else if (fol.kind === "path") paths.add(fol.target)
+      else if (fol.kind === "user" && fol.handle) users.add(fol.handle.toLowerCase())
     }
-    return { authors, paths }
+    return { authors, paths, users }
   }, [follows])
 
-  const invalidate = () => qc.invalidateQueries({ queryKey: followsQuery().queryKey })
+  // A follow change shifts both the manage strip (follows) and any open profile (its
+  // stats + followed_by_me), so refresh both.
+  const invalidate = () => {
+    qc.invalidateQueries({ queryKey: followsQuery().queryKey })
+    qc.invalidateQueries({ queryKey: ["profile"] })
+  }
 
   const add = useMutation({
     mutationFn: ({ kind, target }: { kind: FollowKind; target: string }) =>
@@ -64,6 +73,15 @@ export function useFollows() {
       if (paths.has(target)) remove.mutate({ kind: "path", target })
       else add.mutate({ kind: "path", target })
     },
+    // Are we following this person? (by @handle — the universal key for Follow buttons).
+    isFollowingUser: (username: string) => users.has(username.toLowerCase()),
+    // Flip the follow state for a person by @handle (state read from the live follows set).
+    toggleUser: (username: string) => {
+      if (users.has(username.toLowerCase())) remove.mutate({ kind: "user", target: username })
+      else add.mutate({ kind: "user", target: username })
+    },
+    // True while a follow mutation is in flight (disable the button).
+    pendingFollow: add.isPending || remove.isPending,
     // Drop a follow directly (the manage strip's × buttons).
     unfollow: (kind: FollowKind, target: string) => remove.mutate({ kind, target }),
   }

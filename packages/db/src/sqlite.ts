@@ -88,6 +88,7 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
             author_login: v.author_login ?? null,
             author_avatar: v.author_avatar ?? null,
             author_gh_id: v.author_gh_id ?? null,
+            author_id: v.author_id ?? null,
           })
           .where(eq(artifact.id, artifactId))
           .run()

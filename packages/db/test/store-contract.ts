@@ -446,6 +446,89 @@ export function runStoreContract(
     })
   })
 
+  describe(`${label}: follows (people, cross-workspace)`, () => {
+    it("surfaces a followed person's PUBLIC work in ANY workspace, hides their private work", async () => {
+      const follower = `u_${uuid()}`
+      const followerOrg = `${ORG}_follower_ws` // the viewer's OWN workspace (not the author's)
+      const maya = `u_maya_${uuid()}`
+      const mayaOrg = `${ORG}_maya_ws` // the author publishes in HER workspace
+
+      // Maya's PUBLIC work, in her own workspace (author_id stamped on hand-publish).
+      const pub = await store.createArtifact(newArtifact({ org_id: mayaOrg, visibility: "public" }))
+      await store.addVersion(pub.id, newVersion({ author: "Maya", author_id: maya }))
+      // Maya's PRIVATE (link) work — must NOT leak into a follower's feed.
+      const priv = await store.createArtifact(newArtifact({ org_id: mayaOrg, visibility: "link" }))
+      await store.addVersion(priv.id, newVersion({ author: "Maya", author_id: maya }))
+      // Someone else's public work in another workspace — not followed, must not appear.
+      const other = await store.createArtifact(
+        newArtifact({ org_id: `${ORG}_other_ws`, visibility: "public" }),
+      )
+      await store.addVersion(
+        other.id,
+        newVersion({ author: "Nora", author_id: `u_nora_${uuid()}` }),
+      )
+
+      // The follower follows Maya the PERSON (people-follows are global, org_id "*").
+      await store.addFollow({
+        id: uuid(),
+        org_id: "*",
+        user_id: follower,
+        kind: "user",
+        target: maya,
+      })
+
+      // The feed is queried with the FOLLOWER's active workspace — which is NOT Maya's.
+      const ids = await store.followedArtifactIds(follower, followerOrg)
+      expect(ids).toContain(pub.id) // public work, surfaced across workspaces
+      expect(ids).not.toContain(priv.id) // private work never leaks
+      expect(ids).not.toContain(other.id) // not a followed person
+
+      // A tombstoned public work drops out of the feed.
+      await store.setArtifactRemoved(pub.id, new Date().toISOString())
+      expect(await store.followedArtifactIds(follower, followerOrg)).not.toContain(pub.id)
+      await store.setArtifactRemoved(pub.id, null)
+    })
+
+    it("combines an author follow (workspace-scoped) with a person follow (public, anywhere)", async () => {
+      const user = `u_${uuid()}`
+      const homeOrg = `${ORG}_home_ws`
+      const person = `u_person_${uuid()}`
+      const farOrg = `${ORG}_far_ws`
+
+      // An author-login match in the user's OWN workspace (workspace-scoped branch).
+      const local = await store.createArtifact(newArtifact({ org_id: homeOrg }))
+      await store.addVersion(local.id, newVersion({ author: "Ada", author_login: "ada" }))
+      // The same login in another workspace — author follows stay workspace-scoped, excluded.
+      const localElsewhere = await store.createArtifact(newArtifact({ org_id: farOrg }))
+      await store.addVersion(localElsewhere.id, newVersion({ author: "Ada", author_login: "ada" }))
+      // A followed person's public work in a far workspace (person branch, any workspace).
+      const personPub = await store.createArtifact(
+        newArtifact({ org_id: farOrg, visibility: "public" }),
+      )
+      await store.addVersion(personPub.id, newVersion({ author: "Pat", author_id: person }))
+
+      await store.addFollow({
+        id: uuid(),
+        org_id: homeOrg,
+        user_id: user,
+        kind: "author",
+        target: "ada",
+      })
+      await store.addFollow({
+        id: uuid(),
+        org_id: "*",
+        user_id: user,
+        kind: "user",
+        target: person,
+      })
+
+      const ids = await store.followedArtifactIds(user, homeOrg)
+      expect(ids).toContain(local.id) // author match in the active workspace
+      expect(ids).not.toContain(localElsewhere.id) // author match in another workspace — excluded
+      expect(ids).toContain(personPub.id) // followed person's public work, anywhere
+    })
+  })
+
   describe(`${label}: collections`, () => {
     it("creates a collection, adds/removes items, tracks membership roles", async () => {
       const a = await store.createArtifact(newArtifact())

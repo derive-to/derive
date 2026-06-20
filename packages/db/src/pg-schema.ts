@@ -50,6 +50,9 @@ export const artifact = pgTable("artifact", {
   author_login: text("author_login"),
   author_avatar: text("author_avatar"),
   author_gh_id: text("author_gh_id"),
+  // The Dock user who last published this by hand; null for sync/token/legacy. Mirrors
+  // schema.ts — drives the profile work-list + people-follow.
+  author_id: text("author_id"),
 })
 
 export const version = pgTable(
@@ -70,6 +73,8 @@ export const version = pgTable(
     author_login: text("author_login"),
     author_avatar: text("author_avatar"),
     author_gh_id: text("author_gh_id"),
+    // The Dock user who published this version by hand; null for sync/anon/legacy.
+    author_id: text("author_id"),
     message: text("message"),
     name: text("name"),
     created_at: text("created_at").notNull().$defaultFn(isoNow),
