@@ -170,6 +170,12 @@ describe("people follow", () => {
     const ids = (await feed.json()).artifacts.map((a: { short_id: string }) => a.short_id)
     expect(ids).toContain(amyWork)
 
+    // GET /v1/follows resolves the people-follow's target id back to a handle (so the
+    // client renders @amy + matches follow-state by username — never a raw id).
+    const bobFollows = await (await app.request("/v1/follows", { headers: as(bob.email) })).json()
+    const userFollow = bobFollows.follows.find((f: { kind: string }) => f.kind === "user")
+    expect(userFollow).toMatchObject({ kind: "user", target: amy.id, handle: "amy", name: "Amy" })
+
     // The profile reflects it: amy has 1 follower; bob (the viewer) follows her.
     const amyProfile = await (await app.request("/v1/users/amy", { headers: as(bob.email) })).json()
     expect(amyProfile.user.stats.followers).toBe(1)

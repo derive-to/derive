@@ -23,16 +23,18 @@ export function useFollows() {
   const qc = useQueryClient()
   const { data: follows = [] } = useQuery(followsQuery())
 
-  const { authors, paths } = useMemo(() => {
+  const { authors, paths, users } = useMemo(() => {
     const authors = new Set<string>()
     const paths = new Set<string>()
+    // People-follows store a user id in `target`, but the API resolves `handle` for them,
+    // so we key follow-state by the (lowercased) username — what every Follow button has.
+    const users = new Set<string>()
     for (const fol of follows) {
       if (fol.kind === "author") authors.add(fol.target)
       else if (fol.kind === "path") paths.add(fol.target)
-      // `user` follows store a user id (not a username) and drive `followed_by_me` on
-      // the profile response instead — they aren't keyed here.
+      else if (fol.kind === "user" && fol.handle) users.add(fol.handle.toLowerCase())
     }
-    return { authors, paths }
+    return { authors, paths, users }
   }, [follows])
 
   // A follow change shifts both the manage strip (follows) and any open profile (its
@@ -71,10 +73,11 @@ export function useFollows() {
       if (paths.has(target)) remove.mutate({ kind: "path", target })
       else add.mutate({ kind: "path", target })
     },
-    // Flip the follow state for a person. The current state comes from the profile's
-    // `followed_by_me` (people-follows store a user id, not the username we send here).
-    toggleUser: (username: string, isFollowing: boolean) => {
-      if (isFollowing) remove.mutate({ kind: "user", target: username })
+    // Are we following this person? (by @handle — the universal key for Follow buttons).
+    isFollowingUser: (username: string) => users.has(username.toLowerCase()),
+    // Flip the follow state for a person by @handle (state read from the live follows set).
+    toggleUser: (username: string) => {
+      if (users.has(username.toLowerCase())) remove.mutate({ kind: "user", target: username })
       else add.mutate({ kind: "user", target: username })
     },
     // True while a follow mutation is in flight (disable the button).

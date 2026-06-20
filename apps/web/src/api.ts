@@ -138,8 +138,14 @@ export interface Follow {
   org_id: string
   user_id: string
   kind: FollowKind
+  /** For author/path: the login / path prefix. For user: the followed person's id. */
   target: string
   created_at: string
+  /** Present for kind="user": the followed person's public handle/name/avatar, resolved
+   *  server-side so the client renders them (and matches follow-state) without raw ids. */
+  handle?: string | null
+  name?: string | null
+  image?: string | null
 }
 export type ProposalState = "open" | "approved" | "changes_requested" | "withdrawn"
 export interface Proposal {

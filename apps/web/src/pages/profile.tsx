@@ -81,14 +81,8 @@ export function Profile() {
                   @{data.username}
                 </p>
               </div>
-              {/* Follow only renders for a signed-in viewer on someone else's profile. */}
-              {me && !isMe && (
-                <FollowButton
-                  username={data.username}
-                  isFollowing={!!data.followed_by_me}
-                  className="shrink-0"
-                />
-              )}
+              {/* Self-hides for a signed-out viewer or your own profile. */}
+              <FollowButton username={data.username} className="shrink-0" />
             </div>
 
             {data.profession && (
