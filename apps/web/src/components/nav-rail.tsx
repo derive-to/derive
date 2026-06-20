@@ -114,6 +114,31 @@ export function NavRail() {
 
   const [creating, setCreating] = useState(false)
   const [newName, setNewName] = useState("")
+  // Repo collections whose nested PR previews are collapsed. Default-expanded, so the
+  // set holds only the ones the user has folded shut.
+  const [collapsedRepos, setCollapsedRepos] = useState<Set<string>>(new Set())
+  const toggleRepo = (id: string) =>
+    setCollapsedRepos((prev) => {
+      const next = new Set(prev)
+      next.has(id) ? next.delete(id) : next.add(id)
+      return next
+    })
+
+  // Nest PR-preview collections under their repo. A "pr" collection with a known
+  // parentId becomes a child; everything else (repos, manual, orphaned PRs) stays
+  // top-level. Children sort newest-PR-first.
+  const childPrsByRepo = new Map<string, typeof collections>()
+  const topCollections = collections.filter((col) => {
+    if (col.kind === "pr" && col.parentId && collections.some((p) => p.id === col.parentId)) {
+      const arr = childPrsByRepo.get(col.parentId) ?? []
+      arr.push(col)
+      childPrsByRepo.set(col.parentId, arr)
+      return false
+    }
+    return true
+  })
+  for (const arr of childPrsByRepo.values())
+    arr.sort((a, b) => (b.prNumber ?? 0) - (a.prNumber ?? 0))
   const submitCollection = async () => {
     const t = newName.trim()
     setNewName("")
@@ -292,19 +317,90 @@ export function NavRail() {
           />
         )}
         {!railMode &&
-          collections.map((col) => (
-            <SideItem
-              key={col.id}
-              icon="collection"
-              label={col.title}
-              count={col.count}
-              search={{ collection: col.id }}
-              active={onLibrary && search.collection === col.id}
-              collapsed={false}
-              testId={`sidebar-collection-${col.id}`}
-              onClick={closeDrawer}
-            />
-          ))}
+          topCollections.map((col) => {
+            const childPrs = childPrsByRepo.get(col.id)
+            if (!childPrs || childPrs.length === 0)
+              return (
+                <SideItem
+                  key={col.id}
+                  icon="collection"
+                  label={col.title}
+                  count={col.count}
+                  search={{ collection: col.id }}
+                  active={onLibrary && search.collection === col.id}
+                  collapsed={false}
+                  testId={`sidebar-collection-${col.id}`}
+                  onClick={closeDrawer}
+                />
+              )
+            const repoCollapsed = collapsedRepos.has(col.id)
+            return (
+              <div key={col.id} className="flex flex-col gap-px">
+                <div className="relative flex items-center">
+                  <Link
+                    to="/"
+                    search={{ collection: col.id }}
+                    title={col.title}
+                    aria-label={col.title}
+                    data-testid={`sidebar-collection-${col.id}`}
+                    aria-current={onLibrary && search.collection === col.id ? "page" : undefined}
+                    onClick={closeDrawer}
+                    className={cn(
+                      ROW_BASE,
+                      "pr-9",
+                      onLibrary && search.collection === col.id && ROW_ACTIVE,
+                    )}
+                  >
+                    <span className="flex w-[18px] shrink-0 items-center justify-center">
+                      <Icon name="collection" size={18} />
+                    </span>
+                    <span className="overflow-hidden text-ellipsis">{col.title}</span>
+                    <span
+                      className={cn(
+                        "ml-auto font-mono text-2xs text-muted-foreground",
+                        onLibrary && search.collection === col.id && "text-accent-foreground",
+                      )}
+                    >
+                      {col.count}
+                    </span>
+                  </Link>
+                  <button
+                    type="button"
+                    onClick={() => toggleRepo(col.id)}
+                    aria-expanded={!repoCollapsed}
+                    aria-label={
+                      repoCollapsed
+                        ? `Show ${childPrs.length} pull request${childPrs.length === 1 ? "" : "s"}`
+                        : "Hide pull requests"
+                    }
+                    data-testid={`sidebar-collection-${col.id}-toggle`}
+                    className="absolute right-1 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-[7px] text-muted-foreground hover:bg-hover hover:text-foreground"
+                  >
+                    <Icon
+                      name="caret"
+                      size={14}
+                      className={cn("transition-transform", repoCollapsed && "-rotate-90")}
+                    />
+                  </button>
+                </div>
+                {!repoCollapsed &&
+                  childPrs.map((pr) => (
+                    <div key={pr.id} className="pl-3.5">
+                      <SideItem
+                        icon="collection"
+                        label={pr.title}
+                        count={pr.count}
+                        search={{ collection: pr.id }}
+                        active={onLibrary && search.collection === pr.id}
+                        collapsed={false}
+                        testId={`sidebar-collection-${pr.id}`}
+                        onClick={closeDrawer}
+                      />
+                    </div>
+                  ))}
+              </div>
+            )
+          })}
 
         {!railMode && tags.length > 0 && <SideLabel>Tags</SideLabel>}
         {!railMode &&
