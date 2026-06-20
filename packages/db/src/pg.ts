@@ -786,29 +786,38 @@ export class PgMetaStore implements MetaStore {
   }
   // The "following" feed id set: live artifacts whose current author is a followed login
   // (case-insensitive), whose source_path starts with a followed path prefix, OR whose
-  // author (author_id / linked GitHub id) is a followed person. Mirrors the sqlite path.
+  // author/path follows match within the active workspace; people follows match a
+  // followed person's PUBLIC work across ANY workspace. Mirrors the sqlite path.
   async followedArtifactIds(userId: string, orgId: string): Promise<string[]> {
     const follows = await this.listFollows(userId, orgId)
     const logins = follows.filter((f) => f.kind === "author").map((f) => f.target.toLowerCase())
     const prefixes = follows.filter((f) => f.kind === "path").map((f) => f.target)
     const people = follows.filter((f) => f.kind === "user").map((f) => f.target)
     if (logins.length === 0 && prefixes.length === 0 && people.length === 0) return []
-    const conds = []
-    if (logins.length > 0) conds.push(inArray(sql`lower(${artifact.author_login})`, logins))
+    const branches = []
+    const wsConds = []
+    if (logins.length > 0) wsConds.push(inArray(sql`lower(${artifact.author_login})`, logins))
     for (const p of prefixes) {
       const escaped = p.replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_")
-      conds.push(sql`${artifact.source_path} like ${`${escaped}%`} escape '\\'`)
+      wsConds.push(sql`${artifact.source_path} like ${`${escaped}%`} escape '\\'`)
+    }
+    if (wsConds.length > 0) {
+      const wsMatch = wsConds.length === 1 ? wsConds[0] : or(...wsConds)
+      if (wsMatch) branches.push(and(eq(artifact.org_id, orgId), wsMatch))
     }
     if (people.length > 0) {
-      conds.push(inArray(artifact.author_id, people))
+      const authorConds = [inArray(artifact.author_id, people)]
       const ghIds = (await this.githubIdsForUsers(people)).map((g) => g.toLowerCase())
-      if (ghIds.length > 0) conds.push(inArray(sql`lower(${artifact.author_gh_id})`, ghIds))
+      if (ghIds.length > 0) authorConds.push(inArray(sql`lower(${artifact.author_gh_id})`, ghIds))
+      const authored = authorConds.length === 1 ? authorConds[0] : or(...authorConds)
+      if (authored) branches.push(and(eq(artifact.visibility, "public"), authored))
     }
-    const match = conds.length === 1 ? conds[0] : or(...conds)
+    if (branches.length === 0) return []
+    const match = branches.length === 1 ? branches[0] : or(...branches)
     const rows = await this.db
       .select({ id: artifact.id })
       .from(artifact)
-      .where(and(eq(artifact.org_id, orgId), isNull(artifact.removed_at), match))
+      .where(and(isNull(artifact.removed_at), match))
     return rows.map((r) => r.id)
   }
   // ---- People profiles: works, shared workspaces, follower/following -----

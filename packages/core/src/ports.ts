@@ -311,12 +311,13 @@ export interface MetaStore {
   /** A user's follows for the Following management UI: their `author`/`path` follows in
    *  `orgId` PLUS their global `user` (people) follows (org_id = "*"), newest first. */
   listFollows(userId: string, orgId: string): Promise<FollowRecord[]>
-  /** Artifact ids in `orgId` (not removed) surfaced by this user's follows — the activity
-   *  feed. A row qualifies when its current author_login is a followed login
-   *  (case-insensitive), its source_path starts with a followed path prefix, OR its
-   *  author (by `author_id` or linked GitHub id) is a followed person. Empty when the
-   *  user follows nothing. Stays scoped to `orgId`, so private cross-workspace work a
-   *  followed person did never enters the feed. */
+  /** Artifact ids (not removed) surfaced by this user's follows — the activity feed.
+   *  Two scopes: author/path follows match within the active workspace `orgId` (a followed
+   *  author_login, case-insensitive, or a source_path prefix); people follows match a
+   *  followed person's PUBLIC work in ANY workspace (by `author_id` or their linked GitHub
+   *  ids) — a person you follow usually publishes in their own workspace, not yours. The
+   *  people scope is gated to `public`, so following someone never exposes their private
+   *  cross-workspace work. Empty when the user follows nothing. */
   followedArtifactIds(userId: string, orgId: string): Promise<string[]>
   /** How many people follow this user (kind='user', target=userId). */
   countFollowers(userId: string): Promise<number>

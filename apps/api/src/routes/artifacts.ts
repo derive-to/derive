@@ -147,10 +147,13 @@ export const artifactRoutes = (ctx: AppContext) => {
       q,
       ids,
       collectionId,
-      // Shared-with-me spans workspaces; an explicit member can always see them, so
-      // drop the workspace + public-only restrictions for that scope.
-      orgId: shared ? undefined : listOrg,
-      publicOnly: shared ? false : publicOnly,
+      // `shared` and `following` both resolve to an id set that ALREADY encodes the
+      // correct cross-workspace + visibility scope (an explicit share; or a followed
+      // author/path in this workspace + a followed person's public work anywhere). So
+      // drop the workspace + public-only restrictions, which would otherwise re-clip the
+      // feed back to the active workspace and strip a followed person's public work.
+      orgId: shared || following ? undefined : listOrg,
+      publicOnly: shared || following ? false : publicOnly,
     })
     const hasMore = rows.length > limit
     const page = hasMore ? rows.slice(0, limit) : rows

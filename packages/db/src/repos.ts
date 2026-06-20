@@ -792,33 +792,47 @@ export function makeRepos(db: SqliteDb) {
       return []
     }
   }
-  // The "following" feed's id set: live artifacts in the workspace surfaced by this user's
-  // follows — a followed login (case-insensitive), a followed path prefix, OR a followed
-  // person (matched by the artifact's denormalized author_id or the person's GitHub ids).
+  // The "following" feed's id set (live artifacts only). Two scopes ORed together:
+  //  · author/path follows match within the ACTIVE workspace (your repo-sync feed) —
+  //    a followed login (case-insensitive) or a followed source_path prefix.
+  //  · people follows match a followed person's PUBLIC work across ANY workspace
+  //    (by the artifact's denormalized author_id, or their linked GitHub ids), since a
+  //    person you follow usually publishes in their own workspace, not yours. Gated to
+  //    `public`, so following someone never surfaces their private cross-workspace work.
   const followedArtifactIds = async (userId: string, orgId: string): Promise<string[]> => {
     const follows = await listFollows(userId, orgId)
     const logins = follows.filter((f) => f.kind === "author").map((f) => f.target.toLowerCase())
     const prefixes = follows.filter((f) => f.kind === "path").map((f) => f.target)
     const people = follows.filter((f) => f.kind === "user").map((f) => f.target)
     if (logins.length === 0 && prefixes.length === 0 && people.length === 0) return []
-    const conds: SQL[] = []
-    if (logins.length > 0) conds.push(inArray(sql`lower(${artifact.author_login})`, logins))
+    const branches: SQL[] = []
+    // Workspace branch: author/path matches, scoped to the active workspace.
+    const wsConds: SQL[] = []
+    if (logins.length > 0) wsConds.push(inArray(sql`lower(${artifact.author_login})`, logins))
     // A path prefix is a LIKE 'prefix%'. Escape LIKE metacharacters in the prefix and
     // declare the escape char so a path that happens to contain % or _ matches literally.
     for (const p of prefixes) {
       const escaped = p.replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_")
-      conds.push(sql`${artifact.source_path} like ${`${escaped}%`} escape '\\'`)
+      wsConds.push(sql`${artifact.source_path} like ${`${escaped}%`} escape '\\'`)
     }
+    if (wsConds.length > 0) {
+      const wsMatch = wsConds.length === 1 ? wsConds[0] : or(...wsConds)
+      if (wsMatch) branches.push(and(eq(artifact.org_id, orgId), wsMatch) as SQL)
+    }
+    // People branch: a followed person's public work, in any workspace.
     if (people.length > 0) {
-      conds.push(inArray(artifact.author_id, people))
+      const authorConds: SQL[] = [inArray(artifact.author_id, people)]
       const ghIds = (await githubIdsForUsers(people)).map((g) => g.toLowerCase())
-      if (ghIds.length > 0) conds.push(inArray(sql`lower(${artifact.author_gh_id})`, ghIds))
+      if (ghIds.length > 0) authorConds.push(inArray(sql`lower(${artifact.author_gh_id})`, ghIds))
+      const authored = authorConds.length === 1 ? authorConds[0] : or(...authorConds)
+      if (authored) branches.push(and(eq(artifact.visibility, "public"), authored) as SQL)
     }
-    const match = conds.length === 1 ? conds[0] : or(...conds)
+    if (branches.length === 0) return []
+    const match = branches.length === 1 ? branches[0] : or(...branches)
     const rows = await db
       .select({ id: artifact.id })
       .from(artifact)
-      .where(and(eq(artifact.org_id, orgId), isNull(artifact.removed_at), match))
+      .where(and(isNull(artifact.removed_at), match))
       .all()
     return rows.map((r) => r.id)
   }

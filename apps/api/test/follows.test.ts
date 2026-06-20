@@ -126,15 +126,22 @@ describe("follows route", () => {
 // People-follow: bob follows Amy by handle, her hand-published (author_id) public work
 // flows into his feed, and the profile reflects follower/following + followed_by_me.
 describe("people follow", () => {
-  // Publish a PUBLIC artifact authored by a Dock user (stamps author_id), via the store.
-  const publishByUser = async (title: string, userId: string): Promise<string> => {
+  // Publish an artifact authored by a Dock user (stamps author_id), via the store. `org`
+  // defaults to amy's OWN workspace (not bob's active "default"), so the feed assertions
+  // exercise the cross-workspace people-follow path — the real-world case.
+  const publishByUser = async (
+    title: string,
+    userId: string,
+    visibility: "public" | "link" = "public",
+    org = "amy_ws",
+  ): Promise<string> => {
     const a = await meta.createArtifact({
       id: newId("a"),
       short_id: newId("s"),
-      org_id: "default",
+      org_id: org,
       slug: null,
       title,
-      visibility: "public",
+      visibility,
       kind: "file",
       spa: 0,
     })
@@ -155,20 +162,24 @@ describe("people follow", () => {
     expect((await post(as(amy.email), { kind: "user", target: "ghost" })).status).toBe(404)
   })
 
-  it("follows a person by handle; their public work enters the follower's feed", async () => {
-    const amyWork = await publishByUser("Amy's plan", amy.id)
+  it("follows a person; their public work flows into the feed across workspaces, private stays hidden", async () => {
+    // Amy publishes in HER OWN workspace ("amy_ws") — NOT bob's active "default".
+    const amyPublic = await publishByUser("Amy's plan", amy.id, "public")
+    const amyPrivate = await publishByUser("Amy's secret", amy.id, "link")
 
     // bob follows amy (by username; stored as her id, globally).
     const r = await post(as(bob.email), { kind: "user", target: "Amy" })
     expect(r.status).toBe(201)
     expect((await r.json()).follow).toMatchObject({ kind: "user", target: amy.id, org_id: "*" })
 
-    // Amy's public work now shows in bob's activity feed.
+    // Amy's PUBLIC work shows in bob's feed even though it lives in another workspace;
+    // her private (link) work never leaks. (Bob's active workspace is "default".)
     const feed = await app.request("/v1/artifacts?scope=following&limit=100", {
       headers: as(bob.email),
     })
     const ids = (await feed.json()).artifacts.map((a: { short_id: string }) => a.short_id)
-    expect(ids).toContain(amyWork)
+    expect(ids).toContain(amyPublic) // cross-workspace public work surfaces
+    expect(ids).not.toContain(amyPrivate) // private work stays hidden
 
     // GET /v1/follows resolves the people-follow's target id back to a handle (so the
     // client renders @amy + matches follow-state by username — never a raw id).
