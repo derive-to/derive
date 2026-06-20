@@ -12,6 +12,7 @@ import {
 import { ago } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { artifactTypeLabel, dirOf } from "./artifact-card"
+import { CommentSignal } from "./comment-signal"
 
 /**
  * A compact list row for the library (the default for collections / synced repos,
@@ -49,7 +50,14 @@ export function ArtifactRow({
   const hasAuthor = !!(author?.name || authorLogin || a.author_name)
 
   return (
-    <div className="group relative flex items-center gap-3 rounded-lg border border-border bg-card px-3.5 py-2.5 transition-colors hover:border-primary hover:bg-hover">
+    <div
+      className={cn(
+        "group relative flex items-center gap-3 rounded-lg border border-border bg-card px-3.5 py-2.5 transition-colors hover:border-primary hover:bg-hover",
+        a.mentions_me
+          ? "border-primary ring-1 ring-primary/30"
+          : a.i_participated && "border-primary/60",
+      )}
+    >
       <button
         type="button"
         data-testid={`artifact-row-open-${a.short_id}`}
@@ -81,6 +89,7 @@ export function ArtifactRow({
               {a.views > 999 ? `${(a.views / 1000).toFixed(1)}k` : a.views}
             </span>
           )}
+          <CommentSignal artifact={a} size={12} className="relative z-20" />
         </span>
       </button>
 

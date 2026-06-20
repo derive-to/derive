@@ -83,6 +83,12 @@ export interface Artifact {
   open_proposals?: number
   /** Count of non-withdrawn proposals (open + decided) — gates the Proposals entry. */
   proposals_total?: number
+  /** Open comment threads on this artifact (drives the inline comment indicator). */
+  open_threads?: number
+  /** An open thread on this artifact @mentions the current user — "needs your feedback". */
+  mentions_me?: boolean
+  /** The current user authored a comment in an open thread on this artifact. */
+  i_participated?: boolean
   /** Collection ids this artifact belongs to (detail endpoint). */
   collections?: string[]
   /** Taken down by a moderator: the content is gone (410), the record stays. */
@@ -553,8 +559,9 @@ export const api = {
     author?: string
     /** "shared" → only artifacts explicitly shared with you (across workspaces).
      *  "following" → artifacts in the active workspace matching your follows
-     *  (followed GitHub authors + repo path prefixes) — the activity feed. */
-    scope?: "shared" | "following"
+     *  (followed GitHub authors + repo path prefixes) — the activity feed.
+     *  "needs_feedback" → artifacts with an open thread you're tagged in or commented on. */
+    scope?: "shared" | "following" | "needs_feedback"
     cursor?: string
     limit?: number
   }): Promise<{
