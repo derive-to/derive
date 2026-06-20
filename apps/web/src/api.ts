@@ -193,6 +193,20 @@ export interface Workspace {
   role: Role
   members: ArtifactMember[]
 }
+/** Per-workspace integration switches (mirrors the server's OrgSettings). */
+export interface OrgSettings {
+  emailNotifications: boolean
+  githubPostComments: boolean
+  githubMirrorComments: boolean
+  slackPost: boolean
+}
+/** Slack connection status for the Settings UI. */
+export interface SlackStatus {
+  available: boolean
+  connected: boolean
+  team_name: string | null
+  default_channel: string | null
+}
 /** One entry in the workspace switcher. */
 export interface WorkspaceSummary {
   id: string
@@ -728,6 +742,19 @@ export const api = {
       method: "DELETE",
       credentials: "include",
     }).then(() => undefined),
+
+  // Integration switches (enable/disable each channel) — Admin to change.
+  getWorkspaceSettings: (): Promise<OrgSettings> => f("/v1/workspace/settings", opts()).then(j),
+  updateWorkspaceSettings: (patch: Partial<OrgSettings>): Promise<OrgSettings> =>
+    f("/v1/workspace/settings", { ...opts(patch), method: "PATCH" }).then(j),
+
+  // Slack App: status, set default channel, disconnect. Connect is a redirect to
+  // /v1/slack/install (a full-page navigation, not a fetch).
+  getSlack: (): Promise<SlackStatus> => f("/v1/slack", opts()).then(j),
+  setSlackChannel: (default_channel: string | null): Promise<{ default_channel: string | null }> =>
+    f("/v1/slack", { ...opts({ default_channel }), method: "PATCH" }).then(j),
+  disconnectSlack: (): Promise<void> =>
+    f("/v1/slack", { method: "DELETE", credentials: "include" }).then(() => undefined),
 
   // Workspace name + members (Admin / Creator / Viewer = owner / editor / commenter)
   getWorkspace: (): Promise<Workspace> => f("/v1/workspace", opts()).then(j),

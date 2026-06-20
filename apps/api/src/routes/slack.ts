@@ -1,8 +1,9 @@
 import type { SlackInstallRecord } from "@dock/core"
 import { Hono } from "hono"
+import { z } from "zod"
 import type { AppContext } from "../context"
 import { decryptSecret, encryptSecret, signState, verifyState } from "../lib/crypto"
-import { fail } from "../lib/http"
+import { fail, readJson } from "../lib/http"
 import {
   exchangeSlackOAuth,
   slackAuthorizeUrl,
@@ -117,6 +118,40 @@ export const slackRoutes = (ctx: AppContext) => {
       }
     }
     return c.json({ ok: true })
+  })
+
+  // Connection status for the Settings UI: whether Slack is configured at all, whether
+  // this workspace has connected one, and its team + default channel.
+  app.get("/v1/slack", async (c) => {
+    const me = await currentUser(c)
+    if (!me) return fail(c, 401, "unauthenticated")
+    const install = await meta.getSlackInstall(await activeWorkspace(c))
+    return c.json({
+      available: !!slack,
+      connected: !!install,
+      team_name: install?.team_name ?? null,
+      default_channel: install?.default_channel ?? null,
+    })
+  })
+
+  // Set the channel Dock posts to (Slack channel id, e.g. "C0123ABC"). Admin only.
+  app.patch("/v1/slack", async (c) => {
+    if (!(await workspaceCan(c, "manage"))) return fail(c, 403, "forbidden")
+    const org = await activeWorkspace(c)
+    const install = await meta.getSlackInstall(org)
+    if (!install) return fail(c, 404, "Slack is not connected")
+    const b = await readJson(c, z.object({ default_channel: z.string().nullable() }))
+    if (b instanceof Response) return b
+    const channel = b.default_channel?.trim() ? b.default_channel.trim() : null
+    await meta.setSlackInstall({ ...install, default_channel: channel })
+    return c.json({ default_channel: channel })
+  })
+
+  // Disconnect Slack (admin). Drops the install; thread links are left inert.
+  app.delete("/v1/slack", async (c) => {
+    if (!(await workspaceCan(c, "manage"))) return fail(c, 403, "forbidden")
+    await meta.deleteSlackInstall(await activeWorkspace(c))
+    return c.body(null, 204)
   })
 
   return app

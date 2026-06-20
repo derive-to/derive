@@ -6,6 +6,7 @@ import { useAuth } from "@/ctx"
 import { AgentsSection } from "./agents-section"
 import { CustomDomainsSection } from "./custom-domains-section"
 import { GithubSection } from "./github-section"
+import { IntegrationsSection } from "./integrations-section"
 import { ProfileSection } from "./profile-section"
 import { ReportsSection } from "./reports-section"
 import { WebhooksSection } from "./webhooks-section"
@@ -64,6 +65,9 @@ export function Settings() {
             <TabsTrigger data-testid="settings-tab-workspace" value="workspace">
               Workspace
             </TabsTrigger>
+            <TabsTrigger data-testid="settings-tab-integrations" value="integrations">
+              Integrations
+            </TabsTrigger>
             <TabsTrigger data-testid="settings-tab-webhooks" value="webhooks">
               Webhooks
             </TabsTrigger>
@@ -91,6 +95,9 @@ export function Settings() {
           </TabsContent>
           <TabsContent value="workspace">
             <WorkspaceSection meId={me.id} />
+          </TabsContent>
+          <TabsContent value="integrations">
+            <IntegrationsSection />
           </TabsContent>
           <TabsContent value="webhooks">
             <WebhooksSection />
