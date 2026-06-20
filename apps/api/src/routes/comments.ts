@@ -4,6 +4,7 @@ import { z } from "zod"
 import type { AppContext } from "../context"
 import {
   commentJson,
+  isCollaboratorAuthor,
   type Mention,
   parseMentions,
   parseMeta,
@@ -215,11 +216,16 @@ export const commentRoutes = (ctx: AppContext) => {
             mentionIds: new Set(mentions.map((m) => m.id)),
             actorId: acting?.id ?? null,
           })
+        // GitHub + Slack post AS Dock's bot/app into the customer's systems, so only
+        // mirror comments authored by a real collaborator — never an anonymous or
+        // non-member commenter on a public artifact (who'd otherwise get an
+        // unauthenticated write-into-the-owner's-GitHub/Slack primitive).
+        const trustedAuthor = await isCollaboratorAuthor(meta, artifact, acting?.id ?? null)
         // Mirror onto the PR when this artifact is PR-sourced (no-op otherwise).
-        if (settings.githubPostComments)
+        if (trustedAuthor && settings.githubPostComments)
           await enqueueGithubPrComment({ meta, blobs, baseUrl: deps.baseUrl }, artifact, created)
         // Post to the connected Slack workspace (no-op when Slack isn't connected).
-        if (settings.slackPost)
+        if (trustedAuthor && settings.slackPost)
           await enqueueSlackComment({ meta, baseUrl: deps.baseUrl }, artifact, created)
         // Drain the outbox now: the channel enqueues above (email / Slack / GitHub) don't
         // go through notify()'s poke, so without this they'd wait for the cron backstop

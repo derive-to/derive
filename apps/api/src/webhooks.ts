@@ -142,11 +142,14 @@ export function standardWebhookSignature(
   return `v1,${sig}`
 }
 
-/** The result of one delivery attempt: ok ⇒ delivered; otherwise `status` is the
- *  short failure reason recorded on the row (and retried / dead-lettered). */
+/** The result of one delivery attempt: ok ⇒ delivered; otherwise `status` is the short
+ *  failure reason recorded on the row. `permanent` ⇒ a non-retryable failure (e.g. a 4xx
+ *  from the channel API like Slack `channel_not_found` or a GitHub 422) — dead-letter it
+ *  immediately rather than burning retries (which would also risk a duplicate post). */
 export interface ChannelSendResult {
   ok: boolean
   status: string
+  permanent?: boolean
 }
 
 /**
@@ -311,11 +314,13 @@ export async function runDeliveryTick(
         last_error: null,
         next_attempt_at: d.next_attempt_at,
       })
-    } else if (attempts >= MAX_ATTEMPTS) {
+    } else if (r.permanent || attempts >= MAX_ATTEMPTS) {
+      // Permanent failures (4xx from the channel API) dead-letter at once: retrying
+      // can't succeed and would risk a duplicate post on a partial success.
       await meta.updateDelivery(d.id, {
         status: "dead",
         attempts,
-        last_error: r.status,
+        last_error: r.permanent ? `permanent: ${r.status}` : r.status,
         next_attempt_at: d.next_attempt_at,
       })
     } else {

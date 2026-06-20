@@ -72,7 +72,30 @@ export interface SlackPostResult {
   channel: string
 }
 
-/** Post a message via chat.postMessage. `threadTs` threads it under an existing message. */
+/** A Slack API error carrying the `error` code (e.g. "channel_not_found", "not_in_channel")
+ *  so the delivery sender can recover (auto-join) or dead-letter permanent failures. */
+export class SlackApiError extends Error {
+  constructor(public code: string) {
+    super(`slack: ${code}`)
+  }
+}
+
+/** Slack error codes that can never succeed on retry — dead-letter immediately. */
+const SLACK_PERMANENT = new Set([
+  "channel_not_found",
+  "is_archived",
+  "invalid_auth",
+  "account_inactive",
+  "token_revoked",
+  "no_permission",
+  "not_authed",
+  "msg_too_long",
+  "restricted_action",
+])
+export const isPermanentSlackError = (code: string): boolean => SLACK_PERMANENT.has(code)
+
+/** Post a message via chat.postMessage. `threadTs` threads it under an existing message.
+ *  Throws SlackApiError(code) on a Slack-level failure. */
 export const postSlackMessage = async (
   token: string,
   args: { channel: string; text: string; blocks?: unknown; threadTs?: string },
@@ -91,8 +114,26 @@ export const postSlackMessage = async (
     }),
   })
   const data = (await res.json()) as { ok: boolean; error?: string; ts?: string; channel?: string }
-  if (!data.ok || !data.ts) throw new Error(`slack post failed: ${data.error ?? "unknown"}`)
+  if (!data.ok || !data.ts) throw new SlackApiError(data.error ?? "unknown")
   return { ts: data.ts, channel: data.channel ?? args.channel }
+}
+
+/** Join a public channel so the bot can post to it (best-effort; private channels must
+ *  invite the bot manually). Returns true on success. */
+export const joinSlackChannel = async (token: string, channel: string): Promise<boolean> => {
+  try {
+    const res = await fetch(`${API}/conversations.join`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${token}`,
+        "content-type": "application/json; charset=utf-8",
+      },
+      body: JSON.stringify({ channel }),
+    })
+    return ((await res.json()) as { ok: boolean }).ok
+  } catch {
+    return false
+  }
 }
 
 /** A Slack user's display name (best-effort; falls back to the raw id on any error). */

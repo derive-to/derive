@@ -34,6 +34,21 @@ const headers = (token: string): Record<string, string> => ({
   "content-type": "application/json",
 })
 
+/** A GitHub write failure carrying the HTTP status, so the delivery sender can tell a
+ *  permanent 4xx (don't retry) from a transient 429/5xx (retry). */
+export class GitHubWriteError extends Error {
+  constructor(
+    public status: number,
+    message: string,
+  ) {
+    super(message)
+  }
+}
+
+/** A 4xx (except 429 rate-limit) is permanent — retrying can't succeed. */
+export const isPermanentStatus = (status: number): boolean =>
+  status >= 400 && status < 500 && status !== 429
+
 /** Post a top-level PR conversation comment. Returns the new comment's GitHub id. */
 export async function createIssueComment(
   repo: RepoRef,
@@ -48,7 +63,10 @@ export async function createIssueComment(
     body: JSON.stringify({ body }),
   })
   if (!res.ok)
-    throw new Error(`issue comment HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`)
+    throw new GitHubWriteError(
+      res.status,
+      `issue comment HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`,
+    )
   return ((await res.json()) as { id: number }).id
 }
 
@@ -73,7 +91,10 @@ export async function createReviewComment(
     }),
   })
   if (!res.ok)
-    throw new Error(`review comment HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`)
+    throw new GitHubWriteError(
+      res.status,
+      `review comment HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`,
+    )
   return ((await res.json()) as { id: number }).id
 }
 
@@ -273,32 +294,59 @@ export const makeGithubCommentSender =
       return { ok: true, status: "skipped: no app/installation" }
     const app = await meta.getGithubApp()
     if (!app) return { ok: true, status: "skipped: no github app" }
+
+    // Idempotency pre-check: if this Dock comment already carries a GitHub id, a prior
+    // delivery already posted it (the row was re-claimed after a crash, or double-enqueued)
+    // — don't post again. This closes the common duplicate window without an external
+    // idempotency key (GitHub has none for comments); a crash strictly between the POST
+    // and this stamp can still re-post once, the inherent at-least-once tail.
+    const cm = await meta.getComment(p.dockCommentId)
+    if (cm && parseMeta(cm.meta).github) return { ok: true, status: "already posted" }
+
     const pem = decryptSecret(app.private_key, encryptionKey)
-    const token = await installationToken(app.app_id, pem, p.installationId)
+    let token: string
+    try {
+      token = await installationToken(app.app_id, pem, p.installationId)
+    } catch (err) {
+      // Token minting failures are usually transient (network, clock skew, brief 401);
+      // let the outbox retry rather than dead-letter a recoverable connection.
+      return { ok: false, status: `token: ${(err as Error).message.slice(0, 160)}` }
+    }
 
     let id: number
     let kind: "issue" | "review"
-    if (d.kind === "github_review_comment" && p.path && p.line && p.commitId) {
-      try {
-        id = await createReviewComment(
-          repo,
-          p.prNumber,
-          { commitId: p.commitId, path: p.path, line: p.line, body: p.body },
-          token,
-        )
-        kind = "review"
-      } catch {
-        // The line may not be part of the PR diff (422) — fall back to a PR comment.
+    try {
+      if (d.kind === "github_review_comment" && p.path && p.line && p.commitId) {
+        try {
+          id = await createReviewComment(
+            repo,
+            p.prNumber,
+            { commitId: p.commitId, path: p.path, line: p.line, body: p.body },
+            token,
+          )
+          kind = "review"
+        } catch (err) {
+          // The line may not be part of the PR diff (422) — fall back to a top-level PR
+          // comment. (Any other status falls through too; the issue-comment call below
+          // re-classifies it.)
+          if (err instanceof GitHubWriteError && err.status !== 422) throw err
+          id = await createIssueComment(repo, p.prNumber, p.body, token)
+          kind = "issue"
+        }
+      } else {
         id = await createIssueComment(repo, p.prNumber, p.body, token)
         kind = "issue"
       }
-    } else {
-      id = await createIssueComment(repo, p.prNumber, p.body, token)
-      kind = "issue"
+    } catch (err) {
+      const status = err instanceof GitHubWriteError ? err.status : 0
+      return {
+        ok: false,
+        status: (err as Error).message.slice(0, 200),
+        permanent: isPermanentStatus(status),
+      }
     }
 
     // Stamp provenance so the inbound webhook dedupes our own post.
-    const cm = await meta.getComment(p.dockCommentId)
     if (cm) {
       await meta.updateComment(cm.id, {
         meta: JSON.stringify({ ...parseMeta(cm.meta), github: { comment_id: id, kind } }),

@@ -16,7 +16,7 @@ import {
 import { type ChannelSendResult, enqueueChannelDelivery } from "../webhooks"
 import { parseMeta } from "./comments"
 import { decryptSecret } from "./crypto"
-import { postSlackMessage } from "./slack"
+import { isPermanentSlackError, joinSlackChannel, postSlackMessage, SlackApiError } from "./slack"
 
 const truncate = (s: string, n: number): string => (s.length > n ? `${s.slice(0, n - 1)}…` : s)
 
@@ -82,12 +82,37 @@ export const makeSlackSender =
     const token = decryptSecret(install.bot_token, encryptionKey)
     const existing = await meta.getSlackThreadLinkByThread(p.threadId)
     const channel = existing?.channel ?? install.default_channel
-    const res = await postSlackMessage(token, {
-      channel,
-      text: `${p.author} commented on ${p.title}`,
-      blocks: blocksFor(p),
-      threadTs: existing?.message_ts,
-    })
+    const post = () =>
+      postSlackMessage(token, {
+        channel,
+        text: `${p.author} commented on ${p.title}`,
+        blocks: blocksFor(p),
+        threadTs: existing?.message_ts,
+      })
+
+    let res: Awaited<ReturnType<typeof post>>
+    try {
+      res = await post()
+    } catch (err) {
+      if (!(err instanceof SlackApiError))
+        return { ok: false, status: (err as Error).message.slice(0, 160) }
+      // The bot isn't in the channel yet (common right after connecting): auto-join a
+      // public channel and retry once. Private channels must invite the bot manually.
+      if (err.code === "not_in_channel" && (await joinSlackChannel(token, channel))) {
+        try {
+          res = await post()
+        } catch (err2) {
+          const code = err2 instanceof SlackApiError ? err2.code : "unknown"
+          return { ok: false, status: `slack: ${code}`, permanent: isPermanentSlackError(code) }
+        }
+      } else {
+        // not_in_channel without a successful join is permanent (a private channel the
+        // bot can't self-join) — surface it rather than retrying fruitlessly.
+        const permanent = isPermanentSlackError(err.code) || err.code === "not_in_channel"
+        return { ok: false, status: `slack: ${err.code}`, permanent }
+      }
+    }
+
     // First post for this Dock thread → remember the Slack message so replies thread
     // under it (both directions).
     if (!existing) {

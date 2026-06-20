@@ -23,14 +23,19 @@ export interface SendEmailBinding {
 
 const crlf = (s: string): string => s.replace(/\r?\n/g, "\r\n")
 
-/** Build a minimal RFC 5322 multipart/alternative message (text + html). `from`/`to`
- *  are plain addresses; the subject is assumed ASCII-safe (our subjects are). */
-const buildMime = (from: string, msg: EmailMsg, dateIso: string, msgId: string): string => {
+// Strip CR/LF from a header VALUE so a comment author/title (which can be attacker-chosen,
+// e.g. an anonymous commenter's name) can't inject extra headers (Bcc:, etc.) via a newline.
+const hdr = (s: string): string => s.replace(/[\r\n]+/g, " ").trim()
+
+/** Build a minimal RFC 5322 multipart/alternative message (text + html). `from`/`to` are
+ *  plain addresses; header values are CR/LF-stripped to prevent header injection. Exported
+ *  for unit testing the header construction without the Workers runtime. */
+export const buildMime = (from: string, msg: EmailMsg, dateIso: string, msgId: string): string => {
   const boundary = `dock-${msgId}`
   const headers = [
-    `From: ${from}`,
-    `To: ${msg.to}`,
-    `Subject: ${msg.subject}`,
+    `From: ${hdr(from)}`,
+    `To: ${hdr(msg.to)}`,
+    `Subject: ${hdr(msg.subject)}`,
     `Message-ID: <${msgId}@dock.build>`,
     `Date: ${new Date(dateIso).toUTCString()}`,
     "MIME-Version: 1.0",

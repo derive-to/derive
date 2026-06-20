@@ -1,4 +1,21 @@
-import type { CommentRecord } from "@dock/core"
+import type { ArtifactRecord, CommentRecord, MetaStore } from "@dock/core"
+
+/** Is `actorId` a trusted author for OUTBOUND external posting (Slack / GitHub PR)?
+ *  Those channels post as Dock's own bot/app into the customer's systems, so we only
+ *  mirror comments authored by a real collaborator — a workspace member, an explicit
+ *  artifact-share recipient, or a registered agent. An anonymous commenter or a logged-in
+ *  non-member on a public artifact is NOT trusted to write into the owner's GitHub/Slack.
+ *  (In-app notifications + email to collaborators are gated separately and stay in-Dock.) */
+export const isCollaboratorAuthor = async (
+  meta: MetaStore,
+  artifact: ArtifactRecord,
+  actorId: string | null,
+): Promise<boolean> => {
+  if (!actorId) return false
+  if (await meta.getMembership(artifact.org_id, actorId)) return true
+  if (await meta.getArtifactMember(artifact.id, actorId)) return true
+  return (await meta.listAgents(artifact.org_id)).some((a) => a.id === actorId)
+}
 
 /** The fixed reaction set; arbitrary emoji are rejected to keep data clean. */
 export const REACTIONS = ["👍", "❤️", "🎉", "😄", "👀", "🙏", "🚀", "👎"]
