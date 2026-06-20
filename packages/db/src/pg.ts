@@ -61,7 +61,7 @@ import type {
   WebhookRecord,
   WorkspaceRecord,
 } from "@dock/core"
-import { DEFAULT_ORG_SETTINGS } from "@dock/core"
+import { DEFAULT_ORG_SETTINGS, GLOBAL_FOLLOW_ORG } from "@dock/core"
 import {
   and,
   asc,
@@ -284,6 +284,7 @@ export class PgMetaStore implements MetaStore {
           author_login: v.author_login ?? null,
           author_avatar: v.author_avatar ?? null,
           author_gh_id: v.author_gh_id ?? null,
+          author_id: v.author_id ?? null,
         })
         .where(eq(artifact.id, artifactId))
       const rows = await tx
@@ -766,33 +767,181 @@ export class PgMetaStore implements MetaStore {
         ),
       )
   }
+  // Author/path follows in this workspace PLUS the user's global people-follows (org "*").
   listFollows(userId: string, orgId: string): Promise<FollowRecord[]> {
     return this.db
       .select()
       .from(follow)
-      .where(and(eq(follow.user_id, userId), eq(follow.org_id, orgId)))
+      .where(and(eq(follow.user_id, userId), inArray(follow.org_id, [orgId, GLOBAL_FOLLOW_ORG])))
       .orderBy(desc(follow.created_at), desc(follow.id))
   }
-  // The "following" feed id set: live artifacts whose current author is a followed
-  // login (case-insensitive) OR whose source_path starts with a followed path prefix.
-  // Mirrors the sqlite path exactly (split → OR of inArray + escaped LIKE).
+  // GitHub numeric ids a set of Dock users linked (raw account read; [] if absent).
+  private async githubIdsForUsers(userIds: string[]): Promise<string[]> {
+    if (userIds.length === 0) return []
+    try {
+      const ph = userIds.map((_, i) => `$${i + 1}`).join(",")
+      const { rows } = await this.pool.query(
+        `SELECT a."accountId" gh_id FROM "account" a
+         WHERE a."providerId" = 'github' AND a."userId" IN (${ph})`,
+        userIds,
+      )
+      return (rows as { gh_id: string }[]).map((r) => r.gh_id).filter(Boolean)
+    } catch {
+      return []
+    }
+  }
+  // The "following" feed id set: live artifacts whose current author is a followed login
+  // (case-insensitive), whose source_path starts with a followed path prefix, OR whose
+  // author/path follows match within the active workspace; people follows match a
+  // followed person's PUBLIC work across ANY workspace. Mirrors the sqlite path.
   async followedArtifactIds(userId: string, orgId: string): Promise<string[]> {
     const follows = await this.listFollows(userId, orgId)
     const logins = follows.filter((f) => f.kind === "author").map((f) => f.target.toLowerCase())
     const prefixes = follows.filter((f) => f.kind === "path").map((f) => f.target)
-    if (logins.length === 0 && prefixes.length === 0) return []
-    const conds = []
-    if (logins.length > 0) conds.push(inArray(sql`lower(${artifact.author_login})`, logins))
+    const people = follows.filter((f) => f.kind === "user").map((f) => f.target)
+    if (logins.length === 0 && prefixes.length === 0 && people.length === 0) return []
+    const branches = []
+    const wsConds = []
+    if (logins.length > 0) wsConds.push(inArray(sql`lower(${artifact.author_login})`, logins))
     for (const p of prefixes) {
       const escaped = p.replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_")
-      conds.push(sql`${artifact.source_path} like ${`${escaped}%`} escape '\\'`)
+      wsConds.push(sql`${artifact.source_path} like ${`${escaped}%`} escape '\\'`)
     }
-    const match = conds.length === 1 ? conds[0] : or(...conds)
+    if (wsConds.length > 0) {
+      const wsMatch = wsConds.length === 1 ? wsConds[0] : or(...wsConds)
+      if (wsMatch) branches.push(and(eq(artifact.org_id, orgId), wsMatch))
+    }
+    if (people.length > 0) {
+      const authorConds = [inArray(artifact.author_id, people)]
+      const ghIds = (await this.githubIdsForUsers(people)).map((g) => g.toLowerCase())
+      if (ghIds.length > 0) authorConds.push(inArray(sql`lower(${artifact.author_gh_id})`, ghIds))
+      const authored = authorConds.length === 1 ? authorConds[0] : or(...authorConds)
+      if (authored) branches.push(and(eq(artifact.visibility, "public"), authored))
+    }
+    if (branches.length === 0) return []
+    const match = branches.length === 1 ? branches[0] : or(...branches)
     const rows = await this.db
       .select({ id: artifact.id })
       .from(artifact)
-      .where(and(eq(artifact.org_id, orgId), isNull(artifact.removed_at), match))
+      .where(and(isNull(artifact.removed_at), match))
     return rows.map((r) => r.id)
+  }
+  // ---- People profiles: works, shared workspaces, follower/following -----
+  githubIdsForUser(userId: string): Promise<string[]> {
+    return this.githubIdsForUsers([userId])
+  }
+  async githubLoginForUser(_userId: string, ghIds: string[]): Promise<string | null> {
+    if (ghIds.length === 0) return null
+    const rows = await this.db
+      .select({ login: artifact.author_login })
+      .from(artifact)
+      .where(and(inArray(artifact.author_gh_id, ghIds), isNotNull(artifact.author_login)))
+      .limit(1)
+    return rows[0]?.login ?? null
+  }
+  async sharedOrgIds(viewerId: string, targetUserId: string): Promise<string[]> {
+    const rows = await this.db
+      .select({ org: membership.org_id })
+      .from(membership)
+      .where(
+        and(
+          eq(membership.user_id, viewerId),
+          inArray(
+            membership.org_id,
+            this.db
+              .select({ o: membership.org_id })
+              .from(membership)
+              .where(eq(membership.user_id, targetUserId)),
+          ),
+        ),
+      )
+    return rows.map((r) => r.org)
+  }
+  private userWorksConds(userId: string, ghIds: string[], opts: ListArtifactsOpts) {
+    const conds = [...artifactListConditions(artifact, opts), isNull(artifact.removed_at)]
+    if (ghIds.length > 0) {
+      const m = or(
+        eq(artifact.author_id, userId),
+        inArray(
+          sql`lower(${artifact.author_gh_id})`,
+          ghIds.map((g) => g.toLowerCase()),
+        ),
+      )
+      if (m) conds.push(m)
+    } else {
+      conds.push(eq(artifact.author_id, userId))
+    }
+    const orgs = opts.visibleOrgIds ?? []
+    if (orgs.length > 0) {
+      const v = or(eq(artifact.visibility, "public"), inArray(artifact.org_id, orgs))
+      if (v) conds.push(v)
+    } else {
+      conds.push(eq(artifact.visibility, "public"))
+    }
+    return conds
+  }
+  async listUserWorks(
+    userId: string,
+    ghIds: string[],
+    opts: ListArtifactsOpts,
+  ): Promise<ArtifactRecord[]> {
+    const q = this.db
+      .select()
+      .from(artifact)
+      .where(and(...this.userWorksConds(userId, ghIds, opts)))
+      .orderBy(desc(artifact.created_at), desc(artifact.id))
+    return opts.limit ? q.limit(opts.limit) : q
+  }
+  async countUserWorks(userId: string, ghIds: string[], opts: ListArtifactsOpts): Promise<number> {
+    const rows = await this.db
+      .select({ c: count() })
+      .from(artifact)
+      .where(
+        and(
+          ...this.userWorksConds(userId, ghIds, { ...opts, cursor: undefined, limit: undefined }),
+        ),
+      )
+    return rows[0]?.c ?? 0
+  }
+  async countFollowers(userId: string): Promise<number> {
+    const rows = await this.db
+      .select({ c: count() })
+      .from(follow)
+      .where(and(eq(follow.kind, "user"), eq(follow.target, userId)))
+    return rows[0]?.c ?? 0
+  }
+  async countFollowing(userId: string): Promise<number> {
+    const rows = await this.db
+      .select({ c: count() })
+      .from(follow)
+      .where(and(eq(follow.kind, "user"), eq(follow.user_id, userId)))
+    return rows[0]?.c ?? 0
+  }
+  private async profilesForFollow(
+    column: "user_id" | "target",
+    userId: string,
+    limit: number,
+  ): Promise<UserProfile[]> {
+    try {
+      const join = column === "target" ? `u.id = f.target` : `u.id = f.user_id`
+      const pick = column === "target" ? `f.user_id = $1` : `f.target = $1`
+      const { rows } = await this.pool.query(
+        `SELECT u.id, u.name, u.image, u.username, u.profession, u.about
+         FROM follow f JOIN "user" u ON ${join}
+         WHERE f.kind = 'user' AND ${pick} AND u.username IS NOT NULL
+         ORDER BY f.created_at DESC, f.id DESC LIMIT $2`,
+        [userId, limit],
+      )
+      return rows as UserProfile[]
+    } catch {
+      return []
+    }
+  }
+  listFollowing(userId: string, limit: number): Promise<UserProfile[]> {
+    return this.profilesForFollow("target", userId, limit)
+  }
+  listFollowers(userId: string, limit: number): Promise<UserProfile[]> {
+    return this.profilesForFollow("user_id", userId, limit)
   }
   async tagsForArtifacts(artifactIds: string[]): Promise<Record<string, string[]>> {
     if (artifactIds.length === 0) return {}

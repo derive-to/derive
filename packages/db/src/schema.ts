@@ -60,6 +60,10 @@ export const artifact = sqliteTable("artifact", {
   author_login: text("author_login"),
   author_avatar: text("author_avatar"),
   author_gh_id: text("author_gh_id"),
+  // The Dock user who last published this by hand (the signed-in publisher). Null for
+  // GitHub-synced versions (attributed via author_gh_id), static-token, and legacy rows.
+  // Drives the profile work-list + people-follow. Nullable so it ALTER ADDs cleanly.
+  author_id: text("author_id"),
 })
 
 export const version = sqliteTable(
@@ -81,6 +85,8 @@ export const version = sqliteTable(
     author_login: text("author_login"),
     author_avatar: text("author_avatar"),
     author_gh_id: text("author_gh_id"),
+    // The Dock user who published this version by hand; null for sync/anon/legacy.
+    author_id: text("author_id"),
     message: text("message"),
     name: text("name"),
     created_at: text("created_at").notNull().default(now),

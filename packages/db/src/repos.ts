@@ -50,12 +50,13 @@ import type {
   SlackInstallRecord,
   SlackThreadLinkRecord,
   TakedownInput,
+  UserProfile,
   VersionRecord,
   Visibility,
   WebhookRecord,
   WorkspaceRecord,
 } from "@dock/core"
-import { DEFAULT_ORG_SETTINGS } from "@dock/core"
+import { DEFAULT_ORG_SETTINGS, GLOBAL_FOLLOW_ORG } from "@dock/core"
 import {
   and,
   asc,
@@ -331,6 +332,7 @@ export function makeRepos(db: SqliteDb) {
         author_login: v.author_login ?? null,
         author_avatar: v.author_avatar ?? null,
         author_gh_id: v.author_gh_id ?? null,
+        author_id: v.author_id ?? null,
       })
       .where(eq(artifact.id, artifactId))
       .run()
@@ -769,37 +771,208 @@ export function makeRepos(db: SqliteDb) {
       )
       .run()
   }
+  // A user's follows for the management UI: their author/path follows in this workspace
+  // PLUS their global people-follows (org_id = "*"), newest first.
   const listFollows = async (userId: string, orgId: string): Promise<FollowRecord[]> =>
     db
       .select()
       .from(follow)
-      .where(and(eq(follow.user_id, userId), eq(follow.org_id, orgId)))
+      .where(and(eq(follow.user_id, userId), inArray(follow.org_id, [orgId, GLOBAL_FOLLOW_ORG])))
       .orderBy(desc(follow.created_at), desc(follow.id))
       .all()
-  // The "following" feed's id set: live artifacts in the workspace whose CURRENT author
-  // is a followed login (case-insensitive) OR whose source_path starts with a followed
-  // path prefix. Splits the follows into the two sub-conditions and ORs them.
+  // The GitHub numeric ids a set of Dock users linked via Better Auth (raw account read;
+  // the auth tables live in the same DB but aren't in the drizzle schema). [] if absent.
+  const githubIdsForUsers = async (userIds: string[]): Promise<string[]> => {
+    if (userIds.length === 0) return []
+    try {
+      const list = sql.join(
+        userIds.map((id) => sql`${id}`),
+        sql`, `,
+      )
+      const rows = (await db.all(
+        sql`SELECT a.accountId gh_id FROM account a
+            WHERE a.providerId = 'github' AND a.userId IN (${list})`,
+      )) as { gh_id: string }[]
+      return rows.map((r) => r.gh_id).filter(Boolean)
+    } catch {
+      return []
+    }
+  }
+  // The "following" feed's id set (live artifacts only). Two scopes ORed together:
+  //  · author/path follows match within the ACTIVE workspace (your repo-sync feed) —
+  //    a followed login (case-insensitive) or a followed source_path prefix.
+  //  · people follows match a followed person's PUBLIC work across ANY workspace
+  //    (by the artifact's denormalized author_id, or their linked GitHub ids), since a
+  //    person you follow usually publishes in their own workspace, not yours. Gated to
+  //    `public`, so following someone never surfaces their private cross-workspace work.
   const followedArtifactIds = async (userId: string, orgId: string): Promise<string[]> => {
     const follows = await listFollows(userId, orgId)
     const logins = follows.filter((f) => f.kind === "author").map((f) => f.target.toLowerCase())
     const prefixes = follows.filter((f) => f.kind === "path").map((f) => f.target)
-    if (logins.length === 0 && prefixes.length === 0) return []
-    const conds: SQL[] = []
-    if (logins.length > 0) conds.push(inArray(sql`lower(${artifact.author_login})`, logins))
+    const people = follows.filter((f) => f.kind === "user").map((f) => f.target)
+    if (logins.length === 0 && prefixes.length === 0 && people.length === 0) return []
+    const branches: SQL[] = []
+    // Workspace branch: author/path matches, scoped to the active workspace.
+    const wsConds: SQL[] = []
+    if (logins.length > 0) wsConds.push(inArray(sql`lower(${artifact.author_login})`, logins))
     // A path prefix is a LIKE 'prefix%'. Escape LIKE metacharacters in the prefix and
     // declare the escape char so a path that happens to contain % or _ matches literally.
     for (const p of prefixes) {
       const escaped = p.replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_")
-      conds.push(sql`${artifact.source_path} like ${`${escaped}%`} escape '\\'`)
+      wsConds.push(sql`${artifact.source_path} like ${`${escaped}%`} escape '\\'`)
     }
-    const match = conds.length === 1 ? conds[0] : or(...conds)
+    if (wsConds.length > 0) {
+      const wsMatch = wsConds.length === 1 ? wsConds[0] : or(...wsConds)
+      if (wsMatch) branches.push(and(eq(artifact.org_id, orgId), wsMatch) as SQL)
+    }
+    // People branch: a followed person's public work, in any workspace.
+    if (people.length > 0) {
+      const authorConds: SQL[] = [inArray(artifact.author_id, people)]
+      const ghIds = (await githubIdsForUsers(people)).map((g) => g.toLowerCase())
+      if (ghIds.length > 0) authorConds.push(inArray(sql`lower(${artifact.author_gh_id})`, ghIds))
+      const authored = authorConds.length === 1 ? authorConds[0] : or(...authorConds)
+      if (authored) branches.push(and(eq(artifact.visibility, "public"), authored) as SQL)
+    }
+    if (branches.length === 0) return []
+    const match = branches.length === 1 ? branches[0] : or(...branches)
     const rows = await db
       .select({ id: artifact.id })
       .from(artifact)
-      .where(and(eq(artifact.org_id, orgId), isNull(artifact.removed_at), match))
+      .where(and(isNull(artifact.removed_at), match))
       .all()
     return rows.map((r) => r.id)
   }
+
+  // ---- People profiles: works, shared workspaces, follower/following -----
+  // The GitHub numeric ids one Dock user linked (raw account read; [] if absent).
+  const githubIdsForUser = (userId: string): Promise<string[]> => githubIdsForUsers([userId])
+  // A Dock user's GitHub login, derived from any artifact whose author_gh_id is one of
+  // their linked ids (we don't store the login on `account`). Null when unknown.
+  const githubLoginForUser = async (_userId: string, ghIds: string[]): Promise<string | null> => {
+    if (ghIds.length === 0) return null
+    const row = await db
+      .select({ login: artifact.author_login })
+      .from(artifact)
+      .where(and(inArray(artifact.author_gh_id, ghIds), isNotNull(artifact.author_login)))
+      .limit(1)
+      .get()
+    return row?.login ?? null
+  }
+  // Org ids where BOTH users hold a membership — widens a viewer's profile visibility.
+  const sharedOrgIds = async (viewerId: string, targetUserId: string): Promise<string[]> => {
+    const rows = await db
+      .select({ org: membership.org_id })
+      .from(membership)
+      .where(
+        and(
+          eq(membership.user_id, viewerId),
+          inArray(
+            membership.org_id,
+            db
+              .select({ o: membership.org_id })
+              .from(membership)
+              .where(eq(membership.user_id, targetUserId)),
+          ),
+        ),
+      )
+      .all()
+    return rows.map((r) => r.org)
+  }
+  // The WHERE for a person's visible work: not removed, authored by them (author_id or a
+  // linked GitHub id), and visible to the viewer (public OR in a shared workspace).
+  const userWorksConds = (userId: string, ghIds: string[], opts: ListArtifactsOpts): SQL[] => {
+    // artifactListConditions handles the keyset cursor (created_at,id); we add the rest.
+    const conds: SQL[] = [...artifactListConditions(artifact, opts), isNull(artifact.removed_at)]
+    // Authored by them: author_id is the person, OR a linked GitHub id wrote a synced version.
+    if (ghIds.length > 0) {
+      const m = or(
+        eq(artifact.author_id, userId),
+        inArray(
+          sql`lower(${artifact.author_gh_id})`,
+          ghIds.map((g) => g.toLowerCase()),
+        ),
+      )
+      if (m) conds.push(m)
+    } else {
+      conds.push(eq(artifact.author_id, userId))
+    }
+    // Visible to the viewer: public OR in a workspace they share with the profile owner.
+    const orgs = opts.visibleOrgIds ?? []
+    if (orgs.length > 0) {
+      const v = or(eq(artifact.visibility, "public"), inArray(artifact.org_id, orgs))
+      if (v) conds.push(v)
+    } else {
+      conds.push(eq(artifact.visibility, "public"))
+    }
+    return conds
+  }
+  const listUserWorks = async (
+    userId: string,
+    ghIds: string[],
+    opts: ListArtifactsOpts,
+  ): Promise<ArtifactRecord[]> => {
+    const rows = db
+      .select()
+      .from(artifact)
+      .where(and(...userWorksConds(userId, ghIds, opts)))
+      .orderBy(desc(artifact.created_at), desc(artifact.id))
+    return opts.limit ? rows.limit(opts.limit).all() : rows.all()
+  }
+  const countUserWorks = async (
+    userId: string,
+    ghIds: string[],
+    opts: ListArtifactsOpts,
+  ): Promise<number> =>
+    (
+      await db
+        .select({ c: count() })
+        .from(artifact)
+        .where(
+          and(...userWorksConds(userId, ghIds, { ...opts, cursor: undefined, limit: undefined })),
+        )
+        .get()
+    )?.c ?? 0
+  const countFollowers = async (userId: string): Promise<number> =>
+    (
+      await db
+        .select({ c: count() })
+        .from(follow)
+        .where(and(eq(follow.kind, "user"), eq(follow.target, userId)))
+        .get()
+    )?.c ?? 0
+  const countFollowing = async (userId: string): Promise<number> =>
+    (
+      await db
+        .select({ c: count() })
+        .from(follow)
+        .where(and(eq(follow.kind, "user"), eq(follow.user_id, userId)))
+        .get()
+    )?.c ?? 0
+  // Resolve a set of follow rows (people) to public profiles via the raw user table.
+  const profilesForFollow = async (
+    column: "user_id" | "target",
+    userId: string,
+    limit: number,
+  ): Promise<UserProfile[]> => {
+    try {
+      const join = column === "target" ? sql`u.id = f.target` : sql`u.id = f.user_id`
+      const pick = column === "target" ? sql`f.user_id = ${userId}` : sql`f.target = ${userId}`
+      return (await db.all(
+        sql`SELECT u.id, u.name, u.image, u.username, u.profession, u.about
+            FROM follow f JOIN user u ON ${join}
+            WHERE f.kind = 'user' AND ${pick} AND u.username IS NOT NULL
+            ORDER BY f.created_at DESC, f.id DESC LIMIT ${limit}`,
+      )) as UserProfile[]
+    } catch {
+      return []
+    }
+  }
+  // People this user follows: rows where f.user_id = userId, joined on f.target → user.
+  const listFollowing = (userId: string, limit: number): Promise<UserProfile[]> =>
+    profilesForFollow("target", userId, limit)
+  // People who follow this user: rows where f.target = userId, joined on f.user_id → user.
+  const listFollowers = (userId: string, limit: number): Promise<UserProfile[]> =>
+    profilesForFollow("user_id", userId, limit)
 
   const tagsForArtifacts = async (artifactIds: string[]): Promise<Record<string, string[]>> => {
     if (artifactIds.length === 0) return {}
@@ -1452,6 +1625,15 @@ export function makeRepos(db: SqliteDb) {
     removeFollow,
     listFollows,
     followedArtifactIds,
+    countFollowers,
+    countFollowing,
+    listFollowers,
+    listFollowing,
+    githubIdsForUser,
+    githubLoginForUser,
+    sharedOrgIds,
+    listUserWorks,
+    countUserWorks,
     tagsForArtifacts,
     setArtifactTags,
     createCollection,

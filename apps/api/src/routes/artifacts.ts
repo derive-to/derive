@@ -16,6 +16,7 @@ import { setCookie } from "hono/cookie"
 import { z } from "zod"
 import type { AppContext } from "../context"
 import { sweepAnchors } from "../lib/anchor-sweep"
+import { authorProfile, resolveHandles } from "../lib/author"
 import { hashPassword, safeEqual, unlockCookie, unlockToken, verifyPassword } from "../lib/crypto"
 import {
   DEFAULT_WORKSPACE_NAME,
@@ -53,36 +54,6 @@ export const artifactRoutes = (ctx: AppContext) => {
     sourceText,
   } = ctx
   const app = new Hono()
-
-  // Resolve a set of GitHub numeric user ids to Dock handles (usernames) in ONE batched
-  // query — gh_id → handle, only for committers who signed in with GitHub. Empty set ⇒ {}.
-  const resolveHandles = async (ghIds: string[]): Promise<Record<string, string | null>> => {
-    const out: Record<string, string | null> = {}
-    if (ghIds.length === 0) return out
-    for (const u of await meta.usersByGithubIds(ghIds)) out[u.gh_id] = u.username
-    return out
-  }
-
-  // The artifact's current author as a resolved profile: name/login/avatar from the
-  // denormalized columns, plus the Dock `handle` when the committer is a known user.
-  // Null when the artifact has no recorded author at all.
-  const authorProfile = (
-    a: ArtifactRecord,
-    handleByGhId: Record<string, string | null>,
-  ): {
-    name: string | null
-    login: string | null
-    avatar: string | null
-    handle: string | null
-  } | null => {
-    if (!a.author_name && !a.author_login && !a.author_gh_id) return null
-    return {
-      name: a.author_name,
-      login: a.author_login,
-      avatar: a.author_avatar,
-      handle: a.author_gh_id ? (handleByGhId[a.author_gh_id] ?? null) : null,
-    }
-  }
 
   // Newest-first, keyset-paginated (?cursor=<created_at>&limit=N), with optional
   // server-side ?q= (title search), ?tag=, and ?favorite=true. Returns
@@ -176,10 +147,13 @@ export const artifactRoutes = (ctx: AppContext) => {
       q,
       ids,
       collectionId,
-      // Shared-with-me spans workspaces; an explicit member can always see them, so
-      // drop the workspace + public-only restrictions for that scope.
-      orgId: shared ? undefined : listOrg,
-      publicOnly: shared ? false : publicOnly,
+      // `shared` and `following` both resolve to an id set that ALREADY encodes the
+      // correct cross-workspace + visibility scope (an explicit share; or a followed
+      // author/path in this workspace + a followed person's public work anywhere). So
+      // drop the workspace + public-only restrictions, which would otherwise re-clip the
+      // feed back to the active workspace and strip a followed person's public work.
+      orgId: shared || following ? undefined : listOrg,
+      publicOnly: shared || following ? false : publicOnly,
     })
     const hasMore = rows.length > limit
     const page = hasMore ? rows.slice(0, limit) : rows
@@ -191,7 +165,7 @@ export const artifactRoutes = (ctx: AppContext) => {
     const tags = await meta.tagsForArtifacts(pageIds)
     // Resolve the page's distinct author gh_ids to Dock handles in ONE batched query (no
     // N+1) so each row can show "who last changed this" with a link to the Dock profile.
-    const handleByGhId = await resolveHandles([
+    const handleByGhId = await resolveHandles(meta, [
       ...new Set(page.map((a) => a.author_gh_id).filter((x): x is string => !!x)),
     ])
     return c.json({
@@ -305,6 +279,11 @@ export const artifactRoutes = (ctx: AppContext) => {
     const passwordHash = visibility === "password" && password ? hashPassword(password) : undefined
 
     try {
+      // The authenticated principal behind this publish (signed-in user or agent).
+      // Resolved once: `name` is the display author; `id` attributes the version to a
+      // Dock user so it shows on their profile + flows to their followers. A bare
+      // static-token publish has no principal → null id (stays off any human profile).
+      const actor = await actingUser(c)
       const { artifact, version } = await publish(
         meta,
         blobs,
@@ -321,7 +300,8 @@ export const artifactRoutes = (ctx: AppContext) => {
           // person. Anonymous callers can't reach this route at all, so a publish is
           // always attributed to a real principal (the token's optional `author`
           // label is the one headless exception).
-          author: (await actingUser(c))?.name ?? str(body["author"]),
+          author: actor?.name ?? str(body["author"]),
+          authorId: actor?.id ?? null,
           name: str(body["name"]),
           orgId: org,
           visibility,
@@ -339,6 +319,26 @@ export const artifactRoutes = (ctx: AppContext) => {
         message: version.message,
         author: version.author,
       })
+      // Fan out to the publisher's followers: "someone you follow published X". Only for
+      // a real signed-in user (agent/token publishes have no human followers) and only
+      // for publicly-visible work, so a follow never leaks a private title. Bounded list.
+      if (actor?.id && artifact.visibility === "public") {
+        for (const follower of await meta.listFollowers(actor.id, 100)) {
+          if (follower.id === actor.id) continue
+          await meta.createNotification({
+            id: newId("ntf"),
+            user_id: follower.id,
+            actor: actor.name ?? "Someone",
+            kind: "publish",
+            artifact_id: artifact.id,
+            artifact_short_id: artifact.short_id,
+            artifact_title: artifact.title,
+            thread_id: "",
+            comment_id: "",
+            preview: artifact.title ?? "published an update",
+          })
+        }
+      }
       // Republish can resolve comment threads in the same call.
       const resolves = body["resolves"]
       if (shortId && typeof resolves === "string" && resolves) {
@@ -423,7 +423,7 @@ export const artifactRoutes = (ctx: AppContext) => {
     const ghIds = new Set<string>()
     if (artifact.author_gh_id) ghIds.add(artifact.author_gh_id)
     for (const v of versions) if (v.author_gh_id) ghIds.add(v.author_gh_id)
-    const handleByGhId = await resolveHandles([...ghIds])
+    const handleByGhId = await resolveHandles(meta, [...ghIds])
     const base = toJson(deps.baseUrl, artifact, versions)
     // `versions` stays at revision granularity (machines/agents); `sessions` is
     // the time-grouped view the UI shows by default. `my_role` tells the client
@@ -560,6 +560,7 @@ export const artifactRoutes = (ctx: AppContext) => {
       // stays consistent (and dedup'd, since it reuses the same blob_key).
       size_bytes: src.size_bytes,
       author: me ? (me.name ?? me.username ?? me.email) : "anonymous",
+      author_id: me?.id ?? null,
       message: `Restored v${src.n}`,
       name: null,
     })

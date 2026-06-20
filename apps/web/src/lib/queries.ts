@@ -52,6 +52,27 @@ export const followsQuery = () =>
     queryFn: () => api.listFollows().then((r) => r.follows),
   })
 
+// A public profile by handle — identity card + stats + (for a signed-in viewer)
+// followed_by_me. Keyed by handle; invalidated on any follow change so the stats +
+// Follow button stay live. retry:false so a 404 (no such handle) renders immediately.
+export const profileQuery = (handle: string) =>
+  queryOptions({
+    queryKey: ["profile", handle] as const,
+    queryFn: () => api.profile(handle).then((r) => r.user),
+    retry: false,
+  })
+
+// A person's work as an infinite query — public artifacts they authored, plus
+// shared-workspace work for a signed-in viewer. Keyset cursor drives infinite scroll.
+const PROFILE_PAGE = 24
+export const profileArtifactsQuery = (handle: string) =>
+  infiniteQueryOptions({
+    queryKey: ["profile-artifacts", handle] as const,
+    queryFn: ({ pageParam }) => api.profileArtifacts(handle, pageParam || undefined, PROFILE_PAGE),
+    initialPageParam: "",
+    getNextPageParam: (last) => last.next_cursor ?? undefined,
+  })
+
 // Typed query options shared by route loaders (ensureQueryData, for intent
 // preloading) and components (useQuery). One source of truth for keys +
 // fetchers, so a preloaded route and the page that renders it resolve to the

@@ -1,6 +1,7 @@
 import { Folder } from "lucide-react"
 import type { Artifact } from "@/api"
 import { AuthorChip } from "@/components/author-chip"
+import { FollowButton } from "@/components/follow-button"
 import { Icon } from "@/components/icons"
 import {
   DropdownMenu,
@@ -95,6 +96,9 @@ export function ArtifactRow({
             onClick={onPickAuthor && authorLogin ? () => onPickAuthor(authorLogin) : undefined}
             data-testid={`artifact-row-author-${a.short_id}`}
           />
+          {/* Ambient follow: when the author is a known Dock person, follow them right
+              from the row (self-hides for your own work / signed-out). */}
+          {author?.handle && <FollowButton username={author.handle} size="xs" className="ml-2" />}
         </div>
       )}
 

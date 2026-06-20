@@ -1,7 +1,8 @@
-import { can, normalizeUsername, usernameError } from "@dock/core"
+import { can, normalizeUsername, toJson, usernameError } from "@dock/core"
 import { Hono } from "hono"
 import { z } from "zod"
 import type { AppContext } from "../context"
+import { authorProfile, resolveHandles } from "../lib/author"
 import { safeEqual } from "../lib/crypto"
 import { fail, IMMUTABLE_CACHE, readJson, toBody } from "../lib/http"
 import { MAX_AVATAR_BYTES, sniffImageType } from "../lib/image"
@@ -18,6 +19,7 @@ export const sessionRoutes = (ctx: AppContext) => {
     activeWorkspace,
     authorize,
     actorFor,
+    analyticsOn,
   } = ctx
   const app = new Hono()
 
@@ -101,12 +103,29 @@ export const sessionRoutes = (ctx: AppContext) => {
   })
 
   // A public profile by handle — the GitHub-style discovery surface. Email is
-  // intentionally omitted (private); the handle, name, and avatar are public, so
-  // this is readable by anyone (the GET passes the anon lockdown).
+  // intentionally omitted (private); the handle, name, avatar, stats, GitHub link, and
+  // (for a signed-in viewer) whether they already follow are public. Readable by anyone.
   app.get("/v1/users/:handle", async (c) => {
     const handle = normalizeUsername(c.req.param("handle"))
     const p = await meta.getUserByUsername(handle)
     if (!p) return fail(c, 404, "no profile with that username")
+    const me = await currentUser(c)
+    const ghIds = await meta.githubIdsForUser(p.id)
+    // A signed-in viewer also sees the owner's non-public work in workspaces they share.
+    const sharedOrgs = me ? await meta.sharedOrgIds(me.id, p.id) : []
+    const [works, followers, following, githubLogin] = await Promise.all([
+      meta.countUserWorks(p.id, ghIds, { visibleOrgIds: sharedOrgs }),
+      meta.countFollowers(p.id),
+      meta.countFollowing(p.id),
+      meta.githubLoginForUser(p.id, ghIds),
+    ])
+    // Already following? People-follows are global, so listFollows (which folds in the
+    // org "*" rows) carries them regardless of the viewer's active workspace.
+    let followedByMe = false
+    if (me && me.id !== p.id) {
+      const mine = await meta.listFollows(me.id, await activeWorkspace(c))
+      followedByMe = mine.some((f) => f.kind === "user" && f.target === p.id)
+    }
     return c.json({
       user: {
         username: p.username,
@@ -114,8 +133,75 @@ export const sessionRoutes = (ctx: AppContext) => {
         image: p.image,
         profession: p.profession ?? null,
         about: p.about ?? null,
+        github_login: githubLogin,
+        stats: { works, followers, following },
+        followed_by_me: followedByMe,
       },
     })
+  })
+
+  // A person's work — the artifacts they've authored (hand-published or via a linked
+  // GitHub commit), newest first, keyset-paginated (?cursor=<created_at>|<id>&limit=N).
+  // Visibility-gated IN SQL: an anonymous viewer sees only public work; a signed-in
+  // viewer also sees non-public work in workspaces they share with the owner. Safe to
+  // serve unauthenticated because the gate lives in the query, not the caller.
+  app.get("/v1/users/:handle/artifacts", async (c) => {
+    const p = await meta.getUserByUsername(normalizeUsername(c.req.param("handle")))
+    if (!p) return fail(c, 404, "no profile with that username")
+    const me = await currentUser(c)
+    const ghIds = await meta.githubIdsForUser(p.id)
+    const sharedOrgs = me ? await meta.sharedOrgIds(me.id, p.id) : []
+    const limit = Math.min(50, Math.max(1, Number(c.req.query("limit")) || 24))
+    const rawCursor = c.req.query("cursor")
+    const sep = rawCursor?.indexOf("|") ?? -1
+    const cursor =
+      rawCursor && sep > 0
+        ? { created_at: rawCursor.slice(0, sep), id: rawCursor.slice(sep + 1) }
+        : undefined
+    const rows = await meta.listUserWorks(p.id, ghIds, {
+      limit: limit + 1,
+      cursor,
+      visibleOrgIds: sharedOrgs,
+    })
+    const hasMore = rows.length > limit
+    const page = hasMore ? rows.slice(0, limit) : rows
+    const last = page[page.length - 1]
+    const next_cursor = hasMore && last ? `${last.created_at}|${last.id}` : null
+    const pageIds = page.map((a) => a.id)
+    const counts = analyticsOn ? await meta.viewCounts(pageIds) : {}
+    const tags = await meta.tagsForArtifacts(pageIds)
+    const handleByGhId = await resolveHandles(meta, [
+      ...new Set(page.map((a) => a.author_gh_id).filter((x): x is string => !!x)),
+    ])
+    return c.json({
+      artifacts: page.map((a) => ({
+        ...toJson(deps.baseUrl, a, []),
+        views: counts[a.id] ?? 0,
+        tags: tags[a.id] ?? [],
+        author: authorProfile(a, handleByGhId),
+      })),
+      next_cursor,
+    })
+  })
+
+  // The people who follow / are followed by this user, as public profiles (handle +
+  // name + avatar + role; never ids or email). Powers the profile's followers/following
+  // dialogs. The internal user id is stripped here so it never reaches a client.
+  const publicCard = (u: {
+    username: string
+    name: string | null
+    image: string | null
+    profession?: string | null
+  }) => ({ username: u.username, name: u.name, image: u.image, profession: u.profession ?? null })
+  app.get("/v1/users/:handle/followers", async (c) => {
+    const p = await meta.getUserByUsername(normalizeUsername(c.req.param("handle")))
+    if (!p) return fail(c, 404, "no profile with that username")
+    return c.json({ users: (await meta.listFollowers(p.id, 100)).map(publicCard) })
+  })
+  app.get("/v1/users/:handle/following", async (c) => {
+    const p = await meta.getUserByUsername(normalizeUsername(c.req.param("handle")))
+    if (!p) return fail(c, 404, "no profile with that username")
+    return c.json({ users: (await meta.listFollowing(p.id, 100)).map(publicCard) })
   })
 
   // Upload your profile picture. We take only raster images (identified by their
