@@ -4,8 +4,12 @@ import {
   type BundleManifest,
   looksLikeHtmlDocument,
   mimeFor,
+  readerView,
+  reflowHtml,
+  renderDocShell,
   renderMarkdown,
   SELECTION_SCRIPT,
+  sanitizeHtml,
 } from "@dock/core"
 import type { Context } from "hono"
 import { IMMUTABLE_CACHE, RAW_HEADERS, rewriteAbsoluteUrls, toBody } from "./http"
@@ -38,9 +42,24 @@ export const serveContent = async (
    *  client is appended. Resolves a synced artifact's relative cross-document links
    *  into in-app navigations; omitted ⇒ identity. */
   transformHtml?: (html: string) => Promise<string>,
+  /** Auto-reflow non-mobile-optimized HTML at serve time (inject a viewport tag + a
+   *  conservative overflow reset, only when the document declares no viewport). Detection-
+   *  gated and non-destructive — the stored bytes are untouched. Default on; pass false to
+   *  serve the document exactly as authored. Never applied to markdown-rendered output,
+   *  which is already responsive. */
+  reflow = true,
+  /** Reader view: strip the authored layout and re-render the content in Dock's responsive
+   *  shell (the universal "make it readable" mode, used by the in-app toggle via `?reader`).
+   *  Wins over `reflow` for HTML; markdown is already in the shell, so it's unaffected. */
+  reader = false,
 ) => {
   const headers = { ...RAW_HEADERS, "Cache-Control": cacheControl }
   const tx = (doc: string) => (transformHtml ? transformHtml(doc) : Promise.resolve(doc))
+  const rf = (doc: string) => (reflow ? reflowHtml(doc) : doc)
+  // Produce the final HTML body for a document: Reader re-renders it clean + responsive;
+  // otherwise apply cross-doc rewrite + auto-reflow and append the anchor client.
+  const htmlBody = async (doc: string): Promise<string> =>
+    reader ? readerView(doc, renderDocShell, sanitizeHtml) : rf(await tx(doc)) + SELECTION_SCRIPT
   let path = rawPath
   if (content.content_type === BUNDLE_CONTENT_TYPE) {
     const manifestBytes = await blobs.get(content.blob_key)
@@ -61,7 +80,11 @@ export const serveContent = async (
     if (entry.type.startsWith("text/html") || entry.type.startsWith("text/css")) {
       const rewritten = rewriteAbsoluteUrls(new TextDecoder().decode(data), prefix.slice(0, -1))
       // Bundle pages get the anchor client too — comments stick everywhere.
-      const out = entry.type.startsWith("text/html") ? rewritten + SELECTION_SCRIPT : rewritten
+      const out = entry.type.startsWith("text/html")
+        ? reader
+          ? readerView(rewritten, renderDocShell, sanitizeHtml)
+          : rf(rewritten) + SELECTION_SCRIPT
+        : rewritten
       return c.body(out, 200, { ...headers, "Content-Type": entry.type })
     }
     return c.body(toBody(data), 200, { ...headers, "Content-Type": entry.type })
@@ -85,7 +108,7 @@ export const serveContent = async (
     // the label says — the type sniff is a hint, this is the backstop.
     if (looksLikeHtmlDocument(text)) {
       onMismatch?.()
-      return c.body((await tx(text)) + SELECTION_SCRIPT, 200, {
+      return c.body(await htmlBody(text), 200, {
         ...headers,
         "Content-Type": "text/html; charset=utf-8",
       })
@@ -97,7 +120,7 @@ export const serveContent = async (
   // html file artifact — any path serves the document (+ selection capture)
   const ct = mimeFor(path || "index.html")
   if (ct.startsWith("text/html")) {
-    const html = (await tx(new TextDecoder().decode(data))) + SELECTION_SCRIPT
+    const html = await htmlBody(new TextDecoder().decode(data))
     return c.body(html, 200, { ...headers, "Content-Type": ct })
   }
   return c.body(toBody(data), 200, { ...headers, "Content-Type": ct })
