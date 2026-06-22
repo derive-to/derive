@@ -53,7 +53,7 @@
   "devDependencies": {
     "@biomejs/biome": "^2.5.0",
     "@vitest/coverage-v8": "^4.1.9",
-    "knip": "^6.16.1",
+    "knip": "^6.18.0",
     "typescript": "^6.0.3"
   }
 }
