@@ -83,6 +83,23 @@ describe("scanElements", () => {
     expect(ds.find((d) => d.tag === "p")?.text).toBe("a & b <ok>")
     expect(ds.filter((d) => d.tag === "p")).toHaveLength(2)
   })
+
+  it("keeps the FIRST of duplicate attributes (matches the HTML parser + getAttribute)", () => {
+    // Invalid HTML, but it happens. Browsers keep the first occurrence and ignore the
+    // rest; the scanner must agree or its fingerprint won't match the live one.
+    const d = scanElements(`<img src="first.png" src="second.png" alt="A" alt="B">`).find(
+      (x) => x.tag === "img",
+    )
+    expect(d?.attrs.src).toBe("first.png")
+    expect(d?.attrs.alt).toBe("A")
+  })
+
+  it("decodes numeric + named entities in attributes the way a browser does", () => {
+    const d = scanElements(`<img src="x" alt="A &amp; B &#233; &#xe9; &lt;ok&gt;">`).find(
+      (x) => x.tag === "img",
+    )
+    expect(d?.attrs.alt).toBe("A & B é é <ok>")
+  })
 })
 
 describe("roleOf + elementLabel", () => {

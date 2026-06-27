@@ -409,6 +409,10 @@ function parseAttrs(s: string): Record<string, string> {
   while ((m = re.exec(s))) {
     const name = m[1]?.toLowerCase()
     if (!name) continue
+    // Duplicate attributes are invalid HTML, but they happen. The parsing spec (and
+    // every browser) keeps the FIRST occurrence and ignores the rest — match that, so
+    // a fingerprint here equals one read off a live `getAttribute`.
+    if (name in out) continue
     let val = m[2] ?? ""
     if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'")))
       val = val.slice(1, -1)
