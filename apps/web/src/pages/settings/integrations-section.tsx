@@ -132,6 +132,13 @@ export function IntegrationsSection() {
             onChange={flip("githubMirrorComments")}
           />
           <Toggle
+            id="github-preview-link"
+            label="Comment a preview link on PRs"
+            hint="When a pull request opens, post (and keep updated) a comment linking to the Dock preview of its docs."
+            on={settings.githubPreviewLink}
+            onChange={flip("githubPreviewLink")}
+          />
+          <Toggle
             id="slack-post"
             label="Post activity to Slack"
             hint="Send comments to the connected Slack channel; replies there post back to Dock."

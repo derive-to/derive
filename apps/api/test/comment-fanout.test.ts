@@ -41,6 +41,7 @@ describe("comment channel fan-out", () => {
       emailNotifications: false,
       githubPostComments: true,
       githubMirrorComments: true,
+      githubPreviewLink: true,
       slackPost: true,
     })
     const shortId = await newArtifact(app)
@@ -81,6 +82,7 @@ describe("comment channel fan-out", () => {
       emailNotifications: true,
       githubPostComments: true,
       githubMirrorComments: true,
+      githubPreviewLink: true,
       slackPost: false,
     })
     const shortId = await newArtifact(app)

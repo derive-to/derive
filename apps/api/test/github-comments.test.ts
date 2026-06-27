@@ -8,11 +8,25 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import { parseMeta } from "../src/lib/comments"
 import {
   enqueueGithubPrComment,
+  findPreviewComment,
   ingestGithubPrComment,
   lineFromDiffHunk,
   lineOfQuote,
   prSourceForArtifact,
 } from "../src/lib/github-comments"
+
+describe("sticky preview comment", () => {
+  it("finds the Dock-managed comment by its hidden marker, else null", () => {
+    const comments = [
+      { id: 1, body: "looks good" },
+      { id: 2, body: "📦 Dock preview …\n<!-- dock-preview -->" },
+      { id: 3, body: "another reply" },
+    ]
+    expect(findPreviewComment(comments)).toBe(2)
+    expect(findPreviewComment([{ id: 9, body: "no marker here" }])).toBe(null)
+    expect(findPreviewComment([{ id: 9 }])).toBe(null) // tolerates a bodyless comment
+  })
+})
 
 describe("anchor/line mapping", () => {
   it("finds the 1-based line of a quote's first non-empty line", () => {

@@ -149,6 +149,7 @@ export const workspaceRoutes = (ctx: AppContext) => {
           emailNotifications: z.boolean(),
           githubPostComments: z.boolean(),
           githubMirrorComments: z.boolean(),
+          githubPreviewLink: z.boolean(),
           slackPost: z.boolean(),
         })
         .partial(),

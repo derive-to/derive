@@ -14,6 +14,7 @@ describe("workspace integration settings", () => {
       emailNotifications: true,
       githubPostComments: true,
       githubMirrorComments: true,
+      githubPreviewLink: true,
       slackPost: true,
     })
   })

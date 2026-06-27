@@ -217,6 +217,7 @@ export interface OrgSettings {
   emailNotifications: boolean
   githubPostComments: boolean
   githubMirrorComments: boolean
+  githubPreviewLink: boolean
   slackPost: boolean
 }
 /** Slack connection status for the Settings UI. */

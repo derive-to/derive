@@ -70,6 +70,75 @@ export async function createIssueComment(
   return ((await res.json()) as { id: number }).id
 }
 
+// An invisible (HTML-comment) marker on the single Dock-managed "preview" comment, so we
+// edit it in place on each sync instead of spamming the PR thread with a new one.
+const PREVIEW_MARK = "<!-- dock-preview -->"
+
+interface IssueComment {
+  id: number
+  body?: string
+}
+
+/** A PR's conversation (issue) comments, first ~3 pages — enough to find our own near
+ *  the top. */
+async function listIssueComments(
+  repo: RepoRef,
+  prNumber: number,
+  token: string,
+): Promise<IssueComment[]> {
+  const out: IssueComment[] = []
+  for (let page = 1; page <= 3; page++) {
+    const url = `${API}/repos/${repo.owner}/${repo.name}/issues/${prNumber}/comments?per_page=100&page=${page}`
+    const res = await fetch(url, { headers: headers(token) })
+    if (!res.ok) throw new GitHubWriteError(res.status, `list issue comments HTTP ${res.status}`)
+    const batch = (await res.json()) as IssueComment[]
+    out.push(...batch)
+    if (batch.length < 100) break
+  }
+  return out
+}
+
+/** Edit an existing issue comment's body. */
+async function updateIssueComment(
+  repo: RepoRef,
+  commentId: number,
+  body: string,
+  token: string,
+): Promise<void> {
+  const url = `${API}/repos/${repo.owner}/${repo.name}/issues/comments/${commentId}`
+  const res = await fetch(url, {
+    method: "PATCH",
+    headers: headers(token),
+    body: JSON.stringify({ body }),
+  })
+  if (!res.ok)
+    throw new GitHubWriteError(
+      res.status,
+      `update issue comment HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`,
+    )
+}
+
+/** The id of the Dock-managed preview comment among a PR's comments (by our marker), or
+ *  null when we haven't posted one yet. Pure — exported for testing. */
+export const findPreviewComment = (comments: IssueComment[]): number | null =>
+  comments.find((c) => c.body?.includes(PREVIEW_MARK))?.id ?? null
+
+/** Post or update the single Dock-managed "preview" comment on a PR. The marker makes it
+ *  sticky (subsequent syncs edit the same comment). The `MARK` footer keeps the inbound
+ *  mirror from ingesting it back as a Dock comment. Caller swallows errors — a failed
+ *  comment never blocks the preview sync. */
+export async function upsertPreviewComment(
+  repo: RepoRef,
+  prNumber: number,
+  body: string,
+  token: string,
+): Promise<void> {
+  const full = `${body}\n\n<sub>${MARK} · kept in sync with the PR</sub>\n${PREVIEW_MARK}`
+  const existingId = findPreviewComment(await listIssueComments(repo, prNumber, token))
+  if (existingId != null) await updateIssueComment(repo, existingId, full, token)
+  else await createIssueComment(repo, prNumber, full, token)
+}
+
 /** Post an inline PR review comment on a file+line of the head commit. Throws on 422
  *  (the line isn't part of the PR diff) so the caller can fall back to an issue comment. */
 export async function createReviewComment(

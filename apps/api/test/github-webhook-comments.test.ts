@@ -148,6 +148,7 @@ describe("github → dock comment mirroring (webhook)", () => {
       emailNotifications: true,
       githubPostComments: true,
       githubMirrorComments: false,
+      githubPreviewLink: true,
       slackPost: true,
     })
     const r = await post(app, "pull_request_review_comment", reviewCommentPayload())
