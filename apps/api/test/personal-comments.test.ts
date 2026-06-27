@@ -157,16 +157,22 @@ describe("personal comments — visibility", () => {
     expect(create.status).toBe(400)
   })
 
-  it("an OAuth agent sees its own user's personal comments, never another user's", async () => {
-    seedGrant(A.id, "tok_alice_agent")
-    seedGrant(B.id, "tok_bob_agent")
-    // Alice's authed agent sees Alice's personal channel.
-    expect(
-      (await list(sid, bearer("tok_alice_agent"))).some((c) => c.visibility === "personal"),
-    ).toBe(true)
-    // Bob's authed agent sees only public — Alice's personal is invisible to it.
-    expect(
-      (await list(sid, bearer("tok_bob_agent"))).every((c) => c.visibility !== "personal"),
-    ).toBe(true)
-  })
+  // Grant seeding writes to the sqlite test file; on the pg lane the store is
+  // Postgres (no oauth tables), so this case is sqlite-only. The visibility
+  // FILTER it exercises is covered on both lanes by the cases above.
+  it.skipIf(process.env.DOCK_TEST_DB === "pg")(
+    "an OAuth agent sees its own user's personal comments, never another user's",
+    async () => {
+      seedGrant(A.id, "tok_alice_agent")
+      seedGrant(B.id, "tok_bob_agent")
+      // Alice's authed agent sees Alice's personal channel.
+      expect(
+        (await list(sid, bearer("tok_alice_agent"))).some((c) => c.visibility === "personal"),
+      ).toBe(true)
+      // Bob's authed agent sees only public — Alice's personal is invisible to it.
+      expect(
+        (await list(sid, bearer("tok_bob_agent"))).every((c) => c.visibility !== "personal"),
+      ).toBe(true)
+    },
+  )
 })
