@@ -311,7 +311,12 @@ export function Artifact() {
     if (!head) continue
     const id = head.thread_id
     const a = parseAnchor(head.anchor)
-    const present = inDoc[id] !== false
+    // Does this thread's anchor resolve in the live doc? The frame reports `inDoc`
+    // for the anchors it was sent (open/addressed). An `outdated` thread is NOT sent
+    // to the frame, so `inDoc[id]` is undefined — fall back to the server's `anchored`
+    // flag rather than defaulting to "present" (which would pin it invisibly at
+    // opacity 0 instead of showing it as an orphan in the general list).
+    const present = id in inDoc ? inDoc[id] !== false : head.anchored !== false
     if (deck && a) {
       // Deck: a comment belongs to the slide its text actually resolved on (landed),
       // or, until that's known, the slide it was made on (recorded). Pin it only on

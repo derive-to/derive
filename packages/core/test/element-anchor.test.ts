@@ -181,6 +181,19 @@ describe("resolveElement — ambiguity must not breed false confidence", () => {
     if (m) expect(m.band).not.toBe("high")
   })
 
+  it("never claims high confidence when id and content disagree (a content swap)", () => {
+    // Two charts; comment on the red one. Then the two swap their src+alt but keep
+    // their ids — so the comment's id points one way and its content the other. That
+    // conflict can't be "high"; it relocates but flags itself (medium).
+    const v1 = `<p>a</p><img id="A" src="/red.png" alt="Red chart"><p>b</p><img id="B" src="/blue.png" alt="Blue chart"><p>c</p>`
+    const sel = selFor(v1, "img", 0)
+    const v2 = `<p>a</p><img id="A" src="/blue.png" alt="Blue chart"><p>b</p><img id="B" src="/red.png" alt="Red chart"><p>c</p>`
+    const m = elementResolvesIn(sel, v2)
+    expect(m).not.toBeNull()
+    expect(m?.band).not.toBe("high")
+    expect(m?.confidence ?? 1).toBeLessThanOrEqual(0.6)
+  })
+
   it("stays fast + non-crashing on a huge document", () => {
     const huge = `<div>${`<img src="/x.png" alt="t">`.repeat(2000)}</div>`
     const sel = selFor(huge, "img", 1000)

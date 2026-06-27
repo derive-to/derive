@@ -593,11 +593,21 @@ function grade(
   const strongUnique = (matchedId && ctx.idMatches === 1) || (matchedContent && ctx.fpMatches === 1)
   // A strong signal shared across candidates — not identifying on its own.
   const strongAmbiguous = (matchedId && ctx.idMatches > 1) || (matchedContent && ctx.fpMatches > 1)
+  // The OTHER strong signal points at a DIFFERENT element than the winner — id and
+  // content disagree (two charts swapped src/alt but kept their ids, or an id was
+  // reused for different content). A genuine conflict, so never "high".
+  const conflict =
+    (matchedId && !matchedContent && ctx.fpMatches > 0) ||
+    (matchedContent && !matchedId && ctx.idMatches > 0)
 
   // Ambiguous strong signal with nothing reliable to break the tie (only position /
   // geometry, which a deletion shifts) → low, and don't report a confident number.
   if (strongAmbiguous && !strongUnique && !hasNeighbor) {
     return { band: "low", confidence: Math.min(m.confidence, 0.45) }
+  }
+  // id says one element, content says another → medium at most, flagged as moved.
+  if (conflict) {
+    return { band: "medium", confidence: Math.min(m.confidence, 0.6) }
   }
   if (strongUnique && m.confidence >= 0.6 && ctx.margin >= 0.12) {
     return { band: "high", confidence: m.confidence }

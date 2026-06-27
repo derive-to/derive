@@ -288,7 +288,10 @@ function gradeEl(sig,conf,fpM,idM,margin){
   var mId=sig.indexOf("id")>=0,mContent=sig.indexOf("content")>=0,nb=sig.indexOf("nb")>=0;
   var uniq=(mId&&idM===1)||(mContent&&fpM===1);
   var ambig=(mId&&idM>1)||(mContent&&fpM>1);
+  /* id and content point at different elements (swapped content) -> never high */
+  var conflict=(mId&&!mContent&&fpM>0)||(mContent&&!mId&&idM>0);
   if(ambig&&!uniq&&!nb)return {band:"low",c:Math.min(conf,0.45)};
+  if(conflict)return {band:"medium",c:Math.min(conf,0.6)};
   if(uniq&&conf>=0.6&&margin>=0.12)return {band:"high",c:conf};
   if((uniq||nb||sig.indexOf("position")>=0)&&conf>=0.5)return {band:"medium",c:Math.min(conf,0.75)};
   return {band:"low",c:Math.min(conf,0.5)}}
