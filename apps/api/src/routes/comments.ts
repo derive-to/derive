@@ -155,6 +155,11 @@ export const commentRoutes = (ctx: AppContext) => {
         : typeof body.anchor === "string"
           ? body.anchor
           : null
+    // Cap the anchor size. body_md is bounded but the anchor was not — a real element
+    // anchor (snapshot.html capped at ~2KB + a few short fields) stays well under this;
+    // the limit stops a comment from storing a multi-MB blob that ships on every fetch.
+    if (anchor && anchor.length > 16_000)
+      return fail(c, 400, "anchor is too large (max 16000 characters)")
 
     const acting = await actingUser(c)
     const author = acting

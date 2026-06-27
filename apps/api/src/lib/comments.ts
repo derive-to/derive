@@ -97,11 +97,14 @@ export const previewOf = (body: string): string => {
   return flat.length > 160 ? `${flat.slice(0, 159)}…` : flat
 }
 
-/** The quoted text from a comment anchor, for webhook payloads. */
+/** A short referent for a comment anchor, for webhook payloads — the quoted text
+ *  for a text anchor, or the element's snapshot label for an element anchor. */
 export const quoteOf = (anchor: string | null): string | null => {
   if (!anchor) return null
   try {
-    return (JSON.parse(anchor) as { exact?: string }).exact ?? null
+    const a = JSON.parse(anchor) as { exact?: string; type?: string; snapshot?: { label?: string } }
+    if (a.type === "ElementSelector") return a.snapshot?.label ?? null
+    return a.exact ?? null
   } catch {
     return null
   }

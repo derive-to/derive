@@ -185,10 +185,12 @@ export interface MetaStore {
   createComment(c: NewComment): Promise<CommentRecord>
   listComments(artifactId: string, opts?: { state?: CommentState }): Promise<CommentRecord[]>
   getComment(id: string): Promise<CommentRecord | null>
-  /** Patch a single comment's body and/or meta (reactions, edited, deleted). */
+  /** Patch a single comment's body, meta (reactions, edited, deleted), and/or
+   *  anchor (the re-anchor sweep self-heals an element anchor it recovered across
+   *  versions by rewriting the root comment's selector). */
   updateComment(
     id: string,
-    fields: { body_md?: string; meta?: string | null },
+    fields: { body_md?: string; meta?: string | null; anchor?: string | null },
   ): Promise<CommentRecord | null>
   /** Flips every comment in a thread to a state; returns the count updated. */
   setThreadState(artifactId: string, threadId: string, state: CommentState): Promise<number>

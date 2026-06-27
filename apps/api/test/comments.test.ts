@@ -1,5 +1,27 @@
+import { type ElementSelector, elementLabel, fingerprintOf, roleOf, scanElements } from "@dock/core"
 import { describe, expect, it } from "vitest"
 import { app, as, json, jsonAs, makeAuthedApp, publishAs, type TestUser, upload } from "./helpers"
+
+// Build an element selector for the first element matching `tag` in `html`, the
+// way the browser client would (same fields, from a scan).
+const elSelFor = (html: string, tag: string, ordinal = 0): ElementSelector => {
+  const ds = scanElements(html)
+  const d = ds.find((x) => x.tag === tag && x.ordinal === ordinal)
+  if (!d) throw new Error(`no ${tag}#${ordinal}`)
+  const role = roleOf(d)
+  return {
+    type: "ElementSelector",
+    tag: d.tag,
+    role,
+    id: d.id,
+    fingerprint: fingerprintOf(d),
+    ordinal: d.ordinal,
+    docFraction: d.srcFraction,
+    before: ds[d.index - 1]?.text,
+    after: ds[d.index + 1]?.text,
+    snapshot: { tag: d.tag, label: elementLabel({ ...d, role }) },
+  }
+}
 
 describe("comments + the loop", () => {
   let shortId: string
@@ -296,5 +318,104 @@ describe("@mentions + in-app notifications", () => {
     } finally {
       await reader.cancel()
     }
+  })
+})
+
+describe("element anchors (non-text) through publish + sweep", () => {
+  const page = (img: string) =>
+    `<!doctype html><html><body><p>Intro</p>${img}<p>Outro</p></body></html>`
+  const byState = async (sid: string, state: string) =>
+    (await (await app.request(`/v1/artifacts/${sid}/comments?state=${state}`)).json()).comments
+
+  it("flags an element anchor resolved, and orphaned when the element is removed", async () => {
+    const v1 = page(`<img id="hero" src="/a.png" alt="Hero chart">`)
+    const sid = (await (await upload("e.html", v1, { title: "E" })).json()).short_id
+    const anchor = elSelFor(v1, "img")
+    await app.request(`/v1/artifacts/${sid}/comments`, json({ body_md: "fix this image", anchor }))
+
+    let list = await (await app.request(`/v1/artifacts/${sid}/comments`)).json()
+    expect(list.comments[0].anchored).toBe(true)
+    // The webhook/quote referent is the snapshot label, not a text quote.
+    expect(JSON.parse(list.comments[0].anchor).snapshot.label).toBe("Image — Hero chart")
+
+    // Remove the image entirely → no forward-walk can recover it → orphaned/outdated.
+    await upload("e.html", page(""), {}, sid)
+    expect(await byState(sid, "open")).toHaveLength(0)
+    expect(await byState(sid, "outdated")).toHaveLength(1)
+    list = await (await app.request(`/v1/artifacts/${sid}/comments`)).json()
+    expect(list.comments[0].anchored).toBe(false)
+    // The preserved snapshot still describes what it pointed at.
+    expect(JSON.parse(list.comments[0].anchor).snapshot.label).toBe("Image — Hero chart")
+  })
+
+  it("survives an id rename via the content fingerprint (one-jump)", async () => {
+    const v1 = page(`<img id="A" src="/x.png" alt="hero">`)
+    const sid = (await (await upload("e.html", v1, { title: "E" })).json()).short_id
+    await app.request(
+      `/v1/artifacts/${sid}/comments`,
+      json({ body_md: "on the image", anchor: elSelFor(v1, "img") }),
+    )
+    // id changes but src+alt (the fingerprint) hold → resolves directly, stays open.
+    await upload("e.html", page(`<img id="B" src="/x.png" alt="hero">`), {}, sid)
+    expect(await byState(sid, "outdated")).toHaveLength(0)
+    expect(await byState(sid, "open")).toHaveLength(1)
+  })
+
+  it("forward-walks recovery across versions where no single signal survives end-to-end", async () => {
+    // The comment is made on v1. Across v2..v4 the id and the content (src+alt) each
+    // change, but never both in the same step — so every hop keeps ONE strong signal
+    // while v1→v4 shares neither. One-jump resolution fails; the forward-walk recovers
+    // it and self-heals the stored selector.
+    const v1 = page(`<img id="A" src="/1.png" alt="hero one">`)
+    const sid = (await (await upload("e.html", v1, { title: "E" })).json()).short_id
+    await app.request(
+      `/v1/artifacts/${sid}/comments`,
+      json({ body_md: "on the hero", anchor: elSelFor(v1, "img") }),
+    )
+    // v2: id A kept, content changes. v3: content kept, id → B. v4: id B kept, content changes.
+    await upload("e.html", page(`<img id="A" src="/2.png" alt="hero two">`), {}, sid)
+    await upload("e.html", page(`<img id="B" src="/2.png" alt="hero two">`), {}, sid)
+    await upload("e.html", page(`<img id="B" src="/3.png" alt="hero three">`), {}, sid)
+
+    // Recovered, not orphaned.
+    expect(await byState(sid, "outdated")).toHaveLength(0)
+    expect(await byState(sid, "open")).toHaveLength(1)
+
+    // Self-healed: the stored selector now matches the current element (id B, /3.png)
+    // and still resolves against the current version.
+    const list = await (await app.request(`/v1/artifacts/${sid}/comments`)).json()
+    const healed = JSON.parse(list.comments[0].anchor)
+    expect(healed.id).toBe("B")
+    expect(list.comments[0].anchored).toBe(true)
+    // The original snapshot rode through the recovery.
+    expect(healed.snapshot.label).toBe("Image — hero one")
+  })
+
+  it("rejects an oversized anchor (storage/bandwidth abuse) but accepts a normal one", async () => {
+    const sid = (
+      await (
+        await upload("e.html", page(`<img id="x" src="/a.png" alt="A">`), { title: "E" })
+      ).json()
+    ).short_id
+    // A normal element anchor is fine.
+    const ok = await app.request(
+      `/v1/artifacts/${sid}/comments`,
+      json({ body_md: "ok", anchor: elSelFor(page(`<img id="x" src="/a.png" alt="A">`), "img") }),
+    )
+    expect(ok.status).toBe(201)
+    // A multi-MB anchor (e.g. a giant snapshot.html) is refused, not stored.
+    const huge = await app.request(
+      `/v1/artifacts/${sid}/comments`,
+      json({
+        body_md: "abuse",
+        anchor: {
+          type: "ElementSelector",
+          tag: "img",
+          fingerprint: "x",
+          snapshot: { html: "A".repeat(2_000_000) },
+        },
+      }),
+    )
+    expect(huge.status).toBe(400)
   })
 })

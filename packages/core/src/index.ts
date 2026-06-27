@@ -1,6 +1,7 @@
 export * from "./anchor"
 export * from "./cross-doc"
 export * from "./diff"
+export * from "./element-anchor"
 export * from "./hash"
 export * from "./ids"
 export * from "./md"

@@ -18,6 +18,9 @@ const CommentScopeContext = createContext<{
   currentSlide?: number | null
   /** Per-thread: the slide its anchor resolved on (null = outside any slide). */
   landedSlides?: Record<string, number | null>
+  /** Per-thread element-anchor resolution quality, so a card can show a quiet
+   *  "moved" marker when its element relocated with less than full confidence. */
+  anchorConf?: Record<string, { band: "high" | "medium" | "low"; confidence: number }>
 }>({
   shortId: null,
   canComment: true,

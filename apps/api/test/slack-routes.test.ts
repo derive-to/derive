@@ -9,8 +9,11 @@ const owner: TestUser = { id: "u-o", email: "o@x.com", name: "O", username: "o" 
 const editor: TestUser = { id: "u-e", email: "e@x.com", name: "E", username: "e" }
 
 // Build an app with Slack configured + an owner/editor team. quotaApp wires fake auth
-// (x-test-user header → session) and the custom deps; we seed the memberships so the
-// admin gate (workspaceCan) resolves.
+// (x-test-user header → session) and the custom deps. The memberships are seeded
+// through quotaApp's `team` arg (4th) so they land inside the store's awaited `ready`
+// step — firing meta.setMembership(...) un-awaited here would race activeWorkspace's
+// listWorkspaces lookup under Postgres, falling through to provisionPersonal and
+// resolving the wrong org (the flaky 404s / stale installs this suite saw).
 const make = (name: string) => {
   const { app, meta } = quotaApp(
     name,
@@ -20,10 +23,11 @@ const make = (name: string) => {
       slack: { clientId: "cid", clientSecret: "csec", signingSecret: SIGNING },
     },
     [owner, editor],
+    [
+      { user_id: owner.id, role: "owner" },
+      { user_id: editor.id, role: "editor" },
+    ],
   )
-  meta.setWorkspace("default", "W")
-  meta.setMembership({ id: "m-o", org_id: "default", user_id: owner.id, role: "owner" })
-  meta.setMembership({ id: "m-e", org_id: "default", user_id: editor.id, role: "editor" })
   return { app, meta }
 }
 
