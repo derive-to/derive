@@ -327,11 +327,19 @@ function paintEl(id,el,band){
   else badge.title="View comment";
   ov.appendChild(badge);
   document.body.appendChild(ov);elReg.push({id:id,el:el,ov:ov})}
-function positionEls(){var sy=scrollTop(),sx=window.scrollX||0;
-  for(var i=0;i<elReg.length;i++){var e=elReg[i],r=e.el.getBoundingClientRect();
+var reTick=0;
+function positionEls(){var sy=scrollTop(),sx=window.scrollX||0,detached=false;
+  for(var i=0;i<elReg.length;i++){var e=elReg[i];
+    /* the artifact's JS may REMOVE+recreate an element (a tab switch, an SPA re-render).
+       A detached element isn't just moved — repositioning can't help; we must RESOLVE
+       again to re-attach to the replacement. (A merely hidden element stays attached →
+       handled by the size check below, no re-resolve.) */
+    if(!document.contains(e.el)){detached=true;e.ov.style.display="none";continue}
+    var r=e.el.getBoundingClientRect();
     if(!(r.width||r.height)){e.ov.style.display="none";continue}
     e.ov.style.display="block";e.ov.style.left=(r.left+sx)+"px";e.ov.style.top=(r.top+sy)+"px";
-    e.ov.style.width=r.width+"px";e.ov.style.height=r.height+"px"}}
+    e.ov.style.width=r.width+"px";e.ov.style.height=r.height+"px"}
+  if(detached&&lastAnchors&&!reTick)reTick=setTimeout(function(){reTick=0;applyAnchors(lastAnchors)},150)}
 
 /* hover affordance: a 'Comment' chip parked at the top-right of the anchorable
    element under the pointer; clicking it pins a comment to that element. */
@@ -437,7 +445,9 @@ function reportScroll(){post({type:"scroll",scrollY:scrollTop(),viewH:window.inn
    same phrase on two slides can't collide), then falling back to a whole-document
    search if the text has moved off that slide. Reports, per id, whether it resolved
    and which slide it actually landed in (null = outside any slide / non-deck). */
+var lastAnchors=null;
 function applyAnchors(anchors){
+  lastAnchors=anchors;            /* kept so we can re-resolve if an element is replaced */
   clearMarks();clearEls();
   var slides=slideEls(),resolved={},landed={},conf={};
   for(var k=0;k<anchors.length;k++){
