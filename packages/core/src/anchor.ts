@@ -471,6 +471,14 @@ window.addEventListener("resize",reflow);
    scroll too (cheap; same rAF gate as rect reporting via the scroll handler). */
 /* images/fonts settle after load — re-measure a few times so pins land right */
 window.addEventListener("load",function(){reportRects();setTimeout(reportRects,400);setTimeout(reportRects,1200)});
+/* The artifact's OWN scripts can mutate the DOM after load (a chart library renders,
+   content animates, an accordion expands) — none of which fire scroll/resize/load. So
+   overlays would strand over stale positions. Watch for document size changes
+   (ResizeObserver) and DOM edits (MutationObserver) and re-pin. reflow is rAF-gated, so
+   a burst of mutations coalesces to one reposition per frame, and the cost is O(anchors)
+   not O(DOM). attributes:false so our own style writes in positionEls don't re-trigger it. */
+try{if(window.ResizeObserver)new ResizeObserver(reflow).observe(document.documentElement)}catch(_r){}
+try{if(window.MutationObserver)new MutationObserver(reflow).observe(document.body||document.documentElement,{childList:true,subtree:true})}catch(_m){}
 
 /* hover a highlight (text mark or element badge) -> emphasize its card in the host */
 document.addEventListener("mouseover",function(e){
