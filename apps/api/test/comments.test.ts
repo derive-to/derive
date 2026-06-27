@@ -273,7 +273,11 @@ describe("@mentions + in-app notifications", () => {
       50,
       new Date(Date.now() + 60_000).toISOString(),
     )
-    const mention = due.find((d) => d.event_type === "comment.mention")
+    // The outbox now also carries first-party channel rows (e.g. kind="email") for the
+    // same event, so select the configured-webhook delivery specifically.
+    const mention = due.find(
+      (d) => d.event_type === "comment.mention" && (d.kind === "generic" || d.kind === "slack"),
+    )
     expect(mention).toBeTruthy()
     const payload = JSON.parse(mention?.payload ?? "{}")
     expect(payload.data.mentioned).toContain("Bob")

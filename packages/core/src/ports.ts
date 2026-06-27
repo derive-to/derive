@@ -409,6 +409,25 @@ export interface MetaStore {
   /** A workspace's installations, newest first. */
   listGithubInstallations(orgId: string): Promise<GitHubInstallationRecord[]>
   deleteGithubInstallation(installationId: string): Promise<void>
+  // ---- Workspace integration settings (enable/disable each channel) --------
+  /** The workspace's integration preferences, merged over defaults (so a workspace
+   *  that never saved any returns all-enabled). */
+  getOrgSettings(orgId: string): Promise<OrgSettings>
+  /** Persist the workspace's integration preferences (full object; upsert by org). */
+  setOrgSettings(orgId: string, settings: OrgSettings): Promise<void>
+  // ---- Slack App (connected workspace + thread links) ---------------------
+  /** The Slack workspace connected to this Dock workspace, or null. */
+  getSlackInstall(orgId: string): Promise<SlackInstallRecord | null>
+  /** Upsert (connect / reconnect) the Slack install for a workspace. */
+  setSlackInstall(s: SlackInstallRecord): Promise<void>
+  /** Disconnect Slack for a workspace. */
+  deleteSlackInstall(orgId: string): Promise<void>
+  /** The Slack message a Dock thread is mirrored to (for threading replies), or null. */
+  getSlackThreadLinkByThread(threadId: string): Promise<SlackThreadLinkRecord | null>
+  /** The Dock thread a Slack message maps to (for reply-back), or null. */
+  getSlackThreadLinkByTs(channel: string, ts: string): Promise<SlackThreadLinkRecord | null>
+  /** Record the Slack message ↔ Dock thread mapping (idempotent on thread_id). */
+  setSlackThreadLink(l: SlackThreadLinkRecord): Promise<void>
   // ---- Domain mode: a hostname serving artifact(s) at its own origin ------
   // A domain row is either bound to one artifact (`artifact_id` set: a vanity
   // subdomain today, a per-artifact custom domain later — served at the host root)
@@ -988,6 +1007,53 @@ export interface NewRepoSource {
 /** The instance's GitHub App credentials (single row, id = "default"), captured
  *  via the one-click manifest flow. The three secret columns are encrypted at
  *  rest by the route layer before they reach the store. */
+/** Per-workspace integration switches: each channel behaviour the workspace can turn
+ *  on or off. Stored as one JSON row per org; absent keys fall back to the defaults
+ *  below (everything on), so connecting an integration "just works" until toggled. */
+export interface OrgSettings {
+  /** Send notification emails on comments/mentions. */
+  emailNotifications: boolean
+  /** Post a Dock comment to the PR (inline review or top-level) when it's on a
+   *  PR-sourced artifact. */
+  githubPostComments: boolean
+  /** Mirror PR comments made on GitHub back into the Dock artifact. */
+  githubMirrorComments: boolean
+  /** Post Dock activity to the connected Slack workspace. */
+  slackPost: boolean
+}
+
+export const DEFAULT_ORG_SETTINGS: OrgSettings = {
+  emailNotifications: true,
+  githubPostComments: true,
+  githubMirrorComments: true,
+  slackPost: true,
+}
+
+/** A connected Slack workspace (one per Dock workspace). `bot_token` is the OAuth bot
+ *  token, AES-encrypted at rest. `default_channel` is where Dock posts when an artifact
+ *  has no more specific channel. */
+export interface SlackInstallRecord {
+  org_id: string
+  team_id: string
+  team_name: string | null
+  bot_token: string
+  bot_user_id: string | null
+  default_channel: string | null
+  created_at: string
+}
+
+/** Links a Dock comment thread to the Slack message Dock posted for it, so replies
+ *  thread under it (Dock→Slack) and Slack thread replies map back (Slack→Dock). */
+export interface SlackThreadLinkRecord {
+  id: string
+  org_id: string
+  artifact_id: string
+  thread_id: string
+  channel: string
+  message_ts: string
+  created_at: string
+}
+
 export interface GitHubAppRecord {
   id: string
   /** Numeric GitHub App id, stored as text. */
@@ -1031,6 +1097,24 @@ export interface NewArtifactMember {
 export type WebhookKind = "generic" | "slack"
 export type DeliveryStatus = "pending" | "delivered" | "dead"
 
+/**
+ * What an outbox row delivers to. `generic`/`slack` are user-configured webhooks
+ * (a `webhook` row). The rest are first-party channels Dock fans out to directly —
+ * email (Cloudflare Email Service), a connected Slack App (`chat.postMessage`), and
+ * GitHub PR comments (inline review or top-level issue comment). Internal-channel
+ * rows carry `webhook_id = "internal"` (no backing `webhook` row); the per-kind
+ * sender knows how to build credentials + destination from the payload.
+ */
+export type DeliveryKind =
+  | WebhookKind
+  | "slack_app"
+  | "github_review_comment"
+  | "github_issue_comment"
+  | "email"
+
+/** Sentinel `webhook_id` for outbox rows not tied to a configured `webhook` row. */
+export const INTERNAL_DELIVERY = "internal"
+
 export interface WebhookRecord {
   id: string
   org_id: string
@@ -1057,10 +1141,14 @@ export interface NewWebhook {
 
 export interface DeliveryRecord {
   id: string
+  /** A `webhook` row id, or `INTERNAL_DELIVERY` for a first-party channel row. */
   webhook_id: string
+  /** Destination URL for HTTP kinds; a per-kind hint (or empty) for channel kinds. */
   url: string
+  /** Signing/bearer secret for HTTP kinds; empty for channel kinds (the sender
+   *  resolves credentials from the org/payload at delivery time). */
   secret: string
-  kind: WebhookKind
+  kind: DeliveryKind
   event_type: string
   payload: string
   status: DeliveryStatus
@@ -1074,7 +1162,7 @@ export interface NewDelivery {
   webhook_id: string
   url: string
   secret: string
-  kind: WebhookKind
+  kind: DeliveryKind
   event_type: string
   payload: string
 }

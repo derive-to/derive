@@ -10,7 +10,7 @@ don't go live until a human approves them.
 An agent with **commenter role** (the default) cannot publish directly. It must propose.
 A human (or agent with editor role) then reviews and approves or requests changes.
 
-An agent with **editor role** can publish directly via `publish_version` — no proposal needed.
+An agent with **editor role** can publish directly via `publish`, no proposal needed.
 
 Use proposals when:
 - You want a human checkpoint before content goes live
@@ -32,12 +32,14 @@ it just flags it. The agent creates a new proposal for each revision.
 
 ---
 
-## MCP vs REST
+## Proposing via MCP
 
-The standard MCP server (`@dock/mcp`) includes `publish_version` which **publishes directly**.
-Proposals are a REST-only path in the current MCP server.
+There is one publishing tool, `publish`. Whether it goes live or files a proposal is
+decided by your role: an editor (Creator/Admin) role publishes directly, while a commenter
+role files a proposal. Pass `for_review:true` to file a proposal even when your role could
+publish directly.
 
-To propose via REST:
+To propose via REST instead:
 
 ```bash
 curl -X POST https://dock.build/v1/artifacts/<short_id>/proposals \
@@ -90,9 +92,10 @@ curl -X POST https://dock.build/v1/artifacts/<short_id>/proposals \
 
 ---
 
-## The OAuth MCP server (dock-agentic-loop)
+## The OAuth MCP server
 
-The OAuth-based MCP server (used when connecting via browser consent rather than a
-static token) exposes a `propose` tool that wraps the proposal REST endpoint. If your
-MCP client shows a `propose` tool instead of `publish_version`, you're on the OAuth
-server — use `propose` for all content changes and a human approves them in the UI.
+The OAuth-based remote `/mcp` server (used when connecting via browser consent rather than a
+static token) exposes the same 5 tools, including `publish`. The OAuth scope you grant maps
+to a role: a commenter-scoped agent's `publish` calls always file a proposal a human approves
+in the UI, while a publish-scoped agent goes live (and can still pass `for_review:true` to
+file a proposal).

@@ -14,6 +14,7 @@ import { drizzle } from "drizzle-orm/d1"
 import { createApp } from "./app"
 import { makeAuth } from "./auth-config"
 import { authSchema } from "./auth-schema"
+import type { SendEmailBinding } from "./email-cf"
 import { customDomainsFromEnv } from "./lib/cloudflare-saas"
 import { nativeLimiter } from "./lib/rate-limit"
 import { liveD1, requestD1 } from "./lib/request-d1"
@@ -85,6 +86,15 @@ export interface Env {
   CF_API_TOKEN?: string
   CF_ZONE_ID?: string
   CF_SAAS_FALLBACK_ORIGIN?: string
+  // Cloudflare Email Service: notification email transport (declared in wrangler.toml
+  // `[[send_email]]`). EMAIL_FROM is the verified from-address. Both unset ⇒ email
+  // notifications are skipped on the edge (a delivered no-op in the outbox).
+  SEND_EMAIL?: SendEmailBinding
+  EMAIL_FROM?: string
+  // Slack App (connect flow + Events API). All three set ⇒ Slack on.
+  SLACK_CLIENT_ID?: string
+  SLACK_CLIENT_SECRET?: string
+  SLACK_SIGNING_SECRET?: string
 }
 
 /** Poke the singleton outbox DO so it drains now (a fresh event) or self-heals (cron). */
@@ -145,6 +155,14 @@ export default {
           auth,
           // Encrypt stored GitHub PATs at rest with the edge auth secret.
           encryptionKey: secret,
+          slack:
+            env.SLACK_CLIENT_ID && env.SLACK_CLIENT_SECRET && env.SLACK_SIGNING_SECRET
+              ? {
+                  clientId: env.SLACK_CLIENT_ID,
+                  clientSecret: env.SLACK_CLIENT_SECRET,
+                  signingSecret: env.SLACK_SIGNING_SECRET,
+                }
+              : undefined,
           superAdmins: (env.DOCK_SUPERADMIN_EMAILS ?? "")
             .split(",")
             .map((s) => s.trim().toLowerCase())

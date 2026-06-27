@@ -1,19 +1,23 @@
 // Remote MCP endpoint — Dock as a Model Context Protocol server an AI client
 // (claude.ai / Claude Code) connects to over Streamable HTTP, authenticated by the
 // same OAuth 2.1 bearer the rest of the app uses. It's the transport for the agentic
-// loop: connect once, see what changed (catch_me_up), read, and propose revisions a
-// human approves — no static token.
+// loop: connect once, see what changed (catch_up), read, comment, and publish a
+// revision — no static token.
 //
 // Stateless + fetch-native (no Durable Object, no nodejs_compat): a fresh McpServer
 // is built per request closing over the resolved agent identity, so tool calls act
 // in exactly that bearer's workspace at that bearer's role. Runs identically on the
 // Node tier and the Cloudflare Workers tier — same `createApp`.
 //
-// Tool design follows Anthropic's "Writing effective tools for agents": few tools
+// Tool design follows Anthropic's "Writing effective tools for agents": a small set
 // shaped to the agent's workflow (not the API surface), high-signal responses with
 // truncate-and-steer, semantic ids (short_id / vN / page path — never UUIDs),
 // actionable errors, and identity carried in the server `instructions` rather than a
-// tool slot.
+// tool slot. Five tools, one per intent — FIND (list_artifacts), READ content (read),
+// CATCH UP on state/feedback/history (catch_up), COMMENT (comment), and WRITE
+// (publish). Variation lives in parameters: `since_version`/`to_version` turn
+// catch_up into a diff, `reply_to`/`set_state` fold reply+resolve into comment, and
+// `for_review`/role turn publish into a human-reviewed proposal.
 
 import {
   type AgentRecord,
@@ -22,6 +26,7 @@ import {
   type BundleManifest,
   diffLines,
   formatDiff,
+  newId,
   PublishError,
   propose as proposeChange,
   publish as publishVersion,
@@ -76,6 +81,24 @@ const summarizeVersion = (v: VersionRecord) => ({
   created_at: v.created_at,
 })
 
+const summarizeComment = (c: {
+  thread_id: string
+  author: string
+  state?: string
+  base_version?: number
+  anchor: string | null
+  path?: string | null
+  body_md: string
+}) => ({
+  thread: c.thread_id,
+  author: c.author,
+  ...(c.state ? { state: c.state } : {}),
+  ...(c.base_version != null ? { base_version: c.base_version } : {}),
+  quote: quoteOf(c.anchor),
+  ...(c.path ? { path: c.path } : {}),
+  body: c.body_md,
+})
+
 // A version's bundle manifest, presented cleanly. Lets the loop tools see a
 // multi-page artifact's actual files, not just its entry doc.
 const manifestOf = (ctx: AppContext, v: VersionRecord) => sharedManifestOf(ctx.blobs, v)
@@ -103,32 +126,32 @@ const changeCount = (c: ReturnType<typeof bundleFileChanges>) =>
 
 /**
  * A new MCP server for one request, scoped to `agent` (the OAuth-resolved identity).
- * Tools act in the bearer's workspace at the bearer's role: reads for anyone, and
- * `propose` (the human-in-the-loop write) for commenter+ — a proposal never goes
- * live without a human approving it, so an agent is a safe contributor, not a
- * publisher. Identity rides in the server `instructions` (below), not a `whoami`
- * tool — it's a one-shot fact, not a per-call action.
+ * Tools act in the bearer's workspace at the bearer's role: reads + comments for
+ * commenter+, and writes via `publish` — which goes live for an editor/owner, or is
+ * filed as a human-reviewed proposal for a commenter (or anyone passing
+ * `for_review`). So a low-privilege agent is a safe contributor, not a publisher.
+ * Identity rides in the server `instructions` (below), not a `whoami` tool — it's a
+ * one-shot fact, not a per-call action.
  */
 function buildServer(ctx: AppContext, agent: AgentRecord): McpServer {
   // Steer the write guidance by what this grant can actually do: a publish-capable
-  // grant gets the create/publish path; a lower grant is pointed at propose only.
+  // grant gets the direct-publish path; a lower grant is told its writes go to review.
   const writeGuidance = roleAllows(agent.role, "publish")
-    ? `Use publish to create a new artifact (omit short_id) or push a new version of one you own — ` +
-      `it goes live immediately in your workspace. Use propose to suggest changes to artifacts you ` +
-      `don't own, which a human approves. `
-    : `Work the open threads from list_comments and use propose to suggest a revision a human ` +
-      `approves — you cannot publish directly. `
+    ? `Use publish to create a new artifact (omit short_id) or push a new version of one (pass short_id) — ` +
+      `it goes live immediately. Pass for_review:true to file it as a proposal a human approves instead. `
+    : `Use publish to submit a revision — at your role it is filed as a proposal a human approves before it ` +
+      `goes live; you cannot publish directly. `
   const server = new McpServer(
     { name: "dock", version: "1.0.0" },
     {
       instructions:
         `You are connected to Dock as "${agent.name}", acting in workspace ${agent.org_id} ` +
         `with ${agent.role} permissions. Dock hosts living documents and plans with versioned ` +
-        `history, text-anchored review comments, and a propose → review → revise loop. ` +
-        `Start a session with catch_me_up to re-sync on what changed; use read to view content ` +
-        `(outline first for multi-page bundles). ${writeGuidance}When a ` +
-        `proposal fixes specific feedback, pass those thread ids as propose's "addresses" so the ` +
-        `threads show as pending and auto-resolve on approval.`,
+        `history, text-anchored review comments, and a publish → review → revise loop. ` +
+        `Start a session with catch_up to re-sync on what changed and what feedback is open; use ` +
+        `read to view content (outline first for multi-page bundles); use comment to leave or ` +
+        `resolve feedback. ${writeGuidance}When a revision fixes specific feedback, pass those ` +
+        `thread ids as publish's "addresses" so the threads resolve (or show pending on a proposal).`,
     },
   )
   const org = agent.org_id
@@ -141,11 +164,12 @@ function buildServer(ctx: AppContext, agent: AgentRecord): McpServer {
   const notFound = (shortId: string) =>
     err(`No artifact "${shortId}" in your workspace. Call list_artifacts to see what's here.`)
 
+  // FIND ----------------------------------------------------------------------
   server.registerTool(
     "list_artifacts",
     {
       description:
-        "List the artifacts (docs, plans, sites) in your workspace — short id, title, kind, current version, visibility. Start here to find what to work on, then catch_me_up or read it.",
+        "List the artifacts (docs, plans, sites) in your workspace — short id, title, kind, current version, visibility. Start here to find what to work on, then catch_up or read it.",
       inputSchema: { query: z.string().optional().describe("Optional title search filter.") },
     },
     async ({ query }) => {
@@ -154,110 +178,12 @@ function buildServer(ctx: AppContext, agent: AgentRecord): McpServer {
     },
   )
 
-  server.registerTool(
-    "catch_me_up",
-    {
-      description:
-        "START HERE on an artifact. The coalesced delta since you last saw it (`since_version`): a one-line summary, the versions that landed, which pages changed, and the open comment threads — everything to re-sync in one call. For an exact line-by-line comparison of two specific versions, use `diff` instead. Pass response_format='detailed' to also include the entry-document diff inline.",
-      inputSchema: {
-        short_id: z.string(),
-        since_version: z
-          .number()
-          .optional()
-          .describe("The version you last saw. Defaults to current − 1."),
-        response_format: z
-          .enum(["summary", "detailed"])
-          .optional()
-          .describe(
-            "'summary' (default, token-light) omits the line diff; 'detailed' includes it.",
-          ),
-      },
-    },
-    async ({ short_id, since_version, response_format }) => {
-      const a = await own(short_id)
-      if (!a) return notFound(short_id)
-      const head = a.current_version
-      const since = Math.min(head, Math.max(1, since_version ?? head - 1))
-      const newVersions = (await ctx.meta.listVersions(a.id)).filter((v) => v.n > since)
-      const vs = await ctx.meta.getVersion(a.id, since)
-      const vh = await ctx.meta.getVersion(a.id, head)
-      let entryDiff: string | null = null
-      let pagesChanged: ReturnType<typeof bundleFileChanges> | null = null
-      if (vs && vh && since < head) {
-        const [ms, mh] = [await manifestOf(ctx, vs), await manifestOf(ctx, vh)]
-        if (ms && mh) pagesChanged = bundleFileChanges(ms, mh)
-        if (response_format === "detailed") {
-          const [as_, ah] = [await ctx.sourceText(vs), await ctx.sourceText(vh)]
-          if (as_ !== null && ah !== null) entryDiff = clip(formatDiff(diffLines(as_, ah)))
-        }
-      }
-      const open = await ctx.meta.listComments(a.id, { state: "open" })
-      // Threads whose quoted text changed in a landed version — feedback that may
-      // no longer apply. Surfacing the count tells the agent its (or someone's)
-      // edits touched commented passages.
-      const outdated = await ctx.meta.listComments(a.id, { state: "outdated" })
-      const outdatedBit = outdated.length
-        ? ` ${outdated.length} now outdated (the quoted text changed).`
-        : ""
-      // Threads with a proposal already pending — the agent shouldn't re-propose them.
-      const addressed = await ctx.meta.listComments(a.id, { state: "addressed" })
-      const addressedBit = addressed.length
-        ? ` ${addressed.length} addressed (a proposal is pending review).`
-        : ""
-      const pageBits =
-        pagesChanged && changeCount(pagesChanged)
-          ? ` Pages: ${[
-              pagesChanged.added.length && `+${pagesChanged.added.length}`,
-              pagesChanged.changed.length && `~${pagesChanged.changed.length}`,
-              pagesChanged.removed.length && `-${pagesChanged.removed.length}`,
-            ]
-              .filter(Boolean)
-              .join(" ")}.`
-          : ""
-      const summary =
-        since >= head
-          ? `You're up to date on "${a.title}" (v${head}); ${open.length} open comment${open.length === 1 ? "" : "s"}.${addressedBit}${outdatedBit}`
-          : `"${a.title}": ${newVersions.length} new version${newVersions.length === 1 ? "" : "s"} since v${since} (now v${head}).${pageBits} ${open.length} open comment${open.length === 1 ? "" : "s"}.${addressedBit}${outdatedBit}`
-      return json({
-        summary,
-        short_id,
-        since,
-        head,
-        caught_up: since >= head,
-        new_versions: newVersions.map(summarizeVersion),
-        pages_changed: pagesChanged,
-        ...(entryDiff
-          ? { entry_diff: entryDiff }
-          : {
-              entry_diff:
-                "(omitted) — call again with response_format='detailed', or diff(from, to), for the line-level changes.",
-            }),
-        open_comments: open.map((c) => ({
-          thread: c.thread_id,
-          author: c.author,
-          quote: quoteOf(c.anchor),
-          body: c.body_md,
-        })),
-        // Only included when non-empty, to keep the common response lean.
-        ...(outdated.length
-          ? {
-              outdated_comments: outdated.map((c) => ({
-                thread: c.thread_id,
-                author: c.author,
-                quote: quoteOf(c.anchor),
-                body: c.body_md,
-              })),
-            }
-          : {}),
-      })
-    },
-  )
-
+  // READ CONTENT --------------------------------------------------------------
   server.registerTool(
     "read",
     {
       description:
-        "Read an artifact's content by short id. Multi-page bundle: omit `section` to get its outline (the list of pages), then call again with a `section` (a page path) for that page's full text. Single-file artifact: returns the full content. Pass a past `version` to read history.",
+        "Read an artifact's CONTENT by short id. Multi-page bundle: omit `section` to get its outline (the list of pages), then call again with a `section` (a page path) for that page's full text. Single-file artifact: returns the full content. Pass a past `version` to read history. (For what CHANGED, or the comment threads, use catch_up.)",
       inputSchema: {
         short_id: z.string().describe("The artifact's short id, e.g. nk0dsral."),
         section: z
@@ -311,165 +237,199 @@ function buildServer(ctx: AppContext, agent: AgentRecord): McpServer {
     },
   )
 
+  // CATCH UP — state, feedback, history, and diffs all in one ------------------
   server.registerTool(
-    "diff",
+    "catch_up",
     {
       description:
-        "Exact line-by-line comparison of two versions of an artifact: a unified diff of the entry document, plus (for bundles) which pages were added / removed / changed. For a summary of everything new since you last looked, prefer catch_me_up. `to` defaults to the current version.",
+        "START HERE on an artifact. The state of it in one call: a one-line summary, the versions that landed since `since_version`, which pages changed, the open (and outdated) comment threads, and the full version history. " +
+        "Pass `comments` (open / addressed / resolved / outdated) to instead get that filtered thread list — your feedback to-do queue. " +
+        "Pass `response_format='detailed'` (optionally with `since_version`/`to_version`) to include the exact line-by-line diff between two versions.",
       inputSchema: {
         short_id: z.string(),
-        from: z.number().describe("The base version number."),
-        to: z.number().optional().describe("Defaults to the current version."),
-      },
-    },
-    async ({ short_id, from, to }) => {
-      const a = await own(short_id)
-      if (!a) return notFound(short_id)
-      const toN = to ?? a.current_version
-      const vf = await ctx.meta.getVersion(a.id, from)
-      const vt = await ctx.meta.getVersion(a.id, toN)
-      if (!vf || !vt)
-        return err(`Missing version — "${short_id}" has versions 1..${a.current_version}.`)
-      const [af, at] = [await ctx.sourceText(vf), await ctx.sourceText(vt)]
-      if (af === null || at === null) return err("Version content is unavailable.")
-      const [mf, mt] = [await manifestOf(ctx, vf), await manifestOf(ctx, vt)]
-      return json({
-        short_id,
-        from,
-        to: toN,
-        pages_changed: mf && mt ? bundleFileChanges(mf, mt) : null,
-        entry_diff: clip(formatDiff(diffLines(af, at))),
-      })
-    },
-  )
-
-  server.registerTool(
-    "list_comments",
-    {
-      description:
-        "The review feedback on an artifact: comment threads with author, body, the quoted text they're anchored to, the version they were left on, and state. This is your to-do list before proposing — work the `open` threads. State is open (live feedback), addressed (a proposal you/someone made is pending review for it — don't re-propose), resolved (settled), or outdated (the quoted text changed in a later version, so the feedback may no longer apply — verify before acting). Filter by `state`; default lists all.",
-      inputSchema: {
-        short_id: z.string(),
-        state: z
+        since_version: z
+          .number()
+          .optional()
+          .describe("The version you last saw (the diff base). Defaults to to_version − 1."),
+        to_version: z
+          .number()
+          .optional()
+          .describe("Compare up to this version instead of the current one (for an exact diff)."),
+        comments: z
           .enum(["open", "addressed", "resolved", "outdated"])
           .optional()
-          .describe("Filter by thread state. Omit to list every thread."),
-      },
-    },
-    async ({ short_id, state }) => {
-      const a = await own(short_id)
-      if (!a) return notFound(short_id)
-      const comments = await ctx.meta.listComments(a.id, state ? { state } : undefined)
-      return json({
-        count: comments.length,
-        comments: comments.map((c) => ({
-          thread: c.thread_id,
-          author: c.author,
-          state: c.state,
-          base_version: c.base_version,
-          // The quoted text the thread is anchored to (null for whole-document
-          // feedback) — tells the agent WHERE in the artifact the note applies.
-          quote: quoteOf(c.anchor),
-          path: c.path,
-          body: c.body_md,
-        })),
-      })
-    },
-  )
-
-  server.registerTool(
-    "list_versions",
-    {
-      description:
-        "The version history of an artifact, newest first: number, checkpoint name, message, author, timestamp. For what actually changed between versions, use diff or catch_me_up.",
-      inputSchema: { short_id: z.string() },
-    },
-    async ({ short_id }) => {
-      const a = await own(short_id)
-      if (!a) return notFound(short_id)
-      const versions = await ctx.meta.listVersions(a.id)
-      return json({
-        current: a.current_version,
-        versions: versions.slice().reverse().map(summarizeVersion),
-      })
-    },
-  )
-
-  server.registerTool(
-    "propose",
-    {
-      description:
-        "Propose a revised version of a single-file artifact for human review. It does NOT go live — a reviewer approves it or requests changes, so you're a safe contributor, not a publisher. Provide the FULL new content (not a patch) and a rationale that tells the reviewer what changed and why. Pass `addresses` with the thread ids (from list_comments) this revision resolves — those threads show as `addressed` (pending review) and auto-resolve when the proposal is approved. Multi-page bundles aren't proposable over MCP yet.",
-      inputSchema: {
-        short_id: z.string(),
-        content: z
-          .string()
-          .describe("The complete new content of the document (HTML or Markdown)."),
-        message: z
-          .string()
-          .min(1)
-          .describe("What you changed and why — shown to the reviewer. Required."),
-        filename: z
-          .string()
-          .optional()
-          .describe("Filename hint for the content type, e.g. index.html or notes.md."),
-        addresses: z
-          .array(z.string())
+          .describe(
+            "Return ONLY this state's comment threads (the feedback queue) instead of the delta.",
+          ),
+        response_format: z
+          .enum(["summary", "detailed"])
           .optional()
           .describe(
-            "Thread ids (from list_comments) this revision resolves. They flip to `addressed` and resolve on approval.",
+            "'summary' (default, token-light) omits the line diff; 'detailed' includes it.",
           ),
       },
     },
-    async ({ short_id, content, message, filename, addresses }) => {
+    async ({ short_id, since_version, to_version, comments, response_format }) => {
       const a = await own(short_id)
       if (!a) return notFound(short_id)
-      if (agent.role === "viewer")
-        return err(
-          "Your grant is read-only (dock:read). Re-authorize the connector with dock:propose to propose changes.",
-        )
-      if (a.kind === "bundle")
-        return err(
-          `"${short_id}" is a multi-page bundle; proposing bundle revisions over MCP isn't supported yet (single-file artifacts only).`,
-        )
-      try {
-        const { proposal } = await proposeChange(ctx.meta, ctx.blobs, short_id, {
-          bytes: new TextEncoder().encode(content),
-          filename: filename ?? "index.html",
-          isBundle: false,
-          message,
-          author: agent.name,
-          author_id: agent.id,
-        })
-        const addressed = addresses?.length
-          ? await markAddressed(ctx.meta, a.id, proposal.id, addresses)
-          : []
-        for (const threadId of addressed)
-          ctx.bus.publish(a.id, {
-            type: "comment.addressed",
-            thread_id: threadId,
-            state: "addressed",
-          })
+
+      // `comments` filter → the feedback to-do queue (absorbs the old list_comments).
+      if (comments) {
+        const list = await ctx.meta.listComments(a.id, { state: comments })
         return json({
-          proposed: true,
-          proposal_id: proposal.id,
-          base_version: proposal.base_version,
-          addressed,
-          note: "Submitted for review — a human approves it or requests changes. It is NOT live yet.",
+          short_id,
+          comments_state: comments,
+          count: list.length,
+          comments: list.map(summarizeComment),
         })
-      } catch (e) {
-        return err(
-          `Couldn't store the proposal: ${e instanceof PublishError ? e.message : "unknown error"}.`,
-        )
       }
+
+      const head = a.current_version
+      const to = Math.min(head, Math.max(1, to_version ?? head))
+      const since = Math.min(to, Math.max(1, since_version ?? to - 1))
+      const history = await ctx.meta.listVersions(a.id)
+      const newVersions = history.filter((v) => v.n > since && v.n <= to)
+      const vs = await ctx.meta.getVersion(a.id, since)
+      const vh = await ctx.meta.getVersion(a.id, to)
+      let entryDiff: string | null = null
+      let pagesChanged: ReturnType<typeof bundleFileChanges> | null = null
+      if (vs && vh && since < to) {
+        const [ms, mh] = [await manifestOf(ctx, vs), await manifestOf(ctx, vh)]
+        if (ms && mh) pagesChanged = bundleFileChanges(ms, mh)
+        if (response_format === "detailed") {
+          const [as_, ah] = [await ctx.sourceText(vs), await ctx.sourceText(vh)]
+          if (as_ !== null && ah !== null) entryDiff = clip(formatDiff(diffLines(as_, ah)))
+        }
+      }
+      const open = await ctx.meta.listComments(a.id, { state: "open" })
+      // Threads whose quoted text changed in a landed version — feedback that may no
+      // longer apply. Surfacing it tells the agent its edits touched commented text.
+      const outdated = await ctx.meta.listComments(a.id, { state: "outdated" })
+      const outdatedBit = outdated.length
+        ? ` ${outdated.length} now outdated (the quoted text changed).`
+        : ""
+      // Threads with a proposal already pending — the agent shouldn't re-address them.
+      const addressed = await ctx.meta.listComments(a.id, { state: "addressed" })
+      const addressedBit = addressed.length
+        ? ` ${addressed.length} addressed (a proposal is pending review).`
+        : ""
+      const pageBits =
+        pagesChanged && changeCount(pagesChanged)
+          ? ` Pages: ${[
+              pagesChanged.added.length && `+${pagesChanged.added.length}`,
+              pagesChanged.changed.length && `~${pagesChanged.changed.length}`,
+              pagesChanged.removed.length && `-${pagesChanged.removed.length}`,
+            ]
+              .filter(Boolean)
+              .join(" ")}.`
+          : ""
+      const summary =
+        since >= to
+          ? `You're up to date on "${a.title}" (v${head}); ${open.length} open comment${open.length === 1 ? "" : "s"}.${addressedBit}${outdatedBit}`
+          : `"${a.title}": ${newVersions.length} new version${newVersions.length === 1 ? "" : "s"} since v${since} (now v${to}).${pageBits} ${open.length} open comment${open.length === 1 ? "" : "s"}.${addressedBit}${outdatedBit}`
+      return json({
+        summary,
+        short_id,
+        since,
+        to,
+        head,
+        caught_up: since >= to,
+        versions: history.slice().reverse().map(summarizeVersion),
+        new_versions: newVersions.map(summarizeVersion),
+        pages_changed: pagesChanged,
+        ...(entryDiff
+          ? { entry_diff: entryDiff }
+          : {
+              entry_diff:
+                "(omitted) — call again with response_format='detailed' for the line-level changes.",
+            }),
+        open_comments: open.map(summarizeComment),
+        ...(outdated.length ? { outdated_comments: outdated.map(summarizeComment) } : {}),
+      })
     },
   )
 
+  // COMMENT — leave / reply / resolve feedback --------------------------------
+  server.registerTool(
+    "comment",
+    {
+      description:
+        "Leave feedback on an artifact, reply in a thread, and/or resolve or reopen a thread — all in one tool. Anchor a NEW comment to a quoted span of the rendered text with `quote`. Reply by passing the thread id as `reply_to`. Resolve or reopen by passing `set_state` along with the thread's id in `reply_to`. Thread ids come from catch_up.",
+      inputSchema: {
+        short_id: z.string(),
+        body: z
+          .string()
+          .optional()
+          .describe("The comment text (Markdown). Omit only when just changing thread state."),
+        reply_to: z
+          .string()
+          .optional()
+          .describe(
+            "A thread id (from catch_up): reply in that thread, and/or the thread to set_state on.",
+          ),
+        quote: z
+          .string()
+          .optional()
+          .describe("Exact text in the rendered document to anchor a NEW comment to."),
+        set_state: z
+          .enum(["resolved", "open"])
+          .optional()
+          .describe("Resolve the thread, or reopen it (with `reply_to`)."),
+      },
+    },
+    async ({ short_id, body, reply_to, quote, set_state }) => {
+      const a = await own(short_id)
+      if (!a) return notFound(short_id)
+      if (!roleAllows(agent.role, "comment"))
+        return err(
+          "Your grant is read-only (dock:read). Re-authorize the connector with dock:comment to leave feedback.",
+        )
+      if (!body && !set_state)
+        return err("Provide `body` (to comment) or `set_state` (to resolve/reopen a thread).")
+      let thread = reply_to
+      let commentId: string | undefined
+      if (body) {
+        commentId = newId("c")
+        thread = reply_to || commentId
+        const anchor = quote ? JSON.stringify({ type: "TextQuoteSelector", exact: quote }) : null
+        await ctx.meta.createComment({
+          id: commentId,
+          artifact_id: a.id,
+          thread_id: thread,
+          base_version: a.current_version,
+          path: null,
+          anchor,
+          body_md: body,
+          author: agent.name,
+          author_id: agent.id,
+        })
+        ctx.bus.publish(a.id, { type: "comment.created" })
+      }
+      if (set_state) {
+        if (!thread) return err("`set_state` needs `reply_to` (the thread id to resolve/reopen).")
+        await ctx.meta.setThreadState(a.id, thread, set_state)
+        ctx.bus.publish(a.id, { type: "comment.resolved", thread_id: thread, state: set_state })
+      }
+      return json({
+        short_id,
+        thread,
+        ...(commentId ? { comment_id: commentId, anchored_to: quote ?? null } : {}),
+        ...(set_state ? { state: set_state } : {}),
+        note: body
+          ? reply_to
+            ? "Replied in the thread."
+            : "New comment thread created."
+          : `Thread ${set_state}.`,
+      })
+    },
+  )
+
+  // WRITE — publish live, or file a proposal for review -----------------------
   server.registerTool(
     "publish",
     {
       description:
-        "Publish an artifact to your workspace DIRECTLY — it goes live immediately, no review. Provide `content` for a SINGLE-FILE artifact, or `files` (a map of page path → content) for a MULTI-PAGE BUNDLE — a whole site, with images and any other binary asset. OMIT short_id to create a NEW artifact (a first publish) — `title` is then required. PASS short_id to publish a new version of one you already own, matching its kind: a bundle takes `files`, a single file takes `content`. A bundle republish REPLACES the whole bundle, so include EVERY page and asset. Requires publish rights (Creator/Admin role on the workspace); a commenter-level grant should use `propose` instead. Provide the FULL content (not a patch).",
+        "Save a revision of an artifact. It goes LIVE immediately if your role can publish (Creator/Admin); otherwise — or whenever you pass for_review:true — it is filed as a PROPOSAL a human approves before it goes live. Provide `content` for a SINGLE-FILE artifact, or `files` (a map of page path → content) for a MULTI-PAGE BUNDLE (a whole site, images and any binary asset). OMIT short_id to create a NEW artifact (`title` required); PASS short_id to add a version to one you own, matching its kind. A bundle republish REPLACES the whole bundle, so include EVERY page and asset (or use `merge`). Pass `addresses` with the thread ids (from catch_up) this revision resolves. Provide the FULL content, not a patch. (Proposals are single-file only; bundles must be published directly.)",
       inputSchema: {
         content: z
           .string()
@@ -492,9 +452,7 @@ function buildServer(ctx: AppContext, agent: AgentRecord): McpServer {
         short_id: z
           .string()
           .optional()
-          .describe(
-            "Omit to create a new artifact; pass it to publish a new version of one you own.",
-          ),
+          .describe("Omit to create a new artifact; pass it to revise one you own."),
         visibility: z
           .enum(["workspace", "link", "public"])
           .optional()
@@ -520,39 +478,102 @@ function buildServer(ctx: AppContext, agent: AgentRecord): McpServer {
           .describe(
             "Filename hint for the content type of a single file, e.g. index.html or notes.md.",
           ),
+        for_review: z
+          .boolean()
+          .optional()
+          .describe(
+            "File this as a PROPOSAL for a human to approve instead of publishing live (single-file only). Forced on when your role can't publish directly.",
+          ),
+        addresses: z
+          .array(z.string())
+          .optional()
+          .describe(
+            "Thread ids (from catch_up) this revision resolves. On a live publish they resolve; on a proposal they flip to `addressed` and resolve on approval.",
+          ),
       },
     },
-    async ({ content, files, title, short_id, visibility, spa, merge, message, filename }) => {
-      // Direct publish is gated on the agent's role: Creator/Admin only. A
-      // commenter-level grant is steered to `propose` (human-reviewed), so a
-      // low-privilege agent still can't push live content.
-      if (!roleAllows(agent.role, "publish"))
-        return text(
-          "Your grant can't publish directly (needs a Creator/Admin role). Use `propose` to submit a reviewed change, or re-authorize with a publish scope.",
-        )
+    async ({
+      content,
+      files,
+      title,
+      short_id,
+      visibility,
+      spa,
+      merge,
+      message,
+      filename,
+      for_review,
+      addresses,
+    }) => {
+      const existing = short_id ? await own(short_id) : null
+      if (short_id && !existing) return text(`No artifact "${short_id}" in this workspace.`)
       // Exactly one of content / files. `files` (a page map) means a bundle.
       const isBundle = !!files && Object.keys(files).length > 0
       if (isBundle && content !== undefined)
         return text("Provide `content` (single file) OR `files` (a bundle), not both.")
       if (!isBundle && (content === undefined || content === ""))
         return text("Provide `content` (single file) or `files` (a multi-page bundle).")
-      const existing = short_id ? await own(short_id) : null
-      if (short_id && !existing) return text(`No artifact "${short_id}" in this workspace.`)
       if (existing) {
-        // Kind can't change on republish; steer to the right field instead of
-        // bubbling the core's 409.
+        // Kind can't change on republish; steer to the right field instead of the 409.
         if (existing.kind === "bundle" && !isBundle)
           return text(
             `"${short_id}" is a multi-page bundle — pass \`files\` (every page) to republish it.`,
           )
         if (existing.kind === "file" && isBundle)
           return text(`"${short_id}" is a single-file artifact — pass \`content\`, not \`files\`.`)
-      } else if (!title?.trim()) {
-        return text("Creating a new artifact needs a `title`.")
       }
-      // `merge` folds the given files into the existing bundle (add/overwrite by path)
-      // instead of replacing it — how a large site is grown across calls without
-      // re-sending it. Only meaningful for an existing bundle.
+
+      // Direct publish is gated on the agent's role (Creator/Admin). A commenter-level
+      // grant — or anyone asking for_review — is routed to a human-reviewed proposal,
+      // so a low-privilege agent still can't push live content.
+      const review = for_review === true || !roleAllows(agent.role, "publish")
+      if (review) {
+        if (!roleAllows(agent.role, "propose"))
+          return text(
+            "Your grant is read-only (dock:read). Re-authorize with dock:propose (or a publish scope) to suggest changes.",
+          )
+        if (isBundle)
+          return text(
+            "Multi-page bundles can't be proposed for review yet — only published directly. Ask an editor to publish, or submit a single-file `content` revision.",
+          )
+        if (!existing)
+          return text(
+            "A proposal revises an EXISTING artifact — pass its `short_id`. Creating a new artifact needs publish rights (a Creator/Admin grant).",
+          )
+        try {
+          const { proposal } = await proposeChange(ctx.meta, ctx.blobs, short_id as string, {
+            bytes: new TextEncoder().encode(content as string),
+            filename: filename ?? "index.html",
+            isBundle: false,
+            message: message ?? "Proposed revision",
+            author: agent.name,
+            author_id: agent.id,
+          })
+          const addressed = addresses?.length
+            ? await markAddressed(ctx.meta, existing.id, proposal.id, addresses)
+            : []
+          for (const threadId of addressed)
+            ctx.bus.publish(existing.id, {
+              type: "comment.addressed",
+              thread_id: threadId,
+              state: "addressed",
+            })
+          return json({
+            published: false,
+            proposed: true,
+            proposal_id: proposal.id,
+            base_version: proposal.base_version,
+            addressed,
+            note: "Submitted for review — a human approves it or requests changes. It is NOT live yet.",
+          })
+        } catch (e) {
+          return text(
+            `Couldn't store the proposal: ${e instanceof PublishError ? e.message : "unknown error"}.`,
+          )
+        }
+      }
+
+      // Live publish path.
       if (merge) {
         if (!isBundle) return text("`merge` adds files to a bundle — pass `files`, not `content`.")
         if (!existing) return text("`merge` needs the `short_id` of an existing bundle to add to.")
@@ -561,6 +582,7 @@ function buildServer(ctx: AppContext, agent: AgentRecord): McpServer {
             `"${short_id}" is a single-file artifact — \`merge\` only applies to bundles.`,
           )
       }
+      if (!existing && !title?.trim()) return text("Creating a new artifact needs a `title`.")
       try {
         let bytes: Uint8Array
         // A merge keeps the bundle's existing SPA routing (the caller isn't redeclaring it).
@@ -595,6 +617,18 @@ function buildServer(ctx: AppContext, agent: AgentRecord): McpServer {
           },
           short_id,
         )
+        // A live publish that fixes feedback resolves those threads directly (no
+        // approval step to wait on, unlike a proposal's `addressed`).
+        const resolved: string[] = []
+        for (const threadId of addresses ?? []) {
+          await ctx.meta.setThreadState(artifact.id, threadId, "resolved")
+          ctx.bus.publish(artifact.id, {
+            type: "comment.resolved",
+            thread_id: threadId,
+            state: "resolved",
+          })
+          resolved.push(threadId)
+        }
         return json({
           published: true,
           short_id: artifact.short_id,
@@ -603,6 +637,7 @@ function buildServer(ctx: AppContext, agent: AgentRecord): McpServer {
           url: artifactUrl(ctx.deps.baseUrl, artifact),
           title: artifact.title,
           visibility: artifact.visibility,
+          ...(resolved.length ? { resolved } : {}),
           note: merge
             ? `Live now — merged ${Object.keys(files as Record<string, string>).length} file(s) into the bundle (new current version).`
             : short_id

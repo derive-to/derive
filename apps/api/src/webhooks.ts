@@ -1,5 +1,12 @@
 import { createHmac, randomUUID } from "node:crypto"
-import { type ArtifactRecord, artifactUrl, type DeliveryRecord, type MetaStore } from "@dock/core"
+import {
+  type ArtifactRecord,
+  artifactUrl,
+  type DeliveryKind,
+  type DeliveryRecord,
+  INTERNAL_DELIVERY,
+  type MetaStore,
+} from "@dock/core"
 import type { WebhookEvent } from "./events"
 import { isPrivateAddress } from "./lib/net"
 import { log } from "./log"
@@ -135,14 +142,49 @@ export function standardWebhookSignature(
   return `v1,${sig}`
 }
 
-/** Deliver one outbox row. Slack kind sends a Slack message; generic sends the
- *  signed normalized payload. The `guard` re-validates the target host for SSRF at
- *  delivery time (Node resolves DNS; the edge trusts Cloudflare's egress isolation).
- *  Returns ok + a short status for the delivery log. */
+/** The result of one delivery attempt: ok ⇒ delivered; otherwise `status` is the short
+ *  failure reason recorded on the row. `permanent` ⇒ a non-retryable failure (e.g. a 4xx
+ *  from the channel API like Slack `channel_not_found` or a GitHub 422) — dead-letter it
+ *  immediately rather than burning retries (which would also risk a duplicate post). */
+export interface ChannelSendResult {
+  ok: boolean
+  status: string
+  permanent?: boolean
+}
+
+/**
+ * Senders for the first-party channel kinds (email / connected Slack App / GitHub PR
+ * comments). Each runtime (edge Worker, Node self-host) wires the ones it can serve
+ * from its own bindings/secrets; `deliverOnce` calls the matching one by `kind`. A
+ * kind with no registered sender on this runtime is treated as delivered-no-op (so it
+ * doesn't dead-letter forever on a tier that can't serve it — e.g. email with no
+ * Email Service binding). The HTTP kinds (`generic`/`slack`) never go through here.
+ */
+export type ChannelSenders = Partial<
+  Record<Exclude<DeliveryKind, "generic">, (d: DeliveryRecord) => Promise<ChannelSendResult>>
+>
+
+/** Deliver one outbox row. `generic`/`slack` POST to a configured webhook URL (signed
+ *  payload / Slack incoming-webhook message); the first-party channel kinds are handed
+ *  to the matching `ChannelSenders` entry. The `guard` re-validates the target host for
+ *  SSRF at delivery time on the HTTP path (Node resolves DNS; the edge trusts
+ *  Cloudflare's egress isolation). Returns ok + a short status for the delivery log. */
 export async function deliverOnce(
   d: DeliveryRecord,
   guard: AddressGuard,
-): Promise<{ ok: boolean; status: string }> {
+  senders: ChannelSenders = {},
+): Promise<ChannelSendResult> {
+  // First-party channels (email/slack_app/github_*) carry no configured webhook row;
+  // their sender builds credentials + destination from the payload at delivery time.
+  if (d.kind !== "generic" && d.kind !== "slack") {
+    const send = senders[d.kind]
+    if (!send) return { ok: true, status: "skipped: no sender for kind on this runtime" }
+    try {
+      return await send(d)
+    } catch (err) {
+      return { ok: false, status: (err as Error).message.slice(0, 200) }
+    }
+  }
   try {
     const payload = JSON.parse(d.payload) as EventPayload
     const isSlack = d.kind === "slack"
@@ -222,6 +264,27 @@ export async function enqueueForEvent(
   return subscribed.length
 }
 
+/** Enqueue one first-party channel delivery (email / Slack App / GitHub PR comment).
+ *  Not tied to a configured `webhook` row, so it carries the `INTERNAL_DELIVERY`
+ *  sentinel as `webhook_id`. `payload` is a self-contained JSON the matching sender
+ *  reads; `url`/`secret` are unused by channel senders (left empty). */
+export async function enqueueChannelDelivery(
+  meta: MetaStore,
+  kind: Exclude<DeliveryKind, "generic" | "slack">,
+  event: string,
+  payload: unknown,
+): Promise<void> {
+  await meta.enqueueDelivery({
+    id: `wd_${randomUUID().slice(0, 12)}`,
+    webhook_id: INTERNAL_DELIVERY,
+    url: "",
+    secret: "",
+    kind,
+    event_type: event,
+    payload: JSON.stringify(payload),
+  })
+}
+
 const backoff = (attempts: number) => Math.min(MAX_BACKOFF_MS, BASE_BACKOFF_MS * 2 ** attempts)
 
 /**
@@ -235,13 +298,14 @@ const backoff = (attempts: number) => Math.min(MAX_BACKOFF_MS, BASE_BACKOFF_MS *
 export async function runDeliveryTick(
   meta: MetaStore,
   guard: AddressGuard,
+  senders: ChannelSenders = {},
   limit = 20,
 ): Promise<number> {
   const now = new Date()
   const leaseUntil = new Date(now.getTime() + CLAIM_LEASE_MS).toISOString()
   const due = await meta.claimDueDeliveries(now.toISOString(), limit, leaseUntil)
   for (const d of due) {
-    const r = await deliverOnce(d, guard)
+    const r = await deliverOnce(d, guard, senders)
     const attempts = d.attempts // already incremented by the claim
     if (r.ok) {
       await meta.updateDelivery(d.id, {
@@ -250,11 +314,13 @@ export async function runDeliveryTick(
         last_error: null,
         next_attempt_at: d.next_attempt_at,
       })
-    } else if (attempts >= MAX_ATTEMPTS) {
+    } else if (r.permanent || attempts >= MAX_ATTEMPTS) {
+      // Permanent failures (4xx from the channel API) dead-letter at once: retrying
+      // can't succeed and would risk a duplicate post on a partial success.
       await meta.updateDelivery(d.id, {
         status: "dead",
         attempts,
-        last_error: r.status,
+        last_error: r.permanent ? `permanent: ${r.status}` : r.status,
         next_attempt_at: d.next_attempt_at,
       })
     } else {
@@ -290,6 +356,7 @@ export interface WebhookWorker {
 export function startWebhookWorker(
   meta: MetaStore,
   guard: AddressGuard,
+  senders: ChannelSenders = {},
   intervalMs = 1500,
 ): WebhookWorker {
   let stopped = false
@@ -298,7 +365,7 @@ export function startWebhookWorker(
     if (stopped || running) return
     running = true
     try {
-      await runDeliveryTick(meta, guard)
+      await runDeliveryTick(meta, guard, senders)
     } catch (err) {
       // A bad tick must not kill the loop, but it must not vanish either —
       // otherwise a persistently failing outbox is invisible.

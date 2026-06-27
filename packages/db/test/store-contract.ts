@@ -1,5 +1,6 @@
 import { randomUUID as uuid } from "node:crypto"
 import type { MetaStore, NewArtifact, NewVersion } from "@dock/core"
+import { DEFAULT_ORG_SETTINGS } from "@dock/core"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 
 /**
@@ -1144,6 +1145,92 @@ export function runStoreContract(
       // The audit entry landed in the same step.
       const log = await store.listAuditLog(ORG, { artifactId: a.id })
       expect(log.map((x) => x.action)).toContain("takedown")
+    })
+  })
+
+  describe(`${label}: integration settings + Slack`, () => {
+    it("returns defaults for an unset org, then round-trips an override (insert + upsert)", async () => {
+      const settingsOrg = `org_${uuid()}`
+      // Unset → the full default set.
+      expect(await store.getOrgSettings(settingsOrg)).toEqual(DEFAULT_ORG_SETTINGS)
+      // First write (insert path). Overridden channels stick; the rest stay default on read.
+      await store.setOrgSettings(settingsOrg, {
+        ...DEFAULT_ORG_SETTINGS,
+        githubPostComments: false,
+        slackPost: false,
+      })
+      expect(await store.getOrgSettings(settingsOrg)).toMatchObject({
+        emailNotifications: true,
+        githubPostComments: false,
+        githubMirrorComments: true,
+        slackPost: false,
+      })
+      // Second write for the same org exercises the onConflict update path.
+      await store.setOrgSettings(settingsOrg, {
+        ...DEFAULT_ORG_SETTINGS,
+        emailNotifications: false,
+      })
+      expect(await store.getOrgSettings(settingsOrg)).toMatchObject({
+        emailNotifications: false,
+        githubPostComments: true,
+        slackPost: true,
+      })
+    })
+
+    it("installs, re-installs (token rotation), and deletes a Slack workspace", async () => {
+      expect(await store.getSlackInstall(ORG)).toBeNull()
+      await store.setSlackInstall({
+        org_id: ORG,
+        team_id: "T1",
+        team_name: "Acme",
+        bot_token: "xoxb-1",
+        bot_user_id: "U1",
+        default_channel: "C1",
+        created_at: "2026-06-20T00:00:00.000Z",
+      })
+      expect(await store.getSlackInstall(ORG)).toMatchObject({ team_id: "T1", bot_token: "xoxb-1" })
+      // Re-install (onConflict update): rotate the token, rename, change channel.
+      await store.setSlackInstall({
+        org_id: ORG,
+        team_id: "T1",
+        team_name: "Acme Inc",
+        bot_token: "xoxb-2",
+        bot_user_id: "U1",
+        default_channel: "C2",
+        created_at: "2026-06-21T00:00:00.000Z",
+      })
+      expect(await store.getSlackInstall(ORG)).toMatchObject({
+        team_name: "Acme Inc",
+        bot_token: "xoxb-2",
+        default_channel: "C2",
+      })
+      await store.deleteSlackInstall(ORG)
+      expect(await store.getSlackInstall(ORG)).toBeNull()
+    })
+
+    it("links a Slack thread to an artifact, found by thread id or by channel+ts", async () => {
+      const a = await store.createArtifact(newArtifact())
+      const link = {
+        id: uuid(),
+        org_id: ORG,
+        artifact_id: a.id,
+        thread_id: `th_${uuid()}`,
+        channel: "C9",
+        message_ts: "1700000000.000100",
+        created_at: "2026-06-20T00:00:00.000Z",
+      }
+      await store.setSlackThreadLink(link)
+      expect(await store.getSlackThreadLinkByThread(link.thread_id)).toMatchObject({
+        artifact_id: a.id,
+        channel: "C9",
+        message_ts: "1700000000.000100",
+      })
+      expect(await store.getSlackThreadLinkByTs("C9", "1700000000.000100")).toMatchObject({
+        thread_id: link.thread_id,
+      })
+      // Misses return null on both lookups.
+      expect(await store.getSlackThreadLinkByThread(`missing_${uuid()}`)).toBeNull()
+      expect(await store.getSlackThreadLinkByTs("C9", "nope")).toBeNull()
     })
   })
 }
