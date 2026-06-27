@@ -148,13 +148,17 @@ describe("resolveElement — the cascade", () => {
     expect(elementResolvesIn(sel, v2)).toBeNull()
   })
 
-  it("disambiguates duplicate tags by ordinal + neighbors", () => {
+  it("disambiguates duplicate (same-content) tags by neighbors, not ordinal", () => {
+    // Two byte-identical images; the only thing telling them apart is the text around
+    // them. With ambiguous content, ordinal is untrustworthy (an insertion shifts it),
+    // so the neighbors — not position — must pick the right instance.
     const html = `<p>alpha</p><img src="a.png" alt="A"><p>between</p><img src="a.png" alt="A"><p>omega</p>`
-    const sel = selFor(html, "img", 1) // the second image
+    const sel = selFor(html, "img", 1) // the second image (between / omega)
     const m = elementResolvesIn(sel, html)
     const ds = scanElements(html)
     expect(ds[m?.index ?? -1]?.ordinal).toBe(1)
-    expect(m?.signals).toContain("position")
+    expect(m?.signals.some((s) => s.startsWith("neighbor"))).toBe(true)
+    expect(m?.signals).not.toContain("position") // ordinal dropped for ambiguous content
   })
 })
 
@@ -179,6 +183,29 @@ describe("resolveElement — ambiguity must not breed false confidence", () => {
     const m = elementResolvesIn(sel, v2)
     // Either orphan or a low/medium relocation — never a confident match on Banana.
     if (m) expect(m.band).not.toBe("high")
+  })
+
+  it("a repeated element (logo on every slide) follows neighbors, not a shifted ordinal", () => {
+    // The brand logo repeats on every slide. A comment on slide 3's logo must stay on
+    // slide 3 when a slide is INSERTED at the front — even though that shifts every
+    // logo's ordinal. Before the fix, the stale ordinal dragged it to slide 2's logo.
+    const slide = (t: string) =>
+      `<section><h2>${t}</h2><img src="/logo.png" alt="Logo"><p>${t} body text unique to this slide.</p></section>`
+    const v1 = ["Intro", "Market", "Revenue", "Costs", "Outlook"].map(slide).join("")
+    const sel = selFor(v1, "img", 2) // Revenue slide's logo
+    const v2 = ["NEW", "Intro", "Market", "Revenue", "Costs", "Outlook"].map(slide).join("")
+    const m = elementResolvesIn(sel, v2)
+    expect(m).not.toBeNull()
+    const ds = scanElements(v2)
+    // The landed logo's slide = the nearest preceding <h2>; it must be "Revenue".
+    let slideTitle = ""
+    for (let i = (m?.index ?? 0) - 1; i >= 0; i--) {
+      if (ds[i]?.tag === "h2") {
+        slideTitle = ds[i]?.text ?? ""
+        break
+      }
+    }
+    expect(slideTitle).toBe("Revenue")
   })
 
   it("never claims high confidence when id and content disagree (a content swap)", () => {

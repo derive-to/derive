@@ -522,14 +522,21 @@ export function resolveElement(
       signals.push("content")
     }
 
-    // Structural ordinal (only meaningful within the same tag).
-    max += W.tagOrdinal
-    if (d.tag === sel.tag) {
-      if (d.ordinal === sel.ordinal) {
-        score += W.tagOrdinal
-        signals.push("position")
-      } else {
-        score += W.tagOnly
+    // Structural ordinal — a corroborator for a UNIQUE element. But when the content
+    // fingerprint repeats across candidates (the same logo on every slide, a gallery),
+    // ordinal is exactly the signal a single insertion/deletion scrambles, so it's
+    // untrustworthy and actively misleading: drop it and let neighbors + geometry pick
+    // WHICH instance. (Without this, a comment on slide 3's logo jumps to slide 2's
+    // when a slide is inserted, because the old ordinal now points there.)
+    if (fpMatches <= 1) {
+      max += W.tagOrdinal
+      if (d.tag === sel.tag) {
+        if (d.ordinal === sel.ordinal) {
+          score += W.tagOrdinal
+          signals.push("position")
+        } else {
+          score += W.tagOnly
+        }
       }
     }
 

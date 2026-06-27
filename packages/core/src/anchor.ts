@@ -255,13 +255,15 @@ function textClose(a,b){if(!a||!b)return false;var x=a.toLowerCase(),y=b.toLower
   if(x===y)return true;var sh=x.length<y.length?x:y,lo=x.length<y.length?y:x;
   if(sh.length>=8&&lo.indexOf(sh)>=0)return true;
   var w=Math.min(16,sh.length);return w>=8&&lo.slice(0,w)===sh.slice(0,w)}
-function scoreEl(el,a){
+function scoreEl(el,a,fpM){
   var score=0,max=0,signals=[];
   if(a.id){max+=5;if(el.id===a.id){score+=5;signals.push("id")}}
   max+=5;if(elFp(el)===a.fingerprint){score+=5;signals.push("content")}
   if(a.css){max+=3;if(cssPath(el)===a.css){score+=3;signals.push("css")}}
-  max+=3;if(el.tagName.toLowerCase()===a.tag){
-    if(elOrdinal(el)===a.ordinal){score+=3;signals.push("position")}else score+=1}
+  /* drop ordinal when content repeats across candidates (same logo per slide) — it's
+     the signal an insertion scrambles; let neighbors/geometry pick the instance */
+  if(fpM<=1){max+=3;if(el.tagName.toLowerCase()===a.tag){
+    if(elOrdinal(el)===a.ordinal){score+=3;signals.push("position")}else score+=1}}
   if(a.before||a.after){var nb=neighborText(el);
     if(a.before){max+=1;if(textClose(a.before,nb.before)){score+=1;signals.push("nb")}}
     if(a.after){max+=1;if(textClose(a.after,nb.after)){score+=1;signals.push("nb")}}}
@@ -278,7 +280,7 @@ function resolveEl(a){
   var fpM=0,idM=0;
   for(var c=0;c<cand.length;c++){if(elFp(cand[c])===a.fingerprint)fpM++;if(a.id&&cand[c].id===a.id)idM++}
   var best=null,bestEl=null,runnerUp=0;
-  for(var j=0;j<cand.length;j++){var s=scoreEl(cand[j],a);
+  for(var j=0;j<cand.length;j++){var s=scoreEl(cand[j],a,fpM);
     if(!best||s.c>best.c){if(best&&best.c>runnerUp)runnerUp=best.c;best=s;bestEl=cand[j]}
     else if(s.c>runnerUp)runnerUp=s.c}
   if(!best||best.c<0.42)return null;
