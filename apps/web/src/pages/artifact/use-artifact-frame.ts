@@ -52,6 +52,11 @@ export function useArtifactFrame(p: {
   // or non-deck). The frame reports this so a comment pins on the slide its text
   // really lives on — even after a republish moved the text to a different slide.
   const [landedSlides, setLandedSlides] = useState<Record<string, number | null>>({})
+  // Per-thread element-anchor resolution quality (band + confidence), reported by
+  // the frame so a card can show a quiet "moved" marker on an uncertain relocation.
+  const [anchorConf, setAnchorConf] = useState<
+    Record<string, { band: "high" | "medium" | "low"; confidence: number }>
+  >({})
   const [anchorTops, setAnchorTops] = useState<Record<string, number>>({})
   const [scrollY, setScrollY] = useState(0)
   // The frame's own document height + visible height, reported alongside scroll.
@@ -112,6 +117,9 @@ export function useArtifactFrame(p: {
         // Older clients omit `slides`; default to empty so the page falls back to
         // each comment's recorded slide.
         setLandedSlides(d.slides ?? {})
+        // Element anchors report per-thread resolution quality (band/confidence) so
+        // a card can flag a relocation; text/older clients omit it.
+        setAnchorConf(d.conf ?? {})
       } else if (d.type === "anchor-rects") {
         setAnchorTops(d.tops ?? {})
         if (typeof d.scrollY === "number") setScrollY(d.scrollY)
@@ -169,6 +177,7 @@ export function useArtifactFrame(p: {
     deckRef.current = null
     setSel(null)
     setLandedSlides({})
+    setAnchorConf({})
   }, [shortId, version])
   // A slide flip toggles element visibility without a scroll or resize, so the
   // frame won't re-measure on its own — ping it to re-report highlight rects so the
@@ -233,6 +242,7 @@ export function useArtifactFrame(p: {
     setSel,
     inDoc,
     landedSlides,
+    anchorConf,
     anchorTops,
     scrollY,
     docH,

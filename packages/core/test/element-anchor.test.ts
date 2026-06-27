@@ -158,6 +158,39 @@ describe("resolveElement — the cascade", () => {
   })
 })
 
+describe("resolveElement — ambiguity must not breed false confidence", () => {
+  it("a gallery of identical thumbnails, with one deleted, never resolves HIGH", () => {
+    // 12 byte-identical thumbnails; anchor #6; remove it. The cascade can relocate
+    // to *a* sibling (better than orphaning) but must NOT claim certainty — content
+    // matches all of them, so the pick leans on position, which a deletion scrambles.
+    const cell = `<img src="/t.png" alt="thumb">`
+    const v1 = `<div>${cell.repeat(12)}</div>`
+    const sel = selFor(v1, "img", 6)
+    const v2 = `<div>${cell.repeat(11)}</div>`
+    const m = elementResolvesIn(sel, v2)
+    expect(m?.band).not.toBe("high")
+    expect(m?.confidence ?? 1).toBeLessThanOrEqual(0.5)
+  })
+
+  it("deleting a distinct element never high-confidence-lands on a different one", () => {
+    const v1 = `<p>alpha</p><img id="A" src="/a.png" alt="Apple"><p>mid</p><img id="B" src="/b.png" alt="Banana"><p>omega</p>`
+    const sel = selFor(v1, "img", 0) // "Apple"
+    const v2 = v1.replace(/<img id="A"[^>]*>/, "") // only the distinct "Banana" remains
+    const m = elementResolvesIn(sel, v2)
+    // Either orphan or a low/medium relocation — never a confident match on Banana.
+    if (m) expect(m.band).not.toBe("high")
+  })
+
+  it("stays fast + non-crashing on a huge document", () => {
+    const huge = `<div>${`<img src="/x.png" alt="t">`.repeat(2000)}</div>`
+    const sel = selFor(huge, "img", 1000)
+    const t = Date.now()
+    const m = elementResolvesIn(sel, huge)
+    expect(Date.now() - t).toBeLessThan(2000)
+    expect(m).not.toBeNull()
+  })
+})
+
 describe("planElementForwardWalk — version recovery", () => {
   it("recovers an element renamed then moved across versions", () => {
     const v0 = PAGE
@@ -237,5 +270,62 @@ describe("client/server fingerprint parity", () => {
     for (const c of ["", "abc", "img/charts/revenue.pngRevenue by region", "tableweird", "héllo"]) {
       expect(clientFnv(c)).toBe(fnv1a(c))
     }
+  })
+
+  // The hash matching isn't enough: the two sides also have to JOIN the fields the
+  // same way. They once differed (empty string vs a control-char separator), so every
+  // browser-made anchor failed to resolve server-side. This extracts the client's real
+  // elFp chain and pins it to fingerprintOf, end to end.
+  it("the browser client's elFp() equals fingerprintOf() — fields AND separator", () => {
+    const path = fileURLToPath(new URL("../src/anchor.ts", import.meta.url))
+    const src = readFileSync(path, "utf8")
+    const head = "export const ANCHOR_CLIENT_JS = `"
+    const m = src.indexOf(head)
+    let i = m + head.length
+    let end = -1
+    while (i < src.length) {
+      if (src[i] === "\\") {
+        i += 2
+        continue
+      }
+      if (src[i] === "`") {
+        end = i
+        break
+      }
+      i++
+    }
+    const js = src.slice(m + head.length, end).replace(/\\(.)/g, (_, c) => c)
+    const grab = (re: RegExp) => {
+      const g = js.match(re)
+      if (!g) throw new Error(`client fn not found: ${re}`)
+      return g[0]
+    }
+    const clientElFp = new Function(
+      `${grab(/function fnv\(s\)\{[\s\S]*?return h\.toString\(36\)\}/)}
+       ${grab(/function nw\(s\)\{[\s\S]*?\}/)}
+       ${grab(/function elSrc\(el\)\{[\s\S]*?\}/)}
+       ${grab(/function elAlt\(el\)\{[\s\S]*?\}/)}
+       ${grab(/function elText\(el\)\{[\s\S]*?\}/)}
+       ${grab(/function elFp\(el\)\{[\s\S]*?\}/)}
+       return elFp`,
+    )() as (el: unknown) => string
+    const stub = (tag: string, attrs: Record<string, string>, text = "") => ({
+      tagName: tag.toUpperCase(),
+      textContent: text,
+      getAttribute: (k: string) => attrs[k] ?? null,
+    })
+    const cases: Array<[string, Record<string, string>, string]> = [
+      ["img", { src: "https://x.test/a.png?text=Hero%2BChart", alt: "Unique Hero Chart" }, ""],
+      ["iframe", { src: "https://youtube.com/embed/abc" }, ""],
+      ["pre", {}, "const x = 1"],
+      ["img", { src: "a", alt: "b" }, ""], // boundary the separator defends
+    ]
+    for (const [tag, attrs, text] of cases) {
+      expect(clientElFp(stub(tag, attrs, text))).toBe(fingerprintOf({ tag, attrs, text }))
+    }
+    // Proof the separator is load-bearing: these collide if fields are joined with "".
+    expect(fingerprintOf({ tag: "img", attrs: { src: "a", alt: "b" }, text: "" })).not.toBe(
+      fingerprintOf({ tag: "img", attrs: { alt: "ab" }, text: "" }),
+    )
   })
 })

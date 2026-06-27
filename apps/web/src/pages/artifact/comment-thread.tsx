@@ -194,12 +194,15 @@ function ElementRef({
   label,
   snapshot,
   present,
+  relocated,
   onJump,
 }: {
   threadId: string
   label: string
   snapshot?: ElementSnapshotLite
   present: boolean
+  /** The element resolved, but at less than full confidence — it likely moved. */
+  relocated?: boolean
   onJump: (id: string) => void
 }) {
   const glyph = ROLE_GLYPH[snapshot?.tag === "table" ? "table" : roleGuess(snapshot, label)] ?? "❖"
@@ -212,13 +215,23 @@ function ElementRef({
           e.stopPropagation()
           onJump(threadId)
         }}
-        title="Jump to the element"
+        title={relocated ? "Jump to the element (moved — approximate)" : "Jump to the element"}
         className="flex w-full cursor-pointer items-center gap-1.5 border-l-[3px] border-primary bg-accent px-2.5 py-1.5 text-left text-xs font-medium text-foreground"
       >
         <span aria-hidden className="shrink-0 text-sm leading-none">
           {glyph}
         </span>
         <span className="truncate">{label}</span>
+        {relocated && (
+          // A minor, muted "moved" marker — a small dot + word, not an alarm.
+          <span
+            data-testid={`comment-moved-${threadId}`}
+            className="ml-auto inline-flex shrink-0 items-center gap-1 rounded-full bg-secondary px-1.5 py-px font-mono text-2xs font-medium text-muted-foreground"
+          >
+            <span aria-hidden className="size-1.5 rounded-full bg-primary/60" />
+            moved
+          </span>
+        )}
       </button>
     )
   }
@@ -291,7 +304,7 @@ export function CommentCard({
   onReply: (text: string, threadId: string, mentions?: Mention[]) => void
   onJump: (id: string) => void
 }) {
-  const { canComment, currentSlide, landedSlides } = useCommentScope()
+  const { canComment, currentSlide, landedSlides, anchorConf } = useCommentScope()
   const [reply, setReply] = useState("")
   const [replyMentions, setReplyMentions] = useState<Mention[]>([])
   const root = thread[0]
@@ -311,6 +324,10 @@ export function CommentCard({
   const refLabel = parsed?.exact ?? parsed?.label ?? null
   const snapshot = parsed?.element?.snapshot
   const textPresent = present !== undefined ? present : root.anchored !== false
+  // An element that resolved at less than full confidence relocated — show a quiet
+  // "moved" marker on its chip. High-confidence (or text) anchors show nothing.
+  const elBand = isEl ? anchorConf?.[root.thread_id]?.band : undefined
+  const relocated = isEl && textPresent && (elBand === "low" || elBand === "medium")
   const replies = thread.length - 1
   // Deck context (from CommentScope): the slide this comment belongs to — where its
   // text resolved (landed), else the slide it was written on — and whether the text
@@ -365,6 +382,7 @@ export function CommentCard({
               label={refLabel}
               snapshot={snapshot}
               present={textPresent && !resolved}
+              relocated={relocated}
               onJump={onJump}
             />
           )

@@ -122,6 +122,12 @@ export interface ElementMatch {
 
 const TEXT_CAP = 4000
 const FP_TEXT_CAP = 120
+/** Field separator inside a content fingerprint, so a value ending and the next
+ *  beginning can't blur into a collision (e.g. src "...a" + alt "b" vs src "..." +
+ *  alt "ab"). A control char that never appears in real content. MUST stay identical
+ *  to the client's `elFp` join in `ANCHOR_CLIENT_JS` — they were silently different
+ *  ("" vs this) once, which made every browser-made anchor fail to resolve server-side. */
+const FP_SEP = "\u0001"
 
 const VOID_TAGS = new Set([
   "area",
@@ -197,7 +203,7 @@ export function fingerprintOf(d: {
   text: string
 }): string {
   const parts = [d.tag, srcOf(d), altOf(d), normWs(d.text).slice(0, FP_TEXT_CAP)]
-  return fnv1a(parts.join(""))
+  return fnv1a(parts.join(FP_SEP))
 }
 
 /** Classify an element into a coarse role for labels + capture affordances. */
@@ -474,17 +480,27 @@ export function resolveElement(
   descriptors: ElementDescriptor[],
 ): ElementMatch | null {
   if (!descriptors.length) return null
-  // Candidate set: same tag, plus any element carrying the recorded id.
+  // Candidate set: same tag, plus any element carrying the recorded id. Track how
+  // many share the recorded fingerprint / id — a strong signal that matches MANY
+  // candidates isn't identifying, so it can't grant high confidence (a gallery of
+  // identical thumbnails, two charts on the same blank canvas).
   const candidates = new Set<number>()
+  let fpMatches = 0
+  let idMatches = 0
   for (let i = 0; i < descriptors.length; i++) {
     const d = descriptors[i]
     if (!d) continue
     if (d.tag === sel.tag) candidates.add(i)
-    if (sel.id && d.id === sel.id) candidates.add(i)
+    if (sel.id && d.id === sel.id) {
+      candidates.add(i)
+      idMatches++
+    }
+    if (fingerprintOf(d) === sel.fingerprint) fpMatches++
   }
   if (!candidates.size) return null
 
   let best: ElementMatch | null = null
+  let runnerUp = 0 // second-best confidence — a thin margin means the pick is a guess
   for (const idx of candidates) {
     const d = descriptors[idx]
     if (!d) continue
@@ -539,23 +555,57 @@ export function resolveElement(
     score += W.geometry * geo
 
     const confidence = max > 0 ? score / max : 0
-    if (!best || confidence > best.confidence)
+    if (!best || confidence > best.confidence) {
+      if (best) runnerUp = Math.max(runnerUp, best.confidence)
       best = { index: idx, confidence, band: "low", signals }
+    } else if (confidence > runnerUp) {
+      runnerUp = confidence
+    }
   }
 
   if (!best || best.confidence < ACCEPT) return null
-  best.band = bandOf(best)
+  const { band, confidence } = grade(best, {
+    fpMatches,
+    idMatches,
+    margin: best.confidence - runnerUp,
+  })
+  best.band = band
+  best.confidence = confidence
   return best
 }
 
-function bandOf(m: ElementMatch): ConfidenceBand {
-  // A strong, near-unique signal (id or content) → high. Position/neighbor
-  // agreement → medium. Geometry-led only → low.
-  const strong = m.signals.includes("id") || m.signals.includes("content")
-  if (strong && m.confidence >= 0.6) return "high"
-  if (m.signals.includes("position") || m.signals.some((s) => s.startsWith("neighbor")))
-    return "medium"
-  return "low"
+/**
+ * Turn the winner's raw score into a confidence band, accounting for ambiguity.
+ * The raw ratio over-credits a strong signal that fired on MANY candidates: if the
+ * fingerprint (or id) isn't unique, "content matched" says nothing about WHICH
+ * element, so the pick leans on position/geometry — exactly the signals a deletion
+ * scrambles. So an ambiguous strong signal, or a thin margin over the runner-up,
+ * caps the band (and the reported confidence) down to "we think it moved here".
+ */
+function grade(
+  m: ElementMatch,
+  ctx: { fpMatches: number; idMatches: number; margin: number },
+): { band: ConfidenceBand; confidence: number } {
+  const matchedId = m.signals.includes("id")
+  const matchedContent = m.signals.includes("content")
+  const hasNeighbor = m.signals.some((s) => s.startsWith("neighbor"))
+  // A strong signal that uniquely identifies this element (only one candidate has it).
+  const strongUnique = (matchedId && ctx.idMatches === 1) || (matchedContent && ctx.fpMatches === 1)
+  // A strong signal shared across candidates — not identifying on its own.
+  const strongAmbiguous = (matchedId && ctx.idMatches > 1) || (matchedContent && ctx.fpMatches > 1)
+
+  // Ambiguous strong signal with nothing reliable to break the tie (only position /
+  // geometry, which a deletion shifts) → low, and don't report a confident number.
+  if (strongAmbiguous && !strongUnique && !hasNeighbor) {
+    return { band: "low", confidence: Math.min(m.confidence, 0.45) }
+  }
+  if (strongUnique && m.confidence >= 0.6 && ctx.margin >= 0.12) {
+    return { band: "high", confidence: m.confidence }
+  }
+  if ((strongUnique || hasNeighbor || m.signals.includes("position")) && m.confidence >= 0.5) {
+    return { band: "medium", confidence: Math.min(m.confidence, 0.75) }
+  }
+  return { band: "low", confidence: Math.min(m.confidence, 0.5) }
 }
 
 /** Nearest text-bearing block before/after `idx` in document order. */

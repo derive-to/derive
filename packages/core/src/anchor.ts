@@ -152,12 +152,22 @@ st.textContent="mark.dock-hl{background:rgba(124,108,189,.20);color:inherit;bord
 /* element overlays: a non-text anchor draws an outline box (pointer-events off so
    the element stays interactive) with a clickable comment badge in its corner. A
    low-confidence relocation reads dashed to signal "we think it moved here". */
-".dock-el-hl{position:absolute;pointer-events:none;border:2px solid rgba(124,108,189,.55);border-radius:4px;box-shadow:0 0 0 3px rgba(124,108,189,.12);transition:border-color .15s,box-shadow .15s;z-index:2147483640}"+
-".dock-el-hl.dock-el-low{border-style:dashed;border-color:rgba(124,108,189,.5)}"+
+".dock-el-hl{position:absolute;pointer-events:none;border:2px solid rgba(124,108,189,.55);border-radius:4px;box-shadow:0 0 0 3px rgba(124,108,189,.12);transition:border-color .15s,box-shadow .15s,opacity .15s;z-index:2147483640}"+
+/* low confidence (a relocation we're unsure about) = a quiet hint, never an alarm.
+   At rest there's NO box at all — just the small badge with a tiny 'moved' pip. The
+   faint dashed outline appears only when you hover the badge, so the document stays
+   calm and the signal is opt-in. */
+".dock-el-hl.dock-el-low{border-color:transparent;box-shadow:none}"+
+".dock-el-hl.dock-el-low:hover,.dock-el-hl.dock-el-low.dock-el-on{border:1px dashed rgba(124,108,189,.5)}"+
 ".dock-el-hl.dock-el-on{border-color:rgba(124,108,189,.95);box-shadow:0 0 0 4px rgba(124,108,189,.22)}"+
 ".dock-el-hl.dock-el-flash{animation:dockelflash 1s ease 2}"+
 "@keyframes dockelflash{50%{box-shadow:0 0 0 6px rgba(124,108,189,.4)}}"+
 ".dock-el-badge{position:absolute;top:-11px;right:-11px;width:22px;height:22px;border-radius:11px;background:rgba(124,108,189,.95);color:#fff;font:600 12px/22px system-ui,sans-serif;text-align:center;pointer-events:auto;cursor:pointer;box-shadow:0 1px 4px rgba(0,0,0,.25)}"+
+/* on a moved (low-confidence) badge: dimmed, with a tiny pip marking 'approximate'.
+   Brightens on hover so it's findable without being loud. */
+".dock-el-low .dock-el-badge{background:rgba(124,108,189,.55);box-shadow:0 1px 3px rgba(0,0,0,.16)}"+
+".dock-el-low:hover .dock-el-badge{background:rgba(124,108,189,.95)}"+
+".dock-el-pip{position:absolute;bottom:-2px;right:-2px;width:8px;height:8px;border-radius:50%;background:rgba(124,108,189,.85);border:1.5px solid #fff;box-sizing:content-box}"+
 /* the hover affordance: a small 'Comment' chip that follows the pointer over an
    anchorable element; clicking it pins a comment to that element. */
 ".dock-el-chip{position:absolute;display:none;align-items:center;gap:5px;padding:4px 9px;border-radius:7px;background:rgba(124,108,189,.97);color:#fff;font:600 12px/1 system-ui,sans-serif;pointer-events:auto;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.28);z-index:2147483641;white-space:nowrap}"+
@@ -175,7 +185,9 @@ function nw(s){return (s||"").replace(/\\s+/g," ").trim()}
 function elSrc(el){return (el.getAttribute&&(el.getAttribute("src")||el.getAttribute("href")))||""}
 function elAlt(el){return (el.getAttribute&&(el.getAttribute("alt")||el.getAttribute("aria-label")||el.getAttribute("title")))||""}
 function elText(el){return nw(el.textContent||"")}
-function elFp(el){var tag=el.tagName.toLowerCase();return fnv([tag,elSrc(el),elAlt(el),elText(el).slice(0,120)].join(""))}
+/* join separator MUST equal FP_SEP in element-anchor.ts (\\u0001) — joining with ""
+   instead silently made browser fingerprints differ from the server's. */
+function elFp(el){var tag=el.tagName.toLowerCase();return fnv([tag,elSrc(el),elAlt(el),elText(el).slice(0,120)].join("\\u0001"))}
 function elOrdinal(el){var all=document.getElementsByTagName(el.tagName);
   for(var i=0;i<all.length;i++){if(all[i]===el)return i}return 0}
 /* nearest preceding/following text block, in document order */
@@ -260,23 +272,43 @@ function resolveEl(a){
   var cand=[],seen=[];
   if(a.tag){var bt=document.getElementsByTagName(a.tag);for(var i=0;i<bt.length;i++){cand.push(bt[i]);seen.push(bt[i])}}
   if(a.id){var byId=document.getElementById(a.id);if(byId&&seen.indexOf(byId)<0)cand.push(byId)}
-  var best=null,bestEl=null;
+  /* count how many candidates share the recorded fingerprint / id — a strong
+     signal matching MANY candidates isn't identifying (a gallery of identical
+     thumbnails), so it can't grant high confidence (mirrors core's grade()). */
+  var fpM=0,idM=0;
+  for(var c=0;c<cand.length;c++){if(elFp(cand[c])===a.fingerprint)fpM++;if(a.id&&cand[c].id===a.id)idM++}
+  var best=null,bestEl=null,runnerUp=0;
   for(var j=0;j<cand.length;j++){var s=scoreEl(cand[j],a);
-    if(!best||s.c>best.c){best=s;bestEl=cand[j]}}
+    if(!best||s.c>best.c){if(best&&best.c>runnerUp)runnerUp=best.c;best=s;bestEl=cand[j]}
+    else if(s.c>runnerUp)runnerUp=s.c}
   if(!best||best.c<0.42)return null;
-  var strong=best.signals.indexOf("id")>=0||best.signals.indexOf("content")>=0;
-  var band=strong&&best.c>=0.6?"high":(best.signals.indexOf("position")>=0||best.signals.indexOf("nb")>=0?"medium":"low");
-  return {el:bestEl,confidence:best.c,band:band,signals:best.signals}}
+  var g=gradeEl(best.signals,best.c,fpM,idM,best.c-runnerUp);
+  return {el:bestEl,confidence:g.c,band:g.band,signals:best.signals}}
+function gradeEl(sig,conf,fpM,idM,margin){
+  var mId=sig.indexOf("id")>=0,mContent=sig.indexOf("content")>=0,nb=sig.indexOf("nb")>=0;
+  var uniq=(mId&&idM===1)||(mContent&&fpM===1);
+  var ambig=(mId&&idM>1)||(mContent&&fpM>1);
+  if(ambig&&!uniq&&!nb)return {band:"low",c:Math.min(conf,0.45)};
+  if(uniq&&conf>=0.6&&margin>=0.12)return {band:"high",c:conf};
+  if((uniq||nb||sig.indexOf("position")>=0)&&conf>=0.5)return {band:"medium",c:Math.min(conf,0.75)};
+  return {band:"low",c:Math.min(conf,0.5)}}
 
 /* overlay registry: each resolved element anchor gets an absolutely-positioned
    outline (in document coords, so it glides with scroll) + a corner badge. */
 var elReg=[];
 function clearEls(){for(var i=0;i<elReg.length;i++){var o=elReg[i].ov;if(o&&o.parentNode)o.parentNode.removeChild(o)}elReg=[]}
 function paintEl(id,el,band){
-  var ov=document.createElement("div");ov.className="dock-el-hl"+(band==="low"?" dock-el-low":"");
+  var low=band==="low";
+  var ov=document.createElement("div");ov.className="dock-el-hl"+(low?" dock-el-low":"");
   ov.setAttribute("data-dock-id",id);
   var badge=document.createElement("div");badge.className="dock-el-badge";badge.setAttribute("data-dock-id",id);
-  badge.textContent="\\uD83D\\uDCAC";badge.title="View comment";ov.appendChild(badge);
+  badge.textContent="\\uD83D\\uDCAC";
+  /* a moved (low-confidence) anchor gets a tiny pip + an explanatory title; nothing
+     louder. medium/high look like a normal anchored comment. */
+  if(low){badge.title="View comment \\u00b7 moved here (approximate)";
+    var pip=document.createElement("div");pip.className="dock-el-pip";badge.appendChild(pip)}
+  else badge.title="View comment";
+  ov.appendChild(badge);
   document.body.appendChild(ov);elReg.push({id:id,el:el,ov:ov})}
 function positionEls(){var sy=scrollTop(),sx=window.scrollX||0;
   for(var i=0;i<elReg.length;i++){var e=elReg[i],r=e.el.getBoundingClientRect();

@@ -129,6 +129,7 @@ export function Artifact() {
     setSel,
     inDoc,
     landedSlides,
+    anchorConf,
     anchorTops,
     scrollY,
     docH,
@@ -617,6 +618,7 @@ export function Artifact() {
             startSelComment={startSelComment}
             currentSlide={deck?.i ?? null}
             landedSlides={landedSlides}
+            anchorConf={anchorConf}
           />
         </div>
       </ActionsCtx.Provider>

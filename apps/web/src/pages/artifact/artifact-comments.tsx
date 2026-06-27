@@ -61,6 +61,8 @@ export function ArtifactComments(p: {
    *  Used by comment cards to show a "Slide N" / "moved" badge. */
   currentSlide?: number | null
   landedSlides?: Record<string, number | null>
+  /** Per-thread element-anchor resolution quality for the quiet "moved" marker. */
+  anchorConf?: Record<string, { band: "high" | "medium" | "low"; confidence: number }>
 }) {
   const { isMobile, isAnon, canComment, panel, sel } = p
   // Focus primer: tapping "Comment" focuses this synchronously, inside the tap
@@ -85,6 +87,7 @@ export function ArtifactComments(p: {
         canComment,
         currentSlide: p.currentSlide,
         landedSlides: p.landedSlides,
+        anchorConf: p.anchorConf,
       }}
     >
       {isMobile && canComment && (
