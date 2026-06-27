@@ -435,8 +435,8 @@ headings and distinctive phrases stable. Full guidance: STANDARD.md.
 ## Using an agent harness
 
 A Claude Code skill ships in \`.claude/skills/dock\`, and \`.mcp.json\` wires the
-Dock MCP server (\`publish_artifact\`, \`list_comments\`, \`publish_version\`,
-\`resolve_thread\`, …). Set \`DOCK_SERVER\` and \`DOCK_TOKEN\` in your environment;
+Dock MCP server (five tools: \`list_artifacts\`, \`read\`, \`catch_up\`, \`comment\`,
+\`publish\`). Set \`DOCK_SERVER\` and \`DOCK_TOKEN\` in your environment;
 both the CLI and the MCP server read them.
 `
 
@@ -474,10 +474,11 @@ dock reply <thread_id> "Fixed." # 4a. discuss
 dock resolve <comment_id>       # 4b. close a handled thread
 \`\`\`
 
-If the Dock MCP server is connected (\`.mcp.json\`), prefer its tools for the same
-loop without shelling out: \`publish_artifact\`, \`list_comments\`,
-\`publish_version\` (pass \`resolves\` to close threads), \`reply_comment\`,
-\`resolve_thread\`, \`diff_versions\`.
+If the Dock MCP server is connected (\`.mcp.json\`), prefer its five tools for the same
+loop without shelling out: \`catch_up\` (what changed plus open feedback) ->
+\`read\` (content) -> \`comment\` (reply/resolve) and/or \`publish\` (pass \`addresses\`
+to resolve the threads a revision fixes; \`publish\` goes live or files a proposal based
+on your role, or with \`for_review:true\`). \`list_artifacts\` finds an artifact by title.
 
 ## Keep comments anchorable
 

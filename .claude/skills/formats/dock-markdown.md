@@ -96,4 +96,4 @@ Allowed attributes: `src`, `alt`, `title`, `width`, `height`.
 ```
 
 Task list checkboxes are rendered but not interactive (checking them doesn't update
-the source). Use a new `publish_version` to update task state.
+the source). Use a new `publish` (with the artifact's `short_id`) to update task state.

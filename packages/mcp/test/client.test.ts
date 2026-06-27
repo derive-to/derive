@@ -143,6 +143,35 @@ describe("dock client (the MCP server's backend) over real HTTP", () => {
     expect(got.versions[0]).toHaveProperty("name")
   })
 
+  it("lists the workspace's artifacts, filtered by a title query", async () => {
+    const a = await client.publish({ content: "x", filename: "l.md", title: "Listable Plan" })
+    const all = await client.list()
+    expect(all.some((x) => x.short_id === a.short_id)).toBe(true)
+    const hit = await client.list("Listable")
+    expect(hit.some((x) => x.short_id === a.short_id)).toBe(true)
+    const none = await client.list("zzz-no-such-title-zzz")
+    expect(none.some((x) => x.short_id === a.short_id)).toBe(false)
+  })
+
+  it("proposes a single-file revision for review (with and without addresses)", async () => {
+    const a = await client.publish({ content: "# headline", filename: "p.md", title: "Proposable" })
+    const c = await client.createComment(a.short_id, { body_md: "fix headline", author: "jess" })
+    const p = await client.propose(a.short_id, {
+      content: "# fixed headline",
+      message: "tightened",
+      addresses: [c.thread_id],
+    })
+    expect(p.id).toBeTruthy()
+    expect(p.base_version).toBe(1)
+    expect(p.addressed).toEqual([c.thread_id])
+    // The live version is untouched — a proposal is not a publish.
+    expect(await client.getContent(a.short_id)).toBe("# headline")
+
+    // No `addresses` (default filename) covers the other branch.
+    const p2 = await client.propose(a.short_id, { content: "# again", message: "another pass" })
+    expect(p2.id).toBeTruthy()
+  })
+
   it("surfaces server errors as thrown messages", async () => {
     await expect(client.get("nope0000")).rejects.toThrow(/dock 404/)
   })
