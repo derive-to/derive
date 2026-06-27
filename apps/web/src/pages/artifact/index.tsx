@@ -97,13 +97,18 @@ export function Artifact() {
   // The open/rail/hidden comments panel, with its persistence + `c`/Esc hotkeys.
   const { panel, setPanel } = useCommentsPanel(() => setComposer(null))
   // Which comment surface is showing: the public team thread, or your personal notes
-  // (private to you + the agents you've authed). Two filtered views of one list — and
-  // the document is scoped to the ACTIVE one, so only that tab's anchors are
-  // highlighted + clickable (a highlight always maps to a card you can see).
+  // (private to you + the agents you've authed). Two filtered views of one list. The
+  // panel shows the active tab; the document highlights BOTH (shared lavender +
+  // personal amber), and clicking a highlight switches to its tab.
   const [commentTab, setCommentTab] = useState<"comments" | "personal">("comments")
   const personalComments = comments.filter((c) => c.visibility === "personal")
   const publicComments = comments.filter((c) => c.visibility !== "personal")
   const activeComments = commentTab === "personal" ? personalComments : publicComments
+  // Stable so the iframe message listener subscribes once (it lives in onAnchorTab's deps).
+  const onAnchorTab = useCallback(
+    (personal: boolean) => setCommentTab(personal ? "personal" : "comments"),
+    [],
+  )
 
   // Server-truth refetch after a write or an SSE ping (defined up here so the
   // realtime hook + the iframe message bridge below can both lean on them).
@@ -141,7 +146,11 @@ export function Artifact() {
     docH,
     viewH,
   } = useArtifactFrame({
-    comments: activeComments,
+    // Paint BOTH the shared and your personal anchors in the doc (the server already
+    // limits personal ones to you), color-differentiated; a click jumps to the right
+    // tab. The panel itself stays scoped to the active tab.
+    comments,
+    onAnchorTab,
     shortId,
     version,
     hoverThread,

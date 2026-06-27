@@ -146,6 +146,9 @@ document.addEventListener("visibilitychange",function(){
 var st=document.createElement("style");
 st.textContent="mark.dock-hl{background:rgba(124,108,189,.20);color:inherit;border-bottom:2px solid rgba(124,108,189,.5);border-radius:2px;cursor:pointer;transition:background .15s,border-color .15s}"+
 "mark.dock-hl:hover,mark.dock-hl.dock-hl-on{background:rgba(124,108,189,.42);border-bottom-color:rgba(124,108,189,.95)}"+
+/* personal (your private notes) paint amber, so they're obviously distinct from the lavender shared/team highlights */
+"mark.dock-hl-personal{background:rgba(224,169,58,.22);border-bottom-color:rgba(224,169,58,.6)}"+
+"mark.dock-hl-personal:hover,mark.dock-hl-personal.dock-hl-on{background:rgba(224,169,58,.45);border-bottom-color:rgba(224,169,58,.95)}"+
 "mark.dock-hl-flash{animation:dockflash 1s ease 2}"+
 "@keyframes dockflash{50%{background:rgba(124,108,189,.7)}}";
 (document.head||document.documentElement).appendChild(st);
@@ -166,7 +169,7 @@ function find(full,a){
   if(ctx!==a.exact){var i=full.indexOf(ctx);if(i>=0)return i+pre.length}
   return full.indexOf(a.exact)}
 /* wrap [s,e) of root's concatenated text in marks; reverse order keeps offsets valid */
-function wrapIn(root,id,s,e){
+function wrapIn(root,id,s,e,personal){
   var nodes=textNodes(root),offs=[],full="";
   for(var i=0;i<nodes.length;i++){offs.push(full.length);full+=nodes[i].nodeValue}
   var segs=[];
@@ -179,7 +182,9 @@ function wrapIn(root,id,s,e){
     if(g.b<t.nodeValue.length)t.splitText(g.b);
     var mid=g.a>0?t.splitText(g.a):t;
     var mk=document.createElement("mark");
-    mk.setAttribute("data-dock-id",id);mk.className="dock-hl";mk.title="View comment";
+    mk.setAttribute("data-dock-id",id);mk.className=personal?"dock-hl dock-hl-personal":"dock-hl";
+    if(personal)mk.setAttribute("data-dock-personal","1");
+    mk.title=personal?"Your private note":"View comment";
     t.parentNode.insertBefore(mk,mid);mk.appendChild(mid)}}
 /* root's concatenated-text offset for an anchor (context match first, then exact) */
 function findIn(root,a){
@@ -220,10 +225,10 @@ function applyAnchors(anchors){
     var a=anchors[k],placed=false,where=null;
     if(a.slide!=null&&slides[a.slide]){
       var s1=findIn(slides[a.slide],a);
-      if(s1>=0){wrapIn(slides[a.slide],a.id,s1,s1+a.exact.length);placed=true;where=a.slide}}
+      if(s1>=0){wrapIn(slides[a.slide],a.id,s1,s1+a.exact.length,a.personal);placed=true;where=a.slide}}
     if(!placed){
       var s2=findIn(document.body,a);
-      if(s2>=0){wrapIn(document.body,a.id,s2,s2+a.exact.length);placed=true;
+      if(s2>=0){wrapIn(document.body,a.id,s2,s2+a.exact.length,a.personal);placed=true;
         where=slides.length?slideOf(a.id,slides):null}}
     resolved[a.id]=placed;landed[a.id]=where}
   post({type:"anchors-resolved",resolved:resolved,slides:landed});
@@ -249,7 +254,7 @@ document.addEventListener("mouseout",function(e){
 /* clicking a highlight focuses its thread in the host */
 document.addEventListener("click",function(e){
   var el=e.target,m=el&&el.closest?el.closest("mark[data-dock-id]"):null;
-  if(m){post({type:"anchor-click",id:m.getAttribute("data-dock-id")});return}
+  if(m){post({type:"anchor-click",id:m.getAttribute("data-dock-id"),personal:m.getAttribute("data-dock-personal")==="1"});return}
   navLink(e)
 },true);
 /* Cross-document links: a relative <a> the server resolved to a sibling artifact
