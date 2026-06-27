@@ -97,8 +97,13 @@ export function Artifact() {
   // The open/rail/hidden comments panel, with its persistence + `c`/Esc hotkeys.
   const { panel, setPanel } = useCommentsPanel(() => setComposer(null))
   // Which comment surface is showing: the public team thread, or your personal notes
-  // (private to you + the agents you've authed). Two filtered views of one list.
+  // (private to you + the agents you've authed). Two filtered views of one list — and
+  // the document is scoped to the ACTIVE one, so only that tab's anchors are
+  // highlighted + clickable (a highlight always maps to a card you can see).
   const [commentTab, setCommentTab] = useState<"comments" | "personal">("comments")
+  const personalComments = comments.filter((c) => c.visibility === "personal")
+  const publicComments = comments.filter((c) => c.visibility !== "personal")
+  const activeComments = commentTab === "personal" ? personalComments : publicComments
 
   // Server-truth refetch after a write or an SSE ping (defined up here so the
   // realtime hook + the iframe message bridge below can both lean on them).
@@ -136,7 +141,7 @@ export function Artifact() {
     docH,
     viewH,
   } = useArtifactFrame({
-    comments,
+    comments: activeComments,
     shortId,
     version,
     hoverThread,
@@ -220,10 +225,13 @@ export function Artifact() {
     if (deepLinked.current || comments.length === 0) return
     deepLinked.current = true
     const cid = new URLSearchParams(window.location.search).get("c")
-    if (cid && comments.some((c) => c.thread_id === cid)) {
+    const target = cid ? comments.find((c) => c.thread_id === cid) : undefined
+    if (target) {
+      // Open the tab the thread lives on, or its anchor won't be live in the doc.
+      setCommentTab(target.visibility === "personal" ? "personal" : "comments")
       setPanel("open")
-      setActiveThread(cid)
-      setTimeout(() => post({ type: "focus-anchor", id: cid }), 320)
+      setActiveThread(target.thread_id)
+      setTimeout(() => post({ type: "focus-anchor", id: target.thread_id }), 320)
     }
   }, [comments, post, setPanel])
 
@@ -293,15 +301,13 @@ export function Artifact() {
   // (unanchored or orphaned), and resolved. Pins drive both the margin cards
   // and the collapsed rail dots.
   const docLive = !editing && view === "preview"
-  // Two filtered views of one comment list. The server only ever returns the
-  // caller's own personal comments, so this split is purely which surface to show.
-  const personalComments = comments.filter((c) => c.visibility === "personal")
-  const publicComments = comments.filter((c) => c.visibility !== "personal")
+  // Per-tab open-thread counts for the tab badges (the split itself + the active
+  // set are computed up top, before the iframe hook, so the doc can scope to it).
   const openCountOf = (cs: Comment[]) =>
     groupThreads(cs).filter((t) => t[0] && t[0].state !== "resolved").length
   const personalCount = openCountOf(personalComments)
   const publicCount = openCountOf(publicComments)
-  const all = groupThreads(commentTab === "personal" ? personalComments : publicComments)
+  const all = groupThreads(activeComments)
   // `outdated` threads (their quoted text changed in a later version) stay in the
   // active list, not the resolved drawer — their anchor no longer resolves, so
   // they fall into the general/orphaned bucket below and stay visible to triage.
