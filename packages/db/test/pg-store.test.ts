@@ -151,6 +151,74 @@ if (PG_URL) {
           expect(await store.getUsers(["x"])).toEqual([])
           expect(await store.getUserByUsername("ghost")).toBeNull()
           expect(await store.searchDiscoverableUsers("a", 10)).toEqual([])
+          expect(await store.listDiscoverableUsers(10)).toEqual([])
+          expect(await store.listFollowers("u1", 10)).toEqual([])
+          expect(await store.listFollowing("u1", 10)).toEqual([])
+          expect(await store.backfillAuthorIds()).toBe(0)
+        },
+      )
+    })
+
+    it("browses discoverable people, resolves follower/following profiles, backfills author_id", async () => {
+      await inSchema(
+        async (boot, schema) => {
+          await boot.query(
+            `CREATE TABLE ${schema}."user" (id text primary key, email text, name text, image text, username text, discoverable boolean, profession text, about text)`,
+          )
+          await boot.query(
+            `CREATE TABLE ${schema}."account" (id text primary key, "accountId" text, "providerId" text, "userId" text)`,
+          )
+          await boot.query(
+            `INSERT INTO ${schema}."user"(id,name,username,discoverable,profession) VALUES
+               ('u1','Amy','amy',NULL,'Engineering'),('u2','Bo','bo',true,'Design'),
+               ('u3','Cy','cy',false,NULL),('u4','Dee',NULL,NULL,NULL)`,
+          )
+          await boot.query(
+            `INSERT INTO ${schema}."account"(id,"accountId","providerId","userId") VALUES ('acc','9999','github','u1')`,
+          )
+        },
+        async (store) => {
+          // Browse: discoverable + handle-claimed only, ordered by handle.
+          expect((await store.listDiscoverableUsers(10)).map((x) => x.username)).toEqual([
+            "amy",
+            "bo",
+          ])
+          // Follower / following lists resolve via the user-table JOIN (the pg-specific
+          // raw SQL — a column-case typo here would fail this).
+          await store.addFollow({
+            id: "f1",
+            org_id: "*",
+            user_id: "u2",
+            kind: "user",
+            target: "u1",
+          })
+          expect((await store.listFollowers("u1", 10)).map((x) => x.username)).toEqual(["bo"])
+          expect((await store.listFollowing("u2", 10)).map((x) => x.username)).toEqual(["amy"])
+          expect(await store.listFollowers("u2", 10)).toEqual([])
+          // Backfill author_id from author_gh_id → Dock user; idempotent.
+          const a = await store.createArtifact({
+            id: "a1",
+            short_id: "sh1",
+            org_id: "o",
+            slug: null,
+            title: "T",
+            visibility: "public",
+            kind: "file",
+            spa: 0,
+          })
+          await store.addVersion(a.id, {
+            id: "v1",
+            blob_key: "b",
+            content_type: "text/html",
+            size_bytes: 1,
+            author: "Amy",
+            author_gh_id: "9999",
+            message: null,
+          })
+          expect((await store.getArtifactById("a1"))?.author_id).toBeNull()
+          expect(await store.backfillAuthorIds()).toBe(1)
+          expect((await store.getArtifactById("a1"))?.author_id).toBe("u1")
+          expect(await store.backfillAuthorIds()).toBe(0)
         },
       )
     })

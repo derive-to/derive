@@ -42,6 +42,15 @@ export const sharedArtifactsQuery = () =>
     queryFn: () => api.listArtifacts({ scope: "shared", limit: 12 }).then((r) => r.artifacts),
   })
 
+// Artifacts that need YOUR feedback: an open comment thread you're tagged in or have
+// commented on. Surfaced as a promoted strip at the top of the unfiltered home.
+export const needsFeedbackArtifactsQuery = () =>
+  queryOptions({
+    queryKey: ["artifacts", "needs_feedback"] as const,
+    queryFn: () =>
+      api.listArtifacts({ scope: "needs_feedback", limit: 12 }).then((r) => r.artifacts),
+  })
+
 // The caller's follows (GitHub authors + repo path prefixes) for the active
 // workspace. Drives the Following-feed empty state, the manage strip, and the
 // isFollowing* sets that toggle the Follow buttons. One source of truth: every
@@ -50,6 +59,27 @@ export const followsQuery = () =>
   queryOptions({
     queryKey: ["follows"] as const,
     queryFn: () => api.listFollows().then((r) => r.follows),
+  })
+
+// A public profile by handle — identity card + stats + (for a signed-in viewer)
+// followed_by_me. Keyed by handle; invalidated on any follow change so the stats +
+// Follow button stay live. retry:false so a 404 (no such handle) renders immediately.
+export const profileQuery = (handle: string) =>
+  queryOptions({
+    queryKey: ["profile", handle] as const,
+    queryFn: () => api.profile(handle).then((r) => r.user),
+    retry: false,
+  })
+
+// A person's work as an infinite query — public artifacts they authored, plus
+// shared-workspace work for a signed-in viewer. Keyset cursor drives infinite scroll.
+const PROFILE_PAGE = 24
+export const profileArtifactsQuery = (handle: string) =>
+  infiniteQueryOptions({
+    queryKey: ["profile-artifacts", handle] as const,
+    queryFn: ({ pageParam }) => api.profileArtifacts(handle, pageParam || undefined, PROFILE_PAGE),
+    initialPageParam: "",
+    getNextPageParam: (last) => last.next_cursor ?? undefined,
   })
 
 // Typed query options shared by route loaders (ensureQueryData, for intent

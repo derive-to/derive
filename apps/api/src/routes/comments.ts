@@ -4,6 +4,7 @@ import { z } from "zod"
 import type { AppContext } from "../context"
 import {
   commentJson,
+  isCollaboratorAuthor,
   type Mention,
   parseMentions,
   parseMeta,
@@ -11,13 +12,18 @@ import {
   quoteOf,
   REACTIONS,
 } from "../lib/comments"
+import { enqueueGithubPrComment } from "../lib/github-comments"
 import { fail, readJson } from "../lib/http"
+import { enqueueCommentEmails } from "../lib/notify-email"
+import { enqueueSlackComment } from "../lib/slack-comments"
 
 /** Comments: threaded, anchored to text quotes, with reactions, edits, and soft
  *  deletes. @mentions notify people (bell) or land in an agent's pull inbox. */
 export const commentRoutes = (ctx: AppContext) => {
   const {
+    deps,
     meta,
+    blobs,
     bus,
     notify,
     background,
@@ -201,6 +207,30 @@ export const commentRoutes = (ctx: AppContext) => {
             quote: quoteOf(created.anchor),
             thread_id: created.thread_id,
           })
+        // Channel fan-out is gated per workspace (Settings → integrations toggles).
+        const settings = await meta.getOrgSettings(artifact.org_id)
+        // Email the eligible recipients (mentioned / in-thread / workspace owners),
+        // pre-rendered onto the same retrying outbox as webhooks.
+        if (settings.emailNotifications)
+          await enqueueCommentEmails({ meta, baseUrl: deps.baseUrl }, artifact, created, {
+            mentionIds: new Set(mentions.map((m) => m.id)),
+            actorId: acting?.id ?? null,
+          })
+        // GitHub + Slack post AS Dock's bot/app into the customer's systems, so only
+        // mirror comments authored by a real collaborator — never an anonymous or
+        // non-member commenter on a public artifact (who'd otherwise get an
+        // unauthenticated write-into-the-owner's-GitHub/Slack primitive).
+        const trustedAuthor = await isCollaboratorAuthor(meta, artifact, acting?.id ?? null)
+        // Mirror onto the PR when this artifact is PR-sourced (no-op otherwise).
+        if (trustedAuthor && settings.githubPostComments)
+          await enqueueGithubPrComment({ meta, blobs, baseUrl: deps.baseUrl }, artifact, created)
+        // Post to the connected Slack workspace (no-op when Slack isn't connected).
+        if (trustedAuthor && settings.slackPost)
+          await enqueueSlackComment({ meta, baseUrl: deps.baseUrl }, artifact, created)
+        // Drain the outbox now: the channel enqueues above (email / Slack / GitHub) don't
+        // go through notify()'s poke, so without this they'd wait for the cron backstop
+        // (up to a minute on the edge) instead of delivering promptly.
+        deps.pokeWebhooks?.()
       })(),
     )
     return c.json(commentJson(created), 201)

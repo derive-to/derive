@@ -35,6 +35,11 @@ export function ArtifactTopBar(props: {
   editLabel: string
   /** This artifact is a slide deck — show the Present (fullscreen) button. */
   isDeck: boolean
+  /** Offer the Reader toggle (HTML artifacts only — markdown is already responsive). */
+  showReader: boolean
+  /** Reader view is currently on (re-renders the artifact clean + responsive). */
+  reader: boolean
+  onReaderToggle: () => void
   /** Caller may toggle the change-lock (editor/owner). */
   canLock: boolean
   /** Whether the artifact is currently locked (changes go through approval). */
@@ -112,6 +117,22 @@ export function ArtifactTopBar(props: {
           )}
         </DropdownMenuContent>
       </DropdownMenu>
+      {/* Reader: re-render a non-responsive HTML artifact as clean, mobile-friendly
+          text. A toggle — when on, it's highlighted; tap again for the original. */}
+      {props.showReader && (
+        <Button
+          variant="outline"
+          size="sm"
+          className={cn("gap-1.5", props.reader && "border-primary text-primary")}
+          data-testid="artifact-reader"
+          onClick={props.onReaderToggle}
+          title={props.reader ? "Show original layout" : "Reader view"}
+          aria-label="Reader view"
+          aria-pressed={props.reader}
+        >
+          <Icon name="reader" size={16} /> Reader
+        </Button>
+      )}
       {/* Decks get a one-tap Present (fullscreen) affordance in the chrome, not just
           the small ⛶ on the floating deck bar. */}
       {props.isDeck && (

@@ -5,9 +5,14 @@ import {
   escapeHtml,
   injectHead,
   kindLabel,
+  normalizeUsername,
   oembedResponse,
   ogCardSvg,
+  ogProfileCardSvg,
+  type ProfileCard,
   parseRef,
+  profileMetaTags,
+  profileSummary,
   refFor,
   type UnfurlInfo,
   unfurlDescription,
@@ -98,6 +103,46 @@ export const embedRoutes = (ctx: AppContext) => {
     })
   })
 
+  // Everything a profile unfurl needs, gathered from the public profile + its stats.
+  // Null when the handle isn't claimed (the caller renders a generic card).
+  const profileCardFor = async (handle: string): Promise<ProfileCard | null> => {
+    const p = await meta.getUserByUsername(normalizeUsername(handle))
+    if (!p) return null
+    const ghIds = await meta.githubIdsForUser(p.id)
+    // Public-only counts here (no viewer) — an unfurl must never reflect private work.
+    const [works, followers] = await Promise.all([
+      meta.countUserWorks(p.id, ghIds, {}),
+      meta.countFollowers(p.id),
+    ])
+    return {
+      username: p.username,
+      name: p.name,
+      profession: p.profession ?? null,
+      works,
+      followers,
+    }
+  }
+
+  // The profile OG card image (SVG, 1200x630). Anonymous-readable; a missing handle gets
+  // a generic Dock card (still 200 so the unfurl shows something). Cached hard.
+  app.get("/v1/og/u/:handle", async (c) => {
+    const card = await profileCardFor(c.req.param("handle"))
+    const svg = ogProfileCardSvg(
+      card ?? {
+        username: c.req.param("handle"),
+        name: null,
+        profession: null,
+        works: 0,
+        followers: 0,
+      },
+    )
+    return c.body(svg, 200, {
+      "Content-Type": "image/svg+xml; charset=utf-8",
+      "Cache-Control": "public, max-age=86400, stale-while-revalidate=604800",
+      "X-Content-Type-Options": "nosniff",
+    })
+  })
+
   // oEmbed (https://oembed.com): consumers POST our discovered endpoint with the
   // artifact `url`. Only JSON is implemented. Private/missing → 404, per spec.
   app.get("/v1/oembed", async (c) => {
@@ -164,6 +209,28 @@ export const embedRoutes = (ctx: AppContext) => {
       const canonical = version ? `${refFor(artifact)}@v${version}` : refFor(artifact)
       if (ref !== canonical) return c.redirect(`/a/${canonical}${new URL(c.req.url).search}`, 302)
       return c.html(injectHead(shell, unfurlMetaTags(await infoFor(artifact))))
+    })
+  // Server-rendered profile URL: the SPA shell with profile OG/Twitter meta injected for
+  // crawlers (which don't run JS). Humans get the SPA as usual (the meta is inert). Only
+  // public profile fields go into the head; an unclaimed handle serves the bare shell.
+  if (ctx.deps.shell || ctx.deps.shellFetch)
+    app.get("/u/:handle", async (c) => {
+      const shell = await getShell()
+      if (!shell) return c.notFound()
+      const card = await profileCardFor(c.req.param("handle"))
+      if (!card) return c.html(shell)
+      return c.html(
+        injectHead(
+          shell,
+          profileMetaTags({
+            username: card.username,
+            name: card.name,
+            description: profileSummary(card),
+            pageUrl: `${baseUrl}/u/${card.username}`,
+            imageUrl: `${baseUrl}/v1/og/u/${card.username}`,
+          }),
+        ),
+      )
     })
   // A copy-pasted share link with a trailing slash ("/a/slug-id/") would otherwise
   // 404; canonicalize it to the no-slash form.

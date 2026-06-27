@@ -12,11 +12,14 @@ import { createApp } from "./app"
 import { type AuthDb, makeAuth, migrateAuth } from "./auth-config"
 import { loadConfig, resolveAuthSecret, resolveDefaultOrg } from "./config"
 import { customDomainsFromEnv } from "./lib/cloudflare-saas"
+import { emailDeliverySender, logEmailSender, resendEmailSender } from "./lib/email"
+import { makeGithubCommentSender } from "./lib/github-comments"
 import { mountWeb } from "./lib/serve-web"
+import { makeSlackSender } from "./lib/slack-comments"
 import { makeShutdown } from "./lifecycle"
 import { log } from "./log"
 import { createNodeSyncRunner } from "./node-sync"
-import { startWebhookWorker } from "./webhooks"
+import { type ChannelSenders, startWebhookWorker } from "./webhooks"
 import { nodeDnsGuard } from "./webhooks-node"
 
 const cfg = loadConfig()
@@ -80,6 +83,16 @@ if (cfg.databaseUrl) {
     .run()
 }
 
+// Backfill author_id on artifacts that predate the column: where a GitHub-synced
+// artifact's commit author (author_gh_id) maps to a Dock account, attribute it to that
+// user so their synced work surfaces on their profile + feed by author_id directly.
+// Idempotent — only fills nulls that have a known GitHub→user mapping; a no-op once done.
+// Runs after the auth tables exist. Hand-published pre-feature work without a GitHub
+// identity has no recoverable author and stays null (it re-stamps on its next publish).
+void meta.backfillAuthorIds().then((n) => {
+  if (n > 0) log.info(`backfilled author_id on ${n} artifact(s)`)
+})
+
 const defaultOrg = resolveDefaultOrg(cfg.dataDir)
 
 // One-time rekey of the pre-multi-workspace "local" sentinel onto the real
@@ -114,7 +127,23 @@ const shellHtml = cfg.serveWeb ? readFileSync(cfg.webShell, "utf8") : undefined
 // goes out immediately. `nodeDnsGuard` re-resolves each target at delivery time and
 // refuses private/internal addresses — the SSRF defense that matters most on an
 // internal corporate network, where a webhook URL could point at a private service.
-const webhookWorker = startWebhookWorker(meta, nodeDnsGuard)
+// First-party channel senders for the Node tier. Email uses Resend (over fetch) when
+// RESEND_API_KEY is set, else the log sender (visible in dev, no transport needed).
+// The edge tier wires the Cloudflare Email Service binding instead (see webhook-do.ts).
+const channelSenders: ChannelSenders = {
+  email: emailDeliverySender(
+    cfg.resendApiKey && cfg.emailFrom
+      ? resendEmailSender(cfg.resendApiKey, cfg.emailFrom)
+      : logEmailSender(),
+  ),
+  // GitHub PR comment write-back mints an installation token per delivery from the
+  // stored App (encrypted with the auth secret).
+  github_review_comment: makeGithubCommentSender(meta, authSecret),
+  github_issue_comment: makeGithubCommentSender(meta, authSecret),
+  // Slack App posting (bot token decrypted with the auth secret per delivery).
+  slack_app: makeSlackSender(meta, authSecret),
+}
+const webhookWorker = startWebhookWorker(meta, nodeDnsGuard, channelSenders)
 
 // GitHub-sync runner: drives a triggered sync to completion in-process (detached from
 // the request) so it survives the user navigating away — the self-host counterpart to
@@ -130,6 +159,7 @@ const app = createApp({
   // Encrypt stored third-party secrets (GitHub PATs) at rest with the auth secret.
   encryptionKey: authSecret,
   superAdmins: cfg.superAdmins,
+  slack: cfg.slack,
   auth,
   webOrigins: cfg.webOrigins,
   analytics: cfg.analytics,

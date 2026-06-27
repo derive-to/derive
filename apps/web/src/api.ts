@@ -23,6 +23,12 @@ export interface PublicProfile {
   profession?: string | null
   /** One-line "what you do" blurb; only present on the full /u/:handle profile. */
   about?: string | null
+  /** GitHub login, when known (the full /u/:handle profile only); null otherwise. */
+  github_login?: string | null
+  /** Work / follower / following counts (the full /u/:handle profile only). */
+  stats?: { works: number; followers: number; following: number }
+  /** Whether the signed-in viewer already follows this person (full profile only). */
+  followed_by_me?: boolean
 }
 export interface VersionSession {
   n: number
@@ -77,6 +83,12 @@ export interface Artifact {
   open_proposals?: number
   /** Count of non-withdrawn proposals (open + decided) — gates the Proposals entry. */
   proposals_total?: number
+  /** Open comment threads on this artifact (drives the inline comment indicator). */
+  open_threads?: number
+  /** An open thread on this artifact @mentions the current user — "needs your feedback". */
+  mentions_me?: boolean
+  /** The current user authored a comment in an open thread on this artifact. */
+  i_participated?: boolean
   /** Collection ids this artifact belongs to (detail endpoint). */
   collections?: string[]
   /** Taken down by a moderator: the content is gone (410), the record stays. */
@@ -134,16 +146,23 @@ export interface Collection {
   /** For repo/PR collections: "owner/name". */
   repo?: string
 }
-export type FollowKind = "author" | "path"
-/** A per-user follow: a GitHub author (kind="author", target=login) or a repo path
- *  prefix (kind="path", target=path prefix). Drives the `scope=following` feed. */
+export type FollowKind = "author" | "path" | "user"
+/** A per-user follow: a GitHub author (kind="author", target=login), a repo path
+ *  prefix (kind="path", target=path prefix), or a person (kind="user", target=username
+ *  on the wire). Drives the `scope=following` feed. */
 export interface Follow {
   id: string
   org_id: string
   user_id: string
   kind: FollowKind
+  /** For author/path: the login / path prefix. For user: the followed person's id. */
   target: string
   created_at: string
+  /** Present for kind="user": the followed person's public handle/name/avatar, resolved
+   *  server-side so the client renders them (and matches follow-state) without raw ids. */
+  handle?: string | null
+  name?: string | null
+  image?: string | null
 }
 export type ProposalState = "open" | "approved" | "changes_requested" | "withdrawn"
 export interface Proposal {
@@ -204,6 +223,20 @@ export interface Workspace {
   role: Role
   members: ArtifactMember[]
 }
+/** Per-workspace integration switches (mirrors the server's OrgSettings). */
+export interface OrgSettings {
+  emailNotifications: boolean
+  githubPostComments: boolean
+  githubMirrorComments: boolean
+  slackPost: boolean
+}
+/** Slack connection status for the Settings UI. */
+export interface SlackStatus {
+  available: boolean
+  connected: boolean
+  team_name: string | null
+  default_channel: string | null
+}
 /** One entry in the workspace switcher. */
 export interface WorkspaceSummary {
   id: string
@@ -258,8 +291,9 @@ export interface DirUser {
 export interface Notification {
   id: string
   user_id: string
+  /** Who triggered it. For `follow`/`publish` this is the person's @handle. */
   actor: string
-  kind: "mention" | "comment" | "share"
+  kind: "mention" | "comment" | "share" | "follow" | "publish"
   artifact_id: string
   artifact_short_id: string
   artifact_title: string | null
@@ -473,9 +507,30 @@ export const api = {
   // bad shape — both surface their message via ApiError.
   setUsername: (username: string): Promise<{ username: string }> =>
     f("/v1/me/username", opts({ username })).then(j),
-  // A public profile by handle (no email). Readable without a session.
+  // A public profile by handle (no email). Readable without a session; for a signed-in
+  // viewer it also carries stats + followed_by_me.
   profile: (handle: string): Promise<{ user: PublicProfile }> =>
     f(`/v1/users/${encodeURIComponent(handle)}`, { credentials: "include" }).then(j),
+  // A person's work — public artifacts they authored, plus shared-workspace work for a
+  // signed-in viewer. Keyset-paginated; readable without a session.
+  profileArtifacts: (
+    handle: string,
+    cursor?: string,
+    limit?: number,
+  ): Promise<{ artifacts: Artifact[]; next_cursor: string | null }> => {
+    const qs = new URLSearchParams()
+    if (cursor) qs.set("cursor", cursor)
+    if (limit) qs.set("limit", String(limit))
+    const s = qs.toString()
+    return f(`/v1/users/${encodeURIComponent(handle)}/artifacts${s ? `?${s}` : ""}`, {
+      credentials: "include",
+    }).then(j)
+  },
+  // People who follow / are followed by this user (public profiles; no ids or email).
+  profileFollowers: (handle: string): Promise<{ users: PublicProfile[] }> =>
+    f(`/v1/users/${encodeURIComponent(handle)}/followers`, { credentials: "include" }).then(j),
+  profileFollowing: (handle: string): Promise<{ users: PublicProfile[] }> =>
+    f(`/v1/users/${encodeURIComponent(handle)}/following`, { credentials: "include" }).then(j),
   // Set your team role + "what you do" blurb (onboarding + Settings → Profile).
   // Omitted fields are left untouched; "" clears a field.
   setProfile: (fields: {
@@ -489,6 +544,10 @@ export const api = {
   // Find opted-in people by @handle or name (signed-in; empty q → []).
   searchPeople: (q: string): Promise<{ users: PublicProfile[] }> =>
     f(`/v1/users/search?q=${encodeURIComponent(q)}`, opts()).then(j),
+  // The People directory: browse opted-in people (empty q) or search them (signed-in).
+  // Unlike searchPeople, an empty query BROWSES the discoverable set.
+  people: (q?: string): Promise<{ users: PublicProfile[] }> =>
+    f(`/v1/people${q ? `?q=${encodeURIComponent(q)}` : ""}`, opts()).then(j),
   // Upload a profile picture (raster image; server validates + stores it and sets
   // user.image to the served URL). Returns the new image URL.
   uploadAvatar: (file: File): Promise<{ image: string }> => {
@@ -525,8 +584,9 @@ export const api = {
     author?: string
     /** "shared" → only artifacts explicitly shared with you (across workspaces).
      *  "following" → artifacts in the active workspace matching your follows
-     *  (followed GitHub authors + repo path prefixes) — the activity feed. */
-    scope?: "shared" | "following"
+     *  (followed GitHub authors + repo path prefixes) — the activity feed.
+     *  "needs_feedback" → artifacts with an open thread you're tagged in or commented on. */
+    scope?: "shared" | "following" | "needs_feedback"
     cursor?: string
     limit?: number
   }): Promise<{
@@ -739,6 +799,19 @@ export const api = {
       method: "DELETE",
       credentials: "include",
     }).then(() => undefined),
+
+  // Integration switches (enable/disable each channel) — Admin to change.
+  getWorkspaceSettings: (): Promise<OrgSettings> => f("/v1/workspace/settings", opts()).then(j),
+  updateWorkspaceSettings: (patch: Partial<OrgSettings>): Promise<OrgSettings> =>
+    f("/v1/workspace/settings", { ...opts(patch), method: "PATCH" }).then(j),
+
+  // Slack App: status, set default channel, disconnect. Connect is a redirect to
+  // /v1/slack/install (a full-page navigation, not a fetch).
+  getSlack: (): Promise<SlackStatus> => f("/v1/slack", opts()).then(j),
+  setSlackChannel: (default_channel: string | null): Promise<{ default_channel: string | null }> =>
+    f("/v1/slack", { ...opts({ default_channel }), method: "PATCH" }).then(j),
+  disconnectSlack: (): Promise<void> =>
+    f("/v1/slack", { method: "DELETE", credentials: "include" }).then(() => undefined),
 
   // Workspace name + members (Admin / Creator / Viewer = owner / editor / commenter)
   getWorkspace: (): Promise<Workspace> => f("/v1/workspace", opts()).then(j),

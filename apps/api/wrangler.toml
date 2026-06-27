@@ -46,6 +46,15 @@ new_sqlite_classes = ["WebhookOutbox"]
 tag = "v3"
 new_sqlite_classes = ["RepoSyncRunner"]
 
+# Notification email (Cloudflare Email Service). Left commented because the binding only
+# resolves once the account has Email Service enabled and a sending domain verified — an
+# unprovisioned binding fails `wrangler deploy`. The code no-ops email when SEND_EMAIL is
+# unbound, so leaving this off is safe. To turn email on: enable Email Service, verify the
+# dock.build sending domain, uncomment this block, and set EMAIL_FROM under [vars] (e.g.
+# "Dock <notifications@dock.build>").
+# [[send_email]]
+# name = "SEND_EMAIL"
+
 # Native rate limiting (per-colo). One binding per surface; the worker counts each
 # rate-limited request against the matching binding (apps/api/src/worker.ts). The window
 # (period) can only be 10 or 60s, so the long in-process windows (unlock 5 min, oauth
@@ -100,15 +109,16 @@ crons = ["* * * * *"]
 # the API (no CORS, first-party cookies). Prepare the build first:
 # `pnpm --filter @dock/api build:web` (builds apps/web and preps dist/client for Workers:
 # _shell.html -> index.html, drops the Pages _redirects).
-# The API/data paths run the Worker first; so does /a/* — the share URL, where the
-# Worker serves the SPA shell with per-artifact OG/unfurl meta injected for crawlers
-# (it reads the shell via the ASSETS binding). Every other path serves a static asset,
+# The API/data paths run the Worker first; so do /a/* and /u/* — the share + profile
+# URLs, where the Worker serves the SPA shell with per-artifact / per-profile OG/unfurl
+# meta injected for crawlers (it reads the shell via the ASSETS binding). Every other
+# path serves a static asset,
 # and non-asset routes fall back to the SPA shell (index.html) so the client router
 # owns the page. The SPA is the one and only frontend (no server-rendered viewer).
 [assets]
 directory = "../web/dist/client"
 binding = "ASSETS"
-run_worker_first = ["/v1/*", "/api/*", "/raw/*", "/oauth/*", "/settings/github/*", "/a/*", "/healthz", "/mcp", "/.well-known/oauth-authorization-server", "/.well-known/oauth-protected-resource", "/.well-known/openid-configuration"]
+run_worker_first = ["/v1/*", "/api/*", "/raw/*", "/oauth/*", "/settings/github/*", "/a/*", "/u/*", "/healthz", "/mcp", "/.well-known/oauth-authorization-server", "/.well-known/oauth-protected-resource", "/.well-known/openid-configuration"]
 not_found_handling = "single-page-application"
 
 # baseUrl falls back to the request origin when unset. Secured by Better Auth; set

@@ -30,11 +30,12 @@ const API_EXACT = [
 ] as const
 
 // Page prefixes the SERVER renders before handing off to the SPA, but that are NOT
-// API paths: `/a/:ref` is served as the SPA shell with per-artifact unfurl meta
-// injected (crawlers don't run JS). The edge Worker must run first on these to
-// inject; the dev proxy and `isApiPath` deliberately ignore them (in dev the SPA
-// owns the page, and an unmatched one still falls back to the shell, never JSON).
-const SERVER_PAGE_PREFIXES = ["/a", "/settings/github"] as const
+// API paths: `/a/:ref` (per-artifact unfurl meta) and `/u/:handle` (per-profile unfurl
+// meta) are served as the SPA shell with OpenGraph/Twitter meta injected for crawlers
+// (which don't run JS). The edge Worker must run first on these to inject; the dev proxy
+// and `isApiPath` deliberately ignore them (in dev the SPA owns the page, and an
+// unmatched one still falls back to the shell, never JSON).
+const SERVER_PAGE_PREFIXES = ["/a", "/u", "/settings/github"] as const
 
 /** Server-owned path tokens in declaration order (as the dev proxy lists them). */
 export const API_PATHS: readonly string[] = [...API_PREFIXES, ...API_EXACT]
