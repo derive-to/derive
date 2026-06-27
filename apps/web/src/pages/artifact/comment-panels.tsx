@@ -41,7 +41,7 @@ function CommentTabs({
 }) {
   return (
     <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)} className="min-w-0 flex-1">
-      <TabsList className="h-8 w-full">
+      <TabsList className="h-7 w-full">
         <TabsTrigger value="comments" data-testid="comment-tab-comments" className="flex-1">
           Comments
           {publicCount > 0 && <TabCount n={publicCount} />}
@@ -53,19 +53,6 @@ function CommentTabs({
         </TabsTrigger>
       </TabsList>
     </Tabs>
-  )
-}
-
-/** Reassures the reader (and warns the writer) that this surface is private. */
-function PersonalBanner() {
-  return (
-    <div className="flex items-start gap-2 border-b border-border-soft bg-accent px-3 py-2 text-xs leading-snug text-accent-foreground">
-      <Icon name="lock" size={13} className="mt-px shrink-0" />
-      <span>
-        <b>Personal.</b> Only you and the agents you've connected can see these — never part of the
-        shared file.
-      </span>
-    </div>
   )
 }
 
@@ -239,7 +226,6 @@ export function MobileComments({
             <Icon name="close" size={20} />
           </IconBtn>
         </div>
-        {tab === "personal" && !composer && <PersonalBanner />}
         {composer ? (
           // Composing ("half open"): just the composer, so the sheet is a compact bar
           // pinned above the keyboard with the document visible above. The list
@@ -247,6 +233,7 @@ export function MobileComments({
           <div className="overflow-auto p-3 pb-[max(14px,env(safe-area-inset-bottom))]">
             <Composer
               quote={composer.anchor?.exact ?? null}
+              personal={tab === "personal"}
               // After posting, open the full list so the new comment is visible (the
               // sheet would otherwise drop back to the peek bar and hide it).
               onSubmit={(text, mentions) => {
@@ -374,7 +361,7 @@ export function OpenPanel(props: {
 
   return (
     <>
-      <div className="flex items-center gap-1 border-b border-border-soft py-2 pl-2.5 pr-2">
+      <div className="flex items-center gap-1 border-b border-border-soft py-1.5 pl-2.5 pr-2">
         <CommentTabs
           tab={tab}
           setTab={setTab}
@@ -393,13 +380,13 @@ export function OpenPanel(props: {
           ✕
         </IconBtn>
       </div>
-      {tab === "personal" && <PersonalBanner />}
 
       <div className="relative min-h-0 flex-1 overflow-hidden">
         {/* Pinned margin — cards (and a new-comment composer) float beside their
             highlighted text, sharing one overlap-free layout. */}
         <PinnedZone
           pins={pinned}
+          personal={tab === "personal"}
           scrollY={scrollY}
           onScrollDoc={onScrollDoc}
           composer={composer}
@@ -443,7 +430,12 @@ export function OpenPanel(props: {
         <div className="max-h-[44%] shrink-0 overflow-auto border-t border-border-soft p-2.5">
           {generalComposer && (
             <div className="mb-2.5">
-              <Composer quote={null} onSubmit={onSubmitNew} onCancel={onCancelNew} />
+              <Composer
+                quote={null}
+                personal={tab === "personal"}
+                onSubmit={onSubmitNew}
+                onCancel={onCancelNew}
+              />
             </div>
           )}
           {general.length > 0 && (
