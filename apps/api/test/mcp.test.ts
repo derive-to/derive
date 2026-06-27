@@ -13,7 +13,8 @@ import { sha256 } from "../src/lib/crypto"
 // The remote MCP endpoint (/mcp) authenticated by an OAuth bearer. We seed a grant
 // straight into the oauth-provider tables (what the consent dance produces), publish
 // an artifact as that scoped agent, then drive the MCP JSON-RPC handshake + tools
-// over Streamable HTTP and assert the agent sees its own workspace.
+// over Streamable HTTP and assert the agent sees its own workspace. The tool surface
+// is the consolidated five: list_artifacts, read, catch_up, comment, publish.
 
 const dir = mkdtempSync(join(tmpdir(), "dock-mcp-"))
 afterAll(() => rmSync(dir, { recursive: true, force: true }))
@@ -106,6 +107,14 @@ const publish = (app: App, token: string, title: string) => {
   })
 }
 
+const call = (app: App, token: string, name: string, args: Record<string, unknown> = {}) =>
+  rpc(app, token, {
+    jsonrpc: "2.0",
+    id: 9,
+    method: "tools/call",
+    params: { name, arguments: args },
+  })
+
 describe("remote MCP endpoint (/mcp)", () => {
   it("rejects an unauthenticated connect with 401 + WWW-Authenticate", async () => {
     const { app } = appWithGrant("noauth", "openid dock:read")
@@ -114,7 +123,7 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(r.wwwAuth).toContain("oauth-protected-resource")
   })
 
-  it("initializes (identity in instructions) and lists the consolidated tools", async () => {
+  it("initializes (identity in instructions) and lists the five consolidated tools", async () => {
     const { app, token } = appWithGrant("init", "openid dock:read dock:publish")
     const init = await rpc(app, token, initBody)
     const result = init.parsed?.result as { serverInfo?: { name: string }; instructions?: string }
@@ -125,30 +134,20 @@ describe("remote MCP endpoint (/mcp)", () => {
 
     const list = await rpc(app, token, { jsonrpc: "2.0", id: 2, method: "tools/list" })
     const names = toolNames(list)
-    expect(names).toEqual(
-      expect.arrayContaining([
-        "list_artifacts",
-        "catch_me_up",
-        "read",
-        "diff",
-        "list_comments",
-        "list_versions",
-        "propose",
-      ]),
-    )
-    // Consolidated away: no whoami / read_artifact / read_section.
-    expect(names).not.toContain("whoami")
-    expect(names).not.toContain("read_artifact")
-    expect(names).not.toContain("read_section")
+    expect(names.sort()).toEqual(["catch_up", "comment", "list_artifacts", "publish", "read"])
+    // Consolidated away — folded into catch_up / comment / publish.
+    for (const gone of [
+      "whoami",
+      "catch_me_up",
+      "diff",
+      "list_comments",
+      "list_versions",
+      "propose",
+      "read_artifact",
+      "read_section",
+    ])
+      expect(names).not.toContain(gone)
   })
-
-  const call = (app: App, token: string, name: string, args: Record<string, unknown> = {}) =>
-    rpc(app, token, {
-      jsonrpc: "2.0",
-      id: 9,
-      method: "tools/call",
-      params: { name, arguments: args },
-    })
 
   it("list_artifacts + read see the agent's own published artifact", async () => {
     const { app, token } = appWithGrant("read", "openid dock:read dock:publish")
@@ -166,8 +165,8 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(readOut.content).toContain("My Plan")
   })
 
-  it("diff + catch_me_up report what changed between versions", async () => {
-    const { app, token } = appWithGrant("diff", "openid dock:read dock:publish")
+  it("catch_up reports what changed, with the line diff folded in", async () => {
+    const { app, token } = appWithGrant("catchup", "openid dock:read dock:publish")
     const shortId = (await (await publish(app, token, "V1 Title")).json()).short_id
 
     // Republish a second version with different content.
@@ -181,26 +180,25 @@ describe("remote MCP endpoint (/mcp)", () => {
     })
     expect(rep.status).toBe(201)
 
-    const d = JSON.parse(
-      toolText(await call(app, token, "diff", { short_id: shortId, from: 1, to: 2 })),
-    )
-    expect(d.entry_diff).toContain("V2 Title")
-
+    // Default summary: delta + history, line diff omitted (token-light).
     const c = JSON.parse(
-      toolText(await call(app, token, "catch_me_up", { short_id: shortId, since_version: 1 })),
+      toolText(await call(app, token, "catch_up", { short_id: shortId, since_version: 1 })),
     )
     expect(c.head).toBe(2)
+    expect(c.to).toBe(2)
     expect(c.new_versions.map((v: { n: number }) => v.n)).toContain(2)
-    expect(c.summary).toContain("v2") // prose summary up top
+    expect(c.versions.map((v: { n: number }) => v.n)).toEqual([2, 1]) // full history, newest-first
+    expect(c.summary).toContain("v2")
     expect(c.caught_up).toBe(false)
-    expect(c.entry_diff).not.toContain("V2 Title") // omitted by default (token-light)
+    expect(c.entry_diff).not.toContain("V2 Title")
 
-    // 'detailed' includes the line diff inline.
+    // 'detailed' folds in the exact line diff — this is what `diff` used to do.
     const cd = JSON.parse(
       toolText(
-        await call(app, token, "catch_me_up", {
+        await call(app, token, "catch_up", {
           short_id: shortId,
           since_version: 1,
+          to_version: 2,
           response_format: "detailed",
         }),
       ),
@@ -208,7 +206,7 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(cd.entry_diff).toContain("V2 Title")
   })
 
-  it("read + catch_me_up handle multi-page bundles", async () => {
+  it("read + catch_up handle multi-page bundles", async () => {
     const { app, token } = appWithGrant("bundle", "openid dock:read dock:publish")
     const enc = (s: string) => new TextEncoder().encode(s)
     const postZip = (
@@ -243,7 +241,7 @@ describe("remote MCP endpoint (/mcp)", () => {
     )
     expect(page.content).toContain("Page")
 
-    // Republish with a new page; catch_me_up reports it under pages_changed.added.
+    // Republish with a new page; catch_up reports it under pages_changed.added.
     await postZip(
       {
         "index.html": enc("<h1>Home</h1>"),
@@ -254,26 +252,85 @@ describe("remote MCP endpoint (/mcp)", () => {
       shortId,
     )
     const cu = JSON.parse(
-      toolText(await call(app, token, "catch_me_up", { short_id: shortId, since_version: 1 })),
+      toolText(await call(app, token, "catch_up", { short_id: shortId, since_version: 1 })),
     )
     expect(cu.pages_changed.added).toContain("new.html")
   })
 
-  it("propose stages a revision for review without going live", async () => {
-    // Editor grant so the setup publish works; over MCP even an editor only gets
-    // `propose` (no direct-publish tool), so the candidate still never auto-goes-live.
-    const { app, token } = appWithGrant("propose", "openid dock:read dock:publish")
+  it("comment leaves anchored feedback, replies, and resolves — all via one tool", async () => {
+    const { app, token } = appWithGrant("comment", "openid dock:read dock:comment dock:publish")
+    const shortId = (await (await publish(app, token, "Tighten Me")).json()).short_id
+
+    // Leave a new anchored comment.
+    const made = JSON.parse(
+      toolText(
+        await call(app, token, "comment", {
+          short_id: shortId,
+          body: "this header is weak",
+          quote: "Tighten Me",
+        }),
+      ),
+    )
+    expect(made.thread).toBeTruthy()
+    expect(made.comment_id).toBeTruthy()
+    expect(made.anchored_to).toBe("Tighten Me")
+    const thread = made.thread
+
+    // It shows up as open feedback in catch_up's queue.
+    const open = JSON.parse(
+      toolText(await call(app, token, "catch_up", { short_id: shortId, comments: "open" })),
+    )
+    expect(open.count).toBe(1)
+    expect(open.comments[0].body).toContain("weak")
+    expect(open.comments[0].quote).toBe("Tighten Me")
+
+    // Reply in the same thread.
+    const reply = JSON.parse(
+      toolText(
+        await call(app, token, "comment", { short_id: shortId, body: "agreed", reply_to: thread }),
+      ),
+    )
+    expect(reply.thread).toBe(thread)
+    expect(reply.note).toContain("Replied")
+
+    // Resolve the thread (body optional when only changing state).
+    const resolved = JSON.parse(
+      toolText(
+        await call(app, token, "comment", {
+          short_id: shortId,
+          reply_to: thread,
+          set_state: "resolved",
+        }),
+      ),
+    )
+    expect(resolved.state).toBe("resolved")
+    const stillOpen = JSON.parse(
+      toolText(await call(app, token, "catch_up", { short_id: shortId, comments: "open" })),
+    )
+    expect(stillOpen.count).toBe(0)
+    // Both rows in the thread (the comment + its reply) move to resolved.
+    const done = JSON.parse(
+      toolText(await call(app, token, "catch_up", { short_id: shortId, comments: "resolved" })),
+    )
+    expect(done.count).toBe(2)
+  })
+
+  it("publish with for_review stages a proposal instead of going live", async () => {
+    // Even with an editor grant, for_review:true files a proposal that never auto-goes-live.
+    const { app, token } = appWithGrant("review", "openid dock:read dock:publish")
     const shortId = (await (await publish(app, token, "Draft")).json()).short_id
 
     const p = JSON.parse(
       toolText(
-        await call(app, token, "propose", {
+        await call(app, token, "publish", {
           short_id: shortId,
           content: "<h1>Revised draft</h1>",
           message: "tightened the intro",
+          for_review: true,
         }),
       ),
     )
+    expect(p.published).toBe(false)
     expect(p.proposed).toBe(true)
     expect(p.proposal_id).toBeTruthy()
     expect(p.base_version).toBe(1)
@@ -313,25 +370,24 @@ describe("remote MCP endpoint (/mcp)", () => {
       headers: { authorization: `Bearer ${token}` },
     })
 
-    // list_comments reports the new state + the quoted text the thread targets.
-    const all = JSON.parse(toolText(await call(app, token, "list_comments", { short_id: shortId })))
-    expect(all.comments[0].state).toBe("outdated")
-    expect(all.comments[0].quote).toBe("beta")
+    // catch_up's `comments` filter is the feedback queue — outdated threads + their quote.
     const onlyStale = JSON.parse(
-      toolText(await call(app, token, "list_comments", { short_id: shortId, state: "outdated" })),
+      toolText(await call(app, token, "catch_up", { short_id: shortId, comments: "outdated" })),
     )
     expect(onlyStale.count).toBe(1)
+    expect(onlyStale.comments[0].state).toBe("outdated")
+    expect(onlyStale.comments[0].quote).toBe("beta")
 
-    // catch_me_up leads with it so the agent knows its edits touched commented text.
+    // The default delta leads with it so the agent knows its edits touched commented text.
     const cu = JSON.parse(
-      toolText(await call(app, token, "catch_me_up", { short_id: shortId, since_version: 1 })),
+      toolText(await call(app, token, "catch_up", { short_id: shortId, since_version: 1 })),
     )
     expect(cu.summary).toContain("outdated")
     expect(cu.outdated_comments).toHaveLength(1)
     expect(cu.outdated_comments[0].quote).toBe("beta")
   })
 
-  it("propose with `addresses` marks the cited threads addressed (pending review)", async () => {
+  it("publish for_review with `addresses` marks the cited threads addressed (pending review)", async () => {
     const { app, token } = appWithGrant("addr", "openid dock:read dock:comment dock:publish")
     const shortId = (await (await publish(app, token, "headline to fix")).json()).short_id
     const cm = await (
@@ -344,10 +400,11 @@ describe("remote MCP endpoint (/mcp)", () => {
 
     const p = JSON.parse(
       toolText(
-        await call(app, token, "propose", {
+        await call(app, token, "publish", {
           short_id: shortId,
           content: "<h1>fixed headline</h1>",
           message: "fixed it",
+          for_review: true,
           addresses: [cm.thread_id],
         }),
       ),
@@ -357,18 +414,47 @@ describe("remote MCP endpoint (/mcp)", () => {
 
     // The thread is now addressed — off the open list, listed under `addressed`.
     const open = JSON.parse(
-      toolText(await call(app, token, "list_comments", { short_id: shortId, state: "open" })),
+      toolText(await call(app, token, "catch_up", { short_id: shortId, comments: "open" })),
     )
     expect(open.count).toBe(0)
     const addr = JSON.parse(
-      toolText(await call(app, token, "list_comments", { short_id: shortId, state: "addressed" })),
+      toolText(await call(app, token, "catch_up", { short_id: shortId, comments: "addressed" })),
     )
     expect(addr.count).toBe(1)
     expect(addr.comments[0].state).toBe("addressed")
 
-    // catch_me_up flags it so the agent won't re-propose the same fix.
-    const cu = JSON.parse(toolText(await call(app, token, "catch_me_up", { short_id: shortId })))
+    // catch_up flags it so the agent won't re-address the same fix.
+    const cu = JSON.parse(toolText(await call(app, token, "catch_up", { short_id: shortId })))
     expect(cu.summary).toContain("addressed")
+  })
+
+  it("a live publish with `addresses` resolves those threads directly", async () => {
+    const { app, token } = appWithGrant("liveaddr", "openid dock:read dock:comment dock:publish")
+    const shortId = (await (await publish(app, token, "fix the headline here")).json()).short_id
+    const cm = await (
+      await app.request(`/v1/artifacts/${shortId}/comments`, {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+        body: JSON.stringify({ body_md: "fix it" }),
+      })
+    ).json()
+
+    const p = JSON.parse(
+      toolText(
+        await call(app, token, "publish", {
+          short_id: shortId,
+          content: "<h1>headline fixed</h1>",
+          message: "done",
+          addresses: [cm.thread_id],
+        }),
+      ),
+    )
+    expect(p.published).toBe(true)
+    expect(p.resolved).toEqual([cm.thread_id])
+    const done = JSON.parse(
+      toolText(await call(app, token, "catch_up", { short_id: shortId, comments: "resolved" })),
+    )
+    expect(done.count).toBe(1)
   })
 
   // Regression guard for the "Needs Auth" outage: a remote MCP client (Claude
@@ -376,16 +462,11 @@ describe("remote MCP endpoint (/mcp)", () => {
   // SIGNED JWT access token rather than the opaque token. The server must verify
   // it against the JWKS read from Better Auth's store on this instance — NOT by
   // HTTP-fetching its own /api/auth/jwks, which a Cloudflare Worker can't do.
-  // This mints a real JWT, exposes the public key via a getJwks() stub, and
-  // asserts /mcp accepts it. It FAILS against a createRemoteJWKSet (self-fetch)
-  // implementation, so it pins the verification path in place.
   it("authenticates an OAuth JWT access token via the local JWKS", async () => {
     const { publicKey, privateKey } = await generateKeyPair("EdDSA", { extractable: true })
     const kid = "test-jwt-kid"
     const jwk = { ...(await exportJWK(publicKey)), kid, alg: "EdDSA", use: "sig" }
 
-    // Seed the granting user + client the JWT claims will resolve to, then build
-    // an app whose auth exposes the matching public JWKS (no network).
     const path = join(dir, "jwtauth.db")
     const meta = new SqliteMetaStore(path)
     const seed = new Database(path)
@@ -418,18 +499,15 @@ describe("remote MCP endpoint (/mcp)", () => {
         .setExpirationTime("1h")
         .sign(privateKey)
 
-    // A valid JWT authenticates and resolves the agent's role from its scopes.
     const ok = await rpc(app, await mint(), initBody)
     expect(ok.status).toBe(200)
     expect((ok.parsed?.result as { instructions?: string }).instructions).toContain("editor")
 
-    // A tampered signature is rejected (401), not silently trusted.
     const good = await mint()
     const tampered = `${good.slice(0, -6)}AAAAAA`
     const bad = await rpc(app, tampered, initBody)
     expect(bad.status).toBe(401)
 
-    // Wrong issuer is rejected too (the verify pins `issuer`).
     const wrongIss = await new SignJWT({ scope: "openid dock:read", azp: "cli" })
       .setProtectedHeader({ alg: "EdDSA", kid })
       .setSubject("u_jwt")
@@ -482,25 +560,25 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(v2.version).toBe(2)
   })
 
-  it("publish needs a title to create, and a publish-capable grant", async () => {
+  it("publish needs a title to create, and routes a non-publisher to review", async () => {
     // A new-artifact publish with no title is refused.
     const { app, token } = appWithGrant("pub2", "openid dock:read dock:publish")
     const noTitle = await call(app, token, "publish", { content: "<h1>x</h1>" })
     expect(toolText(noTitle)).toContain("title")
 
-    // A comment-only grant can't publish at all — steered to propose.
+    // A comment-only grant can't publish live — and can't create a NEW artifact even
+    // via review (a proposal revises an existing one). Steered to publish rights.
     const weak = appWithGrant("pub3", "openid dock:read dock:comment")
     const denied = await call(weak.app, weak.token, "publish", {
       title: "Nope",
       content: "<h1>x</h1>",
     })
-    expect(toolText(denied)).toContain("propose")
+    expect(toolText(denied)).toContain("publish rights")
   })
 
   it("publish creates and republishes a multi-page bundle via the files map", async () => {
     const { app, token } = appWithGrant("pubbundle", "openid dock:read dock:publish")
 
-    // A files map (no short_id) creates a new BUNDLE — index.html is the entry.
     const created = JSON.parse(
       toolText(
         await call(app, token, "publish", {
@@ -517,7 +595,6 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(created.kind).toBe("bundle")
     const shortId = created.short_id
 
-    // read returns the outline (its pages), and a section returns that page.
     const outline = JSON.parse(toolText(await call(app, token, "read", { short_id: shortId })))
     expect(outline.pages).toEqual(expect.arrayContaining(["index.html", "about.html", "nav.js"]))
     const about = JSON.parse(
@@ -525,7 +602,6 @@ describe("remote MCP endpoint (/mcp)", () => {
     )
     expect(about.content).toContain("About")
 
-    // Republishing the full files map (with an added page) pushes version 2.
     const v2 = JSON.parse(
       toolText(
         await call(app, token, "publish", {
@@ -542,15 +618,32 @@ describe("remote MCP endpoint (/mcp)", () => {
     )
     expect(v2.version).toBe(2)
     const cu = JSON.parse(
-      toolText(await call(app, token, "catch_me_up", { short_id: shortId, since_version: 1 })),
+      toolText(await call(app, token, "catch_up", { short_id: shortId, since_version: 1 })),
     )
     expect(cu.pages_changed.added).toContain("new.html")
+  })
+
+  it("a bundle can't be filed for review (single-file proposals only)", async () => {
+    const { app, token } = appWithGrant("bundlereview", "openid dock:read dock:publish")
+    const created = JSON.parse(
+      toolText(
+        await call(app, token, "publish", {
+          title: "Site",
+          files: { "index.html": "<h1>home</h1>" },
+        }),
+      ),
+    )
+    const r = await call(app, token, "publish", {
+      short_id: created.short_id,
+      files: { "index.html": "<h1>home v2</h1>" },
+      for_review: true,
+    })
+    expect(toolText(r)).toContain("bundles can't be proposed")
   })
 
   it("publish steers between content and files by kind", async () => {
     const { app, token } = appWithGrant("pubkind", "openid dock:read dock:publish")
 
-    // content + files together is rejected.
     const both = await call(app, token, "publish", {
       title: "x",
       content: "<h1>x</h1>",
@@ -558,7 +651,6 @@ describe("remote MCP endpoint (/mcp)", () => {
     })
     expect(toolText(both)).toContain("not both")
 
-    // A single-file artifact can't be republished as a bundle.
     const file = JSON.parse(
       toolText(await call(app, token, "publish", { title: "Doc", content: "<h1>doc</h1>" })),
     )
@@ -568,7 +660,6 @@ describe("remote MCP endpoint (/mcp)", () => {
     })
     expect(toolText(asBundle)).toContain("single-file")
 
-    // A bundle can't be republished with a single `content` string.
     const bundle = JSON.parse(
       toolText(
         await call(app, token, "publish", {

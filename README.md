@@ -85,7 +85,7 @@ packages/core     domain: ports, publish, markdown render, viewer shell
 packages/db       MetaStore: sqlite (default) · postgres · d1
 packages/storage  BlobStore: fs (default) · s3/r2
 packages/cli      dock init (md/html/slides) · dock publish <file|dir>
-packages/mcp      MCP server: publish / read-back tools for agents
+packages/mcp      MCP server: the 5 agent tools (list_artifacts, read, catch_up, comment, publish)
 ```
 
 ## Deploy
@@ -120,9 +120,10 @@ node packages/cli/bin/dock.js publish    # share a versioned URL
 node packages/cli/bin/dock.js comments   # read the review threads, then revise and publish again
 ```
 
-MCP tools: `whoami`, `list_artifacts`, `read_artifact`, `read_section`, `list_versions`,
-`diff`, `list_comments`, `catch_me_up`, `propose` (human-reviewed), and `publish`
-(direct — Creator/Admin role). Publish vs. propose follows your role. Full loop in
+MCP tools (five): `list_artifacts` (find), `read` (content), `catch_up` (what changed
+plus the open feedback and version history), `comment` (leave/reply/resolve), and
+`publish` (save a revision). `publish` goes live if your role can publish (Creator/Admin),
+otherwise (or with `for_review:true`) it files a proposal a human approves. Full loop in
 [packages/mcp/SKILL.md](packages/mcp/SKILL.md).
 
 > The `@dock/cli` / `@dock/mcp` npm packages aren't published yet — run the CLI from the

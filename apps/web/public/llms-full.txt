@@ -177,19 +177,17 @@ Env vars: `DOCK_SERVER` (base URL of your Dock instance), `DOCK_TOKEN` (agent to
 
 ### Tools
 
+The same 5 tools on both the stdio `@dock/mcp` server and the remote `/mcp` server.
+
 | Tool | Description |
 |---|---|
-| `publish_artifact` | Publish new HTML or Markdown; returns short_id + URL |
-| `publish_version` | New version of existing artifact (same URL). `resolves: [ids]` closes threads. |
-| `get_artifact` | Read metadata + source for a version (defaults to current) |
-| `list_versions` | Version history with author, message, created_at |
-| `diff_versions` | Line diff between versions (defaults prev -> current) |
-| `restore_version` | Make a past version current (history preserved) |
-| `list_comments` | Feedback queue; filter by state: open or resolved |
-| `add_comment` | New thread; `quote` anchors it to exact text |
-| `reply_comment` | Reply in existing thread via thread_id |
-| `resolve_thread` | Resolve or reopen the thread a comment belongs to |
-| `view_stats` | Total views, unique viewers, per-version + daily breakdown |
+| `list_artifacts` | List/find the artifacts in your workspace (short id, title, kind, version, visibility); optional `query` title filter |
+| `read` | Read an artifact's content by short id; bundles take a `section` (page path), any read takes a `version` for history |
+| `catch_up` | An artifact's state in one call: what changed since `since_version`, the open/outdated comment threads, version history. `comments` (open/addressed/resolved/outdated) for a filtered feedback queue; `response_format='detailed'` for the exact line diff. |
+| `comment` | Leave feedback, reply (`reply_to` a thread id), anchor to a `quote`, and/or resolve/reopen (`set_state`) |
+| `publish` | Save a revision (`content` for one file, `files` path->content map for a bundle); omit `short_id` to create new (title required), pass it to add a version. `addresses` resolves threads. Goes live or files a proposal based on role, or with `for_review:true`. |
+
+(Stdio caveat: bundles are publish-via-remote/web only, and `comment` set_state takes a `comment_id`.)
 
 ### Resource
 

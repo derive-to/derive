@@ -16,6 +16,8 @@ export interface PublishArgs {
   resolves?: string[]
 }
 
+export type CommentState = "open" | "addressed" | "resolved" | "outdated"
+
 export interface CommentJson {
   id: string
   thread_id: string
@@ -24,8 +26,30 @@ export interface CommentJson {
   anchor: string | null
   body_md: string
   author: string
-  state: "open" | "resolved"
+  state: CommentState
   created_at: string
+}
+
+export interface ArtifactSummaryJson {
+  short_id: string
+  title: string | null
+  kind: "file" | "bundle"
+  current_version: number
+  visibility: string
+}
+
+/** A revision submitted for human review instead of published live. */
+export interface ProposeArgs {
+  content: string
+  filename?: string
+  message: string
+  /** Thread ids this revision addresses (flip to `addressed`, resolve on approval). */
+  addresses?: string[]
+}
+export interface ProposalJson {
+  id: string
+  base_version: number
+  addressed?: string[]
 }
 
 export interface NewCommentArgs {
@@ -83,10 +107,14 @@ export interface ViewStatsJson {
 }
 
 export interface DockClient {
+  /** List the workspace's artifacts (optionally filtered by a title query). */
+  list(query?: string): Promise<ArtifactSummaryJson[]>
   publish(args: PublishArgs): Promise<ArtifactJson>
+  /** Submit a single-file revision for human review (does not go live). */
+  propose(shortId: string, args: ProposeArgs): Promise<ProposalJson>
   get(shortId: string): Promise<ArtifactJson>
   getContent(shortId: string, version?: number): Promise<string>
-  listComments(shortId: string, state?: "open" | "resolved"): Promise<CommentJson[]>
+  listComments(shortId: string, state?: CommentState): Promise<CommentJson[]>
   createComment(shortId: string, args: NewCommentArgs): Promise<CommentJson>
   /** Resolve or reopen the thread a comment belongs to. */
   setThreadState(shortId: string, commentId: string, state: "resolved" | "open"): Promise<void>
@@ -119,6 +147,14 @@ export function createClient(opts: ClientOptions): DockClient {
   }
 
   return {
+    async list(query) {
+      const q = query ? `?q=${encodeURIComponent(query)}` : ""
+      const r = (await ok(await f(`${base}/v1/artifacts${q}`, { headers: authHeaders }))) as {
+        artifacts: ArtifactSummaryJson[]
+      }
+      return r.artifacts
+    },
+
     async publish(args) {
       const bytes =
         typeof args.content === "string" ? new TextEncoder().encode(args.content) : args.content
@@ -135,6 +171,24 @@ export function createClient(opts: ClientOptions): DockClient {
       return ok(
         await f(url, { method: "POST", body: form, headers: authHeaders }),
       ) as Promise<ArtifactJson>
+    },
+
+    async propose(shortId, args) {
+      const form = new FormData()
+      form.append(
+        "file",
+        new Blob([new TextEncoder().encode(args.content)]),
+        args.filename ?? "index.html",
+      )
+      form.append("message", args.message)
+      if (args.addresses?.length) form.append("addresses", args.addresses.join(","))
+      return ok(
+        await f(`${base}/v1/artifacts/${shortId}/proposals`, {
+          method: "POST",
+          body: form,
+          headers: authHeaders,
+        }),
+      ) as Promise<ProposalJson>
     },
 
     async get(shortId) {
