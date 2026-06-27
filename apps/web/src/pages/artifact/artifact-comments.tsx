@@ -6,7 +6,7 @@ import { MobileComments, OpenPanel } from "./comment-panels"
 import { CommentScopeProvider } from "./lib/comment-scope"
 import { clamp } from "./lib/layout"
 import { Rail } from "./rail-deck"
-import type { Panel, PinItem, Sel } from "./types"
+import { type Panel, type PinItem, type Sel, selLabel } from "./types"
 
 type Composer = { anchor: Sel | null; top: number | null } | null
 type Selection = {
@@ -208,7 +208,9 @@ export function ArtifactComments(p: {
           className="fixed inset-x-0 bottom-0 z-[62] flex items-center gap-2.5 border-t border-border bg-card px-3 pb-[max(16px,env(safe-area-inset-bottom))] pt-4 shadow-[0_-12px_36px_-16px_rgba(0,0,0,0.55)]"
         >
           <span className="min-w-0 flex-1 truncate border-l-[3px] border-primary bg-accent px-2.5 py-1.5 text-xs italic text-foreground">
-            “{sel.selector.exact}”
+            {sel.selector.type === "ElementSelector"
+              ? selLabel(sel.selector)
+              : `“${selLabel(sel.selector) ?? ""}”`}
           </span>
           <button
             type="button"

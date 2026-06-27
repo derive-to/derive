@@ -481,7 +481,7 @@ export function makeRepos(db: SqliteDb) {
 
   const updateComment = async (
     id: string,
-    fields: { body_md?: string; meta?: string | null },
+    fields: { body_md?: string; meta?: string | null; anchor?: string | null },
   ): Promise<CommentRecord | null> => {
     await db.update(comment).set(fields).where(eq(comment.id, id)).run()
     return getComment(id)

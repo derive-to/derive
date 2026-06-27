@@ -5,8 +5,8 @@ import { cn } from "@/lib/utils"
 import { Composer, MentionField } from "./comment-composer"
 import { CommentRow } from "./comment-row"
 import { useCommentScope } from "./lib/comment-scope"
-import { anchorExact, COMPOSER_ID, layoutPins, parseAnchor } from "./lib/layout"
-import type { PinItem, Sel } from "./types"
+import { COMPOSER_ID, layoutPins, parseAnchor } from "./lib/layout"
+import { type ElementSnapshotLite, type PinItem, type Sel, selLabel } from "./types"
 
 // Composer is consumed by comment-panels through this module; re-export so its
 // import path is unchanged now that it lives in comment-composer.
@@ -75,7 +75,7 @@ export function PinnedZone({
   // exactly when there's an anchored composer with a resolved position.
   const activeComposer =
     composer?.anchor && composer.top != null
-      ? { top: composer.top, quote: composer.anchor.exact ?? null }
+      ? { top: composer.top, quote: selLabel(composer.anchor) }
       : null
   const items = pins.flatMap((p) => {
     const head = p.thread[0]
@@ -171,6 +171,103 @@ export function PinnedZone({
   )
 }
 
+// A small glyph standing in for an element's role on the comment card.
+const ROLE_GLYPH: Record<string, string> = {
+  image: "🖼",
+  chart: "📊",
+  media: "🎬",
+  embed: "🔗",
+  table: "▦",
+  code: "{ }",
+  figure: "🖼",
+  block: "❖",
+}
+
+/**
+ * The reference chip for an element anchor. When the element is present, it's a
+ * jump button (scroll to + flash the outline). When it's gone — edited or removed
+ * in this version — it falls back to the preserved SNAPSHOT (a thumbnail for
+ * images, else a tag chip) so the orphaned comment still shows what it pointed at.
+ */
+function ElementRef({
+  threadId,
+  label,
+  snapshot,
+  present,
+  onJump,
+}: {
+  threadId: string
+  label: string
+  snapshot?: ElementSnapshotLite
+  present: boolean
+  onJump: (id: string) => void
+}) {
+  const glyph = ROLE_GLYPH[snapshot?.tag === "table" ? "table" : roleGuess(snapshot, label)] ?? "❖"
+  if (present) {
+    return (
+      <button
+        type="button"
+        data-testid={`comment-jump-${threadId}`}
+        onClick={(e) => {
+          e.stopPropagation()
+          onJump(threadId)
+        }}
+        title="Jump to the element"
+        className="flex w-full cursor-pointer items-center gap-1.5 border-l-[3px] border-primary bg-accent px-2.5 py-1.5 text-left text-xs font-medium text-foreground"
+      >
+        <span aria-hidden className="shrink-0 text-sm leading-none">
+          {glyph}
+        </span>
+        <span className="truncate">{label}</span>
+      </button>
+    )
+  }
+  // Orphaned: show the snapshot so the comment keeps its referent.
+  const thumb = snapshot?.src
+  return (
+    <div
+      title="The element this comment was attached to was edited or removed in this version"
+      data-testid={`comment-orphan-${threadId}`}
+      className="flex w-full items-center gap-2 border-l-[3px] border-border bg-secondary px-2.5 py-1.5 text-left text-xs text-muted-foreground"
+    >
+      {thumb ? (
+        <img
+          src={thumb}
+          alt=""
+          className="size-9 shrink-0 rounded border border-border object-cover"
+          onError={(e) => {
+            e.currentTarget.style.display = "none"
+          }}
+        />
+      ) : (
+        <span
+          aria-hidden
+          className="grid size-9 shrink-0 place-items-center rounded border border-border bg-card text-sm"
+        >
+          {glyph}
+        </span>
+      )}
+      <span className="min-w-0">
+        <span className="block truncate font-medium italic text-foreground">{label}</span>
+        <span className="block text-2xs">removed in this version</span>
+      </span>
+    </div>
+  )
+}
+
+// Best-effort role from a snapshot tag (for the glyph) without re-deriving the role.
+function roleGuess(snapshot: ElementSnapshotLite | undefined, label: string): string {
+  const tag = snapshot?.tag ?? ""
+  if (tag === "img" || tag === "picture") return "image"
+  if (tag === "svg" || tag === "canvas") return "chart"
+  if (tag === "video" || tag === "audio") return "media"
+  if (tag === "iframe" || tag === "embed" || tag === "object") return "embed"
+  if (tag === "table") return "table"
+  if (tag === "pre" || tag === "code") return "code"
+  if (tag === "figure") return "figure"
+  return /chart|graph|plot/i.test(label) ? "chart" : "block"
+}
+
 // One comment thread. Compact until activated; the active card shows the full
 // thread, a reply box, and resolve controls.
 export function CommentCard({
@@ -208,14 +305,18 @@ export function CommentCard({
   const resolved = root.state === "resolved"
   const outdated = root.state === "outdated"
   const addressed = root.state === "addressed"
-  const quote = anchorExact(root.anchor)
+  const parsed = parseAnchor(root.anchor)
+  const isEl = !!parsed?.element
+  // The reference label: a text quote, or an element's snapshot label.
+  const refLabel = parsed?.exact ?? parsed?.label ?? null
+  const snapshot = parsed?.element?.snapshot
   const textPresent = present !== undefined ? present : root.anchored !== false
   const replies = thread.length - 1
   // Deck context (from CommentScope): the slide this comment belongs to — where its
   // text resolved (landed), else the slide it was written on — and whether the text
   // has since moved to a different slide than it was anchored on.
   const onDeck = currentSlide != null
-  const recordedSlide = parseAnchor(root.anchor)?.slide
+  const recordedSlide = parsed?.slide
   const landedSlide = landedSlides?.[root.thread_id]
   const slideNum = landedSlide != null ? landedSlide : recordedSlide
   const slideMoved = recordedSlide != null && landedSlide != null && landedSlide !== recordedSlide
@@ -257,28 +358,38 @@ export function CommentCard({
           )}
         </div>
       )}
-      {quote &&
-        (textPresent && !resolved ? (
-          <button
-            type="button"
-            data-testid={`comment-jump-${root.thread_id}`}
-            onClick={(e) => {
-              e.stopPropagation()
-              onJump(root.thread_id)
-            }}
-            title="Jump to the highlighted text"
-            className="block w-full cursor-pointer truncate border-l-[3px] border-primary bg-accent px-2.5 py-1.5 text-left text-xs italic text-foreground"
-          >
-            “{quote}”
-          </button>
-        ) : (
-          <div
-            title="The text this comment was attached to was edited or removed in this version"
-            className="block w-full truncate border-l-[3px] border-border bg-secondary px-2.5 py-1.5 text-left text-xs italic text-muted-foreground"
-          >
-            “{quote}”
-          </div>
-        ))}
+      {isEl
+        ? refLabel && (
+            <ElementRef
+              threadId={root.thread_id}
+              label={refLabel}
+              snapshot={snapshot}
+              present={textPresent && !resolved}
+              onJump={onJump}
+            />
+          )
+        : refLabel &&
+          (textPresent && !resolved ? (
+            <button
+              type="button"
+              data-testid={`comment-jump-${root.thread_id}`}
+              onClick={(e) => {
+                e.stopPropagation()
+                onJump(root.thread_id)
+              }}
+              title="Jump to the highlighted text"
+              className="block w-full cursor-pointer truncate border-l-[3px] border-primary bg-accent px-2.5 py-1.5 text-left text-xs italic text-foreground"
+            >
+              “{refLabel}”
+            </button>
+          ) : (
+            <div
+              title="The text this comment was attached to was edited or removed in this version"
+              className="block w-full truncate border-l-[3px] border-border bg-secondary px-2.5 py-1.5 text-left text-xs italic text-muted-foreground"
+            >
+              “{refLabel}”
+            </div>
+          ))}
 
       {!active ? (
         <>
@@ -348,12 +459,16 @@ export function CommentCard({
             >
               {resolved ? "resolved" : outdated ? "outdated" : addressed ? "addressed" : "open"}
             </span>
-            {quote && !textPresent && !resolved && !outdated && !addressed && (
+            {refLabel && !textPresent && !resolved && !outdated && !addressed && (
               <span
-                title="The text this comment was attached to was edited or removed in this version"
+                title={
+                  isEl
+                    ? "The element this comment was attached to was edited or removed in this version"
+                    : "The text this comment was attached to was edited or removed in this version"
+                }
                 className="rounded-full bg-accent px-2 py-0.5 font-mono text-2xs font-bold text-primary"
               >
-                text changed
+                {isEl ? "element changed" : "text changed"}
               </span>
             )}
             <Button

@@ -199,14 +199,20 @@ export function useArtifactFrame(p: {
       .filter((head): head is Comment => head?.state === "open" || head?.state === "addressed")
       .map((head) => ({ id: head.thread_id, sel: parseAnchor(head.anchor) }))
       .filter((x): x is { id: string; sel: NonNullable<ReturnType<typeof parseAnchor>> } => !!x.sel)
-      .map((x) => ({
-        id: x.id,
-        exact: x.sel.exact,
-        prefix: x.sel.prefix,
-        suffix: x.sel.suffix,
-        // The frame scopes resolution to this slide first (deck artifacts only).
-        slide: x.sel.slide,
-      }))
+      .map((x) =>
+        // Element anchor: hand the client the whole selector to relocate via the
+        // cascade. Text anchor: the quote + context it greps for.
+        x.sel.element
+          ? { id: x.id, el: x.sel.element }
+          : {
+              id: x.id,
+              exact: x.sel.exact,
+              prefix: x.sel.prefix,
+              suffix: x.sel.suffix,
+              // The frame scopes resolution to this slide first (deck artifacts only).
+              slide: x.sel.slide,
+            },
+      )
     w.postMessage({ source: "dock-host", type: "anchors", anchors }, "*")
   }, [comments])
   // biome-ignore lint/correctness/useExhaustiveDependencies: frameReady is an intentional repaint trigger (re-send anchors when the iframe reloads).

@@ -13,7 +13,7 @@ import {
 } from "./comment-thread"
 import { useCommentScope } from "./lib/comment-scope"
 import { IconBtn } from "./rail-deck"
-import type { PinItem, Sel } from "./types"
+import { type PinItem, type Sel, selLabel } from "./types"
 
 export function MobileComments({
   open,
@@ -186,7 +186,7 @@ export function MobileComments({
           // reappears once you send or cancel.
           <div className="overflow-auto p-3 pb-[max(14px,env(safe-area-inset-bottom))]">
             <Composer
-              quote={composer.anchor?.exact ?? null}
+              quote={selLabel(composer.anchor)}
               // After posting, open the full list so the new comment is visible (the
               // sheet would otherwise drop back to the peek bar and hide it).
               onSubmit={(text, mentions) => {

@@ -330,7 +330,7 @@ export class PgMetaStore implements MetaStore {
 
   async updateComment(
     id: string,
-    fields: { body_md?: string; meta?: string | null },
+    fields: { body_md?: string; meta?: string | null; anchor?: string | null },
   ): Promise<CommentRecord | null> {
     const rows = await this.db.update(comment).set(fields).where(eq(comment.id, id)).returning()
     return rows[0] ?? null
