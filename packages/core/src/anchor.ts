@@ -251,7 +251,7 @@ function buildElSelector(el){
 
 /* -- the in-browser cascade: score every candidate by signal agreement and pick
       the best over threshold (mirrors resolveElement in core) -- */
-function textClose(a,b){if(!a||!b)return false;var x=a.toLowerCase(),y=b.toLowerCase();
+function textClose(a,b){if(typeof a!=="string"||typeof b!=="string")return false;var x=a.toLowerCase(),y=b.toLowerCase();
   if(x===y)return true;var sh=x.length<y.length?x:y,lo=x.length<y.length?y:x;
   if(sh.length>=8&&lo.indexOf(sh)>=0)return true;
   var w=Math.min(16,sh.length);return w>=8&&lo.slice(0,w)===sh.slice(0,w)}

@@ -653,6 +653,7 @@ function neighborText(ds: ElementDescriptor[], idx: number): { before?: string; 
 /** Loose text agreement for neighbors — exact, prefix, or containment of a
  *  meaningful chunk. Neighbors get edited too, so don't demand equality. */
 function textClose(a: string, b: string): boolean {
+  if (typeof a !== "string" || typeof b !== "string") return false // defensive: hostile anchor
   const x = a.toLowerCase()
   const y = b.toLowerCase()
   if (x === y) return true
@@ -737,15 +738,42 @@ export function planElementForwardWalk(start: ElementSelector, versionHtml: stri
 }
 
 /** Parse a stored anchor JSON as an ElementSelector (or null if it's something
- *  else — a text quote, malformed, or absent). */
+ *  else — a text quote, malformed, or absent). Anchors are written by clients, so
+ *  every field is validated/coerced to its expected type: a hostile or buggy anchor
+ *  (e.g. a non-string `before`) must NOT be able to crash resolution — the sweep
+ *  runs on every publish, so a throw here would break publishing for the artifact. */
 export function parseElementSelector(json: string | null): ElementSelector | null {
   if (!json) return null
+  let s: Record<string, unknown>
   try {
-    const s = JSON.parse(json) as Partial<ElementSelector>
-    if (s.type !== "ElementSelector" || !s.fingerprint || !s.tag) return null
-    return s as ElementSelector
+    const parsed = JSON.parse(json)
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null
+    s = parsed as Record<string, unknown>
   } catch {
     return null
+  }
+  if (s.type !== "ElementSelector") return null
+  const tag = typeof s.tag === "string" ? s.tag : ""
+  const fingerprint = typeof s.fingerprint === "string" ? s.fingerprint : ""
+  if (!tag || !fingerprint) return null
+  const str = (v: unknown): string | undefined => (typeof v === "string" ? v : undefined)
+  const num = (v: unknown, fallback: number): number =>
+    typeof v === "number" && Number.isFinite(v) ? v : fallback
+  const snap =
+    s.snapshot && typeof s.snapshot === "object" ? (s.snapshot as ElementSnapshot) : undefined
+  return {
+    type: "ElementSelector",
+    tag,
+    role: (typeof s.role === "string" ? s.role : "block") as ElementRole,
+    id: str(s.id),
+    css: str(s.css),
+    fingerprint,
+    ordinal: num(s.ordinal, 0),
+    docFraction: Math.max(0, Math.min(1, num(s.docFraction, 0))),
+    before: str(s.before),
+    after: str(s.after),
+    snapshot: snap ?? { tag, label: tag },
+    slide: typeof s.slide === "number" && Number.isFinite(s.slide) ? s.slide : undefined,
   }
 }
 
