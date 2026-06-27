@@ -11,6 +11,14 @@ import {
 } from "@dock/core"
 import { pageTextResolver } from "./bundle"
 
+/** Forward-walk recovery is one blob read + scan per version, on the publish path.
+ *  A genuinely-removed element early-exits at the first hop (cheap), but a recoverable
+ *  one drifting across a long history would read every version. Cap the walk to the
+ *  most recent N versions so an artifact with a huge history can't turn one republish
+ *  into hundreds of blob reads. A comment older than this window simply doesn't get
+ *  the gradual-recovery benefit (it still resolves directly if its content held). */
+const MAX_WALK_VERSIONS = 60
+
 /** A thread reduced for the sweep, plus the bundle page it lives on (null = a
  *  single-file artifact or whole-document thread) and the version it was made on
  *  (the start of any forward-walk). `id` is the root comment id (== thread_id). */
@@ -139,8 +147,11 @@ async function rescueElements(
   for (const th of goingStale.values()) {
     const start = parseElementSelector(th.anchor)
     if (!start) continue
-    const trail = versions.filter((v) => v.n > th.base)
+    let trail = versions.filter((v) => v.n > th.base)
     if (trail.length === 0) continue
+    // Bound the work: only walk the most recent versions. (Older history can't turn a
+    // single republish into an unbounded read storm.)
+    if (trail.length > MAX_WALK_VERSIONS) trail = trail.slice(trail.length - MAX_WALK_VERSIONS)
     const htmls: string[] = []
     for (const v of trail) {
       const html = await htmlAt(v, th.path)
