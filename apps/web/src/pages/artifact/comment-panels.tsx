@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react"
+import { type Dispatch, type SetStateAction, useEffect, useRef, useState } from "react"
 import type { Comment, Mention } from "@/api"
 import { Icon } from "@/components/icons"
 import { Button } from "@/components/ui/button"
@@ -15,11 +15,82 @@ import { useCommentScope } from "./lib/comment-scope"
 import { IconBtn } from "./rail-deck"
 import type { PinItem, Sel } from "./types"
 
+type Tab = "comments" | "personal"
+
+const tabCls = (active: boolean) =>
+  cn(
+    "inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-sm font-semibold transition-colors",
+    active ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground",
+  )
+const tabCountCls = (active: boolean) =>
+  cn(
+    "rounded-full px-1.5 py-px font-mono text-2xs font-bold",
+    active ? "bg-accent text-primary" : "bg-secondary text-muted-foreground",
+  )
+
+/** The Comments | Personal switch in a panel header. Personal is your private notes,
+ *  visible only to you and the agents you've authed (the server enforces it). */
+function CommentTabs({
+  tab,
+  setTab,
+  publicCount,
+  personalCount,
+}: {
+  tab: Tab
+  setTab: Dispatch<SetStateAction<Tab>>
+  publicCount: number
+  personalCount: number
+}) {
+  return (
+    <div className="flex flex-1 items-center gap-1">
+      <button
+        type="button"
+        data-testid="comment-tab-comments"
+        aria-pressed={tab === "comments"}
+        onClick={() => setTab("comments")}
+        className={tabCls(tab === "comments")}
+      >
+        Comments
+        {publicCount > 0 && <span className={tabCountCls(tab === "comments")}>{publicCount}</span>}
+      </button>
+      <button
+        type="button"
+        data-testid="comment-tab-personal"
+        aria-pressed={tab === "personal"}
+        onClick={() => setTab("personal")}
+        className={tabCls(tab === "personal")}
+      >
+        <Icon name="lock" size={12} />
+        Personal
+        {personalCount > 0 && (
+          <span className={tabCountCls(tab === "personal")}>{personalCount}</span>
+        )}
+      </button>
+    </div>
+  )
+}
+
+/** Reassures the reader (and warns the writer) that this surface is private. */
+function PersonalBanner() {
+  return (
+    <div className="flex items-start gap-2 border-b border-border-soft bg-accent px-3 py-2 text-xs leading-snug text-accent-foreground">
+      <Icon name="lock" size={13} className="mt-px shrink-0" />
+      <span>
+        <b>Personal.</b> Only you and the agents you've connected can see these — never part of the
+        shared file.
+      </span>
+    </div>
+  )
+}
+
 export function MobileComments({
   open,
+  tab,
+  setTab,
+  personalCount,
+  publicCount,
   openThreads,
   resolved,
-  openCount,
   composer,
   activeThread,
   inDoc,
@@ -33,9 +104,12 @@ export function MobileComments({
   onCancelNew,
 }: {
   open: boolean
+  tab: Tab
+  setTab: Dispatch<SetStateAction<Tab>>
+  personalCount: number
+  publicCount: number
   openThreads: Comment[][]
   resolved: Comment[][]
-  openCount: number
   composer: { anchor: Sel | null; top: number | null } | null
   activeThread: string | null
   inDoc: Record<string, boolean>
@@ -147,14 +221,13 @@ export function MobileComments({
           onClick={grip}
           title="Resize"
         />
-        <div className="flex items-center gap-2 border-b border-border-soft pb-3 pl-3.5 pr-2.5 pt-2">
-          <b className="text-base">Comments</b>
-          {openCount > 0 && (
-            <span className="rounded-full bg-accent px-2 py-px font-mono text-2xs font-bold text-primary">
-              {openCount}
-            </span>
-          )}
-          <span className="flex-1" />
+        <div className="flex items-center gap-2 border-b border-border-soft pb-3 pl-3 pr-2.5 pt-2">
+          <CommentTabs
+            tab={tab}
+            setTab={setTab}
+            publicCount={publicCount}
+            personalCount={personalCount}
+          />
           {canComment && (
             <Button
               variant="outline"
@@ -180,6 +253,7 @@ export function MobileComments({
             <Icon name="close" size={20} />
           </IconBtn>
         </div>
+        {tab === "personal" && !composer && <PersonalBanner />}
         {composer ? (
           // Composing ("half open"): just the composer, so the sheet is a compact bar
           // pinned above the keyboard with the document visible above. The list
@@ -200,11 +274,21 @@ export function MobileComments({
           <div className="min-h-0 flex-1 overflow-auto p-3 pb-[max(14px,env(safe-area-inset-bottom))]">
             {empty && (
               <div className="grid place-items-center gap-2 p-[34px] text-center">
-                <div className="text-3xl opacity-50">💬</div>
+                <div className="text-3xl opacity-50">{tab === "personal" ? "🔒" : "💬"}</div>
                 <div className="text-sm leading-relaxed text-muted-foreground">
-                  No comments yet.
-                  <br />
-                  Select text in the document to start one.
+                  {tab === "personal" ? (
+                    <>
+                      No personal notes yet.
+                      <br />
+                      Only you and your agents can see these.
+                    </>
+                  ) : (
+                    <>
+                      No comments yet.
+                      <br />
+                      Select text in the document to start one.
+                    </>
+                  )}
                 </div>
               </div>
             )}
@@ -247,6 +331,10 @@ export function MobileComments({
 }
 
 export function OpenPanel(props: {
+  tab: Tab
+  setTab: Dispatch<SetStateAction<Tab>>
+  personalCount: number
+  publicCount: number
   openCount: number
   scrollY: number
   onScrollDoc: (dy: number) => void
@@ -269,6 +357,10 @@ export function OpenPanel(props: {
   onCancelNew: () => void
 }) {
   const {
+    tab,
+    setTab,
+    personalCount,
+    publicCount,
     openCount,
     scrollY,
     onScrollDoc,
@@ -296,14 +388,13 @@ export function OpenPanel(props: {
 
   return (
     <>
-      <div className="flex items-center gap-2 border-b border-border-soft py-2.5 pl-3.5 pr-2">
-        <b className="text-sm">Comments</b>
-        {openCount > 0 && (
-          <span className="rounded-full bg-accent px-2 py-px font-mono text-2xs font-bold text-primary">
-            {openCount}
-          </span>
-        )}
-        <span className="flex-1" />
+      <div className="flex items-center gap-1 border-b border-border-soft py-2 pl-2.5 pr-2">
+        <CommentTabs
+          tab={tab}
+          setTab={setTab}
+          publicCount={publicCount}
+          personalCount={personalCount}
+        />
         {canComment && (
           <IconBtn title="New comment" testId="comment-new" onClick={onNewGeneral}>
             ＋
@@ -316,6 +407,7 @@ export function OpenPanel(props: {
           ✕
         </IconBtn>
       </div>
+      {tab === "personal" && <PersonalBanner />}
 
       <div className="relative min-h-0 flex-1 overflow-hidden">
         {/* Pinned margin — cards (and a new-comment composer) float beside their
@@ -340,11 +432,21 @@ export function OpenPanel(props: {
         {/* Empty state. */}
         {empty && (
           <div className="absolute inset-0 grid place-items-center gap-2 p-6 text-center">
-            <div className="text-3xl opacity-50">💬</div>
+            <div className="text-3xl opacity-50">{tab === "personal" ? "🔒" : "💬"}</div>
             <div className="text-sm leading-relaxed text-muted-foreground">
-              No comments yet.
-              <br />
-              Select text in the document to start one.
+              {tab === "personal" ? (
+                <>
+                  No personal notes yet.
+                  <br />
+                  Jot one for yourself, or leave instructions your agents will pick up.
+                </>
+              ) : (
+                <>
+                  No comments yet.
+                  <br />
+                  Select text in the document to start one.
+                </>
+              )}
             </div>
           </div>
         )}

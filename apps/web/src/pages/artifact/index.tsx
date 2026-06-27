@@ -96,6 +96,9 @@ export function Artifact() {
   const [hoverThread, setHoverThread] = useState<string | null>(null)
   // The open/rail/hidden comments panel, with its persistence + `c`/Esc hotkeys.
   const { panel, setPanel } = useCommentsPanel(() => setComposer(null))
+  // Which comment surface is showing: the public team thread, or your personal notes
+  // (private to you + the agents you've authed). Two filtered views of one list.
+  const [commentTab, setCommentTab] = useState<"comments" | "personal">("comments")
 
   // Server-truth refetch after a write or an SSE ping (defined up here so the
   // realtime hook + the iframe message bridge below can both lean on them).
@@ -290,7 +293,15 @@ export function Artifact() {
   // (unanchored or orphaned), and resolved. Pins drive both the margin cards
   // and the collapsed rail dots.
   const docLive = !editing && view === "preview"
-  const all = groupThreads(comments)
+  // Two filtered views of one comment list. The server only ever returns the
+  // caller's own personal comments, so this split is purely which surface to show.
+  const personalComments = comments.filter((c) => c.visibility === "personal")
+  const publicComments = comments.filter((c) => c.visibility !== "personal")
+  const openCountOf = (cs: Comment[]) =>
+    groupThreads(cs).filter((t) => t[0] && t[0].state !== "resolved").length
+  const personalCount = openCountOf(personalComments)
+  const publicCount = openCountOf(publicComments)
+  const all = groupThreads(commentTab === "personal" ? personalComments : publicComments)
   // `outdated` threads (their quoted text changed in a later version) stay in the
   // active list, not the resolved drawer — their anchor no longer resolves, so
   // they fall into the general/orphaned bucket below and stay visible to triage.
@@ -341,6 +352,7 @@ export function Artifact() {
     art,
     qc,
     me,
+    tab: commentTab,
     src,
     title: editTitle,
     proposeMsg,
@@ -578,6 +590,10 @@ export function Artifact() {
             canComment={canComment}
             docLive={docLive}
             panel={panel}
+            tab={commentTab}
+            setTab={setCommentTab}
+            personalCount={personalCount}
+            publicCount={publicCount}
             asideWidth={asideWidth}
             openCount={openCount}
             scrollY={scrollY}

@@ -33,6 +33,11 @@ export function ArtifactComments(p: {
   canComment: boolean
   docLive: boolean
   panel: Panel
+  /** Active comment surface: public team thread vs your personal notes. */
+  tab: "comments" | "personal"
+  setTab: Dispatch<SetStateAction<"comments" | "personal">>
+  personalCount: number
+  publicCount: number
   asideWidth: number
   openCount: number
   scrollY: number
@@ -120,6 +125,10 @@ export function ArtifactComments(p: {
             />
           ) : (
             <OpenPanel
+              tab={p.tab}
+              setTab={p.setTab}
+              personalCount={p.personalCount}
+              publicCount={p.publicCount}
               openCount={p.openCount}
               scrollY={p.scrollY}
               onScrollDoc={p.onScrollDoc}
@@ -150,9 +159,12 @@ export function ArtifactComments(p: {
       {isMobile && !isAnon && (
         <MobileComments
           open={panel === "open"}
+          tab={p.tab}
+          setTab={p.setTab}
+          personalCount={p.personalCount}
+          publicCount={p.publicCount}
           openThreads={p.openThreads}
           resolved={p.resolved}
-          openCount={p.openCount}
           composer={p.composer}
           activeThread={p.activeThread}
           inDoc={p.inDoc}
