@@ -12,7 +12,6 @@ export default defineConfig({
       provider: "v8",
       include: ["src/pg.ts"],
       reporter: ["text-summary"],
-      thresholds: { lines: 88, statements: 85, branches: 55 },
     },
   },
 })

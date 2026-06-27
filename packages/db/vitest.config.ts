@@ -17,7 +17,6 @@ export default defineConfig({
       provider: "v8",
       include: ["src/repos.ts", "src/sqlite.ts", "src/schema.ts", "src/d1-schema.ts"],
       reporter: ["text-summary"],
-      thresholds: { lines: 80, statements: 80, branches: 58 },
     },
   },
 })

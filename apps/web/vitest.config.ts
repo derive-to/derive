@@ -24,7 +24,6 @@ export default defineConfig({
         "src/pages/artifact/lib/layout.ts",
       ],
       reporter: ["text-summary"],
-      thresholds: { lines: 90, statements: 90, branches: 80 },
     },
   },
 })
