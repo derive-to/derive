@@ -326,7 +326,20 @@ function paintEl(id,el,band){
     var pip=document.createElement("div");pip.className="dock-el-pip";badge.appendChild(pip)}
   else badge.title="View comment";
   ov.appendChild(badge);
-  document.body.appendChild(ov);elReg.push({id:id,el:el,ov:ov})}
+  document.body.appendChild(ov);elReg.push({id:id,el:el,ov:ov,clips:clipAncestors(el)})}
+/* ancestors that clip their overflow (a scrollable panel, a code block) — captured
+   once at paint so the hot positioning path is rect math, not getComputedStyle. The
+   overlay lives at the body level and isn't clipped by them, so when the element
+   scrolls out of one, WE must hide the overlay or it floats over unrelated content. */
+function clipAncestors(el){var out=[];
+  for(var p=el.parentElement;p&&p!==document.body&&p!==document.documentElement;p=p.parentElement){
+    try{var st=getComputedStyle(p),ov=(st.overflow||"")+(st.overflowX||"")+(st.overflowY||"");
+      if(/auto|scroll|hidden|clip/.test(ov))out.push(p)}catch(_c){}}
+  return out}
+function clippedOut(r,clips){if(!clips)return false;
+  for(var i=0;i<clips.length;i++){var c=clips[i].getBoundingClientRect();
+    if(r.bottom<=c.top||r.top>=c.bottom||r.right<=c.left||r.left>=c.right)return true}
+  return false}
 var reTick=0;
 function positionEls(){var sy=scrollTop(),sx=window.scrollX||0,detached=false;
   for(var i=0;i<elReg.length;i++){var e=elReg[i];
@@ -336,7 +349,7 @@ function positionEls(){var sy=scrollTop(),sx=window.scrollX||0,detached=false;
        handled by the size check below, no re-resolve.) */
     if(!document.contains(e.el)){detached=true;e.ov.style.display="none";continue}
     var r=e.el.getBoundingClientRect();
-    if(!(r.width||r.height)){e.ov.style.display="none";continue}
+    if(!(r.width||r.height)||clippedOut(r,e.clips)){e.ov.style.display="none";continue}
     e.ov.style.display="block";e.ov.style.left=(r.left+sx)+"px";e.ov.style.top=(r.top+sy)+"px";
     e.ov.style.width=r.width+"px";e.ov.style.height=r.height+"px"}
   if(detached&&lastAnchors&&!reTick)reTick=setTimeout(function(){reTick=0;applyAnchors(lastAnchors)},150)}
