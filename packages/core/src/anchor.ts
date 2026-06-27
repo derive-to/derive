@@ -111,6 +111,14 @@ document.addEventListener("touchend",function(e){
   if(tMoved)return;
   var el=e.target;
   if(!el||!el.closest||el.closest("a,button,input,textarea,select,label,[data-dock-id]"))return;
+  /* touch has no hover, so the desktop chip never appears — a tap on a non-text media
+     element (image/chart/video/embed) is how you anchor a comment to it on mobile.
+     Text-ish containers (table/pre/figure cells) still fall through to block-tap. */
+  var ael=anchorEl(el);
+  if(ael&&/^(img|svg|canvas|video|audio|iframe|embed|object|picture)$/.test(ael.tagName.toLowerCase())){
+    var er=ael.getBoundingClientRect();tapGuard=Date.now();
+    post({type:"select",element:true,rect:{top:er.top,bottom:er.bottom,left:er.left,right:er.right},
+      selector:buildElSelector(ael)});return}
   var b=el.closest("p,li,h1,h2,h3,h4,h5,h6,blockquote,td,th,figcaption,dd,dt,pre");
   if(!b)return;
   var txt=(b.textContent||"").trim();
