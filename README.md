@@ -64,10 +64,25 @@ in-browser publishing, and the comment loop — comments are authored as you, an
 Markdown/HTML artifacts can be edited inline to publish a new version.
 
 Accounts are handled by [Better Auth](https://better-auth.com): email + password
-works with zero config; set `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET` for Google
-sign-in, or `OIDC_ISSUER`/`OIDC_CLIENT_ID`/`OIDC_CLIENT_SECRET` to wire enterprise
-SSO (Okta, Entra, Auth0, Keycloak — anything OIDC). The user/session tables are
-created automatically on first boot. See `.env.example` for the full list.
+works with zero config. Add social sign-in by setting a provider's OAuth
+credentials; the matching "Continue with…" button then appears on `/login`
+automatically:
+
+- **GitHub** (a natural fit, since Dock mirrors GitHub repos): create an OAuth app
+  at GitHub → Settings → Developer settings → OAuth Apps → New, set the callback to
+  `<BASE_URL>/api/auth/callback/github`, then set `GITHUB_LOGIN_CLIENT_ID` and
+  `GITHUB_LOGIN_CLIENT_SECRET`. This is a plain OAuth app, separate from the
+  repo-sync GitHub App you register in Settings → GitHub.
+- **Google**: create an OAuth client (Web) in Google Cloud Console, set the
+  redirect to `<BASE_URL>/api/auth/callback/google`, then set `GOOGLE_CLIENT_ID`
+  and `GOOGLE_CLIENT_SECRET`.
+- **Enterprise SSO**: set `OIDC_ISSUER`/`OIDC_CLIENT_ID`/`OIDC_CLIENT_SECRET`
+  (Okta, Entra, Auth0, Keycloak, anything OIDC).
+
+Provide these as environment variables for the Node/Docker deploy, or as secrets
+for the Worker deploy (`wrangler secret put GITHUB_LOGIN_CLIENT_ID`, and so on).
+The user/session tables are created automatically on first boot; see
+`.env.example` for the full list.
 
 Writes are authorized by a login session **or** a static `DOCK_TOKEN` (for
 CI/agents). Publish with `--visibility public|link|org|password` (default `link`);
