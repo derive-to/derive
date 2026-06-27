@@ -227,6 +227,28 @@ describe("planElementForwardWalk — version recovery", () => {
     expect(walk.resolved).toBe(false)
     expect(walk.survived).toBe(1)
   })
+
+  it("self-heal CONVERGES: the recovered selector then resolves in one jump", () => {
+    // A chain where neither id nor content survives v1→v4, but each hop keeps one.
+    // The sweep can't one-jump it, recovers via the walk, and the carried-forward
+    // selector must then one-jump resolve the current version — so the NEXT sweep is
+    // cheap and the state can't thrash open↔outdated.
+    const p = (id: string, src: string, alt: string) =>
+      `<p>before</p><img id="${id}" src="${src}" alt="${alt}"><p>after</p>`
+    const v1 = p("A", "/1.png", "Hero one")
+    const chain = [
+      p("A", "/2.png", "Hero two"),
+      p("B", "/2.png", "Hero two"),
+      p("B", "/3.png", "Hero three"),
+    ]
+    const start = selFor(v1, "img")
+    const current = chain[chain.length - 1] as string
+    expect(elementResolvesIn(start, current)).toBeNull() // one-jump fails end-to-end
+    const walk = planElementForwardWalk(start, chain)
+    expect(walk.resolved).toBe(true)
+    // The healed selector resolves the current version directly (convergence).
+    expect(elementResolvesIn(walk.selector, current)).not.toBeNull()
+  })
 })
 
 describe("parse helpers", () => {
