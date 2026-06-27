@@ -14,13 +14,17 @@ import { defineConfig } from "vitest/config"
 // secret gate, the extracted shutdown in lifecycle.ts, auth-config providers): the
 // suite now reports ~82% lines / 75% stmts / 68% branches. Floor sits just under
 // that so a regression fails but normal noise doesn't.
+//
+// Raised again after the #244 lib unit suite (crypto, serve-content, comment +
+// addressed helpers, image, http-helpers): now ~82% lines / 78% stmts / 68%
+// branches. Floor kept ~1pt under to absorb Node 22 (local) vs 24 (CI) drift.
 export default defineConfig({
   test: {
     coverage: {
       provider: "v8",
       include: ["src/**"],
       reporter: ["text-summary"],
-      thresholds: { lines: 80, statements: 74, branches: 66 },
+      thresholds: { lines: 81, statements: 76, branches: 67 },
     },
   },
 })
