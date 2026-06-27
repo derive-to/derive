@@ -324,9 +324,17 @@ export const bearer = (token: string) => ({ authorization: `Bearer ${token}` })
 // A fresh app with custom deps, always SECURED by a static token (anonymous
 // callers can't write). `pub(app, …)` with no headers authenticates as that
 // token; with `users`, an `x-test-user` header picks a session, for per-actor
-// tests.
-export const quotaApp = (name: string, extra: Partial<AppDeps>, users?: TestUser[]) => {
-  const m = makeStore(name, users ?? [])
+// tests. Pass `team` to seed the shared "default" workspace + memberships inside
+// the store's `ready` step (awaited before any request runs) — the only race-free
+// way under Postgres, where firing `meta.setMembership(...)` un-awaited from a test
+// body lets `activeWorkspace` read `listWorkspaces` before the write commits.
+export const quotaApp = (
+  name: string,
+  extra: Partial<AppDeps>,
+  users?: TestUser[],
+  team: Seat[] = [],
+) => {
+  const m = makeStore(name, users ?? [], team)
   const app = createApp({
     meta: m,
     blobs: new FsBlobStore(join(dir, `blobs-${name}`)),
