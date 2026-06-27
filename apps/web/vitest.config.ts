@@ -20,6 +20,7 @@ export default defineConfig({
         "src/pages/artifact/lib/reactions.ts",
         "src/pages/settings/roles.ts",
         "src/lib/utils.ts",
+        "src/lib/pr.ts",
         "src/pages/artifact/lib/layout.ts",
       ],
       reporter: ["text-summary"],

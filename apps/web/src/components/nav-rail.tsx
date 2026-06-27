@@ -4,6 +4,7 @@ import { api } from "@/api"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { useAuth } from "@/ctx"
+import { prTitle } from "@/lib/pr"
 import { useIsMobile } from "@/lib/use-is-mobile"
 import { cn } from "@/lib/utils"
 import type { LibrarySearch } from "@/pages/library/types"
@@ -20,6 +21,11 @@ export const ROW_BASE =
   "flex w-full items-center gap-2.5 whitespace-nowrap rounded-[9px] px-2.5 py-2 text-left text-sm font-semibold text-foreground transition-colors hover:bg-hover"
 export const ROW_ACTIVE = "bg-accent text-accent-foreground hover:bg-accent"
 export const ROW_RAIL = "justify-center px-0 py-2.5"
+
+// How many of a repo's PR previews to list inline in the sidebar before collapsing
+// the rest behind a "+N more" link (which opens the repo's in-collection PR viewer).
+// Keeps the rail readable when a repo has dozens of open PRs.
+const MAX_SIDEBAR_PRS = 5
 
 // One filter-nav row: a Link that sets the library filter via URL search. In
 // collapsed (rail) mode it drops the label + count and centers the icon.
@@ -400,21 +406,43 @@ export function NavRail() {
                     />
                   </button>
                 </div>
-                {!repoCollapsed &&
-                  childPrs.map((pr) => (
-                    <div key={pr.id} className="pl-3.5">
-                      <SideItem
-                        icon="collection"
-                        label={pr.title}
-                        count={pr.count}
-                        search={{ collection: pr.id }}
-                        active={onLibrary && search.collection === pr.id}
-                        collapsed={false}
-                        testId={`sidebar-collection-${pr.id}`}
+                {!repoCollapsed && (
+                  <>
+                    {childPrs.slice(0, MAX_SIDEBAR_PRS).map((pr) => (
+                      <div key={pr.id} className="pl-3.5">
+                        <SideItem
+                          icon="review"
+                          label={
+                            pr.prNumber
+                              ? `#${pr.prNumber} ${prTitle(pr.title, pr.prNumber)}`
+                              : prTitle(pr.title)
+                          }
+                          count={pr.count}
+                          search={{ collection: pr.id }}
+                          active={onLibrary && search.collection === pr.id}
+                          collapsed={false}
+                          testId={`sidebar-collection-${pr.id}`}
+                          onClick={closeDrawer}
+                        />
+                      </div>
+                    ))}
+                    {childPrs.length > MAX_SIDEBAR_PRS && (
+                      <Link
+                        to="/"
+                        search={{ collection: col.id }}
+                        data-testid={`sidebar-collection-${col.id}-more-prs`}
                         onClick={closeDrawer}
-                      />
-                    </div>
-                  ))}
+                        className={cn(
+                          ROW_BASE,
+                          "py-1.5 pl-9 text-xs font-medium text-muted-foreground hover:text-foreground",
+                        )}
+                      >
+                        +{childPrs.length - MAX_SIDEBAR_PRS} more pull request
+                        {childPrs.length - MAX_SIDEBAR_PRS === 1 ? "" : "s"}
+                      </Link>
+                    )}
+                  </>
+                )}
               </div>
             )
           })}
