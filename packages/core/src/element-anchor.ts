@@ -105,6 +105,10 @@ export interface ElementDescriptor {
   ordinal: number
   /** Global element index in document order. */
   index: number
+  /** Index of the enclosing element (-1 at top level). Lets neighbour lookup skip
+   *  ancestors/descendants so a wrapped element (`<div><img><p>…`) resolves the same
+   *  preceding/following block the browser-side walk does. */
+  parent: number
   /** Start offset in the HTML source / total length (0..1) — geometry proxy. */
   srcFraction: number
 }
@@ -441,6 +445,7 @@ export function scanElements(html: string): ElementDescriptor[] {
       text: "",
       ordinal,
       index: order++,
+      parent: stack.length ? (stack[stack.length - 1]?.d.index ?? -1) : -1,
       srcFraction: lt / total,
     }
     out.push(d)
@@ -703,8 +708,15 @@ function grade(
 
 /** Nearest text-bearing block before/after `idx` in document order. */
 function neighborText(ds: ElementDescriptor[], idx: number): { before?: string; after?: string } {
+  // Is `a` an ancestor of `b` (walk b's parent chain)?
+  const isAncestor = (a: number, b: number): boolean => {
+    for (let p = ds[b]?.parent ?? -1; p >= 0; p = ds[p]?.parent ?? -1) if (p === a) return true
+    return false
+  }
   let before: string | undefined
-  for (let i = idx - 1; i >= 0 && idx - i <= 6; i--) {
+  for (let i = idx - 1, seen = 0; i >= 0 && seen < 6; i--) {
+    if (isAncestor(i, idx)) continue // an enclosing container is not a preceding block
+    seen++
     const t = ds[i]?.text
     if (t && t.length >= 2) {
       before = t
@@ -712,7 +724,9 @@ function neighborText(ds: ElementDescriptor[], idx: number): { before?: string; 
     }
   }
   let after: string | undefined
-  for (let i = idx + 1; i < ds.length && i - idx <= 6; i++) {
+  for (let i = idx + 1, seen = 0; i < ds.length && seen < 6; i++) {
+    if (isAncestor(idx, i)) continue // a descendant is not a following block
+    seen++
     const t = ds[i]?.text
     if (t && t.length >= 2) {
       after = t

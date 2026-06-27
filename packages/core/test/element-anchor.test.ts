@@ -277,6 +277,29 @@ describe("resolveElement — ambiguity must not breed false confidence", () => {
     expect(slideTitle).toBe("Revenue")
   })
 
+  it("a WRAPPED element disambiguates by its sibling caption, not its container", () => {
+    // Gallery of identical thumbnails, each wrapped in a cell with its own caption.
+    // The caption is a SIBLING, not the enclosing <div> — neighbour lookup must skip
+    // the container (which would otherwise read the same text for every cell) so the
+    // server resolves the same instance the browser-side walk does.
+    const cell = (cap: string) =>
+      `<div class="cell"><img src="/t.png" alt="thumb"><p>${cap}</p></div>`
+    const v1 = cell("alpha caption") + cell("bravo caption") + cell("charlie caption")
+    const sel = selFor(v1, "img", 1) // the "bravo" thumbnail
+    expect(sel.after).toBe("bravo caption") // sibling caption, not the cell div
+    // Reorder the cells; it must follow its caption to the right instance.
+    const v2 = cell("charlie caption") + cell("bravo caption") + cell("alpha caption")
+    const ds = scanElements(v2)
+    const m = resolveElement(sel, ds)
+    let cap = ""
+    for (let i = (m?.index ?? 0) + 1; i < ds.length; i++)
+      if (ds[i]?.tag === "p") {
+        cap = ds[i]?.text ?? ""
+        break
+      }
+    expect(cap).toBe("bravo caption")
+  })
+
   it("never claims high confidence when id and content disagree (a content swap)", () => {
     // Two charts; comment on the red one. Then the two swap their src+alt but keep
     // their ids — so the comment's id points one way and its content the other. That

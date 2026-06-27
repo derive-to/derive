@@ -190,15 +190,27 @@ function elText(el){return nw(el.textContent||"")}
 function elFp(el){var tag=el.tagName.toLowerCase();return fnv([tag,elSrc(el),elAlt(el),elText(el).slice(0,120)].join("\\u0001"))}
 function elOrdinal(el){var all=document.getElementsByTagName(el.tagName);
   for(var i=0;i<all.length;i++){if(all[i]===el)return i}return 0}
-/* nearest preceding/following text block, in document order */
+/* nearest preceding/following text block, in document order. Walks OUTWARD from el
+   (prev/next siblings, then up a level) instead of scanning every block in the doc —
+   the old querySelectorAll+compareDocumentPosition was O(blocks) PER candidate, so a
+   large gallery froze the frame for seconds (1500 imgs ~1.7s). The nearest block is
+   almost always a sibling or one level up, so this is effectively O(1). */
 var BLOCKS="p,li,h1,h2,h3,h4,h5,h6,blockquote,td,th,figcaption,dd,dt,pre";
+function isBlock(n){return n.nodeType===1&&n.matches&&n.matches(BLOCKS)}
+/* deepest block at the trailing (last=true) or leading edge of root's subtree, incl root */
+function edgeBlockText(root,last){
+  if(root.nodeType!==1)return null;
+  var bl=root.querySelectorAll?root.querySelectorAll(BLOCKS):[];
+  for(var i=0;i<bl.length;i++){var b=bl[last?bl.length-1-i:i],t=nw(b.textContent||"");if(t.length>=2)return t}
+  if(isBlock(root)){var rt=nw(root.textContent||"");if(rt.length>=2)return rt}
+  return null}
 function neighborText(el){
-  var before=null,after=null,blocks=document.querySelectorAll(BLOCKS);
-  for(var i=0;i<blocks.length;i++){var b=blocks[i];if(el.contains(b)||b.contains(el))continue;
-    var t=nw(b.textContent||"");if(t.length<2)continue;
-    var pos=el.compareDocumentPosition(b);
-    if(pos&Node.DOCUMENT_POSITION_PRECEDING)before=t;          /* keep the last one before */
-    else if(pos&Node.DOCUMENT_POSITION_FOLLOWING){after=t;break}}
+  var before=null,after=null,hops=0;
+  for(var n=el;n&&n.parentElement&&!before&&hops<400;n=n.parentElement)
+    for(var s=n.previousElementSibling;s&&!before&&hops<400;s=s.previousElementSibling){hops++;before=edgeBlockText(s,true)}
+  hops=0;
+  for(var m=el;m&&m.parentElement&&!after&&hops<400;m=m.parentElement)
+    for(var p=m.nextElementSibling;p&&!after&&hops<400;p=p.nextElementSibling){hops++;after=edgeBlockText(p,false)}
   return {before:before,after:after}}
 /* structural css path of tag:nth-of-type up to a stable ancestor (authored id or body) */
 function cssPath(el){var parts=[],n=el;
