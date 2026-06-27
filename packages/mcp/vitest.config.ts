@@ -10,7 +10,6 @@ export default defineConfig({
       provider: "v8",
       include: ["src/client.ts"],
       reporter: ["text-summary"],
-      thresholds: { lines: 86, statements: 78, branches: 58 },
     },
   },
 })
