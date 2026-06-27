@@ -68,6 +68,27 @@ test("follow a person from the command-palette people search", async ({ owner, s
   await expect(bob.getByTestId(`follow-${maya.username}`)).toHaveAttribute("aria-pressed", "true")
 })
 
+// The People directory: browse discoverable people and follow one without first
+// visiting their profile — the discovery surface for the follow graph.
+test("browse + follow from the People directory", async ({ owner, secondUser }) => {
+  const bob = secondUser.page
+  const maya = (await (await owner.request.get("/v1/me")).json()).user as { username: string }
+
+  await bob.goto("/people")
+  await expect(bob.getByTestId("nav-people")).toBeVisible()
+  // The directory browses discoverable people (everyone is discoverable by default), so
+  // the owner shows up with an inline Follow.
+  const followBtn = bob.getByTestId(`follow-${maya.username}`)
+  await expect(followBtn).toBeVisible()
+  await expect(followBtn).toHaveAttribute("aria-pressed", "false")
+  await followBtn.click()
+  await expect(followBtn).toHaveAttribute("aria-pressed", "true") // optimistic flip
+
+  // The follow really landed — it shows on the person's profile.
+  await bob.goto(`/u/${maya.username}`)
+  await expect(bob.getByTestId(`follow-${maya.username}`)).toHaveAttribute("aria-pressed", "true")
+})
+
 // A person can't follow themselves: the Follow button never renders on your own profile.
 test("the Follow button is absent on your own profile", async ({ owner }) => {
   const me = (await (await owner.request.get("/v1/me")).json()).user as { username: string }

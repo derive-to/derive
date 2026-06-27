@@ -72,6 +72,7 @@ export function Artifact() {
   const [proposeMsg, setProposeMsg] = useState("")
   const [message, setMessage] = useState("")
   const [restoring, setRestoring] = useState(false)
+  const [reader, setReader] = useState(false)
   const [src, setSrc] = useState("")
   // Editable title while editing (seeded from the artifact in startEdit); editors
   // can rename, and it republishes with the new name.
@@ -259,7 +260,9 @@ export function Artifact() {
 
   const shown = version ?? art.current_version
   const editable = art.kind === "file" && shown === art.current_version
-  const rawSrc = `${API_BASE}/raw/${shortId}/v/${shown}/index.html`
+  // Reader view re-renders a non-responsive HTML artifact clean + mobile-friendly
+  // (server applies it on `?reader=1`). Off by default; the top-bar toggle flips it.
+  const rawSrc = `${API_BASE}/raw/${shortId}/v/${shown}/index.html${reader ? "?reader=1" : ""}`
   // Editors publish directly; commenters propose a candidate for review.
   const canPublish = art.my_role === "editor" || art.my_role === "owner"
   // md vs html drives syntax highlighting + how the live preview renders.
@@ -399,6 +402,16 @@ export function Artifact() {
                 showEdit={editable && canPropose && !editing && !art.managed}
                 editLabel={effectiveCanPublish ? "Edit source (dev)" : "Propose change (dev)"}
                 isDeck={!!deck || art.current_content_type === "text/x-dock-deck"}
+                // Reader only helps non-responsive HTML — not markdown (already responsive)
+                // or decks (slides). Hidden while viewing a diff.
+                showReader={
+                  format === "html" &&
+                  !deck &&
+                  art.current_content_type !== "text/x-dock-deck" &&
+                  view !== "diff"
+                }
+                reader={reader}
+                onReaderToggle={() => setReader((r) => !r)}
                 canLock={canLock}
                 locked={isLocked}
                 onPresent={toggleFullscreen}

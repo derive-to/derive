@@ -141,6 +141,87 @@ describe("parseOAuthScopes", () => {
   })
 })
 
+// The people directory (browse), follower/following lists (the user-table JOIN), and the
+// author_id backfill all read Better Auth's `user`/`account` tables, so — like the
+// user-directory methods above — they're seeded + asserted per-dialect here.
+describe("sqlite store: people directory + follower lists + author backfill", () => {
+  it("tolerates the auth tables being absent (fresh store) → empty / zero", async () => {
+    const fresh = new SqliteMetaStore(":memory:")
+    expect(await fresh.listDiscoverableUsers(10)).toEqual([])
+    expect(await fresh.listFollowers("u1", 10)).toEqual([])
+    expect(await fresh.listFollowing("u1", 10)).toEqual([])
+    expect(await fresh.backfillAuthorIds()).toBe(0)
+    fresh.close()
+  })
+
+  it("browses discoverable people, resolves follower/following profiles, backfills author_id", async () => {
+    const { mkdtempSync, rmSync } = await import("node:fs")
+    const { tmpdir } = await import("node:os")
+    const { join } = await import("node:path")
+    const dir = mkdtempSync(join(tmpdir(), "dock-db-people-"))
+    const path = join(dir, "store.db")
+    const s = new SqliteMetaStore(path)
+    const raw = new Database(path)
+    raw.exec(
+      `CREATE TABLE user (id TEXT PRIMARY KEY, email TEXT, name TEXT, image TEXT, username TEXT, discoverable INTEGER, profession TEXT, about TEXT)`,
+    )
+    raw.exec(
+      `CREATE TABLE account (id TEXT PRIMARY KEY, "accountId" TEXT, "providerId" TEXT, "userId" TEXT)`,
+    )
+    const insU = raw.prepare(
+      `INSERT INTO user (id, name, username, discoverable, profession) VALUES (?,?,?,?,?)`,
+    )
+    insU.run("u1", "Amy", "amy", null, "Engineering") // discoverable (null = on by default)
+    insU.run("u2", "Bo", "bo", 1, "Design") // discoverable on
+    insU.run("u3", "Cy", "cy", 0, null) // opted out → excluded
+    insU.run("u4", "Dee", null, null, null) // no handle → excluded
+    raw
+      .prepare(`INSERT INTO account (id, "accountId", "providerId", "userId") VALUES (?,?,?,?)`)
+      .run("acc", "9999", "github", "u1")
+    raw.close()
+
+    // Browse: discoverable + handle-claimed only, ordered by handle. cy (opted out) and
+    // dee (no handle) are excluded.
+    expect((await s.listDiscoverableUsers(10)).map((u) => u.username)).toEqual(["amy", "bo"])
+
+    // Follower / following lists resolve to public profiles (the user-table JOIN happy
+    // path — the branch the cross-dialect contract can't reach without a user table).
+    await s.addFollow({ id: "f1", org_id: "*", user_id: "u2", kind: "user", target: "u1" }) // bo → amy
+    expect((await s.listFollowers("u1", 10)).map((u) => u.username)).toEqual(["bo"])
+    expect((await s.listFollowing("u2", 10)).map((u) => u.username)).toEqual(["amy"])
+    expect(await s.listFollowers("u2", 10)).toEqual([]) // nobody follows bo
+
+    // Backfill: a synced artifact whose author_gh_id maps to a Dock user gets author_id
+    // stamped; a second run is a no-op (idempotent).
+    const a = await s.createArtifact({
+      id: "a1",
+      short_id: "sh1",
+      org_id: "o",
+      slug: null,
+      title: "T",
+      visibility: "public",
+      kind: "file",
+      spa: 0,
+    })
+    await s.addVersion(a.id, {
+      id: "v1",
+      blob_key: "b",
+      content_type: "text/html",
+      size_bytes: 1,
+      author: "Amy",
+      author_gh_id: "9999",
+      message: null,
+    })
+    expect((await s.getArtifactById("a1"))?.author_id).toBeNull()
+    expect(await s.backfillAuthorIds()).toBe(1)
+    expect((await s.getArtifactById("a1"))?.author_id).toBe("u1")
+    expect(await s.backfillAuthorIds()).toBe(0) // idempotent — nothing left to fill
+
+    s.close()
+    rmSync(dir, { recursive: true, force: true })
+  })
+})
+
 // getOAuthGrant / getOAuthClientName / pruneStaleOAuthClients read Better Auth's
 // oauth-provider tables (created out of band by the auth migrator), so — like the
 // user-directory methods above — they're seeded and asserted per-dialect here.

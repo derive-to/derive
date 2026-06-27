@@ -277,6 +277,61 @@ describe("profile work-list (visibility-scoped)", () => {
   })
 })
 
+// The work-list is keyset-paginated (limit+1 over-fetch → next_cursor "<created_at>|<id>").
+// Isolated app so the count is exact (other tests' works don't bleed in).
+describe("profile work-list pagination (keyset)", () => {
+  const peg: TestUser = { id: "u_peg", email: "peg@d.test", name: "Peg", username: "peg" }
+  const { app, meta } = makeAuthedApp("profile-pagination", [peg])
+
+  it("pages public work by cursor; respects + caps the limit", async () => {
+    const N = 27 // > the default page of 24, so there's a real second page
+    for (let i = 0; i < N; i++) {
+      const a = await meta.createArtifact({
+        id: newId("a"),
+        short_id: newId("s"),
+        org_id: "default",
+        slug: null,
+        title: `Doc ${i}`,
+        visibility: "public",
+        kind: "file",
+        spa: 0,
+      })
+      await meta.addVersion(a.id, {
+        id: newId("v"),
+        blob_key: `blob_${newId("b")}`,
+        content_type: "text/markdown",
+        size_bytes: 1,
+        author: "Peg",
+        author_id: peg.id,
+        message: null,
+      })
+    }
+
+    // Page 1: exactly the default page size, with a cursor to continue.
+    const p1 = await (await app.request("/v1/users/peg/artifacts")).json()
+    expect(p1.artifacts.length).toBe(24)
+    expect(p1.next_cursor).toBeTruthy()
+
+    // Page 2: the remainder, and no further cursor.
+    const p2 = await (
+      await app.request(`/v1/users/peg/artifacts?cursor=${encodeURIComponent(p1.next_cursor)}`)
+    ).json()
+    expect(p2.artifacts.length).toBe(N - 24)
+    expect(p2.next_cursor).toBeNull()
+
+    // The two pages are disjoint and together cover every work (keyset correctness).
+    const ids = new Set(
+      [...p1.artifacts, ...p2.artifacts].map((a: { short_id: string }) => a.short_id),
+    )
+    expect(ids.size).toBe(N)
+
+    // An explicit limit is honored (and yields a cursor when more remain).
+    const small = await (await app.request("/v1/users/peg/artifacts?limit=5")).json()
+    expect(small.artifacts.length).toBe(5)
+    expect(small.next_cursor).toBeTruthy()
+  })
+})
+
 describe("discoverability (on by default) + people search", () => {
   // Nova never set the flag → discoverable by default (GitHub-style).
   const nova: TestUser = {
@@ -320,5 +375,35 @@ describe("discoverability (on by default) + people search", () => {
     expect(novaMe.user.discoverable).toBe(true) // session is the seeded (unset) flag → default on
     const doxMe = await (await app.request("/v1/me", { headers: as(dox.email) })).json()
     expect(doxMe.user.discoverable).toBe(false)
+  })
+})
+
+describe("people directory (/v1/people)", () => {
+  const ivy: TestUser = { id: "u_ivy", email: "ivy@d.test", name: "Ivy", username: "ivy" }
+  // Jay opted out — should never appear in browse or search.
+  const jay: TestUser = {
+    id: "u_jay",
+    email: "jay@d.test",
+    name: "Jay",
+    username: "jay",
+    discoverable: false,
+  }
+  const { app } = makeAuthedApp("people-dir", [ivy, jay])
+  const handles = (r: { users: { username: string }[] }) => r.users.map((u) => u.username)
+
+  it("browses discoverable people (empty q), searches, hides opt-outs, requires auth", async () => {
+    // Browse (no query) lists discoverable people — the difference from /v1/users/search,
+    // which returns nothing on an empty query.
+    const browse = await (await app.request("/v1/people", { headers: as(ivy.email) })).json()
+    expect(handles(browse)).toContain("ivy")
+    expect(handles(browse)).not.toContain("jay") // opted out
+    expect(browse.users[0]).not.toHaveProperty("email") // public fields only
+
+    // With a query it searches within the discoverable set.
+    const searched = await (await app.request("/v1/people?q=iv", { headers: as(ivy.email) })).json()
+    expect(handles(searched)).toEqual(["ivy"])
+
+    // Signed-in only — anonymous is refused.
+    expect((await app.request("/v1/people")).status).toBe(401)
   })
 })

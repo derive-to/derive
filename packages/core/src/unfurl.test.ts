@@ -6,6 +6,9 @@ import {
   kindLabel,
   oembedResponse,
   ogCardSvg,
+  ogProfileCardSvg,
+  profileMetaTags,
+  profileSummary,
   type UnfurlInfo,
   unfurlDescription,
   unfurlMetaTags,
@@ -114,5 +117,91 @@ describe("oembedResponse / embedIframe", () => {
   })
   it("escapes the iframe src and title", () => {
     expect(embedIframe('http://x/"onload="', { title: '"<x>' })).toContain("&quot;onload=&quot;")
+  })
+})
+
+describe("profileSummary", () => {
+  it("includes the role when set and pluralizes works/followers", () => {
+    expect(
+      profileSummary({
+        username: "maya",
+        name: "Maya",
+        profession: "Engineering",
+        works: 4,
+        followers: 1,
+      }),
+    ).toBe("Engineering · 4 works · 1 follower · on Dock")
+  })
+  it("omits the role when unset and singularizes a count of one", () => {
+    expect(
+      profileSummary({ username: "ada", name: null, profession: null, works: 1, followers: 0 }),
+    ).toBe("1 work · 0 followers · on Dock")
+  })
+})
+
+describe("profileMetaTags", () => {
+  it("emits profile OG/Twitter tags with the name + handle, all escaped", () => {
+    const html = profileMetaTags({
+      username: "maya",
+      name: "Maya <Chen>",
+      description: "Engineering · 4 works · on Dock",
+      pageUrl: "http://dock.test/u/maya",
+      imageUrl: "http://dock.test/v1/og/u/maya",
+    })
+    expect(html).toContain('property="og:type" content="profile"')
+    expect(html).toContain('property="profile:username" content="maya"')
+    expect(html).toContain("Maya &lt;Chen&gt; (@maya)") // name + handle, angle brackets escaped
+    expect(html).toContain('name="twitter:card" content="summary_large_image"')
+    expect(html).toContain('content="http://dock.test/v1/og/u/maya"')
+    expect(html).not.toContain("Maya <Chen>") // no unescaped markup leaks
+  })
+  it("falls back to just the handle when the name is null", () => {
+    const html = profileMetaTags({
+      username: "ada",
+      name: null,
+      description: "on Dock",
+      pageUrl: "http://dock.test/u/ada",
+      imageUrl: "http://dock.test/v1/og/u/ada",
+    })
+    expect(html).toContain('content="@ada"')
+  })
+})
+
+describe("ogProfileCardSvg", () => {
+  it("renders the name, handle, summary, and first+last initials", () => {
+    const svg = ogProfileCardSvg({
+      username: "maya",
+      name: "Maya Chen",
+      profession: "Engineering",
+      works: 12,
+      followers: 48,
+    })
+    expect(svg).toContain("<svg")
+    expect(svg).toContain("Maya Chen")
+    expect(svg).toContain("@maya")
+    expect(svg).toContain(">MC<") // first+last initial in the avatar disc
+    expect(svg).toContain("12 works · 48 followers · on Dock")
+  })
+  it("escapes the name in the card markup", () => {
+    const svg = ogProfileCardSvg({
+      username: "co",
+      name: "Ada & Co",
+      profession: null,
+      works: 0,
+      followers: 0,
+    })
+    expect(svg).toContain("Ada &amp; Co")
+    expect(svg).not.toContain("Ada & Co") // raw ampersand never leaks into the SVG
+  })
+  it("uses the handle (and its initials) when the name is null", () => {
+    const svg = ogProfileCardSvg({
+      username: "ada",
+      name: null,
+      profession: null,
+      works: 0,
+      followers: 0,
+    })
+    expect(svg).toContain("@ada")
+    expect(svg).toContain(">AD<") // initials derived from the username
   })
 })

@@ -48,7 +48,8 @@ export const followRoutes = (ctx: AppContext) => {
     const follows = await meta.listFollows(me.id, org)
     // Resolve each people-follow's target id → a public handle so the client can render
     // it (and match follow-state by username) without ever holding a raw user id. One
-    // batched lookup; author/path follows pass through untouched.
+    // batched lookup; author/path follows pass through untouched. The internal id is
+    // REPLACED by the handle in `target` on the way out — it never reaches the client.
     const userIds = follows.filter((f) => f.kind === "user").map((f) => f.target)
     const byId = new Map(
       userIds.length ? (await meta.getUsers(userIds)).map((u) => [u.id, u] as const) : [],
@@ -57,7 +58,16 @@ export const followRoutes = (ctx: AppContext) => {
       follows: follows.map((f) => {
         if (f.kind !== "user") return f
         const u = byId.get(f.target)
-        return { ...f, handle: u?.username ?? null, name: u?.name ?? null, image: u?.image ?? null }
+        const handle = u?.username ?? null
+        // target := the public handle (not the internal user id). The client keys
+        // people-follows by handle everywhere; the raw id stays server-side.
+        return {
+          ...f,
+          target: handle ?? "",
+          handle,
+          name: u?.name ?? null,
+          image: u?.image ?? null,
+        }
       }),
     })
   })

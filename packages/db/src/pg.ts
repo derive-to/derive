@@ -7,6 +7,7 @@ import type {
   CollectionMemberRecord,
   CollectionRecord,
   CommentRecord,
+  CommentSignals,
   CommentState,
   DeliveryRecord,
   DeliveryStatus,
@@ -355,6 +356,76 @@ export class PgMetaStore implements MetaStore {
       .where(and(eq(comment.artifact_id, artifactId), eq(comment.thread_id, threadId)))
       .returning({ id: comment.id })
     return rows.length
+  }
+
+  // Mirrors the sqlite path: mentions live in meta.mentions (JSON), matched in code.
+  private commentMentionsUser(metaJson: string | null, userId: string): boolean {
+    if (!metaJson) return false
+    try {
+      const m = JSON.parse(metaJson) as { mentions?: { id?: string }[] }
+      return Array.isArray(m.mentions) && m.mentions.some((x) => x?.id === userId)
+    } catch {
+      return false
+    }
+  }
+
+  async commentSignals(
+    artifactIds: string[],
+    userId: string | null,
+  ): Promise<Record<string, CommentSignals>> {
+    const out: Record<string, CommentSignals> = {}
+    if (artifactIds.length === 0) return out
+    const rows = await this.db
+      .select({
+        artifact_id: comment.artifact_id,
+        thread_id: comment.thread_id,
+        state: comment.state,
+        author_id: comment.author_id,
+        meta: comment.meta,
+      })
+      .from(comment)
+      .where(inArray(comment.artifact_id, artifactIds))
+    const threads: Record<string, Set<string>> = {}
+    for (const r of rows) {
+      if (r.state !== "open") continue
+      let sig = out[r.artifact_id]
+      if (!sig) {
+        sig = { open_threads: 0, mentions_me: false, i_participated: false }
+        out[r.artifact_id] = sig
+      }
+      let set = threads[r.artifact_id]
+      if (!set) {
+        set = new Set()
+        threads[r.artifact_id] = set
+      }
+      set.add(r.thread_id)
+      if (userId) {
+        if (r.author_id === userId) sig.i_participated = true
+        if (!sig.mentions_me && this.commentMentionsUser(r.meta, userId)) sig.mentions_me = true
+      }
+    }
+    for (const [id, set] of Object.entries(threads)) {
+      const sig = out[id]
+      if (sig) sig.open_threads = set.size
+    }
+    return out
+  }
+
+  async artifactIdsNeedingFeedback(userId: string, orgId: string): Promise<string[]> {
+    const rows = await this.db
+      .select({
+        artifact_id: comment.artifact_id,
+        author_id: comment.author_id,
+        meta: comment.meta,
+      })
+      .from(comment)
+      .innerJoin(artifact, eq(artifact.id, comment.artifact_id))
+      .where(and(eq(comment.state, "open"), eq(artifact.org_id, orgId)))
+    const ids = new Set<string>()
+    for (const r of rows) {
+      if (r.author_id === userId || this.commentMentionsUser(r.meta, userId)) ids.add(r.artifact_id)
+    }
+    return [...ids]
   }
 
   listArtifacts(opts?: ListArtifactsOpts): Promise<ArtifactRecord[]> {
@@ -1338,6 +1409,23 @@ export class PgMetaStore implements MetaStore {
       return []
     }
   }
+  // Idempotent backfill (see sqlite.ts) — stamp author_id from a known author_gh_id→user mapping.
+  async backfillAuthorIds(): Promise<number> {
+    try {
+      const res = await this.pool.query(
+        `UPDATE "artifact" SET author_id = (
+           SELECT u.id FROM "account" a JOIN "user" u ON u.id = a."userId"
+           WHERE a."providerId" = 'github' AND a."accountId" = "artifact".author_gh_id LIMIT 1)
+         WHERE author_id IS NULL AND author_gh_id IS NOT NULL
+           AND EXISTS (
+             SELECT 1 FROM "account" a JOIN "user" u ON u.id = a."userId"
+             WHERE a."providerId" = 'github' AND a."accountId" = "artifact".author_gh_id)`,
+      )
+      return res.rowCount ?? 0
+    } catch {
+      return 0
+    }
+  }
   async getUserByUsername(username: string): Promise<UserProfile | null> {
     try {
       const { rows } = await this.pool.query(
@@ -1394,7 +1482,9 @@ export class PgMetaStore implements MetaStore {
     const s = q.trim()
     if (!s) return []
     try {
-      const like = `%${s}%`
+      // Escape ILIKE metacharacters so a literal %/_/\ in the query matches itself —
+      // a search for "%" finds nothing, not everyone.
+      const like = `%${s.replace(/[\\%_]/g, (ch) => `\\${ch}`)}%`
       const { rows } = await this.pool.query(
         // discoverable IS NOT FALSE → true OR unset(null) both match (on by
         // default); only an explicit false (opted out) is excluded.
@@ -1403,6 +1493,19 @@ export class PgMetaStore implements MetaStore {
            AND (username ILIKE $1 OR name ILIKE $1)
          ORDER BY username LIMIT $2`,
         [like, limit],
+      )
+      return rows as UserProfile[]
+    } catch {
+      return []
+    }
+  }
+  async listDiscoverableUsers(limit: number): Promise<UserProfile[]> {
+    try {
+      const { rows } = await this.pool.query(
+        `SELECT id, name, image, username, profession, about FROM "user"
+         WHERE discoverable IS NOT FALSE AND username IS NOT NULL
+         ORDER BY username LIMIT $1`,
+        [limit],
       )
       return rows as UserProfile[]
     } catch {

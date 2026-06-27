@@ -20,8 +20,11 @@ export function FollowButton({
   className?: string
 }) {
   const { me } = useAuth()
-  const { isFollowingUser, toggleUser, pendingFollow } = useFollows()
-  const [hover, setHover] = useState(false)
+  const { isFollowingUser, toggleUser, isTogglingUser } = useFollows()
+  // "peek" = pointer hover OR keyboard focus, so the destructive "Unfollow" intent is
+  // revealed for touch/keyboard users too — not hover-only (the old a11y bug: a focused
+  // or tapped "Following" button gave no hint that activating it unfollows).
+  const [peek, setPeek] = useState(false)
 
   // Nothing to do for a signed-out viewer or on your own profile.
   if (!me || me.username?.toLowerCase() === username.toLowerCase()) return null
@@ -34,31 +37,41 @@ export function FollowButton({
     e.preventDefault()
     toggleUser(username)
   }
+  // Reveal-on-interaction handlers shared by pointer + keyboard.
+  const reveal = {
+    onMouseEnter: () => setPeek(true),
+    onMouseLeave: () => setPeek(false),
+    onFocus: () => setPeek(true),
+    onBlur: () => setPeek(false),
+  }
 
   if (following) {
     return (
       <Button
         variant="outline"
         size="sm"
-        disabled={pendingFollow}
+        disabled={isTogglingUser(username)}
         data-testid={`follow-${username}`}
         aria-pressed
-        onMouseEnter={() => setHover(true)}
-        onMouseLeave={() => setHover(false)}
+        // Always announce the action (unfollow), independent of the visual peek state,
+        // so a screen-reader/keyboard user knows activating this unfollows.
+        aria-label={`Unfollow @${username}`}
+        {...reveal}
         onClick={onClick}
-        className={cn(sizing, hover && "border-destructive/40 text-destructive", className)}
+        className={cn(sizing, peek && "border-destructive/40 text-destructive", className)}
       >
-        <Icon name={hover ? "close" : "check"} size={xs ? 12 : 14} />
-        {hover ? "Unfollow" : "Following"}
+        <Icon name={peek ? "close" : "check"} size={xs ? 12 : 14} />
+        {peek ? "Unfollow" : "Following"}
       </Button>
     )
   }
   return (
     <Button
       size="sm"
-      disabled={pendingFollow}
+      disabled={isTogglingUser(username)}
       data-testid={`follow-${username}`}
       aria-pressed={false}
+      aria-label={`Follow @${username}`}
       onClick={onClick}
       className={cn(sizing, className)}
     >

@@ -181,11 +181,13 @@ describe("people follow", () => {
     expect(ids).toContain(amyPublic) // cross-workspace public work surfaces
     expect(ids).not.toContain(amyPrivate) // private work stays hidden
 
-    // GET /v1/follows resolves the people-follow's target id back to a handle (so the
-    // client renders @amy + matches follow-state by username — never a raw id).
+    // GET /v1/follows resolves the people-follow to a public handle; the internal user id
+    // never reaches the client — `target` is REPLACED by the handle (matches the client's
+    // by-username keying), so amy.id appears nowhere in the response.
     const bobFollows = await (await app.request("/v1/follows", { headers: as(bob.email) })).json()
     const userFollow = bobFollows.follows.find((f: { kind: string }) => f.kind === "user")
-    expect(userFollow).toMatchObject({ kind: "user", target: amy.id, handle: "amy", name: "Amy" })
+    expect(userFollow).toMatchObject({ kind: "user", target: "amy", handle: "amy", name: "Amy" })
+    expect(JSON.stringify(bobFollows)).not.toContain(amy.id) // no raw user id on the wire
 
     // The profile reflects it: amy has 1 follower; bob (the viewer) follows her.
     const amyProfile = await (await app.request("/v1/users/amy", { headers: as(bob.email) })).json()
