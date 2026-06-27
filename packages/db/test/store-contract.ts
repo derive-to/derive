@@ -1,6 +1,6 @@
 import { randomUUID as uuid } from "node:crypto"
 import type { MetaStore, NewArtifact, NewVersion } from "@dock/core"
-import { DEFAULT_ORG_SETTINGS } from "@dock/core"
+import { DEFAULT_ORG_SETTINGS, StaleBaseError } from "@dock/core"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 
 /**
@@ -151,6 +151,41 @@ export function runStoreContract(
       await store.addVersion(a.id, newVersion({ blob_key: "other", size_bytes: 50 }))
       // 100 (shared, counted once) + 50 (other) = 150
       expect(await store.storageBytes(ORG)).toBeGreaterThanOrEqual(150)
+    })
+  })
+
+  describe(`${label}: optimistic concurrency (expectedBase)`, () => {
+    it("appends when expectedBase matches current_version, recording base_version", async () => {
+      const a = await store.createArtifact(newArtifact())
+      // current_version starts at 0; the first guarded append expects base 0.
+      const v1 = await store.addVersion(a.id, newVersion({ base_version: 0 }), { expectedBase: 0 })
+      expect(v1.n).toBe(1)
+      expect(v1.base_version).toBe(0)
+      const v2 = await store.addVersion(a.id, newVersion({ base_version: 1 }), { expectedBase: 1 })
+      expect(v2.n).toBe(2)
+      expect(v2.base_version).toBe(1)
+      expect((await store.getByShortId(a.short_id))?.current_version).toBe(2)
+    })
+
+    it("throws StaleBaseError on a stale base and clobbers nothing", async () => {
+      const a = await store.createArtifact(newArtifact())
+      await store.addVersion(a.id, newVersion()) // n=1 (legacy append, no guard)
+      await store.addVersion(a.id, newVersion()) // n=2
+      // An editor who started from v1 publishes against a base the doc moved past.
+      await expect(
+        store.addVersion(a.id, newVersion(), { expectedBase: 1 }),
+      ).rejects.toBeInstanceOf(StaleBaseError)
+      // Nothing was overwritten: still at v2 with exactly two versions.
+      expect((await store.getByShortId(a.short_id))?.current_version).toBe(2)
+      expect(await store.listVersions(a.id)).toHaveLength(2)
+    })
+
+    it("leaves the unguarded append (no expectedBase) as last-write-wins, base_version null", async () => {
+      const a = await store.createArtifact(newArtifact())
+      const v1 = await store.addVersion(a.id, newVersion())
+      expect(v1.base_version).toBeNull()
+      const v2 = await store.addVersion(a.id, newVersion())
+      expect(v2.n).toBe(2)
     })
   })
 

@@ -79,6 +79,7 @@ export const version = pgTable(
     author_id: text("author_id"),
     message: text("message"),
     name: text("name"),
+    base_version: integer("base_version"), // see schema.ts; nullable on purpose
     created_at: text("created_at").notNull().$defaultFn(isoNow),
   },
   // (artifact_id, n) is unique — addVersion relies on it to turn a concurrent

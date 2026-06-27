@@ -7,6 +7,7 @@ import type {
   VersionRecord,
   ViewStats,
 } from "@dock/core"
+import { StaleBaseError } from "@dock/core"
 import Database from "better-sqlite3"
 import { and, eq } from "drizzle-orm"
 import { drizzle } from "drizzle-orm/better-sqlite3"
@@ -66,7 +67,11 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
 
     // Synchronous transaction: a concurrent increment can't interleave between
     // the read and the write, so version numbers never collide.
-    addVersion: async (artifactId: string, v: NewVersion): Promise<VersionRecord> => {
+    addVersion: async (
+      artifactId: string,
+      v: NewVersion,
+      opts?: { expectedBase?: number },
+    ): Promise<VersionRecord> => {
       const n = db.transaction((tx) => {
         const row = tx
           .select({ cv: artifact.current_version })
@@ -74,6 +79,10 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
           .where(eq(artifact.id, artifactId))
           .get()
         if (!row) throw new Error(`artifact not found: ${artifactId}`)
+        // Optimistic-concurrency guard: the sync transaction makes the read+write
+        // atomic, so a stale base can't slip past between here and the insert.
+        if (opts?.expectedBase !== undefined && row.cv !== opts.expectedBase)
+          throw new StaleBaseError(opts.expectedBase, row.cv)
         const next = row.cv + 1
         tx.insert(version)
           .values({ ...v, artifact_id: artifactId, n: next })

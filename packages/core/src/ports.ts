@@ -116,6 +116,10 @@ export interface VersionRecord {
   message: string | null
   /** A named checkpoint (Docs-style). Null = an ordinary auto-saved revision. */
   name: string | null
+  /** The version this content was derived from — the 3-way merge ancestor, and
+   *  the current_version the author edited. Null on legacy rows and on the
+   *  unguarded last-write-wins append (no ancestor recorded). */
+  base_version: number | null
   created_at: string
 }
 
@@ -148,6 +152,27 @@ export interface NewVersion {
   author_id?: string | null
   message: string | null
   name?: string | null
+  /** The version this content was derived from. Persisted on the row, and the
+   *  natural `expectedBase` for an optimistic publish. Omitted ⇒ stored null. */
+  base_version?: number | null
+}
+
+/**
+ * Thrown by {@link MetaStore.addVersion} when the caller passed an `expectedBase`
+ * that no longer equals the artifact's `current_version` — a concurrent publish
+ * advanced the document. Callers turn this into a recoverable 409 (re-read
+ * current, re-merge against it, retry) instead of silently overwriting the
+ * version that landed in between. `current` is the live version at the clash.
+ */
+export class StaleBaseError extends Error {
+  readonly expectedBase: number
+  readonly current: number
+  constructor(expectedBase: number, current: number) {
+    super(`stale base: expected current_version ${expectedBase}, but it is ${current}`)
+    this.name = "StaleBaseError"
+    this.expectedBase = expectedBase
+    this.current = current
+  }
 }
 
 export interface MetaStore {
@@ -173,8 +198,16 @@ export interface MetaStore {
     orgId: string,
     paths: string[],
   ): Promise<{ short_id: string; slug: string | null; source_path: string }[]>
-  /** Appends the next version and bumps current_version. */
-  addVersion(artifactId: string, v: NewVersion): Promise<VersionRecord>
+  /** Appends the next version and bumps current_version. When `opts.expectedBase`
+   *  is given it's an optimistic-concurrency guard: if the artifact's
+   *  current_version no longer equals it, a concurrent publish moved the doc and
+   *  this throws {@link StaleBaseError} rather than clobbering it. Omitted ⇒ the
+   *  legacy last-write-wins append. */
+  addVersion(
+    artifactId: string,
+    v: NewVersion,
+    opts?: { expectedBase?: number },
+  ): Promise<VersionRecord>
   listVersions(artifactId: string): Promise<VersionRecord[]>
   getVersion(artifactId: string, n: number): Promise<VersionRecord | null>
   /** Correct a version's stored content_type in place (no new version). Also

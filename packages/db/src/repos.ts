@@ -58,7 +58,7 @@ import type {
   WebhookRecord,
   WorkspaceRecord,
 } from "@dock/core"
-import { DEFAULT_ORG_SETTINGS, GLOBAL_FOLLOW_ORG } from "@dock/core"
+import { DEFAULT_ORG_SETTINGS, GLOBAL_FOLLOW_ORG, StaleBaseError } from "@dock/core"
 import {
   and,
   asc,
@@ -309,18 +309,42 @@ export function makeRepos(db: SqliteDb) {
   // Sequential add (used by D1, which has no interactive transactions; the
   // UNIQUE(artifact_id, n) constraint turns a race into a clean error). The
   // better-sqlite3 driver overrides this with a synchronous transaction.
-  const addVersion = async (artifactId: string, v: NewVersion): Promise<VersionRecord> => {
+  const addVersion = async (
+    artifactId: string,
+    v: NewVersion,
+    opts?: { expectedBase?: number },
+  ): Promise<VersionRecord> => {
     const row = await db
       .select({ cv: artifact.current_version })
       .from(artifact)
       .where(eq(artifact.id, artifactId))
       .get()
     if (!row) throw new Error(`artifact not found: ${artifactId}`)
+    // Optimistic-concurrency guard. No interactive txn here, so the explicit
+    // check catches the common stale case and the UNIQUE(artifact_id, n)
+    // constraint is the backstop for the read→insert race (mapped below).
+    if (opts?.expectedBase !== undefined && row.cv !== opts.expectedBase)
+      throw new StaleBaseError(opts.expectedBase, row.cv)
     const n = row.cv + 1
-    await db
-      .insert(version)
-      .values({ ...v, artifact_id: artifactId, n })
-      .run()
+    try {
+      await db
+        .insert(version)
+        .values({ ...v, artifact_id: artifactId, n })
+        .run()
+    } catch (err) {
+      // A concurrent writer claimed n between our read and insert. Re-read the
+      // live version so the caller learns where the doc actually landed.
+      const msg = err instanceof Error ? err.message : String(err)
+      if (opts?.expectedBase !== undefined && /unique constraint/i.test(msg)) {
+        const fresh = await db
+          .select({ cv: artifact.current_version })
+          .from(artifact)
+          .where(eq(artifact.id, artifactId))
+          .get()
+        throw new StaleBaseError(opts.expectedBase, fresh?.cv ?? n)
+      }
+      throw err
+    }
     await db
       .update(artifact)
       .set({

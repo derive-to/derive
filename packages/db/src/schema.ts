@@ -90,6 +90,10 @@ export const version = sqliteTable(
     author_id: text("author_id"),
     message: text("message"),
     name: text("name"),
+    // The version this content derived from (the 3-way merge ancestor / the
+    // current_version the author edited). Nullable: legacy rows + the unguarded
+    // last-write-wins append leave it null. Mirrors VersionRecord.base_version.
+    base_version: integer("base_version"),
     created_at: text("created_at").notNull().default(now),
   },
   (t) => [uniqueIndex("artifact_version").on(t.artifact_id, t.n)],

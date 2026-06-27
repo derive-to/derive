@@ -63,7 +63,7 @@ import type {
   WebhookRecord,
   WorkspaceRecord,
 } from "@dock/core"
-import { DEFAULT_ORG_SETTINGS, GLOBAL_FOLLOW_ORG } from "@dock/core"
+import { DEFAULT_ORG_SETTINGS, GLOBAL_FOLLOW_ORG, StaleBaseError } from "@dock/core"
 import {
   and,
   asc,
@@ -265,7 +265,11 @@ export class PgMetaStore implements MetaStore {
     return rows.filter((r): r is typeof r & { source_path: string } => r.source_path != null)
   }
 
-  async addVersion(artifactId: string, v: NewVersion): Promise<VersionRecord> {
+  async addVersion(
+    artifactId: string,
+    v: NewVersion,
+    opts?: { expectedBase?: number },
+  ): Promise<VersionRecord> {
     return this.db.transaction(async (tx) => {
       const cur = await tx
         .select({ cv: artifact.current_version })
@@ -273,6 +277,10 @@ export class PgMetaStore implements MetaStore {
         .where(eq(artifact.id, artifactId))
         .for("update")
       if (!cur[0]) throw new Error(`artifact not found: ${artifactId}`)
+      // Optimistic-concurrency guard, under the FOR UPDATE row lock so the
+      // read+write is atomic against a concurrent publish.
+      if (opts?.expectedBase !== undefined && cur[0].cv !== opts.expectedBase)
+        throw new StaleBaseError(opts.expectedBase, cur[0].cv)
       const n = cur[0].cv + 1
       await tx.insert(version).values({ ...v, artifact_id: artifactId, n })
       await tx
