@@ -146,6 +146,69 @@ const VOID_TAGS = new Set([
   "wbr",
 ])
 const RAW_TAGS = new Set(["script", "style"])
+/** Block-level tags whose opening implicitly closes an open `<p>` (HTML's optional
+ *  end-tag rule). */
+const BLOCK_TAGS = new Set([
+  "address",
+  "article",
+  "aside",
+  "blockquote",
+  "details",
+  "div",
+  "dl",
+  "fieldset",
+  "figcaption",
+  "figure",
+  "footer",
+  "form",
+  "h1",
+  "h2",
+  "h3",
+  "h4",
+  "h5",
+  "h6",
+  "header",
+  "hr",
+  "main",
+  "menu",
+  "nav",
+  "ol",
+  "p",
+  "pre",
+  "section",
+  "table",
+  "ul",
+])
+/**
+ * Does an open element `open` get implicitly closed when `next` opens? Browsers
+ * apply these optional-end-tag rules, so the scanner must too — otherwise an
+ * unclosed `<p>`/`<li>`/`<td>` nests its siblings and an element's neighbour text
+ * diverges from the live DOM (`"beforeafter"` vs `"before"`), making the server's
+ * `anchored` check disagree with the painted overlay.
+ */
+function autoCloses(open: string, next: string): boolean {
+  switch (open) {
+    case "p":
+      return BLOCK_TAGS.has(next)
+    case "li":
+      return next === "li"
+    case "dt":
+    case "dd":
+      return next === "dt" || next === "dd"
+    case "td":
+    case "th":
+      return next === "td" || next === "th" || next === "tr"
+    case "tr":
+      return next === "tr"
+    case "option":
+      return next === "option" || next === "optgroup"
+    case "thead":
+    case "tbody":
+      return next === "tbody" || next === "tfoot"
+    default:
+      return false
+  }
+}
 /** Tags that never carry standalone visual meaning — not anchor targets. */
 const SKIP_TAGS = new Set([
   "html",
@@ -358,6 +421,15 @@ export function scanElements(html: string): ElementDescriptor[] {
 
     const attrs = parseAttrs(sp < 0 ? "" : inner.slice(sp + 1))
     if (SKIP_TAGS.has(tag)) continue
+
+    // Apply HTML optional-end-tag rules: pop any open elements this tag implicitly
+    // closes (an open <p> before a block, <li> before <li>, <td> before <td>/<tr>…),
+    // so neighbour text matches what the browser's DOM produces.
+    while (stack.length) {
+      const top = stack[stack.length - 1]
+      if (top && autoCloses(top.d.tag, tag)) finalize(stack.pop())
+      else break
+    }
 
     const ordinal = tagCount[tag] ?? 0
     tagCount[tag] = ordinal + 1

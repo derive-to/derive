@@ -84,6 +84,30 @@ describe("scanElements", () => {
     expect(ds.filter((d) => d.tag === "p")).toHaveLength(2)
   })
 
+  it("auto-closes optional-end-tag elements like a browser (p/li/td neighbour parity)", () => {
+    // Unclosed <p>/<li>/<td> must read as SIBLINGS, not nested — otherwise an
+    // element's neighbour text diverges from the live DOM and the server's anchored
+    // check disagrees with the painted overlay.
+    expect(
+      scanElements("<p>one<p>two<p>three")
+        .filter((d) => d.tag === "p")
+        .map((d) => d.text),
+    ).toEqual(["one", "two", "three"])
+    expect(
+      scanElements("<ul><li>a<li>b<li>c</ul>")
+        .filter((d) => d.tag === "li")
+        .map((d) => d.text),
+    ).toEqual(["a", "b", "c"])
+    expect(scanElements("<p>intro<div>block</div>tail").find((d) => d.tag === "p")?.text).toBe(
+      "intro",
+    )
+    // An image between two unclosed <p>s sees the right neighbours.
+    const ds = scanElements(`<p>before<img src="/x.png" alt="X"><p>after`)
+    const i = ds.findIndex((d) => d.tag === "img")
+    expect(ds[i - 1]?.text).toBe("before")
+    expect(ds[i + 1]?.text).toBe("after")
+  })
+
   it("keeps the FIRST of duplicate attributes (matches the HTML parser + getAttribute)", () => {
     // Invalid HTML, but it happens. Browsers keep the first occurrence and ignore the
     // rest; the scanner must agree or its fingerprint won't match the live one.
