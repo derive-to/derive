@@ -386,4 +386,32 @@ describe("element anchors (non-text) through publish + sweep", () => {
     // The original snapshot rode through the recovery.
     expect(healed.snapshot.label).toBe("Image — hero one")
   })
+
+  it("rejects an oversized anchor (storage/bandwidth abuse) but accepts a normal one", async () => {
+    const sid = (
+      await (
+        await upload("e.html", page(`<img id="x" src="/a.png" alt="A">`), { title: "E" })
+      ).json()
+    ).short_id
+    // A normal element anchor is fine.
+    const ok = await app.request(
+      `/v1/artifacts/${sid}/comments`,
+      json({ body_md: "ok", anchor: elSelFor(page(`<img id="x" src="/a.png" alt="A">`), "img") }),
+    )
+    expect(ok.status).toBe(201)
+    // A multi-MB anchor (e.g. a giant snapshot.html) is refused, not stored.
+    const huge = await app.request(
+      `/v1/artifacts/${sid}/comments`,
+      json({
+        body_md: "abuse",
+        anchor: {
+          type: "ElementSelector",
+          tag: "img",
+          fingerprint: "x",
+          snapshot: { html: "A".repeat(2_000_000) },
+        },
+      }),
+    )
+    expect(huge.status).toBe(400)
+  })
 })

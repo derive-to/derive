@@ -235,8 +235,11 @@ function ElementRef({
       </button>
     )
   }
-  // Orphaned: show the snapshot so the comment keeps its referent.
-  const thumb = snapshot?.src
+  // Orphaned: show the snapshot so the comment keeps its referent. The src is
+  // comment-author-controlled and this card renders in the trusted host app (not the
+  // sandboxed iframe), so only render an http(s) thumbnail — never data:/blob:/
+  // javascript: or a protocol-relative URL — falling back to the role glyph otherwise.
+  const thumb = isSafeThumb(snapshot?.src) ? snapshot?.src : undefined
   return (
     <div
       title="The element this comment was attached to was edited or removed in this version"
@@ -266,6 +269,18 @@ function ElementRef({
       </span>
     </div>
   )
+}
+
+// Only a plain http(s) URL is safe to render as a thumbnail in the host app — the
+// snapshot src is comment-author-controlled, so reject data:/blob:/javascript:/
+// protocol-relative and anything that isn't an absolute http(s) URL.
+function isSafeThumb(src: string | undefined): boolean {
+  if (!src) return false
+  try {
+    return /^https?:$/.test(new URL(src).protocol)
+  } catch {
+    return false
+  }
 }
 
 // Best-effort role from a snapshot tag (for the glyph) without re-deriving the role.
