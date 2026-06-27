@@ -109,7 +109,10 @@ const changeCount = (c: ReturnType<typeof bundleFileChanges>) =>
  * publisher. Identity rides in the server `instructions` (below), not a `whoami`
  * tool — it's a one-shot fact, not a per-call action.
  */
-function buildServer(ctx: AppContext, agent: AgentRecord): McpServer {
+// `ownerId` is the human this agent acts on behalf of (the OAuth-consenting user),
+// or null for a registered workspace agent. It scopes which personal comments the
+// agent can see: its own user's, never anyone else's, never a workspace agent's.
+function buildServer(ctx: AppContext, agent: AgentRecord, ownerId: string | null): McpServer {
   // Steer the write guidance by what this grant can actually do: a publish-capable
   // grant gets the create/publish path; a lower grant is pointed at propose only.
   const writeGuidance = roleAllows(agent.role, "publish")
@@ -191,16 +194,24 @@ function buildServer(ctx: AppContext, agent: AgentRecord): McpServer {
           if (as_ !== null && ah !== null) entryDiff = clip(formatDiff(diffLines(as_, ah)))
         }
       }
-      const open = await ctx.meta.listComments(a.id, { state: "open" })
+      // Public threads + the acting user's own personal instructions (ownerId);
+      // a workspace agent (ownerId null) sees public only.
+      const open = await ctx.meta.listComments(a.id, { state: "open", viewerOwnerId: ownerId })
       // Threads whose quoted text changed in a landed version — feedback that may
       // no longer apply. Surfacing the count tells the agent its (or someone's)
       // edits touched commented passages.
-      const outdated = await ctx.meta.listComments(a.id, { state: "outdated" })
+      const outdated = await ctx.meta.listComments(a.id, {
+        state: "outdated",
+        viewerOwnerId: ownerId,
+      })
       const outdatedBit = outdated.length
         ? ` ${outdated.length} now outdated (the quoted text changed).`
         : ""
       // Threads with a proposal already pending — the agent shouldn't re-propose them.
-      const addressed = await ctx.meta.listComments(a.id, { state: "addressed" })
+      const addressed = await ctx.meta.listComments(a.id, {
+        state: "addressed",
+        viewerOwnerId: ownerId,
+      })
       const addressedBit = addressed.length
         ? ` ${addressed.length} addressed (a proposal is pending review).`
         : ""
@@ -359,7 +370,7 @@ function buildServer(ctx: AppContext, agent: AgentRecord): McpServer {
     async ({ short_id, state }) => {
       const a = await own(short_id)
       if (!a) return notFound(short_id)
-      const comments = await ctx.meta.listComments(a.id, state ? { state } : undefined)
+      const comments = await ctx.meta.listComments(a.id, { state, viewerOwnerId: ownerId })
       return json({
         count: comments.length,
         comments: comments.map((c) => ({
@@ -636,7 +647,7 @@ export function mountMcp(app: Hono, ctx: AppContext): void {
         { "WWW-Authenticate": `Bearer resource_metadata="${meta}"` },
       )
     }
-    const server = buildServer(ctx, agent)
+    const server = buildServer(ctx, agent, await ctx.privateOwnerId(c))
     const transport = new StreamableHTTPTransport()
     await server.connect(transport)
     return transport.handleRequest(c)

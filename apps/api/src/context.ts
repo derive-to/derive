@@ -310,18 +310,42 @@ export function buildContext(deps: AppDeps) {
         : "viewer"
 
   const agentCache = new WeakMap<Context, AgentRecord | null>()
+  // The human an OAuth agent acts on behalf of (the user who consented). Null for a
+  // registered workspace agent (no granting user) — kept in lockstep with agentCache.
+  const onBehalfCache = new WeakMap<Context, string | null>()
   const agentFor = async (c: Context): Promise<AgentRecord | null> => {
     if (agentCache.has(c)) return agentCache.get(c) ?? null
     const b = bearer(c)
     let a: AgentRecord | null = null
+    let owner: string | null = null
     if (b && !(deps.token && safeEqual(b, deps.token))) {
-      // Either a registered agent token (stored hashed), or an OAuth access token
-      // minted by the browser consent flow, resolved to a scoped agent.
-      a = (await meta.getAgentByToken(sha256(b))) ?? (await oauthAgent(b))
+      // Either a registered agent token (stored hashed) — a workspace principal with
+      // no granting user — or an OAuth access token from the browser consent flow,
+      // which carries the user who authed it.
+      const reg = await meta.getAgentByToken(sha256(b))
+      if (reg) a = reg
+      else {
+        const o = await oauthAgent(b)
+        if (o) {
+          a = o.rec
+          owner = o.ownerId
+        }
+      }
     }
     agentCache.set(c, a)
+    onBehalfCache.set(c, owner)
     if (a) c.set("actorId", a.id)
     return a
+  }
+
+  // The human identity that owns `personal` comments for this request: a signed-in
+  // user is themselves; an OAuth agent acts on behalf of the user who consented; a
+  // registered workspace agent and anonymous callers have none (→ public only). This
+  // is what every personal-comment read/write keys on.
+  const privateOwnerId = async (c: Context): Promise<string | null> => {
+    const ag = await agentFor(c)
+    if (ag) return onBehalfCache.get(c) ?? null
+    return (await currentUser(c))?.id ?? null
   }
 
   // The agent runs in the granting user's workspace, provisioned on first touch
@@ -352,7 +376,9 @@ export function buildContext(deps: AppDeps) {
   // it runs in the granting user's workspace, authors as the client's name, and
   // takes a role derived from the granted dock:* scopes. Expired/invalid tokens
   // resolve to nothing — the caller is then anonymous (read-only), never the owner.
-  const oauthAgent = async (token: string): Promise<AgentRecord | null> => {
+  const oauthAgent = async (
+    token: string,
+  ): Promise<{ rec: AgentRecord; ownerId: string } | null> => {
     // 1. Opaque access token (the `dock login` flow): stored hashed (sha256, like
     //    agent tokens), so resolve by the hash of the presented bearer.
     const grant = await meta.getOAuthGrant(sha256(token))
@@ -360,12 +386,15 @@ export function buildContext(deps: AppDeps) {
       if (grant.expiresAt.getTime() <= Date.now()) return null
       const org = await oauthWorkspace(grant.userId, grant.userEmail, grant.userName)
       return {
-        id: `oauth:${grant.clientId}`,
-        org_id: org,
-        name: grant.clientName,
-        token: "",
-        role: roleFromScopes(grant.scopes),
-        created_at: new Date().toISOString(),
+        ownerId: grant.userId,
+        rec: {
+          id: `oauth:${grant.clientId}`,
+          org_id: org,
+          name: grant.clientName,
+          token: "",
+          role: roleFromScopes(grant.scopes),
+          created_at: new Date().toISOString(),
+        },
       }
     }
     // 2. JWT access token: the oauth-provider issues a signed JWT (not stored in our
@@ -376,7 +405,9 @@ export function buildContext(deps: AppDeps) {
     return null
   }
 
-  const oauthAgentFromJwt = async (token: string): Promise<AgentRecord | null> => {
+  const oauthAgentFromJwt = async (
+    token: string,
+  ): Promise<{ rec: AgentRecord; ownerId: string } | null> => {
     const verify = async (): Promise<JWTPayload | null> => {
       jwksCache ??= await loadJwks()
       if (!jwksCache) return null
@@ -405,12 +436,15 @@ export function buildContext(deps: AppDeps) {
     const u = (await meta.getUsers([userId]))[0]
     const org = await oauthWorkspace(userId, u?.email ?? null, u?.name ?? null)
     return {
-      id: `oauth:${clientId}`,
-      org_id: org,
-      name: (await meta.getOAuthClientName(clientId)) || clientId || "An agent",
-      token: "",
-      role: roleFromScopes(scopes),
-      created_at: new Date().toISOString(),
+      ownerId: userId,
+      rec: {
+        id: `oauth:${clientId}`,
+        org_id: org,
+        name: (await meta.getOAuthClientName(clientId)) || clientId || "An agent",
+        token: "",
+        role: roleFromScopes(scopes),
+        created_at: new Date().toISOString(),
+      },
     }
   }
 
@@ -660,6 +694,7 @@ export function buildContext(deps: AppDeps) {
     currentUser,
     agentFor,
     actingUser,
+    privateOwnerId,
     limited,
     overStorage,
     ensureMembership,
