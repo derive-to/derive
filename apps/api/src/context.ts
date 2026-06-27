@@ -57,6 +57,9 @@ export interface AppDeps {
   encryptionKey?: string
   /** Operator (instance super-admin) emails: global moderation powers, on top of `token`. */
   superAdmins?: string[]
+  /** Slack App credentials for the connect flow + inbound Events API. All three set ⇒
+   *  the "Add to Slack" connect flow + reply-back are available; unset ⇒ Slack off. */
+  slack?: { clientId: string; clientSecret: string; signingSecret: string }
   /** Better Auth instance — mounts /api/auth/* and provides the session. */
   auth?: Auth
   /**

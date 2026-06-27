@@ -231,6 +231,34 @@ CREATE TABLE IF NOT EXISTS repo_source (
   FOREIGN KEY (collection_id) REFERENCES collection(id)
 );
 
+CREATE TABLE IF NOT EXISTS org_settings (
+  org_id TEXT PRIMARY KEY,
+  settings TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+
+CREATE TABLE IF NOT EXISTS slack_install (
+  org_id TEXT PRIMARY KEY,
+  team_id TEXT NOT NULL,
+  team_name TEXT,
+  bot_token TEXT NOT NULL,
+  bot_user_id TEXT,
+  default_channel TEXT,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+
+CREATE TABLE IF NOT EXISTS slack_thread_link (
+  id TEXT PRIMARY KEY,
+  org_id TEXT NOT NULL,
+  artifact_id TEXT NOT NULL,
+  thread_id TEXT NOT NULL,
+  channel TEXT NOT NULL,
+  message_ts TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  UNIQUE (thread_id),
+  UNIQUE (channel, message_ts)
+);
+
 CREATE TABLE IF NOT EXISTS github_app (
   id TEXT PRIMARY KEY,
   app_id TEXT NOT NULL,

@@ -178,9 +178,9 @@ describe("github app auto-heal (GET /app verification)", () => {
     perms: Record<string, string> = {
       contents: "read",
       metadata: "read",
-      pull_requests: "read",
+      pull_requests: "write",
     },
-    events: string[] = ["push", "pull_request"],
+    events: string[] = ["push", "pull_request", "issue_comment", "pull_request_review_comment"],
   ) =>
     vi.stubGlobal(
       "fetch",
@@ -215,12 +215,17 @@ describe("github app auto-heal (GET /app verification)", () => {
   it("flags a missing permission/event in the diff", async () => {
     const { app, meta } = quotaApp("ghheal-diff", { encryptionKey: KEY })
     await seedLiveApp(meta)
-    // App only has metadata:read — missing contents, pull_requests, both events.
+    // App only has metadata:read — missing contents, pull_requests, all events.
     stubGetApp(200, { metadata: "read" }, [])
     const { app: a } = await statusApp(app)
     expect(a.upToDate).toBe(false)
-    expect(a.missing?.permissions).toMatchObject({ contents: "read", pull_requests: "read" })
-    expect(a.missing?.events).toEqual(["push", "pull_request"])
+    expect(a.missing?.permissions).toMatchObject({ contents: "read", pull_requests: "write" })
+    expect(a.missing?.events).toEqual([
+      "push",
+      "pull_request",
+      "issue_comment",
+      "pull_request_review_comment",
+    ])
   })
 
   it("reports unconfigured once the App is deleted on GitHub (404)", async () => {

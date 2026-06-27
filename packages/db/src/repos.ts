@@ -41,12 +41,15 @@ import type {
   NewWebhook,
   NotificationRecord,
   OAuthGrant,
+  OrgSettings,
   ProposalRecord,
   ProposalState,
   ReportRecord,
   ReportState,
   RepoSourceRecord,
   Role,
+  SlackInstallRecord,
+  SlackThreadLinkRecord,
   TakedownInput,
   UserProfile,
   VersionRecord,
@@ -54,7 +57,7 @@ import type {
   WebhookRecord,
   WorkspaceRecord,
 } from "@dock/core"
-import { GLOBAL_FOLLOW_ORG } from "@dock/core"
+import { DEFAULT_ORG_SETTINGS, GLOBAL_FOLLOW_ORG } from "@dock/core"
 import {
   and,
   asc,
@@ -93,9 +96,12 @@ import {
   githubInstallation,
   membership,
   notification,
+  orgSettings,
   proposal,
   report,
   repoSource,
+  slackInstall,
+  slackThreadLink,
   version,
   webhook,
   webhookDelivery,
@@ -1249,6 +1255,67 @@ export function makeRepos(db: SqliteDb) {
     const { id: _id, created_at: _created, ...set } = a
     await db.insert(githubApp).values(a).onConflictDoUpdate({ target: githubApp.id, set }).run()
   }
+
+  // ---- Workspace integration settings -------------------------------------
+  const getOrgSettings = async (orgId: string): Promise<OrgSettings> => {
+    const row = await db.select().from(orgSettings).where(eq(orgSettings.org_id, orgId)).get()
+    let parsed: Partial<OrgSettings> = {}
+    try {
+      if (row?.settings) parsed = JSON.parse(row.settings) as Partial<OrgSettings>
+    } catch {}
+    return { ...DEFAULT_ORG_SETTINGS, ...parsed }
+  }
+  const setOrgSettings = async (orgId: string, settings: OrgSettings): Promise<void> => {
+    await db
+      .insert(orgSettings)
+      .values({ org_id: orgId, settings: JSON.stringify(settings) })
+      .onConflictDoUpdate({
+        target: orgSettings.org_id,
+        set: { settings: JSON.stringify(settings) },
+      })
+      .run()
+  }
+
+  // ---- Slack App ----------------------------------------------------------
+  const getSlackInstall = async (orgId: string): Promise<SlackInstallRecord | null> =>
+    (await db.select().from(slackInstall).where(eq(slackInstall.org_id, orgId)).get()) ?? null
+  const setSlackInstall = async (s: SlackInstallRecord): Promise<void> => {
+    const { org_id: _o, created_at: _c, ...set } = s
+    await db
+      .insert(slackInstall)
+      .values(s)
+      .onConflictDoUpdate({ target: slackInstall.org_id, set })
+      .run()
+  }
+  const deleteSlackInstall = async (orgId: string): Promise<void> => {
+    await db.delete(slackInstall).where(eq(slackInstall.org_id, orgId)).run()
+  }
+  const getSlackThreadLinkByThread = async (
+    threadId: string,
+  ): Promise<SlackThreadLinkRecord | null> =>
+    (await db
+      .select()
+      .from(slackThreadLink)
+      .where(eq(slackThreadLink.thread_id, threadId))
+      .get()) ?? null
+  const getSlackThreadLinkByTs = async (
+    channel: string,
+    ts: string,
+  ): Promise<SlackThreadLinkRecord | null> =>
+    (await db
+      .select()
+      .from(slackThreadLink)
+      .where(and(eq(slackThreadLink.channel, channel), eq(slackThreadLink.message_ts, ts)))
+      .get()) ?? null
+  const setSlackThreadLink = async (l: SlackThreadLinkRecord): Promise<void> => {
+    const { thread_id: _t, created_at: _c, ...set } = l
+    await db
+      .insert(slackThreadLink)
+      .values(l)
+      .onConflictDoUpdate({ target: slackThreadLink.thread_id, set })
+      .run()
+  }
+
   const upsertGithubInstallation = async (
     i: GitHubInstallationRecord,
   ): Promise<GitHubInstallationRecord> =>
@@ -1677,6 +1744,14 @@ export function makeRepos(db: SqliteDb) {
     managedArtifactIds,
     getGithubApp,
     setGithubApp,
+    getOrgSettings,
+    setOrgSettings,
+    getSlackInstall,
+    setSlackInstall,
+    deleteSlackInstall,
+    getSlackThreadLinkByThread,
+    getSlackThreadLinkByTs,
+    setSlackThreadLink,
     upsertGithubInstallation,
     getGithubInstallation,
     listGithubInstallations,

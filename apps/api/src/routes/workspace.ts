@@ -131,6 +131,36 @@ export const workspaceRoutes = (ctx: AppContext) => {
     return c.body(null, 204)
   })
 
+  // ---- Integration settings (enable/disable each channel) -----------------
+  // The workspace's integration toggles (email / GitHub post + mirror / Slack).
+  // Any member can read them; only an Admin can change them.
+  app.get("/v1/workspace/settings", async (c) => {
+    const role = await workspaceRole(c)
+    if (role === null) return fail(c, 401, "unauthenticated")
+    return c.json(await meta.getOrgSettings(await activeWorkspace(c)))
+  })
+
+  app.patch("/v1/workspace/settings", async (c) => {
+    if (!(await workspaceCan(c, "manage"))) return fail(c, 403, "forbidden")
+    const b = await readJson(
+      c,
+      z
+        .object({
+          emailNotifications: z.boolean(),
+          githubPostComments: z.boolean(),
+          githubMirrorComments: z.boolean(),
+          slackPost: z.boolean(),
+        })
+        .partial(),
+    )
+    if (b instanceof Response) return b
+    const org = await activeWorkspace(c)
+    // Merge over current (so a partial PATCH only flips the keys it sends).
+    const next = { ...(await meta.getOrgSettings(org)), ...b }
+    await meta.setOrgSettings(org, next)
+    return c.json(next)
+  })
+
   // ---- Workspaces: list / create / switch (multi-workspace) --------------
   // The caller's workspaces (just the one in single mode). `active` is the id of
   // the workspace this request resolved to.

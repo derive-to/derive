@@ -44,12 +44,15 @@ import type {
   NewWebhook,
   NotificationRecord,
   OAuthGrant,
+  OrgSettings,
   ProposalRecord,
   ProposalState,
   ReportRecord,
   ReportState,
   RepoSourceRecord,
   Role,
+  SlackInstallRecord,
+  SlackThreadLinkRecord,
   TakedownInput,
   UserDir,
   UserProfile,
@@ -59,7 +62,7 @@ import type {
   WebhookRecord,
   WorkspaceRecord,
 } from "@dock/core"
-import { GLOBAL_FOLLOW_ORG } from "@dock/core"
+import { DEFAULT_ORG_SETTINGS, GLOBAL_FOLLOW_ORG } from "@dock/core"
 import {
   and,
   asc,
@@ -95,10 +98,13 @@ import {
   githubInstallation,
   membership,
   notification,
+  orgSettings,
   PG_SCHEMA_STATEMENTS,
   proposal,
   report,
   repoSource,
+  slackInstall,
+  slackThreadLink,
   version,
   webhook,
   webhookDelivery,
@@ -1201,6 +1207,60 @@ export class PgMetaStore implements MetaStore {
   async setGithubApp(a: GitHubAppRecord): Promise<void> {
     const { id: _id, created_at: _created, ...set } = a
     await this.db.insert(githubApp).values(a).onConflictDoUpdate({ target: githubApp.id, set })
+  }
+  async getOrgSettings(orgId: string): Promise<OrgSettings> {
+    const rows = await this.db.select().from(orgSettings).where(eq(orgSettings.org_id, orgId))
+    let parsed: Partial<OrgSettings> = {}
+    try {
+      if (rows[0]?.settings) parsed = JSON.parse(rows[0].settings) as Partial<OrgSettings>
+    } catch {}
+    return { ...DEFAULT_ORG_SETTINGS, ...parsed }
+  }
+  async setOrgSettings(orgId: string, settings: OrgSettings): Promise<void> {
+    await this.db
+      .insert(orgSettings)
+      .values({ org_id: orgId, settings: JSON.stringify(settings) })
+      .onConflictDoUpdate({
+        target: orgSettings.org_id,
+        set: { settings: JSON.stringify(settings) },
+      })
+  }
+
+  // ---- Slack App ----------------------------------------------------------
+  async getSlackInstall(orgId: string): Promise<SlackInstallRecord | null> {
+    const rows = await this.db.select().from(slackInstall).where(eq(slackInstall.org_id, orgId))
+    return rows[0] ?? null
+  }
+  async setSlackInstall(s: SlackInstallRecord): Promise<void> {
+    const { org_id: _o, created_at: _c, ...set } = s
+    await this.db
+      .insert(slackInstall)
+      .values(s)
+      .onConflictDoUpdate({ target: slackInstall.org_id, set })
+  }
+  async deleteSlackInstall(orgId: string): Promise<void> {
+    await this.db.delete(slackInstall).where(eq(slackInstall.org_id, orgId))
+  }
+  async getSlackThreadLinkByThread(threadId: string): Promise<SlackThreadLinkRecord | null> {
+    const rows = await this.db
+      .select()
+      .from(slackThreadLink)
+      .where(eq(slackThreadLink.thread_id, threadId))
+    return rows[0] ?? null
+  }
+  async getSlackThreadLinkByTs(channel: string, ts: string): Promise<SlackThreadLinkRecord | null> {
+    const rows = await this.db
+      .select()
+      .from(slackThreadLink)
+      .where(and(eq(slackThreadLink.channel, channel), eq(slackThreadLink.message_ts, ts)))
+    return rows[0] ?? null
+  }
+  async setSlackThreadLink(l: SlackThreadLinkRecord): Promise<void> {
+    const { thread_id: _t, created_at: _c, ...set } = l
+    await this.db
+      .insert(slackThreadLink)
+      .values(l)
+      .onConflictDoUpdate({ target: slackThreadLink.thread_id, set })
   }
   async upsertGithubInstallation(i: GitHubInstallationRecord): Promise<GitHubInstallationRecord> {
     const rows = await this.db

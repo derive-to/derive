@@ -1,6 +1,10 @@
 import type { D1Database, DurableObjectState } from "@cloudflare/workers-types"
 import { createD1Store } from "@dock/db/d1"
-import { edgeGuard, runDeliveryTick } from "./webhooks"
+import { cloudflareEmailSender, type SendEmailBinding } from "./email-cf"
+import { emailDeliverySender } from "./lib/email"
+import { makeGithubCommentSender } from "./lib/github-comments"
+import { makeSlackSender } from "./lib/slack-comments"
+import { type ChannelSenders, edgeGuard, runDeliveryTick } from "./webhooks"
 
 // While the outbox has work, re-tick on this cadence so a burst drains promptly and
 // near-term retries fire on time — mirroring the Node interval worker. When a tick
@@ -11,9 +15,16 @@ const TICK_MS = 1_500
 // ~this long rather than waiting up to a cron tick.
 const POKE_DELAY_MS = 250
 
-/** The env the outbox DO needs: just the D1 binding it builds a MetaStore from. */
+/** The env the outbox DO needs: the D1 binding it builds a MetaStore from, plus the
+ *  optional Cloudflare Email Service binding + from-address used to deliver email-kind
+ *  rows (absent ⇒ email rows are a delivered no-op on this tier). */
 export interface WebhookOutboxEnv {
   DB: D1Database
+  SEND_EMAIL?: SendEmailBinding
+  EMAIL_FROM?: string
+  // The auth secret doubles as the at-rest encryption key for stored GitHub App
+  // credentials — the GitHub comment sender needs it to mint installation tokens.
+  DOCK_AUTH_SECRET?: string
 }
 
 /**
@@ -31,12 +42,24 @@ export interface WebhookOutboxEnv {
  */
 export class WebhookOutbox {
   private store: ReturnType<typeof createD1Store>
+  private senders: ChannelSenders
 
   constructor(
     private state: DurableObjectState,
     env: WebhookOutboxEnv,
   ) {
     this.store = createD1Store(env.DB)
+    // First-party channel senders for this tier. Email when the Cloudflare Email
+    // Service binding is bound; GitHub PR comment write-back when the auth secret
+    // (the App-credential encryption key) is present.
+    this.senders = {
+      ...(env.SEND_EMAIL && env.EMAIL_FROM
+        ? { email: emailDeliverySender(cloudflareEmailSender(env.SEND_EMAIL, env.EMAIL_FROM)) }
+        : {}),
+      github_review_comment: makeGithubCommentSender(this.store, env.DOCK_AUTH_SECRET),
+      github_issue_comment: makeGithubCommentSender(this.store, env.DOCK_AUTH_SECRET),
+      slack_app: makeSlackSender(this.store, env.DOCK_AUTH_SECRET),
+    }
   }
 
   // The Worker pokes this (and the cron backstop hits it) to wake the drainer. Arm the
@@ -52,7 +75,7 @@ export class WebhookOutbox {
   // alarm — on failure, reschedule so the loop self-heals.
   async alarm(): Promise<void> {
     try {
-      const claimed = await runDeliveryTick(this.store, edgeGuard)
+      const claimed = await runDeliveryTick(this.store, edgeGuard, this.senders)
       if (claimed > 0) await this.state.storage.setAlarm(Date.now() + TICK_MS)
     } catch {
       await this.state.storage.setAlarm(Date.now() + TICK_MS)

@@ -68,18 +68,26 @@ ${body}</main></body></html>`
 // the `installation`/`new_permissions_accepted` webhook + a live GET /app re-check
 // confirm it. So this constant drives "what we want"; GitHub holds "what we have".
 //
-// All current scopes READ-ONLY: contents+metadata mirror docs; pull_requests(read)
-// lists a PR's changed files + receives `pull_request` events to preview PR docs.
-// push + pull_request drive auto-sync.
+// contents+metadata (read) mirror docs; pull_requests is now WRITE — Dock posts a PR
+// review/issue comment when someone comments on a PR-sourced artifact, and receives
+// `pull_request` + comment events to preview PR docs and mirror PR comments back into
+// Dock (the bidirectional collaboration loop). push + pull_request drive auto-sync.
 export const REQUIRED_PERMISSIONS: Record<string, string> = {
   contents: "read",
   metadata: "read",
-  pull_requests: "read",
+  pull_requests: "write",
 }
-// Only permission-backed events belong here (push needs contents, pull_request needs
-// pull_requests). The installation + installation_repositories lifecycle events are
-// delivered to every App automatically — listing them here is rejected by GitHub.
-export const REQUIRED_EVENTS = ["push", "pull_request"]
+// Only permission-backed events belong here (push needs contents, the pull_request +
+// comment events need pull_requests). The installation + installation_repositories
+// lifecycle events are delivered to every App automatically — listing them here is
+// rejected by GitHub. `issue_comment` carries PR conversation comments; the inline
+// review comments arrive as `pull_request_review_comment`.
+export const REQUIRED_EVENTS = [
+  "push",
+  "pull_request",
+  "issue_comment",
+  "pull_request_review_comment",
+]
 
 /** The GitHub App manifest: what permissions/events/URLs the new App is born with.
  *  Consumes REQUIRED_PERMISSIONS/REQUIRED_EVENTS so a fresh App is always current.
@@ -123,12 +131,12 @@ export function manifestFormHTML(props: { baseUrl: string; state: string }): str
     "Set up GitHub App",
     "",
     `<h1>Create your GitHub App</h1>
-    <p class="sub">This opens GitHub to create a read-only Dock app for your account. You install it on the repos you want to mirror — no tokens to paste.</p>
+    <p class="sub">This opens GitHub to create a Dock app for your account. You install it on the repos you want to mirror — no tokens to paste.</p>
     <form id="f" method="post" action="${esc(action)}">
       <input type="hidden" name="manifest" value="${esc(manifestJson)}"/>
       <button class="btn" type="submit">Continue to GitHub</button>
     </form>
-    <p class="foot">Dock asks for <strong>Contents: read-only</strong> and <strong>Metadata: read-only</strong> — enough to mirror Markdown/HTML, nothing else.</p>
+    <p class="foot">Dock asks for <strong>Contents: read</strong>, <strong>Metadata: read</strong> to mirror your docs, and <strong>Pull requests: write</strong> to sync comments to and from PRs.</p>
     <script>setTimeout(function(){document.getElementById("f").submit()},400)</script>`,
   )
 }
