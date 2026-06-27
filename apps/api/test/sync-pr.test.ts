@@ -53,6 +53,10 @@ const postWebhook = (action: string, pr: Record<string, unknown>) => {
 
 // What `GET /pulls/:n/files` returns — mutated per test to drive different change sets.
 let prFiles: { filename: string; status: string }[] = []
+// In-memory GitHub issue (PR conversation) comments, keyed by PR number — the sticky
+// preview comment writes here so tests can assert post-once + edit-in-place.
+const ghComments: Record<string, { id: number; body: string }[]> = {}
+let ghCommentSeq = 0
 // The repo tree at any ref: markdown docs + one non-doc (excluded by the globs).
 // promote-me.md / edit-me.md back the merge-graduation tests.
 const tree = [
@@ -95,6 +99,28 @@ beforeAll(async () => {
       // lastCommit (best-effort) + GraphQL batch (force the REST blob fallback).
       if (s.includes("/commits?")) return new Response("[]", { status: 200 })
       if (s.endsWith("/graphql")) return new Response("nope", { status: 404 })
+      // Sticky preview comment: list / create / edit (scoped per PR number).
+      const icList = s.match(/\/issues\/(\d+)\/comments/)
+      if (icList?.[1] && method === "GET")
+        return new Response(JSON.stringify(ghComments[icList[1]] ?? []), { status: 200 })
+      if (icList?.[1] && method === "POST") {
+        const b = JSON.parse(String(init?.body ?? "{}")) as { body: string }
+        const id = ++ghCommentSeq
+        const pr = icList[1]
+        if (!ghComments[pr]) ghComments[pr] = []
+        ghComments[pr].push({ id, body: b.body })
+        return new Response(JSON.stringify({ id }), { status: 201 })
+      }
+      const icPatch = s.match(/\/issues\/comments\/(\d+)/)
+      if (icPatch?.[1] && method === "PATCH") {
+        const id = Number(icPatch[1])
+        const b = JSON.parse(String(init?.body ?? "{}")) as { body: string }
+        for (const arr of Object.values(ghComments)) {
+          const c = arr.find((x) => x.id === id)
+          if (c) c.body = b.body
+        }
+        return new Response(JSON.stringify({ id }), { status: 200 })
+      }
       return new Response("nf", { status: 404 })
     }),
   )
@@ -283,5 +309,60 @@ describe("github pr previews", () => {
     expect(after?.current_version ?? 0).toBeGreaterThan(beforeVersion) // PR version folded in
     const comments = await meta.listComments(canonicalId)
     expect(comments.some((c) => c.body_md === "ship it")).toBe(true) // review carried over
+  })
+})
+
+describe("github pr preview: sticky comment on the PR", () => {
+  it("opened: posts ONE comment linking to the preview collection", async () => {
+    prFiles = [{ filename: "docs/guide.md", status: "modified" }]
+    await postWebhook("opened", { number: 20, title: "Doc PR", head: { sha: "s20" } })
+    const p = await preview(20)
+    if (!p) throw new Error("no preview")
+    const comments = ghComments["20"] ?? []
+    expect(comments).toHaveLength(1)
+    expect(comments[0]?.body).toContain(`/?collection=${p.collection_id}`)
+    expect(comments[0]?.body).toContain("<!-- dock-preview -->") // sticky marker
+    expect(comments[0]?.body).toContain("1 doc")
+    expect(comments[0]?.body).not.toContain("—") // no em dashes in customer-facing copy
+  })
+
+  it("synchronize: edits the same comment in place (no duplicate)", async () => {
+    prFiles = [
+      { filename: "docs/guide.md", status: "modified" },
+      { filename: "docs/other.md", status: "modified" },
+    ]
+    await postWebhook("synchronize", { number: 20, title: "Doc PR", head: { sha: "s21" } })
+    const comments = ghComments["20"] ?? []
+    expect(comments).toHaveLength(1) // still one — sticky, not spammed
+    expect(comments[0]?.body).toContain("2 docs")
+  })
+
+  it("closed without merge: resolves the comment to a removed note", async () => {
+    await postWebhook("closed", { number: 20, title: "Doc PR", head: { sha: "s21" } })
+    const comments = ghComments["20"] ?? []
+    expect(comments).toHaveLength(1)
+    expect(comments[0]?.body.toLowerCase()).toContain("removed")
+  })
+
+  it("respects the workspace toggle: no comment when githubPreviewLink is off", async () => {
+    await meta.setOrgSettings(ORG, {
+      emailNotifications: true,
+      githubPostComments: true,
+      githubMirrorComments: true,
+      githubPreviewLink: false,
+      slackPost: true,
+    })
+    prFiles = [{ filename: "docs/guide.md", status: "modified" }]
+    await postWebhook("opened", { number: 21, title: "No comment", head: { sha: "s30" } })
+    expect(await preview(21)).toBeDefined() // preview still created
+    expect(ghComments["21"]).toBeUndefined() // but no PR comment posted
+    // Restore for any later assertions.
+    await meta.setOrgSettings(ORG, {
+      emailNotifications: true,
+      githubPostComments: true,
+      githubMirrorComments: true,
+      githubPreviewLink: true,
+      slackPost: true,
+    })
   })
 })

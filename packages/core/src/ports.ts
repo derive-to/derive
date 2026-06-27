@@ -1018,6 +1018,9 @@ export interface OrgSettings {
   githubPostComments: boolean
   /** Mirror PR comments made on GitHub back into the Dock artifact. */
   githubMirrorComments: boolean
+  /** When a PR opens (and on each push), post + keep updated a single comment on the
+   *  pull request linking to the Dock preview of its docs. */
+  githubPreviewLink: boolean
   /** Post Dock activity to the connected Slack workspace. */
   slackPost: boolean
 }
@@ -1026,6 +1029,7 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
   emailNotifications: true,
   githubPostComments: true,
   githubMirrorComments: true,
+  githubPreviewLink: true,
   slackPost: true,
 }
 
