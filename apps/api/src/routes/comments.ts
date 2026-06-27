@@ -4,6 +4,7 @@ import { z } from "zod"
 import type { AppContext } from "../context"
 import {
   commentJson,
+  isCollaboratorAuthor,
   type Mention,
   parseMentions,
   parseMeta,
@@ -11,13 +12,18 @@ import {
   quoteOf,
   REACTIONS,
 } from "../lib/comments"
+import { enqueueGithubPrComment } from "../lib/github-comments"
 import { fail, readJson } from "../lib/http"
+import { enqueueCommentEmails } from "../lib/notify-email"
+import { enqueueSlackComment } from "../lib/slack-comments"
 
 /** Comments: threaded, anchored to text quotes, with reactions, edits, and soft
  *  deletes. @mentions notify people (bell) or land in an agent's pull inbox. */
 export const commentRoutes = (ctx: AppContext) => {
   const {
+    deps,
     meta,
+    blobs,
     bus,
     notify,
     background,
@@ -158,6 +164,11 @@ export const commentRoutes = (ctx: AppContext) => {
         : typeof body.anchor === "string"
           ? body.anchor
           : null
+    // Cap the anchor size. body_md is bounded but the anchor was not — a real element
+    // anchor (snapshot.html capped at ~2KB + a few short fields) stays well under this;
+    // the limit stops a comment from storing a multi-MB blob that ships on every fetch.
+    if (anchor && anchor.length > 16_000)
+      return fail(c, 400, "anchor is too large (max 16000 characters)")
 
     const acting = await actingUser(c)
     const author = acting
@@ -239,6 +250,19 @@ export const commentRoutes = (ctx: AppContext) => {
               quote: quoteOf(created.anchor),
               thread_id: created.thread_id,
             })
+          // Channel fan-out is gated per workspace (Settings -> integrations toggles).
+          const settings = await meta.getOrgSettings(artifact.org_id)
+          if (settings.emailNotifications)
+            await enqueueCommentEmails({ meta, baseUrl: deps.baseUrl }, artifact, created, {
+              mentionIds: new Set(mentions.map((m) => m.id)),
+              actorId: acting?.id ?? null,
+            })
+          const trustedAuthor = await isCollaboratorAuthor(meta, artifact, acting?.id ?? null)
+          if (trustedAuthor && settings.githubPostComments)
+            await enqueueGithubPrComment({ meta, blobs, baseUrl: deps.baseUrl }, artifact, created)
+          if (trustedAuthor && settings.slackPost)
+            await enqueueSlackComment({ meta, baseUrl: deps.baseUrl }, artifact, created)
+          deps.pokeWebhooks?.()
         })(),
       )
     return c.json(commentJson(created), 201)

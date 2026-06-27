@@ -55,10 +55,15 @@ export function NotificationBell({ collapsed }: { collapsed?: boolean }) {
         .then((r) => setUnread(r.unread))
         .catch(() => {})
     }
+    // A follow notification has no artifact — open the follower's profile instead.
+    if (n.kind === "follow") {
+      nav({ to: "/u/$handle", params: { handle: n.actor } })
+      return
+    }
     nav({
       to: "/a/$ref",
       params: { ref: refFor({ short_id: n.artifact_short_id, title: n.artifact_title }) },
-      // A share notification has no thread; open the artifact itself.
+      // A share/publish notification has no thread; open the artifact itself.
       search: n.thread_id ? { c: n.thread_id } : {},
     })
   }
@@ -136,7 +141,14 @@ export function NotificationBell({ collapsed }: { collapsed?: boolean }) {
                 <span className="min-w-0 flex-1">
                   <span className="block text-sm text-foreground">
                     <strong>{n.actor}</strong>{" "}
-                    {n.kind === "share" ? (
+                    {n.kind === "follow" ? (
+                      "started following you"
+                    ) : n.kind === "publish" ? (
+                      <>
+                        published{" "}
+                        {n.artifact_title ? <strong>{n.artifact_title}</strong> : "an update"}
+                      </>
+                    ) : n.kind === "share" ? (
                       <>
                         shared{" "}
                         {n.artifact_title ? <strong>{n.artifact_title}</strong> : "an artifact"}
@@ -154,9 +166,13 @@ export function NotificationBell({ collapsed }: { collapsed?: boolean }) {
                       </>
                     )}
                   </span>
-                  <span className="my-px block truncate text-xs text-muted-foreground">
-                    {n.preview}
-                  </span>
+                  {/* The preview is a snippet for mention/comment; for follow/publish the
+                      main line already says it all, so skip the duplicate. */}
+                  {(n.kind === "mention" || n.kind === "comment") && (
+                    <span className="my-px block truncate text-xs text-muted-foreground">
+                      {n.preview}
+                    </span>
+                  )}
                   <span className="block font-mono text-2xs text-muted-foreground">
                     {ago(n.created_at)}
                   </span>

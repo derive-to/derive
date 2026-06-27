@@ -8,6 +8,7 @@ import type {
   CollectionRecord,
   CommentListOpts,
   CommentRecord,
+  CommentSignals,
   CommentState,
   DeliveryRecord,
   DeliveryStatus,
@@ -44,12 +45,15 @@ import type {
   NewWebhook,
   NotificationRecord,
   OAuthGrant,
+  OrgSettings,
   ProposalRecord,
   ProposalState,
   ReportRecord,
   ReportState,
   RepoSourceRecord,
   Role,
+  SlackInstallRecord,
+  SlackThreadLinkRecord,
   TakedownInput,
   UserDir,
   UserProfile,
@@ -59,6 +63,7 @@ import type {
   WebhookRecord,
   WorkspaceRecord,
 } from "@dock/core"
+import { DEFAULT_ORG_SETTINGS, GLOBAL_FOLLOW_ORG } from "@dock/core"
 import {
   and,
   asc,
@@ -94,10 +99,13 @@ import {
   githubInstallation,
   membership,
   notification,
+  orgSettings,
   PG_SCHEMA_STATEMENTS,
   proposal,
   report,
   repoSource,
+  slackInstall,
+  slackThreadLink,
   version,
   webhook,
   webhookDelivery,
@@ -278,6 +286,7 @@ export class PgMetaStore implements MetaStore {
           author_login: v.author_login ?? null,
           author_avatar: v.author_avatar ?? null,
           author_gh_id: v.author_gh_id ?? null,
+          author_id: v.author_id ?? null,
         })
         .where(eq(artifact.id, artifactId))
       const rows = await tx
@@ -328,7 +337,7 @@ export class PgMetaStore implements MetaStore {
 
   async updateComment(
     id: string,
-    fields: { body_md?: string; meta?: string | null },
+    fields: { body_md?: string; meta?: string | null; anchor?: string | null },
   ): Promise<CommentRecord | null> {
     const rows = await this.db.update(comment).set(fields).where(eq(comment.id, id)).returning()
     return rows[0] ?? null
@@ -357,6 +366,76 @@ export class PgMetaStore implements MetaStore {
       .where(and(eq(comment.artifact_id, artifactId), eq(comment.thread_id, threadId)))
       .returning({ id: comment.id })
     return rows.length
+  }
+
+  // Mirrors the sqlite path: mentions live in meta.mentions (JSON), matched in code.
+  private commentMentionsUser(metaJson: string | null, userId: string): boolean {
+    if (!metaJson) return false
+    try {
+      const m = JSON.parse(metaJson) as { mentions?: { id?: string }[] }
+      return Array.isArray(m.mentions) && m.mentions.some((x) => x?.id === userId)
+    } catch {
+      return false
+    }
+  }
+
+  async commentSignals(
+    artifactIds: string[],
+    userId: string | null,
+  ): Promise<Record<string, CommentSignals>> {
+    const out: Record<string, CommentSignals> = {}
+    if (artifactIds.length === 0) return out
+    const rows = await this.db
+      .select({
+        artifact_id: comment.artifact_id,
+        thread_id: comment.thread_id,
+        state: comment.state,
+        author_id: comment.author_id,
+        meta: comment.meta,
+      })
+      .from(comment)
+      .where(inArray(comment.artifact_id, artifactIds))
+    const threads: Record<string, Set<string>> = {}
+    for (const r of rows) {
+      if (r.state !== "open") continue
+      let sig = out[r.artifact_id]
+      if (!sig) {
+        sig = { open_threads: 0, mentions_me: false, i_participated: false }
+        out[r.artifact_id] = sig
+      }
+      let set = threads[r.artifact_id]
+      if (!set) {
+        set = new Set()
+        threads[r.artifact_id] = set
+      }
+      set.add(r.thread_id)
+      if (userId) {
+        if (r.author_id === userId) sig.i_participated = true
+        if (!sig.mentions_me && this.commentMentionsUser(r.meta, userId)) sig.mentions_me = true
+      }
+    }
+    for (const [id, set] of Object.entries(threads)) {
+      const sig = out[id]
+      if (sig) sig.open_threads = set.size
+    }
+    return out
+  }
+
+  async artifactIdsNeedingFeedback(userId: string, orgId: string): Promise<string[]> {
+    const rows = await this.db
+      .select({
+        artifact_id: comment.artifact_id,
+        author_id: comment.author_id,
+        meta: comment.meta,
+      })
+      .from(comment)
+      .innerJoin(artifact, eq(artifact.id, comment.artifact_id))
+      .where(and(eq(comment.state, "open"), eq(artifact.org_id, orgId)))
+    const ids = new Set<string>()
+    for (const r of rows) {
+      if (r.author_id === userId || this.commentMentionsUser(r.meta, userId)) ids.add(r.artifact_id)
+    }
+    return [...ids]
   }
 
   listArtifacts(opts?: ListArtifactsOpts): Promise<ArtifactRecord[]> {
@@ -769,33 +848,181 @@ export class PgMetaStore implements MetaStore {
         ),
       )
   }
+  // Author/path follows in this workspace PLUS the user's global people-follows (org "*").
   listFollows(userId: string, orgId: string): Promise<FollowRecord[]> {
     return this.db
       .select()
       .from(follow)
-      .where(and(eq(follow.user_id, userId), eq(follow.org_id, orgId)))
+      .where(and(eq(follow.user_id, userId), inArray(follow.org_id, [orgId, GLOBAL_FOLLOW_ORG])))
       .orderBy(desc(follow.created_at), desc(follow.id))
   }
-  // The "following" feed id set: live artifacts whose current author is a followed
-  // login (case-insensitive) OR whose source_path starts with a followed path prefix.
-  // Mirrors the sqlite path exactly (split → OR of inArray + escaped LIKE).
+  // GitHub numeric ids a set of Dock users linked (raw account read; [] if absent).
+  private async githubIdsForUsers(userIds: string[]): Promise<string[]> {
+    if (userIds.length === 0) return []
+    try {
+      const ph = userIds.map((_, i) => `$${i + 1}`).join(",")
+      const { rows } = await this.pool.query(
+        `SELECT a."accountId" gh_id FROM "account" a
+         WHERE a."providerId" = 'github' AND a."userId" IN (${ph})`,
+        userIds,
+      )
+      return (rows as { gh_id: string }[]).map((r) => r.gh_id).filter(Boolean)
+    } catch {
+      return []
+    }
+  }
+  // The "following" feed id set: live artifacts whose current author is a followed login
+  // (case-insensitive), whose source_path starts with a followed path prefix, OR whose
+  // author/path follows match within the active workspace; people follows match a
+  // followed person's PUBLIC work across ANY workspace. Mirrors the sqlite path.
   async followedArtifactIds(userId: string, orgId: string): Promise<string[]> {
     const follows = await this.listFollows(userId, orgId)
     const logins = follows.filter((f) => f.kind === "author").map((f) => f.target.toLowerCase())
     const prefixes = follows.filter((f) => f.kind === "path").map((f) => f.target)
-    if (logins.length === 0 && prefixes.length === 0) return []
-    const conds = []
-    if (logins.length > 0) conds.push(inArray(sql`lower(${artifact.author_login})`, logins))
+    const people = follows.filter((f) => f.kind === "user").map((f) => f.target)
+    if (logins.length === 0 && prefixes.length === 0 && people.length === 0) return []
+    const branches = []
+    const wsConds = []
+    if (logins.length > 0) wsConds.push(inArray(sql`lower(${artifact.author_login})`, logins))
     for (const p of prefixes) {
       const escaped = p.replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_")
-      conds.push(sql`${artifact.source_path} like ${`${escaped}%`} escape '\\'`)
+      wsConds.push(sql`${artifact.source_path} like ${`${escaped}%`} escape '\\'`)
     }
-    const match = conds.length === 1 ? conds[0] : or(...conds)
+    if (wsConds.length > 0) {
+      const wsMatch = wsConds.length === 1 ? wsConds[0] : or(...wsConds)
+      if (wsMatch) branches.push(and(eq(artifact.org_id, orgId), wsMatch))
+    }
+    if (people.length > 0) {
+      const authorConds = [inArray(artifact.author_id, people)]
+      const ghIds = (await this.githubIdsForUsers(people)).map((g) => g.toLowerCase())
+      if (ghIds.length > 0) authorConds.push(inArray(sql`lower(${artifact.author_gh_id})`, ghIds))
+      const authored = authorConds.length === 1 ? authorConds[0] : or(...authorConds)
+      if (authored) branches.push(and(eq(artifact.visibility, "public"), authored))
+    }
+    if (branches.length === 0) return []
+    const match = branches.length === 1 ? branches[0] : or(...branches)
     const rows = await this.db
       .select({ id: artifact.id })
       .from(artifact)
-      .where(and(eq(artifact.org_id, orgId), isNull(artifact.removed_at), match))
+      .where(and(isNull(artifact.removed_at), match))
     return rows.map((r) => r.id)
+  }
+  // ---- People profiles: works, shared workspaces, follower/following -----
+  githubIdsForUser(userId: string): Promise<string[]> {
+    return this.githubIdsForUsers([userId])
+  }
+  async githubLoginForUser(_userId: string, ghIds: string[]): Promise<string | null> {
+    if (ghIds.length === 0) return null
+    const rows = await this.db
+      .select({ login: artifact.author_login })
+      .from(artifact)
+      .where(and(inArray(artifact.author_gh_id, ghIds), isNotNull(artifact.author_login)))
+      .limit(1)
+    return rows[0]?.login ?? null
+  }
+  async sharedOrgIds(viewerId: string, targetUserId: string): Promise<string[]> {
+    const rows = await this.db
+      .select({ org: membership.org_id })
+      .from(membership)
+      .where(
+        and(
+          eq(membership.user_id, viewerId),
+          inArray(
+            membership.org_id,
+            this.db
+              .select({ o: membership.org_id })
+              .from(membership)
+              .where(eq(membership.user_id, targetUserId)),
+          ),
+        ),
+      )
+    return rows.map((r) => r.org)
+  }
+  private userWorksConds(userId: string, ghIds: string[], opts: ListArtifactsOpts) {
+    const conds = [...artifactListConditions(artifact, opts), isNull(artifact.removed_at)]
+    if (ghIds.length > 0) {
+      const m = or(
+        eq(artifact.author_id, userId),
+        inArray(
+          sql`lower(${artifact.author_gh_id})`,
+          ghIds.map((g) => g.toLowerCase()),
+        ),
+      )
+      if (m) conds.push(m)
+    } else {
+      conds.push(eq(artifact.author_id, userId))
+    }
+    const orgs = opts.visibleOrgIds ?? []
+    if (orgs.length > 0) {
+      const v = or(eq(artifact.visibility, "public"), inArray(artifact.org_id, orgs))
+      if (v) conds.push(v)
+    } else {
+      conds.push(eq(artifact.visibility, "public"))
+    }
+    return conds
+  }
+  async listUserWorks(
+    userId: string,
+    ghIds: string[],
+    opts: ListArtifactsOpts,
+  ): Promise<ArtifactRecord[]> {
+    const q = this.db
+      .select()
+      .from(artifact)
+      .where(and(...this.userWorksConds(userId, ghIds, opts)))
+      .orderBy(desc(artifact.created_at), desc(artifact.id))
+    return opts.limit ? q.limit(opts.limit) : q
+  }
+  async countUserWorks(userId: string, ghIds: string[], opts: ListArtifactsOpts): Promise<number> {
+    const rows = await this.db
+      .select({ c: count() })
+      .from(artifact)
+      .where(
+        and(
+          ...this.userWorksConds(userId, ghIds, { ...opts, cursor: undefined, limit: undefined }),
+        ),
+      )
+    return rows[0]?.c ?? 0
+  }
+  async countFollowers(userId: string): Promise<number> {
+    const rows = await this.db
+      .select({ c: count() })
+      .from(follow)
+      .where(and(eq(follow.kind, "user"), eq(follow.target, userId)))
+    return rows[0]?.c ?? 0
+  }
+  async countFollowing(userId: string): Promise<number> {
+    const rows = await this.db
+      .select({ c: count() })
+      .from(follow)
+      .where(and(eq(follow.kind, "user"), eq(follow.user_id, userId)))
+    return rows[0]?.c ?? 0
+  }
+  private async profilesForFollow(
+    column: "user_id" | "target",
+    userId: string,
+    limit: number,
+  ): Promise<UserProfile[]> {
+    try {
+      const join = column === "target" ? `u.id = f.target` : `u.id = f.user_id`
+      const pick = column === "target" ? `f.user_id = $1` : `f.target = $1`
+      const { rows } = await this.pool.query(
+        `SELECT u.id, u.name, u.image, u.username, u.profession, u.about
+         FROM follow f JOIN "user" u ON ${join}
+         WHERE f.kind = 'user' AND ${pick} AND u.username IS NOT NULL
+         ORDER BY f.created_at DESC, f.id DESC LIMIT $2`,
+        [userId, limit],
+      )
+      return rows as UserProfile[]
+    } catch {
+      return []
+    }
+  }
+  listFollowing(userId: string, limit: number): Promise<UserProfile[]> {
+    return this.profilesForFollow("target", userId, limit)
+  }
+  listFollowers(userId: string, limit: number): Promise<UserProfile[]> {
+    return this.profilesForFollow("user_id", userId, limit)
   }
   async tagsForArtifacts(artifactIds: string[]): Promise<Record<string, string[]>> {
     if (artifactIds.length === 0) return {}
@@ -991,6 +1218,60 @@ export class PgMetaStore implements MetaStore {
     const { id: _id, created_at: _created, ...set } = a
     await this.db.insert(githubApp).values(a).onConflictDoUpdate({ target: githubApp.id, set })
   }
+  async getOrgSettings(orgId: string): Promise<OrgSettings> {
+    const rows = await this.db.select().from(orgSettings).where(eq(orgSettings.org_id, orgId))
+    let parsed: Partial<OrgSettings> = {}
+    try {
+      if (rows[0]?.settings) parsed = JSON.parse(rows[0].settings) as Partial<OrgSettings>
+    } catch {}
+    return { ...DEFAULT_ORG_SETTINGS, ...parsed }
+  }
+  async setOrgSettings(orgId: string, settings: OrgSettings): Promise<void> {
+    await this.db
+      .insert(orgSettings)
+      .values({ org_id: orgId, settings: JSON.stringify(settings) })
+      .onConflictDoUpdate({
+        target: orgSettings.org_id,
+        set: { settings: JSON.stringify(settings) },
+      })
+  }
+
+  // ---- Slack App ----------------------------------------------------------
+  async getSlackInstall(orgId: string): Promise<SlackInstallRecord | null> {
+    const rows = await this.db.select().from(slackInstall).where(eq(slackInstall.org_id, orgId))
+    return rows[0] ?? null
+  }
+  async setSlackInstall(s: SlackInstallRecord): Promise<void> {
+    const { org_id: _o, created_at: _c, ...set } = s
+    await this.db
+      .insert(slackInstall)
+      .values(s)
+      .onConflictDoUpdate({ target: slackInstall.org_id, set })
+  }
+  async deleteSlackInstall(orgId: string): Promise<void> {
+    await this.db.delete(slackInstall).where(eq(slackInstall.org_id, orgId))
+  }
+  async getSlackThreadLinkByThread(threadId: string): Promise<SlackThreadLinkRecord | null> {
+    const rows = await this.db
+      .select()
+      .from(slackThreadLink)
+      .where(eq(slackThreadLink.thread_id, threadId))
+    return rows[0] ?? null
+  }
+  async getSlackThreadLinkByTs(channel: string, ts: string): Promise<SlackThreadLinkRecord | null> {
+    const rows = await this.db
+      .select()
+      .from(slackThreadLink)
+      .where(and(eq(slackThreadLink.channel, channel), eq(slackThreadLink.message_ts, ts)))
+    return rows[0] ?? null
+  }
+  async setSlackThreadLink(l: SlackThreadLinkRecord): Promise<void> {
+    const { thread_id: _t, created_at: _c, ...set } = l
+    await this.db
+      .insert(slackThreadLink)
+      .values(l)
+      .onConflictDoUpdate({ target: slackThreadLink.thread_id, set })
+  }
   async upsertGithubInstallation(i: GitHubInstallationRecord): Promise<GitHubInstallationRecord> {
     const rows = await this.db
       .insert(githubInstallation)
@@ -1138,6 +1419,23 @@ export class PgMetaStore implements MetaStore {
       return []
     }
   }
+  // Idempotent backfill (see sqlite.ts) — stamp author_id from a known author_gh_id→user mapping.
+  async backfillAuthorIds(): Promise<number> {
+    try {
+      const res = await this.pool.query(
+        `UPDATE "artifact" SET author_id = (
+           SELECT u.id FROM "account" a JOIN "user" u ON u.id = a."userId"
+           WHERE a."providerId" = 'github' AND a."accountId" = "artifact".author_gh_id LIMIT 1)
+         WHERE author_id IS NULL AND author_gh_id IS NOT NULL
+           AND EXISTS (
+             SELECT 1 FROM "account" a JOIN "user" u ON u.id = a."userId"
+             WHERE a."providerId" = 'github' AND a."accountId" = "artifact".author_gh_id)`,
+      )
+      return res.rowCount ?? 0
+    } catch {
+      return 0
+    }
+  }
   async getUserByUsername(username: string): Promise<UserProfile | null> {
     try {
       const { rows } = await this.pool.query(
@@ -1194,7 +1492,9 @@ export class PgMetaStore implements MetaStore {
     const s = q.trim()
     if (!s) return []
     try {
-      const like = `%${s}%`
+      // Escape ILIKE metacharacters so a literal %/_/\ in the query matches itself —
+      // a search for "%" finds nothing, not everyone.
+      const like = `%${s.replace(/[\\%_]/g, (ch) => `\\${ch}`)}%`
       const { rows } = await this.pool.query(
         // discoverable IS NOT FALSE → true OR unset(null) both match (on by
         // default); only an explicit false (opted out) is excluded.
@@ -1203,6 +1503,19 @@ export class PgMetaStore implements MetaStore {
            AND (username ILIKE $1 OR name ILIKE $1)
          ORDER BY username LIMIT $2`,
         [like, limit],
+      )
+      return rows as UserProfile[]
+    } catch {
+      return []
+    }
+  }
+  async listDiscoverableUsers(limit: number): Promise<UserProfile[]> {
+    try {
+      const { rows } = await this.pool.query(
+        `SELECT id, name, image, username, profession, about FROM "user"
+         WHERE discoverable IS NOT FALSE AND username IS NOT NULL
+         ORDER BY username LIMIT $1`,
+        [limit],
       )
       return rows as UserProfile[]
     } catch {

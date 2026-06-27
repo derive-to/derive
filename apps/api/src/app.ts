@@ -30,6 +30,7 @@ import { rawRoutes } from "./routes/raw"
 import { realtimeRoutes } from "./routes/realtime"
 import { sessionRoutes } from "./routes/session"
 import { sharingRoutes } from "./routes/sharing"
+import { slackRoutes } from "./routes/slack"
 import { syncRoutes } from "./routes/sync"
 import { vitalsRoutes } from "./routes/vitals"
 import { webhookRoutes } from "./routes/webhooks"
@@ -430,6 +431,7 @@ export function createApp(deps: AppDeps): Hono {
     /^\/v1\/artifacts\/[^/]+\/unlock$/, // password unlock — the password is the gate
     /^\/v1\/vitals$/, // anonymous Core Web Vitals beacon (telemetry, no state)
     /^\/v1\/sync\/github\/webhook$/, // GitHub App webhook — HMAC signature is the gate
+    /^\/v1\/slack\/events$/, // Slack Events API — signing-secret signature is the gate
   ]
   app.use("/v1/*", async (c, next) => {
     const m = c.req.method
@@ -451,6 +453,7 @@ export function createApp(deps: AppDeps): Hono {
     followRoutes,
     collectionRoutes,
     syncRoutes,
+    slackRoutes,
     vitalsRoutes,
     moderationRoutes,
     proposalRoutes,

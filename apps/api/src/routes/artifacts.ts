@@ -16,6 +16,7 @@ import { setCookie } from "hono/cookie"
 import { z } from "zod"
 import type { AppContext } from "../context"
 import { sweepAnchors } from "../lib/anchor-sweep"
+import { authorProfile, resolveHandles } from "../lib/author"
 import { hashPassword, safeEqual, unlockCookie, unlockToken, verifyPassword } from "../lib/crypto"
 import {
   DEFAULT_WORKSPACE_NAME,
@@ -38,6 +39,7 @@ export const artifactRoutes = (ctx: AppContext) => {
     versionWindowMs,
     bus,
     notify,
+    background,
     bearer,
     currentUser,
     actingUser,
@@ -53,36 +55,6 @@ export const artifactRoutes = (ctx: AppContext) => {
     sourceText,
   } = ctx
   const app = new Hono()
-
-  // Resolve a set of GitHub numeric user ids to Dock handles (usernames) in ONE batched
-  // query — gh_id → handle, only for committers who signed in with GitHub. Empty set ⇒ {}.
-  const resolveHandles = async (ghIds: string[]): Promise<Record<string, string | null>> => {
-    const out: Record<string, string | null> = {}
-    if (ghIds.length === 0) return out
-    for (const u of await meta.usersByGithubIds(ghIds)) out[u.gh_id] = u.username
-    return out
-  }
-
-  // The artifact's current author as a resolved profile: name/login/avatar from the
-  // denormalized columns, plus the Dock `handle` when the committer is a known user.
-  // Null when the artifact has no recorded author at all.
-  const authorProfile = (
-    a: ArtifactRecord,
-    handleByGhId: Record<string, string | null>,
-  ): {
-    name: string | null
-    login: string | null
-    avatar: string | null
-    handle: string | null
-  } | null => {
-    if (!a.author_name && !a.author_login && !a.author_gh_id) return null
-    return {
-      name: a.author_name,
-      login: a.author_login,
-      avatar: a.author_avatar,
-      handle: a.author_gh_id ? (handleByGhId[a.author_gh_id] ?? null) : null,
-    }
-  }
 
   // Newest-first, keyset-paginated (?cursor=<created_at>&limit=N), with optional
   // server-side ?q= (title search), ?tag=, and ?favorite=true. Returns
@@ -130,6 +102,13 @@ export const artifactRoutes = (ctx: AppContext) => {
       if (!me) return c.json({ artifacts: [], next_cursor: null })
       narrow(await meta.followedArtifactIds(me.id, await activeWorkspace(c)))
     }
+    // scope=needs_feedback → artifacts in the active workspace with an open thread you're
+    // tagged in or have commented on. Drives the home's "Needs your feedback" section.
+    const needsFeedback = c.req.query("scope") === "needs_feedback"
+    if (needsFeedback) {
+      if (!me) return c.json({ artifacts: [], next_cursor: null })
+      narrow(await meta.artifactIdsNeedingFeedback(me.id, await activeWorkspace(c)))
+    }
     if (tag) narrow(await meta.artifactIdsByTag(tag))
     if (favOnly) narrow(favIds)
 
@@ -176,10 +155,13 @@ export const artifactRoutes = (ctx: AppContext) => {
       q,
       ids,
       collectionId,
-      // Shared-with-me spans workspaces; an explicit member can always see them, so
-      // drop the workspace + public-only restrictions for that scope.
-      orgId: shared ? undefined : listOrg,
-      publicOnly: shared ? false : publicOnly,
+      // `shared` and `following` both resolve to an id set that ALREADY encodes the
+      // correct cross-workspace + visibility scope (an explicit share; or a followed
+      // author/path in this workspace + a followed person's public work anywhere). So
+      // drop the workspace + public-only restrictions, which would otherwise re-clip the
+      // feed back to the active workspace and strip a followed person's public work.
+      orgId: shared || following ? undefined : listOrg,
+      publicOnly: shared || following ? false : publicOnly,
     })
     const hasMore = rows.length > limit
     const page = hasMore ? rows.slice(0, limit) : rows
@@ -191,9 +173,12 @@ export const artifactRoutes = (ctx: AppContext) => {
     const tags = await meta.tagsForArtifacts(pageIds)
     // Resolve the page's distinct author gh_ids to Dock handles in ONE batched query (no
     // N+1) so each row can show "who last changed this" with a link to the Dock profile.
-    const handleByGhId = await resolveHandles([
+    const handleByGhId = await resolveHandles(meta, [
       ...new Set(page.map((a) => a.author_gh_id).filter((x): x is string => !!x)),
     ])
+    // Per-artifact comment signals for the viewer (open-thread count + tagged/authored
+    // flags) — drives the inline comment badge and the "needs your feedback" featuring.
+    const feedback = me ? await meta.commentSignals(pageIds, me.id) : {}
     return c.json({
       artifacts: page.map((a) => ({
         ...toJson(deps.baseUrl, a, []),
@@ -203,6 +188,8 @@ export const artifactRoutes = (ctx: AppContext) => {
         // The current author as a resolved profile (name/login/avatar + Dock handle), so
         // the list can render the last editor + filter by them.
         author: authorProfile(a, handleByGhId),
+        // open_threads + mentions_me + i_participated (defaults for anon / no signals).
+        ...(feedback[a.id] ?? { open_threads: 0, mentions_me: false, i_participated: false }),
       })),
       next_cursor,
       ...(collectionInfo ? { collection: collectionInfo } : {}),
@@ -305,6 +292,12 @@ export const artifactRoutes = (ctx: AppContext) => {
     const passwordHash = visibility === "password" && password ? hashPassword(password) : undefined
 
     try {
+      // The authenticated principal behind this publish (signed-in user or agent) — its
+      // `name` is the display author. The Dock-USER behind it (null for an agent / bare
+      // static token) is what we attribute work to: `author_id` keys a person's profile
+      // + their followers' feed, so it must be a real user id, never an agent principal.
+      const actor = await actingUser(c)
+      const user = await currentUser(c)
       const { artifact, version } = await publish(
         meta,
         blobs,
@@ -321,7 +314,8 @@ export const artifactRoutes = (ctx: AppContext) => {
           // person. Anonymous callers can't reach this route at all, so a publish is
           // always attributed to a real principal (the token's optional `author`
           // label is the one headless exception).
-          author: (await actingUser(c))?.name ?? str(body["author"]),
+          author: actor?.name ?? str(body["author"]),
+          authorId: user?.id ?? null,
           name: str(body["name"]),
           orgId: org,
           visibility,
@@ -339,6 +333,34 @@ export const artifactRoutes = (ctx: AppContext) => {
         message: version.message,
         author: version.author,
       })
+      // Fan out to the publisher's followers: "someone you follow published X". Gated to:
+      // a real signed-in USER (agents/tokens have no human followers), a publicly-visible
+      // artifact (a follow never surfaces a private title), and a NEW artifact only —
+      // `shortId` means a republish/new version, which would otherwise spam followers on
+      // every edit. Done in the background so a popular author's fan-out never adds to
+      // publish latency (it's off the response path, like the comment-mention fan-out).
+      if (!shortId && user?.id && artifact.visibility === "public") {
+        const author = user
+        background(
+          (async () => {
+            for (const follower of await meta.listFollowers(author.id, 200)) {
+              if (follower.id === author.id) continue
+              await meta.createNotification({
+                id: newId("ntf"),
+                user_id: follower.id,
+                actor: author.name ?? author.username ?? "Someone",
+                kind: "publish",
+                artifact_id: artifact.id,
+                artifact_short_id: artifact.short_id,
+                artifact_title: artifact.title,
+                thread_id: "",
+                comment_id: "",
+                preview: artifact.title ?? "published something new",
+              })
+            }
+          })(),
+        )
+      }
       // Republish can resolve comment threads in the same call.
       const resolves = body["resolves"]
       if (shortId && typeof resolves === "string" && resolves) {
@@ -423,7 +445,7 @@ export const artifactRoutes = (ctx: AppContext) => {
     const ghIds = new Set<string>()
     if (artifact.author_gh_id) ghIds.add(artifact.author_gh_id)
     for (const v of versions) if (v.author_gh_id) ghIds.add(v.author_gh_id)
-    const handleByGhId = await resolveHandles([...ghIds])
+    const handleByGhId = await resolveHandles(meta, [...ghIds])
     const base = toJson(deps.baseUrl, artifact, versions)
     // `versions` stays at revision granularity (machines/agents); `sessions` is
     // the time-grouped view the UI shows by default. `my_role` tells the client
@@ -560,6 +582,7 @@ export const artifactRoutes = (ctx: AppContext) => {
       // stays consistent (and dedup'd, since it reuses the same blob_key).
       size_bytes: src.size_bytes,
       author: me ? (me.name ?? me.username ?? me.email) : "anonymous",
+      author_id: me?.id ?? null,
       message: `Restored v${src.n}`,
       name: null,
     })

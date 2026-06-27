@@ -2,7 +2,8 @@
   "$schema": "https://unpkg.com/knip@6/schema.json",
   "workspaces": {
     "apps/api": {
-      "entry": ["src/worker.ts", "gen-auth-schema.ts"]
+      "entry": ["src/worker.ts", "gen-auth-schema.ts"],
+      "ignoreDependencies": ["cloudflare"]
     },
     "apps/web": {
       "entry": ["src/components/ui/**"],

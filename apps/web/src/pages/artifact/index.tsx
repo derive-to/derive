@@ -72,6 +72,7 @@ export function Artifact() {
   const [proposeMsg, setProposeMsg] = useState("")
   const [message, setMessage] = useState("")
   const [restoring, setRestoring] = useState(false)
+  const [reader, setReader] = useState(false)
   const [src, setSrc] = useState("")
   // Editable title while editing (seeded from the artifact in startEdit); editors
   // can rename, and it republishes with the new name.
@@ -141,6 +142,7 @@ export function Artifact() {
     setSel,
     inDoc,
     landedSlides,
+    anchorConf,
     anchorTops,
     scrollY,
     docH,
@@ -279,7 +281,9 @@ export function Artifact() {
 
   const shown = version ?? art.current_version
   const editable = art.kind === "file" && shown === art.current_version
-  const rawSrc = `${API_BASE}/raw/${shortId}/v/${shown}/index.html`
+  // Reader view re-renders a non-responsive HTML artifact clean + mobile-friendly
+  // (server applies it on `?reader=1`). Off by default; the top-bar toggle flips it.
+  const rawSrc = `${API_BASE}/raw/${shortId}/v/${shown}/index.html${reader ? "?reader=1" : ""}`
   // Editors publish directly; commenters propose a candidate for review.
   const canPublish = art.my_role === "editor" || art.my_role === "owner"
   // md vs html drives syntax highlighting + how the live preview renders.
@@ -333,7 +337,12 @@ export function Artifact() {
     if (!head) continue
     const id = head.thread_id
     const a = parseAnchor(head.anchor)
-    const present = inDoc[id] !== false
+    // Does this thread's anchor resolve in the live doc? The frame reports `inDoc`
+    // for the anchors it was sent (open/addressed). An `outdated` thread is NOT sent
+    // to the frame, so `inDoc[id]` is undefined — fall back to the server's `anchored`
+    // flag rather than defaulting to "present" (which would pin it invisibly at
+    // opacity 0 instead of showing it as an orphan in the general list).
+    const present = id in inDoc ? inDoc[id] !== false : head.anchored !== false
     if (deck && a) {
       // Deck: a comment belongs to the slide its text actually resolved on (landed),
       // or, until that's known, the slide it was made on (recorded). Pin it only on
@@ -426,6 +435,16 @@ export function Artifact() {
                 showEdit={editable && canPropose && !editing && !art.managed}
                 editLabel={effectiveCanPublish ? "Edit source (dev)" : "Propose change (dev)"}
                 isDeck={!!deck || art.current_content_type === "text/x-dock-deck"}
+                // Reader only helps non-responsive HTML — not markdown (already responsive)
+                // or decks (slides). Hidden while viewing a diff.
+                showReader={
+                  format === "html" &&
+                  !deck &&
+                  art.current_content_type !== "text/x-dock-deck" &&
+                  view !== "diff"
+                }
+                reader={reader}
+                onReaderToggle={() => setReader((r) => !r)}
                 canLock={canLock}
                 locked={isLocked}
                 onPresent={toggleFullscreen}
@@ -635,6 +654,7 @@ export function Artifact() {
             startSelComment={startSelComment}
             currentSlide={deck?.i ?? null}
             landedSlides={landedSlides}
+            anchorConf={anchorConf}
           />
         </div>
       </ActionsCtx.Provider>

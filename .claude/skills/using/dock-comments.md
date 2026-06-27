@@ -46,11 +46,15 @@ different slide, the comment follows it and is flagged "moved". See `formats/doc
 
 ## Listing comments
 
+The feedback queue comes from `catch_up`:
+
 ```
-list_comments(short_id, state?)
+catch_up(short_id, comments?)
 ```
 
-`state` is `"open"` or `"resolved"`. Omit to get all threads.
+`comments` is `"open"`, `"addressed"`, `"resolved"`, or `"outdated"`; pass it to get that
+filtered feedback queue. Omit it for the artifact's full state (what changed, open/outdated
+threads, version history).
 
 Each comment includes: `id`, `thread_id`, `base_version`, `state`, `author`, `body_md`,
 `anchor` (the TextQuoteSelector JSON or null), `created_at`, and `anchored` (boolean —
@@ -61,7 +65,7 @@ whether the anchor still resolves in the current version).
 ## Adding a comment
 
 ```
-add_comment(short_id, body_md, quote?)
+comment(short_id, body_md, quote?)
 ```
 
 Pass `quote` as the exact text you want to anchor to. Dock finds it in the current version
@@ -69,10 +73,10 @@ and builds the TextQuoteSelector automatically. Omit `quote` for a general (unan
 
 ```
 # General feedback
-add_comment("nk0dsral", "The conclusion needs a call to action.")
+comment("nk0dsral", "The conclusion needs a call to action.")
 
 # Anchored to a specific passage
-add_comment("nk0dsral", "This sentence is unclear.", "The system resolves ambiguities")
+comment("nk0dsral", "This sentence is unclear.", "The system resolves ambiguities")
 ```
 
 ---
@@ -80,27 +84,29 @@ add_comment("nk0dsral", "This sentence is unclear.", "The system resolves ambigu
 ## Replying
 
 ```
-reply_comment(short_id, thread_id, body_md)
+comment(short_id, body_md, reply_to)
 ```
 
-Use the `thread_id` from the root comment (or any comment in the thread — they all share it).
-Replies don't need an anchor; they're part of the root comment's thread.
+Pass `reply_to` as the `thread_id` of the root comment (or any comment in the thread, since
+they all share it). Replies don't need an anchor; they're part of the root comment's thread.
 
 ---
 
 ## Resolving threads
 
 ```
-resolve_thread(short_id, comment_id, state?)
+comment(short_id, set_state, ...)   # set_state: "resolved" | "open"
 ```
 
-`state` defaults to `"resolved"`. Pass `state: "open"` to reopen a closed thread.
-`comment_id` can be any comment in the thread — Dock resolves the thread it belongs to.
+Use `set_state: "resolved"` to close a thread (or `"open"` to reopen one). Target the thread
+by its id (over the stdio `@dock/mcp` server, set_state takes a `comment_id`, which can be any
+comment in the thread).
 
-The most efficient pattern is to resolve threads at the same time as publishing a new version:
+The most efficient pattern is to resolve threads at the same time as publishing a new version,
+via `publish`'s `addresses`:
 
 ```
-publish_version("nk0dsral", newContent, "report.html", "Fixed intro", ["c_abc123", "c_def456"])
+publish("nk0dsral", newContent, "report.html", "Fixed intro", ["c_abc123", "c_def456"])
 ```
 
 ---

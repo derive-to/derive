@@ -14,6 +14,7 @@ import {
   listInstallationRepos,
   verifyWebhookSignature,
 } from "../lib/github-app"
+import { ingestGithubPrComment, upsertPreviewComment } from "../lib/github-comments"
 import { fail, readJson } from "../lib/http"
 import { effectiveToken, isSyncing, runToCompletion } from "../lib/sync-runner"
 import { log } from "../log"
@@ -61,6 +62,17 @@ interface GitHubWebhookPayload {
     head?: { sha?: string; ref?: string }
     base?: { ref?: string }
   }
+  // `issue_comment` (PR conversation) + `pull_request_review_comment` (inline) — mirrored
+  // back into the Dock artifact. `issue.pull_request` presence confirms a PR (not a plain
+  // issue); the review-comment variant carries `path`/`diff_hunk` for anchoring.
+  issue?: { number?: number; pull_request?: unknown }
+  comment?: {
+    id?: number
+    body?: string
+    path?: string
+    diff_hunk?: string
+    user?: { login?: string; type?: string }
+  }
 }
 
 /**
@@ -71,7 +83,7 @@ interface GitHubWebhookPayload {
  * connection, the App install handshake, and drives the engine (lib/sync).
  */
 export const syncRoutes = (ctx: AppContext) => {
-  const { meta, deps, currentUser, activeWorkspace, workspaceCan, background } = ctx
+  const { meta, deps, bus, currentUser, activeWorkspace, workspaceCan, background } = ctx
   const app = new Hono()
 
   // The instance App, with its three secret columns decrypted for use. Null when
@@ -176,13 +188,13 @@ export const syncRoutes = (ctx: AppContext) => {
     prNumber: number,
     prTitle: string,
     headSha: string,
-  ): Promise<void> => {
+  ): Promise<{ collectionId: string }> => {
     const title = `PR #${prNumber}: ${prTitle.trim() || "(untitled)"}`.slice(0, 200)
     if (existing) {
       await meta.updateRepoSourceSync(existing.id, { ref: headSha })
       await meta.updateCollection(existing.collection_id, { title })
       await launch(existing, true)
-      return
+      return { collectionId: existing.collection_id }
     }
     const col = await meta.createCollection({
       id: newId("col"),
@@ -209,6 +221,15 @@ export const syncRoutes = (ctx: AppContext) => {
       created_by: branch.created_by,
     })
     await launch(source, true)
+    return { collectionId: col.id }
+  }
+
+  // The body of the sticky "preview" comment Dock posts on a PR: a friendly line + a
+  // deep link into the preview collection. No em dashes (customer-facing copy).
+  const previewCommentBody = (collectionId: string, docCount: number): string => {
+    const link = `${deps.baseUrl.replace(/\/$/, "")}/?collection=${collectionId}`
+    const docs = `${docCount} doc${docCount === 1 ? "" : "s"}`
+    return `📦 **Dock preview** of this PR: ${docs} rendered with versions, comments, and review.\n\n👉 [Open the preview in Dock](${link})`
   }
 
   // Tear down a preview WITHOUT graduating it: tombstone its artifacts, drop the source
@@ -773,7 +794,30 @@ export const syncRoutes = (ctx: AppContext) => {
             // a preview; it's removable from the UI today (DELETE /v1/sync/github/:id) —
             // an automated reconciler is a noted follow-up.
             const merged = !!payload.pull_request?.merged
-            if (preview) await (merged ? graduatePreview(preview) : removePrPreview(preview))
+            if (preview) {
+              // Resolve the sticky comment to its final state before tearing the
+              // preview down (best-effort, same toggle as the open path).
+              if ((await meta.getOrgSettings(branch.org_id)).githubPreviewLink) {
+                const parsed = parseRepo(fullName)
+                if (parsed) {
+                  try {
+                    const token = await effectiveToken(meta, deps.encryptionKey, branch)
+                    const link = `${deps.baseUrl.replace(/\/$/, "")}/?collection=${branch.collection_id}`
+                    const body = merged
+                      ? `✅ **Merged.** These docs are now part of [${branch.repo} in Dock](${link}).`
+                      : "📦 **Dock preview** removed (this PR was closed without merging)."
+                    if (token) await upsertPreviewComment(parsed, prNumber, body, token)
+                  } catch (err) {
+                    log.warn("pr preview comment (close) skipped", {
+                      repo: fullName,
+                      pr: prNumber,
+                      error: err instanceof Error ? err.message : String(err),
+                    })
+                  }
+                }
+              }
+              await (merged ? graduatePreview(preview) : removePrPreview(preview))
+            }
             log.info("pr preview closed", { repo: fullName, pr: prNumber, merged })
           } else if (action === "opened" || action === "reopened" || action === "synchronize") {
             const headSha = payload.pull_request?.head?.sha
@@ -795,7 +839,7 @@ export const syncRoutes = (ctx: AppContext) => {
                 if (changedDocs.length === 0) {
                   if (preview) await removePrPreview(preview)
                 } else {
-                  await upsertPrPreview(
+                  const { collectionId } = await upsertPrPreview(
                     branch,
                     preview,
                     prNumber,
@@ -807,6 +851,23 @@ export const syncRoutes = (ctx: AppContext) => {
                     pr: prNumber,
                     docs: changedDocs.length,
                   })
+                  // Sticky preview comment on the PR (best-effort, workspace-toggleable).
+                  if (token && (await meta.getOrgSettings(branch.org_id)).githubPreviewLink) {
+                    try {
+                      await upsertPreviewComment(
+                        parsed,
+                        prNumber,
+                        previewCommentBody(collectionId, changedDocs.length),
+                        token,
+                      )
+                    } catch (err) {
+                      log.warn("pr preview comment skipped", {
+                        repo: fullName,
+                        pr: prNumber,
+                        error: err instanceof Error ? err.message : String(err),
+                      })
+                    }
+                  }
                 }
               } catch (err) {
                 log.warn("pr preview skipped", {
@@ -817,6 +878,43 @@ export const syncRoutes = (ctx: AppContext) => {
               }
             }
           }
+        }
+      }
+    } else if (event === "issue_comment" || event === "pull_request_review_comment") {
+      // Mirror a PR comment made on GitHub back into the Dock artifact (the inbound half
+      // of bidirectional comment sync). Only `created`; only for PRs that Dock previews.
+      const installationId = payload.installation?.id ? String(payload.installation.id) : null
+      const fullName = payload.repository?.full_name
+      const prNumber =
+        event === "issue_comment" ? payload.issue?.number : payload.pull_request?.number
+      const isPr = event === "pull_request_review_comment" || !!payload.issue?.pull_request
+      const cmt = payload.comment
+      if (
+        payload.action === "created" &&
+        installationId &&
+        fullName &&
+        prNumber &&
+        isPr &&
+        cmt?.id &&
+        cmt.body
+      ) {
+        const lc = fullName.toLowerCase()
+        const preview = (await meta.listRepoSourcesByInstallation(installationId)).find(
+          (s) => s.pr_number === prNumber && s.repo.toLowerCase() === lc,
+        )
+        // Respect the workspace toggle; skip silently when the PR isn't mirrored in Dock.
+        if (preview && (await meta.getOrgSettings(preview.org_id)).githubMirrorComments) {
+          const created = await ingestGithubPrComment(meta, preview, {
+            ghCommentId: cmt.id,
+            kind: event === "pull_request_review_comment" ? "review" : "issue",
+            authorLogin: cmt.user?.login ?? "github",
+            authorType: cmt.user?.type,
+            body: cmt.body,
+            path: cmt.path,
+            diffHunk: cmt.diff_hunk,
+          })
+          // Signal-only realtime nudge: open viewers refetch the (account-gated) comments.
+          if (created) bus.publish(created.artifact_id, { type: "comment.created" })
         }
       }
     } else if (event === "installation") {

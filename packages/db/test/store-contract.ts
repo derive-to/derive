@@ -1,5 +1,6 @@
 import { randomUUID as uuid } from "node:crypto"
 import type { MetaStore, NewArtifact, NewVersion } from "@dock/core"
+import { DEFAULT_ORG_SETTINGS } from "@dock/core"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 
 /**
@@ -249,6 +250,57 @@ export function runStoreContract(
       expect(await store.listComments(a.id, { state: "open" })).toHaveLength(0)
       expect(await store.listComments(a.id, { state: "resolved" })).toHaveLength(1)
     })
+
+    it("computes per-artifact comment signals for a viewer (open threads, mentions, participation)", async () => {
+      const me = `u_${uuid()}`
+      const other = `u_${uuid()}`
+      const a = await store.createArtifact(newArtifact())
+      const mention = JSON.stringify({ mentions: [{ id: me, name: "Me" }] })
+      // t1: OPEN, authored by other, @mentions me → mentions_me.
+      const c1 = await store.createComment({
+        id: uuid(),
+        artifact_id: a.id,
+        thread_id: "t1",
+        base_version: 1,
+        body_md: "hi",
+        author: "other",
+        author_id: other,
+      })
+      await store.updateComment(c1.id, { meta: mention })
+      // t2: OPEN, authored by me → i_participated.
+      await store.createComment({
+        id: uuid(),
+        artifact_id: a.id,
+        thread_id: "t2",
+        base_version: 1,
+        body_md: "mine",
+        author: "me",
+        author_id: me,
+      })
+      // t3: RESOLVED, mentions me → must NOT count (only open threads signal).
+      const c3 = await store.createComment({
+        id: uuid(),
+        artifact_id: a.id,
+        thread_id: "t3",
+        base_version: 1,
+        body_md: "done",
+        author: "other",
+        author_id: other,
+      })
+      await store.updateComment(c3.id, { meta: mention })
+      await store.setThreadState(a.id, "t3", "resolved")
+
+      // The viewer sees 2 open threads, is mentioned, and participated.
+      const sig = (await store.commentSignals([a.id], me))[a.id]
+      expect(sig).toEqual({ open_threads: 2, mentions_me: true, i_participated: true })
+      // An anonymous viewer gets the thread count but no personal flags.
+      const anon = (await store.commentSignals([a.id], null))[a.id]
+      expect(anon).toEqual({ open_threads: 2, mentions_me: false, i_participated: false })
+      // Empty input ⇒ {}; an artifact with no comments has no entry.
+      expect(await store.commentSignals([], me)).toEqual({})
+      const blank = await store.createArtifact(newArtifact())
+      expect((await store.commentSignals([blank.id], me))[blank.id]).toBeUndefined()
+    })
   })
 
   describe(`${label}: shares, favorites, tags`, () => {
@@ -443,6 +495,170 @@ export function runStoreContract(
       const escIds = await store.followedArtifactIds(esc, ORG)
       expect(escIds).toContain(literal.id)
       expect(escIds).not.toContain(wildcardish.id) // "_" escaped → literal, not "any char"
+    })
+  })
+
+  describe(`${label}: follows (people, cross-workspace)`, () => {
+    it("surfaces a followed person's PUBLIC work in ANY workspace, hides their private work", async () => {
+      const follower = `u_${uuid()}`
+      const followerOrg = `${ORG}_follower_ws` // the viewer's OWN workspace (not the author's)
+      const maya = `u_maya_${uuid()}`
+      const mayaOrg = `${ORG}_maya_ws` // the author publishes in HER workspace
+
+      // Maya's PUBLIC work, in her own workspace (author_id stamped on hand-publish).
+      const pub = await store.createArtifact(newArtifact({ org_id: mayaOrg, visibility: "public" }))
+      await store.addVersion(pub.id, newVersion({ author: "Maya", author_id: maya }))
+      // Maya's PRIVATE (link) work — must NOT leak into a follower's feed.
+      const priv = await store.createArtifact(newArtifact({ org_id: mayaOrg, visibility: "link" }))
+      await store.addVersion(priv.id, newVersion({ author: "Maya", author_id: maya }))
+      // Someone else's public work in another workspace — not followed, must not appear.
+      const other = await store.createArtifact(
+        newArtifact({ org_id: `${ORG}_other_ws`, visibility: "public" }),
+      )
+      await store.addVersion(
+        other.id,
+        newVersion({ author: "Nora", author_id: `u_nora_${uuid()}` }),
+      )
+
+      // The follower follows Maya the PERSON (people-follows are global, org_id "*").
+      await store.addFollow({
+        id: uuid(),
+        org_id: "*",
+        user_id: follower,
+        kind: "user",
+        target: maya,
+      })
+
+      // The feed is queried with the FOLLOWER's active workspace — which is NOT Maya's.
+      const ids = await store.followedArtifactIds(follower, followerOrg)
+      expect(ids).toContain(pub.id) // public work, surfaced across workspaces
+      expect(ids).not.toContain(priv.id) // private work never leaks
+      expect(ids).not.toContain(other.id) // not a followed person
+
+      // A tombstoned public work drops out of the feed.
+      await store.setArtifactRemoved(pub.id, new Date().toISOString())
+      expect(await store.followedArtifactIds(follower, followerOrg)).not.toContain(pub.id)
+      await store.setArtifactRemoved(pub.id, null)
+    })
+
+    it("combines an author follow (workspace-scoped) with a person follow (public, anywhere)", async () => {
+      const user = `u_${uuid()}`
+      const homeOrg = `${ORG}_home_ws`
+      const person = `u_person_${uuid()}`
+      const farOrg = `${ORG}_far_ws`
+
+      // An author-login match in the user's OWN workspace (workspace-scoped branch).
+      const local = await store.createArtifact(newArtifact({ org_id: homeOrg }))
+      await store.addVersion(local.id, newVersion({ author: "Ada", author_login: "ada" }))
+      // The same login in another workspace — author follows stay workspace-scoped, excluded.
+      const localElsewhere = await store.createArtifact(newArtifact({ org_id: farOrg }))
+      await store.addVersion(localElsewhere.id, newVersion({ author: "Ada", author_login: "ada" }))
+      // A followed person's public work in a far workspace (person branch, any workspace).
+      const personPub = await store.createArtifact(
+        newArtifact({ org_id: farOrg, visibility: "public" }),
+      )
+      await store.addVersion(personPub.id, newVersion({ author: "Pat", author_id: person }))
+
+      await store.addFollow({
+        id: uuid(),
+        org_id: homeOrg,
+        user_id: user,
+        kind: "author",
+        target: "ada",
+      })
+      await store.addFollow({
+        id: uuid(),
+        org_id: "*",
+        user_id: user,
+        kind: "user",
+        target: person,
+      })
+
+      const ids = await store.followedArtifactIds(user, homeOrg)
+      expect(ids).toContain(local.id) // author match in the active workspace
+      expect(ids).not.toContain(localElsewhere.id) // author match in another workspace — excluded
+      expect(ids).toContain(personPub.id) // followed person's public work, anywhere
+    })
+  })
+
+  describe(`${label}: people profiles (works, shared orgs, follower counts)`, () => {
+    it("lists + counts a person's work, gated by visibility (public always; shared orgs widen)", async () => {
+      const author = `u_author_${uuid()}`
+      const homeOrg = `${ORG}_pp_home_${uuid()}`
+      const ghId = `gh-${uuid()}` // distinctive, unused by any other test
+      // Public work, hand-authored (author_id) in the author's workspace.
+      const pub = await store.createArtifact(newArtifact({ org_id: homeOrg, visibility: "public" }))
+      await store.addVersion(pub.id, newVersion({ author: "Author", author_id: author }))
+      // Org-visible (non-public) work by the same author.
+      const orgWork = await store.createArtifact(
+        newArtifact({ org_id: homeOrg, visibility: "org" }),
+      )
+      await store.addVersion(orgWork.id, newVersion({ author: "Author", author_id: author }))
+      // Public work attributed by a linked GitHub id (no author_id) — matched via ghIds.
+      const ghWork = await store.createArtifact(
+        newArtifact({ org_id: homeOrg, visibility: "public" }),
+      )
+      await store.addVersion(
+        ghWork.id,
+        newVersion({ author: "Gh", author_login: "gh", author_gh_id: ghId }),
+      )
+
+      // Anonymous viewer (no shared orgs): public work only — both author_id + gh-id matches.
+      const anon = await store.listUserWorks(author, [ghId], {})
+      const anonIds = anon.map((a) => a.id)
+      expect(anonIds).toContain(pub.id)
+      expect(anonIds).toContain(ghWork.id)
+      expect(anonIds).not.toContain(orgWork.id) // non-public, no shared workspace
+      expect(await store.countUserWorks(author, [ghId], {})).toBe(anon.length)
+
+      // A viewer who shares the author's workspace also sees the org-visible work.
+      const shared = await store.listUserWorks(author, [], { visibleOrgIds: [homeOrg] })
+      expect(shared.map((a) => a.id)).toContain(orgWork.id)
+      expect(await store.countUserWorks(author, [], { visibleOrgIds: [homeOrg] })).toBe(
+        shared.length,
+      )
+
+      // No author_id match and no linked gh ids → nothing.
+      expect(await store.listUserWorks(`u_${uuid()}`, [], {})).toEqual([])
+    })
+
+    it("computes the shared-workspace set between two users", async () => {
+      const a = `u_${uuid()}`
+      const b = `u_${uuid()}`
+      const shared = `${ORG}_shared_${uuid()}`
+      const onlyA = `${ORG}_onlyA_${uuid()}`
+      await store.setMembership({ id: uuid(), org_id: shared, user_id: a, role: "editor" })
+      await store.setMembership({ id: uuid(), org_id: shared, user_id: b, role: "viewer" })
+      await store.setMembership({ id: uuid(), org_id: onlyA, user_id: a, role: "owner" })
+      const orgs = await store.sharedOrgIds(a, b)
+      expect(orgs).toContain(shared)
+      expect(orgs).not.toContain(onlyA) // only `a` is a member there
+    })
+
+    it("derives a user's GitHub login from their authored artifacts (null when unknown)", async () => {
+      const gh = await store.createArtifact(newArtifact())
+      await store.addVersion(
+        gh.id,
+        newVersion({ author: "Octo", author_login: "octocat", author_gh_id: "583231-pp" }),
+      )
+      expect(await store.githubLoginForUser(`u_${uuid()}`, ["583231-pp"])).toBe("octocat")
+      expect(await store.githubLoginForUser(`u_${uuid()}`, [])).toBeNull() // no linked ids
+      expect(await store.githubLoginForUser(`u_${uuid()}`, ["no-such-gh"])).toBeNull() // no match
+    })
+
+    it("counts a person's followers and following (people-follows only)", async () => {
+      const maya = `u_maya_${uuid()}`
+      const f1 = `u_${uuid()}`
+      const f2 = `u_${uuid()}`
+      await store.addFollow({ id: uuid(), org_id: "*", user_id: f1, kind: "user", target: maya })
+      await store.addFollow({ id: uuid(), org_id: "*", user_id: f2, kind: "user", target: maya })
+      await store.addFollow({ id: uuid(), org_id: "*", user_id: maya, kind: "user", target: f1 })
+      expect(await store.countFollowers(maya)).toBe(2)
+      expect(await store.countFollowing(maya)).toBe(1)
+      // listFollowers/Following resolve names via Better Auth's user table, which this
+      // contract store doesn't provision — they degrade to [] safely (no throw).
+      expect(Array.isArray(await store.listFollowers(maya, 50))).toBe(true)
+      expect(Array.isArray(await store.listFollowing(maya, 50))).toBe(true)
     })
   })
 
@@ -929,6 +1145,92 @@ export function runStoreContract(
       // The audit entry landed in the same step.
       const log = await store.listAuditLog(ORG, { artifactId: a.id })
       expect(log.map((x) => x.action)).toContain("takedown")
+    })
+  })
+
+  describe(`${label}: integration settings + Slack`, () => {
+    it("returns defaults for an unset org, then round-trips an override (insert + upsert)", async () => {
+      const settingsOrg = `org_${uuid()}`
+      // Unset → the full default set.
+      expect(await store.getOrgSettings(settingsOrg)).toEqual(DEFAULT_ORG_SETTINGS)
+      // First write (insert path). Overridden channels stick; the rest stay default on read.
+      await store.setOrgSettings(settingsOrg, {
+        ...DEFAULT_ORG_SETTINGS,
+        githubPostComments: false,
+        slackPost: false,
+      })
+      expect(await store.getOrgSettings(settingsOrg)).toMatchObject({
+        emailNotifications: true,
+        githubPostComments: false,
+        githubMirrorComments: true,
+        slackPost: false,
+      })
+      // Second write for the same org exercises the onConflict update path.
+      await store.setOrgSettings(settingsOrg, {
+        ...DEFAULT_ORG_SETTINGS,
+        emailNotifications: false,
+      })
+      expect(await store.getOrgSettings(settingsOrg)).toMatchObject({
+        emailNotifications: false,
+        githubPostComments: true,
+        slackPost: true,
+      })
+    })
+
+    it("installs, re-installs (token rotation), and deletes a Slack workspace", async () => {
+      expect(await store.getSlackInstall(ORG)).toBeNull()
+      await store.setSlackInstall({
+        org_id: ORG,
+        team_id: "T1",
+        team_name: "Acme",
+        bot_token: "xoxb-1",
+        bot_user_id: "U1",
+        default_channel: "C1",
+        created_at: "2026-06-20T00:00:00.000Z",
+      })
+      expect(await store.getSlackInstall(ORG)).toMatchObject({ team_id: "T1", bot_token: "xoxb-1" })
+      // Re-install (onConflict update): rotate the token, rename, change channel.
+      await store.setSlackInstall({
+        org_id: ORG,
+        team_id: "T1",
+        team_name: "Acme Inc",
+        bot_token: "xoxb-2",
+        bot_user_id: "U1",
+        default_channel: "C2",
+        created_at: "2026-06-21T00:00:00.000Z",
+      })
+      expect(await store.getSlackInstall(ORG)).toMatchObject({
+        team_name: "Acme Inc",
+        bot_token: "xoxb-2",
+        default_channel: "C2",
+      })
+      await store.deleteSlackInstall(ORG)
+      expect(await store.getSlackInstall(ORG)).toBeNull()
+    })
+
+    it("links a Slack thread to an artifact, found by thread id or by channel+ts", async () => {
+      const a = await store.createArtifact(newArtifact())
+      const link = {
+        id: uuid(),
+        org_id: ORG,
+        artifact_id: a.id,
+        thread_id: `th_${uuid()}`,
+        channel: "C9",
+        message_ts: "1700000000.000100",
+        created_at: "2026-06-20T00:00:00.000Z",
+      }
+      await store.setSlackThreadLink(link)
+      expect(await store.getSlackThreadLinkByThread(link.thread_id)).toMatchObject({
+        artifact_id: a.id,
+        channel: "C9",
+        message_ts: "1700000000.000100",
+      })
+      expect(await store.getSlackThreadLinkByTs("C9", "1700000000.000100")).toMatchObject({
+        thread_id: link.thread_id,
+      })
+      // Misses return null on both lookups.
+      expect(await store.getSlackThreadLinkByThread(`missing_${uuid()}`)).toBeNull()
+      expect(await store.getSlackThreadLinkByTs("C9", "nope")).toBeNull()
     })
   })
 }

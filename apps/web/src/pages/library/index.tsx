@@ -10,7 +10,12 @@ import { useShell } from "@/components/shell-context"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { useAuth } from "@/ctx"
-import { type LibraryParams, libraryArtifactsQuery, sharedArtifactsQuery } from "@/lib/queries"
+import {
+  type LibraryParams,
+  libraryArtifactsQuery,
+  needsFeedbackArtifactsQuery,
+  sharedArtifactsQuery,
+} from "@/lib/queries"
 import { useFollows } from "@/lib/use-follows"
 import { usePrefetchArtifact } from "@/lib/use-prefetch-artifact"
 import { cn } from "@/lib/utils"
@@ -24,6 +29,7 @@ import { FollowingStrip } from "./following-strip"
 import { HowItWorks } from "./how-it-works"
 import { LibrarySkeleton } from "./library-skeleton"
 import { PublishCard } from "./publish-card"
+import { RepoPullRequests } from "./repo-pull-requests"
 import { ShareCollectionDialog } from "./share-collection-dialog"
 import type { Filter } from "./types"
 
@@ -182,6 +188,20 @@ function LibraryBody() {
 
   const activeCollection =
     filter.kind === "collection" ? collections.find((c) => c.id === filter.id) : undefined
+  // The in-collection PR viewer. On a repo mirror it lists that repo's open PR
+  // previews; on a PR preview it lists the siblings (so you can hop between PRs),
+  // with the one you're viewing highlighted. parentId is the repo collection.
+  const prParentId =
+    activeCollection?.kind === "repo"
+      ? activeCollection.id
+      : activeCollection?.kind === "pr"
+        ? activeCollection.parentId
+        : undefined
+  const repoPrs = prParentId
+    ? collections
+        .filter((c) => c.kind === "pr" && c.parentId === prParentId)
+        .sort((a, b) => (b.prNumber ?? 0) - (a.prNumber ?? 0))
+    : []
   // The collection's name from the sidebar list, falling back to the title the list
   // response carries — so a collection in another workspace still shows its real name
   // (not the generic "Collection") rather than relying on the active-workspace list.
@@ -238,6 +258,24 @@ function LibraryBody() {
   const { data: sharedData } = useQuery({ ...sharedArtifactsQuery(), enabled: homeView })
   const sharedItems = homeView ? (sharedData ?? []) : []
 
+  // "Needs your feedback": artifacts with an open thread you're tagged in or have
+  // commented on — promoted to the very top of the home so you act on them first.
+  const { data: feedbackData } = useQuery({ ...needsFeedbackArtifactsQuery(), enabled: homeView })
+  const feedbackItems = homeView ? (feedbackData ?? []) : []
+  const openFeedback = async (a: Artifact) => {
+    const on = !a.favorite
+    qc.setQueryData(needsFeedbackArtifactsQuery().queryKey, (old) =>
+      old?.map((x) => (x.short_id === a.short_id ? { ...x, favorite: on } : x)),
+    )
+    try {
+      await api.favorite(a.short_id, on)
+      refreshSummary()
+    } catch (e) {
+      toast.error((e as Error).message)
+      qc.invalidateQueries({ queryKey: needsFeedbackArtifactsQuery().queryKey })
+    }
+  }
+
   // The caller's follows: drives the Following feed's manage strip + empty state,
   // and the Follow/Following toggle on the active author-filter pill.
   const { follows, isFollowingAuthor, toggleAuthor, unfollow } = useFollows()
@@ -260,7 +298,12 @@ function LibraryBody() {
   // The "how it works" guide is for a truly blank slate: nothing of your own AND
   // nothing shared with you. If something's shared, that section carries the home.
   const emptyHome =
-    homeView && !isPending && !isError && items.length === 0 && sharedItems.length === 0
+    homeView &&
+    !isPending &&
+    !isError &&
+    items.length === 0 &&
+    sharedItems.length === 0 &&
+    feedbackItems.length === 0
 
   return (
     <div ref={scrollRef} className="flex-1 overflow-y-auto">
@@ -379,6 +422,30 @@ function LibraryBody() {
 
         {filter.kind !== "collection" && filter.kind !== "following" && <PublishCard />}
 
+        {feedbackItems.length > 0 && (
+          <section className="mb-6" data-testid="needs-your-feedback">
+            <h2 className="mb-3.5 flex items-center gap-2 font-display text-lg font-semibold">
+              <Icon name="comments" size={18} className="text-primary" />
+              Needs your feedback
+              <span className="text-base font-normal text-muted-foreground">
+                · {feedbackItems.length}
+              </span>
+            </h2>
+            <div className="grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-3.5">
+              {feedbackItems.map((a) => (
+                <ArtifactCard
+                  key={a.short_id}
+                  artifact={a}
+                  onOpen={() => nav({ to: "/a/$ref", params: { ref: refFor(a) } })}
+                  onToggleFavorite={() => openFeedback(a)}
+                  onPickTag={(tag) => nav({ to: "/", search: { tag } })}
+                  onPrefetch={() => prefetch(a.short_id, a.current_version)}
+                />
+              ))}
+            </div>
+          </section>
+        )}
+
         {sharedItems.length > 0 && (
           <section className="mb-6" data-testid="shared-with-you">
             <h2 className="mb-3.5 font-display text-lg font-semibold">
@@ -403,13 +470,16 @@ function LibraryBody() {
         )}
 
         {filter.kind === "collection" ? (
-          <CollectionBar
-            title={heading}
-            count={headingCount}
-            onShare={() => activeCollection && setShareCol(activeCollection)}
-            onRename={(t) => renameCollection(filter.id, t)}
-            onDelete={() => deleteCollection(filter.id)}
-          />
+          <>
+            <CollectionBar
+              title={heading}
+              count={headingCount}
+              onShare={() => activeCollection && setShareCol(activeCollection)}
+              onRename={(t) => renameCollection(filter.id, t)}
+              onDelete={() => deleteCollection(filter.id)}
+            />
+            <RepoPullRequests prs={repoPrs} repo={activeCollection?.repo} activeId={filter.id} />
+          </>
         ) : (
           // Hide the "All artifacts · 0" heading on a brand-new empty home — the
           // visual guide carries it instead.

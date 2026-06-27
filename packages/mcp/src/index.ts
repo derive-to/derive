@@ -5,6 +5,13 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod"
 import { createClient } from "./client"
 
+// Stdio MCP server for self-hosters: `npx @dock/mcp` talks to a Dock instance over
+// the /v1 HTTP API (DOCK_SERVER) with a bearer (DOCK_TOKEN). It exposes the SAME five
+// tools as the remote /mcp server — list_artifacts, read, catch_up, comment, publish —
+// so the vocabulary is identical whether an agent connects over OAuth or a static
+// token. (A static token already has publish rights, so publish here goes live unless
+// you pass for_review; bundle publishing is remote-only.)
+
 const client = createClient({
   baseUrl: process.env.DOCK_SERVER ?? "http://localhost:8080",
   token: process.env.DOCK_TOKEN,
@@ -15,195 +22,270 @@ const GUIDE = (() => {
   try {
     return readFileSync(fileURLToPath(new URL("../SKILL.md", import.meta.url)), "utf8")
   } catch {
-    return "# Dock\nPublish, read comments, revise, reply, resolve via the dock tools."
+    return "# Dock\nFind, read, catch_up, comment, and publish via the dock tools."
   }
 })()
 
-const server = new McpServer({ name: "dock", version: "0.1.0" })
+const server = new McpServer({ name: "dock", version: "1.0.0" })
 
 const text = (s: string) => ({ content: [{ type: "text" as const, text: s }] })
+const json = (v: unknown) => text(JSON.stringify(v, null, 2))
 
+// FIND ------------------------------------------------------------------------
 server.registerTool(
-  "publish_artifact",
-  {
-    description: "Publish an HTML or Markdown artifact and get a permanent URL.",
-    inputSchema: {
-      content: z.string().describe("The artifact's text content (HTML or Markdown)."),
-      filename: z.string().describe("Filename, e.g. report.html or notes.md."),
-      title: z.string().optional(),
-      slug: z.string().optional(),
-      visibility: z.enum(["public", "link", "org", "password"]).optional(),
-      password: z
-        .string()
-        .optional()
-        .describe("Unlock password; required when visibility is 'password'."),
-    },
-  },
-  async (args) => {
-    const a = await client.publish(args)
-    return text(`Published "${a.title}" → ${a.url}\nshort_id ${a.short_id} · v${a.current_version}`)
-  },
-)
-
-server.registerTool(
-  "publish_version",
-  {
-    description: "Publish a new version of an existing artifact (same URL).",
-    inputSchema: {
-      short_id: z.string(),
-      content: z.string(),
-      filename: z.string(),
-      message: z.string().optional().describe("What changed in this version."),
-      resolves: z
-        .array(z.string())
-        .optional()
-        .describe("Comment ids whose threads this version resolves."),
-    },
-  },
-  async ({ short_id, content, filename, message, resolves }) => {
-    const a = await client.publish({ id: short_id, content, filename, message, resolves })
-    const note = resolves?.length ? ` · resolved ${resolves.length} thread(s)` : ""
-    return text(`${a.url} is now v${a.current_version}${note}`)
-  },
-)
-
-server.registerTool(
-  "get_artifact",
+  "list_artifacts",
   {
     description:
-      "Read an artifact's metadata and source content for a given version (defaults to current).",
-    inputSchema: { short_id: z.string(), version: z.number().int().optional() },
+      "List the artifacts in your workspace — short id, title, kind, current version, visibility. Start here to find what to work on, then catch_up or read it.",
+    inputSchema: { query: z.string().optional().describe("Optional title search filter.") },
+  },
+  async ({ query }) => {
+    const arts = await client.list(query)
+    return json({ count: arts.length, artifacts: arts })
+  },
+)
+
+// READ CONTENT ----------------------------------------------------------------
+server.registerTool(
+  "read",
+  {
+    description:
+      "Read an artifact's CONTENT by short id (a past `version` defaults to current). For what CHANGED or the comment threads, use catch_up instead.",
+    inputSchema: {
+      short_id: z.string(),
+      version: z.number().int().optional().describe("Defaults to the current version."),
+    },
   },
   async ({ short_id, version }) => {
     const a = await client.get(short_id)
     const body = await client.getContent(short_id, version)
     const v = version ?? a.current_version
-    return text(`# ${a.title} (v${v}/${a.current_version}, ${a.kind})\n${a.url}\n\n---\n${body}`)
+    return json({ short_id, title: a.title, kind: a.kind, version: v, content: body })
   },
 )
 
+// CATCH UP — state, feedback, history, and diffs all in one -------------------
 server.registerTool(
-  "list_versions",
-  { description: "List an artifact's version history.", inputSchema: { short_id: z.string() } },
-  async ({ short_id }) => {
-    const a = await client.get(short_id)
-    const lines = a.versions
-      .map((v) => `v${v.n} · ${v.author} · ${v.message ?? ""} · ${v.created_at}`)
-      .join("\n")
-    return text(`${a.title} (${a.versions.length} versions)\n${lines}`)
-  },
-)
-
-server.registerTool(
-  "list_comments",
-  {
-    description: "List comment threads on an artifact (the feedback queue). Filter by state.",
-    inputSchema: { short_id: z.string(), state: z.enum(["open", "resolved"]).optional() },
-  },
-  async ({ short_id, state }) => {
-    const comments = await client.listComments(short_id, state)
-    if (comments.length === 0) return text(`No ${state ?? ""} comments.`)
-    const lines = comments.map(
-      (c) =>
-        `[${c.id}] thread ${c.thread_id} · ${c.state} · ${c.author} · base v${c.base_version}` +
-        (c.anchor ? ` · @${c.anchor}` : "") +
-        `\n  ${c.body_md}`,
-    )
-    return text(lines.join("\n"))
-  },
-)
-
-server.registerTool(
-  "reply_comment",
-  {
-    description: "Reply in an existing comment thread (agents can discuss, not just resolve).",
-    inputSchema: { short_id: z.string(), thread_id: z.string(), body_md: z.string() },
-  },
-  async ({ short_id, thread_id, body_md }) => {
-    const c = await client.createComment(short_id, { thread_id, body_md, author: "agent" })
-    return text(`Replied in thread ${c.thread_id} (comment ${c.id}).`)
-  },
-)
-
-server.registerTool(
-  "add_comment",
+  "catch_up",
   {
     description:
-      "Leave new feedback as a new thread. Optionally anchor it to a quoted span of the rendered text.",
+      "START HERE on an artifact. Its state in one call: a summary, the versions since `since_version`, the open (and outdated) comment threads, and the full version history. " +
+      "Pass `comments` (open / addressed / resolved / outdated) to instead get that filtered thread list — your feedback queue. " +
+      "Pass `response_format='detailed'` (optionally with `since_version`/`to_version`) to fold in the exact line diff between two versions.",
     inputSchema: {
       short_id: z.string(),
-      body_md: z.string(),
-      quote: z.string().optional().describe("Exact text to anchor the comment to."),
+      since_version: z
+        .number()
+        .int()
+        .optional()
+        .describe("The version you last saw (diff base). Defaults to to_version − 1."),
+      to_version: z
+        .number()
+        .int()
+        .optional()
+        .describe("Compare up to this version instead of the current one."),
+      comments: z
+        .enum(["open", "addressed", "resolved", "outdated"])
+        .optional()
+        .describe(
+          "Return ONLY this state's comment threads (the feedback queue) instead of the delta.",
+        ),
+      response_format: z
+        .enum(["summary", "detailed"])
+        .optional()
+        .describe("'summary' (default) omits the line diff; 'detailed' includes it."),
     },
   },
-  async ({ short_id, body_md, quote }) => {
-    const anchor = quote ? { type: "TextQuoteSelector", exact: quote } : undefined
-    const c = await client.createComment(short_id, { body_md, anchor, author: "agent" })
-    return text(
-      `Commented (thread ${c.thread_id}, comment ${c.id})${quote ? ` on “${quote}”` : ""}.`,
-    )
+  async ({ short_id, since_version, to_version, comments, response_format }) => {
+    const summarizeComment = (c: {
+      thread_id: string
+      author: string
+      state: string
+      anchor: string | null
+      body_md: string
+    }) => ({
+      thread: c.thread_id,
+      author: c.author,
+      state: c.state,
+      quote: c.anchor,
+      body: c.body_md,
+    })
+
+    if (comments) {
+      const list = await client.listComments(short_id, comments)
+      return json({
+        short_id,
+        comments_state: comments,
+        count: list.length,
+        comments: list.map(summarizeComment),
+      })
+    }
+
+    const a = await client.get(short_id)
+    const head = a.current_version
+    const to = Math.min(head, Math.max(1, to_version ?? head))
+    const since = Math.min(to, Math.max(1, since_version ?? to - 1))
+    const history = a.versions.slice().sort((x, y) => y.n - x.n)
+    const newVersions = history.filter((v) => v.n > since && v.n <= to)
+    const [open, outdated, addressed] = await Promise.all([
+      client.listComments(short_id, "open"),
+      client.listComments(short_id, "outdated"),
+      client.listComments(short_id, "addressed"),
+    ])
+    let entryDiff: string | undefined
+    if (response_format === "detailed" && since < to) {
+      const d = await client.diff(short_id, since, to)
+      entryDiff = d.ops
+        .map((o) => `${o.t === "add" ? "+" : o.t === "del" ? "-" : " "} ${o.line}`)
+        .join("\n")
+    }
+    const outdatedBit = outdated.length ? ` ${outdated.length} now outdated.` : ""
+    const addressedBit = addressed.length ? ` ${addressed.length} addressed (pending review).` : ""
+    const summary =
+      since >= to
+        ? `You're up to date on "${a.title}" (v${head}); ${open.length} open comment(s).${addressedBit}${outdatedBit}`
+        : `"${a.title}": ${newVersions.length} new version(s) since v${since} (now v${to}). ${open.length} open comment(s).${addressedBit}${outdatedBit}`
+    return json({
+      summary,
+      short_id,
+      since,
+      to,
+      head,
+      caught_up: since >= to,
+      versions: history,
+      new_versions: newVersions,
+      ...(entryDiff
+        ? { entry_diff: entryDiff }
+        : {
+            entry_diff: "(omitted) — call again with response_format='detailed' for the line diff.",
+          }),
+      open_comments: open.map(summarizeComment),
+      ...(outdated.length ? { outdated_comments: outdated.map(summarizeComment) } : {}),
+    })
   },
 )
 
+// COMMENT — leave / reply / resolve feedback ----------------------------------
 server.registerTool(
-  "resolve_thread",
+  "comment",
   {
-    description: "Resolve (or reopen) the thread a comment belongs to, once feedback is handled.",
+    description:
+      "Leave feedback, reply in a thread, and/or resolve or reopen a thread. Anchor a NEW comment to a quoted span with `quote`. Reply by passing the thread id as `reply_to`. Resolve/reopen by passing `set_state` with a `comment_id` from the thread (or the comment you just left).",
     inputSchema: {
       short_id: z.string(),
-      comment_id: z.string(),
-      state: z.enum(["resolved", "open"]).default("resolved"),
+      body: z
+        .string()
+        .optional()
+        .describe("The comment text. Omit when only changing thread state."),
+      reply_to: z
+        .string()
+        .optional()
+        .describe("A thread id to reply in; omit to start a new thread."),
+      quote: z.string().optional().describe("Exact text to anchor a NEW comment to."),
+      set_state: z.enum(["resolved", "open"]).optional().describe("Resolve or reopen a thread."),
+      comment_id: z
+        .string()
+        .optional()
+        .describe("A comment in the thread to set_state on (when not posting)."),
     },
   },
-  async ({ short_id, comment_id, state }) => {
-    await client.setThreadState(short_id, comment_id, state)
-    return text(`Thread ${state === "resolved" ? "resolved" : "reopened"}.`)
+  async ({ short_id, body, reply_to, quote, set_state, comment_id }) => {
+    if (!body && !set_state)
+      return text("Provide `body` (to comment) or `set_state` (to resolve/reopen).")
+    let posted: Awaited<ReturnType<typeof client.createComment>> | undefined
+    if (body) {
+      const anchor = quote ? { type: "TextQuoteSelector", exact: quote } : undefined
+      posted = await client.createComment(short_id, {
+        thread_id: reply_to,
+        body_md: body,
+        anchor,
+        author: "agent",
+      })
+    }
+    let stateNote = ""
+    if (set_state) {
+      const ref = posted?.id ?? comment_id
+      if (!ref)
+        return text(
+          "`set_state` needs a `comment_id` (a comment in the thread) or a `body` to post and resolve.",
+        )
+      await client.setThreadState(short_id, ref, set_state)
+      stateNote = ` · thread ${set_state === "resolved" ? "resolved" : "reopened"}`
+    }
+    if (posted) {
+      const where = reply_to
+        ? `replied in thread ${posted.thread_id}`
+        : `new thread ${posted.thread_id}`
+      return text(`${where} (comment ${posted.id})${quote ? ` on “${quote}”` : ""}${stateNote}.`)
+    }
+    return text(`Thread ${set_state === "resolved" ? "resolved" : "reopened"}.`)
   },
 )
 
+// WRITE — publish live, or file a proposal for review -------------------------
 server.registerTool(
-  "diff_versions",
+  "publish",
   {
-    description: "Show what changed between two versions (defaults to previous → current).",
+    description:
+      "Publish a single-file artifact and get a permanent URL. OMIT short_id to create a NEW artifact (title recommended); PASS short_id to publish a new version (same URL). Pass for_review:true to file it as a PROPOSAL a human approves instead of going live. Pass `addresses` with the thread ids this revision resolves. (Multi-page bundles are published via the web app or the remote /mcp server.)",
     inputSchema: {
-      short_id: z.string(),
-      from: z.number().int().optional(),
-      to: z.number().int().optional(),
+      content: z.string().describe("The artifact's text content (HTML or Markdown)."),
+      filename: z
+        .string()
+        .optional()
+        .describe("Filename, e.g. report.html or notes.md. Defaults to index.html."),
+      short_id: z
+        .string()
+        .optional()
+        .describe("Omit to create a new artifact; pass it to add a version."),
+      title: z.string().optional(),
+      visibility: z.enum(["public", "link", "org"]).optional(),
+      message: z.string().optional().describe("What changed in this version."),
+      for_review: z
+        .boolean()
+        .optional()
+        .describe("File as a proposal for human review instead of publishing live."),
+      addresses: z
+        .array(z.string())
+        .optional()
+        .describe("Thread ids this revision resolves (live publish) or addresses (proposal)."),
     },
   },
-  async ({ short_id, from, to }) => {
-    const d = await client.diff(short_id, from, to)
-    const body = d.ops
-      .map((o) => `${o.t === "add" ? "+" : o.t === "del" ? "-" : " "} ${o.line}`)
-      .join("\n")
-    const adds = d.ops.filter((o) => o.t === "add").length
-    const dels = d.ops.filter((o) => o.t === "del").length
-    return text(`diff v${d.from} → v${d.to}  (+${adds} -${dels})\n\n${body}`)
-  },
-)
-
-server.registerTool(
-  "restore_version",
-  {
-    description: "Restore a past version as a new current revision (history is not rewritten).",
-    inputSchema: { short_id: z.string(), version: z.number().int() },
-  },
-  async ({ short_id, version }) => {
-    const a = await client.restore(short_id, version)
-    return text(`Restored v${version} → ${a.url} is now v${a.current_version}.`)
-  },
-)
-
-server.registerTool(
-  "view_stats",
-  {
-    description: "Read view analytics for an artifact (total, unique viewers, per-version).",
-    inputSchema: { short_id: z.string() },
-  },
-  async ({ short_id }) => {
-    const s = await client.viewStats(short_id)
-    const perV = s.perVersion.map((v) => `v${v.version}: ${v.count}`).join(", ")
-    return text(`${s.total} views · ${s.unique} unique${perV ? `\nby version — ${perV}` : ""}`)
+  async ({ content, filename, short_id, title, visibility, message, for_review, addresses }) => {
+    if (for_review) {
+      if (!short_id) return text("A proposal revises an EXISTING artifact — pass its short_id.")
+      const p = await client.propose(short_id, {
+        content,
+        filename,
+        message: message ?? "Proposed revision",
+        addresses,
+      })
+      const note = p.addressed?.length ? ` · addressed ${p.addressed.length} thread(s)` : ""
+      return json({
+        proposed: true,
+        proposal_id: p.id,
+        base_version: p.base_version,
+        note: `Submitted for review (not live)${note}.`,
+      })
+    }
+    const a = await client.publish({
+      id: short_id,
+      content,
+      filename: filename ?? "index.html",
+      title,
+      visibility,
+      message,
+      resolves: addresses,
+    })
+    const note = addresses?.length ? ` · resolved ${addresses.length} thread(s)` : ""
+    return json({
+      published: true,
+      short_id: a.short_id,
+      version: a.current_version,
+      url: a.url,
+      title: a.title,
+      note: short_id ? `Live — new version${note}.` : `Live — created "${a.title}"${note}.`,
+    })
   },
 )
 

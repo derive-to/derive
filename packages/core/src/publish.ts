@@ -41,6 +41,11 @@ export interface PublishInput {
   authorLogin?: string | null
   authorAvatar?: string | null
   authorGhId?: string | null
+  /** The Dock user publishing this by hand (the signed-in publisher). Stored per-version
+   *  and denormalized as the artifact's current `author_id`, so the person's profile and
+   *  people-follow surface their hand-published work. Omitted/null for sync and bare
+   *  static-token publishes. */
+  authorId?: string | null
   /** The workspace the new artifact belongs to (multi-workspace). */
   orgId?: string
   visibility?: Visibility
@@ -199,6 +204,7 @@ export async function publish(
       author_login: input.authorLogin ?? null,
       author_avatar: input.authorAvatar ?? null,
       author_gh_id: input.authorGhId ?? null,
+      author_id: input.authorId ?? null,
       message: input.message ?? null,
       name: input.name ?? null,
     })
@@ -230,6 +236,7 @@ export async function publish(
     author_login: input.authorLogin ?? null,
     author_avatar: input.authorAvatar ?? null,
     author_gh_id: input.authorGhId ?? null,
+    author_id: input.authorId ?? null,
     message: input.message ?? "first publish",
     name: input.name ?? null,
   })
@@ -315,6 +322,9 @@ export async function approveProposal(
     content_type: proposal.content_type,
     size_bytes: stored?.length ?? 0,
     author: proposal.author,
+    // Attribute the live version to the proposer (who did the work), not the approver,
+    // so it shows up on the proposer's profile. Null for legacy/anonymous proposals.
+    author_id: proposal.author_id ?? null,
     message: proposal.message ?? "Approved proposal",
     name: null,
   })

@@ -1,6 +1,7 @@
 import { useNavigate } from "@tanstack/react-router"
 import { useCallback, useEffect, useState } from "react"
 import { type Artifact, api, type PublicProfile } from "@/api"
+import { FollowButton } from "@/components/follow-button"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import {
   Command,
@@ -165,6 +166,8 @@ export function CommandPalette() {
                   </Avatar>
                   <span className="flex-1 truncate">{u.name ?? u.username}</span>
                   <span className="font-mono text-2xs text-muted-foreground">@{u.username}</span>
+                  {/* Follow without leaving the palette (self-hides for your own handle). */}
+                  <FollowButton username={u.username} size="xs" />
                 </CommandItem>
               ))}
             </CommandGroup>

@@ -88,6 +88,7 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
             author_login: v.author_login ?? null,
             author_avatar: v.author_avatar ?? null,
             author_gh_id: v.author_gh_id ?? null,
+            author_id: v.author_id ?? null,
           })
           .where(eq(artifact.id, artifactId))
           .run()
@@ -275,6 +276,26 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
         return []
       }
     },
+    // Idempotent backfill: stamp author_id where a synced artifact's author_gh_id maps
+    // to a Dock account and author_id is still null. Correlated subquery; only fills
+    // rows with a known mapping, so it's a no-op once applied.
+    backfillAuthorIds: async (): Promise<number> => {
+      try {
+        return raw
+          .prepare(
+            `UPDATE artifact SET author_id = (
+               SELECT u.id FROM account a JOIN user u ON u.id = a.userId
+               WHERE a.providerId = 'github' AND a.accountId = artifact.author_gh_id LIMIT 1)
+             WHERE author_id IS NULL AND author_gh_id IS NOT NULL
+               AND EXISTS (
+                 SELECT 1 FROM account a JOIN user u ON u.id = a.userId
+                 WHERE a.providerId = 'github' AND a.accountId = artifact.author_gh_id)`,
+          )
+          .run().changes
+      } catch {
+        return 0
+      }
+    },
     getUserByUsername: async (username): Promise<UserProfile | null> => {
       try {
         return (
@@ -327,17 +348,34 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
       const s = q.trim().toLowerCase()
       if (!s) return []
       try {
-        const like = `%${s}%`
+        // Escape LIKE metacharacters so a literal %/_/\ in the query matches itself —
+        // a search for "%" finds nothing, not everyone.
+        const like = `%${s.replace(/[\\%_]/g, (ch) => `\\${ch}`)}%`
         return raw
           .prepare(
             // discoverable IS NOT 0 → true OR unset(null) both match (on by
             // default); only an explicit 0 (opted out) is excluded.
             `SELECT id, name, image, username, profession, about FROM user
              WHERE discoverable IS NOT 0 AND username IS NOT NULL
-               AND (lower(username) LIKE ? OR lower(name) LIKE ?)
+               AND (lower(username) LIKE ? ESCAPE '\\' OR lower(name) LIKE ? ESCAPE '\\')
              ORDER BY username LIMIT ?`,
           )
           .all(like, like, limit) as UserProfile[]
+      } catch {
+        return []
+      }
+    },
+    // Browse mode for the People directory: every discoverable, handle-claimed user,
+    // ordered by handle, capped. (The empty-query counterpart to the search above.)
+    listDiscoverableUsers: async (limit): Promise<UserProfile[]> => {
+      try {
+        return raw
+          .prepare(
+            `SELECT id, name, image, username, profession, about FROM user
+             WHERE discoverable IS NOT 0 AND username IS NOT NULL
+             ORDER BY username LIMIT ?`,
+          )
+          .all(limit) as UserProfile[]
       } catch {
         return []
       }

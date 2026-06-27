@@ -2,9 +2,9 @@ import { X } from "lucide-react"
 import type { Follow } from "@/api"
 
 // The top-of-feed "following" summary + manage surface: the caller's current
-// follows as chips — @<login> for authors, <path> for paths — each with an
-// unfollow (×). Doubles as the manage-follows surface, so the feed and the
-// settings live in one place.
+// follows as chips — @<login> for GitHub authors, @<handle> for people, <path> for
+// paths — each with an unfollow (×). Doubles as the manage-follows surface, so the
+// feed and the settings live in one place.
 export function FollowingStrip({
   follows,
   onUnfollow,
@@ -19,7 +19,15 @@ export function FollowingStrip({
         Following
       </span>
       {follows.map((fol) => {
-        const label = fol.kind === "author" ? `@${fol.target}` : fol.target
+        // People-follows store a user id in `target` but carry a resolved `handle`; label
+        // them @handle and unfollow BY handle (the server resolves it back to the id).
+        const label =
+          fol.kind === "author"
+            ? `@${fol.target}`
+            : fol.kind === "user"
+              ? `@${fol.handle ?? fol.target}`
+              : fol.target
+        const unfollowTarget = fol.kind === "user" ? (fol.handle ?? fol.target) : fol.target
         return (
           <span
             key={`${fol.kind}:${fol.target}`}
@@ -28,10 +36,10 @@ export function FollowingStrip({
             {label}
             <button
               type="button"
-              data-testid={`following-unfollow-${fol.kind}-${fol.target}`}
+              data-testid={`following-unfollow-${fol.kind}-${unfollowTarget}`}
               title={`Unfollow ${label}`}
               aria-label={`Unfollow ${label}`}
-              onClick={() => onUnfollow(fol.kind, fol.target)}
+              onClick={() => onUnfollow(fol.kind, unfollowTarget)}
               className="grid size-4 place-items-center rounded text-muted-foreground transition-colors hover:text-foreground"
             >
               <X className="size-3" aria-hidden />

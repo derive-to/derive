@@ -61,6 +61,11 @@ export interface ArtifactRecord {
   author_login: string | null
   author_avatar: string | null
   author_gh_id: string | null
+  /** The Dock user who last published this artifact by hand (the signed-in publisher).
+   *  Null for GitHub-synced versions (attributed via `author_gh_id` instead), bare
+   *  static-token publishes, and legacy rows. Lets a person's profile + people-follow
+   *  surface their hand-published work. */
+  author_id: string | null
 }
 
 export interface ListArtifactsOpts {
@@ -84,6 +89,11 @@ export interface ListArtifactsOpts {
   /** Only `public` artifacts. Set for anonymous / non-member callers so a workspace
    *  listing never leaks `org`/`link`/`password` titles to someone who can't open them. */
   publicOnly?: boolean
+  /** Profile work-list visibility gate: a row is included when it is `public` OR its
+   *  `org_id` is in this set (the workspaces the viewer shares with the profile owner).
+   *  An empty/omitted set with a profile query ⇒ public-only. Used by `listUserWorks`
+   *  so a person's profile never leaks non-public work the viewer can't open. */
+  visibleOrgIds?: string[]
 }
 
 export interface VersionRecord {
@@ -101,6 +111,8 @@ export interface VersionRecord {
   author_login: string | null
   author_avatar: string | null
   author_gh_id: string | null
+  /** The Dock user who published this version by hand; null for sync/anon/legacy. */
+  author_id: string | null
   message: string | null
   /** A named checkpoint (Docs-style). Null = an ordinary auto-saved revision. */
   name: string | null
@@ -132,6 +144,8 @@ export interface NewVersion {
   author_login?: string | null
   author_avatar?: string | null
   author_gh_id?: string | null
+  /** The Dock user who published this version by hand; null/omitted for sync/anon. */
+  author_id?: string | null
   message: string | null
   name?: string | null
 }
@@ -179,13 +193,26 @@ export interface MetaStore {
    */
   listComments(artifactId: string, opts?: CommentListOpts): Promise<CommentRecord[]>
   getComment(id: string): Promise<CommentRecord | null>
-  /** Patch a single comment's body and/or meta (reactions, edited, deleted). */
+  /** Patch a single comment's body, meta (reactions, edited, deleted), and/or
+   *  anchor (the re-anchor sweep self-heals an element anchor it recovered across
+   *  versions by rewriting the root comment's selector). */
   updateComment(
     id: string,
-    fields: { body_md?: string; meta?: string | null },
+    fields: { body_md?: string; meta?: string | null; anchor?: string | null },
   ): Promise<CommentRecord | null>
   /** Flips every comment in a thread to a state; returns the count updated. */
   setThreadState(artifactId: string, threadId: string, state: CommentState): Promise<number>
+  /** Per-artifact comment signals for `userId` over a set of artifact ids, in one
+   *  query: open-thread count plus whether the viewer is tagged in or has authored an
+   *  open thread (drives the "needs your feedback" featuring). A null userId gets
+   *  counts only. */
+  commentSignals(
+    artifactIds: string[],
+    userId: string | null,
+  ): Promise<Record<string, CommentSignals>>
+  /** Artifact ids in `orgId` with an open thread the user is tagged in or authored —
+   *  the "needs your feedback" set the home section is built from. */
+  artifactIdsNeedingFeedback(userId: string, orgId: string): Promise<string[]>
 
   /**
    * Newest-first artifact page. `cursor` is keyset pagination on created_at
@@ -298,17 +325,29 @@ export interface MetaStore {
   setFavorite(artifactId: string, userId: string): Promise<void>
   removeFavorite(artifactId: string, userId: string): Promise<void>
 
-  // ---- Follows (per-user: track GitHub authors + repo path prefixes) -----
+  // ---- Follows (per-user: track GitHub authors, repo paths, and people) --
   /** Record a follow (idempotent on (user, org, kind, target)); returns the row. */
   addFollow(f: NewFollow): Promise<FollowRecord>
   removeFollow(userId: string, orgId: string, kind: FollowKind, target: string): Promise<void>
-  /** A user's follows in a workspace, newest first. */
+  /** A user's follows for the Following management UI: their `author`/`path` follows in
+   *  `orgId` PLUS their global `user` (people) follows (org_id = "*"), newest first. */
   listFollows(userId: string, orgId: string): Promise<FollowRecord[]>
-  /** Artifact ids in `orgId` (not removed) whose current author_login is one of the
-   *  user's followed logins (case-insensitive) OR whose source_path starts with one of
-   *  the user's followed path prefixes — the activity feed. Empty when the user follows
-   *  nothing. */
+  /** Artifact ids (not removed) surfaced by this user's follows — the activity feed.
+   *  Two scopes: author/path follows match within the active workspace `orgId` (a followed
+   *  author_login, case-insensitive, or a source_path prefix); people follows match a
+   *  followed person's PUBLIC work in ANY workspace (by `author_id` or their linked GitHub
+   *  ids) — a person you follow usually publishes in their own workspace, not yours. The
+   *  people scope is gated to `public`, so following someone never exposes their private
+   *  cross-workspace work. Empty when the user follows nothing. */
   followedArtifactIds(userId: string, orgId: string): Promise<string[]>
+  /** How many people follow this user (kind='user', target=userId). */
+  countFollowers(userId: string): Promise<number>
+  /** How many people this user follows (kind='user', user_id=userId). */
+  countFollowing(userId: string): Promise<number>
+  /** People who follow this user, as public profiles, newest follow first. */
+  listFollowers(userId: string, limit: number): Promise<UserProfile[]>
+  /** People this user follows, as public profiles, newest follow first. */
+  listFollowing(userId: string, limit: number): Promise<UserProfile[]>
   /** Tags per artifact, batched (no N+1). Missing ids map to no entry. */
   tagsForArtifacts(artifactIds: string[]): Promise<Record<string, string[]>>
   /** Replace an artifact's full tag set (deduped, trimmed, lowercased upstream). */
@@ -378,6 +417,25 @@ export interface MetaStore {
   /** A workspace's installations, newest first. */
   listGithubInstallations(orgId: string): Promise<GitHubInstallationRecord[]>
   deleteGithubInstallation(installationId: string): Promise<void>
+  // ---- Workspace integration settings (enable/disable each channel) --------
+  /** The workspace's integration preferences, merged over defaults (so a workspace
+   *  that never saved any returns all-enabled). */
+  getOrgSettings(orgId: string): Promise<OrgSettings>
+  /** Persist the workspace's integration preferences (full object; upsert by org). */
+  setOrgSettings(orgId: string, settings: OrgSettings): Promise<void>
+  // ---- Slack App (connected workspace + thread links) ---------------------
+  /** The Slack workspace connected to this Dock workspace, or null. */
+  getSlackInstall(orgId: string): Promise<SlackInstallRecord | null>
+  /** Upsert (connect / reconnect) the Slack install for a workspace. */
+  setSlackInstall(s: SlackInstallRecord): Promise<void>
+  /** Disconnect Slack for a workspace. */
+  deleteSlackInstall(orgId: string): Promise<void>
+  /** The Slack message a Dock thread is mirrored to (for threading replies), or null. */
+  getSlackThreadLinkByThread(threadId: string): Promise<SlackThreadLinkRecord | null>
+  /** The Dock thread a Slack message maps to (for reply-back), or null. */
+  getSlackThreadLinkByTs(channel: string, ts: string): Promise<SlackThreadLinkRecord | null>
+  /** Record the Slack message ↔ Dock thread mapping (idempotent on thread_id). */
+  setSlackThreadLink(l: SlackThreadLinkRecord): Promise<void>
   // ---- Domain mode: a hostname serving artifact(s) at its own origin ------
   // A domain row is either bound to one artifact (`artifact_id` set: a vanity
   // subdomain today, a per-artifact custom domain later — served at the host root)
@@ -425,6 +483,24 @@ export interface MetaStore {
    *  `user`. Lets a synced artifact's commit author resolve to a Dock profile/handle.
    *  Returns [] for empty input or when the auth tables are absent. */
   usersByGithubIds(ghIds: string[]): Promise<GithubUserMapping[]>
+  /** The GitHub numeric user ids (account.accountId, as strings) a Dock user has linked
+   *  via Better Auth's `account` (providerId='github'). Inverse of `usersByGithubIds`.
+   *  Returns [] when none or the auth tables are absent. */
+  githubIdsForUser(userId: string): Promise<string[]>
+  /** A Dock user's GitHub login, derived from any artifact whose `author_gh_id` is one of
+   *  their linked GitHub ids (we don't store the login on `account`). Null when unknown —
+   *  used only to show a GitHub link on the profile. */
+  githubLoginForUser(userId: string, ghIds: string[]): Promise<string | null>
+  /** Org ids where BOTH users hold a membership — the shared-workspace set that widens a
+   *  viewer's profile visibility beyond public. Empty for an anonymous viewer. */
+  sharedOrgIds(viewerId: string, targetUserId: string): Promise<string[]>
+  /** A person's work for their profile: artifacts (not removed) authored by them — either
+   *  `author_id = userId` OR `author_gh_id ∈ ghIds` (their linked GitHub commits) — gated
+   *  by `visibleOrgIds` (public OR a shared workspace). Newest first, keyset-paginated via
+   *  `opts.cursor`/`opts.limit`. */
+  listUserWorks(userId: string, ghIds: string[], opts: ListArtifactsOpts): Promise<ArtifactRecord[]>
+  /** Count of a person's visible work (same predicate as `listUserWorks`) for the stats row. */
+  countUserWorks(userId: string, ghIds: string[], opts: ListArtifactsOpts): Promise<number>
   /** Resolve a public profile by its handle (username); null if unclaimed. */
   getUserByUsername(username: string): Promise<UserProfile | null>
   /** Claim or replace a user's handle. Returns "taken" when another account
@@ -443,6 +519,10 @@ export interface MetaStore {
   /** People search: opted-in (discoverable) profiles matching `q` on username or
    *  name, capped to `limit`. Empty `q` returns nothing (no full enumeration). */
   searchDiscoverableUsers(q: string, limit: number): Promise<UserProfile[]>
+  /** Browse the people directory: opted-in (discoverable) profiles with a claimed handle,
+   *  ordered by handle, capped to `limit`. The browse counterpart to
+   *  searchDiscoverableUsers — powers the People page's default view. */
+  listDiscoverableUsers(limit: number): Promise<UserProfile[]>
 
   // ---- Notifications (in-app, one row per recipient) --------------------
   createNotification(n: NewNotification): Promise<void>
@@ -506,6 +586,13 @@ export interface MetaStore {
    *  sync backfill path to stamp an existing tracked artifact's author from its last
    *  commit without republishing. `null` clears all four columns. */
   setArtifactAuthor(artifactId: string, author: GithubAuthor | null): Promise<void>
+  /** One-shot, idempotent: fill `artifact.author_id` for rows that predate the column,
+   *  where the artifact's `author_gh_id` maps to a Dock account (Better Auth `account`,
+   *  providerId='github'). Only touches rows with a null author_id and a known mapping;
+   *  a no-op once applied. Returns the number of rows updated. Best-effort (0 if the auth
+   *  tables are absent). Pre-feature hand-published work without a GitHub identity has no
+   *  recoverable author and is left null. */
+  backfillAuthorIds(): Promise<number>
   createAuditLog(a: NewAuditLog): Promise<void>
   /** Moderation history, newest first. One workspace's, or — super-admin, orgId
    *  undefined — the whole instance's. Optionally narrowed to one artifact. */
@@ -515,9 +602,14 @@ export interface MetaStore {
   ): Promise<AuditLogRecord[]>
 }
 
-/** What a user follows: a GitHub author (`target` = the login) or a repo path
- *  prefix (`target` = a path prefix, e.g. "docs/plans"). */
-export type FollowKind = "author" | "path"
+/** What a user follows: a GitHub author (`target` = the login), a repo path prefix
+ *  (`target` = a path prefix, e.g. "docs/plans"), or a Dock person (`target` = their
+ *  user id). `author`/`path` follows are workspace-scoped; `user` follows are global
+ *  (stored with `org_id = "*"`) since a person's work spans workspaces. */
+export type FollowKind = "author" | "path" | "user"
+/** Sentinel org_id for `user` (people) follows — they are global, not workspace-scoped,
+ *  so a person's work surfaces regardless of which workspace the follower is viewing. */
+export const GLOBAL_FOLLOW_ORG = "*"
 /** A per-user follow — the same shape of relation as a favorite, but keyed on a
  *  (kind, target) pair instead of an artifact id. Drives the "following" feed. */
 export interface FollowRecord {
@@ -525,7 +617,8 @@ export interface FollowRecord {
   org_id: string
   user_id: string
   kind: FollowKind
-  /** For `author`: the GitHub login (stored lowercased). For `path`: a repo path prefix. */
+  /** For `author`: the GitHub login (stored lowercased). For `path`: a repo path prefix.
+   *  For `user`: the followed Dock user id (verbatim). */
   target: string
   created_at: string
 }
@@ -752,7 +845,10 @@ export interface UserProfile {
   about?: string | null
 }
 
-export type NotificationKind = "mention" | "comment" | "share"
+/** `mention`/`comment`/`share` are artifact-anchored. `follow` (someone followed you)
+ *  and `publish` (someone you follow published) are the social kinds — `follow` carries
+ *  no artifact (its artifact_* fields are ""), `publish` points at the new artifact. */
+export type NotificationKind = "mention" | "comment" | "share" | "follow" | "publish"
 export interface NotificationRecord {
   id: string
   user_id: string
@@ -919,6 +1015,57 @@ export interface NewRepoSource {
 /** The instance's GitHub App credentials (single row, id = "default"), captured
  *  via the one-click manifest flow. The three secret columns are encrypted at
  *  rest by the route layer before they reach the store. */
+/** Per-workspace integration switches: each channel behaviour the workspace can turn
+ *  on or off. Stored as one JSON row per org; absent keys fall back to the defaults
+ *  below (everything on), so connecting an integration "just works" until toggled. */
+export interface OrgSettings {
+  /** Send notification emails on comments/mentions. */
+  emailNotifications: boolean
+  /** Post a Dock comment to the PR (inline review or top-level) when it's on a
+   *  PR-sourced artifact. */
+  githubPostComments: boolean
+  /** Mirror PR comments made on GitHub back into the Dock artifact. */
+  githubMirrorComments: boolean
+  /** When a PR opens (and on each push), post + keep updated a single comment on the
+   *  pull request linking to the Dock preview of its docs. */
+  githubPreviewLink: boolean
+  /** Post Dock activity to the connected Slack workspace. */
+  slackPost: boolean
+}
+
+export const DEFAULT_ORG_SETTINGS: OrgSettings = {
+  emailNotifications: true,
+  githubPostComments: true,
+  githubMirrorComments: true,
+  githubPreviewLink: true,
+  slackPost: true,
+}
+
+/** A connected Slack workspace (one per Dock workspace). `bot_token` is the OAuth bot
+ *  token, AES-encrypted at rest. `default_channel` is where Dock posts when an artifact
+ *  has no more specific channel. */
+export interface SlackInstallRecord {
+  org_id: string
+  team_id: string
+  team_name: string | null
+  bot_token: string
+  bot_user_id: string | null
+  default_channel: string | null
+  created_at: string
+}
+
+/** Links a Dock comment thread to the Slack message Dock posted for it, so replies
+ *  thread under it (Dock→Slack) and Slack thread replies map back (Slack→Dock). */
+export interface SlackThreadLinkRecord {
+  id: string
+  org_id: string
+  artifact_id: string
+  thread_id: string
+  channel: string
+  message_ts: string
+  created_at: string
+}
+
 export interface GitHubAppRecord {
   id: string
   /** Numeric GitHub App id, stored as text. */
@@ -962,6 +1109,24 @@ export interface NewArtifactMember {
 export type WebhookKind = "generic" | "slack"
 export type DeliveryStatus = "pending" | "delivered" | "dead"
 
+/**
+ * What an outbox row delivers to. `generic`/`slack` are user-configured webhooks
+ * (a `webhook` row). The rest are first-party channels Dock fans out to directly —
+ * email (Cloudflare Email Service), a connected Slack App (`chat.postMessage`), and
+ * GitHub PR comments (inline review or top-level issue comment). Internal-channel
+ * rows carry `webhook_id = "internal"` (no backing `webhook` row); the per-kind
+ * sender knows how to build credentials + destination from the payload.
+ */
+export type DeliveryKind =
+  | WebhookKind
+  | "slack_app"
+  | "github_review_comment"
+  | "github_issue_comment"
+  | "email"
+
+/** Sentinel `webhook_id` for outbox rows not tied to a configured `webhook` row. */
+export const INTERNAL_DELIVERY = "internal"
+
 export interface WebhookRecord {
   id: string
   org_id: string
@@ -988,10 +1153,14 @@ export interface NewWebhook {
 
 export interface DeliveryRecord {
   id: string
+  /** A `webhook` row id, or `INTERNAL_DELIVERY` for a first-party channel row. */
   webhook_id: string
+  /** Destination URL for HTTP kinds; a per-kind hint (or empty) for channel kinds. */
   url: string
+  /** Signing/bearer secret for HTTP kinds; empty for channel kinds (the sender
+   *  resolves credentials from the org/payload at delivery time). */
   secret: string
-  kind: WebhookKind
+  kind: DeliveryKind
   event_type: string
   payload: string
   status: DeliveryStatus
@@ -1005,7 +1174,7 @@ export interface NewDelivery {
   webhook_id: string
   url: string
   secret: string
-  kind: WebhookKind
+  kind: DeliveryKind
   event_type: string
   payload: string
 }
@@ -1046,6 +1215,15 @@ export type CommentState = "open" | "addressed" | "resolved" | "outdated"
  *  behavior). `personal` = only the human owner (`owner_id`) and the agents that
  *  human has authed — a private side-channel, never part of the shared file. */
 export type CommentVisibility = "public" | "personal"
+/** Per-artifact comment signals for a viewer (see `MetaStore.commentSignals`).
+ *  `open_threads` is the count of distinct OPEN threads; `mentions_me` / `i_participated`
+ *  flag that the viewer is tagged in or has authored an open thread on this artifact —
+ *  the two things that make it "need your feedback". */
+export interface CommentSignals {
+  open_threads: number
+  mentions_me: boolean
+  i_participated: boolean
+}
 
 export interface CommentRecord {
   id: string

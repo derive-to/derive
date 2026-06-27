@@ -24,7 +24,8 @@ CREATE TABLE IF NOT EXISTS artifact (
   author_name TEXT,
   author_login TEXT,
   author_avatar TEXT,
-  author_gh_id TEXT
+  author_gh_id TEXT,
+  author_id TEXT
 );
 
 CREATE TABLE IF NOT EXISTS version (
@@ -38,6 +39,7 @@ CREATE TABLE IF NOT EXISTS version (
   author_login TEXT,
   author_avatar TEXT,
   author_gh_id TEXT,
+  author_id TEXT,
   message TEXT,
   name TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
@@ -231,6 +233,34 @@ CREATE TABLE IF NOT EXISTS repo_source (
   FOREIGN KEY (collection_id) REFERENCES collection(id)
 );
 
+CREATE TABLE IF NOT EXISTS org_settings (
+  org_id TEXT PRIMARY KEY,
+  settings TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+
+CREATE TABLE IF NOT EXISTS slack_install (
+  org_id TEXT PRIMARY KEY,
+  team_id TEXT NOT NULL,
+  team_name TEXT,
+  bot_token TEXT NOT NULL,
+  bot_user_id TEXT,
+  default_channel TEXT,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+
+CREATE TABLE IF NOT EXISTS slack_thread_link (
+  id TEXT PRIMARY KEY,
+  org_id TEXT NOT NULL,
+  artifact_id TEXT NOT NULL,
+  thread_id TEXT NOT NULL,
+  channel TEXT NOT NULL,
+  message_ts TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  UNIQUE (thread_id),
+  UNIQUE (channel, message_ts)
+);
+
 CREATE TABLE IF NOT EXISTS github_app (
   id TEXT PRIMARY KEY,
   app_id TEXT NOT NULL,
@@ -351,6 +381,8 @@ CREATE INDEX IF NOT EXISTS repo_source_org ON repo_source (org_id);
 CREATE INDEX IF NOT EXISTS domain_artifact ON domain (artifact_id);
 
 CREATE INDEX IF NOT EXISTS proposal_artifact_state ON proposal (artifact_id, state);
+
+CREATE INDEX IF NOT EXISTS comment_artifact_state ON comment (artifact_id, state);
 
 CREATE INDEX IF NOT EXISTS report_state ON report (state, created_at);
 

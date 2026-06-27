@@ -47,35 +47,34 @@ An agent token defaults to commenter. To publish directly, the agent needs edito
 
 ---
 
-## Two MCP servers — choose one
+## Two MCP servers (same 5 tools)
+
+Both the stdio `@dock/mcp` server and the remote `/mcp` server expose the same 5
+tools (`list_artifacts`, `read`, `catch_up`, `comment`, `publish`). The difference is
+auth and how writes land:
 
 | | STDIO MCP (`@dock/mcp`) | HTTP MCP (`/mcp`) |
 |---|---|---|
 | **Auth** | Static `dk_agt_` token | OAuth 2.1 bearer |
 | **Connect via** | Claude Code `.claude/mcp.json` | claude.ai / Claude Desktop OAuth flow |
-| **Writes** | Direct publish — no approval gate | Propose only — human approves before live |
-| **Sync tool** | `list_comments` + `get_artifact` | `catch_me_up` (coalesced delta) |
+| **Writes** | `publish` goes live or files a proposal based on role | Same; OAuth scope maps to role |
+| **Caveats** | Bundles are publish-via-remote/web only; `comment` set_state takes a `comment_id` | Full bundle publish via `publish` `files` map |
 | **Best for** | Trusted agents, CI, solo use | Collaborative, human-in-the-loop |
 
 ---
 
-## The loop — STDIO MCP
+## The loop
 
-1. `publish_artifact` — get a `short_id` and URL. Share it.
-2. `list_comments(state: "open")` — read the feedback queue.
-3. `get_artifact` — read the current source.
-4. Revise the content.
-5. `publish_version(resolves: [commentId, ...])` — new version, threads closed atomically.
-6. Repeat from 2.
-
----
-
-## The loop — HTTP MCP
-
-1. `catch_me_up(short_id, since_version)` — coalesced delta: new versions + diff + open threads.
-2. `read_section` to drill into changed pages; `diff` for exact line comparison.
-3. `propose(content, message)` — candidate version, not live. Human approves or requests changes.
-4. On approval Dock publishes it and re-anchors comments. Loop.
+1. `catch_up(short_id, since_version)` gives the state in one call: what changed, the open
+   feedback threads, and version history. Pass `comments` (open/addressed/resolved/outdated)
+   for a filtered feedback queue, or `response_format='detailed'` to fold in the exact line diff.
+2. `read` returns content by short id; for a bundle omit `section` for the outline or pass a
+   `section` (page path) for one page; pass `version` to read history.
+3. Revise the content.
+4. `comment` (reply with `reply_to`, resolve/reopen with `set_state`) and/or
+   `publish` (pass `addresses` to resolve the threads this revision fixes): same URL, a
+   new version, threads closed atomically.
+5. Repeat from 1.
 
 Comments re-anchor to moved text automatically. If the quoted text is deleted, the comment
 shows "text changed" — it never attaches to the wrong place.
@@ -84,37 +83,17 @@ shows "text changed" — it never attaches to the wrong place.
 
 ## MCP tools (quick reference)
 
-**STDIO MCP** (token-based, direct publish):
+The same 5 tools on both servers:
 
 | Tool | When to use |
 |---|---|
-| `publish_artifact` | First publish of new content |
-| `publish_version` | Revised version; pass `resolves` to close threads |
-| `get_artifact` | Read current (or past) source + metadata |
-| `list_versions` | Version history |
-| `diff_versions` | What changed between two versions |
-| `restore_version` | Roll back (creates new version, preserves history) |
-| `list_comments` | Feedback queue |
-| `add_comment` | New thread; pass `quote` to anchor to text |
-| `reply_comment` | Reply in existing thread |
-| `resolve_thread` | Close (or reopen) a thread |
-| `view_stats` | View counts |
+| `list_artifacts` | Find the artifacts in your workspace (short id, title, kind, version, visibility); optional `query` filters by title |
+| `read` | Read content by short id; bundles take a `section` (page path) and any tool takes a `version` for history |
+| `catch_up` | Start here on an artifact: what changed since `since_version`, open/outdated threads, and version history; pass `comments` for a filtered feedback queue, or `response_format='detailed'` for the line diff |
+| `comment` | Leave feedback, reply (`reply_to`), anchor to a `quote`, and/or resolve/reopen (`set_state`) |
+| `publish` | Save a revision (`content` for one file, `files` for a bundle); omit `short_id` to create new, pass it to add a version; `addresses` resolves threads; goes live or files a proposal based on role, or `for_review:true` |
 
 Resource: `dock://guide` — the agent loop guide as a readable MCP resource.
-
-**HTTP MCP** (OAuth, propose-only):
-
-| Tool | When to use |
-|---|---|
-| `catch_me_up` | Session start — coalesced delta since `since_version` |
-| `list_artifacts` | Enumerate workspace artifacts |
-| `read_artifact` | Metadata + content for single-file artifacts |
-| `read_section` | Per-page content for bundles; omit `path` to list pages |
-| `diff` | Line diff between two versions |
-| `list_comments` | Feedback queue |
-| `list_versions` | Version history |
-| `propose` | Submit candidate version for human review |
-| `whoami` | Confirm connection + role |
 
 ---
 
@@ -124,7 +103,7 @@ Resource: `dock://guide` — the agent loop guide as a readable MCP resource.
 - `dock-connect.md` — get a token, wire MCP to Claude Code or Claude Desktop
 
 **Publishing & versioning**
-- `using/dock-publish.md` — publish_artifact, publish_version, versions, CLI, API
+- `using/dock-publish.md` — `publish` (new + versions), versions, CLI, API
 - `using/dock-proposals.md` — the propose -> review -> approve loop
 
 **Feedback**

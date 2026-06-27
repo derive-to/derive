@@ -1,3 +1,4 @@
+import { newId } from "@dock/core"
 import { describe, expect, it } from "vitest"
 import { as, jsonAs, makeAuthedApp, type TestUser } from "./helpers"
 
@@ -27,6 +28,10 @@ describe("usernames + public profiles", () => {
       image: "x.png",
       profession: null,
       about: null,
+      // Enriched profile: GitHub link (none here), stats, and viewer follow state.
+      github_login: null,
+      stats: { works: 0, followers: 0, following: 0 },
+      followed_by_me: false,
     })
     expect(user).not.toHaveProperty("email")
 
@@ -194,6 +199,139 @@ describe("profile avatars", () => {
   })
 })
 
+describe("profile work-list (visibility-scoped)", () => {
+  const amy: TestUser = { id: "u_pw_amy", email: "pwamy@d.test", name: "Amy W", username: "amyw" }
+  const carl: TestUser = {
+    id: "u_pw_carl",
+    email: "pwcarl@d.test",
+    name: "Carl",
+    username: "carlw",
+  }
+  // amy + carl share the "default" workspace (amy owner, carl editor).
+  const { app, meta } = makeAuthedApp("profile-works", [amy, carl])
+
+  // A hand-published artifact authored by `userId` (stamps author_id), at a visibility.
+  const work = async (title: string, userId: string, visibility: "public" | "link") => {
+    const a = await meta.createArtifact({
+      id: newId("a"),
+      short_id: newId("s"),
+      org_id: "default",
+      slug: null,
+      title,
+      visibility,
+      kind: "file",
+      spa: 0,
+    })
+    await meta.addVersion(a.id, {
+      id: newId("v"),
+      blob_key: `blob_${newId("b")}`,
+      content_type: "text/markdown",
+      size_bytes: 1,
+      author: "Amy W",
+      author_id: userId,
+      message: null,
+    })
+    return a.short_id
+  }
+
+  it("shows public work to anyone; non-public only to a shared-workspace viewer", async () => {
+    const pub = await work("Amy public", amy.id, "public")
+    const priv = await work("Amy link-only", amy.id, "link")
+
+    // Anonymous viewer: public work only (the link-only title never leaks).
+    const anon = await (await app.request("/v1/users/amyw/artifacts")).json()
+    const anonIds = anon.artifacts.map((a: { short_id: string }) => a.short_id)
+    expect(anonIds).toContain(pub)
+    expect(anonIds).not.toContain(priv)
+
+    // Carl shares the workspace with amy → he also sees the link-only work.
+    const shared = await (
+      await app.request("/v1/users/amyw/artifacts", { headers: as(carl.email) })
+    ).json()
+    const sharedIds = shared.artifacts.map((a: { short_id: string }) => a.short_id)
+    expect(sharedIds).toContain(pub)
+    expect(sharedIds).toContain(priv)
+
+    // Stats track the same gate: 1 public work for anon, 2 for the shared viewer.
+    const anonProfile = await (await app.request("/v1/users/amyw")).json()
+    expect(anonProfile.user.stats.works).toBe(1)
+    const carlProfile = await (
+      await app.request("/v1/users/amyw", { headers: as(carl.email) })
+    ).json()
+    expect(carlProfile.user.stats.works).toBe(2)
+  })
+
+  it("exposes follower/following lists as public profiles (no ids/email)", async () => {
+    // carl follows amy.
+    await app.request("/v1/follows", {
+      method: "POST",
+      headers: { "content-type": "application/json", ...as(carl.email) },
+      body: JSON.stringify({ kind: "user", target: "amyw" }),
+    })
+    const followers = await (await app.request("/v1/users/amyw/followers")).json()
+    expect(followers.users.map((u: { username: string }) => u.username)).toContain("carlw")
+    expect(followers.users[0]).not.toHaveProperty("email")
+    expect(followers.users[0]).not.toHaveProperty("id")
+    const following = await (await app.request("/v1/users/carlw/following")).json()
+    expect(following.users.map((u: { username: string }) => u.username)).toContain("amyw")
+  })
+})
+
+// The work-list is keyset-paginated (limit+1 over-fetch → next_cursor "<created_at>|<id>").
+// Isolated app so the count is exact (other tests' works don't bleed in).
+describe("profile work-list pagination (keyset)", () => {
+  const peg: TestUser = { id: "u_peg", email: "peg@d.test", name: "Peg", username: "peg" }
+  const { app, meta } = makeAuthedApp("profile-pagination", [peg])
+
+  it("pages public work by cursor; respects + caps the limit", async () => {
+    const N = 27 // > the default page of 24, so there's a real second page
+    for (let i = 0; i < N; i++) {
+      const a = await meta.createArtifact({
+        id: newId("a"),
+        short_id: newId("s"),
+        org_id: "default",
+        slug: null,
+        title: `Doc ${i}`,
+        visibility: "public",
+        kind: "file",
+        spa: 0,
+      })
+      await meta.addVersion(a.id, {
+        id: newId("v"),
+        blob_key: `blob_${newId("b")}`,
+        content_type: "text/markdown",
+        size_bytes: 1,
+        author: "Peg",
+        author_id: peg.id,
+        message: null,
+      })
+    }
+
+    // Page 1: exactly the default page size, with a cursor to continue.
+    const p1 = await (await app.request("/v1/users/peg/artifacts")).json()
+    expect(p1.artifacts.length).toBe(24)
+    expect(p1.next_cursor).toBeTruthy()
+
+    // Page 2: the remainder, and no further cursor.
+    const p2 = await (
+      await app.request(`/v1/users/peg/artifacts?cursor=${encodeURIComponent(p1.next_cursor)}`)
+    ).json()
+    expect(p2.artifacts.length).toBe(N - 24)
+    expect(p2.next_cursor).toBeNull()
+
+    // The two pages are disjoint and together cover every work (keyset correctness).
+    const ids = new Set(
+      [...p1.artifacts, ...p2.artifacts].map((a: { short_id: string }) => a.short_id),
+    )
+    expect(ids.size).toBe(N)
+
+    // An explicit limit is honored (and yields a cursor when more remain).
+    const small = await (await app.request("/v1/users/peg/artifacts?limit=5")).json()
+    expect(small.artifacts.length).toBe(5)
+    expect(small.next_cursor).toBeTruthy()
+  })
+})
+
 describe("discoverability (on by default) + people search", () => {
   // Nova never set the flag → discoverable by default (GitHub-style).
   const nova: TestUser = {
@@ -237,5 +375,35 @@ describe("discoverability (on by default) + people search", () => {
     expect(novaMe.user.discoverable).toBe(true) // session is the seeded (unset) flag → default on
     const doxMe = await (await app.request("/v1/me", { headers: as(dox.email) })).json()
     expect(doxMe.user.discoverable).toBe(false)
+  })
+})
+
+describe("people directory (/v1/people)", () => {
+  const ivy: TestUser = { id: "u_ivy", email: "ivy@d.test", name: "Ivy", username: "ivy" }
+  // Jay opted out — should never appear in browse or search.
+  const jay: TestUser = {
+    id: "u_jay",
+    email: "jay@d.test",
+    name: "Jay",
+    username: "jay",
+    discoverable: false,
+  }
+  const { app } = makeAuthedApp("people-dir", [ivy, jay])
+  const handles = (r: { users: { username: string }[] }) => r.users.map((u) => u.username)
+
+  it("browses discoverable people (empty q), searches, hides opt-outs, requires auth", async () => {
+    // Browse (no query) lists discoverable people — the difference from /v1/users/search,
+    // which returns nothing on an empty query.
+    const browse = await (await app.request("/v1/people", { headers: as(ivy.email) })).json()
+    expect(handles(browse)).toContain("ivy")
+    expect(handles(browse)).not.toContain("jay") // opted out
+    expect(browse.users[0]).not.toHaveProperty("email") // public fields only
+
+    // With a query it searches within the discoverable set.
+    const searched = await (await app.request("/v1/people?q=iv", { headers: as(ivy.email) })).json()
+    expect(handles(searched)).toEqual(["ivy"])
+
+    // Signed-in only — anonymous is refused.
+    expect((await app.request("/v1/people")).status).toBe(401)
   })
 })

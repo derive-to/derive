@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 import type { Comment } from "@/api"
-import { anchorExact, clamp, groupThreads, layoutPins, parseAnchor } from "./layout"
+import { anchorExact, anchorLabel, clamp, groupThreads, layoutPins, parseAnchor } from "./layout"
 
 describe("clamp", () => {
   it("bounds a value to [lo, hi]", () => {
@@ -69,6 +69,39 @@ describe("parseAnchor / anchorExact", () => {
     const a = JSON.stringify({ exact: "hello", prefix: "say ", suffix: "!" })
     expect(parseAnchor(a)).toEqual({ exact: "hello", prefix: "say ", suffix: "!" })
     expect(anchorExact(a)).toBe("hello")
+  })
+
+  it("parses an element anchor into { element, label, slide }", () => {
+    const a = JSON.stringify({
+      type: "ElementSelector",
+      tag: "img",
+      fingerprint: "abc",
+      slide: 2,
+      snapshot: { tag: "img", label: "Image — chart.png" },
+    })
+    const p = parseAnchor(a)
+    expect(p?.element?.tag).toBe("img")
+    expect(p?.label).toBe("Image — chart.png")
+    expect(p?.slide).toBe(2)
+    expect(p?.exact).toBeUndefined()
+    // anchorExact is text-only → null for an element; anchorLabel returns the label.
+    expect(anchorExact(a)).toBeNull()
+    expect(anchorLabel(a)).toBe("Image — chart.png")
+  })
+
+  it("falls back to 'Element' when an element anchor has no snapshot label", () => {
+    const a = JSON.stringify({ type: "ElementSelector", tag: "table", fingerprint: "z" })
+    expect(parseAnchor(a)?.label).toBe("Element")
+  })
+
+  it("an ElementSelector missing tag/fingerprint is not treated as an element anchor", () => {
+    // No exact and not a valid element → null.
+    expect(parseAnchor(JSON.stringify({ type: "ElementSelector", tag: "img" }))).toBeNull()
+  })
+
+  it("anchorLabel returns the quote for text, the label for elements, null otherwise", () => {
+    expect(anchorLabel(JSON.stringify({ exact: "hi" }))).toBe("hi")
+    expect(anchorLabel(null)).toBeNull()
   })
 })
 

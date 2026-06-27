@@ -65,6 +65,14 @@ export interface Config {
   webDir: string
   webShell: string
   serveWeb: boolean
+  /** From-address for notification emails (e.g. "Dock <notifications@dock.build>").
+   *  Unset ⇒ email notifications are logged, not sent (the zero-config default). */
+  emailFrom?: string
+  /** Resend API key for self-host email delivery over fetch (no SDK). Unset ⇒ the
+   *  log sender. The edge uses the Cloudflare Email Service binding instead. */
+  resendApiKey?: string
+  /** Slack App credentials (connect flow + Events API). All three set ⇒ Slack on. */
+  slack?: { clientId: string; clientSecret: string; signingSecret: string }
 }
 
 /**
@@ -135,6 +143,16 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     webOrigins,
     retentionDays: numOr("DOCK_ANALYTICS_RETENTION_DAYS", env.DOCK_ANALYTICS_RETENTION_DAYS, 365),
     objectStoreUrl: urlOr("OBJECT_STORE_URL", env.OBJECT_STORE_URL),
+    emailFrom: env.EMAIL_FROM,
+    resendApiKey: env.RESEND_API_KEY,
+    slack:
+      env.SLACK_CLIENT_ID && env.SLACK_CLIENT_SECRET && env.SLACK_SIGNING_SECRET
+        ? {
+            clientId: env.SLACK_CLIENT_ID,
+            clientSecret: env.SLACK_CLIENT_SECRET,
+            signingSecret: env.SLACK_SIGNING_SECRET,
+          }
+        : undefined,
     webDir,
     webShell,
     serveWeb: existsSync(webShell),

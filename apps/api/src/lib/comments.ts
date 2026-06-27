@@ -1,4 +1,21 @@
-import type { CommentRecord } from "@dock/core"
+import type { ArtifactRecord, CommentRecord, MetaStore } from "@dock/core"
+
+/** Is `actorId` a trusted author for OUTBOUND external posting (Slack / GitHub PR)?
+ *  Those channels post as Dock's own bot/app into the customer's systems, so we only
+ *  mirror comments authored by a real collaborator — a workspace member, an explicit
+ *  artifact-share recipient, or a registered agent. An anonymous commenter or a logged-in
+ *  non-member on a public artifact is NOT trusted to write into the owner's GitHub/Slack.
+ *  (In-app notifications + email to collaborators are gated separately and stay in-Dock.) */
+export const isCollaboratorAuthor = async (
+  meta: MetaStore,
+  artifact: ArtifactRecord,
+  actorId: string | null,
+): Promise<boolean> => {
+  if (!actorId) return false
+  if (await meta.getMembership(artifact.org_id, actorId)) return true
+  if (await meta.getArtifactMember(artifact.id, actorId)) return true
+  return (await meta.listAgents(artifact.org_id)).some((a) => a.id === actorId)
+}
 
 /** The fixed reaction set; arbitrary emoji are rejected to keep data clean. */
 export const REACTIONS = ["👍", "❤️", "🎉", "😄", "👀", "🙏", "🚀", "👎"]
@@ -21,6 +38,14 @@ export type CommentMeta = {
   // Set when the thread flips to `addressed`; cleared when that proposal is
   // approved (→ resolved) or withdrawn / sent back for changes (→ open).
   addressed_by?: string
+  // Provenance for cross-channel sync. Set when a comment ORIGINATED in GitHub
+  // (mirrored in) or, once Dock has posted a comment OUT to GitHub, the id GitHub
+  // assigned it. Either presence means "don't re-post this comment to GitHub" —
+  // the loop-prevention marker for bidirectional PR comment sync.
+  github?: { comment_id: number; kind: "issue" | "review" }
+  // Likewise for the connected Slack App: a comment that came FROM a Slack thread
+  // reply (so it isn't echoed back), or the Slack message ts a Dock comment produced.
+  slack?: { ts: string; channel: string }
 }
 
 export const parseMeta = (m: string | null): CommentMeta => {
@@ -74,11 +99,14 @@ export const previewOf = (body: string): string => {
   return flat.length > 160 ? `${flat.slice(0, 159)}…` : flat
 }
 
-/** The quoted text from a comment anchor, for webhook payloads. */
+/** A short referent for a comment anchor, for webhook payloads — the quoted text
+ *  for a text anchor, or the element's snapshot label for an element anchor. */
 export const quoteOf = (anchor: string | null): string | null => {
   if (!anchor) return null
   try {
-    return (JSON.parse(anchor) as { exact?: string }).exact ?? null
+    const a = JSON.parse(anchor) as { exact?: string; type?: string; snapshot?: { label?: string } }
+    if (a.type === "ElementSelector") return a.snapshot?.label ?? null
+    return a.exact ?? null
   } catch {
     return null
   }

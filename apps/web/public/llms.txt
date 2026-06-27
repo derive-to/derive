@@ -35,17 +35,24 @@ Visibility options: public, link, org, password.
 
 Connect any MCP client with `npx -y @dock/mcp` + env vars `DOCK_SERVER` and `DOCK_TOKEN`.
 
-Tools: publish_artifact, publish_version, get_artifact, list_versions, diff_versions, restore_version, list_comments, add_comment, reply_comment, resolve_thread, view_stats
+Tools (five): list_artifacts, read, catch_up, comment, publish
+
+- list_artifacts: find the artifacts in your workspace (optional query title filter)
+- read: read an artifact's content by short id; bundles take a section (page path), any read takes a version for history
+- catch_up: an artifact's state in one call (what changed since since_version, the open/outdated comment threads, version history); pass comments for a filtered feedback queue or response_format='detailed' for the line diff
+- comment: leave feedback, reply (reply_to), anchor to a quote, resolve/reopen (set_state)
+- publish: save a revision (content for one file, files for a bundle); omit short_id to create new, pass it to add a version; addresses resolves threads; goes live or files a proposal based on role, or with for_review:true
+
+Both the stdio @dock/mcp server and the remote /mcp server expose the same 5 tools.
 
 Resource: dock://guide (agent workflow and tool reference)
 
 ## The agent loop
 
-1. publish_artifact -> get short_id + URL
-2. list_comments (state: open) -> read feedback
-3. get_artifact -> read source, revise
-4. publish_version with resolves: [commentIds] -> close addressed threads
-5. repeat
+1. catch_up -> what changed since since_version, plus the open feedback to address
+2. read -> the content (a bundle page, or a past version), then revise
+3. comment (reply/resolve) and/or publish with addresses: [threadIds] -> same URL, a new version, threads closed atomically
+4. repeat
 
 ## Deployment tiers
 

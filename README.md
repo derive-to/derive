@@ -64,10 +64,25 @@ in-browser publishing, and the comment loop — comments are authored as you, an
 Markdown/HTML artifacts can be edited inline to publish a new version.
 
 Accounts are handled by [Better Auth](https://better-auth.com): email + password
-works with zero config; set `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET` for Google
-sign-in, or `OIDC_ISSUER`/`OIDC_CLIENT_ID`/`OIDC_CLIENT_SECRET` to wire enterprise
-SSO (Okta, Entra, Auth0, Keycloak — anything OIDC). The user/session tables are
-created automatically on first boot. See `.env.example` for the full list.
+works with zero config. Add social sign-in by setting a provider's OAuth
+credentials; the matching "Continue with…" button then appears on `/login`
+automatically:
+
+- **GitHub** (a natural fit, since Dock mirrors GitHub repos): create an OAuth app
+  at GitHub → Settings → Developer settings → OAuth Apps → New, set the callback to
+  `<BASE_URL>/api/auth/callback/github`, then set `GITHUB_LOGIN_CLIENT_ID` and
+  `GITHUB_LOGIN_CLIENT_SECRET`. This is a plain OAuth app, separate from the
+  repo-sync GitHub App you register in Settings → GitHub.
+- **Google**: create an OAuth client (Web) in Google Cloud Console, set the
+  redirect to `<BASE_URL>/api/auth/callback/google`, then set `GOOGLE_CLIENT_ID`
+  and `GOOGLE_CLIENT_SECRET`.
+- **Enterprise SSO**: set `OIDC_ISSUER`/`OIDC_CLIENT_ID`/`OIDC_CLIENT_SECRET`
+  (Okta, Entra, Auth0, Keycloak, anything OIDC).
+
+Provide these as environment variables for the Node/Docker deploy, or as secrets
+for the Worker deploy (`wrangler secret put GITHUB_LOGIN_CLIENT_ID`, and so on).
+The user/session tables are created automatically on first boot; see
+`.env.example` for the full list.
 
 Writes are authorized by a login session **or** a static `DOCK_TOKEN` (for
 CI/agents). Publish with `--visibility public|link|org|password` (default `link`);
@@ -85,7 +100,7 @@ packages/core     domain: ports, publish, markdown render, viewer shell
 packages/db       MetaStore: sqlite (default) · postgres · d1
 packages/storage  BlobStore: fs (default) · s3/r2
 packages/cli      dock init (md/html/slides) · dock publish <file|dir>
-packages/mcp      MCP server: publish / read-back tools for agents
+packages/mcp      MCP server: the 5 agent tools (list_artifacts, read, catch_up, comment, publish)
 ```
 
 ## Deploy
@@ -120,9 +135,10 @@ node packages/cli/bin/dock.js publish    # share a versioned URL
 node packages/cli/bin/dock.js comments   # read the review threads, then revise and publish again
 ```
 
-MCP tools: `whoami`, `list_artifacts`, `read_artifact`, `read_section`, `list_versions`,
-`diff`, `list_comments`, `catch_me_up`, `propose` (human-reviewed), and `publish`
-(direct — Creator/Admin role). Publish vs. propose follows your role. Full loop in
+MCP tools (five): `list_artifacts` (find), `read` (content), `catch_up` (what changed
+plus the open feedback and version history), `comment` (leave/reply/resolve), and
+`publish` (save a revision). `publish` goes live if your role can publish (Creator/Admin),
+otherwise (or with `for_review:true`) it files a proposal a human approves. Full loop in
 [packages/mcp/SKILL.md](packages/mcp/SKILL.md).
 
 > The `@dock/cli` / `@dock/mcp` npm packages aren't published yet — run the CLI from the

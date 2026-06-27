@@ -62,4 +62,63 @@ describe("collections", () => {
     // the artifact itself is untouched
     expect(await meta.getByShortId(short_id)).not.toBeNull()
   })
+
+  it("tags repo / PR / manual collections so the client can nest PR previews", async () => {
+    // Manual: no repo source backing it.
+    const manual = await (await postJson("/v1/collections", { title: "Manual" })).json()
+
+    // Repo mirror: a collection backed by a branch source (pr_number null).
+    const repoCol = await meta.createCollection({
+      id: "col_repo_nest",
+      org_id: "default",
+      title: "GitHub: acme/docs",
+      created_by: "u",
+    })
+    await meta.createRepoSource({
+      id: "rs_branch_nest",
+      org_id: "default",
+      collection_id: repoCol.id,
+      repo: "acme/docs",
+      ref: "HEAD",
+      includes: "**/*.md",
+      created_by: "u",
+    })
+
+    // PR preview: its own collection backed by a source with pr_number set.
+    const prCol = await meta.createCollection({
+      id: "col_pr_nest",
+      org_id: "default",
+      title: "PR #7: Add guide",
+      created_by: "u",
+    })
+    await meta.createRepoSource({
+      id: "rs_pr_nest",
+      org_id: "default",
+      collection_id: prCol.id,
+      repo: "acme/docs",
+      ref: "deadbeef",
+      includes: "**/*.md",
+      pr_number: 7,
+      created_by: "u",
+    })
+
+    const list = await (await app.request("/v1/collections")).json()
+    const byId = (id: string) =>
+      list.collections.find((c: { id: string }) => c.id === id) as {
+        kind: string
+        repo?: string
+        prNumber?: number
+        parentId?: string
+      }
+
+    expect(byId(manual.id).kind).toBe("manual")
+    expect(byId(repoCol.id).kind).toBe("repo")
+    expect(byId(repoCol.id).repo).toBe("acme/docs")
+
+    const pr = byId(prCol.id)
+    expect(pr.kind).toBe("pr")
+    expect(pr.prNumber).toBe(7)
+    // Nests under its repo collection, not top-level.
+    expect(pr.parentId).toBe(repoCol.id)
+  })
 })

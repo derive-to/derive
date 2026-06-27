@@ -1,0 +1,206 @@
+import { type BlobStore, BUNDLE_CONTENT_TYPE, type BundleManifest } from "@dock/core"
+import type { Context } from "hono"
+import { describe, expect, it, vi } from "vitest"
+import { RAW_HEADERS } from "../src/lib/http"
+import { serveContent } from "../src/lib/serve-content"
+
+const enc = (s: string) => new TextEncoder().encode(s)
+
+// Fake BlobStore — serveContent only ever calls get().
+const blobStore = (entries: Record<string, Uint8Array | string>): BlobStore => {
+  const map = new Map<string, Uint8Array>()
+  for (const [k, v] of Object.entries(entries)) map.set(k, typeof v === "string" ? enc(v) : v)
+  return { get: async (key: string) => map.get(key) ?? null } as unknown as BlobStore
+}
+
+// Minimal Hono context: serveContent only calls c.body / c.text, each yielding a Response.
+const ctx = (): Context =>
+  ({
+    body: (data: BodyInit | null, status = 200, headers?: Record<string, string>) =>
+      new Response(data, { status, headers }),
+    text: (msg: string, status = 200, headers?: Record<string, string>) =>
+      new Response(msg, { status, headers: headers ?? {} }),
+  }) as unknown as Context
+
+const CSP = RAW_HEADERS["Content-Security-Policy"]
+const IMMUTABLE = "public, max-age=31536000, immutable"
+
+// The opaque-origin sandbox headers must ride EVERY response serveContent produces.
+const expectSandbox = (res: Response, cache: string = IMMUTABLE) => {
+  expect(res.headers.get("content-security-policy")).toBe(CSP)
+  expect(res.headers.get("x-content-type-options")).toBe("nosniff")
+  expect(res.headers.get("x-robots-tag")).toBe("noindex")
+  expect(res.headers.get("cache-control")).toBe(cache)
+}
+
+const SCRIPT = "/raw/dock-client.js" // the appended anchor client (SELECTION_SCRIPT)
+
+describe("serveContent — single-file artifacts", () => {
+  it("serves an HTML file with the anchor client and the sandbox headers", async () => {
+    const res = await serveContent(
+      ctx(),
+      blobStore({ k: "<h1>Hi</h1>" }),
+      { blob_key: "k", content_type: "text/html" },
+      "Title",
+      "/",
+      "",
+    )
+    expect(res.status).toBe(200)
+    expect(res.headers.get("content-type")).toContain("text/html")
+    const body = await res.text()
+    expect(body).toContain("<h1>Hi</h1>")
+    expect(body).toContain(SCRIPT)
+    expectSandbox(res)
+  })
+
+  it("renders markdown to HTML", async () => {
+    const res = await serveContent(
+      ctx(),
+      blobStore({ k: "# Hello" }),
+      { blob_key: "k", content_type: "text/markdown" },
+      "Doc",
+      "/",
+      "",
+    )
+    expect(res.headers.get("content-type")).toContain("text/html")
+    const body = await res.text()
+    expect(body).toContain("<h1")
+    expect(body).toContain(SCRIPT)
+  })
+
+  it("self-heals a blob mislabeled markdown that is actually a full HTML document", async () => {
+    const onMismatch = vi.fn()
+    const html =
+      "<!DOCTYPE html><html><head><style>b{}</style></head><body>real content</body></html>"
+    const res = await serveContent(
+      ctx(),
+      blobStore({ k: html }),
+      { blob_key: "k", content_type: "text/markdown" },
+      null,
+      "/",
+      "",
+      IMMUTABLE,
+      onMismatch,
+    )
+    expect(onMismatch).toHaveBeenCalledOnce()
+    expect(res.headers.get("content-type")).toContain("text/html")
+    const body = await res.text()
+    // Served verbatim (the <style> survives — the markdown path would have stripped it),
+    // never the blank page.
+    expect(body).toContain("<style>b{}</style>")
+    expect(body).toContain("real content")
+    expect(body).toContain(SCRIPT)
+  })
+
+  it("serves ?raw.md as the markdown source verbatim, without the anchor client", async () => {
+    const res = await serveContent(
+      ctx(),
+      blobStore({ k: "# raw source" }),
+      { blob_key: "k", content_type: "text/markdown" },
+      "Doc",
+      "/",
+      "raw.md",
+    )
+    expect(res.headers.get("content-type")).toContain("text/markdown")
+    const body = await res.text()
+    expect(body).toBe("# raw source")
+    expect(body).not.toContain(SCRIPT)
+  })
+
+  it("uses the gated Cache-Control for a non-public artifact (never immutable)", async () => {
+    const res = await serveContent(
+      ctx(),
+      blobStore({ k: "<h1>x</h1>" }),
+      { blob_key: "k", content_type: "text/html" },
+      null,
+      "/",
+      "",
+      "private, no-store",
+    )
+    expectSandbox(res, "private, no-store")
+  })
+
+  it("applies the serve-time HTML transform before appending the anchor client", async () => {
+    const upper = async (h: string) => h.replace("real", "XFORMED")
+    const res = await serveContent(
+      ctx(),
+      blobStore({ k: "<p>real</p>" }),
+      { blob_key: "k", content_type: "text/html" },
+      null,
+      "/",
+      "",
+      IMMUTABLE,
+      undefined,
+      upper,
+    )
+    const body = await res.text()
+    expect(body).toContain("XFORMED")
+    expect(body).toContain(SCRIPT)
+  })
+})
+
+describe("serveContent — bundles", () => {
+  const manifest: BundleManifest = {
+    entry: "/index.html",
+    spa: false,
+    files: {
+      "/index.html": { key: "k_idx", type: "text/html; charset=utf-8" },
+      "/style.css": { key: "k_css", type: "text/css; charset=utf-8" },
+      "/img.png": { key: "k_img", type: "image/png" },
+    },
+  }
+  const prefix = "/raw/abc/v/1/"
+  const bundleBlobs = (over: Partial<Record<string, Uint8Array | string>> = {}) =>
+    blobStore({
+      kManifest: JSON.stringify(manifest),
+      k_idx: '<a href="/deep">home</a>',
+      k_css: "a{color:red}",
+      k_img: Uint8Array.from([1, 2, 3, 4]),
+      ...over,
+    })
+  const content = { blob_key: "kManifest", content_type: BUNDLE_CONTENT_TYPE }
+
+  it("serves the entry page: scope-rewritten links + the anchor client", async () => {
+    const res = await serveContent(ctx(), bundleBlobs(), content, "Site", prefix, "")
+    expect(res.headers.get("content-type")).toContain("text/html")
+    const body = await res.text()
+    expect(body).toContain('href="/raw/abc/v/1/deep"') // root-absolute link kept in scope
+    expect(body).toContain(SCRIPT)
+    expectSandbox(res)
+  })
+
+  it("serves a CSS page rewritten but WITHOUT the anchor client", async () => {
+    const res = await serveContent(ctx(), bundleBlobs(), content, "Site", prefix, "style.css")
+    expect(res.headers.get("content-type")).toContain("text/css")
+    const body = await res.text()
+    expect(body).toBe("a{color:red}")
+    expect(body).not.toContain(SCRIPT)
+  })
+
+  it("serves a binary asset with its own content type, bytes intact", async () => {
+    const res = await serveContent(ctx(), bundleBlobs(), content, "Site", prefix, "img.png")
+    expect(res.headers.get("content-type")).toBe("image/png")
+    expect(new Uint8Array(await res.arrayBuffer())).toEqual(Uint8Array.from([1, 2, 3, 4]))
+  })
+
+  it("404s an unknown bundle path, still with the sandbox headers", async () => {
+    const res = await serveContent(ctx(), bundleBlobs(), content, "Site", prefix, "nope.html")
+    expect(res.status).toBe(404)
+    expect(res.headers.get("content-security-policy")).toBe(CSP)
+  })
+
+  it("falls back to the entry page for an SPA route with no matching file", async () => {
+    const spaManifest: BundleManifest = { ...manifest, spa: true }
+    const res = await serveContent(
+      ctx(),
+      bundleBlobs({ kManifest: JSON.stringify(spaManifest) }),
+      content,
+      "Site",
+      prefix,
+      "app/some/route",
+    )
+    expect(res.status).toBe(200)
+    expect(res.headers.get("content-type")).toContain("text/html")
+    expect(await res.text()).toContain("home") // the entry document
+  })
+})
