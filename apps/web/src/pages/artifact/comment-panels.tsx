@@ -2,6 +2,7 @@ import { type Dispatch, type SetStateAction, useEffect, useRef, useState } from 
 import type { Comment, Mention } from "@/api"
 import { Icon } from "@/components/icons"
 import { Button } from "@/components/ui/button"
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { useFocusTrap } from "@/lib/use-focus-trap"
 import { cn } from "@/lib/utils"
 import {
@@ -17,19 +18,16 @@ import type { PinItem, Sel } from "./types"
 
 type Tab = "comments" | "personal"
 
-const tabCls = (active: boolean) =>
-  cn(
-    "inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-sm font-semibold transition-colors",
-    active ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground",
-  )
-const tabCountCls = (active: boolean) =>
-  cn(
-    "rounded-full px-1.5 py-px font-mono text-2xs font-bold",
-    active ? "bg-accent text-primary" : "bg-secondary text-muted-foreground",
-  )
+const TabCount = ({ n }: { n: number }) => (
+  <span className="rounded-full bg-accent px-1.5 font-mono text-2xs font-bold text-primary">
+    {n}
+  </span>
+)
 
-/** The Comments | Personal switch in a panel header. Personal is your private notes,
- *  visible only to you and the agents you've authed (the server enforces it). */
+/** The Comments | Personal switch in a panel header — the shared shadcn Tabs control,
+ *  so it matches Settings/Share. Personal is your private notes, visible only to you
+ *  and the agents you've authed (the server enforces it); the parent owns which list
+ *  shows, so there's no TabsContent here. */
 function CommentTabs({
   tab,
   setTab,
@@ -42,31 +40,19 @@ function CommentTabs({
   personalCount: number
 }) {
   return (
-    <div className="flex flex-1 items-center gap-1">
-      <button
-        type="button"
-        data-testid="comment-tab-comments"
-        aria-pressed={tab === "comments"}
-        onClick={() => setTab("comments")}
-        className={tabCls(tab === "comments")}
-      >
-        Comments
-        {publicCount > 0 && <span className={tabCountCls(tab === "comments")}>{publicCount}</span>}
-      </button>
-      <button
-        type="button"
-        data-testid="comment-tab-personal"
-        aria-pressed={tab === "personal"}
-        onClick={() => setTab("personal")}
-        className={tabCls(tab === "personal")}
-      >
-        <Icon name="lock" size={12} />
-        Personal
-        {personalCount > 0 && (
-          <span className={tabCountCls(tab === "personal")}>{personalCount}</span>
-        )}
-      </button>
-    </div>
+    <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)} className="min-w-0 flex-1">
+      <TabsList className="h-8 w-full">
+        <TabsTrigger value="comments" data-testid="comment-tab-comments" className="flex-1">
+          Comments
+          {publicCount > 0 && <TabCount n={publicCount} />}
+        </TabsTrigger>
+        <TabsTrigger value="personal" data-testid="comment-tab-personal" className="flex-1">
+          <Icon name="lock" size={12} />
+          Personal
+          {personalCount > 0 && <TabCount n={personalCount} />}
+        </TabsTrigger>
+      </TabsList>
+    </Tabs>
   )
 }
 
