@@ -411,7 +411,12 @@ function slideOfEl(el,slides){
   return null}
 
 /* doc-absolute top of each anchor — text marks AND element overlays — so the host
-   pins each card beside whatever it points at */
+   pins each card beside whatever it points at. We DEDUPE the host post: a dynamic
+   artifact (a live ticker, a 60fps animation) fires the MutationObserver every frame,
+   but if nothing the host cares about actually moved (same tops/scroll/size), posting
+   would re-render the comment layout 60fps for nothing. Overlays are still repositioned
+   in-frame each call; only the cross-frame message is gated on a real change. */
+var lastRects="";
 function reportRects(){
   var tops={},seen={},sy=scrollTop();
   var ms=document.querySelectorAll("mark[data-dock-id]");
@@ -421,8 +426,11 @@ function reportRects(){
   for(var j=0;j<elReg.length;j++){var e=elReg[j];if(seen[e.id])continue;
     if(e.ov.style.display==="none")continue;seen[e.id]=1;
     tops[e.id]=e.el.getBoundingClientRect().top+sy}
-  post({type:"anchor-rects",tops:tops,scrollY:sy,viewH:window.innerHeight,
-    docH:document.documentElement.scrollHeight})}
+  var payload={type:"anchor-rects",tops:tops,scrollY:sy,viewH:window.innerHeight,
+    docH:document.documentElement.scrollHeight};
+  var sig=JSON.stringify(payload);
+  if(sig===lastRects)return;        /* nothing the host pins to changed — skip the re-render */
+  lastRects=sig;post(payload)}
 function reportScroll(){post({type:"scroll",scrollY:scrollTop(),viewH:window.innerHeight,docH:document.documentElement.scrollHeight})}
 
 /* Resolve each anchor, scoping a deck comment to its recorded slide FIRST (so the
