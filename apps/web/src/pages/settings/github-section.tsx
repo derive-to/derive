@@ -78,6 +78,12 @@ const takeInstallParams = (): { install?: string; error?: string } => {
   return { install, error }
 }
 
+// Open the repo picker automatically the first time a configured + installed
+// workspace lands here without a repo connected yet (once per browser session), so
+// connecting is one step instead of "find the account button, then pick". Stops once
+// any repo is connected.
+const AUTO_PICKER_KEY = "dock:gh-auto-picker"
+
 export function GithubSection() {
   const qc = useQueryClient()
   const [status, setStatus] = useState<GithubSyncStatus | null>(null)
@@ -109,6 +115,18 @@ export function GithubSection() {
     if (error) toast.error(error === "install_expired" ? "Install link expired" : "Install failed")
     if (install) setPickerInstall(install)
   }, [])
+
+  // Onboarding shortcut: an App is configured and installed but no repo is connected
+  // yet → open the picker for the first installation so the user goes straight to
+  // choosing a repo. Once per session (so a return visit isn't hijacked) and never
+  // once a repo exists or the redirect already opened a picker.
+  useEffect(() => {
+    if (!status?.app.configured || pickerInstall || status.sources.length > 0) return
+    const first = status.installations[0]
+    if (!first || sessionStorage.getItem(AUTO_PICKER_KEY)) return
+    sessionStorage.setItem(AUTO_PICKER_KEY, "1")
+    setPickerInstall(first.installation_id)
+  }, [status, pickerInstall])
 
   const appConfigured = status?.app.configured ?? false
 
