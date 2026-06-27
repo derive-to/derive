@@ -333,6 +333,11 @@ function paintEl(id,el,band){
   if(low){badge.title="View comment \\u00b7 moved here (approximate)";
     var pip=document.createElement("div");pip.className="dock-el-pip";badge.appendChild(pip)}
   else badge.title="View comment";
+  /* multiple comments on the SAME element would stack their badges at the identical
+     corner — only the top one is then clickable. Fan each extra badge left so every
+     comment's badge stays reachable in the document. */
+  var stack=0;for(var s=0;s<elReg.length;s++)if(elReg[s].el===el)stack++;
+  if(stack>0)badge.style.right=(-11+stack*24)+"px";   /* fan left, staying over the element */
   ov.appendChild(badge);
   document.body.appendChild(ov);elReg.push({id:id,el:el,ov:ov,clips:clipAncestors(el)})}
 /* ancestors that clip their overflow (a scrollable panel, a code block) — captured
