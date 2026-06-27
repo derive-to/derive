@@ -202,6 +202,34 @@ describe("resolveElement — ambiguity must not breed false confidence", () => {
     if (m) expect(m.band).not.toBe("high")
   })
 
+  it("many distinct anchors survive a compound shuffle without cross-contaminating", () => {
+    // 8 distinct charts, each with a comment. The republish shuffles their order, wraps
+    // every block in a <section>, AND rewords every caption — all at once. Each comment
+    // must land on its OWN chart (by content), and no two may collapse onto the same one.
+    const names = ["Alpha", "Bravo", "Charlie", "Delta", "Echo", "Foxtrot", "Golf", "Hotel"]
+    const v1 = names
+      .map((n) => `<h3>${n}</h3><img src="/${n}.png" alt="${n} chart"><p>${n} notes.</p>`)
+      .join("")
+    const sels = names.map((n) => selFor(v1, "img", names.indexOf(n)))
+    // Reverse order + wrap in sections + reword the prose (images unchanged).
+    const v2 = [...names]
+      .reverse()
+      .map(
+        (n) =>
+          `<section><h3>${n} (revised)</h3><img src="/${n}.png" alt="${n} chart"><p>Updated discussion of ${n}.</p></section>`,
+      )
+      .join("")
+    const ds2 = scanElements(v2)
+    const landed = new Set<number>()
+    sels.forEach((sel, i) => {
+      const m = resolveElement(sel, ds2)
+      expect(m, `anchor ${names[i]} orphaned`).not.toBeNull()
+      expect(ds2[m?.index ?? -1]?.attrs.alt).toBe(`${names[i]} chart`) // its OWN chart
+      expect(landed.has(m?.index ?? -1), `collision on ${names[i]}`).toBe(false)
+      landed.add(m?.index ?? -1)
+    })
+  })
+
   it("a repeated element (logo on every slide) follows neighbors, not a shifted ordinal", () => {
     // The brand logo repeats on every slide. A comment on slide 3's logo must stay on
     // slide 3 when a slide is INSERTED at the front — even though that shifts every
