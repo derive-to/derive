@@ -29,6 +29,7 @@ import { FollowingStrip } from "./following-strip"
 import { HowItWorks } from "./how-it-works"
 import { LibrarySkeleton } from "./library-skeleton"
 import { PublishCard } from "./publish-card"
+import { RepoPullRequests } from "./repo-pull-requests"
 import { ShareCollectionDialog } from "./share-collection-dialog"
 import type { Filter } from "./types"
 
@@ -187,6 +188,20 @@ function LibraryBody() {
 
   const activeCollection =
     filter.kind === "collection" ? collections.find((c) => c.id === filter.id) : undefined
+  // The in-collection PR viewer. On a repo mirror it lists that repo's open PR
+  // previews; on a PR preview it lists the siblings (so you can hop between PRs),
+  // with the one you're viewing highlighted. parentId is the repo collection.
+  const prParentId =
+    activeCollection?.kind === "repo"
+      ? activeCollection.id
+      : activeCollection?.kind === "pr"
+        ? activeCollection.parentId
+        : undefined
+  const repoPrs = prParentId
+    ? collections
+        .filter((c) => c.kind === "pr" && c.parentId === prParentId)
+        .sort((a, b) => (b.prNumber ?? 0) - (a.prNumber ?? 0))
+    : []
   // The collection's name from the sidebar list, falling back to the title the list
   // response carries — so a collection in another workspace still shows its real name
   // (not the generic "Collection") rather than relying on the active-workspace list.
@@ -455,13 +470,16 @@ function LibraryBody() {
         )}
 
         {filter.kind === "collection" ? (
-          <CollectionBar
-            title={heading}
-            count={headingCount}
-            onShare={() => activeCollection && setShareCol(activeCollection)}
-            onRename={(t) => renameCollection(filter.id, t)}
-            onDelete={() => deleteCollection(filter.id)}
-          />
+          <>
+            <CollectionBar
+              title={heading}
+              count={headingCount}
+              onShare={() => activeCollection && setShareCol(activeCollection)}
+              onRename={(t) => renameCollection(filter.id, t)}
+              onDelete={() => deleteCollection(filter.id)}
+            />
+            <RepoPullRequests prs={repoPrs} repo={activeCollection?.repo} activeId={filter.id} />
+          </>
         ) : (
           // Hide the "All artifacts · 0" heading on a brand-new empty home — the
           // visual guide carries it instead.

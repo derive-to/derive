@@ -134,6 +134,17 @@ export interface Collection {
   created_by: string
   created_at: string
   count: number
+  /** Where the collection came from: "repo" = a GitHub repo mirror, "pr" = a
+   *  read-only PR preview nested under its repo, "manual" = user-created. Absent on
+   *  older responses → treat as "manual". */
+  kind?: "manual" | "repo" | "pr"
+  /** For a PR preview: the repo collection it nests under (when that repo is still
+   *  connected). Drives the sidebar hierarchy. */
+  parentId?: string
+  /** For a PR preview: the pull-request number. */
+  prNumber?: number
+  /** For repo/PR collections: "owner/name". */
+  repo?: string
 }
 export type FollowKind = "author" | "path" | "user"
 /** A per-user follow: a GitHub author (kind="author", target=login), a repo path

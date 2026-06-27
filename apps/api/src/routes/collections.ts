@@ -42,7 +42,36 @@ export const collectionRoutes = (ctx: AppContext) => {
     const isMember =
       (deps.token && safeEqual(bearer(c), deps.token)) ||
       (!!me && !!(await meta.getMembership(org, me.id)))
-    return c.json({ collections: isMember ? await meta.listCollections(org) : [] })
+    if (!isMember) return c.json({ collections: [] })
+    // Tag each collection with its origin so the client can nest PR previews under
+    // their repo. A repo_source links a collection to a "owner/name" repo; pr_number
+    // null = the branch mirror (the parent), set = a PR preview (a child). Derived
+    // here, not stored, so it needs no schema change and self-corrects on disconnect.
+    const [cols, sources] = await Promise.all([
+      meta.listCollections(org),
+      meta.listRepoSources(org),
+    ])
+    const srcByCollection = new Map<string, { repo: string; pr: number | null }>()
+    const branchCollectionByRepo = new Map<string, string>()
+    for (const s of sources) {
+      srcByCollection.set(s.collection_id, { repo: s.repo, pr: s.pr_number })
+      if (s.pr_number === null) branchCollectionByRepo.set(s.repo, s.collection_id)
+    }
+    const collections = cols.map((col) => {
+      const src = srcByCollection.get(col.id)
+      if (!src) return { ...col, kind: "manual" as const }
+      if (src.pr === null) return { ...col, kind: "repo" as const, repo: src.repo }
+      return {
+        ...col,
+        kind: "pr" as const,
+        repo: src.repo,
+        prNumber: src.pr,
+        // Omitted when the repo was disconnected but the PR source lingers → the
+        // client falls back to rendering it top-level.
+        parentId: branchCollectionByRepo.get(src.repo),
+      }
+    })
+    return c.json({ collections })
   })
   app.post("/v1/collections", async (c) => {
     if (!(await workspaceCan(c, "comment"))) return fail(c, 403, "forbidden")
