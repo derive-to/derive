@@ -1,9 +1,12 @@
+import { readFileSync } from "node:fs"
+import { fileURLToPath } from "node:url"
 import { describe, expect, it } from "vitest"
 import {
   type ElementSelector,
   elementLabel,
   elementResolvesIn,
   fingerprintOf,
+  fnv1a,
   isElementAnchor,
   parseElementSelector,
   planElementForwardWalk,
@@ -201,5 +204,38 @@ describe("resolveElement edge cases", () => {
       find(`<img id="rev-chart" src="/charts/revenue.png" alt="Revenue by region">`, "img"),
     )
     expect(a).toBe(b)
+  })
+})
+
+// The iframe client (ANCHOR_CLIENT_JS in anchor.ts) duplicates `fnv` verbatim so a
+// fingerprint made in the browser equals one made here. If they drift, element
+// anchors created in the browser silently stop resolving server-side. Pin parity by
+// extracting the client's fnv and comparing it to fnv1a.
+describe("client/server fingerprint parity", () => {
+  it("the browser client's fnv() equals fnv1a()", () => {
+    const path = fileURLToPath(new URL("../src/anchor.ts", import.meta.url))
+    const src = readFileSync(path, "utf8")
+    const marker = "export const ANCHOR_CLIENT_JS = `"
+    const start = src.indexOf(marker) + marker.length
+    let i = start
+    let end = -1
+    while (i < src.length) {
+      if (src[i] === "\\") {
+        i += 2
+        continue
+      }
+      if (src[i] === "`") {
+        end = i
+        break
+      }
+      i++
+    }
+    const js = src.slice(start, end).replace(/\\(.)/g, (_, c) => c) // one unescape level
+    const body = js.match(/function fnv\(s\)\{[\s\S]*?return h\.toString\(36\)\}/)
+    expect(body).not.toBeNull()
+    const clientFnv = new Function(`${body?.[0]};return fnv`)() as (s: string) => string
+    for (const c of ["", "abc", "img/charts/revenue.pngRevenue by region", "tableweird", "héllo"]) {
+      expect(clientFnv(c)).toBe(fnv1a(c))
+    }
   })
 })
