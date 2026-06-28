@@ -55,16 +55,18 @@ export const sharingRoutes = (ctx: AppContext) => {
       z
         .object({
           // Share by @username or by email — either resolves to the account.
+          // `username` is accepted as an alias for `user` (both mean the @handle).
           user: z.string().min(1).optional(),
+          username: z.string().min(1).optional(),
           email: z.string().min(1).optional(),
           role: z.custom<Role>(isRole, "a valid role is required"),
         })
-        .refine((v) => v.user || v.email, "a username or email is required"),
+        .refine((v) => v.user || v.username || v.email, "a username or email is required"),
     )
     if (b instanceof Response) return b
     if (rank(b.role) > (await callerRank(c, artifact)))
       return fail(c, 403, "you can't grant a role above your own")
-    const id = await resolveUserRef(meta, (b.user ?? b.email) as string)
+    const id = await resolveUserRef(meta, (b.user ?? b.username ?? b.email) as string)
     const [user] = id ? await meta.getUsers([id]) : []
     if (!user) return fail(c, 404, "no Dock user with that username or email")
     await meta.setArtifactMember({
