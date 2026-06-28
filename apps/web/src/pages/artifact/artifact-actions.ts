@@ -1,7 +1,7 @@
 import type { QueryClient } from "@tanstack/react-query"
 import type { Dispatch, SetStateAction } from "react"
 import { toast } from "sonner"
-import { api, type Comment, type Mention } from "@/api"
+import { api, asMergeConflict, type Comment, type Mention, type MergeConflict } from "@/api"
 import { commentsQuery } from "@/lib/queries"
 import type { CommentActions } from "./comment-actions"
 import { toggleReaction } from "./lib/reactions"
@@ -39,6 +39,8 @@ export function artifactActions(p: {
   proposeMsg: string
   message: string
   format: "md" | "html"
+  /** The version the editor started from, captured at startEdit (the merge base). */
+  editBase: number | null
   composer: Composer
   sel: Selection
   post: (msg: Record<string, unknown>) => void
@@ -53,31 +55,74 @@ export function artifactActions(p: {
   setSel: Dispatch<SetStateAction<Selection>>
   setActiveThread: Dispatch<SetStateAction<string | null>>
   setRestoring: Dispatch<SetStateAction<boolean>>
+  setEditBase: Dispatch<SetStateAction<number | null>>
+  setConflict: Dispatch<SetStateAction<MergeConflict | null>>
 }) {
   const { shortId, art, qc, me, post, load, refetchComments } = p
 
   const startEdit = async () => {
     p.setEditing(true)
+    p.setConflict(null)
+    // The merge base: the version we're editing from. Captured here (not read at
+    // publish time) because `art` can refresh under us while the editor is open.
+    p.setEditBase(art.current_version)
     p.setTitle(art.title ?? "")
     p.setSrc(await api.getContent(shortId))
   }
+  // Keep the artifact's format: editing an HTML artifact must stay .html (publishing
+  // it as .md would flip its type and re-render it as markdown).
+  const filename = () => `${art.short_id}.${p.format === "md" ? "md" : "html"}`
   const publishEdit = async () => {
     try {
-      // Keep the artifact's format: editing an HTML artifact must stay .html
-      // (publishing it as .md would flip its type and re-render it as markdown).
-      // The title rides along, so editing the name renames the artifact.
+      // baseVersion makes the publish a guarded 3-way merge: edits disjoint from
+      // whatever landed since we started editing combine silently; the title rides
+      // along, so editing the name renames the artifact.
       const a = await api.publishText(
         shortId,
         p.src,
-        `${art.short_id}.${p.format === "md" ? "md" : "html"}`,
+        filename(),
         p.message.trim() || "Edited in browser",
         p.title,
+        p.editBase ?? undefined,
       )
-      toast.success(`Published v${a.current_version}`)
+      // A clean merge that absorbed concurrent edits advances past editBase+1; say so.
+      const merged = p.editBase != null && a.current_version > p.editBase + 1
+      toast.success(
+        merged
+          ? `Merged your changes — published v${a.current_version}`
+          : `Published v${a.current_version}`,
+      )
       p.setEditing(false)
+      p.setConflict(null)
       load()
     } catch (e) {
-      toast.error((e as Error).message)
+      // Overlapping edits couldn't auto-merge: open the in-flow resolver with the
+      // conflict hunks instead of a dead-end toast. Anything else is a real error.
+      const mc = asMergeConflict(e)
+      if (mc) p.setConflict(mc)
+      else toast.error((e as Error).message)
+    }
+  }
+  // Republish a hand-resolved merge against the live version. If no one slipped in
+  // since the conflict, it fast-forwards live; if they did, a fresh conflict opens.
+  const resolveConflict = async (merged: string, baseVersion: number) => {
+    try {
+      const a = await api.publishText(
+        shortId,
+        merged,
+        filename(),
+        p.message.trim() || "Resolved merge in browser",
+        p.title,
+        baseVersion,
+      )
+      toast.success(`Merged your changes — published v${a.current_version}`)
+      p.setEditing(false)
+      p.setConflict(null)
+      load()
+    } catch (e) {
+      const mc = asMergeConflict(e)
+      if (mc) p.setConflict(mc)
+      else toast.error((e as Error).message)
     }
   }
   // A commenter can't publish; their edit becomes a proposal for review. The
@@ -231,6 +276,7 @@ export function artifactActions(p: {
   return {
     startEdit,
     publishEdit,
+    resolveConflict,
     proposeEdit,
     addComment,
     reply,

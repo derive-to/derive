@@ -3,7 +3,7 @@ import { useNavigate, useParams } from "@tanstack/react-router"
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react"
 import { createPortal } from "react-dom"
 import { toast } from "sonner"
-import { API_BASE, ApiError, api, type Comment } from "@/api"
+import { API_BASE, ApiError, api, type Comment, type MergeConflict } from "@/api"
 import { useIsMobile } from "@/components"
 import { CursorButton } from "@/components/cursor/cursor-button"
 import { Icon } from "@/components/icons"
@@ -22,6 +22,7 @@ import {
 } from "./artifact-states"
 import { ArtifactTopBar } from "./artifact-top-bar"
 import { ActionsCtx } from "./comment-actions"
+import { ConflictResolver } from "./conflict-resolver"
 import { canCommentWithRole, shouldPromptSignInToComment } from "./lib/comment-access"
 import { groupThreads, parseAnchor } from "./lib/layout"
 import { parseRef, refFor } from "./parse-ref"
@@ -77,6 +78,10 @@ export function Artifact() {
   // Editable title while editing (seeded from the artifact in startEdit); editors
   // can rename, and it republishes with the new name.
   const [editTitle, setEditTitle] = useState("")
+  // Merge base captured at edit start (the version sent as baseVersion on publish),
+  // and the conflict hunks when a publish couldn't auto-merge (drives the resolver).
+  const [editBase, setEditBase] = useState<number | null>(null)
+  const [conflict, setConflict] = useState<MergeConflict | null>(null)
 
   // Canonicalise the URL client-side: once the artifact is loaded, rewrite any
   // non-canonical ref (bare id, stale name, legacy order) to /a/<name>-<shortId> so
@@ -363,6 +368,7 @@ export function Artifact() {
   const {
     startEdit,
     publishEdit,
+    resolveConflict,
     proposeEdit,
     reply,
     submitNew,
@@ -382,6 +388,7 @@ export function Artifact() {
     proposeMsg,
     message,
     format,
+    editBase,
     composer,
     sel,
     post,
@@ -397,6 +404,8 @@ export function Artifact() {
     setSel,
     setActiveThread,
     setRestoring,
+    setEditBase,
+    setConflict,
   })
 
   // Activating a thread from the panel/rail: on a deck, first flip to the slide it
@@ -536,7 +545,19 @@ export function Artifact() {
               isMobile && panel === "open" && "pb-[50vh]",
             )}
           >
-            {editing ? (
+            {conflict ? (
+              // A publish that couldn't auto-merge: resolve in-flow, then republish
+              // against the live version. Keyed on the live version so a fresh
+              // conflict (someone published again mid-resolve) remounts clean.
+              <ConflictResolver
+                key={conflict.current_version}
+                conflict={conflict}
+                format={format}
+                editBase={editBase}
+                onResolve={resolveConflict}
+                onCancel={() => setConflict(null)}
+              />
+            ) : editing ? (
               <SourceEditor
                 canPublish={effectiveCanPublish}
                 title={effectiveCanPublish ? editTitle : (art.title ?? shortId)}

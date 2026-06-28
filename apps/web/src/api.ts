@@ -459,18 +459,23 @@ const u = (path: string) => API_BASE + path
 const f = (path: string, init?: RequestInit) => fetch(u(path), init)
 
 // Thrown error carries the HTTP status so callers can branch (e.g. a 401 on a
-// password artifact means "prompt for the password", not "not found").
+// password artifact means "prompt for the password", not "not found"). `body` is
+// the parsed error payload — a 409 merge conflict carries the conflict hunks the
+// resolver needs, which would be lost if only the message string were kept.
 export class ApiError extends Error {
   constructor(
     message: string,
     readonly status: number,
+    readonly body?: unknown,
   ) {
     super(message)
   }
 }
 const j = async (r: Response) => {
-  if (!r.ok)
-    throw new ApiError((await r.json().catch(() => ({}))).error ?? `HTTP ${r.status}`, r.status)
+  if (!r.ok) {
+    const body = await r.json().catch(() => ({}))
+    throw new ApiError(body?.error ?? `HTTP ${r.status}`, r.status, body)
+  }
   return r.json()
 }
 const opts = (body?: unknown): RequestInit => ({
@@ -478,6 +483,30 @@ const opts = (body?: unknown): RequestInit => ({
   headers: { accept: "application/json", ...(body ? { "content-type": "application/json" } : {}) },
   ...(body ? { method: "POST", body: JSON.stringify(body) } : {}),
 })
+
+// One region of a 3-way merge, mirroring @dock/core's MergeHunk: text already
+// resolved into the document, or a region both sides changed (carrying all three
+// sides for a human to reconcile). The publish 409 body is a list of these.
+export type MergeHunk =
+  | { t: "clean"; text: string }
+  | { t: "conflict"; base: string; ours: string; theirs: string }
+
+// The 409 body when a guarded republish can't auto-merge: the version the editor
+// started from, the version the doc advanced to, and the decomposed hunks.
+export interface MergeConflict {
+  base_version: number
+  current_version: number
+  conflicts: MergeHunk[]
+}
+
+// Narrow an ApiError to a merge conflict, recovering the typed conflict body.
+export const asMergeConflict = (e: unknown): MergeConflict | null => {
+  if (!(e instanceof ApiError) || e.status !== 409) return null
+  const b = e.body as Partial<MergeConflict> | undefined
+  return b && Array.isArray(b.conflicts) && typeof b.current_version === "number"
+    ? (b as MergeConflict)
+    : null
+}
 
 // Better Auth lives under /api/auth; get-session returns { user } | null.
 const authJson = async (r: Response) => {
@@ -940,16 +969,20 @@ export const api = {
     }).then(j)
   },
   // `title` renames the artifact on this republish (the editor's editable title);
-  // omit it to leave the name unchanged.
+  // omit it to leave the name unchanged. `baseVersion` is the version the editor
+  // started from — when set, the server 3-way merges any drift instead of clobbering
+  // (a clean merge just happens; an overlapping one throws ApiError 409 with hunks).
   publishText(
     id: string,
     text: string,
     filename: string,
     message: string,
     title?: string,
+    baseVersion?: number,
   ): Promise<Artifact> {
     const fields: Record<string, string> = { message }
     if (title?.trim()) fields.title = title.trim()
+    if (baseVersion != null) fields.baseVersion = String(baseVersion)
     return this.publish(new File([text], filename), fields, id)
   },
 }
