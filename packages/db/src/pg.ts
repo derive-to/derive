@@ -6,6 +6,7 @@ import type {
   AuditLogRecord,
   CollectionMemberRecord,
   CollectionRecord,
+  CommentListOpts,
   CommentRecord,
   CommentSignals,
   CommentState,
@@ -342,10 +343,19 @@ export class PgMetaStore implements MetaStore {
     return rows[0] ?? null
   }
 
-  listComments(artifactId: string, opts?: { state?: CommentState }): Promise<CommentRecord[]> {
-    const where = opts?.state
-      ? and(eq(comment.artifact_id, artifactId), eq(comment.state, opts.state))
-      : eq(comment.artifact_id, artifactId)
+  listComments(artifactId: string, opts?: CommentListOpts): Promise<CommentRecord[]> {
+    // Visibility filter: fail-closed (see MetaStore.listComments). Default → public
+    // only; a viewer also sees their own personal comments; includeAll bypasses.
+    const vis = opts?.includeAll
+      ? undefined
+      : opts?.viewerOwnerId
+        ? or(eq(comment.visibility, "public"), eq(comment.owner_id, opts.viewerOwnerId))
+        : eq(comment.visibility, "public")
+    const where = and(
+      eq(comment.artifact_id, artifactId),
+      opts?.state ? eq(comment.state, opts.state) : undefined,
+      vis,
+    )
     return this.db.select().from(comment).where(where).orderBy(asc(comment.created_at))
   }
 

@@ -3,6 +3,7 @@ import type {
   ArtifactKind,
   AuditAction,
   CommentState,
+  CommentVisibility,
   DeliveryKind,
   DeliveryStatus,
   DomainKind,
@@ -110,6 +111,10 @@ export const comment = sqliteTable("comment", {
   // rows + anonymous comments, which fall back to the name check.
   author_id: text("author_id"),
   state: text("state").$type<CommentState>().notNull().default("open"),
+  // `personal` comments are visible only to `owner_id` (the human) and the agents
+  // that human has authed; `public` (default) to everyone. Enforced in listComments.
+  visibility: text("visibility").$type<CommentVisibility>().notNull().default("public"),
+  owner_id: text("owner_id"),
   created_at: text("created_at").notNull().default(now),
   meta: text("meta"),
 })

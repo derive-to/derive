@@ -74,9 +74,11 @@ export function parseMentions(input: unknown): Mention[] {
   return out
 }
 
-/** Wire shape for a comment: meta unpacked into clean fields; deleted bodies blanked. */
+/** Wire shape for a comment: meta unpacked into clean fields; deleted bodies blanked.
+ *  `owner_id` is dropped — the server already filters personal comments to their
+ *  owner, so the client never needs it; `visibility` ships for tab routing. */
 export function commentJson(cm: CommentRecord, anchored?: boolean) {
-  const { meta, ...rest } = cm
+  const { meta, owner_id: _owner, ...rest } = cm
   const md = parseMeta(meta)
   const deleted = !!md.deleted
   return {

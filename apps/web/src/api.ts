@@ -276,6 +276,9 @@ export interface Comment {
   // version (set by the server's re-anchor sweep); the feedback may no longer apply.
   state: "open" | "addressed" | "resolved" | "outdated"
   created_at: string
+  // `personal` = a private note scoped to you and the agents you've authed; the
+  // server only ever returns your own. `public` (default) = everyone on the artifact.
+  visibility?: "public" | "personal"
   anchored?: boolean
   reactions?: Record<string, string[]>
   edited?: boolean
@@ -884,7 +887,13 @@ export const api = {
     f(`/v1/artifacts/${id}/comments`, opts()).then(j),
   comment: (
     id: string,
-    body: { body_md: string; thread_id?: string; anchor?: unknown; mentions?: Mention[] },
+    body: {
+      body_md: string
+      thread_id?: string
+      anchor?: unknown
+      mentions?: Mention[]
+      visibility?: "public" | "personal"
+    },
   ): Promise<Comment> => f(`/v1/artifacts/${id}/comments`, opts(body)).then(j),
   resolve: (id: string, commentId: string, state: "open" | "resolved") =>
     f(`/v1/artifacts/${id}/comments/${commentId}/resolve`, opts({ state })).then(j),

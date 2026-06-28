@@ -36,13 +36,16 @@ export function useArtifactFrame(p: {
   setHoverThread: Dispatch<SetStateAction<string | null>>
   setActiveThread: Dispatch<SetStateAction<string | null>>
   setPanel: Dispatch<SetStateAction<Panel>>
+  // Clicking a highlight: switch to the tab its thread lives on (personal vs shared)
+  // so the card it activates is actually visible in the panel.
+  onAnchorTab: (personal: boolean) => void
   // A cross-document link inside the frame was clicked: the server resolved it to a
   // sibling artifact `ref`. The frame is sandboxed and can't navigate the host, so it
   // hands the click here for an SPA transition (or a new tab on a modified click).
   onNavigate: (ref: string, newTab: boolean) => void
 }) {
   const { comments, shortId, version, hoverThread, onPointerMove, onPointerLeave, onTap } = p
-  const { setHoverThread, setActiveThread, setPanel, onNavigate } = p
+  const { setHoverThread, setActiveThread, setPanel, onNavigate, onAnchorTab } = p
   const frame = useRef<HTMLIFrameElement>(null)
   const presentWrap = useRef<HTMLDivElement>(null)
   const [frameReady, setFrameReady] = useState(0)
@@ -131,6 +134,7 @@ export function useArtifactFrame(p: {
         if (typeof d.viewH === "number") setViewH(d.viewH)
       } else if (d.type === "anchor-hover") setHoverThread(d.id ?? null)
       else if (d.type === "anchor-click") {
+        if (typeof d.personal === "boolean") onAnchorTab(d.personal)
         setActiveThread(d.id)
         setPanel((cur) => (cur === "open" ? cur : "open"))
       } else if (d.type === "cursor" && typeof d.x === "number" && typeof d.y === "number") {
@@ -145,7 +149,16 @@ export function useArtifactFrame(p: {
     }
     window.addEventListener("message", onMsg)
     return () => window.removeEventListener("message", onMsg)
-  }, [onPointerMove, onPointerLeave, onTap, setHoverThread, setActiveThread, setPanel, onNavigate])
+  }, [
+    onPointerMove,
+    onPointerLeave,
+    onTap,
+    setHoverThread,
+    setActiveThread,
+    setPanel,
+    onNavigate,
+    onAnchorTab,
+  ])
 
   // Two-way hover: emphasize the matching highlight in the doc when a comment
   // card is hovered (the inbound anchor-hover sets the same state the other way).
@@ -206,13 +219,25 @@ export function useArtifactFrame(p: {
     const anchors = groupThreads(comments)
       .map((t) => t[0])
       .filter((head): head is Comment => head?.state === "open" || head?.state === "addressed")
-      .map((head) => ({ id: head.thread_id, sel: parseAnchor(head.anchor) }))
-      .filter((x): x is { id: string; sel: NonNullable<ReturnType<typeof parseAnchor>> } => !!x.sel)
+      .map((head) => ({
+        id: head.thread_id,
+        personal: head.visibility === "personal",
+        sel: parseAnchor(head.anchor),
+      }))
+      .filter(
+        (
+          x,
+        ): x is {
+          id: string
+          personal: boolean
+          sel: NonNullable<ReturnType<typeof parseAnchor>>
+        } => !!x.sel,
+      )
       .map((x) =>
         // Element anchor: hand the client the whole selector to relocate via the
         // cascade. Text anchor: the quote + context it greps for.
         x.sel.element
-          ? { id: x.id, el: x.sel.element }
+          ? { id: x.id, el: x.sel.element, personal: x.personal }
           : {
               id: x.id,
               exact: x.sel.exact,
@@ -220,6 +245,8 @@ export function useArtifactFrame(p: {
               suffix: x.sel.suffix,
               // The frame scopes resolution to this slide first (deck artifacts only).
               slide: x.sel.slide,
+              // Paints amber (vs lavender) so personal anchors are obviously distinct.
+              personal: x.personal,
             },
       )
     w.postMessage({ source: "dock-host", type: "anchors", anchors }, "*")

@@ -6,6 +6,7 @@ import type {
   AuditLogRecord,
   CollectionMemberRecord,
   CollectionRecord,
+  CommentListOpts,
   CommentRecord,
   CommentSignals,
   CommentState,
@@ -493,13 +494,24 @@ export function makeRepos(db: SqliteDb) {
     return getComment(id)
   }
 
+  // Visibility filter: fail-closed. Default → public only; a viewer sees their own
+  // personal comments too; includeAll bypasses (background/system only).
+  const visibilityCond = (opts?: CommentListOpts) =>
+    opts?.includeAll
+      ? undefined
+      : opts?.viewerOwnerId
+        ? or(eq(comment.visibility, "public"), eq(comment.owner_id, opts.viewerOwnerId))
+        : eq(comment.visibility, "public")
+
   const listComments = async (
     artifactId: string,
-    opts?: { state?: CommentState },
+    opts?: CommentListOpts,
   ): Promise<CommentRecord[]> => {
-    const where = opts?.state
-      ? and(eq(comment.artifact_id, artifactId), eq(comment.state, opts.state))
-      : eq(comment.artifact_id, artifactId)
+    const where = and(
+      eq(comment.artifact_id, artifactId),
+      opts?.state ? eq(comment.state, opts.state) : undefined,
+      visibilityCond(opts),
+    )
     return db.select().from(comment).where(where).orderBy(asc(comment.created_at)).all()
   }
 

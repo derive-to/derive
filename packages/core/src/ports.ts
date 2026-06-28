@@ -183,7 +183,15 @@ export interface MetaStore {
   reclassifyVersion(artifactId: string, n: number, contentType: string): Promise<void>
 
   createComment(c: NewComment): Promise<CommentRecord>
-  listComments(artifactId: string, opts?: { state?: CommentState }): Promise<CommentRecord[]>
+  /**
+   * Comments on an artifact, oldest-first. Visibility is enforced here so it can't
+   * be bypassed by a caller forgetting to filter:
+   *   - default (no `viewerOwnerId`, no `includeAll`) → PUBLIC only (fail-closed).
+   *   - `viewerOwnerId` set → public + that owner's `personal` comments.
+   *   - `includeAll` → every comment regardless of visibility (background/system
+   *     paths only: re-anchor sweep, addressed release — never a client response).
+   */
+  listComments(artifactId: string, opts?: CommentListOpts): Promise<CommentRecord[]>
   getComment(id: string): Promise<CommentRecord | null>
   /** Patch a single comment's body, meta (reactions, edited, deleted), and/or
    *  anchor (the re-anchor sweep self-heals an element anchor it recovered across
@@ -1203,6 +1211,10 @@ export interface ViewStats {
 //             the quoted text reappears. Never overwrites `resolved`/`addressed`.
 export type CommentState = "open" | "addressed" | "resolved" | "outdated"
 
+/** Who a comment is visible to. `public` = everyone on the artifact (today's
+ *  behavior). `personal` = only the human owner (`owner_id`) and the agents that
+ *  human has authed — a private side-channel, never part of the shared file. */
+export type CommentVisibility = "public" | "personal"
 /** Per-artifact comment signals for a viewer (see `MetaStore.commentSignals`).
  *  `open_threads` is the count of distinct OPEN threads; `mentions_me` / `i_participated`
  *  flag that the viewer is tagged in or has authored an open thread on this artifact —
@@ -1226,6 +1238,11 @@ export interface CommentRecord {
    *  Null for legacy rows and anonymous comments. */
   author_id: string | null
   state: CommentState
+  /** `personal` comments are scoped to `owner_id`; `public` (default) to everyone. */
+  visibility: CommentVisibility
+  /** For a `personal` comment, the human user who owns the private thread (both the
+   *  human and their agent author into it with this set). Null for `public`. */
+  owner_id: string | null
   created_at: string
   /** JSON blob: { reactions?: {emoji: author[]}, edited_at?: string, deleted?: boolean }. */
   meta: string | null
@@ -1241,6 +1258,17 @@ export interface NewComment {
   body_md: string
   author: string
   author_id?: string | null
+  visibility?: CommentVisibility
+  owner_id?: string | null
+}
+
+/** Options for {@link MetaStore.listComments}. See its doc for visibility rules. */
+export interface CommentListOpts {
+  state?: CommentState
+  /** The human identity reading: public + this owner's `personal` comments. */
+  viewerOwnerId?: string | null
+  /** Background/system reads that need every comment regardless of visibility. */
+  includeAll?: boolean
 }
 
 /** A bundle version's blob is this manifest; file versions point at content directly. */

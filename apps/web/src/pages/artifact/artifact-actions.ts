@@ -32,6 +32,8 @@ export function artifactActions(p: {
   art: { title?: string | null; short_id: string; current_version: number }
   qc: QueryClient
   me: Me
+  /** Which comment tab is active — a new thread inherits its visibility. */
+  tab: "comments" | "personal"
   src: string
   title: string
   proposeMsg: string
@@ -98,7 +100,12 @@ export function artifactActions(p: {
   }
   const addComment = async (
     text: string,
-    opts?: { threadId?: string; anchor?: Sel | null; mentions?: Mention[] },
+    opts?: {
+      threadId?: string
+      anchor?: Sel | null
+      mentions?: Mention[]
+      visibility?: "public" | "personal"
+    },
   ) => {
     if (!text.trim()) return
     const key = commentsQuery(shortId).queryKey
@@ -117,6 +124,7 @@ export function artifactActions(p: {
       author: me?.name ?? me?.email ?? "You",
       state: "open",
       created_at: new Date().toISOString(),
+      visibility: opts?.visibility ?? "public",
       reactions: {},
       mentions: opts?.mentions,
     }
@@ -127,6 +135,8 @@ export function artifactActions(p: {
         thread_id: opts?.threadId,
         anchor: opts?.threadId ? undefined : (opts?.anchor ?? undefined),
         mentions: opts?.mentions?.length ? opts.mentions : undefined,
+        // New thread only — a reply inherits its thread's visibility server-side.
+        visibility: opts?.threadId ? undefined : opts?.visibility,
       })
       qc.setQueryData<Comment[]>(key, (old) =>
         (old ?? []).map((cmt) => (cmt.id === tempId ? real : cmt)),
@@ -146,7 +156,11 @@ export function artifactActions(p: {
     const anchor = p.composer?.anchor ?? null
     p.setComposer(null)
     p.setSel(null)
-    await addComment(text, { anchor, mentions })
+    await addComment(text, {
+      anchor,
+      mentions,
+      visibility: p.tab === "personal" ? "personal" : "public",
+    })
   }
   const toggleResolve = async (root: Comment) => {
     // Resolve anything not already resolved (open or outdated); reopen a resolved thread.

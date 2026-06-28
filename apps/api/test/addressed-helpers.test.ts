@@ -54,6 +54,8 @@ const row = (over: Partial<CommentRecord> & { id: string }): CommentRecord => ({
   author: "jess",
   author_id: "u1",
   state: "open",
+  visibility: "public",
+  owner_id: null,
   created_at: "2026-01-01T00:00:00.000Z",
   meta: null,
   ...over,

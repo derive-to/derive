@@ -58,6 +58,8 @@ CREATE TABLE IF NOT EXISTS comment (
   author TEXT NOT NULL,
   author_id TEXT,
   state TEXT NOT NULL DEFAULT 'open',
+  visibility TEXT NOT NULL DEFAULT 'public',
+  owner_id TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   meta TEXT,
   FOREIGN KEY (artifact_id) REFERENCES artifact(id)

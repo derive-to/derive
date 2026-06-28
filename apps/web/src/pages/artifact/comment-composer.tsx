@@ -7,6 +7,7 @@ import {
   useState,
 } from "react"
 import { api, type DirUser, type Mention } from "@/api"
+import { Icon } from "@/components/icons"
 import { Button } from "@/components/ui/button"
 import { PICKER_EMOJI } from "@/lib/emoji"
 import { cn } from "@/lib/utils"
@@ -340,10 +341,13 @@ export function Composer({
   quote,
   onSubmit,
   onCancel,
+  personal,
 }: {
   quote: string | null
   onSubmit: (t: string, mentions: Mention[]) => void
   onCancel: () => void
+  /** Personal tab: a private note for you + your agents — reflected in the copy. */
+  personal?: boolean
 }) {
   const [text, setText] = useState("")
   const [mentions, setMentions] = useState<Mention[]>([])
@@ -372,9 +376,19 @@ export function Composer({
           onSubmit={submit}
           onCancel={onCancel}
           placeholder={
-            quote ? "Comment on the selection… (@ to mention)" : "Add a comment… (@ to mention)"
+            personal
+              ? "Add a personal note… (@ to mention)"
+              : quote
+                ? "Comment on the selection… (@ to mention)"
+                : "Add a comment… (@ to mention)"
           }
         />
+        {personal && (
+          <div className="mt-1.5 flex items-center gap-1.5 text-2xs text-muted-foreground">
+            <Icon name="lock" size={11} />
+            Visible only to you and the agents you've connected.
+          </div>
+        )}
         <div className="mt-1.5 flex gap-1.5">
           <Button
             variant="primary"
@@ -384,7 +398,7 @@ export function Composer({
             data-testid="composer-submit"
             onClick={() => submit(mentions.filter((m) => text.includes(`@${m.name}`)))}
           >
-            Comment
+            {personal ? "Post note" : "Comment"}
           </Button>
           <Button variant="outline" size="sm" data-testid="composer-cancel" onClick={onCancel}>
             Cancel

@@ -43,7 +43,9 @@ export async function releaseAddressed(
   proposalId: string,
   toState: Extract<CommentState, "open" | "resolved">,
 ): Promise<string[]> {
-  const comments = await meta.listComments(artifactId)
+  // System path resolving threads a proposal addressed — must see every thread
+  // (incl. personal) to release them; never returned to a client.
+  const comments = await meta.listComments(artifactId, { includeAll: true })
   const released: string[] = []
   for (const cm of comments) {
     if (cm.id !== cm.thread_id) continue // the root carries the tag + the state
