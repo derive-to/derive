@@ -226,6 +226,18 @@ describe("publish: bundles (zip)", () => {
     ])
     // Title comes from the skill's frontmatter name, not the zip filename.
     expect(artifact.title).toBe("my-skill")
+    // A skill carries the distinct content type so the library can badge it for free.
+    expect(version.content_type).toBe("dock/skill")
+  })
+
+  it("tags a plain docs bundle (no SKILL.md) as a normal dock/bundle", async () => {
+    const blobs = makeBlobs()
+    const { version } = await publish(
+      makeMeta(),
+      blobs,
+      bundle({ "README.md": "# Docs", "guide.md": "# Guide" }),
+    )
+    expect(version.content_type).toBe("dock/bundle")
   })
 
   it("prefers HTML over SKILL.md, and falls back to README.md / shallowest .md", async () => {

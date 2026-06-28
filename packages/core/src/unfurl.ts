@@ -1,7 +1,9 @@
 import { escapeHtml } from "./md"
+import { SKILL_CONTENT_TYPE } from "./ports"
 
 /** A short, kind-aware label for an artifact, used on cards and in descriptions. */
 export const kindLabel = (contentType: string | null | undefined, isBundle: boolean): string => {
+  if (contentType === SKILL_CONTENT_TYPE) return "Skill"
   if (isBundle) return "Site"
   if (contentType === "text/markdown") return "Markdown"
   if (contentType === "text/x-dock-deck") return "Deck"

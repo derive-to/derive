@@ -41,6 +41,7 @@ describe("kindLabel", () => {
     expect(kindLabel("text/x-dock-deck", false)).toBe("Deck")
     expect(kindLabel("text/html; charset=utf-8", false)).toBe("HTML")
     expect(kindLabel("text/html", true)).toBe("Site")
+    expect(kindLabel("dock/skill", true)).toBe("Skill") // a skill bundle reads as "Skill"
     expect(kindLabel(null, false)).toBe("Document")
   })
 })

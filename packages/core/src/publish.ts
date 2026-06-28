@@ -9,6 +9,7 @@ import {
   type BundleManifest,
   type MetaStore,
   type ProposalRecord,
+  SKILL_CONTENT_TYPE,
   type VersionRecord,
   type Visibility,
 } from "./ports"
@@ -162,11 +163,12 @@ async function storeContent(
     if (!entry) throw new PublishError(400, "bundle has no html or markdown entry point")
 
     const manifest: BundleManifest = { entry, spa, files }
-    // A skill bundle (entry = SKILL.md) carries its name in frontmatter — surface it
-    // as the suggested title so `dock publish ./my-skill/` reads as "My Skill", not
-    // the zip's filename.
+    // A skill bundle (entry = SKILL.md) gets the distinct dock/skill content type — so
+    // the library can badge it without opening the manifest — and is titled from its
+    // frontmatter `name`, not the zip's filename, when no title is given.
+    const isSkill = isSkillBundle(manifest)
     let suggestedTitle: string | undefined
-    if (isSkillBundle(manifest)) {
+    if (isSkill) {
       const entryKey = files[entry]?.key
       const entryBytes = entryKey ? await blobs.get(entryKey) : null
       const name = entryBytes && parseFrontmatter(new TextDecoder().decode(entryBytes)).attrs.name
@@ -174,7 +176,7 @@ async function storeContent(
     }
     return {
       blobKey: await blobs.put(new TextEncoder().encode(JSON.stringify(manifest))),
-      contentType: BUNDLE_CONTENT_TYPE,
+      contentType: isSkill ? SKILL_CONTENT_TYPE : BUNDLE_CONTENT_TYPE,
       kind: "bundle",
       suggestedTitle,
     }

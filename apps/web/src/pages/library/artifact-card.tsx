@@ -18,6 +18,9 @@ export const dirOf = (path: string): string => {
 }
 
 export function artifactTypeLabel(a: Artifact): string {
+  // A skill rides the denormalized content type (dock/skill), so the grid badges it
+  // without opening the bundle — string mirrored from @dock/core SKILL_CONTENT_TYPE.
+  if (a.current_content_type === "dock/skill") return "Skill"
   if (a.kind === "bundle") return "Site"
   const ct = a.current_content_type
   if (ct === "text/x-dock-deck") return "Deck"

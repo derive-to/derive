@@ -1279,3 +1279,12 @@ export interface BundleManifest {
 }
 
 export const BUNDLE_CONTENT_TYPE = "dock/bundle"
+/** A skill is a bundle too (kind stays "bundle"), but carries a distinct content type
+ *  so its skill-ness rides the artifact's denormalized `current_content_type` — free to
+ *  read in the list (the "Skill" badge) without opening the manifest, and it tracks the
+ *  current version automatically (republish without a SKILL.md → back to a plain bundle). */
+export const SKILL_CONTENT_TYPE = "dock/skill"
+/** Is this stored content a bundle (plain bundle OR skill)? Use everywhere that branches
+ *  on "is this a multi-file bundle", so a skill is never mistaken for a single file. */
+export const isBundleContentType = (contentType: string | null | undefined): boolean =>
+  contentType === BUNDLE_CONTENT_TYPE || contentType === SKILL_CONTENT_TYPE

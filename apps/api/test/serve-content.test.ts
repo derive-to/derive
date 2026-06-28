@@ -1,4 +1,9 @@
-import { type BlobStore, BUNDLE_CONTENT_TYPE, type BundleManifest } from "@dock/core"
+import {
+  type BlobStore,
+  BUNDLE_CONTENT_TYPE,
+  type BundleManifest,
+  SKILL_CONTENT_TYPE,
+} from "@dock/core"
 import type { Context } from "hono"
 import { describe, expect, it, vi } from "vitest"
 import { RAW_HEADERS } from "../src/lib/http"
@@ -224,7 +229,9 @@ describe("serveContent — skill / markdown bundles", () => {
     k_skill: skillMd,
     k_sh: "#!/usr/bin/env bash\necho hi\n",
   })
-  const content = { blob_key: "kManifest", content_type: BUNDLE_CONTENT_TYPE }
+  // A real skill carries the dock/skill content type; serveContent must still treat
+  // it as a bundle (isBundleContentType), not fall through to single-file handling.
+  const content = { blob_key: "kManifest", content_type: SKILL_CONTENT_TYPE }
 
   it("renders the SKILL.md entry as HTML, frontmatter stripped, with the anchor client", async () => {
     const res = await serveContent(ctx(), blobs, content, "my-skill", prefix, "")

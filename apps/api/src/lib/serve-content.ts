@@ -1,7 +1,7 @@
 import {
   type BlobStore,
-  BUNDLE_CONTENT_TYPE,
   type BundleManifest,
+  isBundleContentType,
   looksLikeHtmlDocument,
   mimeFor,
   parseFrontmatter,
@@ -62,7 +62,7 @@ export const serveContent = async (
   const htmlBody = async (doc: string): Promise<string> =>
     reader ? readerView(doc, renderDocShell, sanitizeHtml) : rf(await tx(doc)) + SELECTION_SCRIPT
   let path = rawPath
-  if (content.content_type === BUNDLE_CONTENT_TYPE) {
+  if (isBundleContentType(content.content_type)) {
     const manifestBytes = await blobs.get(content.blob_key)
     if (!manifestBytes) return c.text("blob missing", 500)
     const manifest = JSON.parse(new TextDecoder().decode(manifestBytes)) as BundleManifest
