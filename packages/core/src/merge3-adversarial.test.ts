@@ -1,52 +1,6 @@
 import { describe, expect, it } from "vitest"
 import { type MergeKind, merge3 } from "./merge3"
-
-// Deterministic PRNG (mulberry32) so any failure reproduces from its seed.
-const prng = (seed: number) => () => {
-  seed = (seed + 0x6d2b79f5) | 0
-  let t = Math.imul(seed ^ (seed >>> 15), 1 | seed)
-  t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
-  return ((t ^ (t >>> 14)) >>> 0) / 4294967296
-}
-
-// A pool of adversarial line atoms: empty, whitespace, unicode, markers, repeats.
-const ATOMS = [
-  "a",
-  "b",
-  "c",
-  "",
-  " ",
-  "  ",
-  "\t",
-  "héllo",
-  "🙂",
-  "</div>",
-  "|---|",
-  "- item",
-  "# h",
-]
-
-const randomDoc = (rand: () => number, n: number): string[] =>
-  Array.from({ length: n }, () => ATOMS[Math.floor(rand() * ATOMS.length)] as string)
-
-const mutate = (rand: () => number, src: string[], tag: string): string[] => {
-  const out = [...src]
-  const edits = Math.floor(rand() * 4)
-  for (let e = 0; e < edits; e++) {
-    if (out.length === 0 && rand() < 0.5) {
-      out.push(`ins_${tag}_${e}`)
-      continue
-    }
-    const i = Math.floor(rand() * Math.max(1, out.length))
-    const op = rand()
-    if (op < 0.4)
-      out[i] = `${out[i] ?? ""}_${tag}${e}` // edit → unique marker
-    else if (op < 0.7)
-      out.splice(i, 1) // delete
-    else out.splice(i, 0, `ins_${tag}_${e}`) // insert → unique marker
-  }
-  return out
-}
+import { mutate, prng, randomDoc } from "./merge3-fuzz-helpers"
 
 describe("merge3 adversarial: universal invariants (text + markdown)", () => {
   it("never throws; clean ⇔ merged!=null ⇔ conflicts==0; and is deterministic", () => {
