@@ -2,6 +2,7 @@ import {
   type ArtifactRecord,
   approveProposal,
   diffLines,
+  MergeConflictError,
   type ProposalRecord,
   PublishError,
   propose,
@@ -216,6 +217,19 @@ export const proposalRoutes = (ctx: AppContext) => {
       const fresh = (await meta.getProposal(proposal.id)) as ProposalRecord
       return c.json({ ...proposalJson(artifact, fresh), published: version.n })
     } catch (err) {
+      // The proposal's base drifted and its edit overlaps what landed since: the
+      // 3-way merge couldn't auto-resolve. Surface the conflict (not a 500) so the
+      // client/agent can reconcile; nothing was published.
+      if (err instanceof MergeConflictError)
+        return c.json(
+          {
+            error: "merge conflict",
+            base_version: err.baseVersion,
+            current_version: err.currentVersion,
+            conflicts: err.hunks,
+          },
+          409,
+        )
       if (err instanceof PublishError) return fail(c, err.statusCode as 400, err.message)
       throw err
     }

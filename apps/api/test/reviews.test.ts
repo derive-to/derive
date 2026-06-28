@@ -118,3 +118,33 @@ describe("reviews: request changes and withdraw keep content live-unchanged", ()
     expect(res.status).toBe(403)
   })
 })
+
+describe("reviews: approving a proposal that conflicts with a drifted current returns 409", () => {
+  const owner: TestUser = { id: "u_conf_o", email: "conf-o@dock.test", name: "ConfO" }
+  const bob: TestUser = { id: "u_conf_b", email: "conf-b@dock.test", name: "ConfB" }
+  const { app } = makeAuthedApp("reviews-conflict", [owner, bob], "commenter")
+
+  it("409s with the conflict and publishes nothing when the doc moved under an overlapping proposal", async () => {
+    const shortId = (await (await publishAs(app, "<h1>v1</h1>", {}, as(owner.email))).json())
+      .short_id
+    const proposalId = (
+      await (await proposeAs(app, shortId, "<h1>candidate</h1>", as(bob.email))).json()
+    ).id
+    // The owner publishes v2 directly, so the proposal's base (v1) is now stale and
+    // its whole-document HTML change overlaps what changed.
+    const v2 = await publishAs(app, "<h1>v2 live</h1>", {}, as(owner.email), shortId)
+    expect(v2.status).toBe(201)
+    // Approving can no longer auto-merge -> 409, and nothing is published.
+    const res = await app.request(`/v1/artifacts/${shortId}/proposals/${proposalId}/approve`, {
+      method: "POST",
+      headers: as(owner.email),
+    })
+    expect(res.status).toBe(409)
+    const body = await res.json()
+    expect(body.error).toBe("merge conflict")
+    expect(body.current_version).toBe(2)
+    // The conflict didn't clobber the live content.
+    const live = await app.request(`/v1/artifacts/${shortId}/content`, { headers: as(owner.email) })
+    expect(await live.text()).toContain("v2 live")
+  })
+})
