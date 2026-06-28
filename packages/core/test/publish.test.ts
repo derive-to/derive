@@ -186,7 +186,7 @@ describe("publish: bundles (zip)", () => {
     expect(manifest.entry).toBe("/ok.html")
   })
 
-  it("rejects a non-zip, an empty bundle, and one with no html entry", async () => {
+  it("rejects a non-zip, an empty bundle, and one with neither html nor markdown", async () => {
     const meta = makeMeta()
     const blobs = makeBlobs()
     await expect(
@@ -197,9 +197,57 @@ describe("publish: bundles (zip)", () => {
       }),
     ).rejects.toMatchObject({ statusCode: 400 })
     await expect(publish(meta, blobs, bundle({}))).rejects.toMatchObject({ statusCode: 400 })
+    // A bundle of only non-renderable files (no .html, no .md) still has no entry.
     await expect(publish(meta, blobs, bundle({ "readme.txt": "hi" }))).rejects.toMatchObject({
       statusCode: 400,
     })
+  })
+
+  it("publishes a skill folder (SKILL.md + scripts, no HTML), entry = /SKILL.md", async () => {
+    const blobs = makeBlobs()
+    const { artifact, version } = await publish(
+      makeMeta(),
+      blobs,
+      bundle({
+        "SKILL.md": "---\nname: my-skill\ndescription: does things\n---\n\n# My Skill\n\nbody",
+        "scripts/run.sh": "#!/usr/bin/env bash\necho hi\n",
+        "references/notes.md": "# Notes",
+      }),
+    )
+    expect(artifact.kind).toBe("bundle")
+    const manifest = JSON.parse(
+      new TextDecoder().decode((await blobs.get(version.blob_key)) ?? undefined),
+    )
+    expect(manifest.entry).toBe("/SKILL.md")
+    expect(Object.keys(manifest.files).sort()).toEqual([
+      "/SKILL.md",
+      "/references/notes.md",
+      "/scripts/run.sh",
+    ])
+    // Title comes from the skill's frontmatter name, not the zip filename.
+    expect(artifact.title).toBe("my-skill")
+  })
+
+  it("prefers HTML over SKILL.md, and falls back to README.md / shallowest .md", async () => {
+    const blobs = makeBlobs()
+    // HTML wins even when a SKILL.md is present.
+    const a = await publish(makeMeta(), blobs, bundle({ "SKILL.md": "# s", "index.html": "<h1>" }))
+    const ma = JSON.parse(
+      new TextDecoder().decode((await blobs.get(a.version.blob_key)) ?? undefined),
+    )
+    expect(ma.entry).toBe("/index.html")
+    // No HTML, no SKILL.md → README.md.
+    const b = await publish(makeMeta(), blobs, bundle({ "README.md": "# r", "deep/x.md": "# x" }))
+    const mb = JSON.parse(
+      new TextDecoder().decode((await blobs.get(b.version.blob_key)) ?? undefined),
+    )
+    expect(mb.entry).toBe("/README.md")
+    // No HTML, no SKILL/README → shallowest markdown.
+    const c = await publish(makeMeta(), blobs, bundle({ "deep/a/b.md": "# b", "top.md": "# t" }))
+    const mc = JSON.parse(
+      new TextDecoder().decode((await blobs.get(c.version.blob_key)) ?? undefined),
+    )
+    expect(mc.entry).toBe("/top.md")
   })
 })
 

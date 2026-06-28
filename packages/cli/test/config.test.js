@@ -98,9 +98,20 @@ describe("scaffold", () => {
     expect(schema.properties.visibility.enum).toContain("link")
   })
 
-  it("exposes the four templates", () => {
-    expect(TEMPLATES).toEqual(["md", "html", "slides", "site"])
+  it("exposes the templates", () => {
+    expect(TEMPLATES).toEqual(["md", "html", "slides", "site", "skill"])
     expect(Object.keys(scaffoldFiles("T", "slides"))).toContain("slides.html")
+  })
+
+  it("scaffolds a skill: SKILL.md (with frontmatter) + scripts + references", () => {
+    const files = scaffoldFiles("My Cool Skill", "skill")
+    const names = Object.keys(files)
+    expect(names).toContain("skill/SKILL.md")
+    expect(names).toContain("skill/scripts/example.sh")
+    expect(names).toContain("skill/references/example.md")
+    const md = files["skill/SKILL.md"]
+    expect(md).toMatch(/^---\nname: my-cool-skill\n/) // title slugified to a skill name
+    expect(md).toContain("description:")
   })
 })
 

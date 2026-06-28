@@ -95,6 +95,16 @@ export interface Artifact {
   removed?: boolean
   /** Mirrored from a GitHub sync source → read-only in Dock (Edit/Propose hidden). */
   managed?: boolean
+  /** Present only when this bundle is a skill (its entry is SKILL.md): the declared
+   *  identity + the bundle's files. Drives the skill viewer (rendered doc + file tree).
+   *  Detail endpoint only. */
+  skill?: {
+    name: string | null
+    description: string | null
+    /** Entry document path, sans leading slash (e.g. "SKILL.md"). */
+    entry: string
+    files: { path: string; type: string }[]
+  }
   /** Repo path for a synced artifact (e.g. "docs/plans/foo.md") — drives the folder view. */
   source_path?: string | null
   /** First-published time. */

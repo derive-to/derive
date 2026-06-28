@@ -12,6 +12,7 @@ import {
   type VersionRecord,
   type Visibility,
 } from "./ports"
+import { isSkillBundle, parseFrontmatter } from "./skill"
 
 /**
  * Does this content begin like a full HTML document? Used to classify a payload as
@@ -75,6 +76,24 @@ const MAX_BUNDLE_FILES = 2000
 // upload that expands to gigabytes — would OOM/CPU-kill the worker without this.
 const MAX_BUNDLE_UNZIPPED_BYTES = 50 * 1024 * 1024 // 50 MB
 
+/**
+ * Choose a bundle's entry page. An HTML site enters at its root `index.html`, else
+ * its shallowest `.html`. A doc/skill bundle with no HTML (a Claude Code skill is a
+ * folder of `SKILL.md` + scripts/refs, no HTML) falls back to `SKILL.md`, then
+ * `README.md`, then the shallowest markdown file — markdown entries render through
+ * the markdown path at serve time. Null when the bundle has neither HTML nor markdown.
+ */
+export const pickBundleEntry = (paths: string[]): string | null => {
+  const shallowest = (pred: (p: string) => boolean): string | undefined =>
+    paths.filter(pred).sort((a, b) => a.split("/").length - b.split("/").length)[0]
+  if (paths.includes("/index.html")) return "/index.html"
+  const html = shallowest((p) => p.endsWith(".html"))
+  if (html) return html
+  if (paths.includes("/SKILL.md")) return "/SKILL.md"
+  if (paths.includes("/README.md")) return "/README.md"
+  return shallowest((p) => /\.(md|markdown)$/i.test(p)) ?? null
+}
+
 /** Normalizes a zip entry path; null means skip the entry. */
 const cleanPath = (raw: string): string | null => {
   const p = raw
@@ -93,6 +112,9 @@ interface StoredContent {
   blobKey: string
   contentType: string
   kind: ArtifactKind
+  /** A skill bundle's frontmatter `name`, so a new artifact is titled from the skill
+   *  rather than the zip's filename when the publisher gives no explicit title. */
+  suggestedTitle?: string
 }
 
 /**
@@ -134,20 +156,27 @@ async function storeContent(
       if (data === undefined) continue
       files[path] = { key: await blobs.put(data), type: mimeFor(path) }
     }
-    // Entry point: root index.html, else the shallowest html file.
-    const entry =
-      "/index.html" in files
-        ? "/index.html"
-        : Object.keys(files)
-            .filter((p) => p.endsWith(".html"))
-            .sort((a, b) => a.split("/").length - b.split("/").length)[0]
-    if (!entry) throw new PublishError(400, "bundle has no html entry point")
+    // Entry point: an HTML site enters at index/shallowest .html; a skill/doc
+    // bundle with no HTML enters at SKILL.md / README.md / shallowest markdown.
+    const entry = pickBundleEntry(Object.keys(files))
+    if (!entry) throw new PublishError(400, "bundle has no html or markdown entry point")
 
     const manifest: BundleManifest = { entry, spa, files }
+    // A skill bundle (entry = SKILL.md) carries its name in frontmatter — surface it
+    // as the suggested title so `dock publish ./my-skill/` reads as "My Skill", not
+    // the zip's filename.
+    let suggestedTitle: string | undefined
+    if (isSkillBundle(manifest)) {
+      const entryKey = files[entry]?.key
+      const entryBytes = entryKey ? await blobs.get(entryKey) : null
+      const name = entryBytes && parseFrontmatter(new TextDecoder().decode(entryBytes)).attrs.name
+      if (name) suggestedTitle = name
+    }
     return {
       blobKey: await blobs.put(new TextEncoder().encode(JSON.stringify(manifest))),
       contentType: BUNDLE_CONTENT_TYPE,
       kind: "bundle",
+      suggestedTitle,
     }
   }
   const text = new TextDecoder().decode(bytes)
@@ -180,7 +209,7 @@ export async function publish(
   input: PublishInput,
   shortId?: string,
 ): Promise<PublishResult> {
-  const { blobKey, contentType, kind } = await storeContent(
+  const { blobKey, contentType, kind, suggestedTitle } = await storeContent(
     blobs,
     input.bytes,
     input.filename,
@@ -215,7 +244,8 @@ export async function publish(
     return { artifact: (await meta.getByShortId(shortId)) as ArtifactRecord, version }
   }
 
-  const title = input.title ?? input.filename.replace(/\.(html?|md|markdown|zip)$/i, "")
+  const title =
+    input.title ?? suggestedTitle ?? input.filename.replace(/\.(html?|md|markdown|zip)$/i, "")
   const artifact = await meta.createArtifact({
     id: newId("a"),
     short_id: newShortId(),

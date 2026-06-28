@@ -27,6 +27,7 @@ import { groupThreads, parseAnchor } from "./lib/layout"
 import { parseRef, refFor } from "./parse-ref"
 import { PasswordGate } from "./password-gate"
 import { Presence } from "./rail-deck"
+import { SkillBar } from "./skill-bar"
 import { SourceEditor } from "./source-editor"
 import type { PinItem, Sel } from "./types"
 import { useArtifactFrame } from "./use-artifact-frame"
@@ -536,6 +537,9 @@ export function Artifact() {
               isMobile && panel === "open" && "pb-[50vh]",
             )}
           >
+            {art.skill && !editing && (
+              <SkillBar skill={art.skill} shortId={shortId} version={shown} />
+            )}
             {editing ? (
               <SourceEditor
                 canPublish={effectiveCanPublish}
