@@ -95,13 +95,16 @@ export interface Artifact {
   removed?: boolean
   /** Mirrored from a GitHub sync source → read-only in Dock (Edit/Propose hidden). */
   managed?: boolean
-  /** Present only when this bundle is a skill (its entry is SKILL.md): the declared
-   *  identity + the bundle's files. Drives the skill viewer (rendered doc + file tree).
-   *  Detail endpoint only. */
-  skill?: {
+  /** Present when this bundle's entry is markdown — a skill (entry SKILL.md) or a
+   *  plain docs folder. Drives the file tree + (for skills) the identity chrome.
+   *  Detail endpoint only; absent for HTML "site" bundles. */
+  bundle?: {
+    /** True when it's a Claude Code skill (entry SKILL.md) — gates the "Skill" badge. */
+    isSkill: boolean
+    /** Skill frontmatter name/description; null for a plain docs bundle. */
     name: string | null
     description: string | null
-    /** Entry document path, sans leading slash (e.g. "SKILL.md"). */
+    /** Entry document path, sans leading slash (e.g. "SKILL.md", "README.md"). */
     entry: string
     files: { path: string; type: string }[]
   }

@@ -193,8 +193,16 @@ async function storeContent(
     // Speaks the dock-deck protocol → it's a slide deck. Match the bare protocol
     // name so either quote style (source:'dock-deck' / "dock-deck") is detected.
     contentType = "text/x-dock-deck"
-  } else {
+  } else if (/\.html?$/i.test(filename)) {
+    // An HTML fragment (no doctype, so the sniff above missed it) saved with an
+    // .html name — keep it HTML so the markup renders, not shows as escaped text.
     contentType = "text/html"
+  } else {
+    // Plaintext / unknown extension (.txt, no extension, …): render as markdown.
+    // It's the safer, more readable default — sanitized and HTML-escaped through the
+    // markdown path — versus serving raw text as HTML. Real HTML still wins above
+    // (full doc by content, or an explicit .html name).
+    contentType = "text/markdown"
   }
   return { blobKey: await blobs.put(bytes), contentType, kind: "file" }
 }

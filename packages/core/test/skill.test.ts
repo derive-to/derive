@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 import type { BundleManifest } from "../src/ports"
-import { isSkillBundle, parseFrontmatter, skillInfo } from "../src/skill"
+import { bundleDoc, isMarkdownBundle, isSkillBundle, parseFrontmatter } from "../src/skill"
 
 const manifest = (entry: string, paths: string[]): BundleManifest => ({
   entry,
@@ -44,13 +44,23 @@ describe("isSkillBundle", () => {
   })
 })
 
-describe("skillInfo", () => {
-  it("pulls name/description from the entry and lists files sans leading slash", () => {
-    const info = skillInfo(
+describe("isMarkdownBundle", () => {
+  it("is true when the entry is markdown (skill OR docs), false for HTML", () => {
+    expect(isMarkdownBundle(manifest("/SKILL.md", ["/SKILL.md"]))).toBe(true)
+    expect(isMarkdownBundle(manifest("/README.md", ["/README.md"]))).toBe(true)
+    expect(isMarkdownBundle(manifest("/docs/guide.markdown", ["/docs/guide.markdown"]))).toBe(true)
+    expect(isMarkdownBundle(manifest("/index.html", ["/index.html"]))).toBe(false)
+  })
+})
+
+describe("bundleDoc", () => {
+  it("flags a skill, pulls its frontmatter, and lists files sans leading slash", () => {
+    const info = bundleDoc(
       manifest("/SKILL.md", ["/SKILL.md", "/scripts/run.sh", "/references/notes.md"]),
       "---\nname: my-skill\ndescription: does things\n---\n# body",
     )
     expect(info).toEqual({
+      isSkill: true,
       name: "my-skill",
       description: "does things",
       entry: "SKILL.md",
@@ -63,9 +73,15 @@ describe("skillInfo", () => {
     })
   })
 
-  it("nulls name/description when the frontmatter omits them", () => {
-    const info = skillInfo(manifest("/SKILL.md", ["/SKILL.md"]), "# no frontmatter")
+  it("treats a non-SKILL markdown bundle as docs: no skill flag, no identity", () => {
+    const info = bundleDoc(
+      manifest("/README.md", ["/README.md", "/guide.md"]),
+      "# Readme\n\nwelcome",
+    )
+    expect(info.isSkill).toBe(false)
     expect(info.name).toBeNull()
     expect(info.description).toBeNull()
+    expect(info.entry).toBe("README.md")
+    expect(info.files.map((f) => f.path)).toEqual(["README.md", "guide.md"])
   })
 })

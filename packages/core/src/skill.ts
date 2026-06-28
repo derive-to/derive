@@ -1,9 +1,11 @@
 /**
- * Skill support. A Claude Code "skill" is a folder — a `SKILL.md` (with YAML
- * frontmatter declaring `name`/`description`) plus optional `scripts/`,
- * `references/`, `assets/` — published to Dock as a bundle. These helpers let Dock
- * recognize such a bundle and read its frontmatter, with NO new artifact kind and
- * no heavy YAML dependency (this module must run on Cloudflare Workers).
+ * Skill + markdown-bundle support. A Claude Code "skill" is a folder — a `SKILL.md`
+ * (with YAML frontmatter declaring `name`/`description`) plus optional `scripts/`,
+ * `references/`, `assets/` — published to Dock as a bundle. More generally, any
+ * bundle whose entry is markdown (a docs folder) gets the same treatment: rendered
+ * pages plus a navigable file tree. These helpers let Dock recognize such bundles
+ * and read frontmatter, with NO new artifact kind and no heavy YAML dependency
+ * (this module must run on Cloudflare Workers).
  */
 import type { BundleManifest } from "./ports"
 
@@ -11,6 +13,11 @@ import type { BundleManifest } from "./ports"
  *  selects `/SKILL.md` as the entry for an HTML-less folder that contains one. */
 export const isSkillBundle = (manifest: BundleManifest): boolean =>
   manifest.entry.toLowerCase() === "/skill.md"
+
+/** A bundle whose entry document is markdown — a skill, or any docs folder (README
+ *  / shallowest .md). These render through the markdown path and earn a file tree. */
+export const isMarkdownBundle = (manifest: BundleManifest): boolean =>
+  /\.(md|markdown)$/i.test(manifest.entry)
 
 export interface Frontmatter {
   /** Flat top-level `key: value` scalars from the leading `--- ... ---` block. */
@@ -47,21 +54,26 @@ export const parseFrontmatter = (src: string): Frontmatter => {
   return { attrs, body: src.slice(m[0].length) }
 }
 
-/** A skill's public shape for the artifact API: its declared identity plus the
- *  files in the bundle, so a client can render the doc + a file tree. `name` /
- *  `description` are null when the frontmatter omits them. */
-export interface SkillInfo {
+/** A markdown bundle's public shape for the artifact API: the entry + file tree so a
+ *  client can render the doc and navigate siblings, plus skill identity when it is one.
+ *  `isSkill` gates the "Skill" badge; `name`/`description` come from SKILL.md
+ *  frontmatter and are null for a plain docs bundle (or when the frontmatter omits them). */
+export interface BundleDoc {
+  isSkill: boolean
   name: string | null
   description: string | null
-  /** Entry document path, sans leading slash (e.g. "SKILL.md"). */
+  /** Entry document path, sans leading slash (e.g. "SKILL.md", "README.md"). */
   entry: string
   /** Every bundle file, paths sans leading slash, sorted. */
   files: { path: string; type: string }[]
 }
 
-export const skillInfo = (manifest: BundleManifest, entrySource: string | null): SkillInfo => {
-  const attrs = entrySource ? parseFrontmatter(entrySource).attrs : {}
+export const bundleDoc = (manifest: BundleManifest, entrySource: string | null): BundleDoc => {
+  const isSkill = isSkillBundle(manifest)
+  // Only a skill carries declared identity in frontmatter; a docs bundle has none.
+  const attrs = isSkill && entrySource ? parseFrontmatter(entrySource).attrs : {}
   return {
+    isSkill,
     name: attrs.name || null,
     description: attrs.description || null,
     entry: manifest.entry.replace(/^\//, ""),

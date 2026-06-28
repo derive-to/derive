@@ -1,18 +1,18 @@
 import {
   type ArtifactRecord,
+  type BundleDoc,
   type BundleManifest,
+  bundleDoc,
   can,
   diffLines,
   effectiveRole,
   formatDiff,
   groupSessions,
-  isSkillBundle,
+  isMarkdownBundle,
   newId,
   PublishError,
   publish,
   renderMarkdown,
-  type SkillInfo,
-  skillInfo,
   toJson,
 } from "@dock/core"
 import { type Context, Hono } from "hono"
@@ -442,11 +442,12 @@ export const artifactRoutes = (ctx: AppContext) => {
     const favorite = me ? (await meta.listUserFavoriteIds(me)).includes(artifact.id) : false
     const collections = await meta.collectionIdsForArtifact(artifact.id)
     const proposals = await meta.listProposals(artifact.id)
-    // A skill is a bundle whose entry is SKILL.md: surface its declared name +
-    // description + file list so the client renders skill chrome (the rendered doc
-    // plus a file tree). One manifest read, on the detail page only — the list view
-    // stays blob-free (no N+1).
-    let skill: SkillInfo | undefined
+    // A markdown bundle (a skill — entry SKILL.md — or a docs folder) gets a `bundle`
+    // block: the entry + file tree (so the client can render the doc and navigate
+    // siblings) plus skill identity when it is one. One manifest read, on the detail
+    // page only — the list view stays blob-free (no N+1). HTML "site" bundles navigate
+    // via their own links, so they get no block.
+    let bundle: BundleDoc | undefined
     const cur =
       artifact.kind === "bundle"
         ? versions.find((v) => v.n === artifact.current_version)
@@ -455,7 +456,7 @@ export const artifactRoutes = (ctx: AppContext) => {
       const manifestBytes = await blobs.get(cur.blob_key)
       if (manifestBytes) {
         const manifest = JSON.parse(new TextDecoder().decode(manifestBytes)) as BundleManifest
-        if (isSkillBundle(manifest)) skill = skillInfo(manifest, await sourceText(cur))
+        if (isMarkdownBundle(manifest)) bundle = bundleDoc(manifest, await sourceText(cur))
       }
     }
     // Resolve the GitHub author(s) to Dock profiles: collect every distinct gh_id on the
@@ -489,9 +490,9 @@ export const artifactRoutes = (ctx: AppContext) => {
       collections,
       open_proposals: proposals.filter((p) => p.state === "open").length,
       proposals_total: proposals.filter((p) => p.state !== "withdrawn").length,
-      // Present only for a skill bundle (entry = SKILL.md): { name, description, entry,
-      // files } — the client renders the skill viewer when this is set.
-      ...(skill ? { skill } : {}),
+      // Present for a markdown bundle (skill or docs folder): { isSkill, name,
+      // description, entry, files } — the client renders the file tree + skill chrome.
+      ...(bundle ? { bundle } : {}),
       // A taken-down artifact keeps its record but serves no content (410); the
       // UI shows a tombstone instead of the iframe.
       removed: !!artifact.removed_at,
