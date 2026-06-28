@@ -166,3 +166,24 @@ describe("merge3 adversarial: brutal edge inputs", () => {
     expect(r.clean).toBe(false)
   })
 })
+
+describe("merge3 adversarial: symmetry", () => {
+  it("mergeability is symmetric: swapping ours/theirs agrees on clean-ness and loses nothing", () => {
+    const rand = prng(7777)
+    for (let i = 0; i < 2000; i++) {
+      const base = Array.from({ length: 2 + Math.floor(rand() * 10) }, (_, k) => `L${k}`)
+      const ours = mutate(rand, base, "O")
+      const theirs = mutate(rand, base, "T")
+      const b = base.join("\n")
+      const r1 = merge3(b, ours.join("\n"), theirs.join("\n"), "text")
+      const r2 = merge3(b, theirs.join("\n"), ours.join("\n"), "text")
+      expect(r1.clean).toBe(r2.clean) // overlap is symmetric → mergeability is symmetric
+      if (r1.clean && r1.merged !== null && r2.merged !== null) {
+        for (const out of [r1.merged.split("\n"), r2.merged.split("\n")]) {
+          for (const u of ours) if (!base.includes(u)) expect(out).toContain(u)
+          for (const u of theirs) if (!base.includes(u)) expect(out).toContain(u)
+        }
+      }
+    }
+  })
+})

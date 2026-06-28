@@ -537,3 +537,102 @@ describe("publish: bundle per-file 3-way merge on republish", () => {
     ).rejects.toBeInstanceOf(MergeConflictError)
   })
 })
+
+describe("publish: bundle merge adversarial", () => {
+  const dec = (b: Uint8Array | null) => new TextDecoder().decode(b ?? undefined)
+  const manifestOf = async (blobs: ReturnType<typeof makeBlobs>, key: string) =>
+    JSON.parse(dec(await blobs.get(key))) as {
+      files: Record<string, { key: string; type: string }>
+    }
+
+  it("combines many disjoint per-file edits across a bundle", async () => {
+    const meta = makeMeta()
+    const blobs = makeBlobs()
+    const files = {
+      "index.html": "<h1>h</h1>",
+      "a.css": "a0",
+      "b.css": "b0",
+      "c.css": "c0",
+      "d.css": "d0",
+    }
+    const { artifact } = await publish(meta, blobs, bundle(files))
+    // v2 edits a + b
+    await publish(
+      meta,
+      blobs,
+      bundle({ ...files, "a.css": "a1", "b.css": "b1" }),
+      artifact.short_id,
+    )
+    // guarded from base v1 edits c + d (disjoint files)
+    const { version } = await publish(
+      meta,
+      blobs,
+      { ...bundle({ ...files, "c.css": "c1", "d.css": "d1" }), baseVersion: 1 },
+      artifact.short_id,
+    )
+    const m = await manifestOf(blobs, version.blob_key)
+    expect(dec(await blobs.get(m.files["/a.css"].key))).toBe("a1") // v2
+    expect(dec(await blobs.get(m.files["/b.css"].key))).toBe("b1") // v2
+    expect(dec(await blobs.get(m.files["/c.css"].key))).toBe("c1") // ours
+    expect(dec(await blobs.get(m.files["/d.css"].key))).toBe("d1") // ours
+  })
+
+  it("conflicts on delete-vs-edit of the same file", async () => {
+    const meta = makeMeta()
+    const blobs = makeBlobs()
+    const { artifact } = await publish(
+      meta,
+      blobs,
+      bundle({ "index.html": "<h1>h</h1>", "x.css": "x0" }),
+    )
+    await publish(meta, blobs, bundle({ "index.html": "<h1>h</h1>" }), artifact.short_id) // v2 deletes x.css
+    await expect(
+      publish(
+        meta,
+        blobs,
+        { ...bundle({ "index.html": "<h1>h</h1>", "x.css": "x1" }), baseVersion: 1 }, // edits x.css
+        artifact.short_id,
+      ),
+    ).rejects.toBeInstanceOf(MergeConflictError)
+  })
+
+  it("conflicts on add-vs-add of the same path with different bytes", async () => {
+    const meta = makeMeta()
+    const blobs = makeBlobs()
+    const { artifact } = await publish(meta, blobs, bundle({ "index.html": "<h1>h</h1>" }))
+    await publish(
+      meta,
+      blobs,
+      bundle({ "index.html": "<h1>h</h1>", "new.css": "v2" }),
+      artifact.short_id,
+    )
+    await expect(
+      publish(
+        meta,
+        blobs,
+        { ...bundle({ "index.html": "<h1>h</h1>", "new.css": "guarded" }), baseVersion: 1 },
+        artifact.short_id,
+      ),
+    ).rejects.toBeInstanceOf(MergeConflictError)
+  })
+
+  it("drops a file both sides deleted (clean)", async () => {
+    const meta = makeMeta()
+    const blobs = makeBlobs()
+    const { artifact } = await publish(
+      meta,
+      blobs,
+      bundle({ "index.html": "<h1>h</h1>", "gone.css": "g" }),
+    )
+    await publish(meta, blobs, bundle({ "index.html": "<h1>h</h1>" }), artifact.short_id) // v2 deletes gone
+    const { version } = await publish(
+      meta,
+      blobs,
+      { ...bundle({ "index.html": "<h1>h</h1>" }), baseVersion: 1 }, // also without gone.css
+      artifact.short_id,
+    )
+    const m = await manifestOf(blobs, version.blob_key)
+    expect(m.files["/gone.css"]).toBeUndefined()
+    expect(m.files["/index.html"]).toBeDefined()
+  })
+})
