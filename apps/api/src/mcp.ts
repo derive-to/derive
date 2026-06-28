@@ -133,7 +133,7 @@ const changeCount = (c: ReturnType<typeof bundleFileChanges>) =>
  * Identity rides in the server `instructions` (below), not a `whoami` tool — it's a
  * one-shot fact, not a per-call action.
  */
-function buildServer(ctx: AppContext, agent: AgentRecord): McpServer {
+function buildServer(ctx: AppContext, agent: AgentRecord, ownerId: string | null): McpServer {
   // Steer the write guidance by what this grant can actually do: a publish-capable
   // grant gets the direct-publish path; a lower grant is told its writes go to review.
   const writeGuidance = roleAllows(agent.role, "publish")
@@ -275,7 +275,7 @@ function buildServer(ctx: AppContext, agent: AgentRecord): McpServer {
 
       // `comments` filter → the feedback to-do queue (absorbs the old list_comments).
       if (comments) {
-        const list = await ctx.meta.listComments(a.id, { state: comments })
+        const list = await ctx.meta.listComments(a.id, { state: comments, viewerOwnerId: ownerId })
         return json({
           short_id,
           comments_state: comments,
@@ -301,15 +301,21 @@ function buildServer(ctx: AppContext, agent: AgentRecord): McpServer {
           if (as_ !== null && ah !== null) entryDiff = clip(formatDiff(diffLines(as_, ah)))
         }
       }
-      const open = await ctx.meta.listComments(a.id, { state: "open" })
+      const open = await ctx.meta.listComments(a.id, { state: "open", viewerOwnerId: ownerId })
       // Threads whose quoted text changed in a landed version — feedback that may no
       // longer apply. Surfacing it tells the agent its edits touched commented text.
-      const outdated = await ctx.meta.listComments(a.id, { state: "outdated" })
+      const outdated = await ctx.meta.listComments(a.id, {
+        state: "outdated",
+        viewerOwnerId: ownerId,
+      })
       const outdatedBit = outdated.length
         ? ` ${outdated.length} now outdated (the quoted text changed).`
         : ""
       // Threads with a proposal already pending — the agent shouldn't re-address them.
-      const addressed = await ctx.meta.listComments(a.id, { state: "addressed" })
+      const addressed = await ctx.meta.listComments(a.id, {
+        state: "addressed",
+        viewerOwnerId: ownerId,
+      })
       const addressedBit = addressed.length
         ? ` ${addressed.length} addressed (a proposal is pending review).`
         : ""
@@ -386,6 +392,16 @@ function buildServer(ctx: AppContext, agent: AgentRecord): McpServer {
         )
       if (!body && !set_state)
         return err("Provide `body` (to comment) or `set_state` (to resolve/reopen a thread).")
+      // A reply / state change inherits the TARGET thread's visibility: an agent must
+      // not post a public reply into a personal thread (that would leak it), and may
+      // only touch a personal thread that belongs to its own user. New top-level
+      // comments stay public feedback.
+      const target = reply_to ? await ctx.meta.getComment(reply_to) : null
+      if (target?.visibility === "personal" && target.owner_id !== ownerId)
+        return err("No such thread in your workspace.")
+      const visibility: "public" | "personal" =
+        target?.visibility === "personal" ? "personal" : "public"
+      const owner_id = visibility === "personal" ? ownerId : null
       let thread = reply_to
       let commentId: string | undefined
       if (body) {
@@ -402,6 +418,8 @@ function buildServer(ctx: AppContext, agent: AgentRecord): McpServer {
           body_md: body,
           author: agent.name,
           author_id: agent.id,
+          visibility,
+          owner_id,
         })
         ctx.bus.publish(a.id, { type: "comment.created" })
       }
@@ -671,7 +689,7 @@ export function mountMcp(app: Hono, ctx: AppContext): void {
         { "WWW-Authenticate": `Bearer resource_metadata="${meta}"` },
       )
     }
-    const server = buildServer(ctx, agent)
+    const server = buildServer(ctx, agent, await ctx.privateOwnerId(c))
     const transport = new StreamableHTTPTransport()
     await server.connect(transport)
     return transport.handleRequest(c)
