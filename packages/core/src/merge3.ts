@@ -41,14 +41,18 @@ export interface MergeResult {
  * per file at a higher layer, each file dispatched back through merge3 by its own
  * type, so there is no "bundle" kind here.
  */
-export const mergeKindFor = (contentType: string): MergeKind =>
-  contentType === "text/markdown"
+export const mergeKindFor = (contentType: string): MergeKind => {
+  // Bundle file types carry a charset param (e.g. "text/css; charset=utf-8"); match
+  // on the bare type so a bundled .md/.html merges as markdown/html, not plain text.
+  const t = contentType.split(";")[0]?.trim() ?? ""
+  return t === "text/markdown"
     ? "markdown"
-    : contentType === "text/x-dock-deck"
+    : t === "text/x-dock-deck"
       ? "deck"
-      : contentType === "text/html"
+      : t === "text/html"
         ? "html"
         : "text"
+}
 
 // Above these, skip the O(n*m) diff entirely and emit one whole-blob conflict —
 // a minified or pathologically large file would otherwise burn CPU/memory on an

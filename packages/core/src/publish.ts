@@ -329,6 +329,100 @@ const blobText = async (blobs: BlobStore, key: string): Promise<string | null> =
   return bytes ? new TextDecoder().decode(bytes) : null
 }
 
+/** Parse a bundle manifest blob, or null when it can't be read. */
+const readManifest = async (blobs: BlobStore, key: string): Promise<BundleManifest | null> => {
+  const bytes = await blobs.get(key)
+  if (!bytes) return null
+  try {
+    return JSON.parse(new TextDecoder().decode(bytes)) as BundleManifest
+  } catch {
+    return null
+  }
+}
+
+// Bundle files we'll 3-way merge when both sides changed one: text only. HTML/deck
+// still resolve to a whole-blob conflict inside merge3; binary (images, fonts, xml,
+// svg) can't be line-merged and conflict here.
+const isMergeableText = (type: string): boolean => {
+  const t = type.split(";")[0]?.trim() ?? ""
+  return t.startsWith("text/") || t === "application/javascript" || t === "application/json"
+}
+
+// Pick a valid entry for the merged manifest: ours' entry if it survived, else
+// theirs', else a root/shallowest html, else null (no entry → caller conflicts).
+const pickEntry = (
+  files: BundleManifest["files"],
+  ours: BundleManifest,
+  theirs: BundleManifest,
+): string | null => {
+  if (files[ours.entry]) return ours.entry
+  if (files[theirs.entry]) return theirs.entry
+  if (files["/index.html"]) return "/index.html"
+  return (
+    Object.keys(files)
+      .filter((p) => p.endsWith(".html"))
+      .sort((a, b) => a.split("/").length - b.split("/").length)[0] ?? null
+  )
+}
+
+// 3-way merge two bundle revisions per file over their common ancestor. A file only
+// one side changed is taken from that side (incl. deletes); a text file both sides
+// changed is recursively merge3'd; add-vs-add, edit-vs-delete, a changed binary/HTML
+// file, or an unreadable side conflict the whole bundle.
+async function mergeBundle3(
+  meta: MetaStore,
+  blobs: BlobStore,
+  input: MergeCommit,
+  currentVersion: number,
+): Promise<Uint8Array> {
+  const conflict = (hunks: MergeHunk[]) =>
+    new MergeConflictError(input.conflictId, input.baseVersion, currentVersion, hunks)
+  const baseV = await meta.getVersion(input.artifactId, input.baseVersion)
+  const oursV = await meta.getVersion(input.artifactId, currentVersion)
+  const baseM = baseV ? await readManifest(blobs, baseV.blob_key) : null
+  const oursM = oursV ? await readManifest(blobs, oursV.blob_key) : null
+  const theirsM = await readManifest(blobs, input.theirsBlobKey)
+  if (!baseM || !oursM || !theirsM) throw conflict([])
+
+  const files: BundleManifest["files"] = {}
+  const paths = new Set([
+    ...Object.keys(baseM.files),
+    ...Object.keys(oursM.files),
+    ...Object.keys(theirsM.files),
+  ])
+  for (const path of paths) {
+    const b = baseM.files[path]
+    const o = oursM.files[path]
+    const t = theirsM.files[path]
+    if (o?.key === b?.key) {
+      // ours didn't touch this file → take theirs (present = keep/edit, absent = delete)
+      if (t) files[path] = t
+    } else if (t?.key === b?.key) {
+      if (o) files[path] = o
+    } else if (o?.key === t?.key) {
+      // both made the same change (incl. both deleted)
+      if (o) files[path] = o
+    } else {
+      // both changed this path differently
+      if (!o || !t || !b) throw conflict([]) // edit-vs-delete, or add-vs-add (no ancestor)
+      if (!isMergeableText(o.type) || o.type !== t.type) throw conflict([])
+      const [baseText, oursText, theirsText] = await Promise.all([
+        blobText(blobs, b.key),
+        blobText(blobs, o.key),
+        blobText(blobs, t.key),
+      ])
+      if (baseText === null || oursText === null || theirsText === null) throw conflict([])
+      const r = merge3(baseText, oursText, theirsText, mergeKindFor(o.type))
+      if (!r.clean || r.merged === null) throw conflict(r.hunks)
+      files[path] = { key: await blobs.put(new TextEncoder().encode(r.merged)), type: o.type }
+    }
+  }
+  const entry = pickEntry(files, oursM, theirsM)
+  if (!entry) throw conflict([])
+  const manifest: BundleManifest = { entry, spa: oursM.spa, files }
+  return new TextEncoder().encode(JSON.stringify(manifest))
+}
+
 /**
  * Thrown by approveProposal when the proposal's change can't be auto-merged into
  * the current version — the document advanced under it and the two edits overlap
@@ -384,8 +478,10 @@ async function merge3IntoCurrent(
 ): Promise<Uint8Array> {
   const conflict = (hunks: MergeHunk[]) =>
     new MergeConflictError(input.conflictId, input.baseVersion, currentVersion, hunks)
-  // Bundles aren't line/block-mergeable in v1 — don't silently overwrite a drift.
-  if (input.contentType === BUNDLE_CONTENT_TYPE) throw conflict([])
+  // Bundles merge per file (disjoint files combine, same text file 3-way merges,
+  // anything else conflicts).
+  if (input.contentType === BUNDLE_CONTENT_TYPE)
+    return mergeBundle3(meta, blobs, input, currentVersion)
   const baseV = await meta.getVersion(input.artifactId, input.baseVersion)
   const oursV = await meta.getVersion(input.artifactId, currentVersion)
   const baseText = baseV ? await blobText(blobs, baseV.blob_key) : null

@@ -115,6 +115,9 @@ describe("merge3 guards + kind mapping", () => {
     expect(mergeKindFor("text/html")).toBe("html")
     expect(mergeKindFor("text/x-dock-deck")).toBe("deck")
     expect(mergeKindFor("application/whatever")).toBe("text")
+    expect(mergeKindFor("text/html; charset=utf-8")).toBe("html") // bundle types carry a charset
+    expect(mergeKindFor("text/markdown; charset=utf-8")).toBe("markdown")
+    expect(mergeKindFor("text/css; charset=utf-8")).toBe("text")
   })
 })
 

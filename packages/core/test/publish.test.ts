@@ -449,3 +449,91 @@ describe("publish: optimistic concurrency + 3-way merge on republish", () => {
     expect(version.base_version ?? null).toBeNull() // unguarded → no ancestor recorded
   })
 })
+
+describe("publish: bundle per-file 3-way merge on republish", () => {
+  const dec = (b: Uint8Array | null) => new TextDecoder().decode(b ?? undefined)
+  const manifestOf = async (blobs: ReturnType<typeof makeBlobs>, key: string) =>
+    JSON.parse(dec(await blobs.get(key))) as {
+      entry: string
+      files: Record<string, { key: string; type: string }>
+    }
+
+  it("auto-merges a bundle republish that changed a DIFFERENT file", async () => {
+    const meta = makeMeta()
+    const blobs = makeBlobs()
+    const { artifact } = await publish(
+      meta,
+      blobs,
+      bundle({ "index.html": "<h1>home</h1>", "a.css": "a{}", "b.css": "b{}" }),
+    )
+    // v2 edits a.css.
+    await publish(
+      meta,
+      blobs,
+      bundle({ "index.html": "<h1>home</h1>", "a.css": "a { color: red }", "b.css": "b{}" }),
+      artifact.short_id,
+    )
+    // Guarded republish from base v1 edits b.css (disjoint).
+    const { version } = await publish(
+      meta,
+      blobs,
+      {
+        ...bundle({ "index.html": "<h1>home</h1>", "a.css": "a{}", "b.css": "b { color: blue }" }),
+        baseVersion: 1,
+      },
+      artifact.short_id,
+    )
+    expect(version.n).toBe(3)
+    const m = await manifestOf(blobs, version.blob_key)
+    expect(dec(await blobs.get(m.files["/a.css"].key))).toContain("color: red") // v2's change kept
+    expect(dec(await blobs.get(m.files["/b.css"].key))).toContain("color: blue") // our change kept
+  })
+
+  it("3-way merges the SAME text file when the edits are disjoint lines", async () => {
+    const meta = makeMeta()
+    const blobs = makeBlobs()
+    const { artifact } = await publish(
+      meta,
+      blobs,
+      bundle({ "index.html": "<h1>h</h1>", "s.css": "line1\nline2\nline3\n" }),
+    )
+    await publish(
+      meta,
+      blobs,
+      bundle({ "index.html": "<h1>h</h1>", "s.css": "L1\nline2\nline3\n" }),
+      artifact.short_id,
+    )
+    const { version } = await publish(
+      meta,
+      blobs,
+      { ...bundle({ "index.html": "<h1>h</h1>", "s.css": "line1\nline2\nL3\n" }), baseVersion: 1 },
+      artifact.short_id,
+    )
+    const m = await manifestOf(blobs, version.blob_key)
+    expect(dec(await blobs.get(m.files["/s.css"].key))).toBe("L1\nline2\nL3\n")
+  })
+
+  it("conflicts when both sides change the same line of the same bundle file", async () => {
+    const meta = makeMeta()
+    const blobs = makeBlobs()
+    const { artifact } = await publish(
+      meta,
+      blobs,
+      bundle({ "index.html": "<h1>h</h1>", "s.css": "a{}\n" }),
+    )
+    await publish(
+      meta,
+      blobs,
+      bundle({ "index.html": "<h1>h</h1>", "s.css": "a{color:red}\n" }),
+      artifact.short_id,
+    )
+    await expect(
+      publish(
+        meta,
+        blobs,
+        { ...bundle({ "index.html": "<h1>h</h1>", "s.css": "a{color:green}\n" }), baseVersion: 1 },
+        artifact.short_id,
+      ),
+    ).rejects.toBeInstanceOf(MergeConflictError)
+  })
+})
