@@ -4,11 +4,11 @@ import {
   type AgentRecord,
   type ArtifactRecord,
   type BlobStore,
-  BUNDLE_CONTENT_TYPE,
   type BundleManifest,
   type CollectionRecord,
   can,
   DEFAULT_VERSION_WINDOW_MS,
+  isBundleContentType,
   type MetaStore,
   maxRole,
   newId,
@@ -652,7 +652,7 @@ export function buildContext(deps: AppDeps) {
     content_type: string
   }): Promise<string | null> => {
     let data: Uint8Array | null
-    if (content.content_type === BUNDLE_CONTENT_TYPE) {
+    if (isBundleContentType(content.content_type)) {
       const manifestBytes = await blobs.get(content.blob_key)
       if (!manifestBytes) return null
       const manifest = JSON.parse(new TextDecoder().decode(manifestBytes)) as BundleManifest

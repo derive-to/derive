@@ -1,7 +1,7 @@
 import {
   type BlobStore,
-  BUNDLE_CONTENT_TYPE,
   type BundleManifest,
+  isBundleContentType,
   PublishError,
   type VersionRecord,
 } from "@dock/core"
@@ -87,7 +87,7 @@ export async function manifestOf(
   blobs: BlobStore,
   v: VersionRecord,
 ): Promise<BundleManifest | null> {
-  if (v.content_type !== BUNDLE_CONTENT_TYPE) return null
+  if (!isBundleContentType(v.content_type)) return null
   const bytes = await blobs.get(v.blob_key)
   if (!bytes) return null
   try {

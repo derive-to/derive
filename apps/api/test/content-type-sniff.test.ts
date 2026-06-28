@@ -44,6 +44,26 @@ describe("content-type: publish-time sniff", () => {
     expect(version.content_type).toBe("text/markdown")
   })
 
+  it("defaults plaintext (no html/md extension) to markdown, not html", async () => {
+    const { version } = await publish(meta, blobs, {
+      bytes: enc("just some plain notes\nwith <angle> brackets"),
+      filename: "notes.txt",
+      isBundle: false,
+      orgId: "local",
+    })
+    expect(version.content_type).toBe("text/markdown")
+  })
+
+  it("keeps an HTML fragment (no doctype) under an .html name as html", async () => {
+    const { version } = await publish(meta, blobs, {
+      bytes: enc("<section><h1>Fragment</h1><p>no doctype here</p></section>"),
+      filename: "fragment.html",
+      isBundle: false,
+      orgId: "local",
+    })
+    expect(version.content_type).toBe("text/html")
+  })
+
   it("does not key off a stray id collision", async () => {
     // Sanity: a second HTML publish under a fresh id is still html.
     const { version } = await publish(meta, blobs, {

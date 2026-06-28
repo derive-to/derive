@@ -1,4 +1,9 @@
-import { type BlobStore, BUNDLE_CONTENT_TYPE, type BundleManifest } from "@dock/core"
+import {
+  type BlobStore,
+  BUNDLE_CONTENT_TYPE,
+  type BundleManifest,
+  SKILL_CONTENT_TYPE,
+} from "@dock/core"
 import type { Context } from "hono"
 import { describe, expect, it, vi } from "vitest"
 import { RAW_HEADERS } from "../src/lib/http"
@@ -13,9 +18,11 @@ const blobStore = (entries: Record<string, Uint8Array | string>): BlobStore => {
   return { get: async (key: string) => map.get(key) ?? null } as unknown as BlobStore
 }
 
-// Minimal Hono context: serveContent only calls c.body / c.text, each yielding a Response.
-const ctx = (): Context =>
+// Minimal Hono context: serveContent calls c.body / c.text (each yielding a Response)
+// and c.req.query (the `?raw=1` markdown-source escape). `query` defaults to empty.
+const ctx = (query: Record<string, string> = {}): Context =>
   ({
+    req: { query: (k: string) => query[k] },
     body: (data: BodyInit | null, status = 200, headers?: Record<string, string>) =>
       new Response(data, { status, headers }),
     text: (msg: string, status = 200, headers?: Record<string, string>) =>
@@ -202,5 +209,57 @@ describe("serveContent — bundles", () => {
     expect(res.status).toBe(200)
     expect(res.headers.get("content-type")).toContain("text/html")
     expect(await res.text()).toContain("home") // the entry document
+  })
+})
+
+describe("serveContent — skill / markdown bundles", () => {
+  // A skill folder: entry is SKILL.md, plus a script (served raw) and a reference doc.
+  const manifest: BundleManifest = {
+    entry: "/SKILL.md",
+    spa: false,
+    files: {
+      "/SKILL.md": { key: "k_skill", type: "text/markdown; charset=utf-8" },
+      "/scripts/run.sh": { key: "k_sh", type: "application/octet-stream" },
+    },
+  }
+  const prefix = "/raw/sk/v/1/"
+  const skillMd = "---\nname: my-skill\ndescription: does things\n---\n\n# My Skill\n\nbody text"
+  const blobs = blobStore({
+    kManifest: JSON.stringify(manifest),
+    k_skill: skillMd,
+    k_sh: "#!/usr/bin/env bash\necho hi\n",
+  })
+  // A real skill carries the dock/skill content type; serveContent must still treat
+  // it as a bundle (isBundleContentType), not fall through to single-file handling.
+  const content = { blob_key: "kManifest", content_type: SKILL_CONTENT_TYPE }
+
+  it("renders the SKILL.md entry as HTML, frontmatter stripped, with the anchor client", async () => {
+    const res = await serveContent(ctx(), blobs, content, "my-skill", prefix, "")
+    expect(res.headers.get("content-type")).toContain("text/html")
+    const body = await res.text()
+    expect(body).toContain("<h1") // the body heading rendered
+    expect(body).toContain("My Skill")
+    expect(body).not.toContain("name: my-skill") // frontmatter stripped, not shown
+    expect(body).toContain(SCRIPT)
+    expectSandbox(res)
+  })
+
+  it("serves the markdown source verbatim with ?raw=1", async () => {
+    const res = await serveContent(
+      ctx({ raw: "1" }),
+      blobs,
+      content,
+      "my-skill",
+      prefix,
+      "SKILL.md",
+    )
+    expect(res.headers.get("content-type")).toContain("text/markdown")
+    expect(await res.text()).toBe(skillMd)
+  })
+
+  it("serves a script file raw (no markdown rendering)", async () => {
+    const res = await serveContent(ctx(), blobs, content, "my-skill", prefix, "scripts/run.sh")
+    expect(res.headers.get("content-type")).toBe("application/octet-stream")
+    expect(await res.text()).toContain("echo hi")
   })
 })

@@ -55,7 +55,7 @@ export const defaultConfig = (title = "My artifact", entry = "index.md") => ({
   id: null,
 })
 
-export const TEMPLATES = ["md", "html", "slides", "site"]
+export const TEMPLATES = ["md", "html", "slides", "site", "skill"]
 
 /** Read dock.json from `dir`, or null if absent. Throws on malformed JSON. */
 export function loadConfig(dir = ".") {
@@ -113,6 +113,17 @@ const STARTERS = {
       "site/index.html": starterSiteIndex(t),
       "site/about.html": starterSiteAbout(t),
       "site/style.css": SITE_CSS,
+    }),
+  },
+  // A Claude Code skill: a SKILL.md (frontmatter + body) plus scripts/ + references/.
+  // `dock publish skill/` zips the folder; Dock renders SKILL.md and recognizes it as
+  // a skill (the project's dock.json/AGENTS.md stay outside the bundled `skill/` dir).
+  skill: {
+    entry: "skill",
+    files: (t) => ({
+      "skill/SKILL.md": starterSkill(t),
+      "skill/scripts/example.sh": STARTER_SKILL_SCRIPT,
+      "skill/references/example.md": STARTER_SKILL_REFERENCE,
     }),
   },
 }
@@ -227,6 +238,48 @@ export function scaffold(dir = ".", title = "My artifact", template = "md") {
   }
   return { created, skipped }
 }
+
+// A skill's `name` must be a kebab-case slug (it's how the skill is invoked); the
+// title may have spaces, so derive one.
+const skillName = (title) =>
+  title
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "") || "my-skill"
+
+const starterSkill = (title) => `---
+name: ${skillName(title)}
+description: ${title} — say, in a sentence or two, when an agent should reach for this skill (the triggers and the job it does).
+---
+
+# ${title}
+
+Replace this with what the skill does and how to use it. A skill is a folder: this
+SKILL.md plus optional \`scripts/\` (helpers it can run) and \`references/\` (context
+loaded on demand). Publish the folder with \`dock publish skill/\`.
+
+## Steps
+
+1. Describe the first step, declaratively, with a worked example.
+2. ...
+
+## Files
+
+- \`scripts/example.sh\` — a helper this skill can run.
+- \`references/example.md\` — extra context, loaded when needed.
+`
+
+const STARTER_SKILL_SCRIPT = `#!/usr/bin/env bash
+# A helper this skill can run. Keep scripts self-contained and relative-path only.
+set -euo pipefail
+echo "hello from the skill"
+`
+
+const STARTER_SKILL_REFERENCE = `# Reference
+
+Extra detail the skill loads on demand — keep SKILL.md lean and push the long tail
+(edge cases, tables, examples) into reference files like this one.
+`
 
 const starterMd = (title) => `# ${title}
 

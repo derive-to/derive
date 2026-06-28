@@ -9,9 +9,11 @@ import {
   type BundleManifest,
   type MetaStore,
   type ProposalRecord,
+  SKILL_CONTENT_TYPE,
   type VersionRecord,
   type Visibility,
 } from "./ports"
+import { isSkillBundle, parseFrontmatter } from "./skill"
 
 /**
  * Does this content begin like a full HTML document? Used to classify a payload as
@@ -75,6 +77,24 @@ const MAX_BUNDLE_FILES = 2000
 // upload that expands to gigabytes — would OOM/CPU-kill the worker without this.
 const MAX_BUNDLE_UNZIPPED_BYTES = 50 * 1024 * 1024 // 50 MB
 
+/**
+ * Choose a bundle's entry page. An HTML site enters at its root `index.html`, else
+ * its shallowest `.html`. A doc/skill bundle with no HTML (a Claude Code skill is a
+ * folder of `SKILL.md` + scripts/refs, no HTML) falls back to `SKILL.md`, then
+ * `README.md`, then the shallowest markdown file — markdown entries render through
+ * the markdown path at serve time. Null when the bundle has neither HTML nor markdown.
+ */
+export const pickBundleEntry = (paths: string[]): string | null => {
+  const shallowest = (pred: (p: string) => boolean): string | undefined =>
+    paths.filter(pred).sort((a, b) => a.split("/").length - b.split("/").length)[0]
+  if (paths.includes("/index.html")) return "/index.html"
+  const html = shallowest((p) => p.endsWith(".html"))
+  if (html) return html
+  if (paths.includes("/SKILL.md")) return "/SKILL.md"
+  if (paths.includes("/README.md")) return "/README.md"
+  return shallowest((p) => /\.(md|markdown)$/i.test(p)) ?? null
+}
+
 /** Normalizes a zip entry path; null means skip the entry. */
 const cleanPath = (raw: string): string | null => {
   const p = raw
@@ -93,6 +113,9 @@ interface StoredContent {
   blobKey: string
   contentType: string
   kind: ArtifactKind
+  /** A skill bundle's frontmatter `name`, so a new artifact is titled from the skill
+   *  rather than the zip's filename when the publisher gives no explicit title. */
+  suggestedTitle?: string
 }
 
 /**
@@ -134,20 +157,28 @@ async function storeContent(
       if (data === undefined) continue
       files[path] = { key: await blobs.put(data), type: mimeFor(path) }
     }
-    // Entry point: root index.html, else the shallowest html file.
-    const entry =
-      "/index.html" in files
-        ? "/index.html"
-        : Object.keys(files)
-            .filter((p) => p.endsWith(".html"))
-            .sort((a, b) => a.split("/").length - b.split("/").length)[0]
-    if (!entry) throw new PublishError(400, "bundle has no html entry point")
+    // Entry point: an HTML site enters at index/shallowest .html; a skill/doc
+    // bundle with no HTML enters at SKILL.md / README.md / shallowest markdown.
+    const entry = pickBundleEntry(Object.keys(files))
+    if (!entry) throw new PublishError(400, "bundle has no html or markdown entry point")
 
     const manifest: BundleManifest = { entry, spa, files }
+    // A skill bundle (entry = SKILL.md) gets the distinct dock/skill content type — so
+    // the library can badge it without opening the manifest — and is titled from its
+    // frontmatter `name`, not the zip's filename, when no title is given.
+    const isSkill = isSkillBundle(manifest)
+    let suggestedTitle: string | undefined
+    if (isSkill) {
+      const entryKey = files[entry]?.key
+      const entryBytes = entryKey ? await blobs.get(entryKey) : null
+      const name = entryBytes && parseFrontmatter(new TextDecoder().decode(entryBytes)).attrs.name
+      if (name) suggestedTitle = name
+    }
     return {
       blobKey: await blobs.put(new TextEncoder().encode(JSON.stringify(manifest))),
-      contentType: BUNDLE_CONTENT_TYPE,
+      contentType: isSkill ? SKILL_CONTENT_TYPE : BUNDLE_CONTENT_TYPE,
       kind: "bundle",
+      suggestedTitle,
     }
   }
   const text = new TextDecoder().decode(bytes)
@@ -164,8 +195,16 @@ async function storeContent(
     // Speaks the dock-deck protocol → it's a slide deck. Match the bare protocol
     // name so either quote style (source:'dock-deck' / "dock-deck") is detected.
     contentType = "text/x-dock-deck"
-  } else {
+  } else if (/\.html?$/i.test(filename)) {
+    // An HTML fragment (no doctype, so the sniff above missed it) saved with an
+    // .html name — keep it HTML so the markup renders, not shows as escaped text.
     contentType = "text/html"
+  } else {
+    // Plaintext / unknown extension (.txt, no extension, …): render as markdown.
+    // It's the safer, more readable default — sanitized and HTML-escaped through the
+    // markdown path — versus serving raw text as HTML. Real HTML still wins above
+    // (full doc by content, or an explicit .html name).
+    contentType = "text/markdown"
   }
   return { blobKey: await blobs.put(bytes), contentType, kind: "file" }
 }
@@ -180,7 +219,7 @@ export async function publish(
   input: PublishInput,
   shortId?: string,
 ): Promise<PublishResult> {
-  const { blobKey, contentType, kind } = await storeContent(
+  const { blobKey, contentType, kind, suggestedTitle } = await storeContent(
     blobs,
     input.bytes,
     input.filename,
@@ -215,7 +254,8 @@ export async function publish(
     return { artifact: (await meta.getByShortId(shortId)) as ArtifactRecord, version }
   }
 
-  const title = input.title ?? input.filename.replace(/\.(html?|md|markdown|zip)$/i, "")
+  const title =
+    input.title ?? suggestedTitle ?? input.filename.replace(/\.(html?|md|markdown|zip)$/i, "")
   const artifact = await meta.createArtifact({
     id: newId("a"),
     short_id: newShortId(),

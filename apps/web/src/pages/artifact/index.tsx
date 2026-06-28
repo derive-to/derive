@@ -21,6 +21,7 @@ import {
   ArtifactRemoved,
 } from "./artifact-states"
 import { ArtifactTopBar } from "./artifact-top-bar"
+import { BundleBar } from "./bundle-bar"
 import { ActionsCtx } from "./comment-actions"
 import { canCommentWithRole, shouldPromptSignInToComment } from "./lib/comment-access"
 import { groupThreads, parseAnchor } from "./lib/layout"
@@ -536,6 +537,9 @@ export function Artifact() {
               isMobile && panel === "open" && "pb-[50vh]",
             )}
           >
+            {art.bundle && !editing && (
+              <BundleBar bundle={art.bundle} shortId={shortId} version={shown} />
+            )}
             {editing ? (
               <SourceEditor
                 canPublish={effectiveCanPublish}

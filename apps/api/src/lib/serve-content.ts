@@ -1,9 +1,10 @@
 import {
   type BlobStore,
-  BUNDLE_CONTENT_TYPE,
   type BundleManifest,
+  isBundleContentType,
   looksLikeHtmlDocument,
   mimeFor,
+  parseFrontmatter,
   readerView,
   reflowHtml,
   renderDocShell,
@@ -61,7 +62,7 @@ export const serveContent = async (
   const htmlBody = async (doc: string): Promise<string> =>
     reader ? readerView(doc, renderDocShell, sanitizeHtml) : rf(await tx(doc)) + SELECTION_SCRIPT
   let path = rawPath
-  if (content.content_type === BUNDLE_CONTENT_TYPE) {
+  if (isBundleContentType(content.content_type)) {
     const manifestBytes = await blobs.get(content.blob_key)
     if (!manifestBytes) return c.text("blob missing", 500)
     const manifest = JSON.parse(new TextDecoder().decode(manifestBytes)) as BundleManifest
@@ -86,6 +87,22 @@ export const serveContent = async (
           : rf(rewritten) + SELECTION_SCRIPT
         : rewritten
       return c.body(out, 200, { ...headers, "Content-Type": entry.type })
+    }
+    // Markdown pages (a skill's SKILL.md, a doc bundle's pages) render through the
+    // same markdown path as a single-file .md — branded shell, GFM, anchor client —
+    // so an HTML-less skill folder reads as a document, not a raw text dump. `?raw=1`
+    // bypasses it to fetch the source (mirrors the single-file `raw.md` escape).
+    // `?raw=1` bypasses rendering to fetch a file's source (mirrors single-file raw.md).
+    if (
+      entry.type.startsWith("text/markdown") &&
+      !["1", "true"].includes(c.req.query("raw") ?? "")
+    ) {
+      // Strip YAML frontmatter (a skill's SKILL.md leads with name/description) — marked
+      // would otherwise render it as a stray `<hr>` + heading. The parsed fields surface
+      // as skill chrome around this iframe, not in the document body.
+      const body = parseFrontmatter(new TextDecoder().decode(data)).body
+      const html = await tx(await renderMarkdown(body, title))
+      return c.body(html, 200, { ...headers, "Content-Type": "text/html; charset=utf-8" })
     }
     return c.body(toBody(data), 200, { ...headers, "Content-Type": entry.type })
   }
