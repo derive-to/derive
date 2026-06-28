@@ -63,3 +63,24 @@ wrong place.
   over the remote `/mcp` server via `publish` with a `files` map. Over the stdio
   `@dock/mcp` server, bundles are publish-via-remote/web only, and `comment` set_state
   takes a `comment_id`. Both servers expose the same 5 tools.
+
+## Merging concurrent edits
+
+`publish` takes an optional **`base_version`** — the version you read before editing.
+Pass it on a republish and Dock treats your write as a 3-way merge instead of an
+overwrite:
+
+- If the artifact hasn't moved since `base_version`, your change goes live as-is.
+- If someone else published in the meantime but your edits are **disjoint** (different
+  paragraphs/blocks, or different files in a bundle), Dock auto-merges and both
+  changes survive.
+- If the edits **overlap**, `publish` does NOT clobber. It returns
+  `{ conflict: true, base_version, current_version, conflicts }` — the conflicting
+  regions, each with `base` / `ours` / `theirs`. Re-read the current version,
+  reconcile each region, and `publish` again with `base_version` set to the
+  `current_version` you were given.
+
+The loop: **read (note the version) → edit → publish with `base_version` → if
+`conflict`, reconcile and retry.** Omit `base_version` to keep the old
+last-write-wins behaviour. HTML/deck artifacts conflict on any overlap (they aren't
+line-merged); Markdown merges at the paragraph/block level.

@@ -26,6 +26,7 @@ import {
   type BundleManifest,
   diffLines,
   formatDiff,
+  MergeConflictError,
   newId,
   PublishError,
   propose as proposeChange,
@@ -471,6 +472,13 @@ function buildServer(ctx: AppContext, agent: AgentRecord): McpServer {
           .describe(
             "Add/overwrite the given `files` INTO the existing bundle instead of replacing it (default false). Build a large site across several calls without re-sending it: publish the pages first, then merge in batches of assets — each call carries only the new files. Requires `short_id` of a bundle; same-path files overwrite, the rest are kept.",
           ),
+        base_version: z
+          .number()
+          .int()
+          .optional()
+          .describe(
+            "The version you edited from (optimistic concurrency). On a republish, if the artifact has since advanced, your change is 3-way merged into the current version instead of overwriting it; if the edits overlap you get the conflicting regions back to reconcile and retry. Omit to overwrite (last-write-wins). Pass the version you read.",
+          ),
         message: z.string().optional().describe("What changed — recorded as the version message."),
         filename: z
           .string()
@@ -504,6 +512,7 @@ function buildServer(ctx: AppContext, agent: AgentRecord): McpServer {
       filename,
       for_review,
       addresses,
+      base_version,
     }) => {
       const existing = short_id ? await own(short_id) : null
       if (short_id && !existing) return text(`No artifact "${short_id}" in this workspace.`)
@@ -614,6 +623,7 @@ function buildServer(ctx: AppContext, agent: AgentRecord): McpServer {
             // team by default (never link-public unless they ask).
             orgId: agent.org_id,
             visibility: visibility === "link" ? "link" : visibility === "public" ? "public" : "org",
+            baseVersion: base_version,
           },
           short_id,
         )
@@ -645,6 +655,17 @@ function buildServer(ctx: AppContext, agent: AgentRecord): McpServer {
               : "Live now — created a new artifact in your workspace.",
         })
       } catch (e) {
+        // The doc advanced past base_version and the edits overlap: hand the agent
+        // the conflicting regions to reconcile rather than clobbering or 500ing.
+        if (e instanceof MergeConflictError)
+          return json({
+            published: false,
+            conflict: true,
+            base_version: e.baseVersion,
+            current_version: e.currentVersion,
+            conflicts: e.hunks,
+            note: `Couldn't auto-merge: "${short_id}" advanced to v${e.currentVersion} since v${e.baseVersion} and your change overlaps. Re-read the current version, reconcile the conflicting regions, then publish again with base_version ${e.currentVersion}.`,
+          })
         const msg = e instanceof PublishError ? e.message : "could not publish"
         return text(`Publish failed: ${msg}`)
       }

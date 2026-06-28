@@ -675,3 +675,80 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(toolText(asFile)).toContain("bundle")
   })
 })
+
+describe("remote MCP endpoint (/mcp): merge on publish", () => {
+  const call = (app: App, token: string, name: string, args: Record<string, unknown> = {}) =>
+    rpc(app, token, {
+      jsonrpc: "2.0",
+      id: 9,
+      method: "tools/call",
+      params: { name, arguments: args },
+    })
+
+  it("publish with base_version returns a conflict instead of clobbering an overlapping edit", async () => {
+    const { app, token } = appWithGrant("mergeconf", "openid dock:read dock:publish")
+    await rpc(app, token, initBody)
+    const v1 = JSON.parse(
+      toolText(
+        await call(app, token, "publish", {
+          content: "<h1>v1</h1>",
+          title: "Doc",
+          filename: "index.html",
+        }),
+      ),
+    )
+    const short = v1.short_id as string
+    await call(app, token, "publish", {
+      short_id: short,
+      content: "<h1>v2 live</h1>",
+      filename: "index.html",
+    })
+    const res = JSON.parse(
+      toolText(
+        await call(app, token, "publish", {
+          short_id: short,
+          content: "<h1>mine</h1>",
+          base_version: 1,
+          filename: "index.html",
+        }),
+      ),
+    )
+    expect(res.conflict).toBe(true)
+    expect(res.published).toBe(false)
+    expect(res.current_version).toBe(2)
+  })
+
+  it("publish with base_version auto-merges a disjoint markdown edit", async () => {
+    const { app, token } = appWithGrant("mergeok", "openid dock:read dock:publish")
+    await rpc(app, token, initBody)
+    const v1 = JSON.parse(
+      toolText(
+        await call(app, token, "publish", {
+          content: "# T\n\nAlpha.\n\nOmega.\n",
+          title: "Doc",
+          filename: "doc.md",
+        }),
+      ),
+    )
+    const short = v1.short_id as string
+    // Another writer advances v2 (edits the heading).
+    await call(app, token, "publish", {
+      short_id: short,
+      content: "# T OURS\n\nAlpha.\n\nOmega.\n",
+      filename: "doc.md",
+    })
+    // We publish from stale base v1 with a disjoint edit (last block) → auto-merge.
+    const res = JSON.parse(
+      toolText(
+        await call(app, token, "publish", {
+          short_id: short,
+          content: "# T\n\nAlpha.\n\nOmega EDIT.\n",
+          base_version: 1,
+          filename: "doc.md",
+        }),
+      ),
+    )
+    expect(res.published).toBe(true)
+    expect(res.version).toBe(3)
+  })
+})
