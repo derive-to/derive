@@ -204,3 +204,113 @@ test("a publish that lands mid-resolve re-opens the resolver with fresh hunks", 
     expect(await readSource(owner, id)).toContain("alpha TWO")
   }).toPass({ timeout: 10_000 })
 })
+
+// Replace the editor content literally (insertText, no per-key markdown/html
+// auto-handling) — reliable for tags, emoji, and exact whitespace.
+async function setSourceRaw(page: Page, text: string): Promise<void> {
+  await page.locator(".cm-content").click()
+  await page.keyboard.press("ControlOrMeta+a")
+  await page.keyboard.press("Delete")
+  await page.keyboard.insertText(text)
+}
+
+async function landTyped(
+  page: Page,
+  id: string,
+  body: string,
+  name: string,
+  mime: string,
+): Promise<void> {
+  await expect(async () => {
+    const res = await page.request.post(`/v1/artifacts/${id}/versions`, {
+      multipart: { file: { name, mimeType: mime, buffer: Buffer.from(body) } },
+    })
+    expect(res.ok(), `landTyped failed: ${res.status()}`).toBeTruthy()
+  }).toPass({ timeout: 10_000 })
+}
+
+test("HTML conflicts as one whole-blob hunk (v1 never line-splices HTML)", async ({ owner }) => {
+  const res = await owner.request.post("/v1/artifacts", {
+    multipart: {
+      file: {
+        name: "page.html",
+        mimeType: "text/html",
+        buffer: Buffer.from("<h1>Title</h1>\n<p>Hello world.</p>\n"),
+      },
+    },
+  })
+  expect(res.ok()).toBeTruthy()
+  const id = (await res.json()).short_id as string
+  await owner.goto(`/a/${id}`)
+  await openEditor(owner)
+
+  await landTyped(owner, id, "<h1>Title</h1>\n<p>Hello CURRENT.</p>\n", "page.html", "text/html")
+  await setSourceRaw(owner, "<h1>Title</h1>\n<p>Hello MINE.</p>\n")
+  await owner.getByTestId("artifact-publish-version").click()
+
+  // HTML/deck fall back to a single whole-document conflict, not per-line hunks.
+  await expect(owner.getByTestId("conflict-card")).toHaveCount(1)
+  await owner.getByTestId("conflict-use-mine").click()
+  await owner.getByTestId("conflict-publish").click()
+  await expect(owner.getByTestId("conflict-card")).toHaveCount(0)
+  await expect(async () => {
+    expect(await readSource(owner, id)).toContain("Hello MINE.")
+  }).toPass({ timeout: 10_000 })
+})
+
+test("delete-vs-edit conflicts; the current side reads as removed", async ({ owner }) => {
+  const id = await publishArtifact(owner, "doc.md", "alpha\n\nbeta\n\ngamma\n")
+  await owner.goto(`/a/${id}`)
+  await openEditor(owner)
+
+  await landVersion(owner, id, "alpha\n\ngamma\n") // teammate DELETES the middle block
+  await setSourceRaw(owner, "alpha\n\nbeta EDITED\n\ngamma\n") // we EDIT it
+  await owner.getByTestId("artifact-publish-version").click()
+
+  const card = owner.getByTestId("conflict-card")
+  await expect(card).toHaveCount(1)
+  await expect(card.getByText("(removed)")).toBeVisible() // deletion shows as removed
+  await owner.getByTestId("conflict-use-mine").click()
+  await owner.getByTestId("conflict-publish").click()
+  await expect(owner.getByTestId("conflict-card")).toHaveCount(0)
+  await expect(async () => {
+    expect(await readSource(owner, id)).toContain("beta EDITED")
+  }).toPass({ timeout: 10_000 })
+})
+
+test("independent edits inside one paragraph auto-merge (no false conflict)", async ({ owner }) => {
+  const id = await publishArtifact(owner, "doc.md", "The quick brown fox.\n")
+  await owner.goto(`/a/${id}`)
+  await openEditor(owner)
+
+  await landVersion(owner, id, "The quick brown LAZY fox.\n") // word inserted near the end
+  await setSourceRaw(owner, "The VERY quick brown fox.\n") // word inserted near the start
+  await owner.getByTestId("artifact-publish-version").click()
+
+  // Disjoint word-level edits in the same paragraph combine — never a conflict.
+  await expect(owner.getByTestId("conflict-card")).toHaveCount(0)
+  await expect(owner.getByTestId("artifact-source-editor")).toBeHidden()
+  await expect(async () => {
+    const s = await readSource(owner, id)
+    expect(s).toContain("VERY")
+    expect(s).toContain("LAZY")
+  }).toPass({ timeout: 10_000 })
+})
+
+test("unicode/emoji survives a conflict resolution intact", async ({ owner }) => {
+  const id = await publishArtifact(owner, "doc.md", "status: ok\n")
+  await owner.goto(`/a/${id}`)
+  await openEditor(owner)
+
+  await landVersion(owner, id, "status: 🟢 green\n")
+  await setSourceRaw(owner, "status: 🔴 red\n")
+  await owner.getByTestId("artifact-publish-version").click()
+
+  await expect(owner.getByTestId("conflict-card")).toHaveCount(1)
+  await owner.getByTestId("conflict-use-mine").click()
+  await owner.getByTestId("conflict-publish").click()
+  await expect(owner.getByTestId("conflict-card")).toHaveCount(0)
+  await expect(async () => {
+    expect(await readSource(owner, id)).toContain("🔴 red")
+  }).toPass({ timeout: 10_000 })
+})
