@@ -7,12 +7,13 @@ import { marked } from "marked"
  * different things) become conflicts. A clean merge is byte-reproducible with no
  * model call — the deterministic core the AI/UX layers build on.
  *
- * This is the classic diff3 algorithm: align both sides to the base via LCS,
- * take one-sided changes, conflict on two-sided ones. Per Khanna-Kunal-Pierce
- * ("A Formal Investigation of Diff3"), the intuition that "edits to well-
- * separated regions never conflict" does NOT hold in general — so the guarantee
- * we rely on is the weaker, true one: a clean merge never silently drops a
- * change (asserted by the fuzz test). HTML and decks are NOT line-spliced in v1
+ * This is a git-style HUNK-BASED 3-way merge: compute each side's changed base
+ * ranges (via LCS), then apply changes only one side made and conflict only where
+ * both changed OVERLAPPING base coordinates — so independent edits combine even on
+ * adjacent lines. The guarantee we lean on is the strong one: a clean merge never
+ * silently drops a change a side made, even when one side's change bridges across
+ * the other's (asserted by the adversarial fuzz). HTML and decks are NOT line-spliced
+ * in v1
  * (interleaving disjoint line edits routinely yields malformed DOM); they fall
  * back to a whole-blob conflict until a structure-aware merge lands.
  */
@@ -107,23 +108,74 @@ type RawHunk =
   | { t: "clean"; toks: string[] }
   | { t: "conflict"; base: string[]; ours: string[]; theirs: string[] }
 
-/** The diff3 core over unit arrays: walk the base anchors both sides agree on;
- *  between anchors take the one side that changed, or conflict when both did. */
-const diff3 = (base: string[], ours: string[], theirs: string[]): RawHunk[] => {
-  const toOurs = new Map<number, number>()
-  for (const [bi, oi] of lcsPairs(base, ours)) toOurs.set(bi, oi)
-  const toTheirs = new Map<number, number>()
-  for (const [bi, ti] of lcsPairs(base, theirs)) toTheirs.set(bi, ti)
+/** Base-line index → side-line index for the lines a side left UNCHANGED (LCS-matched). */
+const baseToSide = (a: string[], x: string[]): Map<number, number> => {
+  const m = new Map<number, number>()
+  for (const [ai, xi] of lcsPairs(a, x)) m.set(ai, xi)
+  return m
+}
 
-  // Stable anchors: base units matched in BOTH sides, plus a sentinel past the
-  // end so the trailing region is emitted.
-  const anchors: Array<[number, number, number]> = []
-  for (let bi = 0; bi < base.length; bi++) {
-    const oi = toOurs.get(bi)
-    const ti = toTheirs.get(bi)
-    if (oi !== undefined && ti !== undefined) anchors.push([bi, oi, ti])
+/** The base ranges [aStart, aEnd) a side changed vs base (a zero-width range is an
+ *  insertion point). Independent changes stay SEPARATE ranges so they can both apply —
+ *  this is what lets adjacent-but-disjoint edits merge instead of conflicting. */
+const changeHunks = (a: string[], x: string[]): Array<[number, number]> => {
+  const hunks: Array<[number, number]> = []
+  let ai = 0
+  let xi = 0
+  for (const [ma, mx] of [...lcsPairs(a, x), [a.length, x.length] as [number, number]]) {
+    if (ma > ai || mx > xi) hunks.push([ai, ma])
+    ai = ma + 1
+    xi = mx + 1
   }
-  anchors.push([base.length, ours.length, theirs.length])
+  return hunks
+}
+
+/** A side's content for base range [bs, be) — INCLUDING lines it kept inside the range,
+ *  so a side's slice is never missing content even when the other side's change bridges
+ *  across it (this is the no-data-loss guarantee for the hunk-based merge). */
+const sliceForBaseRange = (
+  x: string[],
+  matched: Map<number, number>,
+  bs: number,
+  be: number,
+  baseLen: number,
+): string[] => {
+  let xStart = 0
+  for (let k = bs - 1; k >= 0; k--) {
+    const xi = matched.get(k)
+    if (xi !== undefined) {
+      xStart = xi + 1
+      break
+    }
+  }
+  let xEnd = x.length
+  for (let k = be; k < baseLen; k++) {
+    const xi = matched.get(k)
+    if (xi !== undefined) {
+      xEnd = xi
+      break
+    }
+  }
+  return x.slice(xStart, xEnd)
+}
+
+/**
+ * The diff3 core (git-style, hunk-based). Compute each side's changed base ranges,
+ * then walk base merging them: a range only ONE side changed is taken from that side;
+ * ranges both sides changed at OVERLAPPING base coordinates conflict (unless both made
+ * the identical change). Independent edits on adjacent lines stay separate and both
+ * apply — unlike the textbook stable-anchor diff3, which conflicts them. Generic over
+ * the unit array, so lines, markdown blocks, and words all reuse it.
+ */
+const diff3 = (base: string[], ours: string[], theirs: string[]): RawHunk[] => {
+  const matchedO = baseToSide(base, ours)
+  const matchedT = baseToSide(base, theirs)
+  const oh = changeHunks(base, ours)
+  const th = changeHunks(base, theirs)
+  const ourSlice = (bs: number, be: number) =>
+    sliceForBaseRange(ours, matchedO, bs, be, base.length)
+  const theirSlice = (bs: number, be: number) =>
+    sliceForBaseRange(theirs, matchedT, bs, be, base.length)
 
   const hunks: RawHunk[] = []
   let clean: string[] = []
@@ -133,30 +185,61 @@ const diff3 = (base: string[], ours: string[], theirs: string[]): RawHunk[] => {
       clean = []
     }
   }
-  let bi = 0
+
+  let p = 0
   let oi = 0
   let ti = 0
-  for (const [ba, oa, ta] of anchors) {
-    const bSlice = base.slice(bi, ba)
-    const oSlice = ours.slice(oi, oa)
-    const tSlice = theirs.slice(ti, ta)
-    if (bSlice.length || oSlice.length || tSlice.length) {
-      if (sameUnits(oSlice, bSlice))
-        clean.push(...tSlice) // ours unchanged here → take theirs
-      else if (sameUnits(tSlice, bSlice))
-        clean.push(...oSlice) // theirs unchanged here → take ours
-      else if (sameUnits(oSlice, tSlice))
-        clean.push(...oSlice) // both made the same change → take either
-      else {
-        flush()
-        hunks.push({ t: "conflict", base: bSlice, ours: oSlice, theirs: tSlice })
-      }
+  while (oi < oh.length || ti < th.length) {
+    const start = Math.min(
+      oh[oi]?.[0] ?? Number.POSITIVE_INFINITY,
+      th[ti]?.[0] ?? Number.POSITIVE_INFINITY,
+    )
+    // unchanged base before the next change region
+    for (let k = p; k < start; k++) {
+      const ln = base[k]
+      if (ln !== undefined) clean.push(ln)
     }
-    const anchorUnit = base[ba]
-    if (ba < base.length && anchorUnit !== undefined) clean.push(anchorUnit)
-    bi = ba + 1
-    oi = oa + 1
-    ti = ta + 1
+    // cluster: the change(s) at `start`, expanded while the other side strictly overlaps
+    let clEnd = start
+    let sawO = false
+    let sawT = false
+    for (;;) {
+      let grew = false
+      const o = oh[oi]
+      if (o && (o[0] === start || o[0] < clEnd)) {
+        clEnd = Math.max(clEnd, o[1])
+        sawO = true
+        oi++
+        grew = true
+      }
+      const t = th[ti]
+      if (t && (t[0] === start || t[0] < clEnd)) {
+        clEnd = Math.max(clEnd, t[1])
+        sawT = true
+        ti++
+        grew = true
+      }
+      if (!grew) break
+    }
+    if (sawO && sawT) {
+      const o = ourSlice(start, clEnd)
+      const t = theirSlice(start, clEnd)
+      if (sameUnits(o, t)) {
+        clean.push(...o) // both sides made the identical change
+      } else {
+        flush()
+        hunks.push({ t: "conflict", base: base.slice(start, clEnd), ours: o, theirs: t })
+      }
+    } else if (sawO) {
+      clean.push(...ourSlice(start, clEnd))
+    } else {
+      clean.push(...theirSlice(start, clEnd))
+    }
+    p = clEnd
+  }
+  for (let k = p; k < base.length; k++) {
+    const ln = base[k]
+    if (ln !== undefined) clean.push(ln)
   }
   flush()
   return hunks

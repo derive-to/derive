@@ -153,16 +153,16 @@ describe("merge3 adversarial: brutal edge inputs", () => {
     expect(r.merged).toBe("🙂\nb\nZ\n")
   })
 
-  it("CONSERVATIVE but SAFE: adjacent independent edits conflict, never lose data", () => {
-    // Two edits on consecutive lines with no unchanged line between them: textbook diff3
-    // surfaces a conflict rather than merging (git's hunk-based merge would combine them).
-    // The point we GUARANTEE: both sides survive in the conflict — nothing is dropped.
+  it("merges independent edits on ADJACENT lines (hunk-based, like git)", () => {
+    // Two edits on consecutive lines with no unchanged line between them now combine —
+    // the hunk-based merge applies non-overlapping changes from both sides.
     const r = merge3("a\nb\n", "X\nb\n", "a\nY\n", "text")
+    expect(r.clean).toBe(true)
+    expect(r.merged).toBe("X\nY\n")
+  })
+
+  it("still conflicts when adjacent edits actually OVERLAP the same line", () => {
+    const r = merge3("a\nb\n", "X\nb\n", "Y\nb\n", "text") // both rewrite line 0
     expect(r.clean).toBe(false)
-    const all = r.hunks
-      .flatMap((h) => (h.t === "conflict" ? [h.ours, h.theirs] : [h.text]))
-      .join("\n")
-    expect(all).toContain("X")
-    expect(all).toContain("Y")
   })
 })
