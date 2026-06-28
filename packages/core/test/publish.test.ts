@@ -12,6 +12,7 @@ import type {
 import {
   approveProposal,
   artifactUrl,
+  MergeConflictError,
   type ProposeInput,
   PublishError,
   type PublishInput,
@@ -72,6 +73,8 @@ const makeMeta = (): MetaStore => {
       if (art) art.current_version = rec.n
       return rec
     },
+    getVersion: async (artifactId: string, n: number) =>
+      (versions.get(artifactId) ?? []).find((v) => v.n === n) ?? null,
     createProposal: async (p: NewProposal): Promise<FakeProposal> => {
       const rec: FakeProposal = { ...p, state: "open", created_at: "t" }
       proposals.set(p.id, rec)
@@ -305,5 +308,82 @@ describe("publish: URL + JSON helpers", () => {
       spa: false,
       current_version: 2,
     })
+  })
+})
+
+describe("approveProposal: 3-way merge on drift", () => {
+  const md = (body: string): PublishInput => ({
+    bytes: new TextEncoder().encode(body),
+    filename: "doc.md",
+    isBundle: false,
+  })
+  const mdPropose = (body: string): ProposeInput => ({
+    ...md(body),
+    author: "bob",
+    message: "tweak",
+  })
+  const BASE = "# Title\n\nAlpha block.\n\nOmega block.\n"
+
+  it("fast-forwards verbatim when the document has not moved", async () => {
+    const meta = makeMeta()
+    const blobs = makeBlobs()
+    const { artifact } = await publish(meta, blobs, md(BASE))
+    const { proposal } = await propose(
+      meta,
+      blobs,
+      artifact.short_id,
+      mdPropose("# Title\n\nAlpha block EDITED.\n\nOmega block.\n"),
+    )
+    const version = await approveProposal(meta, blobs, proposal, "amy")
+    expect(version.blob_key).toBe(proposal.blob_key)
+    expect(version.base_version).toBe(1)
+  })
+
+  it("auto-merges a stale proposal into a drifted current when the edits are disjoint", async () => {
+    const meta = makeMeta()
+    const blobs = makeBlobs()
+    const { artifact } = await publish(meta, blobs, md(BASE)) // v1
+    const { proposal } = await propose(
+      meta,
+      blobs,
+      artifact.short_id,
+      mdPropose("# Title\n\nAlpha block.\n\nOmega block THEIRS.\n"),
+    )
+    // The document advances with a DISJOINT edit (the heading) before approval.
+    await publish(
+      meta,
+      blobs,
+      md("# Title OURS\n\nAlpha block.\n\nOmega block.\n"),
+      artifact.short_id,
+    )
+    const version = await approveProposal(meta, blobs, proposal, "amy")
+    expect(version.n).toBe(3)
+    expect(version.base_version).toBe(2) // merged against the advanced current, not the stale base
+    const text = new TextDecoder().decode((await blobs.get(version.blob_key)) ?? undefined)
+    expect(text).toContain("Title OURS") // the drift survived
+    expect(text).toContain("Omega block THEIRS.") // the proposal survived
+  })
+
+  it("throws MergeConflictError when the proposal and the drift overlap", async () => {
+    const meta = makeMeta()
+    const blobs = makeBlobs()
+    const { artifact } = await publish(meta, blobs, md(BASE)) // v1
+    const { proposal } = await propose(
+      meta,
+      blobs,
+      artifact.short_id,
+      mdPropose("# Title THEIRS\n\nAlpha block.\n\nOmega block.\n"),
+    )
+    // Current advances with a CONFLICTING edit to the SAME heading block.
+    await publish(
+      meta,
+      blobs,
+      md("# Title OURS\n\nAlpha block.\n\nOmega block.\n"),
+      artifact.short_id,
+    )
+    await expect(approveProposal(meta, blobs, proposal, "amy")).rejects.toBeInstanceOf(
+      MergeConflictError,
+    )
+    expect((await meta.getArtifactById(artifact.id))?.current_version).toBe(2) // nothing published
   })
 })

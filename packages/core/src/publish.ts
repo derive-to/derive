@@ -1,5 +1,6 @@
 import { unzipSync } from "fflate"
 import { newId, newShortId, refFor, slugify } from "./ids"
+import { type MergeHunk, merge3, mergeKindFor } from "./merge3"
 import { mimeFor } from "./mime"
 import {
   type ArtifactKind,
@@ -9,6 +10,7 @@ import {
   type BundleManifest,
   type MetaStore,
   type ProposalRecord,
+  StaleBaseError,
   type VersionRecord,
   type Visibility,
 } from "./ports"
@@ -299,10 +301,68 @@ export async function propose(
   return { artifact, proposal }
 }
 
+/** A blob's UTF-8 text, or null when it can't be read. */
+const blobText = async (blobs: BlobStore, key: string): Promise<string | null> => {
+  const bytes = await blobs.get(key)
+  return bytes ? new TextDecoder().decode(bytes) : null
+}
+
 /**
- * Approving a proposal appends its stored content as the new current version
- * (the experience goes live) and stamps the proposal decided. History is never
- * rewritten: the proposal row stays as the audit trail of who approved what.
+ * Thrown by approveProposal when the proposal's change can't be auto-merged into
+ * the current version — the document advanced under it and the two edits overlap
+ * (or the content isn't line/block-mergeable, e.g. a bundle). The caller surfaces
+ * the conflict for a human/agent to resolve instead of clobbering either side.
+ */
+export class MergeConflictError extends Error {
+  readonly proposalId: string
+  readonly baseVersion: number
+  readonly currentVersion: number
+  readonly hunks: MergeHunk[]
+  constructor(proposalId: string, baseVersion: number, currentVersion: number, hunks: MergeHunk[]) {
+    super(`proposal ${proposalId} conflicts with current version ${currentVersion}`)
+    this.name = "MergeConflictError"
+    this.proposalId = proposalId
+    this.baseVersion = baseVersion
+    this.currentVersion = currentVersion
+    this.hunks = hunks
+  }
+}
+
+// Resolve the content to publish when approving against a CURRENT that has moved
+// past the proposal's base: 3-way merge the proposal (theirs) into the live
+// version (ours) over their common ancestor. Returns the merged bytes, or throws
+// MergeConflictError when it can't auto-merge.
+async function mergeProposalOntoCurrent(
+  meta: MetaStore,
+  blobs: BlobStore,
+  proposal: ProposalRecord,
+  currentVersion: number,
+  theirsText: string | null,
+): Promise<Uint8Array> {
+  const conflict = (hunks: MergeHunk[]) =>
+    new MergeConflictError(proposal.id, proposal.base_version, currentVersion, hunks)
+  // Bundles aren't line/block-mergeable in v1 — don't silently overwrite a drift.
+  if (proposal.content_type === BUNDLE_CONTENT_TYPE) throw conflict([])
+  const baseV = await meta.getVersion(proposal.artifact_id, proposal.base_version)
+  const oursV = await meta.getVersion(proposal.artifact_id, currentVersion)
+  const baseText = baseV ? await blobText(blobs, baseV.blob_key) : null
+  const oursText = oursV ? await blobText(blobs, oursV.blob_key) : null
+  // If any of the three sides is unreadable we can't merge safely → conflict.
+  if (baseText === null || oursText === null || theirsText === null) throw conflict([])
+  const result = merge3(baseText, oursText, theirsText, mergeKindFor(proposal.content_type))
+  if (!result.clean || result.merged === null) throw conflict(result.hunks)
+  return new TextEncoder().encode(result.merged)
+}
+
+/**
+ * Approve a proposal: its change becomes the new current version and the proposal
+ * is stamped decided. When the document hasn't moved since the proposal's base it
+ * fast-forwards (the proposal's stored blob is reused verbatim). When the document
+ * ADVANCED under it, the change is 3-way merged into the current version instead of
+ * overwriting it — auto-merging disjoint edits, or throwing MergeConflictError when
+ * they overlap. The optimistic-concurrency guard makes a publish that lands
+ * mid-approval safe: we re-merge against the new current rather than clobber it.
+ * History is never rewritten; the proposal row stays as the audit trail.
  */
 export async function approveProposal(
   meta: MetaStore,
@@ -313,28 +373,64 @@ export async function approveProposal(
 ): Promise<VersionRecord> {
   if (proposal.state !== "open")
     throw new PublishError(409, `proposal is ${proposal.state}, not open`)
-  // The proposal already stored its blob; the approved version reuses it, so
-  // its byte cost is first counted here (proposals don't create versions).
-  const stored = await blobs.get(proposal.blob_key)
-  const version = await meta.addVersion(proposal.artifact_id, {
-    id: newId("v"),
-    blob_key: proposal.blob_key,
-    content_type: proposal.content_type,
-    size_bytes: stored?.length ?? 0,
-    author: proposal.author,
-    // Attribute the live version to the proposer (who did the work), not the approver,
-    // so it shows up on the proposer's profile. Null for legacy/anonymous proposals.
-    author_id: proposal.author_id ?? null,
-    message: proposal.message ?? "Approved proposal",
-    name: null,
-  })
-  await meta.decideProposal(proposal.id, {
-    state: "approved",
-    decided_by: approver,
-    decided_version: version.n,
-    decision_note: note ?? null,
-  })
-  return version
+  const theirs = await blobs.get(proposal.blob_key)
+  const theirsText = theirs ? new TextDecoder().decode(theirs) : null
+
+  // Re-merge + re-commit a few times: a publish landing between our read of current
+  // and our write loses the optimistic guard, so we recompute against the newly
+  // current version rather than blindly re-applying stale bytes.
+  const MAX_ATTEMPTS = 3
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    const artifact = await meta.getArtifactById(proposal.artifact_id)
+    if (!artifact) throw new PublishError(404, `no artifact ${proposal.artifact_id}`)
+    const current = artifact.current_version
+
+    let blobKey: string
+    let sizeBytes: number
+    if (current === proposal.base_version) {
+      // No drift — fast-forward the proposal's stored blob verbatim.
+      blobKey = proposal.blob_key
+      sizeBytes = theirs?.length ?? 0
+    } else {
+      // Drift — 3-way merge (throws MergeConflictError when the edits overlap).
+      const merged = await mergeProposalOntoCurrent(meta, blobs, proposal, current, theirsText)
+      blobKey = await blobs.put(merged)
+      sizeBytes = merged.length
+    }
+
+    try {
+      const version = await meta.addVersion(
+        proposal.artifact_id,
+        {
+          id: newId("v"),
+          blob_key: blobKey,
+          content_type: proposal.content_type,
+          size_bytes: sizeBytes,
+          author: proposal.author,
+          // Attribute the live version to the proposer (who did the work), not the
+          // approver, so it shows on the proposer's profile. Null for legacy/anon.
+          author_id: proposal.author_id ?? null,
+          message: proposal.message ?? "Approved proposal",
+          name: null,
+          base_version: current,
+        },
+        { expectedBase: current },
+      )
+      await meta.decideProposal(proposal.id, {
+        state: "approved",
+        decided_by: approver,
+        decided_version: version.n,
+        decision_note: note ?? null,
+      })
+      return version
+    } catch (err) {
+      // A concurrent publish moved current between our read and our write — loop to
+      // re-merge against the new current. Any other error propagates.
+      if (err instanceof StaleBaseError && attempt < MAX_ATTEMPTS - 1) continue
+      throw err
+    }
+  }
+  throw new PublishError(409, "approval kept losing a concurrent publish — retry")
 }
 
 // Name-first ref: the slug reads first, the short id is the final token. parseRef
