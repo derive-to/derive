@@ -5,6 +5,7 @@ import {
   effectiveRole,
   formatDiff,
   groupSessions,
+  MergeConflictError,
   newId,
   PublishError,
   publish,
@@ -290,6 +291,10 @@ export const artifactRoutes = (ctx: AppContext) => {
     if (!shortId && visibility === "password" && !password)
       return fail(c, 400, "a password is required for password visibility")
     const passwordHash = visibility === "password" && password ? hashPassword(password) : undefined
+    // Optimistic-concurrency base from the editor (the version it started editing).
+    // Only meaningful on a republish; publish() ignores it when creating an artifact.
+    const baseRaw = str(body["baseVersion"])
+    const baseVersion = baseRaw && /^\d+$/.test(baseRaw) ? Number(baseRaw) : undefined
 
     try {
       // The authenticated principal behind this publish (signed-in user or agent) — its
@@ -317,6 +322,7 @@ export const artifactRoutes = (ctx: AppContext) => {
           author: actor?.name ?? str(body["author"]),
           authorId: user?.id ?? null,
           name: str(body["name"]),
+          baseVersion,
           orgId: org,
           visibility,
           passwordHash,
@@ -386,6 +392,19 @@ export const artifactRoutes = (ctx: AppContext) => {
       const versions = await meta.listVersions(artifact.id)
       return c.json({ ...toJson(deps.baseUrl, artifact, versions), published: version.n }, 201)
     } catch (err) {
+      // A guarded republish whose base drifted and overlaps what changed since: the
+      // 3-way merge couldn't auto-resolve. Surface the conflict (not a 500); nothing
+      // was published.
+      if (err instanceof MergeConflictError)
+        return c.json(
+          {
+            error: "merge conflict",
+            base_version: err.baseVersion,
+            current_version: err.currentVersion,
+            conflicts: err.hunks,
+          },
+          409,
+        )
       if (err instanceof PublishError) return fail(c, err.statusCode as 400, err.message)
       throw err
     }

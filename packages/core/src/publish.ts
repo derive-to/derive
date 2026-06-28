@@ -55,6 +55,10 @@ export interface PublishInput {
   passwordHash?: string | null
   /** Names this publish a pinned checkpoint (Docs-style). */
   name?: string
+  /** Optimistic-concurrency base: the current_version the editor started from. When
+   *  set on a republish, a drift is 3-way merged (or 409s) instead of clobbering;
+   *  omitted ⇒ a plain last-write-wins append (legacy / CLI / GitHub sync). */
+  baseVersion?: number
 }
 
 export interface PublishResult {
@@ -197,19 +201,37 @@ export async function publish(
     if (!artifact) throw new PublishError(404, `no artifact with short_id ${shortId}`)
     if (artifact.kind !== kind)
       throw new PublishError(409, `artifact is a ${artifact.kind}; republish the same kind`)
-    const version = await meta.addVersion(artifact.id, {
-      id: newId("v"),
-      blob_key: blobKey,
-      content_type: contentType,
-      size_bytes: input.bytes.length,
-      author,
-      author_login: input.authorLogin ?? null,
-      author_avatar: input.authorAvatar ?? null,
-      author_gh_id: input.authorGhId ?? null,
-      author_id: input.authorId ?? null,
-      message: input.message ?? null,
-      name: input.name ?? null,
-    })
+    const version =
+      input.baseVersion === undefined
+        ? await meta.addVersion(artifact.id, {
+            id: newId("v"),
+            blob_key: blobKey,
+            content_type: contentType,
+            size_bytes: input.bytes.length,
+            author,
+            author_login: input.authorLogin ?? null,
+            author_avatar: input.authorAvatar ?? null,
+            author_gh_id: input.authorGhId ?? null,
+            author_id: input.authorId ?? null,
+            message: input.message ?? null,
+            name: input.name ?? null,
+          })
+        : await commitWithMerge(meta, blobs, {
+            artifactId: artifact.id,
+            baseVersion: input.baseVersion,
+            theirsBlobKey: blobKey,
+            theirsBytes: input.bytes.length,
+            theirsText: input.isBundle ? null : new TextDecoder().decode(input.bytes),
+            contentType,
+            author,
+            authorLogin: input.authorLogin ?? null,
+            authorAvatar: input.authorAvatar ?? null,
+            authorGhId: input.authorGhId ?? null,
+            authorId: input.authorId ?? null,
+            message: input.message ?? null,
+            name: input.name,
+            conflictId: shortId,
+          })
     // Rename on republish only when a title is explicitly supplied (the in-browser
     // editor sends it; a CLI republish without --title leaves the name untouched).
     const newTitle = input.title?.trim()
@@ -328,41 +350,117 @@ export class MergeConflictError extends Error {
   }
 }
 
-// Resolve the content to publish when approving against a CURRENT that has moved
-// past the proposal's base: 3-way merge the proposal (theirs) into the live
-// version (ours) over their common ancestor. Returns the merged bytes, or throws
-// MergeConflictError when it can't auto-merge.
-async function mergeProposalOntoCurrent(
+// An incoming change (`theirs`) committed as the next version, with the metadata
+// needed to fast-forward, 3-way merge, or conflict against whatever is CURRENT.
+interface MergeCommit {
+  artifactId: string
+  /** The version `theirs` derived from — the merge ancestor. */
+  baseVersion: number
+  /** `theirs`, already stored in the blob store (reused verbatim on a fast-forward). */
+  theirsBlobKey: string
+  theirsBytes: number
+  /** `theirs` decoded, or null for non-text (e.g. a bundle) — those can't auto-merge. */
+  theirsText: string | null
+  contentType: string
+  author: string
+  authorLogin?: string | null
+  authorAvatar?: string | null
+  authorGhId?: string | null
+  authorId?: string | null
+  message: string | null
+  name?: string | null
+  /** Identifies the source (proposal id / short id) in a MergeConflictError. */
+  conflictId: string
+}
+
+// 3-way merge `theirs` into the CURRENT version over their common ancestor when the
+// document has moved past the base it derived from. Returns the merged bytes, or
+// throws MergeConflictError when it can't auto-merge.
+async function merge3IntoCurrent(
   meta: MetaStore,
   blobs: BlobStore,
-  proposal: ProposalRecord,
+  input: MergeCommit,
   currentVersion: number,
-  theirsText: string | null,
 ): Promise<Uint8Array> {
   const conflict = (hunks: MergeHunk[]) =>
-    new MergeConflictError(proposal.id, proposal.base_version, currentVersion, hunks)
+    new MergeConflictError(input.conflictId, input.baseVersion, currentVersion, hunks)
   // Bundles aren't line/block-mergeable in v1 — don't silently overwrite a drift.
-  if (proposal.content_type === BUNDLE_CONTENT_TYPE) throw conflict([])
-  const baseV = await meta.getVersion(proposal.artifact_id, proposal.base_version)
-  const oursV = await meta.getVersion(proposal.artifact_id, currentVersion)
+  if (input.contentType === BUNDLE_CONTENT_TYPE) throw conflict([])
+  const baseV = await meta.getVersion(input.artifactId, input.baseVersion)
+  const oursV = await meta.getVersion(input.artifactId, currentVersion)
   const baseText = baseV ? await blobText(blobs, baseV.blob_key) : null
   const oursText = oursV ? await blobText(blobs, oursV.blob_key) : null
   // If any of the three sides is unreadable we can't merge safely → conflict.
-  if (baseText === null || oursText === null || theirsText === null) throw conflict([])
-  const result = merge3(baseText, oursText, theirsText, mergeKindFor(proposal.content_type))
+  if (baseText === null || oursText === null || input.theirsText === null) throw conflict([])
+  const result = merge3(baseText, oursText, input.theirsText, mergeKindFor(input.contentType))
   if (!result.clean || result.merged === null) throw conflict(result.hunks)
   return new TextEncoder().encode(result.merged)
 }
 
+// Commit `theirs` as the next version with optimistic concurrency: fast-forward when
+// the doc hasn't moved past its base, 3-way merge when it has, conflict when the
+// edits overlap. A publish that lands between our read and our write loses the
+// expectedBase guard, so we re-merge against the new current rather than clobber it.
+async function commitWithMerge(
+  meta: MetaStore,
+  blobs: BlobStore,
+  input: MergeCommit,
+): Promise<VersionRecord> {
+  const MAX_ATTEMPTS = 3
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    const artifact = await meta.getArtifactById(input.artifactId)
+    if (!artifact) throw new PublishError(404, `no artifact ${input.artifactId}`)
+    const current = artifact.current_version
+
+    let blobKey: string
+    let sizeBytes: number
+    if (current === input.baseVersion) {
+      // No drift — fast-forward `theirs` verbatim.
+      blobKey = input.theirsBlobKey
+      sizeBytes = input.theirsBytes
+    } else {
+      // Drift — 3-way merge (throws MergeConflictError when the edits overlap).
+      const merged = await merge3IntoCurrent(meta, blobs, input, current)
+      blobKey = await blobs.put(merged)
+      sizeBytes = merged.length
+    }
+
+    try {
+      return await meta.addVersion(
+        input.artifactId,
+        {
+          id: newId("v"),
+          blob_key: blobKey,
+          content_type: input.contentType,
+          size_bytes: sizeBytes,
+          author: input.author,
+          author_login: input.authorLogin ?? null,
+          author_avatar: input.authorAvatar ?? null,
+          author_gh_id: input.authorGhId ?? null,
+          author_id: input.authorId ?? null,
+          message: input.message,
+          name: input.name ?? null,
+          base_version: current,
+        },
+        { expectedBase: current },
+      )
+    } catch (err) {
+      // A concurrent publish moved current between our read and our write — loop to
+      // re-merge against the new current. Any other error propagates.
+      if (err instanceof StaleBaseError && attempt < MAX_ATTEMPTS - 1) continue
+      throw err
+    }
+  }
+  throw new PublishError(409, "write kept losing a concurrent publish — retry")
+}
+
 /**
- * Approve a proposal: its change becomes the new current version and the proposal
- * is stamped decided. When the document hasn't moved since the proposal's base it
+ * Approve a proposal: its change becomes the new current version and the proposal is
+ * stamped decided. When the document hasn't moved since the proposal's base it
  * fast-forwards (the proposal's stored blob is reused verbatim). When the document
  * ADVANCED under it, the change is 3-way merged into the current version instead of
  * overwriting it — auto-merging disjoint edits, or throwing MergeConflictError when
- * they overlap. The optimistic-concurrency guard makes a publish that lands
- * mid-approval safe: we re-merge against the new current rather than clobber it.
- * History is never rewritten; the proposal row stays as the audit trail.
+ * they overlap. History is never rewritten; the proposal row stays as the audit trail.
  */
 export async function approveProposal(
   meta: MetaStore,
@@ -374,63 +472,25 @@ export async function approveProposal(
   if (proposal.state !== "open")
     throw new PublishError(409, `proposal is ${proposal.state}, not open`)
   const theirs = await blobs.get(proposal.blob_key)
-  const theirsText = theirs ? new TextDecoder().decode(theirs) : null
-
-  // Re-merge + re-commit a few times: a publish landing between our read of current
-  // and our write loses the optimistic guard, so we recompute against the newly
-  // current version rather than blindly re-applying stale bytes.
-  const MAX_ATTEMPTS = 3
-  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
-    const artifact = await meta.getArtifactById(proposal.artifact_id)
-    if (!artifact) throw new PublishError(404, `no artifact ${proposal.artifact_id}`)
-    const current = artifact.current_version
-
-    let blobKey: string
-    let sizeBytes: number
-    if (current === proposal.base_version) {
-      // No drift — fast-forward the proposal's stored blob verbatim.
-      blobKey = proposal.blob_key
-      sizeBytes = theirs?.length ?? 0
-    } else {
-      // Drift — 3-way merge (throws MergeConflictError when the edits overlap).
-      const merged = await mergeProposalOntoCurrent(meta, blobs, proposal, current, theirsText)
-      blobKey = await blobs.put(merged)
-      sizeBytes = merged.length
-    }
-
-    try {
-      const version = await meta.addVersion(
-        proposal.artifact_id,
-        {
-          id: newId("v"),
-          blob_key: blobKey,
-          content_type: proposal.content_type,
-          size_bytes: sizeBytes,
-          author: proposal.author,
-          // Attribute the live version to the proposer (who did the work), not the
-          // approver, so it shows on the proposer's profile. Null for legacy/anon.
-          author_id: proposal.author_id ?? null,
-          message: proposal.message ?? "Approved proposal",
-          name: null,
-          base_version: current,
-        },
-        { expectedBase: current },
-      )
-      await meta.decideProposal(proposal.id, {
-        state: "approved",
-        decided_by: approver,
-        decided_version: version.n,
-        decision_note: note ?? null,
-      })
-      return version
-    } catch (err) {
-      // A concurrent publish moved current between our read and our write — loop to
-      // re-merge against the new current. Any other error propagates.
-      if (err instanceof StaleBaseError && attempt < MAX_ATTEMPTS - 1) continue
-      throw err
-    }
-  }
-  throw new PublishError(409, "approval kept losing a concurrent publish — retry")
+  const version = await commitWithMerge(meta, blobs, {
+    artifactId: proposal.artifact_id,
+    baseVersion: proposal.base_version,
+    theirsBlobKey: proposal.blob_key,
+    theirsBytes: theirs?.length ?? 0,
+    theirsText: theirs ? new TextDecoder().decode(theirs) : null,
+    contentType: proposal.content_type,
+    author: proposal.author,
+    authorId: proposal.author_id ?? null,
+    message: proposal.message ?? "Approved proposal",
+    conflictId: proposal.id,
+  })
+  await meta.decideProposal(proposal.id, {
+    state: "approved",
+    decided_by: approver,
+    decided_version: version.n,
+    decision_note: note ?? null,
+  })
+  return version
 }
 
 // Name-first ref: the slug reads first, the short id is the final token. parseRef

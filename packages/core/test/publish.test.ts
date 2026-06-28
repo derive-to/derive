@@ -387,3 +387,65 @@ describe("approveProposal: 3-way merge on drift", () => {
     expect((await meta.getArtifactById(artifact.id))?.current_version).toBe(2) // nothing published
   })
 })
+
+describe("publish: optimistic concurrency + 3-way merge on republish", () => {
+  const md = (body: string): PublishInput => ({
+    bytes: new TextEncoder().encode(body),
+    filename: "doc.md",
+    isBundle: false,
+  })
+  const BASE = "# Title\n\nAlpha block.\n\nOmega block.\n"
+
+  it("auto-merges a republish whose base drifted when the edits are disjoint", async () => {
+    const meta = makeMeta()
+    const blobs = makeBlobs()
+    const { artifact } = await publish(meta, blobs, md(BASE)) // v1
+    // Another writer advances to v2 (edits the heading).
+    await publish(
+      meta,
+      blobs,
+      md("# Title OURS\n\nAlpha block.\n\nOmega block.\n"),
+      artifact.short_id,
+    )
+    // We republish FROM base v1 with a disjoint edit (the last block), guarded.
+    const { version } = await publish(
+      meta,
+      blobs,
+      { ...md("# Title\n\nAlpha block.\n\nOmega block THEIRS.\n"), baseVersion: 1 },
+      artifact.short_id,
+    )
+    expect(version.n).toBe(3)
+    const text = new TextDecoder().decode((await blobs.get(version.blob_key)) ?? undefined)
+    expect(text).toContain("Title OURS") // the concurrent edit survived
+    expect(text).toContain("Omega block THEIRS.") // our edit survived
+  })
+
+  it("throws MergeConflictError when a guarded republish overlaps the drift", async () => {
+    const meta = makeMeta()
+    const blobs = makeBlobs()
+    const { artifact } = await publish(meta, blobs, md(BASE))
+    await publish(
+      meta,
+      blobs,
+      md("# Title OURS\n\nAlpha block.\n\nOmega block.\n"),
+      artifact.short_id,
+    )
+    await expect(
+      publish(
+        meta,
+        blobs,
+        { ...md("# Title THEIRS\n\nAlpha block.\n\nOmega block.\n"), baseVersion: 1 },
+        artifact.short_id,
+      ),
+    ).rejects.toBeInstanceOf(MergeConflictError)
+  })
+
+  it("leaves an unguarded republish (no baseVersion) as last-write-wins", async () => {
+    const meta = makeMeta()
+    const blobs = makeBlobs()
+    const { artifact } = await publish(meta, blobs, md(BASE))
+    const { version } = await publish(meta, blobs, md("# Whatever\n\nx.\n"), artifact.short_id)
+    expect(version.n).toBe(2)
+    expect(version.base_version ?? null).toBeNull() // unguarded → no ancestor recorded
+  })
+})
