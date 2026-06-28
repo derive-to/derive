@@ -89,7 +89,7 @@ export function artifactActions(p: {
       const merged = p.editBase != null && a.current_version > p.editBase + 1
       toast.success(
         merged
-          ? `Merged your changes — published v${a.current_version}`
+          ? `Merged your changes, published v${a.current_version}`
           : `Published v${a.current_version}`,
       )
       p.setEditing(false)
@@ -115,7 +115,7 @@ export function artifactActions(p: {
         p.title,
         baseVersion,
       )
-      toast.success(`Merged your changes — published v${a.current_version}`)
+      toast.success(`Merged your changes, published v${a.current_version}`)
       p.setEditing(false)
       p.setConflict(null)
       load()
