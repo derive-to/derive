@@ -39,6 +39,7 @@ import type { Hono } from "hono"
 import { z } from "zod"
 import type { AppContext } from "./context"
 import { markAddressed } from "./lib/addressed"
+import { sweepAnchors } from "./lib/anchor-sweep"
 import {
   cleanPath,
   mergeBundleZip,
@@ -635,6 +636,15 @@ function buildServer(ctx: AppContext, agent: AgentRecord, ownerId: string | null
           },
           short_id,
         )
+        // Re-anchor existing threads: feedback whose quoted text changed flips to
+        // `outdated` (and back to `open` if the text reappears). Same sweep the
+        // HTTP route runs — MCP publish must call it too.
+        for (const t of await sweepAnchors(ctx.meta, ctx.blobs, artifact.id, version))
+          ctx.bus.publish(artifact.id, {
+            type: t.state === "outdated" ? "comment.outdated" : "comment.resolved",
+            thread_id: t.thread_id,
+            state: t.state,
+          })
         // A live publish that fixes feedback resolves those threads directly (no
         // approval step to wait on, unlike a proposal's `addressed`).
         const resolved: string[] = []
