@@ -201,7 +201,11 @@ const refineProse = (h: RawHunk): RawHunk[] => {
   if (!isParagraph(b) || !isParagraph(o) || !isParagraph(t)) return [h]
   const words = diff3(splitWords(b), splitWords(o), splitWords(t))
   if (words.some((w) => w.t === "conflict")) return [h] // overlapping words → keep the conflict
-  return [{ t: "clean", toks: [words.flatMap((w) => (w.t === "clean" ? w.toks : [])).join("")] }]
+  const merged = words.flatMap((w) => (w.t === "clean" ? w.toks : [])).join("")
+  // Safety net: a word merge that no longer lexes as a single paragraph (e.g. a merged
+  // word turned it into a heading/list, or it split in two) is rejected to a conflict.
+  if (!isParagraph(merged)) return [h]
+  return [{ t: "clean", toks: [merged] }]
 }
 
 /**

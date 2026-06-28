@@ -213,3 +213,13 @@ describe("merge3 markdown prose (word-level recursion within a paragraph)", () =
     expect(r.merged).toBe("alpha BETA GAMMA\n")
   })
 })
+
+describe("merge3 prose safety net", () => {
+  it("rejects a word merge that would change the block's structure (→ conflict)", () => {
+    // ours turns the first word into "#"; theirs edits the last word. A blind word
+    // merge would yield "# z\n" — a HEADING, not the original paragraph — so the
+    // safety net keeps it a conflict instead of silently restructuring.
+    const r = merge3("x y\n", "# y\n", "x z\n", "markdown")
+    expect(r.clean).toBe(false)
+  })
+})
