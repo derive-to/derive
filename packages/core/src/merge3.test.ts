@@ -177,3 +177,39 @@ describe("merge3 invariants (fuzz)", () => {
     }
   })
 })
+
+describe("merge3 markdown prose (word-level recursion within a paragraph)", () => {
+  it("auto-merges two disjoint edits inside the SAME paragraph", () => {
+    const base = "Intro.\n\nThe quick brown fox jumps over the lazy dog.\n\nOutro.\n"
+    const ours = "Intro.\n\nThe quick RED fox jumps over the lazy dog.\n\nOutro.\n"
+    const theirs = "Intro.\n\nThe quick brown fox jumps over the SLEEPY dog.\n\nOutro.\n"
+    const r = merge3(base, ours, theirs, "markdown")
+    expect(r.clean).toBe(true)
+    expect(r.merged).toContain("RED fox")
+    expect(r.merged).toContain("SLEEPY dog")
+  })
+
+  it("still conflicts when both edit the SAME word/run of a paragraph", () => {
+    const base = "The quick brown fox.\n"
+    const ours = "The quick RED fox.\n"
+    const theirs = "The quick GREEN fox.\n"
+    expect(merge3(base, ours, theirs, "markdown").clean).toBe(false)
+  })
+
+  it("does NOT word-merge inside a fenced code block (stays a conflict)", () => {
+    const base = "```js\nconst x = 1\nconst y = 2\n```\n"
+    const ours = "```js\nconst x = 11\nconst y = 2\n```\n"
+    const theirs = "```js\nconst x = 1\nconst y = 22\n```\n"
+    // One fenced block edited on both sides → a single block conflict, never a word splice.
+    expect(merge3(base, ours, theirs, "markdown").clean).toBe(false)
+  })
+
+  it("keeps a clean paragraph word-merge byte-exact on reassembly", () => {
+    const base = "alpha beta gamma\n"
+    const ours = "alpha BETA gamma\n"
+    const theirs = "alpha beta GAMMA\n"
+    const r = merge3(base, ours, theirs, "markdown")
+    expect(r.clean).toBe(true)
+    expect(r.merged).toBe("alpha BETA GAMMA\n")
+  })
+})

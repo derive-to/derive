@@ -176,6 +176,34 @@ const wholeConflict = (base: string, ours: string, theirs: string): MergeResult 
   conflicts: 1,
 })
 
+// Split prose into words AND the whitespace between them (kept as tokens), so a
+// word-level diff3 rejoins byte-for-byte with "".
+const splitWords = (text: string): string[] => text.split(/(\s+)/).filter((t) => t !== "")
+
+// A block is "prose" we can safely word-merge only if it lexes to exactly one
+// paragraph — never a heading, code fence, table, list item, or blockquote (whose
+// inner structure a blind word merge would corrupt).
+const isParagraph = (block: string): boolean => {
+  const real = marked.lexer(block).filter((t) => t.type !== "space")
+  return real.length === 1 && real[0]?.type === "paragraph"
+}
+
+// Refine a block-level markdown conflict: when it's a SINGLE paragraph edited
+// differently on each side, retry at word granularity so two disjoint edits inside
+// one paragraph still auto-merge. Anything coarser (multi-block, a delete, or a
+// non-paragraph block) stays a conflict.
+const refineProse = (h: RawHunk): RawHunk[] => {
+  if (h.t !== "conflict") return [h]
+  if (h.base.length !== 1 || h.ours.length !== 1 || h.theirs.length !== 1) return [h]
+  const b = h.base[0] as string
+  const o = h.ours[0] as string
+  const t = h.theirs[0] as string
+  if (!isParagraph(b) || !isParagraph(o) || !isParagraph(t)) return [h]
+  const words = diff3(splitWords(b), splitWords(o), splitWords(t))
+  if (words.some((w) => w.t === "conflict")) return [h] // overlapping words → keep the conflict
+  return [{ t: "clean", toks: [words.flatMap((w) => (w.t === "clean" ? w.toks : [])).join("")] }]
+}
+
 /**
  * Three-way merge `ours` and `theirs` over their common ancestor `base`. Returns
  * a clean merged document when the two sides' changes don't overlap, or the
@@ -207,7 +235,10 @@ export const merge3 = (
     return wholeConflict(base, ours, theirs)
 
   const sep = separator(kind)
-  const raw = diff3(bT, oT, tT)
+  // Markdown conflicts on a single paragraph both sides edited recurse to word level,
+  // so two disjoint edits within one paragraph still auto-merge (prose is the common case).
+  const blocks = diff3(bT, oT, tT)
+  const raw = kind === "markdown" ? blocks.flatMap(refineProse) : blocks
   const hunks: MergeHunk[] = raw.map((h) =>
     h.t === "clean"
       ? { t: "clean", text: h.toks.join(sep) }
