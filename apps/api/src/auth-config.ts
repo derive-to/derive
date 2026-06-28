@@ -179,6 +179,11 @@ export function makeAuth(db: AuthDb, baseUrl: string, secret: string, hooks: Aut
         // server-set via POST /v1/me/profile. Better Auth's migration adds the columns.
         profession: { type: "string", required: false, input: false },
         about: { type: "string", required: false, input: false },
+        // Your personal House Style: how YOU like artifacts built. Stored as a JSON
+        // string ({ collectionId?, theme? }); layered over the workspace's House Style
+        // (profile wins) when an agent acts as you. input:false, server-set via
+        // POST /v1/me/profile. Better Auth's migration adds the column.
+        houseStyle: { type: "string", required: false, input: false },
       },
     },
     socialProviders,

@@ -6,6 +6,7 @@ import { useAuth } from "@/ctx"
 import { AgentsSection } from "./agents-section"
 import { CustomDomainsSection } from "./custom-domains-section"
 import { GithubSection } from "./github-section"
+import { HouseStyleSection } from "./house-style-section"
 import { IntegrationsSection } from "./integrations-section"
 import { ProfileSection } from "./profile-section"
 import { ReportsSection } from "./reports-section"
@@ -91,10 +92,16 @@ export function Settings() {
           </TabsList>
 
           <TabsContent value="profile">
-            <ProfileSection />
+            <div className="flex flex-col gap-4">
+              <ProfileSection />
+              <HouseStyleSection scope="profile" />
+            </div>
           </TabsContent>
           <TabsContent value="workspace">
-            <WorkspaceSection meId={me.id} />
+            <div className="flex flex-col gap-4">
+              <WorkspaceSection meId={me.id} />
+              <HouseStyleSection scope="workspace" />
+            </div>
           </TabsContent>
           <TabsContent value="integrations">
             <IntegrationsSection />

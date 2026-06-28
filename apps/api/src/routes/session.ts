@@ -61,15 +61,37 @@ export const sessionRoutes = (ctx: AppContext) => {
       z.object({
         profession: z.string().trim().max(40).optional(),
         about: z.string().trim().max(280).optional(),
+        // Personal House Style: a conventions collection + visual theme. null clears it.
+        houseStyle: z
+          .object({
+            collectionId: z.string().trim().max(64).nullish(),
+            theme: z
+              .object({
+                palette: z.record(z.string(), z.string()).optional(),
+                fonts: z.record(z.string(), z.string()).optional(),
+                dark: z.object({ palette: z.record(z.string(), z.string()).optional() }).optional(),
+              })
+              .nullish(),
+          })
+          .nullable()
+          .optional(),
       }),
     )
     if (body instanceof Response) return body
     // Normalize "" → null (clear) so the column is never an empty string.
-    const patch: { profession?: string | null; about?: string | null } = {}
+    const patch: { profession?: string | null; about?: string | null; houseStyle?: string | null } =
+      {}
     if (body.profession !== undefined) patch.profession = body.profession || null
     if (body.about !== undefined) patch.about = body.about || null
+    // House Style is stored as a JSON string; null clears it.
+    if (body.houseStyle !== undefined)
+      patch.houseStyle = body.houseStyle ? JSON.stringify(body.houseStyle) : null
     await meta.setUserProfile(u.id, patch)
-    return c.json({ profession: patch.profession ?? null, about: patch.about ?? null })
+    return c.json({
+      profession: patch.profession ?? null,
+      about: patch.about ?? null,
+      houseStyle: body.houseStyle ?? null,
+    })
   })
 
   // Opt in/out of people search. Off by default, so you're only findable by

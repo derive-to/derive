@@ -37,7 +37,7 @@ describe("sqlite store: user directory (Better Auth `user` table)", () => {
     // No column default: an unset `discoverable` is NULL, which search treats as
     // discoverable (on by default), same as a pre-migration row.
     raw.exec(
-      `CREATE TABLE IF NOT EXISTS user (id TEXT PRIMARY KEY, email TEXT, name TEXT, image TEXT, username TEXT, discoverable INTEGER, profession TEXT, about TEXT)`,
+      `CREATE TABLE IF NOT EXISTS user (id TEXT PRIMARY KEY, email TEXT, name TEXT, image TEXT, username TEXT, discoverable INTEGER, profession TEXT, about TEXT, houseStyle TEXT)`,
     )
     raw.exec(`CREATE UNIQUE INDEX user_username ON user (username)`)
     const ins = raw.prepare(`INSERT INTO user (id, email, name) VALUES (?,?,?)`)
@@ -91,7 +91,7 @@ describe("sqlite store: user directory (Better Auth `user` table)", () => {
     const s = new SqliteMetaStore(path)
     const raw = new Database(path)
     raw.exec(
-      `CREATE TABLE user (id TEXT PRIMARY KEY, email TEXT, name TEXT, image TEXT, username TEXT, discoverable INTEGER, profession TEXT, about TEXT)`,
+      `CREATE TABLE user (id TEXT PRIMARY KEY, email TEXT, name TEXT, image TEXT, username TEXT, discoverable INTEGER, profession TEXT, about TEXT, houseStyle TEXT)`,
     )
     // Better Auth's account table: camelCase columns, one row per linked provider.
     raw.exec(
@@ -163,7 +163,7 @@ describe("sqlite store: people directory + follower lists + author backfill", ()
     const s = new SqliteMetaStore(path)
     const raw = new Database(path)
     raw.exec(
-      `CREATE TABLE user (id TEXT PRIMARY KEY, email TEXT, name TEXT, image TEXT, username TEXT, discoverable INTEGER, profession TEXT, about TEXT)`,
+      `CREATE TABLE user (id TEXT PRIMARY KEY, email TEXT, name TEXT, image TEXT, username TEXT, discoverable INTEGER, profession TEXT, about TEXT, houseStyle TEXT)`,
     )
     raw.exec(
       `CREATE TABLE account (id TEXT PRIMARY KEY, "accountId" TEXT, "providerId" TEXT, "userId" TEXT)`,

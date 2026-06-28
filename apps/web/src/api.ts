@@ -13,6 +13,17 @@ export interface Me {
   profession: string | null
   /** One-line "what you do" blurb; null if unset. */
   about: string | null
+  /** Personal House Style as a JSON string ({ collectionId?, theme? }); null if unset. */
+  houseStyle: string | null
+}
+/** A workspace/profile House Style: a conventions collection + a visual theme. */
+export interface HouseStyle {
+  collectionId?: string | null
+  theme?: {
+    palette?: Record<string, string>
+    fonts?: Record<string, string>
+    dark?: { palette?: Record<string, string> }
+  }
 }
 /** A public profile, by handle. Email is private and never returned here. */
 export interface PublicProfile {
@@ -243,6 +254,8 @@ export interface OrgSettings {
   githubMirrorComments: boolean
   githubPreviewLink: boolean
   slackPost: boolean
+  /** The workspace's House Style: conventions collection + visual theme. */
+  houseStyle?: HouseStyle
 }
 /** Slack connection status for the Settings UI. */
 export interface SlackStatus {
@@ -517,6 +530,7 @@ export const api = {
         role: "member",
         profession: s.user.profession ?? null,
         about: s.user.about ?? null,
+        houseStyle: s.user.houseStyle ?? null,
       },
     }
   },
@@ -553,7 +567,9 @@ export const api = {
   setProfile: (fields: {
     profession?: string
     about?: string
-  }): Promise<{ profession: string | null; about: string | null }> =>
+    /** Personal House Style; null clears it. */
+    houseStyle?: HouseStyle | null
+  }): Promise<{ profession: string | null; about: string | null; houseStyle: HouseStyle | null }> =>
     f("/v1/me/profile", opts(fields)).then(j),
   // Opt in/out of people search.
   setDiscoverable: (discoverable: boolean): Promise<{ discoverable: boolean }> =>

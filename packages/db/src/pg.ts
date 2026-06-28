@@ -1471,7 +1471,7 @@ export class PgMetaStore implements MetaStore {
   }
   async setUserProfile(
     userId: string,
-    fields: { profession?: string | null; about?: string | null },
+    fields: { profession?: string | null; about?: string | null; houseStyle?: string | null },
   ): Promise<void> {
     // Patch only the fields provided (undefined = leave as-is; null = clear).
     const sets: string[] = []
@@ -1484,9 +1484,21 @@ export class PgMetaStore implements MetaStore {
       args.push(fields.about)
       sets.push(`about = $${args.length}`)
     }
+    if (fields.houseStyle !== undefined) {
+      args.push(fields.houseStyle)
+      sets.push(`"houseStyle" = $${args.length}`)
+    }
     if (sets.length === 0) return
     args.push(userId)
     await this.pool.query(`UPDATE "user" SET ${sets.join(", ")} WHERE id = $${args.length}`, args)
+  }
+  async getUserHouseStyle(userId: string): Promise<string | null> {
+    try {
+      const r = await this.pool.query(`SELECT "houseStyle" FROM "user" WHERE id = $1`, [userId])
+      return (r.rows[0]?.houseStyle as string | null | undefined) ?? null
+    } catch {
+      return null // older/minimal user table without the column
+    }
   }
   async searchDiscoverableUsers(q: string, limit: number): Promise<UserProfile[]> {
     const s = q.trim()

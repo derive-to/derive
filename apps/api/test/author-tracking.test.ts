@@ -201,7 +201,7 @@ describe("GitHub author tracking — user mapping", () => {
     // Seed Better Auth's user + account tables directly via the raw sqlite handle.
     const raw = new Database(dbPath)
     raw.exec(
-      `CREATE TABLE IF NOT EXISTS user (id TEXT PRIMARY KEY, email TEXT, name TEXT, image TEXT, username TEXT, discoverable INTEGER, profession TEXT, about TEXT)`,
+      `CREATE TABLE IF NOT EXISTS user (id TEXT PRIMARY KEY, email TEXT, name TEXT, image TEXT, username TEXT, discoverable INTEGER, profession TEXT, about TEXT, houseStyle TEXT)`,
     )
     raw.exec(
       `CREATE TABLE IF NOT EXISTS account (id TEXT PRIMARY KEY, accountId TEXT, providerId TEXT, userId TEXT)`,

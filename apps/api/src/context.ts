@@ -40,6 +40,8 @@ export interface SessionUser {
   profession: string | null
   /** One-line "what you do" blurb shown on the profile + member directory. */
   about: string | null
+  /** Personal House Style as a JSON string ({ collectionId?, theme? }); null if unset. */
+  houseStyle: string | null
 }
 
 export interface AppDeps {
@@ -269,6 +271,7 @@ export function buildContext(deps: AppDeps) {
           discoverable?: boolean | number | null
           profession?: string | null
           about?: string | null
+          houseStyle?: string | null
         }
       | undefined
     const u: SessionUser | null = su
@@ -281,6 +284,7 @@ export function buildContext(deps: AppDeps) {
           discoverable: su.discoverable !== false,
           profession: su.profession ?? null,
           about: su.about ?? null,
+          houseStyle: su.houseStyle ?? null,
         }
       : null
     userCache.set(c, u)

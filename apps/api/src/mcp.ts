@@ -26,10 +26,13 @@ import {
   type BundleManifest,
   diffLines,
   formatDiff,
+  houseStyleInstructions,
   newId,
   PublishError,
+  parseHouseStyle,
   propose as proposeChange,
   publish as publishVersion,
+  resolveHouseStyle,
   roleAllows,
   type VersionRecord,
 } from "@dock/core"
@@ -134,7 +137,11 @@ const changeCount = (c: ReturnType<typeof bundleFileChanges>) =>
  * Identity rides in the server `instructions` (below), not a `whoami` tool — it's a
  * one-shot fact, not a per-call action.
  */
-function buildServer(ctx: AppContext, agent: AgentRecord, ownerId: string | null): McpServer {
+async function buildServer(
+  ctx: AppContext,
+  agent: AgentRecord,
+  ownerId: string | null,
+): Promise<McpServer> {
   // Steer the write guidance by what this grant can actually do: a publish-capable
   // grant gets the direct-publish path; a lower grant is told its writes go to review.
   const writeGuidance = roleAllows(agent.role, "publish")
@@ -142,6 +149,25 @@ function buildServer(ctx: AppContext, agent: AgentRecord, ownerId: string | null
       `it goes live immediately. Pass for_review:true to file it as a proposal a human approves instead. `
     : `Use publish to submit a revision — at your role it is filed as a proposal a human approves before it ` +
       `goes live; you cannot publish directly. `
+  // Resolve the House Style for this actor: the workspace's conventions ⊕ the owner's
+  // personal ones (profile wins). Each convention doc becomes a readable resource; a
+  // one-line pointer goes in the instructions (progressive disclosure — bodies load on read).
+  const wsHouseStyle = (await ctx.meta.getOrgSettings(agent.org_id)).houseStyle
+  const profileHouseStyle = parseHouseStyle(
+    ownerId ? await ctx.meta.getUserHouseStyle(ownerId) : null,
+  )
+  const resolved = resolveHouseStyle(wsHouseStyle, profileHouseStyle)
+  const conventionDocs: ArtifactRecord[] = []
+  const seen = new Set<string>()
+  for (const collectionId of resolved.collectionIds) {
+    const ids = await ctx.meta.collectionArtifactIds(collectionId)
+    for (const a of ids.length ? await ctx.meta.listArtifacts({ ids }) : []) {
+      if (!seen.has(a.short_id)) {
+        seen.add(a.short_id)
+        conventionDocs.push(a)
+      }
+    }
+  }
   const server = new McpServer(
     { name: "dock", version: "1.0.0" },
     {
@@ -152,10 +178,32 @@ function buildServer(ctx: AppContext, agent: AgentRecord, ownerId: string | null
         `Start a session with catch_up to re-sync on what changed and what feedback is open; use ` +
         `read to view content (outline first for multi-page bundles); use comment to leave or ` +
         `resolve feedback. ${writeGuidance}When a revision fixes specific feedback, pass those ` +
-        `thread ids as publish's "addresses" so the threads resolve (or show pending on a proposal).`,
+        `thread ids as publish's "addresses" so the threads resolve (or show pending on a proposal).` +
+        houseStyleInstructions(conventionDocs.length),
     },
   )
   const org = agent.org_id
+
+  // House Style conventions as resources: dock://house-style/<short_id>, bodies fetched
+  // lazily on read (the current version's text). audience:["assistant"] — context for the agent.
+  for (const doc of conventionDocs) {
+    server.registerResource(
+      `house-style:${doc.short_id}`,
+      `dock://house-style/${doc.short_id}`,
+      {
+        title: doc.title ?? doc.short_id,
+        description: "A House Style convention — how this workspace likes its stuff built.",
+        mimeType: "text/markdown",
+        annotations: { audience: ["assistant"], priority: 0.9 },
+      },
+      async (uri) => {
+        const art = await ctx.meta.getByShortId(doc.short_id)
+        const v = art ? await ctx.meta.getVersion(art.id, art.current_version) : null
+        const text = v ? await ctx.sourceText(v) : null
+        return { contents: [{ uri: uri.href, mimeType: "text/markdown", text: text ?? "" }] }
+      },
+    )
+  }
 
   // Resolve a short id within the caller's workspace (never another org's artifact).
   const own = async (shortId: string): Promise<ArtifactRecord | null> => {
@@ -699,7 +747,7 @@ export function mountMcp(app: Hono, ctx: AppContext): void {
         { "WWW-Authenticate": `Bearer resource_metadata="${meta}"` },
       )
     }
-    const server = buildServer(ctx, agent, await ctx.privateOwnerId(c))
+    const server = await buildServer(ctx, agent, await ctx.privateOwnerId(c))
     const transport = new StreamableHTTPTransport()
     await server.connect(transport)
     return transport.handleRequest(c)

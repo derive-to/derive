@@ -151,13 +151,36 @@ export const workspaceRoutes = (ctx: AppContext) => {
           githubMirrorComments: z.boolean(),
           githubPreviewLink: z.boolean(),
           slackPost: z.boolean(),
+          // House Style: conventions collection + visual theme. null clears it.
+          houseStyle: z
+            .object({
+              collectionId: z.string().trim().max(64).nullish(),
+              theme: z
+                .object({
+                  palette: z.record(z.string(), z.string()).optional(),
+                  fonts: z.record(z.string(), z.string()).optional(),
+                  dark: z
+                    .object({ palette: z.record(z.string(), z.string()).optional() })
+                    .optional(),
+                })
+                .nullish(),
+            })
+            .nullable(),
         })
         .partial(),
     )
     if (b instanceof Response) return b
     const org = await activeWorkspace(c)
     // Merge over current (so a partial PATCH only flips the keys it sends).
-    const next = { ...(await meta.getOrgSettings(org)), ...b }
+    const { houseStyle, ...flat } = b
+    const cur = await meta.getOrgSettings(org)
+    const next = { ...cur, ...flat }
+    // House Style merges one level deep (set collectionId without wiping theme); null clears.
+    if (houseStyle === null) next.houseStyle = undefined
+    else if (houseStyle) {
+      const m = { ...cur.houseStyle, ...houseStyle }
+      next.houseStyle = { collectionId: m.collectionId ?? undefined, theme: m.theme ?? undefined }
+    }
     await meta.setOrgSettings(org, next)
     return c.json(next)
   })
