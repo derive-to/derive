@@ -68,7 +68,7 @@
 
   --font-sans: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --font-mono: ui-monospace, Menlo, Consolas, monospace;
-  --font-display: "Space Grotesk", "Inter", sans-serif;
+  --font-display: "Inter", system-ui, sans-serif;
 
   --radius-sm: 6px;
   --radius: 8px;

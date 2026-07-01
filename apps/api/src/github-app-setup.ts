@@ -21,7 +21,7 @@ const STYLE = `<style>
     --paper:#f6f0e3;--panel:#fdf8ec;--panel-2:#f6efe0;--ink:#2a2540;--ink-soft:#46415c;
     --muted:#6b6680;--line:#e4dcc9;--accent:#655999;--accent-2:#8a7dc0;--good:#6f7a35;
     --good-soft:#ebedda;--bad:#a04425;
-    --display:"Space Grotesk",ui-sans-serif,system-ui,sans-serif;
+    --display:"Inter",ui-sans-serif,system-ui,sans-serif;
     --sans:"Inter",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
     --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
   }
@@ -51,7 +51,7 @@ const SHELL = (title: string, badge: string, body: string): string => `<!doctype
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
 <title>${title} · Derive</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 ${STYLE}</head>
 <body><main class="card"><div class="brand">${MARK}<span class="name">Derive</span>${badge}</div>
 ${body}</main></body></html>`

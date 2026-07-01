@@ -5,7 +5,7 @@
 // browser to the client's redirect_uri with the authorization code. This is the
 // human-in-the-loop grant: an agent can't self-authorize.
 //
-// On the Derive plan-site palette (Space Grotesk + Inter, the anchor mark) so the
+// On the Derive plan-site palette (Inter, the anchor mark) so the
 // grant moment feels like Derive.
 
 const SCOPE_LABELS: Record<string, string> = {
@@ -73,13 +73,13 @@ export function consentHTML(props: {
 <title>Authorize ${name} · Derive</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
   :root{
     --paper:#f6f0e3;--panel:#fdf8ec;--panel-2:#f6efe0;--ink:#2a2540;--ink-soft:#46415c;
     --muted:#6b6680;--line:#e4dcc9;--line-2:#eee7d6;--accent:#655999;--accent-ink:#4f447e;
     --accent-2:#8a7dc0;--accent-soft:#e8e4f1;--good:#6f7a35;--good-soft:#ebedda;--bad:#a04425;
-    --display:"Space Grotesk",ui-sans-serif,system-ui,sans-serif;
+    --display:"Inter",ui-sans-serif,system-ui,sans-serif;
     --sans:"Inter",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
     --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
   }
