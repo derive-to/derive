@@ -7,8 +7,8 @@ import type {
   RateLimit,
   ScheduledController,
 } from "@cloudflare/workers-types"
-import { createD1Store } from "@dock/db/d1"
-import { R2BlobStore } from "@dock/storage"
+import { createD1Store } from "@derive/db/d1"
+import { R2BlobStore } from "@derive/storage"
 import { drizzleAdapter } from "better-auth/adapters/drizzle"
 import { drizzle } from "drizzle-orm/d1"
 import { createApp } from "./app"
@@ -53,7 +53,7 @@ const OUTBOX_NAME = "outbox"
  * Edge/Node separation: this entry imports ONLY `webhook-do` (edge-safe). The Node
  * SSRF guard lives in `webhooks-node` (`node:dns`) and is imported solely by node.ts;
  * `webhooks.ts` itself is runtime-neutral. NEVER import node.ts / config.ts /
- * @dock/storage/fs / webhooks-node here — those pull Node built-ins.
+ * @derive/storage/fs / webhooks-node here — those pull Node built-ins.
  */
 export interface Env {
   DB: D1Database
@@ -78,10 +78,10 @@ export interface Env {
   // meta into /a/:ref (the share URL). Declared in wrangler.toml `[assets] binding`.
   ASSETS: Fetcher
   BASE_URL?: string
-  DOCK_AUTH_SECRET?: string
-  DOCK_SUPERADMIN_EMAILS?: string
+  DERIVE_AUTH_SECRET?: string
+  DERIVE_SUPERADMIN_EMAILS?: string
   // Base domain for vanity subdomains (domain mode); unset = off.
-  DOCK_SUBDOMAIN_BASE?: string
+  DERIVE_SUBDOMAIN_BASE?: string
   // Cloudflare for SaaS (BYO custom domains); all three unset = custom domains off.
   CF_API_TOKEN?: string
   CF_ZONE_ID?: string
@@ -126,9 +126,9 @@ export default {
         // would let anyone forge a valid session. The Node path generates+persists
         // one when unset, but a stateless Worker can't, so it must be bound. Fail
         // closed (a 500 on every request) rather than boot with a forgeable secret.
-        const secret = env.DOCK_AUTH_SECRET
+        const secret = env.DERIVE_AUTH_SECRET
         if (!secret || secret.length < 16)
-          throw new Error("DOCK_AUTH_SECRET (>= 16 chars) is required on the edge")
+          throw new Error("DERIVE_AUTH_SECRET (>= 16 chars) is required on the edge")
         const baseUrl = env.BASE_URL ?? new URL(req.url).origin
         // Both stores talk to D1 through `liveD1` (the requestD1 ALS proxy), never a
         // captured `env.DB` — a captured binding goes stale once its originating request
@@ -163,13 +163,13 @@ export default {
                   signingSecret: env.SLACK_SIGNING_SECRET,
                 }
               : undefined,
-          superAdmins: (env.DOCK_SUPERADMIN_EMAILS ?? "")
+          superAdmins: (env.DERIVE_SUPERADMIN_EMAILS ?? "")
             .split(",")
             .map((s) => s.trim().toLowerCase())
             .filter(Boolean),
           defaultOrgId: "default",
           subdomainBase:
-            env.DOCK_SUBDOMAIN_BASE?.toLowerCase().replace(/^\.+|\.+$/g, "") || undefined,
+            env.DERIVE_SUBDOMAIN_BASE?.toLowerCase().replace(/^\.+|\.+$/g, "") || undefined,
           customDomains: customDomainsFromEnv(env),
           // Enable rate limiting on the edge, counted by Cloudflare's native per-colo
           // limiter (a plain in-memory Map would cap per isolate only). The native binding's

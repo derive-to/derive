@@ -1,4 +1,4 @@
-/** HTTP client for a Dock server. Shared by the MCP server and any tooling. */
+/** HTTP client for a Derive server. Shared by the MCP server and any tooling. */
 
 export interface PublishArgs {
   content: string | Uint8Array
@@ -106,7 +106,7 @@ export interface ViewStatsJson {
   recent: { viewer: string; kind: "user" | "anon"; at: string }[]
 }
 
-export interface DockClient {
+export interface DeriveClient {
   /** List the workspace's artifacts (optionally filtered by a title query). */
   list(query?: string): Promise<ArtifactSummaryJson[]>
   publish(args: PublishArgs): Promise<ArtifactJson>
@@ -133,7 +133,7 @@ export interface ClientOptions {
   fetchImpl?: typeof fetch
 }
 
-export function createClient(opts: ClientOptions): DockClient {
+export function createClient(opts: ClientOptions): DeriveClient {
   const base = opts.baseUrl.replace(/\/$/, "")
   const f = opts.fetchImpl ?? fetch
   const authHeaders: Record<string, string> = opts.token
@@ -143,7 +143,7 @@ export function createClient(opts: ClientOptions): DockClient {
   async function ok(res: Response): Promise<unknown> {
     if (res.ok) return res.json()
     const body = (await res.json().catch(() => ({}))) as { error?: string }
-    throw new Error(`dock ${res.status}: ${body.error ?? res.statusText}`)
+    throw new Error(`derive ${res.status}: ${body.error ?? res.statusText}`)
   }
 
   return {
@@ -202,7 +202,7 @@ export function createClient(opts: ClientOptions): DockClient {
       const res = await f(`${base}/v1/artifacts/${shortId}/content${q}`, { headers: authHeaders })
       if (!res.ok) {
         const body = (await res.json().catch(() => ({}))) as { error?: string }
-        throw new Error(`dock ${res.status}: ${body.error ?? res.statusText}`)
+        throw new Error(`derive ${res.status}: ${body.error ?? res.statusText}`)
       }
       return res.text()
     },

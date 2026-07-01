@@ -1,9 +1,9 @@
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { newId, type RepoSourceRecord } from "@dock/core"
-import { SqliteMetaStore } from "@dock/db/sqlite"
-import { FsBlobStore } from "@dock/storage/fs"
+import { newId, type RepoSourceRecord } from "@derive/core"
+import { SqliteMetaStore } from "@derive/db/sqlite"
+import { FsBlobStore } from "@derive/storage/fs"
 import Database from "better-sqlite3"
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest"
 import { createApp } from "../src/app"
@@ -21,11 +21,11 @@ const commits: Record<
 > = {}
 const blobs: Record<string, string> = {}
 
-const dir = mkdtempSync(join(tmpdir(), "dock-author-test-"))
+const dir = mkdtempSync(join(tmpdir(), "derive-author-test-"))
 const dbPath = join(dir, "a.db")
 const meta = new SqliteMetaStore(dbPath)
 const blobStore = new FsBlobStore(join(dir, "blobs"))
-const app = createApp({ meta, blobs: blobStore, baseUrl: "http://dock.test", token: "tok" })
+const app = createApp({ meta, blobs: blobStore, baseUrl: "http://derive.test", token: "tok" })
 const NOW = "2026-06-17T00:00:00.000Z"
 const auth = { authorization: "Bearer tok" }
 
@@ -197,7 +197,7 @@ describe("GitHub author tracking — model + list filter", () => {
 })
 
 describe("GitHub author tracking — user mapping", () => {
-  it("usersByGithubIds maps an account row to its Dock user", async () => {
+  it("usersByGithubIds maps an account row to its Derive user", async () => {
     // Seed Better Auth's user + account tables directly via the raw sqlite handle.
     const raw = new Database(dbPath)
     raw.exec(

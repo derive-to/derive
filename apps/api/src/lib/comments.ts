@@ -1,11 +1,11 @@
-import type { ArtifactRecord, CommentRecord, MetaStore } from "@dock/core"
+import type { ArtifactRecord, CommentRecord, MetaStore } from "@derive/core"
 
 /** Is `actorId` a trusted author for OUTBOUND external posting (Slack / GitHub PR)?
- *  Those channels post as Dock's own bot/app into the customer's systems, so we only
+ *  Those channels post as Derive's own bot/app into the customer's systems, so we only
  *  mirror comments authored by a real collaborator — a workspace member, an explicit
  *  artifact-share recipient, or a registered agent. An anonymous commenter or a logged-in
  *  non-member on a public artifact is NOT trusted to write into the owner's GitHub/Slack.
- *  (In-app notifications + email to collaborators are gated separately and stay in-Dock.) */
+ *  (In-app notifications + email to collaborators are gated separately and stay in-Derive.) */
 export const isCollaboratorAuthor = async (
   meta: MetaStore,
   artifact: ArtifactRecord,
@@ -39,12 +39,12 @@ export type CommentMeta = {
   // approved (→ resolved) or withdrawn / sent back for changes (→ open).
   addressed_by?: string
   // Provenance for cross-channel sync. Set when a comment ORIGINATED in GitHub
-  // (mirrored in) or, once Dock has posted a comment OUT to GitHub, the id GitHub
+  // (mirrored in) or, once Derive has posted a comment OUT to GitHub, the id GitHub
   // assigned it. Either presence means "don't re-post this comment to GitHub" —
   // the loop-prevention marker for bidirectional PR comment sync.
   github?: { comment_id: number; kind: "issue" | "review" }
   // Likewise for the connected Slack App: a comment that came FROM a Slack thread
-  // reply (so it isn't echoed back), or the Slack message ts a Dock comment produced.
+  // reply (so it isn't echoed back), or the Slack message ts a Derive comment produced.
   slack?: { ts: string; channel: string }
 }
 

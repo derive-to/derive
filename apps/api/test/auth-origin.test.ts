@@ -1,8 +1,8 @@
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { SqliteMetaStore } from "@dock/db/sqlite"
-import { FsBlobStore } from "@dock/storage/fs"
+import { SqliteMetaStore } from "@derive/db/sqlite"
+import { FsBlobStore } from "@derive/storage/fs"
 import Database from "better-sqlite3"
 import { afterAll, describe, expect, it } from "vitest"
 import { createApp } from "../src/app"
@@ -19,7 +19,7 @@ import { makeAuth, migrateAuth } from "../src/auth-config"
 // The requests below carry the Fetch-Metadata headers a browser sends, so they hit
 // the real CSRF path (validateOrigin) rather than the no-cookie/no-metadata
 // short-circuit a bare programmatic POST would take.
-const dir = mkdtempSync(join(tmpdir(), "dock-auth-origin-"))
+const dir = mkdtempSync(join(tmpdir(), "derive-auth-origin-"))
 
 // baseUrl is :8080, but the same-origin/cross-site requests are served at :8081 (a
 // port-mapped host) — the exact mismatch that used to 403 on a real browser signup.
@@ -43,7 +43,7 @@ const signUp = (servedAt: string, origin: string, email: string) =>
     headers: {
       "content-type": "application/json",
       origin,
-      cookie: "dock_probe=1",
+      cookie: "derive_probe=1",
     },
     body: JSON.stringify({ email, password: "password12345", name: "Tester" }),
   })
@@ -61,18 +61,18 @@ describe("auth: same-origin trust (self-host port/proxy mismatch)", () => {
   it("accepts a same-origin sign-up whose Origin matches the served origin, not BASE_URL", async () => {
     // Served at :8081, Origin :8081 (same-origin) — != BASE_URL :8080. Without the
     // same-origin trust this 403s; with it, the request is trusted.
-    const res = await signUp("http://localhost:8081", "http://localhost:8081", "ok@dock.test")
+    const res = await signUp("http://localhost:8081", "http://localhost:8081", "ok@derive.test")
     expect(res.status).toBe(200)
   })
 
   it("still rejects a genuinely cross-site Origin (CSRF stays blocked)", async () => {
     // Served at :8081, Origin evil.example (cross-site) — must 403.
-    const res = await signUp("http://localhost:8081", "http://evil.example", "evil@dock.test")
+    const res = await signUp("http://localhost:8081", "http://evil.example", "evil@derive.test")
     expect(res.status).toBe(403)
   })
 
   it("accepts a sign-up whose Origin matches BASE_URL exactly", async () => {
-    const res = await signUp("http://localhost:8080", "http://localhost:8080", "base@dock.test")
+    const res = await signUp("http://localhost:8080", "http://localhost:8080", "base@derive.test")
     expect(res.status).toBe(200)
   })
 })

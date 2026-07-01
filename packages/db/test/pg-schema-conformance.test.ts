@@ -13,10 +13,10 @@ import { PG_SCHEMA_STATEMENTS } from "../src/pg-schema"
 // ship a broken Postgres schema undetected (the exact gap the review flagged).
 //
 // This runs PG_SCHEMA_STATEMENTS into a real Postgres (the `pg` lane:
-// DOCK_TEST_DB=pg + TEST_DATABASE_URL, set by scripts/test-pg.sh / the CI pg job)
+// DERIVE_TEST_DB=pg + TEST_DATABASE_URL, set by scripts/test-pg.sh / the CI pg job)
 // in an isolated schema, then asserts every drizzle pg table's columns match the
 // columns information_schema reports. Forget a column in the pg DDL and it goes red.
-const PG_URL = process.env.DOCK_TEST_DB === "pg" ? process.env.TEST_DATABASE_URL : undefined
+const PG_URL = process.env.DERIVE_TEST_DB === "pg" ? process.env.TEST_DATABASE_URL : undefined
 
 if (PG_URL) {
   describe("pg schema conformance: drizzle defs match PG_SCHEMA_STATEMENTS", () => {
@@ -66,6 +66,6 @@ if (PG_URL) {
 } else {
   // Keep the file non-empty for the default (no-Postgres) run.
   describe("pg schema conformance", () => {
-    it.skip("skipped — set DOCK_TEST_DB=pg + TEST_DATABASE_URL to run against Postgres", () => {})
+    it.skip("skipped — set DERIVE_TEST_DB=pg + TEST_DATABASE_URL to run against Postgres", () => {})
   })
 }

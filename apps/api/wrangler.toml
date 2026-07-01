@@ -1,21 +1,21 @@
-# Cloudflare Workers entry for Dock (experimental edge tier: Workers + D1 + R2).
-name = "dock"
+# Cloudflare Workers entry for Derive (experimental edge tier: Workers + D1 + R2).
+name = "derive"
 main = "src/worker.ts"
 compatibility_date = "2024-11-01"
 compatibility_flags = ["nodejs_compat"]
 
 [[d1_databases]]
 binding = "DB"
-database_name = "dock"
+database_name = "derive"
 # This is Sift's prod D1 id. A D1 id is not a secret (it's inert without a
 # Cloudflare API token scoped to the account), so it lives here so `pnpm run
-# deploy` is one step. Self-hosting Dock? Run `wrangler d1 create dock` and put
+# deploy` is one step. Self-hosting Derive? Run `wrangler d1 create derive` and put
 # your own id here. See DEPLOY.md.
 database_id = "63229e09-fdf4-4232-807d-1c60fabd9a39"
 
 [[r2_buckets]]
 binding = "BUCKET"
-bucket_name = "dock-blobs"
+bucket_name = "derive-blobs"
 
 [[durable_objects.bindings]]
 name = "ROOMS"
@@ -50,8 +50,8 @@ new_sqlite_classes = ["RepoSyncRunner"]
 # resolves once the account has Email Service enabled and a sending domain verified — an
 # unprovisioned binding fails `wrangler deploy`. The code no-ops email when SEND_EMAIL is
 # unbound, so leaving this off is safe. To turn email on: enable Email Service, verify the
-# dock.build sending domain, uncomment this block, and set EMAIL_FROM under [vars] (e.g.
-# "Dock <notifications@dock.build>").
+# derive.to sending domain, uncomment this block, and set EMAIL_FROM under [vars] (e.g.
+# "Derive <notifications@derive.to>").
 # [[send_email]]
 # name = "SEND_EMAIL"
 
@@ -107,7 +107,7 @@ crons = ["* * * * *"]
 # The web SPA (apps/web) ships from this same Worker via Static Assets, so the whole
 # app — login, library, settings, the /a/:ref artifact viewer — lives same-origin with
 # the API (no CORS, first-party cookies). Prepare the build first:
-# `pnpm --filter @dock/api build:web` (builds apps/web and preps dist/client for Workers:
+# `pnpm --filter @derive/api build:web` (builds apps/web and preps dist/client for Workers:
 # _shell.html -> index.html, drops the Pages _redirects).
 # The API/data paths run the Worker first; so do /a/* and /u/* — the share + profile
 # URLs, where the Worker serves the SPA shell with per-artifact / per-profile OG/unfurl
@@ -122,8 +122,8 @@ run_worker_first = ["/v1/*", "/api/*", "/raw/*", "/oauth/*", "/settings/github/*
 not_found_handling = "single-page-application"
 
 # baseUrl falls back to the request origin when unset. Secured by Better Auth; set
-# DOCK_AUTH_SECRET via `wrangler secret put`. Cross-instance realtime fan-out uses
+# DERIVE_AUTH_SECRET via `wrangler secret put`. Cross-instance realtime fan-out uses
 # the ArtifactRoom Durable Object (one room per channel).
 [vars]
-# DOCK_SUPERADMIN_EMAILS (operator allow-list) is optional; BASE_URL optional;
-# DOCK_AUTH_SECRET is a secret (`wrangler secret put`). Workspaces are always multi.
+# DERIVE_SUPERADMIN_EMAILS (operator allow-list) is optional; BASE_URL optional;
+# DERIVE_AUTH_SECRET is a secret (`wrangler secret put`). Workspaces are always multi.

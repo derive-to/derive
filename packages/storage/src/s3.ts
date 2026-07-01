@@ -1,5 +1,5 @@
 import { createHash, createHmac } from "node:crypto"
-import { type BlobStore, sha256Hex } from "@dock/core"
+import { type BlobStore, sha256Hex } from "@derive/core"
 
 /**
  * S3-compatible blob store for the Node container — covers AWS S3, Cloudflare

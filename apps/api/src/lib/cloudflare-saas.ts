@@ -1,4 +1,4 @@
-import type { DomainStatus } from "@dock/core"
+import type { DomainStatus } from "@derive/core"
 
 /**
  * Cloudflare for SaaS (Custom Hostnames) — the BYO-custom-domain provider. Cloudflare

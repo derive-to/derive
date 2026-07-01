@@ -187,7 +187,7 @@ export function NavRail() {
           <Link
             to="/login"
             search={{ signup: true }}
-            title="Sign up for Dock"
+            title="Sign up for Derive"
             data-testid="anon-signup"
             className={cn(ROW_BASE, ROW_RAIL, "text-primary")}
           >

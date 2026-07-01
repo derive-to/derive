@@ -1,15 +1,15 @@
 import { join } from "node:path"
-import { FsBlobStore } from "@dock/storage/fs"
+import { FsBlobStore } from "@derive/storage/fs"
 import { describe, expect, it } from "vitest"
 import { createApp } from "../src/app"
 import { dir, meta } from "./helpers"
 
-// The hosted landing page for `dock login` (the native/CLI OAuth flow). It must
+// The hosted landing page for `derive login` (the native/CLI OAuth flow). It must
 // answer from the Worker with the one-time code on success and a readable failure
 // otherwise — never a blank page or a localhost bounce.
 describe("GET /oauth/cli-callback", () => {
   const blobs = new FsBlobStore(join(dir, "blobs"))
-  const app = createApp({ meta, blobs, baseUrl: "http://dock.test" })
+  const app = createApp({ meta, blobs, baseUrl: "http://derive.test" })
 
   it("shows the authorization code for copy-paste back to the terminal", async () => {
     const r = await app.request("/oauth/cli-callback?code=ABC123XYZ&state=s")

@@ -85,8 +85,8 @@ describe("rate limits: per-actor write throttles (C4b)", () => {
   })
 
   it("keys the limit by identity — one user hitting the cap doesn't block another", async () => {
-    const amy: TestUser = { id: "u_amy", email: "amy@dock.test", name: "Amy" }
-    const ben: TestUser = { id: "u_ben", email: "ben@dock.test", name: "Ben" }
+    const amy: TestUser = { id: "u_amy", email: "amy@derive.test", name: "Amy" }
+    const ben: TestUser = { id: "u_ben", email: "ben@derive.test", name: "Ben" }
     const { app } = quotaApp("rl-actor", { rateLimit: true, publishRate: 1 }, [amy, ben])
     // Amy provisions as owner (first member); Ben joins as the default editor.
     await app.request("/v1/me", { headers: as(amy.email) })
@@ -98,8 +98,8 @@ describe("rate limits: per-actor write throttles (C4b)", () => {
 })
 
 describe("multi-tenant hardening: per-org quotas + cross-org isolation", () => {
-  const amy: TestUser = { id: "u_mt_amy", email: "mtamy@dock.test", name: "Amy" }
-  const ben: TestUser = { id: "u_mt_ben", email: "mtben@dock.test", name: "Ben" }
+  const amy: TestUser = { id: "u_mt_amy", email: "mtamy@derive.test", name: "Amy" }
+  const ben: TestUser = { id: "u_mt_ben", email: "mtben@derive.test", name: "Ben" }
 
   it("storage quota is per-workspace — one org filling up does NOT block another", async () => {
     const { app } = quotaApp("mt-quota", { maxBytes: 12 }, [amy, ben])

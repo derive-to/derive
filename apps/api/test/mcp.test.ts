@@ -1,8 +1,8 @@
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { SqliteMetaStore } from "@dock/db/sqlite"
-import { FsBlobStore } from "@dock/storage/fs"
+import { SqliteMetaStore } from "@derive/db/sqlite"
+import { FsBlobStore } from "@derive/storage/fs"
 import Database from "better-sqlite3"
 import { zipSync } from "fflate"
 import { exportJWK, generateKeyPair, SignJWT } from "jose"
@@ -16,7 +16,7 @@ import { sha256 } from "../src/lib/crypto"
 // over Streamable HTTP and assert the agent sees its own workspace. The tool surface
 // is the consolidated five: list_artifacts, read, catch_up, comment, publish.
 
-const dir = mkdtempSync(join(tmpdir(), "dock-mcp-"))
+const dir = mkdtempSync(join(tmpdir(), "derive-mcp-"))
 afterAll(() => rmSync(dir, { recursive: true, force: true }))
 
 function appWithGrant(name: string, scopes: string) {
@@ -45,7 +45,7 @@ function appWithGrant(name: string, scopes: string) {
   const app = createApp({
     meta,
     blobs: new FsBlobStore(join(dir, `${name}-blobs`)),
-    baseUrl: "http://dock.test",
+    baseUrl: "http://derive.test",
     token: "tok",
   })
   return { app, token: `tok_${name}` }
@@ -117,17 +117,17 @@ const call = (app: App, token: string, name: string, args: Record<string, unknow
 
 describe("remote MCP endpoint (/mcp)", () => {
   it("rejects an unauthenticated connect with 401 + WWW-Authenticate", async () => {
-    const { app } = appWithGrant("noauth", "openid dock:read")
+    const { app } = appWithGrant("noauth", "openid derive:read")
     const r = await rpc(app, null, initBody)
     expect(r.status).toBe(401)
     expect(r.wwwAuth).toContain("oauth-protected-resource")
   })
 
   it("initializes (identity in instructions) and lists the five consolidated tools", async () => {
-    const { app, token } = appWithGrant("init", "openid dock:read dock:publish")
+    const { app, token } = appWithGrant("init", "openid derive:read derive:publish")
     const init = await rpc(app, token, initBody)
     const result = init.parsed?.result as { serverInfo?: { name: string }; instructions?: string }
-    expect(result.serverInfo).toMatchObject({ name: "dock" })
+    expect(result.serverInfo).toMatchObject({ name: "derive" })
     // Identity rides in the server instructions, not a whoami tool.
     expect(result.instructions).toContain("Claude")
     expect(result.instructions).toContain("editor")
@@ -150,7 +150,7 @@ describe("remote MCP endpoint (/mcp)", () => {
   })
 
   it("list_artifacts + read see the agent's own published artifact", async () => {
-    const { app, token } = appWithGrant("read", "openid dock:read dock:publish")
+    const { app, token } = appWithGrant("read", "openid derive:read derive:publish")
     const pub = await publish(app, token, "My Plan")
     expect(pub.status).toBe(201)
     const shortId = (await pub.json()).short_id
@@ -166,7 +166,7 @@ describe("remote MCP endpoint (/mcp)", () => {
   })
 
   it("catch_up reports what changed, with the line diff folded in", async () => {
-    const { app, token } = appWithGrant("catchup", "openid dock:read dock:publish")
+    const { app, token } = appWithGrant("catchup", "openid derive:read derive:publish")
     const shortId = (await (await publish(app, token, "V1 Title")).json()).short_id
 
     // Republish a second version with different content.
@@ -207,7 +207,7 @@ describe("remote MCP endpoint (/mcp)", () => {
   })
 
   it("read + catch_up handle multi-page bundles", async () => {
-    const { app, token } = appWithGrant("bundle", "openid dock:read dock:publish")
+    const { app, token } = appWithGrant("bundle", "openid derive:read derive:publish")
     const enc = (s: string) => new TextEncoder().encode(s)
     const postZip = (
       files: Record<string, Uint8Array>,
@@ -258,7 +258,10 @@ describe("remote MCP endpoint (/mcp)", () => {
   })
 
   it("comment leaves anchored feedback, replies, and resolves — all via one tool", async () => {
-    const { app, token } = appWithGrant("comment", "openid dock:read dock:comment dock:publish")
+    const { app, token } = appWithGrant(
+      "comment",
+      "openid derive:read derive:comment derive:publish",
+    )
     const shortId = (await (await publish(app, token, "Tighten Me")).json()).short_id
 
     // Leave a new anchored comment.
@@ -317,7 +320,7 @@ describe("remote MCP endpoint (/mcp)", () => {
 
   it("publish with for_review stages a proposal instead of going live", async () => {
     // Even with an editor grant, for_review:true files a proposal that never auto-goes-live.
-    const { app, token } = appWithGrant("review", "openid dock:read dock:publish")
+    const { app, token } = appWithGrant("review", "openid derive:read derive:publish")
     const shortId = (await (await publish(app, token, "Draft")).json()).short_id
 
     const p = JSON.parse(
@@ -343,7 +346,7 @@ describe("remote MCP endpoint (/mcp)", () => {
   })
 
   it("surfaces outdated feedback after a republish drops the quoted text", async () => {
-    const { app, token } = appWithGrant("stale", "openid dock:read dock:comment dock:publish")
+    const { app, token } = appWithGrant("stale", "openid derive:read derive:comment derive:publish")
     const shortId = (await (await publish(app, token, "alpha beta gamma")).json()).short_id
 
     // A comment anchored to "beta".
@@ -388,7 +391,7 @@ describe("remote MCP endpoint (/mcp)", () => {
   })
 
   it("publish for_review with `addresses` marks the cited threads addressed (pending review)", async () => {
-    const { app, token } = appWithGrant("addr", "openid dock:read dock:comment dock:publish")
+    const { app, token } = appWithGrant("addr", "openid derive:read derive:comment derive:publish")
     const shortId = (await (await publish(app, token, "headline to fix")).json()).short_id
     const cm = await (
       await app.request(`/v1/artifacts/${shortId}/comments`, {
@@ -429,7 +432,10 @@ describe("remote MCP endpoint (/mcp)", () => {
   })
 
   it("a live publish with `addresses` resolves those threads directly", async () => {
-    const { app, token } = appWithGrant("liveaddr", "openid dock:read dock:comment dock:publish")
+    const { app, token } = appWithGrant(
+      "liveaddr",
+      "openid derive:read derive:comment derive:publish",
+    )
     const shortId = (await (await publish(app, token, "fix the headline here")).json()).short_id
     const cm = await (
       await app.request(`/v1/artifacts/${shortId}/comments`, {
@@ -483,7 +489,7 @@ describe("remote MCP endpoint (/mcp)", () => {
     const app = createApp({
       meta,
       blobs: new FsBlobStore(join(dir, "jwtauth-blobs")),
-      baseUrl: "http://dock.test",
+      baseUrl: "http://derive.test",
       token: "tok",
       auth: {
         handler: async () => new Response(null, { status: 404 }),
@@ -492,10 +498,10 @@ describe("remote MCP endpoint (/mcp)", () => {
     })
 
     const mint = (over: Record<string, unknown> = {}) =>
-      new SignJWT({ scope: "openid dock:read dock:publish", azp: "cli", ...over })
+      new SignJWT({ scope: "openid derive:read derive:publish", azp: "cli", ...over })
         .setProtectedHeader({ alg: "EdDSA", kid })
         .setSubject("u_jwt")
-        .setIssuer("http://dock.test/api/auth")
+        .setIssuer("http://derive.test/api/auth")
         .setExpirationTime("1h")
         .sign(privateKey)
 
@@ -508,7 +514,7 @@ describe("remote MCP endpoint (/mcp)", () => {
     const bad = await rpc(app, tampered, initBody)
     expect(bad.status).toBe(401)
 
-    const wrongIss = await new SignJWT({ scope: "openid dock:read", azp: "cli" })
+    const wrongIss = await new SignJWT({ scope: "openid derive:read", azp: "cli" })
       .setProtectedHeader({ alg: "EdDSA", kid })
       .setSubject("u_jwt")
       .setIssuer("http://evil.test/api/auth")
@@ -518,7 +524,7 @@ describe("remote MCP endpoint (/mcp)", () => {
   })
 
   it("publish creates a NEW artifact (first publish) and then a new version of it", async () => {
-    const { app, token } = appWithGrant("pub", "openid dock:read dock:publish")
+    const { app, token } = appWithGrant("pub", "openid derive:read derive:publish")
 
     // First publish — no short_id, so it creates a brand-new artifact.
     const created = JSON.parse(
@@ -562,13 +568,13 @@ describe("remote MCP endpoint (/mcp)", () => {
 
   it("publish needs a title to create, and routes a non-publisher to review", async () => {
     // A new-artifact publish with no title is refused.
-    const { app, token } = appWithGrant("pub2", "openid dock:read dock:publish")
+    const { app, token } = appWithGrant("pub2", "openid derive:read derive:publish")
     const noTitle = await call(app, token, "publish", { content: "<h1>x</h1>" })
     expect(toolText(noTitle)).toContain("title")
 
     // A comment-only grant can't publish live — and can't create a NEW artifact even
     // via review (a proposal revises an existing one). Steered to publish rights.
-    const weak = appWithGrant("pub3", "openid dock:read dock:comment")
+    const weak = appWithGrant("pub3", "openid derive:read derive:comment")
     const denied = await call(weak.app, weak.token, "publish", {
       title: "Nope",
       content: "<h1>x</h1>",
@@ -577,7 +583,7 @@ describe("remote MCP endpoint (/mcp)", () => {
   })
 
   it("publish creates and republishes a multi-page bundle via the files map", async () => {
-    const { app, token } = appWithGrant("pubbundle", "openid dock:read dock:publish")
+    const { app, token } = appWithGrant("pubbundle", "openid derive:read derive:publish")
 
     const created = JSON.parse(
       toolText(
@@ -624,7 +630,7 @@ describe("remote MCP endpoint (/mcp)", () => {
   })
 
   it("a bundle can't be filed for review (single-file proposals only)", async () => {
-    const { app, token } = appWithGrant("bundlereview", "openid dock:read dock:publish")
+    const { app, token } = appWithGrant("bundlereview", "openid derive:read derive:publish")
     const created = JSON.parse(
       toolText(
         await call(app, token, "publish", {
@@ -642,7 +648,7 @@ describe("remote MCP endpoint (/mcp)", () => {
   })
 
   it("publish steers between content and files by kind", async () => {
-    const { app, token } = appWithGrant("pubkind", "openid dock:read dock:publish")
+    const { app, token } = appWithGrant("pubkind", "openid derive:read derive:publish")
 
     const both = await call(app, token, "publish", {
       title: "x",
@@ -698,14 +704,14 @@ describe("remote MCP — catch_up scopes personal comments to the granting user"
       sha256("tok_owner"),
       "cli",
       "u_owner",
-      JSON.stringify(["openid", "dock:read", "dock:publish", "dock:comment"]),
+      JSON.stringify(["openid", "derive:read", "derive:publish", "derive:comment"]),
       new Date(Date.now() + 3_600_000).toISOString(),
     )
     db.close()
     const app = createApp({
       meta,
       blobs: new FsBlobStore(join(dir, `${name}-blobs`)),
-      baseUrl: "http://dock.test",
+      baseUrl: "http://derive.test",
       token: "tok",
     })
     return { app, meta }

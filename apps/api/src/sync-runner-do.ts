@@ -1,7 +1,7 @@
 import type { D1Database, DurableObjectState, R2Bucket } from "@cloudflare/workers-types"
-import type { BlobStore, MetaStore } from "@dock/core"
-import { createD1Store } from "@dock/db/d1"
-import { R2BlobStore } from "@dock/storage"
+import type { BlobStore, MetaStore } from "@derive/core"
+import { createD1Store } from "@derive/db/d1"
+import { R2BlobStore } from "@derive/storage"
 import { runSourceBatch } from "./lib/sync-runner"
 import { log } from "./log"
 
@@ -27,7 +27,7 @@ export interface RepoSyncRunnerEnv {
   DB: D1Database
   BUCKET: R2Bucket
   /** At-rest key for decrypting stored PATs / minting installation tokens. */
-  DOCK_AUTH_SECRET?: string
+  DERIVE_AUTH_SECRET?: string
 }
 
 /**
@@ -57,7 +57,7 @@ export class RepoSyncRunner {
   ) {
     this.meta = createD1Store(env.DB)
     this.blobs = new R2BlobStore(env.BUCKET)
-    this.key = env.DOCK_AUTH_SECRET
+    this.key = env.DERIVE_AUTH_SECRET
   }
 
   // The Worker pokes this with the source to sync. Persist the id (the alarm has no

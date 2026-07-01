@@ -89,7 +89,7 @@ const token: Actor = { kind: "token" }
 const user = (over: Partial<Actor> = {}): Actor => ({ kind: "user", userId: "u1", ...over })
 
 describe("effectiveRole — the documented access table", () => {
-  it("a DOCK_TOKEN actor is always owner, on every visibility", () => {
+  it("a DERIVE_TOKEN actor is always owner, on every visibility", () => {
     for (const v of VISIBILITIES) expect(effectiveRole(token, v)).toBe("owner")
   })
 

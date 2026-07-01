@@ -1,4 +1,10 @@
-import { type ElementSelector, elementLabel, fingerprintOf, roleOf, scanElements } from "@dock/core"
+import {
+  type ElementSelector,
+  elementLabel,
+  fingerprintOf,
+  roleOf,
+  scanElements,
+} from "@derive/core"
 import { describe, expect, it } from "vitest"
 import { app, as, json, jsonAs, makeAuthedApp, publishAs, type TestUser, upload } from "./helpers"
 
@@ -167,8 +173,8 @@ describe("the outdated state machine (re-anchor sweep on republish)", () => {
 })
 
 describe("@mentions + in-app notifications", () => {
-  const alice: TestUser = { id: "u_m_alice", email: "ma@dock.test", name: "Alice" }
-  const bob: TestUser = { id: "u_m_bob", email: "mb@dock.test", name: "Bob" }
+  const alice: TestUser = { id: "u_m_alice", email: "ma@derive.test", name: "Alice" }
+  const bob: TestUser = { id: "u_m_bob", email: "mb@derive.test", name: "Bob" }
   const { app, meta: m } = makeAuthedApp("mentions", [alice, bob], "editor")
   let shortId: string
 

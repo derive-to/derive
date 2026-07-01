@@ -17,7 +17,7 @@ export default defineConfig({
       miniflare: {
         compatibilityDate: "2025-05-01",
         compatibilityFlags: ["nodejs_compat"],
-        d1Databases: { DB: "dock-test" },
+        d1Databases: { DB: "derive-test" },
       },
     }),
   ],

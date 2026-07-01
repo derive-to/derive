@@ -1,10 +1,10 @@
 import { mkdirSync, readFileSync } from "node:fs"
 import { join, relative } from "node:path"
-import type { BlobStore, MetaStore } from "@dock/core"
-import { PgMetaStore } from "@dock/db/pg"
-import { SqliteMetaStore } from "@dock/db/sqlite"
-import { FsBlobStore } from "@dock/storage/fs"
-import { s3FromUrl } from "@dock/storage/s3"
+import type { BlobStore, MetaStore } from "@derive/core"
+import { PgMetaStore } from "@derive/db/pg"
+import { SqliteMetaStore } from "@derive/db/sqlite"
+import { FsBlobStore } from "@derive/storage/fs"
+import { s3FromUrl } from "@derive/storage/s3"
 import { serve } from "@hono/node-server"
 import Database from "better-sqlite3"
 import { Pool } from "pg"
@@ -47,13 +47,13 @@ if (cfg.databaseUrl) {
     await pool.end()
   }
 } else {
-  const db = new Database(join(cfg.dataDir, "dock.db"))
-  // Better Auth opens its own connection to the same dock.db. Match the store's
+  const db = new Database(join(cfg.dataDir, "derive.db"))
+  // Better Auth opens its own connection to the same derive.db. Match the store's
   // WAL + busy_timeout so concurrent auth writes (e.g. bursts of signups) wait
   // for the lock instead of failing with SQLITE_BUSY.
   db.pragma("journal_mode = WAL")
   db.pragma("busy_timeout = 5000")
-  const sqliteMeta = new SqliteMetaStore(join(cfg.dataDir, "dock.db"))
+  const sqliteMeta = new SqliteMetaStore(join(cfg.dataDir, "derive.db"))
   meta = sqliteMeta
   authDb = db
   closeStores = async () => {
@@ -84,7 +84,7 @@ if (cfg.databaseUrl) {
 }
 
 // Backfill author_id on artifacts that predate the column: where a GitHub-synced
-// artifact's commit author (author_gh_id) maps to a Dock account, attribute it to that
+// artifact's commit author (author_gh_id) maps to a Derive account, attribute it to that
 // user so their synced work surfaces on their profile + feed by author_id directly.
 // Idempotent — only fills nulls that have a known GitHub→user mapping; a no-op once done.
 // Runs after the auth tables exist. Hand-published pre-feature work without a GitHub
@@ -253,12 +253,12 @@ void (async () => {
 // a cross-site setup without isolation is not.
 if (!cfg.sandboxOrigin && (cfg.crossSite || cfg.webOrigins.length)) {
   log.warn(
-    "DOCK_SANDBOX_URL is unset on a cross-site deployment. Artifact HTML will be served from the app origin; set DOCK_SANDBOX_URL to a separate domain to isolate untrusted content from session cookies.",
+    "DERIVE_SANDBOX_URL is unset on a cross-site deployment. Artifact HTML will be served from the app origin; set DERIVE_SANDBOX_URL to a separate domain to isolate untrusted content from session cookies.",
   )
 }
 
 const server = serve({ fetch: app.fetch, port: cfg.port }, () => {
-  log.info("dock api listening", {
+  log.info("derive api listening", {
     port: cfg.port,
     base_url: cfg.baseUrl,
     meta: cfg.databaseUrl ? "postgres" : `sqlite (${cfg.dataDir})`,

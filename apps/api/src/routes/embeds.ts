@@ -17,14 +17,14 @@ import {
   type UnfurlInfo,
   unfurlDescription,
   unfurlMetaTags,
-} from "@dock/core"
+} from "@derive/core"
 import { type Context, Hono } from "hono"
 import type { AppContext } from "../context"
 import { fail } from "../lib/http"
 
 /**
  * Unfurl + embed surface. Turns a `/a/:ref` share link into a rich card and an
- * embeddable iframe, so a Dock link looks good in Slack / Discord / X / Notion and
+ * embeddable iframe, so a Derive link looks good in Slack / Discord / X / Notion and
  * can be dropped into any page. Three public, anonymous-readable endpoints under
  * `/v1` (worker-first in both runtimes) plus a server-rendered `/a/:ref` that
  * injects OG/Twitter meta into the SPA shell for crawlers (which don't run JS):
@@ -124,7 +124,7 @@ export const embedRoutes = (ctx: AppContext) => {
   }
 
   // The profile OG card image (SVG, 1200x630). Anonymous-readable; a missing handle gets
-  // a generic Dock card (still 200 so the unfurl shows something). Cached hard.
+  // a generic Derive card (still 200 so the unfurl shows something). Cached hard.
   app.get("/v1/og/u/:handle", async (c) => {
     const card = await profileCardFor(c.req.param("handle"))
     const svg = ogProfileCardSvg(
@@ -166,7 +166,7 @@ export const embedRoutes = (ctx: AppContext) => {
     })
   })
 
-  // The embeddable view: a small framed card (title + "View on Dock" + the live
+  // The embeddable view: a small framed card (title + "View on Derive" + the live
   // artifact in a sandboxed iframe + counts). Frameable by design — no
   // X-Frame-Options — so external sites can drop it in.
   app.get("/v1/embed/:ref", async (c) => {
@@ -255,7 +255,7 @@ const embedShell = (data: { info: UnfurlInfo; src: string } | null): string => {
   const mark =
     '<svg class="m" viewBox="0 0 32 32" fill="none"><rect x="1" y="1" width="30" height="30" rx="8" fill="#2a2540"/><path d="M16 7l7 7v11h-4.6v-6.2h-4.8V25H9V14l7-7z" fill="none" stroke="#8a7dc0" stroke-width="1.7" stroke-linejoin="round"/></svg>'
   const body = data
-    ? `<div class="c"><div class="h">${mark}<span class="t">${escapeHtml(data.info.title)}</span><a href="${escapeHtml(data.info.pageUrl)}" target="_blank" rel="noopener">View on Dock ↗</a></div><iframe src="${escapeHtml(data.src)}" sandbox="allow-scripts allow-forms allow-popups allow-modals" title="${escapeHtml(data.info.title)}"></iframe><div class="f">${escapeHtml(unfurlDescription(data.info))}</div></div>`
-    : `<div class="empty">This artifact is private or no longer available.<br>Open it on Dock to request access.</div>`
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex"><title>${data ? escapeHtml(data.info.title) : "Dock"}</title><style>${css}</style></head><body>${body}</body></html>`
+    ? `<div class="c"><div class="h">${mark}<span class="t">${escapeHtml(data.info.title)}</span><a href="${escapeHtml(data.info.pageUrl)}" target="_blank" rel="noopener">View on Derive ↗</a></div><iframe src="${escapeHtml(data.src)}" sandbox="allow-scripts allow-forms allow-popups allow-modals" title="${escapeHtml(data.info.title)}"></iframe><div class="f">${escapeHtml(unfurlDescription(data.info))}</div></div>`
+    : `<div class="empty">This artifact is private or no longer available.<br>Open it on Derive to request access.</div>`
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex"><title>${data ? escapeHtml(data.info.title) : "Derive"}</title><style>${css}</style></head><body>${body}</body></html>`
 }

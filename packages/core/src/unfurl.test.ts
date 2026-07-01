@@ -19,10 +19,10 @@ const info: UnfurlInfo = {
   kindLabel: "Markdown",
   versionCount: 3,
   commentCount: 1,
-  pageUrl: "http://dock.test/a/my-report-abc12345",
-  imageUrl: "http://dock.test/v1/og/abc12345",
-  oembedUrl: "http://dock.test/v1/oembed?url=http%3A%2F%2Fdock.test%2Fa%2Fabc12345",
-  embedUrl: "http://dock.test/v1/embed/abc12345",
+  pageUrl: "http://derive.test/a/my-report-abc12345",
+  imageUrl: "http://derive.test/v1/og/abc12345",
+  oembedUrl: "http://derive.test/v1/oembed?url=http%3A%2F%2Fderive.test%2Fa%2Fabc12345",
+  embedUrl: "http://derive.test/v1/embed/abc12345",
 }
 
 describe("parseRef", () => {
@@ -38,10 +38,10 @@ describe("parseRef", () => {
 describe("kindLabel", () => {
   it("labels by content type and bundle flag", () => {
     expect(kindLabel("text/markdown", false)).toBe("Markdown")
-    expect(kindLabel("text/x-dock-deck", false)).toBe("Deck")
+    expect(kindLabel("text/x-derive-deck", false)).toBe("Deck")
     expect(kindLabel("text/html; charset=utf-8", false)).toBe("HTML")
     expect(kindLabel("text/html", true)).toBe("Site")
-    expect(kindLabel("dock/skill", true)).toBe("Skill") // a skill bundle reads as "Skill"
+    expect(kindLabel("derive/skill", true)).toBe("Skill") // a skill bundle reads as "Skill"
     expect(kindLabel(null, false)).toBe("Document")
   })
 })
@@ -49,7 +49,7 @@ describe("kindLabel", () => {
 describe("unfurlDescription", () => {
   it("pluralizes versions and comments", () => {
     expect(unfurlDescription({ kindLabel: "HTML", versionCount: 1, commentCount: 0 })).toBe(
-      "HTML · 1 version · 0 comments · on Dock",
+      "HTML · 1 version · 0 comments · on Derive",
     )
   })
 })
@@ -58,7 +58,7 @@ describe("unfurlMetaTags", () => {
   it("emits escaped OG + Twitter + oembed-discovery tags", () => {
     const html = unfurlMetaTags(info)
     expect(html).toContain('property="og:title" content="My &lt;Report&gt; &amp; Notes"')
-    expect(html).toContain('property="og:image" content="http://dock.test/v1/og/abc12345"')
+    expect(html).toContain('property="og:image" content="http://derive.test/v1/og/abc12345"')
     expect(html).toContain('name="twitter:card" content="summary_large_image"')
     expect(html).toContain('type="application/json+oembed"')
     // No unescaped angle brackets from the title leak into the markup.
@@ -88,7 +88,7 @@ describe("ogCardSvg", () => {
     expect(svg.startsWith("<svg")).toBe(true)
     expect(svg).toContain("1200")
     expect(svg).toContain("A &amp; B &lt;c&gt;")
-    expect(svg).toContain("DOCK")
+    expect(svg).toContain("DERIVE")
   })
   it("hides the title and shows a locked message when reveal is false", () => {
     const svg = ogCardSvg({
@@ -111,8 +111,8 @@ describe("ogCardSvg", () => {
 
 describe("oembedResponse / embedIframe", () => {
   it("builds a rich oembed with a sandboxed iframe", () => {
-    const r = oembedResponse(info, "http://dock.test")
-    expect(r).toMatchObject({ version: "1.0", type: "rich", provider_name: "Dock" })
+    const r = oembedResponse(info, "http://derive.test")
+    expect(r).toMatchObject({ version: "1.0", type: "rich", provider_name: "Derive" })
     expect(r.html).toContain("<iframe")
     expect(r.html).toContain(info.embedUrl)
   })
@@ -131,12 +131,12 @@ describe("profileSummary", () => {
         works: 4,
         followers: 1,
       }),
-    ).toBe("Engineering · 4 works · 1 follower · on Dock")
+    ).toBe("Engineering · 4 works · 1 follower · on Derive")
   })
   it("omits the role when unset and singularizes a count of one", () => {
     expect(
       profileSummary({ username: "ada", name: null, profession: null, works: 1, followers: 0 }),
-    ).toBe("1 work · 0 followers · on Dock")
+    ).toBe("1 work · 0 followers · on Derive")
   })
 })
 
@@ -145,24 +145,24 @@ describe("profileMetaTags", () => {
     const html = profileMetaTags({
       username: "maya",
       name: "Maya <Chen>",
-      description: "Engineering · 4 works · on Dock",
-      pageUrl: "http://dock.test/u/maya",
-      imageUrl: "http://dock.test/v1/og/u/maya",
+      description: "Engineering · 4 works · on Derive",
+      pageUrl: "http://derive.test/u/maya",
+      imageUrl: "http://derive.test/v1/og/u/maya",
     })
     expect(html).toContain('property="og:type" content="profile"')
     expect(html).toContain('property="profile:username" content="maya"')
     expect(html).toContain("Maya &lt;Chen&gt; (@maya)") // name + handle, angle brackets escaped
     expect(html).toContain('name="twitter:card" content="summary_large_image"')
-    expect(html).toContain('content="http://dock.test/v1/og/u/maya"')
+    expect(html).toContain('content="http://derive.test/v1/og/u/maya"')
     expect(html).not.toContain("Maya <Chen>") // no unescaped markup leaks
   })
   it("falls back to just the handle when the name is null", () => {
     const html = profileMetaTags({
       username: "ada",
       name: null,
-      description: "on Dock",
-      pageUrl: "http://dock.test/u/ada",
-      imageUrl: "http://dock.test/v1/og/u/ada",
+      description: "on Derive",
+      pageUrl: "http://derive.test/u/ada",
+      imageUrl: "http://derive.test/v1/og/u/ada",
     })
     expect(html).toContain('content="@ada"')
   })
@@ -181,7 +181,7 @@ describe("ogProfileCardSvg", () => {
     expect(svg).toContain("Maya Chen")
     expect(svg).toContain("@maya")
     expect(svg).toContain(">MC<") // first+last initial in the avatar disc
-    expect(svg).toContain("12 works · 48 followers · on Dock")
+    expect(svg).toContain("12 works · 48 followers · on Derive")
   })
   it("escapes the name in the card markup", () => {
     const svg = ogProfileCardSvg({

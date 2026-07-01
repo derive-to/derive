@@ -5,7 +5,7 @@ import { cn } from "@/lib/utils"
 // One author, rendered as a tiny avatar + name — the "who last changed this" /
 // "who authored this version" chip. Fields come straight off the resolved
 // `author` (and the per-version author_* fields): a GitHub identity, plus the
-// Dock `handle` when that committer signed into Dock.
+// Derive `handle` when that committer signed into Derive.
 //
 // Three shapes, picked by the props:
 //  - `onClick`  → a button (used to filter the list by this author).
@@ -15,7 +15,7 @@ export interface AuthorChipProps {
   name: string | null
   login: string | null
   avatar: string | null
-  /** The Dock username, when this GitHub user signed in — drives the profile link. */
+  /** The Derive username, when this GitHub user signed in — drives the profile link. */
   handle: string | null
   /** "sm" (default) sits in a meta line; "xs" is the tightest variant. */
   size?: "xs" | "sm"
@@ -73,7 +73,7 @@ export function AuthorChip({
     )
   }
 
-  // Known Dock user → link to their profile.
+  // Known Derive user → link to their profile.
   if (handle) {
     return (
       <Link

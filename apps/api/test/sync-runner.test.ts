@@ -1,9 +1,9 @@
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { newId, type RepoSourceRecord, type SyncProgress } from "@dock/core"
-import { SqliteMetaStore } from "@dock/db/sqlite"
-import { FsBlobStore } from "@dock/storage/fs"
+import { newId, type RepoSourceRecord, type SyncProgress } from "@derive/core"
+import { SqliteMetaStore } from "@derive/db/sqlite"
+import { FsBlobStore } from "@derive/storage/fs"
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest"
 import { isSyncing, runToCompletion } from "../src/lib/sync-runner"
 
@@ -11,7 +11,7 @@ import { isSyncing, runToCompletion } from "../src/lib/sync-runner"
 let tree: { path: string; sha: string; type: "blob" | "tree" }[] = []
 const blobs: Record<string, string> = {}
 
-const dir = mkdtempSync(join(tmpdir(), "dock-sync-runner-test-"))
+const dir = mkdtempSync(join(tmpdir(), "derive-sync-runner-test-"))
 const meta = new SqliteMetaStore(join(dir, "runner.db"))
 const blobStore = new FsBlobStore(join(dir, "blobs"))
 

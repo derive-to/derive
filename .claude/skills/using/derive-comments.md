@@ -1,4 +1,4 @@
-# dock-comments
+# derive-comments
 
 The comment system is the feedback loop. Comments are anchored to exact text passages
 and survive rewrites as long as the text stays recognizable.
@@ -38,9 +38,9 @@ edits when the quoted text stays recognizable. If the exact text is deleted, the
 shows "text changed" — it never attaches to the wrong place.
 
 On a **slide deck**, the anchor also carries `"slide": N` (0-based) — the slide the comment
-was made on. Dock resolves the quote within that slide first, so the same phrase on two
+was made on. Derive resolves the quote within that slide first, so the same phrase on two
 slides doesn't collide, and pins the comment to that slide. If the text later moves to a
-different slide, the comment follows it and is flagged "moved". See `formats/dock-deck.md`.
+different slide, the comment follows it and is flagged "moved". See `formats/derive-deck.md`.
 
 ---
 
@@ -68,7 +68,7 @@ whether the anchor still resolves in the current version).
 comment(short_id, body_md, quote?)
 ```
 
-Pass `quote` as the exact text you want to anchor to. Dock finds it in the current version
+Pass `quote` as the exact text you want to anchor to. Derive finds it in the current version
 and builds the TextQuoteSelector automatically. Omit `quote` for a general (unanchored) comment.
 
 ```
@@ -99,7 +99,7 @@ comment(short_id, set_state, ...)   # set_state: "resolved" | "open"
 ```
 
 Use `set_state: "resolved"` to close a thread (or `"open"` to reopen one). Target the thread
-by its id (over the stdio `@dock/mcp` server, set_state takes a `comment_id`, which can be any
+by its id (over the stdio `@derive/mcp` server, set_state takes a `comment_id`, which can be any
 comment in the thread).
 
 The most efficient pattern is to resolve threads at the same time as publishing a new version,
@@ -118,7 +118,7 @@ Comments support 8 fixed emoji reactions: 👍 ❤️ 🎉 😄 👀 🙏 🚀 �
 Reactions are stored in `comment.meta.reactions` as `{ emoji: [authorName, ...] }`.
 Tapping the same emoji twice removes your name (toggle behavior).
 
-Reactions are not exposed in the MCP tools — use the Dock UI to react.
+Reactions are not exposed in the MCP tools — use the Derive UI to react.
 
 ---
 

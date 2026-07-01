@@ -1,5 +1,5 @@
-# @dock/web
+# @derive/web
 
-The Dock web UI — **TanStack Start (Vite)**. Coming later.
+The Derive web UI — **TanStack Start (Vite)**. Coming later.
 
-Until it lands, `@dock/api` serves a minimal landing page and the artifact viewer.
+Until it lands, `@derive/api` serves a minimal landing page and the artifact viewer.

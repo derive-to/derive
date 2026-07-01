@@ -1,28 +1,33 @@
-// The OAuth consent screen Dock serves when an agent (an MCP client like Claude)
+// The OAuth consent screen Derive serves when an agent (an MCP client like Claude)
 // asks to act on your behalf. The oauth-provider plugin redirects the signed-in
 // user here (/oauth/consent?client_id&scope&code); on Approve we POST to
 // /api/auth/oauth2/consent with the original query, and the plugin returns the
 // browser to the client's redirect_uri with the authorization code. This is the
 // human-in-the-loop grant: an agent can't self-authorize.
 //
-// On the Dock plan-site palette (Space Grotesk + Inter, the anchor mark) so the
-// grant moment feels like Dock.
+// On the Derive plan-site palette (Inter, the anchor mark) so the
+// grant moment feels like Derive.
 
 const SCOPE_LABELS: Record<string, string> = {
   openid: "Confirm who you are",
   profile: "Your name and avatar",
   email: "Your email address",
   offline_access: "Stay connected without asking again (refresh access)",
-  "dock:read": "Read your artifacts and comments",
-  "dock:comment": "Comment on your artifacts",
-  "dock:propose": "Propose new versions (you approve before they go live)",
-  "dock:publish": "Publish new versions directly",
-  "dock:review": "Approve or request changes on proposals",
+  "derive:read": "Read your artifacts and comments",
+  "derive:comment": "Comment on your artifacts",
+  "derive:propose": "Propose new versions (you approve before they go live)",
+  "derive:publish": "Publish new versions directly",
+  "derive:review": "Approve or request changes on proposals",
 }
 
 // Scopes that let the agent change something get a distinct accent tick; read-only
 // scopes get a quieter one — so the grant's blast radius reads at a glance.
-const WRITE_SCOPES = new Set(["dock:comment", "dock:propose", "dock:publish", "dock:review"])
+const WRITE_SCOPES = new Set([
+  "derive:comment",
+  "derive:propose",
+  "derive:publish",
+  "derive:review",
+])
 
 const esc = (s: string): string =>
   s.replace(/[&<>"']/g, (c) =>
@@ -53,7 +58,7 @@ export function consentHTML(props: {
     .join("")
   // The card swapped in after Approve — a branded confirmation on the page we own,
   // shown for a beat before the browser carries the auth code back to the client.
-  const connectedInner = `<div class="brand">${MARK}<span class="name">Dock</span><span class="badge ok">Connected</span></div>
+  const connectedInner = `<div class="brand">${MARK}<span class="name">Derive</span><span class="badge ok">Connected</span></div>
     <div class="done">
       <div class="check" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg></div>
       <h1>You're connected</h1>
@@ -65,16 +70,16 @@ export function consentHTML(props: {
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>Authorize ${name} · Dock</title>
+<title>Authorize ${name} · Derive</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
   :root{
     --paper:#f6f0e3;--panel:#fdf8ec;--panel-2:#f6efe0;--ink:#2a2540;--ink-soft:#46415c;
     --muted:#6b6680;--line:#e4dcc9;--line-2:#eee7d6;--accent:#655999;--accent-ink:#4f447e;
     --accent-2:#8a7dc0;--accent-soft:#e8e4f1;--good:#6f7a35;--good-soft:#ebedda;--bad:#a04425;
-    --display:"Space Grotesk",ui-sans-serif,system-ui,sans-serif;
+    --display:"Inter",ui-sans-serif,system-ui,sans-serif;
     --sans:"Inter",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
     --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
   }
@@ -129,7 +134,7 @@ export function consentHTML(props: {
 </head>
 <body>
   <main class="card">
-    <div class="brand">${MARK}<span class="name">Dock</span><span class="badge">Authorize</span></div>
+    <div class="brand">${MARK}<span class="name">Derive</span><span class="badge">Authorize</span></div>
     <h1><b>${name}</b> wants to act in your workspace</h1>
     <p class="sub">Approving lets this agent do the following as you, with a token that expires. You stay in control.</p>
     <ul class="scopes">${items}</ul>

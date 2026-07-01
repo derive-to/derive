@@ -43,7 +43,7 @@ export function ArtifactRow({
   const updated = a.updated_at ?? a.created_at ?? a.versions[0]?.created_at
   const dir = a.source_path ? dirOf(a.source_path) : ""
   const tags = a.tags ?? []
-  // "Who last changed this": prefer the resolved author (carries the Dock handle),
+  // "Who last changed this": prefer the resolved author (carries the Derive handle),
   // fall back to the denormalized fields. Present only for synced artifacts.
   const author = a.author ?? null
   const authorLogin = author?.login ?? a.author_login ?? null
@@ -105,7 +105,7 @@ export function ArtifactRow({
             onClick={onPickAuthor && authorLogin ? () => onPickAuthor(authorLogin) : undefined}
             data-testid={`artifact-row-author-${a.short_id}`}
           />
-          {/* Ambient follow: when the author is a known Dock person, follow them right
+          {/* Ambient follow: when the author is a known Derive person, follow them right
               from the row (self-hides for your own work / signed-out). */}
           {author?.handle && <FollowButton username={author.handle} size="xs" className="ml-2" />}
         </div>

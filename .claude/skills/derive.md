@@ -1,6 +1,6 @@
-# Dock
+# Derive
 
-Dock gives AI-built content a permanent home: a real URL, versioned history, threaded
+Derive gives AI-built content a permanent home: a real URL, versioned history, threaded
 comments anchored to the text, and a review loop so humans stay in control.
 
 Read this first. It maps the whole system. Then go to the skill that matches your task.
@@ -49,11 +49,11 @@ An agent token defaults to commenter. To publish directly, the agent needs edito
 
 ## Two MCP servers (same 5 tools)
 
-Both the stdio `@dock/mcp` server and the remote `/mcp` server expose the same 5
+Both the stdio `@derive/mcp` server and the remote `/mcp` server expose the same 5
 tools (`list_artifacts`, `read`, `catch_up`, `comment`, `publish`). The difference is
 auth and how writes land:
 
-| | STDIO MCP (`@dock/mcp`) | HTTP MCP (`/mcp`) |
+| | STDIO MCP (`@derive/mcp`) | HTTP MCP (`/mcp`) |
 |---|---|---|
 | **Auth** | Static `dk_agt_` token | OAuth 2.1 bearer |
 | **Connect via** | Claude Code `.claude/mcp.json` | claude.ai / Claude Desktop OAuth flow |
@@ -93,28 +93,28 @@ The same 5 tools on both servers:
 | `comment` | Leave feedback, reply (`reply_to`), anchor to a `quote`, and/or resolve/reopen (`set_state`) |
 | `publish` | Save a revision (`content` for one file, `files` for a bundle); omit `short_id` to create new, pass it to add a version; `addresses` resolves threads; goes live or files a proposal based on role, or `for_review:true` |
 
-Resource: `dock://guide` — the agent loop guide as a readable MCP resource.
+Resource: `derive://guide` — the agent loop guide as a readable MCP resource.
 
 ---
 
 ## Skill map
 
 **Getting started**
-- `dock-connect.md` — get a token, wire MCP to Claude Code or Claude Desktop
+- `derive-connect.md` — get a token, wire MCP to Claude Code or Claude Desktop
 
 **Publishing & versioning**
-- `using/dock-publish.md` — `publish` (new + versions), versions, CLI, API
-- `using/dock-proposals.md` — the propose -> review -> approve loop
+- `using/derive-publish.md` — `publish` (new + versions), versions, CLI, API
+- `using/derive-proposals.md` — the propose -> review -> approve loop
 
 **Feedback**
-- `using/dock-comments.md` — anchors, threads, reactions, mentions
+- `using/derive-comments.md` — anchors, threads, reactions, mentions
 
 **Writing content**
-- `formats/dock-markdown.md` — writing Markdown artifacts
-- `formats/dock-html.md` — writing HTML artifacts (sandbox, anchoring)
-- `formats/dock-deck.md` — writing HTML slide decks (deck protocol)
+- `formats/derive-markdown.md` — writing Markdown artifacts
+- `formats/derive-html.md` — writing HTML artifacts (sandbox, anchoring)
+- `formats/derive-deck.md` — writing HTML slide decks (deck protocol)
 
 **Deployment**
-- `running-locally/dock-self-host.md` — local dev, single container
-- `deploying/dock-node.md` — Node Basic + Node Scale
-- `deploying/dock-cloudflare.md` — Cloudflare Basic + Cloudflare Scale
+- `running-locally/derive-self-host.md` — local dev, single container
+- `deploying/derive-node.md` — Node Basic + Node Scale
+- `deploying/derive-cloudflare.md` — Cloudflare Basic + Cloudflare Scale

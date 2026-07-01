@@ -43,7 +43,7 @@ export function Profile() {
         <div className="max-w-sm text-center" data-testid="profile-not-found">
           <h1 className="font-display text-xl font-semibold text-foreground">No such profile</h1>
           <p className="mt-2 text-sm text-muted-foreground">
-            There's no Dock user with the handle <span className="font-medium">@{handle}</span>.
+            There's no Derive user with the handle <span className="font-medium">@{handle}</span>.
           </p>
         </div>
       </div>

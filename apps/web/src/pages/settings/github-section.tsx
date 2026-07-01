@@ -82,7 +82,7 @@ const takeInstallParams = (): { install?: string; error?: string } => {
 // workspace lands here without a repo connected yet (once per browser session), so
 // connecting is one step instead of "find the account button, then pick". Stops once
 // any repo is connected.
-const AUTO_PICKER_KEY = "dock:gh-auto-picker"
+const AUTO_PICKER_KEY = "derive:gh-auto-picker"
 
 export function GithubSection() {
   const qc = useQueryClient()
@@ -173,13 +173,13 @@ export function GithubSection() {
 
       {/* PR previews — read-only mirrors of the docs an OPEN pull request changes,
           each in its own "PR #<n>" collection. Created automatically as PRs open; they
-          disappear when the PR closes/merges. Review the plan in Dock during the PR. */}
+          disappear when the PR closes/merges. Review the plan in Derive during the PR. */}
       {status !== null && status.prs.length > 0 && (
         <div className="mt-6">
           <div className="text-xs font-semibold text-foreground">Pull request previews</div>
           <p className="mt-0.5 mb-2 text-2xs text-muted-foreground">
-            Open PRs that change docs appear here while they're open. Review them in Dock; on merge
-            they fold into the collection above.
+            Open PRs that change docs appear here while they're open. Review them in Derive; on
+            merge they fold into the collection above.
           </p>
           <div className="flex flex-col gap-2.5">
             {status.prs.map((pr) => (
@@ -288,7 +288,7 @@ function ConnectViaApp({
             <AlertTriangle className="mt-0.5 size-5 shrink-0 text-gold" aria-hidden />
             <div className="min-w-0 flex-1">
               <div className="text-sm font-semibold text-foreground">
-                Dock needs updated GitHub permissions
+                Derive needs updated GitHub permissions
               </div>
               <p className="mt-0.5 text-sm text-muted-foreground">
                 A new feature needs access GitHub hasn't granted this App yet. Update it on GitHub,
@@ -346,12 +346,12 @@ function ConnectViaApp({
             <div className="text-sm font-semibold text-foreground">GitHub App connected</div>
             {installed ? (
               <p className="mt-0.5 text-sm text-muted-foreground">
-                Pick a repository to mirror into Dock, or install on more accounts.
+                Pick a repository to mirror into Derive, or install on more accounts.
               </p>
             ) : (
               <>
                 <p className="mt-0.5 text-sm text-muted-foreground">
-                  Install Dock on the GitHub repos you want to mirror — then pick them here.
+                  Install Derive on the GitHub repos you want to mirror — then pick them here.
                 </p>
                 <Button
                   data-testid="github-install"
@@ -516,7 +516,7 @@ function RepoPicker({
               <Spinner />
             </div>
           ) : repos.length === 0 ? (
-            <EmptyState>This installation has no repositories Dock can read.</EmptyState>
+            <EmptyState>This installation has no repositories Derive can read.</EmptyState>
           ) : shown && shown.length === 0 ? (
             <EmptyState>No repositories match “{query.trim()}”.</EmptyState>
           ) : (

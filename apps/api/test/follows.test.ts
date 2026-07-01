@@ -1,4 +1,4 @@
-import { newId } from "@dock/core"
+import { newId } from "@derive/core"
 import { describe, expect, it } from "vitest"
 import { as, makeAuthedApp, type TestUser } from "./helpers"
 
@@ -126,7 +126,7 @@ describe("follows route", () => {
 // People-follow: bob follows Amy by handle, her hand-published (author_id) public work
 // flows into his feed, and the profile reflects follower/following + followed_by_me.
 describe("people follow", () => {
-  // Publish an artifact authored by a Dock user (stamps author_id), via the store. `org`
+  // Publish an artifact authored by a Derive user (stamps author_id), via the store. `org`
   // defaults to amy's OWN workspace (not bob's active "default"), so the feed assertions
   // exercise the cross-workspace people-follow path — the real-world case.
   const publishByUser = async (

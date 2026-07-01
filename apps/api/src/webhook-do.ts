@@ -1,5 +1,5 @@
 import type { D1Database, DurableObjectState } from "@cloudflare/workers-types"
-import { createD1Store } from "@dock/db/d1"
+import { createD1Store } from "@derive/db/d1"
 import { cloudflareEmailSender, type SendEmailBinding } from "./email-cf"
 import { emailDeliverySender } from "./lib/email"
 import { makeGithubCommentSender } from "./lib/github-comments"
@@ -24,7 +24,7 @@ export interface WebhookOutboxEnv {
   EMAIL_FROM?: string
   // The auth secret doubles as the at-rest encryption key for stored GitHub App
   // credentials — the GitHub comment sender needs it to mint installation tokens.
-  DOCK_AUTH_SECRET?: string
+  DERIVE_AUTH_SECRET?: string
 }
 
 /**
@@ -56,9 +56,9 @@ export class WebhookOutbox {
       ...(env.SEND_EMAIL && env.EMAIL_FROM
         ? { email: emailDeliverySender(cloudflareEmailSender(env.SEND_EMAIL, env.EMAIL_FROM)) }
         : {}),
-      github_review_comment: makeGithubCommentSender(this.store, env.DOCK_AUTH_SECRET),
-      github_issue_comment: makeGithubCommentSender(this.store, env.DOCK_AUTH_SECRET),
-      slack_app: makeSlackSender(this.store, env.DOCK_AUTH_SECRET),
+      github_review_comment: makeGithubCommentSender(this.store, env.DERIVE_AUTH_SECRET),
+      github_issue_comment: makeGithubCommentSender(this.store, env.DERIVE_AUTH_SECRET),
+      slack_app: makeSlackSender(this.store, env.DERIVE_AUTH_SECRET),
     }
   }
 

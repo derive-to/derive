@@ -43,7 +43,7 @@ export interface PublishInput {
   authorLogin?: string | null
   authorAvatar?: string | null
   authorGhId?: string | null
-  /** The Dock user publishing this by hand (the signed-in publisher). Stored per-version
+  /** The Derive user publishing this by hand (the signed-in publisher). Stored per-version
    *  and denormalized as the artifact's current `author_id`, so the person's profile and
    *  people-follow surface their hand-published work. Omitted/null for sync and bare
    *  static-token publishes. */
@@ -163,7 +163,7 @@ async function storeContent(
     if (!entry) throw new PublishError(400, "bundle has no html or markdown entry point")
 
     const manifest: BundleManifest = { entry, spa, files }
-    // A skill bundle (entry = SKILL.md) gets the distinct dock/skill content type — so
+    // A skill bundle (entry = SKILL.md) gets the distinct derive/skill content type — so
     // the library can badge it without opening the manifest — and is titled from its
     // frontmatter `name`, not the zip's filename, when no title is given.
     const isSkill = isSkillBundle(manifest)
@@ -191,10 +191,10 @@ async function storeContent(
     contentType = "text/html"
   } else if (/\.(md|markdown)$/i.test(filename)) {
     contentType = "text/markdown"
-  } else if (text.includes("dock-deck")) {
-    // Speaks the dock-deck protocol → it's a slide deck. Match the bare protocol
-    // name so either quote style (source:'dock-deck' / "dock-deck") is detected.
-    contentType = "text/x-dock-deck"
+  } else if (text.includes("derive-deck")) {
+    // Speaks the derive-deck protocol → it's a slide deck. Match the bare protocol
+    // name so either quote style (source:'derive-deck' / "derive-deck") is detected.
+    contentType = "text/x-derive-deck"
   } else if (/\.html?$/i.test(filename)) {
     // An HTML fragment (no doctype, so the sniff above missed it) saved with an
     // .html name — keep it HTML so the markup renders, not shows as escaped text.
@@ -401,7 +401,7 @@ export const toJson = (baseUrl: string, a: ArtifactRecord, versions: VersionReco
   /** The CURRENT (last) author, denormalized — drives "who last changed this" + the
    *  author filter in the list. For a GitHub-synced artifact these mirror the last
    *  commit's author; null for legacy/anonymous/non-synced rows. The route may attach a
-   *  resolved `author` profile object (with the Dock handle) on top of these. */
+   *  resolved `author` profile object (with the Derive handle) on top of these. */
   author_name: a.author_name,
   author_login: a.author_login,
   author_avatar: a.author_avatar,

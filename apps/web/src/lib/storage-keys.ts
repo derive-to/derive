@@ -1,11 +1,11 @@
 // Every localStorage / sessionStorage key in one place, so a key can't be
-// typo'd, duplicated, or drift out of the `dock` namespace. Enforced by
+// typo'd, duplicated, or drift out of the `derive` namespace. Enforced by
 // scripts/check-frontend.mjs: storage may only be keyed by a member of this
 // object, never a bare string literal.
 export const STORAGE_KEYS = {
-  theme: "dock_theme",
-  cursorPref: "dock.cursor.pref",
-  libraryRail: "dock.browse.rail",
-  commentsPanel: "dock.comments.panel",
-  navCollapsed: "dock.nav.collapsed",
+  theme: "derive_theme",
+  cursorPref: "derive.cursor.pref",
+  libraryRail: "derive.browse.rail",
+  commentsPanel: "derive.comments.panel",
+  navCollapsed: "derive.nav.collapsed",
 } as const

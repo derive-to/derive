@@ -10,7 +10,7 @@ export function HowItWorks() {
     <section data-testid="how-it-works" className="mt-2">
       <div className="mb-4 flex items-center gap-3 text-2xs font-semibold uppercase tracking-wide text-muted-foreground">
         <span className="h-px flex-1 bg-border" />
-        How Dock works
+        How Derive works
         <span className="h-px flex-1 bg-border" />
       </div>
 
@@ -29,7 +29,7 @@ export function HowItWorks() {
             <div className="mt-2 flex items-center gap-1.5">
               <ArrowRight className="size-3 shrink-0 text-muted-foreground" aria-hidden />
               <span className="truncate rounded-full bg-accent/15 px-2 py-0.5 font-mono text-2xs text-accent-foreground">
-                dock.to/q3-plan
+                derive.to/q3-plan
               </span>
             </div>
           </Mock>

@@ -1,4 +1,4 @@
-import type { CommentState, MetaStore } from "@dock/core"
+import type { CommentState, MetaStore } from "@derive/core"
 import { type CommentMeta, parseMeta } from "./comments"
 
 // Linking a proposal to the comment threads it claims to fix, without a schema

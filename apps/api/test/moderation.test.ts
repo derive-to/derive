@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest"
 import { as, jsonAs, makeAuthedApp, publishAs, type TestUser } from "./helpers"
 
 describe("moderation: report → takedown (410) → reinstate + audit (C4a)", () => {
-  const owner: TestUser = { id: "u_mod_own", email: "modown@dock.test", name: "Owner" }
-  const dev: TestUser = { id: "u_mod_dev", email: "moddev@dock.test", name: "Dev" }
+  const owner: TestUser = { id: "u_mod_own", email: "modown@derive.test", name: "Owner" }
+  const dev: TestUser = { id: "u_mod_dev", email: "moddev@derive.test", name: "Dev" }
   const { app } = makeAuthedApp("moderation", [owner, dev], "commenter")
   let shortId: string
 

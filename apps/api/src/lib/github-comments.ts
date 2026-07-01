@@ -1,4 +1,4 @@
-// Dock → GitHub comment write-back. When someone comments on a PR-sourced artifact,
+// Derive → GitHub comment write-back. When someone comments on a PR-sourced artifact,
 // mirror it onto the pull request: an inline review comment on the anchored file+line
 // when we can resolve one, else a top-level PR conversation comment. Rides the same
 // retrying outbox as everything else (kind="github_review_comment" / "github_issue_comment").
@@ -7,7 +7,7 @@
 // re-post those. After a successful post we stamp `meta.github` with the id GitHub
 // returned, both so the inbound webhook can dedupe and so an edit/resync won't double-post.
 
-import type { DeliveryRecord } from "@dock/core"
+import type { DeliveryRecord } from "@derive/core"
 import {
   type ArtifactRecord,
   type BlobStore,
@@ -15,7 +15,7 @@ import {
   type MetaStore,
   newId,
   type RepoSourceRecord,
-} from "@dock/core"
+} from "@derive/core"
 import { type ChannelSendResult, enqueueChannelDelivery } from "../webhooks"
 import { parseMeta, quoteOf } from "./comments"
 import { decryptSecret } from "./crypto"
@@ -23,7 +23,7 @@ import { parseRepo, type RepoRef } from "./github"
 import { installationToken } from "./github-app"
 
 const API = "https://api.github.com"
-const UA = "dock-comments/1"
+const UA = "derive-comments/1"
 const API_VERSION = "2022-11-28"
 
 const headers = (token: string): Record<string, string> => ({
@@ -70,9 +70,9 @@ export async function createIssueComment(
   return ((await res.json()) as { id: number }).id
 }
 
-// An invisible (HTML-comment) marker on the single Dock-managed "preview" comment, so we
+// An invisible (HTML-comment) marker on the single Derive-managed "preview" comment, so we
 // edit it in place on each sync instead of spamming the PR thread with a new one.
-const PREVIEW_MARK = "<!-- dock-preview -->"
+const PREVIEW_MARK = "<!-- derive-preview -->"
 
 interface IssueComment {
   id: number
@@ -118,14 +118,14 @@ async function updateIssueComment(
     )
 }
 
-/** The id of the Dock-managed preview comment among a PR's comments (by our marker), or
+/** The id of the Derive-managed preview comment among a PR's comments (by our marker), or
  *  null when we haven't posted one yet. Pure — exported for testing. */
 export const findPreviewComment = (comments: IssueComment[]): number | null =>
   comments.find((c) => c.body?.includes(PREVIEW_MARK))?.id ?? null
 
-/** Post or update the single Dock-managed "preview" comment on a PR. The marker makes it
+/** Post or update the single Derive-managed "preview" comment on a PR. The marker makes it
  *  sticky (subsequent syncs edit the same comment). The `MARK` footer keeps the inbound
- *  mirror from ingesting it back as a Dock comment. Caller swallows errors — a failed
+ *  mirror from ingesting it back as a Derive comment. Caller swallows errors — a failed
  *  comment never blocks the preview sync. */
 export async function upsertPreviewComment(
   repo: RepoRef,
@@ -208,23 +208,23 @@ interface GithubCommentPayload {
   prNumber: number
   installationId: string | null
   body: string
-  dockCommentId: string
+  deriveCommentId: string
   // Inline-review fields; absent ⇒ post a top-level issue comment.
   path?: string
   line?: number
   commitId?: string
 }
 
-const MARK = "via Dock"
+const MARK = "via Derive"
 
-/** Render the comment body posted to GitHub: the Dock author + body + a deep link back,
+/** Render the comment body posted to GitHub: the Derive author + body + a deep link back,
  *  tagged so the inbound webhook can recognise our own posts as a backstop to `meta`. */
 const ghBody = (baseUrl: string, artifact: ArtifactRecord, cm: CommentRecord): string => {
   const link = `${baseUrl.replace(/\/$/, "")}/a/${artifact.short_id}?c=${encodeURIComponent(cm.thread_id)}`
-  return `**${cm.author}** commented in [Dock](${link}):\n\n${cm.body_md}\n\n_— ${MARK}_`
+  return `**${cm.author}** commented in [Derive](${link}):\n\n${cm.body_md}\n\n_— ${MARK}_`
 }
 
-/** Decide how a Dock comment maps onto the PR and enqueue the delivery. No-op when the
+/** Decide how a Derive comment maps onto the PR and enqueue the delivery. No-op when the
  *  artifact isn't PR-sourced or the comment came from GitHub (loop prevention). Reads
  *  the artifact's current blob to resolve the anchored line for an inline comment. */
 export const enqueueGithubPrComment = async (
@@ -243,7 +243,7 @@ export const enqueueGithubPrComment = async (
     prNumber: source.pr_number as number,
     installationId: source.installation_id,
     body: ghBody(baseUrl, artifact, cm),
-    dockCommentId: cm.id,
+    deriveCommentId: cm.id,
   }
 
   // Try to anchor to a file line: resolve the quoted text against the synced head blob.
@@ -263,11 +263,11 @@ export const enqueueGithubPrComment = async (
   await enqueueChannelDelivery(meta, kind, "comment.created", payload)
 }
 
-// ---- GitHub → Dock (mirror PR comments into the artifact) ------------------
+// ---- GitHub → Derive (mirror PR comments into the artifact) ------------------
 
 /** The commented line's source text, extracted from a review comment's `diff_hunk`
  *  (its last content line, with the leading +/-/space diff marker stripped). Used to
- *  build a Dock text anchor so the mirrored comment lands on the right quote. Null when
+ *  build a Derive text anchor so the mirrored comment lands on the right quote. Null when
  *  the hunk has no usable line. */
 export const lineFromDiffHunk = (diffHunk: string | undefined): string | null => {
   if (!diffHunk) return null
@@ -281,7 +281,7 @@ export const lineFromDiffHunk = (diffHunk: string | undefined): string | null =>
   return null
 }
 
-/** Author marker for a comment mirrored in from GitHub (so it's clearly not a Dock user). */
+/** Author marker for a comment mirrored in from GitHub (so it's clearly not a Derive user). */
 const ghAuthorId = (login: string): string => `gh:${login}`
 
 export interface IngestArgs {
@@ -295,10 +295,10 @@ export interface IngestArgs {
   diffHunk?: string
 }
 
-/** Mirror a GitHub PR comment into the matching Dock artifact. Returns the created
+/** Mirror a GitHub PR comment into the matching Derive artifact. Returns the created
  *  comment (so the caller can fire realtime + notifications), or null when it was
  *  skipped: a bot author (our own write-back or another app — loop prevention), a body
- *  tagged as Dock-originated, an already-mirrored id, or no matching artifact. */
+ *  tagged as Derive-originated, an already-mirrored id, or no matching artifact. */
 export const ingestGithubPrComment = async (
   meta: MetaStore,
   source: RepoSourceRecord,
@@ -350,7 +350,7 @@ export const ingestGithubPrComment = async (
 
 /** Build the GitHub-comment delivery sender for a runtime. Mints an installation token
  *  per delivery (cached ~1h by installationToken), posts the comment, and stamps the
- *  Dock comment's `meta.github` with the returned id (dedupe for the inbound webhook).
+ *  Derive comment's `meta.github` with the returned id (dedupe for the inbound webhook).
  *  Returns a no-op-ok when the App/installation isn't available so a self-host without
  *  GitHub configured doesn't dead-letter these rows. */
 export const makeGithubCommentSender =
@@ -364,12 +364,12 @@ export const makeGithubCommentSender =
     const app = await meta.getGithubApp()
     if (!app) return { ok: true, status: "skipped: no github app" }
 
-    // Idempotency pre-check: if this Dock comment already carries a GitHub id, a prior
+    // Idempotency pre-check: if this Derive comment already carries a GitHub id, a prior
     // delivery already posted it (the row was re-claimed after a crash, or double-enqueued)
     // — don't post again. This closes the common duplicate window without an external
     // idempotency key (GitHub has none for comments); a crash strictly between the POST
     // and this stamp can still re-post once, the inherent at-least-once tail.
-    const cm = await meta.getComment(p.dockCommentId)
+    const cm = await meta.getComment(p.deriveCommentId)
     if (cm && parseMeta(cm.meta).github) return { ok: true, status: "already posted" }
 
     const pem = decryptSecret(app.private_key, encryptionKey)

@@ -1,22 +1,22 @@
-# Dock
+# Derive
 
 > Publish AI-built artifacts — HTML pages, Markdown docs, slide decks — with a permanent URL, version history, and threaded comments anchored to the text.
 
 ## What it is
 
-Dock gives agent-built content a durable home: a real URL on your domain, every revision versioned and addressable, comments anchored to exact text (W3C TextQuoteSelector) that survive rewrites, and a propose -> review -> approve loop so humans stay in control.
+Derive gives agent-built content a durable home: a real URL on your domain, every revision versioned and addressable, comments anchored to exact text (W3C TextQuoteSelector) that survive rewrites, and a propose -> review -> approve loop so humans stay in control.
 
-Self-hostable (Docker, Fly.io, Railway, Render, Cloudflare Workers). Hosted tier at dock.build.
+Self-hostable (Docker, Fly.io, Railway, Render, Cloudflare Workers). Hosted tier at derive.to.
 
 ## Artifact types
 
 - Markdown (.md): rendered prose, task lists, tables, fenced code blocks
 - HTML (.html): the page itself, sandboxed in an opaque origin with CSP
-- HTML deck: HTML with <section class="slide"> elements, gets nav + present mode automatically via the dock-deck postMessage protocol
+- HTML deck: HTML with <section class="slide"> elements, gets nav + present mode automatically via the derive-deck postMessage protocol
 
 ## Key API endpoints
 
-All requests use `Authorization: Bearer $DOCK_TOKEN` (static agent token from Settings > Agents).
+All requests use `Authorization: Bearer $DERIVE_TOKEN` (static agent token from Settings > Agents).
 
 ```
 POST   /v1/artifacts                           publish new artifact (multipart: file, title, visibility)
@@ -33,7 +33,7 @@ Visibility options: public, link, org, password.
 
 ## MCP server
 
-Connect any MCP client with `npx -y @dock/mcp` + env vars `DOCK_SERVER` and `DOCK_TOKEN`.
+Connect any MCP client with `npx -y @derive/mcp` + env vars `DERIVE_SERVER` and `DERIVE_TOKEN`.
 
 Tools (five): list_artifacts, read, catch_up, comment, publish
 
@@ -43,9 +43,9 @@ Tools (five): list_artifacts, read, catch_up, comment, publish
 - comment: leave feedback, reply (reply_to), anchor to a quote, resolve/reopen (set_state)
 - publish: save a revision (content for one file, files for a bundle); omit short_id to create new, pass it to add a version; addresses resolves threads; goes live or files a proposal based on role, or with for_review:true
 
-Both the stdio @dock/mcp server and the remote /mcp server expose the same 5 tools.
+Both the stdio @derive/mcp server and the remote /mcp server expose the same 5 tools.
 
-Resource: dock://guide (agent workflow and tool reference)
+Resource: derive://guide (agent workflow and tool reference)
 
 ## The agent loop
 
@@ -62,10 +62,10 @@ Resource: dock://guide (agent workflow and tool reference)
 - Cloudflare Basic: Workers + D1 + R2 + Durable Objects (wrangler deploy)
 - Cloudflare Scale: Workers + Postgres + R2 + Durable Objects
 
-Key env vars: BASE_URL, DOCK_AUTH_SECRET (openssl rand -hex 32), DOCK_TOKEN
+Key env vars: BASE_URL, DERIVE_AUTH_SECRET (openssl rand -hex 32), DERIVE_TOKEN
 
 ## Links
 
-- GitHub: https://github.com/Niftory/dock.build
+- GitHub: https://github.com/derive-to/derive
 - Deploy guide: DEPLOY.md in the repo
-- MCP skill: packages/mcp/SKILL.md (also served as dock://guide)
+- MCP skill: packages/mcp/SKILL.md (also served as derive://guide)

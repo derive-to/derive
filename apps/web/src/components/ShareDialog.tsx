@@ -108,7 +108,7 @@ export function ShareButton({
   // split-deploy SPA points at the API origin via API_BASE. The embed only shows
   // for others when the artifact is link- or world-readable.
   const origin = API_BASE || (typeof window === "undefined" ? "" : window.location.origin)
-  const embedSnippet = `<iframe src="${origin}/v1/embed/${shortId}" width="100%" height="480" style="border:0;border-radius:12px" loading="lazy" title="Dock artifact" allowfullscreen></iframe>`
+  const embedSnippet = `<iframe src="${origin}/v1/embed/${shortId}" width="100%" height="480" style="border:0;border-radius:12px" loading="lazy" title="Derive artifact" allowfullscreen></iframe>`
   const linkAccessible = visibility === "public" || visibility === "link"
   const copyEmbed = async () => {
     try {
@@ -566,7 +566,7 @@ export function ShareButton({
               </div>
               <p className="mt-1.5 font-mono text-2xs text-muted-foreground">
                 {linkAccessible
-                  ? "Paste into any page — Notion, a blog, docs. Live, with a link back to Dock."
+                  ? "Paste into any page — Notion, a blog, docs. Live, with a link back to Derive."
                   : "Set access to “Anyone with the link” or “Public” for the embed to load for others."}
               </p>
             </div>

@@ -1,9 +1,9 @@
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { type BundleManifest, publish } from "@dock/core"
-import { SqliteMetaStore } from "@dock/db/sqlite"
-import { FsBlobStore } from "@dock/storage/fs"
+import { type BundleManifest, publish } from "@derive/core"
+import { SqliteMetaStore } from "@derive/db/sqlite"
+import { FsBlobStore } from "@derive/storage/fs"
 import { unzipSync } from "fflate"
 import { afterAll, describe, expect, it } from "vitest"
 import { manifestOf, mergeBundleZip, zipBundleFiles } from "../src/lib/bundle"
@@ -13,9 +13,9 @@ import { manifestOf, mergeBundleZip, zipBundleFiles } from "../src/lib/bundle"
 // corrupt. zipBundleFiles carries base64 data: URI values as raw bytes so the whole
 // site (pages + assets) rides one `files` map over MCP, and the core publish path
 // stores + serves each asset with the right content-type. This is the fix for
-// "Dock's MCP publish can't carry screenshots."
+// "Derive's MCP publish can't carry screenshots."
 
-const dir = mkdtempSync(join(tmpdir(), "dock-bundle-assets-"))
+const dir = mkdtempSync(join(tmpdir(), "derive-bundle-assets-"))
 afterAll(() => rmSync(dir, { recursive: true, force: true }))
 
 // A real 1x1 transparent PNG (starts with the 8-byte PNG signature).

@@ -236,7 +236,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             </Button>
             <Link to="/" className="mr-auto flex items-center gap-2.5 text-foreground">
               <Logo />
-              <span className="font-display text-lg font-semibold">Dock</span>
+              <span className="font-display text-lg font-semibold">Derive</span>
             </Link>
             <div
               ref={setTopBarSlot}

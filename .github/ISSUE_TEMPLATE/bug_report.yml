@@ -22,7 +22,7 @@ body:
   - type: dropdown
     id: deploy
     attributes:
-      label: How are you running Dock?
+      label: How are you running Derive?
       options:
         - Local dev (pnpm dev)
         - Self-host (SQLite + local disk)

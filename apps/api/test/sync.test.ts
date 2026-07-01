@@ -1,9 +1,9 @@
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { newId, type RepoSourceRecord, type SyncProgress } from "@dock/core"
-import { SqliteMetaStore } from "@dock/db/sqlite"
-import { FsBlobStore } from "@dock/storage/fs"
+import { newId, type RepoSourceRecord, type SyncProgress } from "@derive/core"
+import { SqliteMetaStore } from "@derive/db/sqlite"
+import { FsBlobStore } from "@derive/storage/fs"
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest"
 import { runSync, type SyncedFile } from "../src/lib/sync"
 
@@ -17,7 +17,7 @@ const blobs: Record<string, string> = {}
 // repo path → the last-commit date the Commits API reports for it.
 const commitDates: Record<string, string> = {}
 
-const dir = mkdtempSync(join(tmpdir(), "dock-sync-test-"))
+const dir = mkdtempSync(join(tmpdir(), "derive-sync-test-"))
 const meta = new SqliteMetaStore(join(dir, "sync.db"))
 const blobStore = new FsBlobStore(join(dir, "blobs"))
 const NOW = "2026-06-14T00:00:00.000Z"

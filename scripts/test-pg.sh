@@ -9,9 +9,9 @@
 set -euo pipefail
 
 PASSWORD=postgres
-DB=dock_test
-NAME="dock-pg-test-$$"
-IMAGE="${DOCK_PG_IMAGE:-postgres:16-alpine}"
+DB=derive_test
+NAME="derive-pg-test-$$"
+IMAGE="${DERIVE_PG_IMAGE:-postgres:16-alpine}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
 cleanup() { docker rm -f "$NAME" >/dev/null 2>&1 || true; }
@@ -40,18 +40,18 @@ for i in $(seq 1 60); do
   if [ "$i" -eq 60 ]; then echo " timed out" && exit 1; fi
 done
 
-export DOCK_TEST_DB=pg
+export DERIVE_TEST_DB=pg
 export TEST_DATABASE_URL="$URL"
 
 echo "→ running apps/api suite against Postgres"
 cd "$ROOT/apps/api"
 pnpm exec vitest run --no-file-parallelism "$@"
 
-# Also run @dock/db's store contract against the same Postgres — the only place
+# Also run @derive/db's store contract against the same Postgres — the only place
 # pg.ts (the hosted-tier driver) is covered + gated by the db package's own suite.
 # Skipped when a specific api file was requested (debugging one spec).
 if [ "$#" -eq 0 ]; then
-  echo "→ running @dock/db store contract against Postgres"
+  echo "→ running @derive/db store contract against Postgres"
   cd "$ROOT"
-  pnpm --filter @dock/db test:pg
+  pnpm --filter @derive/db test:pg
 fi

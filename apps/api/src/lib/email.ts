@@ -5,7 +5,7 @@
 // pre-rendered at enqueue time (the drainer has no request context) and this sender
 // just transports the finished message.
 
-import type { ArtifactRecord, DeliveryRecord } from "@dock/core"
+import type { ArtifactRecord, DeliveryRecord } from "@derive/core"
 import { log } from "../log"
 import type { ChannelSendResult } from "../webhooks"
 
@@ -86,7 +86,7 @@ export interface CommentEmailInput {
 }
 
 /** Render a comment/mention notification email (subject + html + text). Plain, readable,
- *  one clear call-to-action back to the thread in Dock. */
+ *  one clear call-to-action back to the thread in Derive. */
 export const buildCommentEmail = (
   baseUrl: string,
   artifact: ArtifactRecord,
@@ -105,16 +105,16 @@ export const buildCommentEmail = (
   <p><strong>${esc(input.author)}</strong> ${verb} <a href="${esc(link)}">${esc(title)}</a>.</p>
   ${quote ? `<blockquote style="border-left:3px solid #ddd;margin:0 0 12px;padding:4px 12px;color:#666">${esc(quote)}</blockquote>` : ""}
   <p style="white-space:pre-wrap">${esc(body)}</p>
-  <p><a href="${esc(link)}" style="display:inline-block;background:#111;color:#fff;padding:8px 16px;border-radius:6px;text-decoration:none">View in Dock</a></p>
+  <p><a href="${esc(link)}" style="display:inline-block;background:#111;color:#fff;padding:8px 16px;border-radius:6px;text-decoration:none">View in Derive</a></p>
   <hr style="border:none;border-top:1px solid #eee;margin:24px 0"/>
-  <p style="color:#999;font-size:12px">You're receiving this because you collaborate on this artifact in Dock.</p>
+  <p style="color:#999;font-size:12px">You're receiving this because you collaborate on this artifact in Derive.</p>
   </body></html>`
 
   const text = [
     `${input.author} ${verb} ${title}.`,
     quote ? `\n> ${quote}` : "",
     `\n${body}`,
-    `\nView in Dock: ${link}`,
+    `\nView in Derive: ${link}`,
   ]
     .filter(Boolean)
     .join("\n")

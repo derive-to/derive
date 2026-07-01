@@ -9,9 +9,9 @@ import { SCHEMA_STATEMENTS } from "./schema"
  * drifting; `deploy/d1-schema.sql` is generated from this and guarded by a test.
  */
 export const buildD1SchemaSql = (): string => {
-  const header = `-- Cloudflare D1 bootstrap schema for Dock.
+  const header = `-- Cloudflare D1 bootstrap schema for Derive.
 -- GENERATED from packages/db/src/schema.ts (SCHEMA_STATEMENTS); do not edit by hand.
--- Regenerate after a schema change: \`pnpm --filter @dock/db gen:d1-schema\`.
+-- Regenerate after a schema change: \`pnpm --filter @derive/db gen:d1-schema\`.
 -- Apply once: \`wrangler d1 execute <db> --file=deploy/d1-schema.sql\`.
 
 `

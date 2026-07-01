@@ -1,7 +1,7 @@
-# Dock — agent skill
+# Derive — agent skill
 
-Dock hosts an artifact (HTML, Markdown, or a static bundle) at a permanent,
-versioned URL with inline comments. An agent connects to Dock's **remote MCP
+Derive hosts an artifact (HTML, Markdown, or a static bundle) at a permanent,
+versioned URL with inline comments. An agent connects to Derive's **remote MCP
 server** over Streamable HTTP (OAuth-authenticated — no static token) and drives
 the **read → revise → publish** loop. The agent acts at **its own role**: what it
 can do is exactly what that role can do.
@@ -9,7 +9,7 @@ can do is exactly what that role can do.
 Connect (Claude Code / claude.ai / Claude Desktop):
 
 ```
-claude mcp add --transport http dock <your-dock-server>/mcp
+claude mcp add --transport http derive <your-derive-server>/mcp
 ```
 
 The first call triggers an OAuth consent in the browser; you grant the agent a
@@ -61,5 +61,5 @@ wrong place.
   same-author revisions into time-based sessions, but every revision is addressable.
 - Multi-page bundles are readable (`read` with a `section`, `catch_up`) and revisable
   over the remote `/mcp` server via `publish` with a `files` map. Over the stdio
-  `@dock/mcp` server, bundles are publish-via-remote/web only, and `comment` set_state
+  `@derive/mcp` server, bundles are publish-via-remote/web only, and `comment` set_state
   takes a `comment_id`. Both servers expose the same 5 tools.

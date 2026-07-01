@@ -1,11 +1,11 @@
 # Architecture
 
-Dock is a pnpm monorepo. One Hono-on-Node container is the product: it serves the
+Derive is a pnpm monorepo. One Hono-on-Node container is the product: it serves the
 HTTP API, the artifact viewer, the sandboxed raw bytes, and (when bundled) the web
 SPA. The same code self-hosts on SQLite + local disk or scales on Postgres + S3/R2.
 
 ```
-dock.build/
+derive.to/
 ├─ apps/
 │  ├─ api/         Hono server: routes, auth, realtime, the container entrypoint
 │  └─ web/         TanStack Start SPA (front-end; separate workstream)
@@ -15,7 +15,7 @@ dock.build/
 │  │              the viewer shell, diff, version sessions, anchors
 │  ├─ db/          MetaStore adapters: sqlite (default), pg (scale), d1 (edge)
 │  ├─ storage/     BlobStore adapters: fs (default), s3/r2 (hosted)
-│  ├─ cli/         `dock` — init/publish/review from the terminal
+│  ├─ cli/         `derive` — init/publish/review from the terminal
 │  └─ mcp/         Model Context Protocol server for agents
 └─ deploy/         Dockerfile, compose, platform configs
 ```
@@ -40,7 +40,7 @@ boot tasks (auth migrate, legacy-org rekey), starts the webhook worker, and serv
 the bundled SPA when present.
 
 - **Auth** is [Better Auth](https://better-auth.com) under `/api/auth/*`; a static
-  `DOCK_TOKEN` authorizes CI/agents. `packages/core/src/permissions.ts` is the one
+  `DERIVE_TOKEN` authorizes CI/agents. `packages/core/src/permissions.ts` is the one
   authorization gate (`can(actor, action, visibility, generalRole)`); every route
   resolves an `Actor` and asks it. `effectiveRole` there is the source of truth for the
   access matrix (anonymous is always view-only; see SECURITY.md).
@@ -88,7 +88,7 @@ to a workspace role. See `packages/core/src/ports.ts` for the full record shapes
 
 1. `POST /v1/artifacts` (or `/:shortId/versions`) hits the `artifacts` router.
 2. The router authorizes via the AppContext (`workspaceCan`/`authorize`), checks
-   rate limits + storage quota, then calls `publish()` from `@dock/core`.
+   rate limits + storage quota, then calls `publish()` from `@derive/core`.
 3. `publish()` stores bytes through the `BlobStore` and rows through the `MetaStore`,
    stamping the active `org_id`.
 4. The route publishes a `version.published` event on the bus (SSE subscribers

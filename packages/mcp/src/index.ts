@@ -5,16 +5,16 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod"
 import { createClient } from "./client"
 
-// Stdio MCP server for self-hosters: `npx @dock/mcp` talks to a Dock instance over
-// the /v1 HTTP API (DOCK_SERVER) with a bearer (DOCK_TOKEN). It exposes the SAME five
+// Stdio MCP server for self-hosters: `npx @derive/mcp` talks to a Derive instance over
+// the /v1 HTTP API (DERIVE_SERVER) with a bearer (DERIVE_TOKEN). It exposes the SAME five
 // tools as the remote /mcp server — list_artifacts, read, catch_up, comment, publish —
 // so the vocabulary is identical whether an agent connects over OAuth or a static
 // token. (A static token already has publish rights, so publish here goes live unless
 // you pass for_review; bundle publishing is remote-only.)
 
 const client = createClient({
-  baseUrl: process.env.DOCK_SERVER ?? "http://localhost:8080",
-  token: process.env.DOCK_TOKEN,
+  baseUrl: process.env.DERIVE_SERVER ?? "http://localhost:8080",
+  token: process.env.DERIVE_TOKEN,
 })
 
 // The agent guide, served as an MCP resource (single source: SKILL.md).
@@ -22,11 +22,11 @@ const GUIDE = (() => {
   try {
     return readFileSync(fileURLToPath(new URL("../SKILL.md", import.meta.url)), "utf8")
   } catch {
-    return "# Dock\nFind, read, catch_up, comment, and publish via the dock tools."
+    return "# Derive\nFind, read, catch_up, comment, and publish via the derive tools."
   }
 })()
 
-const server = new McpServer({ name: "dock", version: "1.0.0" })
+const server = new McpServer({ name: "derive", version: "1.0.0" })
 
 const text = (s: string) => ({ content: [{ type: "text" as const, text: s }] })
 const json = (v: unknown) => text(JSON.stringify(v, null, 2))
@@ -291,10 +291,10 @@ server.registerTool(
 
 // Expose the agent loop as an MCP resource so any client can read the conventions.
 server.registerResource(
-  "dock-guide",
-  "dock://guide",
+  "derive-guide",
+  "derive://guide",
   {
-    title: "Dock agent guide",
+    title: "Derive agent guide",
     description: "How to run the publish → review → revise loop.",
     mimeType: "text/markdown",
   },

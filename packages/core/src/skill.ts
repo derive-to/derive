@@ -1,9 +1,9 @@
 /**
  * Skill + markdown-bundle support. A Claude Code "skill" is a folder — a `SKILL.md`
  * (with YAML frontmatter declaring `name`/`description`) plus optional `scripts/`,
- * `references/`, `assets/` — published to Dock as a bundle. More generally, any
+ * `references/`, `assets/` — published to Derive as a bundle. More generally, any
  * bundle whose entry is markdown (a docs folder) gets the same treatment: rendered
- * pages plus a navigable file tree. These helpers let Dock recognize such bundles
+ * pages plus a navigable file tree. These helpers let Derive recognize such bundles
  * and read frontmatter, with NO new artifact kind and no heavy YAML dependency
  * (this module must run on Cloudflare Workers).
  */

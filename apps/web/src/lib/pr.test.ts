@@ -24,6 +24,6 @@ describe("prTitle", () => {
 
 describe("prUrl", () => {
   it("builds the GitHub pull-request URL from owner/name + number", () => {
-    expect(prUrl("Niftory/dock.build", 42)).toBe("https://github.com/Niftory/dock.build/pull/42")
+    expect(prUrl("derive-to/derive", 42)).toBe("https://github.com/derive-to/derive/pull/42")
   })
 })

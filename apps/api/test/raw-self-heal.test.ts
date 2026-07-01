@@ -1,16 +1,16 @@
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { newId } from "@dock/core"
-import { SqliteMetaStore } from "@dock/db/sqlite"
-import { FsBlobStore } from "@dock/storage/fs"
+import { newId } from "@derive/core"
+import { SqliteMetaStore } from "@derive/db/sqlite"
+import { FsBlobStore } from "@derive/storage/fs"
 import { afterAll, describe, expect, it } from "vitest"
 import { createApp } from "../src/app"
 
-const dir = mkdtempSync(join(tmpdir(), "dock-rawheal-"))
+const dir = mkdtempSync(join(tmpdir(), "derive-rawheal-"))
 const meta = new SqliteMetaStore(join(dir, "r.db"))
 const blobs = new FsBlobStore(join(dir, "blobs"))
-const app = createApp({ meta, blobs, baseUrl: "http://dock.test", token: "tok" })
+const app = createApp({ meta, blobs, baseUrl: "http://derive.test", token: "tok" })
 const enc = (s: string) => new TextEncoder().encode(s)
 // A full HTML document with a <style> head — the markdown renderer would strip the
 // head/style and emit a blank body (the white screen). The bytes lie under a

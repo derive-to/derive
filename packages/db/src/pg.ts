@@ -62,8 +62,8 @@ import type {
   Visibility,
   WebhookRecord,
   WorkspaceRecord,
-} from "@dock/core"
-import { DEFAULT_ORG_SETTINGS, GLOBAL_FOLLOW_ORG } from "@dock/core"
+} from "@derive/core"
+import { DEFAULT_ORG_SETTINGS, GLOBAL_FOLLOW_ORG } from "@derive/core"
 import {
   and,
   asc,
@@ -856,7 +856,7 @@ export class PgMetaStore implements MetaStore {
       .where(and(eq(follow.user_id, userId), inArray(follow.org_id, [orgId, GLOBAL_FOLLOW_ORG])))
       .orderBy(desc(follow.created_at), desc(follow.id))
   }
-  // GitHub numeric ids a set of Dock users linked (raw account read; [] if absent).
+  // GitHub numeric ids a set of Derive users linked (raw account read; [] if absent).
   private async githubIdsForUsers(userIds: string[]): Promise<string[]> {
     if (userIds.length === 0) return []
     try {
@@ -1402,7 +1402,7 @@ export class PgMetaStore implements MetaStore {
       return []
     }
   }
-  // Map GitHub numeric user ids to Dock accounts ("account".accountId → "user"), scoped
+  // Map GitHub numeric user ids to Derive accounts ("account".accountId → "user"), scoped
   // to the github social provider. Best-effort — [] when the Better Auth tables are absent.
   async usersByGithubIds(ghIds: string[]): Promise<GithubUserMapping[]> {
     if (ghIds.length === 0) return []

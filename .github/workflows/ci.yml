@@ -54,7 +54,7 @@ jobs:
       - name: Test against Postgres
         run: pnpm test:pg
 
-  # Runs the SAME @dock/db store contract against a real Cloudflare D1, inside
+  # Runs the SAME @derive/db store contract against a real Cloudflare D1, inside
   # workerd via Miniflare (the `pnpm test:d1` lane). The default (Node) lane can't
   # host the D1 driver, so this is the only place src/d1.ts is exercised at runtime —
   # the edge tier runs on it.
@@ -71,11 +71,11 @@ jobs:
       - run: pnpm install --frozen-lockfile
 
       - name: Test against Cloudflare D1 (workerd)
-        run: pnpm --filter @dock/db test:d1
+        run: pnpm --filter @derive/db test:d1
 
   # Coverage gates (ratchet floors; see each package's vitest.config.ts): the API
-  # suite, the data layer (@dock/db), the shared domain logic (@dock/core), the blob
-  # stores (@dock/storage), the MCP client, and the web app's pure logic (@dock/web;
+  # suite, the data layer (@derive/db), the shared domain logic (@derive/core), the blob
+  # stores (@derive/storage), the MCP client, and the web app's pure logic (@derive/web;
   # its user flows are covered separately by the Playwright e2e suite).
   coverage:
     runs-on: ubicloud-standard-2
@@ -88,17 +88,17 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - name: API coverage
-        run: pnpm --filter @dock/api test:coverage
+        run: pnpm --filter @derive/api test:coverage
       - name: DB coverage
-        run: pnpm --filter @dock/db test:coverage
+        run: pnpm --filter @derive/db test:coverage
       - name: Core coverage
-        run: pnpm --filter @dock/core test:coverage
+        run: pnpm --filter @derive/core test:coverage
       - name: Storage coverage
-        run: pnpm --filter @dock/storage test:coverage
+        run: pnpm --filter @derive/storage test:coverage
       - name: MCP coverage
-        run: pnpm --filter @dock/mcp test:coverage
+        run: pnpm --filter @derive/mcp test:coverage
       - name: Web coverage
-        run: pnpm --filter @dock/web test:coverage
+        run: pnpm --filter @derive/web test:coverage
 
   # Bundle budget: build the web client and fail if the gzipped JS blows past the
   # budget (see scripts/check-bundle.mjs), so phosphor / radix / cmdk weight can't
@@ -114,7 +114,7 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - name: Build web client
-        run: pnpm --filter @dock/web build
+        run: pnpm --filter @derive/web build
       - name: Bundle budget
         run: pnpm lint:bundle
 

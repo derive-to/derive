@@ -1,4 +1,4 @@
-import { type MetaStore, normalizeUsername } from "@dock/core"
+import { type MetaStore, normalizeUsername } from "@derive/core"
 
 /**
  * Resolve a sharing/invite target that may be typed as either an email or a

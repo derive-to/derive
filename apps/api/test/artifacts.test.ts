@@ -1,6 +1,6 @@
 import { join } from "node:path"
-import { SqliteMetaStore } from "@dock/db/sqlite"
-import { FsBlobStore } from "@dock/storage/fs"
+import { SqliteMetaStore } from "@derive/db/sqlite"
+import { FsBlobStore } from "@derive/storage/fs"
 import { zipSync } from "fflate"
 import { describe, expect, it } from "vitest"
 import { createApp } from "../src/app"
@@ -57,7 +57,7 @@ describe("version sessions", () => {
     const app2 = ownerApp({
       meta: m2,
       blobs: new FsBlobStore(join(dir, "blobs")),
-      baseUrl: "http://dock.test",
+      baseUrl: "http://derive.test",
       versionWindowMs: -1,
     })
     const mk = (c: string, id?: string) => {
@@ -129,7 +129,7 @@ describe("publish html file", () => {
     expect(res.status).toBe(201)
     const json = await res.json()
     shortId = json.short_id
-    expect(json.url).toBe(`http://dock.test/a/q1-review-${shortId}`)
+    expect(json.url).toBe(`http://derive.test/a/q1-review-${shortId}`)
     expect(json.kind).toBe("file")
     expect(json.current_version).toBe(1)
   })
@@ -241,7 +241,7 @@ describe("api surface", () => {
     const v2 = await (await upload("ren.md", "v2", { title: "Renamed" }, short_id)).json()
     expect(v2.title).toBe("Renamed")
     expect(v2.current_version).toBe(2)
-    // A republish without a title (e.g. a plain CLI `dock publish --id`) leaves it.
+    // A republish without a title (e.g. a plain CLI `derive publish --id`) leaves it.
     const v3 = await (await upload("ren.md", "v3", {}, short_id)).json()
     expect(v3.title).toBe("Renamed")
     // The short_id never changes, so every old link still resolves after a rename.
@@ -255,7 +255,7 @@ describe("api surface", () => {
 
     const cur = await app.request(`/v1/artifacts/${short_id}/content`)
     expect(cur.status).toBe(200)
-    expect(cur.headers.get("x-dock-version")).toBe("2")
+    expect(cur.headers.get("x-derive-version")).toBe("2")
     expect(await cur.text()).toBe("# two")
 
     const v1 = await app.request(`/v1/artifacts/${short_id}/content?v=1`)
@@ -266,7 +266,7 @@ describe("api surface", () => {
     const zip = zipSync({ "index.html": new TextEncoder().encode("<h1>Entry</h1>") })
     const { short_id } = await (await upload("site.zip", zip)).json()
     const content = await app.request(`/v1/artifacts/${short_id}/content`)
-    expect(content.headers.get("x-dock-kind")).toBe("bundle")
+    expect(content.headers.get("x-derive-kind")).toBe("bundle")
     expect(await content.text()).toBe("<h1>Entry</h1>")
   })
 
@@ -277,8 +277,8 @@ describe("api surface", () => {
 
     const txt = await app.request(`/v1/artifacts/${short_id}/diff`)
     expect(txt.status).toBe(200)
-    expect(txt.headers.get("x-dock-from")).toBe("1")
-    expect(txt.headers.get("x-dock-to")).toBe("2")
+    expect(txt.headers.get("x-derive-from")).toBe("1")
+    expect(txt.headers.get("x-derive-to")).toBe("2")
     const body = await txt.text()
     expect(body).toContain("  # title")
     expect(body).toContain("- alpha")
@@ -359,7 +359,7 @@ describe("single-container web serving", () => {
     const webApp = createApp({
       meta,
       blobs: new FsBlobStore(join(dir, "blobs")),
-      baseUrl: "http://dock.test",
+      baseUrl: "http://derive.test",
       serveWeb: true,
     })
     // No placeholder here; the Node entry's static + index.html fallback (added

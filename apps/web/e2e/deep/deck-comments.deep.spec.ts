@@ -10,7 +10,7 @@ import { expect, test } from "../fixtures"
 // resolver through crafted anchors and assert the badge.
 
 // A protocol-speaking deck. All slides live in the DOM (inactive ones display:none),
-// so the resolver can find text on any slide; `data-dock-slide` is the stable index.
+// so the resolver can find text on any slide; `data-derive-slide` is the stable index.
 const deckHtml = (slides: string[]) => `<!doctype html>
 <html><head><meta charset="utf-8"><title>Deck</title>
 <style>
@@ -20,14 +20,14 @@ const deckHtml = (slides: string[]) => `<!doctype html>
 </style></head>
 <body>
 <main class="deck">
-${slides.map((s, i) => `  <section class="slide${i === 0 ? " on" : ""}" data-dock-slide="${i}"><h2>Slide ${i + 1}</h2><p>${s}</p></section>`).join("\n")}
+${slides.map((s, i) => `  <section class="slide${i === 0 ? " on" : ""}" data-derive-slide="${i}"><h2>Slide ${i + 1}</h2><p>${s}</p></section>`).join("\n")}
 </main>
 <script>
 (function(){
   var slides=[].slice.call(document.querySelectorAll('.slide')),i=0;
-  function report(){try{parent.postMessage({source:'dock-deck',type:'state',i:i,total:slides.length},'*')}catch(e){}}
+  function report(){try{parent.postMessage({source:'derive-deck',type:'state',i:i,total:slides.length},'*')}catch(e){}}
   function show(n){i=Math.max(0,Math.min(slides.length-1,n));slides.forEach(function(s,k){s.classList.toggle('on',k===i)});report()}
-  window.addEventListener('message',function(e){var d=e.data;if(!d||d.source!=='dock-host'||d.type!=='deck')return;
+  window.addEventListener('message',function(e){var d=e.data;if(!d||d.source!=='derive-host'||d.type!=='deck')return;
     if(d.action==='next')show(i+1);else if(d.action==='prev')show(i-1);else if(d.action==='goto')show(typeof d.n==='number'?d.n:0)});
   show(0);report();
 })();
@@ -168,7 +168,7 @@ test.describe("deck comments — slide-scoped anchoring", () => {
     await expect(owner.getByTestId(`comment-moved-${id}`)).toBeVisible()
   })
 
-  test("plain .slide decks (no data-dock-slide) resolve by document order", async ({ owner }) => {
+  test("plain .slide decks (no data-derive-slide) resolve by document order", async ({ owner }) => {
     // Fallback path: a deck that uses only `.slide`, no explicit index attribute.
     const html = `<!doctype html><html><head><meta charset="utf-8"><title>D</title>
 <style>.slide{display:none}.slide.on{display:block}</style></head><body><main>
@@ -176,9 +176,9 @@ test.describe("deck comments — slide-scoped anchoring", () => {
 <section class="slide"><p>Two beta unique.</p></section>
 <section class="slide"><p>Three gamma.</p></section>
 </main><script>(function(){var s=[].slice.call(document.querySelectorAll('.slide')),i=0;
-function r(){try{parent.postMessage({source:'dock-deck',type:'state',i:i,total:s.length},'*')}catch(e){}}
+function r(){try{parent.postMessage({source:'derive-deck',type:'state',i:i,total:s.length},'*')}catch(e){}}
 function show(n){i=Math.max(0,Math.min(s.length-1,n));s.forEach(function(x,k){x.classList.toggle('on',k===i)});r()}
-window.addEventListener('message',function(e){var d=e.data;if(!d||d.source!=='dock-host'||d.type!=='deck')return;
+window.addEventListener('message',function(e){var d=e.data;if(!d||d.source!=='derive-host'||d.type!=='deck')return;
 if(d.action==='next')show(i+1);else if(d.action==='prev')show(i-1);else if(d.action==='goto')show(d.n)});show(0);r()})();</script></body></html>`
     const shortId = await publishDeck(owner, html)
     const id = await anchorComment(owner, shortId, "doc-order", "Two beta unique", 1)

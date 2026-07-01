@@ -16,10 +16,10 @@ describe("serve-time HTML auto-reflow", () => {
     const body = await raw(await publish("report.html", html))
     expect(body).toContain('name="viewport"')
     expect(body).toContain("width=device-width")
-    expect(body).toContain("data-dock-reflow")
+    expect(body).toContain("data-derive-reflow")
     // Original content is preserved; the anchor client is still appended.
     expect(body).toContain("wide")
-    expect(body).toContain("dock-client.js")
+    expect(body).toContain("derive-client.js")
   })
 
   it("leaves an already-responsive page alone (no reflow injected)", async () => {
@@ -27,7 +27,7 @@ describe("serve-time HTML auto-reflow", () => {
       '<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1">' +
       "<title>Responsive</title></head><body>hi</body></html>"
     const body = await raw(await publish("responsive.html", html))
-    expect(body).not.toContain("data-dock-reflow")
+    expect(body).not.toContain("data-derive-reflow")
     // Exactly the one viewport the author wrote — we didn't add a second.
     expect(body.match(/name="viewport"/g)).toHaveLength(1)
   })
@@ -36,7 +36,7 @@ describe("serve-time HTML auto-reflow", () => {
     const body = await raw(
       await publish("notes.md", "# Notes\n\nSome **text** and a list:\n\n- a\n- b\n"),
     )
-    expect(body).not.toContain("data-dock-reflow")
+    expect(body).not.toContain("data-derive-reflow")
     expect(body.match(/name="viewport"/g)).toHaveLength(1)
     expect(body).toContain("<h1") // it really did render markdown
   })
@@ -54,7 +54,7 @@ describe("serve-time Reader view (?reader=1)", () => {
       "<p>readable body text</p></div></body></html>"
     const id = await publish("spec.html", html)
     const body = await rawReader(id)
-    expect(body).toContain("width=device-width") // Dock responsive shell
+    expect(body).toContain("width=device-width") // Derive responsive shell
     expect(body).toContain("<main>")
     expect(body).toContain("Heading")
     expect(body).toContain("readable body text")

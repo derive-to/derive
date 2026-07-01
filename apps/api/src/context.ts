@@ -14,7 +14,7 @@ import {
   newId,
   type Role,
   roleAllows,
-} from "@dock/core"
+} from "@derive/core"
 import type { Context } from "hono"
 import { getCookie, setCookie } from "hono/cookie"
 import { createLocalJWKSet, type JWTPayload, jwtVerify } from "jose"
@@ -142,7 +142,7 @@ export interface AppDeps {
    */
   sandboxOrigin?: string
   /**
-   * Base domain for vanity subdomains (e.g. "dockd.app"). When set, a request to
+   * Base domain for vanity subdomains (e.g. "derived.app"). When set, a request to
    * `<label>.<base>` whose host is in the `domain` table serves that artifact at
    * the host root (domain mode). Unset = subdomain serving off.
    */
@@ -289,7 +289,7 @@ export function buildContext(deps: AppDeps) {
   }
 
   // Instance super-admins: the people who run + host the deployment. The static
-  // DOCK_TOKEN (automation) or any signed-in user whose email is in the operator
+  // DERIVE_TOKEN (automation) or any signed-in user whose email is in the operator
   // allow-list. Super-admins get global moderation (cross-workspace takedown +
   // the global reports/audit queue); a workspace Admin stays scoped to their own.
   const superAdminEmails = new Set((deps.superAdmins ?? []).map((e) => e.toLowerCase()))
@@ -306,9 +306,9 @@ export function buildContext(deps: AppDeps) {
   // The least-privilege role an OAuth-granted scope set maps to: publish/review
   // earn editor; propose/comment earn commenter; read alone is viewer.
   const roleFromScopes = (scopes: string[]): Role =>
-    scopes.includes("dock:publish") || scopes.includes("dock:review")
+    scopes.includes("derive:publish") || scopes.includes("derive:review")
       ? "editor"
-      : scopes.includes("dock:propose") || scopes.includes("dock:comment")
+      : scopes.includes("derive:propose") || scopes.includes("derive:comment")
         ? "commenter"
         : "viewer"
 
@@ -377,12 +377,12 @@ export function buildContext(deps: AppDeps) {
 
   // An OAuth access token (granted via the consent screen) acts as a scoped agent:
   // it runs in the granting user's workspace, authors as the client's name, and
-  // takes a role derived from the granted dock:* scopes. Expired/invalid tokens
+  // takes a role derived from the granted derive:* scopes. Expired/invalid tokens
   // resolve to nothing — the caller is then anonymous (read-only), never the owner.
   const oauthAgent = async (
     token: string,
   ): Promise<{ rec: AgentRecord; ownerId: string } | null> => {
-    // 1. Opaque access token (the `dock login` flow): stored hashed (sha256, like
+    // 1. Opaque access token (the `derive login` flow): stored hashed (sha256, like
     //    agent tokens), so resolve by the hash of the presented bearer.
     const grant = await meta.getOAuthGrant(sha256(token))
     if (grant) {
@@ -509,7 +509,7 @@ export function buildContext(deps: AppDeps) {
   }
 
   // The caller's active workspace for this request (memoized). Single mode: always
-  // the bootstrap org. Multi mode: the dock_ws cookie (validated against
+  // the bootstrap org. Multi mode: the derive_ws cookie (validated against
   // membership), else the user's first workspace, provisioning one if they have none.
   const wsCache = new WeakMap<Context, string>()
   const activeWorkspace = async (c: Context): Promise<string> => {

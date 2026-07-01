@@ -1,6 +1,6 @@
 # Working in this repo (humans and agents)
 
-Dock leans on a **deterministic gate** rather than on remembering conventions. The
+Derive leans on a **deterministic gate** rather than on remembering conventions. The
 rules that matter are machine-enforced, so a mistake fails the build instead of
 shipping. Before you call a change done:
 

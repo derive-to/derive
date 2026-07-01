@@ -1,4 +1,4 @@
-import type { Role, Visibility } from "@dock/core"
+import type { Role, Visibility } from "@derive/core"
 import type { Context } from "hono"
 import type { ContentfulStatusCode } from "hono/utils/http-status"
 import type { z } from "zod"
@@ -32,10 +32,10 @@ export const readJson = async <T>(c: Context, schema: z.ZodType<T>): Promise<T |
 
 export const DEFAULT_WORKSPACE_NAME = "My Workspace"
 /** Cookie holding the active workspace id (multi-workspace mode). */
-export const WS_COOKIE = "dock_ws"
+export const WS_COOKIE = "derive_ws"
 /** Long-lived cookie that gives an anonymous browser one stable identity — used
  *  for unique-view counts and a stable presence name across opens. */
-export const VIEWER_COOKIE = "dock_vid"
+export const VIEWER_COOKIE = "derive_vid"
 
 // Friendly, anonymous presence handles — `helpful-kitty-95` style. An anonymous
 // viewer never picks their own name (no impersonation/spam); the server derives a

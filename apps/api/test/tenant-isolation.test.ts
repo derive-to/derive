@@ -20,7 +20,7 @@ const publish = async (app: App, who: TestUser): Promise<string> => {
 }
 const body = async <T>(res: Response): Promise<T> => (await res.json()) as T
 
-describe.skipIf(process.env.DOCK_TEST_DB === "pg" && !process.env.TEST_DATABASE_URL)(
+describe.skipIf(process.env.DERIVE_TEST_DB === "pg" && !process.env.TEST_DATABASE_URL)(
   "tenant isolation (multi-workspace)",
   () => {
     test("cannot fold another workspace's artifact into your collection", async () => {

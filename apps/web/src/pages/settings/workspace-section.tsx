@@ -297,7 +297,7 @@ export function WorkspaceSection({ meId }: { meId: string }) {
                 autoCapitalize="none"
                 autoCorrect="off"
                 autoComplete="off"
-                aria-label="Username or email of a Dock user"
+                aria-label="Username or email of a Derive user"
                 placeholder="@username or email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}

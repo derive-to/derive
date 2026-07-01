@@ -31,11 +31,11 @@ describe("reflowHtml", () => {
     )
     expect(out).toContain('name="viewport"')
     expect(out).toContain("width=device-width")
-    expect(out).toContain("data-dock-vp") // marker the fit-to-width script targets
-    expect(out).toContain("data-dock-reflow")
+    expect(out).toContain("data-derive-vp") // marker the fit-to-width script targets
+    expect(out).toContain("data-derive-reflow")
     expect(out).toContain("scrollWidth") // the fit-to-width safeguard ships inline
     // Injected immediately after the opening <head>, before the author's <title>.
-    expect(out.indexOf("data-dock-reflow")).toBeLessThan(out.indexOf("<title>"))
+    expect(out.indexOf("data-derive-reflow")).toBeLessThan(out.indexOf("<title>"))
   })
 
   it("leaves an already-responsive document byte-for-byte unchanged", () => {

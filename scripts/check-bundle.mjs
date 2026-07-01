@@ -10,7 +10,7 @@
 // reports the lazy/aggregate weight for visibility without failing on it (a CDN
 // serves the client with multi-MB of room; the point is catching an ACCIDENT, a
 // fat dep landing EAGERLY, not policing on-demand features). Run
-// `pnpm --filter @dock/web build` first; it emits the manifest this reads.
+// `pnpm --filter @derive/web build` first; it emits the manifest this reads.
 import { readdirSync, readFileSync } from "node:fs"
 import { join } from "node:path"
 import { gzipSync } from "node:zlib"
@@ -34,7 +34,7 @@ try {
 } catch {
   console.error(
     `bundle: no client manifest at ${MANIFEST}\n` +
-      "  Run `pnpm --filter @dock/web build` first (needs build.manifest in vite.config).",
+      "  Run `pnpm --filter @derive/web build` first (needs build.manifest in vite.config).",
   )
   process.exit(1)
 }
@@ -57,7 +57,7 @@ try {
   files = readdirSync(ASSETS).filter((f) => f.endsWith(".js"))
 } catch {
   console.error(
-    `bundle: no client build at ${ASSETS}\n  Run \`pnpm --filter @dock/web build\` first.`,
+    `bundle: no client build at ${ASSETS}\n  Run \`pnpm --filter @derive/web build\` first.`,
   )
   process.exit(1)
 }

@@ -18,15 +18,16 @@
 //      fluid page reflows to device-width and a fixed page shrinks cleanly to fit; either
 //      way there's no sideways scroll, and a genuinely responsive page is never touched.
 
-const VIEWPORT = '<meta name="viewport" content="width=device-width, initial-scale=1" data-dock-vp>'
+const VIEWPORT =
+  '<meta name="viewport" content="width=device-width, initial-scale=1" data-derive-vp>'
 
 // Runs in the sandboxed artifact frame (inline script is allowed under the `sandbox
-// allow-scripts` CSP). It only ever touches OUR viewport meta (data-dock-vp), so an
+// allow-scripts` CSP). It only ever touches OUR viewport meta (data-derive-vp), so an
 // author's own viewport is never affected — and we only inject this on pages that had
 // none. Resets to device-width, measures, and on real overflow switches the viewport to
 // the content width (classic shrink-to-fit). Re-runs on load (late images/fonts) + resize.
-const FIT_SCRIPT = `<script data-dock-reflow>
-(function(){var m=document.querySelector('meta[data-dock-vp]');if(!m)return;
+const FIT_SCRIPT = `<script data-derive-reflow>
+(function(){var m=document.querySelector('meta[data-derive-vp]');if(!m)return;
 var DW='width=device-width, initial-scale=1';
 function fit(){var d=document.documentElement,b=document.body,
 w=Math.max(d.scrollWidth,b?b.scrollWidth:0),s=screen.width||d.clientWidth||9999;
@@ -39,7 +40,7 @@ addEventListener('load',sc);addEventListener('resize',sc);})();
 // Reflow CSS. `!important` on the media caps so an author's fixed pixel width on an <img>
 // can't reintroduce horizontal overflow; tables become their own horizontal scroll region
 // instead of blowing out the page; <pre> wraps instead of running off-screen.
-const REFLOW_CSS = `<style data-dock-reflow>
+const REFLOW_CSS = `<style data-derive-reflow>
 img,video,canvas{max-width:100%!important;height:auto}
 svg,iframe,embed,object{max-width:100%!important}
 pre{white-space:pre-wrap;overflow-wrap:anywhere}
@@ -58,13 +59,13 @@ const hasViewportMeta = (html: string): boolean => /<meta[^>]+name=["']?viewport
 export const needsReflow = (html: string): boolean => !hasViewportMeta(html)
 
 // ---- Reader view ----------------------------------------------------------
-// "Reader" strips the authored layout entirely and re-renders the content in Dock's
+// "Reader" strips the authored layout entirely and re-renders the content in Derive's
 // responsive document shell — the universal answer for pages auto-reflow can't fix (hard
 // fixed-pixel layouts) and the one that also works inside the in-app iframe viewer, where
 // the viewport tag is ignored. Deliberately dependency-free (no Readability/DOM lib, so it
 // stays edge-safe): pull out the <body>, drop <head>/<script>/<style>, and sanitize — which
 // also removes inline style/class, so the author's fixed widths are gone and the content
-// flows into the clean column. Best for the doc/report artifacts Dock holds (no nav/ads to
+// flows into the clean column. Best for the doc/report artifacts Derive holds (no nav/ads to
 // strip); not a full article-extraction.
 
 const stripBlocks = (html: string): string =>
@@ -90,7 +91,7 @@ export const extractTitle = (html: string): string | null => {
 /**
  * Render an HTML document as a clean, responsive Reader view: extract its body content,
  * strip layout/head/scripts, sanitize (which removes inline styles + classes), and wrap it
- * in Dock's responsive shell. `render` is injected (renderDocShell) and `sanitize`
+ * in Derive's responsive shell. `render` is injected (renderDocShell) and `sanitize`
  * (sanitizeHtml) from the markdown module, so this stays a pure string transform that the
  * serve layer wires up.
  */

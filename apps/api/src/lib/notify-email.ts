@@ -10,7 +10,7 @@
 // The comment's author is never emailed about their own comment. Per-user opt-out is
 // applied by the caller's preference gate (added with the Settings UI).
 
-import type { ArtifactRecord, CommentRecord, MetaStore } from "@dock/core"
+import type { ArtifactRecord, CommentRecord, MetaStore } from "@derive/core"
 import { enqueueChannelDelivery } from "../webhooks"
 import { quoteOf } from "./comments"
 import { buildCommentEmail } from "./email"

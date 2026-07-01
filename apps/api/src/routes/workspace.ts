@@ -1,4 +1,4 @@
-import { newId, type Role } from "@dock/core"
+import { newId, type Role } from "@derive/core"
 import { Hono } from "hono"
 import { z } from "zod"
 import type { AppContext } from "../context"
@@ -75,7 +75,7 @@ export const workspaceRoutes = (ctx: AppContext) => {
     if (b instanceof Response) return b
     const id = await resolveUserRef(meta, (b.user ?? b.email) as string)
     const [user] = id ? await meta.getUsers([id]) : []
-    if (!user) return fail(c, 404, "no Dock user with that username or email")
+    if (!user) return fail(c, 404, "no Derive user with that username or email")
     const org = await activeWorkspace(c)
     // This route both adds and re-roles, so it must honor the same last-Admin
     // guard as PATCH — otherwise an Admin could demote the sole Admin via PUT.

@@ -8,7 +8,7 @@ import { createHmac, createPrivateKey, createSign, timingSafeEqual } from "node:
 import { GitHubError } from "./github"
 
 const API = "https://api.github.com"
-const UA = "dock-sync/1"
+const UA = "derive-sync/1"
 const API_VERSION = "2022-11-28"
 
 const b64url = (b: Buffer | string): string => Buffer.from(b).toString("base64url")

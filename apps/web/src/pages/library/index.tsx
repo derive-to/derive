@@ -35,7 +35,7 @@ import type { Filter } from "./types"
 
 // Remember the folder view preference across visits (off by default: a flat,
 // most-recently-updated list is the default for a synced collection).
-const FOLDERS_KEY = "dock:show-folders"
+const FOLDERS_KEY = "derive:show-folders"
 
 // Route component for "/". The persistent AppShell (mounted once around the
 // router Outlet) owns the rail/pod and the auth gate, so this just renders the
@@ -239,7 +239,7 @@ function LibraryBody() {
           ? `Nothing tagged #${filter.tag} yet.`
           : filter.kind === "collection"
             ? "This collection is empty. Open an artifact and add it from its Collections menu."
-            : "Nothing yet. Publish above, or run dock publish ./file."
+            : "Nothing yet. Publish above, or run derive publish ./file."
 
   // A personal header on the (otherwise bare) home view: lead with the user's
   // first name, falling back to their handle. Only on the unfiltered "all" list,
@@ -316,13 +316,13 @@ function LibraryBody() {
             <div>
               <h1 className="font-display text-2xl font-semibold text-foreground">
                 {totalCount === 0
-                  ? `Welcome to Dock, ${firstName}.`
+                  ? `Welcome to Derive, ${firstName}.`
                   : `Welcome back, ${firstName}.`}
               </h1>
               <p className="mt-0.5 text-sm text-muted-foreground">
                 Your artifacts live here. Publish one below, or run{" "}
                 <code className="rounded bg-muted px-1.5 py-px font-mono text-[0.86em]">
-                  dock publish
+                  derive publish
                 </code>
                 .
               </p>

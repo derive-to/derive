@@ -13,10 +13,10 @@ import {
 // Authorship must key on the stable actor id, never the mutable display name:
 // renaming your profile to a victim's name must not grant edit/delete/withdraw.
 describe("authorship is keyed on id, not display name", () => {
-  const owner: TestUser = { id: "u_own", email: "own@dock.test", name: "Owner" }
-  const sam1: TestUser = { id: "u_sam1", email: "sam1@dock.test", name: "Sam" }
+  const owner: TestUser = { id: "u_own", email: "own@derive.test", name: "Owner" }
+  const sam1: TestUser = { id: "u_sam1", email: "sam1@derive.test", name: "Sam" }
   // Same display name as sam1, different id — the impersonation attempt.
-  const sam2: TestUser = { id: "u_sam2", email: "sam2@dock.test", name: "Sam" }
+  const sam2: TestUser = { id: "u_sam2", email: "sam2@derive.test", name: "Sam" }
   const { app: authed } = makeAuthedApp("id-authz", [owner, sam1, sam2], "editor")
   let shortId: string
   let commentId: string

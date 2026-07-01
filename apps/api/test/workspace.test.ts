@@ -1,14 +1,14 @@
 import { join } from "node:path"
-import { SqliteMetaStore } from "@dock/db/sqlite"
-import { FsBlobStore } from "@dock/storage/fs"
+import { SqliteMetaStore } from "@derive/db/sqlite"
+import { FsBlobStore } from "@derive/storage/fs"
 import { describe, expect, it } from "vitest"
 import { createApp } from "../src/app"
 import { as, bearer, dir, jsonAs, makeAuthedApp, publishAs, type TestUser } from "./helpers"
 
 describe("workspace: name + members (Admin / Creator / Viewer)", () => {
-  const admin: TestUser = { id: "u_ws_admin", email: "wsadmin@dock.test", name: "Ada" }
-  const creator: TestUser = { id: "u_ws_creator", email: "wscreator@dock.test", name: "Cara" }
-  const viewer: TestUser = { id: "u_ws_viewer", email: "wsviewer@dock.test", name: "Vic" }
+  const admin: TestUser = { id: "u_ws_admin", email: "wsadmin@derive.test", name: "Ada" }
+  const creator: TestUser = { id: "u_ws_creator", email: "wscreator@derive.test", name: "Cara" }
+  const viewer: TestUser = { id: "u_ws_viewer", email: "wsviewer@derive.test", name: "Vic" }
   const { app } = makeAuthedApp("workspace", [admin, creator, viewer], "commenter")
 
   const ws = async (headers: Record<string, string>) =>
@@ -55,7 +55,7 @@ describe("workspace: name + members (Admin / Creator / Viewer)", () => {
 
   it("rejects an unknown email and an invalid role", async () => {
     expect(
-      (await putMember(as(admin.email), { email: "ghost@dock.test", role: "editor" })).status,
+      (await putMember(as(admin.email), { email: "ghost@derive.test", role: "editor" })).status,
     ).toBe(404)
     expect(
       (await putMember(as(admin.email), { email: creator.email, role: "wizard" })).status,
@@ -86,8 +86,8 @@ describe("workspace: name + members (Admin / Creator / Viewer)", () => {
 })
 
 describe("workspace: edge conditions", () => {
-  const admin: TestUser = { id: "u_we_admin", email: "weadmin@dock.test", name: "Ed" }
-  const other: TestUser = { id: "u_we_other", email: "weother@dock.test", name: "Otto" }
+  const admin: TestUser = { id: "u_we_admin", email: "weadmin@derive.test", name: "Ed" }
+  const other: TestUser = { id: "u_we_other", email: "weother@derive.test", name: "Otto" }
   const { app } = makeAuthedApp("ws-edge", [admin, other], "commenter")
 
   const putMember = (headers: Record<string, string>, body: unknown) =>
@@ -162,7 +162,7 @@ describe("workspace: anonymous lockout + token mode", () => {
     const noTokenApp = createApp({
       meta: new SqliteMetaStore(join(dir, "ws-open.db")),
       blobs: new FsBlobStore(join(dir, "blobs")),
-      baseUrl: "http://dock.test",
+      baseUrl: "http://derive.test",
     })
     // No open-mode owner elevation: an anonymous caller can't rename the workspace.
     const renamed = await noTokenApp.request("/v1/workspace", {
@@ -174,7 +174,7 @@ describe("workspace: anonymous lockout + token mode", () => {
   })
 
   it("a static token acts as Admin", async () => {
-    const admin: TestUser = { id: "u_tok_admin", email: "tokadmin@dock.test", name: "Toki" }
+    const admin: TestUser = { id: "u_tok_admin", email: "tokadmin@derive.test", name: "Toki" }
     const { app: tokApp } = makeAuthedApp("ws-token", [admin], "commenter")
     const r = await tokApp.request("/v1/workspace", {
       method: "PATCH",
@@ -187,14 +187,14 @@ describe("workspace: anonymous lockout + token mode", () => {
 })
 
 describe("multi-workspace: isolation, switch, create, provision", () => {
-  const ada: TestUser = { id: "u_mw_ada", email: "mwada@dock.test", name: "Ada" }
-  const bo: TestUser = { id: "u_mw_bo", email: "mwbo@dock.test", name: "Bo" }
+  const ada: TestUser = { id: "u_mw_ada", email: "mwada@derive.test", name: "Ada" }
+  const bo: TestUser = { id: "u_mw_bo", email: "mwbo@derive.test", name: "Bo" }
   const { app } = makeAuthedApp("multiws", [ada, bo], "commenter", { isolated: true })
 
-  // Pull the dock_ws cookie out of a Set-Cookie header to thread it on later calls.
+  // Pull the derive_ws cookie out of a Set-Cookie header to thread it on later calls.
   const wsCookie = (res: Response): string => {
-    const m = (res.headers.get("set-cookie") ?? "").match(/dock_ws=([^;]+)/)
-    return m ? `dock_ws=${m[1]}` : ""
+    const m = (res.headers.get("set-cookie") ?? "").match(/derive_ws=([^;]+)/)
+    return m ? `derive_ws=${m[1]}` : ""
   }
   const withCookie = (email: string, cookie: string) => ({ ...as(email), cookie })
 
@@ -257,7 +257,7 @@ describe("multi-workspace: isolation, switch, create, provision", () => {
 // only mode; create + switch are always available, /me reports multi:true.)
 
 describe("workspace: delete (guarded)", () => {
-  const me: TestUser = { id: "u_wsdel", email: "wsdel@dock.test", name: "Del" }
+  const me: TestUser = { id: "u_wsdel", email: "wsdel@derive.test", name: "Del" }
   const { app } = makeAuthedApp("ws-del", [me], undefined, { isolated: true })
   const H = as(me.email)
   const del = (id: string) => app.request(`/v1/workspaces/${id}`, { method: "DELETE", headers: H })

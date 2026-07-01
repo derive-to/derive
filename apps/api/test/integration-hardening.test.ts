@@ -1,14 +1,14 @@
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { type DeliveryRecord, newId } from "@dock/core"
-import { SqliteMetaStore } from "@dock/db/sqlite"
+import { type DeliveryRecord, newId } from "@derive/core"
+import { SqliteMetaStore } from "@derive/db/sqlite"
 import { afterAll, describe, expect, it } from "vitest"
 import { buildMime } from "../src/email-cf"
 import { isCollaboratorAuthor } from "../src/lib/comments"
 import { type ChannelSendResult, enqueueChannelDelivery, runDeliveryTick } from "../src/webhooks"
 
-const dir = mkdtempSync(join(tmpdir(), "dock-harden-"))
+const dir = mkdtempSync(join(tmpdir(), "derive-harden-"))
 afterAll(() => rmSync(dir, { recursive: true, force: true }))
 
 describe("collaborator-author gate (external fan-out)", () => {
@@ -87,7 +87,7 @@ describe("permanent-failure dead-lettering", () => {
 describe("email header-injection defense", () => {
   it("strips CR/LF from header values so an author/title can't inject headers", () => {
     const mime = buildMime(
-      "Dock <notifications@dock.build>",
+      "Derive <notifications@derive.to>",
       {
         to: "victim@x.com\r\nBcc: attacker@evil.com",
         subject: "hi\r\nBcc: attacker@evil.com",

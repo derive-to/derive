@@ -1,4 +1,4 @@
-import type { CommentRecord } from "@dock/core"
+import type { CommentRecord } from "@derive/core"
 import { describe, expect, it } from "vitest"
 import {
   commentJson,

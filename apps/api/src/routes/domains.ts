@@ -1,4 +1,4 @@
-import type { ArtifactRecord, DomainRecord } from "@dock/core"
+import type { ArtifactRecord, DomainRecord } from "@derive/core"
 import { Hono } from "hono"
 import { z } from "zod"
 import type { AppContext } from "../context"
@@ -30,7 +30,7 @@ const LABEL = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/
 const refOf = (a: ArtifactRecord): string => (a.slug ? `${a.slug}-${a.short_id}` : a.short_id)
 
 /**
- * Per-artifact vanity subdomains (`<label>.<base>`, needs DOCK_SUBDOMAIN_BASE): claim,
+ * Per-artifact vanity subdomains (`<label>.<base>`, needs DERIVE_SUBDOMAIN_BASE): claim,
  * list, release; gated on `share`. Workspace custom domains are managed separately
  * (workspace-domains.ts) but surfaced here read-only as "also at <domain>/<ref>", so
  * the share dialog shows every URL an artifact is reachable at. Serving is in app.ts.

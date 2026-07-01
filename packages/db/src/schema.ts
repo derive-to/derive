@@ -16,7 +16,7 @@ import type {
   Role,
   Visibility,
   WebhookKind,
-} from "@dock/core"
+} from "@derive/core"
 import { sql } from "drizzle-orm"
 import { getTableConfig, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core"
 import { generateDdl, PERF_INDEXES, placeholderTables } from "./ddl"
@@ -56,12 +56,12 @@ export const artifact = sqliteTable("artifact", {
   // view + author filtering. For a GitHub-synced artifact these mirror the last commit's
   // author: `author_name`/`author_login`/`author_avatar` are the display name, GitHub
   // login, and avatar URL; `author_gh_id` is the GitHub numeric user id (text) used to
-  // map back to a Dock account. All nullable (legacy/anonymous/non-synced rows).
+  // map back to a Derive account. All nullable (legacy/anonymous/non-synced rows).
   author_name: text("author_name"),
   author_login: text("author_login"),
   author_avatar: text("author_avatar"),
   author_gh_id: text("author_gh_id"),
-  // The Dock user who last published this by hand (the signed-in publisher). Null for
+  // The Derive user who last published this by hand (the signed-in publisher). Null for
   // GitHub-synced versions (attributed via author_gh_id), static-token, and legacy rows.
   // Drives the profile work-list + people-follow. Nullable so it ALTER ADDs cleanly.
   author_id: text("author_id"),
@@ -86,7 +86,7 @@ export const version = sqliteTable(
     author_login: text("author_login"),
     author_avatar: text("author_avatar"),
     author_gh_id: text("author_gh_id"),
-    // The Dock user who published this version by hand; null for sync/anon/legacy.
+    // The Derive user who published this version by hand; null for sync/anon/legacy.
     author_id: text("author_id"),
     message: text("message"),
     name: text("name"),
@@ -348,7 +348,7 @@ export const orgSettings = sqliteTable("org_settings", {
   created_at: text("created_at").notNull().default(now),
 })
 
-// A connected Slack workspace (one row per Dock org). `bot_token` AES-encrypted at rest.
+// A connected Slack workspace (one row per Derive org). `bot_token` AES-encrypted at rest.
 export const slackInstall = sqliteTable("slack_install", {
   org_id: text("org_id").primaryKey(),
   team_id: text("team_id").notNull(),
@@ -359,7 +359,7 @@ export const slackInstall = sqliteTable("slack_install", {
   created_at: text("created_at").notNull().default(now),
 })
 
-// Dock comment thread ↔ the Slack message Dock posted for it (for two-way threading).
+// Derive comment thread ↔ the Slack message Derive posted for it (for two-way threading).
 export const slackThreadLink = sqliteTable(
   "slack_thread_link",
   {
@@ -389,7 +389,7 @@ export const githubApp = sqliteTable("github_app", {
 })
 
 // A GitHub App installation a workspace connected — the binding between a GitHub
-// account's selected repos and a Dock workspace. One installation backs many
+// account's selected repos and a Derive workspace. One installation backs many
 // repo_source rows; sync mints installation tokens against installation_id.
 export const githubInstallation = sqliteTable("github_installation", {
   installation_id: text("installation_id").primaryKey(),
@@ -401,7 +401,7 @@ export const githubInstallation = sqliteTable("github_installation", {
 
 // Domain mode: a hostname that serves an artifact at the root of its own origin.
 // `host` is globally unique (one host → one artifact); `kind` separates a platform
-// subdomain (name.dockd.app) from a customer's own domain.
+// subdomain (name.derived.app) from a customer's own domain.
 export const domain = sqliteTable("domain", {
   host: text("host").primaryKey(),
   // Set when the host serves one artifact at its root (subdomain / per-artifact
@@ -534,4 +534,4 @@ export const MIGRATION_STATEMENTS: string[] = ddl.alters
 
 // Schema parity is enforced in repos.ts, where the shared `schema` object lives:
 // `Exhaustive`/`Shapes` (./parity) force every table to be classified and every
-// typed table's row shape to match its @dock/core Record. See ./parity.
+// typed table's row shape to match its @derive/core Record. See ./parity.

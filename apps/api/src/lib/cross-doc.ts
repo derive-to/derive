@@ -1,5 +1,5 @@
-import type { ArtifactRecord, MetaStore } from "@dock/core"
-import { collectSiblingPaths, rewriteCrossDocLinks } from "@dock/core"
+import type { ArtifactRecord, MetaStore } from "@derive/core"
+import { collectSiblingPaths, rewriteCrossDocLinks } from "@derive/core"
 
 /**
  * The serve-time HTML transform that turns a GitHub-synced artifact's relative

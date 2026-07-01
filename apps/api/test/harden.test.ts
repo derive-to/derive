@@ -6,8 +6,8 @@ import { as, jsonAs, makeAuthedApp, publishAs, type TestUser } from "./helpers"
 // content they're entitled to (public artifacts) — never an org/link title, a member
 // roster, an email, or a workspace's name + size. See bug-hunt B-001/003/004/012/013/015.
 describe("read-path exposure hardening", () => {
-  const owner: TestUser = { id: "u_h_owner", email: "owner-h@dock.test", name: "Owner H" }
-  const outsider: TestUser = { id: "u_h_out", email: "out-h@dock.test", name: "Out H" }
+  const owner: TestUser = { id: "u_h_owner", email: "owner-h@derive.test", name: "Owner H" }
+  const outsider: TestUser = { id: "u_h_out", email: "out-h@derive.test", name: "Out H" }
 
   it("B-001: listArtifacts(publicOnly) hides org/link titles; a member still sees all", async () => {
     const { app, meta: m } = makeAuthedApp("harden-list", [owner])
@@ -90,10 +90,10 @@ describe("read-path exposure hardening", () => {
 // user could push an attacker-controlled title/preview into ANY user's bell + SSE —
 // cross-workspace spam/phishing. See bug-hunt B-019.
 describe("B-019: @mention notifies only collaborators", () => {
-  const owner: TestUser = { id: "u_b19_owner", email: "o19@dock.test", name: "Owner19" }
-  const member: TestUser = { id: "u_b19_member", email: "m19@dock.test", name: "Member19" }
-  const sharee: TestUser = { id: "u_b19_sharee", email: "s19@dock.test", name: "Sharee19" }
-  const outsider: TestUser = { id: "u_b19_out", email: "x19@dock.test", name: "Out19" }
+  const owner: TestUser = { id: "u_b19_owner", email: "o19@derive.test", name: "Owner19" }
+  const member: TestUser = { id: "u_b19_member", email: "m19@derive.test", name: "Member19" }
+  const sharee: TestUser = { id: "u_b19_sharee", email: "s19@derive.test", name: "Sharee19" }
+  const outsider: TestUser = { id: "u_b19_out", email: "x19@derive.test", name: "Out19" }
 
   it("notifies a workspace member + an artifact sharee, but NEVER a non-member", async () => {
     const { app, meta: m } = makeAuthedApp(
@@ -149,7 +149,7 @@ describe("B-019: @mention notifies only collaborators", () => {
 // B-018: an explicitly-provided visibility that isn't a known value is rejected, not
 // silently coerced to `link` (URL-readable). Absent visibility still defaults to link.
 describe("B-018: publish rejects an unknown visibility", () => {
-  const owner: TestUser = { id: "u_b18_owner", email: "o18@dock.test", name: "Owner18" }
+  const owner: TestUser = { id: "u_b18_owner", email: "o18@derive.test", name: "Owner18" }
 
   it("400s on an unknown visibility; valid values store; absent defaults to link", async () => {
     const { app } = makeAuthedApp("harden-b18", [owner])
@@ -174,15 +174,15 @@ describe("B-018: publish rejects an unknown visibility", () => {
 // signed-in user, so the endpoint must additionally require a member/sharee — and
 // resolve viewers to a handle, never email. See bug-hunt B-020 (and B-013).
 describe("B-020: view-analytics is collaborator-gated + never leaks email", () => {
-  const owner: TestUser = { id: "u_b20_owner", email: "o20@dock.test", name: "Owner20" }
+  const owner: TestUser = { id: "u_b20_owner", email: "o20@derive.test", name: "Owner20" }
   // name:null forces the viewer-display fallback — it must land on the handle, not email.
   const viewer: TestUser = {
     id: "u_b20_viewer",
-    email: "v20@dock.test",
+    email: "v20@derive.test",
     name: null,
     username: "viewer20",
   }
-  const outsider: TestUser = { id: "u_b20_out", email: "x20@dock.test", name: "Out20" }
+  const outsider: TestUser = { id: "u_b20_out", email: "x20@derive.test", name: "Out20" }
 
   it("refuses a non-member; serves a member; viewers resolve to handle, never email", async () => {
     const { app, meta: m } = makeAuthedApp("harden-b20", [owner, viewer, outsider], undefined, {
@@ -216,7 +216,7 @@ describe("B-020: view-analytics is collaborator-gated + never leaks email", () =
     expect(ownerRes.status).toBe(200)
     const stats = await ownerRes.json()
     expect(stats.recent.map((r: { viewer: string }) => r.viewer)).toContain("viewer20")
-    expect(JSON.stringify(stats)).not.toContain("v20@dock.test")
+    expect(JSON.stringify(stats)).not.toContain("v20@derive.test")
   })
 })
 
@@ -228,7 +228,7 @@ describe("B-021: author/actor attribution falls back to handle, never email", ()
   // name:null forces the fallback — it must land on the username, not the email.
   const ghost: TestUser = {
     id: "u_b21",
-    email: "ghost21@dock.test",
+    email: "ghost21@derive.test",
     name: null,
     username: "ghost21",
   }
@@ -240,7 +240,7 @@ describe("B-021: author/actor attribution falls back to handle, never email", ()
     ).json()
     // The version author byline (shown publicly) is the handle, and the email is absent.
     expect(pub.versions[0].author).toBe("ghost21")
-    expect(JSON.stringify(pub)).not.toContain("ghost21@dock.test")
+    expect(JSON.stringify(pub)).not.toContain("ghost21@derive.test")
 
     const cm = await (
       await app.request(
@@ -249,6 +249,6 @@ describe("B-021: author/actor attribution falls back to handle, never email", ()
       )
     ).json()
     expect(cm.author).toBe("ghost21")
-    expect(JSON.stringify(cm)).not.toContain("ghost21@dock.test")
+    expect(JSON.stringify(cm)).not.toContain("ghost21@derive.test")
   })
 })

@@ -63,7 +63,7 @@ describe("renderMarkdown — document shell", () => {
     expect(html.startsWith("<!doctype html>")).toBe(true)
     expect(html).toContain("<main>")
     expect(html).toContain("<title>My Doc</title>")
-    expect(html).toContain("/raw/dock-client.js") // SELECTION_SCRIPT
+    expect(html).toContain("/raw/derive-client.js") // SELECTION_SCRIPT
   })
 
   it("defaults a null title to Document", async () => {

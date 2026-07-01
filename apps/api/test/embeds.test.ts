@@ -1,13 +1,13 @@
 import { join } from "node:path"
-import { newId } from "@dock/core"
-import { FsBlobStore } from "@dock/storage/fs"
+import { newId } from "@derive/core"
+import { FsBlobStore } from "@derive/storage/fs"
 import { describe, expect, it } from "vitest"
 import { createApp } from "../src/app"
 import { anonApp, app, dir, makeAuthedApp, meta, type TestUser, upload } from "./helpers"
 
 const idOf = async (res: Response): Promise<string> => (await res.json()).short_id
 const SHELL =
-  "<!doctype html><html><head><title>Dock</title></head><body><div id=root></div></body></html>"
+  "<!doctype html><html><head><title>Derive</title></head><body><div id=root></div></body></html>"
 
 describe("unfurl + embed", () => {
   it("serves the OG card as an SVG with the title for a public artifact", async () => {
@@ -25,14 +25,14 @@ describe("unfurl + embed", () => {
   it("oembed returns a rich response with a sandboxed iframe", async () => {
     const short = await idOf(await upload("o.md", "# Hi", { visibility: "public", title: "Deck" }))
     const res = await app.request(
-      `/v1/oembed?url=${encodeURIComponent(`http://dock.test/a/${short}`)}`,
+      `/v1/oembed?url=${encodeURIComponent(`http://derive.test/a/${short}`)}`,
     )
     expect(res.status).toBe(200)
     const body = await res.json()
     expect(body).toMatchObject({
       version: "1.0",
       type: "rich",
-      provider_name: "Dock",
+      provider_name: "Derive",
       title: "Deck",
     })
     expect(body.html).toContain("<iframe")
@@ -43,7 +43,7 @@ describe("unfurl + embed", () => {
   it("oembed rejects a non-artifact url and a missing url", async () => {
     expect((await app.request("/v1/oembed")).status).toBe(400)
     const bad = await app.request(
-      `/v1/oembed?url=${encodeURIComponent("http://dock.test/settings")}`,
+      `/v1/oembed?url=${encodeURIComponent("http://derive.test/settings")}`,
     )
     expect(bad.status).toBe(404)
   })
@@ -53,12 +53,12 @@ describe("unfurl + embed", () => {
       await upload("priv.md", "# secret", { visibility: "org", title: "Secret" }),
     )
     const res = await anonApp.request(
-      `/v1/oembed?url=${encodeURIComponent(`http://dock.test/a/${short}`)}`,
+      `/v1/oembed?url=${encodeURIComponent(`http://derive.test/a/${short}`)}`,
     )
     expect(res.status).toBe(404)
   })
 
-  it("renders the embeddable view with the artifact iframe and a view-on-Dock link", async () => {
+  it("renders the embeddable view with the artifact iframe and a view-on-Derive link", async () => {
     const short = await idOf(
       await upload("e.md", "# Hi", { visibility: "public", title: "Embed Me" }),
     )
@@ -69,7 +69,7 @@ describe("unfurl + embed", () => {
     expect(res.headers.get("content-security-policy")).toContain("frame-ancestors *")
     const html = await res.text()
     expect(html).toContain("<iframe")
-    expect(html).toContain("View on Dock")
+    expect(html).toContain("View on Derive")
     expect(html).toContain("Embed Me")
     expect(html).toContain(`/raw/${short}/v/`)
   })
@@ -87,7 +87,7 @@ describe("unfurl + embed", () => {
     const a = createApp({
       meta,
       blobs: new FsBlobStore(join(dir, "blobs-embed-shell")),
-      baseUrl: "http://dock.test",
+      baseUrl: "http://derive.test",
       token: "tok",
       shell: SHELL,
     })
@@ -113,7 +113,7 @@ describe("unfurl + embed", () => {
     const a = createApp({
       meta,
       blobs: new FsBlobStore(join(dir, "blobs-embed-shellfetch")),
-      baseUrl: "http://dock.test",
+      baseUrl: "http://derive.test",
       token: "tok",
       // No sync `shell`: only the async provider, as the Worker wires it.
       shellFetch: async () => SHELL,
@@ -137,7 +137,7 @@ describe("unfurl + embed", () => {
     const a = createApp({
       meta,
       blobs: new FsBlobStore(join(dir, "blobs-embed-shell2")),
-      baseUrl: "http://dock.test",
+      baseUrl: "http://derive.test",
       token: "tok",
       shell: SHELL,
     })
@@ -199,7 +199,7 @@ describe("profile unfurl (/u/:handle)", () => {
     const a = createApp({
       meta: m,
       blobs: new FsBlobStore(join(dir, "blobs-og-profile-shell")),
-      baseUrl: "http://dock.test",
+      baseUrl: "http://derive.test",
       token: "tok",
       auth: undefined,
       shell: SHELL,
@@ -220,7 +220,7 @@ describe("profile unfurl (/u/:handle)", () => {
     const a = createApp({
       meta,
       blobs: new FsBlobStore(join(dir, "blobs-og-profile-ghost")),
-      baseUrl: "http://dock.test",
+      baseUrl: "http://derive.test",
       token: "tok",
       shell: SHELL,
     })

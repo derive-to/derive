@@ -1,6 +1,6 @@
-# Dock: the collaboration layer
+# Derive: the collaboration layer
 
-Dock is where a team of humans and AI work together on a shared artifact. Sharing
+Derive is where a team of humans and AI work together on a shared artifact. Sharing
 is the foundation. Collaboration is what we build on top of it.
 
 The frame for everything below: **the artifact is the meeting point.** Sharing got
@@ -26,7 +26,7 @@ the one axis that matters most (feedback surviving a revision) it is already goo
   (`exact` plus `prefix`/`suffix` context) and re-anchor on every republish: exact
   match with context first, then exact anywhere, else marked "text changed." A real
   three-tier rehydration strategy, not a brittle character offset.
-- **The anchor-client protocol.** A served (not inlined) `/raw/dock-client.js`
+- **The anchor-client protocol.** A served (not inlined) `/raw/derive-client.js`
   talks to the sandboxed iframe over `postMessage` (`select`, `anchors-resolved`,
   `anchor-click`). The comment layer evolves independently of frozen artifact
   bytes, so portability is already solved. See [STANDARD.md](../../STANDARD.md).
@@ -36,7 +36,7 @@ the one axis that matters most (feedback surviving a revision) it is already goo
 
 ## The thesis
 
-Most "share a doc" tools stop at read-only. Dock's bet is that the shared artifact
+Most "share a doc" tools stop at read-only. Derive's bet is that the shared artifact
 becomes a workspace the moment feedback lands **on** it, anchored to a specific
 spot, from any participant: a teammate, a reviewer, or an agent. AI is a
 participant in that conversation, not just the thing that generated the page.
@@ -56,14 +56,14 @@ extends what a participant can do on the shared object:
   rehydration stay exactly as they are. The layered-anchoring plan wraps more
   fallback locators around that proven core and extends it to non-text elements; it
   does not replace `TextQuoteSelector`.
-- **Not repositioning Dock.** This is depth on the existing share flow, not a new
+- **Not repositioning Derive.** This is depth on the existing share flow, not a new
   product. Sharing stays the front door.
 - **Not baking chrome into artifacts.** See the principle below.
 
 ## The principle that holds it together
 
 Comments and chrome are an **overlay, served separately, never baked into the
-artifact bytes.** The shared file renders identically whether you open it on Dock,
+artifact bytes.** The shared file renders identically whether you open it on Derive,
 download it, or hit the raw URL. Every move respects this: it is what keeps
 artifacts portable, and it is also what keeps private feedback from ever leaking
 into a public file. When a plan below proposes new data, the test it must pass is:

@@ -6,7 +6,7 @@ import { runStoreContract } from "./store-contract"
 
 // The full MetaStore contract on in-memory SQLite — the zero-config default that
 // every `pnpm test` runs. pg-store.test.ts runs the same contract against Postgres
-// when DOCK_TEST_DB=pg. See store-contract.ts.
+// when DERIVE_TEST_DB=pg. See store-contract.ts.
 runStoreContract("sqlite store", async () => {
   const store = new SqliteMetaStore(":memory:")
   return { store, cleanup: () => store.close() }
@@ -30,7 +30,7 @@ describe("sqlite store: user directory (Better Auth `user` table)", () => {
     const { mkdtempSync, rmSync } = await import("node:fs")
     const { tmpdir } = await import("node:os")
     const { join } = await import("node:path")
-    const dir = mkdtempSync(join(tmpdir(), "dock-db-user-"))
+    const dir = mkdtempSync(join(tmpdir(), "derive-db-user-"))
     const path = join(dir, "store.db")
     const s = new SqliteMetaStore(path)
     const raw = new Database(path)
@@ -76,7 +76,7 @@ describe("sqlite store: user directory (Better Auth `user` table)", () => {
     rmSync(dir, { recursive: true, force: true })
   })
 
-  it("maps GitHub account ids to Dock users (account → user join); tolerates absent tables", async () => {
+  it("maps GitHub account ids to Derive users (account → user join); tolerates absent tables", async () => {
     // Absent Better Auth tables → graceful empty (fresh store); empty input short-circuits.
     const fresh = new SqliteMetaStore(":memory:")
     expect(await fresh.usersByGithubIds(["4242"])).toEqual([])
@@ -86,7 +86,7 @@ describe("sqlite store: user directory (Better Auth `user` table)", () => {
     const { mkdtempSync, rmSync } = await import("node:fs")
     const { tmpdir } = await import("node:os")
     const { join } = await import("node:path")
-    const dir = mkdtempSync(join(tmpdir(), "dock-db-gh-"))
+    const dir = mkdtempSync(join(tmpdir(), "derive-db-gh-"))
     const path = join(dir, "store.db")
     const s = new SqliteMetaStore(path)
     const raw = new Database(path)
@@ -129,12 +129,15 @@ describe("sqlite store: user directory (Better Auth `user` table)", () => {
 // but older/space-delimited forms must still parse. Pure helper, exhaustively covered.
 describe("parseOAuthScopes", () => {
   it("handles JSON arrays, space-delimited, non-array JSON, and empties", () => {
-    expect(parseOAuthScopes(JSON.stringify(["dock:read", "dock:publish"]))).toEqual([
-      "dock:read",
-      "dock:publish",
+    expect(parseOAuthScopes(JSON.stringify(["derive:read", "derive:publish"]))).toEqual([
+      "derive:read",
+      "derive:publish",
     ])
     expect(parseOAuthScopes(JSON.stringify(["a", 1, "b"]))).toEqual(["a", "b"]) // drops non-strings
-    expect(parseOAuthScopes("dock:read  dock:publish")).toEqual(["dock:read", "dock:publish"]) // space form
+    expect(parseOAuthScopes("derive:read  derive:publish")).toEqual([
+      "derive:read",
+      "derive:publish",
+    ]) // space form
     expect(parseOAuthScopes('{"not":"array"}')).toEqual(['{"not":"array"}']) // valid JSON, not array
     expect(parseOAuthScopes("")).toEqual([])
     expect(parseOAuthScopes(null)).toEqual([])
@@ -158,7 +161,7 @@ describe("sqlite store: people directory + follower lists + author backfill", ()
     const { mkdtempSync, rmSync } = await import("node:fs")
     const { tmpdir } = await import("node:os")
     const { join } = await import("node:path")
-    const dir = mkdtempSync(join(tmpdir(), "dock-db-people-"))
+    const dir = mkdtempSync(join(tmpdir(), "derive-db-people-"))
     const path = join(dir, "store.db")
     const s = new SqliteMetaStore(path)
     const raw = new Database(path)
@@ -191,7 +194,7 @@ describe("sqlite store: people directory + follower lists + author backfill", ()
     expect((await s.listFollowing("u2", 10)).map((u) => u.username)).toEqual(["amy"])
     expect(await s.listFollowers("u2", 10)).toEqual([]) // nobody follows bo
 
-    // Backfill: a synced artifact whose author_gh_id maps to a Dock user gets author_id
+    // Backfill: a synced artifact whose author_gh_id maps to a Derive user gets author_id
     // stamped; a second run is a no-op (idempotent).
     const a = await s.createArtifact({
       id: "a1",
@@ -238,7 +241,7 @@ describe("sqlite store: OAuth grants (Better Auth oauth-provider tables)", () =>
     const { mkdtempSync, rmSync } = await import("node:fs")
     const { tmpdir } = await import("node:os")
     const { join } = await import("node:path")
-    const dir = mkdtempSync(join(tmpdir(), "dock-db-oauth-"))
+    const dir = mkdtempSync(join(tmpdir(), "derive-db-oauth-"))
     const path = join(dir, "store.db")
     const s = new SqliteMetaStore(path)
     const raw = new Database(path)
@@ -257,7 +260,13 @@ describe("sqlite store: OAuth grants (Better Auth oauth-provider tables)", () =>
       .prepare(
         `INSERT INTO "oauthAccessToken" ("token","clientId","userId","scopes","expiresAt") VALUES (?,?,?,?,?)`,
       )
-      .run("hash_live", "client_live", "u1", JSON.stringify(["dock:read", "dock:publish"]), future)
+      .run(
+        "hash_live",
+        "client_live",
+        "u1",
+        JSON.stringify(["derive:read", "derive:publish"]),
+        future,
+      )
     // An abandoned anonymous client: no user, old, no token, no consent → reapable.
     raw
       .prepare(`INSERT INTO "oauthClient" ("clientId",name,"userId","createdAt") VALUES (?,?,?,?)`)
@@ -266,7 +275,7 @@ describe("sqlite store: OAuth grants (Better Auth oauth-provider tables)", () =>
 
     const grant = await s.getOAuthGrant("hash_live")
     expect(grant).toMatchObject({ userId: "u1", userEmail: "amy@x.com", clientName: "Claude" })
-    expect(grant?.scopes).toEqual(["dock:read", "dock:publish"])
+    expect(grant?.scopes).toEqual(["derive:read", "derive:publish"])
     expect(grant?.expiresAt.getTime()).toBe(Date.parse(future))
     expect(await s.getOAuthClientName("client_live")).toBe("Claude")
     expect(await s.getOAuthGrant("missing")).toBeNull()

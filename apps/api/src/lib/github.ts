@@ -3,7 +3,7 @@
 // user-controlled host), so the SSRF surface that webhooks have doesn't apply.
 
 const API = "https://api.github.com"
-const UA = "dock-sync/1"
+const UA = "derive-sync/1"
 const API_VERSION = "2022-11-28"
 
 export class GitHubError extends Error {

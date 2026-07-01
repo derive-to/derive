@@ -3,7 +3,7 @@
 // (2) the RepoSyncRunner Durable Object (Workers), and (3) the Node detached loop.
 // One bounded batch at a time; the caller loops until `remaining === 0`.
 
-import type { BlobStore, MetaStore, RepoSourceRecord } from "@dock/core"
+import type { BlobStore, MetaStore, RepoSourceRecord } from "@derive/core"
 import { decryptSecret } from "./crypto"
 import { GitHubError } from "./github"
 import { installationToken } from "./github-app"

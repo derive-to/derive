@@ -34,7 +34,7 @@ describe("usernameError", () => {
   })
 
   it("rejects reserved names (after normalization)", () => {
-    for (const r of ["admin", "dock", "ME", "Settings", "api"])
+    for (const r of ["admin", "derive", "ME", "Settings", "api"])
       expect(usernameError(r), r).toMatch(/reserved/)
   })
 })

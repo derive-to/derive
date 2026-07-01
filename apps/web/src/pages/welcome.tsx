@@ -19,7 +19,7 @@ const presetFor = (p: string | null): string => (!p ? "" : PRESET_VALUES.include
 
 // Set once the user finishes (or skips) onboarding, so the post-signup redirect
 // (app-shell.tsx) doesn't bounce them back here on every visit.
-export const ONBOARDED_KEY = "dock:onboarded"
+export const ONBOARDED_KEY = "derive:onboarded"
 
 export const markOnboarded = () => {
   try {
@@ -29,45 +29,45 @@ export const markOnboarded = () => {
   }
 }
 
-// The public origin to hand an agent. A deployed Dock instance's own origin IS its
+// The public origin to hand an agent. A deployed Derive instance's own origin IS its
 // public URL, so that's what we embed — except in local dev (localhost), where we
 // fall back to a clearly-editable placeholder so nobody copies an unreachable URL.
-const PLACEHOLDER_URL = "https://your-dock-server.com"
+const PLACEHOLDER_URL = "https://your-derive-server.com"
 const publicUrlOf = (origin: string) =>
   /localhost|127\.0\.0\.1|\[::1\]/.test(origin) ? PLACEHOLDER_URL : origin
 
-// Hosted: Dock is already running (this instance, or any you point at). The fastest
-// on-ramp — Dock is itself a remote MCP server, so one line connects an agent and it
-// gets every Dock tool. No CLI needed for the publish/review loop.
+// Hosted: Derive is already running (this instance, or any you point at). The fastest
+// on-ramp — Derive is itself a remote MCP server, so one line connects an agent and it
+// gets every Derive tool. No CLI needed for the publish/review loop.
 const hostedPrompt = (url: string) =>
-  `Connect me to Dock, a living-docs tool that hosts pages/docs at permanent, versioned URLs with inline review comments. Dock is a remote MCP server.
+  `Connect me to Derive, a living-docs tool that hosts pages/docs at permanent, versioned URLs with inline review comments. Derive is a remote MCP server.
 
-Dock is running at: ${url}
+Derive is running at: ${url}
 
 Please:
 1. Add it over MCP. In Claude Code run:
-     claude mcp add --transport http dock ${url}/mcp
-   In another harness, add an HTTP/streamable MCP server named "dock" at ${url}/mcp.
-   The first call opens a browser consent (OAuth); the scope I grant maps to my Dock role.
+     claude mcp add --transport http derive ${url}/mcp
+   In another harness, add an HTTP/streamable MCP server named "derive" at ${url}/mcp.
+   The first call opens a browser consent (OAuth); the scope I grant maps to my Derive role.
 2. Confirm it's connected by calling the "whoami" MCP tool, then "list_artifacts".
 
 Once connected you can publish a page, read its review comments, and run the propose -> review -> revise loop — all over MCP.`
 
-// Self-host: run Dock yourself first, then connect. Mirrors DEPLOY.md's single-
+// Self-host: run Derive yourself first, then connect. Mirrors DEPLOY.md's single-
 // container quickstart; the MCP endpoint is always <your BASE_URL>/mcp.
 const selfHostPrompt = () =>
-  `Set up a self-hosted Dock for me, then connect this agent to it. Dock is an open-source living-docs tool (permanent versioned URLs + inline review comments) that is itself a remote MCP server.
+  `Set up a self-hosted Derive for me, then connect this agent to it. Derive is an open-source living-docs tool (permanent versioned URLs + inline review comments) that is itself a remote MCP server.
 
 Please:
-1. From a Dock checkout (the directory with deploy/Dockerfile), run the single-container image (state lives in the dock_data volume):
-     docker build -f deploy/Dockerfile -t dock .
-     docker run -d -p 8080:8080 -v dock_data:/data \\
-       -e DOCK_AUTH_SECRET="$(openssl rand -hex 32)" \\
-       -e BASE_URL="https://dock.example.com" \\
-       dock
+1. From a Derive checkout (the directory with deploy/Dockerfile), run the single-container image (state lives in the derive_data volume):
+     docker build -f deploy/Dockerfile -t derive .
+     docker run -d -p 8080:8080 -v derive_data:/data \\
+       -e DERIVE_AUTH_SECRET="$(openssl rand -hex 32)" \\
+       -e BASE_URL="https://derive.example.com" \\
+       derive
    Set BASE_URL to the public https URL I'll actually reach it at (behind a TLS proxy — not localhost). For a quick local-only trial, BASE_URL=http://localhost:8080 works.
 2. Connect over MCP, using that same BASE_URL:
-     claude mcp add --transport http dock <BASE_URL>/mcp
+     claude mcp add --transport http derive <BASE_URL>/mcp
    The first call opens a browser consent (OAuth).
 3. Confirm by calling the "whoami" MCP tool, then "list_artifacts".
 
@@ -100,7 +100,7 @@ export function Welcome() {
       <div className="mx-auto w-full max-w-2xl px-5 py-10 sm:py-14">
         <div className="mb-6">
           <h1 className="font-display text-2xl font-semibold text-foreground sm:text-3xl">
-            Welcome to Dock, {firstName}.
+            Welcome to Derive, {firstName}.
           </h1>
           <p className="mt-1.5 text-sm text-muted-foreground">
             A minute of setup so your team and your agents know who you are. You can change any of
@@ -125,7 +125,7 @@ export function Welcome() {
             {/* Compact Self-host mode switch — swaps the snippet in place for the
                 run-it-yourself path. Most people never touch it. */}
             <label className="flex shrink-0 cursor-pointer items-center gap-1.5 text-2xs font-medium text-muted-foreground">
-              <span title="Running your own Dock instance">Self-host mode</span>
+              <span title="Running your own Derive instance">Self-host mode</span>
               <button
                 type="button"
                 role="switch"
@@ -144,8 +144,8 @@ export function Welcome() {
           </div>
           <p className="mb-3 mt-1 text-sm text-muted-foreground">
             {devMode
-              ? "Spin up your own Dock, then connect your agent to it. Paste this into Claude Code, Codex, or any agent."
-              : "Paste this into Claude Code, Codex, ChatGPT, or any agent — it connects Dock so the agent can publish, review, and revise for you."}
+              ? "Spin up your own Derive, then connect your agent to it. Paste this into Claude Code, Codex, or any agent."
+              : "Paste this into Claude Code, Codex, ChatGPT, or any agent — it connects Derive so the agent can publish, review, and revise for you."}
           </p>
 
           <PromptBlock
@@ -165,7 +165,7 @@ export function Welcome() {
             Skip for now
           </Button>
           <Button variant="primary" data-testid="welcome-continue" onClick={finish}>
-            Continue to Dock
+            Continue to Derive
           </Button>
         </div>
       </div>

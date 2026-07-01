@@ -19,7 +19,7 @@ import {
 
 const dirs = []
 const tmp = () => {
-  const d = mkdtempSync(join(tmpdir(), "dock-cli-"))
+  const d = mkdtempSync(join(tmpdir(), "derive-cli-"))
   dirs.push(d)
   return d
 }
@@ -28,25 +28,25 @@ afterEach(() => {
 })
 
 describe("scaffold", () => {
-  it("md template writes dock.json + index.md + AGENTS.md + the agent on-ramp", () => {
+  it("md template writes derive.json + index.md + AGENTS.md + the agent on-ramp", () => {
     const d = tmp()
     const { created } = scaffold(d, "Report", "md")
     expect(created.sort()).toEqual([
-      ".claude/skills/dock/SKILL.md",
+      ".claude/skills/derive/SKILL.md",
       ".mcp.json",
       "AGENTS.md",
-      "dock.json",
-      "dock.schema.json",
+      "derive.json",
+      "derive.schema.json",
       "index.md",
     ])
     const cfg = JSON.parse(readFileSync(join(d, CONFIG_FILE), "utf8"))
     expect(cfg).toMatchObject({ title: "Report", entry: "index.md", id: null, visibility: "link" })
     // The MCP config + skill are present and reference the published server.
-    expect(JSON.parse(readFileSync(join(d, ".mcp.json"), "utf8")).mcpServers.dock.args).toContain(
-      "@dock/mcp",
+    expect(JSON.parse(readFileSync(join(d, ".mcp.json"), "utf8")).mcpServers.derive.args).toContain(
+      "@derive/mcp",
     )
-    expect(readFileSync(join(d, ".claude/skills/dock/SKILL.md"), "utf8")).toContain(
-      "name: dock-publish",
+    expect(readFileSync(join(d, ".claude/skills/derive/SKILL.md"), "utf8")).toContain(
+      "name: derive-publish",
     )
   })
 
@@ -57,7 +57,7 @@ describe("scaffold", () => {
     expect(readFileSync(join(d, "index.html"), "utf8")).toContain("<title>Page</title>")
   })
 
-  it("slides template scaffolds a deck with controls + the dock-deck protocol", () => {
+  it("slides template scaffolds a deck with controls + the derive-deck protocol", () => {
     const d = tmp()
     const { created } = scaffold(d, "Talk", "slides")
     expect(created).toContain("slides.html")
@@ -67,8 +67,8 @@ describe("scaffold", () => {
     expect(html).toMatch(/ArrowRight|ArrowLeft/) // keyboard navigation
     expect(html).toMatch(/data-act="prev"|data-act="next"/) // on-screen prev/next
     expect(html).toContain('data-act="full"') // fullscreen control
-    expect(html).toContain("source:'dock-deck'") // announces state to the host
-    expect(html).toMatch(/dock-host[\s\S]*deck/) // accepts host drive commands
+    expect(html).toContain("source:'derive-deck'") // announces state to the host
+    expect(html).toMatch(/derive-host[\s\S]*deck/) // accepts host drive commands
   })
 
   it("never clobbers existing files", () => {
@@ -89,12 +89,12 @@ describe("scaffold", () => {
     expect(JSON.parse(readFileSync(join(d, CONFIG_FILE), "utf8")).entry).toBe("site")
   })
 
-  it("writes a dock.schema.json and references it from dock.json", () => {
+  it("writes a derive.schema.json and references it from derive.json", () => {
     const d = tmp()
     scaffold(d, "X", "md")
     const cfg = JSON.parse(readFileSync(join(d, CONFIG_FILE), "utf8"))
-    expect(cfg.$schema).toBe("./dock.schema.json")
-    const schema = JSON.parse(readFileSync(join(d, "dock.schema.json"), "utf8"))
+    expect(cfg.$schema).toBe("./derive.schema.json")
+    const schema = JSON.parse(readFileSync(join(d, "derive.schema.json"), "utf8"))
     expect(schema.properties.visibility.enum).toContain("link")
   })
 
@@ -147,10 +147,10 @@ describe("formatComments", () => {
 })
 
 describe("loadConfig", () => {
-  it("returns null when no dock.json", () => {
+  it("returns null when no derive.json", () => {
     expect(loadConfig(tmp())).toBeNull()
   })
-  it("parses dock.json", () => {
+  it("parses derive.json", () => {
     const d = tmp()
     writeFileSync(join(d, CONFIG_FILE), JSON.stringify(defaultConfig("Y")))
     expect(loadConfig(d)).toMatchObject({ title: "Y", entry: "index.md" })
@@ -209,53 +209,53 @@ describe("writeId", () => {
   })
 })
 
-describe("credentials (dock login)", () => {
-  // Isolate the user-level store in a tmp dir, and keep DOCK_TOKEN out of the way.
+describe("credentials (derive login)", () => {
+  // Isolate the user-level store in a tmp dir, and keep DERIVE_TOKEN out of the way.
   let prevDir
   let prevToken
   beforeEach(() => {
-    prevDir = process.env.DOCK_CONFIG_DIR
-    prevToken = process.env.DOCK_TOKEN
-    process.env.DOCK_CONFIG_DIR = tmp()
-    delete process.env.DOCK_TOKEN
+    prevDir = process.env.DERIVE_CONFIG_DIR
+    prevToken = process.env.DERIVE_TOKEN
+    process.env.DERIVE_CONFIG_DIR = tmp()
+    delete process.env.DERIVE_TOKEN
   })
   const restore = (key, prev) => {
     if (prev === undefined) delete process.env[key]
     else process.env[key] = prev
   }
   afterEach(() => {
-    restore("DOCK_CONFIG_DIR", prevDir)
-    restore("DOCK_TOKEN", prevToken)
+    restore("DERIVE_CONFIG_DIR", prevDir)
+    restore("DERIVE_TOKEN", prevToken)
   })
 
   it("saves and reads a token per server origin", () => {
-    expect(tokenFor("https://dock.example.com")).toBeNull()
-    saveToken("https://dock.example.com/some/path", "tok_abc")
+    expect(tokenFor("https://derive.example.com")).toBeNull()
+    saveToken("https://derive.example.com/some/path", "tok_abc")
     // Stored + read by origin, so a path on the same host resolves the same token.
-    expect(tokenFor("https://dock.example.com")).toBe("tok_abc")
-    expect(tokenFor("https://dock.example.com/other")).toBe("tok_abc")
-    expect(loadCredentials()["https://dock.example.com"].token).toBe("tok_abc")
+    expect(tokenFor("https://derive.example.com")).toBe("tok_abc")
+    expect(tokenFor("https://derive.example.com/other")).toBe("tok_abc")
+    expect(loadCredentials()["https://derive.example.com"].token).toBe("tok_abc")
   })
 
   it("keeps separate tokens for different servers", () => {
-    saveToken("https://a.dock.com", "tok_a")
-    saveToken("https://b.dock.com", "tok_b")
-    expect(tokenFor("https://a.dock.com")).toBe("tok_a")
-    expect(tokenFor("https://b.dock.com")).toBe("tok_b")
+    saveToken("https://a.derive.com", "tok_a")
+    saveToken("https://b.derive.com", "tok_b")
+    expect(tokenFor("https://a.derive.com")).toBe("tok_a")
+    expect(tokenFor("https://b.derive.com")).toBe("tok_b")
   })
 
   it("resolvePublish uses the saved token for the resolved server", () => {
-    saveToken("https://dock.example.com", "tok_login")
-    const r = resolvePublish({ server: "https://dock.example.com" }, null)
+    saveToken("https://derive.example.com", "tok_login")
+    const r = resolvePublish({ server: "https://derive.example.com" }, null)
     expect(r.token).toBe("tok_login")
   })
 
-  it("explicit --token and DOCK_TOKEN win over the saved token", () => {
-    saveToken("https://dock.example.com", "tok_login")
+  it("explicit --token and DERIVE_TOKEN win over the saved token", () => {
+    saveToken("https://derive.example.com", "tok_login")
     expect(
-      resolvePublish({ server: "https://dock.example.com", token: "tok_flag" }, null).token,
+      resolvePublish({ server: "https://derive.example.com", token: "tok_flag" }, null).token,
     ).toBe("tok_flag")
-    process.env.DOCK_TOKEN = "tok_env"
-    expect(resolvePublish({ server: "https://dock.example.com" }, null).token).toBe("tok_env")
+    process.env.DERIVE_TOKEN = "tok_env"
+    expect(resolvePublish({ server: "https://derive.example.com" }, null).token).toBe("tok_env")
   })
 })

@@ -1,16 +1,22 @@
-# Contributing to Dock
+# Contributing to Derive
 
-Thanks for helping build Dock. This guide covers local setup, the checks your change
+Thanks for helping build Derive. This guide covers local setup, the checks your change
 must pass, and how we structure commits and PRs.
 
 ## Setup
 
 Requires Node 24+ and pnpm 10+.
 
+The dev stack is two servers, each in its own terminal:
+
 ```bash
 pnpm install
-pnpm dev          # API on http://localhost:8080 (SQLite + local disk, zero config)
+pnpm dev          # API    → http://localhost:8090  (SQLite + local disk, zero config)
+pnpm dev:web      # web UI → http://localhost:3090  ← open this in the browser
 ```
+
+The API alone serves only a placeholder page; the web UI proxies its API calls,
+so open the web port. (Container/deploy builds serve both from one origin on 8080.)
 
 By default the API uses embedded SQLite and the local filesystem — no external
 services. Postgres + S3/R2 are opt-in via env (see [DEPLOY.md](DEPLOY.md)).
@@ -67,7 +73,7 @@ shipping. If something below surprises you, that's the guardrail doing its job:
   lint error (`noFloatingPromises`). `void` it deliberately or handle it.
 - **`console.*` in the server.** Lint error outside the logger and the process entry —
   use `log` (`apps/api/src/log.ts`).
-- **DB drivers in routes/lib.** Importing `drizzle-orm`, a driver, or `@dock/db/*` from
+- **DB drivers in routes/lib.** Importing `drizzle-orm`, a driver, or `@derive/db/*` from
   `routes/*` or `lib/*` is a lint error. Reach the database through `ctx.meta` (the
   `MetaStore` port); add a store method instead.
 - **Schema parity + exhaustiveness.** Every drizzle table must be classified in
@@ -129,7 +135,7 @@ and `pnpm test` (which includes the authz-coverage test) complete it.
 
 ## Database migrations
 
-Dock evolves the schema with **forward-only, idempotent DDL applied at boot** — no migration
+Derive evolves the schema with **forward-only, idempotent DDL applied at boot** — no migration
 framework, so a fresh self-host is one command. The trade-off is that the same statements
 re-run on every start, so they must be additive (see the destructive-DDL guard above) and
 idempotent. The model is small but spread across a few files; the guards below catch anything
@@ -143,7 +149,7 @@ you miss.
   `PG_SCHEMA_STATEMENTS` mirrors it with `CREATE TABLE IF NOT EXISTS` + `ALTER TABLE …
   ADD COLUMN IF NOT EXISTS`.
 - **D1**: `deploy/d1-schema.sql` is generated from `SCHEMA_STATEMENTS` — never hand-edit it;
-  run `pnpm --filter @dock/db gen:d1-schema`. D1 can't apply schema at boot (the edge forbids
+  run `pnpm --filter @derive/db gen:d1-schema`. D1 can't apply schema at boot (the edge forbids
   the `sqlite_master` introspection the Node tier uses), so `pnpm deploy` runs
   [apply-d1-schema.mjs](apps/api/scripts/apply-d1-schema.mjs) first: it creates missing
   tables/indexes, then diffs each live table's columns and `ADD COLUMN`s the missing ones — so
@@ -158,7 +164,7 @@ nullable (optionally backfill, then tighten in a later, separately-reviewed chan
 
 **Adding a column:**
 
-1. Add the field to the `@dock/core` Record (+ its `New*` input) in
+1. Add the field to the `@derive/core` Record (+ its `New*` input) in
    [packages/core/src/ports.ts](packages/core/src/ports.ts).
 2. Add it to the drizzle table in **both** `schema.ts` and `pg-schema.ts` (the parity guard
    fails the typecheck if a dialect, or the Record, drifts).
@@ -167,7 +173,7 @@ nullable (optionally backfill, then tighten in a later, separately-reviewed chan
    ([schema-conformance.test.ts](packages/db/test/schema-conformance.test.ts), and
    [pg-schema-conformance.test.ts](packages/db/test/pg-schema-conformance.test.ts) under
    `pnpm test:pg`) go red if the live table's columns don't match the drizzle defs.
-4. Run `pnpm --filter @dock/db gen:d1-schema` to regenerate `deploy/d1-schema.sql`.
+4. Run `pnpm --filter @derive/db gen:d1-schema` to regenerate `deploy/d1-schema.sql`.
 
 **Removing or renaming** is the unsafe path: prefer expand/contract — add the new shape,
 move reads/writes over, and leave the old column unused — over a `DROP`. An actual drop is a
@@ -194,6 +200,6 @@ pnpm test:pg    # the SAME suite on a real Postgres (ephemeral Docker container)
 ```
 
 `pnpm test:pg` ([scripts/test-pg.sh](scripts/test-pg.sh)) points the harness at
-Postgres with `DOCK_TEST_DB=pg` + `TEST_DATABASE_URL` (each test app gets an isolated
+Postgres with `DERIVE_TEST_DB=pg` + `TEST_DATABASE_URL` (each test app gets an isolated
 schema), so the hosted-tier driver is verified by the full behavioral suite, not just
 typecheck. CI runs both jobs. Requires Docker.

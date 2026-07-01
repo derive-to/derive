@@ -16,6 +16,7 @@
       "!**/.vinxi",
       "!data",
       "!docs",
+      "!**/public/brand",
       "!pnpm-lock.yaml"
     ]
   },
@@ -103,7 +104,7 @@
                     "group": [
                       "drizzle-orm",
                       "drizzle-orm/**",
-                      "@dock/db/*",
+                      "@derive/db/*",
                       "better-sqlite3",
                       "pg"
                     ],

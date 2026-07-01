@@ -1,9 +1,9 @@
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { newId, type RepoSourceRecord } from "@dock/core"
-import { SqliteMetaStore } from "@dock/db/sqlite"
-import { FsBlobStore } from "@dock/storage/fs"
+import { newId, type RepoSourceRecord } from "@derive/core"
+import { SqliteMetaStore } from "@derive/db/sqlite"
+import { FsBlobStore } from "@derive/storage/fs"
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest"
 import { fetchBlobsBatch } from "../src/lib/github"
 import { runSync } from "../src/lib/sync"
@@ -19,7 +19,7 @@ const binaryShas = new Set<string>()
 let restBlobCalls = 0
 let graphqlCalls = 0
 
-const dir = mkdtempSync(join(tmpdir(), "dock-sync-gql-"))
+const dir = mkdtempSync(join(tmpdir(), "derive-sync-gql-"))
 const meta = new SqliteMetaStore(join(dir, "gql.db"))
 const blobStore = new FsBlobStore(join(dir, "blobs"))
 const NOW = "2026-06-16T00:00:00.000Z"

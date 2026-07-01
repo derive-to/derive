@@ -17,7 +17,7 @@ const WEB_PORT = Number(process.env.PW_WEB_PORT ?? 3300 + portSlot)
 const WEB = `http://localhost:${WEB_PORT}`
 
 // Isolation model: every test signs up a fresh user, and the API runs with
-// DOCK_MULTI_WORKSPACE=true so each of those users owns an isolated personal
+// DERIVE_MULTI_WORKSPACE=true so each of those users owns an isolated personal
 // workspace. Workspace-scoped data (artifacts, members, settings, collections)
 // never crosses between tests, so owner-dependent flows (share, settings) are
 // deterministic instead of order-dependent — which lets us run fully in parallel.
@@ -49,14 +49,14 @@ export default defineConfig({
   ],
   webServer: [
     {
-      command: `rm -rf apps/api/.e2e-data && PORT=${API_PORT} DATA_DIR=.e2e-data DOCK_MULTI_WORKSPACE=true DOCK_WEB_ORIGIN=${WEB} DOCK_RATE_LIMIT=false pnpm --filter @dock/api dev`,
+      command: `rm -rf apps/api/.e2e-data && PORT=${API_PORT} DATA_DIR=.e2e-data DERIVE_MULTI_WORKSPACE=true DERIVE_WEB_ORIGIN=${WEB} DERIVE_RATE_LIMIT=false pnpm --filter @derive/api dev`,
       url: `http://localhost:${API_PORT}/healthz`,
       cwd: "../..",
       timeout: 60_000,
       reuseExistingServer: !process.env.CI,
     },
     {
-      command: `DOCK_API=http://localhost:${API_PORT} pnpm --filter @dock/web dev --port ${WEB_PORT} --strictPort`,
+      command: `DERIVE_API=http://localhost:${API_PORT} pnpm --filter @derive/web dev --port ${WEB_PORT} --strictPort`,
       url: WEB,
       cwd: "../..",
       timeout: 120_000,

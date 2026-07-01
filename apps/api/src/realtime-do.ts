@@ -5,7 +5,7 @@ import type {
   ExecutionContext,
 } from "@cloudflare/workers-types"
 import type { Context } from "hono"
-import type { Backplane, DockEvent, PresenceStore, Viewer } from "./bus"
+import type { Backplane, DeriveEvent, PresenceStore, Viewer } from "./bus"
 
 /**
  * Per-request execution context, so the DO backplane's fire-and-forget publish can
@@ -66,7 +66,7 @@ export class ArtifactRoom {
     // Broadcast an event to every open stream on this channel.
     if (req.method === "POST" && url.pathname.endsWith("/publish")) {
       const raw = await req.text()
-      const ev = JSON.parse(raw) as DockEvent
+      const ev = JSON.parse(raw) as DeriveEvent
       const f = frame(ev.type, raw)
       for (const c of this.streams) {
         try {

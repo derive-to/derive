@@ -1,4 +1,4 @@
-import type { SlackInstallRecord } from "@dock/core"
+import type { SlackInstallRecord } from "@derive/core"
 import { Hono } from "hono"
 import { z } from "zod"
 import type { AppContext } from "../context"
@@ -64,7 +64,7 @@ export const slackRoutes = (ctx: AppContext) => {
     }
   })
 
-  // Inbound Events API: url_verification challenge + threaded message replies → Dock.
+  // Inbound Events API: url_verification challenge + threaded message replies → Derive.
   // Respond fast and do the work best-effort. Same model as the GitHub App webhook.
   // authz-exempt: Slack signs every request with the signing secret (verifySlackSignature); no session on a webhook.
   app.post("/v1/slack/events", async (c) => {
@@ -134,7 +134,7 @@ export const slackRoutes = (ctx: AppContext) => {
     })
   })
 
-  // Set the channel Dock posts to (Slack channel id, e.g. "C0123ABC"). Admin only.
+  // Set the channel Derive posts to (Slack channel id, e.g. "C0123ABC"). Admin only.
   app.patch("/v1/slack", async (c) => {
     if (!(await workspaceCan(c, "manage"))) return fail(c, 403, "forbidden")
     const org = await activeWorkspace(c)

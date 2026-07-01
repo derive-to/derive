@@ -1,6 +1,6 @@
-# dock-html
+# derive-html
 
-Writing HTML artifacts for Dock. HTML is served sandboxed in an opaque origin
+Writing HTML artifacts for Derive. HTML is served sandboxed in an opaque origin
 with the anchor client injected automatically.
 
 ---
@@ -18,17 +18,17 @@ What this means:
 - Forms and popups work (`allow-forms allow-popups`)
 - **No cookies, no localStorage, no sessionStorage** (sandbox restriction)
 - **No cross-origin requests** to external APIs without CORS (sandbox restriction)
-- **No same-origin access** to the Dock API (different registrable domain)
+- **No same-origin access** to the Derive API (different registrable domain)
 
 Design HTML artifacts to be self-contained. Don't rely on cookies for state,
-don't try to fetch Dock's API from inside the artifact, don't rely on parent-frame
+don't try to fetch Derive's API from inside the artifact, don't rely on parent-frame
 access (the sandbox blocks `document.domain` tricks).
 
 ---
 
 ## Anchor client (auto-injected)
 
-Dock injects `/raw/dock-client.js` into every served HTML artifact. It handles:
+Derive injects `/raw/derive-client.js` into every served HTML artifact. It handles:
 - Text selection capture -> sends `{ type: "select", rect, selector }` to the parent
 - Highlight painting when the host sends anchor data
 - Scroll-to-anchor on focus commands from the host
@@ -37,9 +37,9 @@ Dock injects `/raw/dock-client.js` into every served HTML artifact. It handles:
 You don't need to include this script yourself. Don't try to block or remove it —
 comments won't work without it.
 
-The script communicates with the Dock host via `postMessage`. Your own page scripts
-can also use `postMessage` freely; just avoid using `source: "dock"` or
-`source: "dock-host"` as your message origin (those are Dock's reserved prefixes).
+The script communicates with the Derive host via `postMessage`. Your own page scripts
+can also use `postMessage` freely; just avoid using `source: "derive"` or
+`source: "derive-host"` as your message origin (those are Derive's reserved prefixes).
 
 ---
 
@@ -88,7 +88,7 @@ No external CSS frameworks, no fonts that require CORS requests, no localStorage
 ## External resources
 
 You can load external CSS and fonts from CDNs as long as they support CORS. The sandbox
-doesn't block fetching public resources — it blocks same-origin Dock API access and
+doesn't block fetching public resources — it blocks same-origin Derive API access and
 storage.
 
 Google Fonts works:
@@ -101,17 +101,17 @@ Google Fonts works:
 
 ## The postMessage API (advanced)
 
-If your page needs to respond to Dock's anchor system:
+If your page needs to respond to Derive's anchor system:
 
-**Messages your page receives from Dock:**
+**Messages your page receives from Derive:**
 ```js
 window.addEventListener('message', e => {
-  if (e.data?.source !== 'dock-host') return
+  if (e.data?.source !== 'derive-host') return
   // e.data.type: 'anchors', 'emphasize', 'focus-anchor', 'scroll-by'
 })
 ```
 
-**Messages Dock's injected script sends to the host (for reference):**
+**Messages Derive's injected script sends to the host (for reference):**
 ```js
 // Text selected
 { type: 'select', rect: DOMRect, selector: TextQuoteSelector }

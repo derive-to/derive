@@ -1,6 +1,6 @@
 import { randomUUID as uuid } from "node:crypto"
-import type { MetaStore, NewArtifact, NewVersion } from "@dock/core"
-import { DEFAULT_ORG_SETTINGS } from "@dock/core"
+import type { MetaStore, NewArtifact, NewVersion } from "@derive/core"
+import { DEFAULT_ORG_SETTINGS } from "@derive/core"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 
 /**
@@ -9,7 +9,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest"
  * interface, so the SAME assertions must hold on both — a wrong WHERE, a missing
  * org scope, or a broken transaction in either driver fails here. sqlite-store runs
  * this on in-memory SQLite (zero-config, every `pnpm test`); pg-store runs it on a
- * real Postgres when DOCK_TEST_DB=pg (the `pnpm test:pg` / CI pg job), which is the
+ * real Postgres when DERIVE_TEST_DB=pg (the `pnpm test:pg` / CI pg job), which is the
  * only place pg.ts gets exercised by this package's own suite.
  *
  * `setup` provisions an isolated store; `cleanup` tears it down (close the handle,
@@ -827,19 +827,19 @@ export function runStoreContract(
       await store.setGithubApp({
         id: "default",
         app_id: "111",
-        slug: "dock-on-acme",
+        slug: "derive-on-acme",
         client_id: "Iv1.abc",
         client_secret: "enc-secret",
         private_key: "enc-pem",
         webhook_secret: "enc-whsec",
         created_at: "2026-06-15T00:00:00.000Z",
       })
-      expect(await store.getGithubApp()).toMatchObject({ app_id: "111", slug: "dock-on-acme" })
+      expect(await store.getGithubApp()).toMatchObject({ app_id: "111", slug: "derive-on-acme" })
       // Re-setup overwrites in place (still one row).
       await store.setGithubApp({
         id: "default",
         app_id: "222",
-        slug: "dock-on-acme-2",
+        slug: "derive-on-acme-2",
         client_id: "Iv1.def",
         client_secret: "enc-secret-2",
         private_key: "enc-pem-2",
@@ -959,7 +959,7 @@ export function runStoreContract(
   describe(`${label}: domains`, () => {
     it("claims a host (globally unique), updates status, releases it", async () => {
       const a = await store.createArtifact(newArtifact())
-      const host = `${uuid().slice(0, 8)}.dockd.app`
+      const host = `${uuid().slice(0, 8)}.derived.app`
       const dom = await store.setDomain({ host, artifact_id: a.id, org_id: ORG, kind: "subdomain" })
       expect(dom).toMatchObject({ host })
       expect(await store.getDomain(host)).toMatchObject({ host })

@@ -109,7 +109,7 @@ const RemoteCursor = memo(function RemoteCursor({
 
 // A click ripple — a ring that expands and fades once. Positioned by percentage
 // so it's resolution-independent (no layout read needed); the keyframe lives in
-// globals.css (dock-cursor-ripple).
+// globals.css (derive-cursor-ripple).
 function RippleDot({ ripple }: { ripple: Ripple }) {
   return (
     <span
@@ -118,7 +118,7 @@ function RippleDot({ ripple }: { ripple: Ripple }) {
         left: `${ripple.x * 100}%`,
         top: `${ripple.y * 100}%`,
         borderColor: ripple.color,
-        animation: "dock-cursor-ripple 620ms ease-out forwards",
+        animation: "derive-cursor-ripple 620ms ease-out forwards",
       }}
     />
   )

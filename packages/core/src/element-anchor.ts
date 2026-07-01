@@ -25,7 +25,7 @@
  *      time (label, src, a truncated outerHTML). If the element is later gone, the
  *      orphaned comment still shows what it pointed at instead of a dead marker.
  *
- *   2. Forward-walk RECOVERY (the Dock-only advantage). Because Dock keeps every
+ *   2. Forward-walk RECOVERY (the Derive-only advantage). Because Derive keeps every
  *      version's full HTML, when an anchor can't resolve in the current version we
  *      walk the version history forward from where it was made, re-deriving the
  *      selector at each step it still resolves. An element that was renamed, moved,
@@ -235,8 +235,8 @@ const KEEP_ATTRS = new Set([
   "aria-label",
   "role",
   "name",
-  "data-dock-slide",
-  "data-dock-id",
+  "data-derive-slide",
+  "data-derive-id",
 ])
 
 /** Collapse runs of whitespace and trim. Used everywhere a value feeds matching. */
@@ -786,7 +786,7 @@ export interface ForwardWalk {
 }
 
 /**
- * Forward-walk recovery — the Dock-only move. Given a selector and the ORDERED
+ * Forward-walk recovery — the Derive-only move. Given a selector and the ORDERED
  * HTML of each version after the one it was made on (oldest → current), re-resolve
  * at each hop and re-derive the selector from the match before the next hop. An
  * element edited gradually (renamed, moved, rewrapped) is recovered because every

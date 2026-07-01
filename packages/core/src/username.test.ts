@@ -33,7 +33,7 @@ describe("normalizeUsername", () => {
 describe("suggestUsername", () => {
   it("derives a legal handle from a name or email", () => {
     expect(suggestUsername("Jane Doe")).toBe("jane-doe")
-    expect(suggestUsername("nia@dock.test")).toBe("nia")
+    expect(suggestUsername("nia@derive.test")).toBe("nia")
     // Result is always itself a valid handle.
     for (const seed of ["Jane Doe", "a", "!!!", "x".repeat(50), "weird..name"])
       expect(usernameError(suggestUsername(seed))).toBeNull()

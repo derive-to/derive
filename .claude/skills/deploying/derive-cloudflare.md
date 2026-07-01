@@ -1,7 +1,7 @@
-# dock-cloudflare
+# derive-cloudflare
 
-Deploy Dock to Cloudflare Workers (Cloudflare Basic or Cloudflare Scale).
-For Docker/Node deployment, see `dock-self-host.md`.
+Deploy Derive to Cloudflare Workers (Cloudflare Basic or Cloudflare Scale).
+For Docker/Node deployment, see `derive-self-host.md`.
 
 ---
 
@@ -18,24 +18,24 @@ Treat as **experimental** — typecheck-covered but no edge integration tests in
 cd apps/api
 
 # 1. Create D1 database — copy the database_id into wrangler.toml [[d1_databases]]
-wrangler d1 create dock
+wrangler d1 create derive
 
 # 2. Apply the app schema
-wrangler d1 execute dock --remote --file=../../deploy/d1-schema.sql
+wrangler d1 execute derive --remote --file=../../deploy/d1-schema.sql
 
 # 3. Generate and apply Better Auth tables (D1 blocks sqlite_master introspection at boot)
 pnpm exec tsx gen-auth-schema.ts > /tmp/auth-schema.sql
-wrangler d1 execute dock --remote --file=/tmp/auth-schema.sql
+wrangler d1 execute derive --remote --file=/tmp/auth-schema.sql
 
 # 4. Create R2 bucket for artifact blobs
-wrangler r2 bucket create dock-blobs
+wrangler r2 bucket create derive-blobs
 
 # 5. Build SPA and deploy
 pnpm build:web        # builds apps/web, preps dist/client for Workers
 wrangler deploy       # or: pnpm deploy (runs build:web + deploy in one step)
 
 # 6. Set secrets
-wrangler secret put DOCK_AUTH_SECRET   # openssl rand -hex 32
+wrangler secret put DERIVE_AUTH_SECRET   # openssl rand -hex 32
 ```
 
 After deploy, the first person to sign up at `/login` becomes the workspace owner.
@@ -52,8 +52,8 @@ pnpm deploy   # build:web + wrangler deploy
 Regenerate `deploy/d1-schema.sql` after touching `packages/db/src/schema.ts`:
 
 ```bash
-pnpm --filter @dock/db gen:d1-schema
-wrangler d1 execute dock --remote --file=deploy/d1-schema.sql
+pnpm --filter @derive/db gen:d1-schema
+wrangler d1 execute derive --remote --file=deploy/d1-schema.sql
 ```
 
 ### How it works
@@ -69,9 +69,9 @@ wrangler d1 execute dock --remote --file=deploy/d1-schema.sql
 
 | Secret | Purpose |
 |---|---|
-| `DOCK_AUTH_SECRET` | Session signing key — required |
+| `DERIVE_AUTH_SECRET` | Session signing key — required |
 | `BASE_URL` | Public origin override (defaults to request origin) |
-| `DOCK_TOKEN` | Static bearer for CI/agents |
+| `DERIVE_TOKEN` | Static bearer for CI/agents |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Google sign-in |
 | `OIDC_ISSUER` / `OIDC_CLIENT_ID` / `OIDC_CLIENT_SECRET` / `OIDC_PROVIDER_ID` | Enterprise SSO |
 
@@ -86,8 +86,8 @@ or single-region writes become a constraint.
 
 ```bash
 wrangler secret put DATABASE_URL   # postgres://user:pass@host/db
-wrangler r2 bucket create dock-blobs  # if not already created
-wrangler secret put DOCK_AUTH_SECRET
+wrangler r2 bucket create derive-blobs  # if not already created
+wrangler secret put DERIVE_AUTH_SECRET
 pnpm build:web
 wrangler deploy
 ```

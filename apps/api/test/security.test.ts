@@ -1,6 +1,6 @@
 import { join } from "node:path"
-import { SqliteMetaStore } from "@dock/db/sqlite"
-import { FsBlobStore } from "@dock/storage/fs"
+import { SqliteMetaStore } from "@derive/db/sqlite"
+import { FsBlobStore } from "@derive/storage/fs"
 import { describe, expect, it } from "vitest"
 import { createApp, isPublicHttpUrl } from "../src/app"
 import { as, dir, makeAuthedApp, meta, ownerApp, type TestUser } from "./helpers"
@@ -61,7 +61,7 @@ describe("security: sandbox serving origin (A4)", () => {
 })
 
 describe("security: webhook SSRF guard", () => {
-  const owner: TestUser = { id: "u_wh", email: "wh@dock.test", name: "Wh" }
+  const owner: TestUser = { id: "u_wh", email: "wh@derive.test", name: "Wh" }
   const { app } = makeAuthedApp("ssrf", [owner])
   const create = (url: string) =>
     app.request("/v1/webhooks", {
@@ -95,7 +95,7 @@ describe("security: rate limiting", () => {
   const limited = createApp({
     meta,
     blobs: new FsBlobStore(join(dir, "blobs")),
-    baseUrl: "http://dock.test",
+    baseUrl: "http://derive.test",
     rateLimit: true,
   })
 

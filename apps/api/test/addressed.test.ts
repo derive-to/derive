@@ -5,8 +5,8 @@ import { as, jsonAs, makeAuthedApp, proposeAs, publishAs, type TestUser } from "
 // to `addressed` (pending review); approving resolves them, withdrawing or
 // requesting changes reopens them.
 
-const owner: TestUser = { id: "u_ao", email: "ao@dock.test", name: "Ao" }
-const ed: TestUser = { id: "u_ae", email: "ae@dock.test", name: "Ae" }
+const owner: TestUser = { id: "u_ao", email: "ao@derive.test", name: "Ao" }
+const ed: TestUser = { id: "u_ae", email: "ae@derive.test", name: "Ae" }
 
 const stateOf = async (
   app: ReturnType<typeof makeAuthedApp>["app"],

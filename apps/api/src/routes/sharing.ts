@@ -1,4 +1,4 @@
-import { type ArtifactRecord, effectiveRole, isRole, newId, ROLES, type Role } from "@dock/core"
+import { type ArtifactRecord, effectiveRole, isRole, newId, ROLES, type Role } from "@derive/core"
 import { type Context, Hono } from "hono"
 import { z } from "zod"
 import type { AppContext } from "../context"
@@ -68,7 +68,7 @@ export const sharingRoutes = (ctx: AppContext) => {
       return fail(c, 403, "you can't grant a role above your own")
     const id = await resolveUserRef(meta, (b.user ?? b.username ?? b.email) as string)
     const [user] = id ? await meta.getUsers([id]) : []
-    if (!user) return fail(c, 404, "no Dock user with that username or email")
+    if (!user) return fail(c, 404, "no Derive user with that username or email")
     await meta.setArtifactMember({
       id: newId("am"),
       artifact_id: artifact.id,

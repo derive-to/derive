@@ -1,4 +1,4 @@
-import { effectiveRole } from "@dock/core"
+import { effectiveRole } from "@derive/core"
 import { Hono } from "hono"
 import { streamSSE } from "hono/streaming"
 import { z } from "zod"

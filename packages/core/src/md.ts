@@ -50,11 +50,11 @@ const PAGE_CSS = `
   hr{border:0;border-top:1px solid var(--line);margin:2.2em 0}
 `
 
-/** XSS-sanitize an HTML fragment with Dock's content whitelist (drops scripts, styles,
+/** XSS-sanitize an HTML fragment with Derive's content whitelist (drops scripts, styles,
  *  inline style/class attributes — so re-rendered content can't carry layout or JS). */
 export const sanitizeHtml = (html: string): string => sanitizer.process(html)
 
-/** Wrap clean body HTML in Dock's responsive document shell (the same mobile-safe
+/** Wrap clean body HTML in Derive's responsive document shell (the same mobile-safe
  *  typography the markdown renderer uses). Shared by renderMarkdown + Reader view. */
 export const renderDocShell = (bodyHtml: string, title: string | null): string => `<!doctype html>
 <html lang="en">

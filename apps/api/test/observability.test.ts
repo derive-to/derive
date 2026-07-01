@@ -1,5 +1,5 @@
 import { join } from "node:path"
-import { FsBlobStore } from "@dock/storage/fs"
+import { FsBlobStore } from "@derive/storage/fs"
 import { describe, expect, it } from "vitest"
 import { createApp } from "../src/app"
 import { dir, meta } from "./helpers"
@@ -10,7 +10,7 @@ describe("observability: request id", () => {
   const app = createApp({
     meta,
     blobs: new FsBlobStore(join(dir, "blobs")),
-    baseUrl: "http://dock.test",
+    baseUrl: "http://derive.test",
   })
 
   it("stamps every response with an X-Request-Id", async () => {

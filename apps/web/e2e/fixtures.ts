@@ -17,7 +17,7 @@ import {
 export type SecondUser = { page: Page; email: string }
 
 type Fixtures = {
-  // A fresh signed-up user. With DOCK_MULTI_WORKSPACE the API gives them their
+  // A fresh signed-up user. With DERIVE_MULTI_WORKSPACE the API gives them their
   // own personal workspace, so each test owns a clean, owner-privileged slate.
   owner: Page
   // A second isolated user in their own browser context — for sharing /

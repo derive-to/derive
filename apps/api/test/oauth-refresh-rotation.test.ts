@@ -8,7 +8,7 @@ import { sha256 } from "../src/lib/crypto"
 
 // Regression test for the MCP/OAuth "sign back in every few hours" bug.
 //
-// Claude Code's Dock access token is a 1h JWT, so it must hit the refresh grant
+// Claude Code's Derive access token is a 1h JWT, so it must hit the refresh grant
 // roughly hourly under active use. The oauth-provider rotates refresh tokens on
 // every use and, on detecting a *reused* (already-revoked) token, calls
 // invalidateRefreshFamily — which deletes EVERY refresh + access token for that
@@ -19,20 +19,20 @@ import { sha256 } from "../src/lib/crypto"
 // re-register a brand-new OAuth client and re-consent. Observed in prod as 11
 // client registrations in 4 days.
 //
-// The dock-patch(refresh-rotation-grace) adds a short grace window: a token revoked
+// The derive-patch(refresh-rotation-grace) adds a short grace window: a token revoked
 // within the window is treated as a benign concurrent rotation — the request still
 // fails (the reused token is never honored) but the family is left intact, so the
 // winning refresh keeps the session alive. Genuine reuse outside the window still
 // invalidates the family.
 
-const dir = mkdtempSync(join(tmpdir(), "dock-oauth-refresh-"))
+const dir = mkdtempSync(join(tmpdir(), "derive-oauth-refresh-"))
 afterAll(() => rmSync(dir, { recursive: true, force: true }))
 
 type Auth = ReturnType<typeof makeAuth>
 type Ctx = Awaited<Auth["$context"]>
 
-const BASE = "http://dock.test"
-const SCOPES = ["openid", "offline_access", "dock:read"]
+const BASE = "http://derive.test"
+const SCOPES = ["openid", "offline_access", "derive:read"]
 
 const tokenReq = (auth: Auth, body: Record<string, string>) =>
   auth.handler(
@@ -45,7 +45,7 @@ const tokenReq = (auth: Auth, body: Record<string, string>) =>
 
 // Register a real public MCP-style client via Dynamic Client Registration so it
 // passes validateClientCredentials (token_endpoint_auth_method=none) and is allowed
-// the refresh_token grant — exactly how Claude Code registers against Dock.
+// the refresh_token grant — exactly how Claude Code registers against Derive.
 async function registerClient(auth: Auth): Promise<string> {
   const res = await auth.handler(
     new Request(`${BASE}/api/auth/oauth2/register`, {
@@ -79,7 +79,7 @@ async function createUser(ctx: Ctx, email: string): Promise<string> {
 // Seed a refresh token straight into the oauth-provider table the way a completed
 // authorize→consent→token dance would, so we exercise the refresh grant without the
 // full PKCE/consent flow (irrelevant to the rotation bug). Stored hashed exactly as
-// the plugin stores it (Dock's storeTokens.hash = sha256), so presenting `plaintext`
+// the plugin stores it (Derive's storeTokens.hash = sha256), so presenting `plaintext`
 // resolves to this row.
 async function seedRefreshToken(
   ctx: Ctx,
@@ -120,7 +120,7 @@ describe("OAuth refresh-token rotation survives a concurrent/replayed refresh", 
     await migrateAuth(auth)
     ctx = await auth.$context
     clientId = await registerClient(auth)
-    userId = await createUser(ctx, "race@dock.test")
+    userId = await createUser(ctx, "race@derive.test")
   })
 
   it("a reused (just-rotated) refresh token is rejected but the live child survives", async () => {

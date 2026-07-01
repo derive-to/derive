@@ -79,7 +79,7 @@ export interface Actor {
  *
  * Invariant: an anonymous caller is never more than `viewer`. Anything past view
  * (comment, propose, publish, share, manage) needs an authenticated identity — a
- * signed-in user or a `DOCK_TOKEN`. There is deliberately no "trusted anonymous" path.
+ * signed-in user or a `DERIVE_TOKEN`. There is deliberately no "trusted anonymous" path.
  */
 export function effectiveRole(
   actor: Actor,

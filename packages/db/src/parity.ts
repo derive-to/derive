@@ -2,7 +2,7 @@
 // pg.ts). It does two things at compile time:
 //
 //   1. EXHAUSTIVENESS — every drizzle table must be CLASSIFIED, either as a
-//      typed table (mapped to its @dock/core Record in `TypedTables`) or as a
+//      typed table (mapped to its @derive/core Record in `TypedTables`) or as a
 //      junction table (named in `JunctionTable`). Add a `sqliteTable`/`pgTable`
 //      without classifying it and `Exhaustive<typeof schema>` stops being
 //      `true`, so the guard in the driver fails to compile. No more "added a
@@ -34,7 +34,7 @@ import type {
   VersionRecord,
   WebhookRecord,
   WorkspaceRecord,
-} from "@dock/core"
+} from "@derive/core"
 
 /** A is structurally identical to B (assignable both ways). */
 export type Exact<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false
@@ -66,7 +66,7 @@ export interface TypedTables {
 
 /**
  * Junction tables with no dedicated core Record (simple link rows whose shape
- * isn't mirrored in @dock/core). Naming a table here is a deliberate opt-out of
+ * isn't mirrored in @derive/core). Naming a table here is a deliberate opt-out of
  * shape parity — but it still has to be named, so it can't be forgotten.
  */
 export type JunctionTable = "artifactFavorite" | "artifactTag" | "collectionItem"

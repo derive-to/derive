@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Bring a Dock D1 database fully up to the current app schema. Run as part of every
+// Bring a Derive D1 database fully up to the current app schema. Run as part of every
 // edge deploy (see the `deploy` script) so a deploy can NEVER ship code against a
 // stale schema — the failure that takes the artifact read path (and everything
 // downstream) to 500s, because the edge applies schema out of band (D1 forbids the
@@ -18,7 +18,7 @@ import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { parseExpectedColumns, planColumnAdds } from "./d1-schema-plan.mjs"
 
-const DB = process.env.DOCK_D1_NAME ?? "dock"
+const DB = process.env.DERIVE_D1_NAME ?? "derive"
 const TARGET = process.argv.includes("--local") ? "--local" : "--remote"
 const here = dirname(fileURLToPath(import.meta.url))
 const schemaPath = join(here, "../../../deploy/d1-schema.sql")
@@ -58,7 +58,7 @@ for (const batch of chunk(Object.keys(expected), 5)) {
 
 const { alters, unsafe } = planColumnAdds(expected, live)
 
-// Dock's schema policy is additive-only: a column added to an existing table must be
+// Derive's schema policy is additive-only: a column added to an existing table must be
 // nullable or carry a constant DEFAULT (SQLite/D1 reject ADD COLUMN of a NOT NULL column
 // with no default on populated rows). Abort BEFORE running any ALTER so a policy slip
 // fails the deploy cleanly with an actionable message instead of half-applying the batch.

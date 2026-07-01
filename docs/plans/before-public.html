@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Before Dock goes public</title>
+<title>Before Derive goes public</title>
 <style>
   :root{
     --bg:#0f0f10; --card:#1a1a1d; --card-2:#232327; --hover:#212125;
@@ -44,7 +44,7 @@
 <body>
 <div class="wrap">
 
-  <h1>Before Dock goes public</h1>
+  <h1>Before Derive goes public</h1>
   <p class="sub">The launch checklist. These are the items deliberately deferred from the private
   hardening pass (see <code>ai-guardrails.html</code>): they only make sense, or only work, once the
   repo (and the CLI) are public. Build what can be built now; flip the switches at launch.</p>
@@ -54,10 +54,10 @@
 
   <div class="phase">
     <div class="hd"><span class="pn">D1</span><h3>Distribution — make "CLI-first" true</h3></div>
-    <p class="lead">The README says CLI-first, but <code>@dock/cli</code> is <code>private</code> and unpublished. This is the #1 adoption unblock.</p>
+    <p class="lead">The README says CLI-first, but <code>@derive/cli</code> is <code>private</code> and unpublished. This is the #1 adoption unblock.</p>
     <ul>
       <li><b>Release automation.</b> <span class="m">changesets across the workspace: versioned, changelog-driven releases instead of the static <code>0.1.0</code>. (config can land while private; publishing waits)</span></li>
-      <li><b>Publish <code>@dock/cli</code>.</b> <span class="m">Flip <code>private:false</code>, add <code>description</code>/<code>keywords</code>/<code>files</code>/<code>author</code>, so <code>npm i -g @dock/cli</code> works. Fix the README install path (today it shows the clone-and-run dev path).</span></li>
+      <li><b>Publish <code>@derive/cli</code>.</b> <span class="m">Flip <code>private:false</code>, add <code>description</code>/<code>keywords</code>/<code>files</code>/<code>author</code>, so <code>npm i -g @derive/cli</code> works. Fix the README install path (today it shows the clone-and-run dev path).</span></li>
       <li><b>Release workflow.</b> <span class="m">publish-on-tag with <b>npm provenance</b> (<code>--provenance</code>), and GitHub Releases with notes.</span></li>
       <li><b>HTTP API surface.</b> <span class="m">An OpenAPI spec for the Hono API, served + checked in, so SDKs/clients can be generated.</span></li>
       <li><b>Container attestation (optional).</b> <span class="m">SBOM + cosign signature on the published Docker image.</span></li>
@@ -68,7 +68,7 @@
     <div class="hd"><span class="pn">D2</span><h3>Discoverability + community</h3></div>
     <p class="lead">The repo is the landing page. Make the first 60 seconds sell it.</p>
     <ul>
-      <li><b>README.</b> <span class="m">A demo gif/screenshot, a crisp "why Dock", and live badges (CI / version / coverage / license).</span></li>
+      <li><b>README.</b> <span class="m">A demo gif/screenshot, a crisp "why Derive", and live badges (CI / version / coverage / license).</span></li>
       <li><b>Docs.</b> <span class="m">Consolidate the (already strong) scattered markdown into a small docs site or a clear <code>docs/</code> index; add a "publish your first artifact" tutorial.</span></li>
       <li><b>Community.</b> <span class="m"><code>ROADMAP.md</code>, a labels strategy (<code>good-first-issue</code>), <code>FUNDING.yml</code>, and enable GitHub Discussions.</span></li>
     </ul>

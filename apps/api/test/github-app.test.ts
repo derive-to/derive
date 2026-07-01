@@ -81,7 +81,7 @@ describe("installationToken + convertManifestCode", () => {
           new Response(
             JSON.stringify({
               id: 42,
-              slug: "dock-on-acme",
+              slug: "derive-on-acme",
               client_id: "Iv1.x",
               client_secret: "sek",
               pem: "-----BEGIN RSA PRIVATE KEY-----\n…\n-----END RSA PRIVATE KEY-----",
@@ -92,7 +92,7 @@ describe("installationToken + convertManifestCode", () => {
       ),
     )
     const conv = await convertManifestCode("tmpcode")
-    expect(conv).toMatchObject({ app_id: "42", slug: "dock-on-acme", webhook_secret: "whsec" })
+    expect(conv).toMatchObject({ app_id: "42", slug: "derive-on-acme", webhook_secret: "whsec" })
   })
 })
 

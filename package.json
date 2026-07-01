@@ -1,16 +1,16 @@
 {
-  "name": "dock.build",
+  "name": "derive.to",
   "version": "0.1.0",
   "private": true,
   "description": "Manage and share AI artifacts. Self-hostable, CLI-first, with permanent versioned URLs.",
   "license": "FSL-1.1-ALv2",
-  "homepage": "https://dock.build",
+  "homepage": "https://derive.to",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Niftory/dock.build.git"
+    "url": "https://github.com/derive-to/derive.git"
   },
   "bugs": {
-    "url": "https://github.com/Niftory/dock.build/issues"
+    "url": "https://github.com/derive-to/derive/issues"
   },
   "engines": {
     "node": ">=24"
@@ -29,8 +29,9 @@
     }
   },
   "scripts": {
-    "dev": "pnpm --filter @dock/api dev",
-    "start": "pnpm --filter @dock/api start",
+    "dev": "pnpm --filter @derive/api dev",
+    "dev:web": "pnpm --filter @derive/web dev",
+    "start": "pnpm --filter @derive/api start",
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r test",
     "test:pg": "bash scripts/test-pg.sh",

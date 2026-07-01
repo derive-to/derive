@@ -7,7 +7,7 @@ import { loadConfig, resolveAuthSecret, resolveDefaultOrg } from "../src/config"
 // loadConfig should fail fast at boot on a malformed value rather than coercing it
 // to a silent default (or failing lazily on the first request that touches it).
 describe("config: fail-fast env validation", () => {
-  const base = { PORT: "8080", BASE_URL: "http://dock.test" }
+  const base = { PORT: "8080", BASE_URL: "http://derive.test" }
 
   it("accepts a clean environment", () => {
     expect(loadConfig({ ...base }).port).toBe(8080)
@@ -35,12 +35,14 @@ describe("config: fail-fast env validation", () => {
   })
 
   it("rejects a non-numeric retention window", () => {
-    expect(() => loadConfig({ ...base, DOCK_ANALYTICS_RETENTION_DAYS: "abc" })).toThrow(/RETENTION/)
+    expect(() => loadConfig({ ...base, DERIVE_ANALYTICS_RETENTION_DAYS: "abc" })).toThrow(
+      /RETENTION/,
+    )
   })
 
   it("ignores an invalid quota knob (no-limit) without throwing", () => {
     // A typo'd cap is "no limit", warned not fatal — it shouldn't take the app down.
-    expect(loadConfig({ ...base, DOCK_MAX_ARTIFACTS: "lots" }).maxArtifacts).toBeUndefined()
+    expect(loadConfig({ ...base, DERIVE_MAX_ARTIFACTS: "lots" }).maxArtifacts).toBeUndefined()
   })
 })
 
@@ -50,27 +52,27 @@ describe("config: fail-fast env validation", () => {
 describe("config: baseUrl inference", () => {
   it("prefers an explicit BASE_URL over everything", () => {
     const c = loadConfig({
-      BASE_URL: "https://dock.example.com",
+      BASE_URL: "https://derive.example.com",
       RAILWAY_PUBLIC_DOMAIN: "ignored.up.railway.app",
       FLY_APP_NAME: "ignored",
     })
-    expect(c.baseUrl).toBe("https://dock.example.com")
+    expect(c.baseUrl).toBe("https://derive.example.com")
   })
 
   it("infers https from RAILWAY_PUBLIC_DOMAIN", () => {
-    expect(loadConfig({ RAILWAY_PUBLIC_DOMAIN: "dock.up.railway.app" }).baseUrl).toBe(
-      "https://dock.up.railway.app",
+    expect(loadConfig({ RAILWAY_PUBLIC_DOMAIN: "derive.up.railway.app" }).baseUrl).toBe(
+      "https://derive.up.railway.app",
     )
   })
 
   it("uses RENDER_EXTERNAL_URL verbatim (it already carries the scheme)", () => {
-    expect(loadConfig({ RENDER_EXTERNAL_URL: "https://dock.onrender.com" }).baseUrl).toBe(
-      "https://dock.onrender.com",
+    expect(loadConfig({ RENDER_EXTERNAL_URL: "https://derive.onrender.com" }).baseUrl).toBe(
+      "https://derive.onrender.com",
     )
   })
 
   it("infers https://<app>.fly.dev from FLY_APP_NAME", () => {
-    expect(loadConfig({ FLY_APP_NAME: "my-dock" }).baseUrl).toBe("https://my-dock.fly.dev")
+    expect(loadConfig({ FLY_APP_NAME: "my-derive" }).baseUrl).toBe("https://my-derive.fly.dev")
   })
 
   it("falls back to http://localhost:<port> with nothing set", () => {
@@ -90,48 +92,48 @@ describe("config: baseUrl inference", () => {
 // The env -> Config field mapping: defaults, on/off knobs, list parsing, and the
 // derived bundled-SPA flags. These feed every downstream subsystem.
 describe("config: field mapping", () => {
-  const base = { PORT: "8080", BASE_URL: "http://dock.test" }
+  const base = { PORT: "8080", BASE_URL: "http://derive.test" }
 
   it("defaults analytics + rate limiting on, and turns them off only on 'false'", () => {
     const on = loadConfig({ ...base })
     expect(on.analytics).toBe(true)
     expect(on.rateLimit).toBe(true)
-    const off = loadConfig({ ...base, DOCK_ANALYTICS: "false", DOCK_RATE_LIMIT: "false" })
+    const off = loadConfig({ ...base, DERIVE_ANALYTICS: "false", DERIVE_RATE_LIMIT: "false" })
     expect(off.analytics).toBe(false)
     expect(off.rateLimit).toBe(false)
   })
 
   it("parses superAdmins as a trimmed, lowercased, comma-separated list", () => {
-    const c = loadConfig({ ...base, DOCK_SUPERADMIN_EMAILS: " Amy@X.com , bob@y.com ,," })
+    const c = loadConfig({ ...base, DERIVE_SUPERADMIN_EMAILS: " Amy@X.com , bob@y.com ,," })
     expect(c.superAdmins).toEqual(["amy@x.com", "bob@y.com"])
   })
 
   it("normalizes subdomainBase (lowercase, strips leading/trailing dots)", () => {
-    expect(loadConfig({ ...base, DOCK_SUBDOMAIN_BASE: ".Dockd.App." }).subdomainBase).toBe(
-      "dockd.app",
+    expect(loadConfig({ ...base, DERIVE_SUBDOMAIN_BASE: ".Derived.App." }).subdomainBase).toBe(
+      "derived.app",
     )
-    expect(loadConfig({ ...base, DOCK_SUBDOMAIN_BASE: "" }).subdomainBase).toBeUndefined()
+    expect(loadConfig({ ...base, DERIVE_SUBDOMAIN_BASE: "" }).subdomainBase).toBeUndefined()
   })
 
   it("turns the version window from minutes into ms", () => {
-    expect(loadConfig({ ...base, DOCK_VERSION_WINDOW: "5" }).versionWindowMs).toBe(300_000)
+    expect(loadConfig({ ...base, DERIVE_VERSION_WINDOW: "5" }).versionWindowMs).toBe(300_000)
     expect(loadConfig({ ...base }).versionWindowMs).toBeUndefined()
   })
 
   it("parses the web-origin allowlist and crossSite flag", () => {
     const c = loadConfig({
       ...base,
-      DOCK_WEB_ORIGIN: "https://a.com, https://b.com",
-      DOCK_CROSS_SITE: "true",
+      DERIVE_WEB_ORIGIN: "https://a.com, https://b.com",
+      DERIVE_CROSS_SITE: "true",
     })
     expect(c.webOrigins).toEqual(["https://a.com", "https://b.com"])
     expect(c.crossSite).toBe(true)
   })
 
-  it("serveWeb is false when no built shell is present (empty DOCK_WEB_DIR)", () => {
-    const empty = mkdtempSync(join(tmpdir(), "dock-webdir-"))
+  it("serveWeb is false when no built shell is present (empty DERIVE_WEB_DIR)", () => {
+    const empty = mkdtempSync(join(tmpdir(), "derive-webdir-"))
     try {
-      const c = loadConfig({ ...base, DOCK_WEB_DIR: empty })
+      const c = loadConfig({ ...base, DERIVE_WEB_DIR: empty })
       expect(c.serveWeb).toBe(false)
       expect(c.webDir).toBe(empty)
     } finally {
@@ -140,10 +142,10 @@ describe("config: field mapping", () => {
   })
 
   it("serveWeb is true and webShell points at index.html when the SPA is built", () => {
-    const dir = mkdtempSync(join(tmpdir(), "dock-webdir-"))
+    const dir = mkdtempSync(join(tmpdir(), "derive-webdir-"))
     try {
       writeFileSync(join(dir, "index.html"), "<!doctype html>")
-      const c = loadConfig({ ...base, DOCK_WEB_DIR: dir })
+      const c = loadConfig({ ...base, DERIVE_WEB_DIR: dir })
       expect(c.serveWeb).toBe(true)
       expect(c.webShell).toBe(join(dir, "index.html"))
     } finally {
@@ -156,24 +158,24 @@ describe("config: field mapping", () => {
 // invalidate every session on each boot). Explicit env wins; else persist beside data.
 describe("config: resolveAuthSecret", () => {
   let dir: string
-  const saved = process.env.DOCK_AUTH_SECRET
+  const saved = process.env.DERIVE_AUTH_SECRET
   beforeEach(() => {
-    dir = mkdtempSync(join(tmpdir(), "dock-secret-"))
-    delete process.env.DOCK_AUTH_SECRET
+    dir = mkdtempSync(join(tmpdir(), "derive-secret-"))
+    delete process.env.DERIVE_AUTH_SECRET
   })
   afterEach(() => {
     rmSync(dir, { recursive: true, force: true })
-    if (saved === undefined) delete process.env.DOCK_AUTH_SECRET
-    else process.env.DOCK_AUTH_SECRET = saved
+    if (saved === undefined) delete process.env.DERIVE_AUTH_SECRET
+    else process.env.DERIVE_AUTH_SECRET = saved
   })
 
-  it("uses an explicit DOCK_AUTH_SECRET (>= 16 chars)", () => {
-    process.env.DOCK_AUTH_SECRET = "a-very-long-explicit-secret"
+  it("uses an explicit DERIVE_AUTH_SECRET (>= 16 chars)", () => {
+    process.env.DERIVE_AUTH_SECRET = "a-very-long-explicit-secret"
     expect(resolveAuthSecret(dir)).toBe("a-very-long-explicit-secret")
   })
 
   it("ignores a too-short env secret and generates+persists one instead", () => {
-    process.env.DOCK_AUTH_SECRET = "short"
+    process.env.DERIVE_AUTH_SECRET = "short"
     const s = resolveAuthSecret(dir)
     expect(s).not.toBe("short")
     expect(s.length).toBeGreaterThanOrEqual(32)
@@ -191,19 +193,19 @@ describe("config: resolveAuthSecret", () => {
 // later needs no data migration.
 describe("config: resolveDefaultOrg", () => {
   let dir: string
-  const saved = process.env.DOCK_DEFAULT_ORG_ID
+  const saved = process.env.DERIVE_DEFAULT_ORG_ID
   beforeEach(() => {
-    dir = mkdtempSync(join(tmpdir(), "dock-org-"))
-    delete process.env.DOCK_DEFAULT_ORG_ID
+    dir = mkdtempSync(join(tmpdir(), "derive-org-"))
+    delete process.env.DERIVE_DEFAULT_ORG_ID
   })
   afterEach(() => {
     rmSync(dir, { recursive: true, force: true })
-    if (saved === undefined) delete process.env.DOCK_DEFAULT_ORG_ID
-    else process.env.DOCK_DEFAULT_ORG_ID = saved
+    if (saved === undefined) delete process.env.DERIVE_DEFAULT_ORG_ID
+    else process.env.DERIVE_DEFAULT_ORG_ID = saved
   })
 
-  it("uses an explicit DOCK_DEFAULT_ORG_ID", () => {
-    process.env.DOCK_DEFAULT_ORG_ID = "ws_explicit"
+  it("uses an explicit DERIVE_DEFAULT_ORG_ID", () => {
+    process.env.DERIVE_DEFAULT_ORG_ID = "ws_explicit"
     expect(resolveDefaultOrg(dir)).toBe("ws_explicit")
   })
 

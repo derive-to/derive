@@ -1,4 +1,4 @@
-import type { DeliveryRecord } from "@dock/core"
+import type { DeliveryRecord } from "@derive/core"
 import { describe, expect, it } from "vitest"
 import { as, jsonAs, makeAuthedApp, pub, type TestUser } from "./helpers"
 

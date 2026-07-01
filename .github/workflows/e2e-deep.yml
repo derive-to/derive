@@ -28,10 +28,10 @@ jobs:
       - run: pnpm install --frozen-lockfile
 
       - name: Install Playwright browser
-        run: pnpm --filter @dock/web exec playwright install --with-deps chromium
+        run: pnpm --filter @derive/web exec playwright install --with-deps chromium
 
       - name: Deep suite
-        run: pnpm --filter @dock/web test:e2e:deep
+        run: pnpm --filter @derive/web test:e2e:deep
 
       - name: Upload Playwright report
         if: ${{ !cancelled() }}

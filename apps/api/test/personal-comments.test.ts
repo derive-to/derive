@@ -30,7 +30,7 @@ const personalOf = async (sid: string) =>
 // Seed an OAuth access token granting `userId` a scope set, into the same sqlite file
 // the app uses — what the browser-consent flow produces. The stored token is its
 // sha256; the raw string is the bearer.
-const seedGrant = (userId: string, raw: string, scopes = "openid dock:comment dock:read") => {
+const seedGrant = (userId: string, raw: string, scopes = "openid derive:comment derive:read") => {
   const db = new Database(join(dir, "personal-comments.db"))
   db.exec(`
     CREATE TABLE IF NOT EXISTS "oauthClient" (clientId TEXT PRIMARY KEY, name TEXT);
@@ -160,7 +160,7 @@ describe("personal comments — visibility", () => {
   // Grant seeding writes to the sqlite test file; on the pg lane the store is
   // Postgres (no oauth tables), so this case is sqlite-only. The visibility
   // FILTER it exercises is covered on both lanes by the cases above.
-  it.skipIf(process.env.DOCK_TEST_DB === "pg")(
+  it.skipIf(process.env.DERIVE_TEST_DB === "pg")(
     "an OAuth agent sees its own user's personal comments, never another user's",
     async () => {
       seedGrant(A.id, "tok_alice_agent")
