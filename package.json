@@ -31,6 +31,7 @@
   "scripts": {
     "dev": "pnpm --filter @derive/api dev",
     "dev:web": "pnpm --filter @derive/web dev",
+    "dev:all": "pnpm --parallel --filter \"./apps/*\" dev",
     "start": "pnpm --filter @derive/api start",
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r test",
