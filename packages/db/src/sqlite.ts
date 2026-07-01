@@ -6,7 +6,7 @@ import type {
   UserProfile,
   VersionRecord,
   ViewStats,
-} from "@dock/core"
+} from "@derive/core"
 import Database from "better-sqlite3"
 import { and, eq } from "drizzle-orm"
 import { drizzle } from "drizzle-orm/better-sqlite3"
@@ -258,7 +258,7 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
         return []
       }
     },
-    // Map GitHub numeric user ids to the Dock accounts that signed in with GitHub:
+    // Map GitHub numeric user ids to the Derive accounts that signed in with GitHub:
     // account.accountId (the stringified GitHub id) → user. providerId='github' scopes
     // it to the social provider. Best-effort — [] when the Better Auth tables are absent.
     usersByGithubIds: async (ghIds): Promise<GithubUserMapping[]> => {
@@ -277,7 +277,7 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
       }
     },
     // Idempotent backfill: stamp author_id where a synced artifact's author_gh_id maps
-    // to a Dock account and author_id is still null. Correlated subquery; only fills
+    // to a Derive account and author_id is still null. Correlated subquery; only fills
     // rows with a known mapping, so it's a no-op once applied.
     backfillAuthorIds: async (): Promise<number> => {
       try {

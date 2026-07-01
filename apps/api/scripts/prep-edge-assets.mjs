@@ -14,7 +14,7 @@
 //    cache on change, so these are safe to pin. `_headers` only applies to assets the
 //    static layer serves directly — `/assets/*` is not in run_worker_first, so it does.
 //
-// Run via `pnpm --filter @dock/api build:web` (which builds apps/web first). Idempotent.
+// Run via `pnpm --filter @derive/api build:web` (which builds apps/web first). Idempotent.
 import { copyFileSync, existsSync, rmSync, writeFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"

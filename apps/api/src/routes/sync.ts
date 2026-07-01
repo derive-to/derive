@@ -1,5 +1,5 @@
-import type { GitHubAppRecord, RepoSourceRecord, SyncProgress, VersionRecord } from "@dock/core"
-import { newId } from "@dock/core"
+import type { GitHubAppRecord, RepoSourceRecord, SyncProgress, VersionRecord } from "@derive/core"
+import { newId } from "@derive/core"
 import { Hono } from "hono"
 import { z } from "zod"
 import type { AppContext } from "../context"
@@ -63,7 +63,7 @@ interface GitHubWebhookPayload {
     base?: { ref?: string }
   }
   // `issue_comment` (PR conversation) + `pull_request_review_comment` (inline) — mirrored
-  // back into the Dock artifact. `issue.pull_request` presence confirms a PR (not a plain
+  // back into the Derive artifact. `issue.pull_request` presence confirms a PR (not a plain
   // issue); the review-comment variant carries `path`/`diff_hunk` for anchoring.
   issue?: { number?: number; pull_request?: unknown }
   comment?: {
@@ -136,7 +136,7 @@ export const syncRoutes = (ctx: AppContext) => {
     }
   }
 
-  // Diff Dock's REQUIRED spec against the App's live permissions/events. A scope is
+  // Diff Derive's REQUIRED spec against the App's live permissions/events. A scope is
   // "missing" if absent OR weaker than required (read < write < admin). When the live
   // spec is unknown (a fail-open network blip), report nothing missing rather than
   // nag spuriously. Drives the in-app "update permissions" banner.
@@ -224,12 +224,12 @@ export const syncRoutes = (ctx: AppContext) => {
     return { collectionId: col.id }
   }
 
-  // The body of the sticky "preview" comment Dock posts on a PR: a friendly line + a
+  // The body of the sticky "preview" comment Derive posts on a PR: a friendly line + a
   // deep link into the preview collection. No em dashes (customer-facing copy).
   const previewCommentBody = (collectionId: string, docCount: number): string => {
     const link = `${deps.baseUrl.replace(/\/$/, "")}/?collection=${collectionId}`
     const docs = `${docCount} doc${docCount === 1 ? "" : "s"}`
-    return `📦 **Dock preview** of this PR: ${docs} rendered with versions, comments, and review.\n\n👉 [Open the preview in Dock](${link})`
+    return `📦 **Derive preview** of this PR: ${docs} rendered with versions, comments, and review.\n\n👉 [Open the preview in Derive](${link})`
   }
 
   // Tear down a preview WITHOUT graduating it: tombstone its artifacts, drop the source
@@ -316,7 +316,7 @@ export const syncRoutes = (ctx: AppContext) => {
     }
     // Re-anchor the canonical doc's threads (incl. the migrated ones) against its new
     // current version — quoted text that survived the merge stays anchored, the rest flips
-    // to `outdated` (Dock's normal post-version-bump behavior).
+    // to `outdated` (Derive's normal post-version-bump behavior).
     if (latest) await sweepAnchors(meta, deps.blobs, canonicalId, latest)
     // The preview copy is now redundant — hard-delete it (cascades its versions + comments).
     await meta.deleteArtifact(previewId, preview.org_id)
@@ -470,7 +470,7 @@ export const syncRoutes = (ctx: AppContext) => {
 
   // ---- App install callback (GitHub → browser redirect) -----------------
   // GET, so it passes the anonymous-write lockdown. Primary auth is the signed
-  // state Dock embeds in the install URL — it carries the workspace. A present-
+  // state Derive embeds in the install URL — it carries the workspace. A present-
   // but-invalid state (tampered or expired) is REJECTED — that's the CSRF guard.
   // An ABSENT state is the legitimate "installed directly on GitHub" path (the
   // App's setup_url fires with no state); there we fall back to the session's
@@ -804,8 +804,8 @@ export const syncRoutes = (ctx: AppContext) => {
                     const token = await effectiveToken(meta, deps.encryptionKey, branch)
                     const link = `${deps.baseUrl.replace(/\/$/, "")}/?collection=${branch.collection_id}`
                     const body = merged
-                      ? `✅ **Merged.** These docs are now part of [${branch.repo} in Dock](${link}).`
-                      : "📦 **Dock preview** removed (this PR was closed without merging)."
+                      ? `✅ **Merged.** These docs are now part of [${branch.repo} in Derive](${link}).`
+                      : "📦 **Derive preview** removed (this PR was closed without merging)."
                     if (token) await upsertPreviewComment(parsed, prNumber, body, token)
                   } catch (err) {
                     log.warn("pr preview comment (close) skipped", {
@@ -881,8 +881,8 @@ export const syncRoutes = (ctx: AppContext) => {
         }
       }
     } else if (event === "issue_comment" || event === "pull_request_review_comment") {
-      // Mirror a PR comment made on GitHub back into the Dock artifact (the inbound half
-      // of bidirectional comment sync). Only `created`; only for PRs that Dock previews.
+      // Mirror a PR comment made on GitHub back into the Derive artifact (the inbound half
+      // of bidirectional comment sync). Only `created`; only for PRs that Derive previews.
       const installationId = payload.installation?.id ? String(payload.installation.id) : null
       const fullName = payload.repository?.full_name
       const prNumber =
@@ -902,7 +902,7 @@ export const syncRoutes = (ctx: AppContext) => {
         const preview = (await meta.listRepoSourcesByInstallation(installationId)).find(
           (s) => s.pr_number === prNumber && s.repo.toLowerCase() === lc,
         )
-        // Respect the workspace toggle; skip silently when the PR isn't mirrored in Dock.
+        // Respect the workspace toggle; skip silently when the PR isn't mirrored in Derive.
         if (preview && (await meta.getOrgSettings(preview.org_id)).githubMirrorComments) {
           const created = await ingestGithubPrComment(meta, preview, {
             ghCommentId: cmt.id,
@@ -927,7 +927,7 @@ export const syncRoutes = (ctx: AppContext) => {
         installationId
       ) {
         // New installation or permission upgrade: record/update the row. We don't know
-        // which Dock workspace to assign it to from the webhook alone, so we upsert
+        // which Derive workspace to assign it to from the webhook alone, so we upsert
         // against any existing row (re-using its org_id) or create under a sentinel
         // org so the next `resync-installations` call from the UI can claim it.
         const existing = await meta.getGithubInstallation(installationId)

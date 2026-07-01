@@ -127,9 +127,9 @@ describe("slack events endpoint", () => {
     expect(r.status).toBe(401)
   })
 
-  it("mirrors a signed thread reply into a Dock comment on the linked thread", async () => {
+  it("mirrors a signed thread reply into a Derive comment on the linked thread", async () => {
     const { app, meta } = make("slack-ev-reply")
-    // Seed an artifact + a thread link for an existing Dock thread.
+    // Seed an artifact + a thread link for an existing Derive thread.
     const artifact = await meta.createArtifact({
       id: "a-slack-reply",
       short_id: "slkreply",

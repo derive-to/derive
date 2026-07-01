@@ -7,7 +7,7 @@ import { buildManifest } from "../src/github-app-setup"
 //   - public:false → couldn't install on an organization
 //   - setup_url at the settings page → post-install callback never ran
 describe("GitHub App manifest", () => {
-  const m = buildManifest("https://dock.example.com", "dock.example.com")
+  const m = buildManifest("https://derive.example.com", "derive.example.com")
 
   it("subscribes to permission-backed events (push, PRs, and PR comments)", () => {
     expect(m.default_events).toEqual([
@@ -31,8 +31,8 @@ describe("GitHub App manifest", () => {
   })
 
   it("points setup_url at the install callback and redirect_url at app creation", () => {
-    expect(m.setup_url).toBe("https://dock.example.com/v1/sync/github/callback")
-    expect(m.redirect_url).toBe("https://dock.example.com/settings/github/app/created")
-    expect(m.hook_attributes.url).toBe("https://dock.example.com/v1/sync/github/webhook")
+    expect(m.setup_url).toBe("https://derive.example.com/v1/sync/github/callback")
+    expect(m.redirect_url).toBe("https://derive.example.com/settings/github/app/created")
+    expect(m.hook_attributes.url).toBe("https://derive.example.com/v1/sync/github/webhook")
   })
 })

@@ -25,19 +25,19 @@ Outcome bar: tokenized (all 4 themes), accessible (Radix), responsive (mobile),
 
 ## Dev stack (your own, isolated — never use someone else's ports)
 
-Dock is `apps/api` (Hono) + `apps/web` (vite SPA, proxies `/v1`,`/api`,`/raw`,`/healthz` → API). Pick unique ports.
+Derive is `apps/api` (Hono) + `apps/web` (vite SPA, proxies `/v1`,`/api`,`/raw`,`/healthz` → API). Pick unique ports.
 
 ```bash
 # API (fresh SQLite, isolated data dir)
 cd apps/api && PORT=8200 DATA_DIR="$PWD/.data-mine" \
-  DOCK_WEB_ORIGIN=http://localhost:3200 BASE_URL=http://localhost:3200 pnpm dev
+  DERIVE_WEB_ORIGIN=http://localhost:3200 BASE_URL=http://localhost:3200 pnpm dev
 
 # Web (HMR), proxying to your API
-cd apps/web && DOCK_API=http://localhost:8200 pnpm exec vite --port 3200 --strictPort
+cd apps/web && DERIVE_API=http://localhost:8200 pnpm exec vite --port 3200 --strictPort
 ```
 
 Sign up fresh (first user on a fresh DB = workspace owner). Switch theme with
-`localStorage.setItem('dock_theme','dark'|'light'|'paper'|'dusk')` then reload;
+`localStorage.setItem('derive_theme','dark'|'light'|'paper'|'dusk')` then reload;
 `<html data-theme>` reflects it.
 
 ## Verify (gate for "done")

@@ -1,4 +1,4 @@
-<!-- Thanks for contributing to Dock! Keep PRs focused and the gate green. -->
+<!-- Thanks for contributing to Derive! Keep PRs focused and the gate green. -->
 
 ## What & why
 

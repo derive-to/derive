@@ -7,7 +7,7 @@ import { runStoreContract } from "./store-contract"
 // via Miniflare (the `pnpm test:d1` lane / the CI `d1` job — see vitest.d1.config.ts).
 // This is the first runtime coverage of src/d1.ts: until now the shared query logic
 // rode the SQLite suite and the DDL rode schema-conformance, but the D1-specific path
-// (drizzle-orm/d1 + the raw analytics SQL) had none, and Dock's edge tier runs on it.
+// (drizzle-orm/d1 + the raw analytics SQL) had none, and Derive's edge tier runs on it.
 // A wrong WHERE, a missing org scope, or a D1-only SQL quirk fails the same assertion
 // that passes on SQLite/Postgres.
 //

@@ -2,9 +2,9 @@ import { createHmac } from "node:crypto"
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { type ArtifactRecord, type DeliveryRecord, newId } from "@dock/core"
-import { SqliteMetaStore } from "@dock/db/sqlite"
-import { FsBlobStore } from "@dock/storage/fs"
+import { type ArtifactRecord, type DeliveryRecord, newId } from "@derive/core"
+import { SqliteMetaStore } from "@derive/db/sqlite"
+import { FsBlobStore } from "@derive/storage/fs"
 import { afterAll, describe, expect, it, vi } from "vitest"
 import { WebhookOutbox } from "../src/webhook-do"
 import {
@@ -139,7 +139,7 @@ describe("Standard Webhooks signing", () => {
     expect(headers["webhook-id"]).toBe("wd_test")
     expect(ts).toMatch(/^\d+$/)
     expect(headers["webhook-signature"]).toMatch(/^v1,/)
-    expect(headers["x-dock-signature"]).toMatch(/^sha256=/) // legacy still present
+    expect(headers["x-derive-signature"]).toMatch(/^sha256=/) // legacy still present
     // The signature is over the id/timestamp it actually sent.
     const body = spy.mock.calls[0]?.[1]?.body as string
     expect(headers["webhook-signature"]).toBe(standardWebhookSignature("s", "wd_test", ts, body))
@@ -154,13 +154,13 @@ describe("Standard Webhooks signing", () => {
     )
     const headers = (spy.mock.calls[0]?.[1]?.headers ?? {}) as Record<string, string>
     expect(headers["webhook-signature"]).toBeUndefined()
-    expect(headers["x-dock-signature"]).toBeUndefined()
+    expect(headers["x-derive-signature"]).toBeUndefined()
     spy.mockRestore()
   })
 })
 
-const dir = mkdtempSync(join(tmpdir(), "dock-wha-"))
-const meta = new SqliteMetaStore(join(dir, "dock.db"))
+const dir = mkdtempSync(join(tmpdir(), "derive-wha-"))
+const meta = new SqliteMetaStore(join(dir, "derive.db"))
 afterAll(() => {
   meta.close()
   rmSync(dir, { recursive: true, force: true })
@@ -234,13 +234,13 @@ describe("enqueueForEvent reports how many deliveries it queued", () => {
 
 describe("notify pokes the drainer only when something was enqueued", () => {
   it("pokes after a subscribed event fires, so delivery doesn't wait for the interval", async () => {
-    const ndir = mkdtempSync(join(tmpdir(), "dock-whp-"))
-    const m = new SqliteMetaStore(join(ndir, "dock.db"))
+    const ndir = mkdtempSync(join(tmpdir(), "derive-whp-"))
+    const m = new SqliteMetaStore(join(ndir, "derive.db"))
     const poke = vi.fn()
     const app = ownerApp({
       meta: m,
       blobs: new FsBlobStore(join(ndir, "blobs")),
-      baseUrl: "http://dock.test",
+      baseUrl: "http://derive.test",
       pokeWebhooks: poke,
     })
     await app.request("/v1/webhooks", {

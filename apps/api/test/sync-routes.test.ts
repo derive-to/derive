@@ -94,7 +94,7 @@ describe("sync routes", () => {
       managed?: boolean
     }
     expect(detail.managed).toBe(true)
-    const republish = await upload("readme.md", "# edited in Dock", {}, shortId)
+    const republish = await upload("readme.md", "# edited in Derive", {}, shortId)
     expect(republish.status).toBe(409)
   })
 

@@ -1,8 +1,8 @@
-# Fly.io config for the Dock API container. Deploy with:
+# Fly.io config for the Derive API container. Deploy with:
 #   fly deploy --config deploy/fly.toml
 # Self-hosting your own instance? Change `app` to yours (or run `fly launch`,
 # which rewrites it) and make the volume name below match yours.
-app = "dock-api-lively-hill-7367"
+app = "derive-api-lively-hill-7367"
 primary_region = "iad"
 
 [build]

@@ -1,4 +1,4 @@
-import { newId } from "@dock/core"
+import { newId } from "@derive/core"
 import { Hono } from "hono"
 import { z } from "zod"
 import type { AppContext } from "../context"

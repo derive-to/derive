@@ -1,12 +1,12 @@
 {
-  "name": "@dock/api",
+  "name": "@derive/api",
   "version": "0.1.0",
   "private": true,
   "type": "module",
   "license": "FSL-1.1-ALv2",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Niftory/dock.build.git",
+    "url": "https://github.com/derive-to/derive.git",
     "directory": "apps/api"
   },
   "exports": {
@@ -15,7 +15,7 @@
   "scripts": {
     "dev": "tsx watch src/node.ts",
     "start": "tsx src/node.ts",
-    "build:web": "pnpm --filter @dock/web build && node scripts/prep-edge-assets.mjs",
+    "build:web": "pnpm --filter @derive/web build && node scripts/prep-edge-assets.mjs",
     "deploy:schema": "node scripts/apply-d1-schema.mjs",
     "migrate:auth": "tsx migrate-auth-d1.ts",
     "deploy": "pnpm build:web && pnpm deploy:schema && tsx migrate-auth-d1.ts --apply && wrangler deploy && pnpm deploy:smoke",
@@ -26,9 +26,9 @@
   },
   "dependencies": {
     "@better-auth/oauth-provider": "1.6.19",
-    "@dock/core": "workspace:*",
-    "@dock/db": "workspace:*",
-    "@dock/storage": "workspace:*",
+    "@derive/core": "workspace:*",
+    "@derive/db": "workspace:*",
+    "@derive/storage": "workspace:*",
     "@hono/mcp": "^0.3.0",
     "@hono/node-server": "^2.0.5",
     "@modelcontextprotocol/sdk": "^1.25.1",

@@ -1,4 +1,4 @@
-import { can, newId } from "@dock/core"
+import { can, newId } from "@derive/core"
 import { Hono } from "hono"
 import { getCookie, setCookie } from "hono/cookie"
 import { z } from "zod"
@@ -34,10 +34,10 @@ export const analyticsRoutes = (ctx: AppContext) => {
       // A long-lived first-party cookie keeps the same browser as one anonymous
       // viewer across opens. SameSite=None;Secure when the SPA is cross-site, so
       // it actually sticks there (Lax would be dropped on the cross-site fetch).
-      let vid = getCookie(c, "dock_vid")
+      let vid = getCookie(c, "derive_vid")
       if (!vid) {
         vid = newId("anon")
-        setCookie(c, "dock_vid", vid, {
+        setCookie(c, "derive_vid", vid, {
           path: "/",
           maxAge: 60 * 60 * 24 * 365,
           httpOnly: true,

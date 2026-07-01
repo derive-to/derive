@@ -1,4 +1,4 @@
-import type { CommentRecord, CommentState } from "@dock/core"
+import type { CommentRecord, CommentState } from "@derive/core"
 import { beforeEach, describe, expect, it } from "vitest"
 import { markAddressed, releaseAddressed } from "../src/lib/addressed"
 import { parseMeta } from "../src/lib/comments"

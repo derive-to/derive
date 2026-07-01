@@ -17,14 +17,14 @@ const AUTH = { authorization: `Bearer ${TEST_TOKEN}` }
 // the App webhook-secret HMAC instead. Exercises the anon allow-list, the App
 // credential decrypt, the signature check, and the install-lifecycle mutation.
 const KEY = "test-encryption-key"
-const WHSEC = "whsec_dock_test"
+const WHSEC = "whsec_derive_test"
 const ORG = "ghwebhook"
 
 const seedApp = async (meta: Awaited<ReturnType<typeof quotaApp>>["meta"]) => {
   await meta.setGithubApp({
     id: "default",
     app_id: "1",
-    slug: "dock-test",
+    slug: "derive-test",
     client_id: "Iv1.x",
     client_secret: encryptSecret("cs", KEY),
     private_key: encryptSecret(
@@ -164,14 +164,14 @@ describe("github app auto-heal (GET /app verification)", () => {
     meta.setGithubApp({
       id: "default",
       app_id: "55",
-      slug: "dock-test",
+      slug: "derive-test",
       client_id: "x",
       client_secret: encryptSecret("cs", KEY),
       private_key: encryptSecret(RSA_PEM, KEY),
       webhook_secret: encryptSecret(WHSEC, KEY),
       created_at: "2026-06-15T00:00:00.000Z",
     })
-  // GET /app stub. `perms`/`events` default to Dock's full required set so a
+  // GET /app stub. `perms`/`events` default to Derive's full required set so a
   // healthy App reports upToDate; pass partial sets to exercise the diff.
   const stubGetApp = (
     status: number,
@@ -187,7 +187,7 @@ describe("github app auto-heal (GET /app verification)", () => {
       vi.fn(async (url: string | URL) =>
         String(url).endsWith("/app")
           ? new Response(
-              JSON.stringify({ slug: "dock-test", html_url: "x", permissions: perms, events }),
+              JSON.stringify({ slug: "derive-test", html_url: "x", permissions: perms, events }),
               { status },
             )
           : new Response("nf", { status: 404 }),
@@ -208,7 +208,7 @@ describe("github app auto-heal (GET /app verification)", () => {
     await seedLiveApp(meta)
     stubGetApp(200)
     const { app: a } = await statusApp(app)
-    expect(a).toMatchObject({ configured: true, slug: "dock-test", upToDate: true })
+    expect(a).toMatchObject({ configured: true, slug: "derive-test", upToDate: true })
     expect(a.missing).toEqual({ permissions: {}, events: [] })
   })
 

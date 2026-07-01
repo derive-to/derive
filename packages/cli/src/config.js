@@ -1,15 +1,15 @@
-// dock.json + scaffold logic, kept pure so it's unit-testable without a server.
+// derive.json + scaffold logic, kept pure so it's unit-testable without a server.
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { dirname, join } from "node:path"
 
-export const CONFIG_FILE = "dock.json"
+export const CONFIG_FILE = "derive.json"
 
-// ---- User-level credentials (`dock login`) --------------------------------
-// Tokens are secrets, so they live in a user-level store (one entry per Dock
-// origin), never in the project's dock.json. DOCK_CONFIG_DIR overrides the dir.
+// ---- User-level credentials (`derive login`) --------------------------------
+// Tokens are secrets, so they live in a user-level store (one entry per Derive
+// origin), never in the project's derive.json. DERIVE_CONFIG_DIR overrides the dir.
 
-const configDir = () => process.env.DOCK_CONFIG_DIR ?? join(homedir(), ".config", "dock")
+const configDir = () => process.env.DERIVE_CONFIG_DIR ?? join(homedir(), ".config", "derive")
 const credsPath = () => join(configDir(), "credentials.json")
 
 /** Normalize a server URL to its origin so one entry covers every path under it. */
@@ -45,9 +45,9 @@ export function tokenFor(server) {
   return loadCredentials()[originOf(server)]?.token ?? null
 }
 
-/** The dock.json a fresh project starts with (no id until first publish). */
+/** The derive.json a fresh project starts with (no id until first publish). */
 export const defaultConfig = (title = "My artifact", entry = "index.md") => ({
-  $schema: "./dock.schema.json",
+  $schema: "./derive.schema.json",
   title,
   entry,
   visibility: "link",
@@ -57,7 +57,7 @@ export const defaultConfig = (title = "My artifact", entry = "index.md") => ({
 
 export const TEMPLATES = ["md", "html", "slides", "site", "skill"]
 
-/** Read dock.json from `dir`, or null if absent. Throws on malformed JSON. */
+/** Read derive.json from `dir`, or null if absent. Throws on malformed JSON. */
 export function loadConfig(dir = ".") {
   const path = join(dir, CONFIG_FILE)
   if (!existsSync(path)) return null
@@ -69,13 +69,13 @@ export function loadConfig(dir = ".") {
 }
 
 /**
- * Effective publish settings: CLI flags win over dock.json, which wins over
+ * Effective publish settings: CLI flags win over derive.json, which wins over
  * built-in defaults. Returns the values the publish command actually uses.
  */
 export function resolvePublish(opts = {}, config = null) {
   const c = config ?? {}
   const spa = opts.spa != null ? opts.spa === "true" || opts.spa === true : !!c.spa
-  const server = opts.server ?? c.server ?? process.env.DOCK_SERVER ?? "http://localhost:8080"
+  const server = opts.server ?? c.server ?? process.env.DERIVE_SERVER ?? "http://localhost:8080"
   return {
     id: opts.id ?? c.id ?? null,
     target: opts.target ?? c.entry ?? null,
@@ -86,12 +86,12 @@ export function resolvePublish(opts = {}, config = null) {
     message: opts.message,
     name: opts.name,
     server,
-    // Explicit flag / env win; otherwise fall back to the `dock login` token.
-    token: opts.token ?? process.env.DOCK_TOKEN ?? tokenFor(server),
+    // Explicit flag / env win; otherwise fall back to the `derive login` token.
+    token: opts.token ?? process.env.DERIVE_TOKEN ?? tokenFor(server),
   }
 }
 
-/** Persist the server-assigned id back into dock.json (preserving other keys). */
+/** Persist the server-assigned id back into derive.json (preserving other keys). */
 export function writeId(dir, id) {
   const path = join(dir, CONFIG_FILE)
   const config = loadConfig(dir) ?? defaultConfig()
@@ -100,9 +100,9 @@ export function writeId(dir, id) {
   return config
 }
 
-// Each template's entry (what `dock publish` targets) + the starter file(s) it
-// writes. `site` is a multi-file bundle (entry is a directory). dock.json,
-// dock.schema.json, and AGENTS.md are added to every template.
+// Each template's entry (what `derive publish` targets) + the starter file(s) it
+// writes. `site` is a multi-file bundle (entry is a directory). derive.json,
+// derive.schema.json, and AGENTS.md are added to every template.
 const STARTERS = {
   md: { entry: "index.md", files: (t) => ({ "index.md": starterMd(t) }) },
   html: { entry: "index.html", files: (t) => ({ "index.html": starterHtml(t) }) },
@@ -116,8 +116,8 @@ const STARTERS = {
     }),
   },
   // A Claude Code skill: a SKILL.md (frontmatter + body) plus scripts/ + references/.
-  // `dock publish skill/` zips the folder; Dock renders SKILL.md and recognizes it as
-  // a skill (the project's dock.json/AGENTS.md stay outside the bundled `skill/` dir).
+  // `derive publish skill/` zips the folder; Derive renders SKILL.md and recognizes it as
+  // a skill (the project's derive.json/AGENTS.md stay outside the bundled `skill/` dir).
   skill: {
     entry: "skill",
     files: (t) => ({
@@ -129,9 +129,9 @@ const STARTERS = {
 }
 
 /**
- * Files a new project gets for a template. dock.json drives publishing; AGENTS.md
+ * Files a new project gets for a template. derive.json drives publishing; AGENTS.md
  * is the loop convention for agents; the starter is publishable immediately. The
- * agent on-ramp ships too: a Claude Code skill (.claude/skills/dock) and a project
+ * agent on-ramp ships too: a Claude Code skill (.claude/skills/derive) and a project
  * MCP config (.mcp.json) so "let my agent ship the page and bring comments back"
  * is wired the moment the project exists.
  */
@@ -139,17 +139,17 @@ export function scaffoldFiles(title = "My artifact", template = "md") {
   const t = STARTERS[template] ?? STARTERS.md
   return {
     [CONFIG_FILE]: `${JSON.stringify(defaultConfig(title, t.entry), null, 2)}\n`,
-    "dock.schema.json": `${JSON.stringify(DOCK_SCHEMA, null, 2)}\n`,
+    "derive.schema.json": `${JSON.stringify(DERIVE_SCHEMA, null, 2)}\n`,
     ...t.files(title),
     "AGENTS.md": AGENTS_MD,
-    ".claude/skills/dock/SKILL.md": SKILL_MD,
+    ".claude/skills/derive/SKILL.md": SKILL_MD,
     ".mcp.json": `${JSON.stringify(MCP_CONFIG, null, 2)}\n`,
   }
 }
 
 /** Project-scoped MCP config (Claude Code et al. read `.mcp.json`). Reads the
  *  server + token from the environment so no secret is written to disk; falls
- *  back to a local server. `npx -y @dock/mcp` needs no install. */
+ *  back to a local server. `npx -y @derive/mcp` needs no install. */
 // Shell-style env expansion the agent harness resolves when it reads .mcp.json:
 // `${VAR:-default}`. Assembled from parts so the source carries no literal
 // template placeholder (which a plain JS string shouldn't).
@@ -157,25 +157,25 @@ const envRef = (name, fallback = "") => ["${", name, ":-", fallback, "}"].join("
 
 const MCP_CONFIG = {
   mcpServers: {
-    dock: {
+    derive: {
       command: "npx",
-      args: ["-y", "@dock/mcp"],
+      args: ["-y", "@derive/mcp"],
       env: {
-        DOCK_SERVER: envRef("DOCK_SERVER", "http://localhost:8080"),
-        DOCK_TOKEN: envRef("DOCK_TOKEN"),
+        DERIVE_SERVER: envRef("DERIVE_SERVER", "http://localhost:8080"),
+        DERIVE_TOKEN: envRef("DERIVE_TOKEN"),
       },
     },
   },
 }
 
-/** JSON Schema for dock.json — gives editors autocomplete + validation. */
-export const DOCK_SCHEMA = {
+/** JSON Schema for derive.json — gives editors autocomplete + validation. */
+export const DERIVE_SCHEMA = {
   $schema: "http://json-schema.org/draft-07/schema#",
-  title: "dock.json",
+  title: "derive.json",
   type: "object",
   properties: {
     title: { type: "string", description: "Artifact title." },
-    entry: { type: "string", description: "File or directory `dock publish` targets." },
+    entry: { type: "string", description: "File or directory `derive publish` targets." },
     visibility: { enum: ["public", "link", "org", "password"], default: "link" },
     spa: {
       type: "boolean",
@@ -186,11 +186,11 @@ export const DOCK_SCHEMA = {
       type: ["string", "null"],
       description: "Artifact short id; set automatically on first publish.",
     },
-    server: { type: "string", description: "Dock server URL (overrides DOCK_SERVER)." },
+    server: { type: "string", description: "Derive server URL (overrides DERIVE_SERVER)." },
   },
 }
 
-/** Render comments as a readable thread list for `dock comments`. Pure. */
+/** Render comments as a readable thread list for `derive comments`. Pure. */
 export function formatComments(comments) {
   if (!comments || comments.length === 0) return "No comments yet."
   const threads = new Map()
@@ -256,7 +256,7 @@ description: ${title} — say, in a sentence or two, when an agent should reach 
 
 Replace this with what the skill does and how to use it. A skill is a folder: this
 SKILL.md plus optional \`scripts/\` (helpers it can run) and \`references/\` (context
-loaded on demand). Publish the folder with \`dock publish skill/\`.
+loaded on demand). Publish the folder with \`derive publish skill/\`.
 
 ## Steps
 
@@ -283,7 +283,7 @@ Extra detail the skill loads on demand — keep SKILL.md lean and push the long 
 
 const starterMd = (title) => `# ${title}
 
-Edit this, then run \`dock publish\`. Every publish becomes a new version at the
+Edit this, then run \`derive publish\`. Every publish becomes a new version at the
 same URL, and reviewers can comment on the rendered page.
 
 ## Tips for durable comments
@@ -300,7 +300,7 @@ const starterSiteIndex = (title) => `<!doctype html>
 <nav><a href="/">Home</a> · <a href="/about.html">About</a></nav>
 <h1>${title}</h1>
 <p>A multi-page static site, published as one artifact. Build any generator into
-a folder; <code>dock publish</code> zips it and serves it. Absolute asset paths
+a folder; <code>derive publish</code> zips it and serves it. Absolute asset paths
 are rewritten so the bundle stays sandboxed.</p>
 `
 
@@ -338,14 +338,14 @@ const starterHtml = (title) => `<!doctype html>
 <body>
   <h1>${title}</h1>
   <p class="sub">A standalone HTML artifact.</p>
-  <p>Edit this file and run <code>dock publish</code>. Each publish is a new version
+  <p>Edit this file and run <code>derive publish</code>. Each publish is a new version
   at the same URL, and reviewers can select any text to comment on it.</p>
 </body>
 </html>
 `
 
 // Pure-HTML slides with a real presentation layer: on-screen prev/next +
-// fullscreen, keyboard, and the dock-deck protocol so the Dock viewer can drive
+// fullscreen, keyboard, and the derive-deck protocol so the Derive viewer can drive
 // it too (postMessage). Self-contained, renders in the sandbox.
 const starterSlides = (title) => `<!doctype html>
 <html lang="en">
@@ -386,19 +386,19 @@ const starterSlides = (title) => `<!doctype html>
 </head>
 <body>
 <div class="deck">
-  <section class="slide on" data-dock-slide="0">
+  <section class="slide on" data-derive-slide="0">
     <h1>${title}</h1>
     <p class="lede">Pure-HTML slides. <kbd>→</kbd> / <kbd>Space</kbd> advance, <kbd>←</kbd> back, <kbd>F</kbd> fullscreen.</p>
   </section>
-  <section class="slide" data-dock-slide="1">
+  <section class="slide" data-derive-slide="1">
     <h2>One idea per slide</h2>
     <ul>
-      <li>Write each slide as a <code>&lt;section class="slide" data-dock-slide="N"&gt;</code>.</li>
-      <li>Publish with <code>dock publish</code>; reviewers comment on any slide.</li>
+      <li>Write each slide as a <code>&lt;section class="slide" data-derive-slide="N"&gt;</code>.</li>
+      <li>Publish with <code>derive publish</code>; reviewers comment on any slide.</li>
       <li>Every publish is a new version at the same URL.</li>
     </ul>
   </section>
-  <section class="slide" data-dock-slide="2">
+  <section class="slide" data-derive-slide="2">
     <h2>Make it yours</h2>
     <p class="lede">Edit the markup and styles. It's just HTML.</p>
   </section>
@@ -415,8 +415,8 @@ const starterSlides = (title) => `<!doctype html>
 <script>
   var slides=[].slice.call(document.querySelectorAll('.slide')),i=0;
   var bar=document.querySelector('.bar i'),pos=document.querySelector('.pos');
-  function announce(){ // dock-deck protocol: report position to the Dock viewer
-    try{parent.postMessage({source:'dock-deck',type:'state',i:i,total:slides.length},'*')}catch(e){}
+  function announce(){ // derive-deck protocol: report position to the Derive viewer
+    try{parent.postMessage({source:'derive-deck',type:'state',i:i,total:slides.length},'*')}catch(e){}
   }
   function show(n){i=Math.max(0,Math.min(slides.length-1,n));
     slides.forEach(function(s,k){s.classList.toggle('on',k===i)});
@@ -433,9 +433,9 @@ const starterSlides = (title) => `<!doctype html>
     var a=b.getAttribute('data-act'); if(a==='prev')show(i-1); else if(a==='next')show(i+1); else if(a==='full')full()});
   document.querySelector('.edge.l').addEventListener('click',function(){show(i-1)});
   document.querySelector('.edge.r').addEventListener('click',function(){show(i+1)});
-  // accept drive commands from the Dock viewer's presentation bar
+  // accept drive commands from the Derive viewer's presentation bar
   addEventListener('message',function(e){var d=e.data;
-    if(!d||d.source!=='dock-host'||d.type!=='deck')return;
+    if(!d||d.source!=='derive-host'||d.type!=='deck')return;
     if(d.action==='next')show(i+1);else if(d.action==='prev')show(i-1);else if(d.action==='goto')show(d.n)});
   show(0); announce();
 </script>
@@ -444,35 +444,35 @@ const starterSlides = (title) => `<!doctype html>
 `
 
 // Scaffolded into every project: the publish -> review -> revise loop, written
-// for an agent (or a human) to follow without prior knowledge of Dock.
-const AGENTS_MD = `# Working with Dock
+// for an agent (or a human) to follow without prior knowledge of Derive.
+const AGENTS_MD = `# Working with Derive
 
-This project publishes to **Dock**: artifacts get a permanent URL, versions, and
-inline comments. Config lives in \`dock.json\`; the artifact id is filled in there
+This project publishes to **Derive**: artifacts get a permanent URL, versions, and
+inline comments. Config lives in \`derive.json\`; the artifact id is filled in there
 after the first publish, so later publishes target the same artifact.
 
 ## Publish
 
 \`\`\`bash
-dock publish              # publishes dock.json "entry", or:
-dock publish ./report.md  # a file, or a folder (a built site)
+derive publish              # publishes derive.json "entry", or:
+derive publish ./report.md  # a file, or a folder (a built site)
 \`\`\`
 
 Each publish is a new immutable version at the same URL. Name a checkpoint with
-\`dock publish --name "Final draft"\`.
+\`derive publish --name "Final draft"\`.
 
 ## The loop: publish -> review -> revise
 
-The CLI has a verb for each step (all read the artifact id from dock.json):
+The CLI has a verb for each step (all read the artifact id from derive.json):
 
 \`\`\`bash
-dock publish                      # 1. publish a draft, share the URL
-dock comments                     # 2. read the comment threads (quote · author · state)
+derive publish                      # 1. publish a draft, share the URL
+derive comments                     # 2. read the comment threads (quote · author · state)
 # 3. revise the source for the feedback, then:
-dock publish --name "Rev 2"       #    publish again — same URL, highlights re-anchor
-dock reply <thread_id> "Fixed in this version."   # 4a. discuss
-dock resolve <comment_id>         # 4b. close a handled thread  (dock reopen to undo)
-dock open                         # open the artifact in a browser
+derive publish --name "Rev 2"       #    publish again — same URL, highlights re-anchor
+derive reply <thread_id> "Fixed in this version."   # 4a. discuss
+derive resolve <comment_id>         # 4b. close a handled thread  (derive reopen to undo)
+derive open                         # open the artifact in a browser
 \`\`\`
 
 Each is also a plain HTTP call if you'd rather not shell out — see the API under
@@ -487,9 +487,9 @@ headings and distinctive phrases stable. Full guidance: STANDARD.md.
 
 ## Using an agent harness
 
-A Claude Code skill ships in \`.claude/skills/dock\`, and \`.mcp.json\` wires the
-Dock MCP server (five tools: \`list_artifacts\`, \`read\`, \`catch_up\`, \`comment\`,
-\`publish\`). Set \`DOCK_SERVER\` and \`DOCK_TOKEN\` in your environment;
+A Claude Code skill ships in \`.claude/skills/derive\`, and \`.mcp.json\` wires the
+Derive MCP server (five tools: \`list_artifacts\`, \`read\`, \`catch_up\`, \`comment\`,
+\`publish\`). Set \`DERIVE_SERVER\` and \`DERIVE_TOKEN\` in your environment;
 both the CLI and the MCP server read them.
 `
 
@@ -497,37 +497,37 @@ both the CLI and the MCP server read them.
 // publish -> review -> revise loop. Mirrors AGENTS.md in skill form so a harness
 // surfaces it automatically when the user asks to publish, share, or get feedback.
 const SKILL_MD = `---
-name: dock-publish
-description: Publish this project to Dock — a permanent versioned URL with inline comments — and run the review loop (share, read comments, revise, resolve). Use when the user asks to publish, share, or ship a page, doc, or site, or to read and act on Dock review comments.
+name: derive-publish
+description: Publish this project to Derive — a permanent versioned URL with inline comments — and run the review loop (share, read comments, revise, resolve). Use when the user asks to publish, share, or ship a page, doc, or site, or to read and act on Derive review comments.
 ---
 
-# Publish to Dock and close the loop
+# Publish to Derive and close the loop
 
-This project is wired to Dock (see \`dock.json\`). Dock hosts an artifact — HTML,
+This project is wired to Derive (see \`derive.json\`). Derive hosts an artifact — HTML,
 Markdown, or a static site — at a permanent, versioned URL with inline comments,
 so a human or another agent reviews on the rendered page and you revise.
 
 ## Publish
 
 \`\`\`bash
-dock publish              # publishes dock.json "entry" (a file or a built folder)
+derive publish              # publishes derive.json "entry" (a file or a built folder)
 \`\`\`
 
 Each publish is a new immutable version at the same URL. Name a checkpoint with
-\`dock publish --name "Final draft"\`.
+\`derive publish --name "Final draft"\`.
 
 ## The loop: publish -> review -> revise
 
 \`\`\`bash
-dock publish                    # 1. share the URL
-dock comments                   # 2. read threads (quote · author · state)
+derive publish                    # 1. share the URL
+derive comments                   # 2. read threads (quote · author · state)
 # 3. revise the source for the feedback, then republish:
-dock publish --name "Rev 2"     #    same URL, highlights re-anchor
-dock reply <thread_id> "Fixed." # 4a. discuss
-dock resolve <comment_id>       # 4b. close a handled thread
+derive publish --name "Rev 2"     #    same URL, highlights re-anchor
+derive reply <thread_id> "Fixed." # 4a. discuss
+derive resolve <comment_id>       # 4b. close a handled thread
 \`\`\`
 
-If the Dock MCP server is connected (\`.mcp.json\`), prefer its five tools for the same
+If the Derive MCP server is connected (\`.mcp.json\`), prefer its five tools for the same
 loop without shelling out: \`catch_up\` (what changed plus open feedback) ->
 \`read\` (content) -> \`comment\` (reply/resolve) and/or \`publish\` (pass \`addresses\`
 to resolve the threads a revision fixes; \`publish\` goes live or files a proposal based

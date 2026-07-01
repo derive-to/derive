@@ -63,7 +63,7 @@ export interface Artifact {
     author_login?: string | null
     author_avatar?: string | null
     author_gh_id?: string | null
-    /** The Dock handle of this version's GitHub author, when they signed in with GitHub
+    /** The Derive handle of this version's GitHub author, when they signed in with GitHub
      *  (single-artifact detail only); null otherwise. */
     handle?: string | null
     message: string | null
@@ -93,7 +93,7 @@ export interface Artifact {
   collections?: string[]
   /** Taken down by a moderator: the content is gone (410), the record stays. */
   removed?: boolean
-  /** Mirrored from a GitHub sync source → read-only in Dock (Edit/Propose hidden). */
+  /** Mirrored from a GitHub sync source → read-only in Derive (Edit/Propose hidden). */
   managed?: boolean
   /** Present when this bundle's entry is markdown — a skill (entry SKILL.md) or a
    *  plain docs folder. Drives the file tree + (for skills) the identity chrome.
@@ -121,7 +121,7 @@ export interface Artifact {
   author_login?: string | null
   author_avatar?: string | null
   author_gh_id?: string | null
-  /** The current author resolved to a profile: the raw GitHub identity plus the Dock
+  /** The current author resolved to a profile: the raw GitHub identity plus the Derive
    *  `handle` (username) when the committer signed in with GitHub. Null when there's no
    *  recorded author. Prefer this over the raw fields for rendering. */
   author?: {
@@ -402,7 +402,7 @@ export interface GithubInstallation {
   account_login: string | null
 }
 /** A read-only preview of an open pull request's changed docs, mirrored into its own
- *  collection ("PR #<n>: <title>"). Links out to the PR and into the Dock collection. */
+ *  collection ("PR #<n>: <title>"). Links out to the PR and into the Derive collection. */
 export interface PrPreview {
   id: string
   collection_id: string
@@ -420,7 +420,7 @@ export interface GithubSyncStatus {
   app: {
     configured: boolean
     slug?: string
-    /** False when the live App lacks a permission/event Dock now requires. */
+    /** False when the live App lacks a permission/event Derive now requires. */
     upToDate?: boolean
     /** The scopes/events still to grant: { permissions: {scope: level}, events: [] }. */
     missing?: { permissions: Record<string, string>; events: string[] }
@@ -465,9 +465,9 @@ export interface Diff {
   ops: DiffOp[]
 }
 
-// Same-origin by default (dev proxy / embedded self-host). Set VITE_DOCK_API to
+// Same-origin by default (dev proxy / embedded self-host). Set VITE_DERIVE_API to
 // the API origin when the SPA is served from a CDN separate from the container.
-export const API_BASE = (import.meta.env.VITE_DOCK_API ?? "").replace(/\/$/, "")
+export const API_BASE = (import.meta.env.VITE_DERIVE_API ?? "").replace(/\/$/, "")
 const u = (path: string) => API_BASE + path
 const f = (path: string, init?: RequestInit) => fetch(u(path), init)
 

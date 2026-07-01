@@ -8,7 +8,7 @@ import {
   planAnchorSweep,
   planElementForwardWalk,
   type VersionRecord,
-} from "@dock/core"
+} from "@derive/core"
 import { pageTextResolver } from "./bundle"
 
 /** Forward-walk recovery is one blob read + scan per version, on the publish path.
@@ -39,7 +39,7 @@ type SweepStore = Pick<
  * against the page's HTML. Each thread is checked against ITS page's content, so a
  * comment on one bundle page never goes stale because a different page changed.
  *
- * The element path adds the Dock-only move: before giving up on an element that
+ * The element path adds the Derive-only move: before giving up on an element that
  * doesn't resolve in the new version, FORWARD-WALK it through the version history
  * from where it was made — re-deriving the selector at each hop it still resolves.
  * An element edited gradually (renamed, moved, rewrapped) is recovered because each

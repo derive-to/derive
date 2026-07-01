@@ -1,7 +1,7 @@
 import type { Context } from "hono"
 import type { DomainEvent } from "./events"
 
-export interface DockEvent {
+export interface DeriveEvent {
   // The event name is constrained to the shared DOMAIN_EVENTS union, so a typo
   // (`bus.publish(id, { type: "comment.reslved" })`) is a compile error. The
   // per-event payload stays open via the index signature.
@@ -11,12 +11,12 @@ export interface DockEvent {
 
 /** In-process pub/sub, keyed by artifact id. One process fans out in memory. */
 export interface EventBus {
-  subscribe(artifactId: string, cb: (e: DockEvent) => void): () => void
-  publish(artifactId: string, e: DockEvent): void
+  subscribe(artifactId: string, cb: (e: DeriveEvent) => void): () => void
+  publish(artifactId: string, e: DeriveEvent): void
 }
 
 export function createBus(): EventBus {
-  const subs = new Map<string, Set<(e: DockEvent) => void>>()
+  const subs = new Map<string, Set<(e: DeriveEvent) => void>>()
   return {
     subscribe(artifactId, cb) {
       let set = subs.get(artifactId)
@@ -84,8 +84,8 @@ export interface PresenceStore {
  * change. Selected by env; defaults to in-process so self-host stays zero-config.
  */
 export interface Backplane {
-  publish(channel: string, e: DockEvent): void
-  subscribe(channel: string, cb: (e: DockEvent) => void): () => void
+  publish(channel: string, e: DeriveEvent): void
+  subscribe(channel: string, cb: (e: DeriveEvent) => void): () => void
   presence: PresenceStore
   handleStream?(c: Context, channel: string): Response | Promise<Response> | null
 }

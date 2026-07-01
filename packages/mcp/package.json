@@ -1,15 +1,15 @@
 {
-  "name": "@dock/mcp",
+  "name": "@derive/mcp",
   "version": "0.1.0",
   "type": "module",
   "license": "FSL-1.1-ALv2",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Niftory/dock.build.git",
+    "url": "https://github.com/derive-to/derive.git",
     "directory": "packages/mcp"
   },
   "bin": {
-    "dock-mcp": "./bin/dock-mcp.mjs"
+    "derive-mcp": "./bin/derive-mcp.mjs"
   },
   "files": [
     "bin",
@@ -35,9 +35,9 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@dock/api": "workspace:*",
-    "@dock/db": "workspace:*",
-    "@dock/storage": "workspace:*",
+    "@derive/api": "workspace:*",
+    "@derive/db": "workspace:*",
+    "@derive/storage": "workspace:*",
     "@hono/node-server": "^2.0.5",
     "@types/node": "^25.9.3",
     "typescript": "^6.0.3",

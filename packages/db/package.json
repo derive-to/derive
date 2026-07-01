@@ -1,12 +1,12 @@
 {
-  "name": "@dock/db",
+  "name": "@derive/db",
   "version": "0.1.0",
   "private": true,
   "type": "module",
   "license": "FSL-1.1-ALv2",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Niftory/dock.build.git",
+    "url": "https://github.com/derive-to/derive.git",
     "directory": "packages/db"
   },
   "exports": {
@@ -25,7 +25,7 @@
     "gen:d1-schema": "vitest run test/d1-schema.test.ts -u"
   },
   "dependencies": {
-    "@dock/core": "workspace:*",
+    "@derive/core": "workspace:*",
     "better-sqlite3": "^12.11.1",
     "drizzle-orm": "^0.45.2",
     "pg": "^8.13.1"

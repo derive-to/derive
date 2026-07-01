@@ -28,7 +28,7 @@ worktree and agent gets its own and runs never collide. Override with
 
 ## How it stays stable
 
-- **Isolation**: the API runs with `DOCK_MULTI_WORKSPACE=true`, so every signup
+- **Isolation**: the API runs with `DERIVE_MULTI_WORKSPACE=true`, so every signup
   owns a private workspace. Workspace-scoped data never crosses between tests,
   which is what lets the whole thing run `fullyParallel`. See `playwright.config.ts`.
 - **Fixtures** (`fixtures.ts`): `owner` (a fresh signed-up user) and `secondUser`

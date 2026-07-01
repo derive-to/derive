@@ -1,6 +1,6 @@
-# dock-markdown
+# derive-markdown
 
-Writing Markdown artifacts for Dock. Markdown is rendered server-side via
+Writing Markdown artifacts for Derive. Markdown is rendered server-side via
 GitHub Flavored Markdown (marked) with HTML sanitization, then wrapped in a styled
 full-page document with the anchor client injected.
 
@@ -31,7 +31,7 @@ Script tags and inline event handlers are stripped.
 
 ## Styling
 
-Dock wraps the rendered HTML in a document with embedded CSS:
+Derive wraps the rendered HTML in a document with embedded CSS:
 - Background: `--paper` (warm cream in the default theme)
 - Font: system-ui, 16px base, 1.65 line-height
 - Main column: max-width 760px, centered, generous top/bottom padding
@@ -71,13 +71,13 @@ docker compose -f deploy/compose.yml up -d
 ```
 ````
 
-Language-tagged blocks render with syntax highlighting in the Dock viewer.
+Language-tagged blocks render with syntax highlighting in the Derive viewer.
 
 ---
 
 ## Images
 
-Images must be publicly accessible URLs (Dock doesn't host image uploads in Markdown).
+Images must be publicly accessible URLs (Derive doesn't host image uploads in Markdown).
 Allowed attributes: `src`, `alt`, `title`, `width`, `height`.
 
 ```markdown

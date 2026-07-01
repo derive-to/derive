@@ -14,13 +14,12 @@ const WEB_SRC = join(process.cwd(), "apps/web/src")
 // The one place raw colors + sizes legitimately live: the token definitions.
 const TOKEN_SOURCE = new Set(["styles/globals.css", "styles.css"])
 
-// Files that carry raw color DATA, not theming — a logo doesn't theme, avatar
-// identity tints are a fixed categorical palette, and the theme picker must show
-// each theme's literal swatch color. These are the "right places" for a raw color.
-// The live-cursor files are the same shape: a viewer's chosen identity tint (and
-// the fixed white keyline / lift shadow) painted onto the multiplayer overlay.
+// Files that carry raw color DATA, not theming — avatar identity tints are a
+// fixed categorical palette, and the theme picker must show each theme's literal
+// swatch color. These are the "right places" for a raw color. The live-cursor
+// files are the same shape: a viewer's chosen identity tint (and the fixed white
+// keyline / lift shadow) painted onto the multiplayer overlay.
 const ALLOW_FILES = new Set([
-  "components/shared/logo.tsx",
   "components/shared/colored-avatar.tsx",
   "ctx.tsx",
   "lib/cursors.ts",

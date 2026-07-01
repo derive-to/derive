@@ -1,5 +1,5 @@
 import { join } from "node:path"
-import { FsBlobStore } from "@dock/storage/fs"
+import { FsBlobStore } from "@derive/storage/fs"
 import { describe, expect, it } from "vitest"
 import { createApp } from "../src/app"
 import { dir, meta } from "./helpers"
@@ -10,12 +10,12 @@ describe("health + readiness endpoints", () => {
   const blobs = new FsBlobStore(join(dir, "blobs"))
 
   it("/healthz is a pure liveness check (200, no dependency probe)", async () => {
-    const app = createApp({ meta, blobs, baseUrl: "http://dock.test" })
+    const app = createApp({ meta, blobs, baseUrl: "http://derive.test" })
     expect((await app.request("/healthz")).status).toBe(200)
   })
 
   it("/readyz returns 200 when the datastore + blob store are reachable", async () => {
-    const app = createApp({ meta, blobs, baseUrl: "http://dock.test" })
+    const app = createApp({ meta, blobs, baseUrl: "http://derive.test" })
     const r = await app.request("/readyz")
     expect(r.status).toBe(200)
     expect(await r.json()).toEqual({ ok: true })
@@ -26,7 +26,7 @@ describe("health + readiness endpoints", () => {
       get: (t, p) =>
         p === "getWorkspace" ? () => Promise.reject(new Error("db down")) : Reflect.get(t, p),
     })
-    const app = createApp({ meta: broken, blobs, baseUrl: "http://dock.test" })
+    const app = createApp({ meta: broken, blobs, baseUrl: "http://derive.test" })
     expect((await app.request("/readyz")).status).toBe(503)
   })
 
@@ -39,7 +39,7 @@ describe("health + readiness endpoints", () => {
       get: (t, p) =>
         p === "get" ? () => Promise.reject(new Error("blob backend down")) : Reflect.get(t, p),
     })
-    const app = createApp({ meta, blobs: brokenBlobs, baseUrl: "http://dock.test" })
+    const app = createApp({ meta, blobs: brokenBlobs, baseUrl: "http://derive.test" })
     expect((await app.request("/readyz")).status).toBe(503)
   })
 })

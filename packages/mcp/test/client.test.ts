@@ -2,26 +2,26 @@ import { mkdtempSync, rmSync } from "node:fs"
 import type { AddressInfo } from "node:net"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { createApp } from "@dock/api/app"
-import { SqliteMetaStore } from "@dock/db/sqlite"
-import { FsBlobStore } from "@dock/storage/fs"
+import { createApp } from "@derive/api/app"
+import { SqliteMetaStore } from "@derive/db/sqlite"
+import { FsBlobStore } from "@derive/storage/fs"
 import { serve } from "@hono/node-server"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
-import { createClient, type DockClient } from "../src/client"
+import { createClient, type DeriveClient } from "../src/client"
 
 let server: ReturnType<typeof serve>
 let meta: SqliteMetaStore
-let client: DockClient
-const dir = mkdtempSync(join(tmpdir(), "dock-mcp-"))
+let client: DeriveClient
+const dir = mkdtempSync(join(tmpdir(), "derive-mcp-"))
 
 beforeAll(async () => {
-  meta = new SqliteMetaStore(join(dir, "dock.db"))
-  // The MCP server authenticates to Dock with a static token (DOCK_TOKEN in prod);
+  meta = new SqliteMetaStore(join(dir, "derive.db"))
+  // The MCP server authenticates to Derive with a static token (DERIVE_TOKEN in prod);
   // anonymous callers can't write, so the test wires the same token end-to-end.
   const app = createApp({
     meta,
     blobs: new FsBlobStore(join(dir, "blobs")),
-    baseUrl: "http://dock.test",
+    baseUrl: "http://derive.test",
     token: "tok",
   })
   await new Promise<void>((resolve) => {
@@ -37,7 +37,7 @@ afterAll(() => {
   rmSync(dir, { recursive: true, force: true })
 })
 
-describe("dock client (the MCP server's backend) over real HTTP", () => {
+describe("derive client (the MCP server's backend) over real HTTP", () => {
   let shortId: string
 
   it("publishes and reads content back", async () => {
@@ -173,6 +173,6 @@ describe("dock client (the MCP server's backend) over real HTTP", () => {
   })
 
   it("surfaces server errors as thrown messages", async () => {
-    await expect(client.get("nope0000")).rejects.toThrow(/dock 404/)
+    await expect(client.get("nope0000")).rejects.toThrow(/derive 404/)
   })
 })

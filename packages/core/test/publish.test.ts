@@ -227,17 +227,17 @@ describe("publish: bundles (zip)", () => {
     // Title comes from the skill's frontmatter name, not the zip filename.
     expect(artifact.title).toBe("my-skill")
     // A skill carries the distinct content type so the library can badge it for free.
-    expect(version.content_type).toBe("dock/skill")
+    expect(version.content_type).toBe("derive/skill")
   })
 
-  it("tags a plain docs bundle (no SKILL.md) as a normal dock/bundle", async () => {
+  it("tags a plain docs bundle (no SKILL.md) as a normal derive/bundle", async () => {
     const blobs = makeBlobs()
     const { version } = await publish(
       makeMeta(),
       blobs,
       bundle({ "README.md": "# Docs", "guide.md": "# Guide" }),
     )
-    expect(version.content_type).toBe("dock/bundle")
+    expect(version.content_type).toBe("derive/bundle")
   })
 
   it("prefers HTML over SKILL.md, and falls back to README.md / shallowest .md", async () => {
@@ -344,23 +344,23 @@ describe("publish: URL + JSON helpers", () => {
 
   it("artifactUrl is name-first: explicit slug, else slug-from-title, else bare", () => {
     // Name-first refs (#130): <name>-<short_id>.
-    expect(artifactUrl("https://dock.test", artifact)).toBe("https://dock.test/a/my-doc-abc123")
+    expect(artifactUrl("https://derive.test", artifact)).toBe("https://derive.test/a/my-doc-abc123")
     // No explicit slug → derive the name from the current title (so links stay readable
     // and rename-safe without a backfill).
-    expect(artifactUrl("https://dock.test", { ...artifact, slug: null })).toBe(
-      "https://dock.test/a/my-doc-abc123",
+    expect(artifactUrl("https://derive.test", { ...artifact, slug: null })).toBe(
+      "https://derive.test/a/my-doc-abc123",
     )
     // No slug and no title → the bare short id.
-    expect(artifactUrl("https://dock.test", { ...artifact, slug: null, title: null })).toBe(
-      "https://dock.test/a/abc123",
+    expect(artifactUrl("https://derive.test", { ...artifact, slug: null, title: null })).toBe(
+      "https://derive.test/a/abc123",
     )
   })
 
   it("toJson shapes the public artifact payload", () => {
-    const json = toJson("https://dock.test", artifact, [])
+    const json = toJson("https://derive.test", artifact, [])
     expect(json).toMatchObject({
       short_id: "abc123",
-      url: "https://dock.test/a/my-doc-abc123",
+      url: "https://derive.test/a/my-doc-abc123",
       kind: "file",
       spa: false,
       current_version: 2,

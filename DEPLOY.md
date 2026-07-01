@@ -1,4 +1,4 @@
-# Deploying Dock
+# Deploying Derive
 
 ## Deployment tiers
 
@@ -18,16 +18,16 @@ All tiers run the same codebase. Tiers are additive: Lite + `DATABASE_URL` = Nod
 
 ## Lite: single container
 
-One command gives you a complete, working Dock — sign-in, publish, comments, reviews,
+One command gives you a complete, working Derive — sign-in, publish, comments, reviews,
 notifications, the sandboxed viewer — all served from `http://localhost:8080`.
 
 ```bash
-docker build -f deploy/Dockerfile -t dock .
+docker build -f deploy/Dockerfile -t derive .
 
-docker run -d -p 8080:8080 -v dock_data:/data \
-  -e DOCK_AUTH_SECRET="$(openssl rand -hex 32)" \
-  -e BASE_URL="https://dock.example.com" \
-  dock
+docker run -d -p 8080:8080 -v derive_data:/data \
+  -e DERIVE_AUTH_SECRET="$(openssl rand -hex 32)" \
+  -e BASE_URL="https://derive.example.com" \
+  derive
 ```
 
 Or with Compose:
@@ -43,7 +43,7 @@ in the `/data` volume — back that up and you've backed up the instance.
 - **`BASE_URL`** is the public origin you'll reach it at. It signs auth cookies and
   builds artifact share links, so set it to your real URL (behind a proxy, the
   `https://…` domain — not `localhost`).
-- **`DOCK_AUTH_SECRET`** signs sessions. Set it (any 32-byte hex). If you don't, the
+- **`DERIVE_AUTH_SECRET`** signs sessions. Set it (any 32-byte hex). If you don't, the
   container generates one and persists it in the volume, so logins survive restarts —
   but an explicit secret is what you want in production.
 
@@ -53,13 +53,13 @@ Point a TLS-terminating proxy at the container and a domain at the proxy. Caddy 
 shortest path:
 
 ```caddyfile
-dock.example.com {
+derive.example.com {
   reverse_proxy localhost:8080
 }
 ```
 
 Cloudflare Tunnel, nginx, or any host's built-in HTTPS works the same way. Then set
-`BASE_URL=https://dock.example.com` and you're live.
+`BASE_URL=https://derive.example.com` and you're live.
 
 ### On a managed host (Railway / Render / Fly)
 
@@ -75,7 +75,7 @@ Any host that builds a Dockerfile and gives you a persistent disk runs this as-i
 `PORT` is read from the environment, and the public URL is auto-detected from the
 host (`RAILWAY_PUBLIC_DOMAIN` / `RENDER_EXTERNAL_URL` / `FLY_APP_NAME`) so auth
 cookies and share links work out of the box. Set `BASE_URL` only when you point a
-custom domain at it. Set `DOCK_AUTH_SECRET` once so sessions survive redeploys on
+custom domain at it. Set `DERIVE_AUTH_SECRET` once so sessions survive redeploys on
 hosts with an ephemeral filesystem.
 
 ### First user
@@ -90,15 +90,15 @@ the default role. Sign up at `/login`.
 | Var | Default | Purpose |
 |---|---|---|
 | `BASE_URL` | `http://localhost:PORT` | Public origin of the instance (cookies + share links) |
-| `DOCK_AUTH_SECRET` | generated, persisted | Session signing key (set in prod) |
+| `DERIVE_AUTH_SECRET` | generated, persisted | Session signing key (set in prod) |
 | `PORT` | `8080` | Listen port |
 | `DATA_DIR` | `/data` | SQLite + blob dir (single container) |
 | `DATABASE_URL` | (SQLite) | Postgres for metadata + auth (scale-out) |
 | `OBJECT_STORE_URL` | (local disk) | S3/R2 blob storage (scale-out) |
-| `DOCK_WEB_ORIGIN` | (none) | Comma-separated web origins for CORS (split deploy only) |
-| `DOCK_CROSS_SITE` | `false` | `true` for `SameSite=None; Secure` cookies (split deploy only) |
-| `DOCK_TOKEN` | (none) | Static bearer token for CI/agents. One of the two ways to write (the other is a sign-in session); anonymous callers are always read-only (public/link artifacts), never owners. |
-| `DOCK_WEB_DIR` | (auto) | Override the bundled SPA path |
+| `DERIVE_WEB_ORIGIN` | (none) | Comma-separated web origins for CORS (split deploy only) |
+| `DERIVE_CROSS_SITE` | `false` | `true` for `SameSite=None; Secure` cookies (split deploy only) |
+| `DERIVE_TOKEN` | (none) | Static bearer token for CI/agents. One of the two ways to write (the other is a sign-in session); anonymous callers are always read-only (public/link artifacts), never owners. |
+| `DERIVE_WEB_DIR` | (auto) | Override the bundled SPA path |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | (none) | Google sign-in |
 | `OIDC_ISSUER` / `OIDC_CLIENT_ID` / `OIDC_CLIENT_SECRET` / `OIDC_PROVIDER_ID` | (none) | Enterprise SSO |
 
@@ -107,8 +107,8 @@ the default role. Sign up at `/login`.
 If you set `GOOGLE_*` or `OIDC_*`, register the callback with the provider:
 
 ```
-https://dock.example.com/api/auth/callback/google
-https://dock.example.com/api/auth/oauth2/callback/<OIDC_PROVIDER_ID>
+https://derive.example.com/api/auth/callback/google
+https://derive.example.com/api/auth/oauth2/callback/<OIDC_PROVIDER_ID>
 ```
 
 ---
@@ -122,7 +122,7 @@ on its own origin (then it's a cross-origin call, hence the CORS + cookie vars).
 ```
   browser
     |  app.example.com   static SPA on a CDN (optional — the container also serves it)
-    |  api.example.com   Dock container(s): Fly / Hetzner / any host
+    |  api.example.com   Derive container(s): Fly / Hetzner / any host
     v
   Postgres (Neon, RDS, Supabase, self-hosted)   <- artifacts, versions, comments, users
   S3 / R2                                        <- artifact blobs (zero egress on R2)
@@ -143,7 +143,7 @@ fly launch --config deploy/fly.toml --dockerfile deploy/Dockerfile --no-deploy
 fly secrets set \
   DATABASE_URL='postgres://...' \
   OBJECT_STORE_URL='s3://...' \
-  DOCK_AUTH_SECRET="$(openssl rand -hex 32)" \
+  DERIVE_AUTH_SECRET="$(openssl rand -hex 32)" \
   BASE_URL='https://api.example.com'
 
 fly deploy --config deploy/fly.toml --dockerfile deploy/Dockerfile
@@ -151,7 +151,7 @@ fly deploy --config deploy/fly.toml --dockerfile deploy/Dockerfile
 
 With `DATABASE_URL` + `OBJECT_STORE_URL` set the container is stateless: scale it
 horizontally and drop the `[mounts]` volume from `fly.toml`. Each instance must share
-the same `DOCK_AUTH_SECRET`.
+the same `DERIVE_AUTH_SECRET`.
 
 ### 3. (Optional) Serve the SPA from a CDN
 
@@ -159,17 +159,17 @@ The container already serves the web app, so this is only for putting it on a se
 cache/origin. Build with the API origin baked in and add the CORS vars to the API:
 
 ```bash
-VITE_DOCK_API='https://api.example.com' pnpm --filter @dock/web build
-npx wrangler pages deploy apps/web/dist/client --project-name dock
+VITE_DERIVE_API='https://api.example.com' pnpm --filter @derive/web build
+npx wrangler pages deploy apps/web/dist/client --project-name derive
 ```
 
 ```bash
 # on the API:
-fly secrets set DOCK_WEB_ORIGIN='https://app.example.com' DOCK_CROSS_SITE='true'
+fly secrets set DERIVE_WEB_ORIGIN='https://app.example.com' DERIVE_CROSS_SITE='true'
 ```
 
-`DOCK_CROSS_SITE=true` makes the session cookie `SameSite=None; Secure` so it rides the
-cross-origin SPA→API request; `DOCK_WEB_ORIGIN` allow-lists the SPA for CORS.
+`DERIVE_CROSS_SITE=true` makes the session cookie `SameSite=None; Secure` so it rides the
+cross-origin SPA→API request; `DERIVE_WEB_ORIGIN` allow-lists the SPA for CORS.
 `apps/web/public/_redirects` already ships the SPA fallback.
 
 ## Node Scale: add Redis
@@ -198,7 +198,7 @@ container or start seeing presence/realtime gaps.
 
 ## Cloudflare Basic: Workers + D1 + R2 + Durable Objects (experimental)
 
-Dock has a Cloudflare Workers entry (`apps/api/src/worker.ts`) that runs the whole app
+Derive has a Cloudflare Workers entry (`apps/api/src/worker.ts`) that runs the whole app
 on the edge: D1 for metadata, R2 for blobs, Better Auth on a Kysely D1 dialect, the
 ArtifactRoom Durable Object for cross-instance realtime fan-out, and the web SPA served
 same-origin via Workers Static Assets. It reuses the same runtime-agnostic `createApp`
@@ -211,9 +211,9 @@ First-time setup:
 
 ```bash
 cd apps/api
-wrangler d1 create dock                     # copy the database_id into wrangler.toml
-wrangler r2 bucket create dock-blobs
-wrangler secret put DOCK_AUTH_SECRET        # a strong random secret
+wrangler d1 create derive                     # copy the database_id into wrangler.toml
+wrangler r2 bucket create derive-blobs
+wrangler secret put DERIVE_AUTH_SECRET        # a strong random secret
 pnpm deploy                                 # build:web → app schema → auth schema → wrangler deploy
 ```
 
@@ -231,15 +231,15 @@ and reconcile an existing one.
 > - **App schema** — `deploy:schema` re-applies `deploy/d1-schema.sql`: it creates new
 >   tables AND adds new columns (a plain `CREATE TABLE IF NOT EXISTS` re-apply never adds
 >   columns to a table that already exists). Idempotent; run standalone with
->   `pnpm --filter @dock/api deploy:schema`. Regenerate the SQL from the shared schema
->   with `pnpm --filter @dock/db gen:d1-schema`.
+>   `pnpm --filter @derive/api deploy:schema`. Regenerate the SQL from the shared schema
+>   with `pnpm --filter @derive/db gen:d1-schema`.
 > - **Auth schema** — `migrate-auth-d1.ts --apply` derives the desired Better Auth schema
 >   from the live config (the single source of truth) and reconciles the remote D1:
 >   missing tables, columns, and unique indexes, idempotently. So adding a Better Auth
 >   `additionalField` (or a plugin table) can never leave D1 behind the deployed Worker —
 >   the gap that broke signup with `FAILED_TO_CREATE_USER` (the live `user` table was
 >   missing `username`/`discoverable`). Inspect the plan with
->   `pnpm --filter @dock/api migrate:auth` (dry run). (`gen-auth-schema.ts` remains a
+>   `pnpm --filter @derive/api migrate:auth` (dry run). (`gen-auth-schema.ts` remains a
 >   one-shot dump of the full auth DDL for a brand-new DB; routine deploys don't need it.)
 
 The worker serves the SPA (login, library, settings) same-origin with the API, so there
@@ -263,8 +263,8 @@ Worker at a Postgres instance instead.
 
 ```bash
 wrangler secret put DATABASE_URL      # postgres://user:pass@host/db
-wrangler r2 bucket create dock-blobs  # if not already created
-wrangler secret put DOCK_AUTH_SECRET
+wrangler r2 bucket create derive-blobs  # if not already created
+wrangler secret put DERIVE_AUTH_SECRET
 pnpm build:web
 wrangler deploy
 ```

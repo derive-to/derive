@@ -1,20 +1,20 @@
 // The hosted landing page for the CLI/native OAuth flow. A command-line client
-// (`dock login`) can't host a public callback, but it shouldn't bounce you to
+// (`derive login`) can't host a public callback, but it shouldn't bounce you to
 // localhost either — so it registers THIS page as its redirect_uri. After you
 // approve consent, the authorization server sends the browser here with the
 // one-time `code`; we display it for you to paste back into the terminal. The
 // PKCE code_verifier never leaves the CLI, so the displayed code is useless to
 // anyone else — it only completes the exchange paired with that local verifier.
 //
-// On the Dock plan-site palette (Space Grotesk + Inter, the anchor mark) so the
-// auth experience feels like Dock.
+// On the Derive plan-site palette (Space Grotesk + Inter, the anchor mark) so the
+// auth experience feels like Derive.
 
 const esc = (s: string): string =>
   s.replace(/[&<>"']/g, (c) =>
     c === "&" ? "&amp;" : c === "<" ? "&lt;" : c === ">" ? "&gt;" : c === '"' ? "&quot;" : "&#39;",
   )
 
-// The Dock anchor mark, inline so the page is a single self-contained document.
+// The Derive anchor mark, inline so the page is a single self-contained document.
 const MARK = `<svg class="mk" viewBox="0 0 32 32" fill="none" aria-hidden="true">
   <rect x="1" y="1" width="30" height="30" rx="8" fill="#2a2540"/>
   <path d="M16 7l7 7v11h-4.6v-6.2h-4.8V25H9V14l7-7z" fill="none" stroke="#8a7dc0" stroke-width="1.7" stroke-linejoin="round"/>
@@ -26,7 +26,7 @@ const SHELL = (title: string, inner: { badge: string; body: string }): string =>
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>${title} · Dock</title>
+<title>${title} · Derive</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
@@ -67,7 +67,7 @@ const SHELL = (title: string, inner: { badge: string; body: string }): string =>
 </style>
 </head>
 <body><main class="card">
-  <div class="brand">${MARK}<span class="name">Dock</span>${inner.badge}</div>
+  <div class="brand">${MARK}<span class="name">Derive</span>${inner.badge}</div>
   ${inner.body}
 </main></body>
 </html>`
@@ -75,18 +75,18 @@ const SHELL = (title: string, inner: { badge: string; body: string }): string =>
 /**
  * Render the CLI callback page. With a `code`, shows it for copy-paste back to the
  * terminal; with an `error`, shows the failure so the user isn't left on a blank
- * page. Either way it's a hosted Dock page — never a localhost redirect.
+ * page. Either way it's a hosted Derive page — never a localhost redirect.
  */
 export function cliCallbackHTML(props: { code?: string; error?: string }): string {
   if (props.error || !props.code) {
     const msg = esc(
-      props.error || "No authorization code was returned. Please run `dock login` again.",
+      props.error || "No authorization code was returned. Please run `derive login` again.",
     )
     return SHELL("Authorization failed", {
       badge: `<span class="badge err">Failed</span>`,
       body: `<h1>Authorization didn't complete</h1>
       <p class="err">${msg}</p>
-      <p class="foot">Close this tab and re-run <kbd>dock login</kbd> in your terminal to try again.</p>`,
+      <p class="foot">Close this tab and re-run <kbd>derive login</kbd> in your terminal to try again.</p>`,
     })
   }
   const code = esc(props.code)

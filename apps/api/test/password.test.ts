@@ -1,5 +1,5 @@
 import { join } from "node:path"
-import { FsBlobStore } from "@dock/storage/fs"
+import { FsBlobStore } from "@derive/storage/fs"
 import { describe, expect, it } from "vitest"
 import { createApp } from "../src/app"
 import { dir, meta } from "./helpers"
@@ -11,7 +11,7 @@ describe("permissions: password-protected artifacts", () => {
   const app = createApp({
     meta,
     blobs: new FsBlobStore(join(dir, "blobs")),
-    baseUrl: "http://dock.test",
+    baseUrl: "http://derive.test",
     token: "s3cret",
   })
   const owner = { authorization: "Bearer s3cret" }
@@ -71,7 +71,7 @@ describe("permissions: changing general access (visibility)", () => {
   const app = createApp({
     meta,
     blobs: new FsBlobStore(join(dir, "blobs")),
-    baseUrl: "http://dock.test",
+    baseUrl: "http://derive.test",
     token: "s3cret",
   })
   const owner = { authorization: "Bearer s3cret" }

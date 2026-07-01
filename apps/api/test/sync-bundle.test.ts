@@ -1,9 +1,9 @@
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { type BundleManifest, newId } from "@dock/core"
-import { SqliteMetaStore } from "@dock/db/sqlite"
-import { FsBlobStore } from "@dock/storage/fs"
+import { type BundleManifest, newId } from "@derive/core"
+import { SqliteMetaStore } from "@derive/db/sqlite"
+import { FsBlobStore } from "@derive/storage/fs"
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest"
 import { runSync, type SyncedFile } from "../src/lib/sync"
 
@@ -11,7 +11,7 @@ import { runSync, type SyncedFile } from "../src/lib/sync"
 let tree: { path: string; sha: string; type: "blob" | "tree" }[] = []
 const blobs: Record<string, string> = {}
 
-const dir = mkdtempSync(join(tmpdir(), "dock-sync-bundle-"))
+const dir = mkdtempSync(join(tmpdir(), "derive-sync-bundle-"))
 const meta = new SqliteMetaStore(join(dir, "sync.db"))
 const blobStore = new FsBlobStore(join(dir, "blobs"))
 const NOW = "2026-06-15T00:00:00.000Z"

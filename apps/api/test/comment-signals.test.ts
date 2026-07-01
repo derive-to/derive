@@ -1,9 +1,9 @@
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { publish } from "@dock/core"
-import { SqliteMetaStore } from "@dock/db/sqlite"
-import { FsBlobStore } from "@dock/storage/fs"
+import { publish } from "@derive/core"
+import { SqliteMetaStore } from "@derive/db/sqlite"
+import { FsBlobStore } from "@derive/storage/fs"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 
 // Backend for the "Needs your feedback" feature: per-artifact comment signals (open
@@ -11,7 +11,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest"
 // set of artifacts needing the viewer's feedback. Mentions live in comment.meta JSON;
 // "needs feedback" = tagged OR authored, in an OPEN thread only.
 
-const dir = mkdtempSync(join(tmpdir(), "dock-comment-signals-"))
+const dir = mkdtempSync(join(tmpdir(), "derive-comment-signals-"))
 afterAll(() => rmSync(dir, { recursive: true, force: true }))
 
 const ME = "user_me"

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { type Backplane, createInProcessBackplane, type DockEvent } from "../src/bus"
+import { type Backplane, createInProcessBackplane, type DeriveEvent } from "../src/bus"
 import { bearer, json, publishAs, quotaApp, TEST_TOKEN } from "./helpers"
 
 // The live-cursor frame is the wire contract between viewers: it carries a chosen
@@ -9,9 +9,9 @@ import { bearer, json, publishAs, quotaApp, TEST_TOKEN } from "./helpers"
 // pin that contract by watching what gets published on the bus.
 
 /** A backplane that records every published frame, delegating the rest in-process. */
-const recordingBackplane = (): { backplane: Backplane; frames: DockEvent[] } => {
+const recordingBackplane = (): { backplane: Backplane; frames: DeriveEvent[] } => {
   const inner = createInProcessBackplane()
-  const frames: DockEvent[] = []
+  const frames: DeriveEvent[] = []
   return {
     frames,
     backplane: {
@@ -34,7 +34,7 @@ describe("live cursor frame", () => {
     const cursor = (body: unknown) => app.request(`/v1/artifacts/${short_id}/cursor`, json(body))
     const lastCursor = () =>
       [...frames].reverse().find((f) => f.type === "cursor") as
-        | (DockEvent & Record<string, unknown>)
+        | (DeriveEvent & Record<string, unknown>)
         | undefined
     return { cursor, lastCursor }
   }

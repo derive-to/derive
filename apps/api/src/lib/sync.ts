@@ -7,7 +7,7 @@ import {
   publish,
   type RepoSourceRecord,
   type SyncProgress,
-} from "@dock/core"
+} from "@derive/core"
 import { zipSync } from "fflate"
 import { type BundlePlan, commonDir, planBundle } from "./bundle-from-repo"
 import { sha256 } from "./crypto"
@@ -48,7 +48,7 @@ export interface SyncedFile {
    *  members changed and reconstruct the bundle without re-scanning when stable. */
   members?: Record<string, string>
   /** The source file's last-commit date, mirrored into the artifact's `updated_at`
-   *  (so the card shows the SOURCE's last change, not Dock's ingest time). Set the
+   *  (so the card shows the SOURCE's last change, not Derive's ingest time). Set the
    *  first time we resolve it; `""` records an attempt that found none (so we don't
    *  retry forever); absent means not yet sourced → the date backfill will fill it. */
   updatedAt?: string

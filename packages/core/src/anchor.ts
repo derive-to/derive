@@ -64,12 +64,12 @@ export function reanchor(sel: QuoteSelector, text: string): Reanchor {
  *                 focus-anchor      (scroll to + flash one anchor)
  *                 emphasize         (lift one anchor's highlight — host card hover)
  *
- * Served at /raw/dock-client.js with a SHORT cache and referenced by URL from
+ * Served at /raw/derive-client.js with a SHORT cache and referenced by URL from
  * artifact HTML — the HTML itself is cached immutable, so baking the client
  * inline would freeze old behavior into every previously-viewed artifact.
  */
 export const ANCHOR_CLIENT_JS = `(function(){
-function post(m){m.source="dock";parent.postMessage(m,"*")}
+function post(m){m.source="derive";parent.postMessage(m,"*")}
 function scrollTop(){return window.scrollY||document.documentElement.scrollTop||document.body.scrollTop||0}
 
 /* -- selection capture: a text selection becomes a TextQuoteSelector + the
@@ -110,7 +110,7 @@ document.addEventListener("touchend",function(e){
   if(s&&!s.isCollapsed){setTimeout(emitSelection,0);return}
   if(tMoved)return;
   var el=e.target;
-  if(!el||!el.closest||el.closest("a,button,input,textarea,select,label,[data-dock-id]"))return;
+  if(!el||!el.closest||el.closest("a,button,input,textarea,select,label,[data-derive-id]"))return;
   /* touch has no hover, so the desktop chip never appears — a tap on a non-text media
      element (image/chart/video/embed) is how you anchor a comment to it on mobile.
      Text-ish containers (table/pre/figure cells) still fall through to block-tap. */
@@ -153,36 +153,36 @@ document.addEventListener("visibilitychange",function(){
 
 /* -- highlight styles (mark's default yellow is overridden) -- */
 var st=document.createElement("style");
-st.textContent="mark.dock-hl{background:rgba(124,108,189,.20);color:inherit;border-bottom:2px solid rgba(124,108,189,.5);border-radius:2px;cursor:pointer;transition:background .15s,border-color .15s}"+
-"mark.dock-hl:hover,mark.dock-hl.dock-hl-on{background:rgba(124,108,189,.42);border-bottom-color:rgba(124,108,189,.95)}"+
+st.textContent="mark.derive-hl{background:rgba(100,116,139,.20);color:inherit;border-bottom:2px solid rgba(100,116,139,.5);border-radius:2px;cursor:pointer;transition:background .15s,border-color .15s}"+
+"mark.derive-hl:hover,mark.derive-hl.derive-hl-on{background:rgba(100,116,139,.42);border-bottom-color:rgba(100,116,139,.95)}"+
 /* personal (your private notes) paint amber, so they're obviously distinct from the lavender shared/team highlights */
-"mark.dock-hl-personal{background:rgba(224,169,58,.22);border-bottom-color:rgba(224,169,58,.6)}"+
-"mark.dock-hl-personal:hover,mark.dock-hl-personal.dock-hl-on{background:rgba(224,169,58,.45);border-bottom-color:rgba(224,169,58,.95)}"+
-"mark.dock-hl-flash{animation:dockflash 1s ease 2}"+
-"@keyframes dockflash{50%{background:rgba(124,108,189,.7)}}"+
+"mark.derive-hl-personal{background:rgba(224,169,58,.22);border-bottom-color:rgba(224,169,58,.6)}"+
+"mark.derive-hl-personal:hover,mark.derive-hl-personal.derive-hl-on{background:rgba(224,169,58,.45);border-bottom-color:rgba(224,169,58,.95)}"+
+"mark.derive-hl-flash{animation:derive-flash 1s ease 2}"+
+"@keyframes derive-flash{50%{background:rgba(100,116,139,.7)}}"+
 /* element overlays: a non-text anchor draws an outline box (pointer-events off so
    the element stays interactive) with a clickable comment badge in its corner. A
    low-confidence relocation reads dashed to signal "we think it moved here". */
-".dock-el-hl{position:absolute;pointer-events:none;border:2px solid rgba(124,108,189,.55);border-radius:4px;box-shadow:0 0 0 3px rgba(124,108,189,.12);transition:border-color .15s,box-shadow .15s,opacity .15s;z-index:2147483640}"+
+".derive-el-hl{position:absolute;pointer-events:none;border:2px solid rgba(100,116,139,.55);border-radius:4px;box-shadow:0 0 0 3px rgba(100,116,139,.12);transition:border-color .15s,box-shadow .15s,opacity .15s;z-index:2147483640}"+
 /* low confidence (a relocation we're unsure about) = a quiet hint, never an alarm.
    At rest there's NO box at all — just the small badge with a tiny 'moved' pip. The
    faint dashed outline appears only when you hover the badge, so the document stays
    calm and the signal is opt-in. */
-".dock-el-hl.dock-el-low{border-color:transparent;box-shadow:none}"+
-".dock-el-hl.dock-el-low:hover,.dock-el-hl.dock-el-low.dock-el-on{border:1px dashed rgba(124,108,189,.5)}"+
-".dock-el-hl.dock-el-on{border-color:rgba(124,108,189,.95);box-shadow:0 0 0 4px rgba(124,108,189,.22)}"+
-".dock-el-hl.dock-el-flash{animation:dockelflash 1s ease 2}"+
-"@keyframes dockelflash{50%{box-shadow:0 0 0 6px rgba(124,108,189,.4)}}"+
-".dock-el-badge{position:absolute;top:-11px;right:-11px;width:22px;height:22px;border-radius:11px;background:rgba(124,108,189,.95);color:#fff;font:600 12px/22px system-ui,sans-serif;text-align:center;pointer-events:auto;cursor:pointer;box-shadow:0 1px 4px rgba(0,0,0,.25)}"+
+".derive-el-hl.derive-el-low{border-color:transparent;box-shadow:none}"+
+".derive-el-hl.derive-el-low:hover,.derive-el-hl.derive-el-low.derive-el-on{border:1px dashed rgba(100,116,139,.5)}"+
+".derive-el-hl.derive-el-on{border-color:rgba(100,116,139,.95);box-shadow:0 0 0 4px rgba(100,116,139,.22)}"+
+".derive-el-hl.derive-el-flash{animation:derive-el-flash 1s ease 2}"+
+"@keyframes derive-el-flash{50%{box-shadow:0 0 0 6px rgba(100,116,139,.4)}}"+
+".derive-el-badge{position:absolute;top:-11px;right:-11px;width:22px;height:22px;border-radius:11px;background:rgba(100,116,139,.95);color:#fff;font:600 12px/22px system-ui,sans-serif;text-align:center;pointer-events:auto;cursor:pointer;box-shadow:0 1px 4px rgba(0,0,0,.25)}"+
 /* on a moved (low-confidence) badge: dimmed, with a tiny pip marking 'approximate'.
    Brightens on hover so it's findable without being loud. */
-".dock-el-low .dock-el-badge{background:rgba(124,108,189,.55);box-shadow:0 1px 3px rgba(0,0,0,.16)}"+
-".dock-el-low:hover .dock-el-badge{background:rgba(124,108,189,.95)}"+
-".dock-el-pip{position:absolute;bottom:-2px;right:-2px;width:8px;height:8px;border-radius:50%;background:rgba(124,108,189,.85);border:1.5px solid #fff;box-sizing:content-box}"+
+".derive-el-low .derive-el-badge{background:rgba(100,116,139,.55);box-shadow:0 1px 3px rgba(0,0,0,.16)}"+
+".derive-el-low:hover .derive-el-badge{background:rgba(100,116,139,.95)}"+
+".derive-el-pip{position:absolute;bottom:-2px;right:-2px;width:8px;height:8px;border-radius:50%;background:rgba(100,116,139,.85);border:1.5px solid #fff;box-sizing:content-box}"+
 /* the hover affordance: a small 'Comment' chip that follows the pointer over an
    anchorable element; clicking it pins a comment to that element. */
-".dock-el-chip{position:absolute;display:none;align-items:center;gap:5px;padding:4px 9px;border-radius:7px;background:rgba(124,108,189,.97);color:#fff;font:600 12px/1 system-ui,sans-serif;pointer-events:auto;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.28);z-index:2147483641;white-space:nowrap}"+
-".dock-el-outline{position:absolute;display:none;pointer-events:none;border:2px dashed rgba(124,108,189,.6);border-radius:4px;z-index:2147483639}";
+".derive-el-chip{position:absolute;display:none;align-items:center;gap:5px;padding:4px 9px;border-radius:7px;background:rgba(100,116,139,.97);color:#fff;font:600 12px/1 system-ui,sans-serif;pointer-events:auto;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.28);z-index:2147483641;white-space:nowrap}"+
+".derive-el-outline{position:absolute;display:none;pointer-events:none;border:2px dashed rgba(100,116,139,.6);border-radius:4px;z-index:2147483639}";
 (document.head||document.documentElement).appendChild(st);
 
 /* === Element anchors ========================================================
@@ -236,7 +236,7 @@ function looksAuthoredId(id){return !!id&&!/[0-9a-f]{8}|^[0-9]|^(radix|headlessu
 var ANCHORABLE="img,picture,svg,canvas,video,audio,iframe,embed,object,table,pre,figure";
 function anchorEl(t){
   if(!t||!t.closest)return null;
-  if(t.closest("[data-dock-id],.dock-el-chip,.dock-el-badge,a,button,input,textarea,select,label"))return null;
+  if(t.closest("[data-derive-id],.derive-el-chip,.derive-el-badge,a,button,input,textarea,select,label"))return null;
   var el=t.closest(ANCHORABLE);
   if(el)return el;
   var div=t.closest("div,section,figure");
@@ -327,14 +327,14 @@ var elReg=[];
 function clearEls(){for(var i=0;i<elReg.length;i++){var o=elReg[i].ov;if(o&&o.parentNode)o.parentNode.removeChild(o)}elReg=[]}
 function paintEl(id,el,band){
   var low=band==="low";
-  var ov=document.createElement("div");ov.className="dock-el-hl"+(low?" dock-el-low":"");
-  ov.setAttribute("data-dock-id",id);
-  var badge=document.createElement("div");badge.className="dock-el-badge";badge.setAttribute("data-dock-id",id);
+  var ov=document.createElement("div");ov.className="derive-el-hl"+(low?" derive-el-low":"");
+  ov.setAttribute("data-derive-id",id);
+  var badge=document.createElement("div");badge.className="derive-el-badge";badge.setAttribute("data-derive-id",id);
   badge.textContent="\\uD83D\\uDCAC";
   /* a moved (low-confidence) anchor gets a tiny pip + an explanatory title; nothing
      louder. medium/high look like a normal anchored comment. */
   if(low){badge.title="View comment \\u00b7 moved here (approximate)";
-    var pip=document.createElement("div");pip.className="dock-el-pip";badge.appendChild(pip)}
+    var pip=document.createElement("div");pip.className="derive-el-pip";badge.appendChild(pip)}
   else badge.title="View comment";
   /* multiple comments on the SAME element would stack their badges at the identical
      corner — only the top one is then clickable. Fan each extra badge left so every
@@ -374,7 +374,7 @@ function positionEls(){var sy=scrollTop(),sx=window.scrollX||0,detached=false;
    element under the pointer; clicking it pins a comment to that element. */
 var chip=null,chipEl=null;
 function ensureChip(){if(chip)return chip;
-  chip=document.createElement("div");chip.className="dock-el-chip";chip.textContent="\\uD83D\\uDCAC Comment";
+  chip=document.createElement("div");chip.className="derive-el-chip";chip.textContent="\\uD83D\\uDCAC Comment";
   chip.addEventListener("click",function(ev){ev.preventDefault();ev.stopPropagation();
     if(!chipEl)return;var el=chipEl,r=el.getBoundingClientRect();
     /* the host stamps the deck slide onto the selector, same as the text path. */
@@ -392,7 +392,7 @@ document.addEventListener("mouseover",function(e){
 document.addEventListener("mouseout",function(e){
   /* keep the chip while the pointer is on the chip itself or still over the element */
   var to=e.relatedTarget;
-  if(to&&to.closest&&(to.closest(".dock-el-chip")||anchorEl(to)===chipEl))return;
+  if(to&&to.closest&&(to.closest(".derive-el-chip")||anchorEl(to)===chipEl))return;
   if(!anchorEl(e.target))return;hideChip()});
 
 function textNodes(root){
@@ -401,7 +401,7 @@ function textNodes(root){
     return p==="SCRIPT"||p==="STYLE"||p==="NOSCRIPT"?NodeFilter.FILTER_REJECT:NodeFilter.FILTER_ACCEPT}});
   var out=[],n;while((n=w.nextNode()))out.push(n);return out}
 function clearMarks(){
-  var ms=document.querySelectorAll("mark[data-dock-id]");
+  var ms=document.querySelectorAll("mark[data-derive-id]");
   for(var i=0;i<ms.length;i++){var m=ms[i],p=m.parentNode;
     while(m.firstChild)p.insertBefore(m.firstChild,m);
     p.removeChild(m);p.normalize()}}
@@ -424,8 +424,8 @@ function wrapIn(root,id,s,e,personal){
     if(g.b<t.nodeValue.length)t.splitText(g.b);
     var mid=g.a>0?t.splitText(g.a):t;
     var mk=document.createElement("mark");
-    mk.setAttribute("data-dock-id",id);mk.className=personal?"dock-hl dock-hl-personal":"dock-hl";
-    if(personal)mk.setAttribute("data-dock-personal","1");
+    mk.setAttribute("data-derive-id",id);mk.className=personal?"derive-hl derive-hl-personal":"derive-hl";
+    if(personal)mk.setAttribute("data-derive-personal","1");
     mk.title=personal?"Your private note":"View comment";
     t.parentNode.insertBefore(mk,mid);mk.appendChild(mid)}}
 /* root's concatenated-text offset for an anchor (context match first, then exact) */
@@ -433,16 +433,16 @@ function findIn(root,a){
   var nodes=textNodes(root),full="";
   for(var i=0;i<nodes.length;i++)full+=nodes[i].nodeValue;
   return find(full,a)}
-/* deck slides, ordered: explicit [data-dock-slide] (sorted) else .slide in document
+/* deck slides, ordered: explicit [data-derive-slide] (sorted) else .slide in document
    order. Empty on a non-deck artifact — then anchors resolve against the whole doc. */
 function slideEls(){
-  var ex=document.querySelectorAll("[data-dock-slide]");
+  var ex=document.querySelectorAll("[data-derive-slide]");
   if(ex.length)return [].slice.call(ex).sort(function(a,b){
-    return (+a.getAttribute("data-dock-slide"))-(+b.getAttribute("data-dock-slide"))});
+    return (+a.getAttribute("data-derive-slide"))-(+b.getAttribute("data-derive-slide"))});
   return [].slice.call(document.querySelectorAll(".slide"))}
 /* which slide an already-painted anchor landed in (its mark's nearest slide ancestor) */
 function slideOf(id,slides){
-  var m=document.querySelector('mark[data-dock-id="'+id+'"]');
+  var m=document.querySelector('mark[data-derive-id="'+id+'"]');
   return slideOfEl(m,slides)}
 /* nearest slide ancestor of a DOM element (for element anchors) */
 function slideOfEl(el,slides){
@@ -458,8 +458,8 @@ function slideOfEl(el,slides){
 var lastRects="";
 function reportRects(){
   var tops={},seen={},sy=scrollTop();
-  var ms=document.querySelectorAll("mark[data-dock-id]");
-  for(var i=0;i<ms.length;i++){var id=ms[i].getAttribute("data-dock-id");
+  var ms=document.querySelectorAll("mark[data-derive-id]");
+  for(var i=0;i<ms.length;i++){var id=ms[i].getAttribute("data-derive-id");
     if(seen[id])continue;seen[id]=1;tops[id]=ms[i].getBoundingClientRect().top+sy}
   positionEls();
   for(var j=0;j<elReg.length;j++){var e=elReg[j];if(seen[e.id])continue;
@@ -531,50 +531,50 @@ try{if(window.MutationObserver)new MutationObserver(reflow).observe(document.bod
 
 /* hover a highlight (text mark or element badge) -> emphasize its card in the host */
 document.addEventListener("mouseover",function(e){
-  var m=e.target&&e.target.closest?e.target.closest("mark[data-dock-id],.dock-el-badge[data-dock-id]"):null;
-  if(m)post({type:"anchor-hover",id:m.getAttribute("data-dock-id")})});
+  var m=e.target&&e.target.closest?e.target.closest("mark[data-derive-id],.derive-el-badge[data-derive-id]"):null;
+  if(m)post({type:"anchor-hover",id:m.getAttribute("data-derive-id")})});
 document.addEventListener("mouseout",function(e){
-  var m=e.target&&e.target.closest?e.target.closest("mark[data-dock-id],.dock-el-badge[data-dock-id]"):null;
+  var m=e.target&&e.target.closest?e.target.closest("mark[data-derive-id],.derive-el-badge[data-derive-id]"):null;
   if(m)post({type:"anchor-hover",id:null})});
 /* clicking a highlight (text mark or element badge) focuses its thread in the host */
 document.addEventListener("click",function(e){
-  var el=e.target,m=el&&el.closest?el.closest("mark[data-dock-id],.dock-el-badge[data-dock-id]"):null;
-  if(m){post({type:"anchor-click",id:m.getAttribute("data-dock-id"),personal:m.getAttribute("data-dock-personal")==="1"});return}
+  var el=e.target,m=el&&el.closest?el.closest("mark[data-derive-id],.derive-el-badge[data-derive-id]"):null;
+  if(m){post({type:"anchor-click",id:m.getAttribute("data-derive-id"),personal:m.getAttribute("data-derive-personal")==="1"});return}
   navLink(e)
 },true);
 /* Cross-document links: a relative <a> the server resolved to a sibling artifact
-   (data-dock-nav="<ref>"). The sandboxed frame can't navigate the host, so hand the
+   (data-derive-nav="<ref>"). The sandboxed frame can't navigate the host, so hand the
    click off for an in-app transition (or a new tab on a modified / middle click —
    the host opens that un-sandboxed). preventDefault stops the frame loading /a/… into
    itself. Only marked links are touched; ordinary and in-page links are untouched. */
 function navLink(e){
-  var a=e.target&&e.target.closest?e.target.closest("a[data-dock-nav]"):null;
+  var a=e.target&&e.target.closest?e.target.closest("a[data-derive-nav]"):null;
   if(!a)return;
   e.preventDefault();
-  post({type:"navigate",ref:a.getAttribute("data-dock-nav"),
+  post({type:"navigate",ref:a.getAttribute("data-derive-nav"),
     newTab:!!(e.metaKey||e.ctrlKey||e.shiftKey||e.button===1)})}
 document.addEventListener("auxclick",function(e){if(e.button===1)navLink(e)},true);
 
 function setOn(id){
-  var on=document.querySelectorAll("mark.dock-hl-on,.dock-el-hl.dock-el-on");
-  for(var i=0;i<on.length;i++){on[i].classList.remove("dock-hl-on");on[i].classList.remove("dock-el-on")}
+  var on=document.querySelectorAll("mark.derive-hl-on,.derive-el-hl.derive-el-on");
+  for(var i=0;i<on.length;i++){on[i].classList.remove("derive-hl-on");on[i].classList.remove("derive-el-on")}
   if(!id)return;
-  var ms=document.querySelectorAll('mark[data-dock-id="'+id+'"]');
-  for(var j=0;j<ms.length;j++)ms[j].classList.add("dock-hl-on");
-  var ov=document.querySelectorAll('.dock-el-hl[data-dock-id="'+id+'"]');
-  for(var q=0;q<ov.length;q++)ov[q].classList.add("dock-el-on")}
+  var ms=document.querySelectorAll('mark[data-derive-id="'+id+'"]');
+  for(var j=0;j<ms.length;j++)ms[j].classList.add("derive-hl-on");
+  var ov=document.querySelectorAll('.derive-el-hl[data-derive-id="'+id+'"]');
+  for(var q=0;q<ov.length;q++)ov[q].classList.add("derive-el-on")}
 
 window.addEventListener("message",function(e){
   var d=e.data;
-  if(!d||d.source!=="dock-host")return;
+  if(!d||d.source!=="derive-host")return;
   if(d.type==="anchors")applyAnchors(d.anchors||[]);
   else if(d.type==="remeasure")reportRects();
   else if(d.type==="emphasize")setOn(d.id);
   else if(d.type==="scroll-by")window.scrollBy(0,d.dy||0);
   else if(d.type==="focus-anchor"){
-    /* text marks flash with dock-hl-flash; element overlays with dock-el-flash. */
-    var ms=document.querySelectorAll('mark[data-dock-id="'+d.id+'"]');
-    var ov=document.querySelectorAll('.dock-el-hl[data-dock-id="'+d.id+'"]');
+    /* text marks flash with derive-hl-flash; element overlays with derive-el-flash. */
+    var ms=document.querySelectorAll('mark[data-derive-id="'+d.id+'"]');
+    var ov=document.querySelectorAll('.derive-el-hl[data-derive-id="'+d.id+'"]');
     var first=ms[0]||ov[0];
     if(!first)return;
     /* bias (0..1) places the target at that fraction of the viewport instead of
@@ -582,14 +582,14 @@ window.addEventListener("message",function(e){
     if(typeof d.bias==="number"){var br=first.getBoundingClientRect();
       window.scrollTo({top:scrollTop()+br.top-window.innerHeight*d.bias,behavior:"smooth"})}
     else first.scrollIntoView({behavior:"smooth",block:"center"});
-    for(var i=0;i<ms.length;i++){ms[i].classList.remove("dock-hl-flash");void ms[i].offsetWidth;ms[i].classList.add("dock-hl-flash")}
-    for(var p=0;p<ov.length;p++){ov[p].classList.remove("dock-el-flash");void ov[p].offsetWidth;ov[p].classList.add("dock-el-flash")}
+    for(var i=0;i<ms.length;i++){ms[i].classList.remove("derive-hl-flash");void ms[i].offsetWidth;ms[i].classList.add("derive-hl-flash")}
+    for(var p=0;p<ov.length;p++){ov[p].classList.remove("derive-el-flash");void ov[p].offsetWidth;ov[p].classList.add("derive-el-flash")}
     setTimeout(reportScroll,360)}
 });
 })();`
 
 /** The tag appended to served artifact HTML; resolves on any host. */
-export const SELECTION_SCRIPT = `<script src="/raw/dock-client.js"></script>`
+export const SELECTION_SCRIPT = `<script src="/raw/derive-client.js"></script>`
 
 /** True if the comment's stored anchor still resolves in `content`. For text
  *  anchors `content` is the page text; for element anchors it's the page HTML

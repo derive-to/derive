@@ -88,7 +88,7 @@ export const webhookRoutes = (ctx: AppContext) => {
       event: "version.published",
       at: new Date().toISOString(),
       artifact: { short_id: "sample00", title: "Test artifact", url: `${deps.baseUrl}/a/sample00` },
-      data: { version: 1, message: "test delivery from Dock", author: "dock" },
+      data: { version: 1, message: "test delivery from Derive", author: "derive" },
     })
     await meta.enqueueDelivery({
       id: `wd_${randomUUID().slice(0, 12)}`,

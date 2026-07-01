@@ -7,7 +7,7 @@ import { type APIRequestContext, expect, type Page } from "@playwright/test"
 
 // Globally unique across parallel workers — a per-worker counter would collide
 // between worker processes (each starts at 0), so use a UUID.
-const uniqueEmail = () => `e2e+${crypto.randomUUID()}@dock.test`
+const uniqueEmail = () => `e2e+${crypto.randomUUID()}@derive.test`
 
 // Fresh-DB signup. The first account on a throwaway database is the workspace
 // owner, so this also seeds an authenticated session for everything downstream.

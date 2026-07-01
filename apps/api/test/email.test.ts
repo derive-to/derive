@@ -1,4 +1,4 @@
-import type { ArtifactRecord, DeliveryRecord } from "@dock/core"
+import type { ArtifactRecord, DeliveryRecord } from "@derive/core"
 import { describe, expect, it, vi } from "vitest"
 import { buildCommentEmail, commentDeepLink, emailDeliverySender } from "../src/lib/email"
 import { deliverOnce, edgeGuard } from "../src/webhooks"
@@ -7,22 +7,22 @@ const artifact = { id: "a1", short_id: "spec0001", title: "Roadmap" } as Artifac
 
 describe("email content", () => {
   it("renders a comment email with a deep link to the thread", () => {
-    const { subject, html, text } = buildCommentEmail("https://dock.build/", artifact, {
+    const { subject, html, text } = buildCommentEmail("https://derive.to/", artifact, {
       author: "Ann",
       body: "Looks good to me",
       quote: "the second milestone",
       threadId: "t_123",
     })
     expect(subject).toBe("Ann commented on Roadmap")
-    const link = commentDeepLink("https://dock.build", artifact, "t_123")
-    expect(link).toBe("https://dock.build/a/spec0001?c=t_123")
+    const link = commentDeepLink("https://derive.to", artifact, "t_123")
+    expect(link).toBe("https://derive.to/a/spec0001?c=t_123")
     expect(html).toContain(link)
     expect(html).toContain("the second milestone")
-    expect(text).toContain("View in Dock: https://dock.build/a/spec0001?c=t_123")
+    expect(text).toContain("View in Derive: https://derive.to/a/spec0001?c=t_123")
   })
 
   it("uses mention phrasing when the email is for a mention", () => {
-    const { subject } = buildCommentEmail("https://dock.build", artifact, {
+    const { subject } = buildCommentEmail("https://derive.to", artifact, {
       author: "Ann",
       body: "hey",
       threadId: "t_1",
@@ -32,7 +32,7 @@ describe("email content", () => {
   })
 
   it("escapes HTML in author/body to prevent injection", () => {
-    const { html } = buildCommentEmail("https://dock.build", artifact, {
+    const { html } = buildCommentEmail("https://derive.to", artifact, {
       author: "<script>",
       body: "<img src=x>",
       threadId: "t_1",

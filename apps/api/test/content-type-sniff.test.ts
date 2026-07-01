@@ -1,12 +1,12 @@
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { newId, publish } from "@dock/core"
-import { SqliteMetaStore } from "@dock/db/sqlite"
-import { FsBlobStore } from "@dock/storage/fs"
+import { newId, publish } from "@derive/core"
+import { SqliteMetaStore } from "@derive/db/sqlite"
+import { FsBlobStore } from "@derive/storage/fs"
 import { afterAll, describe, expect, it } from "vitest"
 
-const dir = mkdtempSync(join(tmpdir(), "dock-ctsniff-test-"))
+const dir = mkdtempSync(join(tmpdir(), "derive-ctsniff-test-"))
 const meta = new SqliteMetaStore(join(dir, "r.db"))
 const blobs = new FsBlobStore(join(dir, "blobs"))
 const enc = (s: string) => new TextEncoder().encode(s)

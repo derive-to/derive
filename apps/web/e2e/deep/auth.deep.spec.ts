@@ -16,7 +16,7 @@ test("the toggle switches between sign in and create account", async ({ page }) 
 
 test("a sign-in with unknown credentials shows an error and stays on /login", async ({ page }) => {
   await page.goto("/login")
-  await page.getByTestId("login-email").fill("nobody@dock.test")
+  await page.getByTestId("login-email").fill("nobody@derive.test")
   await page.getByTestId("login-password").fill("wrong-password-123")
   await page.getByTestId("login-submit").click()
   await expect(page.getByTestId("login-error")).toBeVisible()

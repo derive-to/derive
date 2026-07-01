@@ -1,8 +1,8 @@
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { SqliteMetaStore } from "@dock/db/sqlite"
-import { FsBlobStore } from "@dock/storage/fs"
+import { SqliteMetaStore } from "@derive/db/sqlite"
+import { FsBlobStore } from "@derive/storage/fs"
 import Database from "better-sqlite3"
 import { afterAll, describe, expect, it } from "vitest"
 import { createApp } from "../src/app"
@@ -15,7 +15,7 @@ import { sha256 } from "../src/lib/crypto"
 // produce) and assert the bridge: scope maps to capability, identity is the client,
 // and expiry is honored.
 
-const dir = mkdtempSync(join(tmpdir(), "dock-oauth-"))
+const dir = mkdtempSync(join(tmpdir(), "derive-oauth-"))
 afterAll(() => rmSync(dir, { recursive: true, force: true }))
 
 function appWithGrant(
@@ -23,7 +23,7 @@ function appWithGrant(
   grant: { token: string; scopes: string; expiresAt: Date; client?: string },
 ) {
   const path = join(dir, `${name}.db`)
-  const meta = new SqliteMetaStore(path) // creates Dock's own tables
+  const meta = new SqliteMetaStore(path) // creates Derive's own tables
   const db = new Database(path)
   // Minimal stand-ins for the oauth-provider tables (only the columns the bridge
   // reads). The token is stored hashed and scopes as a JSON array, mirroring the
@@ -52,7 +52,7 @@ function appWithGrant(
   return createApp({
     meta,
     blobs: new FsBlobStore(join(dir, `${name}-blobs`)),
-    baseUrl: "http://dock.test",
+    baseUrl: "http://derive.test",
     token: "tok",
   })
 }
@@ -71,10 +71,10 @@ const publish = (app: ReturnType<typeof createApp>, token: string) => {
 describe("OAuth access token acts as a scoped agent", () => {
   const future = () => new Date(Date.now() + 3_600_000)
 
-  it("a dock:publish grant publishes, authored by the client (not a person)", async () => {
+  it("a derive:publish grant publishes, authored by the client (not a person)", async () => {
     const app = appWithGrant("pub", {
       token: "tok_pub",
-      scopes: "openid dock:publish",
+      scopes: "openid derive:publish",
       expiresAt: future(),
       client: "Claude",
     })
@@ -87,7 +87,7 @@ describe("OAuth access token acts as a scoped agent", () => {
   it("a propose-only grant cannot publish (least privilege)", async () => {
     const app = appWithGrant("prop", {
       token: "tok_prop",
-      scopes: "openid dock:propose",
+      scopes: "openid derive:propose",
       expiresAt: future(),
     })
     expect((await publish(app, "tok_prop")).status).toBe(403)
@@ -96,7 +96,7 @@ describe("OAuth access token acts as a scoped agent", () => {
   it("an expired grant is rejected — the caller falls back to anonymous", async () => {
     const app = appWithGrant("exp", {
       token: "tok_exp",
-      scopes: "openid dock:publish",
+      scopes: "openid derive:publish",
       expiresAt: new Date(Date.now() - 1000),
     })
     expect((await publish(app, "tok_exp")).status).toBe(403)

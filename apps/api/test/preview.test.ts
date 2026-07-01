@@ -4,7 +4,7 @@ import { app, as, jsonAs, makeAuthedApp, type TestUser } from "./helpers"
 // The live editor preview endpoint: renders a markdown draft to the exact
 // published HTML (same renderMarkdown), stateless, signed-in only.
 describe("live editor preview (/v1/preview)", () => {
-  const owner: TestUser = { id: "u_prev", email: "prev@dock.test", name: "Prev" }
+  const owner: TestUser = { id: "u_prev", email: "prev@derive.test", name: "Prev" }
   const { app: authed } = makeAuthedApp("preview-org", [owner])
 
   it("renders a markdown draft to HTML for a signed-in user", async () => {

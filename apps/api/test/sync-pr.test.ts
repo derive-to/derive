@@ -2,7 +2,7 @@ import { createHmac, generateKeyPairSync } from "node:crypto"
 import { mkdtempSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { FsBlobStore } from "@dock/storage/fs"
+import { FsBlobStore } from "@derive/storage/fs"
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest"
 import { encryptSecret } from "../src/lib/crypto"
 import { runToCompletion } from "../src/lib/sync-runner"
@@ -21,7 +21,7 @@ const { privateKey: RSA_PEM } = generateKeyPairSync("rsa", {
 })
 
 const KEY = "test-encryption-key"
-const WHSEC = "whsec_dock_test"
+const WHSEC = "whsec_derive_test"
 const ORG = "prpreview-ws"
 const INSTALL = "100"
 const REPO = "acme/docs"
@@ -29,7 +29,7 @@ const REPO = "acme/docs"
 const signed = (body: string) => `sha256=${createHmac("sha256", WHSEC).update(body).digest("hex")}`
 
 const { app, meta } = quotaApp("prpreview", { encryptionKey: KEY, startSync: () => {} })
-const blobStore = new FsBlobStore(mkdtempSync(join(tmpdir(), "dock-pr-blobs-")))
+const blobStore = new FsBlobStore(mkdtempSync(join(tmpdir(), "derive-pr-blobs-")))
 const sync = (id: string) => runToCompletion(meta, blobStore, KEY, id)
 
 const postWebhook = (action: string, pr: Record<string, unknown>) => {
@@ -128,7 +128,7 @@ beforeAll(async () => {
   await meta.setGithubApp({
     id: "default",
     app_id: "1",
-    slug: "dock-test",
+    slug: "derive-test",
     client_id: "Iv1.x",
     client_secret: encryptSecret("cs", KEY),
     private_key: encryptSecret(RSA_PEM, KEY),
@@ -321,7 +321,7 @@ describe("github pr preview: sticky comment on the PR", () => {
     const comments = ghComments["20"] ?? []
     expect(comments).toHaveLength(1)
     expect(comments[0]?.body).toContain(`/?collection=${p.collection_id}`)
-    expect(comments[0]?.body).toContain("<!-- dock-preview -->") // sticky marker
+    expect(comments[0]?.body).toContain("<!-- derive-preview -->") // sticky marker
     expect(comments[0]?.body).toContain("1 doc")
     expect(comments[0]?.body).not.toContain("—") // no em dashes in customer-facing copy
   })

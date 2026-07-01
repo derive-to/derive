@@ -1,6 +1,6 @@
-# Dock: layered anchoring (beyond a single text quote)
+# Derive: layered anchoring (beyond a single text quote)
 
-Two gaps in Dock's anchor model, fixed together:
+Two gaps in Derive's anchor model, fixed together:
 
 1. A comment can only attach to a **text quote** today. Our own
    [STANDARD.md](../../STANDARD.md) admits it: "baked-in screenshots can't be
@@ -41,7 +41,7 @@ weakest. None of them is load-bearing on its own.
 ```
 AnchorLayers = {
   // L0 - explicit durable handle (author opt-in). Survives almost anything.
-  anchorId?: string          // value of data-dock-anchor
+  anchorId?: string          // value of data-derive-anchor
 
   // L1 - precise path. Best when the DOM is stable.
   css?: string               // depth-capped, e.g. "main > figure:nth-of-type(2)"
@@ -118,9 +118,9 @@ under 'Performance', about 40% down the page"), with the thumbnail if we have on
 instead of a bare "element changed." The agent reading comments over MCP receives
 the same snapshot, so it can relocate the intent itself.
 
-### 2. Recover via version history (Dock's advantage)
+### 2. Recover via version history (Derive's advantage)
 
-Dock keeps every version server-side, which the in-iframe-only tools do not. So an
+Derive keeps every version server-side, which the in-iframe-only tools do not. So an
 orphaned anchor has one more move: re-resolve it against the **exact version it was
 made on** (`madeOnVersion`), where every layer still matches perfectly, identify the
 original element there, then walk the diff **forward** to its most likely successor
@@ -132,7 +132,7 @@ hop by hop instead of dropped because the latest DOM drifted too far at once.
 One optional addition to STANDARD.md section 1, alongside "keep headings and
 distinctive phrases stable":
 
-- **Put `data-dock-anchor="…"` on charts, figures, and slide regions you expect
+- **Put `data-derive-anchor="…"` on charts, figures, and slide regions you expect
   feedback on.** It becomes Layer 0, the strongest handle, and makes an element
   anchor as durable as a stable heading. Never required: without it the lower layers
   still apply.
@@ -142,7 +142,7 @@ distinctive phrases stable":
 Additive to STANDARD.md section 2. Old clients and old artifacts keep working; they
 simply never send or receive the new fields.
 
-### Artifact frame to host (`source: "dock"`)
+### Artifact frame to host (`source: "derive"`)
 
 - `select` may carry an element anchor (`kind: "element"`) with the captured layers
   when the user picks an element instead of text. The user enters **element-pick
@@ -150,7 +150,7 @@ simply never send or receive the new fields.
   under the cursor; clicking posts the anchor. Selecting text, or pressing the key
   again, exits the mode.
 
-### Host to artifact frame (`source: "dock-host"`)
+### Host to artifact frame (`source: "derive-host"`)
 
 - `anchors` gains element entries plus a per-anchor `confidence`. The client paints
   an element anchor as an **outline overlay** (absolutely positioned, so we never
@@ -164,7 +164,7 @@ simply never send or receive the new fields.
   existing selection toolbar plus a keyboard shortcut. Until you start, the artifact
   looks untouched.
 - **Picking.** Hover paints a soft outline on the smallest anchorable element
-  (img, svg, figure, canvas, or an explicit `data-dock-anchor` box). Modifier-hover
+  (img, svg, figure, canvas, or an explicit `data-derive-anchor` box). Modifier-hover
   walks up to the parent if you meant the whole figure, not the image inside it.
 - **Commenting.** Click drops a margin pin and opens the **same composer** used for
   text anchors.
@@ -182,7 +182,7 @@ simply never send or receive the new fields.
 3. **Gone case.** Orphan group UI with snapshots; version-history forward-walk
    recovery.
 4. **Element UI.** Pick-mode, outline overlay, unified pin rail, confirm affordance.
-5. **Docs.** STANDARD.md note for `data-dock-anchor`.
+5. **Docs.** STANDARD.md note for `data-derive-anchor`.
 
 ## Open questions
 

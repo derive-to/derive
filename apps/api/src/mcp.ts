@@ -1,4 +1,4 @@
-// Remote MCP endpoint — Dock as a Model Context Protocol server an AI client
+// Remote MCP endpoint — Derive as a Model Context Protocol server an AI client
 // (claude.ai / Claude Code) connects to over Streamable HTTP, authenticated by the
 // same OAuth 2.1 bearer the rest of the app uses. It's the transport for the agentic
 // loop: connect once, see what changed (catch_up), read, comment, and publish a
@@ -32,7 +32,7 @@ import {
   publish as publishVersion,
   roleAllows,
   type VersionRecord,
-} from "@dock/core"
+} from "@derive/core"
 import { StreamableHTTPTransport } from "@hono/mcp"
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import type { Hono } from "hono"
@@ -143,11 +143,11 @@ function buildServer(ctx: AppContext, agent: AgentRecord, ownerId: string | null
     : `Use publish to submit a revision — at your role it is filed as a proposal a human approves before it ` +
       `goes live; you cannot publish directly. `
   const server = new McpServer(
-    { name: "dock", version: "1.0.0" },
+    { name: "derive", version: "1.0.0" },
     {
       instructions:
-        `You are connected to Dock as "${agent.name}", acting in workspace ${agent.org_id} ` +
-        `with ${agent.role} permissions. Dock hosts living documents and plans with versioned ` +
+        `You are connected to Derive as "${agent.name}", acting in workspace ${agent.org_id} ` +
+        `with ${agent.role} permissions. Derive hosts living documents and plans with versioned ` +
         `history, text-anchored review comments, and a publish → review → revise loop. ` +
         `Start a session with catch_up to re-sync on what changed and what feedback is open; use ` +
         `read to view content (outline first for multi-page bundles); use comment to leave or ` +
@@ -389,7 +389,7 @@ function buildServer(ctx: AppContext, agent: AgentRecord, ownerId: string | null
       if (!a) return notFound(short_id)
       if (!roleAllows(agent.role, "comment"))
         return err(
-          "Your grant is read-only (dock:read). Re-authorize the connector with dock:comment to leave feedback.",
+          "Your grant is read-only (derive:read). Re-authorize the connector with derive:comment to leave feedback.",
         )
       if (!body && !set_state)
         return err("Provide `body` (to comment) or `set_state` (to resolve/reopen a thread).")
@@ -549,7 +549,7 @@ function buildServer(ctx: AppContext, agent: AgentRecord, ownerId: string | null
       if (review) {
         if (!roleAllows(agent.role, "propose"))
           return text(
-            "Your grant is read-only (dock:read). Re-authorize with dock:propose (or a publish scope) to suggest changes.",
+            "Your grant is read-only (derive:read). Re-authorize with derive:propose (or a publish scope) to suggest changes.",
           )
         if (isBundle)
           return text(

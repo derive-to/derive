@@ -96,7 +96,7 @@ export function Login() {
       <aside className="hidden flex-col justify-between bg-secondary p-10 text-secondary-foreground lg:flex">
         <div className="flex items-center gap-2.5">
           <Logo size={30} />
-          <span className="font-display text-xl font-semibold">Dock</span>
+          <span className="font-display text-xl font-semibold">Derive</span>
         </div>
         <div className="max-w-md">
           <h1 className="font-display text-3xl font-semibold leading-tight text-foreground">
@@ -130,7 +130,7 @@ export function Login() {
           <div className="mb-6 flex flex-col items-center gap-1 text-center lg:hidden">
             <div className="flex items-center gap-2">
               <Logo size={26} />
-              <span className="font-display text-lg font-semibold">Dock</span>
+              <span className="font-display text-lg font-semibold">Derive</span>
             </div>
             <p className="text-xs text-muted-foreground">
               Permanent URLs, versions, and review for your AI artifacts.

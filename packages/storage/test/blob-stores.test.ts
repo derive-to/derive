@@ -13,7 +13,7 @@ const SHA_RE = /^[0-9a-f]{64}$/
 // hex key, get round-trips, a malformed key is rejected without a backend call, and
 // a well-formed-but-absent key is null (not an error).
 describe("FsBlobStore (local disk, the default store)", () => {
-  const dir = mkdtempSync(join(tmpdir(), "dock-blobs-"))
+  const dir = mkdtempSync(join(tmpdir(), "derive-blobs-"))
   const store = new FsBlobStore(dir)
   afterAll(() => rmSync(dir, { recursive: true, force: true }))
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Schema-safety guardrail. The boot-applied DDL + forward-only migrations
 // (packages/db/src/schema.ts SCHEMA_STATEMENTS/MIGRATION_STATEMENTS, and
-// pg-schema.ts PG_SCHEMA_STATEMENTS) must stay NON-DESTRUCTIVE: Dock evolves the
+// pg-schema.ts PG_SCHEMA_STATEMENTS) must stay NON-DESTRUCTIVE: Derive evolves the
 // schema by adding (expand/contract), never by dropping. A DROP TABLE / DROP
 // COLUMN / TRUNCATE / bare DELETE FROM in the schema source is a data-loss
 // footgun — boot re-applies these, so a stray destructive statement would wipe

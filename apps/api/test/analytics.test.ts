@@ -1,5 +1,5 @@
 import { join } from "node:path"
-import { FsBlobStore } from "@dock/storage/fs"
+import { FsBlobStore } from "@derive/storage/fs"
 import { describe, expect, it } from "vitest"
 import { createApp } from "../src/app"
 import type { Viewer } from "../src/bus"
@@ -69,7 +69,7 @@ describe("view analytics", () => {
     const off = createApp({
       meta,
       blobs: new FsBlobStore(join(dir, "blobs2")),
-      baseUrl: "http://dock.test",
+      baseUrl: "http://derive.test",
       analytics: false,
     })
     const { short_id } = await (async () => {
@@ -138,7 +138,7 @@ describe("live stream (SSE)", () => {
   })
 
   it("reports presence by server identity: handle + role, never email; anon gets a rando handle", async () => {
-    const jess: TestUser = { id: "u_pres_jess", email: "jess@dock.test", name: "Jess" }
+    const jess: TestUser = { id: "u_pres_jess", email: "jess@derive.test", name: "Jess" }
     const { app: a } = makeAuthedApp("presence", [jess])
     const { short_id } = await (
       await publishAs(a, "<h1>p</h1>", { visibility: "public" }, as(jess.email))
@@ -169,12 +169,12 @@ describe("live stream (SSE)", () => {
 })
 
 describe("analytics: identity + retention", () => {
-  const ann: TestUser = { id: "u_view_ann", email: "ann@dock.test", name: "Ann" }
+  const ann: TestUser = { id: "u_view_ann", email: "ann@derive.test", name: "Ann" }
   const bob: TestUser = {
     id: "u_view_bob",
-    email: "bob@dock.test",
+    email: "bob@derive.test",
     name: "Bob",
-    image: "https://cdn.dock.test/bob.png",
+    image: "https://cdn.derive.test/bob.png",
   }
   const { app, meta: m } = makeAuthedApp("analytics-id", [ann, bob], "commenter")
 
@@ -239,7 +239,7 @@ describe("analytics: identity + retention", () => {
     const xs = createApp({
       meta,
       blobs: new FsBlobStore(join(dir, "blobs")),
-      baseUrl: "https://api.dock.test",
+      baseUrl: "https://api.derive.test",
       crossSite: true,
       token: TEST_TOKEN,
     })
@@ -255,7 +255,7 @@ describe("analytics: identity + retention", () => {
       body: "{}",
     })
     const sc = (r.headers.get("set-cookie") ?? "").toLowerCase()
-    expect(sc).toContain("dock_vid=")
+    expect(sc).toContain("derive_vid=")
     expect(sc).toContain("samesite=none") // rides the cross-site request
     expect(sc).toContain("secure")
   })

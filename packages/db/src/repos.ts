@@ -57,8 +57,8 @@ import type {
   Visibility,
   WebhookRecord,
   WorkspaceRecord,
-} from "@dock/core"
-import { DEFAULT_ORG_SETTINGS, GLOBAL_FOLLOW_ORG } from "@dock/core"
+} from "@derive/core"
+import { DEFAULT_ORG_SETTINGS, GLOBAL_FOLLOW_ORG } from "@derive/core"
 import {
   and,
   asc,
@@ -166,7 +166,7 @@ export const schema = {
 }
 
 // Compile-time schema parity (see ./parity): every table must be classified, and
-// every typed table's row shape must match its @dock/core Record exactly. A new
+// every typed table's row shape must match its @derive/core Record exactly. A new
 // table that isn't classified, or a column that drifts, fails to compile here.
 const _schemaExhaustive: Exhaustive<typeof schema> = true
 const _schemaShapes: Shapes<typeof schema> = {
@@ -211,7 +211,7 @@ type RunResult = { changes?: number; meta?: { changes?: number } }
  *  `{ [repoPath]: { artifact_id, sha } }`; a managed artifact is any id therein.
  *  Shared by both drivers so "is this artifact synced?" reads identically. */
 /** The oauth-provider stores granted scopes as a JSON array string
- *  (`["openid","dock:publish"]`); tolerate a space-separated form too. */
+ *  (`["openid","derive:publish"]`); tolerate a space-separated form too. */
 export const parseOAuthScopes = (s: string | null): string[] => {
   if (!s) return []
   try {
@@ -873,7 +873,7 @@ export function makeRepos(db: SqliteDb) {
       .where(and(eq(follow.user_id, userId), inArray(follow.org_id, [orgId, GLOBAL_FOLLOW_ORG])))
       .orderBy(desc(follow.created_at), desc(follow.id))
       .all()
-  // The GitHub numeric ids a set of Dock users linked via Better Auth (raw account read;
+  // The GitHub numeric ids a set of Derive users linked via Better Auth (raw account read;
   // the auth tables live in the same DB but aren't in the drizzle schema). [] if absent.
   const githubIdsForUsers = async (userIds: string[]): Promise<string[]> => {
     if (userIds.length === 0) return []
@@ -937,9 +937,9 @@ export function makeRepos(db: SqliteDb) {
   }
 
   // ---- People profiles: works, shared workspaces, follower/following -----
-  // The GitHub numeric ids one Dock user linked (raw account read; [] if absent).
+  // The GitHub numeric ids one Derive user linked (raw account read; [] if absent).
   const githubIdsForUser = (userId: string): Promise<string[]> => githubIdsForUsers([userId])
-  // A Dock user's GitHub login, derived from any artifact whose author_gh_id is one of
+  // A Derive user's GitHub login, derived from any artifact whose author_gh_id is one of
   // their linked ids (we don't store the login on `account`). Null when unknown.
   const githubLoginForUser = async (_userId: string, ghIds: string[]): Promise<string | null> => {
     if (ghIds.length === 0) return null

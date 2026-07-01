@@ -1,6 +1,6 @@
-# Dock: new collaboration modes and the publish gate
+# Derive: new collaboration modes and the publish gate
 
-Today every comment on Dock is the same kind: public, human-to-human, a discussion.
+Today every comment on Derive is the same kind: public, human-to-human, a discussion.
 That is one quadrant of a larger space. This plan adds the missing quadrants and a
 quality gate, all on the anchor primitive from
 [element-anchors.md](./element-anchors.md). Companion to
@@ -58,7 +58,7 @@ closing the loop.
 ## The publish gate
 
 A headless layout audit that runs **at publish time**, before a share link goes out.
-Dock has nothing here today.
+Derive has nothing here today.
 
 The audit inspects the rendered output for:
 

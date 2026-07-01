@@ -1,6 +1,6 @@
-# The Dock content standard
+# The Derive content standard
 
-Dock artifacts are ordinary HTML, Markdown, or static bundles. Two conventions
+Derive artifacts are ordinary HTML, Markdown, or static bundles. Two conventions
 make them work well in the review loop: authoring so comments stay anchored, and
 the anchor-client protocol that any viewer can speak.
 
@@ -24,18 +24,18 @@ To keep comments attached across revisions:
   the readable text in the DOM (not generated late by script), so it's there
   when the page loads and when an anchor resolves.
 
-These are guidelines, not validation — Dock never rejects content. They just
+These are guidelines, not validation — Derive never rejects content. They just
 make the loop smoother.
 
 ## 2. The anchor-client protocol
 
-Dock serves a small client at **`/raw/dock-client.js`** and references it from
+Derive serves a small client at **`/raw/derive-client.js`** and references it from
 served artifact HTML. It runs inside the sandboxed artifact iframe (opaque
 origin), so the host page (the viewer) and the artifact communicate only by
 `postMessage`. Any viewer can implement the host side; any host can serve a
 compatible client. Messages are tagged with a `source` field.
 
-### Artifact frame → host (`source: "dock"`)
+### Artifact frame → host (`source: "derive"`)
 
 | `type` | payload | meaning |
 |---|---|---|
@@ -43,7 +43,7 @@ compatible client. Messages are tagged with a `source` field.
 | `anchors-resolved` | `{ resolved: { [id]: boolean } }` | which anchor ids were found in the current document |
 | `anchor-click` | `{ id }` | user clicked a painted highlight |
 
-### Host → artifact frame (`source: "dock-host"`)
+### Host → artifact frame (`source: "derive-host"`)
 
 | `type` | payload | meaning |
 |---|---|---|
@@ -54,7 +54,7 @@ compatible client. Messages are tagged with a `source` field.
 
 An anchor is located the same way on the client and the server: try
 `prefix + exact + suffix` first, then `exact` alone; not found ⇒ unresolved.
-Highlights wrap matched text in `<mark data-dock-id="…">`; clicking one posts
+Highlights wrap matched text in `<mark data-derive-id="…">`; clicking one posts
 `anchor-click`.
 
 ### Why it's served, not inlined
@@ -66,18 +66,18 @@ content — and lets other tools build their own viewers against this contract.
 
 ## 3. The deck protocol (slides)
 
-An artifact that is a slide deck can announce itself so the Dock viewer shows a
+An artifact that is a slide deck can announce itself so the Derive viewer shows a
 presentation bar (prev / next / position / fullscreen) and can drive it. Like the
 anchor client, it's pure `postMessage`. Opt-in: any HTML that posts these works;
 anything that doesn't is served normally.
 
-### Deck → host (`source: "dock-deck"`)
+### Deck → host (`source: "derive-deck"`)
 
 | `type` | payload | meaning |
 |---|---|---|
 | `state` | `{ i, total }` | current slide index (0-based) and slide count; post on load and on every change |
 
-### Host → deck (`source: "dock-host"`)
+### Host → deck (`source: "derive-host"`)
 
 | `type` | payload | meaning |
 |---|---|---|
@@ -85,12 +85,12 @@ anything that doesn't is served normally.
 
 The deck owns its own rendering, keyboard, and on-screen controls; the host bar
 is an additional driver. Fullscreen is host-side (it fullscreens the iframe
-wrapper), so a deck needs no special support for it. `dock init --template slides`
+wrapper), so a deck needs no special support for it. `derive init --template slides`
 scaffolds a deck that speaks this protocol.
 
 ## 4. The agent loop
 
-`dock init` scaffolds an `AGENTS.md` describing publish → read comments → revise
-→ reply/resolve over the HTTP API (and the matching `dock comments` / `reply` /
+`derive init` scaffolds an `AGENTS.md` describing publish → read comments → revise
+→ reply/resolve over the HTTP API (and the matching `derive comments` / `reply` /
 `resolve` / `open` verbs). That's the convention for agents (and humans) to close
-the loop without prior knowledge of Dock.
+the loop without prior knowledge of Derive.

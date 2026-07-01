@@ -1,4 +1,4 @@
-import { type FollowKind, GLOBAL_FOLLOW_ORG, newId, normalizeUsername } from "@dock/core"
+import { type FollowKind, GLOBAL_FOLLOW_ORG, newId, normalizeUsername } from "@derive/core"
 import { type Context, Hono } from "hono"
 import { z } from "zod"
 import type { AppContext } from "../context"

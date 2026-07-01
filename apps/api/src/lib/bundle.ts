@@ -4,7 +4,7 @@ import {
   isBundleContentType,
   PublishError,
   type VersionRecord,
-} from "@dock/core"
+} from "@derive/core"
 import { zipSync } from "fflate"
 
 // Bundle manifests store paths with a leading slash (/index.html); present them

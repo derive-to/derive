@@ -25,7 +25,7 @@ export const RESERVED_USERNAMES: ReadonlySet<string> = new Set([
   "api",
   "app",
   "apps",
-  "dock",
+  "derive",
   "root",
   "system",
   "support",

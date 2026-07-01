@@ -1,12 +1,12 @@
-# dock-connect
+# derive-connect
 
-Wire an agent or MCP client to Dock. Works against dock.build or any self-hosted instance.
+Wire an agent or MCP client to Derive. Works against derive.to or any self-hosted instance.
 
 ---
 
-## Step 1: get a DOCK_TOKEN
+## Step 1: get a DERIVE_TOKEN
 
-1. Sign in to your Dock workspace (dock.build or your own instance)
+1. Sign in to your Derive workspace (derive.to or your own instance)
 2. Settings > Agents > New Agent
 3. Name it (e.g. "Claude Code", "CI pipeline")
 4. Copy the `dk_agt_...` token — shown once
@@ -24,12 +24,12 @@ Add to `.claude/mcp.json` in your project root:
 ```json
 {
   "mcpServers": {
-    "dock": {
+    "derive": {
       "command": "npx",
-      "args": ["-y", "@dock/mcp"],
+      "args": ["-y", "@derive/mcp"],
       "env": {
-        "DOCK_SERVER": "https://dock.build",
-        "DOCK_TOKEN": "dk_agt_..."
+        "DERIVE_SERVER": "https://derive.to",
+        "DERIVE_TOKEN": "dk_agt_..."
       }
     }
   }
@@ -39,9 +39,9 @@ Add to `.claude/mcp.json` in your project root:
 Or globally via the CLI:
 
 ```bash
-claude mcp add dock npx -- -y @dock/mcp
-export DOCK_SERVER=https://dock.build
-export DOCK_TOKEN=dk_agt_...
+claude mcp add derive npx -- -y @derive/mcp
+export DERIVE_SERVER=https://derive.to
+export DERIVE_TOKEN=dk_agt_...
 ```
 
 ### Claude Desktop
@@ -51,12 +51,12 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 ```json
 {
   "mcpServers": {
-    "dock": {
+    "derive": {
       "command": "npx",
-      "args": ["-y", "@dock/mcp"],
+      "args": ["-y", "@derive/mcp"],
       "env": {
-        "DOCK_SERVER": "https://dock.build",
-        "DOCK_TOKEN": "dk_agt_..."
+        "DERIVE_SERVER": "https://derive.to",
+        "DERIVE_TOKEN": "dk_agt_..."
       }
     }
   }
@@ -68,7 +68,7 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 ## Step 3: verify
 
 Call `list_artifacts`. It should return your workspace's artifacts (empty array if fresh).
-If you get an auth error, check `DOCK_TOKEN` matches the copied token and `DOCK_SERVER`
+If you get an auth error, check `DERIVE_TOKEN` matches the copied token and `DERIVE_SERVER`
 points to the right instance.
 
 ---
@@ -82,11 +82,11 @@ proposals it creates are attributed to that name. Activity is visible in Setting
 
 ## Self-hosted instances
 
-Replace `https://dock.build` with your instance URL:
+Replace `https://derive.to` with your instance URL:
 
 ```json
-"DOCK_SERVER": "https://dock.example.com"
+"DERIVE_SERVER": "https://derive.example.com"
 ```
 
-Same token format, same MCP tools. See `running-locally/dock-self-host.md` for running a
+Same token format, same MCP tools. See `running-locally/derive-self-host.md` for running a
 local instance, or `deploying/` for production deployment.

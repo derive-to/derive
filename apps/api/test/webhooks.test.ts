@@ -1,9 +1,9 @@
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { type ArtifactRecord, newId } from "@dock/core"
-import { SqliteMetaStore } from "@dock/db/sqlite"
-import { FsBlobStore } from "@dock/storage/fs"
+import { type ArtifactRecord, newId } from "@derive/core"
+import { SqliteMetaStore } from "@derive/db/sqlite"
+import { FsBlobStore } from "@derive/storage/fs"
 import { afterAll, describe, expect, it } from "vitest"
 import { buildPayload, sign, slackMessage } from "../src/webhooks"
 import { ownerApp } from "./helpers"
@@ -48,12 +48,12 @@ describe("webhook formatting + signing", () => {
   })
 })
 
-const dir = mkdtempSync(join(tmpdir(), "dock-wh-"))
-const meta = new SqliteMetaStore(join(dir, "dock.db"))
+const dir = mkdtempSync(join(tmpdir(), "derive-wh-"))
+const meta = new SqliteMetaStore(join(dir, "derive.db"))
 const app = ownerApp({
   meta,
   blobs: new FsBlobStore(join(dir, "blobs")),
-  baseUrl: "http://dock.test",
+  baseUrl: "http://derive.test",
 })
 afterAll(() => {
   meta.close()
@@ -107,8 +107,8 @@ describe("webhook outbox", () => {
 // what stops the outbox double-delivering under multi-instance Postgres; on SQLite
 // (single-writer) the same lease+increment logic prevents overlapping-tick dupes.
 describe("webhook outbox: atomic claim", () => {
-  const cdir = mkdtempSync(join(tmpdir(), "dock-whc-"))
-  const m = new SqliteMetaStore(join(cdir, "dock.db"))
+  const cdir = mkdtempSync(join(tmpdir(), "derive-whc-"))
+  const m = new SqliteMetaStore(join(cdir, "derive.db"))
   afterAll(() => {
     m.close()
     rmSync(cdir, { recursive: true, force: true })

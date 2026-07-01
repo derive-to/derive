@@ -15,7 +15,7 @@ export type ArtifactKind = "file" | "bundle"
 // the visitor enters the password (then a viewer; members/owners see it by role).
 export type Visibility = "public" | "link" | "org" | "password"
 
-/** A platform subdomain (`name.dockd.app`) or a customer's own domain. */
+/** A platform subdomain (`name.derived.app`) or a customer's own domain. */
 export type DomainKind = "subdomain" | "custom"
 
 /** Serving status of a host. Subdomains are `active` immediately; a custom domain
@@ -61,7 +61,7 @@ export interface ArtifactRecord {
   author_login: string | null
   author_avatar: string | null
   author_gh_id: string | null
-  /** The Dock user who last published this artifact by hand (the signed-in publisher).
+  /** The Derive user who last published this artifact by hand (the signed-in publisher).
    *  Null for GitHub-synced versions (attributed via `author_gh_id` instead), bare
    *  static-token publishes, and legacy rows. Lets a person's profile + people-follow
    *  surface their hand-published work. */
@@ -111,7 +111,7 @@ export interface VersionRecord {
   author_login: string | null
   author_avatar: string | null
   author_gh_id: string | null
-  /** The Dock user who published this version by hand; null for sync/anon/legacy. */
+  /** The Derive user who published this version by hand; null for sync/anon/legacy. */
   author_id: string | null
   message: string | null
   /** A named checkpoint (Docs-style). Null = an ordinary auto-saved revision. */
@@ -144,7 +144,7 @@ export interface NewVersion {
   author_login?: string | null
   author_avatar?: string | null
   author_gh_id?: string | null
-  /** The Dock user who published this version by hand; null/omitted for sync/anon. */
+  /** The Derive user who published this version by hand; null/omitted for sync/anon. */
   author_id?: string | null
   message: string | null
   name?: string | null
@@ -424,17 +424,17 @@ export interface MetaStore {
   /** Persist the workspace's integration preferences (full object; upsert by org). */
   setOrgSettings(orgId: string, settings: OrgSettings): Promise<void>
   // ---- Slack App (connected workspace + thread links) ---------------------
-  /** The Slack workspace connected to this Dock workspace, or null. */
+  /** The Slack workspace connected to this Derive workspace, or null. */
   getSlackInstall(orgId: string): Promise<SlackInstallRecord | null>
   /** Upsert (connect / reconnect) the Slack install for a workspace. */
   setSlackInstall(s: SlackInstallRecord): Promise<void>
   /** Disconnect Slack for a workspace. */
   deleteSlackInstall(orgId: string): Promise<void>
-  /** The Slack message a Dock thread is mirrored to (for threading replies), or null. */
+  /** The Slack message a Derive thread is mirrored to (for threading replies), or null. */
   getSlackThreadLinkByThread(threadId: string): Promise<SlackThreadLinkRecord | null>
-  /** The Dock thread a Slack message maps to (for reply-back), or null. */
+  /** The Derive thread a Slack message maps to (for reply-back), or null. */
   getSlackThreadLinkByTs(channel: string, ts: string): Promise<SlackThreadLinkRecord | null>
-  /** Record the Slack message ↔ Dock thread mapping (idempotent on thread_id). */
+  /** Record the Slack message ↔ Derive thread mapping (idempotent on thread_id). */
   setSlackThreadLink(l: SlackThreadLinkRecord): Promise<void>
   // ---- Domain mode: a hostname serving artifact(s) at its own origin ------
   // A domain row is either bound to one artifact (`artifact_id` set: a vanity
@@ -478,16 +478,16 @@ export interface MetaStore {
   // ---- User directory (reads Better Auth's `user` table) ----------------
   findUserByEmail(email: string): Promise<UserDir | null>
   getUsers(ids: string[]): Promise<UserDir[]>
-  /** Map GitHub numeric user ids (as strings) to the Dock accounts that signed in with
+  /** Map GitHub numeric user ids (as strings) to the Derive accounts that signed in with
    *  GitHub — joins Better Auth's `account` (providerId='github', accountId IN ids) to
-   *  `user`. Lets a synced artifact's commit author resolve to a Dock profile/handle.
+   *  `user`. Lets a synced artifact's commit author resolve to a Derive profile/handle.
    *  Returns [] for empty input or when the auth tables are absent. */
   usersByGithubIds(ghIds: string[]): Promise<GithubUserMapping[]>
-  /** The GitHub numeric user ids (account.accountId, as strings) a Dock user has linked
+  /** The GitHub numeric user ids (account.accountId, as strings) a Derive user has linked
    *  via Better Auth's `account` (providerId='github'). Inverse of `usersByGithubIds`.
    *  Returns [] when none or the auth tables are absent. */
   githubIdsForUser(userId: string): Promise<string[]>
-  /** A Dock user's GitHub login, derived from any artifact whose `author_gh_id` is one of
+  /** A Derive user's GitHub login, derived from any artifact whose `author_gh_id` is one of
    *  their linked GitHub ids (we don't store the login on `account`). Null when unknown —
    *  used only to show a GitHub link on the profile. */
   githubLoginForUser(userId: string, ghIds: string[]): Promise<string | null>
@@ -579,7 +579,7 @@ export interface MetaStore {
   /** Set the repo path of a GitHub-synced artifact (its folder/tree "location"). */
   setArtifactSourcePath(id: string, sourcePath: string | null): Promise<void>
   /** Override "updated_at" with an external timestamp (a synced file's last-commit
-   *  date), so the card's "updated" reflects the SOURCE's last change, not when Dock
+   *  date), so the card's "updated" reflects the SOURCE's last change, not when Derive
    *  ingested it. Publish bumps updated_at to now; the sync calls this after to correct it. */
   setArtifactUpdatedAt(id: string, updatedAt: string): Promise<void>
   /** Set the artifact's denormalized current author (its author_* columns). Used by the
@@ -587,7 +587,7 @@ export interface MetaStore {
    *  commit without republishing. `null` clears all four columns. */
   setArtifactAuthor(artifactId: string, author: GithubAuthor | null): Promise<void>
   /** One-shot, idempotent: fill `artifact.author_id` for rows that predate the column,
-   *  where the artifact's `author_gh_id` maps to a Dock account (Better Auth `account`,
+   *  where the artifact's `author_gh_id` maps to a Derive account (Better Auth `account`,
    *  providerId='github'). Only touches rows with a null author_id and a known mapping;
    *  a no-op once applied. Returns the number of rows updated. Best-effort (0 if the auth
    *  tables are absent). Pre-feature hand-published work without a GitHub identity has no
@@ -603,7 +603,7 @@ export interface MetaStore {
 }
 
 /** What a user follows: a GitHub author (`target` = the login), a repo path prefix
- *  (`target` = a path prefix, e.g. "docs/plans"), or a Dock person (`target` = their
+ *  (`target` = a path prefix, e.g. "docs/plans"), or a Derive person (`target` = their
  *  user id). `author`/`path` follows are workspace-scoped; `user` follows are global
  *  (stored with `org_id = "*"`) since a person's work spans workspaces. */
 export type FollowKind = "author" | "path" | "user"
@@ -618,7 +618,7 @@ export interface FollowRecord {
   user_id: string
   kind: FollowKind
   /** For `author`: the GitHub login (stored lowercased). For `path`: a repo path prefix.
-   *  For `user`: the followed Dock user id (verbatim). */
+   *  For `user`: the followed Derive user id (verbatim). */
   target: string
   created_at: string
 }
@@ -804,7 +804,7 @@ export interface GithubAuthor {
   ghId: string | null
 }
 
-/** A GitHub numeric user id resolved to the Dock account that signed in with it
+/** A GitHub numeric user id resolved to the Derive account that signed in with it
  *  (Better Auth `account` joined to `user`). `username` is the public handle. */
 export interface GithubUserMapping {
   gh_id: string
@@ -1021,15 +1021,15 @@ export interface NewRepoSource {
 export interface OrgSettings {
   /** Send notification emails on comments/mentions. */
   emailNotifications: boolean
-  /** Post a Dock comment to the PR (inline review or top-level) when it's on a
+  /** Post a Derive comment to the PR (inline review or top-level) when it's on a
    *  PR-sourced artifact. */
   githubPostComments: boolean
-  /** Mirror PR comments made on GitHub back into the Dock artifact. */
+  /** Mirror PR comments made on GitHub back into the Derive artifact. */
   githubMirrorComments: boolean
   /** When a PR opens (and on each push), post + keep updated a single comment on the
-   *  pull request linking to the Dock preview of its docs. */
+   *  pull request linking to the Derive preview of its docs. */
   githubPreviewLink: boolean
-  /** Post Dock activity to the connected Slack workspace. */
+  /** Post Derive activity to the connected Slack workspace. */
   slackPost: boolean
 }
 
@@ -1041,8 +1041,8 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
   slackPost: true,
 }
 
-/** A connected Slack workspace (one per Dock workspace). `bot_token` is the OAuth bot
- *  token, AES-encrypted at rest. `default_channel` is where Dock posts when an artifact
+/** A connected Slack workspace (one per Derive workspace). `bot_token` is the OAuth bot
+ *  token, AES-encrypted at rest. `default_channel` is where Derive posts when an artifact
  *  has no more specific channel. */
 export interface SlackInstallRecord {
   org_id: string
@@ -1054,8 +1054,8 @@ export interface SlackInstallRecord {
   created_at: string
 }
 
-/** Links a Dock comment thread to the Slack message Dock posted for it, so replies
- *  thread under it (Dock→Slack) and Slack thread replies map back (Slack→Dock). */
+/** Links a Derive comment thread to the Slack message Derive posted for it, so replies
+ *  thread under it (Derive→Slack) and Slack thread replies map back (Slack→Derive). */
 export interface SlackThreadLinkRecord {
   id: string
   org_id: string
@@ -1081,7 +1081,7 @@ export interface GitHubAppRecord {
 }
 
 /** A GitHub App installation a workspace connected: the binding between a GitHub
- *  account's selected repos and a Dock workspace. */
+ *  account's selected repos and a Derive workspace. */
 export interface GitHubInstallationRecord {
   /** Numeric GitHub installation id, stored as text (PK). */
   installation_id: string
@@ -1111,7 +1111,7 @@ export type DeliveryStatus = "pending" | "delivered" | "dead"
 
 /**
  * What an outbox row delivers to. `generic`/`slack` are user-configured webhooks
- * (a `webhook` row). The rest are first-party channels Dock fans out to directly —
+ * (a `webhook` row). The rest are first-party channels Derive fans out to directly —
  * email (Cloudflare Email Service), a connected Slack App (`chat.postMessage`), and
  * GitHub PR comments (inline review or top-level issue comment). Internal-channel
  * rows carry `webhook_id = "internal"` (no backing `webhook` row); the per-kind
@@ -1278,12 +1278,12 @@ export interface BundleManifest {
   files: Record<string, { key: string; type: string }>
 }
 
-export const BUNDLE_CONTENT_TYPE = "dock/bundle"
+export const BUNDLE_CONTENT_TYPE = "derive/bundle"
 /** A skill is a bundle too (kind stays "bundle"), but carries a distinct content type
  *  so its skill-ness rides the artifact's denormalized `current_content_type` — free to
  *  read in the list (the "Skill" badge) without opening the manifest, and it tracks the
  *  current version automatically (republish without a SKILL.md → back to a plain bundle). */
-export const SKILL_CONTENT_TYPE = "dock/skill"
+export const SKILL_CONTENT_TYPE = "derive/skill"
 /** Is this stored content a bundle (plain bundle OR skill)? Use everywhere that branches
  *  on "is this a multi-file bundle", so a skill is never mistaken for a single file. */
 export const isBundleContentType = (contentType: string | null | undefined): boolean =>

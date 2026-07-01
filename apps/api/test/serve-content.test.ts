@@ -3,7 +3,7 @@ import {
   BUNDLE_CONTENT_TYPE,
   type BundleManifest,
   SKILL_CONTENT_TYPE,
-} from "@dock/core"
+} from "@derive/core"
 import type { Context } from "hono"
 import { describe, expect, it, vi } from "vitest"
 import { RAW_HEADERS } from "../src/lib/http"
@@ -40,7 +40,7 @@ const expectSandbox = (res: Response, cache: string = IMMUTABLE) => {
   expect(res.headers.get("cache-control")).toBe(cache)
 }
 
-const SCRIPT = "/raw/dock-client.js" // the appended anchor client (SELECTION_SCRIPT)
+const SCRIPT = "/raw/derive-client.js" // the appended anchor client (SELECTION_SCRIPT)
 
 describe("serveContent — single-file artifacts", () => {
   it("serves an HTML file with the anchor client and the sandbox headers", async () => {
@@ -229,7 +229,7 @@ describe("serveContent — skill / markdown bundles", () => {
     k_skill: skillMd,
     k_sh: "#!/usr/bin/env bash\necho hi\n",
   })
-  // A real skill carries the dock/skill content type; serveContent must still treat
+  // A real skill carries the derive/skill content type; serveContent must still treat
   // it as a bundle (isBundleContentType), not fall through to single-file handling.
   const content = { blob_key: "kManifest", content_type: SKILL_CONTENT_TYPE }
 

@@ -1,4 +1,4 @@
-import type { DomainRecord } from "@dock/core"
+import type { DomainRecord } from "@derive/core"
 import { Hono } from "hono"
 import { z } from "zod"
 import type { AppContext } from "../context"

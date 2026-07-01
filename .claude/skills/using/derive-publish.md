@@ -1,6 +1,6 @@
-# dock-publish
+# derive-publish
 
-Publishing content to Dock and updating it over time.
+Publishing content to Derive and updating it over time.
 
 ---
 
@@ -67,10 +67,10 @@ creates a brand new artifact with a new URL. Pass `short_id` to update existing 
 
 ```bash
 # First publish
-npx @dock/cli publish report.html --title "Q3 report" --visibility link
+npx @derive/cli publish report.html --title "Q3 report" --visibility link
 
 # New version (pass the short_id)
-npx @dock/cli publish report.html --id nk0dsral --message "Updated exec summary"
+npx @derive/cli publish report.html --id nk0dsral --message "Updated exec summary"
 ```
 
 ---
@@ -79,15 +79,15 @@ npx @dock/cli publish report.html --id nk0dsral --message "Updated exec summary"
 
 ```bash
 # First publish
-curl -X POST https://dock.build/v1/artifacts \
-  -H "Authorization: Bearer $DOCK_TOKEN" \
+curl -X POST https://derive.to/v1/artifacts \
+  -H "Authorization: Bearer $DERIVE_TOKEN" \
   -F "file=@report.html" \
   -F "title=Q3 report" \
   -F "visibility=link"
 
 # New version
-curl -X POST https://dock.build/v1/artifacts/nk0dsral/versions \
-  -H "Authorization: Bearer $DOCK_TOKEN" \
+curl -X POST https://derive.to/v1/artifacts/nk0dsral/versions \
+  -H "Authorization: Bearer $DERIVE_TOKEN" \
   -F "file=@report.html" \
   -F "message=Updated exec summary" \
   -F "resolves=c_abc123,c_def456"
@@ -118,7 +118,7 @@ Returns the source content. Omit `version` for the current version. Pass a past
 
 Permanent raw URL (no auth, immutable):
 ```
-https://dock.build/raw/<short_id>/v/<n>/index.html
+https://derive.to/raw/<short_id>/v/<n>/index.html
 ```
 
 ---

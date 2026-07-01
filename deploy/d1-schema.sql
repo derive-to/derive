@@ -1,6 +1,6 @@
--- Cloudflare D1 bootstrap schema for Dock.
+-- Cloudflare D1 bootstrap schema for Derive.
 -- GENERATED from packages/db/src/schema.ts (SCHEMA_STATEMENTS); do not edit by hand.
--- Regenerate after a schema change: `pnpm --filter @dock/db gen:d1-schema`.
+-- Regenerate after a schema change: `pnpm --filter @derive/db gen:d1-schema`.
 -- Apply once: `wrangler d1 execute <db> --file=deploy/d1-schema.sql`.
 
 CREATE TABLE IF NOT EXISTS artifact (

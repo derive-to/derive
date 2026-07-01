@@ -1,7 +1,7 @@
-import type { ArtifactRecord, MetaStore } from "@dock/core"
+import type { ArtifactRecord, MetaStore } from "@derive/core"
 
 /** The current author of an artifact as a resolved profile: the denormalized
- *  name/login/avatar plus the Dock `handle` when the committer signed in with GitHub. */
+ *  name/login/avatar plus the Derive `handle` when the committer signed in with GitHub. */
 export interface ResolvedAuthor {
   name: string | null
   login: string | null
@@ -9,7 +9,7 @@ export interface ResolvedAuthor {
   handle: string | null
 }
 
-/** Resolve a set of GitHub numeric user ids to Dock handles (usernames) in ONE batched
+/** Resolve a set of GitHub numeric user ids to Derive handles (usernames) in ONE batched
  *  query — gh_id → handle, only for committers who signed in with GitHub. Empty set ⇒ {}.
  *  Shared by the artifact list and the profile work-list so both render the same chip. */
 export const resolveHandles = async (

@@ -1,26 +1,26 @@
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import type { MetaStore, Role } from "@dock/core"
-import { PgMetaStore } from "@dock/db/pg"
-import { SqliteMetaStore } from "@dock/db/sqlite"
-import { FsBlobStore } from "@dock/storage/fs"
+import type { MetaStore, Role } from "@derive/core"
+import { PgMetaStore } from "@derive/db/pg"
+import { SqliteMetaStore } from "@derive/db/sqlite"
+import { FsBlobStore } from "@derive/storage/fs"
 import Database from "better-sqlite3"
 import { Pool } from "pg"
 import { afterAll } from "vitest"
 import { type AppDeps, createApp } from "../src/app"
 import { DEFAULT_WORKSPACE_NAME } from "../src/lib/http"
 
-export const dir = mkdtempSync(join(tmpdir(), "dock-test-"))
+export const dir = mkdtempSync(join(tmpdir(), "derive-test-"))
 
 // ---- Backend selection -----------------------------------------------------
-// `pnpm test` runs the embedded SQLite path (zero-config). Set DOCK_TEST_DB=pg
+// `pnpm test` runs the embedded SQLite path (zero-config). Set DERIVE_TEST_DB=pg
 // + TEST_DATABASE_URL to point the SAME test files at Postgres, so the hosted-
 // tier driver is exercised by the full behavioral suite, not just typecheck.
 // `scripts/test-pg.sh` spins up an ephemeral container and wires both vars.
-const PG_URL = process.env.DOCK_TEST_DB === "pg" ? process.env.TEST_DATABASE_URL : undefined
-if (process.env.DOCK_TEST_DB === "pg" && !PG_URL)
-  throw new Error("DOCK_TEST_DB=pg requires TEST_DATABASE_URL to be set")
+const PG_URL = process.env.DERIVE_TEST_DB === "pg" ? process.env.TEST_DATABASE_URL : undefined
+if (process.env.DERIVE_TEST_DB === "pg" && !PG_URL)
+  throw new Error("DERIVE_TEST_DB=pg requires TEST_DATABASE_URL to be set")
 
 type TestStore = MetaStore & { close(): unknown }
 // A seat in the shared test workspace: who, at what role.
@@ -189,7 +189,7 @@ export const meta = makeStore("default", [])
 const sharedApp = createApp({
   meta,
   blobs: new FsBlobStore(join(dir, "blobs")),
-  baseUrl: "http://dock.test",
+  baseUrl: "http://derive.test",
   token: TEST_TOKEN,
 })
 // The default app: every request authenticates as the token (owner).
@@ -276,7 +276,7 @@ export const makeAuthedApp = (
   const app = createApp({
     meta: m,
     blobs: new FsBlobStore(join(dir, "blobs")),
-    baseUrl: "http://dock.test",
+    baseUrl: "http://derive.test",
     token: "tok",
     auth: fakeAuth(users),
     defaultRole,
@@ -338,7 +338,7 @@ export const quotaApp = (
   const app = createApp({
     meta: m,
     blobs: new FsBlobStore(join(dir, `blobs-${name}`)),
-    baseUrl: "http://dock.test",
+    baseUrl: "http://derive.test",
     token: TEST_TOKEN,
     ...(users ? { auth: fakeAuth(users) } : {}),
     ...extra,

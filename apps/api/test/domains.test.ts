@@ -1,17 +1,17 @@
 import { join } from "node:path"
-import { FsBlobStore } from "@dock/storage/fs"
+import { FsBlobStore } from "@derive/storage/fs"
 import { describe, expect, it } from "vitest"
 import { createApp } from "../src/app"
 import { dir, meta, ownerApp } from "./helpers"
 
-const BASE = "dockd.app"
+const BASE = "derived.app"
 const blobs = new FsBlobStore(join(dir, "blobs-domains"))
 // Owner (token-authed) sets domains + publishes; anon serves them like the public.
-const owner = ownerApp({ meta, blobs, baseUrl: "http://dock.test", subdomainBase: BASE })
+const owner = ownerApp({ meta, blobs, baseUrl: "http://derive.test", subdomainBase: BASE })
 const anon = createApp({
   meta,
   blobs,
-  baseUrl: "http://dock.test",
+  baseUrl: "http://derive.test",
   subdomainBase: BASE,
   token: "tok",
 })
@@ -83,7 +83,7 @@ describe("vanity subdomains", () => {
   })
 
   it("501s when the server has no base domain configured", async () => {
-    const noBase = ownerApp({ meta, blobs, baseUrl: "http://dock.test" })
+    const noBase = ownerApp({ meta, blobs, baseUrl: "http://derive.test" })
     const short = await publish("<p>x</p>", { visibility: "public" })
     const res = await noBase.request(`/v1/artifacts/${short}/domains`, {
       method: "PUT",

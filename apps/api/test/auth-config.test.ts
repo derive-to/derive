@@ -13,7 +13,7 @@ const PROVIDER_ENV = [
   "OIDC_CLIENT_ID",
   "OIDC_CLIENT_SECRET",
   "OIDC_PROVIDER_ID",
-  "DOCK_CROSS_SITE",
+  "DERIVE_CROSS_SITE",
 ] as const
 
 const saved = Object.fromEntries(PROVIDER_ENV.map((k) => [k, process.env[k]]))
@@ -30,7 +30,7 @@ describe("auth-config: optional providers", () => {
   it("enables Google when GOOGLE_CLIENT_ID/SECRET are set", () => {
     process.env.GOOGLE_CLIENT_ID = "gid"
     process.env.GOOGLE_CLIENT_SECRET = "gsecret"
-    const auth = makeAuth(db(), "http://dock.test", "test-secret-0123456789abcd")
+    const auth = makeAuth(db(), "http://derive.test", "test-secret-0123456789abcd")
     expect(auth.options.socialProviders?.google).toMatchObject({
       clientId: "gid",
       clientSecret: "gsecret",
@@ -39,7 +39,7 @@ describe("auth-config: optional providers", () => {
 
   it("does not enable Google when only one of the pair is set", () => {
     process.env.GOOGLE_CLIENT_ID = "gid" // no secret
-    const auth = makeAuth(db(), "http://dock.test", "test-secret-0123456789abcd")
+    const auth = makeAuth(db(), "http://derive.test", "test-secret-0123456789abcd")
     expect(auth.options.socialProviders?.google).toBeUndefined()
   })
 
@@ -53,7 +53,7 @@ describe("auth-config: optional providers", () => {
     process.env.OIDC_CLIENT_ID = "oid"
     process.env.OIDC_CLIENT_SECRET = "osecret"
     process.env.OIDC_PROVIDER_ID = "okta"
-    const ids = pluginIds(makeAuth(db(), "http://dock.test", "test-secret-0123456789abcd"))
+    const ids = pluginIds(makeAuth(db(), "http://derive.test", "test-secret-0123456789abcd"))
     expect(ids).toContain("oauth-provider")
     expect(ids).toHaveLength(3) // genericOAuth + jwt + oauth-provider
   })
@@ -61,13 +61,13 @@ describe("auth-config: optional providers", () => {
   it("omits the SSO plugin when the OIDC_* trio is incomplete (the OAuth server stays)", () => {
     process.env.OIDC_ISSUER = "https://issuer.example.com/"
     // no client id/secret
-    const ids = pluginIds(makeAuth(db(), "http://dock.test", "test-secret-0123456789abcd"))
+    const ids = pluginIds(makeAuth(db(), "http://derive.test", "test-secret-0123456789abcd"))
     expect([...ids].sort()).toEqual(["jwt", "oauth-provider"])
   })
 
-  it("applies SameSite=None;Secure cookies when DOCK_CROSS_SITE=true", () => {
-    process.env.DOCK_CROSS_SITE = "true"
-    const auth = makeAuth(db(), "http://dock.test", "test-secret-0123456789abcd")
+  it("applies SameSite=None;Secure cookies when DERIVE_CROSS_SITE=true", () => {
+    process.env.DERIVE_CROSS_SITE = "true"
+    const auth = makeAuth(db(), "http://derive.test", "test-secret-0123456789abcd")
     expect(auth.options.advanced?.defaultCookieAttributes).toMatchObject({
       sameSite: "none",
       secure: true,

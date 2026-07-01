@@ -1,5 +1,5 @@
 import { join } from "node:path"
-import { FsBlobStore } from "@dock/storage/fs"
+import { FsBlobStore } from "@derive/storage/fs"
 import { describe, expect, it } from "vitest"
 import { createApp } from "../src/app"
 import type { CustomDomainProvider } from "../src/lib/cloudflare-saas"
@@ -11,12 +11,12 @@ const makeFakeCf = () => {
   const removed: string[] = []
   let active = false
   const cf: CustomDomainProvider = {
-    cnameTarget: "dock-saas.test",
+    cnameTarget: "derive-saas.test",
     create: async (host) => ({
       cfHostnameId: `cf_${host}`,
       status: "pending",
       records: [
-        { type: "CNAME", name: host, value: "dock-saas.test" },
+        { type: "CNAME", name: host, value: "derive-saas.test" },
         { type: "TXT", name: `_cf.${host}`, value: "v=token" },
       ],
     }),
@@ -61,11 +61,11 @@ const postJson = (app: ReturnType<typeof ownerApp>, path: string, body: unknown)
 describe("workspace custom domains (Cloudflare for SaaS)", () => {
   it("attaches a workspace domain, validates, and serves artifacts at <domain>/<ref>", async () => {
     const { cf, activate } = makeFakeCf()
-    const owner = ownerApp({ meta, blobs, baseUrl: "https://dock.test", customDomains: cf })
+    const owner = ownerApp({ meta, blobs, baseUrl: "https://derive.test", customDomains: cf })
     const anon = createApp({
       meta,
       blobs,
-      baseUrl: "https://dock.test",
+      baseUrl: "https://derive.test",
       token: "tok",
       customDomains: cf,
     })
@@ -78,9 +78,9 @@ describe("workspace custom domains (Cloudflare for SaaS)", () => {
     expect(res.status).toBe(201)
     const body = await res.json()
     expect(body).toMatchObject({ host: "docs.acme.com", status: "pending" })
-    expect(body.cname_target).toBe("dock-saas.test")
+    expect(body.cname_target).toBe("derive-saas.test")
     expect(body.records).toEqual(
-      expect.arrayContaining([{ type: "CNAME", name: "docs.acme.com", value: "dock-saas.test" }]),
+      expect.arrayContaining([{ type: "CNAME", name: "docs.acme.com", value: "derive-saas.test" }]),
     )
 
     // Pending → not served yet.
@@ -102,7 +102,7 @@ describe("workspace custom domains (Cloudflare for SaaS)", () => {
   it("lists workspace domains + surfaces them read-only on the artifact's share data", async () => {
     const { cf, activate } = makeFakeCf()
     activate()
-    const owner = ownerApp({ meta, blobs, baseUrl: "https://dock.test", customDomains: cf })
+    const owner = ownerApp({ meta, blobs, baseUrl: "https://derive.test", customDomains: cf })
     const short = await publish(owner, "<p>x</p>", { visibility: "public" })
     await postJson(owner, "/v1/workspace/domains", { host: "pages.acme.com" })
     await postJson(owner, "/v1/workspace/domains/pages.acme.com/refresh", {})
@@ -122,11 +122,11 @@ describe("workspace custom domains (Cloudflare for SaaS)", () => {
 
   it("never serves one workspace's artifact under another workspace's domain", async () => {
     const { cf } = makeFakeCf()
-    const owner = ownerApp({ meta, blobs, baseUrl: "https://dock.test", customDomains: cf })
+    const owner = ownerApp({ meta, blobs, baseUrl: "https://derive.test", customDomains: cf })
     const anon = createApp({
       meta,
       blobs,
-      baseUrl: "https://dock.test",
+      baseUrl: "https://derive.test",
       token: "tok",
       customDomains: cf,
     })
@@ -145,11 +145,11 @@ describe("workspace custom domains (Cloudflare for SaaS)", () => {
   it("tears down the Cloudflare hostname on delete and stops serving", async () => {
     const { cf, removed, activate } = makeFakeCf()
     activate()
-    const owner = ownerApp({ meta, blobs, baseUrl: "https://dock.test", customDomains: cf })
+    const owner = ownerApp({ meta, blobs, baseUrl: "https://derive.test", customDomains: cf })
     const anon = createApp({
       meta,
       blobs,
-      baseUrl: "https://dock.test",
+      baseUrl: "https://derive.test",
       token: "tok",
       customDomains: cf,
     })
@@ -165,7 +165,7 @@ describe("workspace custom domains (Cloudflare for SaaS)", () => {
 
   it("rejects invalid hosts, a host in use, and 501s when CF is unconfigured", async () => {
     const { cf } = makeFakeCf()
-    const owner = ownerApp({ meta, blobs, baseUrl: "https://dock.test", customDomains: cf })
+    const owner = ownerApp({ meta, blobs, baseUrl: "https://derive.test", customDomains: cf })
     expect((await postJson(owner, "/v1/workspace/domains", { host: "nodot" })).status).toBe(400)
     expect((await postJson(owner, "/v1/workspace/domains", { host: "dup.acme.com" })).status).toBe(
       201,
@@ -173,7 +173,7 @@ describe("workspace custom domains (Cloudflare for SaaS)", () => {
     expect((await postJson(owner, "/v1/workspace/domains", { host: "dup.acme.com" })).status).toBe(
       200,
     )
-    const noCf = ownerApp({ meta, blobs, baseUrl: "https://dock.test" })
+    const noCf = ownerApp({ meta, blobs, baseUrl: "https://derive.test" })
     expect((await postJson(noCf, "/v1/workspace/domains", { host: "x.acme.com" })).status).toBe(501)
   })
 })

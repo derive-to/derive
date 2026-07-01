@@ -1,12 +1,12 @@
-# dock-node (Node Basic + Node Scale)
+# derive-node (Node Basic + Node Scale)
 
 Production deployment on managed container hosts. Two tiers:
 
 - **Node Basic**: stateless containers + Postgres + S3/R2
 - **Node Scale**: add Redis for multi-instance realtime (presence, SSE fan-out, caching)
 
-For local development, see `running-locally/dock-self-host.md`.
-For Cloudflare Workers, see `deploying/dock-cloudflare.md`.
+For local development, see `running-locally/derive-self-host.md`.
+For Cloudflare Workers, see `deploying/derive-cloudflare.md`.
 
 ---
 
@@ -24,7 +24,7 @@ Object store URL format:
 - S3: `s3://<key>:<secret>@s3.<region>.amazonaws.com/<bucket>?region=<region>`
 
 With these set the container holds no state — drop the `/data` volume mount and scale
-horizontally. Every instance must share the same `DOCK_AUTH_SECRET`.
+horizontally. Every instance must share the same `DERIVE_AUTH_SECRET`.
 
 ### Fly.io (reference host)
 
@@ -34,7 +34,7 @@ fly launch --config deploy/fly.toml --dockerfile deploy/Dockerfile --no-deploy
 fly secrets set \
   DATABASE_URL='postgres://...' \
   OBJECT_STORE_URL='s3://...' \
-  DOCK_AUTH_SECRET="$(openssl rand -hex 32)" \
+  DERIVE_AUTH_SECRET="$(openssl rand -hex 32)" \
   BASE_URL='https://<app>.fly.dev'
 
 fly deploy --config deploy/fly.toml --dockerfile deploy/Dockerfile
@@ -43,7 +43,7 @@ fly deploy --config deploy/fly.toml --dockerfile deploy/Dockerfile
 ### Railway
 
 New Project > Deploy from GitHub. `railway.json` points at `deploy/Dockerfile`.
-Set `DATABASE_URL`, `OBJECT_STORE_URL`, `DOCK_AUTH_SECRET`, `BASE_URL` as Railway variables.
+Set `DATABASE_URL`, `OBJECT_STORE_URL`, `DERIVE_AUTH_SECRET`, `BASE_URL` as Railway variables.
 No volume needed when using Postgres + S3/R2.
 
 ### Render
@@ -80,17 +80,17 @@ The container serves the web app by default. This is only needed if you want the
 on a separate origin (e.g., Cloudflare Pages CDN):
 
 ```bash
-VITE_DOCK_API='https://api.example.com' pnpm --filter @dock/web build
-npx wrangler pages deploy apps/web/dist/client --project-name dock
+VITE_DERIVE_API='https://api.example.com' pnpm --filter @derive/web build
+npx wrangler pages deploy apps/web/dist/client --project-name derive
 ```
 
 Then tell the API:
 
 ```bash
-fly secrets set DOCK_WEB_ORIGIN='https://app.example.com' DOCK_CROSS_SITE='true'
+fly secrets set DERIVE_WEB_ORIGIN='https://app.example.com' DERIVE_CROSS_SITE='true'
 ```
 
-`DOCK_CROSS_SITE=true` makes the session cookie `SameSite=None; Secure` so it works cross-origin.
+`DERIVE_CROSS_SITE=true` makes the session cookie `SameSite=None; Secure` so it works cross-origin.
 
 ---
 
@@ -99,19 +99,19 @@ fly secrets set DOCK_WEB_ORIGIN='https://app.example.com' DOCK_CROSS_SITE='true'
 | Var | Default | Purpose |
 |---|---|---|
 | `BASE_URL` | request origin | Public URL for cookies + share links |
-| `DOCK_AUTH_SECRET` | generated | Session signing key — always set in prod |
+| `DERIVE_AUTH_SECRET` | generated | Session signing key — always set in prod |
 | `PORT` | 8080 | Listen port |
 | `DATABASE_URL` | (SQLite) | Postgres connection |
 | `OBJECT_STORE_URL` | (local disk) | S3/R2 blob URL |
 | `REDIS_URL` | (none) | Redis for pub/sub, caching, presence |
-| `DOCK_WEB_ORIGIN` | (none) | SPA origin for CORS (split deploy only) |
-| `DOCK_CROSS_SITE` | false | SameSite=None cookies (split deploy only) |
-| `DOCK_TOKEN` | (none) | Static bearer for CI/agents |
+| `DERIVE_WEB_ORIGIN` | (none) | SPA origin for CORS (split deploy only) |
+| `DERIVE_CROSS_SITE` | false | SameSite=None cookies (split deploy only) |
+| `DERIVE_TOKEN` | (none) | Static bearer for CI/agents |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | (none) | Google sign-in |
 | `OIDC_ISSUER` / `OIDC_CLIENT_ID` / `OIDC_CLIENT_SECRET` / `OIDC_PROVIDER_ID` | (none) | Enterprise SSO |
 
 OAuth callbacks if using Google or OIDC:
 ```
-https://dock.example.com/api/auth/callback/google
-https://dock.example.com/api/auth/oauth2/callback/<OIDC_PROVIDER_ID>
+https://derive.example.com/api/auth/callback/google
+https://derive.example.com/api/auth/oauth2/callback/<OIDC_PROVIDER_ID>
 ```

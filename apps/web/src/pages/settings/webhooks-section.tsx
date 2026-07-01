@@ -37,7 +37,7 @@ export function WebhooksSection() {
           Standard Webhooks
         </a>{" "}
         headers (<code className="font-mono">webhook-signature</code>), and the legacy{" "}
-        <code className="font-mono">X-Dock-Signature</code>.
+        <code className="font-mono">X-Derive-Signature</code>.
       </p>
 
       <NewWebhook

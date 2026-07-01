@@ -31,12 +31,12 @@ const hdr = (s: string): string => s.replace(/[\r\n]+/g, " ").trim()
  *  plain addresses; header values are CR/LF-stripped to prevent header injection. Exported
  *  for unit testing the header construction without the Workers runtime. */
 export const buildMime = (from: string, msg: EmailMsg, dateIso: string, msgId: string): string => {
-  const boundary = `dock-${msgId}`
+  const boundary = `derive-${msgId}`
   const headers = [
     `From: ${hdr(from)}`,
     `To: ${hdr(msg.to)}`,
     `Subject: ${hdr(msg.subject)}`,
-    `Message-ID: <${msgId}@dock.build>`,
+    `Message-ID: <${msgId}@derive.to>`,
     `Date: ${new Date(dateIso).toUTCString()}`,
     "MIME-Version: 1.0",
     `Content-Type: multipart/alternative; boundary="${boundary}"`,

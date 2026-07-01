@@ -1,4 +1,4 @@
-import { type ArtifactRecord, type CommentRecord, isAnchored, newId } from "@dock/core"
+import { type ArtifactRecord, type CommentRecord, isAnchored, newId } from "@derive/core"
 import { type Context, Hono } from "hono"
 import { z } from "zod"
 import type { AppContext } from "../context"

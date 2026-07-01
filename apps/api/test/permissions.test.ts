@@ -1,5 +1,5 @@
 import { join } from "node:path"
-import { FsBlobStore } from "@dock/storage/fs"
+import { FsBlobStore } from "@derive/storage/fs"
 import { describe, expect, it } from "vitest"
 import { createApp } from "../src/app"
 import { anonApp, as, dir, jsonAs, makeAuthedApp, meta, publishAs, type TestUser } from "./helpers"
@@ -8,7 +8,7 @@ describe("auth: token write-gating + per-artifact read-gating", () => {
   const authApp = createApp({
     meta,
     blobs: new FsBlobStore(join(dir, "blobs")),
-    baseUrl: "http://dock.test",
+    baseUrl: "http://derive.test",
     token: "s3cret",
   })
   const authed = (extra: RequestInit = {}) => ({
@@ -59,7 +59,7 @@ describe("security: a no-token container is secure (anonymous can't write)", () 
   const locked = createApp({
     meta,
     blobs: new FsBlobStore(join(dir, "blobs")),
-    baseUrl: "http://dock.test",
+    baseUrl: "http://derive.test",
   })
 
   it("refuses an anonymous publish on a no-token instance", async () => {
@@ -70,8 +70,8 @@ describe("security: a no-token container is secure (anonymous can't write)", () 
 })
 
 describe("permissions: workspace roles gate writes", () => {
-  const alice: TestUser = { id: "u_alice", email: "alice@dock.test", name: "Alice" }
-  const bob: TestUser = { id: "u_bob", email: "bob@dock.test", name: "Bob" }
+  const alice: TestUser = { id: "u_alice", email: "alice@derive.test", name: "Alice" }
+  const bob: TestUser = { id: "u_bob", email: "bob@derive.test", name: "Bob" }
   const { app } = makeAuthedApp("perm-roles", [alice, bob], "commenter")
   let shortId: string
 
@@ -106,9 +106,9 @@ describe("permissions: workspace roles gate writes", () => {
 })
 
 describe("permissions: a per-artifact share overrides the workspace role", () => {
-  const owner: TestUser = { id: "u_own", email: "own@dock.test", name: "Own" }
-  const carol: TestUser = { id: "u_carol", email: "carol@dock.test", name: "Carol" }
-  const dave: TestUser = { id: "u_dave", email: "dave@dock.test", name: "Dave" }
+  const owner: TestUser = { id: "u_own", email: "own@derive.test", name: "Own" }
+  const carol: TestUser = { id: "u_carol", email: "carol@derive.test", name: "Carol" }
+  const dave: TestUser = { id: "u_dave", email: "dave@derive.test", name: "Dave" }
   const { app } = makeAuthedApp("perm-share", [owner, carol, dave], "viewer")
   let shortId: string
 
@@ -168,9 +168,9 @@ describe("permissions: a per-artifact share overrides the workspace role", () =>
 })
 
 describe("permissions: a sharer can't grant or remove a role above their own", () => {
-  const owner: TestUser = { id: "u_o2", email: "o2@dock.test", name: "O2" }
-  const ed: TestUser = { id: "u_ed2", email: "ed2@dock.test", name: "Ed2" }
-  const out: TestUser = { id: "u_out2", email: "out2@dock.test", name: "Out2" }
+  const owner: TestUser = { id: "u_o2", email: "o2@derive.test", name: "O2" }
+  const ed: TestUser = { id: "u_ed2", email: "ed2@derive.test", name: "Ed2" }
+  const out: TestUser = { id: "u_out2", email: "out2@derive.test", name: "Out2" }
   const { app } = makeAuthedApp("perm-clamp", [owner, ed, out], "viewer")
   let shortId: string
 

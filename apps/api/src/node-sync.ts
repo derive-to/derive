@@ -1,4 +1,4 @@
-import type { BlobStore, MetaStore } from "@dock/core"
+import type { BlobStore, MetaStore } from "@derive/core"
 import { isSyncing, runToCompletion } from "./lib/sync-runner"
 import { log } from "./log"
 

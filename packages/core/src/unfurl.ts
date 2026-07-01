@@ -6,7 +6,7 @@ export const kindLabel = (contentType: string | null | undefined, isBundle: bool
   if (contentType === SKILL_CONTENT_TYPE) return "Skill"
   if (isBundle) return "Site"
   if (contentType === "text/markdown") return "Markdown"
-  if (contentType === "text/x-dock-deck") return "Deck"
+  if (contentType === "text/x-derive-deck") return "Deck"
   if (contentType?.startsWith("text/html")) return "HTML"
   return "Document"
 }
@@ -29,13 +29,13 @@ export interface UnfurlInfo {
 
 const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? "" : "s"}`
 
-/** One-line human description: "HTML · 3 versions · 2 comments · on Dock". */
+/** One-line human description: "HTML · 3 versions · 2 comments · on Derive". */
 export const unfurlDescription = (i: {
   kindLabel: string
   versionCount: number
   commentCount: number
 }): string =>
-  `${i.kindLabel} · ${plural(i.versionCount, "version")} · ${plural(i.commentCount, "comment")} · on Dock`
+  `${i.kindLabel} · ${plural(i.versionCount, "version")} · ${plural(i.commentCount, "comment")} · on Derive`
 
 /**
  * OpenGraph + Twitter + oEmbed-discovery `<head>` tags for an artifact. Crawlers
@@ -51,7 +51,7 @@ export const unfurlMetaTags = (i: UnfurlInfo): string => {
   const oembed = escapeHtml(i.oembedUrl)
   return [
     `<meta property="og:type" content="article">`,
-    `<meta property="og:site_name" content="Dock">`,
+    `<meta property="og:site_name" content="Derive">`,
     `<meta property="og:title" content="${t}">`,
     `<meta property="og:description" content="${d}">`,
     `<meta property="og:url" content="${url}">`,
@@ -80,7 +80,7 @@ export const injectHead = (shellHtml: string, headHtml: string): string => {
 export interface OembedResponse {
   version: "1.0"
   type: "rich"
-  provider_name: "Dock"
+  provider_name: "Derive"
   provider_url: string
   title: string
   author_name?: string
@@ -98,7 +98,7 @@ export const EMBED_HEIGHT = 480
 /** A sandboxed iframe snippet pointing at the embeddable view. */
 export const embedIframe = (
   embedUrl: string,
-  opts: { width?: number | string; height?: number; title: string } = { title: "Dock artifact" },
+  opts: { width?: number | string; height?: number; title: string } = { title: "Derive artifact" },
 ): string => {
   const w = opts.width ?? "100%"
   const h = opts.height ?? EMBED_HEIGHT
@@ -109,7 +109,7 @@ export const embedIframe = (
 export const oembedResponse = (i: UnfurlInfo, providerUrl: string): OembedResponse => ({
   version: "1.0",
   type: "rich",
-  provider_name: "Dock",
+  provider_name: "Derive",
   provider_url: providerUrl,
   title: i.title,
   thumbnail_url: i.imageUrl,
@@ -121,7 +121,7 @@ export const oembedResponse = (i: UnfurlInfo, providerUrl: string): OembedRespon
 })
 
 // ---- OG card image (SVG) ---------------------------------------------------
-// A 1200x630 card in the Dock palette. Rendered as SVG: zero dependencies and
+// A 1200x630 card in the Derive palette. Rendered as SVG: zero dependencies and
 // identical output on Node and the Cloudflare Worker. Discord renders SVG OG
 // images directly; on surfaces that prefer raster, og:title/og:description still
 // unfurl. Built as a pure function so a future PNG rasterizer (satori/resvg) is a
@@ -129,6 +129,13 @@ export const oembedResponse = (i: UnfurlInfo, providerUrl: string): OembedRespon
 
 const OG_W = 1200
 const OG_H = 630
+
+// Derive brand chrome for the OG cards. Axiom Black on Origin White.
+const OG_INK = "#030712"
+const OG_PAPER = "#f4f5f8"
+const OG_MUTED = "#565a66"
+// The Derive mark (viewBox 620×824) placed as a 42px-tall glyph at (90,74).
+const OG_MARK = `<g transform="translate(90,74) scale(0.0509)"><path d="M404.01 217.285L271.071 140.531L404.01 63.7773L536.95 140.531L404.01 217.285ZM343.201 686.623L343.063 686.703C298.797 712.261 243.462 680.313 243.462 629.197C243.462 605.464 256.131 583.533 276.691 571.677L348.791 530.099V466.183L215.853 542.936L83.0526 466.183L243.462 373.692V188.295L376.401 265.049V629.119C376.401 652.841 363.746 674.761 343.201 686.623ZM188.243 744.209L55.4433 667.455V514.085L188.243 590.839V744.209ZM404.01 -1.19209e-05L188.243 124.517V341.803L0.224609 450.308V699.344L215.853 824L431.619 699.344V303.385C431.619 279.663 444.275 257.743 464.819 245.88L464.957 245.801C509.225 220.243 564.559 252.189 564.559 303.305V303.444C564.559 327.179 551.89 349.108 531.329 360.965L459.229 402.544V466.321L619.777 373.692V124.517L404.01 -1.19209e-05Z" fill="${OG_INK}"/></g>`
 
 const svgEscape = (s: string): string =>
   s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;")
@@ -177,13 +184,13 @@ export interface ProfileCard {
   followers: number
 }
 
-/** One-line profile description: "Engineering · 12 works · 48 followers · on Dock". */
+/** One-line profile description: "Engineering · 12 works · 48 followers · on Derive". */
 export const profileSummary = (c: ProfileCard): string => {
   const parts: string[] = []
   if (c.profession) parts.push(c.profession)
   parts.push(plural(c.works, "work"))
   parts.push(plural(c.followers, "follower"))
-  return `${parts.join(" · ")} · on Dock`
+  return `${parts.join(" · ")} · on Derive`
 }
 
 /** Initials for the avatar disc — first+last of the name, else the first two chars. */
@@ -209,7 +216,7 @@ export const profileMetaTags = (i: {
   const img = escapeHtml(i.imageUrl)
   return [
     `<meta property="og:type" content="profile">`,
-    `<meta property="og:site_name" content="Dock">`,
+    `<meta property="og:site_name" content="Derive">`,
     `<meta property="profile:username" content="${escapeHtml(i.username)}">`,
     `<meta property="og:title" content="${title}">`,
     `<meta property="og:description" content="${d}">`,
@@ -224,7 +231,7 @@ export const profileMetaTags = (i: {
   ].join("\n")
 }
 
-/** The profile OG card as a standalone SVG (1200x630, Dock palette). Self-contained —
+/** The profile OG card as a standalone SVG (1200x630, Derive palette). Self-contained —
  *  an initials disc, not a remote avatar — so it renders identically on every crawler. */
 export const ogProfileCardSvg = (card: ProfileCard): string => {
   const sans = "Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
@@ -237,19 +244,18 @@ export const ogProfileCardSvg = (card: ProfileCard): string => {
   const cy = 320
   const r = 110
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${OG_W}" height="${OG_H}" viewBox="0 0 ${OG_W} ${OG_H}" role="img" aria-label="${name}">
-  <rect width="${OG_W}" height="${OG_H}" fill="#f6f0e3"/>
-  <rect x="0" y="0" width="${OG_W}" height="10" fill="#655999"/>
-  <g font-family="${mono}" font-size="26" fill="#4f447e" font-weight="600">
-    <rect x="90" y="74" width="42" height="42" rx="10" fill="#2a2540"/>
-    <path d="M111 84l13 13v18h-8.5v-10.4h-9V115H94v-18z" fill="none" stroke="#8a7dc0" stroke-width="2.6" stroke-linejoin="round"/>
-    <text x="150" y="105" letter-spacing="1">DOCK</text>
+  <rect width="${OG_W}" height="${OG_H}" fill="${OG_PAPER}"/>
+  <rect x="0" y="0" width="${OG_W}" height="10" fill="${OG_INK}"/>
+  ${OG_MARK}
+  <g font-family="${mono}" font-size="26" fill="${OG_INK}" font-weight="600">
+    <text x="150" y="105" letter-spacing="1">DERIVE</text>
   </g>
-  <circle cx="${cx}" cy="${cy}" r="${r}" fill="#2a2540"/>
-  <text x="${cx}" y="${cy + 28}" text-anchor="middle" font-family="${sans}" font-size="84" font-weight="700" fill="#cabffb" letter-spacing="2">${initials}</text>
-  <text x="350" y="300" font-family="${sans}" font-size="68" font-weight="700" fill="#2a2540" letter-spacing="-1">${name}</text>
-  <text x="350" y="360" font-family="${mono}" font-size="32" fill="#655999">${handle}</text>
-  <text x="350" y="430" font-family="${mono}" font-size="28" fill="#6b6680">${summary}</text>
-  <text x="${OG_W - 90}" y="105" text-anchor="end" font-family="${mono}" font-size="24" fill="#928da3">dock.build</text>
+  <circle cx="${cx}" cy="${cy}" r="${r}" fill="${OG_INK}"/>
+  <text x="${cx}" y="${cy + 28}" text-anchor="middle" font-family="${sans}" font-size="84" font-weight="700" fill="${OG_PAPER}" letter-spacing="2">${initials}</text>
+  <text x="350" y="300" font-family="${sans}" font-size="68" font-weight="700" fill="${OG_INK}" letter-spacing="-1">${name}</text>
+  <text x="350" y="360" font-family="${mono}" font-size="32" fill="${OG_MUTED}">${handle}</text>
+  <text x="350" y="430" font-family="${mono}" font-size="28" fill="${OG_MUTED}">${summary}</text>
+  <text x="${OG_W - 90}" y="105" text-anchor="end" font-family="${mono}" font-size="24" fill="${OG_MUTED}">derive.to</text>
 </svg>`
 }
 
@@ -263,19 +269,18 @@ export const ogCardSvg = (card: OgCard): string => {
   const titleTspans = lines
     .map((ln, idx) => `<tspan x="90" y="${startY + idx * lineH}">${svgEscape(ln)}</tspan>`)
     .join("")
-  const meta = reveal ? unfurlDescription(card) : "Open it on Dock to request access"
+  const meta = reveal ? unfurlDescription(card) : "Open it on Derive to request access"
   const sans = "Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
   const mono = "'SF Mono', ui-monospace, Menlo, Consolas, monospace"
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${OG_W}" height="${OG_H}" viewBox="0 0 ${OG_W} ${OG_H}" role="img" aria-label="${svgEscape(title)}">
-  <rect width="${OG_W}" height="${OG_H}" fill="#f6f0e3"/>
-  <rect x="0" y="0" width="${OG_W}" height="10" fill="#655999"/>
-  <g font-family="${mono}" font-size="26" fill="#4f447e" font-weight="600">
-    <rect x="90" y="74" width="42" height="42" rx="10" fill="#2a2540"/>
-    <path d="M111 84l13 13v18h-8.5v-10.4h-9V115H94v-18z" fill="none" stroke="#8a7dc0" stroke-width="2.6" stroke-linejoin="round"/>
-    <text x="150" y="105" letter-spacing="1">DOCK</text>
+  <rect width="${OG_W}" height="${OG_H}" fill="${OG_PAPER}"/>
+  <rect x="0" y="0" width="${OG_W}" height="10" fill="${OG_INK}"/>
+  ${OG_MARK}
+  <g font-family="${mono}" font-size="26" fill="${OG_INK}" font-weight="600">
+    <text x="150" y="105" letter-spacing="1">DERIVE</text>
   </g>
-  <text font-family="${sans}" font-size="62" font-weight="700" fill="#2a2540" letter-spacing="-1">${titleTspans}</text>
-  <text x="90" y="540" font-family="${mono}" font-size="28" fill="#6b6680">${svgEscape(meta)}</text>
-  <text x="${OG_W - 90}" y="105" text-anchor="end" font-family="${mono}" font-size="24" fill="#928da3">dock.build</text>
+  <text font-family="${sans}" font-size="62" font-weight="700" fill="${OG_INK}" letter-spacing="-1">${titleTspans}</text>
+  <text x="90" y="540" font-family="${mono}" font-size="28" fill="${OG_MUTED}">${svgEscape(meta)}</text>
+  <text x="${OG_W - 90}" y="105" text-anchor="end" font-family="${mono}" font-size="24" fill="${OG_MUTED}">derive.to</text>
 </svg>`
 }

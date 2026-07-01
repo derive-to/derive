@@ -1,9 +1,9 @@
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { type ArtifactRecord, type CommentRecord, newId, type RepoSourceRecord } from "@dock/core"
-import { SqliteMetaStore } from "@dock/db/sqlite"
-import { FsBlobStore } from "@dock/storage/fs"
+import { type ArtifactRecord, type CommentRecord, newId, type RepoSourceRecord } from "@derive/core"
+import { SqliteMetaStore } from "@derive/db/sqlite"
+import { FsBlobStore } from "@derive/storage/fs"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import { parseMeta } from "../src/lib/comments"
 import {
@@ -16,10 +16,10 @@ import {
 } from "../src/lib/github-comments"
 
 describe("sticky preview comment", () => {
-  it("finds the Dock-managed comment by its hidden marker, else null", () => {
+  it("finds the Derive-managed comment by its hidden marker, else null", () => {
     const comments = [
       { id: 1, body: "looks good" },
-      { id: 2, body: "📦 Dock preview …\n<!-- dock-preview -->" },
+      { id: 2, body: "📦 Derive preview …\n<!-- derive-preview -->" },
       { id: 3, body: "another reply" },
     ]
     expect(findPreviewComment(comments)).toBe(2)
@@ -45,7 +45,7 @@ describe("anchor/line mapping", () => {
 })
 
 describe("github comment mirroring (inbound)", () => {
-  const dir = mkdtempSync(join(tmpdir(), "dock-ghc-"))
+  const dir = mkdtempSync(join(tmpdir(), "derive-ghc-"))
   const meta = new SqliteMetaStore(join(dir, "db.sqlite"))
   let artifact: ArtifactRecord
   let source: RepoSourceRecord
@@ -88,7 +88,7 @@ describe("github comment mirroring (inbound)", () => {
     expect(found?.source.pr_number).toBe(7)
   })
 
-  it("mirrors an inline review comment as an anchored Dock comment", async () => {
+  it("mirrors an inline review comment as an anchored Derive comment", async () => {
     const created = await ingestGithubPrComment(meta, source, {
       ghCommentId: 1001,
       kind: "review",
@@ -110,19 +110,19 @@ describe("github comment mirroring (inbound)", () => {
     const r = await ingestGithubPrComment(meta, source, {
       ghCommentId: 2002,
       kind: "issue",
-      authorLogin: "dock[bot]",
+      authorLogin: "derive[bot]",
       authorType: "Bot",
       body: "echo",
     })
     expect(r).toBe(null)
   })
 
-  it("skips a body still carrying the Dock marker", async () => {
+  it("skips a body still carrying the Derive marker", async () => {
     const r = await ingestGithubPrComment(meta, source, {
       ghCommentId: 2003,
       kind: "issue",
       authorLogin: "octocat",
-      body: "hello\n\n_— via Dock_",
+      body: "hello\n\n_— via Derive_",
     })
     expect(r).toBe(null)
   })
@@ -140,7 +140,7 @@ describe("github comment mirroring (inbound)", () => {
 })
 
 describe("github comment write-back (outbound enqueue)", () => {
-  const dir = mkdtempSync(join(tmpdir(), "dock-ghc-out-"))
+  const dir = mkdtempSync(join(tmpdir(), "derive-ghc-out-"))
   const meta = new SqliteMetaStore(join(dir, "db.sqlite"))
   const blobs = new FsBlobStore(join(dir, "blobs"))
   afterAll(() => rmSync(dir, { recursive: true, force: true }))
@@ -207,7 +207,7 @@ describe("github comment write-back (outbound enqueue)", () => {
       author: "Ada",
       author_id: "u1",
     })
-    await enqueueGithubPrComment({ meta, blobs, baseUrl: "https://dock.test" }, artifact, cm)
+    await enqueueGithubPrComment({ meta, blobs, baseUrl: "https://derive.test" }, artifact, cm)
     const rows = (await claim()).filter((d) => d.webhook_id === "internal")
     const gh = rows.find((d) => d.kind === "github_review_comment")
     expect(gh).toBeTruthy()
@@ -238,7 +238,7 @@ describe("github comment write-back (outbound enqueue)", () => {
       meta: JSON.stringify({ github: { comment_id: 5, kind: "review" } }),
     })
     const fromGh = (await meta.getComment(cm.id)) as CommentRecord
-    await enqueueGithubPrComment({ meta, blobs, baseUrl: "https://dock.test" }, artifact, fromGh)
+    await enqueueGithubPrComment({ meta, blobs, baseUrl: "https://derive.test" }, artifact, fromGh)
     const rows = (await claim()).filter((d) => d.webhook_id === "internal")
     expect(rows).toHaveLength(0)
   })
@@ -256,7 +256,7 @@ describe("github comment write-back (outbound enqueue)", () => {
       author: "Ada",
       author_id: "u1",
     })
-    await enqueueGithubPrComment({ meta, blobs, baseUrl: "https://dock.test" }, artifact, cm)
+    await enqueueGithubPrComment({ meta, blobs, baseUrl: "https://derive.test" }, artifact, cm)
     const rows = (await claim()).filter((d) => d.webhook_id === "internal")
     expect(rows.some((d) => d.kind === "github_issue_comment")).toBe(true)
   })

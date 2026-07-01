@@ -45,7 +45,7 @@ export function ProfileSection() {
   return (
     <section className="flex flex-col gap-4">
       <p className="text-sm text-muted-foreground">
-        How you show up to your team across Dock: on your public profile, in the @mention picker,
+        How you show up to your team across Derive: on your public profile, in the @mention picker,
         and the member directory. Your email always stays private.
       </p>
 

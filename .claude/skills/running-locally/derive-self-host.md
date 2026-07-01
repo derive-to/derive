@@ -1,9 +1,9 @@
-# dock-self-host (local / Lite)
+# derive-self-host (local / Lite)
 
-Run Dock locally on your machine in one command. This is the Lite tier: SQLite + local
+Run Derive locally on your machine in one command. This is the Lite tier: SQLite + local
 blobs in a Docker volume, everything on one origin. No external services.
 
-For production deployment, see `deploying/dock-node.md` or `deploying/dock-cloudflare.md`.
+For production deployment, see `deploying/derive-node.md` or `deploying/derive-cloudflare.md`.
 
 ---
 
@@ -18,14 +18,14 @@ Opens at http://localhost:8080. First person to sign up at `/login` becomes the 
 Or without Compose:
 
 ```bash
-docker build -f deploy/Dockerfile -t dock .
-docker run -d -p 8080:8080 -v dock_data:/data \
-  -e DOCK_AUTH_SECRET="$(openssl rand -hex 32)" \
+docker build -f deploy/Dockerfile -t derive .
+docker run -d -p 8080:8080 -v derive_data:/data \
+  -e DERIVE_AUTH_SECRET="$(openssl rand -hex 32)" \
   -e BASE_URL="http://localhost:8080" \
-  dock
+  derive
 ```
 
-State lives in the `dock_data` Docker volume. Back it up and you've backed up the instance.
+State lives in the `derive_data` Docker volume. Back it up and you've backed up the instance.
 
 ---
 
@@ -37,12 +37,12 @@ cookies and builds share links.
 Caddy (automatic TLS):
 
 ```caddyfile
-dock.example.com {
+derive.example.com {
   reverse_proxy localhost:8080
 }
 ```
 
-Then set `BASE_URL=https://dock.example.com` and redeploy.
+Then set `BASE_URL=https://derive.example.com` and redeploy.
 
 ---
 
@@ -51,18 +51,18 @@ Then set `BASE_URL=https://dock.example.com` and redeploy.
 | Var | What it does |
 |---|---|
 | `BASE_URL` | Public URL (cookies + share links). Required for internet-facing deploys. |
-| `DOCK_AUTH_SECRET` | Session signing key. Generate: `openssl rand -hex 32`. Set it or logins break on restart. |
+| `DERIVE_AUTH_SECRET` | Session signing key. Generate: `openssl rand -hex 32`. Set it or logins break on restart. |
 | `PORT` | Listen port, default 8080. |
 
 ---
 
-## Get a DOCK_TOKEN (for MCP + CLI)
+## Get a DERIVE_TOKEN (for MCP + CLI)
 
 1. Sign in at your local instance
 2. Settings > Agents > New Agent
 3. Name it, copy the `dk_agt_...` token (shown once)
 
-See `using/dock-connect.md` to wire it into Claude Code or Claude Desktop.
+See `using/derive-connect.md` to wire it into Claude Code or Claude Desktop.
 
 ---
 

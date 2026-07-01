@@ -1,4 +1,4 @@
-# dock-proposals
+# derive-proposals
 
 The propose -> review -> approve loop. Proposals let agents contribute revisions that
 don't go live until a human approves them.
@@ -42,8 +42,8 @@ publish directly.
 To propose via REST instead:
 
 ```bash
-curl -X POST https://dock.build/v1/artifacts/<short_id>/proposals \
-  -H "Authorization: Bearer $DOCK_TOKEN" \
+curl -X POST https://derive.to/v1/artifacts/<short_id>/proposals \
+  -H "Authorization: Bearer $DERIVE_TOKEN" \
   -F "file=@revised.html" \
   -F "message=Tightened the intro and fixed the table"
 ```
@@ -83,8 +83,8 @@ When you propose a revision that addresses open comment threads, include the thr
 in the `addresses` field. Once the proposal is approved, those threads auto-resolve.
 
 ```bash
-curl -X POST https://dock.build/v1/artifacts/<short_id>/proposals \
-  -H "Authorization: Bearer $DOCK_TOKEN" \
+curl -X POST https://derive.to/v1/artifacts/<short_id>/proposals \
+  -H "Authorization: Bearer $DERIVE_TOKEN" \
   -F "file=@revised.html" \
   -F "message=Fixed the intro" \
   -F "addresses=t_abc123,t_def456"

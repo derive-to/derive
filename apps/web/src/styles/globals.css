@@ -10,7 +10,7 @@
    dark family too, so `dark:` utilities apply there as well. */
 @custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *, [data-theme="dusk"], [data-theme="dusk"] *));
 
-/* Design tokens. shadcn-style semantic names mapped to dock's themed CSS vars
+/* Design tokens. shadcn-style semantic names mapped to derive's themed CSS vars
    (defined per [data-theme] in the base layer below), so Tailwind utilities
    (bg-card, text-foreground, ring-ring) follow the active theme. `inline` keeps
    them var-based instead of frozen at build time. */
@@ -80,32 +80,35 @@
 @layer base {
   /* The four theme palettes — the source of truth the @theme bridge references.
      Set via [data-theme] on <html>; runtime switching rules out a static @theme. */
+  /* Derive foundation: Axiom Black #030712 + Origin White #F4F5F8. The accent is
+     monochrome — near-black on light themes, near-white on dark — so the brand
+     reads as the two colors; only the semantic good/bad stay chromatic. */
   [data-theme="paper"] {
-    --bg: #f6f0e3;--card: #fdf8ec;--card-2: #efe8d8;--hover: #f1ead9;
-    --fg: #2a2540;--fg-mut: #5e5878;--line: #ddd6c6;--line-soft: #e7e0d2;
-    --ac: #655999;--ac-fg: #fff;--ac-soft: #e9e6f2;
-    --cmt-bg: #ebe7f5;--cmt-tx: #564f82;--cmt-bd: #cbc5e5;--good: #3c6e2f;--good-bg: #e3eedb;--bad: #a04425;
-    --shadow: 0 1px 2px rgba(42,37,64,.05),0 14px 30px -18px rgba(42,37,64,.3);--grain: .045;
+    --bg: #f2efe9;--card: #fbf9f4;--card-2: #ebe7de;--hover: #ede9e0;
+    --fg: #030712;--fg-mut: #5b5850;--line: #ddd8cc;--line-soft: #e7e2d7;
+    --ac: #030712;--ac-fg: #f4f5f8;--ac-soft: #e6e2d8;
+    --cmt-bg: #ece8df;--cmt-tx: #3a382f;--cmt-bd: #d6d1c4;--good: #3c6e2f;--good-bg: #e3eedb;--bad: #a04425;
+    --shadow: 0 1px 2px rgba(3,7,18,.05),0 14px 30px -18px rgba(3,7,18,.28);--grain: .04;
   }
   [data-theme="light"] {
-    --bg: #ffffff;--card: #fcfcfd;--card-2: #f3f3f5;--hover: #f5f5f7;
-    --fg: #18181b;--fg-mut: #5d5d65;--line: #e6e6ea;--line-soft: #efeff2;
-    --ac: #655999;--ac-fg: #fff;--ac-soft: #ecebf6;
-    --cmt-bg: #efeefa;--cmt-tx: #564f82;--cmt-bd: #dad6ef;--good: #3c6e2f;--good-bg: #eef1e0;--bad: #a04425;
-    --shadow: 0 1px 2px rgba(20,20,30,.05),0 14px 30px -18px rgba(20,20,30,.18);--grain: .03;
+    --bg: #f4f5f8;--card: #ffffff;--card-2: #ecedf1;--hover: #e9ebef;
+    --fg: #030712;--fg-mut: #565a66;--line: #dfe1e7;--line-soft: #e9ebef;
+    --ac: #030712;--ac-fg: #f4f5f8;--ac-soft: #e4e6ec;
+    --cmt-bg: #eceef2;--cmt-tx: #2a2e38;--cmt-bd: #d7dae1;--good: #2f7d4f;--good-bg: #e4f0e9;--bad: #b4402c;
+    --shadow: 0 1px 2px rgba(3,7,18,.05),0 14px 30px -18px rgba(3,7,18,.16);--grain: .028;
   }
   [data-theme="dark"] {
-    --bg: #0f0f10;--card: #1a1a1d;--card-2: #232327;--hover: #212125;
-    --fg: #ededee;--fg-mut: #9a9aa1;--line: #2e2e33;--line-soft: #262629;
-    --ac: #a99fe0;--ac-fg: #15131f;--ac-soft: #28243c;
-    --cmt-bg: #221f33;--cmt-tx: #b6ace8;--cmt-bd: #3a3556;--good: #9fb05a;--good-bg: #1f2417;--bad: #e08a6e;
+    --bg: #030712;--card: #0e131f;--card-2: #171d2b;--hover: #141a27;
+    --fg: #f4f5f8;--fg-mut: #99a0af;--line: #232b3b;--line-soft: #1a2130;
+    --ac: #f4f5f8;--ac-fg: #030712;--ac-soft: #1a2233;
+    --cmt-bg: #141b29;--cmt-tx: #c6cad4;--cmt-bd: #2a3141;--good: #7fb08a;--good-bg: #0f1a14;--bad: #e08a6e;
     --shadow: 0 1px 2px rgba(0,0,0,.4),0 18px 36px -18px rgba(0,0,0,.7);--grain: .05;
   }
   [data-theme="dusk"] {
-    --bg: #15101f;--card: #241e3a;--card-2: #2b2542;--hover: #2a2342;
-    --fg: #f6e9d6;--fg-mut: #b1a48d;--line: #3a3357;--line-soft: #322b4c;
-    --ac: #b9aef0;--ac-fg: #1a1430;--ac-soft: #2d2649;
-    --cmt-bg: #271f3f;--cmt-tx: #c5bbf2;--cmt-bd: #463d6a;--good: #aebb6a;--good-bg: #23271a;--bad: #e7806a;
+    --bg: #080c17;--card: #121826;--card-2: #1a2130;--hover: #171e2c;
+    --fg: #eef0f5;--fg-mut: #a4abba;--line: #28303f;--line-soft: #212836;
+    --ac: #f4f5f8;--ac-fg: #030712;--ac-soft: #1d2536;
+    --cmt-bg: #151c2a;--cmt-tx: #c9cdd7;--cmt-bd: #2c3444;--good: #8bb693;--good-bg: #111a16;--bad: #e7806a;
     --shadow: 0 1px 2px rgba(0,0,0,.4),0 18px 36px -18px rgba(0,0,0,.6);--grain: .05;
   }
 
@@ -123,6 +126,8 @@
     background: var(--bg);
     color: var(--fg);
     font: 14px/1.55 Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    /* Inter sits a touch loose at UI sizes; pull it in a hair. */
+    letter-spacing: -0.011em;
     -webkit-font-smoothing: antialiased;
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.82' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E");
   }
@@ -186,7 +191,7 @@
 /* A peer's click ripple on the live-cursor overlay: a ring that expands from the
    click point and fades once. Centered via the transform so percentage left/top
    place the click point itself (see cursor-layer.tsx RippleDot). */
-@keyframes dock-cursor-ripple {
+@keyframes derive-cursor-ripple {
   from {
     opacity: 0.55;
     transform: translate(-50%, -50%) scale(0.4);

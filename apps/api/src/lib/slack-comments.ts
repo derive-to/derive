@@ -1,18 +1,18 @@
-// Dock ↔ Slack comment sync over the connected Slack App. Outbound: a Dock comment is
+// Derive ↔ Slack comment sync over the connected Slack App. Outbound: a Derive comment is
 // posted to the workspace's Slack channel via chat.postMessage, threaded under the Slack
-// message for that Dock thread (the first comment in a thread starts the Slack thread).
-// Inbound: a reply in that Slack thread becomes a Dock comment reply. Loop prevention:
+// message for that Derive thread (the first comment in a thread starts the Slack thread).
+// Inbound: a reply in that Slack thread becomes a Derive comment reply. Loop prevention:
 // outbound is skipped for comments that came from Slack (meta.slack); inbound skips our
 // own bot's messages.
 
-import type { DeliveryRecord } from "@dock/core"
+import type { DeliveryRecord } from "@derive/core"
 import {
   type ArtifactRecord,
   type CommentRecord,
   type MetaStore,
   newId,
   type SlackThreadLinkRecord,
-} from "@dock/core"
+} from "@derive/core"
 import { type ChannelSendResult, enqueueChannelDelivery } from "../webhooks"
 import { parseMeta } from "./comments"
 import { decryptSecret } from "./crypto"
@@ -31,7 +31,7 @@ interface SlackCommentPayload {
   author: string
 }
 
-/** Enqueue a Slack post for a Dock comment, unless the comment came FROM Slack or there's
+/** Enqueue a Slack post for a Derive comment, unless the comment came FROM Slack or there's
  *  no connected Slack workspace. The delivery sender resolves the channel + threading. */
 export const enqueueSlackComment = async (
   deps: { meta: MetaStore; baseUrl: string },
@@ -63,7 +63,7 @@ const blocksFor = (p: SlackCommentPayload): unknown => {
     { type: "section", text: { type: "mrkdwn", text: lines.join("\n") } },
     {
       type: "context",
-      elements: [{ type: "mrkdwn", text: "Dock · reply in this thread to post back" }],
+      elements: [{ type: "mrkdwn", text: "Derive · reply in this thread to post back" }],
     },
   ]
 }
@@ -113,7 +113,7 @@ export const makeSlackSender =
       }
     }
 
-    // First post for this Dock thread → remember the Slack message so replies thread
+    // First post for this Derive thread → remember the Slack message so replies thread
     // under it (both directions).
     if (!existing) {
       await meta.setSlackThreadLink({
@@ -129,7 +129,7 @@ export const makeSlackSender =
     return { ok: true, status: `posted ${res.ts}` }
   }
 
-/** Mirror a Slack thread reply into Dock as a comment on the linked thread. Returns the
+/** Mirror a Slack thread reply into Derive as a comment on the linked thread. Returns the
  *  created comment, or null when it should be skipped (our own bot, or no thread link).
  *  `botUserId` is the connected app's bot so we never re-ingest our own posts. */
 export const ingestSlackReply = async (

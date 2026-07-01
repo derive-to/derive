@@ -3,7 +3,7 @@
 // to GitHub; they click "Create GitHub App" once and GitHub redirects back with a
 // temporary code we trade for the App's permanent credentials (see lib/github-app
 // convertManifestCode). Two pages: the auto-submitting manifest form, and a
-// success/failure landing. Styled like the CLI callback so setup feels like Dock.
+// success/failure landing. Styled like the CLI callback so setup feels like Derive.
 
 const esc = (s: string): string =>
   s.replace(/[&<>"']/g, (c) =>
@@ -49,14 +49,14 @@ const STYLE = `<style>
 const SHELL = (title: string, badge: string, body: string): string => `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>${title} · Dock</title>
+<title>${title} · Derive</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
 ${STYLE}</head>
-<body><main class="card"><div class="brand">${MARK}<span class="name">Dock</span>${badge}</div>
+<body><main class="card"><div class="brand">${MARK}<span class="name">Derive</span>${badge}</div>
 ${body}</main></body></html>`
 
-// ---- The permission/event spec Dock's CURRENT code needs ------------------
+// ---- The permission/event spec Derive's CURRENT code needs ------------------
 // SINGLE SOURCE OF TRUTH. The manifest is born with these, and the live App is
 // diffed against these on every settings load (routes/sync.ts) — a gap surfaces
 // the in-app "update permissions" banner. To request a NEW permission as a feature
@@ -68,10 +68,10 @@ ${body}</main></body></html>`
 // the `installation`/`new_permissions_accepted` webhook + a live GET /app re-check
 // confirm it. So this constant drives "what we want"; GitHub holds "what we have".
 //
-// contents+metadata (read) mirror docs; pull_requests is now WRITE — Dock posts a PR
+// contents+metadata (read) mirror docs; pull_requests is now WRITE — Derive posts a PR
 // review/issue comment when someone comments on a PR-sourced artifact, and receives
 // `pull_request` + comment events to preview PR docs and mirror PR comments back into
-// Dock (the bidirectional collaboration loop). push + pull_request drive auto-sync.
+// Derive (the bidirectional collaboration loop). push + pull_request drive auto-sync.
 export const REQUIRED_PERMISSIONS: Record<string, string> = {
   contents: "read",
   metadata: "read",
@@ -94,7 +94,7 @@ export const REQUIRED_EVENTS = [
  *  Exported so a test can lock the exact shape GitHub accepts (we regressed on
  *  default_events, public, and setup_url during the live rollout). */
 export const buildManifest = (baseUrl: string, host: string) => ({
-  name: `Dock · ${host}`,
+  name: `Derive · ${host}`,
   url: baseUrl,
   // Where GitHub sends the browser after the App is CREATED (manifest → code).
   redirect_url: new URL("/settings/github/app/created", baseUrl).toString(),
@@ -131,12 +131,12 @@ export function manifestFormHTML(props: { baseUrl: string; state: string }): str
     "Set up GitHub App",
     "",
     `<h1>Create your GitHub App</h1>
-    <p class="sub">This opens GitHub to create a Dock app for your account. You install it on the repos you want to mirror — no tokens to paste.</p>
+    <p class="sub">This opens GitHub to create a Derive app for your account. You install it on the repos you want to mirror — no tokens to paste.</p>
     <form id="f" method="post" action="${esc(action)}">
       <input type="hidden" name="manifest" value="${esc(manifestJson)}"/>
       <button class="btn" type="submit">Continue to GitHub</button>
     </form>
-    <p class="foot">Dock asks for <strong>Contents: read</strong>, <strong>Metadata: read</strong> to mirror your docs, and <strong>Pull requests: write</strong> to sync comments to and from PRs.</p>
+    <p class="foot">Derive asks for <strong>Contents: read</strong>, <strong>Metadata: read</strong> to mirror your docs, and <strong>Pull requests: write</strong> to sync comments to and from PRs.</p>
     <script>setTimeout(function(){document.getElementById("f").submit()},400)</script>`,
   )
 }

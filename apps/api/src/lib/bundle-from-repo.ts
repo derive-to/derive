@@ -1,5 +1,5 @@
 // Bundle-aware sync: when a synced HTML file references local assets in the repo
-// (a stylesheet, script, image, font), we mirror it as a Dock *bundle* — the
+// (a stylesheet, script, image, font), we mirror it as a Derive *bundle* — the
 // entry HTML plus those assets — instead of a lone file that renders unstyled.
 // Bundles are served as mini static sites (manifest.files lookup), so relative
 // refs resolve natively with no rewriting; we only have to gather the right files

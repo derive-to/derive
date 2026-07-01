@@ -5,8 +5,8 @@ import { as, jsonAs, makeAuthedApp, publishAs, type TestUser } from "./helpers"
 // same way an @mention does. A share has no comment thread, so the thread/comment
 // ids are empty and the bell deep-links to the artifact itself.
 describe("artifact share → notification", () => {
-  const alice: TestUser = { id: "u_sh_alice", email: "sha@dock.test", name: "Alice" }
-  const bob: TestUser = { id: "u_sh_bob", email: "shb@dock.test", name: "Bob" }
+  const alice: TestUser = { id: "u_sh_alice", email: "sha@derive.test", name: "Alice" }
+  const bob: TestUser = { id: "u_sh_bob", email: "shb@derive.test", name: "Bob" }
   const { app } = makeAuthedApp("share-notif", [alice, bob], "editor")
   let shortId: string
 

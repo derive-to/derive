@@ -14,7 +14,7 @@ import {
   publish,
   renderMarkdown,
   toJson,
-} from "@dock/core"
+} from "@derive/core"
 import { type Context, Hono } from "hono"
 import { setCookie } from "hono/cookie"
 import { z } from "zod"
@@ -175,8 +175,8 @@ export const artifactRoutes = (ctx: AppContext) => {
     const pageIds = page.map((a) => a.id)
     const counts = analyticsOn ? await meta.viewCounts(pageIds) : {}
     const tags = await meta.tagsForArtifacts(pageIds)
-    // Resolve the page's distinct author gh_ids to Dock handles in ONE batched query (no
-    // N+1) so each row can show "who last changed this" with a link to the Dock profile.
+    // Resolve the page's distinct author gh_ids to Derive handles in ONE batched query (no
+    // N+1) so each row can show "who last changed this" with a link to the Derive profile.
     const handleByGhId = await resolveHandles(meta, [
       ...new Set(page.map((a) => a.author_gh_id).filter((x): x is string => !!x)),
     ])
@@ -189,7 +189,7 @@ export const artifactRoutes = (ctx: AppContext) => {
         views: counts[a.id] ?? 0,
         tags: tags[a.id] ?? [],
         favorite: favorites.has(a.id),
-        // The current author as a resolved profile (name/login/avatar + Dock handle), so
+        // The current author as a resolved profile (name/login/avatar + Derive handle), so
         // the list can render the last editor + filter by them.
         author: authorProfile(a, handleByGhId),
         // open_threads + mentions_me + i_participated (defaults for anon / no signals).
@@ -243,7 +243,7 @@ export const artifactRoutes = (ctx: AppContext) => {
       existing = await meta.getByShortId(shortId)
       if (!existing) return fail(c, 404, "not found")
       if (!(await authorize(c, "publish", existing))) return fail(c, 403, "forbidden")
-      // A GitHub-synced artifact is read-only in Dock: GitHub is the source of
+      // A GitHub-synced artifact is read-only in Derive: GitHub is the source of
       // truth, so a republish would be silently overwritten on the next sync.
       // Edit it in the repo instead.
       if ((await meta.managedArtifactIds(existing.org_id)).includes(existing.id))
@@ -297,7 +297,7 @@ export const artifactRoutes = (ctx: AppContext) => {
 
     try {
       // The authenticated principal behind this publish (signed-in user or agent) — its
-      // `name` is the display author. The Dock-USER behind it (null for an agent / bare
+      // `name` is the display author. The Derive-USER behind it (null for an agent / bare
       // static token) is what we attribute work to: `author_id` keys a person's profile
       // + their followers' feed, so it must be a real user id, never an agent principal.
       const actor = await actingUser(c)
@@ -459,8 +459,8 @@ export const artifactRoutes = (ctx: AppContext) => {
         if (isMarkdownBundle(manifest)) bundle = bundleDoc(manifest, await sourceText(cur))
       }
     }
-    // Resolve the GitHub author(s) to Dock profiles: collect every distinct gh_id on the
-    // artifact + its versions, map them in ONE query, and attach a `handle` (the Dock
+    // Resolve the GitHub author(s) to Derive profiles: collect every distinct gh_id on the
+    // artifact + its versions, map them in ONE query, and attach a `handle` (the Derive
     // username) when the committer signed in with GitHub. Additive — the raw author_*
     // fields stay on the response regardless.
     const ghIds = new Set<string>()
@@ -496,7 +496,7 @@ export const artifactRoutes = (ctx: AppContext) => {
       // A taken-down artifact keeps its record but serves no content (410); the
       // UI shows a tombstone instead of the iframe.
       removed: !!artifact.removed_at,
-      // Mirrored from a GitHub sync source → read-only in Dock (the client hides
+      // Mirrored from a GitHub sync source → read-only in Derive (the client hides
       // Edit/Propose; the publish/propose routes also refuse it server-side).
       managed: (await meta.managedArtifactIds(artifact.org_id)).includes(artifact.id),
     })
@@ -651,8 +651,8 @@ export const artifactRoutes = (ctx: AppContext) => {
     c.header("Content-Type", "text/plain; charset=utf-8")
     c.header("X-Content-Type-Options", "nosniff")
     c.header("Access-Control-Allow-Origin", "*")
-    c.header("X-Dock-Version", String(v))
-    c.header("X-Dock-Kind", artifact.kind)
+    c.header("X-Derive-Version", String(v))
+    c.header("X-Derive-Kind", artifact.kind)
     return c.body(src)
   })
 
@@ -690,8 +690,8 @@ export const artifactRoutes = (ctx: AppContext) => {
     const ops = diffLines(a, b)
 
     c.header("Access-Control-Allow-Origin", "*")
-    c.header("X-Dock-From", String(from))
-    c.header("X-Dock-To", String(to))
+    c.header("X-Derive-From", String(from))
+    c.header("X-Derive-To", String(to))
     if (c.req.query("format") === "json") return c.json({ from, to, ops })
     c.header("Content-Type", "text/plain; charset=utf-8")
     return c.body(formatDiff(ops))

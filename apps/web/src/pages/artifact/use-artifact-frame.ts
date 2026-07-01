@@ -67,7 +67,7 @@ export function useArtifactFrame(p: {
   // position in this viewport (and decide who's scrolled off-screen).
   const [docH, setDocH] = useState(0)
   const [viewH, setViewH] = useState(0)
-  // Set when the artifact announces itself as a deck (dock-deck protocol).
+  // Set when the artifact announces itself as a deck (derive-deck protocol).
   const [deck, setDeck] = useState<{ i: number; total: number } | null>(null)
   // The deck position read inside the message handler (a stable closure that never
   // re-subscribes), so selection-capture and cursor-tagging see the CURRENT slide
@@ -75,7 +75,7 @@ export function useArtifactFrame(p: {
   const deckRef = useRef<{ i: number; total: number } | null>(null)
 
   const post = useCallback((msg: Record<string, unknown>) => {
-    frame.current?.contentWindow?.postMessage({ source: "dock-host", ...msg }, "*")
+    frame.current?.contentWindow?.postMessage({ source: "derive-host", ...msg }, "*")
   }, [])
 
   // Scroll the document by a pixel delta. The comments aside calls this to forward
@@ -88,13 +88,13 @@ export function useArtifactFrame(p: {
       const d = e.data
       if (!d) return
       // A slide deck reporting its position (any HTML that speaks the protocol).
-      if (d.source === "dock-deck" && d.type === "state") {
+      if (d.source === "derive-deck" && d.type === "state") {
         const next = { i: d.i ?? 0, total: d.total ?? 1 }
         deckRef.current = next
         setDeck(next)
         return
       }
-      if (d.source !== "dock") return
+      if (d.source !== "derive") return
       if (d.type === "select") {
         if (d.selector && d.rect) {
           const fr = frame.current?.getBoundingClientRect()
@@ -171,7 +171,7 @@ export function useArtifactFrame(p: {
   const deckCmd = useCallback(
     (action: "next" | "prev" | "goto", n?: number) =>
       frame.current?.contentWindow?.postMessage(
-        { source: "dock-host", type: "deck", action, n },
+        { source: "derive-host", type: "deck", action, n },
         "*",
       ),
     [],
@@ -249,7 +249,7 @@ export function useArtifactFrame(p: {
               personal: x.personal,
             },
       )
-    w.postMessage({ source: "dock-host", type: "anchors", anchors }, "*")
+    w.postMessage({ source: "derive-host", type: "anchors", anchors }, "*")
   }, [comments])
   // biome-ignore lint/correctness/useExhaustiveDependencies: frameReady is an intentional repaint trigger (re-send anchors when the iframe reloads).
   useEffect(() => {

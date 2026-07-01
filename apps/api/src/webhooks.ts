@@ -6,7 +6,7 @@ import {
   type DeliveryRecord,
   INTERNAL_DELIVERY,
   type MetaStore,
-} from "@dock/core"
+} from "@derive/core"
 import type { WebhookEvent } from "./events"
 import { isPrivateAddress } from "./lib/net"
 import { log } from "./log"
@@ -112,12 +112,12 @@ export function slackMessage(p: EventPayload): unknown {
     text: head,
     blocks: [
       { type: "section", text: { type: "mrkdwn", text: [head, ...lines].join("\n") } },
-      { type: "context", elements: [{ type: "mrkdwn", text: `Dock · ${p.event}` }] },
+      { type: "context", elements: [{ type: "mrkdwn", text: `Derive · ${p.event}` }] },
     ],
   }
 }
 
-/** HMAC-SHA256 of the request body, hex. Header: X-Dock-Signature: sha256=… */
+/** HMAC-SHA256 of the request body, hex. Header: X-Derive-Signature: sha256=… */
 export function sign(secret: string, body: string): string {
   return `sha256=${createHmac("sha256", secret).update(body).digest("hex")}`
 }
@@ -127,9 +127,9 @@ export function sign(secret: string, body: string): string {
  * `{id}.{timestamp}.{body}` and the header is `webhook-signature: v1,<base64 sig>`,
  * paired with `webhook-id` and `webhook-timestamp`. The key is the secret with any
  * `whsec_` prefix stripped, base64-decoded — exactly how the standardwebhooks
- * verifier libraries derive it, so a consumer can verify Dock with an off-the-shelf
+ * verifier libraries derive it, so a consumer can verify Derive with an off-the-shelf
  * library (passing the same secret string) instead of hand-rolling HMAC. We send this
- * alongside the legacy `X-Dock-Signature` header, so existing consumers keep working.
+ * alongside the legacy `X-Derive-Signature` header, so existing consumers keep working.
  */
 export function standardWebhookSignature(
   secret: string,
@@ -191,15 +191,15 @@ export async function deliverOnce(
     const body = JSON.stringify(isSlack ? slackMessage(payload) : payload)
     const headers: Record<string, string> = {
       "content-type": "application/json",
-      "user-agent": "dock-webhooks/1",
-      "x-dock-event": d.event_type,
+      "user-agent": "derive-webhooks/1",
+      "x-derive-event": d.event_type,
     }
     if (!isSlack) {
-      // Sign two ways: the legacy `X-Dock-Signature` (sha256=hex over the body) for
+      // Sign two ways: the legacy `X-Derive-Signature` (sha256=hex over the body) for
       // existing consumers, and Standard Webhooks headers so new consumers can verify
       // with an off-the-shelf library. `webhook-id` is the (unique) delivery id, which
       // also gives consumers a natural idempotency key for at-least-once delivery.
-      headers["x-dock-signature"] = sign(d.secret, body)
+      headers["x-derive-signature"] = sign(d.secret, body)
       const ts = Math.floor(Date.now() / 1000).toString()
       headers["webhook-id"] = d.id
       headers["webhook-timestamp"] = ts

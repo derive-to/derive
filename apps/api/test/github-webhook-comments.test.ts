@@ -4,16 +4,16 @@ import { encryptSecret } from "../src/lib/crypto"
 import { quotaApp } from "./helpers"
 
 // Inbound half of bidirectional GitHub comment sync: a PR comment made on GitHub is
-// mirrored into the matching Dock artifact. Gated by the App webhook-secret HMAC + the
+// mirrored into the matching Derive artifact. Gated by the App webhook-secret HMAC + the
 // githubMirrorComments workspace toggle.
 const KEY = "gh-webhook-comments-key"
-const WHSEC = "whsec_dock_ghc"
+const WHSEC = "whsec_derive_ghc"
 
 const seedApp = async (meta: Awaited<ReturnType<typeof quotaApp>>["meta"]) =>
   meta.setGithubApp({
     id: "default",
     app_id: "1",
-    slug: "dock-test",
+    slug: "derive-test",
     client_id: "Iv1.x",
     client_secret: encryptSecret("cs", KEY),
     private_key: encryptSecret("pk", KEY),
@@ -90,7 +90,7 @@ const reviewCommentPayload = (overrides: Record<string, unknown> = {}) => ({
   },
 })
 
-describe("github → dock comment mirroring (webhook)", () => {
+describe("github → derive comment mirroring (webhook)", () => {
   it("rejects a bad signature", async () => {
     const { app, meta } = quotaApp("ghwc-badsig", { encryptionKey: KEY })
     await seedApp(meta)
@@ -134,7 +134,7 @@ describe("github → dock comment mirroring (webhook)", () => {
     const r = await post(
       app,
       "pull_request_review_comment",
-      reviewCommentPayload({ user: { login: "dock[bot]", type: "Bot" } }),
+      reviewCommentPayload({ user: { login: "derive[bot]", type: "Bot" } }),
     )
     expect(r.status).toBe(200)
     expect(await meta.listComments(artifact.id)).toHaveLength(0)

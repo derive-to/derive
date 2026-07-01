@@ -1,11 +1,11 @@
 import { oauthProvider } from "@better-auth/oauth-provider"
-import { generateUsername } from "@dock/core"
+import { generateUsername } from "@derive/core"
 import { type BetterAuthOptions, betterAuth } from "better-auth"
 import { getMigrations } from "better-auth/db/migration"
 import { genericOAuth, jwt } from "better-auth/plugins"
 import { sha256 } from "./lib/crypto"
 
-// Scopes an agent can be granted via the OAuth consent. The dock:* scopes map to
+// Scopes an agent can be granted via the OAuth consent. The derive:* scopes map to
 // what the issued token may do; openid/profile/email/offline_access are the
 // standard OIDC set the flow needs. Least-privilege default is propose+comment+read.
 export const OAUTH_SCOPES = [
@@ -13,11 +13,11 @@ export const OAUTH_SCOPES = [
   "profile",
   "email",
   "offline_access",
-  "dock:read",
-  "dock:comment",
-  "dock:propose",
-  "dock:publish",
-  "dock:review",
+  "derive:read",
+  "derive:comment",
+  "derive:propose",
+  "derive:publish",
+  "derive:review",
 ] as const
 
 const env = (k: string) => process.env[k]
@@ -41,14 +41,14 @@ export interface AuthHooks {
 export function makeAuth(db: AuthDb, baseUrl: string, secret: string, hooks: AuthHooks = {}) {
   // The browser sends its own Origin (the web app), which differs from the API's
   // baseURL whenever the SPA and API are on separate origins (dev proxy, or the
-  // hosted split of static-web + API container). DOCK_WEB_ORIGIN lists those in
+  // hosted split of static-web + API container). DERIVE_WEB_ORIGIN lists those in
   // production; localhost dev ports are trusted automatically.
-  const webOrigins = (env("DOCK_WEB_ORIGIN") ?? "")
+  const webOrigins = (env("DERIVE_WEB_ORIGIN") ?? "")
     .split(",")
     .map((s) => s.trim())
     .filter(Boolean)
   const devOrigins = /^https?:\/\/(localhost|127\.0\.0\.1)(:|$)/.test(baseUrl)
-    ? ["http://localhost:3000", "http://localhost:5173"]
+    ? ["http://localhost:3090", "http://localhost:5173"]
     : []
   const staticTrusted = [...new Set([baseUrl, ...webOrigins, ...devOrigins])]
 
@@ -67,7 +67,7 @@ export function makeAuth(db: AuthDb, baseUrl: string, secret: string, hooks: Aut
   })()
   // A superset of the plugin's default ([baseUrl]) so no previously-valid audience
   // is narrowed; resource validation only runs at all when a client sends `resource`
-  // (MCP clients do; dock login and the browser consent flow don't), so other flows
+  // (MCP clients do; derive login and the browser consent flow don't), so other flows
   // are untouched.
   const mcpAudiences = [
     ...new Set([baseUrl, origin, `${origin}/`, `${origin}/mcp`, `${origin}/mcp/`]),
@@ -80,7 +80,7 @@ export function makeAuth(db: AuthDb, baseUrl: string, secret: string, hooks: Aut
   // reached at an origin that doesn't exactly match BASE_URL (e.g. BASE_URL inferred
   // as :8080 but the host published :8081) would otherwise 403 INVALID_ORIGIN on
   // signup/login. Cross-origin (the real CSRF case) still requires an explicit
-  // baseUrl / DOCK_WEB_ORIGIN entry. A TLS-terminating proxy (browser https, app
+  // baseUrl / DERIVE_WEB_ORIGIN entry. A TLS-terminating proxy (browser https, app
   // http) won't match here, so set BASE_URL to the public https origin for those.
   const trusted = async (request?: Request): Promise<string[]> => {
     try {
@@ -124,7 +124,7 @@ export function makeAuth(db: AuthDb, baseUrl: string, secret: string, hooks: Aut
 
   // When the SPA and API are on different sites (CDN web + container API), the
   // session cookie must be SameSite=None; Secure to ride cross-site fetches.
-  const crossSite = env("DOCK_CROSS_SITE") === "true" || env("DOCK_CROSS_SITE") === "1"
+  const crossSite = env("DERIVE_CROSS_SITE") === "true" || env("DERIVE_CROSS_SITE") === "1"
 
   return betterAuth({
     database: db,
@@ -187,11 +187,11 @@ export function makeAuth(db: AuthDb, baseUrl: string, secret: string, hooks: Aut
       ...(oidc.length ? [genericOAuth({ config: oidc })] : []),
       // oauthProvider signs id tokens + serves JWKS through the jwt plugin.
       jwt(),
-      // Dock as an OAuth 2.1 authorization server: agents (MCP clients) authenticate
+      // Derive as an OAuth 2.1 authorization server: agents (MCP clients) authenticate
       // via a browser consent instead of a pasted token, and get a scoped, expiring
       // access token. Endpoints land under /api/auth/oauth2/*; the consent screen is
       // a route we own (/oauth/consent). Tokens are opaque and stored hashed with
-      // Dock's own sha256, so the bridge can resolve them by hash (see context.ts).
+      // Derive's own sha256, so the bridge can resolve them by hash (see context.ts).
       oauthProvider({
         loginPage: "/login",
         consentPage: "/oauth/consent",

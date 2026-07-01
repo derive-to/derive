@@ -7,8 +7,8 @@ import { as, json, makeAuthedApp, publishAs, type TestUser } from "./helpers"
 // no "open" mode that would elevate them.
 // Authenticated users keep normal role-based access — a viewer still sees comments.
 describe("anonymous lockdown (secure instance)", () => {
-  const owner: TestUser = { id: "u_own", email: "own@dock.test", name: "Owner One" }
-  const viewer: TestUser = { id: "u_vee", email: "vee@dock.test", name: "Vee" }
+  const owner: TestUser = { id: "u_own", email: "own@derive.test", name: "Owner One" }
+  const viewer: TestUser = { id: "u_vee", email: "vee@derive.test", name: "Vee" }
   const { app } = makeAuthedApp("anon-lock", [owner, viewer], "viewer")
 
   it("attributes a publish to the signed-in user, never a client field or 'anonymous'", async () => {
@@ -82,7 +82,7 @@ describe("anonymous lockdown (secure instance)", () => {
 // that forgets its gate) trips here. The only things anon may do are read a
 // public artifact, count a view, and send a presence heartbeat.
 describe("anonymous can never write — global lockdown sweep", () => {
-  const owner: TestUser = { id: "u_sweep_own", email: "sweepown@dock.test", name: "Owner" }
+  const owner: TestUser = { id: "u_sweep_own", email: "sweepown@derive.test", name: "Owner" }
   const { app } = makeAuthedApp("anon-sweep", [owner])
   let shortId: string
   const at = (p: string, init?: RequestInit) => app.request(`/v1/artifacts/${shortId}${p}`, init)

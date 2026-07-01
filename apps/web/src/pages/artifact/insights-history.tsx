@@ -191,7 +191,7 @@ export function HistoryDrawer({
         created_at: v.created_at,
       }))
   // A session is the latest version in a time group; its `n` is that version, so
-  // we resolve the rich author identity (avatar, login, the Dock handle for the
+  // we resolve the rich author identity (avatar, login, the Derive handle for the
   // profile link) from the matching version.
   const versionByN = new Map(art.versions.map((v) => [v.n, v]))
   let lastDay = ""

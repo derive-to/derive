@@ -27,7 +27,7 @@ export const parseExpectedColumns = (sql) => {
 
 /**
  * A column ADDED to an existing (populated) table must be nullable or carry a constant
- * DEFAULT — SQLite/D1 reject `ADD COLUMN` of a NOT NULL column with no default. Dock's
+ * DEFAULT — SQLite/D1 reject `ADD COLUMN` of a NOT NULL column with no default. Derive's
  * schema policy is additive-only (CONTRIBUTING.md → Database migrations); this is the
  * deploy-time backstop for it.
  */

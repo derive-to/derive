@@ -1,4 +1,4 @@
-import { ANCHOR_CLIENT_JS } from "@dock/core"
+import { ANCHOR_CLIENT_JS } from "@derive/core"
 import { Hono } from "hono"
 import type { AppContext } from "../context"
 import { crossDocTransform } from "../lib/cross-doc"
@@ -14,7 +14,7 @@ export const rawRoutes = (ctx: AppContext) => {
   // The comment-anchor client, referenced by URL from artifact HTML. Artifact
   // pages are cached immutable; this is cached short so the client can evolve
   // without stranding old behavior in already-viewed artifacts.
-  app.get("/raw/dock-client.js", (c) =>
+  app.get("/raw/derive-client.js", (c) =>
     c.body(ANCHOR_CLIENT_JS, 200, {
       "Content-Type": "text/javascript; charset=utf-8",
       "Cache-Control": "public, max-age=300",

@@ -11,7 +11,7 @@ import {
   renderMarkdown,
   SELECTION_SCRIPT,
   sanitizeHtml,
-} from "@dock/core"
+} from "@derive/core"
 import type { Context } from "hono"
 import { IMMUTABLE_CACHE, RAW_HEADERS, rewriteAbsoluteUrls, toBody } from "./http"
 
@@ -49,7 +49,7 @@ export const serveContent = async (
    *  serve the document exactly as authored. Never applied to markdown-rendered output,
    *  which is already responsive. */
   reflow = true,
-  /** Reader view: strip the authored layout and re-render the content in Dock's responsive
+  /** Reader view: strip the authored layout and re-render the content in Derive's responsive
    *  shell (the universal "make it readable" mode, used by the in-app toggle via `?reader`).
    *  Wins over `reflow` for HTML; markdown is already in the shell, so it's unaffected. */
   reader = false,

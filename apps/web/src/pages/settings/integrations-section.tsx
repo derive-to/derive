@@ -126,22 +126,22 @@ export function IntegrationsSection() {
           />
           <Toggle
             id="github-mirror"
-            label="Mirror PR comments into Dock"
-            hint="Comments made on the pull request show up on the Dock artifact."
+            label="Mirror PR comments into Derive"
+            hint="Comments made on the pull request show up on the Derive artifact."
             on={settings.githubMirrorComments}
             onChange={flip("githubMirrorComments")}
           />
           <Toggle
             id="github-preview-link"
             label="Comment a preview link on PRs"
-            hint="When a pull request opens, post (and keep updated) a comment linking to the Dock preview of its docs."
+            hint="When a pull request opens, post (and keep updated) a comment linking to the Derive preview of its docs."
             on={settings.githubPreviewLink}
             onChange={flip("githubPreviewLink")}
           />
           <Toggle
             id="slack-post"
             label="Post activity to Slack"
-            hint="Send comments to the connected Slack channel; replies there post back to Dock."
+            hint="Send comments to the connected Slack channel; replies there post back to Derive."
             on={settings.slackPost}
             onChange={flip("slackPost")}
           />
@@ -152,7 +152,7 @@ export function IntegrationsSection() {
         <h2 className="mb-1 text-sm font-semibold">Slack</h2>
         {slack && !slack.available ? (
           <p className="text-sm text-muted-foreground">
-            Slack isn't configured on this Dock instance.
+            Slack isn't configured on this Derive instance.
           </p>
         ) : slack?.connected ? (
           <Card className="flex flex-col gap-3 p-4">
@@ -179,7 +179,7 @@ export function IntegrationsSection() {
             </div>
             <p className="text-sm text-muted-foreground">
               Find a channel ID in Slack: open the channel, click its name, and copy the ID at the
-              bottom. Invite the Dock app to that channel.
+              bottom. Invite the Derive app to that channel.
             </p>
             <div>
               <Button data-testid="slack-disconnect" variant="outline" onClick={disconnectSlack}>

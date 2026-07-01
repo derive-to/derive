@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest"
 import { as, bearer, jsonAs, makeAuthedApp, proposeAs, publishAs, type TestUser } from "./helpers"
 
 describe("agents: @mention → pull inbox → propose → ack", () => {
-  const owner: TestUser = { id: "u_ag_own", email: "agown@dock.test", name: "Owner" }
-  const dev: TestUser = { id: "u_ag_dev", email: "agdev@dock.test", name: "Dev" }
+  const owner: TestUser = { id: "u_ag_own", email: "agown@derive.test", name: "Owner" }
+  const dev: TestUser = { id: "u_ag_dev", email: "agdev@derive.test", name: "Dev" }
   const { app } = makeAuthedApp("agents", [owner, dev], "commenter")
   let shortId: string
   let agentId: string
@@ -27,7 +27,7 @@ describe("agents: @mention → pull inbox → propose → ack", () => {
   })
 
   it("stores only the token hash at rest, yet the raw token still authenticates", async () => {
-    const ag: TestUser = { id: "u_ag_hash", email: "aghash@dock.test", name: "Hasher" }
+    const ag: TestUser = { id: "u_ag_hash", email: "aghash@derive.test", name: "Hasher" }
     const { app: a2, meta: m2 } = makeAuthedApp("agent-hash", [ag], "commenter")
     await a2.request("/v1/me", { headers: as(ag.email) }) // claims ownership
     const reg = await (await a2.request("/v1/agents", jsonAs(as(ag.email), { name: "Bot" }))).json()

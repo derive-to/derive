@@ -1,16 +1,17 @@
-// The Dock mark. Brand colors are intentionally fixed — a logo doesn't theme —
-// while everything else in the app is tokenized.
+// The Derive mark. Monochrome, so it takes `currentColor` (theme foreground)
+// rather than a fixed brand hex — the mark reads as black on light, white on dark.
 export const Logo = ({ size = 24 }: { size?: number }) => (
-  // biome-ignore lint/a11y/noSvgWithoutTitle: decorative brand mark; the adjacent "Dock" wordmark labels it
-  <svg width={size} height={size} viewBox="0 0 32 32" fill="none" aria-hidden>
-    <rect x="1" y="1" width="30" height="30" rx="8" fill="#2a2540" />
+  // biome-ignore lint/a11y/noSvgWithoutTitle: decorative brand mark; the adjacent "Derive" wordmark labels it
+  <svg
+    width={Math.round(size * (620 / 824))}
+    height={size}
+    viewBox="0 0 620 824"
+    fill="none"
+    aria-hidden
+  >
     <path
-      d="M16 7l7 7v11h-4.6v-6.2h-4.8V25H9V14l7-7z"
-      fill="none"
-      stroke="#8a7dc0"
-      strokeWidth="1.7"
-      strokeLinejoin="round"
+      d="M404.01 217.285L271.071 140.531L404.01 63.7773L536.95 140.531L404.01 217.285ZM343.201 686.623L343.063 686.703C298.797 712.261 243.462 680.313 243.462 629.197C243.462 605.464 256.131 583.533 276.691 571.677L348.791 530.099V466.183L215.853 542.936L83.0526 466.183L243.462 373.692V188.295L376.401 265.049V629.119C376.401 652.841 363.746 674.761 343.201 686.623ZM188.243 744.209L55.4433 667.455V514.085L188.243 590.839V744.209ZM404.01 -1.19209e-05L188.243 124.517V341.803L0.224609 450.308V699.344L215.853 824L431.619 699.344V303.385C431.619 279.663 444.275 257.743 464.819 245.88L464.957 245.801C509.225 220.243 564.559 252.189 564.559 303.305V303.444C564.559 327.179 551.89 349.108 531.329 360.965L459.229 402.544V466.321L619.777 373.692V124.517L404.01 -1.19209e-05Z"
+      fill="currentColor"
     />
-    <rect x="13.6" y="6.4" width="4.8" height="4.8" rx="1.2" fill="#655999" />
   </svg>
 )

@@ -6,7 +6,7 @@ import type {
   UserDir,
   UserProfile,
   ViewStats,
-} from "@dock/core"
+} from "@derive/core"
 import { sql } from "drizzle-orm"
 import { drizzle } from "drizzle-orm/d1"
 import { makeRepos, schema } from "./repos"
@@ -25,7 +25,7 @@ const VIEW_WINDOW_MS = 30 * 86400_000
  *
  * Experimental: the shared query logic rides on the SQLite suite and the schema on
  * schema-conformance, but the D1-specific runtime path has no integration test yet
- * and Dock ships no Worker entrypoint. Treat as unverified. See DEPLOY.md.
+ * and Derive ships no Worker entrypoint. Treat as unverified. See DEPLOY.md.
  */
 export function createD1Store(d1: D1Database): MetaStore {
   const db = drizzle(d1, { schema })
@@ -141,7 +141,7 @@ export function createD1Store(d1: D1Database): MetaStore {
         return []
       }
     },
-    // Map GitHub numeric user ids to Dock accounts (account.accountId → user), scoped to
+    // Map GitHub numeric user ids to Derive accounts (account.accountId → user), scoped to
     // the github social provider. Best-effort — [] when the Better Auth tables are absent.
     usersByGithubIds: async (ghIds: string[]): Promise<GithubUserMapping[]> => {
       if (ghIds.length === 0) return []

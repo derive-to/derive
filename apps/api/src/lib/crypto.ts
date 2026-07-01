@@ -14,7 +14,7 @@ export const sha256 = (s: string): string => createHash("sha256").update(s).dige
 // and read back on the callback: it binds the install to the workspace + user
 // who started it (so the callback can't be replayed into another workspace) and
 // expires. Format: `<base64url(json)>.<hmac>`, keyed off the server auth secret.
-const stateKey = (secret: string): string => `dock-oauth-state:${secret}`
+const stateKey = (secret: string): string => `derive-oauth-state:${secret}`
 
 export const signState = (
   payload: Record<string, unknown>,
@@ -53,7 +53,7 @@ export const verifyState = <T>(
 // was configured still reads back — it just wasn't encrypted. Runs on Node and
 // the Cloudflare Worker (node:crypto + Buffer under nodejs_compat).
 const encKey = (passphrase: string): Buffer =>
-  createHash("sha256").update(`dock-secret-enc:${passphrase}`).digest()
+  createHash("sha256").update(`derive-secret-enc:${passphrase}`).digest()
 
 export const encryptSecret = (plain: string, passphrase: string): string => {
   const iv = randomBytes(12)

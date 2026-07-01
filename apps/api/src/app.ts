@@ -1,4 +1,4 @@
-import { type ArtifactRecord, parseRef } from "@dock/core"
+import { type ArtifactRecord, parseRef } from "@derive/core"
 import { type Context, Hono } from "hono"
 import { compress } from "hono/compress"
 import { OAUTH_SCOPES } from "./auth-config"
@@ -189,7 +189,7 @@ export function createApp(deps: AppDeps): Hono {
         return next()
       const isSub = !!subBase && host !== subBase && host.endsWith(`.${subBase}`)
       if (!isSub && !customEnabled) return next()
-      // The served HTML references /raw/dock-client.js; let raw + health through.
+      // The served HTML references /raw/derive-client.js; let raw + health through.
       if (c.req.path === "/healthz" || c.req.path.startsWith("/raw/")) return next()
       const record = await ctx.meta.getDomain(host)
       // Unknown subdomain → 404 (clearly ours); unknown/pending custom host → fall
@@ -302,7 +302,7 @@ export function createApp(deps: AppDeps): Hono {
     return c.html(consentHTML({ clientName, scopes, query: new URL(c.req.url).search }))
   })
 
-  // Hosted callback for the CLI/native OAuth flow (`dock login`). A command-line
+  // Hosted callback for the CLI/native OAuth flow (`derive login`). A command-line
   // client registers this as its redirect_uri instead of localhost; after consent
   // the browser lands here with the one-time code, which we display for the user to
   // paste back into the terminal (the PKCE verifier stays on their machine).
@@ -406,11 +406,11 @@ export function createApp(deps: AppDeps): Hono {
   if (!deps.serveWeb)
     app.get("/", (c) =>
       c.html(
-        `<!doctype html><meta charset="utf-8"><title>Dock</title>
+        `<!doctype html><meta charset="utf-8"><title>Derive</title>
 <body style="font:16px/1.6 system-ui;background:#f6f0e3;color:#2a2540;display:grid;place-items:center;height:100vh;margin:0">
-<div style="text-align:center"><h1 style="letter-spacing:-.02em">Dock</h1>
+<div style="text-align:center"><h1 style="letter-spacing:-.02em">Derive</h1>
 <p>An open home for AI-generated artifacts.<br>
-<code style="background:#eee7d6;padding:2px 8px;border-radius:6px">dock publish ./your-thing</code></p></div>`,
+<code style="background:#eee7d6;padding:2px 8px;border-radius:6px">derive publish ./your-thing</code></p></div>`,
       ),
     )
 

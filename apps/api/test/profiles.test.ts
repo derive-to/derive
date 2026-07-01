@@ -1,4 +1,4 @@
-import { newId } from "@dock/core"
+import { newId } from "@derive/core"
 import { describe, expect, it } from "vitest"
 import { as, jsonAs, makeAuthedApp, type TestUser } from "./helpers"
 
@@ -10,7 +10,7 @@ const post = (
 
 describe("usernames + public profiles", () => {
   it("claims a handle, then serves a public profile with no email", async () => {
-    const nia: TestUser = { id: "u_nia", email: "nia@dock.test", name: "Nia", image: "x.png" }
+    const nia: TestUser = { id: "u_nia", email: "nia@derive.test", name: "Nia", image: "x.png" }
     const { app } = makeAuthedApp("profiles-claim", [nia])
 
     const claim = await post(app, as(nia.email), "Nia") // mixed case → lowercased
@@ -40,14 +40,19 @@ describe("usernames + public profiles", () => {
   })
 
   it("reflects a seeded handle on /v1/me", async () => {
-    const pat: TestUser = { id: "u_pat", email: "pat@dock.test", name: "Pat", username: "pat" }
+    const pat: TestUser = { id: "u_pat", email: "pat@derive.test", name: "Pat", username: "pat" }
     const { app } = makeAuthedApp("profiles-me", [pat])
     const me = await (await app.request("/v1/me", { headers: as(pat.email) })).json()
     expect(me.user.username).toBe("pat")
   })
 
   it("sets a role + bio that surface on the public profile (and trims/caps input)", async () => {
-    const ravi: TestUser = { id: "u_ravi", email: "ravi@dock.test", name: "Ravi", username: "ravi" }
+    const ravi: TestUser = {
+      id: "u_ravi",
+      email: "ravi@derive.test",
+      name: "Ravi",
+      username: "ravi",
+    }
     const { app } = makeAuthedApp("profiles-role", [ravi])
 
     // Set a role + blurb; whitespace is trimmed.
@@ -83,12 +88,14 @@ describe("usernames + public profiles", () => {
   })
 
   it("404s an unclaimed handle", async () => {
-    const { app } = makeAuthedApp("profiles-404", [{ id: "u_x", email: "x@dock.test", name: "X" }])
+    const { app } = makeAuthedApp("profiles-404", [
+      { id: "u_x", email: "x@derive.test", name: "X" },
+    ])
     expect((await app.request("/v1/users/ghost")).status).toBe(404)
   })
 
   it("rejects a malformed or reserved handle (400) and claims nothing", async () => {
-    const u: TestUser = { id: "u_bad", email: "bad@dock.test", name: "Bad" }
+    const u: TestUser = { id: "u_bad", email: "bad@derive.test", name: "Bad" }
     const { app } = makeAuthedApp("profiles-bad", [u])
     expect((await post(app, as(u.email), "a")).status).toBe(400) // too short
     expect((await post(app, as(u.email), "no spaces")).status).toBe(400) // bad chars
@@ -98,8 +105,8 @@ describe("usernames + public profiles", () => {
   })
 
   it("won't let two accounts share a handle (409)", async () => {
-    const ann: TestUser = { id: "u_ann", email: "ann@dock.test", name: "Ann" }
-    const bob: TestUser = { id: "u_bob", email: "bob@dock.test", name: "Bob" }
+    const ann: TestUser = { id: "u_ann", email: "ann@derive.test", name: "Ann" }
+    const bob: TestUser = { id: "u_bob", email: "bob@derive.test", name: "Bob" }
     const { app } = makeAuthedApp("profiles-unique", [ann, bob])
 
     expect((await post(app, as(ann.email), "shared")).status).toBe(200)
@@ -113,7 +120,7 @@ describe("usernames + public profiles", () => {
   })
 
   it("renames: the old handle frees up, the new one resolves", async () => {
-    const r: TestUser = { id: "u_ren", email: "ren@dock.test", name: "Ren" }
+    const r: TestUser = { id: "u_ren", email: "ren@derive.test", name: "Ren" }
     const { app } = makeAuthedApp("profiles-rename", [r])
     await post(app, as(r.email), "ren-one")
     expect((await post(app, as(r.email), "ren-two")).status).toBe(200)
@@ -122,7 +129,9 @@ describe("usernames + public profiles", () => {
   })
 
   it("anonymous callers cannot claim a handle (write lockdown)", async () => {
-    const { app } = makeAuthedApp("profiles-anon", [{ id: "u_o", email: "o@dock.test", name: "O" }])
+    const { app } = makeAuthedApp("profiles-anon", [
+      { id: "u_o", email: "o@derive.test", name: "O" },
+    ])
     // No session header + no token → not a principal → blocked at the door.
     const res = await app.request("/v1/me/username", {
       method: "POST",
@@ -148,7 +157,7 @@ const uploadAvatar = (
 
 describe("profile avatars", () => {
   it("accepts a raster upload, serves it back, and surfaces it on the profile", async () => {
-    const u: TestUser = { id: "u_av", email: "av@dock.test", name: "Ava" }
+    const u: TestUser = { id: "u_av", email: "av@derive.test", name: "Ava" }
     const { app } = makeAuthedApp("avatar-ok", [u])
     await post(app, as(u.email), "ava") // claim a handle so we can read the profile
 
@@ -169,7 +178,7 @@ describe("profile avatars", () => {
   })
 
   it("rejects non-images and SVG (no stored-XSS), and 404s an unknown key", async () => {
-    const u: TestUser = { id: "u_av2", email: "av2@dock.test", name: "Avb" }
+    const u: TestUser = { id: "u_av2", email: "av2@derive.test", name: "Avb" }
     const { app } = makeAuthedApp("avatar-bad", [u])
     const enc = (s: string) => new TextEncoder().encode(s)
     expect((await uploadAvatar(app, as(u.email), enc("hello"), "image/png", "x.png")).status).toBe(
@@ -191,7 +200,7 @@ describe("profile avatars", () => {
 
   it("anonymous callers cannot upload an avatar (write lockdown)", async () => {
     const { app } = makeAuthedApp("avatar-anon", [
-      { id: "u_av3", email: "av3@dock.test", name: "C" },
+      { id: "u_av3", email: "av3@derive.test", name: "C" },
     ])
     const fd = new FormData()
     fd.append("file", new Blob([PNG as BlobPart], { type: "image/png" }), "x.png")

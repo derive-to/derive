@@ -1,6 +1,6 @@
 /**
  * Client mirror of packages/core/src/username.ts — kept separate so the SPA
- * bundle doesn't pull in @dock/core (same reasoning as lib/parse-ref). The server
+ * bundle doesn't pull in @derive/core (same reasoning as lib/parse-ref). The server
  * is authoritative (POST /v1/me/username re-validates); this is for instant form
  * feedback + a starting suggestion. Keep the rules in sync with core.
  */
@@ -16,7 +16,7 @@ const RESERVED = new Set([
   "api",
   "app",
   "apps",
-  "dock",
+  "derive",
   "root",
   "system",
   "support",

@@ -1,12 +1,12 @@
 #!/usr/bin/env node
-// dock — scaffold, publish, and run the review loop against a Dock server.
-//   dock init [dir] [--template md|html|slides|site] [--title t]
-//   dock login [--server url] [--scope "…"]   OAuth sign-in; saves a token
-//   dock publish [file|dir] [--id --title --slug --spa --message --name --visibility --server --token]
-//   dock comments [--id]                 list the artifact's comment threads
-//   dock open [--id]                     open the artifact in a browser
-//   dock reply <thread_id> <message…>    reply in a thread
-//   dock resolve|reopen <comment_id>     set a thread's state
+// derive — scaffold, publish, and run the review loop against a Derive server.
+//   derive init [dir] [--template md|html|slides|site] [--title t]
+//   derive login [--server url] [--scope "…"]   OAuth sign-in; saves a token
+//   derive publish [file|dir] [--id --title --slug --spa --message --name --visibility --server --token]
+//   derive comments [--id]                 list the artifact's comment threads
+//   derive open [--id]                     open the artifact in a browser
+//   derive reply <thread_id> <message…>    reply in a thread
+//   derive resolve|reopen <comment_id>     set a thread's state
 import { spawn } from "node:child_process"
 import { createHash, randomBytes } from "node:crypto"
 import { readdirSync, readFileSync, statSync } from "node:fs"
@@ -50,27 +50,27 @@ if (cmd === "init") {
   const entry = created.find((f) => f !== CONFIG_FILE && f !== "AGENTS.md") ?? "the entry"
   console.log(
     created.length
-      ? `\nReady (${template}). Edit ${entry}, then run \`dock publish\`.`
+      ? `\nReady (${template}). Edit ${entry}, then run \`derive publish\`.`
       : `\nNothing to do — ${CONFIG_FILE} already here.`,
   )
   process.exit(0)
 }
 
-// ---- dock login (OAuth 2.1, PKCE, hosted callback) ------------------------
+// ---- derive login (OAuth 2.1, PKCE, hosted callback) ------------------------
 // The native-app flow without the localhost bounce: register a public client,
-// send the user to approve consent in their browser, land on Dock's hosted
+// send the user to approve consent in their browser, land on Derive's hosted
 // /oauth/cli-callback page, and have them paste the one-time code back here. The
 // PKCE verifier never leaves this process, so the exchange (and the resulting
 // token) stay bound to this machine.
 if (cmd === "login") {
   const b64url = (b) =>
     b.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "")
-  const server = (flags.server ?? process.env.DOCK_SERVER ?? "http://localhost:8080").replace(
+  const server = (flags.server ?? process.env.DERIVE_SERVER ?? "http://localhost:8080").replace(
     /\/+$/,
     "",
   )
   const redirect = `${server}/oauth/cli-callback`
-  const scope = flags.scope ?? "openid dock:read dock:publish"
+  const scope = flags.scope ?? "openid derive:read derive:publish"
   const verifier = b64url(randomBytes(64))
   const challenge = b64url(createHash("sha256").update(verifier).digest())
   const state = b64url(randomBytes(16))
@@ -79,7 +79,7 @@ if (cmd === "login") {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
-      client_name: flags.name ?? "Dock CLI",
+      client_name: flags.name ?? "Derive CLI",
       redirect_uris: [redirect],
       token_endpoint_auth_method: "none",
       grant_types: ["authorization_code", "refresh_token"],
@@ -99,7 +99,7 @@ if (cmd === "login") {
     `&scope=${encodeURIComponent(scope)}` +
     `&code_challenge=${challenge}&code_challenge_method=S256&state=${state}`
 
-  console.log(`\nOpening Dock to authorize (scopes: ${scope}).`)
+  console.log(`\nOpening Derive to authorize (scopes: ${scope}).`)
   console.log(`If your browser doesn't open, visit:\n\n  ${authUrl}\n`)
   const opener =
     process.platform === "darwin" ? "open" : process.platform === "win32" ? "start" : "xdg-open"
@@ -109,7 +109,7 @@ if (cmd === "login") {
 
   const code = await new Promise((resolve) => {
     const rl = createInterface({ input: process.stdin, output: process.stdout })
-    rl.question("Paste the code from the Dock page: ", (a) => {
+    rl.question("Paste the code from the Derive page: ", (a) => {
       rl.close()
       resolve((a ?? "").trim())
     })
@@ -140,7 +140,7 @@ if (cmd === "login") {
 
   const path = saveToken(server, tj.access_token)
   console.log(`\n✓ Signed in to ${server}`)
-  console.log(`  Token saved to ${path} — \`dock publish\` will use it automatically.`)
+  console.log(`  Token saved to ${path} — \`derive publish\` will use it automatically.`)
   process.exit(0)
 }
 
@@ -189,7 +189,7 @@ if (LOOP.includes(cmd)) {
     const threadId = positional[0]
     const body = positional.slice(1).join(" ")
     if (!threadId || !body) {
-      console.error(`usage: dock reply <thread_id> <message…>`)
+      console.error(`usage: derive reply <thread_id> <message…>`)
       process.exit(1)
     }
     const res = await fetch(`${base}/comments`, {
@@ -205,7 +205,7 @@ if (LOOP.includes(cmd)) {
   // resolve | reopen
   const commentId = positional[0]
   if (!commentId) {
-    console.error(`usage: dock ${cmd} <comment_id>`)
+    console.error(`usage: derive ${cmd} <comment_id>`)
     process.exit(1)
   }
   const res = await fetch(`${base}/comments/${commentId}/resolve`, {
@@ -220,17 +220,17 @@ if (LOOP.includes(cmd)) {
 
 if (cmd !== "publish") {
   console.error(`usage:
-  dock init [dir] [--template md|html|slides|site] [--title t]
-  dock login [--server url] [--scope "openid dock:read dock:publish"]   OAuth sign-in; saves a token
-  dock publish [file|dir] [--id X] [--title t] [--slug s] [--spa] [--message m] [--name "x"] [--visibility v] [--password p] [--server url] [--token t] [--json]
-  dock comments [--id X]                 list comment threads
-  dock open [--id X]                     open the artifact in a browser
-  dock reply <thread_id> <message…>      reply in a thread
-  dock resolve|reopen <comment_id>       set a thread's state`)
+  derive init [dir] [--template md|html|slides|site] [--title t]
+  derive login [--server url] [--scope "openid derive:read derive:publish"]   OAuth sign-in; saves a token
+  derive publish [file|dir] [--id X] [--title t] [--slug s] [--spa] [--message m] [--name "x"] [--visibility v] [--password p] [--server url] [--token t] [--json]
+  derive comments [--id X]                 list comment threads
+  derive open [--id X]                     open the artifact in a browser
+  derive reply <thread_id> <message…>      reply in a thread
+  derive resolve|reopen <comment_id>       set a thread's state`)
   process.exit(cmd ? 1 : 0)
 }
 
-// Merge dock.json (if present in cwd) with flags; flags win.
+// Merge derive.json (if present in cwd) with flags; flags win.
 let config = null
 try {
   config = loadConfig(".")
@@ -242,7 +242,7 @@ const p = resolvePublish({ ...flags, target: positional[0] }, config)
 
 if (!p.target) {
   console.error(
-    `error: nothing to publish. Pass a file/dir, or set "entry" in ${CONFIG_FILE} (run \`dock init\`).`,
+    `error: nothing to publish. Pass a file/dir, or set "entry" in ${CONFIG_FILE} (run \`derive init\`).`,
   )
   process.exit(1)
 }
@@ -289,7 +289,7 @@ if (p.message) form.append("message", p.message)
 if (p.name) form.append("name", p.name)
 if (p.visibility) form.append("visibility", p.visibility)
 // --password is a per-publish secret for `--visibility password`; never put it in
-// dock.json (it isn't a config field), only pass it on the command line.
+// derive.json (it isn't a config field), only pass it on the command line.
 if (p.password) form.append("password", p.password)
 
 const url = p.id ? `${p.server}/v1/artifacts/${p.id}/versions` : `${p.server}/v1/artifacts`

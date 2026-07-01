@@ -5,8 +5,8 @@ import { consentHTML } from "../src/oauth-consent"
 describe("oauth consent screen", () => {
   const html = consentHTML({
     clientName: "Claude Code",
-    scopes: ["openid", "dock:read", "dock:propose", "dock:publish"],
-    query: "client_id=cli&scope=openid+dock:read&code=abc",
+    scopes: ["openid", "derive:read", "derive:propose", "derive:publish"],
+    query: "client_id=cli&scope=openid+derive:read&code=abc",
   })
 
   it("renders the authorize card with the client name and scope labels", () => {

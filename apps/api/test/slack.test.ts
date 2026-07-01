@@ -2,8 +2,8 @@ import { createHmac } from "node:crypto"
 import { mkdtempSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { type ArtifactRecord, newId, type SlackThreadLinkRecord } from "@dock/core"
-import { SqliteMetaStore } from "@dock/db/sqlite"
+import { type ArtifactRecord, newId, type SlackThreadLinkRecord } from "@derive/core"
+import { SqliteMetaStore } from "@derive/db/sqlite"
 import { describe, expect, it } from "vitest"
 import { parseMeta } from "../src/lib/comments"
 import { slackAuthorizeUrl, verifySlackSignature } from "../src/lib/slack"
@@ -34,7 +34,7 @@ describe("slack signature verification", () => {
 
 describe("slack authorize url", () => {
   it("requests the bot scopes needed for posting + reply-back", () => {
-    const u = new URL(slackAuthorizeUrl("cid", "https://dock.test/cb", "state123"))
+    const u = new URL(slackAuthorizeUrl("cid", "https://derive.test/cb", "state123"))
     expect(u.searchParams.get("client_id")).toBe("cid")
     expect(u.searchParams.get("state")).toBe("state123")
     expect(u.searchParams.get("scope")).toContain("chat:write")
@@ -43,7 +43,7 @@ describe("slack authorize url", () => {
 })
 
 describe("slack reply ingestion (inbound)", () => {
-  const dir = mkdtempSync(join(tmpdir(), "dock-slack-"))
+  const dir = mkdtempSync(join(tmpdir(), "derive-slack-"))
   const meta = new SqliteMetaStore(join(dir, "db.sqlite"))
 
   const setup = async () => {
@@ -70,7 +70,7 @@ describe("slack reply ingestion (inbound)", () => {
     return { artifact, link }
   }
 
-  it("creates a Dock reply on the linked thread from a human Slack message", async () => {
+  it("creates a Derive reply on the linked thread from a human Slack message", async () => {
     const { link } = await setup()
     const created = await ingestSlackReply(meta, link, {
       ts: "1700.2",
@@ -90,7 +90,7 @@ describe("slack reply ingestion (inbound)", () => {
     const r = await ingestSlackReply(meta, link, {
       ts: "1700.3",
       userId: "UBOT",
-      userName: "dock",
+      userName: "derive",
       text: "echo",
       botUserId: "UBOT",
     })

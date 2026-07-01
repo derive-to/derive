@@ -435,13 +435,13 @@ export function Artifact() {
                 openCount={openCount}
                 showEdit={editable && canPropose && !editing && !art.managed}
                 editLabel={effectiveCanPublish ? "Edit source (dev)" : "Propose change (dev)"}
-                isDeck={!!deck || art.current_content_type === "text/x-dock-deck"}
+                isDeck={!!deck || art.current_content_type === "text/x-derive-deck"}
                 // Reader only helps non-responsive HTML — not markdown (already responsive)
                 // or decks (slides). Hidden while viewing a diff.
                 showReader={
                   format === "html" &&
                   !deck &&
-                  art.current_content_type !== "text/x-dock-deck" &&
+                  art.current_content_type !== "text/x-derive-deck" &&
                   view !== "diff"
                 }
                 reader={reader}

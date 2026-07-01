@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest"
 import { as, makeAuthedApp, proposeAs, publishAs, type TestUser } from "./helpers"
 
 describe("reviews: propose → approve goes live; commenter can't approve", () => {
-  const owner: TestUser = { id: "u_ro", email: "ro@dock.test", name: "Ro" }
-  const cassie: TestUser = { id: "u_cassie", email: "cassie@dock.test", name: "Cassie" }
+  const owner: TestUser = { id: "u_ro", email: "ro@derive.test", name: "Ro" }
+  const cassie: TestUser = { id: "u_cassie", email: "cassie@derive.test", name: "Cassie" }
   const { app } = makeAuthedApp("reviews", [owner, cassie], "commenter")
   let shortId: string
   let proposalId: string
@@ -76,8 +76,8 @@ describe("reviews: propose → approve goes live; commenter can't approve", () =
 })
 
 describe("reviews: request changes and withdraw keep content live-unchanged", () => {
-  const owner: TestUser = { id: "u_rc", email: "rc@dock.test", name: "Rc" }
-  const dana: TestUser = { id: "u_dana", email: "dana@dock.test", name: "Dana" }
+  const owner: TestUser = { id: "u_rc", email: "rc@derive.test", name: "Rc" }
+  const dana: TestUser = { id: "u_dana", email: "dana@derive.test", name: "Dana" }
   const { app } = makeAuthedApp("reviews-rc", [owner, dana], "commenter")
   let shortId: string
 

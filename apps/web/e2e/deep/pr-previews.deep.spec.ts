@@ -8,7 +8,7 @@ import { expect, test } from "../fixtures"
 const iso = (msAgo: number) => new Date(Date.now() - msAgo).toISOString()
 
 const SYNC_PAYLOAD = {
-  app: { configured: true, slug: "dock-acme" },
+  app: { configured: true, slug: "derive-acme" },
   installations: [{ installation_id: "1", account_login: "acme" }],
   sources: [
     {

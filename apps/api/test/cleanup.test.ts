@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest"
 import { anonApp, as, jsonAs, makeAuthedApp, publishAs, type TestUser } from "./helpers"
 
 describe("bug-hunt cleanup fixes", () => {
-  const owner: TestUser = { id: "u_cl_owner", email: "owner-cl@dock.test", name: "Owner CL" }
+  const owner: TestUser = { id: "u_cl_owner", email: "owner-cl@derive.test", name: "Owner CL" }
 
   // B-017: comment body is length-capped.
   it("B-017: rejects an over-long comment body (max 10000)", async () => {

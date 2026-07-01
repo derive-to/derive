@@ -6,7 +6,7 @@ import viteReact, { reactCompilerPreset } from "@vitejs/plugin-react"
 import { visualizer } from "rollup-plugin-visualizer"
 import { defineConfig } from "vite"
 
-const API = process.env.DOCK_API ?? "http://localhost:8090"
+const API = process.env.DERIVE_API ?? "http://localhost:8090"
 
 // `ANALYZE=1 pnpm build` writes a gzip treemap to dist/stats.html for spotting
 // what's heavy. Off by default so normal builds don't open a browser tab.
@@ -40,7 +40,7 @@ export default defineConfig({
     },
   },
   server: {
-    port: 3000,
+    port: 3090,
     // /a is the SPA's own route — only proxy API + raw artifact bytes + the
     // server-rendered OAuth consent page.
     proxy: Object.fromEntries(
