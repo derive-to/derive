@@ -67,14 +67,7 @@ function SideItem({
       </span>
       {!collapsed && <span className="overflow-hidden text-ellipsis">{label}</span>}
       {!collapsed && count !== undefined && (
-        <span
-          className={cn(
-            "ml-auto font-mono text-2xs text-muted-foreground",
-            active && "text-accent-foreground",
-          )}
-        >
-          {count}
-        </span>
+        <span className="ml-auto font-mono text-2xs text-muted-foreground">{count}</span>
       )}
     </Link>
   )
@@ -381,12 +374,7 @@ export function NavRail() {
                       <Icon name="collection" size={18} />
                     </span>
                     <span className="overflow-hidden text-ellipsis">{col.title}</span>
-                    <span
-                      className={cn(
-                        "ml-auto font-mono text-2xs text-muted-foreground",
-                        onLibrary && search.collection === col.id && "text-accent-foreground",
-                      )}
-                    >
+                    <span className="ml-auto font-mono text-2xs text-muted-foreground">
                       {col.count}
                     </span>
                   </Link>

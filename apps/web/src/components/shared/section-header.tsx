@@ -1,9 +1,8 @@
 import type { ReactNode } from "react"
 import { cn } from "@/lib/utils"
 
-// A section title heading a block of controls (settings panels, the library
-// sidebar groups). Small display-weight text with an optional trailing action.
-// Callers add their own vertical margin via className.
+// A section title heading a block of controls, with an optional trailing action.
+// Small display-weight text; callers add their own vertical margin via className.
 export function SectionHeader({
   children,
   action,

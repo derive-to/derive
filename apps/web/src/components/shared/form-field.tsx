@@ -3,7 +3,6 @@ import { cn } from "@/lib/utils"
 
 // A labelled form control: a label above its input, plus optional helper text.
 // Pass `htmlFor` (matching the control's id) so the label is properly associated.
-// The one canonical label+field rhythm — used by the showcase and new surfaces.
 export function FormField({
   label,
   htmlFor,

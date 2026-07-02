@@ -34,7 +34,7 @@ export function artifactTypeLabel(a: Artifact): string {
 // One card in the library grid. Stretched-link pattern: the open button's
 // ::after covers the whole card so a click anywhere (thumbnail included) opens
 // it, while the star + tag chips sit above (z-20) and stay independently
-// clickable. `group` lets the thumb + title pick up the accent on hover.
+// clickable. The card lifts on hover; `group` lets the thumbnail respond too.
 export function ArtifactCard({
   artifact: a,
   onOpen,

@@ -2,8 +2,8 @@ import type { ReactNode } from "react"
 import { cn } from "@/lib/utils"
 
 // The artifact format tag (MD · HTML · Deck · Site · Skill). A deliberately crisp,
-// monospace, code-like label — the squarer counterpart to the pill-shaped <Badge>,
-// which is reserved for status. One home for what was three identical inline spans.
+// monospace label — the squarer counterpart to the pill-shaped <Badge>, which is
+// reserved for status.
 export function TypeTag({ children, className }: { children: ReactNode; className?: string }) {
   return (
     <span
