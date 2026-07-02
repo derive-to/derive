@@ -7,13 +7,16 @@
  *   reaches -left-4 into that gutter — overflow clips at the padding-box edge,
  *   so the tick renders flush with the sidebar's edge without being cut.
  * - Rest labels are FULL-STRENGTH ink (Nemonic's calm confidence); only ICONS
- *   carry the muted register. Hover/current brighten the icon over the faint
- *   neutral wash — state is ink + the amber edge tick, never a heavier fill or
- *   a font-weight change.
+ *   carry the muted register. The row grammar lives in ./nav-row.ts (the ONE
+ *   source — SidebarItem composes ROW_BASE/ROW_ACTIVE, never re-declares
+ *   them): hover adds the transient bg-hover wash; the CURRENT row carries no
+ *   wash — state is the amber edge tick + full-ink icon, never a heavier fill
+ *   or a font-weight change.
  */
 import { Link } from "@tanstack/react-router"
 import type * as React from "react"
 import { cn } from "@/lib/utils"
+import { ROW_ACTIVE, ROW_BASE } from "./nav-row"
 
 export function Sidebar({ className, ...props }: React.ComponentProps<"nav">) {
   return <nav {...props} className={cn("flex h-full min-h-0 flex-col", className)} />
@@ -83,21 +86,13 @@ const RouterLink = Link as unknown as (
   props: React.ComponentProps<"a"> & { to: string; search?: unknown; params?: unknown },
 ) => React.ReactElement
 
-const ITEM_CLASSES = cn(
-  "flex w-full items-center gap-3 rounded-lg px-2 py-2.5 text-left text-base font-medium text-foreground outline-none sm:py-2 sm:text-sm",
-  "[&_svg]:shrink-0 [&_svg]:text-muted-foreground [&_svg:not([class*='size-'])]:size-4.5",
-  "hover:bg-hover hover:[&_svg]:text-foreground",
-  "data-current:bg-hover data-current:[&_svg]:text-foreground",
-  "focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring",
-)
-
 export function SidebarItem({
   current,
   className,
   children,
   ...props
 }: {
-  /** Marks the row as the current location: neutral wash, full-ink icon, amber edge tick. */
+  /** Marks the row as the current location: amber edge tick + full-ink icon — no fill. */
   current?: boolean
   className?: string
   children?: React.ReactNode
@@ -111,45 +106,35 @@ export function SidebarItem({
       "className" | "children"
     >)
 )) {
-  const classes = cn(ITEM_CLASSES, className)
-  // The edge tick reaches into the surrounding region's p-4 gutter (see the
-  // file doctrine). Static — no layout animation, no motion dependency.
-  const tick = current ? (
-    <span className="absolute inset-y-2 -left-4 w-0.5 rounded-full bg-primary" />
-  ) : null
+  // The row grammar (incl. the current row's before: edge tick, which reaches
+  // into the surrounding region's p-4 gutter — see the file doctrine) comes
+  // verbatim from nav-row.ts; this component only picks link vs button.
+  const classes = cn(ROW_BASE, current && ROW_ACTIVE, className)
 
   if (props.to !== undefined) {
     const { to, search, params, ...rest } = props
     return (
-      <span className="relative block">
-        {tick}
-        <RouterLink
-          {...rest}
-          to={to}
-          search={search}
-          params={params}
-          className={classes}
-          data-current={current ? "true" : undefined}
-          aria-current={current ? "page" : undefined}
-        >
-          {children}
-        </RouterLink>
-      </span>
-    )
-  }
-  return (
-    <span className="relative block">
-      {tick}
-      <button
-        type="button"
-        {...props}
+      <RouterLink
+        {...rest}
+        to={to}
+        search={search}
+        params={params}
         className={classes}
-        data-current={current ? "true" : undefined}
         aria-current={current ? "page" : undefined}
       >
         {children}
-      </button>
-    </span>
+      </RouterLink>
+    )
+  }
+  return (
+    <button
+      type="button"
+      {...props}
+      className={classes}
+      aria-current={current ? "page" : undefined}
+    >
+      {children}
+    </button>
   )
 }
 
