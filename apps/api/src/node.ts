@@ -1,5 +1,5 @@
 import { mkdirSync, readFileSync } from "node:fs"
-import { join, relative } from "node:path"
+import { join, relative, resolve } from "node:path"
 import type { BlobStore, MetaStore } from "@derive/core"
 import { PgMetaStore } from "@derive/db/pg"
 import { SqliteMetaStore } from "@derive/db/sqlite"
@@ -21,6 +21,19 @@ import { log } from "./log"
 import { createNodeSyncRunner } from "./node-sync"
 import { type ChannelSenders, startWebhookWorker } from "./webhooks"
 import { nodeDnsGuard } from "./webhooks-node"
+
+// Best-effort load a local .env (repo root, then cwd) before reading config, so
+// wiring up Postgres / OAuth / S3 locally is just editing .env instead of exporting
+// vars each shell. Real deployments inject env vars directly, so a missing file is
+// expected — hence the swallowed throw.
+for (const envPath of [join(import.meta.dirname, "../../../.env"), resolve(".env")]) {
+  try {
+    process.loadEnvFile(envPath)
+    break
+  } catch {
+    /* no .env at this path — carry on */
+  }
+}
 
 const cfg = loadConfig()
 mkdirSync(join(cfg.dataDir, "blobs"), { recursive: true })

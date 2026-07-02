@@ -6,6 +6,11 @@ dist/
 .wrangler/
 .tanstack/
 
+# Local env files (secrets) — the committed template is .env.example
+.env
+.env.*
+!.env.example
+
 # e2e (Playwright)
 .e2e-data/
 test-results/
