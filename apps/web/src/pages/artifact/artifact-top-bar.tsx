@@ -1,3 +1,4 @@
+import { useState } from "react"
 import type { GeneralRole, Role } from "@/api"
 import { Icon } from "@/components/icons"
 import { ShareButton } from "@/components/ShareDialog"
@@ -9,7 +10,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { cn } from "@/lib/utils"
-import { CollectionsMenu, ReportButton, StarButton, TagsMenu } from "./header-actions"
+import { CollectionsMenu, ReportDialog, StarButton, TagsMenu } from "./header-actions"
 
 /**
  * The artifact header actions (portaled into the shell top bar): favorite, tags,
@@ -56,6 +57,7 @@ export function ArtifactTopBar(props: {
   onLockToggle: () => void
 }) {
   const { shortId, openProposals, proposalsTotal } = props
+  const [reportOpen, setReportOpen] = useState(false)
   return (
     <>
       <StarButton shortId={shortId} favorite={props.favorite} onChange={props.onFavorite} />
@@ -76,7 +78,7 @@ export function ArtifactTopBar(props: {
         visibility={props.visibility}
         generalRole={props.generalRole}
       />
-      <ReportButton shortId={shortId} />
+      <ReportDialog shortId={shortId} open={reportOpen} onOpenChange={setReportOpen} />
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <Button
@@ -115,6 +117,9 @@ export function ArtifactTopBar(props: {
               {props.locked ? "Unlock changes" : "Lock changes"}
             </DropdownMenuItem>
           )}
+          <DropdownMenuItem data-testid="artifact-report" onSelect={() => setReportOpen(true)}>
+            <Icon name="report" size={16} /> Report artifact
+          </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
       {/* Reader: re-render a non-responsive HTML artifact as clean, mobile-friendly
