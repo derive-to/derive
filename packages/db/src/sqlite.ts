@@ -341,8 +341,22 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
         sets.push("about = ?")
         args.push(fields.about)
       }
+      if (fields.houseStyle !== undefined) {
+        sets.push("houseStyle = ?")
+        args.push(fields.houseStyle)
+      }
       if (sets.length === 0) return
       raw.prepare(`UPDATE user SET ${sets.join(", ")} WHERE id = ?`).run(...args, userId)
+    },
+    getUserHouseStyle: async (userId): Promise<string | null> => {
+      try {
+        const row = raw.prepare("SELECT houseStyle FROM user WHERE id = ?").get(userId) as
+          | { houseStyle?: string | null }
+          | undefined
+        return row?.houseStyle ?? null
+      } catch {
+        return null // older/minimal user table without the column
+      }
     },
     searchDiscoverableUsers: async (q, limit): Promise<UserProfile[]> => {
       const s = q.trim().toLowerCase()

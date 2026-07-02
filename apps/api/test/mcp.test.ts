@@ -48,7 +48,7 @@ function appWithGrant(name: string, scopes: string) {
     baseUrl: "http://derive.test",
     token: "tok",
   })
-  return { app, token: `tok_${name}` }
+  return { app, token: `tok_${name}`, meta }
 }
 
 type App = ReturnType<typeof createApp>
@@ -147,6 +147,50 @@ describe("remote MCP endpoint (/mcp)", () => {
       "read_section",
     ])
       expect(names).not.toContain(gone)
+  })
+
+  it("exposes the workspace's House Style as resources + an instructions pointer", async () => {
+    const { app, token, meta } = appWithGrant("housestyle", "openid dock:read dock:publish")
+    const shortId = (await (await publish(app, token, "How we write Markdown")).json()).short_id
+    const art = await meta.getByShortId(shortId)
+    if (!art) throw new Error("no artifact")
+    // Seed a House Style collection containing the convention doc, point the workspace at it.
+    const collectionId = "col_hs"
+    await meta.createCollection({
+      id: collectionId,
+      org_id: art.org_id,
+      title: "House Style",
+      created_by: "u_o",
+    })
+    await meta.addCollectionItem(collectionId, art.id)
+    await meta.setOrgSettings(art.org_id, {
+      ...(await meta.getOrgSettings(art.org_id)),
+      houseStyle: { collectionId },
+    })
+
+    // Instructions carry the pointer (progressive disclosure — not the full text).
+    const init = await rpc(app, token, initBody)
+    const result = init.parsed?.result as { instructions?: string }
+    expect(result.instructions).toContain("House Style")
+    expect(result.instructions).toContain("1 convention doc")
+    expect(result.instructions).toContain("dock://house-style/*")
+
+    // The convention doc is a readable resource, fetched lazily.
+    const listed = await rpc(app, token, { jsonrpc: "2.0", id: 3, method: "resources/list" })
+    const uris = (
+      (listed.parsed?.result as { resources?: { uri: string }[] } | undefined)?.resources ?? []
+    ).map((r) => r.uri)
+    expect(uris).toContain(`dock://house-style/${shortId}`)
+
+    const read = await rpc(app, token, {
+      jsonrpc: "2.0",
+      id: 4,
+      method: "resources/read",
+      params: { uri: `dock://house-style/${shortId}` },
+    })
+    const text = (read.parsed?.result as { contents?: { text: string }[] } | undefined)
+      ?.contents?.[0]?.text
+    expect(text).toContain("How we write Markdown")
   })
 
   it("list_artifacts + read see the agent's own published artifact", async () => {

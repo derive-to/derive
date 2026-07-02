@@ -510,12 +510,15 @@ export interface MetaStore {
   setUserImage(userId: string, image: string): Promise<void>
   /** Opt a user in/out of people search (discoverable column). */
   setUserDiscoverable(userId: string, discoverable: boolean): Promise<void>
-  /** Set a user's team role + "what you do" blurb (profession/about columns). An
-   *  undefined field is left untouched; null clears it. */
+  /** Set a user's team role + "what you do" blurb (profession/about) + their personal
+   *  House Style (a JSON string). An undefined field is left untouched; null clears it. */
   setUserProfile(
     userId: string,
-    fields: { profession?: string | null; about?: string | null },
+    fields: { profession?: string | null; about?: string | null; houseStyle?: string | null },
   ): Promise<void>
+  /** A user's personal House Style as the stored JSON string (or null). Read for the
+   *  profile layer in agent context resolution. */
+  getUserHouseStyle(userId: string): Promise<string | null>
   /** People search: opted-in (discoverable) profiles matching `q` on username or
    *  name, capped to `limit`. Empty `q` returns nothing (no full enumeration). */
   searchDiscoverableUsers(q: string, limit: number): Promise<UserProfile[]>
@@ -1031,6 +1034,33 @@ export interface OrgSettings {
   githubPreviewLink: boolean
   /** Post Derive activity to the connected Slack workspace. */
   slackPost: boolean
+  /** The workspace's House Style: a conventions collection agents pull as context, plus
+   *  a visual theme for rendered docs. Absent until set. Mirrored on a profile (user
+   *  layer); resolved profile-over-workspace. */
+  houseStyle?: HouseStyle
+}
+
+/** How a workspace/profile likes its stuff built: a pointer to a "conventions"
+ *  collection (docs/skills agents read) and an optional visual theme for rendered docs. */
+export interface HouseStyle {
+  /** Collection of convention artifacts (the house-style docs). */
+  collectionId?: string
+  /** Visual theme applied to shell-rendered markdown/skill docs. */
+  theme?: ThemeTokens
+}
+
+/** Design tokens for the rendered-doc shell — emitted as CSS custom properties. Every
+ *  field optional; unset tokens fall back to Dock's defaults. `dark` overrides for dark mode. */
+export interface ThemeTokens {
+  palette?: Partial<
+    Record<"paper" | "panel" | "ink" | "soft" | "muted" | "line" | "accent", string>
+  >
+  fonts?: Partial<Record<"body" | "display" | "mono", string>>
+  dark?: {
+    palette?: Partial<
+      Record<"paper" | "panel" | "ink" | "soft" | "muted" | "line" | "accent", string>
+    >
+  }
 }
 
 export const DEFAULT_ORG_SETTINGS: OrgSettings = {

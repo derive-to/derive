@@ -213,6 +213,18 @@ export function createD1Store(d1: D1Database): MetaStore {
         await db.run(sql`UPDATE user SET profession = ${fields.profession} WHERE id = ${userId}`)
       if (fields.about !== undefined)
         await db.run(sql`UPDATE user SET about = ${fields.about} WHERE id = ${userId}`)
+      if (fields.houseStyle !== undefined)
+        await db.run(sql`UPDATE user SET houseStyle = ${fields.houseStyle} WHERE id = ${userId}`)
+    },
+    getUserHouseStyle: async (userId: string): Promise<string | null> => {
+      try {
+        const row = (await db.get(sql`SELECT houseStyle FROM user WHERE id = ${userId}`)) as
+          | { houseStyle?: string | null }
+          | undefined
+        return row?.houseStyle ?? null
+      } catch {
+        return null // older/minimal user table without the column
+      }
     },
     searchDiscoverableUsers: async (q: string, limit: number): Promise<UserProfile[]> => {
       const s = q.trim().toLowerCase()

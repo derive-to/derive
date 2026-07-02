@@ -61,7 +61,11 @@ describe("usernames + public profiles", () => {
       jsonAs(as(ravi.email), { profession: " Builder ", about: "  ship features + docs  " }),
     )
     expect(res.status).toBe(200)
-    expect(await res.json()).toEqual({ profession: "Builder", about: "ship features + docs" })
+    expect(await res.json()).toEqual({
+      profession: "Builder",
+      about: "ship features + docs",
+      houseStyle: null,
+    })
 
     // They come back on the public profile.
     const { user } = await (await app.request("/v1/users/ravi")).json()
@@ -69,7 +73,7 @@ describe("usernames + public profiles", () => {
 
     // An empty string clears a field; an omitted field is left untouched.
     const cleared = await app.request("/v1/me/profile", jsonAs(as(ravi.email), { profession: "" }))
-    expect(await cleared.json()).toEqual({ profession: null, about: null })
+    expect(await cleared.json()).toEqual({ profession: null, about: null, houseStyle: null })
     const after = await (await app.request("/v1/users/ravi")).json()
     expect(after.user.profession).toBeNull()
     expect(after.user.about).toBe("ship features + docs") // untouched
