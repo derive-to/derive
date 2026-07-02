@@ -51,7 +51,7 @@ export function ArtifactTopBar(props: {
   onHistory: () => void
   onReview: () => void
   onStartEdit: () => void
-  onShowComments: () => void
+  onToggleComments: () => void
   onPresent: () => void
   onLockToggle: () => void
 }) {
@@ -150,15 +150,16 @@ export function ArtifactTopBar(props: {
       )}
       {/* On phones the bottom-right FAB opens comments, so the header button would
           just be a redundant extra wrap-row. */}
-      {!props.isMobile && !props.panelOpen && (
+      {!props.isMobile && (
         <Button
           variant="ghost"
           size="sm"
-          className="gap-1.5"
+          className={cn("gap-1.5", props.panelOpen && "bg-hover")}
           data-testid="artifact-show-comments"
-          onClick={props.onShowComments}
-          title="Show comments (c)"
-          aria-label="Show comments"
+          onClick={props.onToggleComments}
+          title="Comments (c)"
+          aria-label="Comments"
+          aria-pressed={props.panelOpen}
         >
           <Icon name="comments" size={16} className="text-muted-foreground" />
           {props.openCount > 0 && <b className="font-bold">{props.openCount}</b>}

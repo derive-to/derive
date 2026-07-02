@@ -1,10 +1,7 @@
-import { useCallback, useState } from "react"
 import type { Viewer } from "@/api"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { getInitials } from "@/lib/initials"
 import { cn } from "@/lib/utils"
-import { clamp } from "./lib/layout"
-import type { PinItem } from "./types"
 
 export function IconBtn({
   title,

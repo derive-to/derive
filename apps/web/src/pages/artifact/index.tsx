@@ -481,7 +481,7 @@ export function Artifact() {
                 onHistory={() => setSurface("history")}
                 onReview={() => setReviewing(true)}
                 onStartEdit={startEdit}
-                onShowComments={() => setPanel("open")}
+                onToggleComments={() => setPanel((pn) => (pn === "open" ? "hidden" : "open"))}
               />
             )}
           </>,
