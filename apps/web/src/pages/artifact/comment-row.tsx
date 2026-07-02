@@ -3,6 +3,7 @@ import type { Comment } from "@/api"
 import { Icon } from "@/components/icons"
 import { ColoredAvatar } from "@/components/shared/colored-avatar"
 import { Button } from "@/components/ui/button"
+import { IconButton } from "@/components/ui/icon-button"
 import { Textarea } from "@/components/ui/input"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { ago } from "@/lib/time"
@@ -188,15 +189,15 @@ export function CommentRow({ c, compact }: { c: Comment; compact?: boolean }) {
         >
           <Popover open={open === "react"} onOpenChange={(o) => setOpen(o ? "react" : null)}>
             <PopoverTrigger asChild>
-              <button
-                type="button"
+              <IconButton
+                variant="ghost"
+                size="sm"
                 title="React"
                 aria-label="Add reaction"
                 data-testid="comment-react"
-                className="grid size-6 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-hover hover:text-foreground"
               >
                 <Icon name="react" size={16} />
-              </button>
+              </IconButton>
             </PopoverTrigger>
             <PopoverContent align="end" className="w-auto p-1">
               <div className="grid grid-cols-4 gap-px">
@@ -220,15 +221,15 @@ export function CommentRow({ c, compact }: { c: Comment; compact?: boolean }) {
           </Popover>
           <Popover open={open === "menu"} onOpenChange={(o) => setOpen(o ? "menu" : null)}>
             <PopoverTrigger asChild>
-              <button
-                type="button"
+              <IconButton
+                variant="ghost"
+                size="sm"
                 title="More"
                 aria-label="Comment actions"
                 data-testid="comment-more"
-                className="grid size-6 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-hover hover:text-foreground"
               >
                 <Icon name="more" size={16} />
-              </button>
+              </IconButton>
             </PopoverTrigger>
             <PopoverContent align="end" className="w-auto min-w-[132px] p-1">
               {mine && (

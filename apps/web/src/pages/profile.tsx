@@ -18,6 +18,7 @@ import {
 } from "@/components/ui/dialog"
 import { UsernameForm } from "@/components/username-form"
 import { useAuth } from "@/ctx"
+import { getInitials } from "@/lib/initials"
 import { profileArtifactsQuery, profileQuery } from "@/lib/queries"
 import { ProfileWorkCard } from "./profile-work-card"
 
@@ -51,7 +52,7 @@ export function Profile() {
   }
 
   const isMe = !!me?.username && me.username === data.username
-  const initials = (data.name ?? data.username).slice(0, 2).toUpperCase()
+  const initials = getInitials(data.name ?? data.username)
   const stats = data.stats ?? { works: 0, followers: 0, following: 0 }
 
   return (
@@ -222,9 +223,7 @@ function PeopleStat({
                 >
                   <Avatar className="size-8">
                     {p.image && <AvatarImage src={p.image} alt={p.name ?? p.username} />}
-                    <AvatarFallback>
-                      {(p.name ?? p.username).slice(0, 2).toUpperCase()}
-                    </AvatarFallback>
+                    <AvatarFallback>{getInitials(p.name ?? p.username)}</AvatarFallback>
                   </Avatar>
                   <span className="min-w-0">
                     {p.name && <span className="block truncate text-sm font-medium">{p.name}</span>}

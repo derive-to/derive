@@ -1,11 +1,13 @@
 import type { ReactNode } from "react"
 import { Icon, type IconName } from "@/components/icons"
+import { FormField } from "@/components/shared/form-field"
 import { ThemeSwitch } from "@/components/theme-switch"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { IconButton } from "@/components/ui/icon-button"
 import { Input, Textarea } from "@/components/ui/input"
+import { getInitials } from "@/lib/initials"
 import { cn } from "@/lib/utils"
 
 // The design-system reference: the visual language shown through the real
@@ -74,7 +76,7 @@ function ArtifactCardDemo({
       </div>
       <div className="mt-1 flex items-center gap-2 border-t border-border-soft pt-2.5">
         <Avatar className="size-5">
-          <AvatarFallback>{handle.slice(0, 2).toUpperCase()}</AvatarFallback>
+          <AvatarFallback>{getInitials(handle)}</AvatarFallback>
         </Avatar>
         <span className="font-mono text-xs text-muted-foreground">@{handle}</span>
       </div>
@@ -384,19 +386,12 @@ export function Showcase() {
 
         <Row title="Form" note="Labels, fields, helper text, and a clear primary.">
           <div className="grid max-w-sm gap-4">
-            <div className="grid gap-1.5">
-              <label htmlFor="sc-title" className="text-xs font-medium text-foreground">
-                Title
-              </label>
+            <FormField label="Title" htmlFor="sc-title">
               <Input id="sc-title" placeholder="Q3 board review" />
-            </div>
-            <div className="grid gap-1.5">
-              <label htmlFor="sc-desc" className="text-xs font-medium text-foreground">
-                Description
-              </label>
+            </FormField>
+            <FormField label="Description" htmlFor="sc-desc" hint="Shown on the share card.">
               <Textarea id="sc-desc" rows={3} placeholder="A short summary…" />
-              <p className="text-2xs text-muted-foreground">Shown on the share card.</p>
-            </div>
+            </FormField>
             <div className="flex gap-2">
               <Button size="sm" variant="primary">
                 Save

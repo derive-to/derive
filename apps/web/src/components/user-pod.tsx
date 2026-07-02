@@ -4,6 +4,7 @@ import { api, type Workspaces } from "@/api"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { useAuth } from "@/ctx"
+import { getInitials } from "@/lib/initials"
 import { cn } from "@/lib/utils"
 import { Icon } from "./icons"
 import { ThemeSwitch } from "./theme-switch"
@@ -35,7 +36,7 @@ export function UserPod({
   const [open, setOpen] = useState(false)
   if (!me) return null
 
-  const initials = (me.name ?? me.email).slice(0, 2).toUpperCase()
+  const initials = getInitials(me.name ?? me.email)
   const multi = !!workspaces?.multi
 
   const goSettings = () => {

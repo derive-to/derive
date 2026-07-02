@@ -12,6 +12,7 @@ import {
   CommandItem,
   CommandList,
 } from "@/components/ui/command"
+import { getInitials } from "@/lib/initials"
 import { usePrefetchArtifact } from "@/lib/use-prefetch-artifact"
 import { refFor } from "@/pages/artifact/parse-ref"
 import { Icon } from "./icons"
@@ -160,9 +161,7 @@ export function CommandPalette() {
                 >
                   <Avatar className="size-5">
                     {u.image && <AvatarImage src={u.image} alt={u.name ?? u.username} />}
-                    <AvatarFallback>
-                      {(u.name ?? u.username).slice(0, 2).toUpperCase()}
-                    </AvatarFallback>
+                    <AvatarFallback>{getInitials(u.name ?? u.username)}</AvatarFallback>
                   </Avatar>
                   <span className="flex-1 truncate">{u.name ?? u.username}</span>
                   <span className="font-mono text-2xs text-muted-foreground">@{u.username}</span>

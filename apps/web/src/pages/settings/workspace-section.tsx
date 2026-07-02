@@ -17,6 +17,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
+import { getInitials } from "@/lib/initials"
 import { cn } from "@/lib/utils"
 import { roleLabel, roleValue, selectClass, WS_ROLES } from "./roles"
 
@@ -324,9 +325,7 @@ export function WorkspaceSection({ meId }: { meId: string }) {
                     >
                       <Avatar className="size-6">
                         {u.image && <AvatarImage src={u.image} alt={u.name ?? u.username} />}
-                        <AvatarFallback>
-                          {(u.name ?? u.username).slice(0, 2).toUpperCase()}
-                        </AvatarFallback>
+                        <AvatarFallback>{getInitials(u.name ?? u.username)}</AvatarFallback>
                       </Avatar>
                       <span className="min-w-0 flex-1">
                         {u.name && (

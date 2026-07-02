@@ -7,6 +7,7 @@ import { EmptyState } from "@/components/shared/empty-state"
 import { Spinner } from "@/components/shared/spinner"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Input } from "@/components/ui/input"
+import { getInitials } from "@/lib/initials"
 
 // The People directory — browse + search discoverable people and follow them. This is
 // the discovery surface the follow graph was missing: a way to FIND someone to follow,
@@ -76,7 +77,7 @@ export function People() {
 // not nested in the link — no interactive-inside-interactive). FollowButton self-hides
 // for your own handle and signed-out viewers.
 function PersonCard({ person: p }: { person: PublicProfile }) {
-  const initials = (p.name ?? p.username).slice(0, 2).toUpperCase()
+  const initials = getInitials(p.name ?? p.username)
   return (
     <li className="flex items-center gap-3 rounded-lg border border-border bg-card p-3 transition-colors hover:border-primary">
       <Link

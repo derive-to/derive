@@ -1,6 +1,7 @@
 import { useCallback, useState } from "react"
 import type { Viewer } from "@/api"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { getInitials } from "@/lib/initials"
 import { cn } from "@/lib/utils"
 import { clamp } from "./lib/layout"
 import type { PinItem } from "./types"
@@ -170,7 +171,7 @@ export function DeckBar({
   )
 }
 
-const initials = (v: Viewer) => (v.name || "?").slice(0, 2).toUpperCase()
+const initials = (v: Viewer) => getInitials(v.name)
 
 // "Who's viewing" — an avatar stack that opens a popover listing each live viewer
 // with their name, email (signed-in only), and role. Identity is server-derived

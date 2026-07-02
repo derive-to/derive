@@ -2,6 +2,7 @@ import type { Artifact } from "@/api"
 import { AuthorChip } from "@/components/author-chip"
 import { Icon } from "@/components/icons"
 import { Thumb } from "@/components/shared/thumb"
+import { TypeTag } from "@/components/shared/type-tag"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -131,9 +132,7 @@ export function ArtifactCard({
           </span>
         )}
         <span className="flex items-center gap-2 font-mono text-xs text-muted-foreground">
-          <span className="rounded-[5px] border border-border-soft bg-secondary px-1.5 py-px">
-            {artifactTypeLabel(a)}
-          </span>
+          <TypeTag>{artifactTypeLabel(a)}</TypeTag>
           {(a.updated_at ?? a.created_at ?? a.versions[0]?.created_at) && (
             <span>
               updated {ago(a.updated_at ?? a.created_at ?? a.versions[0]?.created_at ?? "")}
