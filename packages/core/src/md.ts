@@ -24,9 +24,16 @@ const sanitizer = new FilterXSS({
   },
 })
 
+// The rendered-artifact stylesheet (markdown + Reader view). Standalone — it ships
+// inside the sandboxed iframe, so it can't read the app's [data-theme] tokens and
+// carries its own copy of the Derive palette. Monochrome + neutral, following the
+// viewer's OS colour scheme (light default, dark via prefers-color-scheme) so it's
+// never the old fixed "paper" page.
 const PAGE_CSS = `
-  :root{--paper:#f6f0e3;--panel:#fdf8ec;--ink:#2a2540;--soft:#46415c;--muted:#6b6680;
-    --line:#e4dcc9;--line2:#eee7d6;--accent:#655999;--accent-ink:#4f447e}
+  :root{--paper:#f7f8fa;--panel:#eef1f4;--ink:#14161a;--soft:#565a63;--muted:#6b7079;
+    --line:#e5e7eb;--line2:#eef0f3;--pre-bg:#101216;--pre-ink:#e7e8ea}
+  @media(prefers-color-scheme:dark){:root{--paper:#0a0b0d;--panel:#16181d;--ink:#f3f4f6;
+    --soft:#a0a4ac;--muted:#8b8f98;--line:#23252b;--line2:#1b1e22;--pre-bg:#05060a;--pre-ink:#e7e8ea}}
   *{box-sizing:border-box}
   body{margin:0;background:var(--paper);color:var(--ink);
     font:16px/1.65 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased}
@@ -34,12 +41,12 @@ const PAGE_CSS = `
   h1,h2,h3,h4{line-height:1.15;letter-spacing:-.015em}
   h1{font-size:2.1em;margin:.2em 0 .6em} h2{font-size:1.5em;margin:1.6em 0 .5em}
   h3{font-size:1.18em;margin:1.4em 0 .4em}
-  a{color:var(--accent-ink)}
+  a{color:inherit;text-decoration:underline;text-decoration-thickness:1px;text-underline-offset:2px}
   code{font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:.88em;
     background:var(--line2);padding:1px 6px;border-radius:5px}
-  pre{background:#211c33;color:#e9e5f3;padding:16px 18px;border-radius:12px;overflow:auto;line-height:1.6}
+  pre{background:var(--pre-bg);color:var(--pre-ink);padding:16px 18px;border-radius:12px;overflow:auto;line-height:1.6}
   pre code{background:transparent;color:inherit;padding:0}
-  blockquote{margin:1em 0;padding:.2em 1.1em;border-left:3px solid var(--accent);color:var(--soft);
+  blockquote{margin:1em 0;padding:.2em 1.1em;border-left:3px solid var(--line);color:var(--soft);
     background:var(--panel);border-radius:0 10px 10px 0}
   table{border-collapse:collapse;width:100%;font-size:.92em;background:var(--panel);
     border:1px solid var(--line);border-radius:10px;overflow:hidden}
