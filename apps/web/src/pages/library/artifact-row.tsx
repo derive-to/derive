@@ -3,12 +3,14 @@ import type { Artifact } from "@/api"
 import { AuthorChip } from "@/components/author-chip"
 import { FollowButton } from "@/components/follow-button"
 import { Icon } from "@/components/icons"
+import { TypeTag } from "@/components/shared/type-tag"
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import { IconButton } from "@/components/ui/icon-button"
 import { ago } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { artifactTypeLabel, dirOf } from "./artifact-card"
@@ -52,7 +54,7 @@ export function ArtifactRow({
   return (
     <div
       className={cn(
-        "group relative flex items-center gap-3 rounded-lg border border-border bg-card px-3.5 py-2.5 transition-colors hover:border-primary hover:bg-hover",
+        "group relative flex items-center gap-3 rounded-lg border border-border bg-card px-3.5 py-2.5 transition-colors hover:bg-hover",
         a.mentions_me
           ? "border-primary ring-1 ring-primary/30"
           : a.i_participated && "border-primary/60",
@@ -67,16 +69,14 @@ export function ArtifactRow({
         aria-label={`Open ${a.title ?? a.short_id}`}
         className="flex min-w-0 flex-1 flex-col gap-0.5 text-left outline-none after:absolute after:inset-0 after:z-[1] after:rounded-lg after:content-[''] focus-visible:after:outline-2 focus-visible:after:-outline-offset-2 focus-visible:after:outline-ring"
       >
-        <span className="truncate font-display text-base font-semibold text-foreground transition-colors group-hover:text-primary">
+        <span className="truncate font-display text-base font-semibold text-foreground">
           {a.title ?? a.short_id}
         </span>
         {updated && (
           <span className="font-mono text-2xs text-muted-foreground">updated {ago(updated)}</span>
         )}
         <span className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 font-mono text-2xs text-muted-foreground">
-          <span className="rounded-[5px] border border-border-soft bg-secondary px-1.5 py-px text-foreground">
-            {artifactTypeLabel(a)}
-          </span>
+          <TypeTag>{artifactTypeLabel(a)}</TypeTag>
           {dir && (
             <span className="inline-flex items-center gap-1 truncate" title={a.source_path ?? ""}>
               <Folder className="size-3 shrink-0 text-primary" aria-hidden />
@@ -131,8 +131,8 @@ export function ArtifactRow({
         </div>
       )}
 
-      <button
-        type="button"
+      <IconButton
+        variant="chip"
         data-testid={`artifact-row-favorite-${a.short_id}`}
         title={a.favorite ? "Remove from favorites" : "Add to favorites"}
         aria-label="Toggle favorite"
@@ -141,26 +141,23 @@ export function ArtifactRow({
           e.stopPropagation()
           onToggleFavorite()
         }}
-        className={cn(
-          "relative z-20 grid size-7 shrink-0 place-items-center rounded-md border bg-card transition hover:border-primary",
-          a.favorite ? "border-gold text-gold" : "border-border text-muted-foreground opacity-90",
-        )}
+        className={cn("relative z-20", a.favorite ? "border-gold" : "opacity-90")}
       >
         <Icon name="star" size={14} className={cn(!a.favorite && "text-muted-foreground")} />
-      </button>
+      </IconButton>
 
       {isOwner && onDelete && (
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <button
-              type="button"
+            <IconButton
+              variant="chip"
               data-testid={`artifact-row-more-${a.short_id}`}
               aria-label="More actions"
               onClick={(e) => e.stopPropagation()}
-              className="relative z-20 grid size-7 shrink-0 place-items-center rounded-md border border-border bg-card text-muted-foreground opacity-0 transition hover:border-primary group-hover:opacity-100 focus:opacity-100"
+              className="relative z-20 opacity-0 group-hover:opacity-100 focus:opacity-100"
             >
               <Icon name="more" size={14} />
-            </button>
+            </IconButton>
           </DropdownMenuTrigger>
           <DropdownMenuContent onClick={(e) => e.stopPropagation()}>
             <DropdownMenuItem

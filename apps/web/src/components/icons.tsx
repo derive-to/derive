@@ -1,9 +1,10 @@
-// One icon vocabulary for the whole app: bright, filled Phosphor glyphs that
-// retire the old emoji/unicode chrome. Each icon's color is a semantic token
-// CLASS (defined in styles/globals.css), never a raw hex — the design-token
-// guardrail (scripts/check-design-tokens.mjs) enforces that. Every surface
-// imports <Icon name="…" /> so the look stays consistent and a color changes in
-// exactly one place.
+// One icon vocabulary for the whole app: light, regular-weight Phosphor glyphs —
+// the precise, monochrome-leaning look (Linear/Resend), not heavy filled shapes.
+// Each icon's color is a semantic token CLASS (defined in styles/globals.css),
+// never a raw hex — the design-token guardrail (scripts/check-design-tokens.mjs)
+// enforces that. Every surface imports <Icon name="…" /> so the look stays
+// consistent and a color changes in exactly one place; pass weight="fill" for the
+// rare filled state (e.g. a favourited star).
 import {
   BellIcon,
   BookOpenIcon,
@@ -105,7 +106,7 @@ export type IconName = keyof typeof REG
 export function Icon({
   name,
   size = 18,
-  weight = "fill",
+  weight = "regular",
   className,
 }: {
   name: IconName

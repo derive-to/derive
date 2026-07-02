@@ -2,13 +2,9 @@ import { useEffect, useState } from "react"
 import type { ProposalState } from "@/api"
 import { Badge, type BadgeProps } from "@/components/ui/badge"
 
-export const ago = (iso: string): string => {
-  const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000)
-  if (s < 60) return "just now"
-  if (s < 3600) return `${Math.floor(s / 60)}m ago`
-  if (s < 86400) return `${Math.floor(s / 3600)}h ago`
-  return `${Math.floor(s / 86400)}d ago`
-}
+// Re-exported so the review modules keep their local import while there's one
+// implementation (see lib/time).
+export { ago } from "@/lib/time"
 
 /** True while the viewport is phone-width; the rail collapses to a dropdown. */
 export function useNarrow(): boolean {

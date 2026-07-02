@@ -5,8 +5,8 @@
 // browser to the client's redirect_uri with the authorization code. This is the
 // human-in-the-loop grant: an agent can't self-authorize.
 //
-// On the Derive plan-site palette (Inter, the anchor mark) so the
-// grant moment feels like Derive.
+// On the Derive palette (Inter, the anchor mark) so the grant moment feels like Derive.
+import { BRAND_PAGE_MARK, BRAND_PAGE_TOKENS } from "./lib/brand-page-css"
 
 const SCOPE_LABELS: Record<string, string> = {
   openid: "Confirm who you are",
@@ -34,12 +34,6 @@ const esc = (s: string): string =>
     c === "&" ? "&amp;" : c === "<" ? "&lt;" : c === ">" ? "&gt;" : c === '"' ? "&quot;" : "&#39;",
   )
 
-const MARK = `<svg class="mk" viewBox="0 0 32 32" fill="none" aria-hidden="true">
-  <rect x="1" y="1" width="30" height="30" rx="8" fill="#2a2540"/>
-  <path d="M16 7l7 7v11h-4.6v-6.2h-4.8V25H9V14l7-7z" fill="none" stroke="#8a7dc0" stroke-width="1.7" stroke-linejoin="round"/>
-  <rect x="13.6" y="6.4" width="4.8" height="4.8" rx="1.2" fill="#655999"/>
-</svg>`
-
 /** The consent page HTML. `query` is the original authorize query string, echoed
  *  back to /oauth2/consent so the plugin can complete the authorization. */
 export function consentHTML(props: {
@@ -58,7 +52,7 @@ export function consentHTML(props: {
     .join("")
   // The card swapped in after Approve — a branded confirmation on the page we own,
   // shown for a beat before the browser carries the auth code back to the client.
-  const connectedInner = `<div class="brand">${MARK}<span class="name">Derive</span><span class="badge ok">Connected</span></div>
+  const connectedInner = `<div class="brand">${BRAND_PAGE_MARK}<span class="name">Derive</span><span class="badge ok">Connected</span></div>
     <div class="done">
       <div class="check" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg></div>
       <h1>You're connected</h1>
@@ -75,22 +69,15 @@ export function consentHTML(props: {
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
-  :root{
-    --paper:#f6f0e3;--panel:#fdf8ec;--panel-2:#f6efe0;--ink:#2a2540;--ink-soft:#46415c;
-    --muted:#6b6680;--line:#e4dcc9;--line-2:#eee7d6;--accent:#655999;--accent-ink:#4f447e;
-    --accent-2:#8a7dc0;--accent-soft:#e8e4f1;--good:#6f7a35;--good-soft:#ebedda;--bad:#a04425;
-    --display:"Inter",ui-sans-serif,system-ui,sans-serif;
-    --sans:"Inter",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
-    --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
-  }
+  ${BRAND_PAGE_TOKENS}
   *{box-sizing:border-box}
   body{margin:0;min-height:100vh;display:grid;place-items:center;padding:24px;color:var(--ink);
     background:var(--paper);font:15px/1.55 var(--sans);-webkit-font-smoothing:antialiased;
     background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='220'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.82' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.045'/%3E%3C/svg%3E");}
   .card{width:100%;max-width:448px;background:var(--panel);border:1px solid var(--line);border-radius:20px;
-    padding:32px 32px 26px;box-shadow:0 1px 2px rgba(42,37,64,.04),0 24px 60px -22px rgba(42,37,64,.32)}
+    padding:32px 32px 26px;box-shadow:0 1px 2px rgba(0,0,0,.05),0 24px 60px -22px rgba(0,0,0,.28)}
   .brand{display:flex;align-items:center;gap:10px;margin-bottom:22px}
-  .mk{width:30px;height:30px;display:block;flex:none}
+  .mk{height:26px;width:auto;display:block;flex:none}
   .brand .name{font-family:var(--display);font-weight:600;font-size:17px;letter-spacing:-.02em}
   .badge{margin-left:auto;font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:.05em;
     text-transform:uppercase;padding:4px 9px;border-radius:999px;background:var(--accent-soft);color:var(--accent-ink)}
@@ -108,7 +95,7 @@ export function consentHTML(props: {
   .btn:active{transform:translateY(1px)}
   .btn.ghost{background:transparent;color:var(--muted)}
   .btn.ghost:hover{background:var(--panel-2);color:var(--ink-soft)}
-  .btn.primary{background:var(--accent);color:#fff;border-color:var(--accent)}
+  .btn.primary{background:var(--accent);color:var(--accent-fg);border-color:var(--accent)}
   .btn.primary:hover{filter:brightness(1.07)}
   .btn[disabled]{opacity:.55;cursor:default}
   .foot{color:var(--muted);font-size:12px;text-align:center;margin:16px 0 0}
@@ -134,7 +121,7 @@ export function consentHTML(props: {
 </head>
 <body>
   <main class="card">
-    <div class="brand">${MARK}<span class="name">Derive</span><span class="badge">Authorize</span></div>
+    <div class="brand">${BRAND_PAGE_MARK}<span class="name">Derive</span><span class="badge">Authorize</span></div>
     <h1><b>${name}</b> wants to act in your workspace</h1>
     <p class="sub">Approving lets this agent do the following as you, with a token that expires. You stay in control.</p>
     <ul class="scopes">${items}</ul>

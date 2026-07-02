@@ -1,5 +1,6 @@
 import { Link } from "@tanstack/react-router"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
+import { getInitials } from "@/lib/initials"
 import { cn } from "@/lib/utils"
 
 // One author, rendered as a tiny avatar + name — the "who last changed this" /
@@ -26,8 +27,6 @@ export interface AuthorChipProps {
   className?: string
 }
 
-const initialsOf = (label: string): string => label.slice(0, 2).toUpperCase()
-
 export function AuthorChip({
   name,
   login,
@@ -49,7 +48,7 @@ export function AuthorChip({
     <>
       <Avatar className={cn(avatarSize, "shrink-0")}>
         {avatar && <AvatarImage src={avatar} alt={label} />}
-        <AvatarFallback>{initialsOf(label)}</AvatarFallback>
+        <AvatarFallback>{getInitials(label)}</AvatarFallback>
       </Avatar>
       <span className="truncate">{label}</span>
     </>

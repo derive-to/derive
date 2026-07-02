@@ -3,10 +3,11 @@ import { API_BASE } from "@/api"
 // A live, scaled-down render of an artifact's current version. Sandboxed and
 // non-interactive (clicks fall through to the enclosing card); lazy so off-screen
 // cards don't fetch. The token gradient shows through until the frame paints.
-// Lives in a `group` card, so it picks up the accent border on card hover.
+// Full-bleed: the enclosing card clips the top corners (overflow-hidden) and owns
+// the hover response (lift + shadow), so the frame reads as the artifact itself.
 export function Thumb({ id, v }: { id: string; v: number }) {
   return (
-    <div className="relative h-[116px] overflow-hidden rounded border border-border-soft bg-gradient-to-br from-accent to-secondary transition-colors group-hover:border-primary">
+    <div className="relative h-[120px] overflow-hidden bg-gradient-to-br from-accent to-secondary">
       <iframe
         title="Preview"
         aria-hidden

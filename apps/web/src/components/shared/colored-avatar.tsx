@@ -1,3 +1,4 @@
+import { getInitials } from "@/lib/initials"
 import { cn } from "@/lib/utils"
 
 // Stable per-author tints, so people stay recognisable across avatars + threads.
@@ -42,7 +43,7 @@ export function ColoredAvatar({
         background: colorFor(name),
       }}
     >
-      {(name || "?").slice(0, 2).toUpperCase()}
+      {getInitials(name)}
     </span>
   )
 }

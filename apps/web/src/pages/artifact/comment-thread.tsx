@@ -223,7 +223,7 @@ function ElementRef({
           onJump(threadId)
         }}
         title={relocated ? "Jump to the element (moved — approximate)" : "Jump to the element"}
-        className="flex w-full cursor-pointer items-center gap-1.5 border-l-[3px] border-primary bg-accent px-2.5 py-1.5 text-left text-xs font-medium text-foreground"
+        className="flex w-full items-center gap-1.5 border-l-[3px] border-primary bg-accent px-2.5 py-1.5 text-left text-xs font-medium text-foreground"
       >
         <span aria-hidden className="shrink-0 text-sm leading-none">
           {glyph}
@@ -373,8 +373,8 @@ export function CommentCard({
         active
           ? "cursor-default border-primary shadow-[var(--shadow)]"
           : hovered
-            ? "cursor-pointer border-primary/40 shadow-[0_4px_14px_-8px_rgba(0,0,0,0.45)]"
-            : "cursor-pointer border-border",
+            ? " border-primary/40 shadow-[0_4px_14px_-8px_rgba(0,0,0,0.45)]"
+            : " border-border",
         resolved && !active && "opacity-60",
       )}
     >
@@ -418,7 +418,7 @@ export function CommentCard({
                 onJump(root.thread_id)
               }}
               title="Jump to the highlighted text"
-              className="block w-full cursor-pointer truncate border-l-[3px] border-primary bg-accent px-2.5 py-1.5 text-left text-xs italic text-foreground"
+              className="block w-full truncate border-l-[3px] border-primary bg-accent px-2.5 py-1.5 text-left text-xs italic text-foreground"
             >
               “{refLabel}”
             </button>

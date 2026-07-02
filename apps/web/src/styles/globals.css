@@ -6,9 +6,8 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 
-/* Dark variant keys off the theme attribute the app sets on <html>. dusk is a
-   dark family too, so `dark:` utilities apply there as well. */
-@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *, [data-theme="dusk"], [data-theme="dusk"] *));
+/* Dark variant keys off the theme attribute the app sets on <html>. */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
 
 /* Design tokens. shadcn-style semantic names mapped to derive's themed CSS vars
    (defined per [data-theme] in the base layer below), so Tailwind utilities
@@ -32,16 +31,17 @@
   --color-destructive: var(--bad);
   --color-destructive-foreground: #fff;
   --color-success: var(--good);
-  --color-gold: #e0a93a;
-  /* Playful icon accents — fixed brights that read on all four themes, surfaced
-     as text-share / text-comments / … utilities that the <Icon> component applies
-     (color stays a token, never a raw hex in tsx; see check-design-tokens.mjs). */
-  --color-share: #7c6cf0;
-  --color-comments: #3b9ed8;
-  --color-tag: #16b3a7;
-  --color-collection: #f0883a;
-  --color-insights: #46b1f0;
-  --color-review: #52a544;
+  --color-gold: #c2a15e;
+  /* Categorical icon accents — a deliberately muted, low-chroma family so feature
+     wayfinding reads as calm tints, not a rainbow. Surfaced as text-share /
+     text-comments / … utilities the <Icon> component applies (color stays a token,
+     never a raw hex in tsx; see check-design-tokens.mjs). */
+  --color-share: #8781b0;
+  --color-comments: #6b8bac;
+  --color-tag: #5f9a90;
+  --color-collection: #bd8b62;
+  --color-insights: #7f97c2;
+  --color-review: #7a9f70;
   --color-border: var(--line);
   --color-border-soft: var(--line-soft);
   --color-input: var(--line);
@@ -70,46 +70,36 @@
   --font-mono: ui-monospace, Menlo, Consolas, monospace;
   --font-display: "Inter", system-ui, sans-serif;
 
-  --radius-sm: 6px;
-  --radius: 8px;
-  --radius-md: 10px;
-  --radius-lg: 14px;
-  --radius-xl: 18px;
+  --radius-sm: 3px;
+  --radius: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 10px;
 }
 
 @layer base {
-  /* The four theme palettes — the source of truth the @theme bridge references.
-     Set via [data-theme] on <html>; runtime switching rules out a static @theme. */
-  /* Derive foundation: Axiom Black #030712 + Origin White #F4F5F8. The accent is
-     monochrome — near-black on light themes, near-white on dark — so the brand
-     reads as the two colors; only the semantic good/bad stay chromatic. */
-  [data-theme="paper"] {
-    --bg: #f2efe9;--card: #fbf9f4;--card-2: #ebe7de;--hover: #ede9e0;
-    --fg: #030712;--fg-mut: #5b5850;--line: #ddd8cc;--line-soft: #e7e2d7;
-    --ac: #030712;--ac-fg: #f4f5f8;--ac-soft: #e6e2d8;
-    --cmt-bg: #ece8df;--cmt-tx: #3a382f;--cmt-bd: #d6d1c4;--good: #3c6e2f;--good-bg: #e3eedb;--bad: #a04425;
-    --shadow: 0 1px 2px rgba(3,7,18,.05),0 14px 30px -18px rgba(3,7,18,.28);--grain: .04;
-  }
+  /* The two theme palettes — the source of truth the @theme bridge references.
+     Set via [data-theme] on <html>; runtime switching rules out a static @theme.
+     Derive foundation: Axiom Black #030712 + Origin White #F4F5F8. The accent is
+     monochrome — near-black on light, near-white on dark — so the brand reads as
+     the two colors; only the semantic good/bad stay chromatic. */
   [data-theme="light"] {
-    --bg: #f4f5f8;--card: #ffffff;--card-2: #ecedf1;--hover: #e9ebef;
-    --fg: #030712;--fg-mut: #565a66;--line: #dfe1e7;--line-soft: #e9ebef;
-    --ac: #030712;--ac-fg: #f4f5f8;--ac-soft: #e4e6ec;
-    --cmt-bg: #eceef2;--cmt-tx: #2a2e38;--cmt-bd: #d7dae1;--good: #2f7d4f;--good-bg: #e4f0e9;--bad: #b4402c;
-    --shadow: 0 1px 2px rgba(3,7,18,.05),0 14px 30px -18px rgba(3,7,18,.16);--grain: .028;
+    --bg: #f7f8fa;--card: #ffffff;--card-2: #eff1f4;--hover: #eaecf0;
+    --fg: #14161a;--fg-mut: #5c616b;--line: #e5e7eb;--line-soft: #eef0f3;
+    --ac: #14161a;--ac-fg: #f7f8fa;--ac-soft: #e8eaee;
+    --cmt-bg: #eff1f4;--cmt-tx: #33373f;--cmt-bd: #dee1e6;--good: #2f7d4f;--good-bg: #e6f1ea;--bad: #b4402c;
+    --shadow-sm: 0 1px 2px rgba(20,22,26,.06);
+    --shadow: 0 1px 2px rgba(20,22,26,.05),0 12px 28px -16px rgba(20,22,26,.14);
+    --shadow-pop: 0 4px 10px -3px rgba(20,22,26,.10),0 22px 44px -14px rgba(20,22,26,.24);--grain: .022;
   }
   [data-theme="dark"] {
-    --bg: #030712;--card: #0e131f;--card-2: #171d2b;--hover: #141a27;
-    --fg: #f4f5f8;--fg-mut: #99a0af;--line: #232b3b;--line-soft: #1a2130;
-    --ac: #f4f5f8;--ac-fg: #030712;--ac-soft: #1a2233;
-    --cmt-bg: #141b29;--cmt-tx: #c6cad4;--cmt-bd: #2a3141;--good: #7fb08a;--good-bg: #0f1a14;--bad: #e08a6e;
-    --shadow: 0 1px 2px rgba(0,0,0,.4),0 18px 36px -18px rgba(0,0,0,.7);--grain: .05;
-  }
-  [data-theme="dusk"] {
-    --bg: #080c17;--card: #121826;--card-2: #1a2130;--hover: #171e2c;
-    --fg: #eef0f5;--fg-mut: #a4abba;--line: #28303f;--line-soft: #212836;
-    --ac: #f4f5f8;--ac-fg: #030712;--ac-soft: #1d2536;
-    --cmt-bg: #151c2a;--cmt-tx: #c9cdd7;--cmt-bd: #2c3444;--good: #8bb693;--good-bg: #111a16;--bad: #e7806a;
-    --shadow: 0 1px 2px rgba(0,0,0,.4),0 18px 36px -18px rgba(0,0,0,.6);--grain: .05;
+    --bg: #0a0b0d;--card: #101216;--card-2: #16181d;--hover: #1b1d23;
+    --fg: #f3f4f6;--fg-mut: #969aa2;--line: #23252b;--line-soft: #191b1f;
+    --ac: #f3f4f6;--ac-fg: #0a0b0d;--ac-soft: #1b1d23;
+    --cmt-bg: #16181d;--cmt-tx: #c7c9d0;--cmt-bd: #292c33;--good: #74b085;--good-bg: #131c17;--bad: #d98c74;
+    --shadow-sm: 0 1px 2px rgba(0,0,0,.4);
+    --shadow: 0 1px 2px rgba(0,0,0,.5),0 16px 34px -18px rgba(0,0,0,.72);
+    --shadow-pop: 0 4px 14px -3px rgba(0,0,0,.55),0 26px 50px -14px rgba(0,0,0,.75);--grain: .04;
   }
 
   * {
@@ -134,6 +124,9 @@
   a {
     color: var(--ac);
     text-decoration: none;
+    /* Links use the default cursor, not the pointer hand — hover states carry the
+       affordance instead (Linear-style). Buttons are already default via the UA. */
+    cursor: default;
   }
 }
 

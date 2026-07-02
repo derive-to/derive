@@ -5,7 +5,7 @@ import { Toaster as Sonner, type ToasterProps } from "sonner"
 // everywhere else just calls `toast()` / `toast.success()` / `toast.error()`
 // from "sonner" — the singleton means no provider and no prop-drilling. The
 // --normal-* vars theme the neutral toast from our [data-theme] tokens (so it
-// matches Paper/Light/Dark/Dusk); richColors gives success/error their own
+// matches Light/Dark); richColors gives success/error their own
 // palette. bottom-center preserves the prior toast position.
 export function Toaster(props: ToasterProps) {
   return (

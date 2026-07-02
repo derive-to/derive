@@ -38,7 +38,7 @@ export const selLabel = (s: Sel | null | undefined): string | null =>
   s?.exact ?? s?.snapshot?.label ?? null
 
 // Comments UI mode: full panel, collapsed rail of dots, or hidden.
-export type Panel = "open" | "rail" | "hidden"
+export type Panel = "open" | "hidden"
 
 // A thread positioned in the pinned margin beside its highlight.
 export type PinItem = { thread: Comment[]; desiredY: number; located: boolean }

@@ -17,9 +17,12 @@ import { UserPod } from "./user-pod"
 
 // Shared nav-row look (also used by NotificationBell + the Settings link so the
 // whole rail reads as one list).
+// Rows rest muted; hover brightens the text (not just the background) over a faint
+// neutral fill. Selected is a stronger fill (foreground/10 > hover's /5) at full
+// text strength — so the current item reads more prominent than a hovered one.
 export const ROW_BASE =
-  "flex w-full items-center gap-2.5 whitespace-nowrap rounded-[9px] px-2.5 py-2 text-left text-sm font-semibold text-foreground transition-colors hover:bg-hover"
-export const ROW_ACTIVE = "bg-accent text-accent-foreground hover:bg-accent"
+  "flex w-full items-center gap-2.5 whitespace-nowrap rounded-md px-2.5 py-2 text-left text-sm font-medium text-muted-foreground transition-colors hover:bg-foreground/5 hover:text-foreground"
+export const ROW_ACTIVE = "bg-foreground/10 text-foreground hover:bg-foreground/10"
 export const ROW_RAIL = "justify-center px-0 py-2.5"
 
 // How many of a repo's PR previews to list inline in the sidebar before collapsing
@@ -64,14 +67,7 @@ function SideItem({
       </span>
       {!collapsed && <span className="overflow-hidden text-ellipsis">{label}</span>}
       {!collapsed && count !== undefined && (
-        <span
-          className={cn(
-            "ml-auto font-mono text-2xs text-muted-foreground",
-            active && "text-accent-foreground",
-          )}
-        >
-          {count}
-        </span>
+        <span className="ml-auto font-mono text-2xs text-muted-foreground">{count}</span>
       )}
     </Link>
   )
@@ -311,7 +307,7 @@ export function NavRail() {
                 onClick={() => setCreating((v) => !v)}
                 title="New collection"
                 aria-label="New collection"
-                className="cursor-pointer text-primary"
+                className=" text-primary"
               >
                 <Icon name="plus" size={14} />
               </button>
@@ -378,12 +374,7 @@ export function NavRail() {
                       <Icon name="collection" size={18} />
                     </span>
                     <span className="overflow-hidden text-ellipsis">{col.title}</span>
-                    <span
-                      className={cn(
-                        "ml-auto font-mono text-2xs text-muted-foreground",
-                        onLibrary && search.collection === col.id && "text-accent-foreground",
-                      )}
-                    >
+                    <span className="ml-auto font-mono text-2xs text-muted-foreground">
                       {col.count}
                     </span>
                   </Link>

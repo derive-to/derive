@@ -318,7 +318,6 @@ export function OpenPanel(props: {
   hoverThread: string | null
   inDoc: Record<string, boolean>
   composer: { anchor: Sel | null; top: number | null } | null
-  onMinimize: () => void
   onHide: () => void
   onActivate: (id: string) => void
   onHover: (id: string | null) => void
@@ -344,7 +343,6 @@ export function OpenPanel(props: {
     hoverThread,
     inDoc,
     composer,
-    onMinimize,
     onHide,
     onActivate,
     onHover,
@@ -373,10 +371,7 @@ export function OpenPanel(props: {
             ＋
           </IconBtn>
         )}
-        <IconBtn title="Minimize to rail (c)" onClick={onMinimize}>
-          ⟩
-        </IconBtn>
-        <IconBtn title="Hide comments" onClick={onHide}>
+        <IconBtn title="Close comments (c)" onClick={onHide}>
           ✕
         </IconBtn>
       </div>

@@ -523,7 +523,7 @@ function RepoPicker({
             <ul className="flex flex-col gap-1">
               {shown?.map((r) => (
                 <li key={r.full_name}>
-                  <label className="flex cursor-pointer items-center gap-2.5 rounded-md px-2 py-1.5 hover:bg-hover">
+                  <label className="flex items-center gap-2.5 rounded-md px-2 py-1.5 hover:bg-hover">
                     <input
                       type="radio"
                       name="gh-repo"
@@ -553,7 +553,7 @@ function RepoPicker({
           <div className="mt-1 flex flex-col gap-2.5 border-t border-border pt-3">
             <div className="flex flex-wrap items-center gap-3">
               <span className="text-xs font-medium text-muted-foreground">Include:</span>
-              <label className="flex cursor-pointer items-center gap-1.5 text-sm">
+              <label className="flex items-center gap-1.5 text-sm">
                 <input
                   type="checkbox"
                   data-testid="github-include-md"
@@ -562,7 +562,7 @@ function RepoPicker({
                 />{" "}
                 Markdown
               </label>
-              <label className="flex cursor-pointer items-center gap-1.5 text-sm">
+              <label className="flex items-center gap-1.5 text-sm">
                 <input
                   type="checkbox"
                   data-testid="github-include-html"

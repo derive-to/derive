@@ -5,7 +5,6 @@ import { cn } from "@/lib/utils"
 import { MobileComments, OpenPanel } from "./comment-panels"
 import { CommentScopeProvider } from "./lib/comment-scope"
 import { clamp } from "./lib/layout"
-import { Rail } from "./rail-deck"
 import { type Panel, type PinItem, type Sel, selLabel } from "./types"
 
 type Composer = { anchor: Sel | null; top: number | null } | null
@@ -19,10 +18,10 @@ type Selection = {
 } | null
 
 /**
- * All the comment surfaces for an artifact, in one place: the desktop margin aside
- * (rail or open panel), the phone slide-up sheet, and the floating "comment on the
- * selection" affordance. Hidden entirely for an anonymous visitor (read-only). The
- * page owns the state + mutations and threads them in.
+ * All the comment surfaces for an artifact, in one place: the desktop margin aside,
+ * the phone slide-up sheet, and the floating "comment on the selection" affordance.
+ * Hidden entirely for an anonymous visitor (read-only). The page owns the state +
+ * mutations and threads them in.
  */
 export function ArtifactComments(p: {
   shortId: string
@@ -114,19 +113,7 @@ export function ArtifactComments(p: {
           )}
           style={{ width: p.asideWidth, flexBasis: p.asideWidth }}
         >
-          {panel === "rail" ? (
-            <Rail
-              pins={p.pinned}
-              generalCount={p.general.length}
-              active={p.activeThread}
-              onExpand={() => p.setPanel("open")}
-              onHide={() => p.setPanel("hidden")}
-              onDot={(id) => {
-                p.setPanel("open")
-                p.jumpTo(id)
-              }}
-            />
-          ) : (
+          {panel !== "hidden" && (
             <OpenPanel
               tab={p.tab}
               setTab={p.setTab}
@@ -142,7 +129,6 @@ export function ArtifactComments(p: {
               hoverThread={p.hoverThread}
               inDoc={p.inDoc}
               composer={p.composer}
-              onMinimize={() => p.setPanel("rail")}
               onHide={() => p.setPanel("hidden")}
               onActivate={p.activate}
               onHover={p.setHoverThread}

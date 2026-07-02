@@ -87,7 +87,8 @@ test("star and report from the header", async ({ page }) => {
   await star.click()
   await expect(star).toHaveAttribute("aria-pressed", "true")
 
-  // Report opens a popover, takes a reason, and confirms.
+  // Report lives in the ⋯ menu now; it opens a dialog, takes a reason, and confirms.
+  await page.getByTestId("artifact-more").click()
   await page.getByTestId("artifact-report").click()
   await page.getByTestId("report-reason").fill("spam content")
   await page.getByTestId("report-submit").click()

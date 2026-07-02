@@ -2,9 +2,8 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { THEMES, useTheme } from "@/ctx"
 import { cn } from "@/lib/utils"
 
-// Sift-style segmented theme control: Paper | Light | Dark | Dusk. Built on the
-// shadcn Tabs primitive (radix-backed, so roles + keyboard nav come for free).
-// Replaces the swatch list the old user menu carried; lives in the account pod.
+// Segmented theme control: Light | Dark. Built on the shadcn Tabs primitive
+// (radix-backed, so roles + keyboard nav come for free). Lives in the account pod.
 // Keeps the `theme-option-<id>` test-ids the e2e net expects.
 export function ThemeSwitch({ className }: { className?: string }) {
   const { theme, setTheme } = useTheme()

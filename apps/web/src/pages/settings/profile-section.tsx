@@ -2,10 +2,12 @@ import { Camera } from "lucide-react"
 import { useRef, useState } from "react"
 import { api } from "@/api"
 import { ProfileFields } from "@/components/profile-fields"
+import { SectionHeader } from "@/components/shared/section-header"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Card } from "@/components/ui/card"
 import { UsernameForm } from "@/components/username-form"
 import { useAuth } from "@/ctx"
+import { getInitials } from "@/lib/initials"
 
 // Your personal profile (vs the Workspace tab): photo, handle, role + "what you
 // do", and people-search discoverability. The same fields onboarding collects, all
@@ -17,7 +19,7 @@ export function ProfileSection() {
   const [discoverable, setDiscoverable] = useState(!!me?.discoverable)
   if (!me) return null
 
-  const initials = (me.name ?? me.email).slice(0, 2).toUpperCase()
+  const initials = getInitials(me.name ?? me.email)
   const pickPhoto = async (f: File | null) => {
     if (!f) return
     setUploading(true)
@@ -100,14 +102,14 @@ export function ProfileSection() {
 
       {/* Role + what you do */}
       <Card className="p-4">
-        <h3 className="mb-2.5 font-display text-sm font-semibold">Role</h3>
+        <SectionHeader className="mb-2.5">Role</SectionHeader>
         <ProfileFields />
       </Card>
 
       {/* Discoverability */}
       <Card className="p-4">
-        <h3 className="font-display text-sm font-semibold">Discoverability</h3>
-        <label className="mt-2.5 flex cursor-pointer items-start gap-2.5 text-sm text-foreground">
+        <SectionHeader>Discoverability</SectionHeader>
+        <label className="mt-2.5 flex items-start gap-2.5 text-sm text-foreground">
           <input
             type="checkbox"
             data-testid="account-discoverable"

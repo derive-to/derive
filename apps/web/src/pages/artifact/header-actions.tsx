@@ -3,6 +3,13 @@ import { toast } from "sonner"
 import { api, type Collection } from "@/api"
 import { Icon } from "@/components/icons"
 import { Button } from "@/components/ui/button"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 import { Input, Textarea } from "@/components/ui/input"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { cn } from "@/lib/utils"
@@ -31,7 +38,7 @@ export function StarButton({
   }
   return (
     <Button
-      variant="outline"
+      variant="ghost"
       size="sm"
       onClick={toggle}
       disabled={busy}
@@ -39,17 +46,29 @@ export function StarButton({
       aria-label="Toggle favorite"
       aria-pressed={favorite}
       data-testid="artifact-star"
-      className={cn(favorite && "border-gold text-gold hover:text-gold")}
     >
-      <Icon name="star" size={16} className={cn(!favorite && "text-muted-foreground")} />
+      <Icon
+        name="star"
+        size={16}
+        weight={favorite ? "fill" : "regular"}
+        className={favorite ? "text-foreground" : "text-muted-foreground"}
+      />
     </Button>
   )
 }
 
-// Header report popover: anyone viewing can flag an artifact for moderation.
-// A short reason is required; owners triage the queue in Settings.
-export function ReportButton({ shortId }: { shortId: string }) {
-  const [open, setOpen] = useState(false)
+// Report dialog: anyone viewing can flag an artifact for moderation. Opened from
+// the ⋯ menu (a rare action — out of the always-visible toolbar). A short reason
+// is required; owners triage the queue in Settings.
+export function ReportDialog({
+  shortId,
+  open,
+  onOpenChange,
+}: {
+  shortId: string
+  open: boolean
+  onOpenChange: (o: boolean) => void
+}) {
   const [reason, setReason] = useState("")
   const [sent, setSent] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -68,28 +87,20 @@ export function ReportButton({ shortId }: { shortId: string }) {
     }
   }
   return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <Button
-          variant="outline"
-          size="sm"
-          title="Report this artifact"
-          aria-label="Report"
-          data-testid="artifact-report"
-        >
-          <Icon name="report" size={16} />
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent align="end" className="w-64">
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-sm">
+        <DialogHeader>
+          <DialogTitle>Report artifact</DialogTitle>
+          <DialogDescription>
+            Flag this for moderation. Owners triage reports in Settings.
+          </DialogDescription>
+        </DialogHeader>
         {sent ? (
           <div className="text-sm leading-relaxed text-muted-foreground">
             Thanks — this has been flagged for review.
           </div>
         ) : (
           <>
-            <div className="mb-2 font-mono text-2xs uppercase tracking-[0.06em] text-muted-foreground">
-              Report artifact
-            </div>
             <Textarea
               value={reason}
               onChange={(e) => setReason(e.target.value)}
@@ -98,12 +109,12 @@ export function ReportButton({ shortId }: { shortId: string }) {
               data-testid="report-reason"
               className="resize-none text-sm"
             />
-            <div className="mt-2 flex justify-end gap-1.5">
+            <div className="mt-3 flex justify-end gap-1.5">
               <Button
-                variant="outline"
+                variant="ghost"
                 size="sm"
                 data-testid="report-cancel"
-                onClick={() => setOpen(false)}
+                onClick={() => onOpenChange(false)}
               >
                 Cancel
               </Button>
@@ -119,8 +130,8 @@ export function ReportButton({ shortId }: { shortId: string }) {
             </div>
           </>
         )}
-      </PopoverContent>
-    </Popover>
+      </DialogContent>
+    </Dialog>
   )
 }
 
@@ -175,14 +186,14 @@ export function CollectionsMenu({
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <Button
-          variant="outline"
+          variant="ghost"
           size="sm"
           className="gap-1.5"
           title="Collections"
           aria-label="Add to collection"
           data-testid="artifact-collections"
         >
-          <Icon name="collections" size={16} />
+          <Icon name="collections" size={16} className="text-muted-foreground" />
           {inCollections.length > 0 && <b className="font-bold">{inCollections.length}</b>}
         </Button>
       </PopoverTrigger>
@@ -273,14 +284,14 @@ export function TagsMenu({
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <Button
-          variant="outline"
+          variant="ghost"
           size="sm"
           className="gap-1.5"
           title="Tags"
           aria-label="Manage tags"
           data-testid="artifact-tags"
         >
-          <Icon name="tag" size={16} />
+          <Icon name="tag" size={16} className="text-muted-foreground" />
           {tags.length > 0 && <b className="font-bold">{tags.length}</b>}
         </Button>
       </PopoverTrigger>

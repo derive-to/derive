@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { Input, Textarea } from "@/components/ui/input"
 import { useAuth } from "@/ctx"
+import { getInitials } from "@/lib/initials"
 import { usernameError } from "@/lib/username"
 import { cn } from "@/lib/utils"
 import { selectClass } from "@/pages/settings/roles"
@@ -124,7 +125,7 @@ export function Welcome() {
             </div>
             {/* Compact Self-host mode switch — swaps the snippet in place for the
                 run-it-yourself path. Most people never touch it. */}
-            <label className="flex shrink-0 cursor-pointer items-center gap-1.5 text-2xs font-medium text-muted-foreground">
+            <label className="flex shrink-0 items-center gap-1.5 text-2xs font-medium text-muted-foreground">
               <span title="Running your own Derive instance">Self-host mode</span>
               <button
                 type="button"
@@ -190,7 +191,7 @@ function WelcomeProfile() {
   const [err, setErr] = useState("")
   if (!me) return null
 
-  const initials = (me.name ?? me.email).slice(0, 2).toUpperCase()
+  const initials = getInitials(me.name ?? me.email)
   const normalized = handle.trim().toLowerCase()
   const handleErr = normalized ? usernameError(normalized) : null
   const profession = preset === OTHER ? custom.trim() : preset

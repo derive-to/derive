@@ -5,19 +5,20 @@ import type { Panel } from "./types"
 const PANEL_KEY = STORAGE_KEYS.commentsPanel
 const loadPanel = (): Panel => {
   try {
-    const v = localStorage.getItem(PANEL_KEY)
-    return v === "rail" || v === "hidden" ? v : "open"
+    // Only "hidden" is remembered as closed; anything else (incl. a legacy "rail")
+    // opens.
+    return localStorage.getItem(PANEL_KEY) === "hidden" ? "hidden" : "open"
   } catch {
     return "open"
   }
 }
 
 /**
- * The comments panel's open/rail/hidden state and its two side effects: it's
- * persisted per device across visits, and the `c` hotkey toggles it. Escape is
- * wired through the same keydown listener (it routes to the page's composer
- * cancel via `onEscape`) so the page keeps one listener, not two. Phones start
- * hidden (document-first); desktop restores the saved state.
+ * The comments panel's open/hidden state and its two side effects: it's persisted
+ * per device across visits, and the `c` hotkey toggles it. Escape is wired through
+ * the same keydown listener (it routes to the page's composer cancel via
+ * `onEscape`) so the page keeps one listener, not two. Phones start hidden
+ * (document-first); desktop restores the saved state.
  */
 export function useCommentsPanel(onEscape: () => void) {
   const [panel, setPanel] = useState<Panel>(() =>
@@ -48,7 +49,7 @@ export function useCommentsPanel(onEscape: () => void) {
       }
       if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey) return
       if (el && /^(input|textarea|select)$/i.test(el.tagName)) return
-      if (e.key === "c" || e.key === "C") setPanel((p) => (p === "open" ? "rail" : "open"))
+      if (e.key === "c" || e.key === "C") setPanel((p) => (p === "open" ? "hidden" : "open"))
     }
     window.addEventListener("keydown", onKey)
     return () => window.removeEventListener("keydown", onKey)

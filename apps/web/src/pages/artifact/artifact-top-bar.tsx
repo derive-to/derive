@@ -1,3 +1,4 @@
+import { useState } from "react"
 import type { GeneralRole, Role } from "@/api"
 import { Icon } from "@/components/icons"
 import { ShareButton } from "@/components/ShareDialog"
@@ -9,13 +10,13 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { cn } from "@/lib/utils"
-import { CollectionsMenu, ReportButton, StarButton, TagsMenu } from "./header-actions"
+import { CollectionsMenu, ReportDialog, StarButton, TagsMenu } from "./header-actions"
 
 /**
  * The artifact header actions (portaled into the shell top bar): favorite, tags,
- * collections, share, report, the "⋯ More" menu (insights / history / review /
- * edit), and the show-comments button. Shown only to signed-in viewers — an anon
- * visitor gets none of it. Pure + props-driven; the page keeps the cache writes.
+ * collections, share, the comments toggle, and the "⋯ More" menu (insights /
+ * history / review / edit / lock / report). Shown only to signed-in viewers — an
+ * anon visitor gets none of it. Props-driven; the page keeps the cache writes.
  */
 export function ArtifactTopBar(props: {
   shortId: string
@@ -51,11 +52,12 @@ export function ArtifactTopBar(props: {
   onHistory: () => void
   onReview: () => void
   onStartEdit: () => void
-  onShowComments: () => void
+  onToggleComments: () => void
   onPresent: () => void
   onLockToggle: () => void
 }) {
   const { shortId, openProposals, proposalsTotal } = props
+  const [reportOpen, setReportOpen] = useState(false)
   return (
     <>
       <StarButton shortId={shortId} favorite={props.favorite} onChange={props.onFavorite} />
@@ -76,18 +78,18 @@ export function ArtifactTopBar(props: {
         visibility={props.visibility}
         generalRole={props.generalRole}
       />
-      <ReportButton shortId={shortId} />
+      <ReportDialog shortId={shortId} open={reportOpen} onOpenChange={setReportOpen} />
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <Button
-            variant="outline"
+            variant="ghost"
             size="icon"
             title="More"
             aria-label="More actions"
             data-testid="artifact-more"
-            className={cn(openProposals > 0 && "border-primary text-primary")}
+            className={cn(openProposals > 0 && "bg-hover")}
           >
-            <Icon name="more" size={18} />
+            <Icon name="more" size={18} className="text-muted-foreground" />
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent>
@@ -115,29 +117,32 @@ export function ArtifactTopBar(props: {
               {props.locked ? "Unlock changes" : "Lock changes"}
             </DropdownMenuItem>
           )}
+          <DropdownMenuItem data-testid="artifact-report" onSelect={() => setReportOpen(true)}>
+            <Icon name="report" size={16} /> Report artifact
+          </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
       {/* Reader: re-render a non-responsive HTML artifact as clean, mobile-friendly
           text. A toggle — when on, it's highlighted; tap again for the original. */}
       {props.showReader && (
         <Button
-          variant="outline"
+          variant="ghost"
           size="sm"
-          className={cn("gap-1.5", props.reader && "border-primary text-primary")}
+          className={cn("gap-1.5", props.reader && "bg-hover text-foreground")}
           data-testid="artifact-reader"
           onClick={props.onReaderToggle}
           title={props.reader ? "Show original layout" : "Reader view"}
           aria-label="Reader view"
           aria-pressed={props.reader}
         >
-          <Icon name="reader" size={16} /> Reader
+          <Icon name="reader" size={16} className="text-muted-foreground" /> Reader
         </Button>
       )}
       {/* Decks get a one-tap Present (fullscreen) affordance in the chrome, not just
           the small ⛶ on the floating deck bar. */}
       {props.isDeck && (
         <Button
-          variant="outline"
+          variant="ghost"
           size="sm"
           className="gap-1.5"
           data-testid="artifact-present"
@@ -145,22 +150,23 @@ export function ArtifactTopBar(props: {
           title="Present (fullscreen)"
           aria-label="Present"
         >
-          <Icon name="present" size={16} /> Present
+          <Icon name="present" size={16} className="text-muted-foreground" /> Present
         </Button>
       )}
       {/* On phones the bottom-right FAB opens comments, so the header button would
           just be a redundant extra wrap-row. */}
-      {!props.isMobile && !props.panelOpen && (
+      {!props.isMobile && (
         <Button
-          variant="outline"
+          variant="ghost"
           size="sm"
-          className="gap-1.5"
+          className={cn("gap-1.5", props.panelOpen && "bg-hover")}
           data-testid="artifact-show-comments"
-          onClick={props.onShowComments}
-          title="Show comments (c)"
-          aria-label="Show comments"
+          onClick={props.onToggleComments}
+          title="Comments (c)"
+          aria-label="Comments"
+          aria-pressed={props.panelOpen}
         >
-          <Icon name="comments" size={16} />
+          <Icon name="comments" size={16} className="text-muted-foreground" />
           {props.openCount > 0 && <b className="font-bold">{props.openCount}</b>}
         </Button>
       )}
