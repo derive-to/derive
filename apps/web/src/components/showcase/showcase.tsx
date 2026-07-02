@@ -102,15 +102,12 @@ function NavDemo() {
           <div
             key={r.label}
             className={cn(
-              "relative flex items-center gap-2.5 rounded-md px-2.5 py-1.5 text-sm transition-colors",
+              "flex items-center gap-2.5 rounded-md px-2.5 py-1.5 text-sm transition-colors",
               active
                 ? "bg-secondary font-medium text-foreground"
                 : "font-medium text-muted-foreground hover:bg-hover hover:text-foreground",
             )}
           >
-            {active ? (
-              <span className="absolute inset-y-1.5 left-0 w-0.5 rounded-full bg-primary" />
-            ) : null}
             <Icon
               name={r.icon}
               size={17}
