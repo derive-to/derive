@@ -5,6 +5,8 @@ import type * as React from "react"
 
 import { cn } from "@/lib/utils"
 
+// Hairline via the border token (foreground-at-an-opacity), so it composites
+// identically over canvas, cards, and wells — never a solid gray divider.
 function Separator({
   className,
   orientation = "horizontal",

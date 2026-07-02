@@ -1,103 +1,141 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
-@import "@fontsource-variable/inter";
+/* Inter's opsz build (not the default wght-only file): the Display optical axis
+   auto-activates at large sizes via font-optical-sizing, matching the canonical
+   rsms.me distribution — self-hosted so the app makes no third-party requests. */
+@import "@fontsource-variable/inter/opsz.css";
+@import "@fontsource-variable/source-serif-4/opsz.css";
+@import "@fontsource-variable/source-serif-4/opsz-italic.css";
+@import "@fontsource-variable/geist-mono";
 
 /* Dark mode is the standard shadcn `.dark` class (toggled in ctx.tsx / __root.tsx). */
 @custom-variant dark (&:is(.dark *));
 
-/* ── b1D0dv72 theme (monochrome / neutral, red destructive) ───────────────── */
+/* ── Derive theme — the Nemonic identity on shadcn ─────────────────────────────
+   Cool charcoal neutrals (hue ≈ 268) + honey amber as the one warm note. Dark is
+   the canonical brand (ported from Nemonic, which was dark-only); light is a
+   first-class derivation that keeps the cool cast and darkens amber to bronze so
+   it survives as text (#e99421 on white is 2.4:1 — fails AA; brand-700 passes).
+   Doctrine: amber means "this matters" — primary actions, active nav, focus,
+   links, unread. Selected/hover states stay neutral washes. On amber fills, text
+   is the canvas charcoal, never white. See docs/design-system.md. */
 :root {
-  --radius: 0.625rem;
+  --radius: 0.5rem;
   --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
+  --foreground: oklch(0.159 0.011 268); /* gray-950 #0b0d12 — charcoal, never black */
   --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
+  --card-foreground: oklch(0.159 0.011 268);
   --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
+  --popover-foreground: oklch(0.159 0.011 268);
+  --primary: oklch(0.54 0.12 58); /* brand-700 #a15a16 — bronze, AA as text on white */
+  --primary-foreground: oklch(0.981 0.019 83.1); /* brand-50 #fff8eb */
+  --secondary: oklch(0.159 0.011 268 / 4%);
+  --secondary-foreground: oklch(0.2 0.015 266.8);
+  --muted: oklch(0.159 0.011 268 / 5%);
+  --muted-foreground: oklch(0.55 0.029 268); /* cool gray, ≥4.5:1 on white */
+  --accent: oklch(0.159 0.011 268 / 7%);
+  --accent-foreground: oklch(0.2 0.015 266.8);
+  --destructive: oklch(0.577 0.215 27.3); /* danger-600 #dc2626 */
   --destructive-foreground: oklch(0.985 0 0);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.205 0 0);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.708 0 0);
+  --success: oklch(0.527 0.137 150.1); /* #15803d */
+  --warning: oklch(0.553 0.147 48.9); /* #c2410c — safety orange, never amber */
+  --border: oklch(0.159 0.011 268 / 10%);
+  --input: oklch(0.159 0.011 268 / 14%);
+  --ring: oklch(0.64 0.141 61.6); /* brand-600 #c87516 — focus is amber, never blue */
+  --chart-1: oklch(0.64 0.141 61.6);
+  --chart-2: oklch(0.376 0.027 268);
+  --chart-3: oklch(0.716 0.027 268.7);
+  --chart-4: oklch(0.455 0.098 55.4);
+  --chart-5: oklch(0.848 0.016 266.3);
+  --sidebar: oklch(1 0 0);
+  --sidebar-foreground: oklch(0.159 0.011 268);
+  --sidebar-primary: oklch(0.54 0.12 58);
+  --sidebar-primary-foreground: oklch(0.981 0.019 83.1);
+  --sidebar-accent: oklch(0.159 0.011 268 / 7%);
+  --sidebar-accent-foreground: oklch(0.2 0.015 266.8);
+  --sidebar-border: oklch(0.159 0.011 268 / 10%);
+  --sidebar-ring: oklch(0.64 0.141 61.6);
 
-  /* derive vocabulary carried onto the new palette (app-level tokens). */
-  --border-soft: oklch(0.955 0 0);
-  --hover: oklch(0.955 0 0);
-  --disabled-foreground: oklch(0.72 0 0);
-  --selection: oklch(0.9 0 0);
+  /* derive app vocabulary (ink-at-an-opacity edges mirror the dark grammar). */
+  --border-soft: oklch(0.159 0.011 268 / 6%);
+  --hover: oklch(0.159 0.011 268 / 4%);
+  --disabled-foreground: oklch(0.716 0.027 268.7);
+  --selection: oklch(0.737 0.154 67.2 / 25%); /* amber selection reads on light too */
   /* On-image placard scrim — fixed in both themes (rides over user render content). */
   --scrim: #0b0d12;
   --scrim-foreground: #f4f5f8;
-  --shadow-sm: 0 1px 2px rgba(20, 22, 26, 0.06);
-  --shadow: 0 1px 2px rgba(20, 22, 26, 0.05), 0 12px 28px -16px rgba(20, 22, 26, 0.14);
-  --shadow-pop: 0 4px 10px -3px rgba(20, 22, 26, 0.1), 0 22px 44px -14px rgba(20, 22, 26, 0.24);
+  /* Light keeps soft shadows; the no-shadow rule is dark-only. */
+  --shadow-sm: 0 1px 2px rgba(11, 13, 18, 0.06);
+  --shadow: 0 1px 2px rgba(11, 13, 18, 0.05), 0 12px 28px -16px rgba(11, 13, 18, 0.14);
+  --shadow-pop: 0 4px 10px -3px rgba(11, 13, 18, 0.1), 0 22px 44px -14px rgba(11, 13, 18, 0.24);
 }
 
 .dark {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --destructive-foreground: oklch(0.985 0 0);
-  --border: oklch(1 0 0 / 10%);
+  --background: oklch(0.159 0.011 268); /* gray-950 #0b0d12 — the canvas */
+  --foreground: oklch(0.944 0.004 286.3); /* #ececef — never pure white */
+  --card: oklch(0.2 0.015 266.8); /* gray-900 #13161d — raised: dialogs, palette */
+  --card-foreground: oklch(0.944 0.004 286.3);
+  --popover: oklch(0.24 0.02 267.8); /* gray-800 #1b1f29 — floating: menus, toasts */
+  --popover-foreground: oklch(0.944 0.004 286.3);
+  --primary: oklch(0.737 0.154 67.2); /* brand-500 #e99421 — honey amber */
+  --primary-foreground: oklch(0.159 0.011 268); /* charcoal on amber, never white */
+  --secondary: oklch(1 0 0 / 5%); /* quiet wells composite over any surface */
+  --secondary-foreground: oklch(0.944 0.004 286.3);
+  --muted: oklch(1 0 0 / 8%);
+  --muted-foreground: oklch(0.716 0.027 268.7); /* gray-400 #9ca3b5 */
+  --accent: oklch(1 0 0 / 10%); /* menu focus/hover — neutral, amber is reserved */
+  --accent-foreground: oklch(0.944 0.004 286.3);
+  --destructive: oklch(0.711 0.166 22.2); /* danger-400 #f87171 — soft-fill legible */
+  --destructive-foreground: oklch(0.944 0.004 286.3);
+  --success: oklch(0.8 0.182 151.7); /* #4ade80 */
+  --warning: oklch(0.758 0.159 55.9); /* #fb923c */
+  --border: oklch(1 0 0 / 10%); /* every edge is white-at-an-opacity */
   --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
-  --sidebar: oklch(0.205 0 0);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
+  --ring: oklch(0.737 0.154 67.2);
+  --chart-1: oklch(0.737 0.154 67.2);
+  --chart-2: oklch(0.848 0.016 266.3);
+  --chart-3: oklch(0.607 0.029 268.7);
+  --chart-4: oklch(0.847 0.134 82.4);
+  --chart-5: oklch(0.376 0.027 268);
+  --sidebar: oklch(0.159 0.011 268); /* flush with the canvas */
+  --sidebar-foreground: oklch(0.944 0.004 286.3);
+  --sidebar-primary: oklch(0.737 0.154 67.2);
+  --sidebar-primary-foreground: oklch(0.159 0.011 268);
+  --sidebar-accent: oklch(1 0 0 / 5%);
+  --sidebar-accent-foreground: oklch(0.944 0.004 286.3);
   --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.556 0 0);
+  --sidebar-ring: oklch(0.737 0.154 67.2);
 
-  --border-soft: oklch(1 0 0 / 6%);
-  --hover: oklch(1 0 0 / 8%);
-  --disabled-foreground: oklch(0.5 0 0);
-  --selection: oklch(0.32 0 0);
+  --border-soft: oklch(1 0 0 / 5%);
+  --hover: oklch(1 0 0 / 5%);
+  --disabled-foreground: oklch(0.376 0.027 268); /* gray-600 — decoration only */
+  --selection: oklch(0.737 0.154 67.2 / 30%);
   --scrim: #0b0d12;
   --scrim-foreground: #f4f5f8;
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
-  --shadow: 0 1px 2px rgba(0, 0, 0, 0.5), 0 16px 34px -18px rgba(0, 0, 0, 0.72);
-  --shadow-pop: 0 4px 14px -3px rgba(0, 0, 0, 0.55), 0 26px 50px -14px rgba(0, 0, 0, 0.75);
+  /* No shadows in the dark UI: elevation is a surface step plus a ring-foreground/10
+     edge. The vars stay so recipes can reference them unconditionally. */
+  --shadow-sm: 0 0 #0000;
+  --shadow: 0 0 #0000;
+  --shadow-pop: 0 0 #0000;
+}
+
+/* The honey-amber brand ramp — for soft chips (bg-brand-500/10 text-brand-300),
+   eyebrows, and brand moments that need a specific step rather than --primary.
+   Theme-invariant by design: amber is amber; the per-theme --primary picks the
+   step that survives on that theme's canvas. */
+@theme {
+  --color-brand-50: #fff8eb;
+  --color-brand-100: #ffedc2;
+  --color-brand-200: #fedb8a;
+  --color-brand-300: #f8c45c;
+  --color-brand-400: #f0aa37;
+  --color-brand-500: #e99421;
+  --color-brand-600: #c87516;
+  --color-brand-700: #a15a16;
+  --color-brand-800: #7f4618;
+  --color-brand-900: #5a3413;
+  --color-brand-950: #261306;
 }
 
 @theme inline {
@@ -105,9 +143,9 @@
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) + 4px);
-  --radius-2xl: calc(var(--radius) * 1.8);
-  --radius-3xl: calc(var(--radius) * 2.2);
-  --radius-4xl: calc(var(--radius) * 2.6);
+  --radius-2xl: 1rem; /* pinned: dialog radius (Nemonic register), not radius*1.8 */
+  --radius-3xl: calc(var(--radius) * 2.75);
+  --radius-4xl: calc(var(--radius) * 3.25);
 
   --color-background: var(--background);
   --color-foreground: var(--foreground);
@@ -125,6 +163,8 @@
   --color-accent-foreground: var(--accent-foreground);
   --color-destructive: var(--destructive);
   --color-destructive-foreground: var(--destructive-foreground);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
@@ -142,7 +182,7 @@
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
 
-  /* derive app vocabulary (bridged to the new monochrome palette). */
+  /* derive app vocabulary (bridged onto the charcoal + amber palette). */
   --color-border-soft: var(--border-soft);
   --color-hover: var(--hover);
   --color-disabled-foreground: var(--disabled-foreground);
@@ -150,10 +190,9 @@
   --color-scrim: var(--scrim);
   --color-scrim-foreground: var(--scrim-foreground);
 
-  /* Type scale — rebuilt from scratch to a comfortable, standard register sized for
-     the b0 preset (its controls read at text-sm = 14px). Everything steps up ~2px
-     from the old cramped scale so the UI breathes; only the 2xs mono micro-label
-     stays small. rem-based so it respects the user's root font size. */
+  /* Type scale — comfortable, standard register sized for 14px controls. Everything
+     rem-based so it respects the user's root font size; only the 2xs mono
+     micro-label stays small. */
   --text-2xs: 0.6875rem; /* 11px — mono micro-labels only */
   --text-2xs--line-height: 1.45;
   --text-xs: 0.75rem; /* 12px */
@@ -173,9 +212,14 @@
   --text-4xl: 2.25rem; /* 36px — hero */
   --text-4xl--line-height: 1.1;
 
+  /* Three registers: Inter = chrome (working UI), Source Serif 4 = voice (wordmark,
+     greetings, artifact titles, empty-state headlines), Geist Mono = the machine
+     layer (counts, versions, kbd, uppercase eyebrows). Serif is applied per
+     call-site — --font-heading stays Inter so tool-chrome headings never drift. */
   --font-sans: "Inter Variable", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --font-sans--font-feature-settings: "cv02", "cv03", "cv04", "cv11", "ss01", "ss03";
-  --font-mono: ui-monospace, Menlo, Consolas, monospace;
+  --font-serif: "Source Serif 4 Variable", Georgia, serif;
+  --font-mono: "Geist Mono Variable", ui-monospace, Menlo, Consolas, monospace;
   --font-heading: var(--font-sans);
 }
 
@@ -200,8 +244,10 @@
     /* Inter sits a touch loose at UI sizes; pull it in a hair. */
     letter-spacing: -0.011em;
     font-feature-settings: "cv02", "cv03", "cv04", "cv11", "ss01", "ss03";
+    /* Lets Inter/Source Serif switch to their Display cuts at large sizes. */
     font-optical-sizing: auto;
     -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
   }
   a {
     color: var(--primary);
@@ -226,7 +272,7 @@
   /* Styling for parser-generated HTML we can't put utilities on: .cmt-body's nested
      code/link/strong come from the markdown renderer; .mention is the @mention pill. */
   .cmt-body code {
-    font-family: ui-monospace, Menlo, monospace;
+    font-family: var(--font-mono);
     font-size: 11.5px;
     background: var(--muted);
     border: 1px solid var(--border-soft);
@@ -241,11 +287,12 @@
   .cmt-body strong {
     font-weight: 700;
   }
-  /* A mention reads as a solid tag, not faint coloured text — full accent fill. */
+  /* Mentions are soft brand chips (amber wash + amber text), not solid pills — a
+     solid amber block next to body text competes with the page's real CTA. */
   .mention {
-    color: var(--primary-foreground);
-    background: var(--primary);
-    font-weight: 700;
+    color: var(--primary);
+    background: color-mix(in oklab, var(--primary) 15%, transparent);
+    font-weight: 600;
     border-radius: 5px;
     padding: 1px 6px;
     white-space: nowrap;
@@ -256,14 +303,25 @@
      shift text metrics (padding out, equal negative margin back) so glyphs keep their
      advance and the highlight stays under the caret. */
   .mention-live {
-    color: var(--primary-foreground);
-    background: var(--primary);
+    color: var(--primary);
+    background: color-mix(in oklab, var(--primary) 18%, transparent);
     border-radius: 4px;
     padding: 0 3px;
     margin: 0 -3px;
     box-decoration-break: clone;
     -webkit-box-decoration-break: clone;
   }
+}
+
+/* Dot-grid bench texture (workbench stages, specimen fallbacks) — theme-correct in
+   both modes because it's mixed from the foreground token. */
+@utility bench-grid {
+  background-image: radial-gradient(
+    circle,
+    color-mix(in oklab, var(--color-foreground) 5%, transparent) 1px,
+    transparent 1px
+  );
+  background-size: 24px 24px;
 }
 
 /* A peer's click ripple on the live-cursor overlay (see cursor-layer.tsx RippleDot). */

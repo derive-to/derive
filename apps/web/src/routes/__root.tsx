@@ -43,13 +43,9 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       { rel: "icon", type: "image/svg+xml", href: "/brand/logo-light.svg" },
       { rel: "icon", type: "image/png", href: "/brand/favicon.png" },
       { rel: "apple-touch-icon", href: "/brand/favicon.png" },
-      // InterVariable from rsms.me — the canonical Inter build with the Display
-      // optical-size axis + full OpenType feature support (cv02/cv03/cv04/cv11/
-      // ss01/ss03), which Google's static css2 slice strips. Two preconnects: the
-      // stylesheet fetch (plain) and the woff2 font fetches (CORS-anonymous).
-      { rel: "preconnect", href: "https://rsms.me/" },
-      { rel: "preconnect", href: "https://rsms.me/", crossOrigin: "anonymous" },
-      { rel: "stylesheet", href: "https://rsms.me/inter/inter.css" },
+      // Fonts are self-hosted via @fontsource-variable imports in globals.css —
+      // Inter's opsz build keeps the Display optical axis the old rsms.me link
+      // provided, without the third-party request.
     ],
   }),
   component: RootComponent,

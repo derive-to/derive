@@ -8,7 +8,17 @@ function Input({ className, type, ...props }: React.ComponentProps<"input">) {
       type={type}
       data-slot="input"
       className={cn(
-        "h-8 w-full min-w-0 rounded-lg border border-input bg-transparent px-2.5 py-1 text-base transition-colors outline-none file:inline-flex file:h-6 file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:cursor-not-allowed disabled:bg-input/50 disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 md:text-sm dark:bg-input/30 dark:disabled:bg-input/80 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40",
+        // Quiet well: hairline border-input; transparent on light (the themed shadow
+        // var adds depth there and zeroes in dark, where the well fill does the work).
+        // scheme-dark keeps native date/time picker glyphs legible on charcoal.
+        "h-8 w-full min-w-0 rounded-lg border border-input bg-transparent px-2.5 py-1 shadow-(--shadow-sm) outline-none selection:bg-selection dark:bg-input/30 dark:scheme-dark",
+        // iOS no-zoom: fields stay ≥16px on touch; 14px control base from sm up.
+        "text-base placeholder:text-muted-foreground sm:text-sm",
+        "file:inline-flex file:h-6 file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground",
+        // Editable focus grammar: amber border + soft glow, never outline-offset.
+        "focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40",
+        "aria-invalid:border-destructive aria-invalid:ring-2 aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40",
+        "disabled:pointer-events-none disabled:cursor-not-allowed disabled:bg-input/50 disabled:opacity-50 dark:disabled:bg-input/80",
         className,
       )}
       {...props}
