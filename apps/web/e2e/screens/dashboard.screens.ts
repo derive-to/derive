@@ -191,6 +191,19 @@ test("capture the dashboard across themes and viewports", async ({ page: p }) =>
   const ids: string[] = []
   for (const s of SEEDS) ids.push(await publish(p, s))
 
+  // Republish one artifact twice so a card carries version history — exercises
+  // the v{n} placard and the stacked version-deck under-edges on its frame.
+  for (const n of [2, 3]) {
+    const s = SEEDS[2]
+    const res = await p.request.post(`/v1/artifacts/${ids[2]}/versions`, {
+      multipart: {
+        file: { name: s.name, mimeType: s.type, buffer: Buffer.from(s.body) },
+        message: `revision ${n}`,
+      },
+    })
+    if (!res.ok()) throw new Error(`republish v${n} failed: ${res.status()}`)
+  }
+
   await p.goto("/")
   await settle(p)
 

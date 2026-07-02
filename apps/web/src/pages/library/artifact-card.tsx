@@ -2,7 +2,9 @@ import type { Artifact } from "@/api"
 import { AuthorChip } from "@/components/author-chip"
 import { Icon } from "@/components/icons"
 import { Thumb } from "@/components/shared/thumb"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { Card, CardContent } from "@/components/ui/card"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -30,12 +32,16 @@ export function artifactTypeLabel(a: Artifact): string {
   return "Doc"
 }
 
-// One card in the library grid: a full-bleed preview up top, then a padded
-// content block. Stretched-link pattern — the open button's ::after covers the
-// whole card so a click anywhere (preview included) opens it, while the star /
-// more / tag chips sit above (z-20) and stay independently clickable. Hover is
-// an instant edge brighten (never a shadow — dark has none, and a lifting
-// iframe would repaint).
+// One card in the library grid: the render mounted in an inset frame (a slim mat
+// on the Card chassis — concentric radii: rounded-lg frame inside the rounded-xl
+// card), then a caption. Artifacts with version history grow a stacked deck of
+// under-edges below the frame ("there is history here").
+//
+// Stretched-link pattern — the open button's ::after covers the whole card so a
+// click anywhere (preview included) opens it, while the star / more / author /
+// tag chips sit above (z-20) and stay independently clickable. Hover is an
+// instant edge brighten + preview wake (never a shadow — dark has none, and a
+// lifting iframe would repaint).
 export function ArtifactCard({
   artifact: a,
   onOpen,
@@ -57,14 +63,23 @@ export function ArtifactCard({
   // "Who last changed this" — only synced artifacts carry an author.
   const author = a.author ?? null
   const hasAuthor = !!(author?.name || author?.login || a.author_login || a.author_name)
+  const updated = a.updated_at ?? a.created_at ?? a.versions[0]?.created_at
+  // The list endpoint sends `versions: []` (revision detail is a detail-page
+  // concern), so version history reads off `current_version` — the stable head
+  // ordinal, bumped on every publish. > 1 means "there is history here".
+  const versionDepth = Math.max(a.current_version, a.versions.length)
 
   return (
-    <div
+    <Card
       className={cn(
         // No hover transform: the preview is an iframe, and translating its
         // container makes the browser repaint it (a visible flash). A neutral
-        // edge brighten carries the hover instead.
-        "group relative flex flex-col overflow-hidden rounded-xl border bg-card",
+        // edge brighten carries the hover instead. p-1 is the mat: 12px card
+        // radius − 4px padding = 8px frame radius (rounded-lg on the Thumb —
+        // --radius-xl − --spacing(1) = --radius-lg, so the named steps encode
+        // the concentric math). gap-3 is the frame→caption rhythm; the version
+        // deck hangs 6px of it, leaving 6px of air before the title.
+        "group relative isolate gap-3 p-1",
         // Needs-your-feedback items stand out in the grid: a tagged item gets the full
         // accent + ring; one you're just in the thread on gets a softer accent border
         // (amber = "this matters" — the sanctioned attention signal, like unread).
@@ -77,13 +92,15 @@ export function ArtifactCard({
     >
       <div className="relative">
         {/* Format + version-depth placards ride on the render (scrim-backed, always
-            visible) — see Thumb. They free the caption line and put recognition cues
-            where the eye already is. */}
+            visible), and version history stacks a deck of under-edges below the
+            frame — see Thumb. Recognition cues live where the eye already is. */}
         <Thumb
           id={a.short_id}
           v={a.current_version}
           typeLabel={artifactTypeLabel(a)}
-          version={a.versions.length > 1 ? a.current_version : undefined}
+          version={versionDepth > 1 ? a.current_version : undefined}
+          versionCount={versionDepth}
+          className="rounded-lg"
         />
         <Button
           size="icon"
@@ -97,7 +114,7 @@ export function ArtifactCard({
             onToggleFavorite()
           }}
           className={cn(
-            "absolute right-2.5 top-2.5 z-20 transition-opacity",
+            "absolute right-2 top-2 z-20 transition-opacity",
             // Declutter the resting card: a favourited star always shows; an
             // unfavourited one reveals on hover/focus, like the more-actions chip.
             !a.favorite && "opacity-0 group-hover:opacity-100 focus:opacity-100",
@@ -125,7 +142,7 @@ export function ArtifactCard({
                 data-testid={`artifact-card-more-${a.short_id}`}
                 aria-label="More actions"
                 onClick={(e) => e.stopPropagation()}
-                className="absolute left-2.5 top-2.5 z-20 opacity-0 group-hover:opacity-100 focus:opacity-100"
+                className="absolute left-2 top-2 z-20 opacity-0 group-hover:opacity-100 focus:opacity-100"
               >
                 <Icon name="more" size={16} />
                 <span
@@ -147,7 +164,7 @@ export function ArtifactCard({
           </DropdownMenu>
         )}
       </div>
-      <div className="flex min-w-0 flex-col gap-2 border-t border-border-soft p-3.5">
+      <CardContent className="flex min-w-0 flex-col gap-2 p-2 pt-0">
         <button
           type="button"
           data-testid={`artifact-card-open-${a.short_id}`}
@@ -155,7 +172,7 @@ export function ArtifactCard({
           onMouseEnter={onPrefetch}
           onFocus={onPrefetch}
           aria-label={`Open ${a.title ?? a.short_id}`}
-          className="flex w-full min-w-0 flex-col gap-1.5 text-left outline-none after:absolute after:inset-0 after:z-[1] after:rounded-xl after:content-[''] focus-visible:after:outline-2 focus-visible:after:-outline-offset-2 focus-visible:after:outline-ring"
+          className="flex w-full min-w-0 flex-col gap-1 text-left outline-none after:absolute after:inset-0 after:z-[1] after:rounded-xl after:content-[''] focus-visible:after:outline-2 focus-visible:after:-outline-offset-2 focus-visible:after:outline-ring"
         >
           {/* The title is the work, not the tool — serif voice (large enough here). */}
           <span className="truncate font-serif text-lg font-medium tracking-tight text-foreground">
@@ -170,54 +187,74 @@ export function ArtifactCard({
               {dirOf(a.source_path)}/
             </span>
           )}
-          <span className="flex items-center gap-2 font-mono text-xs tabular-nums text-muted-foreground">
-            {(a.updated_at ?? a.created_at ?? a.versions[0]?.created_at) && (
-              <span>
-                updated {ago(a.updated_at ?? a.created_at ?? a.versions[0]?.created_at ?? "")}
+        </button>
+        {/* Poster/time meta row: who last changed this · when, with trailing signals.
+            Machine register (mono) for the time; the author chip is the one
+            interactive island (z-20), the rest of the row clicks through to open. */}
+        <div className="flex min-w-0 items-center gap-1.5 font-mono text-2xs tabular-nums text-muted-foreground">
+          {hasAuthor && (
+            <>
+              <AuthorChip
+                name={author?.name ?? a.author_name ?? null}
+                login={author?.login ?? a.author_login ?? null}
+                avatar={author?.avatar ?? a.author_avatar ?? null}
+                handle={author?.handle ?? null}
+                size="xs"
+                className="relative z-20"
+                data-testid={`artifact-card-author-${a.short_id}`}
+              />
+              <span aria-hidden className="shrink-0 text-muted-foreground/50">
+                ·
+              </span>
+            </>
+          )}
+          {updated && (
+            <time
+              dateTime={new Date(updated).toISOString()}
+              title={new Date(updated).toLocaleString()}
+              className="shrink-0"
+            >
+              {ago(updated)}
+            </time>
+          )}
+          <span className="ml-auto inline-flex shrink-0 items-center gap-2 pl-1">
+            <CommentSignal artifact={a} size={12} />
+            {a.views !== undefined && a.views > 0 && (
+              <span className="inline-flex items-center gap-1" title={`${a.views} viewers`}>
+                <Icon name="views" size={12} />
+                {a.views > 999 ? `${(a.views / 1000).toFixed(1)}k` : a.views}
+                <span className="sr-only"> views</span>
               </span>
             )}
-            <span className="ml-auto inline-flex items-center gap-2">
-              <CommentSignal artifact={a} />
-              {a.views !== undefined && a.views > 0 && (
-                <span className="inline-flex items-center gap-1" title={`${a.views} viewers`}>
-                  <Icon name="views" size={13} />{" "}
-                  {a.views > 999 ? `${(a.views / 1000).toFixed(1)}k` : a.views}
-                  <span className="sr-only"> views</span>
-                </span>
-              )}
-            </span>
           </span>
-        </button>
-        {hasAuthor && (
-          <div className="relative z-20 flex min-w-0">
-            <AuthorChip
-              name={author?.name ?? a.author_name ?? null}
-              login={author?.login ?? a.author_login ?? null}
-              avatar={author?.avatar ?? a.author_avatar ?? null}
-              handle={author?.handle ?? null}
-              data-testid={`artifact-card-author-${a.short_id}`}
-            />
-          </div>
-        )}
+        </div>
         {(a.tags ?? []).length > 0 && (
           <div className="relative z-20 flex flex-wrap gap-1.5">
+            {/* Tag chips are Badges rendered as buttons (asChild) — the chip
+                metrics and focus grammar come from the primitive; only the
+                machine register + hover brighten are local. */}
             {(a.tags ?? []).slice(0, 6).map((t) => (
-              <button
+              <Badge
                 key={t}
-                type="button"
-                data-testid={`artifact-card-tag-${t}`}
-                onClick={(e) => {
-                  e.stopPropagation()
-                  onPickTag(t)
-                }}
-                className="rounded-md border border-border px-1.5 py-px font-mono text-2xs text-muted-foreground outline-none hover:border-foreground/25 hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+                asChild
+                variant="outline"
+                className="px-1.5 font-mono text-2xs hover:border-foreground/25 hover:text-foreground"
               >
-                #{t}
-              </button>
+                <button
+                  type="button"
+                  data-testid={`artifact-card-tag-${t}`}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onPickTag(t)
+                  }}
+                >
+                  #{t}
+                </button>
+              </Badge>
             ))}
           </div>
         )}
-      </div>
-    </div>
+      </CardContent>
+    </Card>
   )
 }

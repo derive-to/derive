@@ -8,9 +8,10 @@ import { ArtifactCard } from "./artifact-card"
 // from the measured width and let react-virtual render only the visible rows.
 const MIN_CARD = 220
 const GAP = 12
-// Initial row estimate for a 16:10 card (thumb ~140 + content ~90 + the pb-5 row
-// gutter); measureElement corrects the real height per row once mounted.
-const EST_ROW = 250
+// Initial row estimate for a 16:10 card (inset frame ~131 + mat/caption ~82 +
+// the pb-5 row gutter); measureElement corrects the real height per row once
+// mounted.
+const EST_ROW = 235
 
 // The library grid, windowed. Only the rows in (or near) the viewport are in the
 // DOM, so the grid stays at 60fps no matter how large the library grows. The
