@@ -65,7 +65,10 @@ export function AuthorChip({
           e.stopPropagation()
           onClick()
         }}
-        className={cn(base, "rounded-md transition-colors hover:text-foreground")}
+        className={cn(
+          base,
+          "rounded-md outline-none hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring",
+        )}
       >
         {inner}
       </button>
@@ -81,7 +84,10 @@ export function AuthorChip({
         data-testid={testId}
         title={`@${handle}`}
         onClick={(e) => e.stopPropagation()}
-        className={cn(base, "transition-colors hover:text-foreground")}
+        className={cn(
+          base,
+          "rounded-md outline-none hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring",
+        )}
       >
         {inner}
       </Link>

@@ -70,7 +70,7 @@ export function UserPod({
         >
           {/* Soft brand tint — never a solid amber block. */}
           <Avatar className="size-7 shrink-0">
-            <AvatarFallback className="bg-primary/15 text-xs font-medium text-primary">
+            <AvatarFallback className="bg-primary/10 text-xs font-medium text-primary">
               {initials}
             </AvatarFallback>
           </Avatar>
@@ -79,7 +79,7 @@ export function UserPod({
               <span className="block truncate text-sm font-medium text-foreground">
                 {me.name ?? me.email}
               </span>
-              <span className="block truncate text-2xs text-muted-foreground">
+              <span className="block truncate text-xs text-muted-foreground">
                 {workspaceLabel || me.email}
               </span>
             </span>
@@ -91,7 +91,7 @@ export function UserPod({
       <PopoverContent side="top" align="start" className="w-64 gap-0 p-1">
         <div className="flex items-center gap-2.5 px-2 py-1.5">
           <Avatar className="size-7 shrink-0">
-            <AvatarFallback className="bg-primary/15 text-xs font-medium text-primary">
+            <AvatarFallback className="bg-primary/10 text-xs font-medium text-primary">
               {initials}
             </AvatarFallback>
           </Avatar>
@@ -99,7 +99,7 @@ export function UserPod({
             <span className="block truncate text-sm font-medium">{me.name ?? me.email}</span>
             {/* Lead with the public handle, not the (private) email. */}
             <span
-              className="block truncate text-2xs text-muted-foreground"
+              className="block truncate text-xs text-muted-foreground"
               data-testid="user-handle"
             >
               {me.username ? `@${me.username}` : me.email}

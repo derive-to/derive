@@ -14,11 +14,12 @@ const buttonVariants = cva(
     variants: {
       variant: {
         // Amber chassis: charcoal text (never white on amber); the inset
-        // top-light reads as a lit edge on the fill in BOTH themes; hover
-        // steps the fill LIGHTER (an opacity step over the dark canvas would
-        // read darker, so mix toward white instead).
+        // top-light reads as a lit edge on the fill in BOTH themes. Hover steps
+        // the fill toward the theme's canvas direction — darker in light (the
+        // brand-50 label needs the contrast), lighter in dark (an opacity step
+        // over the dark canvas would read darker, so mix toward white).
         default:
-          "bg-primary text-primary-foreground shadow-[inset_0_1px_0_--theme(--color-white/20%)] hover:bg-[color-mix(in_oklab,var(--primary)_88%,white)]",
+          "bg-primary text-primary-foreground shadow-[inset_0_1px_0_--theme(--color-white/20%)] hover:bg-[color-mix(in_oklab,var(--primary)_92%,black)] dark:hover:bg-[color-mix(in_oklab,var(--primary)_88%,white)]",
         // Hairline only; hover is a quiet neutral wash, never amber.
         outline: "border-border hover:bg-secondary aria-expanded:bg-secondary",
         // Quiet well + hairline; hover brightens the edge (neutral, not ring).

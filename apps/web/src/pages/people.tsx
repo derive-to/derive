@@ -3,6 +3,7 @@ import { Link } from "@tanstack/react-router"
 import { useEffect, useState } from "react"
 import { api, type PublicProfile } from "@/api"
 import { FollowButton } from "@/components/follow-button"
+import { Icon } from "@/components/icons"
 import { EmptyState } from "@/components/shared/empty-state"
 import { Spinner } from "@/components/shared/spinner"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
@@ -53,11 +54,15 @@ export function People() {
           <EmptyState>Couldn't load people right now.</EmptyState>
         ) : people.length === 0 ? (
           <div data-testid="people-empty">
-            <EmptyState>
-              {debounced
-                ? `No people match "${debounced}".`
-                : "No discoverable people yet. People who turn on discoverability show up here."}
-            </EmptyState>
+            <EmptyState
+              icon={<Icon name="following" strokeWidth={1.75} />}
+              title={debounced ? `No people match “${debounced}”.` : "No discoverable people yet."}
+              description={
+                debounced
+                  ? "Try a different name or @handle."
+                  : "People who turn on discoverability show up here."
+              }
+            />
           </div>
         ) : (
           <ul

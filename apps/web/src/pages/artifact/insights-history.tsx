@@ -246,7 +246,7 @@ export function HistoryDrawer({
                   >
                     <div className="flex items-center gap-1.5">
                       {s.name ? (
-                        <Icon name="pin" size={13} />
+                        <Icon name="pin" size={16} />
                       ) : (
                         <span className="size-1.5 shrink-0 rounded-full bg-muted-foreground" />
                       )}
@@ -255,7 +255,7 @@ export function HistoryDrawer({
                       </span>
                       {s.n === art.current_version && (
                         // The live version gets the sanctioned soft brand chip.
-                        <span className="rounded-full bg-primary/15 px-1.5 py-px font-mono text-2xs font-medium text-primary">
+                        <span className="rounded-full bg-primary/10 px-1.5 py-px font-mono text-2xs font-medium text-primary">
                           current
                         </span>
                       )}

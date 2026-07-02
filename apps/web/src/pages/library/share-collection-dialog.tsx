@@ -73,8 +73,8 @@ export function ShareCollectionDialog({
         <DialogHeader>
           <DialogTitle>Share “{collection.title}”</DialogTitle>
           <DialogDescription>
-            People here get this role on <b className="text-foreground">every artifact</b> in the
-            collection.
+            People here get this role on{" "}
+            <b className="font-medium text-foreground">every artifact</b> in the collection.
           </DialogDescription>
         </DialogHeader>
 

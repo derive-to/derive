@@ -51,9 +51,9 @@ export function ReviewDecisionBar({
             <div className="mb-2 text-xs leading-relaxed">
               {stale ? (
                 <span className="text-warning">
-                  <b>Heads up:</b> this was proposed against v{active?.base_version}, but the live
-                  version is now v{currentVersion}. Approving replaces v{currentVersion} entirely.
-                  Approve anyway?
+                  <b className="font-medium">Heads up:</b> this was proposed against v
+                  {active?.base_version}, but the live version is now v{currentVersion}. Approving
+                  replaces v{currentVersion} entirely. Approve anyway?
                 </span>
               ) : (
                 <span className="text-muted-foreground">

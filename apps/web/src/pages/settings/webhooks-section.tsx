@@ -40,7 +40,7 @@ export function WebhooksSection() {
           href="https://www.standardwebhooks.com"
           target="_blank"
           rel="noreferrer"
-          className="underline"
+          className="text-primary underline underline-offset-2"
         >
           Standard Webhooks
         </a>{" "}

@@ -291,11 +291,15 @@ function ProfileWork({ handle, isMe, name }: { handle: string; isMe: boolean; na
         <EmptyState>Couldn't load this work right now.</EmptyState>
       ) : items.length === 0 ? (
         <div data-testid="profile-work-empty">
-          <EmptyState>
-            {isMe
-              ? "You haven't published anything public yet. Your public work shows up here."
-              : `${name} hasn't published anything public yet.`}
-          </EmptyState>
+          <EmptyState
+            icon={<Icon name="all" strokeWidth={1.75} />}
+            title="Nothing published yet."
+            description={
+              isMe
+                ? "Your public work shows up here once you publish."
+                : `${name} hasn't published anything public yet.`
+            }
+          />
         </div>
       ) : (
         <>

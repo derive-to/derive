@@ -16,13 +16,13 @@ export function CursorButton() {
           data-testid="cursor-self-trigger"
           title="Customize your cursor"
           aria-label="Customize your cursor"
-          className="grid size-[26px] place-items-center rounded-md text-muted-foreground transition-colors hover:bg-hover"
+          className="grid size-[26px] place-items-center rounded-md text-muted-foreground hover:bg-hover"
         >
           <CursorGlyph color={pref.color} kind={pref.kind} emoji={pref.emoji} size={16} />
         </button>
       </PopoverTrigger>
-      <PopoverContent align="end" className="w-60 p-2">
-        <div className="px-0.5 pb-1.5 font-mono text-2xs uppercase tracking-[0.06em] text-muted-foreground">
+      <PopoverContent align="end" className="w-60 gap-0 p-2">
+        <div className="px-0.5 pb-1.5 font-mono text-2xs uppercase tracking-wide text-muted-foreground">
           Your cursor
         </div>
         <CursorSwitch />

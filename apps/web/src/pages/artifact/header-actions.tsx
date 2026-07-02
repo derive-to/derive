@@ -203,7 +203,7 @@ export function CollectionsMenu({
           )}
         </Button>
       </PopoverTrigger>
-      <PopoverContent align="end" className="max-h-[340px] w-[248px] overflow-auto">
+      <PopoverContent align="end" className="max-h-[340px] w-[248px] gap-0 overflow-auto">
         <div className="mb-2 font-mono text-2xs uppercase tracking-wide text-muted-foreground">
           Add to collection
         </div>
@@ -226,7 +226,7 @@ export function CollectionsMenu({
                 )}
               >
                 <span className="grid w-3.5 shrink-0 place-items-center">
-                  {inSet.has(col.id) && <Icon name="check" size={14} />}
+                  {inSet.has(col.id) && <Icon name="check" size={16} />}
                 </span>
                 <span className="flex-1 truncate">{col.title}</span>
               </button>
@@ -245,6 +245,7 @@ export function CollectionsMenu({
           />
           <Button
             variant="outline"
+            size="sm"
             onClick={create}
             disabled={!draft.trim()}
             data-testid="collection-add"
@@ -305,7 +306,7 @@ export function TagsMenu({
           )}
         </Button>
       </PopoverTrigger>
-      <PopoverContent align="end" className="w-[244px]">
+      <PopoverContent align="end" className="w-[244px] gap-0">
         <div className="mb-2 font-mono text-2xs uppercase tracking-wide text-muted-foreground">
           Tags
         </div>
@@ -330,7 +331,7 @@ export function TagsMenu({
                     aria-label={`Remove ${t}`}
                     className="rounded-sm leading-none outline-none hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
                   >
-                    ×
+                    <Icon name="close" size={12} />
                   </button>
                 )}
               </span>
@@ -348,7 +349,13 @@ export function TagsMenu({
                 if (e.key === "Enter") add()
               }}
             />
-            <Button variant="outline" onClick={add} disabled={!draft.trim()} data-testid="tag-add">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={add}
+              disabled={!draft.trim()}
+              data-testid="tag-add"
+            >
               Add
             </Button>
           </div>

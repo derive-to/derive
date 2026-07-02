@@ -1,3 +1,4 @@
+import { ChevronDown, ChevronUp } from "lucide-react"
 import { memo } from "react"
 import { CursorGlyph, NameTag } from "@/components/cursor/glyph"
 import { cn } from "@/lib/utils"
@@ -58,14 +59,21 @@ function EdgeIndicator({
     <button
       type="button"
       onClick={onClick}
+      // Pointer-only by design: the whole layer is aria-hidden, so keep the pill
+      // out of the tab order.
+      tabIndex={-1}
       data-testid={`cursor-offscreen-${side}`}
       title={`${peers.map((p) => p.name).join(", ")} ${side === "top" ? "above" : "below"}. Click to scroll.`}
       className={cn(
-        "pointer-events-auto absolute left-1/2 z-30 flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-border bg-card/95 px-2.5 py-1 text-xs font-semibold text-foreground shadow-[var(--shadow)] backdrop-blur transition-colors hover:bg-hover",
+        "pointer-events-auto absolute left-1/2 z-30 flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-border bg-card/95 px-2.5 py-1 text-xs font-semibold text-foreground shadow-[var(--shadow)] backdrop-blur hover:bg-hover",
         side === "top" ? "top-2" : "bottom-2",
       )}
     >
-      <span aria-hidden>{side === "top" ? "▲" : "▼"}</span>
+      {side === "top" ? (
+        <ChevronUp className="size-3.5 shrink-0" aria-hidden />
+      ) : (
+        <ChevronDown className="size-3.5 shrink-0" aria-hidden />
+      )}
       <span className="flex -space-x-1">
         {peers.slice(0, 3).map((p) => (
           <span

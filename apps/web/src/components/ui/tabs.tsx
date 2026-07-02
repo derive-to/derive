@@ -26,7 +26,7 @@ const tabsListVariants = cva(
       variant: {
         // Filled segments stay a neutral muted wash — amber is reserved for the line underline.
         default: "bg-muted",
-        line: "gap-1 bg-transparent",
+        line: "gap-1 border-b border-border bg-transparent",
       },
     },
     defaultVariants: {

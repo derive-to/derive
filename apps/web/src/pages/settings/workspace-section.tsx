@@ -221,8 +221,10 @@ export function WorkspaceSection({ meId }: { meId: string }) {
     <section>
       <div className="mb-4 flex items-start justify-between gap-3">
         <p className="text-sm text-muted-foreground">
-          Name your workspace and choose who's in it. <strong>Admins</strong> add people,{" "}
-          <strong>Creators</strong> publish artifacts, <strong>Viewers</strong> read and comment.
+          Name your workspace and choose who's in it.{" "}
+          <strong className="font-medium">Admins</strong> add people,{" "}
+          <strong className="font-medium">Creators</strong> publish artifacts,{" "}
+          <strong className="font-medium">Viewers</strong> read and comment.
         </p>
         <Dialog open={createOpen} onOpenChange={setCreateOpen}>
           <DialogTrigger asChild>

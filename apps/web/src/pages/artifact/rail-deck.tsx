@@ -1,4 +1,6 @@
+import { ChevronLeft, ChevronRight } from "lucide-react"
 import type { Viewer } from "@/api"
+import { Icon } from "@/components/icons"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { getInitials } from "@/lib/initials"
 import { cn } from "@/lib/utils"
@@ -50,7 +52,7 @@ export function DeckBar({
   onFullscreen: () => void
 }) {
   const btn =
-    "grid size-[30px] place-items-center rounded-lg border border-border bg-card text-foreground outline-none hover:bg-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:pointer-events-none disabled:opacity-40"
+    "grid size-[30px] place-items-center rounded-lg border border-border bg-card text-foreground outline-none hover:bg-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:pointer-events-none disabled:opacity-50"
   return (
     <div className="absolute bottom-3.5 left-1/2 z-[5] flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-border bg-card p-1.5 shadow-[var(--shadow)]">
       <button
@@ -61,7 +63,7 @@ export function DeckBar({
         disabled={deck.i <= 0}
         aria-label="Previous slide"
       >
-        ‹
+        <ChevronLeft size={16} />
       </button>
       <span
         data-testid="deck-position"
@@ -77,7 +79,7 @@ export function DeckBar({
         disabled={deck.i >= deck.total - 1}
         aria-label="Next slide"
       >
-        ›
+        <ChevronRight size={16} />
       </button>
       <button
         type="button"
@@ -87,7 +89,7 @@ export function DeckBar({
         title="Present (fullscreen)"
         aria-label="Present fullscreen"
       >
-        ⛶
+        <Icon name="present" size={16} />
       </button>
     </div>
   )
@@ -121,7 +123,7 @@ export function Presence({ viewers, selfId }: { viewers: Viewer[]; selfId?: stri
                 key={v.id}
                 className={cn(
                   "grid size-[22px] place-items-center rounded-full border-2 border-background font-mono text-2xs font-medium",
-                  v.id === selfId ? "bg-primary/15 text-primary" : "bg-accent text-foreground",
+                  v.id === selfId ? "bg-primary/10 text-primary" : "bg-accent text-foreground",
                   i > 0 && "-ml-[7px]",
                 )}
               >
@@ -135,7 +137,7 @@ export function Presence({ viewers, selfId }: { viewers: Viewer[]; selfId?: stri
           </span>
         </button>
       </PopoverTrigger>
-      <PopoverContent align="end" data-testid="presence-popover" className="w-64 p-1.5">
+      <PopoverContent align="end" data-testid="presence-popover" className="w-64 gap-0 p-1.5">
         <div className="px-2 py-1 font-mono text-2xs uppercase tracking-wide tabular-nums text-muted-foreground">
           {ordered.length} viewing now
         </div>
@@ -145,7 +147,7 @@ export function Presence({ viewers, selfId }: { viewers: Viewer[]; selfId?: stri
               <span
                 className={cn(
                   "grid size-7 shrink-0 place-items-center rounded-full font-mono text-2xs font-medium",
-                  v.id === selfId ? "bg-primary/15 text-primary" : "bg-accent text-foreground",
+                  v.id === selfId ? "bg-primary/10 text-primary" : "bg-accent text-foreground",
                 )}
               >
                 {initials(v)}

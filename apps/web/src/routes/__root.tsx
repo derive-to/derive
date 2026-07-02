@@ -72,6 +72,9 @@ function RootComponent() {
               <AppFrame />
             </CursorPrefProvider>
           </AuthProvider>
+          {/* Inside ThemeProvider so sonner's useTheme() tracks the app's forced
+              theme rather than falling back to the OS preference. */}
+          <Toaster />
         </ThemeProvider>
       </QueryClientProvider>
     </RootDocument>
@@ -112,7 +115,6 @@ function RootDocument({ children }: { children: ReactNode }) {
       </head>
       <body>
         {children}
-        <Toaster />
         <Scripts />
       </body>
     </html>

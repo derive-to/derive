@@ -137,7 +137,7 @@ export function ArtifactCard({
             <DropdownMenuContent onClick={(e) => e.stopPropagation()}>
               <DropdownMenuItem
                 data-testid={`artifact-card-delete-${a.short_id}`}
-                className="text-destructive focus:text-destructive"
+                variant="destructive"
                 onSelect={() => onDelete()}
               >
                 <Icon name="delete" size={16} />

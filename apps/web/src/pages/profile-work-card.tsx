@@ -16,10 +16,10 @@ export function ProfileWorkCard({ artifact: a }: { artifact: Artifact }) {
       to="/a/$ref"
       params={{ ref: refFor(a) }}
       data-testid={`profile-work-${a.short_id}`}
-      // Interactive card: hairline edge that brightens on hover; the shadow vars
-      // carry light-mode depth and zero out in dark. Shadow keeps its fade —
-      // border color flips instantly.
-      className="group flex flex-col overflow-hidden rounded-xl border bg-card shadow-(--shadow-sm) outline-none transition-shadow duration-150 hover:border-foreground/25 hover:shadow-(--shadow) focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+      // Interactive card: hairline edge that brightens on hover, instantly — no
+      // shadow lift (matches the library card's no-shadow-hover rule). The shadow
+      // vars carry light-mode resting depth and zero out in dark.
+      className="group flex flex-col overflow-hidden rounded-xl border bg-card shadow-(--shadow-sm) outline-none hover:border-foreground/25 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
     >
       <Thumb
         id={a.short_id}

@@ -7,14 +7,15 @@ test("the user menu switches between themes and the choice persists", async ({ o
   const html = owner.locator("html")
 
   // The menu stays open by design so both themes can be tried in a row.
+  // Themes render via the shadcn `.dark`/`.light` class on <html> (next-themes).
   await owner.getByTestId("user-menu-trigger").click()
   for (const theme of ["light", "dark"]) {
     await owner.getByTestId(`theme-option-${theme}`).click()
-    await expect(html).toHaveAttribute("data-theme", theme)
+    await expect(html).toHaveClass(new RegExp(theme))
   }
   // The last choice survives a reload (persisted to localStorage).
   await owner.reload()
-  await expect(html).toHaveAttribute("data-theme", "dark")
+  await expect(html).toHaveClass(/dark/)
 })
 
 test("the notification bell opens an empty panel", async ({ owner }) => {

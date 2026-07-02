@@ -71,7 +71,7 @@ export function SyncChip({ collapsed }: { collapsed: boolean }) {
       <div className="h-1.5 w-full overflow-hidden rounded-full bg-secondary">
         <div
           className={cn(
-            "h-full rounded-full bg-primary transition-all duration-500",
+            "h-full rounded-full bg-primary transition-[width] duration-500",
             indeterminate && "w-1/3 animate-pulse",
           )}
           style={indeterminate ? undefined : { width: `${pct}%` }}

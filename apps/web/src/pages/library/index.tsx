@@ -231,17 +231,41 @@ function LibraryBody() {
             ? (activeCollection?.count ?? items.length)
             : items.length
 
-  const emptyMessage = debouncedQ
-    ? `No artifacts match “${debouncedQ}”.`
+  const emptyProps = debouncedQ
+    ? {
+        icon: <Icon name="search" strokeWidth={1.75} />,
+        title: `No artifacts match “${debouncedQ}”.`,
+        description: "Try a different search.",
+      }
     : filter.kind === "favorites"
-      ? "No favorites yet. Tap the star on any artifact to save it."
+      ? {
+          icon: <Icon name="favorites" strokeWidth={1.75} />,
+          title: "No favorites yet.",
+          description: "Tap the star on any artifact to save it.",
+        }
       : filter.kind === "following"
-        ? "Follow authors or folders to see their recent changes here."
+        ? {
+            icon: <Icon name="following" strokeWidth={1.75} />,
+            title: "Nothing from people you follow yet.",
+            description: "Follow authors or folders to see their recent changes here.",
+          }
         : filter.kind === "tag"
-          ? `Nothing tagged #${filter.tag} yet.`
+          ? {
+              icon: <Icon name="tag" strokeWidth={1.75} />,
+              title: `Nothing tagged #${filter.tag} yet.`,
+              description: "Tag artifacts to group them here.",
+            }
           : filter.kind === "collection"
-            ? "This collection is empty. Open an artifact and add it from its Collections menu."
-            : "Nothing yet. Publish above, or run derive publish ./file."
+            ? {
+                icon: <Icon name="collection" strokeWidth={1.75} />,
+                title: "This collection is empty.",
+                description: "Open an artifact and add it from its Collections menu.",
+              }
+            : {
+                icon: <Icon name="all" strokeWidth={1.75} />,
+                title: "Nothing yet.",
+                description: "Publish above, or run derive publish ./file.",
+              }
 
   // A personal header on the (otherwise bare) home view: lead with the user's
   // first name, falling back to their handle. Only on the unfiltered "all" list,
@@ -513,7 +537,7 @@ function LibraryBody() {
           emptyHome ? (
             <HowItWorks />
           ) : (
-            <EmptyState>{emptyMessage}</EmptyState>
+            <EmptyState {...emptyProps} />
           )
         ) : isSyncedCollection ? (
           // A mirrored repo. Default to a flat, most-recently-updated list; folders are

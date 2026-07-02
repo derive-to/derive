@@ -97,7 +97,7 @@ export function NotificationBell({ collapsed }: { collapsed?: boolean }) {
           </span>
           {!collapsed && <span className="overflow-hidden text-ellipsis">Notifications</span>}
           {!collapsed && unread > 0 && (
-            <span className="ml-auto rounded-full bg-primary/15 px-1.5 font-mono text-2xs tabular-nums text-primary">
+            <span className="ml-auto rounded-full bg-primary/10 px-1.5 font-mono text-2xs tabular-nums text-primary">
               {unread > 9 ? "9+" : unread}
             </span>
           )}

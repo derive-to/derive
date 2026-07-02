@@ -36,9 +36,6 @@ const Toaster = ({ ...props }: ToasterProps) => {
         } as React.CSSProperties
       }
       toastOptions={{
-        classNames: {
-          toast: "cn-toast",
-        },
         // Sonner ships a hardcoded rgba shadow; route it through the theme shadow
         // tokens instead (soft in light, zeroed in dark — the border carries dark).
         style: { boxShadow: "var(--shadow-pop)" },

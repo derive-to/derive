@@ -56,10 +56,14 @@ and `ui/` holds itself to the same standard voluntarily.
 Keep the cool cast (same hue family, low chroma) and keep amber the one warm note, but
 darkened for contrast: bright `#e99421` fails AA as text on light grounds (2.4:1), so
 light-mode primary is bronze `#a15a16` (brand-700, 4.8–5.3:1) with `ring` at brand-600
-`#c87516`. Canvas is cool paper (`#f6f7fa`-ish), cards are white, ink is the dark
-canvas charcoal `#0b0d12` (charcoal, never black). Edges are ink-at-an-opacity
-(mirroring the dark grammar). Light mode KEEPS soft shadows — the no-shadow rule is
-dark-only.
+`#c87516`. Canvas, cards, and popovers are all white — a deliberate deviation from a
+tinted-paper canvas: light surfaces separate by hairline edge + shadow instead of a
+fill step (content sits directly on white; a gray canvas under white cards is the
+pattern the surface rules warn against, and login pages must never sit on a tinted
+ground). Ink is the dark canvas charcoal `#0b0d12` (charcoal, never black); the cool
+cast lives in the ink, edges, and muted text rather than the canvas. Edges are
+ink-at-an-opacity (mirroring the dark grammar). Light mode KEEPS soft shadows — the
+no-shadow rule is dark-only.
 
 ### Amber deployment rules (the discipline that makes it work)
 
@@ -181,8 +185,9 @@ for variants.
 - **Card** — `bg-card rounded-xl border` (border = hairline). No shadows in dark.
 - **Avatar** — image avatars get `outline-1 -outline-offset-1 outline-foreground/10`;
   identity-tint fallbacks unchanged (allow-listed palette); workspace/initials
-  fallback is a SOFT brand tint `bg-primary/15 text-primary`, never a solid amber
-  block.
+  fallback is a SOFT brand tint `bg-primary/10 text-primary` (10%, not 15% — the
+  light theme's bronze text needs the quieter tint to stay AA), never a solid
+  amber block.
 - **Sonner** — toasts on `popover` surface tokens; status icons `text-success` /
   `text-warning` / `text-destructive`.
 - **Skeleton / Separator / Label / Input-group** — retokened, no recipe surprises.

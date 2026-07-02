@@ -5,8 +5,9 @@
    auto-activates at large sizes via font-optical-sizing, matching the canonical
    rsms.me distribution — self-hosted so the app makes no third-party requests. */
 @import "@fontsource-variable/inter/opsz.css";
+/* Serif ships upright only — no voice moment uses italic; add opsz-italic.css
+   back if an editorial em-register ever lands. */
 @import "@fontsource-variable/source-serif-4/opsz.css";
-@import "@fontsource-variable/source-serif-4/opsz-italic.css";
 @import "@fontsource-variable/geist-mono";
 
 /* Dark mode is the standard shadcn `.dark` class (toggled in ctx.tsx / __root.tsx). */
@@ -36,10 +37,10 @@
   --muted-foreground: oklch(0.55 0.029 268); /* cool gray, ≥4.5:1 on white */
   --accent: oklch(0.159 0.011 268 / 7%);
   --accent-foreground: oklch(0.2 0.015 266.8);
-  --destructive: oklch(0.577 0.215 27.3); /* danger-600 #dc2626 */
+  --destructive: oklch(0.505 0.213 27.5); /* danger-700 #b91c1c — dark enough that the bg-destructive/10 soft fill keeps its label AA */
   --destructive-foreground: oklch(0.985 0 0);
-  --success: oklch(0.527 0.137 150.1); /* #15803d */
-  --warning: oklch(0.553 0.147 48.9); /* #c2410c — safety orange, never amber */
+  --success: oklch(0.48 0.125 150.1); /* ≈#117035 — AA on its own /10 tint */
+  --warning: oklch(0.5 0.147 48.9); /* ≈#a24200 — safety orange, never amber; AA on /10 tint */
   --border: oklch(0.159 0.011 268 / 10%);
   --input: oklch(0.159 0.011 268 / 14%);
   --ring: oklch(0.64 0.141 61.6); /* brand-600 #c87516 — focus is amber, never blue */
@@ -144,8 +145,6 @@
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) + 4px);
   --radius-2xl: 1rem; /* pinned: dialog radius (Nemonic register), not radius*1.8 */
-  --radius-3xl: calc(var(--radius) * 2.75);
-  --radius-4xl: calc(var(--radius) * 3.25);
 
   --color-background: var(--background);
   --color-foreground: var(--foreground);
@@ -241,9 +240,9 @@
   body {
     @apply bg-background text-foreground;
     margin: 0;
-    /* Inter sits a touch loose at UI sizes; pull it in a hair. */
+    /* Inter sits a touch loose at UI sizes; pull it in a hair. (The OpenType
+       feature set rides in via the font-sans utility on <html>.) */
     letter-spacing: -0.011em;
-    font-feature-settings: "cv02", "cv03", "cv04", "cv11", "ss01", "ss03";
     /* Lets Inter/Source Serif switch to their Display cuts at large sizes. */
     font-optical-sizing: auto;
     -webkit-font-smoothing: antialiased;
@@ -288,10 +287,11 @@
     font-weight: 700;
   }
   /* Mentions are soft brand chips (amber wash + amber text), not solid pills — a
-     solid amber block next to body text competes with the page's real CTA. */
+     solid amber block next to body text competes with the page's real CTA. 10%
+     wash: the light theme's bronze text needs the quieter tint to stay AA. */
   .mention {
     color: var(--primary);
-    background: color-mix(in oklab, var(--primary) 15%, transparent);
+    background: color-mix(in oklab, var(--primary) 10%, transparent);
     font-weight: 600;
     border-radius: 5px;
     padding: 1px 6px;
@@ -304,24 +304,13 @@
      advance and the highlight stays under the caret. */
   .mention-live {
     color: var(--primary);
-    background: color-mix(in oklab, var(--primary) 18%, transparent);
+    background: color-mix(in oklab, var(--primary) 10%, transparent);
     border-radius: 4px;
     padding: 0 3px;
     margin: 0 -3px;
     box-decoration-break: clone;
     -webkit-box-decoration-break: clone;
   }
-}
-
-/* Dot-grid bench texture (workbench stages, specimen fallbacks) — theme-correct in
-   both modes because it's mixed from the foreground token. */
-@utility bench-grid {
-  background-image: radial-gradient(
-    circle,
-    color-mix(in oklab, var(--color-foreground) 5%, transparent) 1px,
-    transparent 1px
-  );
-  background-size: 24px 24px;
 }
 
 /* A peer's click ripple on the live-cursor overlay (see cursor-layer.tsx RippleDot). */

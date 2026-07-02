@@ -21,9 +21,7 @@ import {
   Folders,
   GitPullRequest,
   History,
-  House,
   Layers,
-  LayoutGrid,
   Link,
   Lock,
   LockOpen,
@@ -53,7 +51,6 @@ import { cn } from "@/lib/utils"
 // <Icon name="star" className="text-muted-foreground" />.
 const REG = {
   // nav
-  home: House,
   all: Layers,
   favorites: Star,
   // The activity feed of followed authors + repo paths.
@@ -66,7 +63,6 @@ const REG = {
   // pod / workspace
   user: User,
   workspace: Building2,
-  squares: LayoutGrid,
   check: Check,
   plus: Plus,
   signout: LogOut,

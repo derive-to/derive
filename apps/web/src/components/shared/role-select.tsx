@@ -28,7 +28,7 @@ export function RoleSelect({
 }) {
   return (
     <Select name={name} value={value} onValueChange={(v) => onChange(v as Role)}>
-      <SelectTrigger aria-label={ariaLabel} data-testid={testId} className={className} size="sm">
+      <SelectTrigger aria-label={ariaLabel} data-testid={testId} className={className}>
         <SelectValue />
       </SelectTrigger>
       <SelectContent>

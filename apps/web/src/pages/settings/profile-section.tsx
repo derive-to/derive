@@ -61,7 +61,7 @@ export function ProfileSection() {
               data-testid="profile-avatar"
               onClick={() => fileRef.current?.click()}
               disabled={uploading}
-              className="group relative size-16 overflow-hidden rounded-full border border-dashed border-input outline-none hover:border-foreground/30 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:opacity-60"
+              className="group relative size-16 overflow-hidden rounded-full border border-dashed border-input outline-none hover:border-foreground/25 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:opacity-60"
               aria-label="Change your profile photo"
             >
               <Avatar className="size-full rounded-full">

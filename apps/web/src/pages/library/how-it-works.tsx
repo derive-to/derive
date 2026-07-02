@@ -45,7 +45,7 @@ export function HowItWorks() {
             <div className="rounded-md border border-border bg-background p-2">
               <div className="flex items-center justify-between gap-2">
                 <div className="h-1.5 w-12 rounded-full bg-foreground/70" />
-                <span className="rounded bg-primary/15 px-1.5 py-0.5 text-2xs font-medium text-primary">
+                <span className="rounded bg-primary/10 px-1.5 py-0.5 text-2xs font-medium text-primary">
                   Share
                 </span>
               </div>
@@ -102,7 +102,7 @@ function Step({
       <div className="flex items-center gap-2">
         {/* Soft brand tint on the step number — a sanctioned brand chip, never a
             solid amber block. */}
-        <span className="flex size-5 items-center justify-center rounded-full bg-primary/15 font-mono text-2xs font-semibold text-primary">
+        <span className="flex size-5 items-center justify-center rounded-full bg-primary/10 font-mono text-2xs font-semibold text-primary">
           {n}
         </span>
         <span className="text-sm font-medium text-foreground">{title}</span>

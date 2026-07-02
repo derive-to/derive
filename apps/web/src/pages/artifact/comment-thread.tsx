@@ -2,6 +2,7 @@ import {
   Box,
   Braces,
   ChartNoAxesColumn,
+  ChevronRight,
   Clapperboard,
   Image as ImageGlyph,
   Link2,
@@ -489,17 +490,15 @@ export function CommentCard({
           <div className="flex items-center gap-1.5 bg-secondary px-3 py-1.5">
             <span
               className={cn(
-                // Status tones: resolved = success, outdated = warning, addressed =
-                // brand (a pending revision is a brand moment), open = neutral wash
-                // — amber is never a status.
+                // Status tones are success/warning/neutral — amber is reserved,
+                // so addressed and open both take the neutral wash; the label
+                // text and title tooltip carry the distinction.
                 "rounded-full px-2 py-0.5 font-mono text-2xs font-medium",
                 resolved
                   ? "bg-success/10 text-success"
                   : outdated
                     ? "bg-warning/10 text-warning"
-                    : addressed
-                      ? "bg-primary/10 text-primary"
-                      : "bg-accent text-foreground",
+                    : "bg-accent text-foreground",
               )}
               title={
                 outdated
@@ -575,7 +574,10 @@ export function ResolvedSection({
         data-testid="resolved-section-toggle"
         className="flex w-full items-center gap-1.5 rounded-sm px-0.5 py-1.5 font-mono text-2xs font-medium uppercase tracking-wide text-muted-foreground tabular-nums outline-none focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
       >
-        <span className={cn("transition-transform", open && "rotate-90")}>▸</span>
+        <ChevronRight
+          className={cn("size-3.5 shrink-0 transition-transform", open && "rotate-90")}
+          aria-hidden
+        />
         Resolved ({threads.length})
       </button>
       {open &&
@@ -632,7 +634,10 @@ export function GeneralSection({
         data-testid="general-section-toggle"
         className="flex w-full items-center gap-1.5 rounded-sm px-0.5 py-1.5 font-mono text-2xs font-medium uppercase tracking-wide text-muted-foreground tabular-nums outline-none focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
       >
-        <span className={cn("transition-transform", open && "rotate-90")}>▸</span>
+        <ChevronRight
+          className={cn("size-3.5 shrink-0 transition-transform", open && "rotate-90")}
+          aria-hidden
+        />
         General ({threads.length})
       </button>
       {open &&

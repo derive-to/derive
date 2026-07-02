@@ -40,7 +40,7 @@ export function ReviewBody({
             meta.banner,
           )}
         >
-          <b className={meta.text}>
+          <b className={cn("font-medium", meta.text)}>
             {meta.label}
             {decisionNote.decided_by ? ` by ${decisionNote.decided_by}` : ""}:
           </b>{" "}
@@ -50,9 +50,9 @@ export function ReviewBody({
       {stale && active && (
         // A stale base is a warning, not a destructive failure.
         <div className="border-b border-border-soft bg-warning/10 px-4 py-2.5 text-xs leading-relaxed">
-          <b className="text-warning">Out of date:</b> proposed against v{active.base_version}, but
-          the live version is now v{currentVersion}. Approving replaces v{currentVersion} entirely —
-          compare against{" "}
+          <b className="font-medium text-warning">Out of date:</b> proposed against v
+          {active.base_version}, but the live version is now v{currentVersion}. Approving replaces v
+          {currentVersion} entirely — compare against{" "}
           <button
             type="button"
             data-testid="review-compare-current"

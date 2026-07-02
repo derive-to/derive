@@ -321,7 +321,7 @@ export function MentionField({
               }}
               onMouseEnter={() => setActive(i)}
               className={cn(
-                "flex w-full items-baseline gap-2 rounded-md px-2 py-1.5 text-left text-foreground",
+                "flex w-full items-baseline gap-2 rounded-md px-2 py-1.5 text-left text-foreground outline-none focus-visible:bg-accent",
                 i === active ? "bg-accent" : "bg-transparent",
               )}
             >

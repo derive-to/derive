@@ -324,7 +324,7 @@ export function ShareButton({
         </DialogHeader>
 
         <Tabs defaultValue="people" className="mt-1">
-          <TabsList variant="line" className="w-full justify-start border-b px-0">
+          <TabsList variant="line" className="w-full justify-start px-0">
             <TabsTrigger value="people" data-testid="share-tab-people" className="flex-none">
               People
             </TabsTrigger>

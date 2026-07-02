@@ -16,6 +16,7 @@ const badgeVariants = cva(
       variant: {
         // Neutral white-wash is the default — amber is reserved for brand moments.
         default: "bg-accent text-foreground",
+        // Deliberate alias of the neutral default — kept as a named variant for API stability.
         secondary: "bg-accent text-foreground",
         brand: "bg-primary/10 text-primary",
         success: "bg-success/10 text-success",

@@ -255,7 +255,7 @@ function WelcomeProfile() {
             <AvatarFallback
               className={cn(
                 "rounded-full",
-                me.name ? "bg-primary/15 text-primary" : "bg-secondary text-muted-foreground",
+                me.name ? "bg-primary/10 text-primary" : "bg-secondary text-muted-foreground",
               )}
             >
               {me.name ? (

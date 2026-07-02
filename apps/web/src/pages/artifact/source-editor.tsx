@@ -207,7 +207,7 @@ export function SourceEditor({
                 spellCheck={false}
                 aria-label="Artifact source"
                 data-testid="artifact-source-editor"
-                className="h-full flex-1 resize-none border-0 bg-card px-5 py-4 font-mono text-sm leading-relaxed text-foreground outline-none"
+                className="h-full flex-1 resize-none border border-input bg-card px-5 py-4 font-mono text-sm leading-relaxed text-foreground outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40"
               />
             }
           >
@@ -234,7 +234,7 @@ export function SourceEditor({
             data-testid="artifact-preview"
             srcDoc={preview}
             sandbox="allow-scripts allow-forms allow-popups allow-modals"
-            className="h-full w-full flex-1 border-0 bg-white"
+            className="size-full flex-1 border-0 bg-white"
           />
         </div>
       </div>

@@ -315,7 +315,7 @@ function ConnectViaApp({
               </ul>
               <div className="mt-3 flex flex-wrap items-center gap-2">
                 {permissionsUrl && (
-                  <Button variant="default" size="sm" data-testid="github-perms-update" asChild>
+                  <Button variant="secondary" size="sm" data-testid="github-perms-update" asChild>
                     <a href={permissionsUrl} target="_blank" rel="noreferrer">
                       Update on GitHub →
                     </a>
@@ -881,7 +881,7 @@ function RepoSourceRow({
 
           <div className="h-2.5 w-full overflow-hidden rounded-full bg-secondary">
             <div
-              className={`h-full rounded-full bg-primary transition-all duration-500 ${indeterminate ? "w-1/3 animate-pulse" : ""}`}
+              className={`h-full rounded-full bg-primary transition-[width] duration-500 ${indeterminate ? "w-1/3 animate-pulse" : ""}`}
               style={indeterminate ? undefined : { width: `${pct}%` }}
             />
           </div>

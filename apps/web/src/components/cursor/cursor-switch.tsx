@@ -12,7 +12,7 @@ export function CursorSwitch({ className }: { className?: string }) {
   return (
     <div className={cn("space-y-2", className)}>
       {/* Live preview of your own cursor. */}
-      <div className="flex items-center gap-2 rounded-md bg-accent/40 px-2.5 py-2">
+      <div className="flex items-center gap-2 rounded-md bg-secondary px-2.5 py-2">
         <CursorGlyph color={pref.color} kind={pref.kind} emoji={pref.emoji} size={20} />
         <NameTag color={pref.color}>You</NameTag>
       </div>
@@ -59,7 +59,7 @@ export function CursorSwitch({ className }: { className?: string }) {
               aria-pressed={pref.emoji === e}
               onClick={() => setPref({ ...pref, kind: "emoji", emoji: e })}
               className={cn(
-                "grid h-7 place-items-center rounded-md text-base transition-colors hover:bg-hover",
+                "grid h-7 place-items-center rounded-md text-base hover:bg-hover",
                 pref.emoji === e && "bg-accent ring-1 ring-foreground",
               )}
             >
@@ -77,7 +77,7 @@ export function CursorSwitch({ className }: { className?: string }) {
         aria-pressed={pref.hidden}
         onClick={() => setPref({ ...pref, hidden: !pref.hidden })}
         className={cn(
-          "mt-1 flex w-full items-center justify-between gap-2 rounded-md border border-border px-2.5 py-2 text-left text-xs font-medium transition-colors hover:bg-hover",
+          "mt-1 flex w-full items-center justify-between gap-2 rounded-md border border-border px-2.5 py-2 text-left text-xs font-medium hover:bg-hover",
           pref.hidden && "border-transparent bg-accent",
         )}
       >
@@ -90,7 +90,7 @@ export function CursorSwitch({ className }: { className?: string }) {
         <span
           className={cn(
             "shrink-0 rounded-full px-2 py-0.5 font-mono text-2xs",
-            pref.hidden ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground",
+            pref.hidden ? "bg-accent text-foreground" : "bg-muted text-muted-foreground",
           )}
         >
           {pref.hidden ? "On" : "Off"}

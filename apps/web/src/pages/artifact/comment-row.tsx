@@ -173,7 +173,7 @@ export function CommentRow({ c, compact }: { c: Comment; compact?: boolean }) {
                 // Reacted = the sanctioned soft brand chip; unreacted stays neutral
                 // (hover brightens the hairline, never an amber tint).
                 who.includes(A.meName)
-                  ? "border-primary/40 bg-primary/15 text-primary"
+                  ? "border-primary/40 bg-primary/10 text-primary"
                   : "border-border bg-card text-muted-foreground hover:border-foreground/25",
               )}
             >
@@ -192,7 +192,7 @@ export function CommentRow({ c, compact }: { c: Comment; compact?: boolean }) {
             "absolute right-2 top-1.5 z-[6] flex gap-px rounded-lg bg-popover p-0.5 shadow-[var(--shadow)] ring-1 ring-foreground/10 transition-opacity",
             open
               ? "opacity-100"
-              : "pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100",
+              : "pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100",
           )}
           onClick={(e) => e.stopPropagation()}
         >
@@ -240,7 +240,7 @@ export function CommentRow({ c, compact }: { c: Comment; compact?: boolean }) {
                 <Icon name="more" size={16} />
               </Button>
             </PopoverTrigger>
-            <PopoverContent align="end" className="w-auto min-w-[132px] p-1">
+            <PopoverContent align="end" className="w-auto min-w-[132px] gap-0 p-1">
               {mine && (
                 <button
                   type="button"
@@ -249,7 +249,7 @@ export function CommentRow({ c, compact }: { c: Comment; compact?: boolean }) {
                     setEditing(true)
                     setOpen(null)
                   }}
-                  className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-sm font-medium text-foreground outline-none hover:bg-accent focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
+                  className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-sm font-medium text-foreground outline-none hover:bg-accent focus-visible:bg-accent"
                 >
                   <Icon name="pencil" size={16} /> Edit
                 </button>
@@ -261,7 +261,7 @@ export function CommentRow({ c, compact }: { c: Comment; compact?: boolean }) {
                   A.copyLink(c.thread_id)
                   setOpen(null)
                 }}
-                className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-sm font-medium text-foreground outline-none hover:bg-accent focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
+                className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-sm font-medium text-foreground outline-none hover:bg-accent focus-visible:bg-accent"
               >
                 <Icon name="link" size={16} /> Copy link
               </button>
@@ -273,7 +273,7 @@ export function CommentRow({ c, compact }: { c: Comment; compact?: boolean }) {
                     A.remove(c.id)
                     setOpen(null)
                   }}
-                  className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-sm font-medium text-destructive outline-none hover:bg-accent focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
+                  className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-sm font-medium text-destructive outline-none hover:bg-destructive/10 focus-visible:bg-destructive/10"
                 >
                   <Icon name="delete" size={16} /> Delete
                 </button>

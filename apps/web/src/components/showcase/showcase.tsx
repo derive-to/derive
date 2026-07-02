@@ -357,7 +357,7 @@ function AvatarDemo() {
       </div>
       <div className="flex items-center gap-2.5">
         <Avatar className="size-8">
-          <AvatarFallback className="bg-primary/15 text-primary">DR</AvatarFallback>
+          <AvatarFallback className="bg-primary/10 text-primary">DR</AvatarFallback>
         </Avatar>
         <span className="font-mono text-2xs text-muted-foreground">workspace · soft brand</span>
       </div>
