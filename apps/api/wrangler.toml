@@ -23,6 +23,10 @@ database_id = "3c076a21-de54-4cf8-b352-7c8430a9ab79"
 # id is account-scoped and not a secret — the DATABASE_URL lives inside the
 # Hyperdrive config (`wrangler hyperdrive create`). Schema is applied at deploy
 # time by `pnpm deploy:pg-schema`.
+# ⚠ Query caching MUST stay disabled on this config (--caching-disabled).
+# Hyperdrive caches SELECT results ~60s by default; this app reads its own
+# writes (workspace resolution, artifact read-back), and cached-stale reads made
+# first-login provision a workspace per request until the TTL expired.
 [[hyperdrive]]
 binding = "HYPERDRIVE"
 id = "10b9d78afcdb46ad8f8db7ad449fb2b3"

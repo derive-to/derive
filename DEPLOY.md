@@ -268,9 +268,13 @@ and the per-request dial goes to a colo-local proxy). The binding's presence is 
 switch: `HYPERDRIVE` bound ⇒ the Postgres path; unbound ⇒ D1.
 
 ```bash
-wrangler hyperdrive create derive-pg \
+wrangler hyperdrive create derive-pg --caching-disabled \
   --connection-string='postgres://user:pass@host/db?sslmode=require'
 # put the returned id into [[hyperdrive]] in wrangler.toml
+# --caching-disabled is required, not a tuning choice: Hyperdrive caches SELECT
+# results (~60s) by default, and Derive reads its own writes — workspace
+# resolution and artifact read-back return stale results under caching (on first
+# login this provisioned a new workspace on every request until the TTL expired).
 wrangler r2 bucket create derive-blobs   # if not already created
 wrangler secret put DERIVE_AUTH_SECRET
 pnpm --filter @derive/api deploy         # build:web → schemas (D1 + pg) → wrangler deploy → smoke

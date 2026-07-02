@@ -496,12 +496,16 @@ export function buildContext(deps: AppDeps) {
   }
 
   // A signed-in user's own workspace, created on demand (multi mode, first login).
+  // The id is derived from the user id, not random: an SPA boot fires several
+  // requests in parallel, and on a first login each can miss the membership read
+  // and provision. setWorkspace/setMembership are upserts, so concurrent
+  // provisions converge on one row instead of racing to create siblings.
   const provisionPersonal = async (me: {
     id: string
     email: string
     name: string | null
   }): Promise<string> => {
-    const id = newId("ws")
+    const id = `ws_p_${me.id}`
     const base = (me.name ?? me.email).split("@")[0] || "My"
     await meta.setWorkspace(id, `${base}'s Workspace`)
     await meta.setMembership({ id: newId("m"), org_id: id, user_id: me.id, role: "owner" })
