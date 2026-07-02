@@ -1,25 +1,43 @@
-import type { CSSProperties } from "react"
+import {
+  CircleCheckIcon,
+  InfoIcon,
+  Loader2Icon,
+  OctagonXIcon,
+  TriangleAlertIcon,
+} from "lucide-react"
+import { useTheme } from "next-themes"
 import { Toaster as Sonner, type ToasterProps } from "sonner"
 
-// App toast surface. One <Toaster/> is mounted at the root (see __root.tsx);
-// everywhere else just calls `toast()` / `toast.success()` / `toast.error()`
-// from "sonner" — the singleton means no provider and no prop-drilling. The
-// --normal-* vars theme the neutral toast from our [data-theme] tokens (so it
-// matches Light/Dark); richColors gives success/error their own
-// palette. bottom-center preserves the prior toast position.
-export function Toaster(props: ToasterProps) {
+const Toaster = ({ ...props }: ToasterProps) => {
+  const { theme = "system" } = useTheme()
+
   return (
     <Sonner
-      position="bottom-center"
-      richColors
+      theme={theme as ToasterProps["theme"]}
+      className="toaster group"
+      icons={{
+        success: <CircleCheckIcon className="size-4" />,
+        info: <InfoIcon className="size-4" />,
+        warning: <TriangleAlertIcon className="size-4" />,
+        error: <OctagonXIcon className="size-4" />,
+        loading: <Loader2Icon className="size-4 animate-spin" />,
+      }}
       style={
         {
-          "--normal-bg": "var(--color-popover)",
-          "--normal-text": "var(--color-popover-foreground)",
-          "--normal-border": "var(--color-border)",
-        } as CSSProperties
+          "--normal-bg": "var(--popover)",
+          "--normal-text": "var(--popover-foreground)",
+          "--normal-border": "var(--border)",
+          "--border-radius": "var(--radius)",
+        } as React.CSSProperties
       }
+      toastOptions={{
+        classNames: {
+          toast: "cn-toast",
+        },
+      }}
       {...props}
     />
   )
 }
+
+export { Toaster }

@@ -29,7 +29,7 @@ export function People() {
 
   return (
     <div className="mx-auto w-full max-w-3xl p-6 sm:p-8">
-      <h1 className="font-display text-2xl font-semibold text-foreground">People</h1>
+      <h1 className="text-2xl font-semibold text-foreground">People</h1>
       <p className="mt-1 text-sm text-muted-foreground">
         Find people on Derive and follow their work.
       </p>

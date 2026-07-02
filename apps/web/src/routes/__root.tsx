@@ -24,7 +24,7 @@ import "@/styles/globals.css"
 // storage-key linter's way.
 const THEME_BOOT = `(function(){try{var t=localStorage.getItem(${JSON.stringify(
   STORAGE_KEYS.theme,
-)});if(t!=="light"&&t!=="dark")t=matchMedia("(prefers-color-scheme: light)").matches?"light":"dark";document.documentElement.dataset.theme=t}catch(e){}})()`
+)});if(t!=="light"&&t!=="dark")t="dark";var e=document.documentElement;e.classList.remove("light","dark");e.classList.add(t)}catch(e){}})()`
 
 export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()({
   head: () => ({
@@ -43,12 +43,13 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       { rel: "icon", type: "image/svg+xml", href: "/brand/logo-light.svg" },
       { rel: "icon", type: "image/png", href: "/brand/favicon.png" },
       { rel: "apple-touch-icon", href: "/brand/favicon.png" },
-      { rel: "preconnect", href: "https://fonts.googleapis.com" },
-      { rel: "preconnect", href: "https://fonts.gstatic.com", crossOrigin: "anonymous" },
-      {
-        rel: "stylesheet",
-        href: "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap",
-      },
+      // InterVariable from rsms.me — the canonical Inter build with the Display
+      // optical-size axis + full OpenType feature support (cv02/cv03/cv04/cv11/
+      // ss01/ss03), which Google's static css2 slice strips. Two preconnects: the
+      // stylesheet fetch (plain) and the woff2 font fetches (CORS-anonymous).
+      { rel: "preconnect", href: "https://rsms.me/" },
+      { rel: "preconnect", href: "https://rsms.me/", crossOrigin: "anonymous" },
+      { rel: "stylesheet", href: "https://rsms.me/inter/inter.css" },
     ],
   }),
   component: RootComponent,
@@ -105,7 +106,7 @@ function AppFrame() {
 function RootDocument({ children }: { children: ReactNode }) {
   // data-theme seeds the prerendered shell; ThemeProvider swaps it client-side.
   return (
-    <html lang="en" data-theme="dark">
+    <html lang="en" className="dark" suppressHydrationWarning>
       <head>
         <script
           // biome-ignore lint/security/noDangerouslySetInnerHtml: static boot string built from a constant storage key, no user input.

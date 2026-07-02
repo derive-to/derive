@@ -1,160 +1,250 @@
-/* Cascade layer order (low → high priority). Utilities outrank components and
-   base, so a converted element's `text-foreground` / `bg-card` always wins over
-   the base reset or the few component rules below. */
-@layer theme, base, components, utilities;
-
 @import "tailwindcss";
 @import "tw-animate-css";
+@import "shadcn/tailwind.css";
+@import "@fontsource-variable/inter";
 
-/* Dark variant keys off the theme attribute the app sets on <html>. */
-@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+/* Dark mode is the standard shadcn `.dark` class (toggled in ctx.tsx / __root.tsx). */
+@custom-variant dark (&:is(.dark *));
 
-/* Design tokens. shadcn-style semantic names mapped to derive's themed CSS vars
-   (defined per [data-theme] in the base layer below), so Tailwind utilities
-   (bg-card, text-foreground, ring-ring) follow the active theme. `inline` keeps
-   them var-based instead of frozen at build time. */
+/* ── b1D0dv72 theme (monochrome / neutral, red destructive) ───────────────── */
+:root {
+  --radius: 0.625rem;
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.145 0 0);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.145 0 0);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.145 0 0);
+  --primary: oklch(0.205 0 0);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.97 0 0);
+  --secondary-foreground: oklch(0.205 0 0);
+  --muted: oklch(0.97 0 0);
+  --muted-foreground: oklch(0.556 0 0);
+  --accent: oklch(0.97 0 0);
+  --accent-foreground: oklch(0.205 0 0);
+  --destructive: oklch(0.577 0.245 27.325);
+  --destructive-foreground: oklch(0.985 0 0);
+  --border: oklch(0.922 0 0);
+  --input: oklch(0.922 0 0);
+  --ring: oklch(0.708 0 0);
+  --chart-1: oklch(0.87 0 0);
+  --chart-2: oklch(0.556 0 0);
+  --chart-3: oklch(0.439 0 0);
+  --chart-4: oklch(0.371 0 0);
+  --chart-5: oklch(0.269 0 0);
+  --sidebar: oklch(0.985 0 0);
+  --sidebar-foreground: oklch(0.145 0 0);
+  --sidebar-primary: oklch(0.205 0 0);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.97 0 0);
+  --sidebar-accent-foreground: oklch(0.205 0 0);
+  --sidebar-border: oklch(0.922 0 0);
+  --sidebar-ring: oklch(0.708 0 0);
+
+  /* derive vocabulary carried onto the new palette (app-level tokens). */
+  --border-soft: oklch(0.955 0 0);
+  --hover: oklch(0.955 0 0);
+  --disabled-foreground: oklch(0.72 0 0);
+  --selection: oklch(0.9 0 0);
+  /* On-image placard scrim — fixed in both themes (rides over user render content). */
+  --scrim: #0b0d12;
+  --scrim-foreground: #f4f5f8;
+  --shadow-sm: 0 1px 2px rgba(20, 22, 26, 0.06);
+  --shadow: 0 1px 2px rgba(20, 22, 26, 0.05), 0 12px 28px -16px rgba(20, 22, 26, 0.14);
+  --shadow-pop: 0 4px 10px -3px rgba(20, 22, 26, 0.1), 0 22px 44px -14px rgba(20, 22, 26, 0.24);
+}
+
+.dark {
+  --background: oklch(0.145 0 0);
+  --foreground: oklch(0.985 0 0);
+  --card: oklch(0.205 0 0);
+  --card-foreground: oklch(0.985 0 0);
+  --popover: oklch(0.205 0 0);
+  --popover-foreground: oklch(0.985 0 0);
+  --primary: oklch(0.922 0 0);
+  --primary-foreground: oklch(0.205 0 0);
+  --secondary: oklch(0.269 0 0);
+  --secondary-foreground: oklch(0.985 0 0);
+  --muted: oklch(0.269 0 0);
+  --muted-foreground: oklch(0.708 0 0);
+  --accent: oklch(0.269 0 0);
+  --accent-foreground: oklch(0.985 0 0);
+  --destructive: oklch(0.704 0.191 22.216);
+  --destructive-foreground: oklch(0.985 0 0);
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 15%);
+  --ring: oklch(0.556 0 0);
+  --chart-1: oklch(0.87 0 0);
+  --chart-2: oklch(0.556 0 0);
+  --chart-3: oklch(0.439 0 0);
+  --chart-4: oklch(0.371 0 0);
+  --chart-5: oklch(0.269 0 0);
+  --sidebar: oklch(0.205 0 0);
+  --sidebar-foreground: oklch(0.985 0 0);
+  --sidebar-primary: oklch(0.488 0.243 264.376);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.269 0 0);
+  --sidebar-accent-foreground: oklch(0.985 0 0);
+  --sidebar-border: oklch(1 0 0 / 10%);
+  --sidebar-ring: oklch(0.556 0 0);
+
+  --border-soft: oklch(1 0 0 / 6%);
+  --hover: oklch(1 0 0 / 8%);
+  --disabled-foreground: oklch(0.5 0 0);
+  --selection: oklch(0.32 0 0);
+  --scrim: #0b0d12;
+  --scrim-foreground: #f4f5f8;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.5), 0 16px 34px -18px rgba(0, 0, 0, 0.72);
+  --shadow-pop: 0 4px 14px -3px rgba(0, 0, 0, 0.55), 0 26px 50px -14px rgba(0, 0, 0, 0.75);
+}
+
 @theme inline {
-  --color-background: var(--bg);
-  --color-foreground: var(--fg);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
   --color-card: var(--card);
-  --color-card-foreground: var(--fg);
-  --color-popover: var(--card);
-  --color-popover-foreground: var(--fg);
-  --color-primary: var(--ac);
-  --color-primary-foreground: var(--ac-fg);
-  --color-secondary: var(--card-2);
-  --color-secondary-foreground: var(--fg);
-  --color-muted: var(--card-2);
-  --color-muted-foreground: var(--fg-mut);
-  --color-accent: var(--ac-soft);
-  --color-accent-foreground: var(--ac);
-  --color-destructive: var(--bad);
-  --color-destructive-foreground: #fff;
-  --color-success: var(--good);
-  --color-gold: #c2a15e;
-  /* Categorical icon accents — a deliberately muted, low-chroma family so feature
-     wayfinding reads as calm tints, not a rainbow. Surfaced as text-share /
-     text-comments / … utilities the <Icon> component applies (color stays a token,
-     never a raw hex in tsx; see check-design-tokens.mjs). */
-  --color-share: #8781b0;
-  --color-comments: #6b8bac;
-  --color-tag: #5f9a90;
-  --color-collection: #bd8b62;
-  --color-insights: #7f97c2;
-  --color-review: #7a9f70;
-  --color-border: var(--line);
-  --color-border-soft: var(--line-soft);
-  --color-input: var(--line);
-  --color-ring: var(--ac);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  /* derive app vocabulary (bridged to the new monochrome palette). */
+  --color-border-soft: var(--border-soft);
   --color-hover: var(--hover);
+  --color-disabled-foreground: var(--disabled-foreground);
+  --color-selection: var(--selection);
+  --color-scrim: var(--scrim);
+  --color-scrim-foreground: var(--scrim-foreground);
 
-  /* Type scale — the only allowed text sizes. */
-  --text-2xs: 10px;
-  --text-2xs--line-height: 1.4;
-  --text-xs: 11px;
-  --text-xs--line-height: 1.45;
-  --text-sm: 12.5px;
+  /* Type scale — rebuilt from scratch to a comfortable, standard register sized for
+     the b0 preset (its controls read at text-sm = 14px). Everything steps up ~2px
+     from the old cramped scale so the UI breathes; only the 2xs mono micro-label
+     stays small. rem-based so it respects the user's root font size. */
+  --text-2xs: 0.6875rem; /* 11px — mono micro-labels only */
+  --text-2xs--line-height: 1.45;
+  --text-xs: 0.75rem; /* 12px */
+  --text-xs--line-height: 1.5;
+  --text-sm: 0.875rem; /* 14px — control + secondary-body base */
   --text-sm--line-height: 1.5;
-  --text-base: 14px;
-  --text-base--line-height: 1.55;
-  --text-lg: 16px;
-  --text-lg--line-height: 1.4;
-  --text-xl: 18px;
-  --text-xl--line-height: 1.3;
-  --text-2xl: 22px;
-  --text-2xl--line-height: 1.2;
-  --text-3xl: 28px;
-  --text-3xl--line-height: 1.1;
+  --text-base: 1rem; /* 16px — body */
+  --text-base--line-height: 1.6;
+  --text-lg: 1.125rem; /* 18px */
+  --text-lg--line-height: 1.5;
+  --text-xl: 1.25rem; /* 20px */
+  --text-xl--line-height: 1.4;
+  --text-2xl: 1.5rem; /* 24px */
+  --text-2xl--line-height: 1.3;
+  --text-3xl: 1.875rem; /* 30px */
+  --text-3xl--line-height: 1.2;
+  --text-4xl: 2.25rem; /* 36px — hero */
+  --text-4xl--line-height: 1.1;
 
-  --font-sans: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-sans: "Inter Variable", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-sans--font-feature-settings: "cv02", "cv03", "cv04", "cv11", "ss01", "ss03";
   --font-mono: ui-monospace, Menlo, Consolas, monospace;
-  --font-display: "Inter", system-ui, sans-serif;
-
-  --radius-sm: 3px;
-  --radius: 4px;
-  --radius-md: 6px;
-  --radius-lg: 8px;
-  --radius-xl: 10px;
+  --font-heading: var(--font-sans);
 }
 
 @layer base {
-  /* The two theme palettes — the source of truth the @theme bridge references.
-     Set via [data-theme] on <html>; runtime switching rules out a static @theme.
-     Derive foundation: Axiom Black #030712 + Origin White #F4F5F8. The accent is
-     monochrome — near-black on light, near-white on dark — so the brand reads as
-     the two colors; only the semantic good/bad stay chromatic. */
-  [data-theme="light"] {
-    --bg: #f7f8fa;--card: #ffffff;--card-2: #eff1f4;--hover: #eaecf0;
-    --fg: #14161a;--fg-mut: #5c616b;--line: #e5e7eb;--line-soft: #eef0f3;
-    --ac: #14161a;--ac-fg: #f7f8fa;--ac-soft: #e8eaee;
-    --cmt-bg: #eff1f4;--cmt-tx: #33373f;--cmt-bd: #dee1e6;--good: #2f7d4f;--good-bg: #e6f1ea;--bad: #b4402c;
-    --shadow-sm: 0 1px 2px rgba(20,22,26,.06);
-    --shadow: 0 1px 2px rgba(20,22,26,.05),0 12px 28px -16px rgba(20,22,26,.14);
-    --shadow-pop: 0 4px 10px -3px rgba(20,22,26,.10),0 22px 44px -14px rgba(20,22,26,.24);--grain: .022;
-  }
-  [data-theme="dark"] {
-    --bg: #0a0b0d;--card: #101216;--card-2: #16181d;--hover: #1b1d23;
-    --fg: #f3f4f6;--fg-mut: #969aa2;--line: #23252b;--line-soft: #191b1f;
-    --ac: #f3f4f6;--ac-fg: #0a0b0d;--ac-soft: #1b1d23;
-    --cmt-bg: #16181d;--cmt-tx: #c7c9d0;--cmt-bd: #292c33;--good: #74b085;--good-bg: #131c17;--bad: #d98c74;
-    --shadow-sm: 0 1px 2px rgba(0,0,0,.4);
-    --shadow: 0 1px 2px rgba(0,0,0,.5),0 16px 34px -18px rgba(0,0,0,.72);
-    --shadow-pop: 0 4px 14px -3px rgba(0,0,0,.55),0 26px 50px -14px rgba(0,0,0,.75);--grain: .04;
-  }
-
   * {
-    box-sizing: border-box;
-    border-color: var(--color-border);
+    @apply border-border outline-ring/50;
+  }
+  ::selection {
+    background: var(--selection);
   }
   html,
   body,
   #root {
     height: 100%;
   }
+  html {
+    @apply font-sans;
+  }
   body {
+    @apply bg-background text-foreground;
     margin: 0;
-    background: var(--bg);
-    color: var(--fg);
-    font: 14px/1.55 Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
     /* Inter sits a touch loose at UI sizes; pull it in a hair. */
     letter-spacing: -0.011em;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11", "ss01", "ss03";
+    font-optical-sizing: auto;
     -webkit-font-smoothing: antialiased;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.82' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E");
   }
   a {
-    color: var(--ac);
+    color: var(--primary);
     text-decoration: none;
-    /* Links use the default cursor, not the pointer hand — hover states carry the
-       affordance instead (Linear-style). Buttons are already default via the UA. */
+    /* Links use the default cursor; hover states carry the affordance (Linear-style). */
     cursor: default;
+  }
+  /* Tighten heading tracking a hair — the "this was designed" tell. */
+  h1,
+  h2 {
+    letter-spacing: -0.02em;
+  }
+  h3,
+  h4,
+  h5,
+  h6 {
+    letter-spacing: -0.012em;
   }
 }
 
 @layer components {
-  /* The only hand-written rules left: styling parser-generated HTML we can't put
-     utilities on. .cmt-body's nested code/link/strong come from the markdown
-     renderer; .mention is the @mention pill markdown.ts emits as <span>. */
+  /* Styling for parser-generated HTML we can't put utilities on: .cmt-body's nested
+     code/link/strong come from the markdown renderer; .mention is the @mention pill. */
   .cmt-body code {
     font-family: ui-monospace, Menlo, monospace;
     font-size: 11.5px;
-    background: var(--card-2);
-    border: 1px solid var(--line-soft);
+    background: var(--muted);
+    border: 1px solid var(--border-soft);
     border-radius: 5px;
     padding: 1px 4px;
   }
   .cmt-body a {
-    color: var(--ac);
+    color: var(--primary);
     text-decoration: underline;
     text-underline-offset: 2px;
   }
   .cmt-body strong {
     font-weight: 700;
   }
-  /* A mention reads as a solid tag, not faint coloured text, so the tagged
-     person can't miss it: full accent fill + its contrasting foreground. */
+  /* A mention reads as a solid tag, not faint coloured text — full accent fill. */
   .mention {
-    color: var(--ac-fg);
-    background: var(--ac);
+    color: var(--primary-foreground);
+    background: var(--primary);
     font-weight: 700;
     border-radius: 5px;
     padding: 1px 6px;
@@ -162,17 +252,12 @@
     box-decoration-break: clone;
     -webkit-box-decoration-break: clone;
   }
-
-  /* The live highlight painted behind the composer textarea (see MentionField's
-     overlay). It reads as the same solid accent tag as a delivered .mention, so a
-     tag is unmistakable the instant you pick someone — but it must NOT shift the
-     text's metrics or it drifts off the caret. So: a solid fill + contrasting ink
-     (both paint-only), and the horizontal breathing room is net-zero (padding out,
-     equal negative margin back in), so following glyphs keep their exact advance.
-     No font-weight/size change for the same reason. */
+  /* The live highlight behind the composer textarea (MentionField overlay). Must not
+     shift text metrics (padding out, equal negative margin back) so glyphs keep their
+     advance and the highlight stays under the caret. */
   .mention-live {
-    color: var(--ac-fg);
-    background: var(--ac);
+    color: var(--primary-foreground);
+    background: var(--primary);
     border-radius: 4px;
     padding: 0 3px;
     margin: 0 -3px;
@@ -181,9 +266,7 @@
   }
 }
 
-/* A peer's click ripple on the live-cursor overlay: a ring that expands from the
-   click point and fades once. Centered via the transform so percentage left/top
-   place the click point itself (see cursor-layer.tsx RippleDot). */
+/* A peer's click ripple on the live-cursor overlay (see cursor-layer.tsx RippleDot). */
 @keyframes derive-cursor-ripple {
   from {
     opacity: 0.55;
@@ -195,12 +278,7 @@
   }
 }
 
-/* Honor prefers-reduced-motion: near-zero out CSS animations, transitions, and
-   view transitions for vestibular-sensitive users. These rules are unlayered, so
-   the cascade-layer order above puts them ahead of every Tailwind utility (no
-   !important needed). The live-cursor rAF loop is JS-driven (transforms, not CSS),
-   so it snaps instead of gliding and skips click ripples in code too: see
-   use-live-cursors. */
+/* Honor prefers-reduced-motion (unlayered → wins over utilities without !important). */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

@@ -9,7 +9,8 @@ test("owner shares an artifact and the member appears", async ({ owner, secondUs
   await expect(owner.getByTestId("share-empty")).toBeVisible()
 
   await owner.getByTestId("share-email").fill(secondUser.email)
-  await owner.getByTestId("share-role").locator("select").selectOption("commenter")
+  await owner.getByTestId("share-role").click()
+  await owner.getByRole("option", { name: "commenter", exact: true }).click()
   await owner.getByTestId("share-add").click()
 
   const row = owner.locator('[data-testid^="share-member-row-"]')

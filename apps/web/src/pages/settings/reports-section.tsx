@@ -52,7 +52,7 @@ function ReportRow({
   return (
     <Card
       data-testid={`report-row-${report.id}`}
-      className="flex gap-3 border-destructive/50 px-4 py-3"
+      className="flex gap-3 ring-destructive/50 px-4 py-3"
     >
       <div className="min-w-0 flex-1">
         <div className="text-sm font-semibold text-foreground">

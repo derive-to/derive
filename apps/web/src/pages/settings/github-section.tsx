@@ -18,6 +18,7 @@ import { EmptyState } from "@/components/shared/empty-state"
 import { Spinner } from "@/components/shared/spinner"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
+import { Checkbox } from "@/components/ui/checkbox"
 import {
   Dialog,
   DialogContent,
@@ -26,6 +27,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { ago } from "@/lib/time"
 
 // "owner/name", tolerating a github.com URL or a trailing .git (mirrors the
@@ -227,7 +229,7 @@ function SetUpApp() {
           mirror. No tokens to paste, and pushes sync automatically.
         </p>
       </div>
-      <Button variant="primary" asChild data-testid="github-setup-app">
+      <Button variant="default" asChild data-testid="github-setup-app">
         <a href="/settings/github/app/new">Set up GitHub App</a>
       </Button>
     </Card>
@@ -281,11 +283,11 @@ function ConnectViaApp({
     <>
       {needsPerms && missing && (
         <Card
-          className="mb-3 flex flex-col gap-3 border-gold/40 bg-gold/10 p-4"
+          className="mb-3 flex flex-col gap-3 border-border bg-secondary p-4"
           data-testid="github-perms-banner"
         >
           <div className="flex items-start gap-2.5">
-            <AlertTriangle className="mt-0.5 size-5 shrink-0 text-gold" aria-hidden />
+            <AlertTriangle className="mt-0.5 size-5 shrink-0 text-foreground" aria-hidden />
             <div className="min-w-0 flex-1">
               <div className="text-sm font-semibold text-foreground">
                 Derive needs updated GitHub permissions
@@ -297,14 +299,14 @@ function ConnectViaApp({
               <ul className="mt-2 flex flex-col gap-1 text-xs text-foreground">
                 {Object.entries(missing.permissions).map(([scope, level]) => (
                   <li key={scope} className="flex items-center gap-1.5">
-                    <span className="size-1 rounded-full bg-gold" aria-hidden />
+                    <span className="size-1 rounded-full bg-foreground" aria-hidden />
                     <span className="font-medium">{PERMISSION_LABELS[scope] ?? scope}</span>
                     <span className="text-muted-foreground">→ {LEVEL_LABELS[level] ?? level}</span>
                   </li>
                 ))}
                 {missing.events.map((ev) => (
                   <li key={ev} className="flex items-center gap-1.5">
-                    <span className="size-1 rounded-full bg-gold" aria-hidden />
+                    <span className="size-1 rounded-full bg-foreground" aria-hidden />
                     <span className="text-muted-foreground">Subscribe to</span>
                     <span className="font-medium">{EVENT_LABELS[ev] ?? ev}</span>
                     <span className="text-muted-foreground">events</span>
@@ -313,7 +315,7 @@ function ConnectViaApp({
               </ul>
               <div className="mt-3 flex flex-wrap items-center gap-2">
                 {permissionsUrl && (
-                  <Button variant="primary" size="sm" data-testid="github-perms-update" asChild>
+                  <Button variant="default" size="sm" data-testid="github-perms-update" asChild>
                     <a href={permissionsUrl} target="_blank" rel="noreferrer">
                       Update on GitHub →
                     </a>
@@ -341,7 +343,7 @@ function ConnectViaApp({
       )}
       <Card className="flex flex-col gap-3 p-4">
         <div className="flex items-start gap-2.5">
-          <CheckCircle2 className="mt-0.5 size-5 shrink-0 text-success" aria-hidden />
+          <CheckCircle2 className="mt-0.5 size-5 shrink-0 text-muted-foreground" aria-hidden />
           <div className="min-w-0 flex-1">
             <div className="text-sm font-semibold text-foreground">GitHub App connected</div>
             {installed ? (
@@ -355,7 +357,7 @@ function ConnectViaApp({
                 </p>
                 <Button
                   data-testid="github-install"
-                  variant="primary"
+                  variant="default"
                   className="mt-3"
                   onClick={install}
                   disabled={busy}
@@ -384,7 +386,7 @@ function ConnectViaApp({
               <Button
                 key={i.installation_id}
                 data-testid="github-pick-installation"
-                variant="primary"
+                variant="default"
                 size="sm"
                 onClick={() => onPick(i.installation_id)}
               >
@@ -520,32 +522,27 @@ function RepoPicker({
           ) : shown && shown.length === 0 ? (
             <EmptyState>No repositories match “{query.trim()}”.</EmptyState>
           ) : (
-            <ul className="flex flex-col gap-1">
+            <RadioGroup value={repo ?? ""} onValueChange={setRepo} className="gap-1">
               {shown?.map((r) => (
-                <li key={r.full_name}>
-                  <label className="flex items-center gap-2.5 rounded-md px-2 py-1.5 hover:bg-hover">
-                    <input
-                      type="radio"
-                      name="gh-repo"
-                      data-testid="github-repo-radio"
-                      checked={repo === r.full_name}
-                      onChange={() => setRepo(r.full_name)}
-                    />
-                    <span className="font-mono text-xs text-foreground">{r.full_name}</span>
-                    {r.private && (
-                      <span className="text-2xs uppercase tracking-wide text-muted-foreground">
-                        private
-                      </span>
-                    )}
-                    {r.pushed_at && (
-                      <span className="ml-auto shrink-0 text-2xs text-muted-foreground">
-                        {ago(r.pushed_at)}
-                      </span>
-                    )}
-                  </label>
-                </li>
+                <label
+                  key={r.full_name}
+                  className="flex items-center gap-2.5 rounded-md px-2 py-1.5 hover:bg-hover"
+                >
+                  <RadioGroupItem value={r.full_name} data-testid="github-repo-radio" />
+                  <span className="font-mono text-xs text-foreground">{r.full_name}</span>
+                  {r.private && (
+                    <span className="font-mono text-2xs uppercase tracking-wide text-muted-foreground">
+                      private
+                    </span>
+                  )}
+                  {r.pushed_at && (
+                    <span className="ml-auto shrink-0 text-2xs text-muted-foreground">
+                      {ago(r.pushed_at)}
+                    </span>
+                  )}
+                </label>
               ))}
-            </ul>
+            </RadioGroup>
           )}
         </div>
 
@@ -554,20 +551,18 @@ function RepoPicker({
             <div className="flex flex-wrap items-center gap-3">
               <span className="text-xs font-medium text-muted-foreground">Include:</span>
               <label className="flex items-center gap-1.5 text-sm">
-                <input
-                  type="checkbox"
+                <Checkbox
                   data-testid="github-include-md"
                   checked={md}
-                  onChange={(e) => setMd(e.target.checked)}
+                  onCheckedChange={(v) => setMd(v === true)}
                 />{" "}
                 Markdown
               </label>
               <label className="flex items-center gap-1.5 text-sm">
-                <input
-                  type="checkbox"
+                <Checkbox
                   data-testid="github-include-html"
                   checked={html}
-                  onChange={(e) => setHtml(e.target.checked)}
+                  onCheckedChange={(v) => setHtml(v === true)}
                 />{" "}
                 HTML
               </label>
@@ -605,7 +600,7 @@ function RepoPicker({
             Cancel
           </Button>
           <Button
-            variant="primary"
+            variant="default"
             onClick={connect}
             disabled={busy || !repo || !includes}
             data-testid="github-picker-connect"
@@ -690,7 +685,7 @@ function PrPreviewRow({ pr }: { pr: PrPreview }) {
           )}
         </div>
       </div>
-      <Button data-testid={`github-pr-view-${pr.pr_number}`} variant="default" size="sm" asChild>
+      <Button data-testid={`github-pr-view-${pr.pr_number}`} variant="outline" size="sm" asChild>
         <Link to="/" search={{ collection: pr.collection_id }}>
           View
         </Link>
@@ -804,7 +799,7 @@ function RepoSourceRow({
           {!active && !errored && (
             <div className="mt-px flex items-center gap-1 truncate font-mono text-2xs text-muted-foreground">
               {(status.last_status?.startsWith("ok") || status.last_synced_at) && (
-                <CheckCircle2 className="size-3 shrink-0 text-success" aria-hidden />
+                <CheckCircle2 className="size-3 shrink-0 text-muted-foreground" aria-hidden />
               )}
               {status.file_count} doc{status.file_count === 1 ? "" : "s"}
               {status.last_synced_at
@@ -815,7 +810,7 @@ function RepoSourceRow({
         </div>
         <Button
           data-testid={`github-sync-${source.id}`}
-          variant="default"
+          variant="outline"
           size="sm"
           onClick={sync}
           disabled={active}
@@ -825,8 +820,8 @@ function RepoSourceRow({
         <Button
           data-testid={`github-remove-${source.id}`}
           variant="ghost"
+          className="text-destructive hover:bg-destructive/10 hover:text-destructive"
           size="sm"
-          className="text-destructive hover:text-destructive"
           onClick={() => setDisconnectDialog(true)}
         >
           Disconnect
@@ -899,7 +894,7 @@ function RepoSourceRow({
           </div>
 
           <div className="flex items-center gap-1.5 text-2xs text-muted-foreground">
-            <CheckCircle2 className="size-3 shrink-0 text-success" aria-hidden />
+            <CheckCircle2 className="size-3 shrink-0 text-muted-foreground" aria-hidden />
             Running on our servers — you can close this tab, it’ll keep going.
           </div>
         </div>
@@ -1004,7 +999,7 @@ function AdvancedPat({
             />
             <Button
               data-testid="github-connect"
-              variant="primary"
+              variant="default"
               onClick={add}
               disabled={busy || !valid}
             >

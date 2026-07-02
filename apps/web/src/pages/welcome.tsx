@@ -7,12 +7,20 @@ import { PROFESSIONS } from "@/components/profile-fields"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
-import { Input, Textarea } from "@/components/ui/input"
+import { Input } from "@/components/ui/input"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+import { Switch } from "@/components/ui/switch"
+import { Textarea } from "@/components/ui/textarea"
 import { useAuth } from "@/ctx"
 import { getInitials } from "@/lib/initials"
 import { usernameError } from "@/lib/username"
 import { cn } from "@/lib/utils"
-import { selectClass } from "@/pages/settings/roles"
 
 const OTHER = "Other"
 const PRESET_VALUES = PROFESSIONS.map((p) => p.value)
@@ -100,7 +108,7 @@ export function Welcome() {
     <div className="min-h-full overflow-y-auto bg-background">
       <div className="mx-auto w-full max-w-2xl px-5 py-10 sm:py-14">
         <div className="mb-6">
-          <h1 className="font-display text-2xl font-semibold text-foreground sm:text-3xl">
+          <h1 className="text-2xl font-semibold text-foreground sm:text-3xl">
             Welcome to Derive, {firstName}.
           </h1>
           <p className="mt-1.5 text-sm text-muted-foreground">
@@ -127,20 +135,12 @@ export function Welcome() {
                 run-it-yourself path. Most people never touch it. */}
             <label className="flex shrink-0 items-center gap-1.5 text-2xs font-medium text-muted-foreground">
               <span title="Running your own Derive instance">Self-host mode</span>
-              <button
-                type="button"
-                role="switch"
-                aria-checked={devMode}
+              <Switch
+                checked={devMode}
                 aria-label="Self-host mode"
                 data-testid="welcome-dev-toggle"
-                onClick={() => setDevMode((v) => !v)}
-                className={cn(
-                  "flex h-[18px] w-8 items-center rounded-full p-[3px] transition-colors",
-                  devMode ? "justify-end bg-primary" : "justify-start bg-foreground/15",
-                )}
-              >
-                <span className="size-3 rounded-full bg-white shadow-sm" />
-              </button>
+                onCheckedChange={setDevMode}
+              />
             </label>
           </div>
           <p className="mb-3 mt-1 text-sm text-muted-foreground">
@@ -165,7 +165,7 @@ export function Welcome() {
           >
             Skip for now
           </Button>
-          <Button variant="primary" data-testid="welcome-continue" onClick={finish}>
+          <Button variant="default" data-testid="welcome-continue" onClick={finish}>
             Continue to Derive
           </Button>
         </div>
@@ -247,7 +247,7 @@ function WelcomeProfile() {
             {me.image && <AvatarImage src={me.image} alt="Your avatar" />}
             <AvatarFallback className="rounded-full bg-card text-muted-foreground">
               {me.name ? (
-                <span className="font-display text-xl font-semibold">{initials}</span>
+                <span className="text-xl font-semibold">{initials}</span>
               ) : (
                 <Camera className="size-5" aria-hidden />
               )}
@@ -275,7 +275,7 @@ function WelcomeProfile() {
             <div
               className={cn(
                 "flex items-center rounded-md border border-input bg-card transition-colors",
-                "focus-within:border-primary focus-within:ring-2 focus-within:ring-accent",
+                "focus-within:border-primary focus-within:ring-2 focus-within:ring-ring/30",
                 handleErr && "border-destructive",
               )}
             >
@@ -292,28 +292,24 @@ function WelcomeProfile() {
                   setErr("")
                 }}
                 placeholder="yourname"
-                className="h-9 w-full rounded-md bg-transparent pl-1 pr-3 text-sm text-foreground outline-none placeholder:text-muted-foreground"
+                className="h-7 w-full rounded-md bg-transparent pl-1 pr-3 text-sm text-foreground outline-none placeholder:text-muted-foreground"
               />
             </div>
           </div>
           <div className="w-[150px]">
             <div className="mb-1 text-2xs font-medium text-muted-foreground">Role</div>
-            <select
-              data-testid="welcome-role"
-              aria-label="Your role"
-              value={preset}
-              onChange={(e) => setPreset(e.target.value)}
-              className={cn(selectClass, "w-full", preset === "" && "text-muted-foreground")}
-            >
-              <option value="" disabled hidden>
-                Who are you?
-              </option>
-              {PROFESSIONS.map((p) => (
-                <option key={p.value} value={p.value} className="text-foreground">
-                  {p.value}
-                </option>
-              ))}
-            </select>
+            <Select value={preset || undefined} onValueChange={setPreset}>
+              <SelectTrigger data-testid="welcome-role" aria-label="Your role" className="w-full">
+                <SelectValue placeholder="Who are you?" />
+              </SelectTrigger>
+              <SelectContent>
+                {PROFESSIONS.map((p) => (
+                  <SelectItem key={p.value} value={p.value}>
+                    {p.value}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
         </div>
 
@@ -352,7 +348,7 @@ function WelcomeProfile() {
 
         <div className="mt-3 flex items-center gap-3">
           <Button
-            variant="primary"
+            variant="outline"
             size="sm"
             data-testid="welcome-profile-save"
             onClick={save}

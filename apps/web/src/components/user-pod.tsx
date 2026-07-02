@@ -86,7 +86,7 @@ export function UserPod({
         </button>
       </PopoverTrigger>
 
-      <PopoverContent side="top" align="start" className="w-64 p-1.5">
+      <PopoverContent side="top" align="start" className="w-64 gap-0 p-1.5">
         <div className="flex items-center gap-2.5 px-2 py-1.5">
           <Avatar className="size-7 shrink-0">
             <AvatarFallback className="bg-primary text-xs text-primary-foreground">

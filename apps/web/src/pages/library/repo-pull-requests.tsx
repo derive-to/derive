@@ -25,7 +25,7 @@ export function RepoPullRequests({
     >
       <header className="flex items-center gap-2 border-b border-border-soft px-3.5 py-2.5">
         <Icon name="review" size={16} />
-        <span className="font-display text-sm font-semibold text-foreground">Pull requests</span>
+        <span className="text-sm font-semibold text-foreground">Pull requests</span>
         <span className="font-mono text-2xs text-muted-foreground">{prs.length}</span>
       </header>
       <ul className="flex flex-col">

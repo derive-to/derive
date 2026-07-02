@@ -78,7 +78,7 @@ export function ReviewBody({
                 key={i}
                 className={cn(
                   "whitespace-pre-wrap break-words px-4",
-                  o.t === "add" && "bg-success/10",
+                  o.t === "add" && "bg-muted",
                   o.t === "del" && "bg-destructive/10",
                 )}
               >

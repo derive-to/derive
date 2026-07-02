@@ -24,6 +24,13 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { getInitials } from "@/lib/initials"
 import { cn } from "@/lib/utils"
@@ -300,7 +307,7 @@ export function ShareButton({
       }}
     >
       <DialogTrigger asChild>
-        <Button data-testid="share-trigger" variant="default" size="sm" title="Share this artifact">
+        <Button data-testid="share-trigger" variant="outline" size="sm" title="Share this artifact">
           <Share2 />
           Share
         </Button>
@@ -390,7 +397,7 @@ export function ShareButton({
                       className="w-full"
                     />
                   </div>
-                  <Button data-testid="share-add" variant="primary" type="submit" disabled={busy}>
+                  <Button data-testid="share-add" variant="default" type="submit" disabled={busy}>
                     {busy ? "…" : "Add"}
                   </Button>
                 </form>
@@ -451,7 +458,6 @@ export function ShareButton({
                             data-testid={`share-member-remove-${m.user_id}`}
                             variant="ghost"
                             size="icon"
-                            className="size-7 text-muted-foreground hover:text-foreground"
                             onClick={() => remove(m)}
                             aria-label={`Remove ${m.name ?? (m.handle ? `@${m.handle}` : "member")}`}
                           >
@@ -480,34 +486,39 @@ export function ShareButton({
               {canManage ? (
                 <>
                   <div className="flex gap-1.5">
-                    <select
-                      aria-label="General access"
-                      data-testid="share-visibility"
-                      value={vis}
-                      onChange={(e) => setVis(e.target.value)}
-                      className="flex-1 rounded-md border border-input bg-card px-2 py-2 text-sm text-foreground outline-none transition-colors focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring"
-                    >
-                      {ACCESS.map((a) => (
-                        <option key={a.value} value={a.value}>
-                          {a.label}
-                        </option>
-                      ))}
-                    </select>
-                    {reach && (
-                      <select
-                        aria-label="Link permission"
-                        data-testid="share-general-role"
-                        value={genRole}
-                        onChange={(e) => setGenRole(e.target.value as GeneralRole)}
-                        className="rounded-md border border-input bg-card px-2 py-2 text-sm text-foreground outline-none transition-colors focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring"
+                    <Select value={vis} onValueChange={setVis}>
+                      <SelectTrigger
+                        aria-label="General access"
+                        data-testid="share-visibility"
+                        className="flex-1"
                       >
-                        <option value="viewer">Can view</option>
-                        <option value="commenter">Can comment</option>
-                      </select>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {ACCESS.map((a) => (
+                          <SelectItem key={a.value} value={a.value}>
+                            {a.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    {reach && (
+                      <Select value={genRole} onValueChange={(v) => setGenRole(v as GeneralRole)}>
+                        <SelectTrigger
+                          aria-label="Link permission"
+                          data-testid="share-general-role"
+                        >
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="viewer">Can view</SelectItem>
+                          <SelectItem value="commenter">Can comment</SelectItem>
+                        </SelectContent>
+                      </Select>
                     )}
                     <Button
                       data-testid="share-visibility-save"
-                      variant="primary"
+                      variant="default"
                       disabled={savingVis || needsPw || visUnchanged}
                       onClick={saveVisibility}
                     >
@@ -559,7 +570,7 @@ export function ShareButton({
                   onFocus={(e) => e.currentTarget.select()}
                   className="flex-1 font-mono text-2xs"
                 />
-                <Button data-testid="share-embed-copy" variant="primary" onClick={copyEmbed}>
+                <Button data-testid="share-embed-copy" variant="default" onClick={copyEmbed}>
                   {copied ? "Copied" : "Copy"}
                 </Button>
               </div>
@@ -601,7 +612,6 @@ export function ShareButton({
                             variant="ghost"
                             size="icon"
                             data-testid="share-domain-remove"
-                            className="size-7 text-muted-foreground hover:text-foreground"
                             onClick={() => dropDomain(d.host)}
                             aria-label="Remove custom URL"
                           >
@@ -626,7 +636,7 @@ export function ShareButton({
                     </span>
                     <Button
                       data-testid="share-domain-claim"
-                      variant="primary"
+                      variant="default"
                       type="submit"
                       disabled={claiming || !label.trim()}
                     >

@@ -27,14 +27,12 @@ export function BundleBar({
       {(bundle.isSkill || bundle.name) && (
         <div className="flex flex-wrap items-center gap-2">
           {bundle.isSkill && (
-            <span className="rounded-[5px] border border-primary/40 bg-primary/10 px-1.5 py-px font-mono text-2xs font-semibold uppercase tracking-wide text-primary">
+            <span className="rounded-sm border border-primary/40 bg-primary/10 px-1.5 py-px font-mono text-2xs font-semibold uppercase tracking-wide text-primary">
               Skill
             </span>
           )}
           {bundle.name && (
-            <span className="font-display text-sm font-semibold text-foreground">
-              {bundle.name}
-            </span>
+            <span className="text-sm font-semibold text-foreground">{bundle.name}</span>
           )}
         </div>
       )}

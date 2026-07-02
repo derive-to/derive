@@ -1,14 +1,24 @@
-import { MagnifyingGlassIcon } from "@phosphor-icons/react"
-import * as DialogPrimitive from "@radix-ui/react-dialog"
+"use client"
+
 import { Command as CommandPrimitive } from "cmdk"
+import { CheckIcon, SearchIcon } from "lucide-react"
 import type * as React from "react"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import { InputGroup, InputGroupAddon } from "@/components/ui/input-group"
 import { cn } from "@/lib/utils"
 
-export function Command({ className, ...props }: React.ComponentProps<typeof CommandPrimitive>) {
+function Command({ className, ...props }: React.ComponentProps<typeof CommandPrimitive>) {
   return (
     <CommandPrimitive
+      data-slot="command"
       className={cn(
-        "flex h-full w-full flex-col overflow-hidden rounded-lg bg-popover text-popover-foreground",
+        "flex size-full flex-col overflow-hidden rounded-xl! bg-popover p-1 text-popover-foreground",
         className,
       )}
       {...props}
@@ -16,76 +26,93 @@ export function Command({ className, ...props }: React.ComponentProps<typeof Com
   )
 }
 
-// A command palette in a centered, top-anchored dialog (no close button — Escape
-// or click-away dismisses). A visually-hidden title keeps it accessible.
-export function CommandDialog({
-  open,
-  onOpenChange,
-  label = "Command palette",
+function CommandDialog({
+  title = "Command Palette",
+  description = "Search for a command to run...",
   children,
-}: {
-  open: boolean
-  onOpenChange: (open: boolean) => void
-  label?: string
-  children: React.ReactNode
+  className,
+  showCloseButton = false,
+  ...props
+}: React.ComponentProps<typeof Dialog> & {
+  title?: string
+  description?: string
+  className?: string
+  showCloseButton?: boolean
 }) {
   return (
-    <DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
-      <DialogPrimitive.Portal>
-        <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-black/45 backdrop-blur-[1px] data-[state=closed]:animate-out data-[state=open]:animate-in data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0" />
-        <DialogPrimitive.Content className="fixed left-1/2 top-[14%] z-50 w-full max-w-xl -translate-x-1/2 overflow-hidden rounded-lg border border-border bg-popover shadow-[var(--shadow-pop)] data-[state=closed]:animate-out data-[state=open]:animate-in data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95">
-          <DialogPrimitive.Title className="sr-only">{label}</DialogPrimitive.Title>
-          {children}
-        </DialogPrimitive.Content>
-      </DialogPrimitive.Portal>
-    </DialogPrimitive.Root>
+    <Dialog {...props}>
+      <DialogHeader className="sr-only">
+        <DialogTitle>{title}</DialogTitle>
+        <DialogDescription>{description}</DialogDescription>
+      </DialogHeader>
+      <DialogContent
+        className={cn("top-1/3 translate-y-0 overflow-hidden rounded-xl! p-0", className)}
+        showCloseButton={showCloseButton}
+      >
+        {children}
+      </DialogContent>
+    </Dialog>
   )
 }
 
-export function CommandInput({
+function CommandInput({
   className,
   ...props
 }: React.ComponentProps<typeof CommandPrimitive.Input>) {
   return (
-    <div className="flex items-center gap-2.5 border-b border-border-soft px-3.5">
-      <MagnifyingGlassIcon size={16} className="shrink-0 text-muted-foreground" />
-      <CommandPrimitive.Input
-        className={cn(
-          "flex h-12 w-full bg-transparent text-base outline-none placeholder:text-muted-foreground",
-          className,
-        )}
-        {...props}
-      />
+    <div data-slot="command-input-wrapper" className="p-1 pb-0">
+      <InputGroup className="h-8! rounded-lg! border-input/30 bg-input/30 shadow-none! *:data-[slot=input-group-addon]:pl-2!">
+        <CommandPrimitive.Input
+          data-slot="command-input"
+          className={cn(
+            "w-full text-sm outline-hidden disabled:cursor-not-allowed disabled:opacity-50",
+            className,
+          )}
+          {...props}
+        />
+        <InputGroupAddon>
+          <SearchIcon className="size-4 shrink-0 opacity-50" />
+        </InputGroupAddon>
+      </InputGroup>
     </div>
   )
 }
 
-export function CommandList({
-  className,
-  ...props
-}: React.ComponentProps<typeof CommandPrimitive.List>) {
+function CommandList({ className, ...props }: React.ComponentProps<typeof CommandPrimitive.List>) {
   return (
     <CommandPrimitive.List
-      className={cn("max-h-[360px] overflow-y-auto overflow-x-hidden p-1.5", className)}
+      data-slot="command-list"
+      className={cn(
+        "no-scrollbar max-h-72 scroll-py-1 overflow-x-hidden overflow-y-auto outline-none",
+        className,
+      )}
       {...props}
     />
   )
 }
 
-export function CommandEmpty(props: React.ComponentProps<typeof CommandPrimitive.Empty>) {
+function CommandEmpty({
+  className,
+  ...props
+}: React.ComponentProps<typeof CommandPrimitive.Empty>) {
   return (
-    <CommandPrimitive.Empty className="py-8 text-center text-sm text-muted-foreground" {...props} />
+    <CommandPrimitive.Empty
+      data-slot="command-empty"
+      className={cn("py-6 text-center text-sm", className)}
+      {...props}
+    />
   )
 }
 
-export function CommandGroup({
+function CommandGroup({
   className,
   ...props
 }: React.ComponentProps<typeof CommandPrimitive.Group>) {
   return (
     <CommandPrimitive.Group
+      data-slot="command-group"
       className={cn(
-        "overflow-hidden [&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:pb-1 [&_[cmdk-group-heading]]:pt-2 [&_[cmdk-group-heading]]:font-mono [&_[cmdk-group-heading]]:text-2xs [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:tracking-wider [&_[cmdk-group-heading]]:text-muted-foreground",
+        "overflow-hidden p-1 text-foreground **:[[cmdk-group-heading]]:px-2 **:[[cmdk-group-heading]]:py-1.5 **:[[cmdk-group-heading]]:text-xs **:[[cmdk-group-heading]]:font-medium **:[[cmdk-group-heading]]:text-muted-foreground",
         className,
       )}
       {...props}
@@ -93,17 +120,60 @@ export function CommandGroup({
   )
 }
 
-export function CommandItem({
+function CommandSeparator({
   className,
+  ...props
+}: React.ComponentProps<typeof CommandPrimitive.Separator>) {
+  return (
+    <CommandPrimitive.Separator
+      data-slot="command-separator"
+      className={cn("-mx-1 h-px bg-border", className)}
+      {...props}
+    />
+  )
+}
+
+function CommandItem({
+  className,
+  children,
   ...props
 }: React.ComponentProps<typeof CommandPrimitive.Item>) {
   return (
     <CommandPrimitive.Item
+      data-slot="command-item"
       className={cn(
-        "flex items-center gap-2.5 rounded-md px-2 py-2 text-sm text-foreground outline-none data-[disabled=true]:pointer-events-none data-[selected=true]:bg-hover data-[disabled=true]:opacity-50",
+        "group/command-item relative flex cursor-default items-center gap-2 rounded-sm px-2 py-1.5 text-sm outline-hidden select-none in-data-[slot=dialog-content]:rounded-lg! data-[disabled=true]:pointer-events-none data-[disabled=true]:opacity-50 data-selected:bg-muted data-selected:text-foreground [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4 data-selected:*:[svg]:text-foreground",
+        className,
+      )}
+      {...props}
+    >
+      {children}
+      <CheckIcon className="ml-auto opacity-0 group-has-data-[slot=command-shortcut]/command-item:hidden group-data-[checked=true]/command-item:opacity-100" />
+    </CommandPrimitive.Item>
+  )
+}
+
+function CommandShortcut({ className, ...props }: React.ComponentProps<"span">) {
+  return (
+    <span
+      data-slot="command-shortcut"
+      className={cn(
+        "ml-auto text-xs tracking-widest text-muted-foreground group-data-selected/command-item:text-foreground",
         className,
       )}
       {...props}
     />
   )
+}
+
+export {
+  Command,
+  CommandDialog,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+  CommandSeparator,
+  CommandShortcut,
 }

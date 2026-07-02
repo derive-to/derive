@@ -52,7 +52,7 @@ export function Settings() {
   return (
     <div className="flex-1 overflow-y-auto">
       <main className="mx-auto max-w-3xl px-5 pb-16 pt-7">
-        <h1 className="font-display text-2xl font-semibold">Settings</h1>
+        <h1 className="text-2xl font-semibold">Settings</h1>
         <p className="mt-1 text-sm text-muted-foreground">
           Your profile, workspace, and integrations.
         </p>
@@ -83,9 +83,7 @@ export function Settings() {
             {hasReports && (
               <TabsTrigger data-testid="settings-tab-reports" value="reports">
                 Reports
-                <Badge className="border-destructive bg-destructive text-destructive-foreground">
-                  {openReports.length}
-                </Badge>
+                <Badge variant="destructive">{openReports.length}</Badge>
               </TabsTrigger>
             )}
           </TabsList>

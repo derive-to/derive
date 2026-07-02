@@ -42,7 +42,7 @@ export function Profile() {
     return (
       <div className="grid h-full place-items-center p-6">
         <div className="max-w-sm text-center" data-testid="profile-not-found">
-          <h1 className="font-display text-xl font-semibold text-foreground">No such profile</h1>
+          <h1 className="text-xl font-semibold text-foreground">No such profile</h1>
           <p className="mt-2 text-sm text-muted-foreground">
             There's no Derive user with the handle <span className="font-medium">@{handle}</span>.
           </p>
@@ -69,7 +69,7 @@ export function Profile() {
               <div className="min-w-0">
                 {data.name && (
                   <h1
-                    className="truncate font-display text-2xl font-semibold text-foreground"
+                    className="truncate text-2xl font-semibold text-foreground"
                     data-testid="profile-name"
                   >
                     {data.name}
@@ -263,7 +263,7 @@ function ProfileWork({ handle, isMe, name }: { handle: string; isMe: boolean; na
 
   return (
     <section className="mt-7">
-      <h2 className="mb-3 font-display text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+      <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
         Work
       </h2>
       {isPending ? (

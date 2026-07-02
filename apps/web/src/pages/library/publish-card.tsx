@@ -63,7 +63,7 @@ export function PublishCard() {
       }}
     >
       <div className="min-w-[200px] flex-1">
-        <div className="font-display text-lg font-semibold">Publish an artifact</div>
+        <div className="text-lg font-semibold">Publish an artifact</div>
         <div className="text-sm text-muted-foreground">
           Write or paste Markdown or HTML, or drop a file.
         </div>
@@ -87,7 +87,7 @@ export function PublishCard() {
       >
         <Upload /> {busy ? "Publishing…" : "Upload a file"}
       </Button>
-      <Button variant="primary" data-testid="library-new" onClick={() => nav({ to: "/new" })}>
+      <Button variant="default" data-testid="library-new" onClick={() => nav({ to: "/new" })}>
         <Plus /> Write or paste
       </Button>
     </Card>

@@ -219,7 +219,7 @@ export function AppShell({ children }: { children: ReactNode }) {
               straight to the page. Visually hidden until focused. */}
           <a
             href="#main-content"
-            className="sr-only rounded-md bg-primary px-4 py-2 text-primary-foreground focus:not-sr-only focus:absolute focus:left-3 focus:top-3 focus:z-[100]"
+            className="sr-only rounded-md bg-primary px-4 py-2 text-primary-foreground focus:not-sr-only focus:absolute focus:left-3 focus:top-3 focus:z-100"
           >
             Skip to content
           </a>
@@ -236,7 +236,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             </Button>
             <Link to="/" className="mr-auto flex items-center gap-2.5 text-foreground">
               <Logo />
-              <span className="font-display text-lg font-semibold">Derive</span>
+              <span className="text-lg font-semibold">Derive</span>
             </Link>
             <div
               ref={setTopBarSlot}
@@ -254,7 +254,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                 onClick={() => setDrawerOpen(false)}
                 className={cn(
                   // Below the drawer (z-45) and the overlay layer (z-50); above page content.
-                  "fixed inset-0 z-[44] bg-black/35 transition-opacity",
+                  "fixed inset-0 z-44 bg-black/35 transition-opacity",
                   drawerOpen ? "opacity-100" : "pointer-events-none opacity-0",
                 )}
               />

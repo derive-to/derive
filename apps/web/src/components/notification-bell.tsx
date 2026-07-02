@@ -7,12 +7,8 @@ import { ago } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { refFor } from "@/pages/artifact/parse-ref"
 import { Icon } from "./icons"
-
-// Nav-rail row classes (kept in sync with NavRail's SideItem so notifications +
-// settings sit flush with the nav items above them).
-const ROW =
-  "flex w-full items-center gap-2.5 whitespace-nowrap rounded-[9px] px-2.5 py-2 text-left text-sm font-semibold text-foreground transition-colors hover:bg-hover"
-const ROW_RAIL = "justify-center px-0 py-2.5"
+// One shared row look so notifications sit flush with the nav items above.
+import { ROW_BASE, ROW_RAIL } from "./nav-row"
 
 // Notifications: an unread badge + a panel of recent @mentions, kept live over
 // SSE. Lives at the foot of the nav rail; clicking an item deep-links to its
@@ -85,7 +81,7 @@ export function NotificationBell({ collapsed }: { collapsed?: boolean }) {
           data-testid="notif-bell"
           title="Notifications"
           aria-label={unread > 0 ? `Notifications, ${unread} unread` : "Notifications"}
-          className={cn(ROW, collapsed && ROW_RAIL)}
+          className={cn(ROW_BASE, collapsed && ROW_RAIL)}
         >
           <span className="relative flex w-[18px] shrink-0 items-center justify-center">
             <Icon name="bell" size={18} />
@@ -103,7 +99,7 @@ export function NotificationBell({ collapsed }: { collapsed?: boolean }) {
           )}
         </button>
       </PopoverTrigger>
-      <PopoverContent side="right" align="end" className="w-[330px] overflow-hidden p-0">
+      <PopoverContent side="right" align="end" className="w-[330px] gap-0 overflow-hidden p-0">
         <div className="flex items-center justify-between border-b border-border-soft px-3 py-2.5">
           <span className="text-sm font-semibold">Notifications</span>
           {unread > 0 && (
@@ -128,8 +124,9 @@ export function NotificationBell({ collapsed }: { collapsed?: boolean }) {
                 data-testid={`notif-item-${n.id}`}
                 onClick={() => openItem(n)}
                 className={cn(
-                  "flex w-full gap-2.5 border-b border-border-soft px-3 py-2.5 text-left transition-colors last:border-b-0 hover:bg-hover",
-                  !n.read && "bg-accent",
+                  "relative flex w-full gap-2.5 border-b border-border-soft px-3 py-2.5 text-left transition-colors last:border-b-0 hover:bg-hover",
+                  !n.read &&
+                    "bg-muted before:absolute before:top-1.5 before:bottom-1.5 before:left-0 before:w-[3px] before:rounded-full before:bg-primary before:content-['']",
                 )}
               >
                 <span

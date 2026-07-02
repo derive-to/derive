@@ -1,11 +1,11 @@
 import { useLayoutEffect, useRef, useState } from "react"
 import type { Comment } from "@/api"
 import { Icon } from "@/components/icons"
-import { ColoredAvatar } from "@/components/shared/colored-avatar"
+import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
-import { IconButton } from "@/components/ui/icon-button"
-import { Textarea } from "@/components/ui/input"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { Textarea } from "@/components/ui/textarea"
+import { getInitials } from "@/lib/initials"
 import { ago } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { useActions } from "./comment-actions"
@@ -90,7 +90,9 @@ export function CommentRow({ c, compact }: { c: Comment; compact?: boolean }) {
       )}
     >
       <div className="mb-1 flex items-center gap-1.5">
-        <ColoredAvatar name={c.author} />
+        <Avatar className="size-5">
+          <AvatarFallback className="text-2xs">{getInitials(c.author)}</AvatarFallback>
+        </Avatar>
         <span className="text-xs font-bold text-foreground">{c.author}</span>
         <span className="ml-auto font-mono text-2xs text-muted-foreground">
           {ago(c.created_at)}
@@ -121,7 +123,7 @@ export function CommentRow({ c, compact }: { c: Comment; compact?: boolean }) {
           />
           <div className="mt-1.5 flex gap-1.5">
             <Button
-              variant="primary"
+              variant="default"
               size="sm"
               disabled={!draft.trim()}
               data-testid="comment-edit-save"
@@ -156,16 +158,23 @@ export function CommentRow({ c, compact }: { c: Comment; compact?: boolean }) {
               key={emoji}
               type="button"
               data-testid={`reaction-pill-${emoji}`}
+              // title shows on mouse hover; aria-label carries the same reactor list to
+              // keyboard + touch (where title never appears), and aria-pressed exposes
+              // the toggle state.
               title={who.join(", ")}
+              aria-label={`${emoji}, ${who.length}: ${who.join(", ")}`}
+              aria-pressed={who.includes(A.meName)}
               onClick={(e) => {
                 e.stopPropagation()
                 A.react(c.id, emoji)
               }}
               className={cn(
-                "inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-xs transition-colors",
+                "inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-xs outline-none transition-colors focus-visible:ring-[3px] focus-visible:ring-ring/50",
+                // Reacted reads as a quiet monochrome tint, not a loud fill — many
+                // reacted pills shouldn't shout.
                 who.includes(A.meName)
-                  ? "border-primary bg-accent font-bold text-primary"
-                  : "border-border bg-card text-muted-foreground hover:border-primary",
+                  ? "border-primary/40 bg-primary/10 text-foreground"
+                  : "border-border bg-card text-muted-foreground hover:border-primary/60",
               )}
             >
               <span>{emoji}</span>
@@ -180,7 +189,7 @@ export function CommentRow({ c, compact }: { c: Comment; compact?: boolean }) {
         // biome-ignore lint/a11y/useKeyWithClickEvents: stopPropagation wrapper around the action toolbar, not a control
         <div
           className={cn(
-            "absolute right-2 top-1.5 z-[6] flex gap-px rounded-[9px] border border-border bg-card p-0.5 shadow-[var(--shadow)] transition-opacity",
+            "absolute right-2 top-1.5 z-[6] flex gap-px rounded-lg border border-border bg-card p-0.5 shadow-[var(--shadow)] transition-opacity",
             open
               ? "opacity-100"
               : "pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100",
@@ -189,15 +198,15 @@ export function CommentRow({ c, compact }: { c: Comment; compact?: boolean }) {
         >
           <Popover open={open === "react"} onOpenChange={(o) => setOpen(o ? "react" : null)}>
             <PopoverTrigger asChild>
-              <IconButton
+              <Button
                 variant="ghost"
-                size="sm"
+                size="icon-sm"
                 title="React"
                 aria-label="Add reaction"
                 data-testid="comment-react"
               >
                 <Icon name="react" size={16} />
-              </IconButton>
+              </Button>
             </PopoverTrigger>
             <PopoverContent align="end" className="w-auto p-1">
               <div className="grid grid-cols-4 gap-px">
@@ -221,15 +230,15 @@ export function CommentRow({ c, compact }: { c: Comment; compact?: boolean }) {
           </Popover>
           <Popover open={open === "menu"} onOpenChange={(o) => setOpen(o ? "menu" : null)}>
             <PopoverTrigger asChild>
-              <IconButton
+              <Button
                 variant="ghost"
-                size="sm"
+                size="icon-sm"
                 title="More"
                 aria-label="Comment actions"
                 data-testid="comment-more"
               >
                 <Icon name="more" size={16} />
-              </IconButton>
+              </Button>
             </PopoverTrigger>
             <PopoverContent align="end" className="w-auto min-w-[132px] p-1">
               {mine && (

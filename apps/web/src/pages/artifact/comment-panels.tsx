@@ -172,7 +172,7 @@ export function MobileComments({
       <div
         ref={sheetRef}
         className={cn(
-          "fixed inset-x-0 bottom-0 z-[61] flex flex-col rounded-t-[18px] border-t border-border bg-card shadow-[0_-14px_44px_-18px_rgba(0,0,0,0.5)] duration-[260ms]",
+          "fixed inset-x-0 bottom-0 z-[61] flex flex-col rounded-t-2xl border-t border-border bg-card shadow-[0_-14px_44px_-18px_rgba(0,0,0,0.5)] duration-[260ms]",
           // Don't animate height while the keyboard repositions the sheet.
           kb ? "transition-transform" : "transition-[transform,height]",
           // Composing: a compact bar sized to its content (capped), so the box sits

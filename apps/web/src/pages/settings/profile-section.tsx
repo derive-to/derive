@@ -2,9 +2,10 @@ import { Camera } from "lucide-react"
 import { useRef, useState } from "react"
 import { api } from "@/api"
 import { ProfileFields } from "@/components/profile-fields"
-import { SectionHeader } from "@/components/shared/section-header"
+import { SectionTitle } from "@/components/shared/section-title"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Card } from "@/components/ui/card"
+import { Checkbox } from "@/components/ui/checkbox"
 import { UsernameForm } from "@/components/username-form"
 import { useAuth } from "@/ctx"
 import { getInitials } from "@/lib/initials"
@@ -67,7 +68,7 @@ export function ProfileSection() {
                 {me.image && <AvatarImage src={me.image} alt="Your avatar" />}
                 <AvatarFallback className="rounded-full bg-card text-muted-foreground">
                   {me.name ? (
-                    <span className="font-display text-xl font-semibold">{initials}</span>
+                    <span className="text-xl font-semibold">{initials}</span>
                   ) : (
                     <Camera className="size-5" aria-hidden />
                   )}
@@ -102,20 +103,19 @@ export function ProfileSection() {
 
       {/* Role + what you do */}
       <Card className="p-4">
-        <SectionHeader className="mb-2.5">Role</SectionHeader>
+        <SectionTitle>Role</SectionTitle>
         <ProfileFields />
       </Card>
 
       {/* Discoverability */}
       <Card className="p-4">
-        <SectionHeader>Discoverability</SectionHeader>
-        <label className="mt-2.5 flex items-start gap-2.5 text-sm text-foreground">
-          <input
-            type="checkbox"
+        <SectionTitle>Discoverability</SectionTitle>
+        <label className="flex items-start gap-2.5 text-sm text-foreground">
+          <Checkbox
             data-testid="account-discoverable"
             checked={discoverable}
-            onChange={toggleDiscoverable}
-            className="mt-0.5 size-4"
+            onCheckedChange={toggleDiscoverable}
+            className="mt-0.5"
           />
           <span>
             Let people find me by username in search.

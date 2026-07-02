@@ -17,9 +17,16 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { getInitials } from "@/lib/initials"
 import { cn } from "@/lib/utils"
-import { roleLabel, roleValue, selectClass, WS_ROLES } from "./roles"
+import { roleLabel, roleValue, WS_ROLES } from "./roles"
 
 export function WorkspaceSection({ meId }: { meId: string }) {
   const { refreshWorkspaces, createWorkspace } = useShell()
@@ -245,7 +252,7 @@ export function WorkspaceSection({ meId }: { meId: string }) {
                 Cancel
               </Button>
               <Button
-                variant="primary"
+                variant="default"
                 size="sm"
                 onClick={createSubmit}
                 disabled={!newName.trim()}
@@ -274,7 +281,7 @@ export function WorkspaceSection({ meId }: { meId: string }) {
           {isAdmin && (
             <Button
               data-testid="workspace-save"
-              variant="primary"
+              variant="default"
               onClick={saveName}
               disabled={savingName || !name.trim() || name.trim() === ws?.name}
             >
@@ -285,7 +292,7 @@ export function WorkspaceSection({ meId }: { meId: string }) {
       </Card>
 
       <div className="mb-1 mt-6 flex items-baseline gap-2.5">
-        <h3 className="font-display text-sm font-semibold">Members</h3>
+        <h3 className="text-sm font-semibold">Members</h3>
         <span className="text-sm text-muted-foreground">· {ws?.members.length ?? 0}</span>
       </div>
 
@@ -343,22 +350,25 @@ export function WorkspaceSection({ meId }: { meId: string }) {
                 </div>
               )}
             </div>
-            <select
-              data-testid="member-role"
-              aria-label="Role for new member"
-              value={addRole}
-              onChange={(e) => setAddRole(e.target.value as Role)}
-              className={`${selectClass} w-[130px]`}
-            >
-              {WS_ROLES.map((r) => (
-                <option key={r.value} value={r.value}>
-                  {r.label}
-                </option>
-              ))}
-            </select>
+            <Select value={addRole} onValueChange={(v) => setAddRole(v as Role)}>
+              <SelectTrigger
+                data-testid="member-role"
+                aria-label="Role for new member"
+                className="w-[130px]"
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {WS_ROLES.map((r) => (
+                  <SelectItem key={r.value} value={r.value}>
+                    {r.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
             <Button
               data-testid="member-add"
-              variant="primary"
+              variant="default"
               onClick={addMember}
               disabled={adding || !email.trim()}
             >
@@ -398,30 +408,34 @@ export function WorkspaceSection({ meId }: { meId: string }) {
                 )}
               </div>
               {isAdmin ? (
-                <select
-                  data-testid={`member-role-${m.user_id}`}
-                  aria-label={`Role for ${m.name ?? (m.handle ? `@${m.handle}` : "member")}`}
+                <Select
                   value={roleValue(m.role)}
-                  onChange={(e) => changeRole(m.user_id, e.target.value as Role)}
-                  className={`${selectClass} w-[120px]`}
+                  onValueChange={(v) => changeRole(m.user_id, v as Role)}
                 >
-                  {WS_ROLES.map((r) => (
-                    <option key={r.value} value={r.value}>
-                      {r.label}
-                    </option>
-                  ))}
-                </select>
+                  <SelectTrigger
+                    data-testid={`member-role-${m.user_id}`}
+                    aria-label={`Role for ${m.name ?? (m.handle ? `@${m.handle}` : "member")}`}
+                    className="w-[120px]"
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {WS_ROLES.map((r) => (
+                      <SelectItem key={r.value} value={r.value}>
+                        {r.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               ) : (
-                <Badge variant="accent" size="md" className="font-mono">
-                  {roleLabel(m.role)}
-                </Badge>
+                <Badge variant="secondary">{roleLabel(m.role)}</Badge>
               )}
               {isAdmin && (
                 <Button
                   data-testid={`member-remove-${m.user_id}`}
                   variant="ghost"
+                  className="text-destructive hover:bg-destructive/10 hover:text-destructive"
                   size="sm"
-                  className="text-destructive hover:text-destructive"
                   onClick={() => removeMember(m)}
                 >
                   Remove
@@ -433,8 +447,8 @@ export function WorkspaceSection({ meId }: { meId: string }) {
       </div>
 
       {isAdmin && ws && (
-        <Card className="mt-6 border-destructive/40 p-4">
-          <div className="text-xs font-semibold uppercase tracking-wide text-destructive">
+        <Card className="mt-6 ring-destructive/40 p-4">
+          <div className="font-mono text-xs font-semibold uppercase tracking-wide text-destructive">
             Danger zone
           </div>
           <div className="mt-2 flex flex-wrap items-center justify-between gap-3">
@@ -470,9 +484,10 @@ export function WorkspaceSection({ meId }: { meId: string }) {
                 />
                 <Button
                   data-testid="workspace-delete-go"
+                  variant="destructive"
                   onClick={onDelete}
                   disabled={deleting || delName.trim() !== ws.name}
-                  className="mt-2 w-full bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                  className="mt-2 w-full"
                 >
                   {deleting ? "Deleting…" : "Delete this workspace"}
                 </Button>

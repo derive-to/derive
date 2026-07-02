@@ -6,8 +6,16 @@ import { Spinner } from "@/components/shared/spinner"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
+import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
-import { ALL_EVENTS, selectClass } from "./roles"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+import { ALL_EVENTS } from "./roles"
 
 export function WebhooksSection() {
   const [hooks, setHooks] = useState<Webhook[] | null>(null)
@@ -100,16 +108,15 @@ function NewWebhook({ onCreated }: { onCreated: (msg: string) => void }) {
   return (
     <Card className="p-4">
       <div className="flex flex-wrap items-center gap-2">
-        <select
-          data-testid="webhook-kind"
-          aria-label="Webhook type"
-          value={kind}
-          onChange={(e) => setKind(e.target.value as "generic" | "slack")}
-          className={`${selectClass} w-[110px]`}
-        >
-          <option value="generic">Webhook</option>
-          <option value="slack">Slack</option>
-        </select>
+        <Select value={kind} onValueChange={(v) => setKind(v as "generic" | "slack")}>
+          <SelectTrigger data-testid="webhook-kind" aria-label="Webhook type" className="w-[110px]">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="generic">Webhook</SelectItem>
+            <SelectItem value="slack">Slack</SelectItem>
+          </SelectContent>
+        </Select>
         <Input
           data-testid="webhook-url"
           aria-label="Endpoint URL"
@@ -122,7 +129,7 @@ function NewWebhook({ onCreated }: { onCreated: (msg: string) => void }) {
           }
           className="min-w-[240px] flex-1"
         />
-        <Button data-testid="webhook-add" variant="primary" onClick={add} disabled={busy || !valid}>
+        <Button data-testid="webhook-add" variant="default" onClick={add} disabled={busy || !valid}>
           {busy ? "Adding…" : "Add"}
         </Button>
       </div>
@@ -132,12 +139,10 @@ function NewWebhook({ onCreated }: { onCreated: (msg: string) => void }) {
             key={e}
             className="flex items-center gap-1.5 font-mono text-xs text-muted-foreground"
           >
-            <input
-              type="checkbox"
+            <Checkbox
               data-testid={`webhook-event-${e}`}
-              className="accent-primary"
               checked={events.includes(e)}
-              onChange={() => toggle(e)}
+              onCheckedChange={() => toggle(e)}
             />
             {e}
           </label>
@@ -147,11 +152,9 @@ function NewWebhook({ onCreated }: { onCreated: (msg: string) => void }) {
   )
 }
 
-const deliveryBadge = (
-  status: string,
-): { variant: "success" | "outline" | "default"; cls?: string } =>
+const deliveryBadge = (status: string): { variant: "outline" | "default"; cls?: string } =>
   status === "delivered"
-    ? { variant: "success" }
+    ? { variant: "outline", cls: "border-transparent bg-muted text-muted-foreground" }
     : status === "dead"
       ? { variant: "outline", cls: "text-destructive" }
       : { variant: "default" }
@@ -197,7 +200,7 @@ function WebhookRow({
   return (
     <Card data-testid={`webhook-row-${hook.id}`} className="overflow-hidden p-0">
       <div className="flex items-center gap-2.5 px-3.5 py-3">
-        <Badge variant={hook.kind === "slack" ? "accent" : "default"} className="font-mono">
+        <Badge variant={hook.kind === "slack" ? "secondary" : "default"}>
           {hook.kind === "slack" ? "Slack" : "Webhook"}
         </Badge>
         <div className="min-w-0 flex-1">
@@ -215,8 +218,8 @@ function WebhookRow({
         <Button
           data-testid={`webhook-remove-${hook.id}`}
           variant="ghost"
+          className="text-destructive hover:bg-destructive/10 hover:text-destructive"
           size="sm"
-          className="text-destructive hover:text-destructive"
           onClick={remove}
         >
           Remove
@@ -233,7 +236,7 @@ function WebhookRow({
               const b = deliveryBadge(d.status)
               return (
                 <div key={d.id} className="flex items-center gap-2 py-0.5 text-xs">
-                  <Badge variant={b.variant} className={`font-mono ${b.cls ?? ""}`}>
+                  <Badge variant={b.variant} className={b.cls}>
                     {d.status}
                   </Badge>
                   <span className="font-mono text-muted-foreground">{d.event_type}</span>

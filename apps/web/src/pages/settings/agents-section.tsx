@@ -8,7 +8,13 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
-import { selectClass } from "./roles"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 
 export function AgentsSection() {
   const [agents, setAgents] = useState<Agent[] | null>(null)
@@ -97,19 +103,18 @@ function NewAgent({ onCreated }: { onCreated: (msg: string) => void }) {
           onChange={(e) => setName(e.target.value)}
           className="min-w-[180px] flex-1"
         />
-        <select
-          data-testid="agent-role"
-          aria-label="Agent role"
-          value={role}
-          onChange={(e) => setRole(e.target.value as Role)}
-          className={`${selectClass} w-[150px]`}
-        >
-          <option value="commenter">Commenter (propose)</option>
-          <option value="editor">Editor (publish)</option>
-        </select>
+        <Select value={role} onValueChange={(v) => setRole(v as Role)}>
+          <SelectTrigger data-testid="agent-role" aria-label="Agent role" className="w-[150px]">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="commenter">Commenter (propose)</SelectItem>
+            <SelectItem value="editor">Editor (publish)</SelectItem>
+          </SelectContent>
+        </Select>
         <Button
           data-testid="agent-add"
-          variant="primary"
+          variant="default"
           onClick={add}
           disabled={busy || !name.trim()}
         >
@@ -185,9 +190,7 @@ function AgentRow({
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-1.5 text-sm font-semibold text-foreground">
           @{agent.name}
-          <Badge variant="accent" className="font-mono">
-            {agent.role}
-          </Badge>
+          <Badge variant="secondary">{agent.role}</Badge>
         </div>
         <div className="text-2xs text-muted-foreground">
           Mention it in any thread to send it work.
@@ -196,8 +199,8 @@ function AgentRow({
       <Button
         data-testid={`agent-remove-${agent.id}`}
         variant="ghost"
+        className="text-destructive hover:bg-destructive/10 hover:text-destructive"
         size="sm"
-        className="text-destructive hover:text-destructive"
         onClick={remove}
         disabled={busy}
       >

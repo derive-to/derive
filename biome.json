@@ -68,11 +68,28 @@
         "useValidAnchor": "error",
         "noAutofocus": "error",
         "useIframeTitle": "error",
-        "noSvgWithoutTitle": "error"
+        "noSvgWithoutTitle": "error",
+        "noLabelWithoutControl": {
+          "level": "error",
+          "options": {
+            "inputComponents": ["Input", "Textarea", "Checkbox", "Switch", "RadioGroupItem"]
+          }
+        }
       }
     }
   },
   "overrides": [
+    {
+      "includes": ["apps/web/src/components/ui/**"],
+      "linter": {
+        "rules": {
+          "a11y": {
+            "useSemanticElements": "off",
+            "useKeyWithClickEvents": "off"
+          }
+        }
+      }
+    },
     {
       "includes": ["apps/api/**", "packages/core/**", "packages/db/**", "packages/storage/**"],
       "linter": {

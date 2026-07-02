@@ -373,7 +373,7 @@ export function CommentCard({
         active
           ? "cursor-default border-primary shadow-[var(--shadow)]"
           : hovered
-            ? " border-primary/40 shadow-[0_4px_14px_-8px_rgba(0,0,0,0.45)]"
+            ? " border-primary/40 shadow-[var(--shadow-sm)]"
             : " border-border",
         resolved && !active && "opacity-60",
       )}
@@ -390,7 +390,7 @@ export function CommentCard({
             <span
               data-testid={`comment-moved-${root.thread_id}`}
               title="The text this comment anchors to moved to a different slide since it was written"
-              className="rounded-full bg-secondary px-1.5 py-px font-mono text-2xs font-medium text-gold"
+              className="rounded-full bg-secondary px-1.5 py-px font-mono text-2xs font-medium text-foreground"
             >
               moved
             </span>
@@ -482,11 +482,11 @@ export function CommentCard({
               className={cn(
                 "rounded-full px-2 py-0.5 font-mono text-2xs font-bold",
                 resolved
-                  ? "bg-success/15 text-success"
+                  ? "bg-muted text-muted-foreground"
                   : outdated
-                    ? "bg-gold/15 text-gold"
+                    ? "bg-secondary text-foreground"
                     : addressed
-                      ? "bg-review/15 text-review"
+                      ? "bg-muted text-muted-foreground"
                       : "bg-accent text-primary",
               )}
               title={

@@ -5,6 +5,7 @@ import { Spinner } from "@/components/shared/spinner"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
+import { Switch } from "@/components/ui/switch"
 
 /** A labelled on/off switch backed by a button (so it carries a testid + is keyboard
  *  reachable). Colours come from theme tokens only. */
@@ -22,23 +23,14 @@ function Toggle(props: {
         <div className="text-sm font-medium">{props.label}</div>
         <div className="text-sm text-muted-foreground">{props.hint}</div>
       </div>
-      <button
-        type="button"
-        role="switch"
-        aria-checked={props.on}
-        data-testid={`toggle-${props.id}`}
+      <Switch
+        checked={props.on}
         disabled={props.disabled}
-        onClick={() => props.onChange(!props.on)}
-        className={`relative mt-1 inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors disabled:opacity-50 ${
-          props.on ? "bg-primary" : "bg-muted"
-        }`}
-      >
-        <span
-          className={`inline-block h-4 w-4 rounded-full bg-background transition-transform ${
-            props.on ? "translate-x-4" : "translate-x-0.5"
-          }`}
-        />
-      </button>
+        data-testid={`toggle-${props.id}`}
+        aria-label={props.label}
+        onCheckedChange={props.onChange}
+        className="mt-1"
+      />
     </div>
   )
 }
@@ -173,7 +165,7 @@ export function IntegrationsSection() {
                   placeholder="C0123ABC456"
                 />
               </div>
-              <Button data-testid="slack-channel-save" onClick={saveChannel}>
+              <Button data-testid="slack-channel-save" variant="default" onClick={saveChannel}>
                 Save
               </Button>
             </div>
@@ -192,7 +184,7 @@ export function IntegrationsSection() {
             <p className="text-sm text-muted-foreground">
               Connect a Slack workspace to get comments in a channel and reply back from Slack.
             </p>
-            <Button data-testid="slack-connect" asChild>
+            <Button data-testid="slack-connect" variant="default" asChild>
               <a href="/v1/slack/install">Add to Slack</a>
             </Button>
           </Card>

@@ -43,7 +43,7 @@ export function DiffView({
             {fromLabel} → {toLabel}
           </span>
         )}
-        <span className="font-mono text-success">+{adds}</span>
+        <span className="font-mono text-muted-foreground">+{adds}</span>
         <span className="font-mono text-destructive">−{dels}</span>
         <span className="font-mono text-muted-foreground">{diff.ops.length} lines</span>
       </div>
@@ -55,7 +55,7 @@ export function DiffView({
             className={cn(
               "whitespace-pre-wrap break-words px-4",
               o.t === "add"
-                ? "bg-success/15 text-foreground"
+                ? "bg-muted text-foreground"
                 : o.t === "del"
                   ? "bg-destructive/10 text-foreground"
                   : "text-muted-foreground",
@@ -64,7 +64,11 @@ export function DiffView({
             <span
               className={cn(
                 "mr-2.5 select-none",
-                o.t === "add" ? "text-success" : o.t === "del" ? "text-destructive" : "text-border",
+                o.t === "add"
+                  ? "text-muted-foreground"
+                  : o.t === "del"
+                    ? "text-destructive"
+                    : "text-border",
               )}
             >
               {o.t === "add" ? "+" : o.t === "del" ? "−" : " "}

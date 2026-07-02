@@ -45,13 +45,13 @@ export function CollectionBar({
           className="max-w-[280px] text-lg font-semibold"
         />
       ) : (
-        <h2 className="font-display text-xl font-semibold">
+        <h2 className="text-xl font-semibold">
           {title} <span className="text-sm font-normal text-muted-foreground">· {count}</span>
         </h2>
       )}
       <span className="flex-1" />
       <Button
-        variant="primary"
+        variant="default"
         size="sm"
         data-testid="collection-share"
         onClick={onShare}
@@ -69,9 +69,9 @@ export function CollectionBar({
       </Button>
       <Button
         variant="ghost"
+        className="text-destructive hover:bg-destructive/10 hover:text-destructive"
         size="sm"
         data-testid="collection-delete"
-        className="text-destructive hover:text-destructive"
         onClick={() => {
           if (confirm(`Delete the collection “${title}”? The artifacts are not deleted.`))
             onDelete()

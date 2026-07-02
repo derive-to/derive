@@ -8,7 +8,9 @@ import { ArtifactCard } from "./artifact-card"
 // from the measured width and let react-virtual render only the visible rows.
 const MIN_CARD = 220
 const GAP = 12
-const EST_ROW = 168 // card (~156) + gap; measureElement corrects per row
+// Initial row estimate for a 16:10 card (thumb ~140 + content ~90 + the pb-5 row
+// gutter); measureElement corrects the real height per row once mounted.
+const EST_ROW = 250
 
 // The library grid, windowed. Only the rows in (or near) the viewport are in the
 // DOM, so the grid stays at 60fps no matter how large the library grows. The
@@ -89,7 +91,10 @@ export function ArtifactGrid({
             key={vrow.key}
             data-index={vrow.index}
             ref={virtualizer.measureElement}
-            className="grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-3"
+            // Asymmetric gutter: a wider vertical gap (pb-5, measured into the row)
+            // than the horizontal gap-3, so captions get air before the next row's
+            // render — reads as a curated wall, not a tight data grid.
+            className="grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-3 pb-5"
             style={{
               position: "absolute",
               top: 0,

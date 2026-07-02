@@ -1,10 +1,9 @@
 // One icon vocabulary for the whole app: light, regular-weight Phosphor glyphs —
 // the precise, monochrome-leaning look (Linear/Resend), not heavy filled shapes.
-// Each icon's color is a semantic token CLASS (defined in styles/globals.css),
-// never a raw hex — the design-token guardrail (scripts/check-design-tokens.mjs)
-// enforces that. Every surface imports <Icon name="…" /> so the look stays
-// consistent and a color changes in exactly one place; pass weight="fill" for the
-// rare filled state (e.g. a favourited star).
+// Icons inherit `currentColor` (the shadcn/lucide default) so a glyph always matches
+// the text next to it — inside a button it takes the button's ink, in a nav row the
+// row's ink, etc. Pass a `text-*` token className only to override for a specific
+// spot (e.g. a muted, unfavourited star); pass weight="fill" for a filled state.
 import {
   BellIcon,
   BookOpenIcon,
@@ -50,56 +49,56 @@ import {
 import { cn } from "@/lib/utils"
 
 // name → [glyph, default color-token class]. The color is a token utility
-// (text-gold, text-share, …) so it themes correctly and passes the guardrail.
+// (text-foreground, text-muted-foreground, …) so it themes correctly and passes the guardrail.
 // Override per-usage by passing a `text-*` className (tailwind-merge wins) —
 // e.g. an inactive star renders <Icon name="star" className="text-muted-foreground" />.
 const REG = {
   // nav
-  home: [HouseIcon, "text-primary"],
-  all: [StackIcon, "text-primary"],
-  favorites: [StarIcon, "text-gold"],
+  home: HouseIcon,
+  all: StackIcon,
+  favorites: StarIcon,
   // The activity feed of followed authors + repo paths.
-  following: [UsersThreeIcon, "text-primary"],
-  collections: [FoldersIcon, "text-collection"],
-  collection: [FolderSimpleIcon, "text-collection"],
-  tag: [TagIcon, "text-tag"],
-  search: [MagnifyingGlassIcon, "text-muted-foreground"],
-  settings: [GearIcon, "text-muted-foreground"],
+  following: UsersThreeIcon,
+  collections: FoldersIcon,
+  collection: FolderSimpleIcon,
+  tag: TagIcon,
+  search: MagnifyingGlassIcon,
+  settings: GearIcon,
   // pod / workspace
-  user: [UserIcon, "text-primary"],
-  workspace: [BuildingsIcon, "text-primary"],
-  squares: [SquaresFourIcon, "text-primary"],
-  check: [CheckIcon, "text-primary"],
-  plus: [PlusIcon, "text-primary"],
-  signout: [SignOutIcon, "text-muted-foreground"],
+  user: UserIcon,
+  workspace: BuildingsIcon,
+  squares: SquaresFourIcon,
+  check: CheckIcon,
+  plus: PlusIcon,
+  signout: SignOutIcon,
   // chrome
-  sidebar: [SidebarSimpleIcon, "text-muted-foreground"],
-  bell: [BellIcon, "text-share"],
-  more: [DotsThreeIcon, "text-muted-foreground"],
-  close: [XIcon, "text-muted-foreground"],
+  sidebar: SidebarSimpleIcon,
+  bell: BellIcon,
+  more: DotsThreeIcon,
+  close: XIcon,
   // artifact toolbar
-  star: [StarIcon, "text-gold"],
-  share: [ShareNetworkIcon, "text-share"],
-  comments: [ChatCircleIcon, "text-comments"],
-  insights: [ChartBarIcon, "text-insights"],
-  history: [ClockCounterClockwiseIcon, "text-muted-foreground"],
-  report: [FlagIcon, "text-muted-foreground"],
-  caret: [CaretDownIcon, "text-muted-foreground"],
-  edit: [CodeIcon, "text-muted-foreground"],
-  review: [GitPullRequestIcon, "text-review"],
-  pin: [PushPinIcon, "text-gold"],
-  views: [EyeIcon, "text-muted-foreground"],
-  reader: [BookOpenIcon, "text-primary"],
-  removed: [ProhibitIcon, "text-muted-foreground"],
-  present: [CornersOutIcon, "text-primary"],
-  lock: [LockSimpleIcon, "text-muted-foreground"],
-  unlock: [LockSimpleOpenIcon, "text-muted-foreground"],
+  star: StarIcon,
+  share: ShareNetworkIcon,
+  comments: ChatCircleIcon,
+  insights: ChartBarIcon,
+  history: ClockCounterClockwiseIcon,
+  report: FlagIcon,
+  caret: CaretDownIcon,
+  edit: CodeIcon,
+  review: GitPullRequestIcon,
+  pin: PushPinIcon,
+  views: EyeIcon,
+  reader: BookOpenIcon,
+  removed: ProhibitIcon,
+  present: CornersOutIcon,
+  lock: LockSimpleIcon,
+  unlock: LockSimpleOpenIcon,
   // comment toolbar / menu
-  react: [SmileyIcon, "text-muted-foreground"],
-  pencil: [PencilSimpleIcon, "text-muted-foreground"],
-  link: [LinkIcon, "text-muted-foreground"],
-  delete: [TrashIcon, "text-muted-foreground"],
-} as const satisfies Record<string, readonly [PhIcon, string]>
+  react: SmileyIcon,
+  pencil: PencilSimpleIcon,
+  link: LinkIcon,
+  delete: TrashIcon,
+} as const satisfies Record<string, PhIcon>
 
 export type IconName = keyof typeof REG
 
@@ -115,6 +114,6 @@ export function Icon({
   /** A `text-*` token class to recolor (e.g. "text-muted-foreground"). */
   className?: string
 }) {
-  const [Glyph, color] = REG[name]
-  return <Glyph size={size} weight={weight} className={cn(color, className)} />
+  const Glyph = REG[name]
+  return <Glyph size={size} weight={weight} className={cn(className)} />
 }

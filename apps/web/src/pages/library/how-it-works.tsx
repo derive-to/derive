@@ -1,5 +1,6 @@
 import { ArrowRight } from "lucide-react"
 import type { ReactNode } from "react"
+import { Icon } from "@/components/icons"
 
 // A visual "how it works" guide shown on a brand-new, empty home (below the
 // publish launcher). Each step pairs a one-liner with a tiny mock of the actual
@@ -8,7 +9,7 @@ import type { ReactNode } from "react"
 export function HowItWorks() {
   return (
     <section data-testid="how-it-works" className="mt-2">
-      <div className="mb-4 flex items-center gap-3 text-2xs font-semibold uppercase tracking-wide text-muted-foreground">
+      <div className="mb-4 flex items-center gap-3 font-mono text-2xs font-semibold uppercase tracking-wide text-muted-foreground">
         <span className="h-px flex-1 bg-border" />
         How Derive works
         <span className="h-px flex-1 bg-border" />
@@ -28,7 +29,7 @@ export function HowItWorks() {
             </div>
             <div className="mt-2 flex items-center gap-1.5">
               <ArrowRight className="size-3 shrink-0 text-muted-foreground" aria-hidden />
-              <span className="truncate rounded-full bg-accent/15 px-2 py-0.5 font-mono text-2xs text-accent-foreground">
+              <span className="truncate rounded-full bg-muted px-2 py-0.5 font-mono text-2xs text-foreground">
                 derive.to/q3-plan
               </span>
             </div>
@@ -61,12 +62,12 @@ export function HowItWorks() {
             <div className="rounded-md border border-border bg-background p-2">
               <div className="h-1 w-full rounded-full bg-foreground/15" />
               <div className="mt-1 flex items-center gap-1">
-                <span className="h-1 w-10 rounded-full bg-accent/60" />
+                <span className="h-1 w-10 rounded-full bg-foreground/40" />
                 <span className="h-1 flex-1 rounded-full bg-foreground/15" />
               </div>
               <div className="mt-1.5 flex items-center gap-1">
-                <span className="rounded-md border border-border bg-card px-1.5 py-0.5 text-2xs text-muted-foreground">
-                  💬 @priya
+                <span className="inline-flex items-center gap-1 rounded-md border border-border bg-card px-1.5 py-0.5 text-2xs text-muted-foreground">
+                  <Icon name="comments" size={12} /> @priya
                 </span>
                 <ArrowRight className="size-2.5 text-muted-foreground" aria-hidden />
                 <span className="rounded bg-foreground/10 px-1.5 py-0.5 font-mono text-2xs text-foreground">
@@ -98,10 +99,10 @@ function Step({
         <span className="flex size-5 items-center justify-center rounded-full bg-primary/15 font-mono text-2xs font-semibold text-primary">
           {n}
         </span>
-        <span className="font-display text-sm font-semibold text-foreground">{title}</span>
+        <span className="text-sm font-semibold text-foreground">{title}</span>
       </div>
       <div className="mt-2.5">{children}</div>
-      <p className="mt-2.5 text-xs leading-relaxed text-muted-foreground">{blurb}</p>
+      <p className="mt-2.5 text-xs text-muted-foreground">{blurb}</p>
     </div>
   )
 }
@@ -111,7 +112,7 @@ const Mock = ({ children }: { children: ReactNode }) => (
 )
 
 const Chip = ({ children }: { children: ReactNode }) => (
-  <span className="rounded-full bg-accent/15 px-1.5 py-0.5 text-2xs font-medium text-accent-foreground">
+  <span className="rounded-full bg-muted px-1.5 py-0.5 text-2xs font-medium text-foreground">
     {children}
   </span>
 )

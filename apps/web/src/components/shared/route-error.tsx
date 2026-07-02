@@ -20,7 +20,7 @@ export function RouteError({ error, reset }: ErrorComponentProps) {
       <div className="flex gap-2">
         <Button
           data-testid="route-error-retry"
-          variant="primary"
+          variant="default"
           onClick={() => {
             reset()
             router.invalidate()
@@ -49,7 +49,7 @@ export function RouteNotFound() {
           That link doesn't point anywhere in this workspace.
         </p>
       </div>
-      <Button asChild variant="primary" data-testid="route-notfound-home">
+      <Button asChild variant="default" data-testid="route-notfound-home">
         <Link to="/">Go home</Link>
       </Button>
     </div>

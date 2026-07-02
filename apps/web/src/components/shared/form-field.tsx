@@ -1,8 +1,10 @@
 import type { ReactNode } from "react"
+import { Label } from "@/components/ui/label"
 import { cn } from "@/lib/utils"
 
-// A labelled form control: a label above its input, plus optional helper text.
-// Pass `htmlFor` (matching the control's id) so the label is properly associated.
+// The one form row: a label above its control, plus optional helper text. Composes
+// the Label primitive so every form shares one label register instead of hand-
+// rolling <label> markup. Pass `htmlFor` matching the control's id for association.
 export function FormField({
   label,
   htmlFor,
@@ -18,11 +20,9 @@ export function FormField({
 }) {
   return (
     <div className={cn("grid gap-1.5", className)}>
-      <label htmlFor={htmlFor} className="text-xs font-medium text-foreground">
-        {label}
-      </label>
+      <Label htmlFor={htmlFor}>{label}</Label>
       {children}
-      {hint ? <p className="text-2xs text-muted-foreground">{hint}</p> : null}
+      {hint ? <p className="text-xs text-muted-foreground">{hint}</p> : null}
     </div>
   )
 }

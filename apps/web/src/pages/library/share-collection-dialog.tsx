@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react"
 import { toast } from "sonner"
 import { type ArtifactMember, api, type Collection, type Role } from "@/api"
+import { Icon } from "@/components/icons"
 import { EmptyState } from "@/components/shared/empty-state"
 import { RoleSelect } from "@/components/shared/role-select"
 import { Button } from "@/components/ui/button"
@@ -96,7 +97,7 @@ export function ShareCollectionDialog({
             className="w-[104px]"
           />
           <Button
-            variant="primary"
+            variant="default"
             type="submit"
             data-testid="collection-share-add"
             disabled={busy}
@@ -124,12 +125,11 @@ export function ShareCollectionDialog({
                   variant="ghost"
                   size="icon"
                   data-testid={`collection-share-remove-${m.user_id}`}
-                  className="size-7 text-muted-foreground hover:text-foreground"
                   onClick={() => remove(m)}
                   title="Remove"
                   aria-label={`Remove ${m.name ?? (m.handle ? `@${m.handle}` : "member")}`}
                 >
-                  ✕
+                  <Icon name="close" size={14} />
                 </Button>
               </div>
             ))}

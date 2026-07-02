@@ -3,27 +3,22 @@ import { type ReactNode, useState } from "react"
 import { api } from "@/api"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { Kbd } from "@/components/ui/kbd"
 import { useAuth } from "@/ctx"
 import { prTitle } from "@/lib/pr"
 import { useIsMobile } from "@/lib/use-is-mobile"
 import { cn } from "@/lib/utils"
 import type { LibrarySearch } from "@/pages/library/types"
 import { Icon, type IconName } from "./icons"
+import { ROW_ACTIVE, ROW_BASE, ROW_RAIL } from "./nav-row"
 import { NotificationBell } from "./notification-bell"
 import { Logo } from "./shared/logo"
 import { useShell } from "./shell-context"
 import { SyncChip } from "./sync-chip"
 import { UserPod } from "./user-pod"
 
-// Shared nav-row look (also used by NotificationBell + the Settings link so the
-// whole rail reads as one list).
-// Rows rest muted; hover brightens the text (not just the background) over a faint
-// neutral fill. Selected is a stronger fill (foreground/10 > hover's /5) at full
-// text strength — so the current item reads more prominent than a hovered one.
-export const ROW_BASE =
-  "flex w-full items-center gap-2.5 whitespace-nowrap rounded-md px-2.5 py-2 text-left text-sm font-medium text-muted-foreground transition-colors hover:bg-foreground/5 hover:text-foreground"
-export const ROW_ACTIVE = "bg-foreground/10 text-foreground hover:bg-foreground/10"
-export const ROW_RAIL = "justify-center px-0 py-2.5"
+// Re-exported for existing importers; the source of truth is ./nav-row.
+export { ROW_ACTIVE, ROW_BASE, ROW_RAIL }
 
 // How many of a repo's PR previews to list inline in the sidebar before collapsing
 // the rest behind a "+N more" link (which opens the repo's in-collection PR viewer).
@@ -164,7 +159,7 @@ export function NavRail() {
           // Sits BELOW the Radix overlay layer (z-50) so menus opened from inside the
           // drawer — the workspace switcher, the command palette — render above it, not
           // behind it. Still above page content + the backdrop.
-          "fixed inset-y-0 left-0 z-[45] w-[266px] basis-[266px] px-2.5 shadow-[0_0_44px_-10px_rgba(0,0,0,0.45)]",
+          "fixed inset-y-0 left-0 z-45 w-[266px] basis-[266px] px-2.5 shadow-[var(--shadow-pop)]",
           drawerOpen ? "translate-x-0" : "-translate-x-[105%]",
         )
       : collapsed
@@ -194,16 +189,14 @@ export function NavRail() {
             <div className="rounded-lg border border-border bg-background/60 p-3.5">
               <div className="flex items-center gap-2">
                 <Logo size={22} />
-                <span className="font-display text-sm font-semibold text-foreground">
-                  Create your own
-                </span>
+                <span className="text-sm font-semibold text-foreground">Create your own</span>
               </div>
               <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
                 Give your AI artifacts a permanent home: versions, comments, and one link to share.
               </p>
               <Button
                 asChild
-                variant="primary"
+                variant="default"
                 size="sm"
                 className="mt-3 w-full"
                 data-testid="anon-signup"
@@ -232,6 +225,9 @@ export function NavRail() {
   return (
     <aside aria-label="Navigation" className={asideClass}>
       <div className="flex flex-1 flex-col gap-px">
+        {/* The palette launcher reads as a search field (not another nav row) so it
+            anchors the top of the rail and says "type to find". Collapses to a plain
+            icon button in the rail. */}
         <button
           type="button"
           onClick={() => {
@@ -241,16 +237,18 @@ export function NavRail() {
           title="Search (⌘K)"
           aria-label="Search (⌘K)"
           data-testid="open-command-palette"
-          className={cn(ROW_BASE, railMode && ROW_RAIL)}
+          className={cn(
+            railMode
+              ? cn(ROW_BASE, ROW_RAIL)
+              : "mb-1 flex h-8 w-full items-center gap-2 rounded-md border border-border bg-secondary px-2.5 text-left text-sm text-muted-foreground outline-none transition-colors hover:bg-hover hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50",
+          )}
         >
-          <span className="flex w-[18px] shrink-0 items-center justify-center">
-            <Icon name="search" size={18} />
-          </span>
-          {!railMode && <span className="flex-1 overflow-hidden text-ellipsis">Search</span>}
+          <Icon name="search" size={railMode ? 18 : 16} className="shrink-0" />
           {!railMode && (
-            <kbd className="rounded border border-border-soft bg-muted px-1.5 py-px font-mono text-2xs text-muted-foreground">
-              ⌘K
-            </kbd>
+            <>
+              <span className="flex-1 overflow-hidden text-ellipsis">Search</span>
+              <Kbd>⌘K</Kbd>
+            </>
           )}
         </button>
         <SideItem
@@ -388,7 +386,7 @@ export function NavRail() {
                         : "Hide pull requests"
                     }
                     data-testid={`sidebar-collection-${col.id}-toggle`}
-                    className="absolute right-1 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-[7px] text-muted-foreground hover:bg-hover hover:text-foreground"
+                    className="absolute right-1 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-sm text-muted-foreground hover:bg-hover hover:text-foreground"
                   >
                     <Icon
                       name="caret"

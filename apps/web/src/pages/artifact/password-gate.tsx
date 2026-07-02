@@ -37,10 +37,12 @@ export function PasswordGate({ shortId, onUnlocked }: { shortId: string; onUnloc
         <div className="mx-auto mb-3 grid size-11 place-items-center rounded-full bg-muted text-muted-foreground">
           <Lock className="size-5" />
         </div>
-        <h1 className="font-display text-lg font-semibold">This artifact is password-protected</h1>
+        <h1 className="text-lg font-semibold">This artifact is password-protected</h1>
         <p className="mt-1 text-sm text-muted-foreground">Enter the password to view it.</p>
         <Input
           type="password"
+          name="password"
+          autoComplete="current-password"
           autoFocus
           data-testid="password-gate-input"
           placeholder="Password"
@@ -60,7 +62,7 @@ export function PasswordGate({ shortId, onUnlocked }: { shortId: string; onUnloc
         )}
         <Button
           type="submit"
-          variant="primary"
+          variant="default"
           data-testid="password-gate-submit"
           disabled={busy || !password}
           className="mt-3 w-full"

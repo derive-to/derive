@@ -96,7 +96,7 @@ function NewDomain({
         />
         <Button
           data-testid="domain-add"
-          variant="primary"
+          variant="default"
           onClick={add}
           disabled={busy || !host.trim()}
         >
@@ -112,11 +112,13 @@ function NewDomain({
   )
 }
 
-const statusBadge = (
-  s: string,
-): { variant: "success" | "outline" | "default"; label: string; cls?: string } =>
+const statusBadge = (s: string): { variant: "outline" | "default"; label: string; cls?: string } =>
   s === "active"
-    ? { variant: "success", label: "Active" }
+    ? {
+        variant: "outline",
+        label: "Active",
+        cls: "border-transparent bg-muted text-muted-foreground",
+      }
     : s === "error"
       ? { variant: "outline", label: "Error", cls: "text-destructive" }
       : { variant: "default", label: "Pending" }
@@ -161,8 +163,8 @@ function DomainRow({ domain, onChanged }: { domain: WorkspaceDomain; onChanged: 
         <Button
           data-testid="domain-remove"
           variant="ghost"
+          className="text-destructive hover:bg-destructive/10 hover:text-destructive"
           size="sm"
-          className="text-destructive hover:text-destructive"
           onClick={remove}
         >
           Remove

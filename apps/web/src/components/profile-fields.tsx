@@ -2,9 +2,16 @@ import { useState } from "react"
 import { toast } from "sonner"
 import { api } from "@/api"
 import { Button } from "@/components/ui/button"
-import { Input, Textarea } from "@/components/ui/input"
+import { Input } from "@/components/ui/input"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+import { Textarea } from "@/components/ui/textarea"
 import { useAuth } from "@/ctx"
-import { selectClass } from "@/pages/settings/roles"
 
 // The team roles offered in the picker, written casually with a plain-language
 // blurb so people self-identify by what they actually do, not a job title. Stored
@@ -70,21 +77,27 @@ export function ProfileFields({ onSaved }: { onSaved?: () => void }) {
           <label htmlFor="profile-role" className="text-2xs font-medium text-muted-foreground">
             Your role
           </label>
-          <select
-            id="profile-role"
-            data-testid="profile-role"
-            aria-label="Your role"
-            value={preset}
-            onChange={(e) => setPreset(e.target.value)}
-            className={`${selectClass} w-[150px]`}
+          <Select
+            value={preset || "__unset"}
+            onValueChange={(v) => setPreset(v === "__unset" ? "" : v)}
           >
-            <option value="">Not set</option>
-            {PROFESSIONS.map((p) => (
-              <option key={p.value} value={p.value}>
-                {p.value}
-              </option>
-            ))}
-          </select>
+            <SelectTrigger
+              id="profile-role"
+              data-testid="profile-role"
+              aria-label="Your role"
+              className="w-[150px]"
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__unset">Not set</SelectItem>
+              {PROFESSIONS.map((p) => (
+                <SelectItem key={p.value} value={p.value}>
+                  {p.value}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
         {preset === OTHER && (
           <div className="flex min-w-[150px] flex-1 flex-col gap-1">
@@ -106,7 +119,7 @@ export function ProfileFields({ onSaved }: { onSaved?: () => void }) {
         )}
       </div>
       {preset && preset !== OTHER && presetHint && (
-        <p className="-mt-1 text-2xs text-muted-foreground">{presetHint}</p>
+        <p className="text-2xs text-muted-foreground">{presetHint}</p>
       )}
       <div className="flex flex-col gap-1">
         <label htmlFor="profile-about" className="text-2xs font-medium text-muted-foreground">
@@ -124,8 +137,7 @@ export function ProfileFields({ onSaved }: { onSaved?: () => void }) {
       </div>
       <div>
         <Button
-          variant="primary"
-          size="sm"
+          variant="default"
           data-testid="profile-save"
           onClick={save}
           disabled={saving || !dirty}

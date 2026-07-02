@@ -98,7 +98,7 @@ export function SourceEditor({
       onClick={() => setPane(id)}
       className={cn(
         "rounded-md px-3 py-1.5 text-xs font-semibold transition-colors",
-        pane === id ? "bg-card text-foreground shadow-sm" : "text-muted-foreground",
+        pane === id ? "bg-card text-foreground shadow-[var(--shadow-sm)]" : "text-muted-foreground",
       )}
     >
       {label}
@@ -175,7 +175,7 @@ export function SourceEditor({
           </Button>
           {canPublish ? (
             <Button
-              variant="primary"
+              variant="default"
               size="sm"
               data-testid="artifact-publish-version"
               onClick={onPublish}
@@ -184,7 +184,7 @@ export function SourceEditor({
             </Button>
           ) : (
             <Button
-              variant="primary"
+              variant="default"
               size="sm"
               data-testid="artifact-propose-submit"
               onClick={onPropose}

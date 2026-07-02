@@ -85,7 +85,7 @@ export function ArtifactDocument({
             {restoring ? "Restoring…" : "Restore this version"}
           </Button>
           <Button
-            variant="primary"
+            variant="default"
             size="sm"
             data-testid="artifact-back-to-current"
             onClick={onBackToCurrent}

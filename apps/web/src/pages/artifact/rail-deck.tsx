@@ -130,7 +130,7 @@ export function Presence({ viewers, selfId }: { viewers: Viewer[]; selfId?: stri
             ))}
           </div>
           <span className="flex items-center gap-1 font-mono text-xs text-muted-foreground">
-            <span className="size-1.5 rounded-full bg-success" />
+            <span className="size-1.5 rounded-full bg-muted-foreground" />
             {ordered.length} viewing{extra > 0 ? ` (+${extra})` : ""}
           </span>
         </button>

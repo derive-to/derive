@@ -2,17 +2,20 @@ import { useEffect, useState } from "react"
 import { type Analytics, type Artifact as Art, api } from "@/api"
 import { AuthorChip } from "@/components/author-chip"
 import { Icon } from "@/components/icons"
-import { ColoredAvatar } from "@/components/shared/colored-avatar"
 import { Spinner } from "@/components/shared/spinner"
+import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
-import { Sheet, SheetBody, SheetContent, SheetHeader } from "@/components/ui/sheet"
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
+import { getInitials } from "@/lib/initials"
 import { ago } from "@/lib/time"
 import { cn } from "@/lib/utils"
 
 function StatTile({ value, label }: { value: number; label: string }) {
   return (
     <div className="rounded-lg border border-border-soft bg-secondary px-4 py-3">
-      <div className="font-display text-3xl font-bold leading-none">{value.toLocaleString()}</div>
+      <div className="text-3xl font-semibold leading-none tracking-tight">
+        {value.toLocaleString()}
+      </div>
       <div className="mt-1 font-mono text-2xs uppercase tracking-wider text-muted-foreground">
         {label}
       </div>
@@ -126,7 +129,11 @@ export function Insights({
                             className="size-[18px] shrink-0 rounded-full object-cover"
                           />
                         ) : (
-                          <ColoredAvatar name={r.viewer} size={18} />
+                          <Avatar className="size-[18px]">
+                            <AvatarFallback className="text-2xs">
+                              {getInitials(r.viewer)}
+                            </AvatarFallback>
+                          </Avatar>
                         )}
                         <span className="flex-1 truncate font-medium">{r.viewer}</span>
                         <span className="font-mono text-2xs text-muted-foreground">
@@ -197,12 +204,14 @@ export function HistoryDrawer({
   let lastDay = ""
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent title="Version history">
+      <SheetContent>
         <SheetHeader>
-          <Icon name="history" size={18} />
-          Version history
+          <SheetTitle className="flex items-center gap-2">
+            <Icon name="history" size={18} />
+            Version history
+          </SheetTitle>
         </SheetHeader>
-        <SheetBody>
+        <div className="min-h-0 flex-1 overflow-y-auto p-2">
           {sessions.map((s) => {
             const cur = s.n === shown
             const day = dayLabel(s.created_at)
@@ -231,7 +240,7 @@ export function HistoryDrawer({
                       goTo(s.n)
                       onOpenChange(false)
                     }}
-                    className="block w-full text-left outline-none after:absolute after:inset-0 after:z-[1] after:rounded-md after:content-[''] focus-visible:after:outline-2 focus-visible:after:-outline-offset-2 focus-visible:after:outline-ring"
+                    className="block w-full text-left outline-none after:absolute after:inset-0 after:z-[1] after:rounded-md after:content-[''] focus-visible:after:ring-[3px] focus-visible:after:ring-inset focus-visible:after:ring-ring/50"
                   >
                     <div className="flex items-center gap-1.5">
                       {s.name ? (
@@ -248,7 +257,7 @@ export function HistoryDrawer({
                         {s.name ?? clock(s.created_at)}
                       </span>
                       {s.n === art.current_version && (
-                        <span className="rounded-full bg-success/15 px-1.5 py-px font-mono text-2xs font-bold text-success">
+                        <span className="rounded-full bg-muted px-1.5 py-px font-mono text-2xs font-bold text-muted-foreground">
                           current
                         </span>
                       )}
@@ -278,7 +287,7 @@ export function HistoryDrawer({
               </div>
             )
           })}
-        </SheetBody>
+        </div>
       </SheetContent>
     </Sheet>
   )

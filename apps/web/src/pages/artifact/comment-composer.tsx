@@ -391,7 +391,7 @@ export function Composer({
         )}
         <div className="mt-1.5 flex gap-1.5">
           <Button
-            variant="primary"
+            variant="default"
             size="sm"
             className="flex-1"
             disabled={!text.trim()}

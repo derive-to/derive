@@ -10,8 +10,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import { Input, Textarea } from "@/components/ui/input"
+import { Input } from "@/components/ui/input"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { Textarea } from "@/components/ui/textarea"
 import { cn } from "@/lib/utils"
 
 export function StarButton({
@@ -119,7 +120,7 @@ export function ReportDialog({
                 Cancel
               </Button>
               <Button
-                variant="primary"
+                variant="default"
                 size="sm"
                 onClick={submit}
                 disabled={!reason.trim() || busy}
@@ -234,11 +235,9 @@ export function CollectionsMenu({
             onKeyDown={(e) => {
               if (e.key === "Enter") create()
             }}
-            className="h-8 text-sm"
           />
           <Button
             variant="outline"
-            size="sm"
             onClick={create}
             disabled={!draft.trim()}
             data-testid="collection-add"
@@ -337,15 +336,8 @@ export function TagsMenu({
               onKeyDown={(e) => {
                 if (e.key === "Enter") add()
               }}
-              className="h-8 text-sm"
             />
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={add}
-              disabled={!draft.trim()}
-              data-testid="tag-add"
-            >
+            <Button variant="outline" onClick={add} disabled={!draft.trim()} data-testid="tag-add">
               Add
             </Button>
           </div>

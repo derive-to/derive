@@ -6,9 +6,12 @@ import { toast } from "sonner"
 import { type Artifact, api } from "@/api"
 import { Icon } from "@/components/icons"
 import { EmptyState } from "@/components/shared/empty-state"
+import { SectionEyebrow } from "@/components/shared/section-eyebrow"
+import { StatusPanel } from "@/components/shared/status-panel"
 import { useShell } from "@/components/shell-context"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { useAuth } from "@/ctx"
 import {
   type LibraryParams,
@@ -18,7 +21,6 @@ import {
 } from "@/lib/queries"
 import { useFollows } from "@/lib/use-follows"
 import { usePrefetchArtifact } from "@/lib/use-prefetch-artifact"
-import { cn } from "@/lib/utils"
 import { refFor } from "../artifact/parse-ref"
 import { ArtifactCard } from "./artifact-card"
 import { ArtifactGrid } from "./artifact-grid"
@@ -314,17 +316,14 @@ function LibraryBody() {
             data-testid="library-greeting"
           >
             <div>
-              <h1 className="font-display text-2xl font-semibold text-foreground">
+              <h1 className="text-2xl font-semibold text-foreground">
                 {totalCount === 0
                   ? `Welcome to Derive, ${firstName}.`
                   : `Welcome back, ${firstName}.`}
               </h1>
               <p className="mt-0.5 text-sm text-muted-foreground">
                 Your artifacts live here. Publish one below, or run{" "}
-                <code className="rounded bg-muted px-1.5 py-px font-mono text-[0.86em]">
-                  derive publish
-                </code>
-                .
+                <code className="rounded bg-muted px-1.5 py-px font-mono">derive publish</code>.
               </p>
             </div>
             {(me?.username || wsName) && (
@@ -388,7 +387,7 @@ function LibraryBody() {
                 <X />
               </Button>
               <Button
-                variant={followingAuthor ? "secondary" : "primary"}
+                variant={followingAuthor ? "secondary" : "default"}
                 size="sm"
                 data-testid={`library-follow-author-${search.author}`}
                 aria-pressed={followingAuthor}
@@ -424,14 +423,14 @@ function LibraryBody() {
 
         {feedbackItems.length > 0 && (
           <section className="mb-6" data-testid="needs-your-feedback">
-            <h2 className="mb-3.5 flex items-center gap-2 font-display text-lg font-semibold">
-              <Icon name="comments" size={18} className="text-primary" />
+            <SectionEyebrow
+              className="mb-3.5"
+              count={feedbackItems.length}
+              icon={<Icon name="comments" size={13} />}
+            >
               Needs your feedback
-              <span className="text-base font-normal text-muted-foreground">
-                · {feedbackItems.length}
-              </span>
-            </h2>
-            <div className="grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-3.5">
+            </SectionEyebrow>
+            <div className="grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-x-3 gap-y-5">
               {feedbackItems.map((a) => (
                 <ArtifactCard
                   key={a.short_id}
@@ -448,13 +447,10 @@ function LibraryBody() {
 
         {sharedItems.length > 0 && (
           <section className="mb-6" data-testid="shared-with-you">
-            <h2 className="mb-3.5 font-display text-lg font-semibold">
-              Shared with you{" "}
-              <span className="text-base font-normal text-muted-foreground">
-                · {sharedItems.length}
-              </span>
-            </h2>
-            <div className="grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-3.5">
+            <SectionEyebrow className="mb-3.5" count={sharedItems.length}>
+              Shared with you
+            </SectionEyebrow>
+            <div className="grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-x-3 gap-y-5">
               {sharedItems.map((a) => (
                 <ArtifactCard
                   key={a.short_id}
@@ -484,19 +480,20 @@ function LibraryBody() {
           // Hide the "All artifacts · 0" heading on a brand-new empty home — the
           // visual guide carries it instead.
           !emptyHome && (
-            <h2 className="mb-3.5 font-display text-lg font-semibold">
-              {heading}{" "}
-              <span className="text-base font-normal text-muted-foreground">· {headingCount}</span>
-            </h2>
+            <SectionEyebrow className="mb-3.5" count={headingCount}>
+              {heading}
+            </SectionEyebrow>
           )
         )}
 
         {isPending ? (
           <LibrarySkeleton />
         ) : isError ? (
-          <EmptyState>
-            <div className="flex flex-col items-center gap-3">
-              <span>Couldn’t load the library. This is usually temporary.</span>
+          <StatusPanel
+            tone="danger"
+            title="Couldn’t load the library"
+            description="This is usually temporary."
+            action={
               <Button
                 variant="outline"
                 size="sm"
@@ -505,8 +502,8 @@ function LibraryBody() {
               >
                 Try again
               </Button>
-            </div>
-          </EmptyState>
+            }
+          />
         ) : items.length === 0 ? (
           emptyHome ? (
             <HowItWorks />
@@ -517,36 +514,28 @@ function LibraryBody() {
           // A mirrored repo. Default to a flat, most-recently-updated list; folders are
           // there as a toggle (off by default) so the tree is available but not forced.
           <div className="flex flex-col gap-3">
-            <div className="flex items-center gap-1 self-end rounded-lg border border-border bg-card p-0.5">
-              <button
-                type="button"
-                data-testid="library-view-list"
-                onClick={() => toggleFolders(false)}
-                aria-pressed={!showFolders}
-                className={cn(
-                  "inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition-colors",
-                  !showFolders
-                    ? "bg-accent text-accent-foreground"
-                    : "text-muted-foreground hover:text-foreground",
-                )}
-              >
-                <List className="size-3.5" aria-hidden /> List
-              </button>
-              <button
-                type="button"
+            <ToggleGroup
+              type="single"
+              variant="outline"
+              size="sm"
+              aria-label="View"
+              className="self-end"
+              value={showFolders ? "folders" : "list"}
+              onValueChange={(v) => v && toggleFolders(v === "folders")}
+            >
+              <ToggleGroupItem value="list" aria-label="List" data-testid="library-view-list">
+                <List aria-hidden />
+                List
+              </ToggleGroupItem>
+              <ToggleGroupItem
+                value="folders"
+                aria-label="Folders"
                 data-testid="library-view-folders"
-                onClick={() => toggleFolders(true)}
-                aria-pressed={showFolders}
-                className={cn(
-                  "inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition-colors",
-                  showFolders
-                    ? "bg-accent text-accent-foreground"
-                    : "text-muted-foreground hover:text-foreground",
-                )}
               >
-                <FolderTree className="size-3.5" aria-hidden /> Folders
-              </button>
-            </div>
+                <FolderTree aria-hidden />
+                Folders
+              </ToggleGroupItem>
+            </ToggleGroup>
             {showFolders ? (
               <FolderGroups
                 items={recencyItems}

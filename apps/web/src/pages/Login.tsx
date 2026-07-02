@@ -96,10 +96,10 @@ export function Login() {
       <aside className="hidden flex-col justify-between bg-secondary p-10 text-secondary-foreground lg:flex">
         <div className="flex items-center gap-2.5">
           <Logo size={30} />
-          <span className="font-display text-xl font-semibold">Derive</span>
+          <span className="text-xl font-semibold">Derive</span>
         </div>
         <div className="max-w-md">
-          <h1 className="font-display text-3xl font-semibold leading-tight text-foreground">
+          <h1 className="text-3xl font-semibold leading-tight text-foreground">
             The permanent home for your AI artifacts.
           </h1>
           <p className="mt-3 text-sm text-muted-foreground">
@@ -126,11 +126,11 @@ export function Login() {
       {/* Auth form — kept lean; profile setup (username + photo) happens on the home
           page once you're in, not as a gate here. */}
       <main className="flex items-center justify-center p-6">
-        <div className="w-full max-w-sm">
+        <div className="w-full max-w-xs">
           <div className="mb-6 flex flex-col items-center gap-1 text-center lg:hidden">
             <div className="flex items-center gap-2">
               <Logo size={26} />
-              <span className="font-display text-lg font-semibold">Derive</span>
+              <span className="text-lg font-semibold">Derive</span>
             </div>
             <p className="text-xs text-muted-foreground">
               Permanent URLs, versions, and review for your AI artifacts.
@@ -201,6 +201,8 @@ export function Login() {
                     <Input
                       id="login-name"
                       data-testid="login-name"
+                      name="name"
+                      autoComplete="name"
                       value={name}
                       onChange={(e) => setName(e.target.value)}
                       placeholder="Your name"
@@ -216,6 +218,8 @@ export function Login() {
                     id="login-email"
                     data-testid="login-email"
                     type="email"
+                    name="email"
+                    autoComplete="email"
                     required
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
@@ -231,6 +235,8 @@ export function Login() {
                     id="login-password"
                     data-testid="login-password"
                     type="password"
+                    name="password"
+                    autoComplete={signup ? "new-password" : "current-password"}
                     required
                     minLength={8}
                     value={password}
@@ -240,7 +246,7 @@ export function Login() {
                 </label>
                 <Button
                   data-testid="login-submit"
-                  variant="primary"
+                  variant="default"
                   size="lg"
                   type="submit"
                   disabled={busy || !email || !password}

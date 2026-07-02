@@ -2,14 +2,13 @@ import type { Artifact } from "@/api"
 import { AuthorChip } from "@/components/author-chip"
 import { Icon } from "@/components/icons"
 import { Thumb } from "@/components/shared/thumb"
-import { TypeTag } from "@/components/shared/type-tag"
+import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { IconButton } from "@/components/ui/icon-button"
 import { ago } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { CommentSignal } from "./comment-signal"
@@ -73,9 +72,18 @@ export function ArtifactCard({
       )}
     >
       <div className="relative">
-        <Thumb id={a.short_id} v={a.current_version} />
-        <IconButton
-          variant="chip"
+        {/* Format + version-depth placards ride on the render (scrim-backed, always
+            visible) — see Thumb. They free the caption line and put recognition cues
+            where the eye already is. */}
+        <Thumb
+          id={a.short_id}
+          v={a.current_version}
+          typeLabel={artifactTypeLabel(a)}
+          version={a.versions.length > 1 ? a.current_version : undefined}
+        />
+        <Button
+          size="icon"
+          variant="outline"
           data-testid={`artifact-card-favorite-${a.short_id}`}
           title={a.favorite ? "Remove from favorites" : "Add to favorites"}
           aria-label="Toggle favorite"
@@ -97,19 +105,28 @@ export function ArtifactCard({
             weight={a.favorite ? "fill" : "regular"}
             className={a.favorite ? "text-foreground" : "text-muted-foreground"}
           />
-        </IconButton>
+          <span
+            aria-hidden
+            className="absolute top-1/2 left-1/2 size-[max(100%,3rem)] -translate-1/2 pointer-fine:hidden"
+          />
+        </Button>
         {isOwner && onDelete && (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <IconButton
-                variant="chip"
+              <Button
+                size="icon"
+                variant="outline"
                 data-testid={`artifact-card-more-${a.short_id}`}
                 aria-label="More actions"
                 onClick={(e) => e.stopPropagation()}
                 className="absolute left-2.5 top-2.5 z-20 opacity-0 group-hover:opacity-100 focus:opacity-100"
               >
                 <Icon name="more" size={14} />
-              </IconButton>
+                <span
+                  aria-hidden
+                  className="absolute top-1/2 left-1/2 size-[max(100%,3rem)] -translate-1/2 pointer-fine:hidden"
+                />
+              </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent onClick={(e) => e.stopPropagation()}>
               <DropdownMenuItem
@@ -132,9 +149,9 @@ export function ArtifactCard({
           onMouseEnter={onPrefetch}
           onFocus={onPrefetch}
           aria-label={`Open ${a.title ?? a.short_id}`}
-          className="flex w-full min-w-0 flex-col gap-1.5 text-left outline-none after:absolute after:inset-0 after:z-[1] after:rounded-lg after:content-[''] focus-visible:after:outline-2 focus-visible:after:-outline-offset-2 focus-visible:after:outline-ring"
+          className="flex w-full min-w-0 flex-col gap-1.5 text-left outline-none after:absolute after:inset-0 after:z-[1] after:rounded-lg after:content-[''] focus-visible:after:ring-[3px] focus-visible:after:ring-inset focus-visible:after:ring-ring/50"
         >
-          <span className="truncate font-display text-lg font-medium tracking-tight text-foreground">
+          <span className="truncate text-lg font-medium tracking-tight text-foreground">
             {a.title ?? a.short_id}
           </span>
           {/* For a synced file: its folder location (the path lives in source_path). */}
@@ -147,7 +164,6 @@ export function ArtifactCard({
             </span>
           )}
           <span className="flex items-center gap-2 font-mono text-xs text-muted-foreground">
-            <TypeTag>{artifactTypeLabel(a)}</TypeTag>
             {(a.updated_at ?? a.created_at ?? a.versions[0]?.created_at) && (
               <span>
                 updated {ago(a.updated_at ?? a.created_at ?? a.versions[0]?.created_at ?? "")}
@@ -187,7 +203,7 @@ export function ArtifactCard({
                   e.stopPropagation()
                   onPickTag(t)
                 }}
-                className="rounded-md border border-border bg-card px-1.5 py-px font-mono text-2xs text-primary transition hover:border-primary"
+                className="rounded-md border border-border bg-card px-1.5 py-px font-mono text-2xs text-primary hover:border-primary"
               >
                 #{t}
               </button>

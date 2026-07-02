@@ -1,6 +1,6 @@
 import type { Proposal } from "@/api"
 import { Button } from "@/components/ui/button"
-import { Textarea } from "@/components/ui/input"
+import { Textarea } from "@/components/ui/textarea"
 
 // The bottom decision bar. Request-changes / Approve open an inline note composer
 // first (confirm step); approve on a stale base is spelled out as "Approve anyway".
@@ -109,7 +109,7 @@ export function ReviewDecisionBar({
             {noteFor === "changes" ? (
               <Button
                 data-testid="review-send-request"
-                variant="primary"
+                variant="default"
                 size="sm"
                 disabled={busy || !note.trim()}
                 onClick={onSubmitChanges}
@@ -119,7 +119,7 @@ export function ReviewDecisionBar({
             ) : (
               <Button
                 data-testid="review-approve-confirm"
-                variant="primary"
+                variant="default"
                 size="sm"
                 disabled={busy}
                 onClick={onConfirmApprove}
@@ -156,7 +156,7 @@ export function ReviewDecisionBar({
                   </Button>
                   <Button
                     data-testid="review-approve"
-                    variant="primary"
+                    variant="default"
                     size="sm"
                     disabled={busy}
                     onClick={onOpenApprove}

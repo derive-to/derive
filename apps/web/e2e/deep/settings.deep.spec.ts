@@ -20,7 +20,8 @@ test("owner manages workspace, webhooks, and agents through the tabs", async ({
 
   // Add the teammate as a commenter → owner + teammate = 2 member rows.
   await owner.getByTestId("member-email").fill(secondUser.email)
-  await owner.getByTestId("member-role").selectOption("commenter")
+  await owner.getByTestId("member-role").click()
+  await owner.getByRole("option", { name: "Viewer", exact: true }).click()
   await owner.getByTestId("member-add").click()
   await expect(owner.locator('[data-testid^="member-row-"]')).toHaveCount(2)
 

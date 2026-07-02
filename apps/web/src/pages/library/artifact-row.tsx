@@ -3,14 +3,14 @@ import type { Artifact } from "@/api"
 import { AuthorChip } from "@/components/author-chip"
 import { FollowButton } from "@/components/follow-button"
 import { Icon } from "@/components/icons"
-import { TypeTag } from "@/components/shared/type-tag"
+import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { IconButton } from "@/components/ui/icon-button"
 import { ago } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { artifactTypeLabel, dirOf } from "./artifact-card"
@@ -67,16 +67,16 @@ export function ArtifactRow({
         onMouseEnter={onPrefetch}
         onFocus={onPrefetch}
         aria-label={`Open ${a.title ?? a.short_id}`}
-        className="flex min-w-0 flex-1 flex-col gap-0.5 text-left outline-none after:absolute after:inset-0 after:z-[1] after:rounded-lg after:content-[''] focus-visible:after:outline-2 focus-visible:after:-outline-offset-2 focus-visible:after:outline-ring"
+        className="flex min-w-0 flex-1 flex-col gap-0.5 text-left outline-none after:absolute after:inset-0 after:z-[1] after:rounded-lg after:content-[''] focus-visible:after:ring-[3px] focus-visible:after:ring-inset focus-visible:after:ring-ring/50"
       >
-        <span className="truncate font-display text-base font-semibold text-foreground">
+        <span className="truncate text-base font-semibold text-foreground">
           {a.title ?? a.short_id}
         </span>
         {updated && (
           <span className="font-mono text-2xs text-muted-foreground">updated {ago(updated)}</span>
         )}
         <span className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 font-mono text-2xs text-muted-foreground">
-          <TypeTag>{artifactTypeLabel(a)}</TypeTag>
+          <Badge variant="secondary">{artifactTypeLabel(a)}</Badge>
           {dir && (
             <span className="inline-flex items-center gap-1 truncate" title={a.source_path ?? ""}>
               <Folder className="size-3 shrink-0 text-primary" aria-hidden />
@@ -123,7 +123,7 @@ export function ArtifactRow({
                 e.stopPropagation()
                 onPickTag(t)
               }}
-              className="rounded-md border border-border bg-card px-1.5 py-px font-mono text-2xs text-primary transition hover:border-primary"
+              className="rounded-md border border-border bg-card px-1.5 py-px font-mono text-2xs text-primary hover:border-primary"
             >
               #{t}
             </button>
@@ -131,8 +131,9 @@ export function ArtifactRow({
         </div>
       )}
 
-      <IconButton
-        variant="chip"
+      <Button
+        size="icon"
+        variant="outline"
         data-testid={`artifact-row-favorite-${a.short_id}`}
         title={a.favorite ? "Remove from favorites" : "Add to favorites"}
         aria-label="Toggle favorite"
@@ -141,23 +142,32 @@ export function ArtifactRow({
           e.stopPropagation()
           onToggleFavorite()
         }}
-        className={cn("relative z-20", a.favorite ? "border-gold" : "opacity-90")}
+        className={cn("relative z-20", a.favorite ? "border-primary" : "opacity-90")}
       >
         <Icon name="star" size={14} className={cn(!a.favorite && "text-muted-foreground")} />
-      </IconButton>
+        <span
+          aria-hidden
+          className="absolute top-1/2 left-1/2 size-[max(100%,3rem)] -translate-1/2 pointer-fine:hidden"
+        />
+      </Button>
 
       {isOwner && onDelete && (
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <IconButton
-              variant="chip"
+            <Button
+              size="icon"
+              variant="outline"
               data-testid={`artifact-row-more-${a.short_id}`}
               aria-label="More actions"
               onClick={(e) => e.stopPropagation()}
               className="relative z-20 opacity-0 group-hover:opacity-100 focus:opacity-100"
             >
               <Icon name="more" size={14} />
-            </IconButton>
+              <span
+                aria-hidden
+                className="absolute top-1/2 left-1/2 size-[max(100%,3rem)] -translate-1/2 pointer-fine:hidden"
+              />
+            </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent onClick={(e) => e.stopPropagation()}>
             <DropdownMenuItem

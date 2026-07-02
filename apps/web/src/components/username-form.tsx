@@ -46,7 +46,7 @@ export function UsernameForm({
       <div
         className={cn(
           "flex items-center rounded-md border border-input bg-card transition-colors",
-          "focus-within:border-primary focus-within:ring-2 focus-within:ring-accent",
+          "focus-within:border-primary focus-within:ring-2 focus-within:ring-ring/30",
           err && "border-destructive",
         )}
       >
@@ -64,7 +64,7 @@ export function UsernameForm({
             setServerErr("")
           }}
           placeholder="yourname"
-          className="h-9 w-full rounded-md bg-transparent pl-1 pr-3 text-base text-foreground outline-none placeholder:text-muted-foreground"
+          className="h-7 w-full rounded-md bg-transparent pl-1 pr-3 text-sm text-foreground outline-none placeholder:text-muted-foreground"
         />
       </div>
       {err && (
@@ -75,7 +75,7 @@ export function UsernameForm({
       <Button
         data-testid="username-submit"
         type="submit"
-        variant="primary"
+        variant="default"
         size="lg"
         disabled={busy || !handle || !!localErr}
         className="w-full"

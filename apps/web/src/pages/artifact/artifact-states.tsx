@@ -42,7 +42,7 @@ export function ArtifactLoadError({
         Something went wrong reaching the server. This is usually temporary.
       </div>
       <div className="flex gap-2">
-        <Button variant="primary" data-testid="artifact-load-retry" onClick={onRetry}>
+        <Button variant="default" data-testid="artifact-load-retry" onClick={onRetry}>
           Try again
         </Button>
         <Button variant="outline" data-testid="artifact-load-back" onClick={onBack}>
