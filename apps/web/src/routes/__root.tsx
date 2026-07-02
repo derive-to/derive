@@ -40,7 +40,7 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       { title: "Derive" },
     ],
     links: [
-      { rel: "icon", type: "image/svg+xml", href: "/brand/logo-dark.svg" },
+      { rel: "icon", type: "image/svg+xml", href: "/brand/logo-light.svg" },
       { rel: "icon", type: "image/png", href: "/brand/favicon.png" },
       { rel: "apple-touch-icon", href: "/brand/favicon.png" },
       { rel: "preconnect", href: "https://fonts.googleapis.com" },
