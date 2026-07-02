@@ -31,10 +31,11 @@ export function artifactTypeLabel(a: Artifact): string {
   return "Doc"
 }
 
-// One card in the library grid. Stretched-link pattern: the open button's
-// ::after covers the whole card so a click anywhere (thumbnail included) opens
-// it, while the star + tag chips sit above (z-20) and stay independently
-// clickable. The card lifts on hover; `group` lets the thumbnail respond too.
+// One card in the library grid: a full-bleed preview up top, then a padded
+// content block. Stretched-link pattern — the open button's ::after covers the
+// whole card so a click anywhere (preview included) opens it, while the star /
+// more / tag chips sit above (z-20) and stay independently clickable. The card
+// lifts + shadows on hover as one piece.
 export function ArtifactCard({
   artifact: a,
   onOpen,
@@ -60,7 +61,7 @@ export function ArtifactCard({
   return (
     <div
       className={cn(
-        "group relative flex cursor-pointer flex-col gap-2 rounded-lg border border-border bg-card p-3.5 shadow-[var(--shadow-sm)] transition-all duration-150 motion-safe:hover:-translate-y-0.5 hover:shadow-[var(--shadow)] active:translate-y-0",
+        "group relative flex cursor-pointer flex-col overflow-hidden rounded-lg border border-border bg-card shadow-[var(--shadow-sm)] transition-all duration-150 motion-safe:hover:-translate-y-0.5 hover:shadow-[var(--shadow)] active:translate-y-0",
         // Needs-your-feedback items stand out in the grid: a tagged item gets the full
         // accent + ring; one you're just in the thread on gets a softer accent border.
         a.mentions_me
@@ -120,72 +121,77 @@ export function ArtifactCard({
           </DropdownMenu>
         )}
       </div>
-      <button
-        type="button"
-        data-testid={`artifact-card-open-${a.short_id}`}
-        onClick={onOpen}
-        onMouseEnter={onPrefetch}
-        onFocus={onPrefetch}
-        aria-label={`Open ${a.title ?? a.short_id}`}
-        className="flex w-full min-w-0 flex-col gap-1.5 text-left outline-none after:absolute after:inset-0 after:z-[1] after:rounded-lg after:content-[''] focus-visible:after:outline-2 focus-visible:after:-outline-offset-2 focus-visible:after:outline-ring"
-      >
-        <span className="truncate font-display text-lg font-medium tracking-tight text-foreground">
-          {a.title ?? a.short_id}
-        </span>
-        {/* For a synced file: its folder location (the path lives in source_path). */}
-        {a.source_path && dirOf(a.source_path) && (
-          <span className="truncate font-mono text-2xs text-muted-foreground" title={a.source_path}>
-            {dirOf(a.source_path)}/
+      <div className="flex min-w-0 flex-col gap-2 border-t border-border-soft p-3.5">
+        <button
+          type="button"
+          data-testid={`artifact-card-open-${a.short_id}`}
+          onClick={onOpen}
+          onMouseEnter={onPrefetch}
+          onFocus={onPrefetch}
+          aria-label={`Open ${a.title ?? a.short_id}`}
+          className="flex w-full min-w-0 flex-col gap-1.5 text-left outline-none after:absolute after:inset-0 after:z-[1] after:rounded-lg after:content-[''] focus-visible:after:outline-2 focus-visible:after:-outline-offset-2 focus-visible:after:outline-ring"
+        >
+          <span className="truncate font-display text-lg font-medium tracking-tight text-foreground">
+            {a.title ?? a.short_id}
           </span>
-        )}
-        <span className="flex items-center gap-2 font-mono text-xs text-muted-foreground">
-          <TypeTag>{artifactTypeLabel(a)}</TypeTag>
-          {(a.updated_at ?? a.created_at ?? a.versions[0]?.created_at) && (
-            <span>
-              updated {ago(a.updated_at ?? a.created_at ?? a.versions[0]?.created_at ?? "")}
+          {/* For a synced file: its folder location (the path lives in source_path). */}
+          {a.source_path && dirOf(a.source_path) && (
+            <span
+              className="truncate font-mono text-2xs text-muted-foreground"
+              title={a.source_path}
+            >
+              {dirOf(a.source_path)}/
             </span>
           )}
-          <span className="ml-auto inline-flex items-center gap-2">
-            <CommentSignal artifact={a} />
-            {a.views !== undefined && a.views > 0 && (
-              <span className="inline-flex items-center gap-1" title={`${a.views} viewers`}>
-                <Icon name="views" size={13} />{" "}
-                {a.views > 999 ? `${(a.views / 1000).toFixed(1)}k` : a.views}
-                <span className="sr-only"> views</span>
+          <span className="flex items-center gap-2 font-mono text-xs text-muted-foreground">
+            <TypeTag>{artifactTypeLabel(a)}</TypeTag>
+            {(a.updated_at ?? a.created_at ?? a.versions[0]?.created_at) && (
+              <span>
+                updated {ago(a.updated_at ?? a.created_at ?? a.versions[0]?.created_at ?? "")}
               </span>
             )}
+            <span className="ml-auto inline-flex items-center gap-2">
+              <CommentSignal artifact={a} />
+              {a.views !== undefined && a.views > 0 && (
+                <span className="inline-flex items-center gap-1" title={`${a.views} viewers`}>
+                  <Icon name="views" size={13} />{" "}
+                  {a.views > 999 ? `${(a.views / 1000).toFixed(1)}k` : a.views}
+                  <span className="sr-only"> views</span>
+                </span>
+              )}
+            </span>
           </span>
-        </span>
-      </button>
-      {hasAuthor && (
-        <div className="relative z-20 flex min-w-0">
-          <AuthorChip
-            name={author?.name ?? a.author_name ?? null}
-            login={author?.login ?? a.author_login ?? null}
-            avatar={author?.avatar ?? a.author_avatar ?? null}
-            handle={author?.handle ?? null}
-            data-testid={`artifact-card-author-${a.short_id}`}
-          />
-        </div>
-      )}
-      {(a.tags ?? []).length > 0 && (
-        <div className="relative z-20 flex flex-wrap gap-1.5">
-          {(a.tags ?? []).slice(0, 6).map((t) => (
-            <button
-              key={t}
-              type="button"
-              data-testid={`artifact-card-tag-${t}`}
-              onClick={(e) => {
-                e.stopPropagation()
-                onPickTag(t)
-              }}
-              className="rounded-md border border-border bg-card px-1.5 py-px font-mono text-2xs text-primary transition hover:border-primary"
-            >
-              #{t}
-            </button>
-          ))}
-        </div>
-      )}
+        </button>
+        {hasAuthor && (
+          <div className="relative z-20 flex min-w-0">
+            <AuthorChip
+              name={author?.name ?? a.author_name ?? null}
+              login={author?.login ?? a.author_login ?? null}
+              avatar={author?.avatar ?? a.author_avatar ?? null}
+              handle={author?.handle ?? null}
+              data-testid={`artifact-card-author-${a.short_id}`}
+            />
+          </div>
+        )}
+        {(a.tags ?? []).length > 0 && (
+          <div className="relative z-20 flex flex-wrap gap-1.5">
+            {(a.tags ?? []).slice(0, 6).map((t) => (
+              <button
+                key={t}
+                type="button"
+                data-testid={`artifact-card-tag-${t}`}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onPickTag(t)
+                }}
+                className="rounded-md border border-border bg-card px-1.5 py-px font-mono text-2xs text-primary transition hover:border-primary"
+              >
+                #{t}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   )
 }

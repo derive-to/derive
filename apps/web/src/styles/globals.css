@@ -70,11 +70,11 @@
   --font-mono: ui-monospace, Menlo, Consolas, monospace;
   --font-display: "Inter", system-ui, sans-serif;
 
-  --radius-sm: 6px;
-  --radius: 8px;
-  --radius-md: 10px;
-  --radius-lg: 14px;
-  --radius-xl: 18px;
+  --radius-sm: 4px;
+  --radius: 6px;
+  --radius-md: 8px;
+  --radius-lg: 10px;
+  --radius-xl: 14px;
 }
 
 @layer base {
