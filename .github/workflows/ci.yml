@@ -140,10 +140,12 @@ jobs:
   # Ship on merge: deploy to Cloudflare (the Derive account) only on a push to main
   # AND only after every check above is green. Runs the exact same `pnpm run deploy`
   # a human runs by hand — build:web → apply D1 app schema → reconcile Better Auth
-  # schema → wrangler deploy → trigger the post-deploy smoke. Both schema steps are
-  # idempotent, so D1 is brought fully current before the new Worker goes live and a
-  # deploy can never ship code against a stale schema. PRs skip this job (the `if`),
-  # so nothing deploys until it's merged.
+  # schema → apply Postgres schema → wrangler deploy → trigger the post-deploy smoke.
+  # The schema steps are idempotent, so the datastore is brought fully current before
+  # the new Worker goes live and a deploy can never ship code against a stale schema.
+  # NB: the hosted tier runs on Postgres (Hyperdrive), so DATABASE_URL must be set or
+  # deploy:pg-schema silently skips and the pg schema drifts from the deployed Worker.
+  # PRs skip this job (the `if`), so nothing deploys until it's merged.
   deploy:
     needs: [check, pg, d1, coverage, bundle, security]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -171,4 +173,7 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          # Neon connection string for deploy:pg-schema (the hosted tier's metadata +
+          # auth store). Without it the pg schema step no-ops and can drift.
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
           GH_TOKEN: ${{ github.token }}

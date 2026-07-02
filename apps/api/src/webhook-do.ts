@@ -1,5 +1,6 @@
-import type { D1Database, DurableObjectState } from "@cloudflare/workers-types"
-import { createD1Store } from "@derive/db/d1"
+import type { D1Database, DurableObjectState, Hyperdrive } from "@cloudflare/workers-types"
+import type { MetaStore } from "@derive/core"
+import { tickStore } from "./edge-pg"
 import { cloudflareEmailSender, type SendEmailBinding } from "./email-cf"
 import { emailDeliverySender } from "./lib/email"
 import { makeGithubCommentSender } from "./lib/github-comments"
@@ -15,11 +16,13 @@ const TICK_MS = 1_500
 // ~this long rather than waiting up to a cron tick.
 const POKE_DELAY_MS = 250
 
-/** The env the outbox DO needs: the D1 binding it builds a MetaStore from, plus the
+/** The env the outbox DO needs: the datastore bindings it builds a per-tick MetaStore
+ *  from (Postgres when HYPERDRIVE is bound, else D1 — see edge-pg.ts), plus the
  *  optional Cloudflare Email Service binding + from-address used to deliver email-kind
  *  rows (absent ⇒ email rows are a delivered no-op on this tier). */
 export interface WebhookOutboxEnv {
   DB: D1Database
+  HYPERDRIVE?: Hyperdrive
   SEND_EMAIL?: SendEmailBinding
   EMAIL_FROM?: string
   // The auth secret doubles as the at-rest encryption key for stored GitHub App
@@ -41,24 +44,24 @@ export interface WebhookOutboxEnv {
  * so losing it (or a missed poke) only delays delivery to the next cron backstop.
  */
 export class WebhookOutbox {
-  private store: ReturnType<typeof createD1Store>
-  private senders: ChannelSenders
-
   constructor(
     private state: DurableObjectState,
-    env: WebhookOutboxEnv,
-  ) {
-    this.store = createD1Store(env.DB)
-    // First-party channel senders for this tier. Email when the Cloudflare Email
-    // Service binding is bound; GitHub PR comment write-back when the auth secret
-    // (the App-credential encryption key) is present.
-    this.senders = {
+    private env: WebhookOutboxEnv,
+  ) {}
+
+  // First-party channel senders for this tier, rebuilt per tick (they capture the
+  // tick's store). Email when the Cloudflare Email Service binding is bound; GitHub
+  // PR comment write-back when the auth secret (the App-credential encryption key)
+  // is present.
+  private senders(store: MetaStore): ChannelSenders {
+    const env = this.env
+    return {
       ...(env.SEND_EMAIL && env.EMAIL_FROM
         ? { email: emailDeliverySender(cloudflareEmailSender(env.SEND_EMAIL, env.EMAIL_FROM)) }
         : {}),
-      github_review_comment: makeGithubCommentSender(this.store, env.DERIVE_AUTH_SECRET),
-      github_issue_comment: makeGithubCommentSender(this.store, env.DERIVE_AUTH_SECRET),
-      slack_app: makeSlackSender(this.store, env.DERIVE_AUTH_SECRET),
+      github_review_comment: makeGithubCommentSender(store, env.DERIVE_AUTH_SECRET),
+      github_issue_comment: makeGithubCommentSender(store, env.DERIVE_AUTH_SECRET),
+      slack_app: makeSlackSender(store, env.DERIVE_AUTH_SECRET),
     }
   }
 
@@ -74,11 +77,18 @@ export class WebhookOutbox {
   // retries fire without waiting for the next poke/cron. Errors must not strand the
   // alarm — on failure, reschedule so the loop self-heals.
   async alarm(): Promise<void> {
+    // Store construction stays inside the try: a throw anywhere must still land in
+    // the catch's re-arm, or the drain loop strands until the cron backstop.
+    let close = async () => {}
     try {
-      const claimed = await runDeliveryTick(this.store, edgeGuard, this.senders)
+      const opened = tickStore(this.env)
+      close = opened.close
+      const claimed = await runDeliveryTick(opened.store, edgeGuard, this.senders(opened.store))
       if (claimed > 0) await this.state.storage.setAlarm(Date.now() + TICK_MS)
     } catch {
       await this.state.storage.setAlarm(Date.now() + TICK_MS)
+    } finally {
+      await close()
     }
   }
 }

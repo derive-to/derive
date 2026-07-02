@@ -22,7 +22,7 @@ describe("personal workspace provisioning under concurrent first-login", () => {
 
     const mine = await meta.listWorkspaces(user.id)
     expect(mine.length).toBe(1)
-    expect(mine[0]?.id).toBe(`ws_${user.id}`)
+    expect(mine[0]?.id).toBe(`ws_p_${user.id}`)
   })
 
   it("re-provisioning the same user is idempotent (deterministic id)", async () => {

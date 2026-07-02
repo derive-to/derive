@@ -2,16 +2,34 @@
 name = "derive"
 main = "src/worker.ts"
 compatibility_date = "2024-11-01"
-compatibility_flags = ["nodejs_compat"]
+# populate_process_env mirrors vars + secrets into process.env (automatic only at
+# compat dates ≥ 2025-04-01) — auth-config reads its optional providers
+# (GOOGLE_*, GITHUB_LOGIN_*, OIDC_*) there, same as on Node.
+compatibility_flags = ["nodejs_compat", "nodejs_compat_populate_process_env"]
 
 [[d1_databases]]
 binding = "DB"
 database_name = "derive"
-# Derive's own prod D1 (the "Derive" Cloudflare account). A D1 id is not a secret
-# (it's inert without a Cloudflare API token scoped to the account), so it lives
-# here so `pnpm run deploy` is one step. Self-hosting Derive? Run
-# `wrangler d1 create derive` and put your own id here. See DEPLOY.md.
+# The Derive Cloudflare account's D1. A D1 id is not a secret (it's inert without a
+# Cloudflare API token scoped to the account), so it lives here so `pnpm run
+# deploy` is one step. Self-hosting Derive? Run `wrangler d1 create derive` and put
+# your own id here. See DEPLOY.md. NOTE: with the HYPERDRIVE binding below, metadata
+# + auth live in Postgres and this database sits idle — the binding stays only
+# because the runtime requires every declared binding to resolve.
 database_id = "3c076a21-de54-4cf8-b352-7c8430a9ab79"
+
+# Hyperdrive → Neon Postgres (the hosted tier's metadata + auth store). Bound ⇒
+# the worker takes the Postgres path; remove the binding to fall back to D1. The
+# id is account-scoped and not a secret — the DATABASE_URL lives inside the
+# Hyperdrive config (`wrangler hyperdrive create`). Schema is applied at deploy
+# time by `pnpm deploy:pg-schema`.
+# ⚠ Query caching MUST stay disabled on this config (--caching-disabled).
+# Hyperdrive caches SELECT results ~60s by default; this app reads its own
+# writes (workspace resolution, artifact read-back), and cached-stale reads made
+# first-login provision a workspace per request until the TTL expired.
+[[hyperdrive]]
+binding = "HYPERDRIVE"
+id = "10b9d78afcdb46ad8f8db7ad449fb2b3"
 
 [[r2_buckets]]
 binding = "BUCKET"
@@ -120,6 +138,19 @@ directory = "../web/dist/client"
 binding = "ASSETS"
 run_worker_first = ["/v1/*", "/api/*", "/raw/*", "/oauth/*", "/settings/github/*", "/a/*", "/u/*", "/healthz", "/mcp", "/.well-known/oauth-authorization-server", "/.well-known/oauth-protected-resource", "/.well-known/openid-configuration"]
 not_found_handling = "single-page-application"
+
+# Public hosts: the derive.to apex is canonical, app.derive.to an alias. Cloudflare
+# auto-creates the DNS records + edge certs. baseUrl falls back to the request
+# origin, so the workers.dev origin keeps serving for smoke tests.
+# NB: must be [[routes]] — a bare `routes = [...]` below a table header belongs to
+# that table and is silently ignored.
+[[routes]]
+pattern = "derive.to"
+custom_domain = true
+
+[[routes]]
+pattern = "app.derive.to"
+custom_domain = true
 
 # baseUrl falls back to the request origin when unset. Secured by Better Auth; set
 # DERIVE_AUTH_SECRET via `wrangler secret put`. Cross-instance realtime fan-out uses

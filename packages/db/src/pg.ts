@@ -210,6 +210,13 @@ export class PgMetaStore implements MetaStore {
     })
     pool.on("error", (err) => onError?.(err))
     for (const stmt of PG_SCHEMA_STATEMENTS) await pool.query(stmt)
+    return PgMetaStore.fromPool(pool)
+  }
+
+  /** Wrap an existing pool without applying schema — the Workers path, where pools
+   *  are invocation-scoped (see apps/api edge-pg.ts) and DDL runs at deploy
+   *  time (apply-pg-schema.ts). */
+  static fromPool(pool: Pool): PgMetaStore {
     return new PgMetaStore(pool, drizzle(pool, { schema }))
   }
 
