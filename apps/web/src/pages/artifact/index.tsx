@@ -1,12 +1,10 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useNavigate, useParams } from "@tanstack/react-router"
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react"
-import { createPortal } from "react-dom"
 import { toast } from "sonner"
 import { API_BASE, ApiError, api, type Comment } from "@/api"
 import { CursorButton } from "@/components/cursor/cursor-button"
 import { Icon } from "@/components/icons"
-import { useTopBarSlot } from "@/components/shell-context"
 import { useAuth } from "@/ctx"
 import { artifactQuery, commentsQuery } from "@/lib/queries"
 import { useIsMobile } from "@/lib/use-is-mobile"
@@ -51,10 +49,6 @@ export function Artifact() {
   const { me, loading } = useAuth()
   const nav = useNavigate()
   const isMobile = useIsMobile()
-  // The persistent shell exposes its top-bar region; this page's header actions
-  // are portaled into it (the shell is mounted once, above the route Outlet).
-  // Its own context, so the artifact page doesn't re-render on shell-state churn.
-  const topBarSlot = useTopBarSlot()
 
   // Artifact metadata + comments come from React Query, so the route loader's
   // intent preload (ensureQueryData) warms exactly what we render here — the
@@ -412,10 +406,68 @@ export function Artifact() {
   const asideWidth = isMobile ? 0 : panel === "open" ? 340 : 0
 
   return (
-    <>
-      {topBarSlot &&
-        createPortal(
-          <>
+    <ActionsCtx.Provider value={actions}>
+      {reviewing && (
+        <Suspense fallback={null}>
+          <ReviewOverlay
+            shortId={shortId}
+            currentVersion={art.current_version}
+            myRole={art.my_role}
+            meName={me?.name ?? me?.email ?? null}
+            onClose={() => setReviewing(false)}
+            onApplied={load}
+          />
+        </Suspense>
+      )}
+      {surface === "insights" && (
+        <Suspense fallback={null}>
+          <Insights
+            shortId={shortId}
+            title={art.title}
+            open
+            onOpenChange={(o) => setSurface(o ? "insights" : null)}
+          />
+        </Suspense>
+      )}
+      {surface === "history" && (
+        <Suspense fallback={null}>
+          <HistoryDrawer
+            art={art}
+            shown={shown}
+            goTo={(n) => {
+              const base = refFor({ short_id: shortId, title: art.title })
+              nav({
+                to: "/a/$ref",
+                params: { ref: n === art.current_version ? base : `${base}@v${n}` },
+              })
+            }}
+            open
+            onOpenChange={(o) => setSurface(o ? "history" : null)}
+          />
+        </Suspense>
+      )}
+      <div className="flex min-h-0 flex-1">
+        <div
+          className={cn(
+            // On phones, the comments sheet sits in the bottom half — reserve
+            // that space so the document stays visible above it (and a
+            // jumped-to highlight lands in view, not behind the sheet).
+            "relative flex min-w-0 flex-1 flex-col transition-[padding] duration-[260ms]",
+            isMobile && panel === "open" && "pb-[50vh]",
+          )}
+        >
+          {/* The workbench bar — with the global top bar gone (sidebar-first
+                shell), the page owns its toolbar: the artifact title (the serif
+                content register) on the left, presence/cursors + the header
+                actions on the right. shrink-0, so the document stage below keeps
+                the min-h-0 flex-1 height chain. */}
+          <div className="flex shrink-0 items-center gap-2 border-b border-border px-4 py-2 max-sm:flex-wrap max-sm:px-3">
+            <h1
+              className="min-w-0 flex-1 truncate font-serif text-base font-medium tracking-tight"
+              title={art.title ?? shortId}
+            >
+              {art.title ?? shortId}
+            </h1>
             {!isMobile && <Presence viewers={live.viewers} selfId={me?.id} />}
             {!isMobile && <CursorButton />}
             {!isAnon && (
@@ -484,184 +536,131 @@ export function Artifact() {
                 onToggleComments={() => setPanel((pn) => (pn === "open" ? "hidden" : "open"))}
               />
             )}
-          </>,
-          topBarSlot,
-        )}
-      <ActionsCtx.Provider value={actions}>
-        {reviewing && (
-          <Suspense fallback={null}>
-            <ReviewOverlay
-              shortId={shortId}
-              currentVersion={art.current_version}
-              myRole={art.my_role}
-              meName={me?.name ?? me?.email ?? null}
-              onClose={() => setReviewing(false)}
-              onApplied={load}
+          </div>
+          {art.bundle && !editing && (
+            <BundleBar bundle={art.bundle} shortId={shortId} version={shown} />
+          )}
+          {editing ? (
+            <SourceEditor
+              canPublish={effectiveCanPublish}
+              title={effectiveCanPublish ? editTitle : (art.title ?? shortId)}
+              onTitle={effectiveCanPublish ? setEditTitle : undefined}
+              format={format}
+              proposeMsg={proposeMsg}
+              message={message}
+              src={src}
+              onProposeMsg={setProposeMsg}
+              onMessage={setMessage}
+              onSrc={setSrc}
+              onCancel={() => setEditing(false)}
+              onPublish={publishEdit}
+              onPropose={proposeEdit}
             />
-          </Suspense>
-        )}
-        {surface === "insights" && (
-          <Suspense fallback={null}>
-            <Insights
-              shortId={shortId}
-              title={art.title}
-              open
-              onOpenChange={(o) => setSurface(o ? "insights" : null)}
-            />
-          </Suspense>
-        )}
-        {surface === "history" && (
-          <Suspense fallback={null}>
-            <HistoryDrawer
-              art={art}
+          ) : (
+            <ArtifactDocument
               shown={shown}
-              goTo={(n) => {
-                const base = refFor({ short_id: shortId, title: art.title })
+              currentVersion={art.current_version}
+              title={art.title ?? shortId}
+              rawSrc={rawSrc}
+              view={view}
+              diff={diff}
+              diffFailed={diffFailed}
+              onDiffRetry={retryDiff}
+              restoring={restoring}
+              deck={deck}
+              frameRef={frame}
+              presentWrapRef={presentWrap}
+              cursor={live.cursor}
+              onScrollDoc={scrollBy}
+              onFrameLoad={onFrameLoad}
+              onToggleDiff={() => setView(view === "diff" ? "preview" : "diff")}
+              onRestore={() => restore(shown)}
+              onBackToCurrent={() =>
                 nav({
                   to: "/a/$ref",
-                  params: { ref: n === art.current_version ? base : `${base}@v${n}` },
+                  params: { ref: refFor({ short_id: shortId, title: art.title }) },
                 })
-              }}
-              open
-              onOpenChange={(o) => setSurface(o ? "history" : null)}
+              }
+              onDeckPrev={() => deckCmd("prev")}
+              onDeckNext={() => deckCmd("next")}
+              onFullscreen={toggleFullscreen}
             />
-          </Suspense>
-        )}
-        <div className="flex min-h-0 flex-1">
-          <div
-            className={cn(
-              // On phones, the comments sheet sits in the bottom half — reserve
-              // that space so the document stays visible above it (and a
-              // jumped-to highlight lands in view, not behind the sheet).
-              "relative flex min-w-0 flex-1 flex-col transition-[padding] duration-[260ms]",
-              isMobile && panel === "open" && "pb-[50vh]",
-            )}
-          >
-            {art.bundle && !editing && (
-              <BundleBar bundle={art.bundle} shortId={shortId} version={shown} />
-            )}
-            {editing ? (
-              <SourceEditor
-                canPublish={effectiveCanPublish}
-                title={effectiveCanPublish ? editTitle : (art.title ?? shortId)}
-                onTitle={effectiveCanPublish ? setEditTitle : undefined}
-                format={format}
-                proposeMsg={proposeMsg}
-                message={message}
-                src={src}
-                onProposeMsg={setProposeMsg}
-                onMessage={setMessage}
-                onSrc={setSrc}
-                onCancel={() => setEditing(false)}
-                onPublish={publishEdit}
-                onPropose={proposeEdit}
-              />
-            ) : (
-              <ArtifactDocument
-                shown={shown}
-                currentVersion={art.current_version}
-                title={art.title ?? shortId}
-                rawSrc={rawSrc}
-                view={view}
-                diff={diff}
-                diffFailed={diffFailed}
-                onDiffRetry={retryDiff}
-                restoring={restoring}
-                deck={deck}
-                frameRef={frame}
-                presentWrapRef={presentWrap}
-                cursor={live.cursor}
-                onScrollDoc={scrollBy}
-                onFrameLoad={onFrameLoad}
-                onToggleDiff={() => setView(view === "diff" ? "preview" : "diff")}
-                onRestore={() => restore(shown)}
-                onBackToCurrent={() =>
-                  nav({
-                    to: "/a/$ref",
-                    params: { ref: refFor({ short_id: shortId, title: art.title }) },
-                  })
-                }
-                onDeckPrev={() => deckCmd("prev")}
-                onDeckNext={() => deckCmd("next")}
-                onFullscreen={toggleFullscreen}
-              />
-            )}
-            {!isAnon && panel === "hidden" && (
-              <button
-                type="button"
-                onClick={() => setPanel("open")}
-                title="Show comments (c)"
-                data-testid="artifact-comments-fab"
-                className="absolute bottom-[18px] right-[18px] flex h-11 items-center gap-2 rounded-full border border-border bg-card px-4 text-sm font-medium tabular-nums text-foreground shadow-[var(--shadow)] outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
-              >
-                <Icon name="comments" size={16} />
-                {openCount > 0
-                  ? `${openCount} comment${openCount === 1 ? "" : "s"}`
-                  : "Show comments"}
-              </button>
-            )}
-            {/* Anonymous visitor on a comment-enabled link: commenting forces auth (anon
+          )}
+          {!isAnon && panel === "hidden" && (
+            <button
+              type="button"
+              onClick={() => setPanel("open")}
+              title="Show comments (c)"
+              data-testid="artifact-comments-fab"
+              className="absolute bottom-[18px] right-[18px] flex h-11 items-center gap-2 rounded-full border border-border bg-card px-4 text-sm font-medium tabular-nums text-foreground shadow-[var(--shadow)] outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+            >
+              <Icon name="comments" size={16} />
+              {openCount > 0
+                ? `${openCount} comment${openCount === 1 ? "" : "s"}`
+                : "Show comments"}
+            </button>
+          )}
+          {/* Anonymous visitor on a comment-enabled link: commenting forces auth (anon
                 stays view-only). Offer sign-in, returning here afterward. */}
-            {promptSignInToComment && (
-              <button
-                type="button"
-                onClick={() =>
-                  nav({
-                    to: "/login",
-                    search: { return_to: `/a/${refFor({ short_id: shortId, title: art.title })}` },
-                  })
-                }
-                title="Sign in to comment"
-                data-testid="sign-in-to-comment"
-                className="absolute bottom-[18px] right-[18px] flex h-11 items-center gap-2 rounded-full border border-border bg-card px-4 text-sm font-medium text-foreground shadow-[var(--shadow)] outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
-              >
-                <Icon name="comments" size={16} />
-                Sign in to comment
-              </button>
-            )}
-          </div>
-
-          <ArtifactComments
-            shortId={shortId}
-            isMobile={isMobile}
-            isAnon={isAnon}
-            canComment={canComment}
-            docLive={docLive}
-            panel={panel}
-            tab={commentTab}
-            setTab={setCommentTab}
-            personalCount={personalCount}
-            publicCount={publicCount}
-            asideWidth={asideWidth}
-            openCount={openCount}
-            scrollY={scrollY}
-            onScrollDoc={scrollBy}
-            pinned={pinned}
-            general={general}
-            resolved={resolvedThreads}
-            openThreads={openThreads}
-            activeThread={activeThread}
-            hoverThread={hoverThread}
-            inDoc={inDoc}
-            composer={composer}
-            sel={sel}
-            setPanel={setPanel}
-            setComposer={setComposer}
-            setSel={setSel}
-            setActiveThread={setActiveThread}
-            setHoverThread={setHoverThread}
-            activate={activateThread}
-            toggleResolve={toggleResolve}
-            reply={reply}
-            submitNew={submitNew}
-            jumpTo={jumpTo}
-            startSelComment={startSelComment}
-            currentSlide={deck?.i ?? null}
-            landedSlides={landedSlides}
-            anchorConf={anchorConf}
-          />
+          {promptSignInToComment && (
+            <button
+              type="button"
+              onClick={() =>
+                nav({
+                  to: "/login",
+                  search: { return_to: `/a/${refFor({ short_id: shortId, title: art.title })}` },
+                })
+              }
+              title="Sign in to comment"
+              data-testid="sign-in-to-comment"
+              className="absolute bottom-[18px] right-[18px] flex h-11 items-center gap-2 rounded-full border border-border bg-card px-4 text-sm font-medium text-foreground shadow-[var(--shadow)] outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+            >
+              <Icon name="comments" size={16} />
+              Sign in to comment
+            </button>
+          )}
         </div>
-      </ActionsCtx.Provider>
-    </>
+
+        <ArtifactComments
+          shortId={shortId}
+          isMobile={isMobile}
+          isAnon={isAnon}
+          canComment={canComment}
+          docLive={docLive}
+          panel={panel}
+          tab={commentTab}
+          setTab={setCommentTab}
+          personalCount={personalCount}
+          publicCount={publicCount}
+          asideWidth={asideWidth}
+          openCount={openCount}
+          scrollY={scrollY}
+          onScrollDoc={scrollBy}
+          pinned={pinned}
+          general={general}
+          resolved={resolvedThreads}
+          openThreads={openThreads}
+          activeThread={activeThread}
+          hoverThread={hoverThread}
+          inDoc={inDoc}
+          composer={composer}
+          sel={sel}
+          setPanel={setPanel}
+          setComposer={setComposer}
+          setSel={setSel}
+          setActiveThread={setActiveThread}
+          setHoverThread={setHoverThread}
+          activate={activateThread}
+          toggleResolve={toggleResolve}
+          reply={reply}
+          submitNew={submitNew}
+          jumpTo={jumpTo}
+          startSelComment={startSelComment}
+          currentSlide={deck?.i ?? null}
+          landedSlides={landedSlides}
+          anchorConf={anchorConf}
+        />
+      </div>
+    </ActionsCtx.Provider>
   )
 }

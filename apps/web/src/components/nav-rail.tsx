@@ -80,13 +80,17 @@ function SideLabel({ children, action }: { children: ReactNode; action?: ReactNo
   )
 }
 
-// The persistent left nav: All / Favorites always visible (so you can jump to a
-// favorite from anywhere), collections (with inline create) + tags when expanded,
-// then a foot group of Notifications + Settings + the account/workspace pod.
-// Collapses to an icon rail on desktop and becomes an off-canvas drawer on mobile.
+// The persistent left nav — the app's only desktop chrome (there is no global
+// top bar). Nemonic sidebar anatomy: a HEADER (brand wordmark + collapse toggle
+// + the ⌘K launcher), a scrolling BODY of nav rows (All / Favorites / Following /
+// People, collections with inline create, tags, then Settings pushed to the
+// bottom), and a pinned FOOTER (sync + notifications + the account/workspace
+// pod). Collapses to an icon rail on desktop and becomes a floating off-canvas
+// drawer card on mobile.
 export function NavRail() {
   const {
     collapsed,
+    toggleCollapsed,
     drawerOpen,
     setDrawerOpen,
     summary,
@@ -156,86 +160,86 @@ export function NavRail() {
   }
 
   // Flush shell: the rail sits on the canvas itself, separated by the hairline.
+  // Scrolling lives in the body region (below), so the header + footer stay pinned.
   const asideClass = cn(
-    "flex flex-col gap-px overflow-y-auto border-r border-border bg-background py-3.5 transition-[transform,flex-basis,width] duration-200",
+    "flex flex-col border-r border-border bg-background py-3.5 transition-[transform,flex-basis,width] duration-200",
     isMobile
       ? cn(
-          // Sits BELOW the Radix overlay layer (z-50) so menus opened from inside the
-          // drawer — the workspace switcher, the command palette — render above it, not
-          // behind it. Still above page content + the backdrop.
-          "fixed inset-y-0 left-0 z-45 w-[266px] basis-[266px] px-2.5 shadow-[var(--shadow-pop)]",
+          // A floating drawer card. Sits BELOW the Radix overlay layer (z-50) so
+          // menus opened from inside the drawer — the workspace switcher, the
+          // command palette — render above it, not behind it. Still above page
+          // content + the backdrop.
+          "fixed inset-y-2 left-2 z-45 w-[266px] basis-[266px] rounded-xl px-2.5 shadow-[var(--shadow-pop)] ring-1 ring-foreground/10",
           drawerOpen ? "translate-x-0" : "-translate-x-[105%]",
         )
       : collapsed
         ? "w-[62px] shrink-0 basis-[62px] px-[9px]"
-        : "w-56 shrink-0 basis-56 px-2.5",
+        : "w-64 shrink-0 basis-64 px-2.5",
   )
 
-  // Anonymous visitor on a shared public artifact. There's no workspace to
-  // navigate, so the rail becomes the conversion surface — a single path to
-  // making their own (Figma/Notion-style viral loop). The artifact itself stays
-  // fully view-only; this is the only nav an anon ever sees.
-  if (!me)
-    return (
-      <aside aria-label="Navigation" className={asideClass}>
-        {railMode ? (
+  // HEADER — shared by the signed-in and anon rails: the brand wordmark (the
+  // app's one wordmark now that the top bar is gone), the collapse toggle
+  // (desktop only — app-shell renders its own `library-menu` on mobile, and the
+  // testid must exist exactly once), and the ⌘K launcher (signed-in only).
+  const header = (
+    <div
+      className={cn(
+        "flex shrink-0 flex-col border-b border-border-soft pb-2.5",
+        railMode ? "items-center gap-1" : "gap-2",
+      )}
+    >
+      {railMode ? (
+        <>
           <Link
-            to="/login"
-            search={{ signup: true }}
-            title="Sign up for Derive"
-            data-testid="anon-signup"
-            className={cn(ROW_BASE, ROW_RAIL, "text-primary")}
+            to="/"
+            title="Derive — home"
+            aria-label="Derive — home"
+            className="flex size-8 items-center justify-center rounded-lg text-foreground outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
           >
-            <Icon name="plus" size={18} />
+            <Logo size={20} />
           </Link>
-        ) : (
-          <div className="flex flex-1 flex-col">
-            {/* The one card in the rail — a conversion moment that must lift off
-                the flush canvas; its headline is a voice moment (serif). */}
-            <div className="rounded-xl border border-border bg-card p-3.5">
-              <div className="flex items-center gap-2">
-                <Logo size={22} />
-                <span className="font-serif text-base font-medium tracking-tight text-foreground">
-                  Create your own
-                </span>
-              </div>
-              <p className="mt-2 text-pretty text-sm text-muted-foreground">
-                Give your AI artifacts a permanent home: versions, comments, and one link to share.
-              </p>
-              <Button
-                asChild
-                variant="default"
-                size="sm"
-                className="mt-3 w-full"
-                data-testid="anon-signup"
-              >
-                <Link to="/login" search={{ signup: true }} onClick={closeDrawer}>
-                  Sign up free
-                </Link>
-              </Button>
-            </div>
-            <p className="mt-3 px-1 text-xs text-muted-foreground">
-              Already have an account?{" "}
-              <Link
-                to="/login"
-                onClick={closeDrawer}
-                data-testid="anon-login"
-                className="font-medium text-primary hover:underline"
-              >
-                Log in
-              </Link>
-            </p>
-          </div>
-        )}
-      </aside>
-    )
-
-  return (
-    <aside aria-label="Navigation" className={asideClass}>
-      <div className="flex flex-1 flex-col gap-px">
-        {/* The palette launcher reads as a search field (not another nav row) so it
-            anchors the top of the rail and says "type to find". Collapses to a plain
-            icon button in the rail. */}
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            data-testid="library-menu"
+            aria-label="Expand sidebar"
+            title="Toggle sidebar"
+            onClick={toggleCollapsed}
+          >
+            <Icon name="sidebar" size={16} />
+          </Button>
+        </>
+      ) : (
+        <div className="flex items-center gap-1">
+          {/* The wordmark is the voice register: the mark stays currentColor;
+              only the word itself is serif. */}
+          <Link
+            to="/"
+            onClick={closeDrawer}
+            className="flex min-w-0 items-center gap-2.5 rounded-md text-foreground outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+          >
+            <Logo />
+            <span className="font-serif text-lg font-medium tracking-tight">Derive</span>
+          </Link>
+          {!isMobile && (
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              data-testid="library-menu"
+              aria-label="Collapse sidebar"
+              title="Toggle sidebar"
+              onClick={toggleCollapsed}
+              className="ml-auto"
+            >
+              <Icon name="sidebar" size={16} />
+            </Button>
+          )}
+        </div>
+      )}
+      {/* The palette launcher reads as a search field (not another nav row) so it
+          anchors the rail header and says "type to find". Collapses to a plain
+          icon button in the rail. Absent for anon (nothing to search). */}
+      {me && (
         <button
           type="button"
           onClick={() => {
@@ -248,7 +252,7 @@ export function NavRail() {
           className={cn(
             railMode
               ? cn(ROW_BASE, ROW_RAIL)
-              : "mb-1 flex h-8 w-full items-center gap-2 rounded-lg border border-input bg-secondary px-2.5 text-left text-sm text-muted-foreground outline-none hover:border-foreground/25 hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring",
+              : "flex h-8 w-full items-center gap-2 rounded-lg border border-input bg-secondary px-2.5 text-left text-sm text-muted-foreground outline-none hover:border-foreground/25 hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring",
           )}
         >
           <Icon name="search" size={railMode ? 18 : 16} className="shrink-0" />
@@ -259,6 +263,77 @@ export function NavRail() {
             </>
           )}
         </button>
+      )}
+    </div>
+  )
+
+  // Anonymous visitor on a shared public artifact. There's no workspace to
+  // navigate, so the rail becomes the conversion surface — a single path to
+  // making their own (Figma/Notion-style viral loop). The artifact itself stays
+  // fully view-only; this is the only nav an anon ever sees.
+  if (!me)
+    return (
+      <aside aria-label="Navigation" className={asideClass}>
+        {header}
+        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto pt-2">
+          {railMode ? (
+            <Link
+              to="/login"
+              search={{ signup: true }}
+              title="Sign up for Derive"
+              data-testid="anon-signup"
+              className={cn(ROW_BASE, ROW_RAIL, "text-primary")}
+            >
+              <Icon name="plus" size={18} />
+            </Link>
+          ) : (
+            <div className="flex flex-1 flex-col">
+              {/* The one card in the rail — a conversion moment that must lift off
+                  the flush canvas; its headline is a voice moment (serif). */}
+              <div className="rounded-xl border border-border bg-card p-3.5">
+                <div className="flex items-center gap-2">
+                  <Logo size={22} />
+                  <span className="font-serif text-base font-medium tracking-tight text-foreground">
+                    Create your own
+                  </span>
+                </div>
+                <p className="mt-2 text-pretty text-sm text-muted-foreground">
+                  Give your AI artifacts a permanent home: versions, comments, and one link to
+                  share.
+                </p>
+                <Button
+                  asChild
+                  variant="default"
+                  size="sm"
+                  className="mt-3 w-full"
+                  data-testid="anon-signup"
+                >
+                  <Link to="/login" search={{ signup: true }} onClick={closeDrawer}>
+                    Sign up free
+                  </Link>
+                </Button>
+              </div>
+              <p className="mt-3 px-1 text-xs text-muted-foreground">
+                Already have an account?{" "}
+                <Link
+                  to="/login"
+                  onClick={closeDrawer}
+                  data-testid="anon-login"
+                  className="font-medium text-primary hover:underline"
+                >
+                  Log in
+                </Link>
+              </p>
+            </div>
+          )}
+        </div>
+      </aside>
+    )
+
+  return (
+    <aside aria-label="Navigation" className={asideClass}>
+      {header}
+      <div className="flex min-h-0 flex-1 flex-col gap-px overflow-y-auto pt-2">
         <SideItem
           icon="all"
           label="All artifacts"
@@ -459,11 +534,10 @@ export function NavRail() {
               onClick={closeDrawer}
             />
           ))}
-      </div>
 
-      <div className="mt-auto flex flex-col gap-px border-t border-border-soft pt-2">
-        <SyncChip collapsed={railMode} />
-        <NotificationBell collapsed={railMode} />
+        {/* Spacer: pins Settings to the bottom of the body when the nav is short,
+            without pulling it out of the scroll flow when the nav is long. */}
+        <div aria-hidden className="mt-8 flex-1" />
         <Link
           to="/settings"
           data-testid="menu-settings"
@@ -477,6 +551,12 @@ export function NavRail() {
           </span>
           {!railMode && <span className="overflow-hidden text-ellipsis">Settings</span>}
         </Link>
+      </div>
+
+      {/* FOOTER — pinned below the scroll: ambient status + identity. */}
+      <div className="flex shrink-0 flex-col gap-px border-t border-border-soft pt-2">
+        <SyncChip collapsed={railMode} />
+        <NotificationBell collapsed={railMode} />
         <UserPod
           rail={railMode}
           workspaceLabel={summary?.workspace ?? ""}

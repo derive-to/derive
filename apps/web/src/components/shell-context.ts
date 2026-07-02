@@ -37,13 +37,3 @@ export function useShell(): ShellValue {
   if (!v) throw new Error("useShell must be used within <AppShell>")
   return v
 }
-
-// The top bar's right-side region lives in its own context, separate from the
-// volatile shell state above. AppShell is mounted once around the router Outlet,
-// so a page (the artifact view) portals its header actions into this slot rather
-// than passing a prop. Splitting it out means the artifact page subscribes only
-// to the slot — it no longer re-renders when unrelated shell state churns
-// (rail collapse, summary refresh, ⌘K). Null until the bar has mounted.
-export const TopBarSlotCtx = createContext<HTMLElement | null>(null)
-
-export const useTopBarSlot = (): HTMLElement | null => useContext(TopBarSlotCtx)

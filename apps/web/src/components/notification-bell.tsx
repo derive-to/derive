@@ -40,6 +40,13 @@ export function NotificationBell({ collapsed }: { collapsed?: boolean }) {
     return () => ev.close()
   }, [me, load])
 
+  // Mirror the unread count into the tab title — "(3) Derive" (the Nemonic
+  // grammar). Strip any previous prefix first so updates replace, never stack.
+  useEffect(() => {
+    const base = document.title.replace(/^\(\d+\+?\)\s*/, "")
+    document.title = unread > 0 ? `(${unread > 99 ? "99+" : unread}) ${base}` : base
+  }, [unread])
+
   if (!me) return null
 
   const openItem = (n: Notification) => {

@@ -60,118 +60,123 @@ export function Profile() {
   const stats = data.stats ?? { works: 0, followers: 0, following: 0 }
 
   return (
-    <div className="mx-auto flex w-full max-w-3xl flex-col gap-8 p-6 sm:p-8">
-      {/* The identity header sits flush on the canvas — whitespace over a card,
+    // The shell's <main> is overflow-hidden — this wrapper is the page's scroll
+    // container. The Work grid's IntersectionObserver sentinel observes against
+    // the viewport (null root), which still fires as this container scrolls.
+    <div className="min-h-0 flex-1 overflow-y-auto">
+      <div className="mx-auto flex w-full max-w-3xl flex-col gap-8 p-6 sm:p-8">
+        {/* The identity header sits flush on the canvas — whitespace over a card,
           per the surfaces doctrine (it's a page header, not a liftable object). */}
-      <section data-testid="profile-card">
-        <div className="flex flex-col gap-5 sm:flex-row sm:items-start sm:gap-6">
-          <Avatar className="size-20 shrink-0 sm:size-24">
-            {data.image && <AvatarImage src={data.image} alt={data.name ?? data.username} />}
-            {/* Identity tint (stable per person) + the outline frame images get. */}
-            <AvatarFallback
-              className="text-2xl font-medium text-scrim-foreground outline-1 -outline-offset-1 outline-foreground/10"
-              style={{ backgroundColor: colorForName(data.name ?? data.username) }}
-            >
-              {initials}
-            </AvatarFallback>
-          </Avatar>
+        <section data-testid="profile-card">
+          <div className="flex flex-col gap-5 sm:flex-row sm:items-start sm:gap-6">
+            <Avatar className="size-20 shrink-0 sm:size-24">
+              {data.image && <AvatarImage src={data.image} alt={data.name ?? data.username} />}
+              {/* Identity tint (stable per person) + the outline frame images get. */}
+              <AvatarFallback
+                className="text-2xl font-medium text-scrim-foreground outline-1 -outline-offset-1 outline-foreground/10"
+                style={{ backgroundColor: colorForName(data.name ?? data.username) }}
+              >
+                {initials}
+              </AvatarFallback>
+            </Avatar>
 
-          <div className="min-w-0 flex-1">
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                {data.name && (
-                  // A person's name is content, not chrome — the serif register.
-                  <h1
-                    className="truncate font-serif text-2xl font-medium tracking-tight text-foreground"
-                    data-testid="profile-name"
+            <div className="min-w-0 flex-1">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  {data.name && (
+                    // A person's name is content, not chrome — the serif register.
+                    <h1
+                      className="truncate font-serif text-2xl font-medium tracking-tight text-foreground"
+                      data-testid="profile-name"
+                    >
+                      {data.name}
+                    </h1>
+                  )}
+                  <p
+                    className="font-mono text-sm text-muted-foreground"
+                    data-testid="profile-username"
                   >
-                    {data.name}
-                  </h1>
-                )}
-                <p
-                  className="font-mono text-sm text-muted-foreground"
-                  data-testid="profile-username"
-                >
-                  @{data.username}
+                    @{data.username}
+                  </p>
+                </div>
+                {/* Self-hides for a signed-out viewer or your own profile. */}
+                <FollowButton username={data.username} className="shrink-0" />
+              </div>
+
+              {data.profession && (
+                <p className="mt-2 text-sm font-medium text-foreground" data-testid="profile-role">
+                  {data.profession}
                 </p>
+              )}
+              {data.about && (
+                <p
+                  className="mt-1.5 text-sm text-pretty text-muted-foreground"
+                  data-testid="profile-about"
+                >
+                  {data.about}
+                </p>
+              )}
+              {data.github_login && (
+                <a
+                  href={`https://github.com/${data.github_login}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  data-testid="profile-github"
+                  className="mt-2.5 inline-flex items-center gap-1.5 font-mono text-xs text-muted-foreground hover:text-primary"
+                >
+                  <Icon name="link" size={13} />@{data.github_login} on GitHub
+                </a>
+              )}
+
+              {/* Stats: works (static), followers + following (open a people dialog). */}
+              <div className="mt-4 flex items-center gap-5 text-sm" data-testid="profile-stats">
+                <Stat label="works" value={stats.works} />
+                <PeopleStat
+                  label="followers"
+                  value={stats.followers}
+                  handle={data.username}
+                  load={() => api.profileFollowers(data.username).then((r) => r.users)}
+                />
+                <PeopleStat
+                  label="following"
+                  value={stats.following}
+                  handle={data.username}
+                  load={() => api.profileFollowing(data.username).then((r) => r.users)}
+                />
               </div>
-              {/* Self-hides for a signed-out viewer or your own profile. */}
-              <FollowButton username={data.username} className="shrink-0" />
+
+              {isMe && (
+                <div className="mt-4">
+                  {editing ? (
+                    <div className="max-w-xs">
+                      <UsernameForm
+                        initial={data.username}
+                        submitLabel="Save username"
+                        onClaimed={(username) => {
+                          setMe(me ? { ...me, username } : me)
+                          setEditing(false)
+                          nav({ to: "/u/$handle", params: { handle: username } })
+                        }}
+                      />
+                    </div>
+                  ) : (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      data-testid="profile-edit"
+                      onClick={() => setEditing(true)}
+                    >
+                      Change username
+                    </Button>
+                  )}
+                </div>
+              )}
             </div>
-
-            {data.profession && (
-              <p className="mt-2 text-sm font-medium text-foreground" data-testid="profile-role">
-                {data.profession}
-              </p>
-            )}
-            {data.about && (
-              <p
-                className="mt-1.5 text-sm text-pretty text-muted-foreground"
-                data-testid="profile-about"
-              >
-                {data.about}
-              </p>
-            )}
-            {data.github_login && (
-              <a
-                href={`https://github.com/${data.github_login}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                data-testid="profile-github"
-                className="mt-2.5 inline-flex items-center gap-1.5 font-mono text-xs text-muted-foreground hover:text-primary"
-              >
-                <Icon name="link" size={13} />@{data.github_login} on GitHub
-              </a>
-            )}
-
-            {/* Stats: works (static), followers + following (open a people dialog). */}
-            <div className="mt-4 flex items-center gap-5 text-sm" data-testid="profile-stats">
-              <Stat label="works" value={stats.works} />
-              <PeopleStat
-                label="followers"
-                value={stats.followers}
-                handle={data.username}
-                load={() => api.profileFollowers(data.username).then((r) => r.users)}
-              />
-              <PeopleStat
-                label="following"
-                value={stats.following}
-                handle={data.username}
-                load={() => api.profileFollowing(data.username).then((r) => r.users)}
-              />
-            </div>
-
-            {isMe && (
-              <div className="mt-4">
-                {editing ? (
-                  <div className="max-w-xs">
-                    <UsernameForm
-                      initial={data.username}
-                      submitLabel="Save username"
-                      onClaimed={(username) => {
-                        setMe(me ? { ...me, username } : me)
-                        setEditing(false)
-                        nav({ to: "/u/$handle", params: { handle: username } })
-                      }}
-                    />
-                  </div>
-                ) : (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    data-testid="profile-edit"
-                    onClick={() => setEditing(true)}
-                  >
-                    Change username
-                  </Button>
-                )}
-              </div>
-            )}
           </div>
-        </div>
-      </section>
+        </section>
 
-      <ProfileWork handle={data.username} isMe={isMe} name={data.name ?? data.username} />
+        <ProfileWork handle={data.username} isMe={isMe} name={data.name ?? data.username} />
+      </div>
     </div>
   )
 }

@@ -1,4 +1,4 @@
-import { Link, useNavigate, useRouterState } from "@tanstack/react-router"
+import { useNavigate, useRouterState } from "@tanstack/react-router"
 import { lazy, type ReactNode, Suspense, useCallback, useEffect, useMemo, useState } from "react"
 import { api, type Collection, type Workspaces } from "@/api"
 import { Button } from "@/components/ui/button"
@@ -9,9 +9,8 @@ import { cn } from "@/lib/utils"
 import { ONBOARDED_KEY } from "@/pages/welcome"
 import { Icon } from "./icons"
 import { NavRail } from "./nav-rail"
-import { Logo } from "./shared/logo"
 import { CenteredSpinner } from "./shared/spinner"
-import { ShellCtx, type ShellValue, type Summary, TopBarSlotCtx } from "./shell-context"
+import { ShellCtx, type ShellValue, type Summary } from "./shell-context"
 
 // The ⌘K palette pulls in cmdk; it's only needed once the user opens it, so keep
 // it (and cmdk) out of the shared bundle every route pays for. Loads on first open.
@@ -21,10 +20,13 @@ const CommandPalette = lazy(() =>
 
 const COLLAPSE_KEY = STORAGE_KEYS.navCollapsed
 
-// The persistent app frame: a slim top bar (toggle + brand left, page actions +
-// bell right) over [nav rail | page]. Owns the rail collapse state (collapsed by
-// default) and fetches the nav data (summary, collections, workspaces) once, so
-// the rail + pod behave identically on every page.
+// The persistent app frame — sidebar-first, one spatial model (the Nemonic shell
+// architecture): the rail is the only persistent chrome; there is no global top
+// bar, so pages own their headers and toolbars (the artifact workbench owns every
+// pixel beside the rail). On mobile a sticky navbar (hamburger + current-page
+// label + search) stands in for the hidden rail. Owns the rail collapse state
+// (collapsed by default) and fetches the nav data (summary, collections,
+// workspaces) once, so the rail + pod behave identically on every page.
 export function AppShell({ children }: { children: ReactNode }) {
   const { me, loading } = useAuth()
   const nav = useNavigate()
@@ -43,8 +45,6 @@ export function AppShell({ children }: { children: ReactNode }) {
   const [summary, setSummary] = useState<Summary | null>(null)
   const [collections, setCollections] = useState<Collection[]>([])
   const [workspaces, setWorkspaces] = useState<Workspaces | null>(null)
-  // The top bar's right region; a page portals its actions here (see useTopBarSlot).
-  const [topBarSlot, setTopBarSlot] = useState<HTMLElement | null>(null)
 
   // Public pages render for anonymous visitors too: artifact pages (/a/:ref,
   // read-only with a sign-up CTA — the viral path) and profiles (/u/:handle,
@@ -80,12 +80,21 @@ export function AppShell({ children }: { children: ReactNode }) {
     }
   }, [collapsed])
 
-  // ⌘K / Ctrl+K toggles the command palette from anywhere.
+  // ⌘K / Ctrl+K (and "/" outside inputs) opens the command palette from anywhere.
+  // Never stack it over an open dialog (share, delete confirm, …).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && (e.key === "k" || e.key === "K")) {
         e.preventDefault()
         setPaletteOpen((o) => !o)
+        return
+      }
+      if (e.key === "/" && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        if (document.querySelector('[role="dialog"]')) return
+        const t = e.target as HTMLElement | null
+        if (t?.tagName === "INPUT" || t?.tagName === "TEXTAREA" || t?.isContentEditable) return
+        e.preventDefault()
+        setPaletteOpen(true)
       }
     }
     window.addEventListener("keydown", onKey)
@@ -213,76 +222,88 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   return (
     <ShellCtx.Provider value={value}>
-      <TopBarSlotCtx.Provider value={topBarSlot}>
-        <div className="flex h-full flex-col">
-          {/* Keyboard users land here first and can jump past the rail + top bar
-              straight to the page. Visually hidden until focused. */}
-          <a
-            href="#main-content"
-            className="sr-only rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring focus:not-sr-only focus:absolute focus:left-3 focus:top-3 focus:z-100"
-          >
-            Skip to content
-          </a>
-          {/* Flush shell: the top bar sits on the canvas itself — one surface,
-              hairline-separated — never an inset panel. */}
-          <header className="flex items-center gap-2.5 border-b border-border bg-background px-5.5 py-3 max-sm:flex-wrap max-sm:px-3.5 max-sm:py-2.5">
-            <Button
-              variant="outline"
-              size="icon"
-              data-testid="library-menu"
-              aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-              title="Toggle sidebar"
-              onClick={() => (isMobile ? setDrawerOpen(true) : toggleCollapsed())}
-            >
-              <Icon name="sidebar" size={18} />
-            </Button>
-            {/* The wordmark is the voice register: the mark stays currentColor;
-                only the word itself is serif. */}
-            <Link
-              to="/"
-              className="mr-auto flex items-center gap-2.5 rounded-md text-foreground outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
-            >
-              <Logo />
-              <span className="font-serif text-lg font-medium tracking-tight">Derive</span>
-            </Link>
-            <div
-              ref={setTopBarSlot}
-              className="ml-auto flex items-center gap-2 max-sm:flex-wrap max-sm:justify-end"
-            />
-          </header>
+      <div className="flex h-full flex-col">
+        {/* Keyboard users land here first and can jump past the rail straight
+            to the page. Visually hidden until focused. */}
+        <a
+          href="#main-content"
+          className="sr-only rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring focus:not-sr-only focus:absolute focus:left-3 focus:top-3 focus:z-100"
+        >
+          Skip to content
+        </a>
 
-          <div className="flex min-h-0 flex-1">
-            {isMobile && (
-              <button
-                type="button"
-                data-testid="library-menu-backdrop"
-                aria-label="Close menu"
-                tabIndex={drawerOpen ? 0 : -1}
-                onClick={() => setDrawerOpen(false)}
-                className={cn(
-                  // Below the drawer (z-45) and the overlay layer (z-50); above page
-                  // content. Scrim token, matching the dialog overlay recipe.
-                  "fixed inset-0 z-44 bg-scrim/50 transition-opacity",
-                  drawerOpen ? "opacity-100" : "pointer-events-none opacity-0",
-                )}
-              />
-            )}
-            <NavRail />
-            <main
-              id="main-content"
-              tabIndex={-1}
-              className="flex min-w-0 flex-1 flex-col overflow-hidden outline-none"
+        {/* Mobile navbar: the rail hides behind the drawer below sm, so the
+            sticky bar answers "where am I" (current-page label) and keeps
+            navigation + search reachable mid-scroll. Desktop has no top bar at
+            all — the sidebar is the only persistent chrome. */}
+        {isMobile && (
+          <header className="flex shrink-0 items-center gap-1.5 border-b border-border bg-background/95 px-2.5 py-2 backdrop-blur-sm">
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              data-testid="library-menu"
+              aria-label="Open navigation"
+              onClick={() => setDrawerOpen(true)}
             >
-              {children}
-            </main>
-          </div>
-        </div>
-        {paletteOpen && (
-          <Suspense fallback={null}>
-            <CommandPalette />
-          </Suspense>
+              <Icon name="sidebar" size={16} />
+            </Button>
+            <span className="min-w-0 flex-1 truncate text-sm font-medium">
+              <PageLabel pathname={pathname} />
+            </span>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              aria-label="Search"
+              onClick={() => setPaletteOpen(true)}
+            >
+              <Icon name="search" size={16} />
+            </Button>
+          </header>
         )}
-      </TopBarSlotCtx.Provider>
+
+        <div className="flex min-h-0 flex-1">
+          {isMobile && (
+            <button
+              type="button"
+              data-testid="library-menu-backdrop"
+              aria-label="Close menu"
+              tabIndex={drawerOpen ? 0 : -1}
+              onClick={() => setDrawerOpen(false)}
+              className={cn(
+                // Below the drawer (z-45) and the overlay layer (z-50); above page
+                // content. Scrim token, matching the dialog overlay recipe.
+                "fixed inset-0 z-44 bg-scrim/50 transition-opacity",
+                drawerOpen ? "opacity-100" : "pointer-events-none opacity-0",
+              )}
+            />
+          )}
+          <NavRail />
+          <main
+            id="main-content"
+            tabIndex={-1}
+            className="flex min-w-0 flex-1 flex-col overflow-hidden outline-none"
+          >
+            {children}
+          </main>
+        </div>
+      </div>
+      {paletteOpen && (
+        <Suspense fallback={null}>
+          <CommandPalette />
+        </Suspense>
+      )}
     </ShellCtx.Provider>
   )
+}
+
+// Where am I, for the mobile navbar (the sidebar is hidden behind the drawer).
+// A pathname switch, not route metadata — labels are chrome, not content.
+function PageLabel({ pathname }: { pathname: string }) {
+  if (pathname === "/") return "Library"
+  if (pathname === "/people") return "People"
+  if (pathname === "/new") return "New artifact"
+  if (pathname.startsWith("/settings")) return "Settings"
+  if (pathname.startsWith("/a/")) return "Artifact"
+  if (pathname.startsWith("/u/")) return "Profile"
+  return "Derive"
 }
