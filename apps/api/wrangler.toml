@@ -7,11 +7,11 @@ compatibility_flags = ["nodejs_compat"]
 [[d1_databases]]
 binding = "DB"
 database_name = "derive"
-# This is Sift's prod D1 id. A D1 id is not a secret (it's inert without a
-# Cloudflare API token scoped to the account), so it lives here so `pnpm run
-# deploy` is one step. Self-hosting Derive? Run `wrangler d1 create derive` and put
-# your own id here. See DEPLOY.md.
-database_id = "63229e09-fdf4-4232-807d-1c60fabd9a39"
+# Derive's own prod D1 (the "Derive" Cloudflare account). A D1 id is not a secret
+# (it's inert without a Cloudflare API token scoped to the account), so it lives
+# here so `pnpm run deploy` is one step. Self-hosting Derive? Run
+# `wrangler d1 create derive` and put your own id here. See DEPLOY.md.
+database_id = "3c076a21-de54-4cf8-b352-7c8430a9ab79"
 
 [[r2_buckets]]
 binding = "BUCKET"

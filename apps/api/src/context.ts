@@ -501,7 +501,12 @@ export function buildContext(deps: AppDeps) {
     email: string
     name: string | null
   }): Promise<string> => {
-    const id = newId("ws")
+    // Deterministic id so concurrent first-login requests provisioning in parallel
+    // all upsert the SAME row instead of each minting a fresh workspace. setWorkspace
+    // (conflict on workspace.id) and setMembership (conflict on org_id+user_id) then
+    // collapse the burst to one workspace + one membership — no lock needed. A random
+    // newId("ws") here is what produced the duplicate "…'s Workspace" rows.
+    const id = `ws_${me.id}`
     const base = (me.name ?? me.email).split("@")[0] || "My"
     await meta.setWorkspace(id, `${base}'s Workspace`)
     await meta.setMembership({ id: newId("m"), org_id: id, user_id: me.id, role: "owner" })
@@ -529,6 +534,9 @@ export function buildContext(deps: AppDeps) {
       else {
         const mine = await meta.listWorkspaces(me.id)
         ws = mine[0]?.id ?? (await provisionPersonal(me))
+        // Persist the resolved workspace so the next request short-circuits on the
+        // cookie instead of re-racing listWorkspaces during the first-login burst.
+        setWsCookie(c, ws)
       }
     }
     wsCache.set(c, ws)
