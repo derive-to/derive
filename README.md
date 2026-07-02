@@ -8,12 +8,15 @@ API; view it rendered and sandboxed. Self-host it, or use the hosted tier.
 
 ## Quickstart (dev)
 
-The dev stack is two servers — the API and the web UI. Run each in its own terminal:
+The dev stack is two servers — the API and the web UI:
 
 ```bash
 pnpm install
-pnpm dev                                  # 1. API      → http://localhost:8090
-pnpm dev:web                              # 2. web UI    → http://localhost:3090  ← open this
+pnpm dev:all                              # both servers → open http://localhost:3090
+
+# or run them in separate terminals:
+#   pnpm dev       # API    → http://localhost:8090
+#   pnpm dev:web   # web UI → http://localhost:3090  ← open this
 
 # scaffold a project (templates: md · html · slides)
 node packages/cli/bin/derive.js init my-doc --template slides

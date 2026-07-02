@@ -7,19 +7,23 @@ must pass, and how we structure commits and PRs.
 
 Requires Node 24+ and pnpm 10+.
 
-The dev stack is two servers, each in its own terminal:
+The dev stack is two servers — run both with one command:
 
 ```bash
 pnpm install
-pnpm dev          # API    → http://localhost:8090  (SQLite + local disk, zero config)
-pnpm dev:web      # web UI → http://localhost:3090  ← open this in the browser
+pnpm dev:all      # API on :8090 + web UI on :3090 → open http://localhost:3090
+
+# or run them separately:
+#   pnpm dev       # API    → http://localhost:8090  (SQLite + local disk, zero config)
+#   pnpm dev:web   # web UI → http://localhost:3090
 ```
 
 The API alone serves only a placeholder page; the web UI proxies its API calls,
 so open the web port. (Container/deploy builds serve both from one origin on 8080.)
 
 By default the API uses embedded SQLite and the local filesystem — no external
-services. Postgres + S3/R2 are opt-in via env (see [DEPLOY.md](DEPLOY.md)).
+services. Postgres + S3/R2 are opt-in via env: copy `.env.example` to `.env`
+(git-ignored, auto-loaded in dev) and fill in what you need. See [DEPLOY.md](DEPLOY.md).
 
 ## The gate
 
