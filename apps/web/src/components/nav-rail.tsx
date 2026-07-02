@@ -17,10 +17,12 @@ import { UserPod } from "./user-pod"
 
 // Shared nav-row look (also used by NotificationBell + the Settings link so the
 // whole rail reads as one list).
+// Rows rest muted; hover brightens the text (not just the background) over a faint
+// neutral fill. Selected is a stronger fill (foreground/10 > hover's /5) at full
+// text strength — so the current item reads more prominent than a hovered one.
 export const ROW_BASE =
-  "flex w-full items-center gap-2.5 whitespace-nowrap rounded-[9px] px-2.5 py-2 text-left text-sm font-medium text-foreground transition-colors hover:bg-hover"
-// Active reads as a quiet subtle fill, not a heavy full-ink block.
-export const ROW_ACTIVE = "bg-secondary text-foreground hover:bg-secondary"
+  "flex w-full items-center gap-2.5 whitespace-nowrap rounded-md px-2.5 py-2 text-left text-sm font-medium text-muted-foreground transition-colors hover:bg-foreground/5 hover:text-foreground"
+export const ROW_ACTIVE = "bg-foreground/10 text-foreground hover:bg-foreground/10"
 export const ROW_RAIL = "justify-center px-0 py-2.5"
 
 // How many of a repo's PR previews to list inline in the sidebar before collapsing
@@ -305,7 +307,7 @@ export function NavRail() {
                 onClick={() => setCreating((v) => !v)}
                 title="New collection"
                 aria-label="New collection"
-                className="cursor-pointer text-primary"
+                className=" text-primary"
               >
                 <Icon name="plus" size={14} />
               </button>

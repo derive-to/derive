@@ -17,7 +17,7 @@ export function ProfileWorkCard({ artifact: a }: { artifact: Artifact }) {
       to="/a/$ref"
       params={{ ref: refFor(a) }}
       data-testid={`profile-work-${a.short_id}`}
-      className="group flex cursor-pointer flex-col overflow-hidden rounded-lg border border-border bg-card shadow-[var(--shadow-sm)] outline-none transition-shadow duration-150 hover:shadow-[var(--shadow)] focus-visible:border-primary"
+      className="group flex flex-col overflow-hidden rounded-lg border border-border bg-card shadow-[var(--shadow-sm)] outline-none transition-shadow duration-150 hover:shadow-[var(--shadow)] focus-visible:border-primary"
     >
       <Thumb id={a.short_id} v={a.current_version} />
       <div className="flex min-w-0 flex-col gap-2 border-t border-border-soft p-3.5">

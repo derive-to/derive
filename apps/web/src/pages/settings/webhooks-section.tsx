@@ -130,7 +130,7 @@ function NewWebhook({ onCreated }: { onCreated: (msg: string) => void }) {
         {ALL_EVENTS.map((e) => (
           <label
             key={e}
-            className="flex cursor-pointer items-center gap-1.5 font-mono text-xs text-muted-foreground"
+            className="flex items-center gap-1.5 font-mono text-xs text-muted-foreground"
           >
             <input
               type="checkbox"

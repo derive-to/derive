@@ -49,7 +49,7 @@ function ArtifactCardDemo({
   starred?: boolean
 }) {
   return (
-    <div className="group relative flex cursor-pointer flex-col gap-2 rounded-lg border border-border bg-card p-3.5 transition-all motion-safe:hover:-translate-y-0.5 hover:border-primary hover:shadow-[var(--shadow)]">
+    <div className="group relative flex flex-col gap-2 rounded-lg border border-border bg-card p-3.5 transition-all motion-safe:hover:-translate-y-0.5 hover:border-primary hover:shadow-[var(--shadow)]">
       <div className="absolute right-2.5 top-2.5 grid size-7 place-items-center rounded-md border border-border bg-card">
         <Icon
           name="star"
@@ -102,10 +102,10 @@ function NavDemo() {
           <div
             key={r.label}
             className={cn(
-              "flex items-center gap-2.5 rounded-md px-2.5 py-1.5 text-sm transition-colors",
+              "flex items-center gap-2.5 rounded-md px-2.5 py-1.5 text-sm font-medium transition-colors",
               active
-                ? "bg-secondary font-medium text-foreground"
-                : "font-medium text-muted-foreground hover:bg-hover hover:text-foreground",
+                ? "bg-foreground/10 text-foreground"
+                : "text-muted-foreground hover:bg-foreground/5 hover:text-foreground",
             )}
           >
             <Icon

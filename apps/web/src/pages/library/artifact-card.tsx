@@ -64,7 +64,7 @@ export function ArtifactCard({
         // No hover transform: the preview is an iframe, and translating its
         // container makes the browser repaint it (a visible flash). The shadow
         // deepening carries the hover instead.
-        "group relative flex cursor-pointer flex-col overflow-hidden rounded-lg border border-border bg-card shadow-[var(--shadow-sm)] transition-shadow duration-150 hover:shadow-[var(--shadow)]",
+        "group relative flex flex-col overflow-hidden rounded-lg border border-border bg-card shadow-[var(--shadow-sm)] transition-shadow duration-150 hover:shadow-[var(--shadow)]",
         // Needs-your-feedback items stand out in the grid: a tagged item gets the full
         // accent + ring; one you're just in the thread on gets a softer accent border.
         a.mentions_me

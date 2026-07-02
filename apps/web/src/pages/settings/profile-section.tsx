@@ -109,7 +109,7 @@ export function ProfileSection() {
       {/* Discoverability */}
       <Card className="p-4">
         <SectionHeader>Discoverability</SectionHeader>
-        <label className="mt-2.5 flex cursor-pointer items-start gap-2.5 text-sm text-foreground">
+        <label className="mt-2.5 flex items-start gap-2.5 text-sm text-foreground">
           <input
             type="checkbox"
             data-testid="account-discoverable"
