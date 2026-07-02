@@ -1,5 +1,6 @@
 import { Link } from "@tanstack/react-router"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
+import { colorForName } from "@/lib/avatar-tints"
 import { getInitials } from "@/lib/initials"
 import { cn } from "@/lib/utils"
 
@@ -47,8 +48,19 @@ export function AuthorChip({
   const inner = (
     <>
       <Avatar className={cn(avatarSize, "shrink-0")}>
-        {avatar && <AvatarImage src={avatar} alt={label} />}
-        <AvatarFallback>{getInitials(label)}</AvatarFallback>
+        {/* The visible name sits right beside the image — alt stays empty. */}
+        {avatar && <AvatarImage src={avatar} alt="" />}
+        {/* The primitive's fallback type is scaled for size-8 avatars; at this
+            tiny scale the initials drop to the micro register (one glyph at
+            size-4) or they'd overflow the circle. Image-less authors get the
+            stable identity tint (house idiom — cf. people.tsx / profile.tsx)
+            so a person stays recognisable across surfaces. */}
+        <AvatarFallback
+          className="text-2xs font-medium text-scrim-foreground outline-1 -outline-offset-1 outline-foreground/10"
+          style={{ backgroundColor: colorForName(label) }}
+        >
+          {size === "xs" ? getInitials(label).charAt(0) : getInitials(label)}
+        </AvatarFallback>
       </Avatar>
       <span className="truncate">{label}</span>
     </>
