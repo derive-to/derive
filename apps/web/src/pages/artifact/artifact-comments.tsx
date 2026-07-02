@@ -18,10 +18,10 @@ type Selection = {
 } | null
 
 /**
- * All the comment surfaces for an artifact, in one place: the desktop margin aside
- * (rail or open panel), the phone slide-up sheet, and the floating "comment on the
- * selection" affordance. Hidden entirely for an anonymous visitor (read-only). The
- * page owns the state + mutations and threads them in.
+ * All the comment surfaces for an artifact, in one place: the desktop margin aside,
+ * the phone slide-up sheet, and the floating "comment on the selection" affordance.
+ * Hidden entirely for an anonymous visitor (read-only). The page owns the state +
+ * mutations and threads them in.
  */
 export function ArtifactComments(p: {
   shortId: string

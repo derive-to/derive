@@ -14,9 +14,9 @@ import { CollectionsMenu, ReportDialog, StarButton, TagsMenu } from "./header-ac
 
 /**
  * The artifact header actions (portaled into the shell top bar): favorite, tags,
- * collections, share, report, the "⋯ More" menu (insights / history / review /
- * edit), and the show-comments button. Shown only to signed-in viewers — an anon
- * visitor gets none of it. Pure + props-driven; the page keeps the cache writes.
+ * collections, share, the comments toggle, and the "⋯ More" menu (insights /
+ * history / review / edit / lock / report). Shown only to signed-in viewers — an
+ * anon visitor gets none of it. Props-driven; the page keeps the cache writes.
  */
 export function ArtifactTopBar(props: {
   shortId: string

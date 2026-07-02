@@ -96,7 +96,7 @@ export function Artifact() {
   const [composer, setComposer] = useState<{ anchor: Sel | null; top: number | null } | null>(null)
   const [activeThread, setActiveThread] = useState<string | null>(null)
   const [hoverThread, setHoverThread] = useState<string | null>(null)
-  // The open/rail/hidden comments panel, with its persistence + `c`/Esc hotkeys.
+  // The open/hidden comments panel, with its persistence + `c`/Esc hotkeys.
   const { panel, setPanel } = useCommentsPanel(() => setComposer(null))
   // Which comment surface is showing: the public team thread, or your personal notes
   // (private to you + the agents you've authed). Two filtered views of one list. The
@@ -400,7 +400,7 @@ export function Artifact() {
     setRestoring,
   })
 
-  // Activating a thread from the panel/rail: on a deck, first flip to the slide it
+  // Activating a thread from the panel: on a deck, first flip to the slide it
   // lives on so its highlight is visible, then open it.
   const activateThread = (id: string) => {
     goToCommentSlide(id)
