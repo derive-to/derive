@@ -409,7 +409,7 @@ export function Artifact() {
 
   // On phones the comments live in a slide-up sheet, so the in-flow aside has
   // no width and the document gets the full screen.
-  const asideWidth = isMobile ? 0 : panel === "open" ? 340 : panel === "rail" ? 50 : 0
+  const asideWidth = isMobile ? 0 : panel === "open" ? 340 : 0
 
   return (
     <>
