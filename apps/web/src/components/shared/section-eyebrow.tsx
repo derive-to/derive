@@ -23,7 +23,7 @@ export function SectionEyebrow({
 }) {
   return (
     <div className={cn("flex items-center gap-3", className)}>
-      <Tag className="flex shrink-0 items-center gap-1.5 font-mono text-2xs font-medium uppercase tracking-wider text-muted-foreground">
+      <Tag className="flex shrink-0 items-center gap-1.5 font-mono text-2xs uppercase tracking-wide text-muted-foreground">
         {icon}
         <span>{children}</span>
         {count !== undefined && (

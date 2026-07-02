@@ -219,11 +219,13 @@ export function AppShell({ children }: { children: ReactNode }) {
               straight to the page. Visually hidden until focused. */}
           <a
             href="#main-content"
-            className="sr-only rounded-md bg-primary px-4 py-2 text-primary-foreground focus:not-sr-only focus:absolute focus:left-3 focus:top-3 focus:z-100"
+            className="sr-only rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring focus:not-sr-only focus:absolute focus:left-3 focus:top-3 focus:z-100"
           >
             Skip to content
           </a>
-          <header className="flex items-center gap-2.5 border-b border-border bg-card px-5.5 py-3 max-sm:flex-wrap max-sm:px-3.5 max-sm:py-2.5">
+          {/* Flush shell: the top bar sits on the canvas itself — one surface,
+              hairline-separated — never an inset panel. */}
+          <header className="flex items-center gap-2.5 border-b border-border bg-background px-5.5 py-3 max-sm:flex-wrap max-sm:px-3.5 max-sm:py-2.5">
             <Button
               variant="outline"
               size="icon"
@@ -234,9 +236,14 @@ export function AppShell({ children }: { children: ReactNode }) {
             >
               <Icon name="sidebar" size={18} />
             </Button>
-            <Link to="/" className="mr-auto flex items-center gap-2.5 text-foreground">
+            {/* The wordmark is the voice register: the mark stays currentColor;
+                only the word itself is serif. */}
+            <Link
+              to="/"
+              className="mr-auto flex items-center gap-2.5 rounded-md text-foreground outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+            >
               <Logo />
-              <span className="text-lg font-semibold">Derive</span>
+              <span className="font-serif text-lg font-medium tracking-tight">Derive</span>
             </Link>
             <div
               ref={setTopBarSlot}
@@ -253,8 +260,9 @@ export function AppShell({ children }: { children: ReactNode }) {
                 tabIndex={drawerOpen ? 0 : -1}
                 onClick={() => setDrawerOpen(false)}
                 className={cn(
-                  // Below the drawer (z-45) and the overlay layer (z-50); above page content.
-                  "fixed inset-0 z-44 bg-black/35 transition-opacity",
+                  // Below the drawer (z-45) and the overlay layer (z-50); above page
+                  // content. Scrim token, matching the dialog overlay recipe.
+                  "fixed inset-0 z-44 bg-scrim/50 transition-opacity",
                   drawerOpen ? "opacity-100" : "pointer-events-none opacity-0",
                 )}
               />

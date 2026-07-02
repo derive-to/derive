@@ -21,7 +21,9 @@ export function Thumb({
   version?: number
 }) {
   return (
-    <div className="relative aspect-[16/10] overflow-hidden bg-linear-to-br from-accent to-secondary">
+    // Renders never get borders — the frame is an inset hairline outline (paints
+    // above the iframe, per the images/thumbnails doctrine).
+    <div className="relative aspect-[16/10] overflow-hidden bg-linear-to-br from-accent to-secondary outline-1 -outline-offset-1 outline-foreground/10">
       <iframe
         title="Preview"
         aria-hidden
@@ -36,17 +38,18 @@ export function Thumb({
         className="pointer-events-none absolute left-0 top-0 h-[250%] w-[250%] origin-top-left scale-[0.4] border-0 bg-white brightness-[0.94] saturate-[0.96] transition-[filter] duration-200 group-hover:brightness-100 group-hover:saturate-100"
       />
       {(typeLabel || version !== undefined) && (
-        // Placards ride on the render, so they use the fixed scrim (dark + light ink,
-        // both themes) — legible over any screenshot, light or dark — with a faint ring
-        // so they still read on a dark render. Non-interactive.
+        // Placards ride on the render, so they use the fixed scrim at 85% (dark + light
+        // ink, both themes) — placard legibility over arbitrary screenshots is
+        // non-negotiable — with a faint ring so they still read on a dark render.
+        // Non-interactive.
         <div className="pointer-events-none absolute inset-x-2 bottom-2 z-10 flex items-center justify-between gap-2">
           {typeLabel && (
-            <span className="rounded-md bg-scrim/70 px-1.5 py-0.5 font-mono text-2xs text-scrim-foreground ring-1 ring-scrim-foreground/15">
+            <span className="rounded-md bg-scrim/85 px-1.5 py-0.5 font-mono text-2xs uppercase tracking-wide text-scrim-foreground ring-1 ring-scrim-foreground/15">
               {typeLabel}
             </span>
           )}
           {version !== undefined && (
-            <span className="ml-auto rounded-md bg-scrim/70 px-1.5 py-0.5 font-mono text-2xs text-scrim-foreground/75 ring-1 ring-scrim-foreground/15">
+            <span className="ml-auto rounded-md bg-scrim/85 px-1.5 py-0.5 font-mono text-2xs tabular-nums tracking-wide text-scrim-foreground ring-1 ring-scrim-foreground/15">
               v{version}
             </span>
           )}

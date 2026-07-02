@@ -9,10 +9,11 @@ import { cn } from "@/lib/utils"
 import { Icon } from "./icons"
 import { ThemeSwitch } from "./theme-switch"
 
+// Menu items follow the neutral bg-accent focus/hover grammar (amber is
+// reserved); the section label is the mono eyebrow.
 const ROW =
-  "flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-sm font-medium text-foreground transition-colors hover:bg-hover"
-const SECTION =
-  "px-2 pb-1 pt-1 font-mono text-2xs uppercase tracking-[0.06em] text-muted-foreground"
+  "flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left text-sm text-foreground outline-none hover:bg-accent focus-visible:bg-accent"
+const SECTION = "px-2 pb-1 pt-1 font-mono text-2xs uppercase tracking-wide text-muted-foreground"
 
 // The account + workspace pod at the foot of the nav rail (bottom-left). Opens
 // UPWARD. Holds the workspace switcher (switch between the ones you're in), the
@@ -63,18 +64,19 @@ export function UserPod({
           data-testid="user-menu-trigger"
           title={me.name ?? me.email}
           className={cn(
-            "flex w-full items-center gap-2.5 rounded-md px-2 py-2 text-left transition-colors hover:bg-hover",
+            "flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left outline-none hover:bg-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring",
             rail && "justify-center px-0",
           )}
         >
+          {/* Soft brand tint — never a solid amber block. */}
           <Avatar className="size-7 shrink-0">
-            <AvatarFallback className="bg-primary text-xs text-primary-foreground">
+            <AvatarFallback className="bg-primary/15 text-xs font-medium text-primary">
               {initials}
             </AvatarFallback>
           </Avatar>
           {!rail && (
             <span className="min-w-0 flex-1">
-              <span className="block truncate text-sm font-semibold text-foreground">
+              <span className="block truncate text-sm font-medium text-foreground">
                 {me.name ?? me.email}
               </span>
               <span className="block truncate text-2xs text-muted-foreground">
@@ -86,15 +88,15 @@ export function UserPod({
         </button>
       </PopoverTrigger>
 
-      <PopoverContent side="top" align="start" className="w-64 gap-0 p-1.5">
+      <PopoverContent side="top" align="start" className="w-64 gap-0 p-1">
         <div className="flex items-center gap-2.5 px-2 py-1.5">
           <Avatar className="size-7 shrink-0">
-            <AvatarFallback className="bg-primary text-xs text-primary-foreground">
+            <AvatarFallback className="bg-primary/15 text-xs font-medium text-primary">
               {initials}
             </AvatarFallback>
           </Avatar>
           <span className="min-w-0">
-            <span className="block truncate text-sm font-semibold">{me.name ?? me.email}</span>
+            <span className="block truncate text-sm font-medium">{me.name ?? me.email}</span>
             {/* Lead with the public handle, not the (private) email. */}
             <span
               className="block truncate text-2xs text-muted-foreground"
@@ -119,6 +121,8 @@ export function UserPod({
         {multi ? (
           <>
             <div className={SECTION}>Workspace</div>
+            {/* The selected workspace stays neutral (the check carries it) — an
+                amber row inside the menu would read as a CTA. */}
             {workspaces?.workspaces.map((w) => (
               <button
                 key={w.id}
@@ -128,7 +132,7 @@ export function UserPod({
                   onSwitchWorkspace(w.id)
                   setOpen(false)
                 }}
-                className={cn(ROW, w.id === workspaces.active && "text-primary")}
+                className={ROW}
               >
                 {w.id === workspaces.active ? (
                   <Icon name="check" size={16} />

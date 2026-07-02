@@ -1,4 +1,5 @@
 import { useNavigate } from "@tanstack/react-router"
+import { AtSign } from "lucide-react"
 import { useCallback, useEffect, useState } from "react"
 import { api, type Notification } from "@/api"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
@@ -85,15 +86,18 @@ export function NotificationBell({ collapsed }: { collapsed?: boolean }) {
         >
           <span className="relative flex w-[18px] shrink-0 items-center justify-center">
             <Icon name="bell" size={18} />
+            {/* The unread signal is the amber dot (Nemonic grammar) — amber means
+                "this matters", so it never inflates into a solid count block. */}
             {collapsed && unread > 0 && (
-              <span className="absolute -right-2 -top-2 grid h-4 min-w-4 place-items-center rounded-full bg-primary px-1 font-mono text-2xs font-bold text-primary-foreground ring-2 ring-card">
-                {unread > 9 ? "9+" : unread}
-              </span>
+              <span
+                className="absolute -top-0.5 -right-0.5 size-1.5 rounded-full bg-primary"
+                aria-hidden
+              />
             )}
           </span>
           {!collapsed && <span className="overflow-hidden text-ellipsis">Notifications</span>}
           {!collapsed && unread > 0 && (
-            <span className="ml-auto font-mono text-2xs text-muted-foreground">
+            <span className="ml-auto rounded-full bg-primary/15 px-1.5 font-mono text-2xs tabular-nums text-primary">
               {unread > 9 ? "9+" : unread}
             </span>
           )}
@@ -107,7 +111,7 @@ export function NotificationBell({ collapsed }: { collapsed?: boolean }) {
               type="button"
               onClick={markAll}
               data-testid="notif-mark-all"
-              className="text-xs text-primary underline-offset-2 hover:underline"
+              className="rounded-sm text-xs text-primary underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
             >
               Mark all read
             </button>
@@ -115,7 +119,7 @@ export function NotificationBell({ collapsed }: { collapsed?: boolean }) {
         </div>
         <div className="max-h-[380px] overflow-auto">
           {items.length === 0 ? (
-            <div className="px-3 py-6 text-center text-xs text-muted-foreground">Nothing yet</div>
+            <div className="px-3 py-8 text-center text-sm text-muted-foreground">Nothing yet</div>
           ) : (
             items.map((n) => (
               <button
@@ -123,18 +127,32 @@ export function NotificationBell({ collapsed }: { collapsed?: boolean }) {
                 type="button"
                 data-testid={`notif-item-${n.id}`}
                 onClick={() => openItem(n)}
-                className={cn(
-                  "relative flex w-full gap-2.5 border-b border-border-soft px-3 py-2.5 text-left transition-colors last:border-b-0 hover:bg-hover",
-                  !n.read &&
-                    "bg-muted before:absolute before:top-1.5 before:bottom-1.5 before:left-0 before:w-[3px] before:rounded-full before:bg-primary before:content-['']",
-                )}
+                className="flex w-full items-start gap-2.5 border-b border-border-soft px-3 py-2.5 text-left last:border-b-0 hover:bg-hover focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
               >
-                <span
-                  className={cn(
-                    "mt-1.5 size-[7px] shrink-0 rounded-full",
-                    n.read ? "bg-border" : "bg-primary",
-                  )}
-                />
+                {/* Kind glyph: mentions/replies are about you, so they take the brand
+                    ink; follows/publishes/shares stay neutral — amber is reserved. */}
+                {n.kind === "mention" ? (
+                  <AtSign className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden />
+                ) : (
+                  <Icon
+                    name={
+                      n.kind === "follow"
+                        ? "user"
+                        : n.kind === "publish"
+                          ? "history"
+                          : n.kind === "share"
+                            ? "share"
+                            : "comments"
+                    }
+                    size={16}
+                    className={cn(
+                      "mt-0.5",
+                      n.kind === "follow" || n.kind === "publish" || n.kind === "share"
+                        ? "text-muted-foreground"
+                        : "text-primary",
+                    )}
+                  />
+                )}
                 <span className="min-w-0 flex-1">
                   <span className="block text-sm text-foreground">
                     <strong>{n.actor}</strong>{" "}
@@ -174,6 +192,10 @@ export function NotificationBell({ collapsed }: { collapsed?: boolean }) {
                     {ago(n.created_at)}
                   </span>
                 </span>
+                {/* Unread carries the amber dot; read rows carry nothing. */}
+                {!n.read && (
+                  <span className="mt-1.5 size-1.5 shrink-0 rounded-full bg-primary" aria-hidden />
+                )}
               </button>
             ))
           )}

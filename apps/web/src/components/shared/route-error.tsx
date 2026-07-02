@@ -5,22 +5,24 @@ import { Button } from "@/components/ui/button"
 // Shown by the router when a route's loader or render throws. Without it a
 // thrown error blanks the content area (or dumps a stack in dev). The chrome
 // (rail + top bar) stays mounted above this, so the user can always navigate
-// away. "Try again" resets the boundary and re-runs the loader. The raw message
-// is dev-only — a thrown error can carry internals we don't want in prod UI.
+// away. Errors are tool chrome, not voice: Inter headline, muted copy, quiet
+// actions — no filled primary on a failure surface. "Try again" resets the
+// boundary and re-runs the loader. The raw message is dev-only — a thrown
+// error can carry internals we don't want in prod UI.
 export function RouteError({ error, reset }: ErrorComponentProps) {
   const router = useRouter()
   const detail = import.meta.env.DEV ? error.message : "Something went wrong loading this page."
   return (
     <div className="flex flex-1 flex-col items-center justify-center gap-4 p-10 text-center">
-      <Icon name="removed" size={32} className="text-destructive" />
-      <div className="space-y-1">
-        <p className="font-semibold text-base text-foreground">Couldn't load this page</p>
-        <p className="max-w-md text-muted-foreground text-sm">{detail}</p>
+      <Icon name="removed" size={24} strokeWidth={1.75} className="text-destructive" />
+      <div className="flex flex-col items-center gap-1.5">
+        <p className="text-lg font-medium text-balance text-foreground">Couldn't load this page</p>
+        <p className="max-w-md text-sm text-pretty text-muted-foreground">{detail}</p>
       </div>
       <div className="flex gap-2">
         <Button
           data-testid="route-error-retry"
-          variant="default"
+          variant="secondary"
           onClick={() => {
             reset()
             router.invalidate()
@@ -28,7 +30,7 @@ export function RouteError({ error, reset }: ErrorComponentProps) {
         >
           Try again
         </Button>
-        <Button asChild variant="outline" data-testid="route-error-home">
+        <Button asChild variant="ghost" data-testid="route-error-home">
           <Link to="/">Go home</Link>
         </Button>
       </div>
@@ -42,14 +44,14 @@ export function RouteError({ error, reset }: ErrorComponentProps) {
 export function RouteNotFound() {
   return (
     <div className="flex flex-1 flex-col items-center justify-center gap-4 p-10 text-center">
-      <Icon name="search" size={32} className="text-muted-foreground" />
-      <div className="space-y-1">
-        <p className="font-semibold text-base text-foreground">Page not found</p>
-        <p className="max-w-md text-muted-foreground text-sm">
+      <Icon name="search" size={24} strokeWidth={1.75} className="text-muted-foreground" />
+      <div className="flex flex-col items-center gap-1.5">
+        <p className="text-lg font-medium text-balance text-foreground">Page not found</p>
+        <p className="max-w-md text-sm text-pretty text-muted-foreground">
           That link doesn't point anywhere in this workspace.
         </p>
       </div>
-      <Button asChild variant="default" data-testid="route-notfound-home">
+      <Button asChild variant="secondary" data-testid="route-notfound-home">
         <Link to="/">Go home</Link>
       </Button>
     </div>

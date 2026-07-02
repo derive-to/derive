@@ -62,15 +62,18 @@ function SideItem({
       </span>
       {!collapsed && <span className="overflow-hidden text-ellipsis">{label}</span>}
       {!collapsed && count !== undefined && (
-        <span className="ml-auto font-mono text-2xs text-muted-foreground">{count}</span>
+        <span className="ml-auto font-mono text-2xs tabular-nums text-muted-foreground">
+          {count}
+        </span>
       )}
     </Link>
   )
 }
 
+// The mono eyebrow grammar — the one place uppercase is allowed.
 function SideLabel({ children, action }: { children: ReactNode; action?: ReactNode }) {
   return (
-    <div className="flex items-center px-2 pb-1.5 pt-3 font-mono text-2xs uppercase tracking-[0.07em] text-muted-foreground">
+    <div className="flex items-center px-2 pb-1.5 pt-3 font-mono text-2xs uppercase tracking-wide text-muted-foreground">
       <span className="flex-1">{children}</span>
       {action}
     </div>
@@ -152,8 +155,9 @@ export function NavRail() {
     }
   }
 
+  // Flush shell: the rail sits on the canvas itself, separated by the hairline.
   const asideClass = cn(
-    "flex flex-col gap-px overflow-y-auto border-r border-border bg-card py-3.5 transition-[transform,flex-basis,width] duration-200",
+    "flex flex-col gap-px overflow-y-auto border-r border-border bg-background py-3.5 transition-[transform,flex-basis,width] duration-200",
     isMobile
       ? cn(
           // Sits BELOW the Radix overlay layer (z-50) so menus opened from inside the
@@ -186,12 +190,16 @@ export function NavRail() {
           </Link>
         ) : (
           <div className="flex flex-1 flex-col">
-            <div className="rounded-lg border border-border bg-background/60 p-3.5">
+            {/* The one card in the rail — a conversion moment that must lift off
+                the flush canvas; its headline is a voice moment (serif). */}
+            <div className="rounded-xl border border-border bg-card p-3.5">
               <div className="flex items-center gap-2">
                 <Logo size={22} />
-                <span className="text-sm font-semibold text-foreground">Create your own</span>
+                <span className="font-serif text-base font-medium tracking-tight text-foreground">
+                  Create your own
+                </span>
               </div>
-              <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
+              <p className="mt-2 text-pretty text-sm text-muted-foreground">
                 Give your AI artifacts a permanent home: versions, comments, and one link to share.
               </p>
               <Button
@@ -212,7 +220,7 @@ export function NavRail() {
                 to="/login"
                 onClick={closeDrawer}
                 data-testid="anon-login"
-                className="font-semibold text-primary hover:underline"
+                className="font-medium text-primary hover:underline"
               >
                 Log in
               </Link>
@@ -240,7 +248,7 @@ export function NavRail() {
           className={cn(
             railMode
               ? cn(ROW_BASE, ROW_RAIL)
-              : "mb-1 flex h-8 w-full items-center gap-2 rounded-md border border-border bg-secondary px-2.5 text-left text-sm text-muted-foreground outline-none transition-colors hover:bg-hover hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50",
+              : "mb-1 flex h-8 w-full items-center gap-2 rounded-lg border border-input bg-secondary px-2.5 text-left text-sm text-muted-foreground outline-none hover:border-foreground/25 hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring",
           )}
         >
           <Icon name="search" size={railMode ? 18 : 16} className="shrink-0" />
@@ -305,7 +313,7 @@ export function NavRail() {
                 onClick={() => setCreating((v) => !v)}
                 title="New collection"
                 aria-label="New collection"
-                className=" text-primary"
+                className="rounded-sm text-primary outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
               >
                 <Icon name="plus" size={14} />
               </button>
@@ -372,7 +380,7 @@ export function NavRail() {
                       <Icon name="collection" size={18} />
                     </span>
                     <span className="overflow-hidden text-ellipsis">{col.title}</span>
-                    <span className="ml-auto font-mono text-2xs text-muted-foreground">
+                    <span className="ml-auto font-mono text-2xs tabular-nums text-muted-foreground">
                       {col.count}
                     </span>
                   </Link>
@@ -386,7 +394,7 @@ export function NavRail() {
                         : "Hide pull requests"
                     }
                     data-testid={`sidebar-collection-${col.id}-toggle`}
-                    className="absolute right-1 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-sm text-muted-foreground hover:bg-hover hover:text-foreground"
+                    className="absolute right-1 top-1/2 flex size-6 -translate-y-1/2 items-center justify-center rounded-sm text-muted-foreground outline-none hover:bg-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
                   >
                     <Icon
                       name="caret"
