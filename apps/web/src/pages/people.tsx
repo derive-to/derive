@@ -5,6 +5,7 @@ import { api, type PublicProfile } from "@/api"
 import { FollowButton } from "@/components/follow-button"
 import { Icon } from "@/components/icons"
 import { EmptyState } from "@/components/shared/empty-state"
+import { PageShell } from "@/components/shared/page-shell"
 import { Spinner } from "@/components/shared/spinner"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Input } from "@/components/ui/input"
@@ -30,59 +31,52 @@ export function People() {
   const people = data ?? []
 
   return (
-    // The shell's <main> is overflow-hidden — this wrapper is the page's scroll
-    // container, so the directory can actually scroll (scrollbar at the pane
-    // edge, not the max-w column's).
-    <div className="min-h-0 flex-1 overflow-y-auto">
-      <div className="mx-auto w-full max-w-3xl p-6 sm:p-8">
-        <h1 className="text-2xl font-semibold tracking-tight text-foreground">People</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Find people on Derive and follow their work.
-        </p>
-        <Input
-          type="search"
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          placeholder="Search people by name or @handle…"
-          aria-label="Search people"
-          data-testid="people-search"
-          className="mt-4"
-        />
+    <PageShell>
+      <h1 className="text-2xl font-semibold tracking-tight text-foreground">People</h1>
+      <p className="mt-1 text-sm text-muted-foreground">
+        Find people on Derive and follow their work.
+      </p>
+      <Input
+        type="search"
+        value={q}
+        onChange={(e) => setQ(e.target.value)}
+        placeholder="Search people by name or @handle…"
+        aria-label="Search people"
+        data-testid="people-search"
+        className="mt-4"
+      />
 
-        <div className="mt-5">
-          {isPending ? (
-            <div className="py-10">
-              <Spinner />
-            </div>
-          ) : isError ? (
-            <EmptyState>Couldn't load people right now.</EmptyState>
-          ) : people.length === 0 ? (
-            <div data-testid="people-empty">
-              <EmptyState
-                icon={<Icon name="following" strokeWidth={1.75} />}
-                title={
-                  debounced ? `No people match “${debounced}”.` : "No discoverable people yet."
-                }
-                description={
-                  debounced
-                    ? "Try a different name or @handle."
-                    : "People who turn on discoverability show up here."
-                }
-              />
-            </div>
-          ) : (
-            <ul
-              className="grid grid-cols-[repeat(auto-fill,minmax(240px,1fr))] gap-3"
-              data-testid="people-grid"
-            >
-              {people.map((p) => (
-                <PersonCard key={p.username} person={p} />
-              ))}
-            </ul>
-          )}
-        </div>
+      <div className="mt-5">
+        {isPending ? (
+          <div className="py-10">
+            <Spinner />
+          </div>
+        ) : isError ? (
+          <EmptyState>Couldn't load people right now.</EmptyState>
+        ) : people.length === 0 ? (
+          <div data-testid="people-empty">
+            <EmptyState
+              icon={<Icon name="following" strokeWidth={1.75} />}
+              title={debounced ? `No people match “${debounced}”.` : "No discoverable people yet."}
+              description={
+                debounced
+                  ? "Try a different name or @handle."
+                  : "People who turn on discoverability show up here."
+              }
+            />
+          </div>
+        ) : (
+          <ul
+            className="grid grid-cols-[repeat(auto-fill,minmax(240px,1fr))] gap-3"
+            data-testid="people-grid"
+          >
+            {people.map((p) => (
+              <PersonCard key={p.username} person={p} />
+            ))}
+          </ul>
+        )}
       </div>
-    </div>
+    </PageShell>
   )
 }
 

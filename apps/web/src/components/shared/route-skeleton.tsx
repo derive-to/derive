@@ -9,7 +9,12 @@ import { Skeleton } from "@/components/ui/skeleton"
 // (ui/skeleton), no card chrome; reduced motion is handled there too.
 export function RouteSkeleton() {
   return (
-    <div className="flex flex-1 flex-col gap-3 p-5.5" aria-hidden>
+    // Mirrors PageShell's measure geometry (wide column, 20px → 32px gutters)
+    // so the shimmer's heading sits where the incoming page's header lands.
+    <div
+      className="mx-auto flex min-h-0 w-full max-w-5xl flex-1 flex-col gap-3 p-5 sm:p-8"
+      aria-hidden
+    >
       <Skeleton className="h-7 w-44" />
       <Skeleton className="flex-1 rounded-lg" />
     </div>

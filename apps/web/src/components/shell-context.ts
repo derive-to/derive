@@ -8,15 +8,12 @@ export type Summary = {
   workspace: string
 }
 
-// Shared chrome state: the nav rail's collapse + mobile drawer, the nav data
-// (summary counts, collections, workspaces) fetched once by <AppShell>, and the
-// workspace actions. Lives in its own module so AppShell and NavRail can both
-// reach it without a circular import.
+// Shared chrome state: the command palette, the nav data (summary counts,
+// collections, workspaces) fetched once by <AppShell>, and the workspace
+// actions. Lives in its own module so AppShell and NavRail can both reach it
+// without a circular import. (Sidebar collapse/drawer state lives in the shadcn
+// SidebarProvider — reach it with useSidebar from ui/sidebar.)
 export interface ShellValue {
-  collapsed: boolean
-  toggleCollapsed: () => void
-  drawerOpen: boolean
-  setDrawerOpen: (o: boolean) => void
   paletteOpen: boolean
   setPaletteOpen: (open: boolean) => void
   summary: Summary | null

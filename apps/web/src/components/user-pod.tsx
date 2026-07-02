@@ -4,6 +4,7 @@ import { useState } from "react"
 import { api, type Workspaces } from "@/api"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { SidebarMenuButton } from "@/components/ui/sidebar"
 import { useAuth } from "@/ctx"
 import { getInitials } from "@/lib/initials"
 import { cn } from "@/lib/utils"
@@ -16,22 +17,21 @@ const ROW =
   "flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left text-sm text-foreground outline-none hover:bg-accent focus-visible:bg-accent"
 const SECTION = "px-2 pb-1 pt-1 font-mono text-2xs uppercase tracking-wide text-muted-foreground"
 
-// The account + workspace pod at the foot of the nav rail (bottom-left). Opens
-// UPWARD. Holds the workspace switcher (switch between the ones you're in), the
-// segmented theme control, and the account actions. Creating a NEW workspace
-// lives in Settings → Workspace (a deliberate, infrequent action), not here.
-// Keeps the e2e test-ids: user-menu-trigger, theme-option-*, menu-signout,
-// workspace-*.
+// The account + workspace pod at the foot of the nav rail (bottom-left) — the
+// official sidebar footer pattern: a SidebarMenuButton size="lg" trigger that
+// shrinks to just the avatar in the collapsed icon rail. Opens UPWARD. Holds
+// the workspace switcher (switch between the ones you're in), the segmented
+// theme control, and the account actions. Creating a NEW workspace lives in
+// Settings → Workspace (a deliberate, infrequent action), not here. Keeps the
+// e2e test-ids: user-menu-trigger, theme-option-*, menu-signout, workspace-*.
 export function UserPod({
   workspaceLabel,
   workspaces,
   onSwitchWorkspace,
-  rail,
 }: {
   workspaceLabel: string
   workspaces: Workspaces | null
   onSwitchWorkspace: (id: string) => void
-  rail?: boolean
 }) {
   const { me, setMe } = useAuth()
   const nav = useNavigate()
@@ -60,35 +60,31 @@ export function UserPod({
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
-        <button
-          type="button"
+        <SidebarMenuButton
+          size="lg"
           data-testid="user-menu-trigger"
           title={me.name ?? me.email}
-          className={cn(
-            "flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left outline-none hover:bg-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring",
-            rail && "justify-center px-0",
-          )}
+          className="data-open:bg-sidebar-accent"
         >
           {/* Soft brand tint — never a solid amber block. Footer register: the
-              identity row is the rail's one generous moment (Nemonic anatomy). */}
-          <Avatar className="size-9 shrink-0">
+              identity row is the rail's one generous moment. In the collapsed
+              icon rail the button shrinks to exactly the avatar. */}
+          <Avatar className="size-8 shrink-0">
             <AvatarFallback className="bg-primary/10 text-xs font-medium text-primary">
               {initials}
             </AvatarFallback>
           </Avatar>
-          {!rail && (
-            <span className="min-w-0 flex-1">
-              <span className="block truncate text-sm font-medium text-foreground">
-                {me.name ?? me.email}
-              </span>
-              <span className="block truncate text-xs text-muted-foreground">
-                {workspaceLabel || me.email}
-              </span>
+          <span className="grid min-w-0 flex-1">
+            <span className="truncate text-sm font-medium text-foreground">
+              {me.name ?? me.email}
             </span>
-          )}
+            <span className="truncate text-xs text-muted-foreground">
+              {workspaceLabel || me.email}
+            </span>
+          </span>
           {/* Opens upward — the chevron says so. */}
-          {!rail && <ChevronUp className="size-4 shrink-0 text-muted-foreground" aria-hidden />}
-        </button>
+          <ChevronUp className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+        </SidebarMenuButton>
       </PopoverTrigger>
 
       <PopoverContent side="top" align="start" className="w-64 gap-0 p-1">

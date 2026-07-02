@@ -15,5 +15,9 @@ test("a theme switch applies and persists across reload", async ({ owner }) => {
 
 test("the notification bell opens its panel", async ({ owner }) => {
   await owner.getByTestId("notif-bell").click()
-  await expect(owner.getByText("Notifications", { exact: true })).toBeVisible()
+  // Scoped to the popover: the bell row itself also carries a "Notifications"
+  // label (clipped in the collapsed rail, but still in the DOM).
+  await expect(
+    owner.locator('[data-slot="popover-content"]').getByText("Notifications", { exact: true }),
+  ).toBeVisible()
 })

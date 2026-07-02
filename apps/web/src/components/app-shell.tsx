@@ -2,10 +2,11 @@ import { useNavigate, useRouterState } from "@tanstack/react-router"
 import { lazy, type ReactNode, Suspense, useCallback, useEffect, useMemo, useState } from "react"
 import { api, type Collection, type Workspaces } from "@/api"
 import { Button } from "@/components/ui/button"
+import { SidebarInset, SidebarProvider, useSidebar } from "@/components/ui/sidebar"
+import { TooltipProvider } from "@/components/ui/tooltip"
 import { useAuth } from "@/ctx"
 import { STORAGE_KEYS } from "@/lib/storage-keys"
 import { useIsMobile } from "@/lib/use-is-mobile"
-import { cn } from "@/lib/utils"
 import { ONBOARDED_KEY } from "@/pages/welcome"
 import { Icon } from "./icons"
 import { NavRail } from "./nav-rail"
@@ -20,27 +21,40 @@ const CommandPalette = lazy(() =>
 
 const COLLAPSE_KEY = STORAGE_KEYS.navCollapsed
 
-// The persistent app frame — sidebar-first, one spatial model (the Nemonic shell
-// architecture): the rail is the only persistent chrome; there is no global top
-// bar, so pages own their headers and toolbars (the artifact workbench owns every
-// pixel beside the rail). On mobile a sticky navbar (hamburger + current-page
-// label + search) stands in for the hidden rail. Owns the rail collapse state
-// (collapsed by default) and fetches the nav data (summary, collections,
-// workspaces) once, so the rail + pod behave identically on every page.
+// The persistent app frame — sidebar-first, one spatial model: the rail is the
+// only persistent chrome; there is no global top bar, so pages own their headers
+// and toolbars (the artifact workbench owns every pixel beside the rail). Built
+// on the official shadcn sidebar: SidebarProvider owns the open/collapsed state
+// (persisted to STORAGE_KEYS.navCollapsed, toggled by ⌘B and the header
+// trigger), the rail collapses to an icon strip on desktop, and on mobile the
+// whole sidebar lives in the component's off-canvas Sheet behind the sticky
+// navbar's hamburger. Fetches the nav data (summary, collections, workspaces)
+// once, so the rail + pod behave identically on every page.
 export function AppShell({ children }: { children: ReactNode }) {
   const { me, loading } = useAuth()
   const nav = useNavigate()
   const isMobile = useIsMobile()
 
-  const [collapsed, setCollapsed] = useState<boolean>(() => {
+  // The provider is controlled so the state round-trips through the app's
+  // storage contract ("1" = collapsed; collapsed by default) instead of the
+  // component's cookie.
+  const [sidebarOpen, setSidebarOpen] = useState<boolean>(() => {
     try {
       const v = localStorage.getItem(COLLAPSE_KEY)
-      return v === null ? true : v === "1"
+      return v === null ? false : v !== "1"
     } catch {
-      return true
+      return false
     }
   })
-  const [drawerOpen, setDrawerOpen] = useState(false)
+  const onSidebarOpenChange = useCallback((open: boolean) => {
+    setSidebarOpen(open)
+    try {
+      localStorage.setItem(COLLAPSE_KEY, open ? "0" : "1")
+    } catch {
+      /* private mode */
+    }
+  }, [])
+
   const [paletteOpen, setPaletteOpen] = useState(false)
   const [summary, setSummary] = useState<Summary | null>(null)
   const [collections, setCollections] = useState<Collection[]>([])
@@ -72,16 +86,9 @@ export function AppShell({ children }: { children: ReactNode }) {
     if (!me.profession && !onboarded) nav({ to: "/welcome" })
   }, [loading, me, publicView, nav])
 
-  useEffect(() => {
-    try {
-      localStorage.setItem(COLLAPSE_KEY, collapsed ? "1" : "0")
-    } catch {
-      /* private mode */
-    }
-  }, [collapsed])
-
   // ⌘K / Ctrl+K (and "/" outside inputs) opens the command palette from anywhere.
-  // Never stack it over an open dialog (share, delete confirm, …).
+  // Never stack it over an open dialog (share, delete confirm, …). ⌘B (the
+  // sidebar toggle) is handled by SidebarProvider itself.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && (e.key === "k" || e.key === "K")) {
@@ -167,18 +174,12 @@ export function AppShell({ children }: { children: ReactNode }) {
     window.location.reload()
   }, [])
 
-  const toggleCollapsed = useCallback(() => setCollapsed((c) => !c), [])
-
   // Memoized so the provider gets a stable value object — consumers re-render
   // only when shell state actually changes, not on every AppShell render. The
   // action fns are already stable (useCallback / setState), so the volatile
-  // deps are just the state. topBarSlot lives in its own context (below).
+  // deps are just the state.
   const value = useMemo<ShellValue>(
     () => ({
-      collapsed,
-      toggleCollapsed,
-      drawerOpen,
-      setDrawerOpen,
       paletteOpen,
       setPaletteOpen,
       summary,
@@ -191,12 +192,9 @@ export function AppShell({ children }: { children: ReactNode }) {
       createWorkspace,
       deleteWorkspace,
     }),
-    // setDrawerOpen / setPaletteOpen are stable useState setters — intentionally
-    // not listed (React guarantees their identity).
+    // setPaletteOpen is a stable useState setter — intentionally not listed
+    // (React guarantees its identity).
     [
-      collapsed,
-      toggleCollapsed,
-      drawerOpen,
       paletteOpen,
       summary,
       collections,
@@ -222,77 +220,80 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   return (
     <ShellCtx.Provider value={value}>
-      <div className="flex h-full flex-col">
-        {/* Keyboard users land here first and can jump past the rail straight
-            to the page. Visually hidden until focused. */}
-        <a
-          href="#main-content"
-          className="sr-only rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring focus:not-sr-only focus:absolute focus:left-3 focus:top-3 focus:z-100"
+      {/* Tooltips ride the sidebar's collapsed icon rows (the official
+          menu-button tooltip pattern); Radix requires the provider. */}
+      <TooltipProvider>
+        <SidebarProvider
+          open={sidebarOpen}
+          onOpenChange={onSidebarOpenChange}
+          className="h-full min-h-0"
         >
-          Skip to content
-        </a>
-
-        {/* Mobile navbar: the rail hides behind the drawer below sm, so the
-            sticky bar answers "where am I" (current-page label) and keeps
-            navigation + search reachable mid-scroll. Desktop has no top bar at
-            all — the sidebar is the only persistent chrome. */}
-        {isMobile && (
-          <header className="flex shrink-0 items-center gap-1.5 border-b border-border bg-background/95 px-2.5 py-2 backdrop-blur-sm">
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              data-testid="library-menu"
-              aria-label="Open navigation"
-              onClick={() => setDrawerOpen(true)}
-            >
-              <Icon name="sidebar" size={16} />
-            </Button>
-            <span className="min-w-0 flex-1 truncate text-sm font-medium">
-              <PageLabel pathname={pathname} />
-            </span>
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              aria-label="Search"
-              onClick={() => setPaletteOpen(true)}
-            >
-              <Icon name="search" size={16} />
-            </Button>
-          </header>
-        )}
-
-        <div className="flex min-h-0 flex-1">
-          {isMobile && (
-            <button
-              type="button"
-              data-testid="library-menu-backdrop"
-              aria-label="Close menu"
-              tabIndex={drawerOpen ? 0 : -1}
-              onClick={() => setDrawerOpen(false)}
-              className={cn(
-                // Below the drawer (z-45) and the overlay layer (z-50); above page
-                // content. Scrim token, matching the dialog overlay recipe.
-                "fixed inset-0 z-44 bg-scrim/50 transition-opacity",
-                drawerOpen ? "opacity-100" : "pointer-events-none opacity-0",
-              )}
-            />
-          )}
+          {/* Keyboard users land here first and can jump past the rail straight
+              to the page. Visually hidden until focused. */}
+          <a
+            href="#main-content"
+            className="sr-only rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring focus:not-sr-only focus:absolute focus:left-3 focus:top-3 focus:z-100"
+          >
+            Skip to content
+          </a>
           <NavRail />
-          <main
+          {/* The page region. Viewport-locked scroll model: the inset never
+              scrolls itself (overflow-hidden); pages own their scroll areas
+              (library virtualizer, artifact iframe). */}
+          <SidebarInset
             id="main-content"
             tabIndex={-1}
-            className="flex min-w-0 flex-1 flex-col overflow-hidden outline-none"
+            className="min-h-0 min-w-0 overflow-hidden outline-none"
           >
+            {/* Mobile navbar: the rail hides behind the drawer below sm, so the
+                sticky bar answers "where am I" (current-page label) and keeps
+                navigation + search reachable mid-scroll. Desktop has no top bar
+                at all — the sidebar is the only persistent chrome. */}
+            {isMobile && (
+              <MobileTopBar pathname={pathname} onOpenPalette={() => setPaletteOpen(true)} />
+            )}
             {children}
-          </main>
-        </div>
-      </div>
+          </SidebarInset>
+        </SidebarProvider>
+      </TooltipProvider>
       {paletteOpen && (
         <Suspense fallback={null}>
           <CommandPalette />
         </Suspense>
       )}
     </ShellCtx.Provider>
+  )
+}
+
+// The mobile sticky bar. Lives inside SidebarProvider so the hamburger can open
+// the sidebar's off-canvas Sheet (the `library-menu` testid on mobile — the
+// desktop trigger in the rail header doesn't render below sm, so it stays unique).
+function MobileTopBar({
+  pathname,
+  onOpenPalette,
+}: {
+  pathname: string
+  onOpenPalette: () => void
+}) {
+  const { setOpenMobile } = useSidebar()
+  return (
+    <header className="flex shrink-0 items-center gap-1.5 border-b border-border bg-background/95 px-2.5 py-2 backdrop-blur-sm">
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        data-testid="library-menu"
+        aria-label="Open navigation"
+        onClick={() => setOpenMobile(true)}
+      >
+        <Icon name="sidebar" size={16} />
+      </Button>
+      <span className="min-w-0 flex-1 truncate text-sm font-medium">
+        <PageLabel pathname={pathname} />
+      </span>
+      <Button variant="ghost" size="icon-sm" aria-label="Search" onClick={onOpenPalette}>
+        <Icon name="search" size={16} />
+      </Button>
+    </header>
   )
 }
 

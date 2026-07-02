@@ -6,6 +6,7 @@ import { toast } from "sonner"
 import { type Artifact, api } from "@/api"
 import { Icon } from "@/components/icons"
 import { EmptyState } from "@/components/shared/empty-state"
+import { PageShell } from "@/components/shared/page-shell"
 import { SectionEyebrow } from "@/components/shared/section-eyebrow"
 import { StatusPanel } from "@/components/shared/status-panel"
 import { useShell } from "@/components/shell-context"
@@ -332,302 +333,300 @@ function LibraryBody() {
     feedbackItems.length === 0
 
   return (
-    <div ref={scrollRef} className="flex-1 overflow-y-auto">
-      <div className="mx-auto max-w-[1000px] px-5.5 pb-16 pt-5.5">
-        {showGreeting && (
-          <div
-            className="mb-4 flex flex-wrap items-start justify-between gap-2"
-            data-testid="library-greeting"
-          >
-            <div>
-              {/* The greeting is a human moment — the serif voice register. */}
-              <h1 className="font-serif text-2xl font-medium tracking-tight text-balance text-foreground">
-                {totalCount === 0
-                  ? `Welcome to Derive, ${firstName}.`
-                  : `Welcome back, ${firstName}.`}
-              </h1>
-              <p className="mt-0.5 text-sm text-muted-foreground">
-                Your artifacts live here. Publish one below, or run{" "}
-                <code className="rounded bg-muted px-1.5 py-px font-mono text-xs">
-                  derive publish
-                </code>
-                .
-              </p>
-            </div>
-            {(me?.username || wsName) && (
-              <div className="flex shrink-0 items-center gap-2 pt-1 font-mono text-2xs text-muted-foreground">
-                {me?.username && (
-                  <span className="font-medium text-foreground">@{me.username}</span>
-                )}
-                {wsName && (
-                  <span className="rounded-full border border-border px-2 py-0.5">{wsName}</span>
-                )}
-              </div>
-            )}
+    <PageShell scrollRef={scrollRef} width="wide">
+      {showGreeting && (
+        <div
+          className="mb-4 flex flex-wrap items-start justify-between gap-2"
+          data-testid="library-greeting"
+        >
+          <div>
+            {/* The greeting is a human moment — the serif voice register. */}
+            <h1 className="font-serif text-2xl font-medium tracking-tight text-balance text-foreground">
+              {totalCount === 0
+                ? `Welcome to Derive, ${firstName}.`
+                : `Welcome back, ${firstName}.`}
+            </h1>
+            <p className="mt-0.5 text-sm text-muted-foreground">
+              Your artifacts live here. Publish one below, or run{" "}
+              <code className="rounded bg-muted px-1.5 py-px font-mono text-xs">
+                derive publish
+              </code>
+              .
+            </p>
           </div>
+          {/* min-w-0 + wrap (not shrink-0): a long handle folds the workspace
+              chip under itself instead of pushing past the page gutter. */}
+          {(me?.username || wsName) && (
+            <div className="flex min-w-0 flex-wrap items-center gap-2 pt-1 font-mono text-2xs text-muted-foreground">
+              {me?.username && <span className="font-medium text-foreground">@{me.username}</span>}
+              {wsName && (
+                <span className="rounded-full border border-border px-2 py-0.5">{wsName}</span>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+      <div className="mb-4.5 flex flex-wrap items-center gap-2.5">
+        <Input
+          placeholder="Search by title…"
+          aria-label="Search artifacts by title"
+          data-testid="library-search"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          className="min-w-[200px] flex-1"
+        />
+        {filter.kind !== "all" && (
+          <Button
+            variant="outline"
+            size="sm"
+            data-testid="library-clear-filter"
+            onClick={() => nav({ to: "/", search: {} })}
+          >
+            {filter.kind === "favorites" ? (
+              <>
+                <Icon name="favorites" size={16} /> Favorites
+              </>
+            ) : filter.kind === "following" ? (
+              <>
+                <Icon name="following" size={16} /> Following
+              </>
+            ) : filter.kind === "tag" ? (
+              `#${filter.tag}`
+            ) : (
+              <>
+                <Icon name="collection" size={16} /> {collectionTitle}
+              </>
+            )}
+            <X />
+          </Button>
         )}
-        <div className="mb-4.5 flex flex-wrap items-center gap-2.5">
-          <Input
-            placeholder="Search by title…"
-            aria-label="Search artifacts by title"
-            data-testid="library-search"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            className="min-w-[200px] flex-1"
-          />
-          {filter.kind !== "all" && (
+        {/* Active author filter — independent of the tag/collection filter, so it
+              gets its own clearable pill, plus a Follow toggle for that author. */}
+        {search.author && (
+          <>
             <Button
               variant="outline"
               size="sm"
-              data-testid="library-clear-filter"
-              onClick={() => nav({ to: "/", search: {} })}
+              data-testid="library-author-filter-clear"
+              title={`Clear author filter: ${search.author}`}
+              onClick={clearAuthor}
             >
-              {filter.kind === "favorites" ? (
-                <>
-                  <Icon name="favorites" size={16} /> Favorites
-                </>
-              ) : filter.kind === "following" ? (
-                <>
-                  <Icon name="following" size={16} /> Following
-                </>
-              ) : filter.kind === "tag" ? (
-                `#${filter.tag}`
-              ) : (
-                <>
-                  <Icon name="collection" size={16} /> {collectionTitle}
-                </>
-              )}
+              <Icon name="user" size={16} /> {search.author}
               <X />
             </Button>
-          )}
-          {/* Active author filter — independent of the tag/collection filter, so it
-              gets its own clearable pill, plus a Follow toggle for that author. */}
-          {search.author && (
-            <>
-              <Button
-                variant="outline"
-                size="sm"
-                data-testid="library-author-filter-clear"
-                title={`Clear author filter: ${search.author}`}
-                onClick={clearAuthor}
-              >
-                <Icon name="user" size={16} /> {search.author}
-                <X />
-              </Button>
-              {/* Quiet by design: the page's one filled primary lives in PublishCard. */}
-              <Button
-                variant={followingAuthor ? "secondary" : "outline"}
-                size="sm"
-                data-testid={`library-follow-author-${search.author}`}
-                aria-pressed={followingAuthor}
-                title={
-                  followingAuthor
-                    ? `Unfollow @${search.author}`
-                    : `Follow @${search.author} to see their changes in your feed`
-                }
-                onClick={() => search.author && toggleAuthor(search.author)}
-              >
-                {followingAuthor ? (
-                  <>
-                    <Icon name="check" size={16} /> Following
-                  </>
-                ) : (
-                  <>
-                    <Icon name="following" size={16} /> Follow @{search.author}
-                  </>
-                )}
-              </Button>
-            </>
-          )}
-        </div>
+            {/* Quiet by design: the page's one filled primary lives in PublishCard. */}
+            <Button
+              variant={followingAuthor ? "secondary" : "outline"}
+              size="sm"
+              data-testid={`library-follow-author-${search.author}`}
+              aria-pressed={followingAuthor}
+              title={
+                followingAuthor
+                  ? `Unfollow @${search.author}`
+                  : `Follow @${search.author} to see their changes in your feed`
+              }
+              onClick={() => search.author && toggleAuthor(search.author)}
+            >
+              {followingAuthor ? (
+                <>
+                  <Icon name="check" size={16} /> Following
+                </>
+              ) : (
+                <>
+                  <Icon name="following" size={16} /> Follow @{search.author}
+                </>
+              )}
+            </Button>
+          </>
+        )}
+      </div>
 
-        {/* Following feed: the manage strip of current follows (authors + paths),
+      {/* Following feed: the manage strip of current follows (authors + paths),
             each unfollowable, sits above the heading so it reads as the feed's
             controls. Hidden (returns null) when you follow nothing. */}
-        {filter.kind === "following" && (
-          <FollowingStrip follows={follows} onUnfollow={(kind, target) => unfollow(kind, target)} />
-        )}
+      {filter.kind === "following" && (
+        <FollowingStrip follows={follows} onUnfollow={(kind, target) => unfollow(kind, target)} />
+      )}
 
-        {filter.kind !== "collection" && filter.kind !== "following" && <PublishCard />}
+      {filter.kind !== "collection" && filter.kind !== "following" && <PublishCard />}
 
-        {feedbackItems.length > 0 && (
-          <section className="mb-6" data-testid="needs-your-feedback">
-            <SectionEyebrow
-              className="mb-3.5"
-              count={feedbackItems.length}
-              icon={<Icon name="comments" size={13} />}
-            >
-              Needs your feedback
-            </SectionEyebrow>
-            <div className="grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-x-3 gap-y-5">
-              {feedbackItems.map((a) => (
-                <ArtifactCard
-                  key={a.short_id}
-                  artifact={a}
-                  onOpen={() => nav({ to: "/a/$ref", params: { ref: refFor(a) } })}
-                  onToggleFavorite={() => openFeedback(a)}
-                  onPickTag={(tag) => nav({ to: "/", search: { tag } })}
-                  onPrefetch={() => prefetch(a.short_id, a.current_version)}
-                />
-              ))}
-            </div>
-          </section>
-        )}
+      {feedbackItems.length > 0 && (
+        <section className="mb-6" data-testid="needs-your-feedback">
+          <SectionEyebrow
+            className="mb-3.5"
+            count={feedbackItems.length}
+            icon={<Icon name="comments" size={13} />}
+          >
+            Needs your feedback
+          </SectionEyebrow>
+          <div className="grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-x-3 gap-y-5">
+            {feedbackItems.map((a) => (
+              <ArtifactCard
+                key={a.short_id}
+                artifact={a}
+                onOpen={() => nav({ to: "/a/$ref", params: { ref: refFor(a) } })}
+                onToggleFavorite={() => openFeedback(a)}
+                onPickTag={(tag) => nav({ to: "/", search: { tag } })}
+                onPrefetch={() => prefetch(a.short_id, a.current_version)}
+              />
+            ))}
+          </div>
+        </section>
+      )}
 
-        {sharedItems.length > 0 && (
-          <section className="mb-6" data-testid="shared-with-you">
-            <SectionEyebrow className="mb-3.5" count={sharedItems.length}>
-              Shared with you
-            </SectionEyebrow>
-            <div className="grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-x-3 gap-y-5">
-              {sharedItems.map((a) => (
-                <ArtifactCard
-                  key={a.short_id}
-                  artifact={a}
-                  onOpen={() => nav({ to: "/a/$ref", params: { ref: refFor(a) } })}
-                  onToggleFavorite={() => openShared(a)}
-                  onPickTag={(tag) => nav({ to: "/", search: { tag } })}
-                  onPrefetch={() => prefetch(a.short_id, a.current_version)}
-                />
-              ))}
-            </div>
-          </section>
-        )}
+      {sharedItems.length > 0 && (
+        <section className="mb-6" data-testid="shared-with-you">
+          <SectionEyebrow className="mb-3.5" count={sharedItems.length}>
+            Shared with you
+          </SectionEyebrow>
+          <div className="grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-x-3 gap-y-5">
+            {sharedItems.map((a) => (
+              <ArtifactCard
+                key={a.short_id}
+                artifact={a}
+                onOpen={() => nav({ to: "/a/$ref", params: { ref: refFor(a) } })}
+                onToggleFavorite={() => openShared(a)}
+                onPickTag={(tag) => nav({ to: "/", search: { tag } })}
+                onPrefetch={() => prefetch(a.short_id, a.current_version)}
+              />
+            ))}
+          </div>
+        </section>
+      )}
 
-        {filter.kind === "collection" ? (
-          <>
-            <CollectionBar
-              title={heading}
-              count={headingCount}
-              onShare={() => activeCollection && setShareCol(activeCollection)}
-              onRename={(t) => renameCollection(filter.id, t)}
-              onDelete={() => deleteCollection(filter.id)}
-            />
-            <RepoPullRequests prs={repoPrs} repo={activeCollection?.repo} activeId={filter.id} />
-          </>
-        ) : (
-          // Hide the "All artifacts · 0" heading on a brand-new empty home — the
-          // visual guide carries it instead.
-          !emptyHome && (
-            <SectionEyebrow className="mb-3.5" count={headingCount}>
-              {heading}
-            </SectionEyebrow>
-          )
-        )}
-
-        {isPending ? (
-          <LibrarySkeleton />
-        ) : isError ? (
-          <StatusPanel
-            tone="danger"
-            title="Couldn’t load the library"
-            description="This is usually temporary."
-            action={
-              <Button
-                variant="outline"
-                size="sm"
-                data-testid="library-retry"
-                onClick={() => refetch()}
-              >
-                Try again
-              </Button>
-            }
+      {filter.kind === "collection" ? (
+        <>
+          <CollectionBar
+            title={heading}
+            count={headingCount}
+            onShare={() => activeCollection && setShareCol(activeCollection)}
+            onRename={(t) => renameCollection(filter.id, t)}
+            onDelete={() => deleteCollection(filter.id)}
           />
-        ) : items.length === 0 ? (
-          emptyHome ? (
-            <HowItWorks />
-          ) : (
-            <EmptyState {...emptyProps} />
-          )
-        ) : isSyncedCollection ? (
-          // A mirrored repo. Default to a flat, most-recently-updated list; folders are
-          // there as a toggle (off by default) so the tree is available but not forced.
-          <div className="flex flex-col gap-3">
-            <ToggleGroup
-              type="single"
+          <RepoPullRequests prs={repoPrs} repo={activeCollection?.repo} activeId={filter.id} />
+        </>
+      ) : (
+        // Hide the "All artifacts · 0" heading on a brand-new empty home — the
+        // visual guide carries it instead.
+        !emptyHome && (
+          <SectionEyebrow className="mb-3.5" count={headingCount}>
+            {heading}
+          </SectionEyebrow>
+        )
+      )}
+
+      {isPending ? (
+        <LibrarySkeleton />
+      ) : isError ? (
+        <StatusPanel
+          tone="danger"
+          title="Couldn’t load the library"
+          description="This is usually temporary."
+          action={
+            <Button
               variant="outline"
               size="sm"
-              aria-label="View"
-              className="self-end"
-              value={showFolders ? "folders" : "list"}
-              onValueChange={(v) => v && toggleFolders(v === "folders")}
+              data-testid="library-retry"
+              onClick={() => refetch()}
             >
-              <ToggleGroupItem value="list" aria-label="List" data-testid="library-view-list">
-                <List aria-hidden />
-                List
-              </ToggleGroupItem>
-              <ToggleGroupItem
-                value="folders"
-                aria-label="Folders"
-                data-testid="library-view-folders"
-              >
-                <FolderTree aria-hidden />
-                Folders
-              </ToggleGroupItem>
-            </ToggleGroup>
-            {showFolders ? (
-              <FolderGroups
-                items={recencyItems}
-                hasNextPage={!!hasNextPage}
-                isFetchingNextPage={isFetchingNextPage}
-                onLoadMore={() => fetchNextPage()}
-                onOpen={(a) => nav({ to: "/a/$ref", params: { ref: refFor(a) } })}
-                onToggleFavorite={toggleFav}
-                onPickTag={(tag) => nav({ to: "/", search: { tag } })}
-                onPickAuthor={pickAuthor}
-                onPrefetch={(a) => prefetch(a.short_id, a.current_version)}
-              />
-            ) : (
-              <div className="flex flex-col gap-2" data-testid="library-flat-list">
-                {recencyItems.map((a) => (
-                  <ArtifactRow
-                    key={a.short_id}
-                    artifact={a}
-                    onOpen={() => nav({ to: "/a/$ref", params: { ref: refFor(a) } })}
-                    onToggleFavorite={() => toggleFav(a)}
-                    onPickTag={(tag) => nav({ to: "/", search: { tag } })}
-                    onPickAuthor={pickAuthor}
-                    onDelete={() => deleteArtifact(a)}
-                    onPrefetch={() => prefetch(a.short_id, a.current_version)}
-                  />
-                ))}
-                {(hasNextPage || isFetchingNextPage) && (
-                  <div className="py-2 text-center text-sm text-muted-foreground">
-                    Loading the rest…
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
+              Try again
+            </Button>
+          }
+        />
+      ) : items.length === 0 ? (
+        emptyHome ? (
+          <HowItWorks />
         ) : (
-          <>
-            <ArtifactGrid
-              items={items}
-              scrollRef={scrollRef}
+          <EmptyState {...emptyProps} />
+        )
+      ) : isSyncedCollection ? (
+        // A mirrored repo. Default to a flat, most-recently-updated list; folders are
+        // there as a toggle (off by default) so the tree is available but not forced.
+        <div className="flex flex-col gap-3">
+          <ToggleGroup
+            type="single"
+            variant="outline"
+            size="sm"
+            aria-label="View"
+            className="self-end"
+            value={showFolders ? "folders" : "list"}
+            onValueChange={(v) => v && toggleFolders(v === "folders")}
+          >
+            <ToggleGroupItem value="list" aria-label="List" data-testid="library-view-list">
+              <List aria-hidden />
+              List
+            </ToggleGroupItem>
+            <ToggleGroupItem
+              value="folders"
+              aria-label="Folders"
+              data-testid="library-view-folders"
+            >
+              <FolderTree aria-hidden />
+              Folders
+            </ToggleGroupItem>
+          </ToggleGroup>
+          {showFolders ? (
+            <FolderGroups
+              items={recencyItems}
               hasNextPage={!!hasNextPage}
               isFetchingNextPage={isFetchingNextPage}
               onLoadMore={() => fetchNextPage()}
               onOpen={(a) => nav({ to: "/a/$ref", params: { ref: refFor(a) } })}
               onToggleFavorite={toggleFav}
               onPickTag={(tag) => nav({ to: "/", search: { tag } })}
-              onDelete={deleteArtifact}
+              onPickAuthor={pickAuthor}
               onPrefetch={(a) => prefetch(a.short_id, a.current_version)}
             />
-            {isFetchingNextPage && (
-              <div
-                className="mt-4 text-center text-sm text-muted-foreground"
-                data-testid="library-loading-more"
-              >
-                Loading more…
-              </div>
-            )}
-          </>
-        )}
+          ) : (
+            <div className="flex flex-col gap-2" data-testid="library-flat-list">
+              {recencyItems.map((a) => (
+                <ArtifactRow
+                  key={a.short_id}
+                  artifact={a}
+                  onOpen={() => nav({ to: "/a/$ref", params: { ref: refFor(a) } })}
+                  onToggleFavorite={() => toggleFav(a)}
+                  onPickTag={(tag) => nav({ to: "/", search: { tag } })}
+                  onPickAuthor={pickAuthor}
+                  onDelete={() => deleteArtifact(a)}
+                  onPrefetch={() => prefetch(a.short_id, a.current_version)}
+                />
+              ))}
+              {(hasNextPage || isFetchingNextPage) && (
+                <div className="py-2 text-center text-sm text-muted-foreground">
+                  Loading the rest…
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      ) : (
+        <>
+          <ArtifactGrid
+            items={items}
+            scrollRef={scrollRef}
+            hasNextPage={!!hasNextPage}
+            isFetchingNextPage={isFetchingNextPage}
+            onLoadMore={() => fetchNextPage()}
+            onOpen={(a) => nav({ to: "/a/$ref", params: { ref: refFor(a) } })}
+            onToggleFavorite={toggleFav}
+            onPickTag={(tag) => nav({ to: "/", search: { tag } })}
+            onDelete={deleteArtifact}
+            onPrefetch={(a) => prefetch(a.short_id, a.current_version)}
+          />
+          {isFetchingNextPage && (
+            <div
+              className="mt-4 text-center text-sm text-muted-foreground"
+              data-testid="library-loading-more"
+            >
+              Loading more…
+            </div>
+          )}
+        </>
+      )}
 
-        {shareCol && (
-          <ShareCollectionDialog collection={shareCol} onClose={() => setShareCol(null)} />
-        )}
-      </div>
-    </div>
+      {shareCol && (
+        <ShareCollectionDialog collection={shareCol} onClose={() => setShareCol(null)} />
+      )}
+    </PageShell>
   )
 }

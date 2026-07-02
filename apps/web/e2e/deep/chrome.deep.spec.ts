@@ -20,7 +20,11 @@ test("the user menu switches between themes and the choice persists", async ({ o
 
 test("the notification bell opens an empty panel", async ({ owner }) => {
   await owner.getByTestId("notif-bell").click()
-  await expect(owner.getByText("Notifications", { exact: true })).toBeVisible()
+  // Scoped to the popover: the bell row itself also carries a "Notifications"
+  // label (clipped in the collapsed rail, but still in the DOM).
+  await expect(
+    owner.locator('[data-slot="popover-content"]').getByText("Notifications", { exact: true }),
+  ).toBeVisible()
   // exact, so it doesn't collide with the empty library's "Nothing yet. Publish…"
   await expect(owner.getByText("Nothing yet", { exact: true })).toBeVisible()
 })

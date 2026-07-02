@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react"
 import { api, type Report } from "@/api"
+import { PageShell } from "@/components/shared/page-shell"
 import { Badge } from "@/components/ui/badge"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { useAuth } from "@/ctx"
@@ -50,74 +51,74 @@ export function Settings() {
   const hasReports = openReports.length > 0
 
   return (
-    <div className="flex-1 overflow-y-auto">
-      <main className="mx-auto max-w-3xl px-5 pb-16 pt-7">
-        <h1 className="text-2xl font-semibold tracking-tight">Settings</h1>
-        <p className="mt-1 text-sm text-pretty text-muted-foreground">
-          Your profile, workspace, and integrations.
-        </p>
+    // The shell's SidebarInset is already the page's <main> — this is just the
+    // scrolling content column.
+    <PageShell>
+      <h1 className="text-2xl font-semibold tracking-tight">Settings</h1>
+      <p className="mt-1 text-sm text-pretty text-muted-foreground">
+        Your profile, workspace, and integrations.
+      </p>
 
-        <Tabs value={tab} onValueChange={setTab} className="mt-6">
-          <TabsList variant="line" className="max-w-full overflow-x-auto pb-1.5">
-            <TabsTrigger data-testid="settings-tab-profile" value="profile">
-              Profile
-            </TabsTrigger>
-            <TabsTrigger data-testid="settings-tab-workspace" value="workspace">
-              Workspace
-            </TabsTrigger>
-            <TabsTrigger data-testid="settings-tab-integrations" value="integrations">
-              Integrations
-            </TabsTrigger>
-            <TabsTrigger data-testid="settings-tab-webhooks" value="webhooks">
-              Webhooks
-            </TabsTrigger>
-            <TabsTrigger data-testid="settings-tab-agents" value="agents">
-              Agents
-            </TabsTrigger>
-            <TabsTrigger data-testid="settings-tab-github" value="github">
-              GitHub
-            </TabsTrigger>
-            <TabsTrigger data-testid="settings-tab-domains" value="domains">
-              Domains
-            </TabsTrigger>
-            {hasReports && (
-              <TabsTrigger data-testid="settings-tab-reports" value="reports">
-                Reports
-                <Badge variant="destructive" className="font-mono tabular-nums">
-                  {openReports.length}
-                </Badge>
-              </TabsTrigger>
-            )}
-          </TabsList>
-
-          <TabsContent value="profile">
-            <ProfileSection />
-          </TabsContent>
-          <TabsContent value="workspace">
-            <WorkspaceSection meId={me.id} />
-          </TabsContent>
-          <TabsContent value="integrations">
-            <IntegrationsSection />
-          </TabsContent>
-          <TabsContent value="webhooks">
-            <WebhooksSection />
-          </TabsContent>
-          <TabsContent value="agents">
-            <AgentsSection />
-          </TabsContent>
-          <TabsContent value="github">
-            <GithubSection />
-          </TabsContent>
-          <TabsContent value="domains">
-            <CustomDomainsSection />
-          </TabsContent>
+      <Tabs value={tab} onValueChange={setTab} className="mt-6">
+        <TabsList variant="line" className="max-w-full overflow-x-auto pb-1.5">
+          <TabsTrigger data-testid="settings-tab-profile" value="profile">
+            Profile
+          </TabsTrigger>
+          <TabsTrigger data-testid="settings-tab-workspace" value="workspace">
+            Workspace
+          </TabsTrigger>
+          <TabsTrigger data-testid="settings-tab-integrations" value="integrations">
+            Integrations
+          </TabsTrigger>
+          <TabsTrigger data-testid="settings-tab-webhooks" value="webhooks">
+            Webhooks
+          </TabsTrigger>
+          <TabsTrigger data-testid="settings-tab-agents" value="agents">
+            Agents
+          </TabsTrigger>
+          <TabsTrigger data-testid="settings-tab-github" value="github">
+            GitHub
+          </TabsTrigger>
+          <TabsTrigger data-testid="settings-tab-domains" value="domains">
+            Domains
+          </TabsTrigger>
           {hasReports && (
-            <TabsContent value="reports">
-              <ReportsSection reports={openReports} reload={loadReports} />
-            </TabsContent>
+            <TabsTrigger data-testid="settings-tab-reports" value="reports">
+              Reports
+              <Badge variant="destructive" className="font-mono tabular-nums">
+                {openReports.length}
+              </Badge>
+            </TabsTrigger>
           )}
-        </Tabs>
-      </main>
-    </div>
+        </TabsList>
+
+        <TabsContent value="profile">
+          <ProfileSection />
+        </TabsContent>
+        <TabsContent value="workspace">
+          <WorkspaceSection meId={me.id} />
+        </TabsContent>
+        <TabsContent value="integrations">
+          <IntegrationsSection />
+        </TabsContent>
+        <TabsContent value="webhooks">
+          <WebhooksSection />
+        </TabsContent>
+        <TabsContent value="agents">
+          <AgentsSection />
+        </TabsContent>
+        <TabsContent value="github">
+          <GithubSection />
+        </TabsContent>
+        <TabsContent value="domains">
+          <CustomDomainsSection />
+        </TabsContent>
+        {hasReports && (
+          <TabsContent value="reports">
+            <ReportsSection reports={openReports} reload={loadReports} />
+          </TabsContent>
+        )}
+      </Tabs>
+    </PageShell>
   )
 }
