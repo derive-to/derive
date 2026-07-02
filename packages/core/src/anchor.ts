@@ -181,7 +181,7 @@ st.textContent="mark.derive-hl{background:rgba(100,116,139,.20);color:inherit;bo
 ".derive-el-pip{position:absolute;bottom:-2px;right:-2px;width:8px;height:8px;border-radius:50%;background:rgba(100,116,139,.85);border:1.5px solid #fff;box-sizing:content-box}"+
 /* the hover affordance: a small 'Comment' chip that follows the pointer over an
    anchorable element; clicking it pins a comment to that element. */
-".derive-el-chip{position:absolute;display:none;align-items:center;gap:5px;padding:4px 9px;border-radius:7px;background:rgba(100,116,139,.97);color:#fff;font:600 12px/1 system-ui,sans-serif;pointer-events:auto;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.28);z-index:2147483641;white-space:nowrap}"+
+".derive-el-chip{position:absolute;display:none;align-items:center;gap:6px;padding:5px 10px;border-radius:8px;background:#fff;color:#14161a;border:1px solid rgba(20,22,26,.1);font:500 12px/1 system-ui,-apple-system,sans-serif;pointer-events:auto;cursor:pointer;box-shadow:0 6px 20px -6px rgba(0,0,0,.28),0 1px 2px rgba(0,0,0,.1);z-index:2147483641;white-space:nowrap}"+
 ".derive-el-outline{position:absolute;display:none;pointer-events:none;border:2px dashed rgba(100,116,139,.6);border-radius:4px;z-index:2147483639}";
 (document.head||document.documentElement).appendChild(st);
 

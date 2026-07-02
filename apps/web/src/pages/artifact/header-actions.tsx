@@ -31,7 +31,7 @@ export function StarButton({
   }
   return (
     <Button
-      variant="outline"
+      variant="ghost"
       size="sm"
       onClick={toggle}
       disabled={busy}
@@ -39,9 +39,13 @@ export function StarButton({
       aria-label="Toggle favorite"
       aria-pressed={favorite}
       data-testid="artifact-star"
-      className={cn(favorite && "border-gold text-gold hover:text-gold")}
     >
-      <Icon name="star" size={16} className={cn(!favorite && "text-muted-foreground")} />
+      <Icon
+        name="star"
+        size={16}
+        weight={favorite ? "fill" : "regular"}
+        className={favorite ? "text-foreground" : "text-muted-foreground"}
+      />
     </Button>
   )
 }
@@ -71,13 +75,13 @@ export function ReportButton({ shortId }: { shortId: string }) {
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <Button
-          variant="outline"
+          variant="ghost"
           size="sm"
           title="Report this artifact"
           aria-label="Report"
           data-testid="artifact-report"
         >
-          <Icon name="report" size={16} />
+          <Icon name="report" size={16} className="text-muted-foreground" />
         </Button>
       </PopoverTrigger>
       <PopoverContent align="end" className="w-64">
@@ -175,14 +179,14 @@ export function CollectionsMenu({
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <Button
-          variant="outline"
+          variant="ghost"
           size="sm"
           className="gap-1.5"
           title="Collections"
           aria-label="Add to collection"
           data-testid="artifact-collections"
         >
-          <Icon name="collections" size={16} />
+          <Icon name="collections" size={16} className="text-muted-foreground" />
           {inCollections.length > 0 && <b className="font-bold">{inCollections.length}</b>}
         </Button>
       </PopoverTrigger>
@@ -273,14 +277,14 @@ export function TagsMenu({
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <Button
-          variant="outline"
+          variant="ghost"
           size="sm"
           className="gap-1.5"
           title="Tags"
           aria-label="Manage tags"
           data-testid="artifact-tags"
         >
-          <Icon name="tag" size={16} />
+          <Icon name="tag" size={16} className="text-muted-foreground" />
           {tags.length > 0 && <b className="font-bold">{tags.length}</b>}
         </Button>
       </PopoverTrigger>
