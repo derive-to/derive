@@ -61,21 +61,21 @@ export function ProfileSection() {
               data-testid="profile-avatar"
               onClick={() => fileRef.current?.click()}
               disabled={uploading}
-              className="group relative size-16 overflow-hidden rounded-full border border-dashed border-input transition-colors hover:border-primary disabled:opacity-60"
+              className="group relative size-16 overflow-hidden rounded-full border border-dashed border-input outline-none hover:border-foreground/30 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:opacity-60"
               aria-label="Change your profile photo"
             >
               <Avatar className="size-full rounded-full">
                 {me.image && <AvatarImage src={me.image} alt="Your avatar" />}
-                <AvatarFallback className="rounded-full bg-card text-muted-foreground">
+                <AvatarFallback className="rounded-full">
                   {me.name ? (
-                    <span className="text-xl font-semibold">{initials}</span>
+                    <span className="text-xl font-medium">{initials}</span>
                   ) : (
-                    <Camera className="size-5" aria-hidden />
+                    <Camera className="size-5" strokeWidth={1.75} aria-hidden />
                   )}
                 </AvatarFallback>
               </Avatar>
             </button>
-            <span className="text-2xs text-muted-foreground">
+            <span className="text-xs text-muted-foreground">
               {uploading ? "Uploading…" : me.image ? "Change" : "Add a photo"}
             </span>
             <input
@@ -87,14 +87,14 @@ export function ProfileSection() {
               onChange={(e) => pickPhoto(e.target.files?.[0] ?? null)}
             />
           </div>
-          <div className="min-w-[240px] flex-1">
-            <div className="mb-1 text-2xs font-medium text-muted-foreground">Username</div>
+          <div className="flex min-w-[240px] flex-1 flex-col gap-2">
+            <div className="text-sm font-medium leading-none">Username</div>
             <UsernameForm
               initial={me.username ?? ""}
               submitLabel={me.username ? "Update username" : "Save username"}
               onClaimed={(username) => setMe({ ...me, username })}
             />
-            <p className="mt-2 text-2xs text-muted-foreground">
+            <p className="text-xs text-muted-foreground">
               <span className="font-medium text-foreground">{me.email}</span> stays private.
             </p>
           </div>

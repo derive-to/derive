@@ -14,6 +14,7 @@ import {
 import { EmptyState } from "@/components/shared/empty-state"
 import { RoleSelect } from "@/components/shared/role-select"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -312,7 +313,7 @@ export function ShareButton({
           Share
         </Button>
       </DialogTrigger>
-      <DialogContent>
+      <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>Share this artifact</DialogTitle>
           <DialogDescription>
@@ -323,11 +324,11 @@ export function ShareButton({
         </DialogHeader>
 
         <Tabs defaultValue="people" className="mt-1">
-          <TabsList className="grid w-full grid-cols-2">
-            <TabsTrigger value="people" data-testid="share-tab-people">
+          <TabsList variant="line" className="w-full justify-start border-b px-0">
+            <TabsTrigger value="people" data-testid="share-tab-people" className="flex-none">
               People
             </TabsTrigger>
-            <TabsTrigger value="links" data-testid="share-tab-links">
+            <TabsTrigger value="links" data-testid="share-tab-links" className="flex-none">
               Links
             </TabsTrigger>
           </TabsList>
@@ -336,7 +337,7 @@ export function ShareButton({
           <TabsContent value="people">
             {canManage ? (
               <>
-                <form onSubmit={add} className="flex gap-1.5">
+                <form onSubmit={add} className="flex items-center gap-1.5">
                   <div className="relative flex-1">
                     <Input
                       data-testid="share-email"
@@ -354,7 +355,7 @@ export function ShareButton({
                     {suggest.length > 0 && (
                       <div
                         data-testid="share-suggest"
-                        className="absolute inset-x-0 top-[calc(100%+4px)] z-40 max-h-56 overflow-y-auto rounded-lg border border-border bg-card p-1 shadow-[var(--shadow)]"
+                        className="absolute inset-x-0 top-[calc(100%+4px)] z-40 max-h-56 overflow-y-auto rounded-xl bg-popover p-1 shadow-[var(--shadow-pop)] ring-1 ring-foreground/10"
                       >
                         {suggest.map((u, i) => (
                           <button
@@ -366,8 +367,8 @@ export function ShareButton({
                             onClick={() => pick(u)}
                             onMouseEnter={() => setActive(i)}
                             className={cn(
-                              "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left",
-                              i === active ? "bg-hover" : "hover:bg-hover",
+                              "flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left outline-none focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring",
+                              i === active ? "bg-accent" : "hover:bg-accent",
                             )}
                           >
                             <Avatar className="size-6">
@@ -376,7 +377,7 @@ export function ShareButton({
                             </Avatar>
                             <span className="min-w-0 flex-1">
                               {u.name && (
-                                <span className="block truncate text-sm font-semibold text-foreground">
+                                <span className="block truncate text-sm font-medium text-foreground">
                                   {u.name}
                                 </span>
                               )}
@@ -397,16 +398,22 @@ export function ShareButton({
                       className="w-full"
                     />
                   </div>
-                  <Button data-testid="share-add" variant="default" type="submit" disabled={busy}>
+                  <Button
+                    data-testid="share-add"
+                    variant="default"
+                    size="sm"
+                    type="submit"
+                    disabled={busy}
+                  >
                     {busy ? "…" : "Add"}
                   </Button>
                 </form>
-                <p className="mt-1.5 font-mono text-2xs text-muted-foreground">{BLURB[role]}.</p>
+                <p className="mt-1.5 text-xs text-muted-foreground">{BLURB[role]}.</p>
               </>
             ) : (
               <div
                 data-testid="share-viewonly"
-                className="flex items-center gap-2 rounded-md border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground"
+                className="flex items-center gap-2 rounded-lg bg-secondary px-3 py-2 text-xs text-muted-foreground"
               >
                 <Lock className="size-3.5 shrink-0" />
                 View only · ask an owner or editor to change access.
@@ -419,7 +426,7 @@ export function ShareButton({
             )}
 
             <div className="mt-3.5">
-              <div className="mb-1.5 font-mono text-2xs font-semibold uppercase tracking-wide text-muted-foreground">
+              <div className="mb-1.5 font-mono text-2xs uppercase tracking-wide text-muted-foreground">
                 People with access
               </div>
               {members.length === 0 ? (
@@ -429,19 +436,21 @@ export function ShareButton({
                   </EmptyState>
                 </div>
               ) : (
-                <div className="flex flex-col gap-1.5">
+                <div className="-mx-2 flex flex-col">
                   {members.map((m) => (
                     <div
                       key={m.user_id}
                       data-testid={`share-member-row-${m.user_id}`}
-                      className="flex items-center gap-2"
+                      className="flex items-center gap-2 rounded-lg px-2 py-1 hover:bg-hover"
                     >
                       <div className="min-w-0 flex-1">
-                        <div className="truncate text-sm font-semibold text-foreground">
+                        <div className="truncate text-sm font-medium text-foreground">
                           {m.name ?? (m.handle ? `@${m.handle}` : m.user_id)}
                         </div>
                         {m.name && m.handle && (
-                          <div className="truncate text-2xs text-muted-foreground">@{m.handle}</div>
+                          <div className="truncate font-mono text-2xs text-muted-foreground">
+                            @{m.handle}
+                          </div>
                         )}
                       </div>
                       {canManage ? (
@@ -457,7 +466,7 @@ export function ShareButton({
                           <Button
                             data-testid={`share-member-remove-${m.user_id}`}
                             variant="ghost"
-                            size="icon"
+                            size="icon-sm"
                             onClick={() => remove(m)}
                             aria-label={`Remove ${m.name ?? (m.handle ? `@${m.handle}` : "member")}`}
                           >
@@ -480,7 +489,7 @@ export function ShareButton({
 
             {/* General access (visibility) — the "anyone with the link" control. */}
             <div className="mt-4 border-t border-border pt-3.5">
-              <div className="mb-1.5 font-mono text-2xs font-semibold uppercase tracking-wide text-muted-foreground">
+              <div className="mb-1.5 font-mono text-2xs uppercase tracking-wide text-muted-foreground">
                 General access
               </div>
               {canManage ? (
@@ -518,7 +527,8 @@ export function ShareButton({
                     )}
                     <Button
                       data-testid="share-visibility-save"
-                      variant="default"
+                      variant="secondary"
+                      size="sm"
                       disabled={savingVis || needsPw || visUnchanged}
                       onClick={saveVisibility}
                     >
@@ -540,15 +550,15 @@ export function ShareButton({
                       className="mt-1.5"
                     />
                   )}
-                  <p className="mt-1.5 font-mono text-2xs text-muted-foreground">
+                  <p className="mt-1.5 text-xs text-muted-foreground">
                     {ACCESS.find((a) => a.value === vis)?.blurb}
                     {reach && genRole === "commenter" && " Signed-in visitors can comment."}
                   </p>
                 </>
               ) : (
-                <p className="text-xs text-muted-foreground">
+                <Badge variant={linkAccessible ? "brand" : "default"}>
                   {ACCESS.find((a) => a.value === visibility)?.label ?? visibility}
-                </p>
+                </Badge>
               )}
             </div>
           </TabsContent>
@@ -558,7 +568,7 @@ export function ShareButton({
             {/* Embed — drop the artifact into any page. Shows for anyone who can open
                 the link, so it needs link- or world-readable access. */}
             <div>
-              <div className="mb-1.5 font-mono text-2xs font-semibold uppercase tracking-wide text-muted-foreground">
+              <div className="mb-1.5 font-mono text-2xs uppercase tracking-wide text-muted-foreground">
                 Embed
               </div>
               <div className="flex gap-1.5">
@@ -568,13 +578,18 @@ export function ShareButton({
                   aria-label="Embed code"
                   value={embedSnippet}
                   onFocus={(e) => e.currentTarget.select()}
-                  className="flex-1 font-mono text-2xs"
+                  className="flex-1 bg-secondary font-mono text-xs dark:bg-secondary sm:text-xs"
                 />
-                <Button data-testid="share-embed-copy" variant="default" onClick={copyEmbed}>
+                <Button
+                  data-testid="share-embed-copy"
+                  variant="default"
+                  size="sm"
+                  onClick={copyEmbed}
+                >
                   {copied ? "Copied" : "Copy"}
                 </Button>
               </div>
-              <p className="mt-1.5 font-mono text-2xs text-muted-foreground">
+              <p className="mt-1.5 text-xs text-muted-foreground">
                 {linkAccessible
                   ? "Paste into any page — Notion, a blog, docs. Live, with a link back to Derive."
                   : "Set access to “Anyone with the link” or “Public” for the embed to load for others."}
@@ -585,7 +600,7 @@ export function ShareButton({
             origin. Only shown when the server has a base domain configured. */}
             {domainBase && (
               <div className="mt-4 border-t border-border pt-3.5">
-                <div className="mb-1.5 font-mono text-2xs font-semibold uppercase tracking-wide text-muted-foreground">
+                <div className="mb-1.5 font-mono text-2xs uppercase tracking-wide text-muted-foreground">
                   Custom URL
                 </div>
                 {domains.length > 0 ? (
@@ -598,10 +613,11 @@ export function ShareButton({
                           aria-label="Custom URL"
                           value={d.url}
                           onFocus={(e) => e.currentTarget.select()}
-                          className="flex-1 font-mono text-2xs"
+                          className="flex-1 font-mono text-2xs sm:text-2xs"
                         />
                         <Button
                           variant="outline"
+                          size="sm"
                           data-testid="share-domain-copy"
                           onClick={() => copyUrl(d.url)}
                         >
@@ -610,7 +626,7 @@ export function ShareButton({
                         {canManage && (
                           <Button
                             variant="ghost"
-                            size="icon"
+                            size="icon-sm"
                             data-testid="share-domain-remove"
                             onClick={() => dropDomain(d.host)}
                             aria-label="Remove custom URL"
@@ -636,7 +652,8 @@ export function ShareButton({
                     </span>
                     <Button
                       data-testid="share-domain-claim"
-                      variant="default"
+                      variant="secondary"
+                      size="sm"
                       type="submit"
                       disabled={claiming || !label.trim()}
                     >
@@ -646,7 +663,7 @@ export function ShareButton({
                 ) : (
                   <p className="text-xs text-muted-foreground">No custom URL.</p>
                 )}
-                <p className="mt-1.5 font-mono text-2xs text-muted-foreground">
+                <p className="mt-1.5 text-xs text-muted-foreground">
                   A clean URL on {domainBase}, served at its own origin. Works for link- or
                   world-readable artifacts.
                 </p>
@@ -657,7 +674,7 @@ export function ShareButton({
                 domains (managed in workspace settings, shown read-only here). */}
             {workspaceDomains.length > 0 && (
               <div className="mt-4 border-t border-border pt-3.5">
-                <div className="mb-1.5 font-mono text-2xs font-semibold uppercase tracking-wide text-muted-foreground">
+                <div className="mb-1.5 font-mono text-2xs uppercase tracking-wide text-muted-foreground">
                   Also at
                 </div>
                 <div className="flex flex-col gap-1.5">
@@ -669,15 +686,20 @@ export function ShareButton({
                         aria-label={`URL on ${d.host}`}
                         value={d.url}
                         onFocus={(e) => e.currentTarget.select()}
-                        className="flex-1 font-mono text-2xs"
+                        className="flex-1 font-mono text-2xs sm:text-2xs"
                       />
-                      <Button variant="outline" onClick={() => copyUrl(d.url)}>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        data-testid="share-workspace-domain-copy"
+                        onClick={() => copyUrl(d.url)}
+                      >
                         Copy
                       </Button>
                     </div>
                   ))}
                 </div>
-                <p className="mt-1.5 font-mono text-2xs text-muted-foreground">
+                <p className="mt-1.5 text-xs text-muted-foreground">
                   On your workspace's custom domain. Manage domains in workspace settings.
                 </p>
               </div>

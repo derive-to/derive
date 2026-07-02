@@ -25,7 +25,7 @@ export function IconBtn({
       aria-label={title}
       onClick={onClick}
       className={cn(
-        "grid place-items-center rounded-md text-muted-foreground transition-colors hover:bg-hover hover:text-foreground",
+        "grid place-items-center rounded-md text-muted-foreground outline-none hover:bg-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring",
         big ? "size-9 text-lg" : "size-[26px]",
       )}
     >
@@ -50,7 +50,7 @@ export function DeckBar({
   onFullscreen: () => void
 }) {
   const btn =
-    "grid size-[30px] place-items-center rounded-lg border border-border bg-card text-foreground transition-colors hover:bg-hover disabled:pointer-events-none disabled:opacity-40"
+    "grid size-[30px] place-items-center rounded-lg border border-border bg-card text-foreground outline-none hover:bg-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:pointer-events-none disabled:opacity-40"
   return (
     <div className="absolute bottom-3.5 left-1/2 z-[5] flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-border bg-card p-1.5 shadow-[var(--shadow)]">
       <button
@@ -65,7 +65,7 @@ export function DeckBar({
       </button>
       <span
         data-testid="deck-position"
-        className="min-w-[52px] text-center font-mono text-sm text-muted-foreground"
+        className="min-w-[52px] text-center font-mono text-xs tabular-nums text-muted-foreground"
       >
         {deck.i + 1} / {deck.total}
       </span>
@@ -113,15 +113,15 @@ export function Presence({ viewers, selfId }: { viewers: Viewer[]; selfId?: stri
           type="button"
           data-testid="presence-trigger"
           aria-label={`${ordered.length} viewing — see who`}
-          className="flex items-center gap-1.5 rounded-full py-0.5 pl-1 pr-2 transition-colors hover:bg-hover"
+          className="flex items-center gap-1.5 rounded-full py-0.5 pl-1 pr-2 outline-none hover:bg-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
         >
           <div className="flex">
             {shown.map((v, i) => (
               <span
                 key={v.id}
                 className={cn(
-                  "grid size-[22px] place-items-center rounded-full border-2 border-card font-mono text-2xs font-bold",
-                  v.id === selfId ? "bg-primary text-primary-foreground" : "bg-accent text-primary",
+                  "grid size-[22px] place-items-center rounded-full border-2 border-background font-mono text-2xs font-medium",
+                  v.id === selfId ? "bg-primary/15 text-primary" : "bg-accent text-foreground",
                   i > 0 && "-ml-[7px]",
                 )}
               >
@@ -129,14 +129,14 @@ export function Presence({ viewers, selfId }: { viewers: Viewer[]; selfId?: stri
               </span>
             ))}
           </div>
-          <span className="flex items-center gap-1 font-mono text-xs text-muted-foreground">
+          <span className="flex items-center gap-1 font-mono text-xs tabular-nums text-muted-foreground">
             <span className="size-1.5 rounded-full bg-muted-foreground" />
             {ordered.length} viewing{extra > 0 ? ` (+${extra})` : ""}
           </span>
         </button>
       </PopoverTrigger>
       <PopoverContent align="end" data-testid="presence-popover" className="w-64 p-1.5">
-        <div className="px-2 py-1 font-mono text-2xs uppercase tracking-wide text-muted-foreground">
+        <div className="px-2 py-1 font-mono text-2xs uppercase tracking-wide tabular-nums text-muted-foreground">
           {ordered.length} viewing now
         </div>
         <div className="max-h-[280px] overflow-auto">
@@ -144,8 +144,8 @@ export function Presence({ viewers, selfId }: { viewers: Viewer[]; selfId?: stri
             <div key={v.id} className="flex items-center gap-2.5 rounded-md px-2 py-1.5">
               <span
                 className={cn(
-                  "grid size-7 shrink-0 place-items-center rounded-full font-mono text-2xs font-bold",
-                  v.id === selfId ? "bg-primary text-primary-foreground" : "bg-accent text-primary",
+                  "grid size-7 shrink-0 place-items-center rounded-full font-mono text-2xs font-medium",
+                  v.id === selfId ? "bg-primary/15 text-primary" : "bg-accent text-foreground",
                 )}
               >
                 {initials(v)}
@@ -153,7 +153,7 @@ export function Presence({ viewers, selfId }: { viewers: Viewer[]; selfId?: stri
               <span className="min-w-0 flex-1">
                 <span className="flex items-center gap-1.5 text-sm font-medium text-foreground">
                   <span className="truncate">{v.name}</span>
-                  {v.id === selfId && <span className="text-2xs text-muted-foreground">(you)</span>}
+                  {v.id === selfId && <span className="text-xs text-muted-foreground">(you)</span>}
                 </span>
               </span>
               {v.role && (

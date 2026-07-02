@@ -54,10 +54,13 @@ export function ArtifactRow({
   return (
     <div
       className={cn(
-        "group relative flex items-center gap-3 rounded-lg border border-border bg-card px-3.5 py-2.5 transition-colors hover:bg-hover",
+        "group relative flex items-center gap-3 rounded-lg border bg-card px-3.5 py-2.5 hover:bg-hover",
+        // Needs-your-feedback accents — amber is the sanctioned attention signal.
         a.mentions_me
           ? "border-primary ring-1 ring-primary/30"
-          : a.i_participated && "border-primary/60",
+          : a.i_participated
+            ? "border-primary/60"
+            : "border-border",
       )}
     >
       <button
@@ -67,19 +70,21 @@ export function ArtifactRow({
         onMouseEnter={onPrefetch}
         onFocus={onPrefetch}
         aria-label={`Open ${a.title ?? a.short_id}`}
-        className="flex min-w-0 flex-1 flex-col gap-0.5 text-left outline-none after:absolute after:inset-0 after:z-[1] after:rounded-lg after:content-[''] focus-visible:after:ring-[3px] focus-visible:after:ring-inset focus-visible:after:ring-ring/50"
+        className="flex min-w-0 flex-1 flex-col gap-0.5 text-left outline-none after:absolute after:inset-0 after:z-[1] after:rounded-lg after:content-[''] focus-visible:after:outline-2 focus-visible:after:-outline-offset-2 focus-visible:after:outline-ring"
       >
-        <span className="truncate text-base font-semibold text-foreground">
+        {/* The title is the work — serif voice (text-base clears the size floor). */}
+        <span className="truncate font-serif text-base font-medium tracking-tight text-foreground">
           {a.title ?? a.short_id}
         </span>
         {updated && (
           <span className="font-mono text-2xs text-muted-foreground">updated {ago(updated)}</span>
         )}
-        <span className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 font-mono text-2xs text-muted-foreground">
+        <span className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 font-mono text-2xs tabular-nums text-muted-foreground">
           <Badge variant="secondary">{artifactTypeLabel(a)}</Badge>
           {dir && (
             <span className="inline-flex items-center gap-1 truncate" title={a.source_path ?? ""}>
-              <Folder className="size-3 shrink-0 text-primary" aria-hidden />
+              {/* Neutral metadata — a folder path is not a brand moment. */}
+              <Folder className="size-3 shrink-0" aria-hidden />
               {dir}/
             </span>
           )}
@@ -123,7 +128,7 @@ export function ArtifactRow({
                 e.stopPropagation()
                 onPickTag(t)
               }}
-              className="rounded-md border border-border bg-card px-1.5 py-px font-mono text-2xs text-primary hover:border-primary"
+              className="rounded-md border border-border px-1.5 py-px font-mono text-2xs text-muted-foreground outline-none hover:border-foreground/25 hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
             >
               #{t}
             </button>
@@ -142,9 +147,15 @@ export function ArtifactRow({
           e.stopPropagation()
           onToggleFavorite()
         }}
-        className={cn("relative z-20", a.favorite ? "border-primary" : "opacity-90")}
+        className="relative z-20"
       >
-        <Icon name="star" size={14} className={cn(!a.favorite && "text-muted-foreground")} />
+        {/* Favorited = amber-filled star (the sanctioned brand tint); muted when off. */}
+        <Icon
+          name="star"
+          size={16}
+          weight={a.favorite ? "fill" : "regular"}
+          className={a.favorite ? "text-primary" : "text-muted-foreground"}
+        />
         <span
           aria-hidden
           className="absolute top-1/2 left-1/2 size-[max(100%,3rem)] -translate-1/2 pointer-fine:hidden"
@@ -162,7 +173,7 @@ export function ArtifactRow({
               onClick={(e) => e.stopPropagation()}
               className="relative z-20 opacity-0 group-hover:opacity-100 focus:opacity-100"
             >
-              <Icon name="more" size={14} />
+              <Icon name="more" size={16} />
               <span
                 aria-hidden
                 className="absolute top-1/2 left-1/2 size-[max(100%,3rem)] -translate-1/2 pointer-fine:hidden"

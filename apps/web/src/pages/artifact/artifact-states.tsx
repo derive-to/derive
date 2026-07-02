@@ -1,4 +1,5 @@
 import { Icon } from "@/components/icons"
+import { EmptyState } from "@/components/shared/empty-state"
 import { Spinner } from "@/components/shared/spinner"
 import { Button } from "@/components/ui/button"
 
@@ -14,19 +15,25 @@ export function ArtifactLoading() {
 
 export function ArtifactNotFound({ onBack }: { onBack: () => void }) {
   return (
-    <div className="grid h-full place-items-center gap-2.5">
-      <div className="text-muted-foreground">Artifact not found, or you don't have access.</div>
-      <Button variant="outline" data-testid="artifact-notfound-back" onClick={onBack}>
-        Back to library
-      </Button>
-    </div>
+    <EmptyState
+      className="h-full"
+      icon={<Icon name="removed" strokeWidth={1.75} />}
+      title="Artifact not found"
+      description="It doesn't exist, or you don't have access to it."
+      action={
+        <Button variant="outline" data-testid="artifact-notfound-back" onClick={onBack}>
+          Back to library
+        </Button>
+      }
+    />
   )
 }
 
 // A TRANSIENT failure (network blip, a 5xx, the server briefly unhealthy) — distinct
 // from a real 404/403. The query already auto-retries with backoff; this is the
 // recoverable fallback once those are exhausted, so the page comes back with one
-// click instead of dead-ending on "not found".
+// click instead of dead-ending on "not found". Deliberately NOT the boxless
+// empty-state voice — an error is tool chrome, so the headline stays Inter.
 export function ArtifactLoadError({
   onRetry,
   onBack,
@@ -35,19 +42,23 @@ export function ArtifactLoadError({
   onBack: () => void
 }) {
   return (
-    <div className="grid h-full place-items-center gap-3 text-center">
-      <Icon name="removed" size={36} className="opacity-50" />
-      <div className="text-lg font-semibold">Couldn't load this artifact</div>
-      <div className="max-w-[360px] text-sm leading-relaxed text-muted-foreground">
-        Something went wrong reaching the server. This is usually temporary.
-      </div>
-      <div className="flex gap-2">
-        <Button variant="default" data-testid="artifact-load-retry" onClick={onRetry}>
-          Try again
-        </Button>
-        <Button variant="outline" data-testid="artifact-load-back" onClick={onBack}>
-          Back to library
-        </Button>
+    <div className="grid h-full place-items-center">
+      <div className="flex flex-col items-center gap-4 p-10 text-center">
+        <Icon name="removed" size={24} strokeWidth={1.75} className="text-muted-foreground" />
+        <div className="flex flex-col items-center gap-2">
+          <p className="text-lg font-medium text-balance">Couldn't load this artifact</p>
+          <p className="max-w-sm text-sm text-pretty text-muted-foreground">
+            Something went wrong reaching the server. This is usually temporary.
+          </p>
+        </div>
+        <div className="flex gap-2">
+          <Button variant="default" data-testid="artifact-load-retry" onClick={onRetry}>
+            Try again
+          </Button>
+          <Button variant="outline" data-testid="artifact-load-back" onClick={onBack}>
+            Back to library
+          </Button>
+        </div>
       </div>
     </div>
   )
@@ -65,22 +76,23 @@ export function ArtifactRemoved({
   onBack: () => void
 }) {
   return (
-    <div className="grid h-full place-items-center gap-3 text-center">
-      <Icon name="removed" size={40} className="opacity-55" />
-      <div className="text-lg font-semibold">This artifact was removed</div>
-      <div className="max-w-[360px] text-sm leading-relaxed text-muted-foreground">
-        It was taken down by a moderator and is no longer available.
-      </div>
-      <div className="flex gap-2">
-        {canReinstate && (
-          <Button variant="outline" data-testid="artifact-reinstate" onClick={onReinstate}>
-            Reinstate
+    <EmptyState
+      className="h-full"
+      icon={<Icon name="removed" strokeWidth={1.75} />}
+      title="This artifact was removed"
+      description="It was taken down by a moderator and is no longer available."
+      action={
+        <div className="flex gap-2">
+          {canReinstate && (
+            <Button variant="outline" data-testid="artifact-reinstate" onClick={onReinstate}>
+              Reinstate
+            </Button>
+          )}
+          <Button variant="outline" data-testid="artifact-removed-back" onClick={onBack}>
+            Back to library
           </Button>
-        )}
-        <Button variant="outline" data-testid="artifact-removed-back" onClick={onBack}>
-          Back to library
-        </Button>
-      </div>
-    </div>
+        </div>
+      }
+    />
   )
 }

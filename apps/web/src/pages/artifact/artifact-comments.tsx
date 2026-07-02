@@ -102,7 +102,7 @@ export function ArtifactComments(p: {
           aria-hidden
           tabIndex={-1}
           data-testid="compose-primer"
-          className="pointer-events-none fixed bottom-0 left-0 -z-10 size-px resize-none border-0 bg-transparent p-0 text-lg opacity-0"
+          className="pointer-events-none fixed bottom-0 left-0 -z-10 size-px resize-none border-0 bg-transparent p-0 text-base opacity-0"
         />
       )}
       {!isMobile && !isAnon && (
@@ -177,7 +177,7 @@ export function ArtifactComments(p: {
       {!isMobile && canComment && p.docLive && sel && !p.composer && (
         <button
           type="button"
-          className="fixed z-50 inline-flex items-center gap-2 whitespace-nowrap rounded-full border border-primary bg-card px-3.5 py-2 text-sm font-semibold text-primary shadow-[var(--shadow)] transition-colors hover:bg-primary hover:text-primary-foreground"
+          className="fixed z-50 inline-flex items-center gap-2 whitespace-nowrap rounded-full border border-primary bg-card px-3.5 py-2 text-sm font-medium text-primary shadow-[var(--shadow)] outline-none hover:bg-primary hover:text-primary-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
           title="Comment on the selection"
           data-testid="comment-on-selection"
           onMouseDown={(e) => e.preventDefault()}
@@ -206,7 +206,7 @@ export function ArtifactComments(p: {
       {isMobile && canComment && p.docLive && sel && !p.composer && (
         <div
           data-testid="mobile-comment-bar"
-          className="fixed inset-x-0 bottom-0 z-[62] flex items-center gap-2.5 border-t border-border bg-card px-3 pb-[max(16px,env(safe-area-inset-bottom))] pt-4 shadow-[0_-12px_36px_-16px_rgba(0,0,0,0.55)]"
+          className="fixed inset-x-0 bottom-0 z-[62] flex items-center gap-2.5 border-t border-border bg-card px-3 pb-[max(16px,env(safe-area-inset-bottom))] pt-4 shadow-[0_-12px_36px_-16px_rgba(0,0,0,0.55)] dark:shadow-none"
         >
           <span className="min-w-0 flex-1 truncate border-l-[3px] border-primary bg-accent px-2.5 py-1.5 text-xs italic text-foreground">
             {sel.selector.type === "ElementSelector"
@@ -221,16 +221,16 @@ export function ArtifactComments(p: {
               p.setPanel("open")
               p.startSelComment()
             }}
-            className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground"
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-primary px-4 py-2 text-sm font-medium text-primary-foreground outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
           >
-            <Icon name="comments" size={17} /> Comment
+            <Icon name="comments" size={16} /> Comment
           </button>
           <button
             type="button"
             aria-label="Dismiss selection"
             data-testid="mobile-comment-dismiss"
             onClick={() => p.setSel(null)}
-            className="grid size-9 shrink-0 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-hover"
+            className="grid size-9 shrink-0 place-items-center rounded-md text-muted-foreground outline-none hover:bg-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
           >
             <Icon name="close" size={20} />
           </button>

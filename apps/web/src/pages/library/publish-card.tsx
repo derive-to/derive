@@ -47,7 +47,10 @@ export function PublishCard() {
   return (
     <Card
       className={cn(
-        "mb-5.5 flex flex-wrap items-center gap-3.5 border-dashed p-4 transition-colors",
+        // flex-row overrides the Card base's flex-col: this launcher is one
+        // wrapping band, not a stacked card. The amber drop affordance is a
+        // sanctioned brand moment; the color flips instantly (no transition).
+        "mb-5.5 flex flex-row flex-wrap items-center gap-3.5 border-dashed p-4",
         dragging && "border-primary bg-primary/5",
       )}
       onDragOver={(e) => {
@@ -63,8 +66,11 @@ export function PublishCard() {
       }}
     >
       <div className="min-w-[200px] flex-1">
-        <div className="text-lg font-semibold">Publish an artifact</div>
-        <div className="text-sm text-muted-foreground">
+        {/* The home launcher headline is a brand moment — voice register. */}
+        <div className="font-serif text-lg font-medium tracking-tight text-foreground">
+          Publish an artifact
+        </div>
+        <div className="text-sm text-pretty text-muted-foreground">
           Write or paste Markdown or HTML, or drop a file.
         </div>
       </div>

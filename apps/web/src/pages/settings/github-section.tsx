@@ -178,8 +178,8 @@ export function GithubSection() {
           disappear when the PR closes/merges. Review the plan in Derive during the PR. */}
       {status !== null && status.prs.length > 0 && (
         <div className="mt-6">
-          <div className="text-xs font-semibold text-foreground">Pull request previews</div>
-          <p className="mt-0.5 mb-2 text-2xs text-muted-foreground">
+          <div className="text-sm font-medium text-foreground">Pull request previews</div>
+          <p className="mt-0.5 mb-2 text-xs text-muted-foreground">
             Open PRs that change docs appear here while they're open. Review them in Derive; on
             merge they fold into the collection above.
           </p>
@@ -223,7 +223,7 @@ function SetUpApp() {
   return (
     <Card className="flex flex-col items-start gap-3 p-4">
       <div>
-        <div className="text-sm font-semibold text-foreground">Connect GitHub</div>
+        <div className="text-sm font-medium text-foreground">Connect GitHub</div>
         <p className="mt-0.5 text-sm text-muted-foreground">
           Create a read-only GitHub App for this instance, then install it on the repos you want to
           mirror. No tokens to paste, and pushes sync automatically.
@@ -282,14 +282,14 @@ function ConnectViaApp({
   return (
     <>
       {needsPerms && missing && (
-        <Card
-          className="mb-3 flex flex-col gap-3 border-border bg-secondary p-4"
+        <div
+          className="mb-3 rounded-xl bg-warning/10 p-4 ring-1 ring-inset ring-warning/25"
           data-testid="github-perms-banner"
         >
           <div className="flex items-start gap-2.5">
-            <AlertTriangle className="mt-0.5 size-5 shrink-0 text-foreground" aria-hidden />
+            <AlertTriangle className="mt-0.5 size-4 shrink-0 text-warning" aria-hidden />
             <div className="min-w-0 flex-1">
-              <div className="text-sm font-semibold text-foreground">
+              <div className="text-sm font-medium text-foreground">
                 Derive needs updated GitHub permissions
               </div>
               <p className="mt-0.5 text-sm text-muted-foreground">
@@ -339,13 +339,13 @@ function ConnectViaApp({
               </div>
             </div>
           </div>
-        </Card>
+        </div>
       )}
       <Card className="flex flex-col gap-3 p-4">
         <div className="flex items-start gap-2.5">
-          <CheckCircle2 className="mt-0.5 size-5 shrink-0 text-muted-foreground" aria-hidden />
+          <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-success" aria-hidden />
           <div className="min-w-0 flex-1">
-            <div className="text-sm font-semibold text-foreground">GitHub App connected</div>
+            <div className="text-sm font-medium text-foreground">GitHub App connected</div>
             {installed ? (
               <p className="mt-0.5 text-sm text-muted-foreground">
                 Pick a repository to mirror into Derive, or install on more accounts.
@@ -386,7 +386,7 @@ function ConnectViaApp({
               <Button
                 key={i.installation_id}
                 data-testid="github-pick-installation"
-                variant="default"
+                variant="secondary"
                 size="sm"
                 onClick={() => onPick(i.installation_id)}
               >
@@ -536,7 +536,7 @@ function RepoPicker({
                     </span>
                   )}
                   {r.pushed_at && (
-                    <span className="ml-auto shrink-0 text-2xs text-muted-foreground">
+                    <span className="ml-auto shrink-0 font-mono text-2xs text-muted-foreground">
                       {ago(r.pushed_at)}
                     </span>
                   )}
@@ -582,7 +582,7 @@ function RepoPicker({
                 "Counting…"
               ) : preview ? (
                 <>
-                  <span className="font-semibold text-foreground">
+                  <span className="font-mono font-medium tabular-nums text-foreground">
                     {preview.total} file{preview.total === 1 ? "" : "s"}
                   </span>{" "}
                   · {preview.md} MD · {preview.html} HTML
@@ -654,8 +654,8 @@ function PrPreviewRow({ pr }: { pr: PrPreview }) {
   // The API titles a preview "PR #<n>: <title>"; show just the <title> here.
   const label = pr.title.replace(/^PR #\d+:\s*/, "") || pr.title
   return (
-    <Card data-testid={`github-pr-${pr.pr_number}`} className="flex items-center gap-3 p-3.5">
-      <GitPullRequest className="size-4 shrink-0 text-primary" aria-hidden />
+    <Card data-testid={`github-pr-${pr.pr_number}`} className="flex-row items-center gap-3 p-3.5">
+      <GitPullRequest className="size-4 shrink-0 text-muted-foreground" aria-hidden />
       <div className="min-w-0 flex-1">
         <div className="truncate text-sm font-medium text-foreground">{label}</div>
         <div className="mt-0.5 flex items-center gap-1.5 truncate font-mono text-2xs text-muted-foreground">
@@ -799,7 +799,7 @@ function RepoSourceRow({
           {!active && !errored && (
             <div className="mt-px flex items-center gap-1 truncate font-mono text-2xs text-muted-foreground">
               {(status.last_status?.startsWith("ok") || status.last_synced_at) && (
-                <CheckCircle2 className="size-3 shrink-0 text-muted-foreground" aria-hidden />
+                <CheckCircle2 className="size-3 shrink-0 text-success" aria-hidden />
               )}
               {status.file_count} doc{status.file_count === 1 ? "" : "s"}
               {status.last_synced_at
@@ -868,12 +868,12 @@ function RepoSourceRow({
           data-testid={`github-progress-${source.id}`}
         >
           <div className="flex items-center justify-between gap-2">
-            <div className="flex min-w-0 items-center gap-2 text-sm font-semibold text-foreground">
+            <div className="flex min-w-0 items-center gap-2 text-sm font-medium text-foreground">
               <Loader2 className="size-4 shrink-0 animate-spin text-primary" aria-hidden />
               <span className="truncate">{phaseHeadline(prog, source.repo)}</span>
             </div>
             {!indeterminate && (
-              <span className="shrink-0 font-mono text-sm font-semibold tabular-nums text-primary">
+              <span className="shrink-0 font-mono text-sm font-medium tabular-nums text-primary">
                 {pct}%
               </span>
             )}
@@ -893,7 +893,7 @@ function RepoSourceRow({
             {phaseDetail(prog)}
           </div>
 
-          <div className="flex items-center gap-1.5 text-2xs text-muted-foreground">
+          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
             <CheckCircle2 className="size-3 shrink-0 text-muted-foreground" aria-hidden />
             Running on our servers — you can close this tab, it’ll keep going.
           </div>
@@ -903,12 +903,12 @@ function RepoSourceRow({
       {/* ERROR — red block with the message and a one-click retry. */}
       {errored && !active && (
         <div
-          className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 p-3"
+          className="flex items-start gap-2 rounded-lg bg-destructive/10 p-3 ring-1 ring-inset ring-destructive/25"
           data-testid={`github-error-${source.id}`}
         >
           <AlertTriangle className="mt-0.5 size-4 shrink-0 text-destructive" aria-hidden />
           <div className="min-w-0 flex-1">
-            <div className="text-sm font-semibold text-destructive">Sync failed</div>
+            <div className="text-sm font-medium text-destructive">Sync failed</div>
             <div className="mt-0.5 break-words font-mono text-2xs text-muted-foreground">
               {prog?.message ?? status.last_status ?? "Unknown error"}
             </div>
@@ -975,8 +975,8 @@ function AdvancedPat({
         {open ? "Hide advanced" : "Advanced: connect with a token or a public repo"}
       </Button>
       {open && (
-        <Card className="mt-2 p-4">
-          <p className="mb-3 text-xs text-muted-foreground">
+        <Card className="mt-2 gap-3 p-4">
+          <p className="text-xs text-muted-foreground">
             For a private repo without the GitHub App, paste a read-only token. Public repos need no
             token.
           </p>
@@ -999,14 +999,15 @@ function AdvancedPat({
             />
             <Button
               data-testid="github-connect"
-              variant="default"
+              variant="secondary"
+              size="sm"
               onClick={add}
               disabled={busy || !valid}
             >
               {busy ? "Connecting…" : "Connect"}
             </Button>
           </div>
-          <div className="mt-2 flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <Input
               data-testid="github-includes"
               aria-label="Include globs"

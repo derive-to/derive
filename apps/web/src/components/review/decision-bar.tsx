@@ -50,7 +50,7 @@ export function ReviewDecisionBar({
           {noteFor === "approve" && (
             <div className="mb-2 text-xs leading-relaxed">
               {stale ? (
-                <span className="text-destructive">
+                <span className="text-warning">
                   <b>Heads up:</b> this was proposed against v{active?.base_version}, but the live
                   version is now v{currentVersion}. Approving replaces v{currentVersion} entirely.
                   Approve anyway?
@@ -107,20 +107,24 @@ export function ReviewDecisionBar({
               Cancel
             </Button>
             {noteFor === "changes" ? (
+              // Request changes is warning-toned (soft tint) — never a filled amber.
               <Button
                 data-testid="review-send-request"
-                variant="default"
+                variant="ghost"
                 size="sm"
+                className="bg-warning/10 text-warning hover:bg-warning/15 hover:text-warning"
                 disabled={busy || !note.trim()}
                 onClick={onSubmitChanges}
               >
                 {busy ? "Sending…" : "Send request"}
               </Button>
             ) : (
+              // Approve is success-toned (soft tint) — never a filled amber.
               <Button
                 data-testid="review-approve-confirm"
-                variant="default"
+                variant="ghost"
                 size="sm"
+                className="bg-success/10 text-success hover:bg-success/15 hover:text-success"
                 disabled={busy}
                 onClick={onConfirmApprove}
               >
@@ -147,8 +151,9 @@ export function ReviewDecisionBar({
                 <>
                   <Button
                     data-testid="review-request-changes"
-                    variant="outline"
+                    variant="ghost"
                     size="sm"
+                    className="bg-warning/10 text-warning hover:bg-warning/15 hover:text-warning"
                     disabled={busy}
                     onClick={onOpenChanges}
                   >
@@ -156,8 +161,9 @@ export function ReviewDecisionBar({
                   </Button>
                   <Button
                     data-testid="review-approve"
-                    variant="default"
+                    variant="ghost"
                     size="sm"
+                    className="bg-success/10 text-success hover:bg-success/15 hover:text-success"
                     disabled={busy}
                     onClick={onOpenApprove}
                   >

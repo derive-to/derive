@@ -9,10 +9,14 @@ import { Icon } from "@/components/icons"
 export function HowItWorks() {
   return (
     <section data-testid="how-it-works" className="mt-2">
-      <div className="mb-4 flex items-center gap-3 font-mono text-2xs font-semibold uppercase tracking-wide text-muted-foreground">
-        <span className="h-px flex-1 bg-border" />
-        How Derive works
-        <span className="h-px flex-1 bg-border" />
+      {/* A first-run moment — the headline speaks in the voice register (serif),
+          set between the house hairline rules. */}
+      <div className="mb-4 flex items-center gap-3">
+        <span aria-hidden className="h-px flex-1 bg-border" />
+        <h2 className="font-serif text-xl font-medium tracking-tight text-balance text-foreground">
+          How Derive works
+        </h2>
+        <span aria-hidden className="h-px flex-1 bg-border" />
       </div>
 
       <div className="grid gap-3 sm:grid-cols-3">
@@ -94,15 +98,17 @@ function Step({
   children: ReactNode
 }) {
   return (
-    <div className="rounded-lg border border-border bg-card p-3.5">
+    <div className="flex flex-col gap-2.5 rounded-xl border border-border bg-card p-3.5">
       <div className="flex items-center gap-2">
+        {/* Soft brand tint on the step number — a sanctioned brand chip, never a
+            solid amber block. */}
         <span className="flex size-5 items-center justify-center rounded-full bg-primary/15 font-mono text-2xs font-semibold text-primary">
           {n}
         </span>
-        <span className="text-sm font-semibold text-foreground">{title}</span>
+        <span className="text-sm font-medium text-foreground">{title}</span>
       </div>
-      <div className="mt-2.5">{children}</div>
-      <p className="mt-2.5 text-xs text-muted-foreground">{blurb}</p>
+      <div>{children}</div>
+      <p className="text-sm text-pretty text-muted-foreground">{blurb}</p>
     </div>
   )
 }

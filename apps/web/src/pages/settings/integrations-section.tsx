@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from "react"
 import { toast } from "sonner"
 import { api, type OrgSettings, type SlackStatus } from "@/api"
+import { FormField } from "@/components/shared/form-field"
+import { SectionTitle } from "@/components/shared/section-title"
 import { Spinner } from "@/components/shared/spinner"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
@@ -101,7 +103,7 @@ export function IntegrationsSection() {
         <p className="mb-2 text-sm text-muted-foreground">
           Turn each integration channel on or off for this workspace.
         </p>
-        <Card className="divide-y px-4 py-1">
+        <Card className="gap-0 divide-y px-4 py-1">
           <Toggle
             id="email"
             label="Email notifications"
@@ -141,7 +143,7 @@ export function IntegrationsSection() {
       </div>
 
       <div>
-        <h2 className="mb-1 text-sm font-semibold">Slack</h2>
+        <SectionTitle className="mb-1">Slack</SectionTitle>
         {slack && !slack.available ? (
           <p className="text-sm text-muted-foreground">
             Slack isn't configured on this Derive instance.
@@ -153,19 +155,22 @@ export function IntegrationsSection() {
               <span className="font-medium">{slack.team_name ?? "your Slack workspace"}</span>.
             </p>
             <div className="flex items-end gap-2">
-              <div className="flex-1 text-sm">
-                <label htmlFor="slack-channel" className="mb-1 block text-muted-foreground">
-                  Default channel ID
-                </label>
+              <FormField label="Default channel ID" htmlFor="slack-channel" className="flex-1">
                 <Input
                   id="slack-channel"
                   data-testid="slack-channel"
                   value={channel}
                   onChange={(e) => setChannel(e.target.value)}
                   placeholder="C0123ABC456"
+                  className="font-mono"
                 />
-              </div>
-              <Button data-testid="slack-channel-save" variant="default" onClick={saveChannel}>
+              </FormField>
+              <Button
+                data-testid="slack-channel-save"
+                variant="default"
+                size="sm"
+                onClick={saveChannel}
+              >
                 Save
               </Button>
             </div>

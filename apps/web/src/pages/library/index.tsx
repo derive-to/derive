@@ -316,18 +316,22 @@ function LibraryBody() {
             data-testid="library-greeting"
           >
             <div>
-              <h1 className="text-2xl font-semibold text-foreground">
+              {/* The greeting is a human moment — the serif voice register. */}
+              <h1 className="font-serif text-2xl font-medium tracking-tight text-balance text-foreground">
                 {totalCount === 0
                   ? `Welcome to Derive, ${firstName}.`
                   : `Welcome back, ${firstName}.`}
               </h1>
               <p className="mt-0.5 text-sm text-muted-foreground">
                 Your artifacts live here. Publish one below, or run{" "}
-                <code className="rounded bg-muted px-1.5 py-px font-mono">derive publish</code>.
+                <code className="rounded bg-muted px-1.5 py-px font-mono text-xs">
+                  derive publish
+                </code>
+                .
               </p>
             </div>
             {(me?.username || wsName) && (
-              <div className="flex shrink-0 items-center gap-2 pt-1 text-2xs text-muted-foreground">
+              <div className="flex shrink-0 items-center gap-2 pt-1 font-mono text-2xs text-muted-foreground">
                 {me?.username && (
                   <span className="font-medium text-foreground">@{me.username}</span>
                 )}
@@ -338,7 +342,7 @@ function LibraryBody() {
             )}
           </div>
         )}
-        <div className="mb-[18px] flex flex-wrap items-center gap-2.5">
+        <div className="mb-4.5 flex flex-wrap items-center gap-2.5">
           <Input
             placeholder="Search by title…"
             aria-label="Search artifacts by title"
@@ -356,17 +360,17 @@ function LibraryBody() {
             >
               {filter.kind === "favorites" ? (
                 <>
-                  <Icon name="favorites" size={15} /> Favorites
+                  <Icon name="favorites" size={16} /> Favorites
                 </>
               ) : filter.kind === "following" ? (
                 <>
-                  <Icon name="following" size={15} /> Following
+                  <Icon name="following" size={16} /> Following
                 </>
               ) : filter.kind === "tag" ? (
                 `#${filter.tag}`
               ) : (
                 <>
-                  <Icon name="collection" size={15} /> {collectionTitle}
+                  <Icon name="collection" size={16} /> {collectionTitle}
                 </>
               )}
               <X />
@@ -383,11 +387,12 @@ function LibraryBody() {
                 title={`Clear author filter: ${search.author}`}
                 onClick={clearAuthor}
               >
-                <Icon name="user" size={15} /> {search.author}
+                <Icon name="user" size={16} /> {search.author}
                 <X />
               </Button>
+              {/* Quiet by design: the page's one filled primary lives in PublishCard. */}
               <Button
-                variant={followingAuthor ? "secondary" : "default"}
+                variant={followingAuthor ? "secondary" : "outline"}
                 size="sm"
                 data-testid={`library-follow-author-${search.author}`}
                 aria-pressed={followingAuthor}
@@ -400,11 +405,11 @@ function LibraryBody() {
               >
                 {followingAuthor ? (
                   <>
-                    <Icon name="check" size={15} /> Following
+                    <Icon name="check" size={16} /> Following
                   </>
                 ) : (
                   <>
-                    <Icon name="following" size={15} /> Follow @{search.author}
+                    <Icon name="following" size={16} /> Follow @{search.author}
                   </>
                 )}
               </Button>

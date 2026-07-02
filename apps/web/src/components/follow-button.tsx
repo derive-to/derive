@@ -66,7 +66,10 @@ export function FollowButton({
     )
   }
   return (
+    // Secondary, never the amber fill: Follow is a row/header action wherever it
+    // appears — the page's one primary action lives elsewhere.
     <Button
+      variant="secondary"
       size="sm"
       disabled={isTogglingUser(username)}
       data-testid={`follow-${username}`}

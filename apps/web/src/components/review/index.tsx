@@ -159,7 +159,8 @@ export function ReviewOverlay({
     >
       {/* Top bar: selected proposal identity + view controls. */}
       <div className="flex flex-wrap items-center gap-3 border-b border-border bg-card px-3 py-2.5 md:flex-nowrap md:px-5">
-        <Badge variant="secondary" className="flex-none tracking-wider">
+        {/* Mono eyebrow grammar: uppercase only with mono + tracking-wide. */}
+        <Badge variant="secondary" className="flex-none font-mono text-2xs tracking-wide">
           REVIEW
         </Badge>
         <div className="min-w-0 flex-1">
@@ -212,15 +213,16 @@ export function ReviewOverlay({
       <div
         className={cn(
           "flex items-center gap-2 border-b border-l-[3px] border-border-soft px-5 py-1.5 text-xs font-medium",
+          // "Viewing the proposed version" is a brand moment: amber bar + soft tint.
           strip.accent
-            ? "border-l-primary bg-accent/10 text-accent-foreground"
+            ? "border-l-primary bg-primary/10 text-foreground"
             : "border-l-border bg-card text-muted-foreground",
         )}
       >
         {strip.text}
         {view === "diff" && (
-          <span className="ml-auto flex gap-3 font-mono">
-            <span className="text-muted-foreground">+{adds}</span>
+          <span className="ml-auto flex gap-3 font-mono tabular-nums">
+            <span className="text-success">+{adds}</span>
             <span className="text-destructive">−{dels}</span>
           </span>
         )}

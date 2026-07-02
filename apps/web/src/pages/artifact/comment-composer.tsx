@@ -198,8 +198,9 @@ export function MentionField({
   // (with lit-up mentions) directly underneath, so a tag glows live as you type or
   // pick someone. Both share `textBox` exactly, or the highlight drifts off the caret.
   // 16px on phones so iOS doesn't zoom the page when the field focuses; the usual
-  // 12.5px from md up. Backdrop + field share this, so the highlight stays aligned.
-  const textBox = cn("px-2.5 py-1.5 pr-9 text-lg leading-relaxed md:text-sm", className)
+  // 14px control base from md up. Backdrop + field share this, so the highlight
+  // stays aligned.
+  const textBox = cn("px-2.5 py-1.5 pr-9 text-base leading-relaxed md:text-sm", className)
   const handlers = {
     ref,
     "data-testid": testId,
@@ -230,7 +231,8 @@ export function MentionField({
 
   return (
     <div style={{ position: "relative" }}>
-      <div className="relative rounded-md border border-input bg-card transition-colors focus-within:border-primary focus-within:ring-2 focus-within:ring-accent">
+      {/* Editable focus grammar (mirrors ui/textarea): amber border + soft glow. */}
+      <div className="relative rounded-lg border border-input bg-transparent focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/40 dark:bg-input/30">
         <div
           ref={backdropRef}
           aria-hidden="true"
@@ -268,9 +270,9 @@ export function MentionField({
         aria-label="Add emoji"
         aria-expanded={emojiOpen}
         onClick={() => setEmojiOpen((o) => !o)}
-        className="absolute right-1.5 top-1.5 grid size-6 place-items-center rounded text-base leading-none text-muted-foreground transition-colors hover:bg-hover hover:text-foreground"
+        className="absolute right-1.5 top-1.5 grid size-6 place-items-center rounded-md text-muted-foreground outline-none hover:bg-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
       >
-        🙂
+        <Icon name="react" size={16} />
       </button>
       {emojiOpen && (
         <>
@@ -285,7 +287,7 @@ export function MentionField({
           />
           <div
             data-testid="emoji-picker"
-            className="absolute right-1.5 top-9 z-50 grid w-[244px] grid-cols-8 gap-0.5 rounded-lg border border-border bg-card p-1.5 shadow-[var(--shadow)]"
+            className="absolute right-1.5 top-9 z-50 grid w-[244px] grid-cols-8 gap-0.5 rounded-xl bg-popover p-1.5 shadow-[var(--shadow-pop)] ring-1 ring-foreground/10"
           >
             {PICKER_EMOJI.map((emo) => (
               <button
@@ -297,7 +299,7 @@ export function MentionField({
                 // actual insert is onClick so keyboard (Enter/Space) works too.
                 onMouseDown={(e) => e.preventDefault()}
                 onClick={() => insertEmoji(emo)}
-                className="grid size-7 place-items-center rounded text-lg leading-none hover:bg-hover"
+                className="grid size-7 place-items-center rounded-md text-lg leading-none outline-none hover:bg-accent focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
               >
                 {emo}
               </button>
@@ -307,7 +309,7 @@ export function MentionField({
       )}
 
       {menu && results.length > 0 && (
-        <div className="absolute inset-x-0 top-[calc(100%+4px)] z-40 max-h-[200px] overflow-auto rounded-lg border border-border bg-card p-1 shadow-[var(--shadow)]">
+        <div className="absolute inset-x-0 top-[calc(100%+4px)] z-40 max-h-[200px] overflow-auto rounded-xl bg-popover p-1 shadow-[var(--shadow-pop)] ring-1 ring-foreground/10">
           {results.map((u, i) => (
             <button
               key={u.id}
@@ -323,7 +325,7 @@ export function MentionField({
                 i === active ? "bg-accent" : "bg-transparent",
               )}
             >
-              <span className="text-sm font-semibold">
+              <span className="text-sm font-medium">
                 {u.name ?? (u.handle ? `@${u.handle}` : "")}
               </span>
               {u.name && u.handle && (

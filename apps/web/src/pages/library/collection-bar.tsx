@@ -30,7 +30,7 @@ export function CollectionBar({
 
   return (
     <div className="mb-4 flex flex-wrap items-center gap-2.5 border-b border-border-soft pb-3.5">
-      <Icon name="collection" size={20} />
+      <Icon name="collection" size={18} className="text-muted-foreground" />
       {renaming ? (
         <Input
           value={draft}
@@ -42,14 +42,21 @@ export function CollectionBar({
             if (e.key === "Enter") commitRename()
             if (e.key === "Escape") setRenaming(false)
           }}
-          className="max-w-[280px] text-lg font-semibold"
+          className="max-w-[280px] text-lg font-medium"
         />
       ) : (
-        <h2 className="text-xl font-semibold">
-          {title} <span className="text-sm font-normal text-muted-foreground">· {count}</span>
+        // The collection's name is the user's content, not tool chrome — voice
+        // register; the count rides along in the machine register.
+        <h2 className="font-serif text-xl font-medium tracking-tight text-foreground">
+          {title}{" "}
+          <span className="font-mono text-xs font-normal tracking-normal text-muted-foreground tabular-nums">
+            · {count}
+          </span>
         </h2>
       )}
       <span className="flex-1" />
+      {/* Share is the collection view's one filled primary (the publish launcher
+          doesn't render on this view). */}
       <Button
         variant="default"
         size="sm"
@@ -57,7 +64,7 @@ export function CollectionBar({
         onClick={onShare}
         title="Share this collection"
       >
-        <Icon name="share" size={15} /> Share
+        <Icon name="share" size={16} /> Share
       </Button>
       <Button
         variant="outline"
@@ -68,8 +75,7 @@ export function CollectionBar({
         {renaming ? "Save" : "Rename"}
       </Button>
       <Button
-        variant="ghost"
-        className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+        variant="destructive"
         size="sm"
         data-testid="collection-delete"
         onClick={() => {

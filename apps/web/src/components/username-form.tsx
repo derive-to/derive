@@ -1,8 +1,13 @@
 import { type FormEvent, useEffect, useRef, useState } from "react"
 import { ApiError, api } from "@/api"
 import { Button } from "@/components/ui/button"
+import {
+  InputGroup,
+  InputGroupAddon,
+  InputGroupInput,
+  InputGroupText,
+} from "@/components/ui/input-group"
 import { usernameError } from "@/lib/username"
-import { cn } from "@/lib/utils"
 
 // The claim/rename handle form, shared by the onboarding gate and the profile
 // page's self-edit. Live client validation mirrors the server (lib/username);
@@ -42,19 +47,16 @@ export function UsernameForm({
   }
 
   return (
-    <form onSubmit={submit} className="flex flex-col gap-2.5">
-      <div
-        className={cn(
-          "flex items-center rounded-md border border-input bg-card transition-colors",
-          "focus-within:border-primary focus-within:ring-2 focus-within:ring-ring/30",
-          err && "border-destructive",
-        )}
-      >
-        <span className="select-none pl-3 text-sm font-medium text-muted-foreground">@</span>
-        <input
+    <form onSubmit={submit} className="flex flex-col items-start gap-2">
+      <InputGroup>
+        <InputGroupAddon>
+          <InputGroupText>@</InputGroupText>
+        </InputGroupAddon>
+        <InputGroupInput
           ref={inputRef}
           data-testid="username-input"
           aria-label="Username"
+          aria-invalid={!!err}
           autoCapitalize="none"
           autoCorrect="off"
           spellCheck={false}
@@ -64,21 +66,19 @@ export function UsernameForm({
             setServerErr("")
           }}
           placeholder="yourname"
-          className="h-7 w-full rounded-md bg-transparent pl-1 pr-3 text-sm text-foreground outline-none placeholder:text-muted-foreground"
         />
-      </div>
+      </InputGroup>
       {err && (
-        <p data-testid="username-error" role="alert" className="text-xs text-destructive">
+        <p data-testid="username-error" role="alert" className="text-sm text-destructive">
           {err}
         </p>
       )}
       <Button
         data-testid="username-submit"
         type="submit"
-        variant="default"
-        size="lg"
+        variant="secondary"
+        size="sm"
         disabled={busy || !handle || !!localErr}
-        className="w-full"
       >
         {busy ? "…" : submitLabel}
       </Button>

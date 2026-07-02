@@ -78,7 +78,8 @@ export function ShareCollectionDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <form onSubmit={add} className="mb-3 flex gap-1.5">
+        {/* DialogContent's grid gap spaces the sections — no child margins. */}
+        <form onSubmit={add} className="flex gap-1.5">
           <Input
             type="text"
             autoCapitalize="none"
@@ -88,14 +89,15 @@ export function ShareCollectionDialog({
             aria-label="Username or email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            className="flex-1"
+            className="min-w-0 flex-1"
           />
           <RoleSelect
             value={role}
             onChange={setRole}
             data-testid="collection-share-role"
-            className="w-[104px]"
+            className="w-[104px] shrink-0"
           />
+          {/* Add is this dialog's one filled primary. */}
           <Button
             variant="default"
             type="submit"
@@ -107,17 +109,19 @@ export function ShareCollectionDialog({
         </form>
 
         {members.length === 0 ? (
-          <EmptyState className="p-6 text-xs">No one shared yet.</EmptyState>
+          <EmptyState className="p-6">No one shared yet.</EmptyState>
         ) : (
           <div className="flex flex-col gap-1.5">
             {members.map((m) => (
               <div key={m.user_id} className="flex items-center gap-2">
                 <div className="min-w-0 flex-1">
-                  <div className="truncate text-sm font-semibold">
+                  <div className="truncate text-sm font-medium text-foreground">
                     {m.name ?? (m.handle ? `@${m.handle}` : m.user_id)}
                   </div>
                   {m.name && m.handle && (
-                    <div className="truncate text-2xs text-muted-foreground">@{m.handle}</div>
+                    <div className="truncate font-mono text-2xs text-muted-foreground">
+                      @{m.handle}
+                    </div>
                   )}
                 </div>
                 <span className="font-mono text-xs text-muted-foreground">{m.role}</span>

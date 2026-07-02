@@ -592,9 +592,9 @@ export function Artifact() {
                 onClick={() => setPanel("open")}
                 title="Show comments (c)"
                 data-testid="artifact-comments-fab"
-                className="absolute bottom-[18px] right-[18px] flex h-11 items-center gap-2 rounded-full border border-border bg-card px-4 text-sm font-semibold text-foreground shadow-[var(--shadow)]"
+                className="absolute bottom-[18px] right-[18px] flex h-11 items-center gap-2 rounded-full border border-border bg-card px-4 text-sm font-medium tabular-nums text-foreground shadow-[var(--shadow)] outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
               >
-                <Icon name="comments" size={18} />
+                <Icon name="comments" size={16} />
                 {openCount > 0
                   ? `${openCount} comment${openCount === 1 ? "" : "s"}`
                   : "Show comments"}
@@ -613,9 +613,9 @@ export function Artifact() {
                 }
                 title="Sign in to comment"
                 data-testid="sign-in-to-comment"
-                className="absolute bottom-[18px] right-[18px] flex h-11 items-center gap-2 rounded-full border border-border bg-card px-4 text-sm font-semibold text-foreground shadow-[var(--shadow)]"
+                className="absolute bottom-[18px] right-[18px] flex h-11 items-center gap-2 rounded-full border border-border bg-card px-4 text-sm font-medium text-foreground shadow-[var(--shadow)] outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
               >
-                <Icon name="comments" size={18} />
+                <Icon name="comments" size={16} />
                 Sign in to comment
               </button>
             )}

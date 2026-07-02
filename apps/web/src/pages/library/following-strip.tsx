@@ -15,7 +15,7 @@ export function FollowingStrip({
   if (follows.length === 0) return null
   return (
     <div className="mb-4 flex flex-wrap items-center gap-1.5" data-testid="following-strip">
-      <span className="mr-0.5 font-mono text-2xs uppercase tracking-[0.07em] text-muted-foreground">
+      <span className="mr-0.5 font-mono text-2xs uppercase tracking-wide text-muted-foreground">
         Following
       </span>
       {follows.map((fol) => {
@@ -31,7 +31,9 @@ export function FollowingStrip({
         return (
           <span
             key={`${fol.kind}:${fol.target}`}
-            className="inline-flex items-center gap-1 rounded-md border border-border bg-card py-0.5 pl-2 pr-1 font-mono text-2xs text-foreground"
+            // Follow chips are neutral washes (the flat tonal badge grammar) —
+            // never brand tints.
+            className="inline-flex items-center gap-1 rounded-md bg-accent py-0.5 pl-2 pr-1 font-mono text-2xs text-foreground"
           >
             {label}
             <button
@@ -40,7 +42,7 @@ export function FollowingStrip({
               title={`Unfollow ${label}`}
               aria-label={`Unfollow ${label}`}
               onClick={() => onUnfollow(fol.kind, unfollowTarget)}
-              className="grid size-4 place-items-center rounded text-muted-foreground transition-colors hover:text-foreground"
+              className="grid size-4 place-items-center rounded text-muted-foreground outline-none hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
             >
               <X className="size-3" aria-hidden />
             </button>

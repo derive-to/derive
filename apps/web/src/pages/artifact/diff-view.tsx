@@ -43,9 +43,11 @@ export function DiffView({
             {fromLabel} → {toLabel}
           </span>
         )}
-        <span className="font-mono text-muted-foreground">+{adds}</span>
-        <span className="font-mono text-destructive">−{dels}</span>
-        <span className="font-mono text-muted-foreground">{diff.ops.length} lines</span>
+        <span className="font-mono text-success tabular-nums">+{adds}</span>
+        <span className="font-mono text-destructive tabular-nums">−{dels}</span>
+        <span className="font-mono text-muted-foreground tabular-nums">
+          {diff.ops.length} lines
+        </span>
       </div>
       <pre className="m-0 py-2.5 font-mono text-sm leading-relaxed">
         {diff.ops.map((o, i) => (
@@ -53,9 +55,11 @@ export function DiffView({
             // biome-ignore lint/suspicious/noArrayIndexKey: diff ops are an immutable, never-reordered list rebuilt wholesale per version; lines repeat, so the index is the stable identity.
             key={i}
             className={cn(
+              // Add/remove keep their semantic tones: success/destructive tints,
+              // never raw greens/reds.
               "whitespace-pre-wrap break-words px-4",
               o.t === "add"
-                ? "bg-muted text-foreground"
+                ? "bg-success/10 text-foreground"
                 : o.t === "del"
                   ? "bg-destructive/10 text-foreground"
                   : "text-muted-foreground",
@@ -64,11 +68,7 @@ export function DiffView({
             <span
               className={cn(
                 "mr-2.5 select-none",
-                o.t === "add"
-                  ? "text-muted-foreground"
-                  : o.t === "del"
-                    ? "text-destructive"
-                    : "text-border",
+                o.t === "add" ? "text-success" : o.t === "del" ? "text-destructive" : "text-border",
               )}
             >
               {o.t === "add" ? "+" : o.t === "del" ? "−" : " "}

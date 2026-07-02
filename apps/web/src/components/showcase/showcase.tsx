@@ -1,6 +1,7 @@
 import { type ReactNode, useState } from "react"
 import { toast } from "sonner"
 import { Icon, type IconName } from "@/components/icons"
+import { EmptyState } from "@/components/shared/empty-state"
 import { FormField } from "@/components/shared/form-field"
 import { SectionEyebrow } from "@/components/shared/section-eyebrow"
 import { StatusPanel } from "@/components/shared/status-panel"
@@ -67,10 +68,11 @@ import { cn } from "@/lib/utils"
 
 // The design-system reference: the visual language shown through the real
 // components it produces, so it can be reviewed and evolved before it touches
-// product surfaces. Restraint is the point — color is reserved, hierarchy comes
-// from type, weight, and a neutral surface ramp. Lives outside pages/ +
-// components/shared/ (it's a design canvas, not a product surface), and is fully
-// token-pure so it doubles as proof the token system is complete. At /showcase.
+// product surfaces. Restraint is the point — amber is the one warm note,
+// hierarchy comes from type registers, weight, and the charcoal surface ramp.
+// Lives outside pages/ + components/shared/ (it's a design canvas, not a product
+// surface), and is fully token-pure so it doubles as proof the token system is
+// complete. At /showcase.
 
 /** A reference row: a fixed label column on the left, live examples on the right. */
 function Row({ title, note, children }: { title: string; note?: string; children: ReactNode }) {
@@ -123,15 +125,18 @@ function ArtifactCardDemo({
             name="star"
             size={14}
             weight={starred ? "fill" : "regular"}
-            className={starred ? "text-foreground" : "text-muted-foreground"}
+            className={starred ? "text-primary" : "text-muted-foreground"}
           />
         </div>
       </div>
       <div className="flex min-w-0 flex-col gap-2 border-t border-border-soft p-3.5">
-        <span className="truncate text-lg font-medium tracking-tight text-foreground">{title}</span>
+        {/* Artifact titles are the work, not the tool — the serif voice register. */}
+        <span className="truncate font-serif text-lg font-medium tracking-tight text-foreground">
+          {title}
+        </span>
         <span className="flex items-center gap-2 font-mono text-xs text-muted-foreground">
           <span>updated 2d</span>
-          <span className="ml-auto inline-flex items-center gap-2">
+          <span className="ml-auto inline-flex items-center gap-2 tabular-nums">
             <span className="inline-flex items-center gap-1">
               <Icon name="comments" size={13} className="text-muted-foreground" /> {comments}
             </span>
@@ -234,31 +239,30 @@ const NAV: { icon: IconName; label: string; count?: number }[] = [
   { icon: "collections", label: "Collections", count: 4 },
 ]
 
-/** A mini nav rail — showing the refined, restrained active state (subtle fill +
- *  a hairline accent), the Linear-grade replacement for the old full-ink fill. */
+/** A mini nav rail — the real row grammar: flush on the canvas, rest muted, hover
+ *  a neutral wash, active a foreground/5 wash plus the 3px amber left bar. Color
+ *  flips are instant; no font-weight change between states. */
 function NavDemo() {
   return (
-    <div className="w-56 rounded-lg border border-border bg-card p-1.5">
+    <div className="flex w-56 flex-col gap-px">
       {NAV.map((r, i) => {
         const active = i === 0
         return (
           <div
             key={r.label}
             className={cn(
-              "relative flex items-center gap-2.5 rounded-md px-2.5 py-1.5 text-sm font-medium transition-colors",
+              "relative flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm font-medium",
               active
-                ? "bg-foreground/10 text-foreground before:absolute before:bottom-1.5 before:left-0 before:top-1.5 before:w-[3px] before:rounded-full before:bg-primary before:content-['']"
-                : "text-muted-foreground hover:bg-foreground/5 hover:text-foreground",
+                ? "bg-foreground/5 text-foreground before:absolute before:bottom-1.5 before:left-0 before:top-1.5 before:w-[3px] before:rounded-full before:bg-primary before:content-['']"
+                : "text-muted-foreground hover:bg-hover hover:text-foreground",
             )}
           >
-            <Icon
-              name={r.icon}
-              size={17}
-              className={active ? undefined : "text-muted-foreground"}
-            />
+            <Icon name={r.icon} size={18} />
             <span>{r.label}</span>
             {r.count ? (
-              <span className="ml-auto font-mono text-2xs text-muted-foreground">{r.count}</span>
+              <span className="ml-auto font-mono text-2xs tabular-nums text-muted-foreground">
+                {r.count}
+              </span>
             ) : null}
           </div>
         )
@@ -267,7 +271,7 @@ function NavDemo() {
   )
 }
 
-/** The artifact toolbar — a segmented version switch plus actions. */
+/** The artifact toolbar — a segmented version switch plus actions, one primary. */
 function ToolbarDemo() {
   return (
     <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-card p-2">
@@ -277,10 +281,8 @@ function ToolbarDemo() {
             type="button"
             key={v}
             className={cn(
-              "rounded px-2 py-1 font-mono text-2xs transition-colors",
-              i === 0
-                ? "bg-card text-foreground shadow-[var(--shadow)]"
-                : "text-muted-foreground hover:text-foreground",
+              "rounded px-2 py-1 font-mono text-2xs outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring",
+              i === 0 ? "bg-accent text-foreground" : "text-muted-foreground hover:text-foreground",
             )}
           >
             {v}
@@ -318,10 +320,16 @@ function CommentDemo() {
           The intro reads great — can we tighten the second paragraph before this ships?
         </p>
         <div className="mt-2.5 flex items-center gap-4 text-xs text-muted-foreground">
-          <button type="button" className="transition-colors hover:text-foreground">
+          <button
+            type="button"
+            className="rounded-sm outline-none hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+          >
             Reply
           </button>
-          <button type="button" className="transition-colors hover:text-foreground">
+          <button
+            type="button"
+            className="rounded-sm outline-none hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+          >
             Resolve
           </button>
         </div>
@@ -330,7 +338,8 @@ function CommentDemo() {
   )
 }
 
-/** Avatar — image, initials fallback across sizes, and a stacked group. */
+/** Avatar — initials fallback across sizes, the workspace soft-brand tint, and a
+ *  stacked group. Never a solid amber block. */
 function AvatarDemo() {
   return (
     <div className="flex flex-wrap items-center gap-6">
@@ -346,6 +355,12 @@ function AvatarDemo() {
         </Avatar>
         <span className="font-mono text-2xs text-muted-foreground">fallback · sizes</span>
       </div>
+      <div className="flex items-center gap-2.5">
+        <Avatar className="size-8">
+          <AvatarFallback className="bg-primary/15 text-primary">DR</AvatarFallback>
+        </Avatar>
+        <span className="font-mono text-2xs text-muted-foreground">workspace · soft brand</span>
+      </div>
       <div className="flex -space-x-2">
         {["AL", "RO", "JD", "MK"].map((s) => (
           <Avatar key={s} className="size-8 ring-2 ring-background">
@@ -357,30 +372,41 @@ function AvatarDemo() {
   )
 }
 
-/** Tabs — the Preview / Source / History switch used on the artifact page. */
+/** Tabs — the filled neutral wash for panel switches, and the line variant whose
+ *  amber underline is the ONE amber selected state (an underlined tab is nav-like). */
 function TabsDemo() {
   return (
-    <Tabs defaultValue="preview" className="w-full max-w-md gap-3">
-      <TabsList>
-        <TabsTrigger value="preview">Preview</TabsTrigger>
-        <TabsTrigger value="source">Source</TabsTrigger>
-        <TabsTrigger value="history">History</TabsTrigger>
-      </TabsList>
-      <TabsContent value="preview" className="text-sm text-muted-foreground">
-        The rendered artifact, exactly as a reader sees it.
-      </TabsContent>
-      <TabsContent value="source" className="text-sm text-muted-foreground">
-        The raw markdown or HTML behind the render.
-      </TabsContent>
-      <TabsContent value="history" className="text-sm text-muted-foreground">
-        Every published version, newest first.
-      </TabsContent>
-    </Tabs>
+    <div className="flex flex-col gap-7">
+      <Tabs defaultValue="preview" className="w-full max-w-md gap-3">
+        <TabsList>
+          <TabsTrigger value="preview">Preview</TabsTrigger>
+          <TabsTrigger value="source">Source</TabsTrigger>
+          <TabsTrigger value="history">History</TabsTrigger>
+        </TabsList>
+        <TabsContent value="preview" className="text-sm text-muted-foreground">
+          The rendered artifact, exactly as a reader sees it.
+        </TabsContent>
+        <TabsContent value="source" className="text-sm text-muted-foreground">
+          The raw markdown or HTML behind the render.
+        </TabsContent>
+        <TabsContent value="history" className="text-sm text-muted-foreground">
+          Every published version, newest first.
+        </TabsContent>
+      </Tabs>
+      <Tabs defaultValue="preview" className="w-full max-w-md">
+        <TabsList variant="line">
+          <TabsTrigger value="preview">Preview</TabsTrigger>
+          <TabsTrigger value="source">Source</TabsTrigger>
+          <TabsTrigger value="history">History</TabsTrigger>
+        </TabsList>
+      </Tabs>
+    </div>
   )
 }
 
 /** Overlays — tooltip, popover, dropdown menu, dialog, and sheet, each on a
- *  trigger, so the whole floating-surface family is reviewable in one place. */
+ *  trigger, so the whole floating-surface family is reviewable in one place.
+ *  Tooltips are surface-style now (popover step + inset ring), not inverted. */
 function OverlaysDemo() {
   return (
     <TooltipProvider>
@@ -473,10 +499,11 @@ function OverlaysDemo() {
   )
 }
 
-/** Command palette — the ⌘K surface, shown inline (the app mounts it in a dialog). */
+/** Command palette — the ⌘K surface, shown inline (the app mounts it in a dialog).
+ *  The rebuilt frame is the raised card surface with a ring edge; no extra chrome. */
 function CommandDemo() {
   return (
-    <Command className="max-w-md rounded-lg border border-border shadow-[var(--shadow)]">
+    <Command className="max-w-md ring-1 ring-foreground/10">
       <CommandInput placeholder="Search artifacts, people, actions…" />
       <CommandList>
         <CommandEmpty>No results found.</CommandEmpty>
@@ -525,16 +552,17 @@ function FeedbackDemo() {
   )
 }
 
+// The chrome register (Inter) across the scale — tool-surface headings stay Inter.
 const TYPE_SPECIMEN = [
   {
     cls: "text-3xl font-semibold tracking-tight",
-    label: "Display · 3xl / semibold",
-    sample: "Derive",
+    label: "Chrome display · 3xl / semibold",
+    sample: "Design system",
   },
   {
     cls: "text-xl font-semibold tracking-tight",
-    label: "Title · xl / semibold",
-    sample: "Quarterly review",
+    label: "Chrome title · xl / semibold",
+    sample: "Workspace settings",
   },
   {
     cls: "text-base text-foreground",
@@ -546,19 +574,28 @@ const TYPE_SPECIMEN = [
     label: "Secondary · sm / muted",
     sample: "Published 2 days ago · 3 versions",
   },
-  {
-    cls: "font-mono text-2xs uppercase tracking-[0.14em] text-muted-foreground",
-    label: "Label · 2xs / mono",
-    sample: "Markdown",
-  },
 ]
 
+// The charcoal surface steps — canvas, raised, floating, well.
 const SURFACES = [
   { cls: "bg-background", label: "background" },
   { cls: "bg-card", label: "card" },
+  { cls: "bg-popover", label: "popover" },
   { cls: "bg-secondary", label: "secondary" },
-  { cls: "bg-hover", label: "hover" },
 ]
+
+// The four hues, each with one job. Amber is brand; safety-orange is the warning
+// (a different hue family, so alerts never read as brand notes).
+const ACCENTS = [
+  { cls: "bg-primary", label: "primary · amber" },
+  { cls: "bg-success", label: "success" },
+  { cls: "bg-warning", label: "warning · safety orange" },
+  { cls: "bg-destructive", label: "destructive" },
+]
+
+// The working middle of the honey-amber ramp (--color-brand-*): 500 is the dark
+// primary, 700 the light-mode bronze primary, 600 the light focus ring.
+const BRAND_RAMP = ["bg-brand-300", "bg-brand-400", "bg-brand-500", "bg-brand-600", "bg-brand-700"]
 
 const CATEGORICAL: IconName[] = ["share", "comments", "tag", "collections", "insights", "review"]
 
@@ -570,8 +607,8 @@ export function Showcase() {
           <div>
             <h1 className="text-2xl font-semibold tracking-tight">Design system</h1>
             <p className="mt-1.5 max-w-md text-sm leading-relaxed text-muted-foreground">
-              Stock shadcn components, kept monochrome — hierarchy comes from ink, weight, and a
-              neutral surface ramp. Toggle the theme to review both.
+              The Derive identity on shadcn — charcoal surfaces, three type registers, and honey
+              amber as the one warm note. Toggle the theme to review both.
             </p>
           </div>
           <ThemeSwitch className="w-36" />
@@ -579,9 +616,15 @@ export function Showcase() {
 
         <Row
           title="Type"
-          note="Inter, tracking pulled in a hair. Hierarchy from size, weight, and ink — not color."
+          note="Three registers: Inter is the working chrome, Source Serif carries moments of voice (greetings, artifact titles, empty states), Geist Mono is the machine layer (counts, versions, kbd, eyebrows)."
         >
           <div className="space-y-5">
+            <div className="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1">
+              <span className="font-serif text-2xl font-medium tracking-tight text-balance">
+                The permanent home for your AI artifacts.
+              </span>
+              <span className="font-mono text-2xs text-muted-foreground">Voice · serif / 2xl</span>
+            </div>
             {TYPE_SPECIMEN.map((t) => (
               <div
                 key={t.label}
@@ -591,35 +634,47 @@ export function Showcase() {
                 <span className="font-mono text-2xs text-muted-foreground">{t.label}</span>
               </div>
             ))}
+            <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2">
+              <span className="flex flex-wrap items-center gap-3">
+                <span className="font-mono text-2xs uppercase tracking-wide text-muted-foreground">
+                  Markdown
+                </span>
+                <span className="font-mono text-2xs tabular-nums text-muted-foreground">
+                  v3 · updated 2d · 128 views
+                </span>
+                <Kbd>⌘K</Kbd>
+              </span>
+              <span className="font-mono text-2xs text-muted-foreground">Machine · mono / 2xs</span>
+            </div>
           </div>
         </Row>
 
         <Row
           title="Buttons"
-          note="Stock variants — the filled default carries emphasis; everything else stays quiet. Destructive red is the one hue."
+          note="One filled primary per view — everything else stays quiet. Destructive is a soft red fill; the loud moment is the confirm dialog, never the button."
         >
           <div className="space-y-4">
             <div className="flex flex-wrap items-center gap-2.5">
-              <Button variant="default">Default</Button>
+              <Button variant="default">Publish</Button>
               <Button variant="secondary">Secondary</Button>
               <Button variant="outline">Outline</Button>
               <Button variant="ghost">Ghost</Button>
-              <Button variant="destructive">Destructive</Button>
-              <Button
-                variant="ghost"
-                className="text-destructive hover:bg-destructive/10 hover:text-destructive"
-              >
-                Quiet delete
-              </Button>
+              <Button variant="destructive">Delete</Button>
               <Button variant="link">Link</Button>
             </div>
             <div className="flex flex-wrap items-center gap-2.5">
-              <Button size="sm">
+              <Button variant="secondary" size="sm">
                 <Icon name="plus" size={14} /> Small
               </Button>
-              <Button size="default">Default</Button>
-              <Button size="lg">Large</Button>
-              <Button disabled>Disabled</Button>
+              <Button variant="secondary" size="default">
+                Default
+              </Button>
+              <Button variant="secondary" size="lg">
+                Large
+              </Button>
+              <Button variant="secondary" disabled>
+                Disabled
+              </Button>
             </div>
           </div>
         </Row>
@@ -631,13 +686,13 @@ export function Showcase() {
           <div className="flex flex-wrap items-center gap-6">
             <div className="flex items-center gap-2">
               <Button variant="ghost" size="icon-xs" aria-label="Share">
-                <Icon name="share" size={15} className="text-muted-foreground" />
+                <Icon name="share" size={14} className="text-muted-foreground" />
               </Button>
               <Button variant="ghost" size="icon-sm" aria-label="Comment">
                 <Icon name="comments" size={16} className="text-muted-foreground" />
               </Button>
               <Button variant="ghost" size="icon" aria-label="More">
-                <Icon name="more" size={18} className="text-muted-foreground" />
+                <Icon name="more" size={16} className="text-muted-foreground" />
               </Button>
               <span className="font-mono text-2xs text-muted-foreground">ghost</span>
             </div>
@@ -646,7 +701,7 @@ export function Showcase() {
                 <Icon name="star" size={14} className="text-muted-foreground" />
               </Button>
               <Button variant="outline" size="icon-sm" aria-label="Pin">
-                <Icon name="pin" size={15} className="text-muted-foreground" />
+                <Icon name="pin" size={16} className="text-muted-foreground" />
               </Button>
               <span className="font-mono text-2xs text-muted-foreground">chip</span>
             </div>
@@ -655,7 +710,7 @@ export function Showcase() {
 
         <Row
           title="Artifact card"
-          note="The most-seen surface. Icons sit muted; only a starred favorite earns color."
+          note="The most-seen surface. Titles are the work, so they speak serif; icons sit muted — only a starred favorite earns the amber."
         >
           <div className="grid gap-3 sm:grid-cols-2">
             <ArtifactCardDemo
@@ -680,7 +735,7 @@ export function Showcase() {
 
         <Row
           title="Navigation"
-          note="Active is a subtle fill plus a mono left-edge bar, not a heavy full-ink block."
+          note="Flush on the canvas. Active is a neutral foreground wash plus the 3px amber left bar — selection stays a white wash; the bar alone carries the brand."
         >
           <NavDemo />
         </Row>
@@ -706,7 +761,7 @@ export function Showcase() {
 
         <Row
           title="Status panel"
-          note="A tinted callout for a transient error or degraded state — distinct from an empty state, so a failed load never reads as an empty library."
+          note="A tinted callout: bg-tone/10 plus an inset ring. Success, warning, and danger are the statuses; brand is for brand moments (sync, upgrade nudges) — amber is not a status."
         >
           <div className="grid gap-3 sm:grid-cols-2">
             <StatusPanel
@@ -715,11 +770,37 @@ export function Showcase() {
               description="This is usually temporary."
             />
             <StatusPanel
-              tone="neutral"
-              title="Sync in progress"
-              description="Mirroring the latest from GitHub."
+              tone="warning"
+              title="Sync is falling behind"
+              description="GitHub hasn't answered in a while."
+            />
+            <StatusPanel
+              tone="success"
+              title="Everything is up to date"
+              description="All versions are published."
+            />
+            <StatusPanel
+              tone="brand"
+              title="Upgrade to Team"
+              description="Invite unlimited collaborators."
             />
           </div>
+        </Row>
+
+        <Row
+          title="Empty state"
+          note="Boxless — an icon with a faint brand tint, a serif headline, one plain line, and ONE quiet action, straight on the canvas. Distinct from a status panel, so nothing-here never reads as an error."
+        >
+          <EmptyState
+            icon={<Icon name="collections" strokeWidth={1.75} />}
+            title="Nothing here yet."
+            description="Publish an artifact from Claude or the CLI and it lands here, versioned and shareable."
+            action={
+              <Button variant="secondary" size="sm">
+                New artifact
+              </Button>
+            }
+          />
         </Row>
 
         <Row
@@ -735,17 +816,23 @@ export function Showcase() {
           </div>
         </Row>
 
-        <Row title="Avatar" note="Initials fallback across sizes, and a stacked group.">
+        <Row
+          title="Avatar"
+          note="Initials fallback across sizes, the workspace soft-brand tint (never a solid amber block), and a stacked group."
+        >
           <AvatarDemo />
         </Row>
 
-        <Row title="Tabs" note="Underline tabs — the Preview / Source / History switch.">
+        <Row
+          title="Tabs"
+          note="Filled segments stay a neutral wash; the line variant's amber underline is the one amber selected state — an underlined tab is nav-like."
+        >
           <TabsDemo />
         </Row>
 
         <Row
           title="Overlays"
-          note="The floating-surface family — tooltip, popover, dropdown menu, dialog, and sheet — each on a trigger. Click to open."
+          note="The floating-surface family — surface tooltip, popover, dropdown menu, dialog, and sheet — each a surface step with a ring edge. Click to open."
         >
           <OverlaysDemo />
         </Row>
@@ -802,19 +889,17 @@ export function Showcase() {
 
         <Row
           title="Badges & status"
-          note="Mono by default; reserved for genuine state, never decoration."
+          note="Neutral by default — tonal variants only for genuine state: brand for brand moments, success / warning / destructive for status."
         >
           <div className="flex flex-wrap items-center gap-2.5">
             <Badge variant="default">Draft</Badge>
-            <Badge variant="outline">Link</Badge>
-            <Badge variant="default">Published</Badge>
-            <Badge variant="outline" className="border-transparent bg-muted text-muted-foreground">
-              Approved
-            </Badge>
-            <Badge variant="secondary">v3</Badge>
-            <Badge variant="destructive">2</Badge>
+            <Badge variant="brand">Shared</Badge>
+            <Badge variant="success">Published</Badge>
+            <Badge variant="warning">Sync stale</Badge>
+            <Badge variant="destructive">Failed</Badge>
+            <Badge variant="outline">v3</Badge>
             <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-              <span className="size-1.5 rounded-full bg-muted-foreground" /> Synced
+              <span className="size-1.5 rounded-full bg-success" /> Synced
             </span>
             <span className="inline-flex items-center gap-1.5 text-xs text-destructive">
               <span className="size-1.5 rounded-full bg-destructive" /> Failed
@@ -824,7 +909,7 @@ export function Showcase() {
 
         <Row
           title="View toggle"
-          note="Stock ToggleGroup (type='single') — one tab stop, arrow keys move selection. For List/Folders-style view switches."
+          note="Stock ToggleGroup (type='single') — one tab stop, arrow keys move selection; pressed is a neutral wash, never amber. For List/Folders-style view switches."
         >
           <div className="flex flex-wrap items-center gap-6">
             <SegmentedDemo />
@@ -836,7 +921,7 @@ export function Showcase() {
 
         <Row
           title="Color"
-          note="Pure ink on a neutral surface ramp. Destructive red is the only hue (shadcn's default); the focus ring and active-nav bar use the primary ink. Feature icons are monochrome."
+          note="Charcoal surfaces with one warm note: amber means 'this matters' — primary actions, active nav, focus, links, unread. Safety-orange warns, red is danger, green confirms. Feature icons stay monochrome."
         >
           <div className="space-y-5">
             <div>
@@ -854,21 +939,34 @@ export function Showcase() {
               </div>
             </div>
             <div className="flex flex-wrap items-center gap-5">
-              {[
-                { cls: "bg-primary", label: "primary · ink" },
-                { cls: "bg-muted-foreground", label: "muted · ink" },
-                { cls: "bg-destructive", label: "destructive" },
-              ].map((a) => (
+              {ACCENTS.map((a) => (
                 <span key={a.label} className="inline-flex items-center gap-2">
                   <span className={cn("size-5 rounded-md border border-border-soft", a.cls)} />
                   <span className="font-mono text-2xs text-muted-foreground">{a.label}</span>
                 </span>
               ))}
             </div>
+            <div>
+              <div className="flex w-fit overflow-hidden rounded-md border border-border-soft">
+                {BRAND_RAMP.map((cls) => (
+                  <div key={cls} className={cn("h-8 w-12", cls)} />
+                ))}
+              </div>
+              <div className="mt-1.5 flex w-fit">
+                {BRAND_RAMP.map((cls) => (
+                  <span key={cls} className="w-12 font-mono text-2xs text-muted-foreground">
+                    {cls.replace("bg-brand-", "")}
+                  </span>
+                ))}
+              </div>
+              <p className="mt-1 font-mono text-2xs text-muted-foreground">
+                brand-300 → brand-700 · dark primary is 500, light primary is 700
+              </p>
+            </div>
             <div className="flex flex-wrap items-center gap-4">
               {CATEGORICAL.map((n) => (
                 <div key={n} className="flex flex-col items-center gap-1">
-                  <Icon name={n} size={18} className="text-muted-foreground" />
+                  <Icon name={n} size={16} className="text-muted-foreground" />
                   <span className="font-mono text-2xs text-muted-foreground">{n}</span>
                 </div>
               ))}

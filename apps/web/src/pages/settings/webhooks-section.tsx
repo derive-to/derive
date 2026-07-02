@@ -129,11 +129,17 @@ function NewWebhook({ onCreated }: { onCreated: (msg: string) => void }) {
           }
           className="min-w-[240px] flex-1"
         />
-        <Button data-testid="webhook-add" variant="default" onClick={add} disabled={busy || !valid}>
+        <Button
+          data-testid="webhook-add"
+          variant="secondary"
+          size="sm"
+          onClick={add}
+          disabled={busy || !valid}
+        >
           {busy ? "Adding…" : "Add"}
         </Button>
       </div>
-      <div className="mt-3 flex flex-wrap gap-3.5">
+      <div className="flex flex-wrap gap-3.5">
         {ALL_EVENTS.map((e) => (
           <label
             key={e}
@@ -152,12 +158,10 @@ function NewWebhook({ onCreated }: { onCreated: (msg: string) => void }) {
   )
 }
 
-const deliveryBadge = (status: string): { variant: "outline" | "default"; cls?: string } =>
-  status === "delivered"
-    ? { variant: "outline", cls: "border-transparent bg-muted text-muted-foreground" }
-    : status === "dead"
-      ? { variant: "outline", cls: "text-destructive" }
-      : { variant: "default" }
+// Delivery outcome → badge tone: delivered is a quiet success, dead (gave up
+// retrying) is destructive, anything in flight (pending/retrying) stays neutral.
+const deliveryBadge = (status: string): "success" | "destructive" | "default" =>
+  status === "delivered" ? "success" : status === "dead" ? "destructive" : "default"
 
 function WebhookRow({
   hook,
@@ -198,7 +202,7 @@ function WebhookRow({
     }
   }
   return (
-    <Card data-testid={`webhook-row-${hook.id}`} className="overflow-hidden p-0">
+    <Card data-testid={`webhook-row-${hook.id}`} className="gap-0 overflow-hidden p-0">
       <div className="flex items-center gap-2.5 px-3.5 py-3">
         <Badge variant={hook.kind === "slack" ? "secondary" : "default"}>
           {hook.kind === "slack" ? "Slack" : "Webhook"}
@@ -233,12 +237,9 @@ function WebhookRow({
             <div className="text-xs text-muted-foreground">No deliveries yet. Hit Test.</div>
           ) : (
             deliveries.map((d) => {
-              const b = deliveryBadge(d.status)
               return (
                 <div key={d.id} className="flex items-center gap-2 py-0.5 text-xs">
-                  <Badge variant={b.variant} className={b.cls}>
-                    {d.status}
-                  </Badge>
+                  <Badge variant={deliveryBadge(d.status)}>{d.status}</Badge>
                   <span className="font-mono text-muted-foreground">{d.event_type}</span>
                   {d.attempts > 1 && (
                     <span className="font-mono text-muted-foreground">· {d.attempts} tries</span>

@@ -48,11 +48,12 @@ export function StarButton({
       aria-pressed={favorite}
       data-testid="artifact-star"
     >
+      {/* The filled favorite star is a sanctioned amber moment. */}
       <Icon
         name="star"
         size={16}
         weight={favorite ? "fill" : "regular"}
-        className={favorite ? "text-foreground" : "text-muted-foreground"}
+        className={favorite ? "text-primary" : "text-muted-foreground"}
       />
     </Button>
   )
@@ -195,11 +196,15 @@ export function CollectionsMenu({
           data-testid="artifact-collections"
         >
           <Icon name="collections" size={16} className="text-muted-foreground" />
-          {inCollections.length > 0 && <b className="font-bold">{inCollections.length}</b>}
+          {inCollections.length > 0 && (
+            <span className="font-mono text-2xs tabular-nums text-muted-foreground">
+              {inCollections.length}
+            </span>
+          )}
         </Button>
       </PopoverTrigger>
       <PopoverContent align="end" className="max-h-[340px] w-[248px] overflow-auto">
-        <div className="mb-2 font-mono text-2xs uppercase tracking-[0.06em] text-muted-foreground">
+        <div className="mb-2 font-mono text-2xs uppercase tracking-wide text-muted-foreground">
           Add to collection
         </div>
         {all.length === 0 && (
@@ -216,11 +221,13 @@ export function CollectionsMenu({
                 data-testid={`collections-menu-${col.id}`}
                 onClick={() => toggle(col)}
                 className={cn(
-                  "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm font-medium text-foreground transition-colors hover:bg-hover",
+                  "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm font-medium text-foreground outline-none hover:bg-hover focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring",
                   inSet.has(col.id) && "bg-accent",
                 )}
               >
-                <span className="w-3.5 text-primary">{inSet.has(col.id) ? "✓" : ""}</span>
+                <span className="grid w-3.5 shrink-0 place-items-center">
+                  {inSet.has(col.id) && <Icon name="check" size={14} />}
+                </span>
                 <span className="flex-1 truncate">{col.title}</span>
               </button>
             ))}
@@ -291,11 +298,15 @@ export function TagsMenu({
           data-testid="artifact-tags"
         >
           <Icon name="tag" size={16} className="text-muted-foreground" />
-          {tags.length > 0 && <b className="font-bold">{tags.length}</b>}
+          {tags.length > 0 && (
+            <span className="font-mono text-2xs tabular-nums text-muted-foreground">
+              {tags.length}
+            </span>
+          )}
         </Button>
       </PopoverTrigger>
       <PopoverContent align="end" className="w-[244px]">
-        <div className="mb-2 font-mono text-2xs uppercase tracking-[0.06em] text-muted-foreground">
+        <div className="mb-2 font-mono text-2xs uppercase tracking-wide text-muted-foreground">
           Tags
         </div>
         {tags.length === 0 && (
@@ -308,7 +319,7 @@ export function TagsMenu({
             {tags.map((t) => (
               <span
                 key={t}
-                className="inline-flex items-center gap-1 rounded-full bg-accent px-2 py-0.5 font-mono text-2xs text-primary"
+                className="inline-flex items-center gap-1 rounded-md border border-border px-1.5 py-0.5 font-mono text-2xs text-muted-foreground"
               >
                 #{t}
                 {canEdit && (
@@ -317,7 +328,7 @@ export function TagsMenu({
                     data-testid={`tag-remove-${t}`}
                     onClick={() => save(tags.filter((x) => x !== t))}
                     aria-label={`Remove ${t}`}
-                    className="leading-none text-primary"
+                    className="rounded-sm leading-none outline-none hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
                   >
                     ×
                   </button>

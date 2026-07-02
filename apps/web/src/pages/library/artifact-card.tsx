@@ -33,8 +33,9 @@ export function artifactTypeLabel(a: Artifact): string {
 // One card in the library grid: a full-bleed preview up top, then a padded
 // content block. Stretched-link pattern — the open button's ::after covers the
 // whole card so a click anywhere (preview included) opens it, while the star /
-// more / tag chips sit above (z-20) and stay independently clickable. The card
-// lifts + shadows on hover as one piece.
+// more / tag chips sit above (z-20) and stay independently clickable. Hover is
+// an instant edge brighten (never a shadow — dark has none, and a lifting
+// iframe would repaint).
 export function ArtifactCard({
   artifact: a,
   onOpen,
@@ -61,14 +62,17 @@ export function ArtifactCard({
     <div
       className={cn(
         // No hover transform: the preview is an iframe, and translating its
-        // container makes the browser repaint it (a visible flash). The shadow
-        // deepening carries the hover instead.
-        "group relative flex flex-col overflow-hidden rounded-lg border border-border bg-card shadow-[var(--shadow-sm)] transition-shadow duration-150 hover:shadow-[var(--shadow)]",
+        // container makes the browser repaint it (a visible flash). A neutral
+        // edge brighten carries the hover instead.
+        "group relative flex flex-col overflow-hidden rounded-xl border bg-card",
         // Needs-your-feedback items stand out in the grid: a tagged item gets the full
-        // accent + ring; one you're just in the thread on gets a softer accent border.
+        // accent + ring; one you're just in the thread on gets a softer accent border
+        // (amber = "this matters" — the sanctioned attention signal, like unread).
         a.mentions_me
           ? "border-primary ring-1 ring-primary/30"
-          : a.i_participated && "border-primary/60",
+          : a.i_participated
+            ? "border-primary/60"
+            : "border-border hover:border-foreground/25",
       )}
     >
       <div className="relative">
@@ -99,11 +103,13 @@ export function ArtifactCard({
             !a.favorite && "opacity-0 group-hover:opacity-100 focus:opacity-100",
           )}
         >
+          {/* A favorited star keeps the brand tint — pinned/favorited is a
+              sanctioned amber moment. */}
           <Icon
             name="star"
-            size={14}
+            size={16}
             weight={a.favorite ? "fill" : "regular"}
-            className={a.favorite ? "text-foreground" : "text-muted-foreground"}
+            className={a.favorite ? "text-primary" : "text-muted-foreground"}
           />
           <span
             aria-hidden
@@ -121,7 +127,7 @@ export function ArtifactCard({
                 onClick={(e) => e.stopPropagation()}
                 className="absolute left-2.5 top-2.5 z-20 opacity-0 group-hover:opacity-100 focus:opacity-100"
               >
-                <Icon name="more" size={14} />
+                <Icon name="more" size={16} />
                 <span
                   aria-hidden
                   className="absolute top-1/2 left-1/2 size-[max(100%,3rem)] -translate-1/2 pointer-fine:hidden"
@@ -149,9 +155,10 @@ export function ArtifactCard({
           onMouseEnter={onPrefetch}
           onFocus={onPrefetch}
           aria-label={`Open ${a.title ?? a.short_id}`}
-          className="flex w-full min-w-0 flex-col gap-1.5 text-left outline-none after:absolute after:inset-0 after:z-[1] after:rounded-lg after:content-[''] focus-visible:after:ring-[3px] focus-visible:after:ring-inset focus-visible:after:ring-ring/50"
+          className="flex w-full min-w-0 flex-col gap-1.5 text-left outline-none after:absolute after:inset-0 after:z-[1] after:rounded-xl after:content-[''] focus-visible:after:outline-2 focus-visible:after:-outline-offset-2 focus-visible:after:outline-ring"
         >
-          <span className="truncate text-lg font-medium tracking-tight text-foreground">
+          {/* The title is the work, not the tool — serif voice (large enough here). */}
+          <span className="truncate font-serif text-lg font-medium tracking-tight text-foreground">
             {a.title ?? a.short_id}
           </span>
           {/* For a synced file: its folder location (the path lives in source_path). */}
@@ -163,7 +170,7 @@ export function ArtifactCard({
               {dirOf(a.source_path)}/
             </span>
           )}
-          <span className="flex items-center gap-2 font-mono text-xs text-muted-foreground">
+          <span className="flex items-center gap-2 font-mono text-xs tabular-nums text-muted-foreground">
             {(a.updated_at ?? a.created_at ?? a.versions[0]?.created_at) && (
               <span>
                 updated {ago(a.updated_at ?? a.created_at ?? a.versions[0]?.created_at ?? "")}
@@ -203,7 +210,7 @@ export function ArtifactCard({
                   e.stopPropagation()
                   onPickTag(t)
                 }}
-                className="rounded-md border border-border bg-card px-1.5 py-px font-mono text-2xs text-primary hover:border-primary"
+                className="rounded-md border border-border px-1.5 py-px font-mono text-2xs text-muted-foreground outline-none hover:border-foreground/25 hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
               >
                 #{t}
               </button>

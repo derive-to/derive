@@ -13,10 +13,11 @@ import { cn } from "@/lib/utils"
 function StatTile({ value, label }: { value: number; label: string }) {
   return (
     <div className="rounded-lg border border-border-soft bg-secondary px-4 py-3">
-      <div className="text-3xl font-semibold leading-none tracking-tight">
+      {/* Machine register: counts read as data, not display type. */}
+      <div className="font-mono text-3xl font-medium leading-none tabular-nums">
         {value.toLocaleString()}
       </div>
-      <div className="mt-1 font-mono text-2xs uppercase tracking-wider text-muted-foreground">
+      <div className="mt-1 font-mono text-2xs uppercase tracking-wide text-muted-foreground">
         {label}
       </div>
     </div>
@@ -68,7 +69,7 @@ export function Insights({
               <StatTile value={today} label="today" />
               {data.daily.length > 0 && (
                 <div className="ml-auto min-w-[160px] flex-1">
-                  <div className="mb-1 font-mono text-2xs uppercase tracking-wider text-muted-foreground">
+                  <div className="mb-1 font-mono text-2xs uppercase tracking-wide text-muted-foreground">
                     Last 30 days
                   </div>
                   <div className="flex h-12 items-end gap-px">
@@ -87,7 +88,7 @@ export function Insights({
 
             <div className="grid gap-6 sm:grid-cols-2">
               <div>
-                <div className="mb-2 font-mono text-2xs uppercase tracking-wider text-muted-foreground">
+                <div className="mb-2 font-mono text-2xs uppercase tracking-wide text-muted-foreground">
                   Per version
                 </div>
                 <div className="flex flex-col gap-1.5">
@@ -95,7 +96,7 @@ export function Insights({
                     .sort((a, b) => b.version - a.version)
                     .map((v) => (
                       <div key={v.version} className="flex items-center gap-2 text-sm">
-                        <span className="w-8 shrink-0 font-mono text-2xs text-muted-foreground">
+                        <span className="w-8 shrink-0 font-mono text-2xs text-muted-foreground tabular-nums">
                           v{v.version}
                         </span>
                         <div className="h-2.5 flex-1 overflow-hidden rounded-full bg-secondary">
@@ -104,7 +105,7 @@ export function Insights({
                             style={{ width: `${(v.count / vmax) * 100}%` }}
                           />
                         </div>
-                        <span className="w-10 shrink-0 text-right font-mono text-2xs text-muted-foreground">
+                        <span className="w-10 shrink-0 text-right font-mono text-2xs text-muted-foreground tabular-nums">
                           {v.count}
                         </span>
                       </div>
@@ -113,7 +114,7 @@ export function Insights({
               </div>
 
               <div>
-                <div className="mb-2 font-mono text-2xs uppercase tracking-wider text-muted-foreground">
+                <div className="mb-2 font-mono text-2xs uppercase tracking-wide text-muted-foreground">
                   Viewed by
                 </div>
                 {namedRecent.length === 0 && data.anonViewers === 0 ? (
@@ -126,7 +127,7 @@ export function Insights({
                           <img
                             src={r.avatar}
                             alt=""
-                            className="size-[18px] shrink-0 rounded-full object-cover"
+                            className="size-[18px] shrink-0 rounded-full object-cover outline-1 -outline-offset-1 outline-foreground/10"
                           />
                         ) : (
                           <Avatar className="size-[18px]">
@@ -207,7 +208,7 @@ export function HistoryDrawer({
       <SheetContent>
         <SheetHeader>
           <SheetTitle className="flex items-center gap-2">
-            <Icon name="history" size={18} />
+            <Icon name="history" size={16} />
             Version history
           </SheetTitle>
         </SheetHeader>
@@ -220,7 +221,7 @@ export function HistoryDrawer({
             return (
               <div key={s.n}>
                 {header && (
-                  <div className="px-2 pb-1 pt-3 font-mono text-2xs uppercase tracking-[0.05em] text-muted-foreground">
+                  <div className="px-2 pb-1 pt-3 font-mono text-2xs uppercase tracking-wide text-muted-foreground">
                     {header}
                   </div>
                 )}
@@ -229,7 +230,8 @@ export function HistoryDrawer({
                     independently clickable — no anchor nested in a button. */}
                 <div
                   className={cn(
-                    "group relative mb-px rounded-md px-2 py-2 transition-colors hover:bg-hover",
+                    "group relative mb-px rounded-md px-2 py-2 hover:bg-hover",
+                    // The selected version is a neutral wash — never an amber tint.
                     cur && "bg-accent",
                   )}
                 >
@@ -240,7 +242,7 @@ export function HistoryDrawer({
                       goTo(s.n)
                       onOpenChange(false)
                     }}
-                    className="block w-full text-left outline-none after:absolute after:inset-0 after:z-[1] after:rounded-md after:content-[''] focus-visible:after:ring-[3px] focus-visible:after:ring-inset focus-visible:after:ring-ring/50"
+                    className="block w-full text-left outline-none after:absolute after:inset-0 after:z-[1] after:rounded-md after:content-[''] focus-visible:after:outline-2 focus-visible:after:-outline-offset-2 focus-visible:after:outline-ring"
                   >
                     <div className="flex items-center gap-1.5">
                       {s.name ? (
@@ -248,21 +250,17 @@ export function HistoryDrawer({
                       ) : (
                         <span className="size-1.5 shrink-0 rounded-full bg-muted-foreground" />
                       )}
-                      <span
-                        className={cn(
-                          "truncate text-sm font-semibold",
-                          cur ? "text-primary" : "text-foreground",
-                        )}
-                      >
+                      <span className="truncate text-sm font-medium text-foreground">
                         {s.name ?? clock(s.created_at)}
                       </span>
                       {s.n === art.current_version && (
-                        <span className="rounded-full bg-muted px-1.5 py-px font-mono text-2xs font-bold text-muted-foreground">
+                        // The live version gets the sanctioned soft brand chip.
+                        <span className="rounded-full bg-primary/15 px-1.5 py-px font-mono text-2xs font-medium text-primary">
                           current
                         </span>
                       )}
                       {s.count > 1 && (
-                        <span className="ml-auto font-mono text-2xs text-muted-foreground">
+                        <span className="ml-auto font-mono text-2xs text-muted-foreground tabular-nums">
                           {s.count} edits
                         </span>
                       )}

@@ -5,10 +5,10 @@ import { api, type PublicProfile } from "@/api"
 import { FollowButton } from "@/components/follow-button"
 import { Icon } from "@/components/icons"
 import { EmptyState } from "@/components/shared/empty-state"
+import { SectionEyebrow } from "@/components/shared/section-eyebrow"
 import { CenteredSpinner, Spinner } from "@/components/shared/spinner"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
-import { Card } from "@/components/ui/card"
 import {
   Dialog,
   DialogContent,
@@ -18,6 +18,7 @@ import {
 } from "@/components/ui/dialog"
 import { UsernameForm } from "@/components/username-form"
 import { useAuth } from "@/ctx"
+import { colorForName } from "@/lib/avatar-tints"
 import { getInitials } from "@/lib/initials"
 import { profileArtifactsQuery, profileQuery } from "@/lib/queries"
 import { ProfileWorkCard } from "./profile-work-card"
@@ -42,8 +43,11 @@ export function Profile() {
     return (
       <div className="grid h-full place-items-center p-6">
         <div className="max-w-sm text-center" data-testid="profile-not-found">
-          <h1 className="text-xl font-semibold text-foreground">No such profile</h1>
-          <p className="mt-2 text-sm text-muted-foreground">
+          {/* "Nothing here" is a voice moment — serif, matching the EmptyState grammar. */}
+          <h1 className="font-serif text-xl font-medium tracking-tight text-balance text-foreground">
+            No such profile
+          </h1>
+          <p className="mt-2 text-sm text-pretty text-muted-foreground">
             There's no Derive user with the handle <span className="font-medium">@{handle}</span>.
           </p>
         </div>
@@ -56,27 +60,36 @@ export function Profile() {
   const stats = data.stats ?? { works: 0, followers: 0, following: 0 }
 
   return (
-    <div className="mx-auto w-full max-w-3xl p-6 sm:p-8">
-      <Card className="p-6 sm:p-7" data-testid="profile-card">
+    <div className="mx-auto flex w-full max-w-3xl flex-col gap-8 p-6 sm:p-8">
+      {/* The identity header sits flush on the canvas — whitespace over a card,
+          per the surfaces doctrine (it's a page header, not a liftable object). */}
+      <section data-testid="profile-card">
         <div className="flex flex-col gap-5 sm:flex-row sm:items-start sm:gap-6">
           <Avatar className="size-20 shrink-0 sm:size-24">
             {data.image && <AvatarImage src={data.image} alt={data.name ?? data.username} />}
-            <AvatarFallback className="text-2xl">{initials}</AvatarFallback>
+            {/* Identity tint (stable per person) + the outline frame images get. */}
+            <AvatarFallback
+              className="text-2xl font-medium text-scrim-foreground outline-1 -outline-offset-1 outline-foreground/10"
+              style={{ backgroundColor: colorForName(data.name ?? data.username) }}
+            >
+              {initials}
+            </AvatarFallback>
           </Avatar>
 
           <div className="min-w-0 flex-1">
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
                 {data.name && (
+                  // A person's name is content, not chrome — the serif register.
                   <h1
-                    className="truncate text-2xl font-semibold text-foreground"
+                    className="truncate font-serif text-2xl font-medium tracking-tight text-foreground"
                     data-testid="profile-name"
                   >
                     {data.name}
                   </h1>
                 )}
                 <p
-                  className="text-sm font-medium text-muted-foreground"
+                  className="font-mono text-sm text-muted-foreground"
                   data-testid="profile-username"
                 >
                   @{data.username}
@@ -87,15 +100,15 @@ export function Profile() {
             </div>
 
             {data.profession && (
-              <p
-                className="mt-2 text-sm font-medium text-accent-foreground"
-                data-testid="profile-role"
-              >
+              <p className="mt-2 text-sm font-medium text-foreground" data-testid="profile-role">
                 {data.profession}
               </p>
             )}
             {data.about && (
-              <p className="mt-1.5 text-sm text-muted-foreground" data-testid="profile-about">
+              <p
+                className="mt-1.5 text-sm text-pretty text-muted-foreground"
+                data-testid="profile-about"
+              >
                 {data.about}
               </p>
             )}
@@ -105,7 +118,7 @@ export function Profile() {
                 target="_blank"
                 rel="noopener noreferrer"
                 data-testid="profile-github"
-                className="mt-2.5 inline-flex items-center gap-1.5 font-mono text-xs text-muted-foreground transition-colors hover:text-primary"
+                className="mt-2.5 inline-flex items-center gap-1.5 font-mono text-xs text-muted-foreground hover:text-primary"
               >
                 <Icon name="link" size={13} />@{data.github_login} on GitHub
               </a>
@@ -156,17 +169,18 @@ export function Profile() {
             )}
           </div>
         </div>
-      </Card>
+      </section>
 
       <ProfileWork handle={data.username} isMe={isMe} name={data.name ?? data.username} />
     </div>
   )
 }
 
+// Counts are the machine register: mono, tabular so they don't shimmy as they change.
 function Stat({ label, value }: { label: string; value: number }) {
   return (
     <span className="inline-flex items-baseline gap-1">
-      <span className="font-semibold text-foreground">{value}</span>
+      <span className="font-mono font-medium tabular-nums text-foreground">{value}</span>
       <span className="text-muted-foreground">{label}</span>
     </span>
   )
@@ -197,9 +211,9 @@ function PeopleStat({
           type="button"
           disabled={value === 0}
           data-testid={`profile-stat-${label}`}
-          className="inline-flex items-baseline gap-1 rounded transition-colors hover:text-primary disabled:cursor-default disabled:hover:text-current"
+          className="inline-flex items-baseline gap-1 rounded-sm underline-offset-4 outline-none enabled:hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:cursor-default"
         >
-          <span className="font-semibold text-foreground">{value}</span>
+          <span className="font-mono font-medium tabular-nums text-foreground">{value}</span>
           <span className="text-muted-foreground">{label}</span>
         </button>
       </DialogTrigger>
@@ -219,11 +233,16 @@ function PeopleStat({
                   to="/u/$handle"
                   params={{ handle: p.username }}
                   onClick={() => setOpen(false)}
-                  className="flex items-center gap-3 rounded-md p-2 transition-colors hover:bg-hover"
+                  className="flex items-center gap-3 rounded-md p-2 outline-none hover:bg-hover focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
                 >
                   <Avatar className="size-8">
                     {p.image && <AvatarImage src={p.image} alt={p.name ?? p.username} />}
-                    <AvatarFallback>{getInitials(p.name ?? p.username)}</AvatarFallback>
+                    <AvatarFallback
+                      className="text-scrim-foreground outline-1 -outline-offset-1 outline-foreground/10"
+                      style={{ backgroundColor: colorForName(p.name ?? p.username) }}
+                    >
+                      {getInitials(p.name ?? p.username)}
+                    </AvatarFallback>
                   </Avatar>
                   <span className="min-w-0">
                     {p.name && <span className="block truncate text-sm font-medium">{p.name}</span>}
@@ -262,10 +281,8 @@ function ProfileWork({ handle, isMe, name }: { handle: string; isMe: boolean; na
   }, [hasNextPage, isFetchingNextPage, fetchNextPage])
 
   return (
-    <section className="mt-7">
-      <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-        Work
-      </h2>
+    <section className="flex flex-col gap-3">
+      <SectionEyebrow>Work</SectionEyebrow>
       {isPending ? (
         <div className="py-10">
           <Spinner />
@@ -291,7 +308,11 @@ function ProfileWork({ handle, isMe, name }: { handle: string; isMe: boolean; na
             ))}
           </div>
           <div ref={sentinel} className="h-8" />
-          {isFetchingNextPage && <Spinner />}
+          {isFetchingNextPage && (
+            <div className="flex justify-center py-2">
+              <Spinner />
+            </div>
+          )}
         </>
       )}
     </section>

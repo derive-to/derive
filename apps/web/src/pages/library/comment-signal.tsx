@@ -9,8 +9,9 @@ type Signals = Pick<Artifact, "open_threads" | "mentions_me" | "i_participated">
 export const needsMyFeedback = (a: Signals): boolean => !!(a.mentions_me || a.i_participated)
 
 /** Inline comment indicator for a list item. Plain comment activity reads quietly
- *  (a muted count, like views); an item that needs your feedback gets a loud accent
+ *  (a muted count, like views); an item that needs your feedback gets a soft brand
  *  chip — "Tagged you" (you were @mentioned) outranks "You're in this" (you commented).
+ *  Amber here is the sanctioned attention signal (like unread), kept to a tint.
  *  Renders nothing when there's no comment activity at all. */
 export function CommentSignal({
   artifact: a,
@@ -41,8 +42,9 @@ export function CommentSignal({
       className={cn(
         "inline-flex items-center gap-1 rounded-md font-medium",
         featured && "px-1.5 py-px",
+        // Flat tonal chip (badge grammar — no ring): soft amber wash + amber ink.
         tagged
-          ? "bg-primary/15 text-primary ring-1 ring-inset ring-primary/35"
+          ? "bg-primary/10 text-primary"
           : a.i_participated
             ? "text-primary"
             : "text-muted-foreground",
@@ -50,7 +52,7 @@ export function CommentSignal({
       )}
     >
       <Icon name="comments" size={size} />
-      {open > 0 && <span>{open}</span>}
+      {open > 0 && <span className="font-mono tabular-nums">{open}</span>}
       {label && <span>{label}</span>}
     </span>
   )

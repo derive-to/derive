@@ -114,29 +114,31 @@ function NewAgent({ onCreated }: { onCreated: (msg: string) => void }) {
         </Select>
         <Button
           data-testid="agent-add"
-          variant="default"
+          variant="secondary"
+          size="sm"
           onClick={add}
           disabled={busy || !name.trim()}
         >
           {busy ? "Adding…" : "Add agent"}
         </Button>
       </div>
-      {/* The token is shown exactly once, right after creation. */}
+      {/* The token is shown exactly once, right after creation — the one-time
+          reveal is a safety-orange warning moment, never amber. */}
       {created && (
         <div
           data-testid="agent-token"
-          className="mt-3 rounded-lg border border-primary bg-accent/15 p-3"
+          className="flex flex-col gap-1.5 rounded-lg bg-warning/10 p-3 ring-1 ring-inset ring-warning/25"
         >
-          <div className="mb-1.5 text-xs font-semibold text-foreground">
+          <div className="text-xs font-medium text-warning">
             Token for {created.name} — copy it now, it won't be shown again.
           </div>
           <div className="flex items-center gap-2">
-            <code className="flex-1 break-all rounded-md border border-border bg-card px-2.5 py-1.5 font-mono text-xs">
+            <code className="flex-1 break-all rounded-md bg-background/60 px-2.5 py-1.5 font-mono text-xs text-foreground">
               {created.token}
             </code>
             <Button
               data-testid="agent-token-copy"
-              variant="ghost"
+              variant="secondary"
               size="sm"
               onClick={() => {
                 navigator.clipboard?.writeText(created.token)
@@ -183,16 +185,16 @@ function AgentRow({
     }
   }
   return (
-    <Card data-testid={`agent-row-${agent.id}`} className="flex items-center gap-3 px-4 py-3">
+    <Card data-testid={`agent-row-${agent.id}`} className="flex-row items-center gap-3 px-4 py-3">
       <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-secondary text-muted-foreground">
         <Bot className="size-4" aria-hidden />
       </span>
       <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-1.5 text-sm font-semibold text-foreground">
+        <div className="flex items-center gap-1.5 text-sm font-medium text-foreground">
           @{agent.name}
           <Badge variant="secondary">{agent.role}</Badge>
         </div>
-        <div className="text-2xs text-muted-foreground">
+        <div className="text-xs text-muted-foreground">
           Mention it in any thread to send it work.
         </div>
       </div>

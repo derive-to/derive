@@ -87,9 +87,16 @@ export function ArtifactTopBar(props: {
             title="More"
             aria-label="More actions"
             data-testid="artifact-more"
-            className={cn(openProposals > 0 && "bg-hover")}
+            className="relative"
           >
-            <Icon name="more" size={18} className="text-muted-foreground" />
+            <Icon name="more" size={16} className="text-muted-foreground" />
+            {/* Open proposals waiting on review — the unread-dot grammar. */}
+            {openProposals > 0 && (
+              <span
+                aria-hidden
+                className="absolute right-1.5 top-1.5 size-1.5 rounded-full bg-primary"
+              />
+            )}
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent>
@@ -128,7 +135,7 @@ export function ArtifactTopBar(props: {
         <Button
           variant="ghost"
           size="sm"
-          className={cn("gap-1.5", props.reader && "bg-hover text-foreground")}
+          className={cn(props.reader && "bg-accent text-foreground")}
           data-testid="artifact-reader"
           onClick={props.onReaderToggle}
           title={props.reader ? "Show original layout" : "Reader view"}
@@ -144,7 +151,6 @@ export function ArtifactTopBar(props: {
         <Button
           variant="ghost"
           size="sm"
-          className="gap-1.5"
           data-testid="artifact-present"
           onClick={props.onPresent}
           title="Present (fullscreen)"
@@ -159,7 +165,7 @@ export function ArtifactTopBar(props: {
         <Button
           variant="ghost"
           size="sm"
-          className={cn("gap-1.5", props.panelOpen && "bg-hover")}
+          className={cn(props.panelOpen && "bg-accent text-foreground")}
           data-testid="artifact-show-comments"
           onClick={props.onToggleComments}
           title="Comments (c)"
@@ -167,7 +173,11 @@ export function ArtifactTopBar(props: {
           aria-pressed={props.panelOpen}
         >
           <Icon name="comments" size={16} className="text-muted-foreground" />
-          {props.openCount > 0 && <b className="font-bold">{props.openCount}</b>}
+          {props.openCount > 0 && (
+            <span className="font-mono text-2xs tabular-nums text-muted-foreground">
+              {props.openCount}
+            </span>
+          )}
         </Button>
       )}
     </>

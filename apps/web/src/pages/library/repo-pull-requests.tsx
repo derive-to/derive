@@ -24,9 +24,9 @@ export function RepoPullRequests({
       className="mb-4 overflow-hidden rounded-xl border border-border bg-card"
     >
       <header className="flex items-center gap-2 border-b border-border-soft px-3.5 py-2.5">
-        <Icon name="review" size={16} />
-        <span className="text-sm font-semibold text-foreground">Pull requests</span>
-        <span className="font-mono text-2xs text-muted-foreground">{prs.length}</span>
+        <Icon name="review" size={16} className="text-muted-foreground" />
+        <span className="text-sm font-medium text-foreground">Pull requests</span>
+        <span className="font-mono text-2xs text-muted-foreground tabular-nums">{prs.length}</span>
       </header>
       <ul className="flex flex-col">
         {prs.map((pr) => {
@@ -42,15 +42,16 @@ export function RepoPullRequests({
                 data-testid={`repo-pr-${pr.id}`}
                 aria-current={active ? "page" : undefined}
                 className={cn(
-                  "flex min-w-0 flex-1 items-center gap-2.5 px-3.5 py-2.5 text-sm transition-colors hover:bg-hover",
+                  // Full-bleed row in an overflow-clipped card → inset focus outline.
+                  "flex min-w-0 flex-1 items-center gap-2.5 px-3.5 py-2.5 text-sm outline-none hover:bg-hover focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring",
                   active && "bg-accent text-accent-foreground hover:bg-accent",
                 )}
               >
-                <Icon name="review" size={15} className="shrink-0" />
+                <Icon name="review" size={16} className="shrink-0 text-muted-foreground" />
                 {pr.prNumber !== undefined && (
                   <span
                     className={cn(
-                      "shrink-0 font-mono text-2xs text-muted-foreground",
+                      "shrink-0 font-mono text-2xs text-muted-foreground tabular-nums",
                       active && "text-accent-foreground",
                     )}
                   >
@@ -62,7 +63,7 @@ export function RepoPullRequests({
                 </span>
                 <span
                   className={cn(
-                    "shrink-0 font-mono text-2xs text-muted-foreground",
+                    "shrink-0 font-mono text-2xs text-muted-foreground tabular-nums",
                     active && "text-accent-foreground",
                   )}
                 >
@@ -77,9 +78,9 @@ export function RepoPullRequests({
                   title={`Open PR #${pr.prNumber} on GitHub`}
                   aria-label={`Open PR #${pr.prNumber} on GitHub`}
                   data-testid={`repo-pr-${pr.id}-github`}
-                  className="flex h-9 w-9 shrink-0 items-center justify-center text-muted-foreground transition-colors hover:text-foreground"
+                  className="flex size-9 shrink-0 items-center justify-center text-muted-foreground outline-none hover:text-foreground focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
                 >
-                  <Icon name="link" size={15} />
+                  <Icon name="link" size={16} />
                 </a>
               )}
             </li>

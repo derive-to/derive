@@ -91,34 +91,39 @@ export function Login() {
   const signup = mode === "signup"
 
   return (
-    <div className="grid min-h-screen lg:grid-cols-2">
-      {/* Brand + value panel — desktop only; the form carries a compact brand on mobile. */}
-      <aside className="hidden flex-col justify-between bg-secondary p-10 text-secondary-foreground lg:flex">
+    <div className="grid min-h-screen bg-background lg:grid-cols-2">
+      {/* Brand + value panel — desktop only; the form carries a compact brand on mobile.
+          Flush on the canvas with a hairline divider — never a tinted well. */}
+      <aside className="hidden flex-col justify-between border-r p-10 lg:flex">
         <div className="flex items-center gap-2.5">
           <Logo size={30} />
-          <span className="text-xl font-semibold">Derive</span>
+          <span className="font-serif text-xl font-medium tracking-tight">Derive</span>
         </div>
-        <div className="max-w-md">
-          <h1 className="text-3xl font-semibold leading-tight text-foreground">
-            The permanent home for your AI artifacts.
-          </h1>
-          <p className="mt-3 text-sm text-muted-foreground">
-            Give any HTML page, doc, or built site a lasting URL, version history, and a review loop
-            your team and your agents can actually use.
-          </p>
-          <ul className="mt-6 flex flex-col gap-3">
+        <div className="flex max-w-md flex-col gap-6">
+          <div className="flex flex-col gap-3">
+            {/* The one voice moment on the page — serif, per the login headline rule. */}
+            <h1 className="font-serif text-3xl font-medium tracking-tight text-balance text-foreground xl:text-4xl">
+              The permanent home for your AI artifacts.
+            </h1>
+            <p className="text-base text-pretty text-muted-foreground">
+              Give any HTML page, doc, or built site a lasting URL, version history, and a review
+              loop your team and your agents can actually use.
+            </p>
+          </div>
+          <ul className="flex flex-col gap-3">
             {FEATURES.map(([title, desc]) => (
               <li key={title} className="flex gap-2.5">
+                {/* Amber checks are a sanctioned brand moment on this page. */}
                 <Check className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden />
                 <div className="flex flex-col">
-                  <span className="text-sm font-semibold text-foreground">{title}</span>
-                  <span className="text-xs text-muted-foreground">{desc}</span>
+                  <span className="text-sm font-medium text-foreground">{title}</span>
+                  <span className="text-sm text-muted-foreground">{desc}</span>
                 </div>
               </li>
             ))}
           </ul>
         </div>
-        <p className="text-2xs text-muted-foreground">
+        <p className="text-xs text-muted-foreground">
           Open source. Self-host the whole thing, or use the hosted tier.
         </p>
       </aside>
@@ -126,13 +131,13 @@ export function Login() {
       {/* Auth form — kept lean; profile setup (username + photo) happens on the home
           page once you're in, not as a gate here. */}
       <main className="flex items-center justify-center p-6">
-        <div className="w-full max-w-xs">
-          <div className="mb-6 flex flex-col items-center gap-1 text-center lg:hidden">
+        <div className="flex w-full max-w-xs flex-col gap-6">
+          <div className="flex flex-col items-center gap-1.5 text-center lg:hidden">
             <div className="flex items-center gap-2">
               <Logo size={26} />
-              <span className="text-lg font-semibold">Derive</span>
+              <span className="font-serif text-lg font-medium tracking-tight">Derive</span>
             </div>
-            <p className="text-xs text-muted-foreground">
+            <p className="text-sm text-muted-foreground">
               Permanent URLs, versions, and review for your AI artifacts.
             </p>
           </div>
@@ -175,7 +180,7 @@ export function Login() {
                   </div>
                   <div className="flex items-center gap-3 py-0.5">
                     <span className="h-px flex-1 bg-border" />
-                    <span className="text-2xs uppercase tracking-wide text-muted-foreground">
+                    <span className="font-mono text-2xs uppercase tracking-wide text-muted-foreground">
                       or
                     </span>
                     <span className="h-px flex-1 bg-border" />
@@ -187,7 +192,7 @@ export function Login() {
                   <div
                     data-testid="login-error"
                     role="alert"
-                    className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+                    className="rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive ring-1 ring-inset ring-destructive/25"
                   >
                     {err}
                   </div>
@@ -262,7 +267,7 @@ export function Login() {
                   data-testid="login-toggle"
                   variant="link"
                   type="button"
-                  className="h-auto p-0 align-baseline text-sm font-semibold"
+                  className="h-auto p-0 align-baseline text-sm font-medium"
                   onClick={() => setMode(signup ? "login" : "signup")}
                 >
                   {signup ? "Sign in" : "Create an account"}

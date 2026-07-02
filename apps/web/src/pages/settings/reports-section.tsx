@@ -52,10 +52,10 @@ function ReportRow({
   return (
     <Card
       data-testid={`report-row-${report.id}`}
-      className="flex gap-3 ring-destructive/50 px-4 py-3"
+      className="flex-row gap-3 border-destructive/30 px-4 py-3"
     >
       <div className="min-w-0 flex-1">
-        <div className="text-sm font-semibold text-foreground">
+        <div className="text-sm font-medium text-foreground">
           {report.reason}{" "}
           <a
             href={`/a/${report.artifact_short_id}`}
@@ -67,7 +67,7 @@ function ReportRow({
         {report.detail && (
           <div className="mt-0.5 text-xs text-muted-foreground">{report.detail}</div>
         )}
-        <div className="mt-1 text-2xs text-muted-foreground">
+        <div className="mt-1 font-mono text-2xs text-muted-foreground">
           {report.reporter ? `reported from ${report.reporter}` : "reported anonymously"}
         </div>
       </div>

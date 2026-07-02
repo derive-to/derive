@@ -1,3 +1,13 @@
+import {
+  Box,
+  Braces,
+  ChartNoAxesColumn,
+  Clapperboard,
+  Image as ImageGlyph,
+  Link2,
+  type LucideIcon,
+  Table2,
+} from "lucide-react"
 import { useCallback, useEffect, useRef, useState } from "react"
 import type { Comment, Mention } from "@/api"
 import { Button } from "@/components/ui/button"
@@ -178,16 +188,17 @@ export function PinnedZone({
   )
 }
 
-// A small glyph standing in for an element's role on the comment card.
-const ROLE_GLYPH: Record<string, string> = {
-  image: "🖼",
-  chart: "📊",
-  media: "🎬",
-  embed: "🔗",
-  table: "▦",
-  code: "{ }",
-  figure: "🖼",
-  block: "❖",
+// A small glyph standing in for an element's role on the comment card (lucide
+// only — no emoji in chrome).
+const ROLE_GLYPH: Record<string, LucideIcon> = {
+  image: ImageGlyph,
+  chart: ChartNoAxesColumn,
+  media: Clapperboard,
+  embed: Link2,
+  table: Table2,
+  code: Braces,
+  figure: ImageGlyph,
+  block: Box,
 }
 
 /**
@@ -212,7 +223,7 @@ function ElementRef({
   relocated?: boolean
   onJump: (id: string) => void
 }) {
-  const glyph = ROLE_GLYPH[snapshot?.tag === "table" ? "table" : roleGuess(snapshot, label)] ?? "❖"
+  const Glyph = ROLE_GLYPH[snapshot?.tag === "table" ? "table" : roleGuess(snapshot, label)] ?? Box
   if (present) {
     return (
       <button
@@ -223,11 +234,9 @@ function ElementRef({
           onJump(threadId)
         }}
         title={relocated ? "Jump to the element (moved — approximate)" : "Jump to the element"}
-        className="flex w-full items-center gap-1.5 border-l-[3px] border-primary bg-accent px-2.5 py-1.5 text-left text-xs font-medium text-foreground"
+        className="flex w-full items-center gap-1.5 border-l-[3px] border-primary bg-accent px-2.5 py-1.5 text-left text-xs font-medium text-foreground outline-none focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
       >
-        <span aria-hidden className="shrink-0 text-sm leading-none">
-          {glyph}
-        </span>
+        <Glyph aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
         <span className="truncate">{label}</span>
         {relocated && (
           // A minor, muted "moved" marker — a small dot + word, not an alarm.
@@ -257,7 +266,7 @@ function ElementRef({
         <img
           src={thumb}
           alt=""
-          className="size-9 shrink-0 rounded border border-border object-cover"
+          className="size-9 shrink-0 rounded object-cover outline-1 -outline-offset-1 outline-foreground/10"
           onError={(e) => {
             e.currentTarget.style.display = "none"
           }}
@@ -265,9 +274,9 @@ function ElementRef({
       ) : (
         <span
           aria-hidden
-          className="grid size-9 shrink-0 place-items-center rounded border border-border bg-card text-sm"
+          className="grid size-9 shrink-0 place-items-center rounded border border-border bg-card"
         >
-          {glyph}
+          <Glyph className="size-4" />
         </span>
       )}
       <span className="min-w-0">
@@ -369,7 +378,7 @@ export function CommentCard({
       onMouseLeave={() => onHover(null)}
       onClick={() => !active && onActivate(root.thread_id)}
       className={cn(
-        "animate-in fade-in slide-in-from-bottom-1 duration-200 overflow-hidden rounded-lg border bg-card transition-[box-shadow,border-color]",
+        "animate-in fade-in slide-in-from-bottom-1 duration-200 overflow-hidden rounded-lg border bg-card",
         active
           ? "cursor-default border-primary shadow-[var(--shadow)]"
           : hovered
@@ -382,7 +391,7 @@ export function CommentCard({
         <div className="flex items-center gap-1.5 px-2.5 pb-0.5 pt-1.5">
           <span
             data-testid={`comment-slide-${root.thread_id}`}
-            className="rounded-full bg-secondary px-1.5 py-px font-mono text-2xs font-medium text-muted-foreground"
+            className="rounded-full bg-secondary px-1.5 py-px font-mono text-2xs font-medium tabular-nums text-muted-foreground"
           >
             Slide {slideNum + 1}
           </span>
@@ -418,7 +427,7 @@ export function CommentCard({
                 onJump(root.thread_id)
               }}
               title="Jump to the highlighted text"
-              className="block w-full truncate border-l-[3px] border-primary bg-accent px-2.5 py-1.5 text-left text-xs italic text-foreground"
+              className="block w-full truncate border-l-[3px] border-primary bg-accent px-2.5 py-1.5 text-left text-xs italic text-foreground outline-none focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
             >
               “{refLabel}”
             </button>
@@ -435,7 +444,7 @@ export function CommentCard({
         <>
           <CommentRow c={root} compact />
           {replies > 0 && (
-            <div className="px-3 pb-2.5 font-mono text-2xs font-bold text-primary">
+            <div className="px-3 pb-2.5 font-mono text-2xs font-medium tabular-nums text-muted-foreground">
               {replies} repl{replies === 1 ? "y" : "ies"}
             </div>
           )}
@@ -480,14 +489,17 @@ export function CommentCard({
           <div className="flex items-center gap-1.5 bg-secondary px-3 py-1.5">
             <span
               className={cn(
-                "rounded-full px-2 py-0.5 font-mono text-2xs font-bold",
+                // Status tones: resolved = success, outdated = warning, addressed =
+                // brand (a pending revision is a brand moment), open = neutral wash
+                // — amber is never a status.
+                "rounded-full px-2 py-0.5 font-mono text-2xs font-medium",
                 resolved
-                  ? "bg-muted text-muted-foreground"
+                  ? "bg-success/10 text-success"
                   : outdated
-                    ? "bg-secondary text-foreground"
+                    ? "bg-warning/10 text-warning"
                     : addressed
-                      ? "bg-muted text-muted-foreground"
-                      : "bg-accent text-primary",
+                      ? "bg-primary/10 text-primary"
+                      : "bg-accent text-foreground",
               )}
               title={
                 outdated
@@ -506,15 +518,20 @@ export function CommentCard({
                     ? "The element this comment was attached to was edited or removed in this version"
                     : "The text this comment was attached to was edited or removed in this version"
                 }
-                className="rounded-full bg-accent px-2 py-0.5 font-mono text-2xs font-bold text-primary"
+                className="rounded-full bg-warning/10 px-2 py-0.5 font-mono text-2xs font-medium text-warning"
               >
                 {isEl ? "element changed" : "text changed"}
               </span>
             )}
+            {/* Resolve is a success affordance (soft tint, never a filled amber);
+                Reopen goes back to a quiet outline. */}
             <Button
-              variant="outline"
+              variant={resolved ? "outline" : "ghost"}
               size="sm"
-              className="ml-auto"
+              className={cn(
+                "ml-auto",
+                !resolved && "bg-success/10 text-success hover:bg-success/15 hover:text-success",
+              )}
               data-testid="comment-resolve"
               onClick={(e) => {
                 e.stopPropagation()
@@ -556,7 +573,7 @@ export function ResolvedSection({
         type="button"
         onClick={() => setOpen((o) => !o)}
         data-testid="resolved-section-toggle"
-        className="flex w-full items-center gap-1.5 px-0.5 py-1.5 font-mono text-2xs font-bold uppercase tracking-[0.06em] text-muted-foreground"
+        className="flex w-full items-center gap-1.5 rounded-sm px-0.5 py-1.5 font-mono text-2xs font-medium uppercase tracking-wide text-muted-foreground tabular-nums outline-none focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
       >
         <span className={cn("transition-transform", open && "rotate-90")}>▸</span>
         Resolved ({threads.length})
@@ -613,7 +630,7 @@ export function GeneralSection({
         type="button"
         onClick={() => setOpen((o) => !o)}
         data-testid="general-section-toggle"
-        className="flex w-full items-center gap-1.5 px-0.5 py-1.5 font-mono text-2xs font-bold uppercase tracking-[0.06em] text-muted-foreground"
+        className="flex w-full items-center gap-1.5 rounded-sm px-0.5 py-1.5 font-mono text-2xs font-medium uppercase tracking-wide text-muted-foreground tabular-nums outline-none focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
       >
         <span className={cn("transition-transform", open && "rotate-90")}>▸</span>
         General ({threads.length})

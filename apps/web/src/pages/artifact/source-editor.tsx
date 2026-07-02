@@ -97,8 +97,12 @@ export function SourceEditor({
       data-testid={`artifact-${id}-tab`}
       onClick={() => setPane(id)}
       className={cn(
-        "rounded-md px-3 py-1.5 text-xs font-semibold transition-colors",
-        pane === id ? "bg-card text-foreground shadow-[var(--shadow-sm)]" : "text-muted-foreground",
+        // Segmented control per the tabs recipe: the active pane lifts on a
+        // neutral surface (shadow only reads in light; dark uses the wash).
+        "rounded-md px-3 py-1.5 text-xs font-medium outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring",
+        pane === id
+          ? "bg-background text-foreground shadow-[var(--shadow-sm)] dark:bg-accent"
+          : "text-muted-foreground",
       )}
     >
       {label}
@@ -118,7 +122,7 @@ export function SourceEditor({
             placeholder="Untitled"
             aria-label="Title"
             data-testid="artifact-title-input"
-            className="h-8 w-full text-sm font-semibold md:w-auto md:max-w-[320px] md:flex-1"
+            className="h-8 w-full text-sm font-medium md:w-auto md:max-w-[320px] md:flex-1"
           />
         ) : (
           <span className="flex items-center gap-2 font-mono text-xs text-muted-foreground">
@@ -157,16 +161,14 @@ export function SourceEditor({
             onClick={() => setPreviewOpen((v) => !v)}
             title={previewOpen ? "Hide preview" : "Show preview"}
             aria-pressed={previewOpen}
-            className={cn(
-              "hidden gap-1.5 md:inline-flex",
-              previewOpen && "border-primary text-primary",
-            )}
+            // Pressed toggles are a neutral wash — amber is reserved.
+            className={cn("hidden gap-1.5 md:inline-flex", previewOpen && "bg-accent")}
           >
             <Icon name="views" size={16} />
             Preview
           </Button>
           {/* Phone: one pane at a time. */}
-          <span className="flex rounded-lg border border-border bg-muted/50 p-0.5 md:hidden">
+          <span className="flex rounded-lg bg-muted p-0.5 md:hidden">
             {tab("edit", "Edit")}
             {tab("preview", "Preview")}
           </span>
@@ -222,7 +224,7 @@ export function SourceEditor({
           {previewStale && (
             <div
               data-testid="preview-stale"
-              className="shrink-0 border-b border-border-soft bg-secondary px-3 py-1.5 text-xs text-muted-foreground"
+              className="shrink-0 border-b border-border-soft bg-warning/10 px-3 py-1.5 text-xs text-warning"
             >
               Preview unavailable. Showing your last successful render.
             </div>

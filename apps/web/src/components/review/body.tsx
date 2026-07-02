@@ -48,14 +48,15 @@ export function ReviewBody({
         </div>
       )}
       {stale && active && (
-        <div className="border-b border-border-soft bg-destructive/10 px-4 py-2.5 text-xs leading-relaxed">
-          <b className="text-destructive">Out of date:</b> proposed against v{active.base_version},
-          but the live version is now v{currentVersion}. Approving replaces v{currentVersion}{" "}
-          entirely — compare against{" "}
+        // A stale base is a warning, not a destructive failure.
+        <div className="border-b border-border-soft bg-warning/10 px-4 py-2.5 text-xs leading-relaxed">
+          <b className="text-warning">Out of date:</b> proposed against v{active.base_version}, but
+          the live version is now v{currentVersion}. Approving replaces v{currentVersion} entirely —
+          compare against{" "}
           <button
             type="button"
             data-testid="review-compare-current"
-            className="font-semibold text-primary underline-offset-2 hover:underline"
+            className="rounded-sm font-medium text-primary underline-offset-2 outline-none hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
             onClick={onCompareCurrent}
           >
             Current
@@ -77,12 +78,22 @@ export function ReviewBody({
                 // biome-ignore lint/suspicious/noArrayIndexKey: diff lines are positional, no stable id
                 key={i}
                 className={cn(
+                  // Success/destructive tints carry add/remove — never raw greens/reds.
                   "whitespace-pre-wrap break-words px-4",
-                  o.t === "add" && "bg-muted",
+                  o.t === "add" && "bg-success/10",
                   o.t === "del" && "bg-destructive/10",
                 )}
               >
-                <span className="select-none text-muted-foreground">
+                <span
+                  className={cn(
+                    "select-none",
+                    o.t === "add"
+                      ? "text-success"
+                      : o.t === "del"
+                        ? "text-destructive"
+                        : "text-muted-foreground",
+                  )}
+                >
                   {o.t === "add" ? "+ " : o.t === "del" ? "− " : "  "}
                 </span>
                 {o.line}

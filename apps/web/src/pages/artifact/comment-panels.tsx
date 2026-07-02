@@ -1,6 +1,7 @@
 import { type Dispatch, type SetStateAction, useEffect, useRef, useState } from "react"
 import type { Comment, Mention } from "@/api"
 import { Icon } from "@/components/icons"
+import { EmptyState } from "@/components/shared/empty-state"
 import { Button } from "@/components/ui/button"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { useFocusTrap } from "@/lib/use-focus-trap"
@@ -18,8 +19,9 @@ import { type PinItem, type Sel, selLabel } from "./types"
 
 type Tab = "comments" | "personal"
 
+// Machine register: a neutral mono count, not an amber signal.
 const TabCount = ({ n }: { n: number }) => (
-  <span className="rounded-full bg-accent px-1.5 font-mono text-2xs font-bold text-primary">
+  <span className="rounded-full bg-accent px-1.5 font-mono text-2xs font-medium tabular-nums text-muted-foreground">
     {n}
   </span>
 )
@@ -165,14 +167,14 @@ export function MobileComments({
         tabIndex={open && !composer && size === "full" ? 0 : -1}
         onClick={() => setSize("peek")}
         className={cn(
-          "fixed inset-0 z-[60] bg-black/35 transition-opacity",
+          "fixed inset-0 z-[60] bg-scrim/50 transition-opacity",
           open && !composer && size === "full" ? "opacity-100" : "pointer-events-none opacity-0",
         )}
       />
       <div
         ref={sheetRef}
         className={cn(
-          "fixed inset-x-0 bottom-0 z-[61] flex flex-col rounded-t-2xl border-t border-border bg-card shadow-[0_-14px_44px_-18px_rgba(0,0,0,0.5)] duration-[260ms]",
+          "fixed inset-x-0 bottom-0 z-[61] flex flex-col rounded-t-2xl border-t border-border bg-card shadow-[0_-14px_44px_-18px_rgba(0,0,0,0.5)] duration-[260ms] dark:shadow-none",
           // Don't animate height while the keyboard repositions the sheet.
           kb ? "transition-transform" : "transition-[transform,height]",
           // Composing: a compact bar sized to its content (capped), so the box sits
@@ -211,7 +213,8 @@ export function MobileComments({
                 onNewGeneral()
               }}
             >
-              ＋ New
+              <Icon name="plus" size={16} />
+              New
             </Button>
           )}
           <IconBtn
@@ -246,24 +249,16 @@ export function MobileComments({
         ) : size === "full" ? (
           <div className="min-h-0 flex-1 overflow-auto p-3 pb-[max(14px,env(safe-area-inset-bottom))]">
             {empty && (
-              <div className="grid place-items-center gap-2 p-[34px] text-center">
-                <div className="text-3xl opacity-50">{tab === "personal" ? "🔒" : "💬"}</div>
-                <div className="text-sm leading-relaxed text-muted-foreground">
-                  {tab === "personal" ? (
-                    <>
-                      No personal notes yet.
-                      <br />
-                      Only you and your agents can see these.
-                    </>
-                  ) : (
-                    <>
-                      No comments yet.
-                      <br />
-                      Select text in the document to start one.
-                    </>
-                  )}
-                </div>
-              </div>
+              <EmptyState
+                className="p-8"
+                icon={<Icon name={tab === "personal" ? "lock" : "comments"} strokeWidth={1.75} />}
+                title={tab === "personal" ? "No personal notes yet." : "No comments yet."}
+                description={
+                  tab === "personal"
+                    ? "Only you and your agents can see these."
+                    : "Select text in the document to start one."
+                }
+              />
             )}
             {openThreads.map((t) => {
               const head = t[0]
@@ -368,11 +363,11 @@ export function OpenPanel(props: {
         />
         {canComment && (
           <IconBtn title="New comment" testId="comment-new" onClick={onNewGeneral}>
-            ＋
+            <Icon name="plus" size={16} />
           </IconBtn>
         )}
         <IconBtn title="Close comments (c)" onClick={onHide}>
-          ✕
+          <Icon name="close" size={16} />
         </IconBtn>
       </div>
 
@@ -399,23 +394,17 @@ export function OpenPanel(props: {
 
         {/* Empty state. */}
         {empty && (
-          <div className="absolute inset-0 grid place-items-center gap-2 p-6 text-center">
-            <div className="text-3xl opacity-50">{tab === "personal" ? "🔒" : "💬"}</div>
-            <div className="text-sm leading-relaxed text-muted-foreground">
-              {tab === "personal" ? (
-                <>
-                  No personal notes yet.
-                  <br />
-                  Jot one for yourself, or leave instructions your agents will pick up.
-                </>
-              ) : (
-                <>
-                  No comments yet.
-                  <br />
-                  Select text in the document to start one.
-                </>
-              )}
-            </div>
+          <div className="absolute inset-0 grid place-items-center p-6">
+            <EmptyState
+              className="p-0"
+              icon={<Icon name={tab === "personal" ? "lock" : "comments"} strokeWidth={1.75} />}
+              title={tab === "personal" ? "No personal notes yet." : "No comments yet."}
+              description={
+                tab === "personal"
+                  ? "Jot one for yourself, or leave instructions your agents will pick up."
+                  : "Select text in the document to start one."
+              }
+            />
           </div>
         )}
       </div>

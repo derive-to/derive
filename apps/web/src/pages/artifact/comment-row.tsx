@@ -52,7 +52,7 @@ function CommentBody({ html, compact }: { html: string; compact?: boolean }) {
             e.stopPropagation()
             setExpanded((v) => !v)
           }}
-          className="mt-1 text-xs font-semibold text-primary hover:underline"
+          className="mt-1 rounded-sm text-xs font-medium text-primary outline-none hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
         >
           {expanded ? "Show less" : "Show more"}
         </button>
@@ -93,7 +93,7 @@ export function CommentRow({ c, compact }: { c: Comment; compact?: boolean }) {
         <Avatar className="size-5">
           <AvatarFallback className="text-2xs">{getInitials(c.author)}</AvatarFallback>
         </Avatar>
-        <span className="text-xs font-bold text-foreground">{c.author}</span>
+        <span className="text-xs font-medium text-foreground">{c.author}</span>
         <span className="ml-auto font-mono text-2xs text-muted-foreground">
           {ago(c.created_at)}
           {c.edited ? " · edited" : ""}
@@ -169,16 +169,16 @@ export function CommentRow({ c, compact }: { c: Comment; compact?: boolean }) {
                 A.react(c.id, emoji)
               }}
               className={cn(
-                "inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-xs outline-none transition-colors focus-visible:ring-[3px] focus-visible:ring-ring/50",
-                // Reacted reads as a quiet monochrome tint, not a loud fill — many
-                // reacted pills shouldn't shout.
+                "inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-xs outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring",
+                // Reacted = the sanctioned soft brand chip; unreacted stays neutral
+                // (hover brightens the hairline, never an amber tint).
                 who.includes(A.meName)
-                  ? "border-primary/40 bg-primary/10 text-foreground"
-                  : "border-border bg-card text-muted-foreground hover:border-primary/60",
+                  ? "border-primary/40 bg-primary/15 text-primary"
+                  : "border-border bg-card text-muted-foreground hover:border-foreground/25",
               )}
             >
               <span>{emoji}</span>
-              <span className="font-mono text-2xs">{who.length}</span>
+              <span className="font-mono text-2xs tabular-nums">{who.length}</span>
             </button>
           ))}
         </div>
@@ -189,7 +189,7 @@ export function CommentRow({ c, compact }: { c: Comment; compact?: boolean }) {
         // biome-ignore lint/a11y/useKeyWithClickEvents: stopPropagation wrapper around the action toolbar, not a control
         <div
           className={cn(
-            "absolute right-2 top-1.5 z-[6] flex gap-px rounded-lg border border-border bg-card p-0.5 shadow-[var(--shadow)] transition-opacity",
+            "absolute right-2 top-1.5 z-[6] flex gap-px rounded-lg bg-popover p-0.5 shadow-[var(--shadow)] ring-1 ring-foreground/10 transition-opacity",
             open
               ? "opacity-100"
               : "pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100",
@@ -220,7 +220,7 @@ export function CommentRow({ c, compact }: { c: Comment; compact?: boolean }) {
                       A.react(c.id, em)
                       setOpen(null)
                     }}
-                    className="grid size-[30px] place-items-center rounded-md text-lg hover:bg-hover"
+                    className="grid size-[30px] place-items-center rounded-md text-lg outline-none hover:bg-accent focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
                   >
                     {em}
                   </button>
@@ -249,9 +249,9 @@ export function CommentRow({ c, compact }: { c: Comment; compact?: boolean }) {
                     setEditing(true)
                     setOpen(null)
                   }}
-                  className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-sm font-medium text-foreground transition-colors hover:bg-hover"
+                  className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-sm font-medium text-foreground outline-none hover:bg-accent focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
                 >
-                  <Icon name="pencil" size={15} /> Edit
+                  <Icon name="pencil" size={16} /> Edit
                 </button>
               )}
               <button
@@ -261,9 +261,9 @@ export function CommentRow({ c, compact }: { c: Comment; compact?: boolean }) {
                   A.copyLink(c.thread_id)
                   setOpen(null)
                 }}
-                className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-sm font-medium text-foreground transition-colors hover:bg-hover"
+                className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-sm font-medium text-foreground outline-none hover:bg-accent focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
               >
-                <Icon name="link" size={15} /> Copy link
+                <Icon name="link" size={16} /> Copy link
               </button>
               {mine && (
                 <button
@@ -273,9 +273,9 @@ export function CommentRow({ c, compact }: { c: Comment; compact?: boolean }) {
                     A.remove(c.id)
                     setOpen(null)
                   }}
-                  className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-sm font-medium text-foreground transition-colors hover:bg-hover hover:text-destructive"
+                  className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-sm font-medium text-destructive outline-none hover:bg-accent focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
                 >
-                  <Icon name="delete" size={15} /> Delete
+                  <Icon name="delete" size={16} /> Delete
                 </button>
               )}
             </PopoverContent>

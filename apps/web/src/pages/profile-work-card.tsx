@@ -16,7 +16,10 @@ export function ProfileWorkCard({ artifact: a }: { artifact: Artifact }) {
       to="/a/$ref"
       params={{ ref: refFor(a) }}
       data-testid={`profile-work-${a.short_id}`}
-      className="group flex flex-col overflow-hidden rounded-lg bg-card shadow-[var(--shadow-sm)] outline-none ring-1 ring-foreground/10 transition-shadow duration-150 hover:shadow-[var(--shadow)] focus-visible:ring-primary"
+      // Interactive card: hairline edge that brightens on hover; the shadow vars
+      // carry light-mode depth and zero out in dark. Shadow keeps its fade —
+      // border color flips instantly.
+      className="group flex flex-col overflow-hidden rounded-xl border bg-card shadow-(--shadow-sm) outline-none transition-shadow duration-150 hover:border-foreground/25 hover:shadow-(--shadow) focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
     >
       <Thumb
         id={a.short_id}
@@ -25,7 +28,8 @@ export function ProfileWorkCard({ artifact: a }: { artifact: Artifact }) {
         version={a.versions.length > 1 ? a.current_version : undefined}
       />
       <div className="flex min-w-0 flex-col gap-2 border-t border-border-soft p-3.5">
-        <span className="truncate text-lg font-medium tracking-tight text-foreground">
+        {/* The artifact title is the work — serif voice register. */}
+        <span className="truncate font-serif text-lg font-medium tracking-tight text-foreground">
           {a.title ?? a.short_id}
         </span>
         {a.source_path && dirOf(a.source_path) && (
@@ -40,7 +44,10 @@ export function ProfileWorkCard({ artifact: a }: { artifact: Artifact }) {
             </span>
           )}
           {a.views !== undefined && a.views > 0 && (
-            <span className="ml-auto inline-flex items-center gap-1" title={`${a.views} viewers`}>
+            <span
+              className="ml-auto inline-flex items-center gap-1 tabular-nums"
+              title={`${a.views} viewers`}
+            >
               <Icon name="views" size={13} />{" "}
               {a.views > 999 ? `${(a.views / 1000).toFixed(1)}k` : a.views}
               <span className="sr-only"> views</span>

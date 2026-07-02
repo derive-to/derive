@@ -98,7 +98,7 @@ function FolderSection({
           type="button"
           data-testid={`folder-toggle-${dir}`}
           onClick={() => setOpen((o) => !o)}
-          className="flex min-w-0 flex-1 items-center gap-2 rounded-md py-1.5 text-left hover:text-foreground"
+          className="flex min-w-0 flex-1 items-center gap-2 rounded-md py-1.5 text-left outline-none hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
         >
           <ChevronRight
             className={cn(
@@ -107,9 +107,11 @@ function FolderSection({
             )}
             aria-hidden
           />
-          <Folder className="size-4 shrink-0 text-primary" aria-hidden />
+          <Folder className="size-4 shrink-0 text-muted-foreground" aria-hidden />
           <span className="truncate font-mono text-sm font-medium text-foreground">{dir}</span>
-          <span className="font-mono text-xs text-muted-foreground">· {items.length}</span>
+          <span className="font-mono text-xs text-muted-foreground tabular-nums">
+            · {items.length}
+          </span>
         </button>
         {followable && (
           <button
@@ -121,9 +123,10 @@ function FolderSection({
             }
             onClick={onToggleFollow}
             className={cn(
-              "inline-flex shrink-0 items-center gap-1 rounded-md border px-2 py-1 font-mono text-2xs transition-colors",
+              // The followed state is a neutral wash — amber is reserved.
+              "inline-flex shrink-0 items-center gap-1 rounded-md border px-2 py-1 font-mono text-2xs outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring",
               following
-                ? "border-primary text-primary"
+                ? "border-border bg-accent text-foreground"
                 : "border-border text-muted-foreground opacity-0 hover:text-foreground group-hover/folder:opacity-100 focus-visible:opacity-100",
             )}
           >

@@ -84,7 +84,7 @@ function NewDomain({
     }
   }
   return (
-    <Card className="p-4">
+    <Card className="gap-2 p-4">
       <div className="flex flex-wrap items-center gap-2">
         <Input
           data-testid="domain-host"
@@ -92,11 +92,12 @@ function NewDomain({
           value={host}
           onChange={(e) => setHost(e.target.value)}
           placeholder="docs.acme.com"
-          className="min-w-[240px] flex-1 font-mono text-sm"
+          className="min-w-[240px] flex-1 font-mono"
         />
         <Button
           data-testid="domain-add"
-          variant="default"
+          variant="secondary"
+          size="sm"
           onClick={add}
           disabled={busy || !host.trim()}
         >
@@ -104,7 +105,7 @@ function NewDomain({
         </Button>
       </div>
       {cnameTarget && (
-        <p className="mt-2 font-mono text-2xs text-muted-foreground">
+        <p className="font-mono text-2xs text-muted-foreground">
           CNAME your domain to <span className="text-foreground">{cnameTarget}</span>.
         </p>
       )}
@@ -112,16 +113,16 @@ function NewDomain({
   )
 }
 
-const statusBadge = (s: string): { variant: "outline" | "default"; label: string; cls?: string } =>
+// Verification state → badge tone: a live cert is a success, a failed issuance is
+// destructive, and pending means DNS work is still on the user (warning, not amber).
+const statusBadge = (
+  s: string,
+): { variant: "success" | "destructive" | "warning"; label: string } =>
   s === "active"
-    ? {
-        variant: "outline",
-        label: "Active",
-        cls: "border-transparent bg-muted text-muted-foreground",
-      }
+    ? { variant: "success", label: "Active" }
     : s === "error"
-      ? { variant: "outline", label: "Error", cls: "text-destructive" }
-      : { variant: "default", label: "Pending" }
+      ? { variant: "destructive", label: "Error" }
+      : { variant: "warning", label: "Pending" }
 
 function DomainRow({ domain, onChanged }: { domain: WorkspaceDomain; onChanged: () => void }) {
   const b = statusBadge(domain.status)
@@ -143,16 +144,12 @@ function DomainRow({ domain, onChanged }: { domain: WorkspaceDomain; onChanged: 
     }
   }
   return (
-    <Card data-testid={`domain-row-${domain.host}`} className="overflow-hidden p-0">
+    <Card data-testid={`domain-row-${domain.host}`} className="gap-0 overflow-hidden p-0">
       <div className="flex items-center gap-2.5 px-3.5 py-3">
         <div className="min-w-0 flex-1 truncate font-mono text-sm text-foreground">
           {domain.host}
         </div>
-        <Badge
-          data-testid="domain-status"
-          variant={b.variant}
-          className={`font-mono ${b.cls ?? ""}`}
-        >
+        <Badge data-testid="domain-status" variant={b.variant}>
           {b.label}
         </Badge>
         {domain.status !== "active" && (

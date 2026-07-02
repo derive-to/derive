@@ -1,6 +1,7 @@
 import { useState } from "react"
 import { toast } from "sonner"
 import { api } from "@/api"
+import { FormField } from "@/components/shared/form-field"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import {
@@ -71,12 +72,13 @@ export function ProfileFields({ onSaved }: { onSaved?: () => void }) {
   }
 
   return (
-    <div className="flex flex-col gap-3">
-      <div className="flex flex-wrap items-start gap-2">
-        <div className="flex flex-col gap-1">
-          <label htmlFor="profile-role" className="text-2xs font-medium text-muted-foreground">
-            Your role
-          </label>
+    <div className="flex flex-col gap-4">
+      <div className="flex flex-wrap items-start gap-3">
+        <FormField
+          label="Your role"
+          htmlFor="profile-role"
+          hint={preset && preset !== OTHER && presetHint ? presetHint : undefined}
+        >
           <Select
             value={preset || "__unset"}
             onValueChange={(v) => setPreset(v === "__unset" ? "" : v)}
@@ -98,15 +100,13 @@ export function ProfileFields({ onSaved }: { onSaved?: () => void }) {
               ))}
             </SelectContent>
           </Select>
-        </div>
+        </FormField>
         {preset === OTHER && (
-          <div className="flex min-w-[150px] flex-1 flex-col gap-1">
-            <label
-              htmlFor="profile-role-other"
-              className="text-2xs font-medium text-muted-foreground"
-            >
-              Role name
-            </label>
+          <FormField
+            label="Role name"
+            htmlFor="profile-role-other"
+            className="min-w-[150px] flex-1"
+          >
             <Input
               id="profile-role-other"
               data-testid="profile-role-other"
@@ -115,16 +115,10 @@ export function ProfileFields({ onSaved }: { onSaved?: () => void }) {
               placeholder="e.g. Data, Sales, Ops…"
               onChange={(e) => setCustom(e.target.value)}
             />
-          </div>
+          </FormField>
         )}
       </div>
-      {preset && preset !== OTHER && presetHint && (
-        <p className="text-2xs text-muted-foreground">{presetHint}</p>
-      )}
-      <div className="flex flex-col gap-1">
-        <label htmlFor="profile-about" className="text-2xs font-medium text-muted-foreground">
-          What you do
-        </label>
+      <FormField label="What you do" htmlFor="profile-about">
         <Textarea
           id="profile-about"
           data-testid="profile-about"
@@ -134,7 +128,7 @@ export function ProfileFields({ onSaved }: { onSaved?: () => void }) {
           placeholder="A line about what you work on, so teammates and agents know who you are."
           onChange={(e) => setAbout(e.target.value)}
         />
-      </div>
+      </FormField>
       <div>
         <Button
           variant="default"

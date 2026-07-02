@@ -106,57 +106,62 @@ export function Welcome() {
 
   return (
     <div className="min-h-full overflow-y-auto bg-background">
-      <div className="mx-auto w-full max-w-2xl px-5 py-10 sm:py-14">
-        <div className="mb-6">
-          <h1 className="text-2xl font-semibold text-foreground sm:text-3xl">
+      <div className="mx-auto flex w-full max-w-2xl flex-col gap-6 px-5 py-10 sm:py-14">
+        <div className="flex flex-col gap-1.5">
+          {/* First-run greeting — a voice moment, so it takes the serif register. */}
+          <h1 className="font-serif text-2xl font-medium tracking-tight text-balance text-foreground sm:text-3xl">
             Welcome to Derive, {firstName}.
           </h1>
-          <p className="mt-1.5 text-sm text-muted-foreground">
+          <p className="text-sm text-pretty text-muted-foreground">
             A minute of setup so your team and your agents know who you are. You can change any of
             this later in Settings.
           </p>
         </div>
 
-        {/* 1 — Profile: photo + handle + role + bio, one block, one save */}
-        <Card className="p-5">
-          <div className="text-2xs font-semibold uppercase tracking-wide text-muted-foreground">
-            Step 1 · Your profile
-          </div>
-          <WelcomeProfile />
-        </Card>
-
-        {/* 2 — Connect your tools (paste-into-an-agent) */}
-        <Card className="mt-4 p-5">
-          <div className="flex items-center justify-between gap-3">
-            <div className="text-2xs font-semibold uppercase tracking-wide text-muted-foreground">
-              Step 2 · Connect your tools
+        <div className="flex flex-col gap-4">
+          {/* 1 — Profile: photo + handle + role + bio, one block, one save */}
+          <Card className="p-5">
+            <div className="font-mono text-2xs uppercase tracking-wide text-muted-foreground">
+              Step 1 · Your profile
             </div>
-            {/* Compact Self-host mode switch — swaps the snippet in place for the
-                run-it-yourself path. Most people never touch it. */}
-            <label className="flex shrink-0 items-center gap-1.5 text-2xs font-medium text-muted-foreground">
-              <span title="Running your own Derive instance">Self-host mode</span>
-              <Switch
-                checked={devMode}
-                aria-label="Self-host mode"
-                data-testid="welcome-dev-toggle"
-                onCheckedChange={setDevMode}
-              />
-            </label>
-          </div>
-          <p className="mb-3 mt-1 text-sm text-muted-foreground">
-            {devMode
-              ? "Spin up your own Derive, then connect your agent to it. Paste this into Claude Code, Codex, or any agent."
-              : "Paste this into Claude Code, Codex, ChatGPT, or any agent — it connects Derive so the agent can publish, review, and revise for you."}
-          </p>
+            <WelcomeProfile />
+          </Card>
 
-          <PromptBlock
-            key={devMode ? "dev" : "hosted"}
-            text={devMode ? devText : hostedText}
-            testid="welcome-prompt"
-          />
-        </Card>
+          {/* 2 — Connect your tools (paste-into-an-agent) */}
+          <Card className="p-5">
+            <div className="flex flex-col gap-1">
+              <div className="flex items-center justify-between gap-3">
+                <div className="font-mono text-2xs uppercase tracking-wide text-muted-foreground">
+                  Step 2 · Connect your tools
+                </div>
+                {/* Compact Self-host mode switch — swaps the snippet in place for the
+                    run-it-yourself path. Most people never touch it. */}
+                <label className="flex shrink-0 items-center gap-1.5 text-xs font-medium text-muted-foreground">
+                  <span title="Running your own Derive instance">Self-host mode</span>
+                  <Switch
+                    checked={devMode}
+                    aria-label="Self-host mode"
+                    data-testid="welcome-dev-toggle"
+                    onCheckedChange={setDevMode}
+                  />
+                </label>
+              </div>
+              <p className="text-sm text-pretty text-muted-foreground">
+                {devMode
+                  ? "Spin up your own Derive, then connect your agent to it. Paste this into Claude Code, Codex, or any agent."
+                  : "Paste this into Claude Code, Codex, ChatGPT, or any agent — it connects Derive so the agent can publish, review, and revise for you."}
+              </p>
+            </div>
 
-        <div className="mt-6 flex items-center justify-between gap-3">
+            <PromptBlock
+              key={devMode ? "dev" : "hosted"}
+              text={devMode ? devText : hostedText}
+              testid="welcome-prompt"
+            />
+          </Card>
+        </div>
+
+        <div className="flex items-center justify-between gap-3">
           <Button
             variant="ghost"
             data-testid="welcome-skip"
@@ -232,7 +237,7 @@ function WelcomeProfile() {
   }
 
   return (
-    <div className="mt-3 flex flex-wrap items-start gap-4">
+    <div className="flex flex-wrap items-start gap-4">
       {/* Avatar (left) */}
       <div className="flex flex-col items-center gap-1">
         <button
@@ -240,21 +245,28 @@ function WelcomeProfile() {
           data-testid="welcome-avatar"
           onClick={() => fileRef.current?.click()}
           disabled={uploading}
-          className="group relative size-16 overflow-hidden rounded-full border border-dashed border-input transition-colors hover:border-primary disabled:opacity-60"
+          className="group relative size-16 overflow-hidden rounded-full border border-dashed border-input outline-none hover:border-foreground/25 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:opacity-60"
           aria-label="Add a profile photo"
         >
           <Avatar className="size-full rounded-full">
             {me.image && <AvatarImage src={me.image} alt="Your avatar" />}
-            <AvatarFallback className="rounded-full bg-card text-muted-foreground">
+            {/* Your own initials take the soft brand tint (the user-pod idiom) —
+                never a solid amber block. */}
+            <AvatarFallback
+              className={cn(
+                "rounded-full",
+                me.name ? "bg-primary/15 text-primary" : "bg-secondary text-muted-foreground",
+              )}
+            >
               {me.name ? (
-                <span className="text-xl font-semibold">{initials}</span>
+                <span className="text-xl font-medium">{initials}</span>
               ) : (
                 <Camera className="size-5" aria-hidden />
               )}
             </AvatarFallback>
           </Avatar>
         </button>
-        <span className="text-2xs text-muted-foreground">
+        <span className="text-xs text-muted-foreground">
           {uploading ? "Uploading…" : me.image ? "Change" : "Add a photo"}
         </span>
         <input
@@ -268,18 +280,22 @@ function WelcomeProfile() {
       </div>
 
       {/* Handle + role (one row), description (below), one save */}
-      <div className="min-w-[260px] flex-1">
+      <div className="flex min-w-[260px] flex-1 flex-col gap-2">
         <div className="flex flex-wrap gap-2">
-          <div className="min-w-[150px] flex-1">
-            <div className="mb-1 text-2xs font-medium text-muted-foreground">Username</div>
+          <div className="flex min-w-[150px] flex-1 flex-col gap-1">
+            <div className="text-xs font-medium text-muted-foreground">Username</div>
+            {/* A composed quiet well — mirrors the Input recipe (hairline border-input,
+                amber editable focus, no offset). */}
             <div
               className={cn(
-                "flex items-center rounded-md border border-input bg-card transition-colors",
-                "focus-within:border-primary focus-within:ring-2 focus-within:ring-ring/30",
+                "flex items-center rounded-lg border border-input bg-transparent shadow-(--shadow-sm) dark:bg-input/30",
+                "focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/40",
                 handleErr && "border-destructive",
               )}
             >
-              <span className="select-none pl-3 text-sm font-medium text-muted-foreground">@</span>
+              <span className="select-none pl-2.5 text-sm font-medium text-muted-foreground">
+                @
+              </span>
               <input
                 data-testid="welcome-username"
                 aria-label="Username"
@@ -292,12 +308,12 @@ function WelcomeProfile() {
                   setErr("")
                 }}
                 placeholder="yourname"
-                className="h-7 w-full rounded-md bg-transparent pl-1 pr-3 text-sm text-foreground outline-none placeholder:text-muted-foreground"
+                className="h-8 w-full rounded-lg bg-transparent pl-1 pr-2.5 text-sm text-foreground outline-none placeholder:text-muted-foreground"
               />
             </div>
           </div>
-          <div className="w-[150px]">
-            <div className="mb-1 text-2xs font-medium text-muted-foreground">Role</div>
+          <div className="flex w-[150px] flex-col gap-1">
+            <div className="text-xs font-medium text-muted-foreground">Role</div>
             <Select value={preset || undefined} onValueChange={setPreset}>
               <SelectTrigger data-testid="welcome-role" aria-label="Your role" className="w-full">
                 <SelectValue placeholder="Who are you?" />
@@ -320,12 +336,11 @@ function WelcomeProfile() {
             maxLength={40}
             placeholder="e.g. Data, Sales, Ops…"
             onChange={(e) => setCustom(e.target.value)}
-            className="mt-2"
           />
         )}
 
-        <div className="mt-2">
-          <div className="mb-1 text-2xs font-medium text-muted-foreground">What you do</div>
+        <div className="flex flex-col gap-1">
+          <div className="text-xs font-medium text-muted-foreground">What you do</div>
           <Textarea
             data-testid="welcome-about"
             value={about}
@@ -337,16 +352,12 @@ function WelcomeProfile() {
         </div>
 
         {(err || handleErr) && (
-          <p
-            role="alert"
-            data-testid="welcome-profile-error"
-            className="mt-1.5 text-xs text-destructive"
-          >
+          <p role="alert" data-testid="welcome-profile-error" className="text-xs text-destructive">
             {err || handleErr}
           </p>
         )}
 
-        <div className="mt-3 flex items-center gap-3">
+        <div className="mt-1 flex items-center gap-3">
           <Button
             variant="outline"
             size="sm"
@@ -356,7 +367,7 @@ function WelcomeProfile() {
           >
             {saving ? "Saving…" : "Save profile"}
           </Button>
-          <span className="text-2xs text-muted-foreground">
+          <span className="text-xs text-muted-foreground">
             <span className="font-medium text-foreground">{me.email}</span> stays private.
           </span>
         </div>
@@ -381,21 +392,22 @@ function PromptBlock({ text, testid }: { text: string; testid: string }) {
   }
   return (
     <div className="relative">
+      {/* The machine register on a quiet well: mono text, bg-secondary, hairline edge. */}
       <pre
         data-testid={testid}
-        className="max-h-64 overflow-auto whitespace-pre-wrap rounded-lg border border-border bg-secondary/40 p-3 pr-12 font-mono text-xs leading-relaxed text-foreground"
+        className="max-h-64 overflow-auto whitespace-pre-wrap rounded-lg border bg-secondary p-3 pr-12 font-mono text-xs leading-relaxed text-foreground"
       >
         {text}
       </pre>
       <Button
         variant="outline"
-        size="icon"
+        size="icon-sm"
         data-testid={`${testid}-copy`}
         aria-label="Copy setup prompt"
         className="absolute right-2 top-2"
         onClick={copy}
       >
-        {copied ? <Check className="size-4" /> : <Copy className="size-4" />}
+        {copied ? <Check className="size-4 text-success" /> : <Copy className="size-4" />}
       </Button>
     </div>
   )

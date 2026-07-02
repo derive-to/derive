@@ -63,13 +63,15 @@ export function ArtifactDocument({
       {/* History-viewing banner: only when looking at a past version. The current
           version just shows the artifact, no version chrome. */}
       {past && (
-        <div className="flex flex-wrap items-center gap-2.5 gap-y-1.5 border-b border-border-soft bg-accent px-3.5 py-2 text-sm">
-          <span className="font-semibold text-primary">Viewing an earlier version</span>
+        // A brand-tinted strip (the sync-chip grammar): being off the live version
+        // is a "this matters" moment, not a status warning.
+        <div className="flex flex-wrap items-center gap-2.5 gap-y-1.5 border-b border-primary/30 bg-primary/5 px-3.5 py-2 text-sm">
+          <span className="font-medium text-primary">Viewing an earlier version</span>
           <span className="text-muted-foreground">·</span>
           <button
             type="button"
             data-testid="artifact-toggle-diff"
-            className="text-primary underline underline-offset-2 hover:opacity-80"
+            className="rounded-sm text-primary underline underline-offset-2 outline-none hover:opacity-80 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
             onClick={onToggleDiff}
           >
             {view === "diff" ? "Hide changes" : "Show changes since this"}

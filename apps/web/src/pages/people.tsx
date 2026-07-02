@@ -7,6 +7,7 @@ import { EmptyState } from "@/components/shared/empty-state"
 import { Spinner } from "@/components/shared/spinner"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Input } from "@/components/ui/input"
+import { colorForName } from "@/lib/avatar-tints"
 import { getInitials } from "@/lib/initials"
 
 // The People directory — browse + search discoverable people and follow them. This is
@@ -29,7 +30,7 @@ export function People() {
 
   return (
     <div className="mx-auto w-full max-w-3xl p-6 sm:p-8">
-      <h1 className="text-2xl font-semibold text-foreground">People</h1>
+      <h1 className="text-2xl font-semibold tracking-tight text-foreground">People</h1>
       <p className="mt-1 text-sm text-muted-foreground">
         Find people on Derive and follow their work.
       </p>
@@ -79,16 +80,23 @@ export function People() {
 function PersonCard({ person: p }: { person: PublicProfile }) {
   const initials = getInitials(p.name ?? p.username)
   return (
-    <li className="flex items-center gap-3 rounded-lg border border-border bg-card p-3 transition-colors hover:border-primary">
+    // Interactive card: hairline edge that brightens (neutrally) on hover.
+    <li className="flex items-center gap-3 rounded-xl border bg-card p-3 hover:border-foreground/25">
       <Link
         to="/u/$handle"
         params={{ handle: p.username }}
         data-testid={`people-card-${p.username}`}
-        className="flex min-w-0 flex-1 items-center gap-3 outline-none"
+        className="flex min-w-0 flex-1 items-center gap-3 rounded-lg outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
       >
         <Avatar className="size-9 shrink-0">
           {p.image && <AvatarImage src={p.image} alt={p.name ?? p.username} />}
-          <AvatarFallback>{initials}</AvatarFallback>
+          {/* Identity tint (stable per person) + the outline frame images get. */}
+          <AvatarFallback
+            className="font-medium text-scrim-foreground outline-1 -outline-offset-1 outline-foreground/10"
+            style={{ backgroundColor: colorForName(p.name ?? p.username) }}
+          >
+            {initials}
+          </AvatarFallback>
         </Avatar>
         <span className="min-w-0">
           {p.name && (
@@ -98,11 +106,11 @@ function PersonCard({ person: p }: { person: PublicProfile }) {
             @{p.username}
           </span>
           {p.profession && (
-            <span className="block truncate text-2xs text-accent-foreground">{p.profession}</span>
+            <span className="block truncate text-xs text-muted-foreground">{p.profession}</span>
           )}
         </span>
       </Link>
-      <FollowButton username={p.username} size="xs" className="shrink-0" />
+      <FollowButton username={p.username} size="sm" className="shrink-0" />
     </li>
   )
 }
