@@ -1,7 +1,12 @@
-import type { D1Database, DurableObjectState, R2Bucket } from "@cloudflare/workers-types"
-import type { BlobStore, MetaStore } from "@derive/core"
-import { createD1Store } from "@derive/db/d1"
+import type {
+  D1Database,
+  DurableObjectState,
+  Hyperdrive,
+  R2Bucket,
+} from "@cloudflare/workers-types"
+import type { BlobStore } from "@derive/core"
 import { R2BlobStore } from "@derive/storage"
+import { tickStore } from "./edge-pg"
 import { runSourceBatch } from "./lib/sync-runner"
 import { log } from "./log"
 
@@ -22,9 +27,12 @@ const RETRY_BACKOFF_MS = 1_200
 // Past this many consecutive throws we stop and leave the error visible for the user.
 const MAX_RETRIES = 4
 
-/** The env the sync runner DO needs: D1 (MetaStore) + R2 (blobs) + the at-rest key. */
+/** The env the sync runner DO needs: the datastore bindings for the per-batch
+ *  MetaStore (Postgres when HYPERDRIVE is bound, else D1 — see edge-pg.ts) +
+ *  R2 (blobs) + the at-rest key. */
 export interface RepoSyncRunnerEnv {
   DB: D1Database
+  HYPERDRIVE?: Hyperdrive
   BUCKET: R2Bucket
   /** At-rest key for decrypting stored PATs / minting installation tokens. */
   DERIVE_AUTH_SECRET?: string
@@ -47,15 +55,13 @@ export interface RepoSyncRunnerEnv {
  * the cron backstop, and the persisted map makes every retry idempotent.
  */
 export class RepoSyncRunner {
-  private meta: MetaStore
   private blobs: BlobStore
   private key: string | undefined
 
   constructor(
     private state: DurableObjectState,
-    env: RepoSyncRunnerEnv,
+    private env: RepoSyncRunnerEnv,
   ) {
-    this.meta = createD1Store(env.DB)
     this.blobs = new R2BlobStore(env.BUCKET)
     this.key = env.DERIVE_AUTH_SECRET
   }
@@ -81,13 +87,19 @@ export class RepoSyncRunner {
   async alarm(): Promise<void> {
     const sourceId = await this.state.storage.get<string>("source")
     if (!sourceId) return // nothing queued (a stray cron/poke) — stay idle
+    // Store construction stays inside the try: a throw anywhere must land in the
+    // retry/backoff path, or the batch loop strands until the next user trigger.
+    let close = async () => {}
     try {
-      const source = await this.meta.getRepoSource(sourceId)
+      const opened = tickStore(this.env)
+      close = opened.close
+      const meta = opened.store
+      const source = await meta.getRepoSource(sourceId)
       if (!source) {
         await this.stop() // disconnected mid-sync — nothing left to do
         return
       }
-      const res = await runSourceBatch(this.meta, this.blobs, this.key, source)
+      const res = await runSourceBatch(meta, this.blobs, this.key, source)
       if (res.remaining > 0) {
         await this.state.storage.put("retries", 0)
         await this.state.storage.setAlarm(Date.now() + TICK_MS)
@@ -107,6 +119,8 @@ export class RepoSyncRunner {
       // Linear backoff; a recovering batch overwrites progress back to mirroring/done.
       await this.state.storage.put("retries", retries + 1)
       await this.state.storage.setAlarm(Date.now() + RETRY_BACKOFF_MS * (retries + 1))
+    } finally {
+      await close()
     }
   }
 
