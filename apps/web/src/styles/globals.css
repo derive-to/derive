@@ -124,6 +124,9 @@
   a {
     color: var(--ac);
     text-decoration: none;
+    /* Links use the default cursor, not the pointer hand — hover states carry the
+       affordance instead (Linear-style). Buttons are already default via the UA. */
+    cursor: default;
   }
 }
 
