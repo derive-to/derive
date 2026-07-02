@@ -81,11 +81,18 @@ export function ArtifactCard({
             onToggleFavorite()
           }}
           className={cn(
-            "absolute right-2.5 top-2.5 z-20",
-            a.favorite ? "border-gold" : "opacity-90",
+            "absolute right-2.5 top-2.5 z-20 transition-opacity",
+            // Declutter the resting card: a favourited star always shows; an
+            // unfavourited one reveals on hover/focus, like the more-actions chip.
+            !a.favorite && "opacity-0 group-hover:opacity-100 focus:opacity-100",
           )}
         >
-          <Icon name="star" size={14} className={cn(!a.favorite && "text-muted-foreground")} />
+          <Icon
+            name="star"
+            size={14}
+            weight={a.favorite ? "fill" : "regular"}
+            className={a.favorite ? "text-foreground" : "text-muted-foreground"}
+          />
         </IconButton>
         {isOwner && onDelete && (
           <DropdownMenu>
@@ -122,7 +129,7 @@ export function ArtifactCard({
         aria-label={`Open ${a.title ?? a.short_id}`}
         className="flex w-full min-w-0 flex-col gap-1.5 text-left outline-none after:absolute after:inset-0 after:z-[1] after:rounded-lg after:content-[''] focus-visible:after:outline-2 focus-visible:after:-outline-offset-2 focus-visible:after:outline-ring"
       >
-        <span className="truncate font-display text-lg font-semibold text-foreground">
+        <span className="truncate font-display text-lg font-medium tracking-tight text-foreground">
           {a.title ?? a.short_id}
         </span>
         {/* For a synced file: its folder location (the path lives in source_path). */}
