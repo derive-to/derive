@@ -1,4 +1,5 @@
 import { useNavigate } from "@tanstack/react-router"
+import { ChevronUp } from "lucide-react"
 import { useState } from "react"
 import { api, type Workspaces } from "@/api"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
@@ -68,8 +69,9 @@ export function UserPod({
             rail && "justify-center px-0",
           )}
         >
-          {/* Soft brand tint — never a solid amber block. */}
-          <Avatar className="size-7 shrink-0">
+          {/* Soft brand tint — never a solid amber block. Footer register: the
+              identity row is the rail's one generous moment (Nemonic anatomy). */}
+          <Avatar className="size-9 shrink-0">
             <AvatarFallback className="bg-primary/10 text-xs font-medium text-primary">
               {initials}
             </AvatarFallback>
@@ -84,7 +86,8 @@ export function UserPod({
               </span>
             </span>
           )}
-          {!rail && <Icon name="more" size={16} />}
+          {/* Opens upward — the chevron says so. */}
+          {!rail && <ChevronUp className="size-4 shrink-0 text-muted-foreground" aria-hidden />}
         </button>
       </PopoverTrigger>
 

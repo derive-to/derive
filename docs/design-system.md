@@ -207,10 +207,14 @@ for variants.
 - **App shell** — top bar `bg-background border-b` (flush), serif wordmark: `Logo`
   mark (unchanged, `currentColor`) + `<span class="font-serif text-lg font-medium
   tracking-tight">Derive</span>`.
-- **Nav rail** — `bg-background border-r` (flush). Row grammar (`nav-row.ts`): rest
-  `text-muted-foreground`; hover `bg-hover` + brighten; active `bg-foreground/5
-  text-foreground` + 3px rounded amber left bar (`before:bg-primary`). Counts in
-  `font-mono text-2xs tabular-nums`. No font-weight changes between states.
+- **Nav rail** — `bg-background border-r` (flush), built on the `sidebar.tsx`
+  primitives (Catalyst port): header → scrolling body (`p-4`, sections `gap-0.5`
+  internally, `mt-8` apart) → pod-only footer. Row grammar (`SidebarItem` /
+  `nav-row.ts`): rest labels are FULL-strength ink — only icons are muted,
+  brightening on hover/current; hover/current wash `bg-hover`; the current tick
+  is a 2px `rounded-full bg-primary` bar at the sidebar's absolute edge
+  (`-left` into the body's gutter). Counts `font-mono text-2xs tabular-nums`,
+  rendered only when nonzero. No font-weight changes between states.
 - **UserPod** — initials avatar soft brand tint; popover per menu recipe.
 - **NotificationBell** — unread signal = `size-1.5 rounded-full bg-primary` dot.
 - **SyncChip** — `border-primary/30 bg-primary/5` amber-tinted chip (a brand moment).
