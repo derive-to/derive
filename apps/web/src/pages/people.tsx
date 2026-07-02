@@ -29,7 +29,7 @@ export function People() {
 
   return (
     <div className="mx-auto w-full max-w-3xl p-6 sm:p-8">
-      <h1 className="font-display text-2xl font-semibold text-foreground">People</h1>
+      <h1 className="font-display text-2xl font-medium tracking-tight text-foreground">People</h1>
       <p className="mt-1 text-sm text-muted-foreground">
         Find people on Derive and follow their work.
       </p>
@@ -79,7 +79,7 @@ export function People() {
 function PersonCard({ person: p }: { person: PublicProfile }) {
   const initials = getInitials(p.name ?? p.username)
   return (
-    <li className="flex items-center gap-3 rounded-lg border border-border bg-card p-3 transition-colors hover:border-primary">
+    <li className="flex items-center gap-3 rounded-lg border border-border bg-card p-3 transition-colors hover:bg-hover">
       <Link
         to="/u/$handle"
         params={{ handle: p.username }}
@@ -98,7 +98,7 @@ function PersonCard({ person: p }: { person: PublicProfile }) {
             @{p.username}
           </span>
           {p.profession && (
-            <span className="block truncate text-2xs text-accent-foreground">{p.profession}</span>
+            <span className="block truncate text-2xs text-muted-foreground">{p.profession}</span>
           )}
         </span>
       </Link>

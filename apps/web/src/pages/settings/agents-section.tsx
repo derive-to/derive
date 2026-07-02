@@ -183,7 +183,7 @@ function AgentRow({
         <Bot className="size-4" aria-hidden />
       </span>
       <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-1.5 text-sm font-semibold text-foreground">
+        <div className="flex items-center gap-1.5 text-sm font-medium text-foreground">
           @{agent.name}
           <Badge variant="accent" className="font-mono">
             {agent.role}
