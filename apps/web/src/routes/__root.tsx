@@ -16,15 +16,15 @@ import { STORAGE_KEYS } from "../lib/storage-keys"
 import { reportWebVitals } from "../lib/vitals"
 import "@/styles/globals.css"
 
-// Apply the saved theme before first paint. The prerendered shell ships
-// data-theme="paper"; without this, a user on Dark/Dusk/Light sees a paper
-// flash until ThemeProvider's effect runs post-hydration. This runs
-// synchronously in <head>, ahead of body render. Keyed off STORAGE_KEYS.theme
+// Resolve the theme before first paint so there's no flash: a stored light/dark
+// choice wins, otherwise follow the OS preference. Mirrors resolveTheme() in ctx
+// so the pre-paint attribute matches what ThemeProvider settles on post-hydration.
+// Runs synchronously in <head>, ahead of body render. Keyed off STORAGE_KEYS.theme
 // (not a literal) so it tracks the one key definition and stays out of the
 // storage-key linter's way.
 const THEME_BOOT = `(function(){try{var t=localStorage.getItem(${JSON.stringify(
   STORAGE_KEYS.theme,
-)});if(t)document.documentElement.dataset.theme=t}catch(e){}})()`
+)});if(t!=="light"&&t!=="dark")t=matchMedia("(prefers-color-scheme: light)").matches?"light":"dark";document.documentElement.dataset.theme=t}catch(e){}})()`
 
 export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()({
   head: () => ({
@@ -86,8 +86,12 @@ function RootComponent() {
 // rail never remounts. /login is the one chrome-less route.
 function AppFrame() {
   // /login and /welcome (first-run onboarding) render chrome-less — no rail/top bar.
+  // /showcase is the design canvas and renders chrome-less too.
   const chromeless = useRouterState({
-    select: (s) => s.location.pathname === "/login" || s.location.pathname === "/welcome",
+    select: (s) =>
+      s.location.pathname === "/login" ||
+      s.location.pathname === "/welcome" ||
+      s.location.pathname === "/showcase",
   })
   return chromeless ? (
     <Outlet />
@@ -101,7 +105,7 @@ function AppFrame() {
 function RootDocument({ children }: { children: ReactNode }) {
   // data-theme seeds the prerendered shell; ThemeProvider swaps it client-side.
   return (
-    <html lang="en" data-theme="paper">
+    <html lang="en" data-theme="dark">
       <head>
         <script
           // biome-ignore lint/security/noDangerouslySetInnerHtml: static boot string built from a constant storage key, no user input.

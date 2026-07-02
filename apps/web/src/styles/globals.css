@@ -6,9 +6,8 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 
-/* Dark variant keys off the theme attribute the app sets on <html>. dusk is a
-   dark family too, so `dark:` utilities apply there as well. */
-@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *, [data-theme="dusk"], [data-theme="dusk"] *));
+/* Dark variant keys off the theme attribute the app sets on <html>. */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
 
 /* Design tokens. shadcn-style semantic names mapped to derive's themed CSS vars
    (defined per [data-theme] in the base layer below), so Tailwind utilities
@@ -78,18 +77,11 @@
 }
 
 @layer base {
-  /* The four theme palettes — the source of truth the @theme bridge references.
-     Set via [data-theme] on <html>; runtime switching rules out a static @theme. */
-  /* Derive foundation: Axiom Black #030712 + Origin White #F4F5F8. The accent is
-     monochrome — near-black on light themes, near-white on dark — so the brand
-     reads as the two colors; only the semantic good/bad stay chromatic. */
-  [data-theme="paper"] {
-    --bg: #f2efe9;--card: #fbf9f4;--card-2: #ebe7de;--hover: #ede9e0;
-    --fg: #030712;--fg-mut: #5b5850;--line: #ddd8cc;--line-soft: #e7e2d7;
-    --ac: #030712;--ac-fg: #f4f5f8;--ac-soft: #e6e2d8;
-    --cmt-bg: #ece8df;--cmt-tx: #3a382f;--cmt-bd: #d6d1c4;--good: #3c6e2f;--good-bg: #e3eedb;--bad: #a04425;
-    --shadow: 0 1px 2px rgba(3,7,18,.05),0 14px 30px -18px rgba(3,7,18,.28);--grain: .04;
-  }
+  /* The two theme palettes — the source of truth the @theme bridge references.
+     Set via [data-theme] on <html>; runtime switching rules out a static @theme.
+     Derive foundation: Axiom Black #030712 + Origin White #F4F5F8. The accent is
+     monochrome — near-black on light, near-white on dark — so the brand reads as
+     the two colors; only the semantic good/bad stay chromatic. */
   [data-theme="light"] {
     --bg: #f4f5f8;--card: #ffffff;--card-2: #ecedf1;--hover: #e9ebef;
     --fg: #030712;--fg-mut: #565a66;--line: #dfe1e7;--line-soft: #e9ebef;
@@ -103,13 +95,6 @@
     --ac: #f4f5f8;--ac-fg: #030712;--ac-soft: #1a2233;
     --cmt-bg: #141b29;--cmt-tx: #c6cad4;--cmt-bd: #2a3141;--good: #7fb08a;--good-bg: #0f1a14;--bad: #e08a6e;
     --shadow: 0 1px 2px rgba(0,0,0,.4),0 18px 36px -18px rgba(0,0,0,.7);--grain: .05;
-  }
-  [data-theme="dusk"] {
-    --bg: #080c17;--card: #121826;--card-2: #1a2130;--hover: #171e2c;
-    --fg: #eef0f5;--fg-mut: #a4abba;--line: #28303f;--line-soft: #212836;
-    --ac: #f4f5f8;--ac-fg: #030712;--ac-soft: #1d2536;
-    --cmt-bg: #151c2a;--cmt-tx: #c9cdd7;--cmt-bd: #2c3444;--good: #8bb693;--good-bg: #111a16;--bad: #e7806a;
-    --shadow: 0 1px 2px rgba(0,0,0,.4),0 18px 36px -18px rgba(0,0,0,.6);--grain: .05;
   }
 
   * {

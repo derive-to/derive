@@ -26,26 +26,30 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 }
 
 /* ---- theme ---- */
+// Swatches are raw hex (identity color data, not theming) — see check-design-tokens.
 export const THEMES = [
-  { id: "paper", label: "Paper", sw: "#f6f0e3" },
-  { id: "light", label: "Light", sw: "#ffffff" },
-  { id: "dark", label: "Dark", sw: "#0f0f10" },
-  { id: "dusk", label: "Dusk", sw: "#241e3a" },
+  { id: "light", label: "Light", sw: "#f4f5f8" },
+  { id: "dark", label: "Dark", sw: "#030712" },
 ] as const
 
+// Resolve the active theme: an explicit stored choice wins; otherwise follow the
+// OS preference. Anything else (an empty store, or a stale "paper"/"dusk" from
+// before those themes were retired) falls through to the system default.
+function resolveTheme(): "light" | "dark" {
+  if (typeof localStorage === "undefined") return "dark"
+  const stored = localStorage.getItem(STORAGE_KEYS.theme)
+  if (stored === "light" || stored === "dark") return stored
+  return matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark"
+}
+
 const ThemeCtx = createContext<{ theme: string; setTheme: (t: string) => void }>({
-  theme: "paper",
+  theme: "dark",
   setTheme: () => {},
 })
 export const useTheme = () => useContext(ThemeCtx)
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
-  // Guard for the prerendered shell (no window/localStorage at build time).
-  const [theme, setTheme] = useState(() =>
-    typeof localStorage === "undefined"
-      ? "paper"
-      : (localStorage.getItem(STORAGE_KEYS.theme) ?? "paper"),
-  )
+  const [theme, setTheme] = useState<string>(resolveTheme)
   useEffect(() => {
     document.documentElement.dataset.theme = theme
     localStorage.setItem(STORAGE_KEYS.theme, theme)

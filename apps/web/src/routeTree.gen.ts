@@ -10,6 +10,7 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as WelcomeRouteImport } from './routes/welcome'
+import { Route as ShowcaseRouteImport } from './routes/showcase'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as PeopleRouteImport } from './routes/people'
 import { Route as NewRouteImport } from './routes/new'
@@ -21,6 +22,11 @@ import { Route as ARefRouteImport } from './routes/a.$ref'
 const WelcomeRoute = WelcomeRouteImport.update({
   id: '/welcome',
   path: '/welcome',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ShowcaseRoute = ShowcaseRouteImport.update({
+  id: '/showcase',
+  path: '/showcase',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SettingsRoute = SettingsRouteImport.update({
@@ -65,6 +71,7 @@ export interface FileRoutesByFullPath {
   '/new': typeof NewRoute
   '/people': typeof PeopleRoute
   '/settings': typeof SettingsRoute
+  '/showcase': typeof ShowcaseRoute
   '/welcome': typeof WelcomeRoute
   '/a/$ref': typeof ARefRoute
   '/u/$handle': typeof UHandleRoute
@@ -75,6 +82,7 @@ export interface FileRoutesByTo {
   '/new': typeof NewRoute
   '/people': typeof PeopleRoute
   '/settings': typeof SettingsRoute
+  '/showcase': typeof ShowcaseRoute
   '/welcome': typeof WelcomeRoute
   '/a/$ref': typeof ARefRoute
   '/u/$handle': typeof UHandleRoute
@@ -86,6 +94,7 @@ export interface FileRoutesById {
   '/new': typeof NewRoute
   '/people': typeof PeopleRoute
   '/settings': typeof SettingsRoute
+  '/showcase': typeof ShowcaseRoute
   '/welcome': typeof WelcomeRoute
   '/a/$ref': typeof ARefRoute
   '/u/$handle': typeof UHandleRoute
@@ -98,6 +107,7 @@ export interface FileRouteTypes {
     | '/new'
     | '/people'
     | '/settings'
+    | '/showcase'
     | '/welcome'
     | '/a/$ref'
     | '/u/$handle'
@@ -108,6 +118,7 @@ export interface FileRouteTypes {
     | '/new'
     | '/people'
     | '/settings'
+    | '/showcase'
     | '/welcome'
     | '/a/$ref'
     | '/u/$handle'
@@ -118,6 +129,7 @@ export interface FileRouteTypes {
     | '/new'
     | '/people'
     | '/settings'
+    | '/showcase'
     | '/welcome'
     | '/a/$ref'
     | '/u/$handle'
@@ -129,6 +141,7 @@ export interface RootRouteChildren {
   NewRoute: typeof NewRoute
   PeopleRoute: typeof PeopleRoute
   SettingsRoute: typeof SettingsRoute
+  ShowcaseRoute: typeof ShowcaseRoute
   WelcomeRoute: typeof WelcomeRoute
   ARefRoute: typeof ARefRoute
   UHandleRoute: typeof UHandleRoute
@@ -141,6 +154,13 @@ declare module '@tanstack/react-router' {
       path: '/welcome'
       fullPath: '/welcome'
       preLoaderRoute: typeof WelcomeRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/showcase': {
+      id: '/showcase'
+      path: '/showcase'
+      fullPath: '/showcase'
+      preLoaderRoute: typeof ShowcaseRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/settings': {
@@ -201,6 +221,7 @@ const rootRouteChildren: RootRouteChildren = {
   NewRoute: NewRoute,
   PeopleRoute: PeopleRoute,
   SettingsRoute: SettingsRoute,
+  ShowcaseRoute: ShowcaseRoute,
   WelcomeRoute: WelcomeRoute,
   ARefRoute: ARefRoute,
   UHandleRoute: UHandleRoute,
