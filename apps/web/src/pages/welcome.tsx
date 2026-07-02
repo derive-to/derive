@@ -100,7 +100,7 @@ export function Welcome() {
     <div className="min-h-full overflow-y-auto bg-background">
       <div className="mx-auto w-full max-w-2xl px-5 py-10 sm:py-14">
         <div className="mb-6">
-          <h1 className="font-display text-2xl font-semibold text-foreground sm:text-3xl">
+          <h1 className="font-display text-2xl font-medium tracking-tight text-foreground sm:text-3xl">
             Welcome to Derive, {firstName}.
           </h1>
           <p className="mt-1.5 text-sm text-muted-foreground">
@@ -111,7 +111,7 @@ export function Welcome() {
 
         {/* 1 — Profile: photo + handle + role + bio, one block, one save */}
         <Card className="p-5">
-          <div className="text-2xs font-semibold uppercase tracking-wide text-muted-foreground">
+          <div className="font-mono text-2xs uppercase tracking-[0.08em] text-muted-foreground">
             Step 1 · Your profile
           </div>
           <WelcomeProfile />
@@ -120,7 +120,7 @@ export function Welcome() {
         {/* 2 — Connect your tools (paste-into-an-agent) */}
         <Card className="mt-4 p-5">
           <div className="flex items-center justify-between gap-3">
-            <div className="text-2xs font-semibold uppercase tracking-wide text-muted-foreground">
+            <div className="font-mono text-2xs uppercase tracking-[0.08em] text-muted-foreground">
               Step 2 · Connect your tools
             </div>
             {/* Compact Self-host mode switch — swaps the snippet in place for the
@@ -247,7 +247,7 @@ function WelcomeProfile() {
             {me.image && <AvatarImage src={me.image} alt="Your avatar" />}
             <AvatarFallback className="rounded-full bg-card text-muted-foreground">
               {me.name ? (
-                <span className="font-display text-xl font-semibold">{initials}</span>
+                <span className="font-display text-xl font-medium">{initials}</span>
               ) : (
                 <Camera className="size-5" aria-hidden />
               )}

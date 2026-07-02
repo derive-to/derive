@@ -329,7 +329,7 @@ export function WorkspaceSection({ meId }: { meId: string }) {
                       </Avatar>
                       <span className="min-w-0 flex-1">
                         {u.name && (
-                          <span className="block truncate text-sm font-semibold text-foreground">
+                          <span className="block truncate text-sm font-medium text-foreground">
                             {u.name}
                           </span>
                         )}
@@ -384,7 +384,7 @@ export function WorkspaceSection({ meId }: { meId: string }) {
                 <User className="size-4" aria-hidden />
               </span>
               <div className="min-w-0 flex-1">
-                <div className="text-sm font-semibold text-foreground">
+                <div className="text-sm font-medium text-foreground">
                   {m.name ?? (m.handle ? `@${m.handle}` : m.user_id)}
                   {m.user_id === meId && (
                     <span className="font-normal text-muted-foreground"> (you)</span>

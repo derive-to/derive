@@ -1,8 +1,9 @@
 import { getRouteApi, useNavigate } from "@tanstack/react-router"
-import { Check } from "lucide-react"
 import type { FormEvent } from "react"
 import { useEffect, useState } from "react"
 import { api } from "@/api"
+import { Icon } from "@/components/icons"
+import { FormField } from "@/components/shared/form-field"
 import { Logo } from "@/components/shared/logo"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -93,26 +94,26 @@ export function Login() {
   return (
     <div className="grid min-h-screen lg:grid-cols-2">
       {/* Brand + value panel — desktop only; the form carries a compact brand on mobile. */}
-      <aside className="hidden flex-col justify-between bg-secondary p-10 text-secondary-foreground lg:flex">
+      <aside className="hidden flex-col justify-between bg-secondary p-12 text-secondary-foreground lg:flex">
         <div className="flex items-center gap-2.5">
-          <Logo size={30} />
-          <span className="font-display text-xl font-semibold">Derive</span>
+          <Logo size={26} />
+          <span className="font-display text-lg font-semibold tracking-tight">Derive</span>
         </div>
         <div className="max-w-md">
-          <h1 className="font-display text-3xl font-semibold leading-tight text-foreground">
+          <h1 className="font-display text-3xl font-medium leading-[1.15] tracking-tight text-foreground">
             The permanent home for your AI artifacts.
           </h1>
-          <p className="mt-3 text-sm text-muted-foreground">
+          <p className="mt-4 text-sm leading-relaxed text-muted-foreground">
             Give any HTML page, doc, or built site a lasting URL, version history, and a review loop
             your team and your agents can actually use.
           </p>
-          <ul className="mt-6 flex flex-col gap-3">
+          <ul className="mt-9 flex flex-col gap-4">
             {FEATURES.map(([title, desc]) => (
-              <li key={title} className="flex gap-2.5">
-                <Check className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden />
-                <div className="flex flex-col">
-                  <span className="text-sm font-semibold text-foreground">{title}</span>
-                  <span className="text-xs text-muted-foreground">{desc}</span>
+              <li key={title} className="flex gap-3">
+                <Icon name="check" size={15} className="mt-0.5 shrink-0 text-muted-foreground" />
+                <div className="flex flex-col gap-0.5">
+                  <span className="text-sm font-medium text-foreground">{title}</span>
+                  <span className="text-xs leading-relaxed text-muted-foreground">{desc}</span>
                 </div>
               </li>
             ))}
@@ -144,7 +145,7 @@ export function Login() {
                 {signup ? "Start publishing artifacts in seconds." : "Sign in to your workspace."}
               </CardDescription>
             </CardHeader>
-            <CardContent className="flex flex-col gap-3">
+            <CardContent className="flex flex-col gap-4">
               {(providers?.google || providers?.github) && (
                 <>
                   <div className="flex flex-col gap-2">
@@ -182,7 +183,7 @@ export function Login() {
                   </div>
                 </>
               )}
-              <form onSubmit={submit} className="flex flex-col gap-3">
+              <form onSubmit={submit} className="flex flex-col gap-4">
                 {err && (
                   <div
                     data-testid="login-error"
@@ -193,11 +194,7 @@ export function Login() {
                   </div>
                 )}
                 {signup && (
-                  <label
-                    htmlFor="login-name"
-                    className="flex flex-col gap-1.5 text-sm font-medium text-foreground"
-                  >
-                    Name
+                  <FormField label="Name" htmlFor="login-name">
                     <Input
                       id="login-name"
                       data-testid="login-name"
@@ -205,13 +202,9 @@ export function Login() {
                       onChange={(e) => setName(e.target.value)}
                       placeholder="Your name"
                     />
-                  </label>
+                  </FormField>
                 )}
-                <label
-                  htmlFor="login-email"
-                  className="flex flex-col gap-1.5 text-sm font-medium text-foreground"
-                >
-                  Email
+                <FormField label="Email" htmlFor="login-email">
                   <Input
                     id="login-email"
                     data-testid="login-email"
@@ -221,12 +214,8 @@ export function Login() {
                     onChange={(e) => setEmail(e.target.value)}
                     placeholder="you@company.com"
                   />
-                </label>
-                <label
-                  htmlFor="login-password"
-                  className="flex flex-col gap-1.5 text-sm font-medium text-foreground"
-                >
-                  Password
+                </FormField>
+                <FormField label="Password" htmlFor="login-password">
                   <Input
                     id="login-password"
                     data-testid="login-password"
@@ -237,7 +226,7 @@ export function Login() {
                     onChange={(e) => setPassword(e.target.value)}
                     placeholder="At least 8 characters"
                   />
-                </label>
+                </FormField>
                 <Button
                   data-testid="login-submit"
                   variant="primary"
@@ -256,7 +245,7 @@ export function Login() {
                   data-testid="login-toggle"
                   variant="link"
                   type="button"
-                  className="h-auto p-0 align-baseline text-sm font-semibold"
+                  className="h-auto p-0 align-baseline text-sm font-medium"
                   onClick={() => setMode(signup ? "login" : "signup")}
                 >
                   {signup ? "Sign in" : "Create an account"}

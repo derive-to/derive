@@ -67,7 +67,7 @@ export function ProfileSection() {
                 {me.image && <AvatarImage src={me.image} alt="Your avatar" />}
                 <AvatarFallback className="rounded-full bg-card text-muted-foreground">
                   {me.name ? (
-                    <span className="font-display text-xl font-semibold">{initials}</span>
+                    <span className="font-display text-xl font-medium">{initials}</span>
                   ) : (
                     <Camera className="size-5" aria-hidden />
                   )}
