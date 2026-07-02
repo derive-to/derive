@@ -4,6 +4,7 @@ import { ThemeSwitch } from "@/components/theme-switch"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { IconButton } from "@/components/ui/icon-button"
 import { Input, Textarea } from "@/components/ui/input"
 import { cn } from "@/lib/utils"
 
@@ -283,6 +284,35 @@ export function Showcase() {
               <Button variant="default" disabled>
                 Disabled
               </Button>
+            </div>
+          </div>
+        </Row>
+
+        <Row
+          title="Icon buttons"
+          note="One primitive for the icon-chip pattern — ghost for toolbars, chip for card overlays."
+        >
+          <div className="flex flex-wrap items-center gap-6">
+            <div className="flex items-center gap-2">
+              <IconButton variant="ghost" size="sm" aria-label="Share">
+                <Icon name="share" size={15} className="text-muted-foreground" />
+              </IconButton>
+              <IconButton variant="ghost" size="md" aria-label="Comment">
+                <Icon name="comments" size={16} className="text-muted-foreground" />
+              </IconButton>
+              <IconButton variant="ghost" size="lg" aria-label="More">
+                <Icon name="more" size={18} className="text-muted-foreground" />
+              </IconButton>
+              <span className="font-mono text-2xs text-muted-foreground">ghost</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <IconButton variant="chip" size="sm" aria-label="Star">
+                <Icon name="star" size={14} className="text-muted-foreground" />
+              </IconButton>
+              <IconButton variant="chip" size="md" aria-label="Pin">
+                <Icon name="pin" size={15} className="text-muted-foreground" />
+              </IconButton>
+              <span className="font-mono text-2xs text-muted-foreground">chip</span>
             </div>
           </div>
         </Row>

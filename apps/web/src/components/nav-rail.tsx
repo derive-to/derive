@@ -18,8 +18,11 @@ import { UserPod } from "./user-pod"
 // Shared nav-row look (also used by NotificationBell + the Settings link so the
 // whole rail reads as one list).
 export const ROW_BASE =
-  "flex w-full items-center gap-2.5 whitespace-nowrap rounded-[9px] px-2.5 py-2 text-left text-sm font-semibold text-foreground transition-colors hover:bg-hover"
-export const ROW_ACTIVE = "bg-accent text-accent-foreground hover:bg-accent"
+  "flex w-full items-center gap-2.5 whitespace-nowrap rounded-[9px] px-2.5 py-2 text-left text-sm font-medium text-foreground transition-colors hover:bg-hover"
+// Active reads as a quiet fill plus a hairline accent bar (inset shadow, so no
+// layout shift), not a heavy full-ink block.
+export const ROW_ACTIVE =
+  "bg-secondary text-foreground shadow-[inset_2px_0_0_var(--ac)] hover:bg-secondary"
 export const ROW_RAIL = "justify-center px-0 py-2.5"
 
 // How many of a repo's PR previews to list inline in the sidebar before collapsing

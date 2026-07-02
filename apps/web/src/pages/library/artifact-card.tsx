@@ -8,6 +8,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import { IconButton } from "@/components/ui/icon-button"
 import { ago } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { CommentSignal } from "./comment-signal"
@@ -58,7 +59,7 @@ export function ArtifactCard({
   return (
     <div
       className={cn(
-        "group relative flex cursor-pointer flex-col gap-2 rounded-lg border border-border bg-card p-3.5 transition-all motion-safe:hover:-translate-y-0.5 hover:border-primary hover:shadow-[var(--shadow)] active:translate-y-0",
+        "group relative flex cursor-pointer flex-col gap-2 rounded-lg border border-border bg-card p-3.5 shadow-[var(--shadow-sm)] transition-all duration-150 motion-safe:hover:-translate-y-0.5 hover:shadow-[var(--shadow)] active:translate-y-0",
         // Needs-your-feedback items stand out in the grid: a tagged item gets the full
         // accent + ring; one you're just in the thread on gets a softer accent border.
         a.mentions_me
@@ -68,8 +69,8 @@ export function ArtifactCard({
     >
       <div className="relative">
         <Thumb id={a.short_id} v={a.current_version} />
-        <button
-          type="button"
+        <IconButton
+          variant="chip"
           data-testid={`artifact-card-favorite-${a.short_id}`}
           title={a.favorite ? "Remove from favorites" : "Add to favorites"}
           aria-label="Toggle favorite"
@@ -79,24 +80,24 @@ export function ArtifactCard({
             onToggleFavorite()
           }}
           className={cn(
-            "absolute right-2.5 top-2.5 z-20 grid size-7 place-items-center rounded-md border bg-card transition hover:border-primary",
-            a.favorite ? "border-gold text-gold" : "border-border text-muted-foreground opacity-90",
+            "absolute right-2.5 top-2.5 z-20",
+            a.favorite ? "border-gold" : "opacity-90",
           )}
         >
           <Icon name="star" size={14} className={cn(!a.favorite && "text-muted-foreground")} />
-        </button>
+        </IconButton>
         {isOwner && onDelete && (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <button
-                type="button"
+              <IconButton
+                variant="chip"
                 data-testid={`artifact-card-more-${a.short_id}`}
                 aria-label="More actions"
                 onClick={(e) => e.stopPropagation()}
-                className="absolute left-2.5 top-2.5 z-20 grid size-7 place-items-center rounded-md border border-border bg-card text-muted-foreground opacity-0 transition hover:border-primary group-hover:opacity-100 focus:opacity-100"
+                className="absolute left-2.5 top-2.5 z-20 opacity-0 group-hover:opacity-100 focus:opacity-100"
               >
                 <Icon name="more" size={14} />
-              </button>
+              </IconButton>
             </DropdownMenuTrigger>
             <DropdownMenuContent onClick={(e) => e.stopPropagation()}>
               <DropdownMenuItem
@@ -120,7 +121,7 @@ export function ArtifactCard({
         aria-label={`Open ${a.title ?? a.short_id}`}
         className="flex w-full min-w-0 flex-col gap-1.5 text-left outline-none after:absolute after:inset-0 after:z-[1] after:rounded-lg after:content-[''] focus-visible:after:outline-2 focus-visible:after:-outline-offset-2 focus-visible:after:outline-ring"
       >
-        <span className="truncate font-display text-lg font-semibold text-foreground transition-colors group-hover:text-primary">
+        <span className="truncate font-display text-lg font-semibold text-foreground">
           {a.title ?? a.short_id}
         </span>
         {/* For a synced file: its folder location (the path lives in source_path). */}
