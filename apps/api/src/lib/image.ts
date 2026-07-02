@@ -5,6 +5,11 @@
 
 export const MAX_AVATAR_BYTES = 2 * 1024 * 1024 // 2 MB
 
+// A standalone bundle asset (a screenshot, a diagram) can be much larger than an
+// avatar but is still bounded well under the 100MB raw-upload / 50MB unzipped-bundle
+// caps, so one asset can never fill a bundle on its own.
+export const MAX_ASSET_BYTES = 25 * 1024 * 1024 // 25 MB
+
 export type ImageType = "image/png" | "image/jpeg" | "image/gif" | "image/webp"
 
 /** Identify a supported raster image by its magic bytes, or null if unsupported. */
