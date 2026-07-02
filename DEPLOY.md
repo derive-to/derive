@@ -259,20 +259,37 @@ Durable Objects on the edge but move metadata to Postgres. R2 stays for blobs.
 
 When to switch: D1 has a 10 GB storage limit per database and single-region writes. If
 your workspace grows beyond that, or you need cross-region write performance, point the
-Worker at a Postgres instance instead.
+Worker at a Postgres instance instead. This is the tier the hosted product runs.
+
+The Worker reaches Postgres through [Hyperdrive](https://developers.cloudflare.com/hyperdrive/)
+(Cloudflare's connection pooler — a Worker opens a fresh short-lived connection per
+request, which raw Postgres handles badly; Hyperdrive holds the real server-side pool
+and the per-request dial goes to a colo-local proxy). The binding's presence is the
+switch: `HYPERDRIVE` bound ⇒ the Postgres path; unbound ⇒ D1.
 
 ```bash
-wrangler secret put DATABASE_URL      # postgres://user:pass@host/db
-wrangler r2 bucket create derive-blobs  # if not already created
+wrangler hyperdrive create derive-pg \
+  --connection-string='postgres://user:pass@host/db?sslmode=require'
+# put the returned id into [[hyperdrive]] in wrangler.toml
+wrangler r2 bucket create derive-blobs   # if not already created
 wrangler secret put DERIVE_AUTH_SECRET
-pnpm build:web
-wrangler deploy
+pnpm --filter @derive/api deploy         # build:web → schemas (D1 + pg) → wrangler deploy → smoke
 ```
 
-With `DATABASE_URL` set, the Worker uses the Postgres backend (via `packages/db`) instead
-of D1. Durable Objects (`ArtifactRoom`, `WebhookOutbox`) continue handling realtime
-fan-out and the webhook outbox drain — those stay on the edge regardless.
+`deploy:pg-schema` (part of `deploy`, or standalone) brings Postgres fully current
+before the new Worker goes live — the pg twin of the D1 deploy's two schema steps: it
+applies the app DDL (idempotent) and reconciles the Better Auth schema, reading
+`DATABASE_URL` from the environment or the repo-root `.env`. Like the D1 tier, the edge
+never applies schema at runtime (the Node tier does, on boot).
 
-The `[[d1_databases]]` binding in `wrangler.toml` is still required by the Workers runtime
-even when `DATABASE_URL` overrides it at app startup. Leave the binding in place; the D1
-database itself will be idle.
+Durable Objects (`ArtifactRoom`, `WebhookOutbox`, `RepoSyncRunner`) continue handling
+realtime fan-out, the webhook outbox drain, and GitHub sync — those stay on the edge
+regardless, and the outbox/sync DOs read the same Postgres through Hyperdrive.
+
+The `[[d1_databases]]` binding in `wrangler.toml` is still required by the Workers
+runtime even when `HYPERDRIVE` takes over at app startup. Leave the binding in place;
+the D1 database itself will be idle.
+
+PlanetScale note: its connection strings end in `sslrootcert=system`, which
+node-postgres reads as a file path — drop that parameter (keep `sslmode`); the deploy
+scripts already tolerate it.
