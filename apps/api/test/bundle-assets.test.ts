@@ -64,6 +64,34 @@ describe("an asset: reference resolves a pre-uploaded blob (images without base6
     expect(new TextDecoder().decode(unzipped["index.html"])).toBe("<img src=shot.png>")
   })
 
+  it("publishes a multi-file bundle referencing an asset handle end to end (the MCP path)", async () => {
+    // Exactly what MCP `publish` does for a bundle: build the zip from a {path: content}
+    // map via zipBundleFiles(files, blobs), then hand it to the core publish path.
+    const meta = new SqliteMetaStore(join(dir, "asset-pub.db"))
+    const blobs = new FsBlobStore(join(dir, "asset-pub-blobs"))
+    const key = await blobs.put(PNG_BYTES) // POST /v1/assets stored the screenshot
+    const { version } = await publish(meta, blobs, {
+      bytes: await zipBundleFiles(
+        { "index.html": "<!doctype html><img src=shot.png>", "shot.png": `asset:${key}` },
+        blobs,
+      ),
+      filename: "site.zip",
+      isBundle: true,
+      title: "Site",
+      author: "Tester",
+    })
+    const manifest = await manifestOf(blobs, version)
+    expect(manifest, "published as a bundle").not.toBeNull()
+    const png = manifest?.files["/shot.png"]
+    expect(png?.type).toBe("image/png") // served type from the .png extension
+    const stored = await blobs.get(png?.key as string)
+    expect(new Uint8Array(stored as Uint8Array)).toEqual(PNG_BYTES) // exact bytes, no base64
+    const entry = manifest?.files[manifest.entry]
+    const html = new TextDecoder().decode((await blobs.get(entry?.key as string)) as Uint8Array)
+    expect(html).toContain("<img src=shot.png>")
+    meta.close()
+  })
+
   it("rejects an unknown asset handle with an actionable 400", async () => {
     const blobs = new FsBlobStore(join(dir, "ref-blobs2"))
     await expect(zipBundleFiles({ "x.png": `asset:${"0".repeat(64)}` }, blobs)).rejects.toThrow(
