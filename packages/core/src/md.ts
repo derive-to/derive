@@ -25,36 +25,48 @@ const sanitizer = new FilterXSS({
 })
 
 // The rendered-artifact stylesheet (markdown + Reader view). Standalone — it ships
-// inside the sandboxed iframe, so it can't read the app's [data-theme] tokens and
-// carries its own copy of the Derive palette. Monochrome + neutral, following the
-// viewer's OS colour scheme (light default, dark via prefers-color-scheme) so it's
-// never the old fixed "paper" page.
+// inside the sandboxed iframe, so it can't read the app's [data-theme] tokens (or
+// Tailwind's prose plugin), and carries its own copy of the Derive palette. The
+// look is a hand-rolled version of the editorial prose style: medium-weight,
+// tracked-tight headings with generous rhythm; soft body ink at a relaxed
+// line-height; quiet underlined links; calm code. Follows the viewer's OS colour
+// scheme (light default, dark via prefers-color-scheme).
 const PAGE_CSS = `
-  :root{--paper:#f7f8fa;--panel:#eef1f4;--ink:#14161a;--soft:#565a63;--muted:#6b7079;
-    --line:#e5e7eb;--line2:#eef0f3;--pre-bg:#101216;--pre-ink:#e7e8ea}
-  @media(prefers-color-scheme:dark){:root{--paper:#0a0b0d;--panel:#16181d;--ink:#f3f4f6;
-    --soft:#a0a4ac;--muted:#8b8f98;--line:#23252b;--line2:#1b1e22;--pre-bg:#05060a;--pre-ink:#e7e8ea}}
+  :root{--paper:#f7f8fa;--ink:#14161a;--body:#3f434a;--muted:#6b7079;--line:#e5e7eb;
+    --code:#eceef2;--code-line:#e2e5ea}
+  @media(prefers-color-scheme:dark){:root{--paper:#0a0b0d;--ink:#f3f4f6;--body:#c2c6cd;
+    --muted:#8b8f98;--line:#23252b;--code:#16181d;--code-line:#23252b}}
   *{box-sizing:border-box}
-  body{margin:0;background:var(--paper);color:var(--ink);
-    font:16px/1.65 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased}
-  main{max-width:760px;margin:0 auto;padding:48px 28px 80px}
-  h1,h2,h3,h4{line-height:1.15;letter-spacing:-.015em}
-  h1{font-size:2.1em;margin:.2em 0 .6em} h2{font-size:1.5em;margin:1.6em 0 .5em}
-  h3{font-size:1.18em;margin:1.4em 0 .4em}
-  a{color:inherit;text-decoration:underline;text-decoration-thickness:1px;text-underline-offset:2px}
-  code{font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:.88em;
-    background:var(--line2);padding:1px 6px;border-radius:5px}
-  pre{background:var(--pre-bg);color:var(--pre-ink);padding:16px 18px;border-radius:12px;overflow:auto;line-height:1.6}
-  pre code{background:transparent;color:inherit;padding:0}
-  blockquote{margin:1em 0;padding:.2em 1.1em;border-left:3px solid var(--line);color:var(--soft);
-    background:var(--panel);border-radius:0 10px 10px 0}
-  table{border-collapse:collapse;width:100%;font-size:.92em;background:var(--panel);
-    border:1px solid var(--line);border-radius:10px;overflow:hidden}
-  th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line2)}
-  th{font-size:.8em;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}
-  tr:last-child td{border-bottom:0}
-  img{max-width:100%;border-radius:10px}
-  hr{border:0;border-top:1px solid var(--line);margin:2.2em 0}
+  body{margin:0;background:var(--paper);color:var(--body);
+    font:16px/1.75 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+  main{max-width:700px;margin:0 auto;padding:56px 24px 96px}
+  h1,h2,h3,h4{color:var(--ink);font-weight:500;letter-spacing:-.02em;line-height:1.25}
+  h1{font-size:2em;font-weight:600;margin:0 0 .6em}
+  h2{font-size:1.5em;margin:2em 0 .7em}
+  h3{font-size:1.22em;margin:1.6em 0 .5em}
+  h4{font-size:1.05em;margin:1.4em 0 .4em}
+  :is(h1,h2,h3,h4):first-child{margin-top:0}
+  p{margin:1.15em 0}
+  a{color:var(--ink);text-decoration:underline;text-decoration-thickness:1px;
+    text-underline-offset:3px;text-decoration-color:var(--line);transition:text-decoration-color .15s}
+  a:hover{text-decoration-color:var(--ink)}
+  strong{color:var(--ink);font-weight:600}
+  ul,ol{margin:1.5em 0;padding-left:1.4em}
+  li{margin:.35em 0}
+  li::marker{color:var(--muted)}
+  code{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-size:.86em;
+    background:var(--code);border:1px solid var(--code-line);padding:.1em .4em;border-radius:6px}
+  pre{background:var(--code);border:1px solid var(--code-line);padding:16px 18px;border-radius:12px;
+    overflow:auto;line-height:1.6;margin:1.6em 0}
+  pre code{background:none;border:0;padding:0;font-size:.9em}
+  blockquote{margin:1.6em 0;padding:.1em 0 .1em 1.1em;border-left:2px solid var(--line);color:var(--muted)}
+  blockquote p{margin:.5em 0}
+  table{border-collapse:collapse;width:100%;font-size:.92em;margin:1.6em 0}
+  th,td{text-align:left;padding:8px 12px;border-bottom:1px solid var(--line)}
+  th{color:var(--ink);font-weight:600;font-size:.86em}
+  img{max-width:100%;height:auto;border-radius:12px;margin:1.6em 0;box-shadow:0 1px 2px rgba(0,0,0,.06)}
+  hr{border:0;border-top:1px solid var(--line);margin:3em 0}
 `
 
 /** XSS-sanitize an HTML fragment with Derive's content whitelist (drops scripts, styles,
