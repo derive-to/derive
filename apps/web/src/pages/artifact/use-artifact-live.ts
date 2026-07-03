@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react"
 import { API_BASE, api, type Viewer } from "@/api"
+import { usePageVisible } from "@/lib/use-page-visible"
 import { useLiveCursors } from "./cursors/use-live-cursors"
 
 /**
@@ -23,10 +24,14 @@ export function useArtifactLive(opts: {
   const [viewers, setViewers] = useState<Viewer[]>([])
   const cursors = useLiveCursors(shortId)
   const { paintFrame } = cursors
+  const visible = usePageVisible()
 
   // The live stream: comment churn + new versions refetch/reload; presence and
-  // peer cursors paint directly.
+  // peer cursors paint directly. Closed while the tab is hidden (and reopened
+  // on focus) so a backgrounded tab doesn't keep the artifact's room Durable
+  // Object active.
   useEffect(() => {
+    if (!visible) return
     const ev = new EventSource(`${API_BASE}/v1/artifacts/${shortId}/events`, {
       withCredentials: true,
     })
@@ -52,11 +57,14 @@ export function useArtifactLive(opts: {
       }
     })
     return () => ev.close()
-  }, [shortId, onComment, onVersion, paintFrame])
+  }, [shortId, onComment, onVersion, paintFrame, visible])
 
   // Announce we're viewing (anon shows up by their server handle — Google-Docs
-  // style) and keep the heartbeat alive (TTL 45s).
+  // style) and keep the heartbeat alive (TTL 45s). Paused while the tab is
+  // hidden, so a backgrounded viewer ages out of presence instead of showing
+  // as "currently viewing" forever.
   useEffect(() => {
+    if (!visible) return
     const beat = () =>
       api
         .heartbeat(shortId)
@@ -65,7 +73,7 @@ export function useArtifactLive(opts: {
     beat()
     const t = setInterval(beat, 20_000)
     return () => clearInterval(t)
-  }, [shortId])
+  }, [shortId, visible])
 
   // Record one view per artifact open.
   const recorded = useRef("")

@@ -409,7 +409,9 @@ describe("people directory (/v1/people)", () => {
     expect(browse.users[0]).not.toHaveProperty("email") // public fields only
 
     // With a query it searches within the discoverable set.
-    const searched = await (await app.request("/v1/people?query=iv", { headers: as(ivy.email) })).json()
+    const searched = await (
+      await app.request("/v1/people?query=iv", { headers: as(ivy.email) })
+    ).json()
     expect(handles(searched)).toEqual(["ivy"])
 
     // Signed-in only — anonymous is refused.
