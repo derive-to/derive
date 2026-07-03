@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/sidebar"
 import { useAuth } from "@/ctx"
 import { ago } from "@/lib/time"
+import { usePageVisible } from "@/lib/use-page-visible"
 import { cn } from "@/lib/utils"
 import { refFor } from "@/pages/artifact/parse-ref"
 import { Icon } from "./icons"
@@ -27,6 +28,7 @@ export function NotificationBell() {
   const [items, setItems] = useState<Notification[]>([])
   const [unread, setUnread] = useState(0)
   const [open, setOpen] = useState(false)
+  const visible = usePageVisible()
 
   const load = useCallback(() => {
     api
@@ -38,14 +40,16 @@ export function NotificationBell() {
       .catch(() => {})
   }, [])
 
-  // Initial load + live updates. EventSource reconnects on its own.
+  // Initial load + live updates. EventSource reconnects on its own. Closed
+  // while the tab is hidden (and reopened + re-loaded on focus) so a
+  // backgrounded tab doesn't keep the per-user room Durable Object active.
   useEffect(() => {
-    if (!me) return
+    if (!me || !visible) return
     load()
     const ev = new EventSource(api.notificationsStreamUrl(), { withCredentials: true })
     ev.addEventListener("notification", load)
     return () => ev.close()
-  }, [me, load])
+  }, [me, load, visible])
 
   // Mirror the unread count into the tab title — "(3) Derive" (the house
   // grammar). Strip any previous prefix first so updates replace, never stack.
