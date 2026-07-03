@@ -47,7 +47,9 @@ describe("agents: @mention → pull inbox → propose → ack", () => {
   })
 
   it("the agent shows up in the @mention directory", async () => {
-    const dir = await (await app.request("/v1/users?query=clau", { headers: as(owner.email) })).json()
+    const dir = await (
+      await app.request("/v1/users?query=clau", { headers: as(owner.email) })
+    ).json()
     expect(dir.users).toContainEqual(
       expect.objectContaining({ id: agentId, name: "Claude", kind: "agent" }),
     )
