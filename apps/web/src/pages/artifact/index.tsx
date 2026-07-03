@@ -670,7 +670,10 @@ export function Artifact() {
             )}
           </div>
 
-          <ReviewCard shortId={shortId} canApprove={canPublish} />
+          {/* Only members who can act see the review card — an anonymous or
+              view-only visitor on a link artifact shouldn't be told "Review
+              requested / Send back". */}
+          {canComment && <ReviewCard shortId={shortId} canApprove={canPublish} />}
 
           <ArtifactComments
             shortId={shortId}

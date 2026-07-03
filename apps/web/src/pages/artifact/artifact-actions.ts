@@ -161,8 +161,20 @@ export function artifactActions(p: {
   }
   const toggleResolve = async (root: Comment) => {
     // Resolve anything not already resolved (open or outdated); reopen a resolved thread.
-    await api.resolve(shortId, root.id, root.state === "resolved" ? "open" : "resolved")
-    refetchComments()
+    const next = root.state === "resolved" ? "open" : "resolved"
+    // Optimistic: flip the thread's state in the cache NOW so the click feels instant,
+    // snapshotting to roll back if the server rejects it (mirrors `react` below).
+    const key = commentsQuery(shortId).queryKey
+    const prev = qc.getQueryData(key)
+    qc.setQueryData<Comment[]>(key, (cs) =>
+      (cs ?? []).map((c) => (c.thread_id === root.id ? { ...c, state: next } : c)),
+    )
+    try {
+      await api.resolve(shortId, root.id, next)
+      refetchComments()
+    } catch {
+      qc.setQueryData(key, prev)
+    }
   }
   const activate = (id: string) => {
     p.setActiveThread((cur) => (cur === id ? cur : id))
