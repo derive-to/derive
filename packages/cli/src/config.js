@@ -5,6 +5,19 @@ import { dirname, join } from "node:path"
 
 export const CONFIG_FILE = "derive.json"
 
+// Where `derive` talks to by default: the hosted cloud. `--local` targets a dev
+// server on this machine; `--server <url>` or DERIVE_SERVER override either.
+export const CLOUD_SERVER = "https://derive.to"
+export const LOCAL_SERVER = "http://localhost:8080"
+
+/** Resolve the target server: `--server` wins, then `--local`, then a project's
+ *  derive.json server, then DERIVE_SERVER, else the hosted cloud. */
+export function resolveServer(opts = {}, config = null) {
+  if (opts.server) return String(opts.server).replace(/\/+$/, "")
+  if (opts.local) return LOCAL_SERVER
+  return (config?.server ?? process.env.DERIVE_SERVER ?? CLOUD_SERVER).replace(/\/+$/, "")
+}
+
 // ---- User-level credentials (`derive login`) --------------------------------
 // Tokens are secrets, so they live in a user-level store (one entry per Derive
 // origin), never in the project's derive.json. DERIVE_CONFIG_DIR overrides the dir.
@@ -120,7 +133,7 @@ export function loadConfig(dir = ".") {
 export function resolvePublish(opts = {}, config = null) {
   const c = config ?? {}
   const spa = opts.spa != null ? opts.spa === "true" || opts.spa === true : !!c.spa
-  const server = opts.server ?? c.server ?? process.env.DERIVE_SERVER ?? "http://localhost:8080"
+  const server = resolveServer(opts, c)
   return {
     id: opts.id ?? c.id ?? null,
     target: opts.target ?? c.entry ?? null,

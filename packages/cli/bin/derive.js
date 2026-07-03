@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // derive — scaffold, publish, and run the review loop against a Derive server.
 //   derive init [dir] [--template md|html|slides|site] [--title t]
-//   derive login [--server url] [--scope "…"]   OAuth sign-in; saves a token
+//   derive login [--local] [--server url]   OAuth sign-in (default https://derive.to); saves a token
 //   derive publish [file|dir] [--id --title --slug --spa --message --name --visibility --server --token]
 //   derive comments [--id]                 list the artifact's comment threads
 //   derive open [--id]                     open the artifact in a browser
@@ -22,6 +22,7 @@ import {
   freshToken,
   loadConfig,
   resolvePublish,
+  resolveServer,
   saveToken,
   scaffold,
   TEMPLATES,
@@ -37,6 +38,7 @@ for (let i = 0; i < args.length; i++) {
   const a = args[i]
   if (a === "--spa") flags.spa = "true"
   else if (a === "--review") flags.review = "true"
+  else if (a === "--local") flags.local = "true"
   else if (a === "--json") flags.json = "true"
   else if (a.startsWith("--")) flags[a.slice(2)] = args[++i]
   else positional.push(a)
@@ -70,10 +72,7 @@ if (cmd === "init") {
 if (cmd === "login") {
   const b64url = (b) =>
     b.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "")
-  const server = (flags.server ?? process.env.DERIVE_SERVER ?? "http://localhost:8080").replace(
-    /\/+$/,
-    "",
-  )
+  const server = resolveServer(flags)
   const redirect = `${server}/oauth/cli-callback`
   const scope =
     flags.scope ??
@@ -272,7 +271,7 @@ if (LOOP.includes(cmd)) {
 if (cmd !== "publish") {
   console.error(`usage:
   derive init [dir] [--template md|html|slides|site] [--title t]
-  derive login [--server url] [--scope "openid derive:read derive:publish"]   OAuth sign-in; saves a token
+  derive login [--local] [--server url]    OAuth sign-in (defaults to https://derive.to); saves a persistent token
   derive publish [file|dir] [--id X] [--title t] [--slug s] [--spa] [--message m] [--name "x"] [--visibility v] [--password p] [--server url] [--token t] [--json]
   derive comments [--id X]                 list comment threads
   derive open [--id X]                     open the artifact in a browser
