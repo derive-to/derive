@@ -3,17 +3,21 @@ import type {
   DurableObjectNamespace,
   ExecutionContext,
   Fetcher,
+  Hyperdrive,
   R2Bucket,
   RateLimit,
   ScheduledController,
 } from "@cloudflare/workers-types"
 import { createD1Store } from "@derive/db/d1"
+import { PgMetaStore } from "@derive/db/pg"
 import { R2BlobStore } from "@derive/storage"
 import { drizzleAdapter } from "better-auth/adapters/drizzle"
 import { drizzle } from "drizzle-orm/d1"
+import { PostgresDialect } from "kysely"
 import { createApp } from "./app"
-import { makeAuth } from "./auth-config"
+import { type AuthDb, makeAuth } from "./auth-config"
 import { authSchema } from "./auth-schema"
+import { hyperdrivePool, livePgPool, requestPg } from "./edge-pg"
 import type { SendEmailBinding } from "./email-cf"
 import { customDomainsFromEnv } from "./lib/cloudflare-saas"
 import { nativeLimiter } from "./lib/rate-limit"
@@ -57,6 +61,10 @@ const OUTBOX_NAME = "outbox"
  */
 export interface Env {
   DB: D1Database
+  // Hyperdrive → Postgres (the hosted tier). Bound ⇒ metadata + auth live in
+  // Postgres and DB (D1) sits idle (the binding stays because the runtime requires
+  // every declared binding to resolve). Unbound ⇒ D1 is the store (the default).
+  HYPERDRIVE?: Hyperdrive
   BUCKET: R2Bucket
   ROOMS: DurableObjectNamespace
   // The webhook outbox drainer DO (a single named instance). Declared in wrangler.toml.
@@ -116,113 +124,129 @@ let app: ReturnType<typeof createApp> | null = null
 // a deployment). Injected with per-artifact unfurl meta on each /a/:ref request.
 let shellCache: string | null = null
 
-export default {
-  fetch(req: Request, env: Env, ctx: ExecutionContext): Response | Promise<Response> {
-    // Bind THIS request's D1 for the entire handler — including the one-time app/auth
-    // construction below — so liveD1 always resolves to a live binding, never a stale one.
-    return requestD1.run(env.DB, () => {
-      if (!app) {
-        // No insecure default on the edge: a hardcoded, public session-signing key
-        // would let anyone forge a valid session. The Node path generates+persists
-        // one when unset, but a stateless Worker can't, so it must be bound. Fail
-        // closed (a 500 on every request) rather than boot with a forgeable secret.
-        const secret = env.DERIVE_AUTH_SECRET
-        if (!secret || secret.length < 16)
-          throw new Error("DERIVE_AUTH_SECRET (>= 16 chars) is required on the edge")
-        const baseUrl = env.BASE_URL ?? new URL(req.url).origin
-        // Both stores talk to D1 through `liveD1` (the requestD1 ALS proxy), never a
-        // captured `env.DB` — a captured binding goes stale once its originating request
-        // context is reclaimed and then hangs every query. liveD1 always resolves to the
-        // in-flight request's binding (set via requestD1.run below).
-        const meta = createD1Store(liveD1)
-        // Better Auth on Drizzle's first-class D1 driver (drizzle-orm/d1) — the same
-        // driver the app store uses, and no kysely-d1. The drizzle adapter defaults
-        // transaction:false, so it never issues an interactive transaction to D1.
-        const auth = makeAuth(
-          drizzleAdapter(drizzle(liveD1, { schema: authSchema }), {
+// The request handler behind both tiers. Split from `fetch` so the pg tier can
+// wrap it in a request-scoped pool without indenting the whole body.
+const handle = (req: Request, env: Env, ctx: ExecutionContext): Response | Promise<Response> => {
+  // Bind THIS request's D1 for the entire handler — including the one-time app/auth
+  // construction below — so liveD1 always resolves to a live binding, never a stale one.
+  return requestD1.run(env.DB, () => {
+    if (!app) {
+      // No insecure default on the edge: a hardcoded, public session-signing key
+      // would let anyone forge a valid session. The Node path generates+persists
+      // one when unset, but a stateless Worker can't, so it must be bound. Fail
+      // closed (a 500 on every request) rather than boot with a forgeable secret.
+      const secret = env.DERIVE_AUTH_SECRET
+      if (!secret || secret.length < 16)
+        throw new Error("DERIVE_AUTH_SECRET (>= 16 chars) is required on the edge")
+      const baseUrl = env.BASE_URL ?? new URL(req.url).origin
+      // Both stores talk to their backend through a request-scoped proxy (liveD1 /
+      // livePgPool), never a captured binding or socket — anything captured at
+      // construction goes stale once its originating request context is reclaimed
+      // and then hangs every query. The proxies always resolve to the in-flight
+      // request's handle (bound via requestD1.run / requestPg.run in fetch).
+      const meta = env.HYPERDRIVE ? PgMetaStore.fromPool(livePgPool) : createD1Store(liveD1)
+      // Auth datastore: Postgres rides Better Auth's Kysely core on an explicit
+      // PostgresDialect (declared, not duck-typed — livePgPool is a Proxy). D1 rides
+      // Drizzle's first-class D1 driver — the same driver the app store uses, and no
+      // kysely-d1; the drizzle adapter defaults transaction:false, so it never issues
+      // an interactive transaction to D1.
+      const authDb: AuthDb = env.HYPERDRIVE
+        ? { dialect: new PostgresDialect({ pool: livePgPool }), type: "postgres" }
+        : drizzleAdapter(drizzle(liveD1, { schema: authSchema }), {
             provider: "sqlite",
             schema: authSchema,
-          }),
-          baseUrl,
-          secret,
-          { usernameTaken: (u) => meta.getUserByUsername(u).then(Boolean) },
-        )
-        app = createApp({
-          meta,
-          blobs: new R2BlobStore(env.BUCKET),
-          backplane: createDoBackplane(env.ROOMS),
-          baseUrl,
-          auth,
-          // Encrypt stored GitHub PATs at rest with the edge auth secret.
-          encryptionKey: secret,
-          slack:
-            env.SLACK_CLIENT_ID && env.SLACK_CLIENT_SECRET && env.SLACK_SIGNING_SECRET
-              ? {
-                  clientId: env.SLACK_CLIENT_ID,
-                  clientSecret: env.SLACK_CLIENT_SECRET,
-                  signingSecret: env.SLACK_SIGNING_SECRET,
-                }
-              : undefined,
-          superAdmins: (env.DERIVE_SUPERADMIN_EMAILS ?? "")
-            .split(",")
-            .map((s) => s.trim().toLowerCase())
-            .filter(Boolean),
-          defaultOrgId: "default",
-          subdomainBase:
-            env.DERIVE_SUBDOMAIN_BASE?.toLowerCase().replace(/^\.+|\.+$/g, "") || undefined,
-          customDomains: customDomainsFromEnv(env),
-          // Enable rate limiting on the edge, counted by Cloudflare's native per-colo
-          // limiter (a plain in-memory Map would cap per isolate only). The native binding's
-          // window is fixed at 60s, so unlock / oauth-register run a tighter per-minute cap
-          // here than the long-window in-process defaults (see wrangler.toml [[ratelimits]]).
-          rateLimit: true,
-          rateLimiters: {
-            auth: nativeLimiter(env.RL_AUTH, 60),
-            write: nativeLimiter(env.RL_WRITE, 60),
-            publish: nativeLimiter(env.RL_PUBLISH, 60),
-            comment: nativeLimiter(env.RL_COMMENT, 60),
-            // Both ride RL_STRICT (3/60); the prefix keeps their counts separate.
-            unlock: nativeLimiter(env.RL_STRICT, 60, "unlock"),
-            oauthRegister: nativeLimiter(env.RL_STRICT, 60, "oauth-register"),
-          },
-          // Deliver freshly enqueued events now: poke the outbox DO so its alarm fires,
-          // riding waitUntil so the subrequest isn't cancelled when the response is sent.
-          pokeWebhooks: () => {
-            const p = pokeOutbox(env)
-            const c = edgeCtx.getStore()
-            if (c) c.waitUntil(p)
-            else void p
-          },
-          // Run a triggered GitHub sync server-side: poke the per-source runner DO so
-          // it mirrors to completion on our servers (tab-independent). waitUntil keeps
-          // the poke subrequest alive past the 202 response.
-          startSync: (sourceId) => {
-            const p = pokeSync(env, sourceId)
-            const c = edgeCtx.getStore()
-            if (c) c.waitUntil(p)
-            else void p
-          },
-          // Read the SPA shell from static assets so /a/:ref can carry unfurl meta.
-          // Cached per isolate; null on any miss leaves the shell untouched.
-          shellFetch: async () => {
-            if (shellCache !== null) return shellCache
-            try {
-              // Fetch "/" (the canonical shell URL), NOT "/index.html": Static Assets
-              // 307-redirects /index.html -> /, so a non-2xx would null the shell and
-              // drop unfurl/OG injection on /a/:ref (crawlers/social cards get no meta).
-              const res = await env.ASSETS.fetch(new URL("/", baseUrl).toString())
-              shellCache = res.ok ? await res.text() : null
-            } catch {
-              shellCache = null
-            }
-            return shellCache
-          },
-        })
-      }
-      // Run within the per-request context so the DO backplane's publish can waitUntil.
-      const ready = app
-      return edgeCtx.run(ctx, () => ready.fetch(req))
-    })
+          })
+      const auth = makeAuth(authDb, baseUrl, secret, {
+        usernameTaken: (u) => meta.getUserByUsername(u).then(Boolean),
+      })
+      app = createApp({
+        meta,
+        blobs: new R2BlobStore(env.BUCKET),
+        backplane: createDoBackplane(env.ROOMS),
+        baseUrl,
+        auth,
+        // Encrypt stored GitHub PATs at rest with the edge auth secret.
+        encryptionKey: secret,
+        slack:
+          env.SLACK_CLIENT_ID && env.SLACK_CLIENT_SECRET && env.SLACK_SIGNING_SECRET
+            ? {
+                clientId: env.SLACK_CLIENT_ID,
+                clientSecret: env.SLACK_CLIENT_SECRET,
+                signingSecret: env.SLACK_SIGNING_SECRET,
+              }
+            : undefined,
+        superAdmins: (env.DERIVE_SUPERADMIN_EMAILS ?? "")
+          .split(",")
+          .map((s) => s.trim().toLowerCase())
+          .filter(Boolean),
+        defaultOrgId: "default",
+        subdomainBase:
+          env.DERIVE_SUBDOMAIN_BASE?.toLowerCase().replace(/^\.+|\.+$/g, "") || undefined,
+        customDomains: customDomainsFromEnv(env),
+        // Enable rate limiting on the edge, counted by Cloudflare's native per-colo
+        // limiter (a plain in-memory Map would cap per isolate only). The native binding's
+        // window is fixed at 60s, so unlock / oauth-register run a tighter per-minute cap
+        // here than the long-window in-process defaults (see wrangler.toml [[ratelimits]]).
+        rateLimit: true,
+        rateLimiters: {
+          auth: nativeLimiter(env.RL_AUTH, 60),
+          write: nativeLimiter(env.RL_WRITE, 60),
+          publish: nativeLimiter(env.RL_PUBLISH, 60),
+          comment: nativeLimiter(env.RL_COMMENT, 60),
+          // Both ride RL_STRICT (3/60); the prefix keeps their counts separate.
+          unlock: nativeLimiter(env.RL_STRICT, 60, "unlock"),
+          oauthRegister: nativeLimiter(env.RL_STRICT, 60, "oauth-register"),
+        },
+        // Deliver freshly enqueued events now: poke the outbox DO so its alarm fires,
+        // riding waitUntil so the subrequest isn't cancelled when the response is sent.
+        pokeWebhooks: () => {
+          const p = pokeOutbox(env)
+          const c = edgeCtx.getStore()
+          if (c) c.waitUntil(p)
+          else void p
+        },
+        // Run a triggered GitHub sync server-side: poke the per-source runner DO so
+        // it mirrors to completion on our servers (tab-independent). waitUntil keeps
+        // the poke subrequest alive past the 202 response.
+        startSync: (sourceId) => {
+          const p = pokeSync(env, sourceId)
+          const c = edgeCtx.getStore()
+          if (c) c.waitUntil(p)
+          else void p
+        },
+        // Read the SPA shell from static assets so /a/:ref can carry unfurl meta.
+        // Cached per isolate; null on any miss leaves the shell untouched.
+        shellFetch: async () => {
+          if (shellCache !== null) return shellCache
+          try {
+            // Fetch "/" (the canonical shell URL), NOT "/index.html": Static Assets
+            // 307-redirects /index.html -> /, so a non-2xx would null the shell and
+            // drop unfurl/OG injection on /a/:ref (crawlers/social cards get no meta).
+            const res = await env.ASSETS.fetch(new URL("/", baseUrl).toString())
+            shellCache = res.ok ? await res.text() : null
+          } catch {
+            shellCache = null
+          }
+          return shellCache
+        },
+      })
+    }
+    // Run within the per-request context so the DO backplane's publish can waitUntil.
+    const ready = app
+    return edgeCtx.run(ctx, () => ready.fetch(req))
+  })
+}
+
+export default {
+  fetch(req: Request, env: Env, ctx: ExecutionContext): Response | Promise<Response> {
+    // Postgres tier: bind a request-scoped pool (see edge-pg.ts) for livePgPool to
+    // resolve. Never end()ed here — `background()` fan-out (context.ts) keeps
+    // querying it on waitUntil after the response, so an eager end() would cut
+    // notifications/webhooks off mid-flight. Idle sockets reap themselves and the
+    // rest dies with the request context.
+    if (env.HYPERDRIVE)
+      return requestPg.run(hyperdrivePool(env.HYPERDRIVE), () => handle(req, env, ctx))
+    return handle(req, env, ctx)
   },
 
   // Cron backstop (wrangler.toml `[triggers] crons`): the outbox DO goes idle once it
