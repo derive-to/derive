@@ -11,12 +11,15 @@ import {
 } from "lucide-react"
 import { useCallback, useEffect, useRef, useState } from "react"
 import type { Comment, Mention } from "@/api"
+import { Eyebrow } from "@/components/shared/section-eyebrow"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { Composer, MentionField } from "./comment-composer"
 import { CommentRow } from "./comment-row"
 import { useCommentScope } from "./lib/comment-scope"
 import { COMPOSER_ID, layoutPins, parseAnchor } from "./lib/layout"
+import { quoteChipClass } from "./quote-chip"
 import { type ElementSnapshotLite, type PinItem, type Sel, selLabel } from "./types"
 
 // Composer is consumed by comment-panels through this module; re-export so its
@@ -39,9 +42,14 @@ export function PinnedZone({
   onSubmitNew,
   onCancelNew,
   personal,
+  topInset = 0,
 }: {
   pins: PinItem[]
   scrollY: number
+  /** Vertical gap between the pinned zone's top and the document's top (the panel
+   *  header sitting above it). Cards are anchored from the document top, so this is
+   *  subtracted to keep them lined up with their highlights. */
+  topInset?: number
   onScrollDoc: (dy: number) => void
   composer: { anchor: Sel | null; top: number | null } | null
   personal?: boolean
@@ -90,11 +98,16 @@ export function PinnedZone({
     composer?.anchor && composer.top != null
       ? { top: composer.top, quote: selLabel(composer.anchor) }
       : null
+  // The pinned zone sits `topInset` px below the document's top (the panel header
+  // above it), so a card at desiredY (measured from the document top) must render
+  // that much higher to line up with its highlight. Clamp at 0 so cards anchored
+  // near the very top bunch just under the header rather than scroll out of reach.
+  const align = (y: number) => Math.max(0, y - topInset)
   const items = pins.flatMap((p) => {
     const head = p.thread[0]
-    return head ? [{ id: head.thread_id, desiredY: p.desiredY }] : []
+    return head ? [{ id: head.thread_id, desiredY: align(p.desiredY) }] : []
   })
-  if (activeComposer) items.push({ id: COMPOSER_ID, desiredY: activeComposer.top })
+  if (activeComposer) items.push({ id: COMPOSER_ID, desiredY: align(activeComposer.top) })
   const activeId = activeComposer ? COMPOSER_ID : activeThread
   const pos = layoutPins(items, heights, activeId, 12)
   // Tallest card bottom in the relaxed stack. When a dense cluster pushes this
@@ -141,13 +154,13 @@ export function PinnedZone({
         if (!head) return null
         const id = head.thread_id
         const active = !activeComposer && activeThread === id
-        const y = pos[id] ?? p.desiredY
+        const y = pos[id] ?? align(p.desiredY)
         return (
           <div
             key={id}
             ref={measure}
             data-pin={id}
-            className="absolute inset-x-2.5 top-0 transition-transform duration-[180ms]"
+            className="absolute inset-x-2.5 top-0 transition-transform duration-200"
             style={{
               transform: `translateY(${Math.round(y)}px)`,
               zIndex: active ? 6 : hoverThread === id ? 4 : 2,
@@ -172,9 +185,9 @@ export function PinnedZone({
         <div
           ref={measure}
           data-pin={COMPOSER_ID}
-          className="absolute inset-x-2.5 top-0 z-10 transition-transform duration-[180ms]"
+          className="absolute inset-x-2.5 top-0 z-10 transition-transform duration-200"
           style={{
-            transform: `translateY(${Math.round(pos[COMPOSER_ID] ?? activeComposer.top)}px)`,
+            transform: `translateY(${Math.round(pos[COMPOSER_ID] ?? align(activeComposer.top))}px)`,
           }}
         >
           <Composer
@@ -235,19 +248,16 @@ function ElementRef({
           onJump(threadId)
         }}
         title={relocated ? "Jump to the element (moved — approximate)" : "Jump to the element"}
-        className="flex w-full items-center gap-1.5 border-l-[3px] border-primary bg-accent px-2.5 py-1.5 text-left text-xs font-medium text-foreground outline-none focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
+        className="flex w-full items-center gap-1.5 border-l-[3px] border-foreground/25 bg-accent px-2.5 py-1.5 text-left text-sm font-medium text-foreground outline-none focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
       >
-        <Glyph aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
+        <Glyph aria-hidden className="size-4 shrink-0 text-muted-foreground" />
         <span className="truncate">{label}</span>
         {relocated && (
           // A minor, muted "moved" marker — a small dot + word, not an alarm.
-          <span
-            data-testid={`comment-moved-${threadId}`}
-            className="ml-auto inline-flex shrink-0 items-center gap-1 rounded-full bg-secondary px-1.5 py-px font-mono text-2xs font-medium text-muted-foreground"
-          >
+          <Badge shape="pill" data-testid={`comment-moved-${threadId}`} className="ml-auto">
             <span aria-hidden className="size-1.5 rounded-full bg-primary/60" />
             moved
-          </span>
+          </Badge>
         )}
       </button>
     )
@@ -261,7 +271,7 @@ function ElementRef({
     <div
       title="The element this comment was attached to was edited or removed in this version"
       data-testid={`comment-orphan-${threadId}`}
-      className="flex w-full items-center gap-2 border-l-[3px] border-border bg-secondary px-2.5 py-1.5 text-left text-xs text-muted-foreground"
+      className="flex w-full items-center gap-2 border-l-[3px] border-border bg-secondary px-2.5 py-1.5 text-left text-sm text-muted-foreground"
     >
       {thumb ? (
         <img
@@ -282,7 +292,7 @@ function ElementRef({
       )}
       <span className="min-w-0">
         <span className="block truncate font-medium italic text-foreground">{label}</span>
-        <span className="block text-2xs">removed in this version</span>
+        <span className="block font-mono text-2xs">removed in this version</span>
       </span>
     </div>
   )
@@ -380,30 +390,29 @@ export function CommentCard({
       onClick={() => !active && onActivate(root.thread_id)}
       className={cn(
         "animate-in fade-in slide-in-from-bottom-1 duration-200 overflow-hidden rounded-lg border bg-card",
+        // Active/hovered cards take neutral re-inked edges — never the accent
+        // (the ink accent marks actions and brand moments, not selection).
         active
-          ? "cursor-default border-primary shadow-[var(--shadow)]"
+          ? "cursor-default border-foreground/25 shadow-[var(--shadow)]"
           : hovered
-            ? " border-primary/40 shadow-[var(--shadow-sm)]"
+            ? " border-foreground/15 shadow-[var(--shadow-sm)]"
             : " border-border",
         resolved && !active && "opacity-60",
       )}
     >
       {onDeck && slideNum != null && (
         <div className="flex items-center gap-1.5 px-2.5 pb-0.5 pt-1.5">
-          <span
-            data-testid={`comment-slide-${root.thread_id}`}
-            className="rounded-full bg-secondary px-1.5 py-px font-mono text-2xs font-medium tabular-nums text-muted-foreground"
-          >
+          <Badge shape="pill" data-testid={`comment-slide-${root.thread_id}`}>
             Slide {slideNum + 1}
-          </span>
+          </Badge>
           {slideMoved && (
-            <span
+            <Badge
+              shape="pill"
               data-testid={`comment-moved-${root.thread_id}`}
               title="The text this comment anchors to moved to a different slide since it was written"
-              className="rounded-full bg-secondary px-1.5 py-px font-mono text-2xs font-medium text-foreground"
             >
               moved
-            </span>
+            </Badge>
           )}
         </div>
       )}
@@ -428,14 +437,17 @@ export function CommentCard({
                 onJump(root.thread_id)
               }}
               title="Jump to the highlighted text"
-              className="block w-full truncate border-l-[3px] border-primary bg-accent px-2.5 py-1.5 text-left text-xs italic text-foreground outline-none focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
+              className={quoteChipClass({
+                className:
+                  "block w-full truncate outline-none focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring",
+              })}
             >
               “{refLabel}”
             </button>
           ) : (
             <div
               title="The text this comment was attached to was edited or removed in this version"
-              className="block w-full truncate border-l-[3px] border-border bg-secondary px-2.5 py-1.5 text-left text-xs italic text-muted-foreground"
+              className={quoteChipClass({ muted: true, className: "block w-full truncate" })}
             >
               “{refLabel}”
             </div>
@@ -452,7 +464,7 @@ export function CommentCard({
         </>
       ) : (
         <>
-          <div className="max-h-[360px] overflow-auto">
+          <div className="max-h-90 overflow-auto">
             {thread.map((c) => (
               <CommentRow key={c.id} c={c} />
             ))}
@@ -488,18 +500,12 @@ export function CommentCard({
             </div>
           )}
           <div className="flex items-center gap-1.5 bg-secondary px-3 py-1.5">
-            <span
-              className={cn(
-                // Status tones are success/warning/neutral — amber is reserved,
-                // so addressed and open both take the neutral wash; the label
-                // text and title tooltip carry the distinction.
-                "rounded-full px-2 py-0.5 font-mono text-2xs font-medium",
-                resolved
-                  ? "bg-success/10 text-success"
-                  : outdated
-                    ? "bg-warning/10 text-warning"
-                    : "bg-accent text-foreground",
-              )}
+            {/* Status tones are success/warning/neutral — the ink accent is reserved, so
+                addressed and open both take the neutral wash; the label text and
+                title tooltip carry the distinction. */}
+            <Badge
+              shape="pill"
+              variant={resolved ? "success" : outdated ? "warning" : "default"}
               title={
                 outdated
                   ? "The text this thread was attached to changed in a later version — this feedback may no longer apply"
@@ -509,28 +515,26 @@ export function CommentCard({
               }
             >
               {resolved ? "resolved" : outdated ? "outdated" : addressed ? "addressed" : "open"}
-            </span>
+            </Badge>
             {refLabel && !textPresent && !resolved && !outdated && !addressed && (
-              <span
+              <Badge
+                shape="pill"
+                variant="warning"
                 title={
                   isEl
                     ? "The element this comment was attached to was edited or removed in this version"
                     : "The text this comment was attached to was edited or removed in this version"
                 }
-                className="rounded-full bg-warning/10 px-2 py-0.5 font-mono text-2xs font-medium text-warning"
               >
                 {isEl ? "element changed" : "text changed"}
-              </span>
+              </Badge>
             )}
-            {/* Resolve is a success affordance (soft tint, never a filled amber);
-                Reopen goes back to a quiet outline. */}
+            {/* Resolve is a success affordance (the soft status fill, never a
+                filled ink); Reopen goes back to a quiet outline. */}
             <Button
-              variant={resolved ? "outline" : "ghost"}
+              variant={resolved ? "outline" : "success"}
               size="sm"
-              className={cn(
-                "ml-auto",
-                !resolved && "bg-success/10 text-success hover:bg-success/15 hover:text-success",
-              )}
+              className="ml-auto"
               data-testid="comment-resolve"
               onClick={(e) => {
                 e.stopPropagation()
@@ -572,13 +576,15 @@ export function ResolvedSection({
         type="button"
         onClick={() => setOpen((o) => !o)}
         data-testid="resolved-section-toggle"
-        className="flex w-full items-center gap-1.5 rounded-sm px-0.5 py-1.5 font-mono text-2xs font-medium uppercase tracking-wide text-muted-foreground tabular-nums outline-none focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
+        className="flex w-full items-center gap-1.5 rounded-sm px-0.5 py-1.5 text-muted-foreground outline-none focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
       >
         <ChevronRight
-          className={cn("size-3.5 shrink-0 transition-transform", open && "rotate-90")}
+          className={cn("size-3 shrink-0 transition-transform", open && "rotate-90")}
           aria-hidden
         />
-        Resolved ({threads.length})
+        <Eyebrow as="span" className="tabular-nums">
+          Resolved ({threads.length})
+        </Eyebrow>
       </button>
       {open &&
         threads.map((t) => {
@@ -632,13 +638,15 @@ export function GeneralSection({
         type="button"
         onClick={() => setOpen((o) => !o)}
         data-testid="general-section-toggle"
-        className="flex w-full items-center gap-1.5 rounded-sm px-0.5 py-1.5 font-mono text-2xs font-medium uppercase tracking-wide text-muted-foreground tabular-nums outline-none focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
+        className="flex w-full items-center gap-1.5 rounded-sm px-0.5 py-1.5 text-muted-foreground outline-none focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
       >
         <ChevronRight
-          className={cn("size-3.5 shrink-0 transition-transform", open && "rotate-90")}
+          className={cn("size-3 shrink-0 transition-transform", open && "rotate-90")}
           aria-hidden
         />
-        General ({threads.length})
+        <Eyebrow as="span" className="tabular-nums">
+          General ({threads.length})
+        </Eyebrow>
       </button>
       {open &&
         threads.map((t) => {

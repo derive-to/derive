@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useState } from "react"
-import { toast } from "sonner"
 import { api, type WorkspaceDomain } from "@/api"
+import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { EmptyState } from "@/components/shared/empty-state"
 import { Spinner } from "@/components/shared/spinner"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
+import { toast } from "@/components/ui/sonner"
 
 type State = { enabled: boolean; cname_target: string | null; domains: WorkspaceDomain[] }
 
@@ -33,14 +34,14 @@ export function CustomDomainsSection() {
 
   if (!state.enabled)
     return (
-      <section>
+      <section className="flex flex-col gap-6">
         <EmptyState>Custom domains aren't enabled on this server.</EmptyState>
       </section>
     )
 
   return (
-    <section>
-      <p className="mb-4 text-sm text-muted-foreground">
+    <section className="flex flex-col gap-6">
+      <p className="text-sm text-muted-foreground">
         Put your own domain on this workspace. Every artifact is then served at{" "}
         <code className="font-mono">your-domain/&lt;id&gt;</code>. Cloudflare for SaaS issues and
         renews the TLS cert.
@@ -48,7 +49,7 @@ export function CustomDomainsSection() {
 
       <NewDomain cnameTarget={state.cname_target} onCreated={load} />
 
-      <div className="mt-4 flex flex-col gap-2.5">
+      <div className="flex flex-col gap-2.5">
         {state.domains.length === 0 ? (
           <EmptyState>No custom domains yet. Add one above.</EmptyState>
         ) : (
@@ -92,7 +93,7 @@ function NewDomain({
           value={host}
           onChange={(e) => setHost(e.target.value)}
           placeholder="docs.acme.com"
-          className="min-w-[240px] flex-1 font-mono"
+          className="min-w-60 flex-1 font-mono"
         />
         <Button
           data-testid="domain-add"
@@ -114,7 +115,7 @@ function NewDomain({
 }
 
 // Verification state → badge tone: a live cert is a success, a failed issuance is
-// destructive, and pending means DNS work is still on the user (warning, not amber).
+// destructive, and pending means DNS work is still on the user (warning, not the accent).
 const statusBadge = (
   s: string,
 ): { variant: "success" | "destructive" | "warning"; label: string } =>
@@ -126,6 +127,7 @@ const statusBadge = (
 
 function DomainRow({ domain, onChanged }: { domain: WorkspaceDomain; onChanged: () => void }) {
   const b = statusBadge(domain.status)
+  const [confirming, setConfirming] = useState(false)
   const refresh = async () => {
     try {
       await api.refreshWorkspaceDomain(domain.host)
@@ -159,14 +161,21 @@ function DomainRow({ domain, onChanged }: { domain: WorkspaceDomain; onChanged: 
         )}
         <Button
           data-testid="domain-remove"
-          variant="ghost"
-          className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+          variant="destructive-ghost"
           size="sm"
-          onClick={remove}
+          onClick={() => setConfirming(true)}
         >
           Remove
         </Button>
       </div>
+      <ConfirmDialog
+        open={confirming}
+        onOpenChange={setConfirming}
+        title={`Remove ${domain.host}?`}
+        description="Artifacts stop serving on this domain immediately; the TLS cert is released."
+        confirmLabel="Remove"
+        onConfirm={remove}
+      />
       {domain.status !== "active" && domain.records && domain.records.length > 0 && (
         <div className="border-t border-border-soft bg-secondary px-3.5 py-2">
           <p className="mb-1 font-mono text-2xs text-muted-foreground">

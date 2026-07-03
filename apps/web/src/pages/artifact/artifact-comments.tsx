@@ -1,10 +1,12 @@
 import { type Dispatch, type SetStateAction, useRef } from "react"
 import type { Comment, Mention } from "@/api"
 import { Icon } from "@/components/icons"
+import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { MobileComments, OpenPanel } from "./comment-panels"
 import { CommentScopeProvider } from "./lib/comment-scope"
 import { clamp } from "./lib/layout"
+import { quoteChipClass } from "./quote-chip"
 import { type Panel, type PinItem, type Sel, selLabel } from "./types"
 
 type Composer = { anchor: Sel | null; top: number | null } | null
@@ -175,9 +177,9 @@ export function ArtifactComments(p: {
           this would land under iOS's own selection menu, so mobile uses the bottom
           bar below instead. Clicking opens the panel and starts a pinned composer. */}
       {!isMobile && canComment && p.docLive && sel && !p.composer && (
-        <button
-          type="button"
-          className="fixed z-50 inline-flex items-center gap-2 whitespace-nowrap rounded-full border border-primary bg-card px-3.5 py-2 text-sm font-medium text-primary shadow-[var(--shadow)] outline-none hover:bg-primary hover:text-primary-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+        <Button
+          variant="outline"
+          className="fixed z-50 rounded-full bg-card shadow-[var(--shadow)]"
           title="Comment on the selection"
           data-testid="comment-on-selection"
           onMouseDown={(e) => e.preventDefault()}
@@ -197,7 +199,7 @@ export function ArtifactComments(p: {
           }}
         >
           <Icon name="comments" size={16} /> Comment
-        </button>
+        </Button>
       )}
       {/* Phones: a selection (drag) OR a tapped paragraph surfaces this bottom bar,
           pinned below iOS's own selection menu and big enough to thumb. It shows
@@ -206,34 +208,34 @@ export function ArtifactComments(p: {
       {isMobile && canComment && p.docLive && sel && !p.composer && (
         <div
           data-testid="mobile-comment-bar"
-          className="fixed inset-x-0 bottom-0 z-[62] flex items-center gap-2.5 border-t border-border bg-card px-3 pb-[max(16px,env(safe-area-inset-bottom))] pt-4 shadow-[0_-12px_36px_-16px_rgba(0,0,0,0.55)] dark:shadow-none"
+          className="fixed inset-x-0 bottom-0 z-62 flex items-center gap-2.5 border-t border-border bg-card px-3 pb-[max(16px,env(safe-area-inset-bottom))] pt-4 shadow-[var(--shadow-pop)]"
         >
-          <span className="min-w-0 flex-1 truncate border-l-[3px] border-primary bg-accent px-2.5 py-1.5 text-xs italic text-foreground">
+          <span className={quoteChipClass({ className: "min-w-0 flex-1 truncate" })}>
             {sel.selector.type === "ElementSelector"
               ? selLabel(sel.selector)
               : `“${selLabel(sel.selector) ?? ""}”`}
           </span>
-          <button
-            type="button"
+          <Button
             data-testid="mobile-comment-start"
             onClick={() => {
               primer.current?.focus()
               p.setPanel("open")
               p.startSelComment()
             }}
-            className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-primary px-4 py-2 text-sm font-medium text-primary-foreground outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+            className="shrink-0 rounded-full"
           >
             <Icon name="comments" size={16} /> Comment
-          </button>
-          <button
-            type="button"
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
             aria-label="Dismiss selection"
             data-testid="mobile-comment-dismiss"
             onClick={() => p.setSel(null)}
-            className="grid size-9 shrink-0 place-items-center rounded-md text-muted-foreground outline-none hover:bg-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+            className="shrink-0"
           >
-            <Icon name="close" size={20} />
-          </button>
+            <Icon name="close" className="size-4" />
+          </Button>
         </div>
       )}
     </CommentScopeProvider>

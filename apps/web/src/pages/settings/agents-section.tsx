@@ -1,9 +1,11 @@
 import { Bot } from "lucide-react"
 import { useCallback, useEffect, useState } from "react"
-import { toast } from "sonner"
 import { type Agent, api, type Role } from "@/api"
+import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { EmptyState } from "@/components/shared/empty-state"
 import { Spinner } from "@/components/shared/spinner"
+import { StatusPanel } from "@/components/shared/status-panel"
+import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
@@ -15,6 +17,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import { toast } from "@/components/ui/sonner"
 
 export function AgentsSection() {
   const [agents, setAgents] = useState<Agent[] | null>(null)
@@ -31,8 +34,8 @@ export function AgentsSection() {
   }, [load])
 
   return (
-    <section>
-      <p className="mb-4 text-sm text-muted-foreground">
+    <section className="flex flex-col gap-6">
+      <p className="text-sm text-muted-foreground">
         Register an agent so people can <code className="font-mono">@mention</code> it in a thread.
         It gets a scoped token and acts as a commenter — it can propose changes for review, but a
         human still approves. The agent reads its mentions from{" "}
@@ -46,7 +49,7 @@ export function AgentsSection() {
         }}
       />
 
-      <div className="mt-4 flex flex-col gap-2.5">
+      <div className="flex flex-col gap-2.5">
         {agents === null ? (
           <div className="flex h-20 items-center justify-center">
             <Spinner />
@@ -101,10 +104,10 @@ function NewAgent({ onCreated }: { onCreated: (msg: string) => void }) {
           placeholder="Agent name (e.g. Claude)"
           value={name}
           onChange={(e) => setName(e.target.value)}
-          className="min-w-[180px] flex-1"
+          className="min-w-45 flex-1"
         />
         <Select value={role} onValueChange={(v) => setRole(v as Role)}>
-          <SelectTrigger data-testid="agent-role" aria-label="Agent role" className="w-[150px]">
+          <SelectTrigger data-testid="agent-role" aria-label="Agent role" className="w-37.5">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -123,39 +126,42 @@ function NewAgent({ onCreated }: { onCreated: (msg: string) => void }) {
         </Button>
       </div>
       {/* The token is shown exactly once, right after creation — the one-time
-          reveal is a safety-orange warning moment, never amber. */}
+          reveal is a safety-orange warning moment, never the accent. */}
       {created && (
-        <div
-          data-testid="agent-token"
-          className="flex flex-col gap-1.5 rounded-lg bg-warning/10 p-3 ring-1 ring-inset ring-warning/25"
-        >
-          <div className="text-xs font-medium text-warning">
-            Token for {created.name} — copy it now, it won't be shown again.
-          </div>
-          <div className="flex items-center gap-2">
-            <code className="flex-1 break-all rounded-md bg-background/60 px-2.5 py-1.5 font-mono text-xs text-foreground">
-              {created.token}
-            </code>
-            <Button
-              data-testid="agent-token-copy"
-              variant="secondary"
-              size="sm"
-              onClick={() => {
-                navigator.clipboard?.writeText(created.token)
-                onCreated("Token copied")
-              }}
-            >
-              Copy
-            </Button>
-            <Button
-              data-testid="agent-token-done"
-              variant="ghost"
-              size="sm"
-              onClick={() => setCreated(null)}
-            >
-              Done
-            </Button>
-          </div>
+        <div data-testid="agent-token">
+          <StatusPanel
+            tone="warning"
+            layout="inline"
+            title={`Token for ${created.name} — copy it now, it won't be shown again.`}
+            description={
+              <code className="block break-all rounded-md bg-secondary px-2.5 py-1.5 font-mono text-2xs text-foreground">
+                {created.token}
+              </code>
+            }
+            action={
+              <div className="flex items-center gap-2">
+                <Button
+                  data-testid="agent-token-copy"
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => {
+                    navigator.clipboard?.writeText(created.token)
+                    onCreated("Token copied")
+                  }}
+                >
+                  Copy
+                </Button>
+                <Button
+                  data-testid="agent-token-done"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setCreated(null)}
+                >
+                  Done
+                </Button>
+              </div>
+            }
+          />
         </div>
       )}
     </Card>
@@ -171,43 +177,46 @@ function AgentRow({
   onChanged: (msg: string) => void
   onError: (msg: string) => void
 }) {
-  const [busy, setBusy] = useState(false)
-  const remove = async () => {
-    if (!confirm(`Remove agent ${agent.name}? Its token stops working.`)) return
-    setBusy(true)
-    try {
-      await api.deleteAgent(agent.id)
-      onChanged(`Agent ${agent.name} removed`)
-    } catch (e) {
-      onError((e as Error).message)
-    } finally {
-      setBusy(false)
-    }
-  }
+  const [confirming, setConfirming] = useState(false)
   return (
     <Card data-testid={`agent-row-${agent.id}`} className="flex-row items-center gap-3 px-4 py-3">
-      <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-secondary text-muted-foreground">
-        <Bot className="size-4" aria-hidden />
-      </span>
+      <Avatar className="size-7">
+        <AvatarFallback>
+          <Bot className="size-4" aria-hidden />
+        </AvatarFallback>
+      </Avatar>
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-1.5 text-sm font-medium text-foreground">
           @{agent.name}
           <Badge variant="secondary">{agent.role}</Badge>
         </div>
-        <div className="text-xs text-muted-foreground">
+        <div className="text-sm text-muted-foreground">
           Mention it in any thread to send it work.
         </div>
       </div>
       <Button
         data-testid={`agent-remove-${agent.id}`}
-        variant="ghost"
-        className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+        variant="destructive-ghost"
         size="sm"
-        onClick={remove}
-        disabled={busy}
+        onClick={() => setConfirming(true)}
       >
         Remove
       </Button>
+      <ConfirmDialog
+        open={confirming}
+        onOpenChange={setConfirming}
+        title={`Remove @${agent.name}?`}
+        description="Its token stops working immediately."
+        confirmLabel="Remove"
+        onConfirm={async () => {
+          try {
+            await api.deleteAgent(agent.id)
+            onChanged(`Agent ${agent.name} removed`)
+          } catch (e) {
+            onError((e as Error).message)
+          }
+        }}
+      />
     </Card>
   )
 }

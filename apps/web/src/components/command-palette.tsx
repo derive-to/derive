@@ -12,6 +12,7 @@ import {
   CommandItem,
   CommandList,
 } from "@/components/ui/command"
+import { colorForName } from "@/lib/avatar-tints"
 import { getInitials } from "@/lib/initials"
 import { usePrefetchArtifact } from "@/lib/use-prefetch-artifact"
 import { refFor } from "@/pages/artifact/parse-ref"
@@ -98,7 +99,13 @@ export function CommandPalette() {
   const showFav = "favorites".includes(q)
 
   return (
-    <CommandDialog open={paletteOpen} onOpenChange={setPaletteOpen}>
+    <CommandDialog
+      open={paletteOpen}
+      onOpenChange={setPaletteOpen}
+      // The sr-only accessible name matches what this palette actually does.
+      title="Search"
+      description="Search artifacts, people, and collections."
+    >
       <Command shouldFilter={false}>
         <CommandInput
           value={query}
@@ -141,7 +148,7 @@ export function CommandPalette() {
                 >
                   <Icon name="all" size={16} className="text-muted-foreground" />
                   <span className="flex-1 truncate">{a.title ?? a.short_id}</span>
-                  <span className="font-mono text-2xs text-muted-foreground">
+                  <span className="font-mono text-2xs text-muted-foreground tabular-nums">
                     v{a.current_version}
                   </span>
                 </CommandItem>
@@ -161,7 +168,14 @@ export function CommandPalette() {
                 >
                   <Avatar className="size-5">
                     {u.image && <AvatarImage src={u.image} alt={u.name ?? u.username} />}
-                    <AvatarFallback>{getInitials(u.name ?? u.username)}</AvatarFallback>
+                    {/* Identity tint — the house idiom for people (cf. author-chip,
+                        people.tsx); one glyph at this micro scale. */}
+                    <AvatarFallback
+                      className="text-2xs font-medium text-scrim-foreground"
+                      style={{ backgroundColor: colorForName(u.name ?? u.username) }}
+                    >
+                      {getInitials(u.name ?? u.username).charAt(0)}
+                    </AvatarFallback>
                   </Avatar>
                   <span className="flex-1 truncate">{u.name ?? u.username}</span>
                   <span className="font-mono text-2xs text-muted-foreground">@{u.username}</span>
@@ -182,7 +196,9 @@ export function CommandPalette() {
                 >
                   <Icon name="collection" size={16} />
                   <span className="flex-1 truncate">{c.title}</span>
-                  <span className="font-mono text-2xs text-muted-foreground">{c.count}</span>
+                  <span className="font-mono text-2xs text-muted-foreground tabular-nums">
+                    {c.count}
+                  </span>
                 </CommandItem>
               ))}
             </CommandGroup>

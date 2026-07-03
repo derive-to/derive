@@ -1,13 +1,14 @@
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query"
 import { getRouteApi, Link, useNavigate } from "@tanstack/react-router"
 import { useEffect, useRef, useState } from "react"
-import { api, type PublicProfile } from "@/api"
+import { ApiError, api, type PublicProfile } from "@/api"
 import { FollowButton } from "@/components/follow-button"
 import { Icon } from "@/components/icons"
 import { EmptyState } from "@/components/shared/empty-state"
 import { PageShell } from "@/components/shared/page-shell"
 import { SectionEyebrow } from "@/components/shared/section-eyebrow"
 import { CenteredSpinner, Spinner } from "@/components/shared/spinner"
+import { StatusPanel } from "@/components/shared/status-panel"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
 import {
@@ -22,6 +23,7 @@ import { useAuth } from "@/ctx"
 import { colorForName } from "@/lib/avatar-tints"
 import { getInitials } from "@/lib/initials"
 import { profileArtifactsQuery, profileQuery } from "@/lib/queries"
+import { CardGrid } from "./library/card-grid"
 import { ProfileWorkCard } from "./profile-work-card"
 
 const route = getRouteApi("/u/$handle")
@@ -36,23 +38,54 @@ export function Profile() {
   const nav = useNavigate()
   const [editing, setEditing] = useState(false)
 
-  const { data, isPending, isError } = useQuery(profileQuery(handle))
+  const { data, isPending, isError, error, refetch } = useQuery(profileQuery(handle))
 
   if (isPending) return <CenteredSpinner />
 
+  // A transient fetch failure is status, not a genuine 404 — surface it as a
+  // recoverable danger panel (matching ProfileWork + People), never the bare
+  // "No such profile" empty state. Only a real 404 (or missing data) falls through.
+  if (isError && !(error instanceof ApiError && error.status === 404)) {
+    return (
+      <PageShell className="grid min-h-full place-items-center">
+        <StatusPanel
+          tone="danger"
+          title="Couldn’t load this profile"
+          description="This is usually temporary."
+          action={
+            <Button
+              variant="outline"
+              size="sm"
+              data-testid="profile-retry"
+              onClick={() => refetch()}
+            >
+              Try again
+            </Button>
+          }
+        />
+      </PageShell>
+    )
+  }
+
   if (isError || !data) {
     return (
-      <div className="grid min-h-0 flex-1 place-items-center p-6">
-        <div className="max-w-sm text-center" data-testid="profile-not-found">
-          {/* "Nothing here" is a voice moment — serif, matching the EmptyState grammar. */}
-          <h1 className="font-serif text-xl font-medium tracking-tight text-balance text-foreground">
-            No such profile
-          </h1>
-          <p className="mt-2 text-sm text-pretty text-muted-foreground">
-            There's no Derive user with the handle <span className="font-medium">@{handle}</span>.
-          </p>
+      // The shared EmptyState carries the voice grammar (Inter headline +
+      // supporting line); PageShell keeps it on the same reading measure as
+      // every other page, centered in the pane (a terminal 404 state, like the
+      // pending spinner — not an in-context empty pinned below a header).
+      <PageShell className="grid min-h-full place-items-center">
+        <div data-testid="profile-not-found">
+          <EmptyState
+            title="No such profile"
+            description={
+              <>
+                There's no Derive user with the handle{" "}
+                <span className="font-medium">@{handle}</span>.
+              </>
+            }
+          />
         </div>
-      </div>
+      </PageShell>
     )
   }
 
@@ -83,7 +116,7 @@ export function Profile() {
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
                 {data.name && (
-                  // A person's name is content, not chrome — the serif register.
+                  // A person's name is content, not chrome — Inter at display size.
                   <h1
                     className="truncate font-serif text-2xl font-medium tracking-tight text-foreground"
                     data-testid="profile-name"
@@ -121,9 +154,9 @@ export function Profile() {
                 target="_blank"
                 rel="noopener noreferrer"
                 data-testid="profile-github"
-                className="mt-2.5 inline-flex items-center gap-1.5 font-mono text-xs text-muted-foreground hover:text-primary"
+                className="mt-2.5 inline-flex items-center gap-1.5 font-mono text-2xs text-muted-foreground hover:text-primary"
               >
-                <Icon name="link" size={13} />@{data.github_login} on GitHub
+                <Icon name="link" size={12} />@{data.github_login} on GitHub
               </a>
             )}
 
@@ -220,23 +253,24 @@ function PeopleStat({
           <span className="text-muted-foreground">{label}</span>
         </button>
       </DialogTrigger>
-      <DialogContent className="max-w-sm">
+      {/* Title + the list itself are the content — no prose description (Radix opt-out). */}
+      <DialogContent className="max-w-sm" aria-describedby={undefined}>
         <DialogHeader>
           <DialogTitle className="capitalize">{label}</DialogTitle>
         </DialogHeader>
         {isPending ? (
-          <div className="py-6">
+          <div className="flex justify-center py-6">
             <Spinner />
           </div>
         ) : people && people.length > 0 ? (
-          <ul className="flex max-h-80 flex-col gap-1 overflow-y-auto">
+          <ul role="list" className="flex max-h-80 flex-col gap-1 overflow-y-auto">
             {people.map((p) => (
               <li key={p.username}>
                 <Link
                   to="/u/$handle"
                   params={{ handle: p.username }}
                   onClick={() => setOpen(false)}
-                  className="flex items-center gap-3 rounded-md p-2 outline-none hover:bg-hover focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
+                  className="flex items-center gap-3 rounded-md p-2 outline-none hover:bg-secondary focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
                 >
                   <Avatar className="size-8">
                     {p.image && <AvatarImage src={p.image} alt={p.name ?? p.username} />}
@@ -249,7 +283,7 @@ function PeopleStat({
                   </Avatar>
                   <span className="min-w-0">
                     {p.name && <span className="block truncate text-sm font-medium">{p.name}</span>}
-                    <span className="block truncate font-mono text-xs text-muted-foreground">
+                    <span className="block truncate font-mono text-2xs text-muted-foreground">
                       @{p.username}
                     </span>
                   </span>
@@ -268,7 +302,7 @@ function PeopleStat({
 // The person's work — an infinite grid, paged by keyset cursor. A sentinel pulls the
 // next page as it scrolls into view.
 function ProfileWork({ handle, isMe, name }: { handle: string; isMe: boolean; name: string }) {
-  const { data, isPending, isError, fetchNextPage, hasNextPage, isFetchingNextPage } =
+  const { data, isPending, isError, fetchNextPage, hasNextPage, isFetchingNextPage, refetch } =
     useInfiniteQuery(profileArtifactsQuery(handle))
   const items = data?.pages.flatMap((p) => p.artifacts) ?? []
   const sentinel = useRef<HTMLDivElement>(null)
@@ -287,11 +321,26 @@ function ProfileWork({ handle, isMe, name }: { handle: string; isMe: boolean; na
     <section className="flex flex-col gap-3">
       <SectionEyebrow>Work</SectionEyebrow>
       {isPending ? (
-        <div className="py-10">
+        <div className="flex justify-center py-10">
           <Spinner />
         </div>
       ) : isError ? (
-        <EmptyState>Couldn't load this work right now.</EmptyState>
+        // A failed fetch is status, not emptiness — the danger tone grammar.
+        <StatusPanel
+          tone="danger"
+          title="Couldn’t load this work"
+          description="This is usually temporary."
+          action={
+            <Button
+              variant="outline"
+              size="sm"
+              data-testid="profile-work-retry"
+              onClick={() => refetch()}
+            >
+              Try again
+            </Button>
+          }
+        />
       ) : items.length === 0 ? (
         <div data-testid="profile-work-empty">
           <EmptyState
@@ -306,13 +355,13 @@ function ProfileWork({ handle, isMe, name }: { handle: string; isMe: boolean; na
         </div>
       ) : (
         <>
-          <div
-            className="grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-3"
-            data-testid="profile-work-grid"
-          >
-            {items.map((a) => (
-              <ProfileWorkCard key={a.short_id} artifact={a} />
-            ))}
+          {/* CardGrid owns the card-grid geometry; the wrapper only carries the testid. */}
+          <div data-testid="profile-work-grid">
+            <CardGrid>
+              {items.map((a) => (
+                <ProfileWorkCard key={a.short_id} artifact={a} />
+              ))}
+            </CardGrid>
           </div>
           <div ref={sentinel} className="h-8" />
           {isFetchingNextPage && (

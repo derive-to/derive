@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useState } from "react"
-import { toast } from "sonner"
 import { type ArtifactMember, api, type Collection, type Role } from "@/api"
 import { Icon } from "@/components/icons"
 import { EmptyState } from "@/components/shared/empty-state"
@@ -13,6 +12,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
+import { toast } from "@/components/ui/sonner"
 
 // Share a collection: add people by email at a role. A member's role applies to
 // every artifact in the collection (the headline of collection-level sharing).
@@ -95,16 +95,11 @@ export function ShareCollectionDialog({
             value={role}
             onChange={setRole}
             data-testid="collection-share-role"
-            className="w-[104px] shrink-0"
+            className="w-26 shrink-0"
           />
           {/* Add is this dialog's one filled primary. */}
-          <Button
-            variant="default"
-            type="submit"
-            data-testid="collection-share-add"
-            disabled={busy}
-          >
-            {busy ? "…" : "Add"}
+          <Button variant="default" type="submit" data-testid="collection-share-add" loading={busy}>
+            {busy ? "Adding…" : "Add"}
           </Button>
         </form>
 
@@ -124,16 +119,15 @@ export function ShareCollectionDialog({
                     </div>
                   )}
                 </div>
-                <span className="font-mono text-xs text-muted-foreground">{m.role}</span>
+                <span className="font-mono text-2xs text-muted-foreground">{m.role}</span>
                 <Button
                   variant="ghost"
                   size="icon"
                   data-testid={`collection-share-remove-${m.user_id}`}
                   onClick={() => remove(m)}
-                  title="Remove"
                   aria-label={`Remove ${m.name ?? (m.handle ? `@${m.handle}` : "member")}`}
                 >
-                  <Icon name="close" size={14} />
+                  <Icon name="close" />
                 </Button>
               </div>
             ))}

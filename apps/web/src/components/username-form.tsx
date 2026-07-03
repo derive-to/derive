@@ -57,6 +57,7 @@ export function UsernameForm({
           data-testid="username-input"
           aria-label="Username"
           aria-invalid={!!err}
+          aria-describedby={err ? "username-error" : undefined}
           autoCapitalize="none"
           autoCorrect="off"
           spellCheck={false}
@@ -69,7 +70,12 @@ export function UsernameForm({
         />
       </InputGroup>
       {err && (
-        <p data-testid="username-error" role="alert" className="text-sm text-destructive">
+        <p
+          id="username-error"
+          data-testid="username-error"
+          role="alert"
+          className="text-sm text-destructive"
+        >
           {err}
         </p>
       )}
@@ -78,9 +84,10 @@ export function UsernameForm({
         type="submit"
         variant="secondary"
         size="sm"
-        disabled={busy || !handle || !!localErr}
+        loading={busy}
+        disabled={!handle || !!localErr}
       >
-        {busy ? "…" : submitLabel}
+        {busy ? "Saving…" : submitLabel}
       </Button>
     </form>
   )

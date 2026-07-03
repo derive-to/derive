@@ -6,8 +6,7 @@
       "ignoreDependencies": ["cloudflare"]
     },
     "apps/web": {
-      "entry": ["src/components/ui/**"],
-      "ignoreDependencies": ["tslib"]
+      "entry": ["src/components/ui/**", "e2e/**/*.screens.ts"]
     },
     "packages/db": {
       "ignore": ["test/env.d.ts"],

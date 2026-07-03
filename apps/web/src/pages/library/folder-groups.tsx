@@ -1,7 +1,10 @@
-import { ChevronRight, Folder } from "lucide-react"
+import { ChevronRight } from "lucide-react"
 import { useMemo, useState } from "react"
 import type { Artifact } from "@/api"
 import { Icon } from "@/components/icons"
+import { Count } from "@/components/shared/section-eyebrow"
+import { Spinner } from "@/components/shared/spinner"
+import { Button } from "@/components/ui/button"
 import { useFollows } from "@/lib/use-follows"
 import { cn } from "@/lib/utils"
 import { ArtifactRow } from "./artifact-row"
@@ -69,7 +72,9 @@ export function FolderGroups({
         />
       ))}
       {(hasNextPage || isFetchingNextPage) && (
-        <div className="py-2 text-center text-sm text-muted-foreground">Loading the rest…</div>
+        <div className="flex justify-center py-2">
+          <Spinner />
+        </div>
       )}
     </div>
   )
@@ -107,15 +112,16 @@ function FolderSection({
             )}
             aria-hidden
           />
-          <Folder className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+          <Icon name="collection" className="text-muted-foreground" />
           <span className="truncate font-mono text-sm font-medium text-foreground">{dir}</span>
-          <span className="font-mono text-xs text-muted-foreground tabular-nums">
-            · {items.length}
-          </span>
+          <Count>{items.length}</Count>
         </button>
         {followable && (
-          <button
-            type="button"
+          // The followed state is a neutral wash (secondary) — the ink accent is reserved.
+          // Same variant flip as the library's author-follow button.
+          <Button
+            variant={following ? "secondary" : "outline"}
+            size="xs"
             data-testid={`folder-follow-${dir}`}
             aria-pressed={following}
             title={
@@ -123,20 +129,17 @@ function FolderSection({
             }
             onClick={onToggleFollow}
             className={cn(
-              // The followed state is a neutral wash — amber is reserved.
-              "inline-flex shrink-0 items-center gap-1 rounded-md border px-2 py-1 font-mono text-2xs outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring",
-              following
-                ? "border-border bg-accent text-foreground"
-                : "border-border text-muted-foreground opacity-0 hover:text-foreground group-hover/folder:opacity-100 focus-visible:opacity-100",
+              "shrink-0 transition-opacity",
+              !following && "opacity-0 group-hover/folder:opacity-100 focus-visible:opacity-100",
             )}
           >
-            <Icon name={following ? "check" : "following"} size={13} />
+            <Icon name={following ? "check" : "following"} />
             {following ? "Following" : "Follow"}
-          </button>
+          </Button>
         )}
       </div>
       {open && (
-        <div className="ml-6 mt-1.5 flex flex-col gap-2">
+        <div className="mt-1.5 flex flex-col gap-2 pl-6">
           {items.map((a) => (
             <ArtifactRow
               key={a.short_id}

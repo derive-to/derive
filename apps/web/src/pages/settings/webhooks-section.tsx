@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react"
-import { toast } from "sonner"
 import { api, type Delivery, type Webhook } from "@/api"
+import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { EmptyState } from "@/components/shared/empty-state"
 import { Spinner } from "@/components/shared/spinner"
 import { Badge } from "@/components/ui/badge"
@@ -15,6 +15,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import { toast } from "@/components/ui/sonner"
 import { ALL_EVENTS } from "./roles"
 
 export function WebhooksSection() {
@@ -32,8 +33,8 @@ export function WebhooksSection() {
   }, [load])
 
   return (
-    <section>
-      <p className="mb-4 text-sm text-muted-foreground">
+    <section className="flex flex-col gap-6">
+      <p className="text-sm text-muted-foreground">
         Get a POST (or a Slack message) when a comment is added or resolved, or a new version is
         published. Generic payloads are signed with{" "}
         <a
@@ -55,7 +56,7 @@ export function WebhooksSection() {
         }}
       />
 
-      <div className="mt-4 flex flex-col gap-2.5">
+      <div className="flex flex-col gap-2.5">
         {hooks === null ? (
           <div className="flex h-20 items-center justify-center">
             <Spinner />
@@ -109,7 +110,7 @@ function NewWebhook({ onCreated }: { onCreated: (msg: string) => void }) {
     <Card className="p-4">
       <div className="flex flex-wrap items-center gap-2">
         <Select value={kind} onValueChange={(v) => setKind(v as "generic" | "slack")}>
-          <SelectTrigger data-testid="webhook-kind" aria-label="Webhook type" className="w-[110px]">
+          <SelectTrigger data-testid="webhook-kind" aria-label="Webhook type" className="w-27.5">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -127,7 +128,7 @@ function NewWebhook({ onCreated }: { onCreated: (msg: string) => void }) {
               ? "Slack incoming-webhook URL"
               : "https://your-endpoint.example.com/hook"
           }
-          className="min-w-[240px] flex-1"
+          className="min-w-60 flex-1"
         />
         <Button
           data-testid="webhook-add"
@@ -143,7 +144,7 @@ function NewWebhook({ onCreated }: { onCreated: (msg: string) => void }) {
         {ALL_EVENTS.map((e) => (
           <label
             key={e}
-            className="flex items-center gap-1.5 font-mono text-xs text-muted-foreground"
+            className="flex items-center gap-1.5 font-mono text-2xs text-muted-foreground"
           >
             <Checkbox
               data-testid={`webhook-event-${e}`}
@@ -193,6 +194,7 @@ function WebhookRow({
       onError((e as Error).message)
     }
   }
+  const [confirming, setConfirming] = useState(false)
   const remove = async () => {
     try {
       await api.deleteWebhook(hook.id)
@@ -204,11 +206,9 @@ function WebhookRow({
   return (
     <Card data-testid={`webhook-row-${hook.id}`} className="gap-0 overflow-hidden p-0">
       <div className="flex items-center gap-2.5 px-3.5 py-3">
-        <Badge variant={hook.kind === "slack" ? "secondary" : "default"}>
-          {hook.kind === "slack" ? "Slack" : "Webhook"}
-        </Badge>
+        <Badge>{hook.kind === "slack" ? "Slack" : "Webhook"}</Badge>
         <div className="min-w-0 flex-1">
-          <div className="truncate font-mono text-xs text-foreground">{hook.url}</div>
+          <div className="truncate font-mono text-sm text-foreground">{hook.url}</div>
           <div className="mt-px font-mono text-2xs text-muted-foreground">
             {hook.events === "*" ? "all events" : hook.events.split(",").join(" · ")}
           </div>
@@ -221,28 +221,39 @@ function WebhookRow({
         </Button>
         <Button
           data-testid={`webhook-remove-${hook.id}`}
-          variant="ghost"
-          className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+          variant="destructive-ghost"
           size="sm"
-          onClick={remove}
+          onClick={() => setConfirming(true)}
         >
           Remove
         </Button>
       </div>
+      <ConfirmDialog
+        open={confirming}
+        onOpenChange={setConfirming}
+        title="Remove this webhook?"
+        description={`Deliveries to ${hook.url} stop immediately.`}
+        confirmLabel="Remove"
+        onConfirm={remove}
+      />
       {open && (
         <div className="border-t border-border-soft bg-secondary px-3.5 py-2">
           {deliveries === null ? (
-            <div className="text-xs text-muted-foreground">Loading…</div>
+            <div className="flex justify-center py-2">
+              <Spinner />
+            </div>
           ) : deliveries.length === 0 ? (
-            <div className="text-xs text-muted-foreground">No deliveries yet. Hit Test.</div>
+            <div className="text-sm text-muted-foreground">No deliveries yet. Hit Test.</div>
           ) : (
             deliveries.map((d) => {
               return (
-                <div key={d.id} className="flex items-center gap-2 py-0.5 text-xs">
+                <div key={d.id} className="flex items-center gap-2 py-0.5 text-2xs">
                   <Badge variant={deliveryBadge(d.status)}>{d.status}</Badge>
                   <span className="font-mono text-muted-foreground">{d.event_type}</span>
                   {d.attempts > 1 && (
-                    <span className="font-mono text-muted-foreground">· {d.attempts} tries</span>
+                    <span className="font-mono text-muted-foreground tabular-nums">
+                      · {d.attempts} tries
+                    </span>
                   )}
                   {d.last_error && (
                     <span className="truncate font-mono text-destructive">· {d.last_error}</span>

@@ -21,7 +21,7 @@ function SelectValue({ ...props }: React.ComponentProps<typeof SelectPrimitive.V
   return <SelectPrimitive.Value data-slot="select-value" {...props} />
 }
 
-// Trigger is an EDITABLE: quiet input well + amber border/soft glow on focus
+// Trigger is an EDITABLE: quiet input well + ink border/soft glow on focus
 // (no outline-offset — that grammar belongs to clickables).
 function SelectTrigger({
   className,
@@ -93,7 +93,11 @@ function SelectLabel({ className, ...props }: React.ComponentProps<typeof Select
   return (
     <SelectPrimitive.Label
       data-slot="select-label"
-      className={cn("px-2 py-1.5 text-xs text-muted-foreground", className)}
+      // Same mono eyebrow register as DropdownMenuLabel / the Command palette.
+      className={cn(
+        "px-2 py-1.5 font-mono text-2xs font-medium tracking-wide text-muted-foreground uppercase",
+        className,
+      )}
       {...props}
     />
   )

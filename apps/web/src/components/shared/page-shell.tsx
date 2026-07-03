@@ -13,7 +13,7 @@ import { cn } from "@/lib/utils"
 // the rail's rhythm rather than an unrelated inset; 20px below `sm` (the mobile
 // navbar already spends vertical room, so the top stays compact); 64px bottom
 // so a scrolled page never ends flush at the viewport edge. RouteSkeleton
-// mirrors these values — keep them in sync.
+// renders PageShell itself, so the pending shimmer inherits this geometry.
 export function PageShell({
   scrollRef,
   width = "reading",
@@ -29,7 +29,10 @@ export function PageShell({
   children: ReactNode
 }) {
   return (
-    <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto">
+    // scrollbar-gutter keeps the measure column identical whether or not this
+    // route scrolls (classic-scrollbar platforms would otherwise shift the
+    // header between routes — the exact drift the shared rhythm exists to stop).
+    <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto [scrollbar-gutter:stable]">
       <div
         className={cn(
           "mx-auto w-full px-5 pt-5 pb-16 sm:px-8 sm:pt-8",

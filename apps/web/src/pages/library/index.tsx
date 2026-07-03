@@ -1,17 +1,20 @@
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useNavigate, useSearch } from "@tanstack/react-router"
-import { FolderTree, List, X } from "lucide-react"
+import { FolderTree, List } from "lucide-react"
 import { useEffect, useMemo, useRef, useState } from "react"
-import { toast } from "sonner"
 import { type Artifact, api } from "@/api"
 import { Icon } from "@/components/icons"
+import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { EmptyState } from "@/components/shared/empty-state"
+import { PageHeader } from "@/components/shared/page-header"
 import { PageShell } from "@/components/shared/page-shell"
+import { SearchField } from "@/components/shared/search-field"
 import { SectionEyebrow } from "@/components/shared/section-eyebrow"
+import { Spinner } from "@/components/shared/spinner"
 import { StatusPanel } from "@/components/shared/status-panel"
 import { useShell } from "@/components/shell-context"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
+import { toast } from "@/components/ui/sonner"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { useAuth } from "@/ctx"
 import {
@@ -20,12 +23,14 @@ import {
   needsFeedbackArtifactsQuery,
   sharedArtifactsQuery,
 } from "@/lib/queries"
+import { STORAGE_KEYS } from "@/lib/storage-keys"
 import { useFollows } from "@/lib/use-follows"
 import { usePrefetchArtifact } from "@/lib/use-prefetch-artifact"
 import { refFor } from "../artifact/parse-ref"
 import { ArtifactCard } from "./artifact-card"
 import { ArtifactGrid } from "./artifact-grid"
 import { ArtifactRow, byRecency } from "./artifact-row"
+import { CardGrid } from "./card-grid"
 import { CollectionBar } from "./collection-bar"
 import { FolderGroups } from "./folder-groups"
 import { FollowingStrip } from "./following-strip"
@@ -35,10 +40,6 @@ import { PublishCard } from "./publish-card"
 import { RepoPullRequests } from "./repo-pull-requests"
 import { ShareCollectionDialog } from "./share-collection-dialog"
 import type { Filter } from "./types"
-
-// Remember the folder view preference across visits (off by default: a flat,
-// most-recently-updated list is the default for a synced collection).
-const FOLDERS_KEY = "derive:show-folders"
 
 // Route component for "/". The persistent AppShell (mounted once around the
 // router Outlet) owns the rail/pod and the auth gate, so this just renders the
@@ -52,7 +53,7 @@ function LibraryBody() {
   const nav = useNavigate()
   const search = useSearch({ from: "/" })
   const { me } = useAuth()
-  const { summary, collections, refreshSummary, workspaces } = useShell()
+  const { summary, collections, refreshSummary } = useShell()
   const prefetch = usePrefetchArtifact()
   const qc = useQueryClient()
   // The library is the scroll container; the virtualized grid windows against it.
@@ -61,13 +62,15 @@ function LibraryBody() {
   const [shareCol, setShareCol] = useState<(typeof collections)[number] | null>(null)
   const [query, setQuery] = useState(search.q ?? "")
   const [debouncedQ, setDebouncedQ] = useState((search.q ?? "").trim())
-  // Folder vs flat-list view (synced collections). Off by default; remembered.
+  // Folder vs flat-list view (synced collections). Off by default (a flat,
+  // most-recently-updated list is the default for a synced collection); remembered.
   const [showFolders, setShowFolders] = useState(
-    () => typeof window !== "undefined" && localStorage.getItem(FOLDERS_KEY) === "1",
+    () =>
+      typeof window !== "undefined" && localStorage.getItem(STORAGE_KEYS.libraryFolders) === "1",
   )
   const toggleFolders = (on: boolean) => {
     setShowFolders(on)
-    localStorage.setItem(FOLDERS_KEY, on ? "1" : "0")
+    localStorage.setItem(STORAGE_KEYS.libraryFolders, on ? "1" : "0")
   }
 
   // Derive the active filter from the URL search params.
@@ -158,8 +161,10 @@ function LibraryBody() {
     nav({ to: "/", search: {} })
   }
 
+  // Destructive intent is confirmed in the shared ConfirmDialog, never
+  // window.confirm — rows only stage the artifact here.
+  const [pendingDelete, setPendingDelete] = useState<Artifact | null>(null)
   const deleteArtifact = async (a: Artifact) => {
-    if (!confirm(`Permanently delete "${a.title ?? a.short_id}"? This cannot be undone.`)) return
     qc.setQueryData(listQuery.queryKey, (old) =>
       old
         ? {
@@ -249,6 +254,16 @@ function LibraryBody() {
             icon: <Icon name="following" strokeWidth={1.75} />,
             title: "Nothing from people you follow yet.",
             description: "Follow authors or folders to see their recent changes here.",
+            action: (
+              <Button
+                variant="outline"
+                size="sm"
+                data-testid="library-empty-browse-people"
+                onClick={() => nav({ to: "/people" })}
+              >
+                Browse people
+              </Button>
+            ),
           }
         : filter.kind === "tag"
           ? {
@@ -266,6 +281,16 @@ function LibraryBody() {
                 icon: <Icon name="all" strokeWidth={1.75} />,
                 title: "Nothing yet.",
                 description: "Publish above, or run derive publish ./file.",
+                action: (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    data-testid="library-empty-write"
+                    onClick={() => nav({ to: "/new" })}
+                  >
+                    Write or paste
+                  </Button>
+                ),
               }
 
   // A personal header on the (otherwise bare) home view: lead with the user's
@@ -277,7 +302,6 @@ function LibraryBody() {
     "there"
   const totalCount = summary?.total ?? items.length
   const showGreeting = filter.kind === "all" && !debouncedQ
-  const wsName = workspaces?.workspaces.find((w) => w.id === workspaces.active)?.name
 
   // "Shared with you": things explicitly shared, surfaced on the unfiltered home
   // above your own list. Only fetched there.
@@ -335,45 +359,36 @@ function LibraryBody() {
   return (
     <PageShell scrollRef={scrollRef} width="wide">
       {showGreeting && (
-        <div
-          className="mb-4 flex flex-wrap items-start justify-between gap-2"
-          data-testid="library-greeting"
-        >
-          <div>
-            {/* The greeting is a human moment — the serif voice register. */}
-            <h1 className="font-serif text-2xl font-medium tracking-tight text-balance text-foreground">
-              {totalCount === 0
-                ? `Welcome to Derive, ${firstName}.`
-                : `Welcome back, ${firstName}.`}
-            </h1>
-            <p className="mt-0.5 text-sm text-muted-foreground">
+        // The home greeting is the voice headline — the shared PageHeader (one
+        // register for every page title), not a hand-rolled clone of its class string.
+        <PageHeader
+          className="mb-4"
+          titleTestId="library-greeting"
+          title={
+            totalCount === 0 ? `Welcome to Derive, ${firstName}.` : `Welcome back, ${firstName}.`
+          }
+          subtitle={
+            <>
               Your artifacts live here. Publish one below, or run{" "}
-              <code className="rounded bg-muted px-1.5 py-px font-mono text-xs">
+              {/* The Kbd chip recipe (inline-flex mono 2xs on the muted wash) —
+                  inline code is machine register, not body copy. */}
+              <code className="inline-flex h-5 items-center rounded-sm bg-muted px-1 font-mono text-2xs font-medium text-foreground/70">
                 derive publish
               </code>
               .
-            </p>
-          </div>
-          {/* min-w-0 + wrap (not shrink-0): a long handle folds the workspace
-              chip under itself instead of pushing past the page gutter. */}
-          {(me?.username || wsName) && (
-            <div className="flex min-w-0 flex-wrap items-center gap-2 pt-1 font-mono text-2xs text-muted-foreground">
-              {me?.username && <span className="font-medium text-foreground">@{me.username}</span>}
-              {wsName && (
-                <span className="rounded-full border border-border px-2 py-0.5">{wsName}</span>
-              )}
-            </div>
-          )}
-        </div>
+            </>
+          }
+        />
       )}
       <div className="mb-4.5 flex flex-wrap items-center gap-2.5">
-        <Input
-          placeholder="Search by title…"
-          aria-label="Search artifacts by title"
-          data-testid="library-search"
+        <SearchField
           value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          className="min-w-[200px] flex-1"
+          onValueChange={setQuery}
+          placeholder="Filter by title…"
+          aria-label="Filter artifacts by title"
+          testId="library-search"
+          hotkey
+          className="min-w-50 flex-1"
         />
         {filter.kind !== "all" && (
           <Button
@@ -397,7 +412,7 @@ function LibraryBody() {
                 <Icon name="collection" size={16} /> {collectionTitle}
               </>
             )}
-            <X />
+            <Icon name="close" size={16} />
           </Button>
         )}
         {/* Active author filter — independent of the tag/collection filter, so it
@@ -412,7 +427,7 @@ function LibraryBody() {
               onClick={clearAuthor}
             >
               <Icon name="user" size={16} /> {search.author}
-              <X />
+              <Icon name="close" size={16} />
             </Button>
             {/* Quiet by design: the page's one filled primary lives in PublishCard. */}
             <Button
@@ -455,11 +470,11 @@ function LibraryBody() {
           <SectionEyebrow
             className="mb-3.5"
             count={feedbackItems.length}
-            icon={<Icon name="comments" size={13} />}
+            icon={<Icon name="comments" size={12} />}
           >
             Needs your feedback
           </SectionEyebrow>
-          <div className="grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-x-3 gap-y-5">
+          <CardGrid>
             {feedbackItems.map((a) => (
               <ArtifactCard
                 key={a.short_id}
@@ -470,7 +485,7 @@ function LibraryBody() {
                 onPrefetch={() => prefetch(a.short_id, a.current_version)}
               />
             ))}
-          </div>
+          </CardGrid>
         </section>
       )}
 
@@ -479,7 +494,7 @@ function LibraryBody() {
           <SectionEyebrow className="mb-3.5" count={sharedItems.length}>
             Shared with you
           </SectionEyebrow>
-          <div className="grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-x-3 gap-y-5">
+          <CardGrid>
             {sharedItems.map((a) => (
               <ArtifactCard
                 key={a.short_id}
@@ -490,7 +505,7 @@ function LibraryBody() {
                 onPrefetch={() => prefetch(a.short_id, a.current_version)}
               />
             ))}
-          </div>
+          </CardGrid>
         </section>
       )}
 
@@ -587,13 +602,13 @@ function LibraryBody() {
                   onToggleFavorite={() => toggleFav(a)}
                   onPickTag={(tag) => nav({ to: "/", search: { tag } })}
                   onPickAuthor={pickAuthor}
-                  onDelete={() => deleteArtifact(a)}
+                  onDelete={() => setPendingDelete(a)}
                   onPrefetch={() => prefetch(a.short_id, a.current_version)}
                 />
               ))}
               {(hasNextPage || isFetchingNextPage) && (
-                <div className="py-2 text-center text-sm text-muted-foreground">
-                  Loading the rest…
+                <div className="flex justify-center py-2">
+                  <Spinner />
                 </div>
               )}
             </div>
@@ -610,15 +625,12 @@ function LibraryBody() {
             onOpen={(a) => nav({ to: "/a/$ref", params: { ref: refFor(a) } })}
             onToggleFavorite={toggleFav}
             onPickTag={(tag) => nav({ to: "/", search: { tag } })}
-            onDelete={deleteArtifact}
+            onDelete={setPendingDelete}
             onPrefetch={(a) => prefetch(a.short_id, a.current_version)}
           />
           {isFetchingNextPage && (
-            <div
-              className="mt-4 text-center text-sm text-muted-foreground"
-              data-testid="library-loading-more"
-            >
-              Loading more…
+            <div className="flex justify-center py-2" data-testid="library-loading-more">
+              <Spinner />
             </div>
           )}
         </>
@@ -627,6 +639,17 @@ function LibraryBody() {
       {shareCol && (
         <ShareCollectionDialog collection={shareCol} onClose={() => setShareCol(null)} />
       )}
+      <ConfirmDialog
+        open={!!pendingDelete}
+        onOpenChange={(o) => !o && setPendingDelete(null)}
+        title={`Delete “${pendingDelete?.title ?? pendingDelete?.short_id ?? ""}”?`}
+        description="This permanently deletes the artifact and its versions. This cannot be undone."
+        confirmLabel="Delete"
+        confirmTestId="library-delete-confirm"
+        onConfirm={() => {
+          if (pendingDelete) deleteArtifact(pendingDelete)
+        }}
+      />
     </PageShell>
   )
 }

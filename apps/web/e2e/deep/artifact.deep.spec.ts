@@ -69,6 +69,8 @@ test("edit and delete an own comment", async ({ page }) => {
   await fixed.hover()
   await fixed.getByTestId("comment-more").click()
   await page.getByTestId("comment-delete").click()
+  // Destructive actions confirm via the shared dialog, never immediately.
+  await page.getByTestId("comment-delete-confirm").click()
   await expect(page.getByText("Comment deleted")).toBeVisible()
 })
 
@@ -96,6 +98,8 @@ test("star and report from the header", async ({ page }) => {
 })
 
 test("add a tag from the header", async ({ page }) => {
+  // Tags moved into the ⋯ menu (opens a dialog) in the reimagined header.
+  await page.getByTestId("artifact-more").click()
   await page.getByTestId("artifact-tags").click()
   await page.getByTestId("tag-new-input").fill("design")
   await page.getByTestId("tag-add").click()

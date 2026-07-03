@@ -65,17 +65,20 @@ export function ArtifactDocument({
       {past && (
         // A brand-tinted strip (the sync-chip grammar): being off the live version
         // is a "this matters" moment, not a status warning.
-        <div className="flex flex-wrap items-center gap-2.5 gap-y-1.5 border-b border-primary/30 bg-primary/5 px-3.5 py-2 text-sm">
+        <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1.5 border-b border-primary/30 bg-primary/5 px-4 py-2 text-sm">
           <span className="font-medium text-primary">Viewing an earlier version</span>
           <span className="text-muted-foreground">·</span>
-          <button
-            type="button"
+          <Button
+            variant="link"
             data-testid="artifact-toggle-diff"
-            className="rounded-sm text-primary underline underline-offset-2 outline-none hover:opacity-80 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+            // In-flow with the banner text: strip the control box, keep the link
+            // recipe. Persistent underline (not the variant's hover-only) so the
+            // ink link stays legible as a control beside the ink banner label.
+            className="h-auto p-0 underline"
             onClick={onToggleDiff}
           >
             {view === "diff" ? "Hide changes" : "Show changes since this"}
-          </button>
+          </Button>
           <span className="flex-1" />
           <Button
             variant="outline"
@@ -86,8 +89,10 @@ export function ArtifactDocument({
           >
             {restoring ? "Restoring…" : "Restore this version"}
           </Button>
+          {/* Secondary, not filled: the toolbar's Share is the page's one ink
+              primary — a second filled button in the history banner would compete. */}
           <Button
-            variant="default"
+            variant="secondary"
             size="sm"
             data-testid="artifact-back-to-current"
             onClick={onBackToCurrent}

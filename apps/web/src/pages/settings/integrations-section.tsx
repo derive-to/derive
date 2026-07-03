@@ -1,16 +1,17 @@
 import { useCallback, useEffect, useState } from "react"
-import { toast } from "sonner"
 import { api, type OrgSettings, type SlackStatus } from "@/api"
+import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { FormField } from "@/components/shared/form-field"
 import { SectionTitle } from "@/components/shared/section-title"
 import { Spinner } from "@/components/shared/spinner"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
+import { toast } from "@/components/ui/sonner"
 import { Switch } from "@/components/ui/switch"
 
-/** A labelled on/off switch backed by a button (so it carries a testid + is keyboard
- *  reachable). Colours come from theme tokens only. */
+/** A labelled on/off row built on the Switch primitive (the switch itself carries
+ *  the testid and keyboard focus). Colours come from theme tokens only. */
 function Toggle(props: {
   id: string
   label: string
@@ -41,6 +42,7 @@ export function IntegrationsSection() {
   const [settings, setSettings] = useState<OrgSettings | null>(null)
   const [slack, setSlack] = useState<SlackStatus | null>(null)
   const [channel, setChannel] = useState("")
+  const [disconnecting, setDisconnecting] = useState(false)
 
   const load = useCallback(() => {
     api
@@ -79,15 +81,16 @@ export function IntegrationsSection() {
       .then(() => toast.success("Slack channel saved"))
       .catch((e) => toast.error(e?.message ?? "Could not save"))
   }
-  const disconnectSlack = () => {
+  const disconnectSlack = () =>
     api
       .disconnectSlack()
       .then(() => {
         toast.success("Slack disconnected")
         load()
       })
-      .catch((e) => toast.error(e?.message ?? "Could not disconnect"))
-  }
+      .catch((e) => {
+        toast.error(e?.message ?? "Could not disconnect")
+      })
 
   if (!settings) {
     return (
@@ -179,10 +182,24 @@ export function IntegrationsSection() {
               bottom. Invite the Derive app to that channel.
             </p>
             <div>
-              <Button data-testid="slack-disconnect" variant="outline" onClick={disconnectSlack}>
+              <Button
+                data-testid="slack-disconnect"
+                variant="destructive-ghost"
+                size="sm"
+                onClick={() => setDisconnecting(true)}
+              >
                 Disconnect Slack
               </Button>
             </div>
+            <ConfirmDialog
+              open={disconnecting}
+              onOpenChange={setDisconnecting}
+              title="Disconnect Slack?"
+              description="Comments will stop posting to your channel, and replies from Slack will stop. You can reconnect anytime."
+              confirmLabel="Disconnect"
+              onConfirm={disconnectSlack}
+              confirmTestId="slack-disconnect-confirm"
+            />
           </Card>
         ) : (
           <Card className="flex flex-col items-start gap-3 p-4">

@@ -1,7 +1,8 @@
 import { useNavigate } from "@tanstack/react-router"
-import { AtSign } from "lucide-react"
 import { useCallback, useEffect, useState } from "react"
 import { api, type Notification } from "@/api"
+import { EmptyState } from "@/components/shared/empty-state"
+import { Button } from "@/components/ui/button"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import {
   SidebarMenuBadge,
@@ -46,7 +47,7 @@ export function NotificationBell() {
     return () => ev.close()
   }, [me, load])
 
-  // Mirror the unread count into the tab title — "(3) Derive" (the Nemonic
+  // Mirror the unread count into the tab title — "(3) Derive" (the house
   // grammar). Strip any previous prefix first so updates replace, never stack.
   useEffect(() => {
     const base = document.title.replace(/^\(\d+\+?\)\s*/, "")
@@ -87,17 +88,19 @@ export function NotificationBell() {
       .catch(() => {})
   }
 
-  // Icon rail: the unread signal collapses into the amber dot on the bell —
-  // amber means "this matters", so it never inflates into a solid count block.
+  // Icon rail: the unread signal collapses into the ink dot on the bell —
+  // the ink accent means "this matters", so it never inflates into a solid count block.
   const iconMode = state === "collapsed" && !isMobile
 
   return (
     <SidebarMenuItem>
       <Popover open={open} onOpenChange={setOpen}>
+        {/* No Tooltip layer here: stacking TooltipTrigger and PopoverTrigger
+            asChild on one button loops radix's composed refs (verified in e2e).
+            The dynamic aria-label carries the unread count instead. */}
         <PopoverTrigger asChild>
           <SidebarMenuButton
             data-testid="notif-bell"
-            title="Notifications"
             aria-label={unread > 0 ? `Notifications, ${unread} unread` : "Notifications"}
             className={cn(
               "[&_svg]:text-muted-foreground hover:[&_svg]:text-foreground data-open:bg-sidebar-accent",
@@ -106,7 +109,10 @@ export function NotificationBell() {
           >
             <span className="relative flex size-4 shrink-0 items-center justify-center">
               <Icon name="bell" />
-              {iconMode && unread > 0 && (
+              {/* The ink dot is the unread signal in BOTH the collapsed strip and
+                  the expanded rail — the ink accent means "this matters"; the count badge
+                  beside it stays neutral like every other sidebar count. */}
+              {unread > 0 && (
                 <span
                   className="absolute -top-0.5 -right-0.5 size-1.5 rounded-full bg-primary"
                   aria-hidden
@@ -116,28 +122,24 @@ export function NotificationBell() {
             <span>Notifications</span>
           </SidebarMenuButton>
         </PopoverTrigger>
+        {/* The count is decoration here — the button's aria-label announces it. */}
         {!iconMode && unread > 0 && (
-          <SidebarMenuBadge className="top-1.5 rounded-full bg-primary/10 font-mono text-2xs tabular-nums text-primary">
+          <SidebarMenuBadge aria-hidden className="top-1.5 text-muted-foreground">
             {unread > 9 ? "9+" : unread}
           </SidebarMenuBadge>
         )}
-        <PopoverContent side="right" align="end" className="w-[330px] gap-0 overflow-hidden p-0">
+        <PopoverContent side="right" align="end" className="w-82.5 gap-0 overflow-hidden p-0">
           <div className="flex items-center justify-between border-b border-border-soft px-3 py-2.5">
             <span className="text-sm font-semibold">Notifications</span>
             {unread > 0 && (
-              <button
-                type="button"
-                onClick={markAll}
-                data-testid="notif-mark-all"
-                className="rounded-sm text-xs text-primary underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
-              >
+              <Button variant="link" size="xs" onClick={markAll} data-testid="notif-mark-all">
                 Mark all read
-              </button>
+              </Button>
             )}
           </div>
-          <div className="max-h-[380px] overflow-auto">
+          <div className="max-h-95 overflow-auto">
             {items.length === 0 ? (
-              <div className="px-3 py-8 text-center text-sm text-muted-foreground">Nothing yet</div>
+              <EmptyState className="py-8">Nothing yet.</EmptyState>
             ) : (
               items.map((n) => (
                 <button
@@ -145,12 +147,12 @@ export function NotificationBell() {
                   type="button"
                   data-testid={`notif-item-${n.id}`}
                   onClick={() => openItem(n)}
-                  className="flex w-full items-start gap-2.5 border-b border-border-soft px-3 py-2.5 text-left last:border-b-0 hover:bg-hover focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
+                  className="flex w-full items-start gap-2.5 border-b border-border-soft px-3 py-2.5 text-left last:border-b-0 hover:bg-secondary focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
                 >
                   {/* Kind glyph: mentions/replies are about you, so they take the brand
-                    ink; follows/publishes/shares stay neutral — amber is reserved. */}
+                    ink; follows/publishes/shares stay neutral — the ink accent is reserved. */}
                   {n.kind === "mention" ? (
-                    <AtSign className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden />
+                    <Icon name="at" className="mt-0.5 text-primary" />
                   ) : (
                     <Icon
                       name={
@@ -202,7 +204,7 @@ export function NotificationBell() {
                     {/* The preview is a snippet for mention/comment; for follow/publish the
                       main line already says it all, so skip the duplicate. */}
                     {(n.kind === "mention" || n.kind === "comment") && (
-                      <span className="my-px block truncate text-xs text-muted-foreground">
+                      <span className="my-px block truncate text-sm text-muted-foreground">
                         {n.preview}
                       </span>
                     )}
@@ -210,7 +212,7 @@ export function NotificationBell() {
                       {ago(n.created_at)}
                     </span>
                   </span>
-                  {/* Unread carries the amber dot; read rows carry nothing. */}
+                  {/* Unread carries the ink dot; read rows carry nothing. */}
                   {!n.read && (
                     <span
                       className="mt-1.5 size-1.5 shrink-0 rounded-full bg-primary"

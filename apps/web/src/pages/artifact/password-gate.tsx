@@ -1,6 +1,6 @@
-import { Lock } from "lucide-react"
 import { type FormEvent, useState } from "react"
 import { api } from "@/api"
+import { Icon } from "@/components/icons"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 
@@ -35,9 +35,11 @@ export function PasswordGate({ shortId, onUnlocked }: { shortId: string; onUnloc
         className="flex w-full max-w-xs flex-col gap-4 rounded-xl border border-border bg-card p-6 text-center shadow-[var(--shadow)]"
       >
         <div className="flex flex-col items-center gap-3">
-          <Lock className="size-6 text-muted-foreground" strokeWidth={1.75} aria-hidden />
+          {/* The gate's editorial hero glyph: 24px, light stroke. */}
+          <Icon name="lock" size={24} strokeWidth={1.75} className="text-muted-foreground" />
           <div className="flex flex-col gap-1">
-            <h1 className="text-lg font-semibold text-balance">
+            {/* A gate is a voice moment (like login/welcome), not tool chrome. */}
+            <h1 className="font-serif text-xl font-medium tracking-tight text-balance">
               This artifact is password-protected
             </h1>
             <p className="text-sm text-pretty text-muted-foreground">

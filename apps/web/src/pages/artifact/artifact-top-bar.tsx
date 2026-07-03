@@ -1,22 +1,28 @@
 import { useState } from "react"
 import type { GeneralRole, Role } from "@/api"
 import { Icon } from "@/components/icons"
-import { ShareButton } from "@/components/ShareDialog"
+import { ShareButton } from "@/components/share-dialog"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { cn } from "@/lib/utils"
-import { CollectionsMenu, ReportDialog, StarButton, TagsMenu } from "./header-actions"
+import { CollectionsDialog, ReportDialog, StarButton, TagsDialog } from "./header-actions"
 
 /**
- * The artifact header actions (portaled into the shell top bar): favorite, tags,
- * collections, share, the comments toggle, and the "⋯ More" menu (insights /
- * history / review / edit / lock / report). Shown only to signed-in viewers — an
- * anon visitor gets none of it. Props-driven; the page keeps the cache writes.
+ * The right side of the workbench header (signed-in viewers only). Grouped by spacing,
+ * not rules — two clusters read left → right by hierarchy:
+ *   [ Share · ★ · ⋯ ]        [ comments ]
+ *     actions cluster          the discussion panel toggle (terminal)
+ * The filled-ink Share leads as the one primary; the favorited star is glanceable
+ * state; the ⋯ holds everything else (Reader/Present, Tags/Collections, Insights/
+ * History/Proposals, Edit/Lock/Report). Comments hugs the panel it opens. Presence +
+ * the cursor picker are the ambient cluster the page renders ahead of this. Props-
+ * driven; the page keeps the cache writes.
  */
 export function ArtifactTopBar(props: {
   shortId: string
@@ -34,7 +40,7 @@ export function ArtifactTopBar(props: {
   openCount: number
   showEdit: boolean
   editLabel: string
-  /** This artifact is a slide deck — show the Present (fullscreen) button. */
+  /** This artifact is a slide deck — offer Present (fullscreen) in the ⋯ menu. */
   isDeck: boolean
   /** Offer the Reader toggle (HTML artifacts only — markdown is already responsive). */
   showReader: boolean
@@ -58,118 +64,124 @@ export function ArtifactTopBar(props: {
 }) {
   const { shortId, openProposals, proposalsTotal } = props
   const [reportOpen, setReportOpen] = useState(false)
+  const [tagsOpen, setTagsOpen] = useState(false)
+  const [collectionsOpen, setCollectionsOpen] = useState(false)
+  const hasView = props.showReader || props.isDeck
   return (
     <>
-      <StarButton shortId={shortId} favorite={props.favorite} onChange={props.onFavorite} />
-      <TagsMenu
-        shortId={shortId}
-        tags={props.tags}
-        canEdit={props.canEditTags}
-        onChange={props.onTags}
-      />
-      <CollectionsMenu
-        shortId={shortId}
-        inCollections={props.collections}
-        onChange={props.onCollections}
-      />
-      <ShareButton
-        shortId={shortId}
-        myRole={props.myRole}
-        visibility={props.visibility}
-        generalRole={props.generalRole}
-      />
-      <ReportDialog shortId={shortId} open={reportOpen} onOpenChange={setReportOpen} />
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button
-            variant="ghost"
-            size="icon"
-            title="More"
-            aria-label="More actions"
-            data-testid="artifact-more"
-            className="relative"
-          >
-            <Icon name="more" size={16} className="text-muted-foreground" />
-            {/* Open proposals waiting on review — the unread-dot grammar. */}
-            {openProposals > 0 && (
-              <span
-                aria-hidden
-                className="absolute right-1.5 top-1.5 size-1.5 rounded-full bg-primary"
-              />
+      {/* Actions cluster — the filled Share leads (the one primary), then the favorited
+          star (glanceable state), then the overflow. Tight within; the collaboration
+          cluster and comments toggle are held apart by spacing, not vertical rules. */}
+      <div className="flex items-center gap-0.5">
+        <ShareButton
+          shortId={shortId}
+          myRole={props.myRole}
+          visibility={props.visibility}
+          generalRole={props.generalRole}
+        />
+        <StarButton shortId={shortId} favorite={props.favorite} onChange={props.onFavorite} />
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              aria-label="More actions"
+              data-testid="artifact-more"
+              className="relative"
+            >
+              <Icon name="more" size={16} className="text-muted-foreground" />
+              {/* Open proposals waiting on review — the ink unread-dot grammar. */}
+              {openProposals > 0 && (
+                <span
+                  aria-hidden
+                  className="absolute top-1 right-1 size-1.5 rounded-full bg-primary"
+                />
+              )}
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent>
+            {/* View modes (contextual) — a check marks the active one. */}
+            {props.showReader && (
+              <DropdownMenuItem data-testid="artifact-reader" onSelect={props.onReaderToggle}>
+                <Icon name="reader" size={16} /> Reader
+                {props.reader && <Icon name="check" size={16} className="ml-auto" />}
+              </DropdownMenuItem>
             )}
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent>
-          <DropdownMenuItem data-testid="artifact-insights" onSelect={props.onInsights}>
-            <Icon name="insights" size={16} /> Insights
-          </DropdownMenuItem>
-          <DropdownMenuItem data-testid="artifact-history" onSelect={props.onHistory}>
-            <Icon name="history" size={16} /> Version history
-          </DropdownMenuItem>
-          {proposalsTotal > 0 && (
-            <DropdownMenuItem data-testid="artifact-review" onSelect={props.onReview}>
-              <Icon name="review" size={16} />
-              {openProposals > 0 ? `Review proposals (${openProposals})` : "Proposals"}
+            {props.isDeck && (
+              <DropdownMenuItem data-testid="artifact-present" onSelect={props.onPresent}>
+                <Icon name="present" size={16} /> Present
+              </DropdownMenuItem>
+            )}
+            {hasView && <DropdownMenuSeparator />}
+
+            {/* Organize — open as dialogs. */}
+            <DropdownMenuItem data-testid="artifact-tags" onSelect={() => setTagsOpen(true)}>
+              <Icon name="tag" size={16} /> Tags
+              {props.tags.length > 0 && (
+                <span className="ml-auto font-mono text-2xs tabular-nums text-muted-foreground">
+                  {props.tags.length}
+                </span>
+              )}
             </DropdownMenuItem>
-          )}
-          {props.showEdit && (
-            <DropdownMenuItem data-testid="artifact-edit" onSelect={props.onStartEdit}>
-              <Icon name="edit" size={16} />
-              {props.editLabel}
+            <DropdownMenuItem
+              data-testid="artifact-collections"
+              onSelect={() => setCollectionsOpen(true)}
+            >
+              <Icon name="collections" size={16} /> Add to collection
+              {props.collections.length > 0 && (
+                <span className="ml-auto font-mono text-2xs tabular-nums text-muted-foreground">
+                  {props.collections.length}
+                </span>
+              )}
             </DropdownMenuItem>
-          )}
-          {props.canLock && (
-            <DropdownMenuItem data-testid="artifact-lock" onSelect={props.onLockToggle}>
-              <Icon name={props.locked ? "unlock" : "lock"} size={16} />
-              {props.locked ? "Unlock changes" : "Lock changes"}
+
+            {/* Activity. */}
+            <DropdownMenuSeparator />
+            <DropdownMenuItem data-testid="artifact-insights" onSelect={props.onInsights}>
+              <Icon name="insights" size={16} /> Insights
             </DropdownMenuItem>
-          )}
-          <DropdownMenuItem data-testid="artifact-report" onSelect={() => setReportOpen(true)}>
-            <Icon name="report" size={16} /> Report artifact
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
-      {/* Reader: re-render a non-responsive HTML artifact as clean, mobile-friendly
-          text. A toggle — when on, it's highlighted; tap again for the original. */}
-      {props.showReader && (
-        <Button
-          variant="ghost"
-          size="sm"
-          className={cn(props.reader && "bg-accent text-foreground")}
-          data-testid="artifact-reader"
-          onClick={props.onReaderToggle}
-          title={props.reader ? "Show original layout" : "Reader view"}
-          aria-label="Reader view"
-          aria-pressed={props.reader}
-        >
-          <Icon name="reader" size={16} className="text-muted-foreground" /> Reader
-        </Button>
-      )}
-      {/* Decks get a one-tap Present (fullscreen) affordance in the chrome, not just
-          the small ⛶ on the floating deck bar. */}
-      {props.isDeck && (
-        <Button
-          variant="ghost"
-          size="sm"
-          data-testid="artifact-present"
-          onClick={props.onPresent}
-          title="Present (fullscreen)"
-          aria-label="Present"
-        >
-          <Icon name="present" size={16} className="text-muted-foreground" /> Present
-        </Button>
-      )}
-      {/* On phones the bottom-right FAB opens comments, so the header button would
-          just be a redundant extra wrap-row. */}
+            <DropdownMenuItem data-testid="artifact-history" onSelect={props.onHistory}>
+              <Icon name="history" size={16} /> Version history
+            </DropdownMenuItem>
+            {proposalsTotal > 0 && (
+              <DropdownMenuItem data-testid="artifact-review" onSelect={props.onReview}>
+                <Icon name="review" size={16} />
+                {openProposals > 0 ? `Review proposals (${openProposals})` : "Proposals"}
+              </DropdownMenuItem>
+            )}
+
+            {/* Manage. */}
+            {(props.showEdit || props.canLock) && <DropdownMenuSeparator />}
+            {props.showEdit && (
+              <DropdownMenuItem data-testid="artifact-edit" onSelect={props.onStartEdit}>
+                <Icon name="edit" size={16} />
+                {props.editLabel}
+              </DropdownMenuItem>
+            )}
+            {props.canLock && (
+              <DropdownMenuItem data-testid="artifact-lock" onSelect={props.onLockToggle}>
+                <Icon name={props.locked ? "unlock" : "lock"} size={16} />
+                {props.locked ? "Unlock changes" : "Lock changes"}
+              </DropdownMenuItem>
+            )}
+            <DropdownMenuSeparator />
+            <DropdownMenuItem data-testid="artifact-report" onSelect={() => setReportOpen(true)}>
+              <Icon name="report" size={16} /> Report artifact
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+
+      {/* Comments — the discussion panel toggle, terminal (hugs the panel it opens);
+          held apart by spacing. On phones the bottom-right FAB owns this. */}
       {!props.isMobile && (
         <Button
           variant="ghost"
           size="sm"
-          className={cn(props.panelOpen && "bg-accent text-foreground")}
+          className={cn("ml-1", props.panelOpen && "bg-accent text-foreground")}
           data-testid="artifact-show-comments"
           onClick={props.onToggleComments}
-          title="Comments (c)"
-          aria-label="Comments"
+          aria-label={props.openCount > 0 ? `Comments, ${props.openCount} open` : "Comments"}
           aria-pressed={props.panelOpen}
         >
           <Icon name="comments" size={16} className="text-muted-foreground" />
@@ -180,6 +192,24 @@ export function ArtifactTopBar(props: {
           )}
         </Button>
       )}
+
+      {/* Portaled dialogs — invisible until opened from the ⋯ menu. */}
+      <TagsDialog
+        shortId={shortId}
+        tags={props.tags}
+        canEdit={props.canEditTags}
+        onChange={props.onTags}
+        open={tagsOpen}
+        onOpenChange={setTagsOpen}
+      />
+      <CollectionsDialog
+        shortId={shortId}
+        inCollections={props.collections}
+        onChange={props.onCollections}
+        open={collectionsOpen}
+        onOpenChange={setCollectionsOpen}
+      />
+      <ReportDialog shortId={shortId} open={reportOpen} onOpenChange={setReportOpen} />
     </>
   )
 }

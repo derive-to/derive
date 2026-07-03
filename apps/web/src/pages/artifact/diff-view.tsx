@@ -1,5 +1,6 @@
 import type { Diff } from "@/api"
 import { Spinner } from "@/components/shared/spinner"
+import { StatusPanel } from "@/components/shared/status-panel"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 
@@ -18,13 +19,18 @@ export function DiffView({
 }) {
   if (failed)
     return (
-      <div className="grid flex-1 place-items-center gap-2.5 text-center">
-        <div className="text-sm text-muted-foreground">Couldn't load the changes.</div>
-        {onRetry && (
-          <Button variant="outline" size="sm" data-testid="diff-retry" onClick={onRetry}>
-            Try again
-          </Button>
-        )}
+      <div className="grid flex-1 place-items-center">
+        <StatusPanel
+          tone="danger"
+          title="Couldn't load the changes."
+          action={
+            onRetry && (
+              <Button variant="outline" size="sm" data-testid="diff-retry" onClick={onRetry}>
+                Try again
+              </Button>
+            )
+          }
+        />
       </div>
     )
   if (!diff)
@@ -49,7 +55,7 @@ export function DiffView({
           {diff.ops.length} lines
         </span>
       </div>
-      <pre className="m-0 py-2.5 font-mono text-sm leading-relaxed">
+      <pre className="py-2.5 font-mono text-sm">
         {diff.ops.map((o, i) => (
           <div
             // biome-ignore lint/suspicious/noArrayIndexKey: diff ops are an immutable, never-reordered list rebuilt wholesale per version; lines repeat, so the index is the stable identity.

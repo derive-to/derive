@@ -1,8 +1,16 @@
 import { useLayoutEffect, useRef, useState } from "react"
 import type { Comment } from "@/api"
 import { Icon } from "@/components/icons"
+import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Textarea } from "@/components/ui/textarea"
 import { getInitials } from "@/lib/initials"
@@ -36,26 +44,27 @@ function CommentBody({ html, compact }: { html: string; compact?: boolean }) {
       <div
         ref={ref}
         className={cn(
-          "cmt-body text-sm leading-relaxed [word-break:break-word]",
+          "cmt-body text-sm [word-break:break-word]",
           compact && "line-clamp-2",
           clamped &&
-            "max-h-[168px] overflow-hidden [mask-image:linear-gradient(to_bottom,#000_120px,transparent)]",
+            "max-h-42 overflow-hidden [mask-image:linear-gradient(to_bottom,#000_120px,transparent)]",
         )}
         // biome-ignore lint/security/noDangerouslySetInnerHtml: input is escaped first in mdToHtml.
         dangerouslySetInnerHTML={{ __html: html }}
       />
       {!compact && overflows && (
-        <button
-          type="button"
+        <Button
+          variant="link"
+          size="xs"
           data-testid="comment-toggle-length"
           onClick={(e) => {
             e.stopPropagation()
             setExpanded((v) => !v)
           }}
-          className="mt-1 rounded-sm text-xs font-medium text-primary outline-none hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+          className="mt-1 px-0"
         >
           {expanded ? "Show less" : "Show more"}
-        </button>
+        </Button>
       )}
     </div>
   )
@@ -68,6 +77,7 @@ export function CommentRow({ c, compact }: { c: Comment; compact?: boolean }) {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(c.body_md)
   const [open, setOpen] = useState<null | "react" | "menu">(null)
+  const [confirmDelete, setConfirmDelete] = useState(false)
   const mine = !!A.meName && c.author === A.meName
   const reactions = c.reactions ?? {}
 
@@ -93,7 +103,7 @@ export function CommentRow({ c, compact }: { c: Comment; compact?: boolean }) {
         <Avatar className="size-5">
           <AvatarFallback className="text-2xs">{getInitials(c.author)}</AvatarFallback>
         </Avatar>
-        <span className="text-xs font-medium text-foreground">{c.author}</span>
+        <span className="text-sm font-medium text-foreground">{c.author}</span>
         <span className="ml-auto font-mono text-2xs text-muted-foreground">
           {ago(c.created_at)}
           {c.edited ? " · edited" : ""}
@@ -109,7 +119,7 @@ export function CommentRow({ c, compact }: { c: Comment; compact?: boolean }) {
             autoFocus
             data-testid="comment-edit-input"
             onChange={(e) => setDraft(e.target.value)}
-            className="min-h-[52px] resize-y text-sm"
+            className="min-h-14 resize-y"
             onKeyDown={(e) => {
               if (e.key === "Escape") {
                 setEditing(false)
@@ -153,34 +163,42 @@ export function CommentRow({ c, compact }: { c: Comment; compact?: boolean }) {
 
       {Object.keys(reactions).length > 0 && (
         <div className="mt-1.5 flex flex-wrap gap-1">
-          {Object.entries(reactions).map(([emoji, who]) => (
-            <button
-              key={emoji}
-              type="button"
-              data-testid={`reaction-pill-${emoji}`}
-              // title shows on mouse hover; aria-label carries the same reactor list to
-              // keyboard + touch (where title never appears), and aria-pressed exposes
-              // the toggle state.
-              title={who.join(", ")}
-              aria-label={`${emoji}, ${who.length}: ${who.join(", ")}`}
-              aria-pressed={who.includes(A.meName)}
-              onClick={(e) => {
-                e.stopPropagation()
-                A.react(c.id, emoji)
-              }}
-              className={cn(
-                "inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-xs outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring",
-                // Reacted = the sanctioned soft brand chip; unreacted stays neutral
-                // (hover brightens the hairline, never an amber tint).
-                who.includes(A.meName)
-                  ? "border-primary/40 bg-primary/10 text-primary"
-                  : "border-border bg-card text-muted-foreground hover:border-foreground/25",
-              )}
-            >
-              <span>{emoji}</span>
-              <span className="font-mono text-2xs tabular-nums">{who.length}</span>
-            </button>
-          ))}
+          {Object.entries(reactions).map(([emoji, who]) => {
+            const reacted = who.includes(A.meName)
+            return (
+              // The one sanctioned pill (Badge shape="pill", asChild button — the
+              // library tag-chip pattern); the mono 2xs tabular count register is
+              // baked into the pill. Reacted (toggled-on) = the neutral default
+              // wash + re-inked text, per the selected-state rule — never an ink
+              // tint; unreacted stays a quiet outline (hover brightens the hairline).
+              <Badge
+                key={emoji}
+                asChild
+                shape="pill"
+                variant={reacted ? "default" : "outline"}
+                className={reacted ? undefined : "hover:border-foreground/25 hover:text-foreground"}
+              >
+                <button
+                  type="button"
+                  data-testid={`reaction-pill-${emoji}`}
+                  // title shows on mouse hover; aria-label carries the same reactor list to
+                  // keyboard + touch (where title never appears), and aria-pressed exposes
+                  // the toggle state.
+                  title={who.join(", ")}
+                  aria-label={`${emoji}, ${who.length}: ${who.join(", ")}`}
+                  aria-pressed={reacted}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    A.react(c.id, emoji)
+                  }}
+                >
+                  {/* The emoji keeps its original glyph size; the count takes the pill's register. */}
+                  <span className="text-xs">{emoji}</span>
+                  <span>{who.length}</span>
+                </button>
+              </Badge>
+            )
+          })}
         </div>
       )}
 
@@ -189,7 +207,7 @@ export function CommentRow({ c, compact }: { c: Comment; compact?: boolean }) {
         // biome-ignore lint/a11y/useKeyWithClickEvents: stopPropagation wrapper around the action toolbar, not a control
         <div
           className={cn(
-            "absolute right-2 top-1.5 z-[6] flex gap-px rounded-lg bg-popover p-0.5 shadow-[var(--shadow)] ring-1 ring-foreground/10 transition-opacity",
+            "absolute right-2 top-1.5 z-6 flex gap-px rounded-lg bg-popover p-0.5 shadow-[var(--shadow)] ring-1 ring-foreground/10 transition-opacity",
             open
               ? "opacity-100"
               : "pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100",
@@ -201,7 +219,6 @@ export function CommentRow({ c, compact }: { c: Comment; compact?: boolean }) {
               <Button
                 variant="ghost"
                 size="icon-sm"
-                title="React"
                 aria-label="Add reaction"
                 data-testid="comment-react"
               >
@@ -220,7 +237,7 @@ export function CommentRow({ c, compact }: { c: Comment; compact?: boolean }) {
                       A.react(c.id, em)
                       setOpen(null)
                     }}
-                    className="grid size-[30px] place-items-center rounded-md text-lg outline-none hover:bg-accent focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
+                    className="grid size-7 place-items-center rounded-md text-lg outline-none hover:bg-accent focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
                   >
                     {em}
                   </button>
@@ -228,60 +245,51 @@ export function CommentRow({ c, compact }: { c: Comment; compact?: boolean }) {
               </div>
             </PopoverContent>
           </Popover>
-          <Popover open={open === "menu"} onOpenChange={(o) => setOpen(o ? "menu" : null)}>
-            <PopoverTrigger asChild>
+          <DropdownMenu open={open === "menu"} onOpenChange={(o) => setOpen(o ? "menu" : null)}>
+            <DropdownMenuTrigger asChild>
               <Button
                 variant="ghost"
                 size="icon-sm"
-                title="More"
                 aria-label="Comment actions"
                 data-testid="comment-more"
               >
                 <Icon name="more" size={16} />
               </Button>
-            </PopoverTrigger>
-            <PopoverContent align="end" className="w-auto min-w-[132px] gap-0 p-1">
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
               {mine && (
-                <button
-                  type="button"
-                  data-testid="comment-edit"
-                  onClick={() => {
-                    setEditing(true)
-                    setOpen(null)
-                  }}
-                  className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-sm font-medium text-foreground outline-none hover:bg-accent focus-visible:bg-accent"
-                >
-                  <Icon name="pencil" size={16} /> Edit
-                </button>
+                <DropdownMenuItem data-testid="comment-edit" onSelect={() => setEditing(true)}>
+                  <Icon name="pencil" /> Edit
+                </DropdownMenuItem>
               )}
-              <button
-                type="button"
+              <DropdownMenuItem
                 data-testid="comment-copy-link"
-                onClick={() => {
-                  A.copyLink(c.thread_id)
-                  setOpen(null)
-                }}
-                className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-sm font-medium text-foreground outline-none hover:bg-accent focus-visible:bg-accent"
+                onSelect={() => A.copyLink(c.thread_id)}
               >
-                <Icon name="link" size={16} /> Copy link
-              </button>
+                <Icon name="link" /> Copy link
+              </DropdownMenuItem>
               {mine && (
-                <button
-                  type="button"
+                <DropdownMenuItem
+                  variant="destructive"
                   data-testid="comment-delete"
-                  onClick={() => {
-                    A.remove(c.id)
-                    setOpen(null)
-                  }}
-                  className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-sm font-medium text-destructive outline-none hover:bg-destructive/10 focus-visible:bg-destructive/10"
+                  onSelect={() => setConfirmDelete(true)}
                 >
-                  <Icon name="delete" size={16} /> Delete
-                </button>
+                  <Icon name="delete" /> Delete
+                </DropdownMenuItem>
               )}
-            </PopoverContent>
-          </Popover>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       )}
+      <ConfirmDialog
+        open={confirmDelete}
+        onOpenChange={setConfirmDelete}
+        title="Delete this comment?"
+        description="The comment is removed from the thread for everyone."
+        confirmLabel="Delete"
+        onConfirm={() => A.remove(c.id)}
+        confirmTestId="comment-delete-confirm"
+      />
     </div>
   )
 }

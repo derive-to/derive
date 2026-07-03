@@ -3,148 +3,144 @@
 @import "shadcn/tailwind.css";
 /* Inter's opsz build (not the default wght-only file): the Display optical axis
    auto-activates at large sizes via font-optical-sizing, matching the canonical
-   rsms.me distribution — self-hosted so the app makes no third-party requests. */
+   rsms.me distribution — self-hosted so the app makes no third-party requests.
+   Inter is the app's ONE typeface: chrome, voice, and (over a system-mono
+   fallback) the machine layer all ride it. No serif or mono webfont ships. */
 @import "@fontsource-variable/inter/opsz.css";
-/* Serif ships upright only — no voice moment uses italic; add opsz-italic.css
-   back if an editorial em-register ever lands. */
-@import "@fontsource-variable/source-serif-4/opsz.css";
-@import "@fontsource-variable/geist-mono";
 
 /* Dark mode is the standard shadcn `.dark` class (toggled in ctx.tsx / __root.tsx). */
 @custom-variant dark (&:is(.dark *));
 
-/* ── Derive theme — the Nemonic identity on shadcn ─────────────────────────────
-   Cool charcoal neutrals (hue ≈ 268) + honey amber as the one warm note. Dark is
-   the canonical brand (ported from Nemonic, which was dark-only); light is a
-   first-class derivation that keeps the cool cast and darkens amber to bronze so
-   it survives as text (#e99421 on white is 2.4:1 — fails AA; brand-700 passes).
-   Doctrine: amber means "this matters" — primary actions, active nav, focus,
-   links, unread. Selected/hover states stay neutral washes. On amber fills, text
-   is the canvas charcoal, never white. See docs/design-system.md. */
+/* ── Derive theme — the monochrome identity on shadcn ──────────────────────────
+   Foundation: Axiom Black #030712 + Origin White #F4F5F8. The accent is
+   MONOCHROME — near-black ink on light, near-white on dark — so the brand reads
+   as its two canvas colors, not a hue. Nothing is "the brand color": primary
+   actions, active nav, focus, and links all render in ink; selected/hover states
+   are quiet neutral washes. Only the semantic signals (success/destructive/
+   warning) and the calm low-chroma wayfinding tints stay chromatic — and those
+   stay muted on purpose: "calm tints, not a rainbow." See docs/design-system.md. */
 :root {
-  --radius: 0.5rem;
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.159 0.011 268); /* gray-950 #0b0d12 — charcoal, never black */
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.159 0.011 268);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.159 0.011 268);
-  --primary: oklch(0.54 0.12 58); /* brand-700 #a15a16 — bronze, AA as text on white */
-  --primary-foreground: oklch(0.981 0.019 83.1); /* brand-50 #fff8eb */
-  --secondary: oklch(0.159 0.011 268 / 4%);
-  --secondary-foreground: oklch(0.2 0.015 266.8);
-  --muted: oklch(0.159 0.011 268 / 5%);
-  --muted-foreground: oklch(0.55 0.029 268); /* cool gray, ≥4.5:1 on white */
-  --accent: oklch(0.159 0.011 268 / 7%);
-  --accent-foreground: oklch(0.2 0.015 266.8);
-  --destructive: oklch(0.505 0.213 27.5); /* danger-700 #b91c1c — dark enough that the bg-destructive/10 soft fill keeps its label AA */
-  --destructive-foreground: oklch(0.985 0 0);
-  --success: oklch(0.48 0.125 150.1); /* ≈#117035 — AA on its own /10 tint */
-  --warning: oklch(0.5 0.147 48.9); /* ≈#a24200 — safety orange, never amber; AA on /10 tint */
-  --border: oklch(0.159 0.011 268 / 10%);
-  --input: oklch(0.159 0.011 268 / 14%);
-  --ring: oklch(0.64 0.141 61.6); /* brand-600 #c87516 — focus is amber, never blue */
-  --chart-1: oklch(0.64 0.141 61.6);
-  --chart-2: oklch(0.376 0.027 268);
-  --chart-3: oklch(0.716 0.027 268.7);
-  --chart-4: oklch(0.455 0.098 55.4);
-  --chart-5: oklch(0.848 0.016 266.3);
-  --sidebar: oklch(1 0 0);
-  --sidebar-foreground: oklch(0.159 0.011 268);
-  --sidebar-primary: oklch(0.54 0.12 58);
-  --sidebar-primary-foreground: oklch(0.981 0.019 83.1);
-  --sidebar-accent: oklch(0.159 0.011 268 / 7%);
-  --sidebar-accent-foreground: oklch(0.2 0.015 266.8);
-  --sidebar-border: oklch(0.159 0.011 268 / 10%);
-  --sidebar-ring: oklch(0.64 0.141 61.6);
+  --radius: 0.25rem; /* 4px — tight corners are part of the register */
+  --background: #f7f8fa;
+  --foreground: #14161a; /* near-black ink, never pure black */
+  --card: #ffffff;
+  --card-foreground: #14161a;
+  --popover: #ffffff;
+  --popover-foreground: #14161a;
+  --primary: #14161a; /* MONOCHROME — the accent is ink, never a hue */
+  --primary-foreground: #f7f8fa;
+  --secondary: #eff1f4;
+  --secondary-foreground: #14161a;
+  --muted: #eff1f4;
+  --muted-foreground: #5c616b; /* ≥4.5:1 on the canvas */
+  --accent: #e8eaee; /* quiet selected/hover wash */
+  --accent-foreground: #14161a;
+  --destructive: #b4402c;
+  --destructive-foreground: #ffffff;
+  --success: #2f7d4f;
+  --warning: #a24200; /* safety orange (semantic) — never a brand note */
+  --border: #e5e7eb;
+  --input: #e5e7eb;
+  --ring: #14161a; /* focus is ink, never a hue */
+  /* Calm categorical family — categorical charts + feature wayfinding (see the
+     @theme tint utilities below). Muted and low-chroma by intent. */
+  --chart-1: #7a9f70;
+  --chart-2: #7f97c2;
+  --chart-3: #bd8b62;
+  --chart-4: #8781b0;
+  --chart-5: #6b8bac;
+  --sidebar: #e9ebf1; /* the recessed backdrop the inset content card floats above (shell is variant="inset") */
+  --sidebar-foreground: #14161a;
+  --sidebar-primary: #14161a;
+  --sidebar-primary-foreground: #f7f8fa;
+  --sidebar-accent: #e3e6eb; /* hover row wash, a step down from the recessed rail so hover reads */
+  --sidebar-accent-foreground: #14161a;
+  --sidebar-border: #dde0e6; /* defines the rail edge + the raised active-chip ring against the recessed surface */
+  --sidebar-ring: #14161a;
 
-  /* derive app vocabulary (ink-at-an-opacity edges mirror the dark grammar). */
-  --border-soft: oklch(0.159 0.011 268 / 6%);
-  --hover: oklch(0.159 0.011 268 / 4%);
-  --disabled-foreground: oklch(0.716 0.027 268.7);
-  --selection: oklch(0.737 0.154 67.2 / 25%); /* amber selection reads on light too */
+  /* derive app vocabulary. */
+  --border-soft: #eef0f3;
+  --disabled-foreground: #aeb2ba; /* decoration only */
+  --selection: rgba(20, 22, 26, 0.18); /* ink wash, never a hue */
   /* On-image placard scrim — fixed in both themes (rides over user render content). */
-  --scrim: #0b0d12;
-  --scrim-foreground: #f4f5f8;
+  --scrim: #030712; /* Axiom Black */
+  --scrim-foreground: #f4f5f8; /* Origin White */
   /* Light keeps soft shadows; the no-shadow rule is dark-only. */
-  --shadow-sm: 0 1px 2px rgba(11, 13, 18, 0.06);
-  --shadow: 0 1px 2px rgba(11, 13, 18, 0.05), 0 12px 28px -16px rgba(11, 13, 18, 0.14);
-  --shadow-pop: 0 4px 10px -3px rgba(11, 13, 18, 0.1), 0 22px 44px -14px rgba(11, 13, 18, 0.24);
+  --shadow-sm: 0 1px 2px rgba(20, 22, 26, 0.06);
+  --shadow: 0 1px 2px rgba(20, 22, 26, 0.05), 0 12px 28px -16px rgba(20, 22, 26, 0.14);
+  --shadow-pop: 0 4px 10px -3px rgba(20, 22, 26, 0.1), 0 22px 44px -14px rgba(20, 22, 26, 0.24);
+  --grain: 0.022;
 }
 
 .dark {
-  --background: oklch(0.159 0.011 268); /* gray-950 #0b0d12 — the canvas */
-  --foreground: oklch(0.944 0.004 286.3); /* #ececef — never pure white */
-  --card: oklch(0.2 0.015 266.8); /* gray-900 #13161d — raised: dialogs, palette */
-  --card-foreground: oklch(0.944 0.004 286.3);
-  --popover: oklch(0.24 0.02 267.8); /* gray-800 #1b1f29 — floating: menus, toasts */
-  --popover-foreground: oklch(0.944 0.004 286.3);
-  --primary: oklch(0.737 0.154 67.2); /* brand-500 #e99421 — honey amber */
-  --primary-foreground: oklch(0.159 0.011 268); /* charcoal on amber, never white */
-  --secondary: oklch(1 0 0 / 5%); /* quiet wells composite over any surface */
-  --secondary-foreground: oklch(0.944 0.004 286.3);
-  --muted: oklch(1 0 0 / 8%);
-  --muted-foreground: oklch(0.716 0.027 268.7); /* gray-400 #9ca3b5 */
-  --accent: oklch(1 0 0 / 10%); /* menu focus/hover — neutral, amber is reserved */
-  --accent-foreground: oklch(0.944 0.004 286.3);
-  --destructive: oklch(0.711 0.166 22.2); /* danger-400 #f87171 — soft-fill legible */
-  --destructive-foreground: oklch(0.944 0.004 286.3);
-  --success: oklch(0.8 0.182 151.7); /* #4ade80 */
-  --warning: oklch(0.758 0.159 55.9); /* #fb923c */
-  --border: oklch(1 0 0 / 10%); /* every edge is white-at-an-opacity */
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.737 0.154 67.2);
-  --chart-1: oklch(0.737 0.154 67.2);
-  --chart-2: oklch(0.848 0.016 266.3);
-  --chart-3: oklch(0.607 0.029 268.7);
-  --chart-4: oklch(0.847 0.134 82.4);
-  --chart-5: oklch(0.376 0.027 268);
-  --sidebar: oklch(0.159 0.011 268); /* flush with the canvas */
-  --sidebar-foreground: oklch(0.944 0.004 286.3);
-  --sidebar-primary: oklch(0.737 0.154 67.2);
-  --sidebar-primary-foreground: oklch(0.159 0.011 268);
-  --sidebar-accent: oklch(1 0 0 / 5%);
-  --sidebar-accent-foreground: oklch(0.944 0.004 286.3);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.737 0.154 67.2);
+  --background: #0a0b0d; /* the canvas */
+  --foreground: #f3f4f6; /* never pure white */
+  --card: #101216; /* raised: dialogs, palette */
+  --card-foreground: #f3f4f6;
+  --popover: #101216; /* floating: menus, toasts */
+  --popover-foreground: #f3f4f6;
+  --primary: #f3f4f6; /* MONOCHROME — near-white ink on the dark canvas */
+  --primary-foreground: #0a0b0d;
+  --secondary: #16181d;
+  --secondary-foreground: #f3f4f6;
+  --muted: #16181d;
+  --muted-foreground: #969aa2;
+  --accent: #1b1d23; /* quiet selected/hover wash */
+  --accent-foreground: #f3f4f6;
+  --destructive: #d98c74;
+  --destructive-foreground: #ffffff;
+  --success: #74b085;
+  --warning: #fb923c;
+  --border: #23252b;
+  --input: #23252b;
+  --ring: #f3f4f6;
+  --chart-1: #7a9f70;
+  --chart-2: #7f97c2;
+  --chart-3: #bd8b62;
+  --chart-4: #8781b0;
+  --chart-5: #6b8bac;
+  --sidebar: #060709; /* the recessed near-black backdrop the inset content card floats above (a step darker than the canvas so content lifts) */
+  --sidebar-foreground: #f3f4f6;
+  --sidebar-primary: #f3f4f6;
+  --sidebar-primary-foreground: #0a0b0d;
+  --sidebar-accent: #1c1e24; /* hover row wash, a step up from the raised rail */
+  --sidebar-accent-foreground: #f3f4f6;
+  --sidebar-border: #26282f; /* defines the rail edge + the raised active-chip ring */
+  --sidebar-ring: #f3f4f6;
 
-  --border-soft: oklch(1 0 0 / 5%);
-  --hover: oklch(1 0 0 / 5%);
-  --disabled-foreground: oklch(0.376 0.027 268); /* gray-600 — decoration only */
-  --selection: oklch(0.737 0.154 67.2 / 30%);
-  --scrim: #0b0d12;
+  --border-soft: #191b1f;
+  --disabled-foreground: #4b4f57; /* decoration only */
+  --selection: rgba(243, 244, 246, 0.18);
+  --scrim: #030712;
   --scrim-foreground: #f4f5f8;
-  /* No shadows in the dark UI: elevation is a surface step plus a ring-foreground/10
-     edge. The vars stay so recipes can reference them unconditionally. */
+  /* No shadows in the dark UI: elevation is a surface step plus a border edge.
+     The vars stay defined so recipes can reference them unconditionally. */
   --shadow-sm: 0 0 #0000;
   --shadow: 0 0 #0000;
   --shadow-pop: 0 0 #0000;
 }
 
-/* The honey-amber brand ramp — for soft chips (bg-brand-500/10 text-brand-300),
-   eyebrows, and brand moments that need a specific step rather than --primary.
-   Theme-invariant by design: amber is amber; the per-theme --primary picks the
-   step that survives on that theme's canvas. */
+/* The calm categorical family — muted, low-chroma tints for DATA surfaces
+   (categorical charts, chart-1…5) and any deliberate category label. Theme-
+   invariant by design ("calm tints, not a rainbow"), surfaced as text-share /
+   bg-review / … utilities. Chrome icons are NOT tinted from here: the chrome
+   stays monochrome so the user's own artifact colour is what stands out. */
 @theme {
-  --color-brand-50: #fff8eb;
-  --color-brand-100: #ffedc2;
-  --color-brand-200: #fedb8a;
-  --color-brand-300: #f8c45c;
-  --color-brand-400: #f0aa37;
-  --color-brand-500: #e99421;
-  --color-brand-600: #c87516;
-  --color-brand-700: #a15a16;
-  --color-brand-800: #7f4618;
-  --color-brand-900: #5a3413;
-  --color-brand-950: #261306;
+  --color-gold: #c2a15e;
+  --color-share: #8781b0;
+  --color-comments: #6b8bac;
+  --color-tag: #5f9a90;
+  --color-collection: #bd8b62;
+  --color-insights: #7f97c2;
+  --color-review: #7a9f70;
 }
 
 @theme inline {
-  --radius-sm: calc(var(--radius) - 4px);
-  --radius-md: calc(var(--radius) - 2px);
-  --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) + 4px);
-  --radius-2xl: 1rem; /* pinned: dialog radius (Nemonic register), not radius*1.8 */
+  --radius-sm: 0.1875rem; /* 3px */
+  --radius-md: 0.375rem; /* 6px */
+  --radius-lg: 0.5rem; /* 8px */
+  --radius-xl: 0.625rem; /* 10px */
+  --radius-2xl: 0.75rem; /* 12px — dialogs; tight register, not radius*2 */
 
   --color-background: var(--background);
   --color-foreground: var(--foreground);
@@ -181,50 +177,66 @@
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
 
-  /* derive app vocabulary (bridged onto the charcoal + amber palette). */
+  /* derive app vocabulary (bridged onto the monochrome palette). Quiet hover
+     washes ride --secondary (bg-secondary) — there is deliberately no separate
+     --hover token; two names for one value is how washes drift. */
   --color-border-soft: var(--border-soft);
-  --color-hover: var(--hover);
   --color-disabled-foreground: var(--disabled-foreground);
   --color-selection: var(--selection);
   --color-scrim: var(--scrim);
   --color-scrim-foreground: var(--scrim-foreground);
 
-  /* Type scale — comfortable, standard register sized for 14px controls. Everything
-     rem-based so it respects the user's root font size; only the 2xs mono
-     micro-label stays small. */
-  --text-2xs: 0.6875rem; /* 11px — mono micro-labels only */
-  --text-2xs--line-height: 1.45;
-  --text-xs: 0.75rem; /* 12px */
-  --text-xs--line-height: 1.5;
-  --text-sm: 0.875rem; /* 14px — control + secondary-body base */
+  /* Type scale — the dense pro-tool register (14px body, 12.5px controls/secondary),
+     rem-based so it still respects the user's root font size. Density lives HERE,
+     not in control geometry: the h-9/h-8/h-7 chassis is unchanged — the type just
+     tightens, so a button reads as main's, not a roomier restyle. Line-heights
+     ride tighter as the step grows (headings hug). */
+  --text-2xs: 0.625rem; /* 10px — mono micro-labels only */
+  --text-2xs--line-height: 1.4;
+  --text-xs: 0.6875rem; /* 11px */
+  --text-xs--line-height: 1.45;
+  --text-sm: 0.78125rem; /* 12.5px — control + secondary-body base */
   --text-sm--line-height: 1.5;
-  --text-base: 1rem; /* 16px — body */
-  --text-base--line-height: 1.6;
-  --text-lg: 1.125rem; /* 18px */
-  --text-lg--line-height: 1.5;
-  --text-xl: 1.25rem; /* 20px */
-  --text-xl--line-height: 1.4;
-  --text-2xl: 1.5rem; /* 24px */
-  --text-2xl--line-height: 1.3;
-  --text-3xl: 1.875rem; /* 30px */
-  --text-3xl--line-height: 1.2;
-  --text-4xl: 2.25rem; /* 36px — hero */
-  --text-4xl--line-height: 1.1;
+  --text-base: 0.875rem; /* 14px — body */
+  --text-base--line-height: 1.55;
+  --text-lg: 1rem; /* 16px */
+  --text-lg--line-height: 1.4;
+  --text-xl: 1.125rem; /* 18px */
+  --text-xl--line-height: 1.3;
+  --text-2xl: 1.375rem; /* 22px */
+  --text-2xl--line-height: 1.2;
+  --text-3xl: 1.75rem; /* 28px */
+  --text-3xl--line-height: 1.1;
+  --text-4xl: 2rem; /* 32px — the single hero step */
+  --text-4xl--line-height: 1.05;
 
-  /* Three registers: Inter = chrome (working UI), Source Serif 4 = voice (wordmark,
-     greetings, artifact titles, empty-state headlines), Geist Mono = the machine
-     layer (counts, versions, kbd, uppercase eyebrows). Serif is applied per
-     call-site — --font-heading stays Inter so tool-chrome headings never drift. */
+  /* One typeface. Inter carries the working chrome AND the voice moments
+     (wordmark, greetings, artifact titles, empty-state headlines) — the app is
+     Inter-only, so --font-serif is an alias, not a second face. The machine layer
+     (counts, versions, kbd, code) rides the system mono stack — no mono webfont. */
   --font-sans: "Inter Variable", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --font-sans--font-feature-settings: "cv02", "cv03", "cv04", "cv11", "ss01", "ss03";
-  --font-serif: "Source Serif 4 Variable", Georgia, serif;
-  --font-mono: "Geist Mono Variable", ui-monospace, Menlo, Consolas, monospace;
+  /* Aliased to Inter WITH the same OpenType features, so the ~15 `font-serif`
+     "voice" call-sites render as identically-tuned Inter (not the plain cut) —
+     one typeface, one rendering. The hook stays a named token in case a real
+     editorial face is ever wanted; today it is chrome. */
+  --font-serif: var(--font-sans);
+  --font-serif--font-feature-settings: "cv02", "cv03", "cv04", "cv11", "ss01", "ss03";
+  --font-mono: ui-monospace, Menlo, Consolas, monospace;
   --font-heading: var(--font-sans);
 }
 
 @layer base {
   * {
     @apply border-border outline-ring/50;
+  }
+  /* Native chrome (scrollbars, form-control glyphs, popups) follows the active
+     theme — no per-control scheme-dark patches needed. */
+  :root {
+    color-scheme: light;
+  }
+  .dark {
+    color-scheme: dark;
   }
   ::selection {
     background: var(--selection);
@@ -243,16 +255,18 @@
     /* Inter sits a touch loose at UI sizes; pull it in a hair. (The OpenType
        feature set rides in via the font-sans utility on <html>.) */
     letter-spacing: -0.011em;
-    /* Lets Inter/Source Serif switch to their Display cuts at large sizes. */
+    /* Lets Inter switch to its Display cut at large sizes. */
     font-optical-sizing: auto;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+    /* A whisper of film grain over the canvas — the material tell of the brand. */
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.82' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E");
   }
   a {
     color: var(--primary);
     text-decoration: none;
-    /* Links use the default cursor; hover states carry the affordance (Linear-style). */
-    cursor: default;
+    /* Links carry the pointer affordance on hover. */
+    cursor: pointer;
   }
   /* Tighten heading tracking a hair — the "this was designed" tell. */
   h1,
@@ -272,7 +286,7 @@
      code/link/strong come from the markdown renderer; .mention is the @mention pill. */
   .cmt-body code {
     font-family: var(--font-mono);
-    font-size: 11.5px;
+    font-size: var(--text-2xs); /* the mono micro step — no off-scale sizes */
     background: var(--muted);
     border: 1px solid var(--border-soft);
     border-radius: 5px;
@@ -286,13 +300,13 @@
   .cmt-body strong {
     font-weight: 700;
   }
-  /* Mentions are soft brand chips (amber wash + amber text), not solid pills — a
-     solid amber block next to body text competes with the page's real CTA. 10%
-     wash: the light theme's bronze text needs the quieter tint to stay AA. */
+  /* A mention reads as a solid tag, not faint coloured text, so the tagged person
+     can't miss it: full ink fill + its contrasting foreground. With a monochrome
+     accent there is no coloured CTA for it to compete with. */
   .mention {
-    color: var(--primary);
-    background: color-mix(in oklab, var(--primary) 10%, transparent);
-    font-weight: 600;
+    color: var(--primary-foreground);
+    background: var(--primary);
+    font-weight: 700;
     border-radius: 5px;
     padding: 1px 6px;
     white-space: nowrap;
@@ -303,8 +317,8 @@
      shift text metrics (padding out, equal negative margin back) so glyphs keep their
      advance and the highlight stays under the caret. */
   .mention-live {
-    color: var(--primary);
-    background: color-mix(in oklab, var(--primary) 10%, transparent);
+    color: var(--primary-foreground);
+    background: var(--primary);
     border-radius: 4px;
     padding: 0 3px;
     margin: 0 -3px;

@@ -1,7 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query"
-import { Lock, Share2, X } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
-import { toast } from "sonner"
 import {
   API_BASE,
   type ArtifactDomain,
@@ -11,8 +9,10 @@ import {
   type PublicProfile,
   type Role,
 } from "@/api"
+import { Icon } from "@/components/icons"
 import { EmptyState } from "@/components/shared/empty-state"
 import { RoleSelect } from "@/components/shared/role-select"
+import { Eyebrow } from "@/components/shared/section-eyebrow"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -32,6 +32,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import { toast } from "@/components/ui/sonner"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { getInitials } from "@/lib/initials"
 import { cn } from "@/lib/utils"
@@ -308,8 +309,11 @@ export function ShareButton({
       }}
     >
       <DialogTrigger asChild>
-        <Button data-testid="share-trigger" variant="outline" size="sm" title="Share this artifact">
-          <Share2 />
+        {/* The artifact page's ONE filled-ink primary — the toolbar's single focal
+            point (design-system.md: one filled primary per page; ink is where the
+            eye lands). Everything else in the bar is ghost. */}
+        <Button data-testid="share-trigger" variant="default" size="sm">
+          <Icon name="share" />
           Share
         </Button>
       </DialogTrigger>
@@ -339,6 +343,9 @@ export function ShareButton({
               <>
                 <form onSubmit={add} className="flex items-center gap-1.5">
                   <div className="relative flex-1">
+                    {/* WAI-APG combobox wiring: the input announces the popup and
+                        the arrow-key highlight (aria-activedescendant) — the
+                        visual `active` state was previously invisible to AT. */}
                     <Input
                       data-testid="share-email"
                       type="text"
@@ -347,6 +354,13 @@ export function ShareButton({
                       autoComplete="off"
                       placeholder="@username or email"
                       aria-label="Username or email"
+                      role="combobox"
+                      aria-expanded={suggest.length > 0}
+                      aria-autocomplete="list"
+                      aria-controls="share-suggest-list"
+                      aria-activedescendant={
+                        active >= 0 && suggest[active] ? `share-suggest-opt-${active}` : undefined
+                      }
                       value={email}
                       onChange={(e) => setEmail(e.target.value)}
                       onKeyDown={onAddKeyDown}
@@ -355,6 +369,9 @@ export function ShareButton({
                     {suggest.length > 0 && (
                       <div
                         data-testid="share-suggest"
+                        id="share-suggest-list"
+                        role="listbox"
+                        aria-label="People suggestions"
                         className="absolute inset-x-0 top-[calc(100%+4px)] z-40 max-h-56 overflow-y-auto rounded-xl bg-popover p-1 shadow-[var(--shadow-pop)] ring-1 ring-foreground/10"
                       >
                         {suggest.map((u, i) => (
@@ -362,6 +379,9 @@ export function ShareButton({
                             key={u.username}
                             type="button"
                             data-testid="share-suggest-item"
+                            id={`share-suggest-opt-${i}`}
+                            role="option"
+                            aria-selected={i === active}
                             // Keep the input focused so the click registers without blurring first.
                             onMouseDown={(e) => e.preventDefault()}
                             onClick={() => pick(u)}
@@ -390,7 +410,7 @@ export function ShareButton({
                       </div>
                     )}
                   </div>
-                  <div data-testid="share-role" className="w-[104px]">
+                  <div data-testid="share-role" className="w-26">
                     <RoleSelect
                       value={role}
                       onChange={setRole}
@@ -403,35 +423,35 @@ export function ShareButton({
                     variant="default"
                     size="sm"
                     type="submit"
-                    disabled={busy}
+                    loading={busy}
                   >
-                    {busy ? "…" : "Add"}
+                    {busy ? "Adding…" : "Add"}
                   </Button>
                 </form>
-                <p className="mt-1.5 text-xs text-muted-foreground">{BLURB[role]}.</p>
+                <p className="mt-1.5 text-sm text-muted-foreground">{BLURB[role]}.</p>
               </>
             ) : (
               <div
                 data-testid="share-viewonly"
-                className="flex items-center gap-2 rounded-lg bg-secondary px-3 py-2 text-xs text-muted-foreground"
+                className="flex items-center gap-2 rounded-lg bg-secondary px-3 py-2 text-sm text-muted-foreground"
               >
-                <Lock className="size-3.5 shrink-0" />
+                <Icon name="lock" />
                 View only · ask an owner or editor to change access.
               </div>
             )}
             {err && (
-              <p data-testid="share-error" role="alert" className="mt-2 text-xs text-destructive">
+              <p data-testid="share-error" role="alert" className="mt-2 text-sm text-destructive">
                 {err}
               </p>
             )}
 
             <div className="mt-3.5">
-              <div className="mb-1.5 font-mono text-2xs uppercase tracking-wide text-muted-foreground">
+              <Eyebrow as="div" className="mb-1.5">
                 People with access
-              </div>
+              </Eyebrow>
               {members.length === 0 ? (
                 <div data-testid="share-empty">
-                  <EmptyState className="p-6 text-xs">
+                  <EmptyState className="p-6">
                     {canManage ? "No one shared yet." : "Just you and the workspace."}
                   </EmptyState>
                 </div>
@@ -441,7 +461,7 @@ export function ShareButton({
                     <div
                       key={m.user_id}
                       data-testid={`share-member-row-${m.user_id}`}
-                      className="flex items-center gap-2 rounded-lg px-2 py-1 hover:bg-hover"
+                      className="flex items-center gap-2 rounded-lg px-2 py-1 hover:bg-secondary"
                     >
                       <div className="min-w-0 flex-1">
                         <div className="truncate text-sm font-medium text-foreground">
@@ -455,7 +475,7 @@ export function ShareButton({
                       </div>
                       {canManage ? (
                         <>
-                          <div data-testid={`share-member-role-${m.user_id}`} className="w-[92px]">
+                          <div data-testid={`share-member-role-${m.user_id}`} className="w-23">
                             <RoleSelect
                               value={m.role}
                               onChange={(next) => change(m, next)}
@@ -470,13 +490,13 @@ export function ShareButton({
                             onClick={() => remove(m)}
                             aria-label={`Remove ${m.name ?? (m.handle ? `@${m.handle}` : "member")}`}
                           >
-                            <X />
+                            <Icon name="close" />
                           </Button>
                         </>
                       ) : (
                         <span
                           data-testid={`share-member-role-${m.user_id}`}
-                          className="text-xs text-muted-foreground"
+                          className="text-sm text-muted-foreground"
                         >
                           {ROLE_LABEL[m.role]}
                         </span>
@@ -489,9 +509,9 @@ export function ShareButton({
 
             {/* General access (visibility) — the "anyone with the link" control. */}
             <div className="mt-4 border-t border-border pt-3.5">
-              <div className="mb-1.5 font-mono text-2xs uppercase tracking-wide text-muted-foreground">
+              <Eyebrow as="div" className="mb-1.5">
                 General access
-              </div>
+              </Eyebrow>
               {canManage ? (
                 <>
                   <div className="flex gap-1.5">
@@ -529,10 +549,11 @@ export function ShareButton({
                       data-testid="share-visibility-save"
                       variant="secondary"
                       size="sm"
-                      disabled={savingVis || needsPw || visUnchanged}
+                      loading={savingVis}
+                      disabled={needsPw || visUnchanged}
                       onClick={saveVisibility}
                     >
-                      {savingVis ? "…" : "Update"}
+                      {savingVis ? "Updating…" : "Update"}
                     </Button>
                   </div>
                   {vis === "password" && (
@@ -550,7 +571,7 @@ export function ShareButton({
                       className="mt-1.5"
                     />
                   )}
-                  <p className="mt-1.5 text-xs text-muted-foreground">
+                  <p className="mt-1.5 text-sm text-muted-foreground">
                     {ACCESS.find((a) => a.value === vis)?.blurb}
                     {reach && genRole === "commenter" && " Signed-in visitors can comment."}
                   </p>
@@ -568,9 +589,9 @@ export function ShareButton({
             {/* Embed — drop the artifact into any page. Shows for anyone who can open
                 the link, so it needs link- or world-readable access. */}
             <div>
-              <div className="mb-1.5 font-mono text-2xs uppercase tracking-wide text-muted-foreground">
+              <Eyebrow as="div" className="mb-1.5">
                 Embed
-              </div>
+              </Eyebrow>
               <div className="flex gap-1.5">
                 <Input
                   readOnly
@@ -578,7 +599,7 @@ export function ShareButton({
                   aria-label="Embed code"
                   value={embedSnippet}
                   onFocus={(e) => e.currentTarget.select()}
-                  className="flex-1 bg-secondary font-mono text-xs dark:bg-secondary sm:text-xs"
+                  className="flex-1 bg-secondary font-mono"
                 />
                 <Button
                   data-testid="share-embed-copy"
@@ -589,7 +610,7 @@ export function ShareButton({
                   {copied ? "Copied" : "Copy"}
                 </Button>
               </div>
-              <p className="mt-1.5 text-xs text-muted-foreground">
+              <p className="mt-1.5 text-sm text-muted-foreground">
                 {linkAccessible
                   ? "Paste into any page — Notion, a blog, docs. Live, with a link back to Derive."
                   : "Set access to “Anyone with the link” or “Public” for the embed to load for others."}
@@ -600,9 +621,9 @@ export function ShareButton({
             origin. Only shown when the server has a base domain configured. */}
             {domainBase && (
               <div className="mt-4 border-t border-border pt-3.5">
-                <div className="mb-1.5 font-mono text-2xs uppercase tracking-wide text-muted-foreground">
+                <Eyebrow as="div" className="mb-1.5">
                   Custom URL
-                </div>
+                </Eyebrow>
                 {domains.length > 0 ? (
                   <div className="flex flex-col gap-1.5">
                     {domains.map((d) => (
@@ -613,7 +634,7 @@ export function ShareButton({
                           aria-label="Custom URL"
                           value={d.url}
                           onFocus={(e) => e.currentTarget.select()}
-                          className="flex-1 font-mono text-2xs sm:text-2xs"
+                          className="flex-1 font-mono"
                         />
                         <Button
                           variant="outline"
@@ -631,7 +652,7 @@ export function ShareButton({
                             onClick={() => dropDomain(d.host)}
                             aria-label="Remove custom URL"
                           >
-                            <X />
+                            <Icon name="close" />
                           </Button>
                         )}
                       </div>
@@ -655,15 +676,16 @@ export function ShareButton({
                       variant="secondary"
                       size="sm"
                       type="submit"
-                      disabled={claiming || !label.trim()}
+                      loading={claiming}
+                      disabled={!label.trim()}
                     >
-                      {claiming ? "…" : "Claim"}
+                      {claiming ? "Claiming…" : "Claim"}
                     </Button>
                   </form>
                 ) : (
-                  <p className="text-xs text-muted-foreground">No custom URL.</p>
+                  <p className="text-sm text-muted-foreground">No custom URL.</p>
                 )}
-                <p className="mt-1.5 text-xs text-muted-foreground">
+                <p className="mt-1.5 text-sm text-muted-foreground">
                   A clean URL on {domainBase}, served at its own origin. Works for link- or
                   world-readable artifacts.
                 </p>
@@ -674,9 +696,9 @@ export function ShareButton({
                 domains (managed in workspace settings, shown read-only here). */}
             {workspaceDomains.length > 0 && (
               <div className="mt-4 border-t border-border pt-3.5">
-                <div className="mb-1.5 font-mono text-2xs uppercase tracking-wide text-muted-foreground">
+                <Eyebrow as="div" className="mb-1.5">
                   Also at
-                </div>
+                </Eyebrow>
                 <div className="flex flex-col gap-1.5">
                   {workspaceDomains.map((d) => (
                     <div key={d.host} className="flex items-center gap-1.5">
@@ -686,7 +708,7 @@ export function ShareButton({
                         aria-label={`URL on ${d.host}`}
                         value={d.url}
                         onFocus={(e) => e.currentTarget.select()}
-                        className="flex-1 font-mono text-2xs sm:text-2xs"
+                        className="flex-1 font-mono"
                       />
                       <Button
                         variant="outline"
@@ -699,7 +721,7 @@ export function ShareButton({
                     </div>
                   ))}
                 </div>
-                <p className="mt-1.5 text-xs text-muted-foreground">
+                <p className="mt-1.5 text-sm text-muted-foreground">
                   On your workspace's custom domain. Manage domains in workspace settings.
                 </p>
               </div>

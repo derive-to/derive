@@ -91,7 +91,7 @@ export function CodeEditor({
               backgroundColor: "transparent",
               fontSize: "13px", // tokens-ignore: CodeMirror raw-CSS theme; editor font px, not a design token
             },
-            // Editable focus grammar: no outline, soft amber glow via the ring token.
+            // Editable focus grammar: no outline, soft ink glow via the ring token.
             "&.cm-focused": {
               outline: "none",
               boxShadow: "0 0 0 2px color-mix(in oklab, var(--ring) 40%, transparent)",

@@ -193,8 +193,9 @@ test("capture the dashboard across themes and viewports", async ({ page: p }) =>
 
   // Republish one artifact twice so a card carries version history — exercises
   // the v{n} placard and the stacked version-deck under-edges on its frame.
+  const s = SEEDS[2]
+  if (!s) throw new Error("SEEDS[2] missing — the seed list shrank")
   for (const n of [2, 3]) {
-    const s = SEEDS[2]
     const res = await p.request.post(`/v1/artifacts/${ids[2]}/versions`, {
       multipart: {
         file: { name: s.name, mimeType: s.type, buffer: Buffer.from(s.body) },
@@ -246,6 +247,16 @@ test("capture the dashboard across themes and viewports", async ({ page: p }) =>
     await p.goto("/")
     await settle(p)
     await shot(`library-${theme}-desktop`)
+
+    // TEMP: open the account menu and shoot it (revert after).
+    await p
+      .getByTestId("user-menu-trigger")
+      .click()
+      .catch(() => {})
+    await p.waitForTimeout(300)
+    await shot(`usermenu-${theme}`)
+    await p.keyboard.press("Escape").catch(() => {})
+    await p.waitForTimeout(150)
 
     // Card hover — verify the render "wakes" (glare-dim clears) + shadow lift.
     if (theme === "dark") {

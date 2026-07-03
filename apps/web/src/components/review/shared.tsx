@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react"
+import { type ComponentProps, useEffect, useState } from "react"
 import type { ProposalState } from "@/api"
+import type { StatusPanel } from "@/components/shared/status-panel"
 import { Badge } from "@/components/ui/badge"
 
 // Re-exported so the review modules keep their local import while there's one
@@ -23,9 +24,10 @@ export function useNarrow(): boolean {
 type StateMeta = {
   label: string
   badge: "default" | "secondary" | "destructive" | "outline" | "brand" | "success" | "warning"
-  // banner = the tinted strip shown for a decided proposal's decision note.
-  banner: string
-  text: string
+  // tone = the StatusPanel tone for a decided proposal's decision-note banner
+  // (rendered in body.tsx) — the panel owns the fill + announce grammar; none of
+  // these states is "danger", so they all announce politely.
+  tone: NonNullable<ComponentProps<typeof StatusPanel>["tone"]>
 }
 
 // Review states map onto the status hues: approved = success, changes requested
@@ -34,26 +36,22 @@ export const STATE_META: Record<ProposalState, StateMeta> = {
   open: {
     label: "Open",
     badge: "secondary",
-    banner: "bg-accent",
-    text: "text-foreground",
+    tone: "neutral",
   },
   approved: {
     label: "Approved",
     badge: "success",
-    banner: "bg-success/10",
-    text: "text-success",
+    tone: "success",
   },
   changes_requested: {
     label: "Changes requested",
     badge: "warning",
-    banner: "bg-warning/10",
-    text: "text-warning",
+    tone: "warning",
   },
   withdrawn: {
     label: "Withdrawn",
     badge: "outline",
-    banner: "bg-secondary",
-    text: "text-muted-foreground",
+    tone: "neutral",
   },
 }
 

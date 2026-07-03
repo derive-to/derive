@@ -1,5 +1,7 @@
-import { X } from "lucide-react"
 import type { Follow } from "@/api"
+import { Icon } from "@/components/icons"
+import { Eyebrow } from "@/components/shared/section-eyebrow"
+import { Badge } from "@/components/ui/badge"
 
 // The top-of-feed "following" summary + manage surface: the caller's current
 // follows as chips — @<login> for GitHub authors, @<handle> for people, <path> for
@@ -15,9 +17,7 @@ export function FollowingStrip({
   if (follows.length === 0) return null
   return (
     <div className="mb-4 flex flex-wrap items-center gap-1.5" data-testid="following-strip">
-      <span className="mr-0.5 font-mono text-2xs uppercase tracking-wide text-muted-foreground">
-        Following
-      </span>
+      <Eyebrow>Following</Eyebrow>
       {follows.map((fol) => {
         // People-follows store a user id in `target` but carry a resolved `handle`; label
         // them @handle and unfollow BY handle (the server resolves it back to the id).
@@ -29,24 +29,25 @@ export function FollowingStrip({
               : fol.target
         const unfollowTarget = fol.kind === "user" ? (fol.handle ?? fol.target) : fol.target
         return (
-          <span
-            key={`${fol.kind}:${fol.target}`}
-            // Follow chips are neutral washes (the flat tonal badge grammar) —
-            // never brand tints.
-            className="inline-flex items-center gap-1 rounded-md bg-accent py-0.5 pl-2 pr-1 font-mono text-2xs text-foreground"
-          >
+          // Follow chips are the neutral Badge (never brand tints) in the machine
+          // register; overflow-visible lets the unfollow ×'s touch target escape.
+          <Badge key={`${fol.kind}:${fol.target}`} className="overflow-visible font-mono text-2xs">
             {label}
             <button
               type="button"
+              data-icon="inline-end"
               data-testid={`following-unfollow-${fol.kind}-${unfollowTarget}`}
-              title={`Unfollow ${label}`}
               aria-label={`Unfollow ${label}`}
               onClick={() => onUnfollow(fol.kind, unfollowTarget)}
-              className="grid size-4 place-items-center rounded text-muted-foreground outline-none hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+              className="relative grid size-4 place-items-center rounded-sm text-muted-foreground outline-none hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
             >
-              <X className="size-3" aria-hidden />
+              <Icon name="close" size={12} />
+              <span
+                aria-hidden
+                className="absolute top-1/2 left-1/2 size-[max(100%,3rem)] -translate-1/2 pointer-fine:hidden"
+              />
             </button>
-          </span>
+          </Badge>
         )
       })}
     </div>

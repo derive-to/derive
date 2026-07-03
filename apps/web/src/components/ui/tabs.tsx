@@ -24,13 +24,20 @@ const tabsListVariants = cva(
   {
     variants: {
       variant: {
-        // Filled segments stay a neutral muted wash — amber is reserved for the line underline.
+        // Filled segments stay a neutral muted wash — the ink accent is reserved for the line underline.
         default: "bg-muted",
         line: "gap-1 border-b border-border bg-transparent",
+      },
+      size: {
+        default: "",
+        // Compact segmented control (theme switch, editor mode toggle): one
+        // recipe, so call sites stop re-deriving their own small tabs.
+        sm: "p-0.5 group-data-horizontal/tabs:h-7",
       },
     },
     defaultVariants: {
       variant: "default",
+      size: "default",
     },
   },
 )
@@ -38,13 +45,15 @@ const tabsListVariants = cva(
 function TabsList({
   className,
   variant = "default",
+  size = "default",
   ...props
 }: React.ComponentProps<typeof TabsPrimitive.List> & VariantProps<typeof tabsListVariants>) {
   return (
     <TabsPrimitive.List
       data-slot="tabs-list"
       data-variant={variant}
-      className={cn(tabsListVariants({ variant }), className)}
+      data-size={size}
+      className={cn(tabsListVariants({ variant, size }), className)}
       {...props}
     />
   )
@@ -57,11 +66,11 @@ function TabsTrigger({ className, ...props }: React.ComponentProps<typeof TabsPr
       className={cn(
         // Weight never changes between states — active is signaled by surface/underline, not
         // bold. Color flips are instant (no transition).
-        "relative inline-flex h-[calc(100%-1px)] flex-1 items-center justify-center gap-1.5 rounded-md border border-transparent px-1.5 py-0.5 text-sm font-medium whitespace-nowrap text-muted-foreground group-data-vertical/tabs:w-full group-data-vertical/tabs:justify-start hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:pointer-events-none disabled:opacity-50 has-data-[icon=inline-end]:pr-1 has-data-[icon=inline-start]:pl-1 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
+        "relative inline-flex h-[calc(100%-1px)] flex-1 items-center justify-center gap-1.5 rounded-md border border-transparent px-1.5 py-0.5 text-sm font-medium whitespace-nowrap text-muted-foreground group-data-vertical/tabs:w-full group-data-vertical/tabs:justify-start group-data-[size=sm]/tabs-list:text-xs hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:pointer-events-none disabled:opacity-50 has-data-[icon=inline-end]:pr-1 has-data-[icon=inline-start]:pl-1 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
         // Filled variant: active trigger lifts onto a neutral surface — shadow-sm reads only in
         // light (dark zeroes the shadow vars), so dark lifts with the accent wash instead.
         "data-active:text-foreground group-data-[variant=default]/tabs-list:data-active:bg-background group-data-[variant=default]/tabs-list:data-active:shadow-sm dark:group-data-[variant=default]/tabs-list:data-active:bg-accent",
-        // Line variant: the amber underline is the ONE amber selected state — an underlined tab
+        // Line variant: the inked underline is the ONE ink selected state — an underlined tab
         // is nav-like. The opacity fade is movement-free motion, allowed.
         "after:absolute after:bg-primary after:opacity-0 after:transition-opacity group-data-horizontal/tabs:after:inset-x-0 group-data-horizontal/tabs:after:bottom-[-5px] group-data-horizontal/tabs:after:h-0.5 group-data-vertical/tabs:after:inset-y-0 group-data-vertical/tabs:after:-right-1 group-data-vertical/tabs:after:w-0.5 group-data-[variant=line]/tabs-list:data-active:after:opacity-100",
         className,

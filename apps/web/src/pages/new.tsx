@@ -1,7 +1,7 @@
 import { useNavigate } from "@tanstack/react-router"
 import { useState } from "react"
-import { toast } from "sonner"
 import { api } from "@/api"
+import { toast } from "@/components/ui/sonner"
 import { refFor } from "./artifact/parse-ref"
 import { SourceEditor } from "./artifact/source-editor"
 

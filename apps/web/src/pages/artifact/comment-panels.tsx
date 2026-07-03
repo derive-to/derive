@@ -1,9 +1,19 @@
-import { type Dispatch, type SetStateAction, useEffect, useRef, useState } from "react"
+import {
+  type Dispatch,
+  type SetStateAction,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react"
 import type { Comment, Mention } from "@/api"
 import { Icon } from "@/components/icons"
 import { EmptyState } from "@/components/shared/empty-state"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { Kbd } from "@/components/ui/kbd"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { useFocusTrap } from "@/lib/use-focus-trap"
 import { cn } from "@/lib/utils"
 import {
@@ -14,17 +24,12 @@ import {
   ResolvedSection,
 } from "./comment-thread"
 import { useCommentScope } from "./lib/comment-scope"
-import { IconBtn } from "./rail-deck"
 import { type PinItem, type Sel, selLabel } from "./types"
 
 type Tab = "comments" | "personal"
 
-// Machine register: a neutral mono count, not an amber signal.
-const TabCount = ({ n }: { n: number }) => (
-  <span className="rounded-full bg-accent px-1.5 font-mono text-2xs font-medium tabular-nums text-muted-foreground">
-    {n}
-  </span>
-)
+// Machine register: a neutral mono count, not an ink signal.
+const TabCount = ({ n }: { n: number }) => <Badge shape="pill">{n}</Badge>
 
 /** The Comments | Personal switch in a panel header — the shared shadcn Tabs control,
  *  so it matches Settings/Share. Personal is your private notes, visible only to you
@@ -43,14 +48,17 @@ function CommentTabs({
 }) {
   return (
     <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)} className="min-w-0 flex-1">
-      <TabsList className="h-7 w-full">
+      <TabsList size="sm" className="w-full">
+        {/* Labels get their own element (never a bare text node beside the count
+            pill): truncation stays controllable and the label reads as exactly
+            "Comments" to tests/AT even when a count rides along. */}
         <TabsTrigger value="comments" data-testid="comment-tab-comments" className="flex-1">
-          Comments
+          <span>Comments</span>
           {publicCount > 0 && <TabCount n={publicCount} />}
         </TabsTrigger>
         <TabsTrigger value="personal" data-testid="comment-tab-personal" className="flex-1">
           <Icon name="lock" size={12} />
-          Personal
+          <span>Personal</span>
           {personalCount > 0 && <TabCount n={personalCount} />}
         </TabsTrigger>
       </TabsList>
@@ -167,19 +175,19 @@ export function MobileComments({
         tabIndex={open && !composer && size === "full" ? 0 : -1}
         onClick={() => setSize("peek")}
         className={cn(
-          "fixed inset-0 z-[60] bg-scrim/50 transition-opacity",
+          "fixed inset-0 z-60 bg-scrim/50 transition-opacity",
           open && !composer && size === "full" ? "opacity-100" : "pointer-events-none opacity-0",
         )}
       />
       <div
         ref={sheetRef}
         className={cn(
-          "fixed inset-x-0 bottom-0 z-[61] flex flex-col rounded-t-2xl border-t border-border bg-card shadow-[0_-14px_44px_-18px_rgba(0,0,0,0.5)] duration-[260ms] dark:shadow-none",
+          "fixed inset-x-0 bottom-0 z-61 flex flex-col rounded-t-2xl border-t border-border bg-card shadow-[var(--shadow-pop)] duration-200",
           // Don't animate height while the keyboard repositions the sheet.
           kb ? "transition-transform" : "transition-[transform,height]",
           // Composing: a compact bar sized to its content (capped), so the box sits
           // flush above the keyboard rather than high up in a tall sheet.
-          composer ? "max-h-[80vh]" : size === "full" ? "h-[88vh]" : "h-[74px]",
+          composer ? "max-h-[80vh]" : size === "full" ? "h-[88vh]" : "h-18.5",
           open ? "translate-y-0" : "translate-y-full",
         )}
         // While the keyboard is up, lift the sheet's bottom to just above it and cap
@@ -192,10 +200,12 @@ export function MobileComments({
         {/* biome-ignore lint/a11y/useKeyWithClickEvents lint/a11y/noStaticElementInteractions: grip resizes the sheet; ✕ closes. */}
         <div
           data-testid="comments-sheet-grip"
-          className="mx-auto mb-1 mt-[9px] h-1 w-10 shrink-0 cursor-grab rounded-full bg-border"
+          className="flex shrink-0 cursor-grab justify-center pb-1 pt-2"
           onClick={grip}
           title="Resize"
-        />
+        >
+          <div className="h-1 w-10 rounded-full bg-border" />
+        </div>
         <div className="flex items-center gap-2 border-b border-border-soft pb-3 pl-3 pr-2.5 pt-2">
           <CommentTabs
             tab={tab}
@@ -217,17 +227,24 @@ export function MobileComments({
               New
             </Button>
           )}
-          <IconBtn
-            big
-            title={size === "peek" ? "Expand" : "Collapse"}
-            testId="comments-sheet-resize"
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label={size === "peek" ? "Expand" : "Collapse"}
+            data-testid="comments-sheet-resize"
             onClick={() => setSize(size === "peek" ? "full" : "peek")}
           >
-            <Icon name="caret" size={20} className={size === "peek" ? "rotate-180" : undefined} />
-          </IconBtn>
-          <IconBtn big title="Close comments" onClick={onClose}>
-            <Icon name="close" size={20} />
-          </IconBtn>
+            <Icon name="caret" className={cn("size-4", size === "peek" && "rotate-180")} />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label="Close comments"
+            data-testid="comments-sheet-close"
+            onClick={onClose}
+          >
+            <Icon name="close" className="size-4" />
+          </Button>
         </div>
         {composer ? (
           // Composing ("half open"): just the composer, so the sheet is a compact bar
@@ -252,11 +269,28 @@ export function MobileComments({
               <EmptyState
                 className="p-8"
                 icon={<Icon name={tab === "personal" ? "lock" : "comments"} strokeWidth={1.75} />}
-                title={tab === "personal" ? "No personal notes yet." : "No comments yet."}
+                title={
+                  tab === "personal" ? "A private layer, just for you." : "Start the conversation."
+                }
                 description={
                   tab === "personal"
-                    ? "Only you and your agents can see these."
-                    : "Select text in the document to start one."
+                    ? "Only you and your agents can see these notes."
+                    : "Select text in the document, or add a general comment."
+                }
+                action={
+                  canComment ? (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      data-testid="comments-sheet-empty-new"
+                      onClick={() => {
+                        setSize("full")
+                        onNewGeneral()
+                      }}
+                    >
+                      New comment
+                    </Button>
+                  ) : undefined
                 }
               />
             )}
@@ -352,9 +386,28 @@ export function OpenPanel(props: {
   const generalComposer = composer && !composer.anchor
   const empty = openCount === 0 && resolved.length === 0 && !composer
 
+  // The panel now docks under the full-width top bar, so this header sits above
+  // the pinned zone. Cards are placed from the document's top, so feed the
+  // header's height down as `topInset` to shift them back into alignment with
+  // their highlights (see PinnedZone). Measured, so it tracks any header reflow.
+  const headerRef = useRef<HTMLDivElement>(null)
+  const [headerH, setHeaderH] = useState(0)
+  useLayoutEffect(() => {
+    const el = headerRef.current
+    if (!el) return
+    const sync = () => setHeaderH(el.offsetHeight)
+    sync()
+    const ro = new ResizeObserver(sync)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+
   return (
     <>
-      <div className="flex items-center gap-1 border-b border-border-soft py-1.5 pl-2.5 pr-2">
+      <div
+        ref={headerRef}
+        className="flex items-center gap-1 border-b border-border-soft py-1.5 pl-2.5 pr-2"
+      >
         <CommentTabs
           tab={tab}
           setTab={setTab}
@@ -362,13 +415,37 @@ export function OpenPanel(props: {
           personalCount={personalCount}
         />
         {canComment && (
-          <IconBtn title="New comment" testId="comment-new" onClick={onNewGeneral}>
-            <Icon name="plus" size={16} />
-          </IconBtn>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                aria-label="New comment"
+                data-testid="comment-new"
+                onClick={onNewGeneral}
+              >
+                <Icon name="plus" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>New comment</TooltipContent>
+          </Tooltip>
         )}
-        <IconBtn title="Close comments (c)" onClick={onHide}>
-          <Icon name="close" size={16} />
-        </IconBtn>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              aria-label="Close comments"
+              data-testid="comments-panel-close"
+              onClick={onHide}
+            >
+              <Icon name="close" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>
+            Close comments <Kbd>c</Kbd>
+          </TooltipContent>
+        </Tooltip>
       </div>
 
       <div className="relative min-h-0 flex-1 overflow-hidden">
@@ -377,6 +454,7 @@ export function OpenPanel(props: {
         <PinnedZone
           pins={pinned}
           personal={tab === "personal"}
+          topInset={headerH}
           scrollY={scrollY}
           onScrollDoc={onScrollDoc}
           composer={composer}
@@ -398,11 +476,25 @@ export function OpenPanel(props: {
             <EmptyState
               className="p-0"
               icon={<Icon name={tab === "personal" ? "lock" : "comments"} strokeWidth={1.75} />}
-              title={tab === "personal" ? "No personal notes yet." : "No comments yet."}
+              title={
+                tab === "personal" ? "A private layer, just for you." : "Start the conversation."
+              }
               description={
                 tab === "personal"
                   ? "Jot one for yourself, or leave instructions your agents will pick up."
-                  : "Select text in the document to start one."
+                  : "Select text in the document, or add a general comment."
+              }
+              action={
+                canComment ? (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    data-testid="comments-empty-new"
+                    onClick={onNewGeneral}
+                  >
+                    New comment
+                  </Button>
+                ) : undefined
               }
             />
           </div>

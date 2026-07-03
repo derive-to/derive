@@ -135,14 +135,14 @@ export function ReviewOverlay({
 
   const ViewTabs = (
     <Tabs value={view} onValueChange={(v) => setView(v as View)}>
-      <TabsList className="h-8">
-        <TabsTrigger value="proposed" data-testid="review-view-proposed" className="px-2.5 py-0.5">
+      <TabsList>
+        <TabsTrigger value="proposed" data-testid="review-view-proposed">
           Proposed
         </TabsTrigger>
-        <TabsTrigger value="current" data-testid="review-view-current" className="px-2.5 py-0.5">
+        <TabsTrigger value="current" data-testid="review-view-current">
           Current
         </TabsTrigger>
-        <TabsTrigger value="diff" data-testid="review-view-diff" className="px-2.5 py-0.5">
+        <TabsTrigger value="diff" data-testid="review-view-diff">
           Diff
         </TabsTrigger>
       </TabsList>
@@ -155,25 +155,25 @@ export function ReviewOverlay({
       role="dialog"
       aria-modal="true"
       aria-label="Review proposed changes"
-      className="fixed inset-0 z-[80] flex flex-col bg-background"
+      className="fixed inset-0 z-80 flex flex-col bg-background"
     >
       {/* Top bar: selected proposal identity + view controls. */}
       <div className="flex flex-wrap items-center gap-3 border-b border-border bg-card px-3 py-2.5 md:flex-nowrap md:px-5">
-        {/* Mono eyebrow grammar: uppercase only with mono + tracking-wide. */}
-        <Badge variant="secondary" className="flex-none font-mono text-2xs tracking-wide">
+        {/* Mono eyebrow grammar: the machine-register pill (uppercase needs tracking-wide). */}
+        <Badge variant="secondary" shape="pill" className="flex-none tracking-wide">
           REVIEW
         </Badge>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             <span
               data-testid="review-title"
-              className="truncate text-sm font-semibold text-foreground"
+              className="truncate text-sm font-medium text-foreground"
             >
               {active?.message ?? "Proposed change"}
             </span>
             {active && !narrow && <StateBadge state={active.state} />}
           </div>
-          <div className="truncate text-xs text-muted-foreground">
+          <div className="truncate font-mono text-2xs text-muted-foreground">
             {active ? `${active.author} · proposed ${ago(active.created_at)}` : "Loading…"}
           </div>
         </div>
@@ -182,7 +182,7 @@ export function ReviewOverlay({
             <SelectTrigger
               data-testid="review-proposal-select"
               aria-label="Select proposal"
-              className="w-[150px] flex-none"
+              className="w-37.5 flex-none"
             >
               <SelectValue />
             </SelectTrigger>
@@ -212,8 +212,8 @@ export function ReviewOverlay({
       {/* Context strip. */}
       <div
         className={cn(
-          "flex items-center gap-2 border-b border-l-[3px] border-border-soft px-5 py-1.5 text-xs font-medium",
-          // "Viewing the proposed version" is a brand moment: amber bar + soft tint.
+          "flex items-center gap-2 border-b border-l-[3px] border-border-soft px-5 py-1.5 text-sm font-medium",
+          // "Viewing the proposed version" is a brand moment: ink bar + soft tint.
           strip.accent
             ? "border-l-primary bg-primary/10 text-foreground"
             : "border-l-border bg-card text-muted-foreground",

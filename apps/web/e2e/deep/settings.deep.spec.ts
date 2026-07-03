@@ -7,9 +7,7 @@ test("owner manages workspace, webhooks, and agents through the tabs", async ({
   owner,
   secondUser,
 }) => {
-  // Member / webhook / agent removal go through a native confirm().
-  owner.on("dialog", (d) => d.accept())
-
+  // Member / webhook / agent removal confirm via the in-app ConfirmDialog.
   await owner.goto("/settings")
 
   // --- Workspace tab (Profile is the default now; switch to Workspace) ---
@@ -31,6 +29,7 @@ test("owner manages workspace, webhooks, and agents through the tabs", async ({
   await owner.getByTestId("webhook-add").click()
   await expect(owner.locator('[data-testid^="webhook-row-"]')).toHaveCount(1)
   await owner.locator('[data-testid^="webhook-remove-"]').click()
+  await owner.getByTestId("confirm-dialog-confirm").click()
   await expect(owner.locator('[data-testid^="webhook-row-"]')).toHaveCount(0)
 
   // --- Agents tab ---
@@ -41,5 +40,6 @@ test("owner manages workspace, webhooks, and agents through the tabs", async ({
   await owner.getByTestId("agent-token-done").click()
   await expect(owner.locator('[data-testid^="agent-row-"]')).toHaveCount(1)
   await owner.locator('[data-testid^="agent-remove-"]').click()
+  await owner.getByTestId("confirm-dialog-confirm").click()
   await expect(owner.locator('[data-testid^="agent-row-"]')).toHaveCount(0)
 })

@@ -1,3 +1,5 @@
+import { Eyebrow } from "@/components/shared/section-eyebrow"
+import { Button } from "@/components/ui/button"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { useCursorPref } from "@/ctx"
 import { CursorSwitch } from "./cursor-switch"
@@ -10,21 +12,26 @@ export function CursorButton() {
   const { pref } = useCursorPref()
   return (
     <Popover>
+      {/* No Tooltip layer: TooltipTrigger + PopoverTrigger asChild on one
+          button loops radix's composed refs (verified in e2e). aria-label
+          carries the name; the popover itself is the explanation. */}
       <PopoverTrigger asChild>
-        <button
-          type="button"
+        {/* Glyph at 14 to match the icon-xs register (the button sizes svgs to
+            3.5 anyway; the emoji branch follows suit via fontSize). */}
+        <Button
+          variant="ghost"
+          size="icon-xs"
           data-testid="cursor-self-trigger"
-          title="Customize your cursor"
           aria-label="Customize your cursor"
-          className="grid size-[26px] place-items-center rounded-md text-muted-foreground hover:bg-hover"
+          className="text-muted-foreground"
         >
-          <CursorGlyph color={pref.color} kind={pref.kind} emoji={pref.emoji} size={16} />
-        </button>
+          <CursorGlyph color={pref.color} kind={pref.kind} emoji={pref.emoji} size={14} />
+        </Button>
       </PopoverTrigger>
       <PopoverContent align="end" className="w-60 gap-0 p-2">
-        <div className="px-0.5 pb-1.5 font-mono text-2xs uppercase tracking-wide text-muted-foreground">
+        <Eyebrow as="div" className="px-0.5 pb-1.5">
           Your cursor
-        </div>
+        </Eyebrow>
         <CursorSwitch />
       </PopoverContent>
     </Popover>

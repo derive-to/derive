@@ -69,6 +69,7 @@
         "noAutofocus": "error",
         "useIframeTitle": "error",
         "noSvgWithoutTitle": "error",
+        "noRedundantRoles": "off",
         "noLabelWithoutControl": {
           "level": "error",
           "options": {
@@ -86,6 +87,26 @@
           "a11y": {
             "useSemanticElements": "off",
             "useKeyWithClickEvents": "off"
+          }
+        }
+      }
+    },
+    {
+      "includes": ["apps/web/src/**", "!apps/web/src/components/ui/sonner.tsx"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": ["sonner"],
+                    "message": "Import toast/Toaster from @/components/ui/sonner — the configured house layer (error toasts linger 8s)."
+                  }
+                ]
+              }
+            }
           }
         }
       }

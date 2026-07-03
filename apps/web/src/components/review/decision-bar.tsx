@@ -48,10 +48,10 @@ export function ReviewDecisionBar({
       {noteFor && (
         <div className="px-4 pt-2.5">
           {noteFor === "approve" && (
-            <div className="mb-2 text-xs leading-relaxed">
+            <div className="mb-2 text-sm">
               {stale ? (
                 <span className="text-warning">
-                  <b className="font-medium">Heads up:</b> this was proposed against v
+                  <strong className="font-medium">Heads up:</strong> this was proposed against v
                   {active?.base_version}, but the live version is now v{currentVersion}. Approving
                   replaces v{currentVersion} entirely. Approve anyway?
                 </span>
@@ -80,7 +80,7 @@ export function ReviewDecisionBar({
       )}
       <div className="flex items-center gap-2.5 px-4 py-2.5">
         {err ? (
-          <span data-testid="review-error" className="text-xs text-destructive">
+          <span data-testid="review-error" className="text-sm text-destructive">
             {err}
           </span>
         ) : (
@@ -88,7 +88,7 @@ export function ReviewDecisionBar({
           canApprove &&
           !narrow &&
           !noteFor && (
-            <span className="text-xs text-muted-foreground">
+            <span className="text-sm text-muted-foreground">
               Approving publishes this as the new live version.
             </span>
           )
@@ -107,24 +107,22 @@ export function ReviewDecisionBar({
               Cancel
             </Button>
             {noteFor === "changes" ? (
-              // Request changes is warning-toned (soft tint) — never a filled amber.
+              // Request changes is warning-toned (soft tint) — never a filled ink.
               <Button
                 data-testid="review-send-request"
-                variant="ghost"
+                variant="warning"
                 size="sm"
-                className="bg-warning/10 text-warning hover:bg-warning/15 hover:text-warning"
                 disabled={busy || !note.trim()}
                 onClick={onSubmitChanges}
               >
                 {busy ? "Sending…" : "Send request"}
               </Button>
             ) : (
-              // Approve is success-toned (soft tint) — never a filled amber.
+              // Approve is success-toned (soft tint) — never a filled ink.
               <Button
                 data-testid="review-approve-confirm"
-                variant="ghost"
+                variant="success"
                 size="sm"
-                className="bg-success/10 text-success hover:bg-success/15 hover:text-success"
                 disabled={busy}
                 onClick={onConfirmApprove}
               >
@@ -151,9 +149,8 @@ export function ReviewDecisionBar({
                 <>
                   <Button
                     data-testid="review-request-changes"
-                    variant="ghost"
+                    variant="warning"
                     size="sm"
-                    className="bg-warning/10 text-warning hover:bg-warning/15 hover:text-warning"
                     disabled={busy}
                     onClick={onOpenChanges}
                   >
@@ -161,9 +158,8 @@ export function ReviewDecisionBar({
                   </Button>
                   <Button
                     data-testid="review-approve"
-                    variant="ghost"
+                    variant="success"
                     size="sm"
-                    className="bg-success/10 text-success hover:bg-success/15 hover:text-success"
                     disabled={busy}
                     onClick={onOpenApprove}
                   >
@@ -172,7 +168,7 @@ export function ReviewDecisionBar({
                 </>
               ) : (
                 !isAuthor && (
-                  <span className="text-xs text-muted-foreground">Only an editor can approve.</span>
+                  <span className="text-sm text-muted-foreground">Only an editor can approve.</span>
                 )
               )}
             </>

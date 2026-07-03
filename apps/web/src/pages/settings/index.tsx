@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react"
 import { api, type Report } from "@/api"
+import { PageHeader } from "@/components/shared/page-header"
 import { PageShell } from "@/components/shared/page-shell"
 import { Badge } from "@/components/ui/badge"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -53,14 +54,11 @@ export function Settings() {
   return (
     // The shell's SidebarInset is already the page's <main> — this is just the
     // scrolling content column.
-    <PageShell>
-      <h1 className="text-2xl font-semibold tracking-tight">Settings</h1>
-      <p className="mt-1 text-sm text-pretty text-muted-foreground">
-        Your profile, workspace, and integrations.
-      </p>
+    <PageShell className="flex flex-col gap-6">
+      <PageHeader title="Settings" subtitle="Your profile, workspace, and integrations." />
 
-      <Tabs value={tab} onValueChange={setTab} className="mt-6">
-        <TabsList variant="line" className="max-w-full overflow-x-auto pb-1.5">
+      <Tabs value={tab} onValueChange={setTab}>
+        <TabsList variant="line" className="max-w-full overflow-x-auto">
           <TabsTrigger data-testid="settings-tab-profile" value="profile">
             Profile
           </TabsTrigger>
@@ -85,7 +83,7 @@ export function Settings() {
           {hasReports && (
             <TabsTrigger data-testid="settings-tab-reports" value="reports">
               Reports
-              <Badge variant="destructive" className="font-mono tabular-nums">
+              <Badge variant="destructive" shape="pill">
                 {openReports.length}
               </Badge>
             </TabsTrigger>

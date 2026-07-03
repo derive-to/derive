@@ -26,7 +26,7 @@ test("the notification bell opens an empty panel", async ({ owner }) => {
     owner.locator('[data-slot="popover-content"]').getByText("Notifications", { exact: true }),
   ).toBeVisible()
   // exact, so it doesn't collide with the empty library's "Nothing yet. Publish…"
-  await expect(owner.getByText("Nothing yet", { exact: true })).toBeVisible()
+  await expect(owner.getByText("Nothing yet.", { exact: true })).toBeVisible()
 })
 
 test("sign out returns to the login screen", async ({ owner }) => {
@@ -39,5 +39,5 @@ test("sign out returns to the login screen", async ({ owner }) => {
 // in the a11y pass). Located by ROLE + NAME, so a dropped aria-label fails here.
 test("icon-only chrome controls expose accessible names", async ({ owner }) => {
   await expect(owner.getByRole("button", { name: "Search (⌘K)" })).toBeVisible()
-  await expect(owner.getByRole("textbox", { name: "Search artifacts by title" })).toBeVisible()
+  await expect(owner.getByRole("searchbox", { name: "Filter artifacts by title" })).toBeVisible()
 })

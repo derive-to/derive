@@ -1,9 +1,9 @@
-import { Camera } from "lucide-react"
-import { useRef, useState } from "react"
+import { useState } from "react"
 import { api } from "@/api"
 import { ProfileFields } from "@/components/profile-fields"
+import { AvatarPicker } from "@/components/shared/avatar-picker"
+import { FormField } from "@/components/shared/form-field"
 import { SectionTitle } from "@/components/shared/section-title"
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Card } from "@/components/ui/card"
 import { Checkbox } from "@/components/ui/checkbox"
 import { UsernameForm } from "@/components/username-form"
@@ -15,7 +15,6 @@ import { getInitials } from "@/lib/initials"
 // editable here. First tab in Settings — "we'll do even more in here" over time.
 export function ProfileSection() {
   const { me, setMe } = useAuth()
-  const fileRef = useRef<HTMLInputElement>(null)
   const [uploading, setUploading] = useState(false)
   const [discoverable, setDiscoverable] = useState(!!me?.discoverable)
   if (!me) return null
@@ -46,7 +45,7 @@ export function ProfileSection() {
   }
 
   return (
-    <section className="flex flex-col gap-4">
+    <section className="flex flex-col gap-6">
       <p className="text-sm text-muted-foreground">
         How you show up to your team across Derive: on your public profile, in the @mention picker,
         and the member directory. Your email always stays private.
@@ -55,49 +54,29 @@ export function ProfileSection() {
       {/* Photo + handle */}
       <Card className="p-4">
         <div className="flex flex-wrap items-start gap-4">
-          <div className="flex flex-col items-center gap-1">
-            <button
-              type="button"
-              data-testid="profile-avatar"
-              onClick={() => fileRef.current?.click()}
-              disabled={uploading}
-              className="group relative size-16 overflow-hidden rounded-full border border-dashed border-input outline-none hover:border-foreground/25 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:opacity-60"
-              aria-label="Change your profile photo"
-            >
-              <Avatar className="size-full rounded-full">
-                {me.image && <AvatarImage src={me.image} alt="Your avatar" />}
-                <AvatarFallback className="rounded-full">
-                  {me.name ? (
-                    <span className="text-xl font-medium">{initials}</span>
-                  ) : (
-                    <Camera className="size-5" strokeWidth={1.75} aria-hidden />
-                  )}
-                </AvatarFallback>
-              </Avatar>
-            </button>
-            <span className="text-xs text-muted-foreground">
-              {uploading ? "Uploading…" : me.image ? "Change" : "Add a photo"}
-            </span>
-            <input
-              ref={fileRef}
-              type="file"
-              accept="image/png,image/jpeg,image/gif,image/webp"
-              data-testid="profile-avatar-input"
-              className="hidden"
-              onChange={(e) => pickPhoto(e.target.files?.[0] ?? null)}
-            />
-          </div>
-          <div className="flex min-w-[240px] flex-1 flex-col gap-2">
-            <div className="text-sm font-medium leading-none">Username</div>
+          <AvatarPicker
+            image={me.image}
+            initials={me.name ? initials : null}
+            uploading={uploading}
+            onPick={pickPhoto}
+            ariaLabel="Change your profile photo"
+            testId="profile-avatar"
+          />
+          <FormField
+            label="Username"
+            className="min-w-60 flex-1"
+            hint={
+              <>
+                <span className="font-medium text-foreground">{me.email}</span> stays private.
+              </>
+            }
+          >
             <UsernameForm
               initial={me.username ?? ""}
               submitLabel={me.username ? "Update username" : "Save username"}
               onClaimed={(username) => setMe({ ...me, username })}
             />
-            <p className="text-xs text-muted-foreground">
-              <span className="font-medium text-foreground">{me.email}</span> stays private.
-            </p>
-          </div>
+          </FormField>
         </div>
       </Card>
 
@@ -119,7 +98,7 @@ export function ProfileSection() {
           />
           <span>
             Let people find me by username in search.
-            <span className="mt-0.5 block text-xs text-muted-foreground">
+            <span className="mt-0.5 block text-sm text-muted-foreground">
               On by default. Your @{me.username ?? "handle"}, name, role, and photo show up in
               people search; uncheck to hide yourself. Your email always stays private.
             </span>

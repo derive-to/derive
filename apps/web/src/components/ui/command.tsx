@@ -28,8 +28,8 @@ function Command({ className, ...props }: React.ComponentProps<typeof CommandPri
 }
 
 function CommandDialog({
-  title = "Command Palette",
-  description = "Search for a command to run...",
+  title = "Command palette",
+  description = "Search for a command to run.",
   children,
   className,
   showCloseButton = false,
@@ -42,18 +42,23 @@ function CommandDialog({
 }) {
   return (
     <Dialog {...props}>
-      <DialogHeader className="sr-only">
-        <DialogTitle>{title}</DialogTitle>
-        <DialogDescription>{description}</DialogDescription>
-      </DialogHeader>
       {/* rounded-xl (not the dialog 2xl): the palette reads as a floating menu. */}
       <DialogContent
         className={cn(
-          "top-1/3 translate-y-0 overflow-hidden rounded-xl! p-0 sm:max-w-lg",
+          // overflow-y-hidden beats the base's overflow-y-auto deterministically
+          // (same tailwind-merge group) — the palette's CommandList owns scroll.
+          "top-1/3 translate-y-0 overflow-hidden overflow-y-hidden rounded-xl! p-0 sm:max-w-lg",
           className,
         )}
         showCloseButton={showCloseButton}
       >
+        {/* Inside the content so the accessible name sits in the dialog subtree
+            and only mounts while open (Radix wires the ids either way, but the
+            docs' shape is title-within-content). */}
+        <DialogHeader className="sr-only">
+          <DialogTitle>{title}</DialogTitle>
+          <DialogDescription>{description}</DialogDescription>
+        </DialogHeader>
         {children}
       </DialogContent>
     </Dialog>
@@ -119,7 +124,7 @@ function CommandGroup({
     <CommandPrimitive.Group
       data-slot="command-group"
       className={cn(
-        "overflow-hidden text-foreground **:[[cmdk-group-heading]]:px-2 **:[[cmdk-group-heading]]:py-1.5 **:[[cmdk-group-heading]]:font-mono **:[[cmdk-group-heading]]:text-2xs **:[[cmdk-group-heading]]:tracking-wide **:[[cmdk-group-heading]]:text-muted-foreground **:[[cmdk-group-heading]]:uppercase",
+        "overflow-hidden text-foreground **:[[cmdk-group-heading]]:px-2 **:[[cmdk-group-heading]]:py-1.5 **:[[cmdk-group-heading]]:font-mono **:[[cmdk-group-heading]]:text-2xs **:[[cmdk-group-heading]]:font-medium **:[[cmdk-group-heading]]:tracking-wide **:[[cmdk-group-heading]]:text-muted-foreground **:[[cmdk-group-heading]]:uppercase",
         className,
       )}
       {...props}
@@ -140,7 +145,7 @@ function CommandSeparator({
   )
 }
 
-// Selected row is the NEUTRAL accent wash — amber is reserved.
+// Selected row is the NEUTRAL accent wash — the ink accent is reserved.
 function CommandItem({
   className,
   children,

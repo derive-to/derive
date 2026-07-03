@@ -1,3 +1,4 @@
+import { PageShell } from "@/components/shared/page-shell"
 import { Skeleton } from "@/components/ui/skeleton"
 
 // Router-level pending placeholder. Shown in the content area (the persistent
@@ -9,14 +10,23 @@ import { Skeleton } from "@/components/ui/skeleton"
 // (ui/skeleton), no card chrome; reduced motion is handled there too.
 export function RouteSkeleton() {
   return (
-    // Mirrors PageShell's measure geometry (wide column, 20px → 32px gutters)
-    // so the shimmer's heading sits where the incoming page's header lands.
-    <div
-      className="mx-auto flex min-h-0 w-full max-w-5xl flex-1 flex-col gap-3 p-5 sm:p-8"
-      aria-hidden
-    >
+    // The real PageShell (wide), not a hand-mirrored copy — scroll wrapper,
+    // scrollbar gutter, and measure geometry all come from the source, so
+    // there are no values to keep in sync. The width is deliberately biased to
+    // the wide Library (max-w-5xl) — the heaviest loader and the one most likely
+    // to show this shimmer; reading-width routes (People/Settings/Profile,
+    // max-w-3xl) may therefore shift horizontally by the column-width delta on
+    // very wide viewports when their loader is slow. min-h-full on the measure
+    // resolves (PageShell's scroll wrapper is a definite-height flex child),
+    // keeping the panel filling toward the viewport bottom. The sr-only STATUS
+    // announces; the shimmer blocks themselves are AT-hidden inside
+    // ui/skeleton — the Roselli skeleton pattern.
+    <PageShell width="wide" className="flex min-h-full flex-col gap-3">
+      <span role="status" className="sr-only">
+        Loading page…
+      </span>
       <Skeleton className="h-7 w-44" />
       <Skeleton className="flex-1 rounded-lg" />
-    </div>
+    </PageShell>
   )
 }

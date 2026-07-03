@@ -1,5 +1,4 @@
 import { useState } from "react"
-import { toast } from "sonner"
 import { api } from "@/api"
 import { FormField } from "@/components/shared/form-field"
 import { Button } from "@/components/ui/button"
@@ -11,6 +10,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import { toast } from "@/components/ui/sonner"
 import { Textarea } from "@/components/ui/textarea"
 import { useAuth } from "@/ctx"
 
@@ -87,7 +87,7 @@ export function ProfileFields({ onSaved }: { onSaved?: () => void }) {
               id="profile-role"
               data-testid="profile-role"
               aria-label="Your role"
-              className="w-[150px]"
+              className="w-37.5"
             >
               <SelectValue />
             </SelectTrigger>
@@ -102,11 +102,7 @@ export function ProfileFields({ onSaved }: { onSaved?: () => void }) {
           </Select>
         </FormField>
         {preset === OTHER && (
-          <FormField
-            label="Role name"
-            htmlFor="profile-role-other"
-            className="min-w-[150px] flex-1"
-          >
+          <FormField label="Role name" htmlFor="profile-role-other" className="min-w-37.5 flex-1">
             <Input
               id="profile-role-other"
               data-testid="profile-role-other"
@@ -134,7 +130,8 @@ export function ProfileFields({ onSaved }: { onSaved?: () => void }) {
           variant="default"
           data-testid="profile-save"
           onClick={save}
-          disabled={saving || !dirty}
+          loading={saving}
+          disabled={!dirty}
         >
           {saving ? "Saving…" : "Save profile"}
         </Button>

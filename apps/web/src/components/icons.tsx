@@ -6,6 +6,7 @@
 // muted, unfavourited star); pass weight="fill" for a filled state (favorited
 // star, pinned pin) — it fills the glyph with the current ink.
 import {
+  AtSign,
   Ban,
   BarChart3,
   Bell,
@@ -13,6 +14,7 @@ import {
   Building2,
   Check,
   ChevronDown,
+  ChevronUp,
   Code,
   Ellipsis,
   Eye,
@@ -79,6 +81,7 @@ const REG = {
   history: History,
   report: Flag,
   caret: ChevronDown,
+  "caret-up": ChevronUp,
   edit: Code,
   review: GitPullRequest,
   pin: Pin,
@@ -93,19 +96,28 @@ const REG = {
   pencil: Pencil,
   link: Link,
   delete: Trash2,
+  // notifications
+  at: AtSign,
 } as const satisfies Record<string, LucideIcon>
 
+// Icons stay monochrome: they inherit `currentColor`, so a glyph always matches
+// the ink beside it. The chrome is deliberately neutral so the user's artifacts —
+// which carry their own colour (charts, heroes, thumbnails) — are what pops; a
+// tinted glyph next to that content would only compete with it. The categorical
+// tint family (globals.css @theme) is reserved for data surfaces (charts) and any
+// future, deliberate wayfinding, not a blanket icon default.
 export type IconName = keyof typeof REG
 export type IconWeight = "regular" | "fill"
 
 export function Icon({
   name,
-  size = 18,
+  size = 16,
   weight = "regular",
   strokeWidth = 2,
   className,
 }: {
   name: IconName
+  /** 16 (size-4) is the app register; 12 for mono meta rows; 24 editorial. */
   size?: number
   /** "fill" paints the glyph solid with the current ink (favorited star, pinned pin). */
   weight?: IconWeight
@@ -120,6 +132,9 @@ export function Icon({
       size={size}
       strokeWidth={strokeWidth}
       fill={weight === "fill" ? "currentColor" : "none"}
+      // Icons are always decorative in this app — the adjacent label or the
+      // control's aria-label carries the meaning, never the glyph.
+      aria-hidden="true"
       className={cn("shrink-0", className)}
     />
   )

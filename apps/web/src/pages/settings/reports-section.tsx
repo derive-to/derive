@@ -1,13 +1,14 @@
 import { useState } from "react"
-import { toast } from "sonner"
 import { api, type Report } from "@/api"
+import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
+import { toast } from "@/components/ui/sonner"
 
 export function ReportsSection({ reports, reload }: { reports: Report[]; reload: () => void }) {
   return (
-    <section>
-      <p className="mb-4 text-sm text-muted-foreground">
+    <section className="flex flex-col gap-6">
+      <p className="text-sm text-muted-foreground">
         Abuse reports against artifacts in this workspace. Take an artifact down to 410 its content
         everywhere (the record is kept), or dismiss the report.
       </p>
@@ -38,6 +39,7 @@ function ReportRow({
   onError: (msg: string) => void
 }) {
   const [busy, setBusy] = useState(false)
+  const [confirming, setConfirming] = useState(false)
   const act = async (fn: () => Promise<unknown>, msg: string) => {
     setBusy(true)
     try {
@@ -50,22 +52,19 @@ function ReportRow({
     }
   }
   return (
-    <Card
-      data-testid={`report-row-${report.id}`}
-      className="flex-row gap-3 border-destructive/30 px-4 py-3"
-    >
+    <Card data-testid={`report-row-${report.id}`} className="flex-row gap-3 px-4 py-3">
       <div className="min-w-0 flex-1">
         <div className="text-sm font-medium text-foreground">
           {report.reason}{" "}
           <a
             href={`/a/${report.artifact_short_id}`}
-            className="font-mono text-xs font-medium text-primary"
+            className="font-mono text-2xs font-medium text-primary"
           >
             {report.artifact_short_id}
           </a>
         </div>
         {report.detail && (
-          <div className="mt-0.5 text-xs text-muted-foreground">{report.detail}</div>
+          <div className="mt-0.5 text-sm text-muted-foreground">{report.detail}</div>
         )}
         <div className="mt-1 font-mono text-2xs text-muted-foreground">
           {report.reporter ? `reported from ${report.reporter}` : "reported anonymously"}
@@ -83,17 +82,23 @@ function ReportRow({
         </Button>
         <Button
           data-testid={`report-takedown-${report.id}`}
-          variant="destructive"
+          variant="destructive-ghost"
           size="sm"
           disabled={busy}
-          onClick={() =>
-            confirm(`Take down ${report.artifact_short_id}? Its content stops serving (410).`) &&
-            act(() => api.takedown(report.artifact_id), "Artifact taken down")
-          }
+          onClick={() => setConfirming(true)}
         >
           Take down
         </Button>
       </div>
+      <ConfirmDialog
+        open={confirming}
+        onOpenChange={setConfirming}
+        title={`Take down ${report.artifact_short_id}?`}
+        description="Its content stops serving everywhere (410). The record is kept."
+        confirmLabel="Take down"
+        confirmTestId={`report-takedown-confirm-${report.id}`}
+        onConfirm={() => act(() => api.takedown(report.artifact_id), "Artifact taken down")}
+      />
     </Card>
   )
 }

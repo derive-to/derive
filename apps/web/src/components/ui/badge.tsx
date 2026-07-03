@@ -14,7 +14,7 @@ const badgeVariants = cva(
   {
     variants: {
       variant: {
-        // Neutral white-wash is the default — amber is reserved for brand moments.
+        // Neutral wash is the default — the ink accent is reserved for brand moments.
         default: "bg-accent text-foreground",
         // Deliberate alias of the neutral default — kept as a named variant for API stability.
         secondary: "bg-accent text-foreground",
@@ -23,12 +23,17 @@ const badgeVariants = cva(
         warning: "bg-warning/10 text-warning",
         destructive: "bg-destructive/10 text-destructive",
         outline: "border-border text-muted-foreground",
-        ghost: "text-muted-foreground",
-        link: "text-primary underline-offset-4 hover:underline",
+      },
+      shape: {
+        default: "",
+        // Machine-register chip: the one sanctioned rounded-full pill — mono 2xs
+        // for counts, versions, slide markers, statuses (pairs with size-3 icons).
+        pill: "rounded-full font-mono text-2xs tabular-nums",
       },
     },
     defaultVariants: {
       variant: "default",
+      shape: "default",
     },
   },
 )
@@ -36,6 +41,7 @@ const badgeVariants = cva(
 function Badge({
   className,
   variant = "default",
+  shape = "default",
   asChild = false,
   ...props
 }: React.ComponentProps<"span"> & VariantProps<typeof badgeVariants> & { asChild?: boolean }) {
@@ -45,7 +51,8 @@ function Badge({
     <Comp
       data-slot="badge"
       data-variant={variant}
-      className={cn(badgeVariants({ variant }), className)}
+      data-shape={shape}
+      className={cn(badgeVariants({ variant, shape }), className)}
       {...props}
     />
   )

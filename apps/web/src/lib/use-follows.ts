@@ -1,7 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useMemo, useState } from "react"
-import { toast } from "sonner"
 import { api, type Follow, type FollowKind } from "@/api"
+import { toast } from "@/components/ui/sonner"
 import { followsQuery } from "./queries"
 
 // Path targets are stored verbatim as repo prefixes (e.g. "docs/plans/"); a

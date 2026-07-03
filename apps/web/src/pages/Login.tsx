@@ -1,20 +1,14 @@
 import { getRouteApi, useNavigate } from "@tanstack/react-router"
-import { Check } from "lucide-react"
 import type { FormEvent } from "react"
 import { useEffect, useState } from "react"
 import { api } from "@/api"
+import { FormField } from "@/components/shared/form-field"
 import { Logo } from "@/components/shared/logo"
+import { Eyebrow, LabeledDivider } from "@/components/shared/section-eyebrow"
+import { StatusPanel } from "@/components/shared/status-panel"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { useAuth } from "@/ctx"
-
-const FEATURES: [string, string][] = [
-  ["Permanent URLs", "Every artifact gets a stable link with full version history."],
-  ["Review in context", "Comments anchor to the text and survive every republish."],
-  ["Publish from anywhere", "Ship from the CLI, the HTTP API, or an agent over MCP."],
-  ["Yours to host", "Self-host the whole thing, or use the hosted tier."],
-]
 
 const loginRoute = getRouteApi("/login")
 
@@ -90,193 +84,172 @@ export function Login() {
 
   const signup = mode === "signup"
 
+  // The auth screen is a calm gateway, not a landing page: one focused column,
+  // centered on a solid canvas (the login-surface rule — white in light, the deep
+  // canvas in dark, never light-tinted paper under a card-less form). No marketing
+  // panel; the brand carries in the monochrome, the type, and the wordmark. The
+  // ONE ink moment on the page is the primary CTA. Onboarding/reassurance lives on
+  // /welcome after signup — this page just authenticates.
   return (
-    <div className="grid min-h-screen bg-background lg:grid-cols-2">
-      {/* Brand + value panel — desktop only; the form carries a compact brand on mobile.
-          Flush on the canvas with a hairline divider — never a tinted well. */}
-      <aside className="hidden flex-col justify-between border-r p-10 lg:flex">
-        <div className="flex items-center gap-2.5">
-          <Logo size={30} />
-          <span className="font-serif text-xl font-medium tracking-tight">Derive</span>
-        </div>
-        <div className="flex max-w-md flex-col gap-6">
-          <div className="flex flex-col gap-3">
-            {/* The one voice moment on the page — serif, per the login headline rule. */}
-            <h1 className="font-serif text-3xl font-medium tracking-tight text-balance text-foreground xl:text-4xl">
-              The permanent home for your AI artifacts.
-            </h1>
-            <p className="text-base text-pretty text-muted-foreground">
-              Give any HTML page, doc, or built site a lasting URL, version history, and a review
-              loop your team and your agents can actually use.
-            </p>
-          </div>
-          <ul className="flex flex-col gap-3">
-            {FEATURES.map(([title, desc]) => (
-              <li key={title} className="flex gap-2.5">
-                {/* Amber checks are a sanctioned brand moment on this page. */}
-                <Check className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden />
-                <div className="flex flex-col">
-                  <span className="text-sm font-medium text-foreground">{title}</span>
-                  <span className="text-sm text-muted-foreground">{desc}</span>
-                </div>
-              </li>
-            ))}
-          </ul>
-        </div>
-        <p className="text-xs text-muted-foreground">
-          Open source. Self-host the whole thing, or use the hosted tier.
-        </p>
-      </aside>
-
-      {/* Auth form — kept lean; profile setup (username + photo) happens on the home
-          page once you're in, not as a gate here. */}
-      <main className="flex items-center justify-center p-6">
-        <div className="flex w-full max-w-xs flex-col gap-6">
-          <div className="flex flex-col items-center gap-1.5 text-center lg:hidden">
+    <div className="flex min-h-dvh flex-col bg-card dark:bg-background">
+      <main className="flex flex-1 items-center justify-center px-6 py-12">
+        <div className="flex w-full max-w-xs flex-col gap-8">
+          <div className="flex flex-col items-center gap-5 text-center">
+            {/* Wordmark — this page is chrome-less (no rail), so the mark stands in as
+                the brand anchor. Non-interactive: "/" is auth-walled, so linking it
+                would just bounce back here. */}
             <div className="flex items-center gap-2">
               <Logo size={26} />
               <span className="font-serif text-lg font-medium tracking-tight">Derive</span>
             </div>
-            <p className="text-sm text-muted-foreground">
-              Permanent URLs, versions, and review for your AI artifacts.
-            </p>
+
+            {/* Login/signup headlines are voice moments (Inter display via the
+                font-serif alias); this is also the page's one functional <h1>. */}
+            <div className="flex flex-col gap-1.5">
+              <h1 className="font-serif text-3xl font-medium tracking-tight text-balance text-foreground">
+                {signup ? "Create your account" : "Welcome back"}
+              </h1>
+              <p className="text-sm text-pretty text-muted-foreground">
+                {signup ? "Start publishing artifacts in seconds." : "Sign in to your workspace."}
+              </p>
+            </div>
           </div>
 
-          <Card>
-            <CardHeader>
-              <CardTitle>{signup ? "Create your account" : "Welcome back"}</CardTitle>
-              <CardDescription>
-                {signup ? "Start publishing artifacts in seconds." : "Sign in to your workspace."}
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="flex flex-col gap-3">
-              {(providers?.google || providers?.github) && (
-                <>
-                  <div className="flex flex-col gap-2">
-                    {providers.google && (
-                      <Button
-                        data-testid="login-google"
-                        variant="outline"
-                        size="lg"
-                        type="button"
-                        className="w-full"
-                        onClick={() => social("google")}
-                      >
-                        Continue with Google
-                      </Button>
-                    )}
-                    {providers.github && (
-                      <Button
-                        data-testid="login-github"
-                        variant="outline"
-                        size="lg"
-                        type="button"
-                        className="w-full"
-                        onClick={() => social("github")}
-                      >
-                        Continue with GitHub
-                      </Button>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-3 py-0.5">
-                    <span className="h-px flex-1 bg-border" />
-                    <span className="font-mono text-2xs uppercase tracking-wide text-muted-foreground">
-                      or
-                    </span>
-                    <span className="h-px flex-1 bg-border" />
-                  </div>
-                </>
-              )}
-              <form onSubmit={submit} className="flex flex-col gap-3">
-                {err && (
-                  <div
-                    data-testid="login-error"
-                    role="alert"
-                    className="rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive ring-1 ring-inset ring-destructive/25"
-                  >
-                    {err}
-                  </div>
-                )}
-                {signup && (
-                  <label
-                    htmlFor="login-name"
-                    className="flex flex-col gap-1.5 text-sm font-medium text-foreground"
-                  >
-                    Name
-                    <Input
-                      id="login-name"
-                      data-testid="login-name"
-                      name="name"
-                      autoComplete="name"
-                      value={name}
-                      onChange={(e) => setName(e.target.value)}
-                      placeholder="Your name"
-                    />
-                  </label>
-                )}
-                <label
-                  htmlFor="login-email"
-                  className="flex flex-col gap-1.5 text-sm font-medium text-foreground"
-                >
-                  Email
-                  <Input
-                    id="login-email"
-                    data-testid="login-email"
-                    type="email"
-                    name="email"
-                    autoComplete="email"
-                    required
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    placeholder="you@company.com"
-                  />
-                </label>
-                <label
-                  htmlFor="login-password"
-                  className="flex flex-col gap-1.5 text-sm font-medium text-foreground"
-                >
-                  Password
-                  <Input
-                    id="login-password"
-                    data-testid="login-password"
-                    type="password"
-                    name="password"
-                    autoComplete={signup ? "new-password" : "current-password"}
-                    required
-                    minLength={8}
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    placeholder="At least 8 characters"
-                  />
-                </label>
-                <Button
-                  data-testid="login-submit"
-                  variant="default"
-                  size="lg"
-                  type="submit"
-                  disabled={busy || !email || !password}
-                  className="mt-1 w-full"
-                >
-                  {busy ? "…" : signup ? "Create account" : "Sign in"}
-                </Button>
-              </form>
+          {/* Action zone — the sign-in methods (OAuth + email/password) and the
+              mode toggle, grouped tighter than the break above so the form reads as
+              one considered unit rather than four equidistant pieces. */}
+          <div className="flex flex-col gap-6">
+            {(providers?.google || providers?.github) && (
+              <div className="flex flex-col gap-3">
+                <div className="flex flex-col gap-2">
+                  {providers.google && (
+                    <Button
+                      data-testid="login-google"
+                      variant="outline"
+                      size="lg"
+                      type="button"
+                      className="w-full"
+                      onClick={() => social("google")}
+                    >
+                      Continue with Google
+                    </Button>
+                  )}
+                  {providers.github && (
+                    <Button
+                      data-testid="login-github"
+                      variant="outline"
+                      size="lg"
+                      type="button"
+                      className="w-full"
+                      onClick={() => social("github")}
+                    >
+                      Continue with GitHub
+                    </Button>
+                  )}
+                </div>
+                <LabeledDivider>
+                  <Eyebrow>or</Eyebrow>
+                </LabeledDivider>
+              </div>
+            )}
 
-              <p className="text-sm text-muted-foreground">
-                {signup ? "Have an account? " : "New here? "}
-                <Button
-                  data-testid="login-toggle"
-                  variant="link"
-                  type="button"
-                  className="h-auto p-0 align-baseline text-sm font-medium"
-                  onClick={() => setMode(signup ? "login" : "signup")}
-                >
-                  {signup ? "Sign in" : "Create an account"}
-                </Button>
-              </p>
-            </CardContent>
-          </Card>
+            <form onSubmit={submit} className="flex flex-col gap-4">
+              {err && (
+                <div data-testid="login-error">
+                  {/* StatusPanel (tone="danger") announces via role="alert" and bakes in
+                    the inline padding — no wrapper role, no p-* override. */}
+                  <StatusPanel tone="danger" layout="inline" title={err} />
+                </div>
+              )}
+              {signup && (
+                <FormField label="Name" htmlFor="login-name">
+                  <Input
+                    id="login-name"
+                    data-testid="login-name"
+                    name="name"
+                    autoComplete="name"
+                    // First field in signup mode takes focus on mount.
+                    autoFocus
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    placeholder="Your name"
+                  />
+                </FormField>
+              )}
+              <FormField label="Email" htmlFor="login-email">
+                <Input
+                  id="login-email"
+                  data-testid="login-email"
+                  type="email"
+                  name="email"
+                  autoComplete="email"
+                  required
+                  // First field in login mode takes focus on mount (signup leads with name).
+                  autoFocus={!signup}
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="you@company.com"
+                />
+              </FormField>
+              <FormField label="Password" htmlFor="login-password">
+                <Input
+                  id="login-password"
+                  data-testid="login-password"
+                  type="password"
+                  name="password"
+                  autoComplete={signup ? "new-password" : "current-password"}
+                  required
+                  minLength={8}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="At least 8 characters"
+                />
+              </FormField>
+              <Button
+                data-testid="login-submit"
+                variant="default"
+                size="lg"
+                type="submit"
+                // Busy uses the Button `loading` recipe (auto-disables + current-ink
+                // spinner) while we keep the verb label; the value guard stays the
+                // house convention (matches password-gate, workspace invite, etc.).
+                loading={busy}
+                disabled={!email || !password}
+                className="w-full"
+              >
+                {busy
+                  ? signup
+                    ? "Creating account…"
+                    : "Signing in…"
+                  : signup
+                    ? "Create account"
+                    : "Sign in"}
+              </Button>
+            </form>
+
+            <p className="text-center text-sm text-muted-foreground">
+              {signup ? "Have an account? " : "New here? "}
+              <Button
+                data-testid="login-toggle"
+                variant="link"
+                type="button"
+                className="h-auto p-0 align-baseline"
+                onClick={() => setMode(signup ? "login" : "signup")}
+              >
+                {signup ? "Sign in" : "Create an account"}
+              </Button>
+            </p>
+          </div>
         </div>
       </main>
+
+      {/* One quiet brand line grounds the bottom — the single voice note besides the
+          wordmark, kept in the muted register so it never competes with the form. */}
+      <footer className="px-6 pb-8 text-center">
+        <p className="text-sm text-pretty text-muted-foreground">
+          Open source. Self-host the whole thing, or use the hosted tier.
+        </p>
+      </footer>
     </div>
   )
 }

@@ -1,8 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query"
 import { Link } from "@tanstack/react-router"
-import { AlertTriangle, CheckCircle2, ExternalLink, GitPullRequest, Loader2 } from "lucide-react"
+import { AlertTriangle, CheckCircle2, ExternalLink } from "lucide-react"
 import { useCallback, useEffect, useRef, useState } from "react"
-import { toast } from "sonner"
 import {
   api,
   type GithubSyncStatus,
@@ -14,8 +13,13 @@ import {
   type SyncProgress,
   type SyncStatus,
 } from "@/api"
+import { Icon } from "@/components/icons"
 import { EmptyState } from "@/components/shared/empty-state"
+import { SearchField } from "@/components/shared/search-field"
+import { Eyebrow } from "@/components/shared/section-eyebrow"
+import { SectionTitle } from "@/components/shared/section-title"
 import { Spinner } from "@/components/shared/spinner"
+import { StatusPanel } from "@/components/shared/status-panel"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -28,6 +32,7 @@ import {
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
+import { toast } from "@/components/ui/sonner"
 import { ago } from "@/lib/time"
 
 // "owner/name", tolerating a github.com URL or a trailing .git (mirrors the
@@ -133,8 +138,8 @@ export function GithubSection() {
   const appConfigured = status?.app.configured ?? false
 
   return (
-    <section>
-      <p className="mb-4 text-sm text-muted-foreground">
+    <section className="flex flex-col gap-6">
+      <p className="text-sm text-muted-foreground">
         Mirror a GitHub repo's Markdown and HTML into a collection. Sync is one-way: GitHub stays
         the source of truth, so synced docs are read-only here but stay fully commentable.
       </p>
@@ -154,9 +159,11 @@ export function GithubSection() {
         <SetUpApp />
       )}
 
-      <div className="mt-4 flex flex-col gap-2.5">
-        {status !== null &&
-          (status.sources.length === 0 ? (
+      {/* Rendered only once status is known — an empty placeholder div would still
+          claim a flex gap slot and double the section rhythm. */}
+      {status !== null && (
+        <div className="flex flex-col gap-2.5">
+          {status.sources.length === 0 ? (
             <EmptyState>No repos connected yet. Add one above.</EmptyState>
           ) : (
             status.sources.map((s) => (
@@ -170,16 +177,17 @@ export function GithubSection() {
                 onError={(m) => toast.error(m)}
               />
             ))
-          ))}
-      </div>
+          )}
+        </div>
+      )}
 
       {/* PR previews — read-only mirrors of the docs an OPEN pull request changes,
           each in its own "PR #<n>" collection. Created automatically as PRs open; they
           disappear when the PR closes/merges. Review the plan in Derive during the PR. */}
       {status !== null && status.prs.length > 0 && (
-        <div className="mt-6">
-          <div className="text-sm font-medium text-foreground">Pull request previews</div>
-          <p className="mt-0.5 mb-2 text-xs text-muted-foreground">
+        <div>
+          <SectionTitle>Pull request previews</SectionTitle>
+          <p className="mt-0.5 mb-2 text-sm text-muted-foreground">
             Open PRs that change docs appear here while they're open. Review them in Derive; on
             merge they fold into the collection above.
           </p>
@@ -223,7 +231,7 @@ function SetUpApp() {
   return (
     <Card className="flex flex-col items-start gap-3 p-4">
       <div>
-        <div className="text-sm font-medium text-foreground">Connect GitHub</div>
+        <SectionTitle>Connect GitHub</SectionTitle>
         <p className="mt-0.5 text-sm text-muted-foreground">
           Create a read-only GitHub App for this instance, then install it on the repos you want to
           mirror. No tokens to paste, and pushes sync automatically.
@@ -281,71 +289,71 @@ function ConnectViaApp({
     (Object.keys(missing.permissions).length > 0 || missing.events.length > 0)
   return (
     <>
+      {/* The fragment's children land directly in the section's gap-6 column, so the
+          banner needs no margin of its own. */}
       {needsPerms && missing && (
-        <div
-          className="mb-3 rounded-xl bg-warning/10 p-4 ring-1 ring-inset ring-warning/25"
-          data-testid="github-perms-banner"
-        >
-          <div className="flex items-start gap-2.5">
-            <AlertTriangle className="mt-0.5 size-4 shrink-0 text-warning" aria-hidden />
-            <div className="min-w-0 flex-1">
-              <div className="text-sm font-medium text-foreground">
-                Derive needs updated GitHub permissions
-              </div>
-              <p className="mt-0.5 text-sm text-muted-foreground">
-                A new feature needs access GitHub hasn't granted this App yet. Update it on GitHub,
-                save, then approve on your installation.
-              </p>
-              <ul className="mt-2 flex flex-col gap-1 text-xs text-foreground">
-                {Object.entries(missing.permissions).map(([scope, level]) => (
-                  <li key={scope} className="flex items-center gap-1.5">
-                    <span className="size-1 rounded-full bg-foreground" aria-hidden />
-                    <span className="font-medium">{PERMISSION_LABELS[scope] ?? scope}</span>
-                    <span className="text-muted-foreground">→ {LEVEL_LABELS[level] ?? level}</span>
-                  </li>
-                ))}
-                {missing.events.map((ev) => (
-                  <li key={ev} className="flex items-center gap-1.5">
-                    <span className="size-1 rounded-full bg-foreground" aria-hidden />
-                    <span className="text-muted-foreground">Subscribe to</span>
-                    <span className="font-medium">{EVENT_LABELS[ev] ?? ev}</span>
-                    <span className="text-muted-foreground">events</span>
-                  </li>
-                ))}
-              </ul>
-              <div className="mt-3 flex flex-wrap items-center gap-2">
-                {permissionsUrl && (
-                  <Button variant="secondary" size="sm" data-testid="github-perms-update" asChild>
-                    <a href={permissionsUrl} target="_blank" rel="noreferrer">
-                      Update on GitHub →
-                    </a>
+        <div data-testid="github-perms-banner">
+          <StatusPanel
+            tone="warning"
+            layout="inline"
+            icon={<AlertTriangle aria-hidden />}
+            title="Derive needs updated GitHub permissions"
+            description="A new feature needs access GitHub hasn't granted this App yet. Update it on GitHub, save, then approve on your installation."
+            action={
+              <div className="flex flex-col gap-3">
+                <ul role="list" className="flex flex-col gap-1 text-sm text-foreground">
+                  {Object.entries(missing.permissions).map(([scope, level]) => (
+                    <li key={scope} className="flex items-center gap-1.5">
+                      <span className="size-1 rounded-full bg-foreground" aria-hidden />
+                      <span className="font-medium">{PERMISSION_LABELS[scope] ?? scope}</span>
+                      <span className="text-muted-foreground">
+                        → {LEVEL_LABELS[level] ?? level}
+                      </span>
+                    </li>
+                  ))}
+                  {missing.events.map((ev) => (
+                    <li key={ev} className="flex items-center gap-1.5">
+                      <span className="size-1 rounded-full bg-foreground" aria-hidden />
+                      <span className="text-muted-foreground">Subscribe to</span>
+                      <span className="font-medium">{EVENT_LABELS[ev] ?? ev}</span>
+                      <span className="text-muted-foreground">events</span>
+                    </li>
+                  ))}
+                </ul>
+                <div className="flex flex-wrap items-center gap-2">
+                  {permissionsUrl && (
+                    <Button variant="secondary" size="sm" data-testid="github-perms-update" asChild>
+                      <a href={permissionsUrl} target="_blank" rel="noreferrer">
+                        Update on GitHub →
+                      </a>
+                    </Button>
+                  )}
+                  {approveUrl && (
+                    <Button variant="outline" size="sm" data-testid="github-perms-approve" asChild>
+                      <a href={approveUrl} target="_blank" rel="noreferrer">
+                        Approve on installation →
+                      </a>
+                    </Button>
+                  )}
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    data-testid="github-perms-recheck"
+                    onClick={onRefresh}
+                  >
+                    Re-check
                   </Button>
-                )}
-                {approveUrl && (
-                  <Button variant="outline" size="sm" data-testid="github-perms-approve" asChild>
-                    <a href={approveUrl} target="_blank" rel="noreferrer">
-                      Approve on installation →
-                    </a>
-                  </Button>
-                )}
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  data-testid="github-perms-recheck"
-                  onClick={onRefresh}
-                >
-                  Re-check
-                </Button>
+                </div>
               </div>
-            </div>
-          </div>
+            }
+          />
         </div>
       )}
       <Card className="flex flex-col gap-3 p-4">
         <div className="flex items-start gap-2.5">
           <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-success" aria-hidden />
           <div className="min-w-0 flex-1">
-            <div className="text-sm font-medium text-foreground">GitHub App connected</div>
+            <SectionTitle>GitHub App connected</SectionTitle>
             {installed ? (
               <p className="mt-0.5 text-sm text-muted-foreground">
                 Pick a repository to mirror into Derive, or install on more accounts.
@@ -369,19 +377,19 @@ function ConnectViaApp({
           </div>
           {installed && (
             <Button
-              data-testid="github-install"
+              data-testid="github-install-more"
               variant="outline"
               size="sm"
               onClick={install}
               disabled={busy}
             >
-              {busy ? "Opening…" : "Install on more"}
+              {busy ? "Opening GitHub…" : "Install on more"}
             </Button>
           )}
         </div>
         {installed && (
           <div className="flex flex-wrap items-center gap-2 border-t border-border pt-3">
-            <span className="text-xs text-muted-foreground">Pick a repository:</span>
+            <span className="text-sm text-muted-foreground">Pick a repository:</span>
             {status.installations.map((i) => (
               <Button
                 key={i.installation_id}
@@ -401,13 +409,13 @@ function ConnectViaApp({
               href={`https://github.com/settings/apps/${slug}`}
               target="_blank"
               rel="noreferrer"
-              className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground hover:underline"
+              className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground hover:underline"
               data-testid="github-app-settings-link"
             >
               Manage App on GitHub
-              <ExternalLink className="size-3" aria-hidden />
+              <ExternalLink className="size-3 shrink-0" aria-hidden />
             </a>
-            <span className="text-xs text-muted-foreground">— update permissions or uninstall</span>
+            <span className="text-sm text-muted-foreground">— update permissions or uninstall</span>
           </div>
         )}
       </Card>
@@ -501,14 +509,14 @@ function RepoPicker({
         </DialogHeader>
 
         {repos && repos.length > 0 && (
-          <Input
-            aria-label="Search repositories"
-            data-testid="github-repo-search"
+          <SearchField
             value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search repositories…"
-            className="mb-2"
+            onValueChange={setQuery}
+            placeholder="Filter repositories…"
+            aria-label="Filter repositories"
+            testId="github-repo-search"
             autoFocus
+            className="mb-2"
           />
         )}
 
@@ -526,15 +534,11 @@ function RepoPicker({
               {shown?.map((r) => (
                 <label
                   key={r.full_name}
-                  className="flex items-center gap-2.5 rounded-md px-2 py-1.5 hover:bg-hover"
+                  className="flex items-center gap-2.5 rounded-md px-2 py-1.5 hover:bg-secondary"
                 >
                   <RadioGroupItem value={r.full_name} data-testid="github-repo-radio" />
                   <span className="font-mono text-xs text-foreground">{r.full_name}</span>
-                  {r.private && (
-                    <span className="font-mono text-2xs uppercase tracking-wide text-muted-foreground">
-                      private
-                    </span>
-                  )}
+                  {r.private && <Eyebrow>private</Eyebrow>}
                   {r.pushed_at && (
                     <span className="ml-auto shrink-0 font-mono text-2xs text-muted-foreground">
                       {ago(r.pushed_at)}
@@ -549,7 +553,7 @@ function RepoPicker({
         {repo && (
           <div className="mt-1 flex flex-col gap-2.5 border-t border-border pt-3">
             <div className="flex flex-wrap items-center gap-3">
-              <span className="text-xs font-medium text-muted-foreground">Include:</span>
+              <span className="text-sm font-medium text-muted-foreground">Include:</span>
               <label className="flex items-center gap-1.5 text-sm">
                 <Checkbox
                   data-testid="github-include-md"
@@ -573,9 +577,9 @@ function RepoPicker({
               value={folder}
               onChange={(e) => setFolder(e.target.value)}
               placeholder="folder (optional, e.g. docs) — blank = whole repo"
-              className="font-mono text-xs"
+              className="font-mono"
             />
-            <div className="text-xs text-muted-foreground" data-testid="github-preview">
+            <div className="text-sm text-muted-foreground" data-testid="github-preview">
               {!includes ? (
                 <span className="text-destructive">Pick at least one file type.</span>
               ) : preview === "loading" ? (
@@ -654,8 +658,11 @@ function PrPreviewRow({ pr }: { pr: PrPreview }) {
   // The API titles a preview "PR #<n>: <title>"; show just the <title> here.
   const label = pr.title.replace(/^PR #\d+:\s*/, "") || pr.title
   return (
-    <Card data-testid={`github-pr-${pr.pr_number}`} className="flex-row items-center gap-3 p-3.5">
-      <GitPullRequest className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+    <Card
+      data-testid={`github-pr-${pr.pr_number}`}
+      className="flex-row items-center gap-3 px-4 py-3"
+    >
+      <Icon name="review" className="text-muted-foreground" />
       <div className="min-w-0 flex-1">
         <div className="truncate text-sm font-medium text-foreground">{label}</div>
         <div className="mt-0.5 flex items-center gap-1.5 truncate font-mono text-2xs text-muted-foreground">
@@ -667,14 +674,15 @@ function PrPreviewRow({ pr }: { pr: PrPreview }) {
             className="inline-flex items-center gap-0.5 hover:text-foreground hover:underline"
           >
             #{pr.pr_number}
-            <ExternalLink className="size-2.5" aria-hidden />
+            <ExternalLink className="size-3 shrink-0" aria-hidden />
           </a>
           <span aria-hidden>·</span>
           <span className="truncate">{pr.repo}</span>
           <span aria-hidden>·</span>
           {active ? (
             <span className="inline-flex items-center gap-1 text-primary">
-              <Loader2 className="size-3 shrink-0 animate-spin" aria-hidden />
+              {/* Decorative — the "syncing…" text right here announces the state. */}
+              <Spinner role="presentation" aria-label={undefined} className="size-3 shrink-0" />
               syncing…
             </span>
           ) : (
@@ -788,10 +796,10 @@ function RepoSourceRow({
   const indeterminate = active && (!prog || prog.total === 0)
 
   return (
-    <Card data-testid={`github-row-${source.id}`} className="flex flex-col gap-3 p-3.5">
+    <Card data-testid={`github-row-${source.id}`} className="flex flex-col gap-3 px-4 py-3">
       <div className="flex items-center gap-2.5">
         <div className="min-w-0 flex-1">
-          <div className="truncate font-mono text-xs text-foreground">
+          <div className="truncate font-mono text-sm text-foreground">
             {source.repo}
             <span className="text-muted-foreground"> · {source.ref}</span>
             {source.installation_id && <span className="text-muted-foreground"> · app</span>}
@@ -819,8 +827,7 @@ function RepoSourceRow({
         </Button>
         <Button
           data-testid={`github-remove-${source.id}`}
-          variant="ghost"
-          className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+          variant="destructive-ghost"
           size="sm"
           onClick={() => setDisconnectDialog(true)}
         >
@@ -869,7 +876,8 @@ function RepoSourceRow({
         >
           <div className="flex items-center justify-between gap-2">
             <div className="flex min-w-0 items-center gap-2 text-sm font-medium text-foreground">
-              <Loader2 className="size-4 shrink-0 animate-spin text-primary" aria-hidden />
+              {/* Decorative — the phase headline beside it announces the state. */}
+              <Spinner role="presentation" aria-label={undefined} className="size-4 shrink-0" />
               <span className="truncate">{phaseHeadline(prog, source.repo)}</span>
             </div>
             {!indeterminate && (
@@ -893,34 +901,38 @@ function RepoSourceRow({
             {phaseDetail(prog)}
           </div>
 
-          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+          <div className="flex items-center gap-1.5 text-sm text-muted-foreground">
             <CheckCircle2 className="size-3 shrink-0 text-muted-foreground" aria-hidden />
             Running on our servers — you can close this tab, it’ll keep going.
           </div>
         </div>
       )}
 
-      {/* ERROR — red block with the message and a one-click retry. */}
+      {/* ERROR — danger callout with the message and a one-click retry. */}
       {errored && !active && (
-        <div
-          className="flex items-start gap-2 rounded-lg bg-destructive/10 p-3 ring-1 ring-inset ring-destructive/25"
-          data-testid={`github-error-${source.id}`}
-        >
-          <AlertTriangle className="mt-0.5 size-4 shrink-0 text-destructive" aria-hidden />
-          <div className="min-w-0 flex-1">
-            <div className="text-sm font-medium text-destructive">Sync failed</div>
-            <div className="mt-0.5 break-words font-mono text-2xs text-muted-foreground">
-              {prog?.message ?? status.last_status ?? "Unknown error"}
-            </div>
-          </div>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={sync}
-            data-testid={`github-retry-${source.id}`}
-          >
-            Try again
-          </Button>
+        <div data-testid={`github-error-${source.id}`}>
+          <StatusPanel
+            tone="danger"
+            layout="inline"
+            icon={<AlertTriangle aria-hidden />}
+            className="p-3"
+            title="Sync failed"
+            description={
+              <span className="break-words font-mono text-2xs">
+                {prog?.message ?? status.last_status ?? "Unknown error"}
+              </span>
+            }
+            action={
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={sync}
+                data-testid={`github-retry-${source.id}`}
+              >
+                Try again
+              </Button>
+            }
+          />
         </div>
       )}
     </Card>
@@ -965,18 +977,18 @@ function AdvancedPat({
     }
   }
   return (
-    <div className="mt-4">
+    <div>
       <Button
         variant="link"
         data-testid="github-advanced-toggle"
-        className="h-auto p-0 text-xs"
+        className="h-auto p-0"
         onClick={() => setOpen((o) => !o)}
       >
         {open ? "Hide advanced" : "Advanced: connect with a token or a public repo"}
       </Button>
       {open && (
         <Card className="mt-2 gap-3 p-4">
-          <p className="text-xs text-muted-foreground">
+          <p className="text-sm text-muted-foreground">
             For a private repo without the GitHub App, paste a read-only token. Public repos need no
             token.
           </p>
@@ -987,7 +999,7 @@ function AdvancedPat({
               value={repo}
               onChange={(e) => setRepo(e.target.value)}
               placeholder="owner/repo"
-              className="min-w-[200px] flex-1 font-mono"
+              className="min-w-50 flex-1 font-mono"
             />
             <Input
               data-testid="github-ref"
@@ -995,7 +1007,7 @@ function AdvancedPat({
               value={ref}
               onChange={(e) => setRef(e.target.value)}
               placeholder="branch (default HEAD)"
-              className="w-[170px]"
+              className="w-42.5"
             />
             <Button
               data-testid="github-connect"
@@ -1014,7 +1026,7 @@ function AdvancedPat({
               value={includes}
               onChange={(e) => setIncludes(e.target.value)}
               placeholder="**/*.md,**/*.html"
-              className="min-w-[200px] flex-1 font-mono text-xs"
+              className="min-w-50 flex-1 font-mono"
             />
             <Input
               data-testid="github-token"
@@ -1023,7 +1035,7 @@ function AdvancedPat({
               value={token}
               onChange={(e) => setToken(e.target.value)}
               placeholder="read-only token (private repos)"
-              className="min-w-[200px] flex-1"
+              className="min-w-50 flex-1"
             />
           </div>
         </Card>

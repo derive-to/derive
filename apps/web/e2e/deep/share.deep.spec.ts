@@ -21,18 +21,18 @@ test("owner shares an artifact, changes the role, and removes the member", async
   // Share with the teammate as a commenter.
   await owner.getByTestId("share-email").fill(secondUser.email)
   await owner.getByTestId("share-role").click()
-  await owner.getByRole("option", { name: "commenter", exact: true }).click()
+  await owner.getByRole("option", { name: "Commenter", exact: true }).click()
   await owner.getByTestId("share-add").click()
 
   const row = owner.locator('[data-testid^="share-member-row-"]')
   await expect(row).toHaveCount(1)
-  await expect(row).toContainText(secondUser.email)
-  await expect(owner.locator('[data-testid^="share-member-role-"]')).toContainText("commenter")
+  await expect(row).not.toContainText(secondUser.email) // handle leads; the private email never renders
+  await expect(owner.locator('[data-testid^="share-member-role-"]')).toContainText("Commenter")
 
   // Promote them to editor.
   await owner.locator('[data-testid^="share-member-role-"]').click()
-  await owner.getByRole("option", { name: "editor", exact: true }).click()
-  await expect(owner.locator('[data-testid^="share-member-role-"]')).toContainText("editor")
+  await owner.getByRole("option", { name: "Editor", exact: true }).click()
+  await expect(owner.locator('[data-testid^="share-member-role-"]')).toContainText("Editor")
 
   // Remove them: back to the empty state.
   await owner.locator('[data-testid^="share-member-remove-"]').click()

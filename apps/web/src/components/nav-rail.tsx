@@ -24,6 +24,7 @@ import {
   SidebarTrigger,
   useSidebar,
 } from "@/components/ui/sidebar"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { useAuth } from "@/ctx"
 import { prTitle } from "@/lib/pr"
 import { cn } from "@/lib/utils"
@@ -45,13 +46,11 @@ const MAX_SIDEBAR_PRS = 5
 const ROW_ICON =
   "[&_svg]:text-muted-foreground hover:[&_svg]:text-foreground data-active:[&_svg]:text-foreground"
 
-// Counts are the machine register: mono, tabular, muted. `top-1.5` centers the
-// h-5 badge in the h-8 menu button (the badge rides INSIDE the asChild link so
-// e2e text assertions on the row see the number).
-const COUNT_BADGE = "top-1.5 font-mono text-2xs tabular-nums text-muted-foreground"
-
-// Mono eyebrow register for group labels.
-const GROUP_LABEL = "font-mono text-2xs uppercase tracking-wide"
+// The badge rides INSIDE the asChild link (so e2e text assertions on the row see
+// the number), which means the primitive's peer-positioning can't fire — `top-1.5`
+// re-centers the h-5 badge in the h-8 row. The mono register is baked into
+// SidebarMenuBadge itself; only the muted tint is a call-site choice.
+const COUNT_BADGE = "top-1.5 text-muted-foreground"
 
 // One filter-nav row: sets the library filter via URL search. A zero count is
 // noise — the badge earns its ink only once it's nonzero.
@@ -98,7 +97,7 @@ function FilterItem({
 // testid must exist exactly once), and the ⌘K launcher (signed-in only — it
 // reads as a search FIELD, Linear-style, collapsing to a plain icon in the rail).
 function RailHeader({ showSearch }: { showSearch: boolean }) {
-  const { isMobile, open, setOpenMobile } = useSidebar()
+  const { isMobile, open, state, setOpenMobile } = useSidebar()
   const { setPaletteOpen } = useShell()
   return (
     <SidebarHeader>
@@ -115,32 +114,48 @@ function RailHeader({ showSearch }: { showSearch: boolean }) {
           </span>
         </Link>
         {!isMobile && (
-          <SidebarTrigger
-            data-testid="library-menu"
-            aria-label={open ? "Collapse sidebar" : "Expand sidebar"}
-            title="Toggle sidebar"
-            className="text-muted-foreground hover:text-foreground"
-          />
+          // Icon-only control: the hover hint is a real Tooltip (a title attr is
+          // invisible to keyboard and touch); aria-label carries the name.
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <SidebarTrigger
+                data-testid="library-menu"
+                aria-label={open ? "Collapse sidebar" : "Expand sidebar"}
+                className="text-muted-foreground hover:text-foreground"
+              />
+            </TooltipTrigger>
+            <TooltipContent side="right">
+              Toggle sidebar <Kbd>⌘B</Kbd>
+            </TooltipContent>
+          </Tooltip>
         )}
       </div>
       {showSearch && (
-        <button
-          type="button"
-          onClick={() => {
-            setOpenMobile(false)
-            setPaletteOpen(true)
-          }}
-          title="Search (⌘K)"
-          aria-label="Search (⌘K)"
-          data-testid="open-command-palette"
-          className="flex h-8 w-full items-center gap-2 rounded-md bg-secondary px-2 text-left ring-1 ring-input ring-inset outline-none hover:bg-hover hover:ring-foreground/25 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring group-data-[collapsible=icon]:size-8 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:bg-transparent group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:ring-0 group-data-[collapsible=icon]:hover:bg-sidebar-accent"
-        >
-          <Icon name="search" size={16} className="text-muted-foreground" />
-          <span className="min-w-0 flex-1 truncate text-sm text-muted-foreground group-data-[collapsible=icon]:hidden">
-            Search
-          </span>
-          <Kbd className="group-data-[collapsible=icon]:hidden">⌘K</Kbd>
-        </button>
+        // Tooltip only earns its keep in the collapsed icon strip, where the
+        // launcher loses its visible label + ⌘K hint (the sidebar idiom).
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              onClick={() => {
+                setOpenMobile(false)
+                setPaletteOpen(true)
+              }}
+              aria-label="Search (⌘K)"
+              data-testid="open-command-palette"
+              className="flex h-8 w-full items-center gap-2 rounded-lg bg-secondary px-2 text-left ring-1 ring-input ring-inset outline-none hover:ring-foreground/25 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring group-data-[collapsible=icon]:size-8 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:bg-transparent group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:ring-0 group-data-[collapsible=icon]:hover:bg-sidebar-accent"
+            >
+              <Icon name="search" size={16} className="text-muted-foreground" />
+              <span className="min-w-0 flex-1 truncate text-sm text-muted-foreground group-data-[collapsible=icon]:hidden">
+                Search
+              </span>
+              <Kbd className="group-data-[collapsible=icon]:hidden">⌘K</Kbd>
+            </button>
+          </TooltipTrigger>
+          <TooltipContent side="right" hidden={state !== "collapsed" || isMobile}>
+            Search <Kbd>⌘K</Kbd>
+          </TooltipContent>
+        </Tooltip>
       )}
     </SidebarHeader>
   )
@@ -150,10 +165,11 @@ function RailHeader({ showSearch }: { showSearch: boolean }) {
 // top bar). Built on the official shadcn sidebar primitives (ui/sidebar):
 // SidebarProvider (in app-shell) owns the collapse state; the desktop rail
 // collapses to an icon strip (collapsible="icon"), and on mobile the whole
-// sidebar renders inside the component's off-canvas Sheet. Anatomy: header
-// (brand + trigger + ⌘K launcher) → content (primary filters, collections with
-// PR sub-menus, tags, then the utility rows — sync, notifications, Settings —
-// pinned to the foot with mt-auto) → footer (the account/workspace pod).
+// sidebar renders inside the component's off-canvas Sheet. The rail is its own
+// recessed surface (bg-sidebar, distinct from the content canvas); inactive rows
+// sit dim and the active row lifts off it as a raised chip (ui/sidebar). Reads as
+// calm tiers top to bottom: brand + search → primary nav → your library
+// (collections + tags) → tools → account — separated by whitespace, not dividers.
 export function NavRail() {
   const { summary, collections, workspaces, switchWorkspace, refreshCollections } = useShell()
   const { me } = useAuth()
@@ -223,7 +239,7 @@ export function NavRail() {
   // fully view-only; this is the only nav an anon ever sees.
   if (!me)
     return (
-      <Sidebar collapsible="icon">
+      <Sidebar collapsible="icon" variant="inset">
         <RailHeader showSearch={false} />
         <SidebarContent>
           {iconMode ? (
@@ -232,7 +248,7 @@ export function NavRail() {
                 <SidebarMenu>
                   <SidebarMenuItem>
                     <SidebarMenuButton asChild tooltip="Sign up for Derive">
-                      {/* The rail's rows mute their icons; this one is the amber
+                      {/* The rail's rows mute their icons; this one is the
                           conversion moment, so it keeps the brand ink. */}
                       <Link
                         to="/login"
@@ -253,7 +269,7 @@ export function NavRail() {
             <SidebarGroup>
               <SidebarGroupContent className="flex flex-col gap-3">
                 {/* The one card in the rail — a conversion moment that must lift off
-                    the flush canvas; its headline is a voice moment (serif). */}
+                    the flush canvas; its headline is a voice moment (Inter). */}
                 <div className="rounded-xl border border-border bg-card p-3.5">
                   <div className="flex items-center gap-2">
                     <Logo size={22} />
@@ -277,7 +293,7 @@ export function NavRail() {
                     </Link>
                   </Button>
                 </div>
-                <p className="px-1 text-xs text-muted-foreground">
+                <p className="px-1 text-sm text-muted-foreground">
                   Already have an account?{" "}
                   <Link
                     to="/login"
@@ -296,9 +312,12 @@ export function NavRail() {
     )
 
   return (
-    <Sidebar collapsible="icon">
+    <Sidebar collapsible="icon" variant="inset">
       <RailHeader showSearch />
       <SidebarContent>
+        {/* TIER 1 — primary navigation: the whole library at a glance, plus the
+            people directory. The rail's home base; it carries no section label
+            because it IS the top of the rail. */}
         <SidebarGroup>
           <SidebarGroupContent>
             <SidebarMenu>
@@ -346,19 +365,26 @@ export function NavRail() {
           </SidebarGroupContent>
         </SidebarGroup>
 
+        {/* TIER 2 — your library: the things you've organized. Each list carries a
+            mono eyebrow, so the section labels do the tier-separating work (no
+            divider needed between the eyebrowed groups). */}
         <SidebarGroup className="group-data-[collapsible=icon]:hidden">
-          <SidebarGroupLabel className={GROUP_LABEL}>Collections</SidebarGroupLabel>
-          {/* The + stays neutral, not amber: create-in-rail isn't a sanctioned
-              amber moment. */}
-          <SidebarGroupAction
-            title="New collection"
-            aria-label="New collection"
-            data-testid="sidebar-new-collection"
-            onClick={() => setCreating((v) => !v)}
-            className="text-muted-foreground hover:text-foreground"
-          >
-            <Icon name="plus" />
-          </SidebarGroupAction>
+          <SidebarGroupLabel>Collections</SidebarGroupLabel>
+          {/* The + stays neutral, not the accent: create-in-rail isn't a sanctioned
+              ink moment. */}
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <SidebarGroupAction
+                aria-label="New collection"
+                data-testid="sidebar-new-collection"
+                onClick={() => setCreating((v) => !v)}
+                className="text-muted-foreground hover:text-foreground"
+              >
+                <Icon name="plus" />
+              </SidebarGroupAction>
+            </TooltipTrigger>
+            <TooltipContent side="right">New collection</TooltipContent>
+          </Tooltip>
           <SidebarGroupContent>
             {creating && (
               <Input
@@ -376,7 +402,9 @@ export function NavRail() {
                   }
                 }}
                 onBlur={submitCollection}
-                className="mb-1 h-8 text-sm"
+                // No text-size override: Input's base keeps 16px on touch (iOS
+                // no-zoom) and steps to 14px from sm up.
+                className="mb-1"
               />
             )}
             <SidebarMenu>
@@ -498,7 +526,7 @@ export function NavRail() {
 
         {tags.length > 0 && (
           <SidebarGroup className="group-data-[collapsible=icon]:hidden">
-            <SidebarGroupLabel className={GROUP_LABEL}>Tags</SidebarGroupLabel>
+            <SidebarGroupLabel>Tags</SidebarGroupLabel>
             <SidebarGroupContent>
               <SidebarMenu>
                 {tags.map(({ tag, count }) => (
@@ -517,8 +545,8 @@ export function NavRail() {
           </SidebarGroup>
         )}
 
-        {/* Utility rows pinned to the foot of the scroll region: a running sync,
-            notifications, Settings. mt-auto pins without leaving the scroll flow. */}
+        {/* Tools — a running sync, notifications, Settings. Pinned to the foot of
+            the scroll (mt-auto); the whitespace above sets them apart, no divider. */}
         <SidebarGroup className="mt-auto">
           <SidebarGroupContent>
             <SidebarMenu>
@@ -543,7 +571,9 @@ export function NavRail() {
         </SidebarGroup>
       </SidebarContent>
 
-      {/* FOOTER — pinned below the scroll: one calm identity row, nothing else. */}
+      {/* TIER 4 — account: the identity row, pinned below the scroll. It needs no
+          divider of its own — the avatar + taller row already set it apart from the
+          tools directly above it. */}
       <SidebarFooter>
         <SidebarMenu>
           <SidebarMenuItem>

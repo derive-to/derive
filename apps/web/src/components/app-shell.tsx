@@ -86,9 +86,12 @@ export function AppShell({ children }: { children: ReactNode }) {
     if (!me.profession && !onboarded) nav({ to: "/welcome" })
   }, [loading, me, publicView, nav])
 
-  // ⌘K / Ctrl+K (and "/" outside inputs) opens the command palette from anywhere.
-  // Never stack it over an open dialog (share, delete confirm, …). ⌘B (the
-  // sidebar toggle) is handled by SidebarProvider itself.
+  // ⌘K / Ctrl+K opens the command palette from anywhere. "/" (outside inputs)
+  // focuses the page's primary SearchField when one is registered
+  // (data-slash-target, the GitHub idiom — typing replaces the selected query)
+  // and falls back to the palette on pages without one. Never stack the palette
+  // over an open dialog (share, delete confirm, …). ⌘B (the sidebar toggle) is
+  // handled by SidebarProvider itself.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && (e.key === "k" || e.key === "K")) {
@@ -101,7 +104,13 @@ export function AppShell({ children }: { children: ReactNode }) {
         const t = e.target as HTMLElement | null
         if (t?.tagName === "INPUT" || t?.tagName === "TEXTAREA" || t?.isContentEditable) return
         e.preventDefault()
-        setPaletteOpen(true)
+        const field = document.querySelector<HTMLInputElement>("input[data-slash-target]")
+        if (field) {
+          field.focus()
+          field.select()
+        } else {
+          setPaletteOpen(true)
+        }
       }
     }
     window.addEventListener("keydown", onKey)
@@ -226,7 +235,9 @@ export function AppShell({ children }: { children: ReactNode }) {
         <SidebarProvider
           open={sidebarOpen}
           onOpenChange={onSidebarOpenChange}
-          className="h-full min-h-0"
+          // isolate: the app frame is its own stacking context, so in-page
+          // z-indexes can never climb over portalled dialogs/popovers.
+          className="isolate h-full min-h-0"
         >
           {/* Keyboard users land here first and can jump past the rail straight
               to the page. Visually hidden until focused. */}

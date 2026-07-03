@@ -12,7 +12,7 @@ function Textarea({ className, ...props }: React.ComponentProps<"textarea">) {
         "flex field-sizing-content min-h-16 w-full rounded-lg border border-input bg-transparent px-2.5 py-2 shadow-(--shadow-sm) outline-none selection:bg-selection dark:bg-input/30",
         // iOS no-zoom: fields stay ≥16px on touch; 14px control base from sm up.
         "text-base placeholder:text-muted-foreground sm:text-sm",
-        // Editable focus grammar: amber border + soft glow, never outline-offset.
+        // Editable focus grammar: ink border + soft glow, never outline-offset.
         "focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40",
         "aria-invalid:border-destructive aria-invalid:ring-2 aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40",
         "disabled:cursor-not-allowed disabled:bg-input/50 disabled:opacity-50 dark:disabled:bg-input/80",

@@ -1,6 +1,7 @@
 import { Icon } from "@/components/icons"
 import { EmptyState } from "@/components/shared/empty-state"
 import { Spinner } from "@/components/shared/spinner"
+import { StatusPanel } from "@/components/shared/status-panel"
 import { Button } from "@/components/ui/button"
 
 /** Full-page states the artifact route renders before (or instead of) the doc. */
@@ -19,7 +20,7 @@ export function ArtifactNotFound({ onBack }: { onBack: () => void }) {
       className="h-full"
       icon={<Icon name="removed" strokeWidth={1.75} />}
       title="Artifact not found"
-      description="It doesn't exist, or you don't have access to it."
+      description="It doesn’t exist, or you don’t have access to it."
       action={
         <Button variant="outline" data-testid="artifact-notfound-back" onClick={onBack}>
           Back to library
@@ -42,24 +43,24 @@ export function ArtifactLoadError({
   onBack: () => void
 }) {
   return (
-    <div className="grid h-full place-items-center">
-      <div className="flex flex-col items-center gap-4 p-10 text-center">
-        <Icon name="removed" size={24} strokeWidth={1.75} className="text-muted-foreground" />
-        <div className="flex flex-col items-center gap-2">
-          <p className="text-lg font-medium text-balance">Couldn't load this artifact</p>
-          <p className="max-w-sm text-sm text-pretty text-muted-foreground">
-            Something went wrong reaching the server. This is usually temporary.
-          </p>
-        </div>
-        <div className="flex gap-2">
-          <Button variant="default" data-testid="artifact-load-retry" onClick={onRetry}>
-            Try again
-          </Button>
-          <Button variant="outline" data-testid="artifact-load-back" onClick={onBack}>
-            Back to library
-          </Button>
-        </div>
-      </div>
+    <div className="grid h-full place-items-center p-6">
+      <StatusPanel
+        tone="danger"
+        icon={<Icon name="removed" strokeWidth={1.75} />}
+        title="Couldn’t load this artifact"
+        description="Something went wrong reaching the server. This is usually temporary."
+        className="max-w-md"
+        action={
+          <div className="flex gap-2">
+            <Button variant="outline" data-testid="artifact-load-retry" onClick={onRetry}>
+              Try again
+            </Button>
+            <Button variant="ghost" data-testid="artifact-load-back" onClick={onBack}>
+              Back to library
+            </Button>
+          </div>
+        }
+      />
     </div>
   )
 }

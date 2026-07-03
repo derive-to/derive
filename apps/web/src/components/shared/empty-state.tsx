@@ -2,7 +2,7 @@ import type { ReactNode } from "react"
 import { cn } from "@/lib/utils"
 
 // "There's simply nothing here" — deliberately NOT a box. No dashed border, no
-// card: the state sits directly on the canvas as an icon, a serif headline (the
+// card: the state sits directly on the canvas as an icon, an Inter headline (the
 // voice register — an empty state is a moment of voice, not tool chrome), one
 // line of plain copy, and ONE quiet action (secondary — the page's real CTA
 // lives elsewhere). Generic on purpose so every surface (library, collections,
