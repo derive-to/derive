@@ -670,16 +670,15 @@ export function Artifact() {
             )}
           </div>
 
-          {/* Only members who can act see the review card — an anonymous or
-              view-only visitor on a link artifact shouldn't be told "Review
-              requested / Send back". */}
-          {canComment && <ReviewCard shortId={shortId} canApprove={canPublish} />}
-
           <ArtifactComments
             shortId={shortId}
             isMobile={isMobile}
             isAnon={isAnon}
             canComment={canComment}
+            reviewCard={
+              // Top of the comments rail, not its own pane; members who can act only.
+              canComment ? <ReviewCard shortId={shortId} canApprove={canPublish} /> : undefined
+            }
             docLive={docLive}
             panel={panel}
             tab={commentTab}

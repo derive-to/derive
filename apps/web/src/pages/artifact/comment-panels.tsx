@@ -1,5 +1,6 @@
 import {
   type Dispatch,
+  type ReactNode,
   type SetStateAction,
   useEffect,
   useLayoutEffect,
@@ -95,6 +96,7 @@ export function MobileComments({
   onJump: (id: string) => void
   onSubmitNew: (text: string, mentions?: Mention[]) => void
   onCancelNew: () => void
+  reviewCard?: ReactNode
 }) {
   // Two states only: peek (a slim "Comments (N)" bar — the default) and full (the
   // list). Composing overrides both with a compact composer bar pinned above the
@@ -341,6 +343,7 @@ export function OpenPanel(props: {
   onNewGeneral: () => void
   onSubmitNew: (text: string, mentions?: Mention[]) => void
   onCancelNew: () => void
+  reviewCard?: ReactNode
 }) {
   const {
     tab,
@@ -365,6 +368,7 @@ export function OpenPanel(props: {
     onNewGeneral,
     onSubmitNew,
     onCancelNew,
+    reviewCard,
   } = props
   const { canComment } = useCommentScope()
   const generalComposer = composer && !composer.anchor
@@ -426,6 +430,10 @@ export function OpenPanel(props: {
           </TooltipContent>
         </Tooltip>
       </div>
+
+      {/* The review card lives at the top of the comments rail — one column, not a
+          second pane crowding the document. */}
+      {reviewCard}
 
       <div className="relative min-h-0 flex-1 overflow-hidden">
         {/* Pinned margin — cards (and a new-comment composer) float beside their
