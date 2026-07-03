@@ -1,24 +1,28 @@
 import { useNavigate } from "@tanstack/react-router"
 import { useCallback, useEffect, useState } from "react"
 import { api, type Notification } from "@/api"
+import { EmptyState } from "@/components/shared/empty-state"
+import { Button } from "@/components/ui/button"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import {
+  SidebarMenuBadge,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  useSidebar,
+} from "@/components/ui/sidebar"
 import { useAuth } from "@/ctx"
 import { ago } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { refFor } from "@/pages/artifact/parse-ref"
 import { Icon } from "./icons"
 
-// Nav-rail row classes (kept in sync with NavRail's SideItem so notifications +
-// settings sit flush with the nav items above them).
-const ROW =
-  "flex w-full items-center gap-2.5 whitespace-nowrap rounded-[9px] px-2.5 py-2 text-left text-sm font-semibold text-foreground transition-colors hover:bg-hover"
-const ROW_RAIL = "justify-center px-0 py-2.5"
-
 // Notifications: an unread badge + a panel of recent @mentions, kept live over
-// SSE. Lives at the foot of the nav rail; clicking an item deep-links to its
-// comment thread (?c=) and marks it read. Built on the Popover primitive.
-export function NotificationBell({ collapsed }: { collapsed?: boolean }) {
+// SSE. Lives in the rail's utility menu (a SidebarMenuItem); clicking an item
+// deep-links to its comment thread (?c=) and marks it read. Built on the
+// Popover primitive with a SidebarMenuButton trigger.
+export function NotificationBell() {
   const { me } = useAuth()
+  const { state, isMobile } = useSidebar()
   const nav = useNavigate()
   const [items, setItems] = useState<Notification[]>([])
   const [unread, setUnread] = useState(0)
@@ -42,6 +46,13 @@ export function NotificationBell({ collapsed }: { collapsed?: boolean }) {
     ev.addEventListener("notification", load)
     return () => ev.close()
   }, [me, load])
+
+  // Mirror the unread count into the tab title — "(3) Derive" (the house
+  // grammar). Strip any previous prefix first so updates replace, never stack.
+  useEffect(() => {
+    const base = document.title.replace(/^\(\d+\+?\)\s*/, "")
+    document.title = unread > 0 ? `(${unread > 99 ? "99+" : unread}) ${base}` : base
+  }, [unread])
 
   if (!me) return null
 
@@ -77,111 +88,143 @@ export function NotificationBell({ collapsed }: { collapsed?: boolean }) {
       .catch(() => {})
   }
 
+  // Icon rail: the unread signal collapses into the ink dot on the bell —
+  // the ink accent means "this matters", so it never inflates into a solid count block.
+  const iconMode = state === "collapsed" && !isMobile
+
   return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <button
-          type="button"
-          data-testid="notif-bell"
-          title="Notifications"
-          aria-label={unread > 0 ? `Notifications, ${unread} unread` : "Notifications"}
-          className={cn(ROW, collapsed && ROW_RAIL)}
-        >
-          <span className="relative flex w-[18px] shrink-0 items-center justify-center">
-            <Icon name="bell" size={18} />
-            {collapsed && unread > 0 && (
-              <span className="absolute -right-2 -top-2 grid h-4 min-w-4 place-items-center rounded-full bg-primary px-1 font-mono text-2xs font-bold text-primary-foreground ring-2 ring-card">
-                {unread > 9 ? "9+" : unread}
-              </span>
+    <SidebarMenuItem>
+      <Popover open={open} onOpenChange={setOpen}>
+        {/* No Tooltip layer here: stacking TooltipTrigger and PopoverTrigger
+            asChild on one button loops radix's composed refs (verified in e2e).
+            The dynamic aria-label carries the unread count instead. */}
+        <PopoverTrigger asChild>
+          <SidebarMenuButton
+            data-testid="notif-bell"
+            aria-label={unread > 0 ? `Notifications, ${unread} unread` : "Notifications"}
+            className={cn(
+              "[&_svg]:text-muted-foreground hover:[&_svg]:text-foreground data-open:bg-sidebar-accent",
+              unread > 0 && "pr-9",
             )}
-          </span>
-          {!collapsed && <span className="overflow-hidden text-ellipsis">Notifications</span>}
-          {!collapsed && unread > 0 && (
-            <span className="ml-auto font-mono text-2xs text-muted-foreground">
-              {unread > 9 ? "9+" : unread}
-            </span>
-          )}
-        </button>
-      </PopoverTrigger>
-      <PopoverContent side="right" align="end" className="w-[330px] overflow-hidden p-0">
-        <div className="flex items-center justify-between border-b border-border-soft px-3 py-2.5">
-          <span className="text-sm font-semibold">Notifications</span>
-          {unread > 0 && (
-            <button
-              type="button"
-              onClick={markAll}
-              data-testid="notif-mark-all"
-              className="text-xs text-primary underline-offset-2 hover:underline"
-            >
-              Mark all read
-            </button>
-          )}
-        </div>
-        <div className="max-h-[380px] overflow-auto">
-          {items.length === 0 ? (
-            <div className="px-3 py-6 text-center text-xs text-muted-foreground">Nothing yet</div>
-          ) : (
-            items.map((n) => (
-              <button
-                key={n.id}
-                type="button"
-                data-testid={`notif-item-${n.id}`}
-                onClick={() => openItem(n)}
-                className={cn(
-                  "flex w-full gap-2.5 border-b border-border-soft px-3 py-2.5 text-left transition-colors last:border-b-0 hover:bg-hover",
-                  !n.read && "bg-accent",
-                )}
-              >
+          >
+            <span className="relative flex size-4 shrink-0 items-center justify-center">
+              <Icon name="bell" />
+              {/* The ink dot is the unread signal in BOTH the collapsed strip and
+                  the expanded rail — the ink accent means "this matters"; the count badge
+                  beside it stays neutral like every other sidebar count. */}
+              {unread > 0 && (
                 <span
-                  className={cn(
-                    "mt-1.5 size-[7px] shrink-0 rounded-full",
-                    n.read ? "bg-border" : "bg-primary",
-                  )}
+                  className="absolute -top-0.5 -right-0.5 size-1.5 rounded-full bg-primary"
+                  aria-hidden
                 />
-                <span className="min-w-0 flex-1">
-                  <span className="block text-sm text-foreground">
-                    <strong>{n.actor}</strong>{" "}
-                    {n.kind === "follow" ? (
-                      "started following you"
-                    ) : n.kind === "publish" ? (
-                      <>
-                        published{" "}
-                        {n.artifact_title ? <strong>{n.artifact_title}</strong> : "an update"}
-                      </>
-                    ) : n.kind === "share" ? (
-                      <>
-                        shared{" "}
-                        {n.artifact_title ? <strong>{n.artifact_title}</strong> : "an artifact"}
-                        {" with you"}
-                      </>
-                    ) : (
-                      <>
-                        {n.kind === "mention" ? "mentioned you" : "commented"}
-                        {n.artifact_title ? (
-                          <>
-                            {" in "}
-                            <strong>{n.artifact_title}</strong>
-                          </>
-                        ) : null}
-                      </>
-                    )}
-                  </span>
-                  {/* The preview is a snippet for mention/comment; for follow/publish the
-                      main line already says it all, so skip the duplicate. */}
-                  {(n.kind === "mention" || n.kind === "comment") && (
-                    <span className="my-px block truncate text-xs text-muted-foreground">
-                      {n.preview}
-                    </span>
+              )}
+            </span>
+            <span>Notifications</span>
+          </SidebarMenuButton>
+        </PopoverTrigger>
+        {/* The count is decoration here — the button's aria-label announces it. */}
+        {!iconMode && unread > 0 && (
+          <SidebarMenuBadge aria-hidden className="top-1.5 text-muted-foreground">
+            {unread > 9 ? "9+" : unread}
+          </SidebarMenuBadge>
+        )}
+        <PopoverContent side="right" align="end" className="w-82.5 gap-0 overflow-hidden p-0">
+          <div className="flex items-center justify-between border-b border-border-soft px-3 py-2.5">
+            <span className="text-sm font-semibold">Notifications</span>
+            {unread > 0 && (
+              <Button variant="link" size="xs" onClick={markAll} data-testid="notif-mark-all">
+                Mark all read
+              </Button>
+            )}
+          </div>
+          <div className="max-h-95 overflow-auto">
+            {items.length === 0 ? (
+              <EmptyState className="py-8">Nothing yet.</EmptyState>
+            ) : (
+              items.map((n) => (
+                <button
+                  key={n.id}
+                  type="button"
+                  data-testid={`notif-item-${n.id}`}
+                  onClick={() => openItem(n)}
+                  className="flex w-full items-start gap-2.5 border-b border-border-soft px-3 py-2.5 text-left last:border-b-0 hover:bg-secondary focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
+                >
+                  {/* Kind glyph: mentions/replies are about you, so they take the brand
+                    ink; follows/publishes/shares stay neutral — the ink accent is reserved. */}
+                  {n.kind === "mention" ? (
+                    <Icon name="at" className="mt-0.5 text-primary" />
+                  ) : (
+                    <Icon
+                      name={
+                        n.kind === "follow"
+                          ? "user"
+                          : n.kind === "publish"
+                            ? "history"
+                            : n.kind === "share"
+                              ? "share"
+                              : "comments"
+                      }
+                      size={16}
+                      className={cn(
+                        "mt-0.5",
+                        n.kind === "follow" || n.kind === "publish" || n.kind === "share"
+                          ? "text-muted-foreground"
+                          : "text-primary",
+                      )}
+                    />
                   )}
-                  <span className="block font-mono text-2xs text-muted-foreground">
-                    {ago(n.created_at)}
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-sm text-foreground">
+                      <strong>{n.actor}</strong>{" "}
+                      {n.kind === "follow" ? (
+                        "started following you"
+                      ) : n.kind === "publish" ? (
+                        <>
+                          published{" "}
+                          {n.artifact_title ? <strong>{n.artifact_title}</strong> : "an update"}
+                        </>
+                      ) : n.kind === "share" ? (
+                        <>
+                          shared{" "}
+                          {n.artifact_title ? <strong>{n.artifact_title}</strong> : "an artifact"}
+                          {" with you"}
+                        </>
+                      ) : (
+                        <>
+                          {n.kind === "mention" ? "mentioned you" : "commented"}
+                          {n.artifact_title ? (
+                            <>
+                              {" in "}
+                              <strong>{n.artifact_title}</strong>
+                            </>
+                          ) : null}
+                        </>
+                      )}
+                    </span>
+                    {/* The preview is a snippet for mention/comment; for follow/publish the
+                      main line already says it all, so skip the duplicate. */}
+                    {(n.kind === "mention" || n.kind === "comment") && (
+                      <span className="my-px block truncate text-sm text-muted-foreground">
+                        {n.preview}
+                      </span>
+                    )}
+                    <span className="block font-mono text-2xs text-muted-foreground">
+                      {ago(n.created_at)}
+                    </span>
                   </span>
-                </span>
-              </button>
-            ))
-          )}
-        </div>
-      </PopoverContent>
-    </Popover>
+                  {/* Unread carries the ink dot; read rows carry nothing. */}
+                  {!n.read && (
+                    <span
+                      className="mt-1.5 size-1.5 shrink-0 rounded-full bg-primary"
+                      aria-hidden
+                    />
+                  )}
+                </button>
+              ))
+            )}
+          </div>
+        </PopoverContent>
+      </Popover>
+    </SidebarMenuItem>
   )
 }

@@ -1,16 +1,17 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useNavigate, useParams } from "@tanstack/react-router"
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react"
-import { createPortal } from "react-dom"
-import { toast } from "sonner"
 import { API_BASE, ApiError, api, type Comment } from "@/api"
-import { useIsMobile } from "@/components"
 import { CursorButton } from "@/components/cursor/cursor-button"
 import { Icon } from "@/components/icons"
-import { useTopBarSlot } from "@/components/shell-context"
+import { Button } from "@/components/ui/button"
+import { toast } from "@/components/ui/sonner"
 import { useAuth } from "@/ctx"
 import { artifactQuery, commentsQuery } from "@/lib/queries"
+import { ago } from "@/lib/time"
+import { useIsMobile } from "@/lib/use-is-mobile"
 import { cn } from "@/lib/utils"
+import { artifactTypeLabel } from "../library/artifact-card"
 import { artifactActions } from "./artifact-actions"
 import { ArtifactComments } from "./artifact-comments"
 import { ArtifactDocument } from "./artifact-document"
@@ -45,16 +46,45 @@ const HistoryDrawer = lazy(() =>
   import("./insights-history").then((m) => ({ default: m.HistoryDrawer })),
 )
 
+// The floating pill over the document (comments toggle / sign-in prompt) — one
+// recipe on the Button primitive so both call sites can't drift apart.
+function DocFab({
+  title,
+  testId,
+  onClick,
+  children,
+}: {
+  title: string
+  testId: string
+  onClick: () => void
+  children: React.ReactNode
+}) {
+  return (
+    <Button
+      variant="outline"
+      size="lg"
+      title={title}
+      data-testid={testId}
+      onClick={onClick}
+      // Floats over the white document, so the fill must stay opaque: the
+      // outline variant's hover:bg-secondary is a ~4% wash meant to sit over a
+      // surface, and over the iframe it would erase the pill. Composite the
+      // neutral hover step into the opaque card instead (darkens in light,
+      // lightens in dark — same ink direction as --secondary).
+      className="absolute right-4.5 bottom-4.5 rounded-full bg-card tabular-nums shadow-[var(--shadow)] hover:bg-[color-mix(in_oklab,var(--card)_95%,var(--foreground))]"
+    >
+      <Icon name="comments" size={16} />
+      {children}
+    </Button>
+  )
+}
+
 export function Artifact() {
   const { ref } = useParams({ from: "/a/$ref" })
   const { shortId, version } = parseRef(ref)
   const { me, loading } = useAuth()
   const nav = useNavigate()
   const isMobile = useIsMobile()
-  // The persistent shell exposes its top-bar region; this page's header actions
-  // are portaled into it (the shell is mounted once, above the route Outlet).
-  // Its own context, so the artifact page doesn't re-render on shell-state churn.
-  const topBarSlot = useTopBarSlot()
 
   // Artifact metadata + comments come from React Query, so the route loader's
   // intent preload (ensureQueryData) warms exactly what we render here — the
@@ -101,7 +131,7 @@ export function Artifact() {
   // Which comment surface is showing: the public team thread, or your personal notes
   // (private to you + the agents you've authed). Two filtered views of one list. The
   // panel shows the active tab; the document highlights BOTH (shared lavender +
-  // personal amber), and clicking a highlight switches to its tab.
+  // personal ink), and clicking a highlight switches to its tab.
   const [commentTab, setCommentTab] = useState<"comments" | "personal">("comments")
   const personalComments = comments.filter((c) => c.visibility === "personal")
   const publicComments = comments.filter((c) => c.visibility !== "personal")
@@ -412,128 +442,157 @@ export function Artifact() {
   const asideWidth = isMobile ? 0 : panel === "open" ? 340 : 0
 
   return (
-    <>
-      {topBarSlot &&
-        createPortal(
-          <>
-            {!isMobile && <Presence viewers={live.viewers} selfId={me?.id} />}
-            {!isMobile && <CursorButton />}
-            {!isAnon && (
-              <ArtifactTopBar
-                shortId={shortId}
-                myRole={art.my_role}
-                visibility={art.visibility}
-                generalRole={art.general_role}
-                favorite={!!art.favorite}
-                tags={art.tags ?? []}
-                collections={art.collections ?? []}
-                canEditTags={art.my_role === "editor" || art.my_role === "owner"}
-                openProposals={art.open_proposals ?? 0}
-                proposalsTotal={art.proposals_total ?? 0}
-                isMobile={isMobile}
-                panelOpen={panel === "open"}
-                openCount={openCount}
-                showEdit={editable && canPropose && !editing && !art.managed}
-                editLabel={effectiveCanPublish ? "Edit source (dev)" : "Propose change (dev)"}
-                isDeck={!!deck || art.current_content_type === "text/x-derive-deck"}
-                // Reader only helps non-responsive HTML — not markdown (already responsive)
-                // or decks (slides). Hidden while viewing a diff.
-                showReader={
-                  format === "html" &&
-                  !deck &&
-                  art.current_content_type !== "text/x-derive-deck" &&
-                  view !== "diff"
-                }
-                reader={reader}
-                onReaderToggle={() => setReader((r) => !r)}
-                canLock={canLock}
-                locked={isLocked}
-                onPresent={toggleFullscreen}
-                onLockToggle={async () => {
-                  const next = !isLocked
-                  // Optimistic flip; roll back if the server rejects.
-                  qc.setQueryData(artifactQuery(shortId).queryKey, (a) =>
-                    a ? { ...a, locked: next } : a,
-                  )
-                  try {
-                    await api.setLocked(shortId, next)
-                  } catch (e) {
-                    qc.setQueryData(artifactQuery(shortId).queryKey, (a) =>
-                      a ? { ...a, locked: !next } : a,
-                    )
-                    toast.error((e as Error).message)
-                  }
-                }}
-                onFavorite={(fav) =>
-                  qc.setQueryData(artifactQuery(shortId).queryKey, (a) =>
-                    a ? { ...a, favorite: fav } : a,
-                  )
-                }
-                onTags={(tags) =>
-                  qc.setQueryData(artifactQuery(shortId).queryKey, (a) => (a ? { ...a, tags } : a))
-                }
-                onCollections={(collections) =>
-                  qc.setQueryData(artifactQuery(shortId).queryKey, (a) =>
-                    a ? { ...a, collections } : a,
-                  )
-                }
-                onInsights={() => setSurface("insights")}
-                onHistory={() => setSurface("history")}
-                onReview={() => setReviewing(true)}
-                onStartEdit={startEdit}
-                onToggleComments={() => setPanel((pn) => (pn === "open" ? "hidden" : "open"))}
-              />
-            )}
-          </>,
-          topBarSlot,
-        )}
-      <ActionsCtx.Provider value={actions}>
-        {reviewing && (
-          <Suspense fallback={null}>
-            <ReviewOverlay
+    <ActionsCtx.Provider value={actions}>
+      {reviewing && (
+        <Suspense fallback={null}>
+          <ReviewOverlay
+            shortId={shortId}
+            currentVersion={art.current_version}
+            myRole={art.my_role}
+            meName={me?.name ?? me?.email ?? null}
+            onClose={() => setReviewing(false)}
+            onApplied={load}
+          />
+        </Suspense>
+      )}
+      {surface === "insights" && (
+        <Suspense fallback={null}>
+          <Insights
+            shortId={shortId}
+            title={art.title}
+            open
+            onOpenChange={(o) => setSurface(o ? "insights" : null)}
+          />
+        </Suspense>
+      )}
+      {surface === "history" && (
+        <Suspense fallback={null}>
+          <HistoryDrawer
+            art={art}
+            shown={shown}
+            goTo={(n) => {
+              const base = refFor({ short_id: shortId, title: art.title })
+              nav({
+                to: "/a/$ref",
+                params: { ref: n === art.current_version ? base : `${base}@v${n}` },
+              })
+            }}
+            open
+            onOpenChange={(o) => setSurface(o ? "history" : null)}
+          />
+        </Suspense>
+      )}
+      {/* data-artifact-view: while the workbench is mounted, globals.css drops the
+          film-grain overlay so Derive's material steps back inside the author's document. */}
+      <div data-artifact-view className="flex min-h-0 flex-1 flex-col">
+        {/* The workbench bar — full-width now (sidebar-first shell), so the
+              comments panel docks BELOW it instead of squeezing it into the
+              remaining width. The page owns its toolbar: the artifact title (the
+              Geist content register) on the left, presence/cursors + the header
+              actions on the right. shrink-0 keeps the split row below it on the
+              min-h-0 flex-1 height chain. */}
+        <div className="flex shrink-0 items-center gap-3 border-b border-border px-4 py-2.5 max-sm:flex-wrap max-sm:px-3">
+          {/* Identity — a two-line document header, the reframe: the artifact title,
+              then a machine-register state line (type · version · freshness). The
+              bar's job is to say WHAT you're viewing and its state, not to be a run
+              of icons — the actions collapse to the right. */}
+          <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+            <h1
+              className="truncate font-serif text-base font-medium leading-tight tracking-tight"
+              title={art.title ?? shortId}
+            >
+              {art.title ?? shortId}
+            </h1>
+            <span className="truncate font-mono text-2xs tabular-nums text-muted-foreground">
+              {artifactTypeLabel(art)} · v{art.current_version}
+              {art.updated_at ? ` · updated ${ago(art.updated_at)}` : ""}
+            </span>
+          </div>
+          {/* Collaboration — presence facepile + your cursor, one ambient cluster,
+              held apart from the actions by spacing (no vertical rule). */}
+          {!isMobile && (
+            <div className="flex items-center gap-0.5">
+              <Presence viewers={live.viewers} selfId={me?.id} />
+              <CursorButton />
+            </div>
+          )}
+          {!isAnon && (
+            <ArtifactTopBar
               shortId={shortId}
-              currentVersion={art.current_version}
               myRole={art.my_role}
-              meName={me?.name ?? me?.email ?? null}
-              onClose={() => setReviewing(false)}
-              onApplied={load}
-            />
-          </Suspense>
-        )}
-        {surface === "insights" && (
-          <Suspense fallback={null}>
-            <Insights
-              shortId={shortId}
-              title={art.title}
-              open
-              onOpenChange={(o) => setSurface(o ? "insights" : null)}
-            />
-          </Suspense>
-        )}
-        {surface === "history" && (
-          <Suspense fallback={null}>
-            <HistoryDrawer
-              art={art}
-              shown={shown}
-              goTo={(n) => {
-                const base = refFor({ short_id: shortId, title: art.title })
-                nav({
-                  to: "/a/$ref",
-                  params: { ref: n === art.current_version ? base : `${base}@v${n}` },
-                })
+              visibility={art.visibility}
+              generalRole={art.general_role}
+              favorite={!!art.favorite}
+              tags={art.tags ?? []}
+              collections={art.collections ?? []}
+              canEditTags={art.my_role === "editor" || art.my_role === "owner"}
+              openProposals={art.open_proposals ?? 0}
+              proposalsTotal={art.proposals_total ?? 0}
+              isMobile={isMobile}
+              panelOpen={panel === "open"}
+              openCount={openCount}
+              showEdit={editable && canPropose && !editing && !art.managed}
+              editLabel={effectiveCanPublish ? "Edit source (dev)" : "Propose change (dev)"}
+              isDeck={!!deck || art.current_content_type === "text/x-derive-deck"}
+              // Reader only helps non-responsive HTML — not markdown (already responsive)
+              // or decks (slides). Hidden while viewing a diff.
+              showReader={
+                format === "html" &&
+                !deck &&
+                art.current_content_type !== "text/x-derive-deck" &&
+                view !== "diff"
+              }
+              reader={reader}
+              onReaderToggle={() => setReader((r) => !r)}
+              canLock={canLock}
+              locked={isLocked}
+              onPresent={toggleFullscreen}
+              onLockToggle={async () => {
+                const next = !isLocked
+                // Optimistic flip; roll back if the server rejects.
+                qc.setQueryData(artifactQuery(shortId).queryKey, (a) =>
+                  a ? { ...a, locked: next } : a,
+                )
+                try {
+                  await api.setLocked(shortId, next)
+                } catch (e) {
+                  qc.setQueryData(artifactQuery(shortId).queryKey, (a) =>
+                    a ? { ...a, locked: !next } : a,
+                  )
+                  toast.error((e as Error).message)
+                }
               }}
-              open
-              onOpenChange={(o) => setSurface(o ? "history" : null)}
+              onFavorite={(fav) =>
+                qc.setQueryData(artifactQuery(shortId).queryKey, (a) =>
+                  a ? { ...a, favorite: fav } : a,
+                )
+              }
+              onTags={(tags) =>
+                qc.setQueryData(artifactQuery(shortId).queryKey, (a) => (a ? { ...a, tags } : a))
+              }
+              onCollections={(collections) =>
+                qc.setQueryData(artifactQuery(shortId).queryKey, (a) =>
+                  a ? { ...a, collections } : a,
+                )
+              }
+              onInsights={() => setSurface("insights")}
+              onHistory={() => setSurface("history")}
+              onReview={() => setReviewing(true)}
+              onStartEdit={startEdit}
+              onToggleComments={() => setPanel((pn) => (pn === "open" ? "hidden" : "open"))}
             />
-          </Suspense>
-        )}
+          )}
+        </div>
+        {/* The split row lives BELOW the full-width bar: the document stage on
+                the left, the comments aside on the right, so the panel slides in
+                under the toolbar rather than beside it. */}
         <div className="flex min-h-0 flex-1">
           <div
             className={cn(
               // On phones, the comments sheet sits in the bottom half — reserve
               // that space so the document stays visible above it (and a
               // jumped-to highlight lands in view, not behind the sheet).
-              "relative flex min-w-0 flex-1 flex-col transition-[padding] duration-[260ms]",
+              "relative flex min-w-0 flex-1 flex-col transition-[padding] duration-200",
               isMobile && panel === "open" && "pb-[50vh]",
             )}
           >
@@ -587,37 +646,31 @@ export function Artifact() {
               />
             )}
             {!isAnon && panel === "hidden" && (
-              <button
-                type="button"
-                onClick={() => setPanel("open")}
+              <DocFab
                 title="Show comments (c)"
-                data-testid="artifact-comments-fab"
-                className="absolute bottom-[18px] right-[18px] flex h-11 items-center gap-2 rounded-full border border-border bg-card px-4 text-sm font-semibold text-foreground shadow-[var(--shadow)]"
+                testId="artifact-comments-fab"
+                onClick={() => setPanel("open")}
               >
-                <Icon name="comments" size={18} />
                 {openCount > 0
                   ? `${openCount} comment${openCount === 1 ? "" : "s"}`
                   : "Show comments"}
-              </button>
+              </DocFab>
             )}
             {/* Anonymous visitor on a comment-enabled link: commenting forces auth (anon
                 stays view-only). Offer sign-in, returning here afterward. */}
             {promptSignInToComment && (
-              <button
-                type="button"
+              <DocFab
+                title="Sign in to comment"
+                testId="sign-in-to-comment"
                 onClick={() =>
                   nav({
                     to: "/login",
                     search: { return_to: `/a/${refFor({ short_id: shortId, title: art.title })}` },
                   })
                 }
-                title="Sign in to comment"
-                data-testid="sign-in-to-comment"
-                className="absolute bottom-[18px] right-[18px] flex h-11 items-center gap-2 rounded-full border border-border bg-card px-4 text-sm font-semibold text-foreground shadow-[var(--shadow)]"
               >
-                <Icon name="comments" size={18} />
                 Sign in to comment
-              </button>
+              </DocFab>
             )}
           </div>
 
@@ -661,7 +714,7 @@ export function Artifact() {
             anchorConf={anchorConf}
           />
         </div>
-      </ActionsCtx.Provider>
-    </>
+      </div>
+    </ActionsCtx.Provider>
   )
 }

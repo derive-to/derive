@@ -1,8 +1,10 @@
 import { lazy, Suspense, useEffect, useState } from "react"
 import { api } from "@/api"
 import { Icon } from "@/components/icons"
+import { StatusPanel } from "@/components/shared/status-panel"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { cn } from "@/lib/utils"
 
 // CodeMirror (+ the markdown renderer the preview pulls in) load only when the
@@ -91,26 +93,13 @@ export function SourceEditor({
     }
   }, [src, format, title, previewOpen])
 
-  const tab = (id: "edit" | "preview", label: string) => (
-    <button
-      type="button"
-      data-testid={`artifact-${id}-tab`}
-      onClick={() => setPane(id)}
-      className={cn(
-        "rounded-md px-3 py-1.5 text-xs font-semibold transition-colors",
-        pane === id ? "bg-card text-foreground shadow-sm" : "text-muted-foreground",
-      )}
-    >
-      {label}
-    </button>
-  )
-
   return (
     // In-flow (fills the document column), not a fullscreen overlay: the app
     // sidebar stays, and the comments panel toggles in/out beside the editor just
     // like in normal viewing — so you can reference comments while editing.
     <div className="flex min-h-0 flex-1 flex-col bg-card">
-      <div className="flex flex-wrap items-center gap-2 border-b border-border-soft px-4 py-2.5">
+      {/* Toolbar canon: matches the view bar in index.tsx (px-4 py-2 border-border). */}
+      <div className="flex flex-wrap items-center gap-2 border-b border-border px-4 py-2">
         {onTitle ? (
           <Input
             value={title}
@@ -118,10 +107,10 @@ export function SourceEditor({
             placeholder="Untitled"
             aria-label="Title"
             data-testid="artifact-title-input"
-            className="h-8 w-full text-sm font-semibold md:w-auto md:max-w-[320px] md:flex-1"
+            className="font-medium md:w-auto md:max-w-80 md:flex-1"
           />
         ) : (
-          <span className="flex items-center gap-2 font-mono text-xs text-muted-foreground">
+          <span className="flex items-center gap-2 font-mono text-2xs text-muted-foreground">
             <Icon name="edit" size={16} />
             <span className="max-w-[40vw] truncate">
               {canPublish ? `Editing · ${title}` : "Proposing a change"}
@@ -135,7 +124,7 @@ export function SourceEditor({
             placeholder="Describe this version (optional)"
             aria-label="Version description"
             data-testid="artifact-commit-message"
-            className="order-last h-8 w-full text-sm md:order-none md:w-auto md:max-w-[360px] md:flex-1"
+            className="order-last md:order-none md:w-auto md:max-w-90 md:flex-1"
           />
         ) : (
           <Input
@@ -144,7 +133,7 @@ export function SourceEditor({
             placeholder="What are you changing, and why?"
             aria-label="Proposal description"
             data-testid="artifact-propose-message"
-            className="order-last h-8 w-full text-sm md:order-none md:w-auto md:max-w-[420px] md:flex-1"
+            className="order-last md:order-none md:w-auto md:max-w-105 md:flex-1"
           />
         )}
         <span className="ml-auto flex items-center gap-2">
@@ -157,25 +146,33 @@ export function SourceEditor({
             onClick={() => setPreviewOpen((v) => !v)}
             title={previewOpen ? "Hide preview" : "Show preview"}
             aria-pressed={previewOpen}
-            className={cn(
-              "hidden gap-1.5 md:inline-flex",
-              previewOpen && "border-primary text-primary",
-            )}
+            // Pressed toggles are a neutral wash — the ink accent is reserved.
+            className={cn("hidden gap-1.5 md:inline-flex", previewOpen && "bg-accent")}
           >
             <Icon name="views" size={16} />
             Preview
           </Button>
-          {/* Phone: one pane at a time. */}
-          <span className="flex rounded-lg border border-border bg-muted/50 p-0.5 md:hidden">
-            {tab("edit", "Edit")}
-            {tab("preview", "Preview")}
-          </span>
+          {/* Phone: one pane at a time — the shared compact segmented control. */}
+          <Tabs
+            value={pane}
+            onValueChange={(v) => setPane(v as "edit" | "preview")}
+            className="md:hidden"
+          >
+            <TabsList size="sm">
+              <TabsTrigger value="edit" data-testid="artifact-edit-tab">
+                Edit
+              </TabsTrigger>
+              <TabsTrigger value="preview" data-testid="artifact-preview-tab">
+                Preview
+              </TabsTrigger>
+            </TabsList>
+          </Tabs>
           <Button variant="outline" size="sm" data-testid="artifact-edit-cancel" onClick={onCancel}>
             Cancel
           </Button>
           {canPublish ? (
             <Button
-              variant="primary"
+              variant="default"
               size="sm"
               data-testid="artifact-publish-version"
               onClick={onPublish}
@@ -184,7 +181,7 @@ export function SourceEditor({
             </Button>
           ) : (
             <Button
-              variant="primary"
+              variant="default"
               size="sm"
               data-testid="artifact-propose-submit"
               onClick={onPropose}
@@ -205,7 +202,7 @@ export function SourceEditor({
                 spellCheck={false}
                 aria-label="Artifact source"
                 data-testid="artifact-source-editor"
-                className="h-full flex-1 resize-none border-0 bg-card px-5 py-4 font-mono text-sm leading-relaxed text-foreground outline-none"
+                className="h-full flex-1 resize-none border border-input bg-card px-5 py-4 font-mono text-sm text-foreground outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40"
               />
             }
           >
@@ -220,11 +217,16 @@ export function SourceEditor({
           )}
         >
           {previewStale && (
-            <div
-              data-testid="preview-stale"
-              className="shrink-0 border-b border-border-soft bg-secondary px-3 py-1.5 text-xs text-muted-foreground"
-            >
-              Preview unavailable. Showing your last successful render.
+            // StatusPanel doesn't spread extra props, so the testid rides a wrapper.
+            <div data-testid="preview-stale" className="shrink-0">
+              <StatusPanel
+                tone="warning"
+                layout="inline"
+                title="Preview unavailable"
+                description="Showing your last successful render."
+                // A compact edge-to-edge strip in the editor chrome, not a floating card.
+                className="rounded-none p-2.5"
+              />
             </div>
           )}
           <iframe
@@ -232,7 +234,7 @@ export function SourceEditor({
             data-testid="artifact-preview"
             srcDoc={preview}
             sandbox="allow-scripts allow-forms allow-popups allow-modals"
-            className="h-full w-full flex-1 border-0 bg-white"
+            className="size-full flex-1 border-0 bg-white"
           />
         </div>
       </div>

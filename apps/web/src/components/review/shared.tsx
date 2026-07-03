@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react"
+import { type ComponentProps, useEffect, useState } from "react"
 import type { ProposalState } from "@/api"
-import { Badge, type BadgeProps } from "@/components/ui/badge"
+import type { StatusPanel } from "@/components/shared/status-panel"
+import { Badge } from "@/components/ui/badge"
 
 // Re-exported so the review modules keep their local import while there's one
 // implementation (see lib/time).
@@ -22,41 +23,39 @@ export function useNarrow(): boolean {
 
 type StateMeta = {
   label: string
-  badge: BadgeProps["variant"]
-  badgeCls?: string
-  // banner = the tinted strip shown for a decided proposal's decision note.
-  banner: string
-  text: string
+  badge: "default" | "secondary" | "destructive" | "outline" | "brand" | "success" | "warning"
+  // tone = the StatusPanel tone for a decided proposal's decision-note banner
+  // (rendered in body.tsx) — the panel owns the fill + announce grammar; none of
+  // these states is "danger", so they all announce politely.
+  tone: NonNullable<ComponentProps<typeof StatusPanel>["tone"]>
 }
 
+// Review states map onto the status hues: approved = success, changes requested
+// = warning (a request, not a failure); open/withdrawn stay neutral.
 export const STATE_META: Record<ProposalState, StateMeta> = {
-  open: { label: "Open", badge: "accent", banner: "bg-accent/10", text: "text-accent-foreground" },
+  open: {
+    label: "Open",
+    badge: "secondary",
+    tone: "neutral",
+  },
   approved: {
     label: "Approved",
     badge: "success",
-    banner: "bg-secondary",
-    text: "text-success",
+    tone: "success",
   },
   changes_requested: {
     label: "Changes requested",
-    badge: "outline",
-    badgeCls: "border-destructive text-destructive",
-    banner: "bg-destructive/10",
-    text: "text-destructive",
+    badge: "warning",
+    tone: "warning",
   },
   withdrawn: {
     label: "Withdrawn",
-    badge: "default",
-    banner: "bg-secondary",
-    text: "text-muted-foreground",
+    badge: "outline",
+    tone: "neutral",
   },
 }
 
 export function StateBadge({ state }: { state: ProposalState }) {
   const m = STATE_META[state]
-  return (
-    <Badge variant={m.badge} className={m.badgeCls}>
-      {m.label}
-    </Badge>
-  )
+  return <Badge variant={m.badge}>{m.label}</Badge>
 }

@@ -1,6 +1,6 @@
-import { Lock } from "lucide-react"
 import { type FormEvent, useState } from "react"
 import { api } from "@/api"
+import { Icon } from "@/components/icons"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 
@@ -32,38 +32,45 @@ export function PasswordGate({ shortId, onUnlocked }: { shortId: string; onUnloc
     <div className="grid min-h-dvh place-items-center bg-background px-4">
       <form
         onSubmit={submit}
-        className="w-full max-w-sm rounded-lg border border-border bg-card p-6 text-center shadow-[var(--shadow)]"
+        className="flex w-full max-w-xs flex-col gap-4 rounded-xl border border-border bg-card p-6 text-center shadow-[var(--shadow)]"
       >
-        <div className="mx-auto mb-3 grid size-11 place-items-center rounded-full bg-muted text-muted-foreground">
-          <Lock className="size-5" />
+        <div className="flex flex-col items-center gap-3">
+          {/* The gate's editorial hero glyph: 24px, light stroke. */}
+          <Icon name="lock" size={24} strokeWidth={1.75} className="text-muted-foreground" />
+          <div className="flex flex-col gap-1">
+            {/* A gate is a voice moment (like login/welcome), not tool chrome. */}
+            <h1 className="font-serif text-xl font-medium tracking-tight text-balance">
+              This artifact is password-protected
+            </h1>
+            <p className="text-sm text-pretty text-muted-foreground">
+              Enter the password to view it.
+            </p>
+          </div>
         </div>
-        <h1 className="font-display text-lg font-semibold">This artifact is password-protected</h1>
-        <p className="mt-1 text-sm text-muted-foreground">Enter the password to view it.</p>
-        <Input
-          type="password"
-          autoFocus
-          data-testid="password-gate-input"
-          placeholder="Password"
-          aria-label="Password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          className="mt-4"
-        />
-        {err && (
-          <p
-            data-testid="password-gate-error"
-            role="alert"
-            className="mt-2 text-xs text-destructive"
-          >
-            {err}
-          </p>
-        )}
+        <div className="flex flex-col gap-2">
+          <Input
+            type="password"
+            name="password"
+            autoComplete="current-password"
+            autoFocus
+            data-testid="password-gate-input"
+            placeholder="Password"
+            aria-label="Password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+          />
+          {err && (
+            <p data-testid="password-gate-error" role="alert" className="text-sm text-destructive">
+              {err}
+            </p>
+          )}
+        </div>
         <Button
           type="submit"
-          variant="primary"
+          variant="default"
           data-testid="password-gate-submit"
           disabled={busy || !password}
-          className="mt-3 w-full"
+          className="w-full"
         >
           {busy ? "Unlocking…" : "Unlock"}
         </Button>

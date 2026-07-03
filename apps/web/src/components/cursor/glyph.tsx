@@ -75,7 +75,7 @@ export function NameTag({
     <span
       data-cursor-label
       className={cn(
-        "inline-block max-w-[160px] truncate rounded-[5px] px-1.5 py-px text-2xs font-semibold leading-tight text-white",
+        "inline-block max-w-[160px] truncate rounded-[5px] px-1.5 py-px text-xs font-semibold leading-tight text-white",
         className,
       )}
       style={{ background: color, ...style }}

@@ -25,9 +25,11 @@ export async function signUp(page: Page, name = "E2E Tester"): Promise<string> {
   // exercise onboarding itself drive /welcome explicitly. The click auto-waits for
   // the step to render, absorbing the post-signup redirect timing.
   await page.getByTestId("welcome-skip").click()
-  // Authenticated chrome is up (the header user menu renders on every page once
-  // `me` resolves) — a deterministic "signed in and the app shell is ready" gate.
-  await expect(page.getByTestId("user-menu-trigger")).toBeVisible()
+  // Authenticated chrome is up — a deterministic "signed in and the app shell
+  // is ready" gate. `library-menu` renders on every viewport (the rail's
+  // trigger on desktop, the navbar hamburger on mobile); the user pod itself
+  // lives inside the mobile drawer sheet, so it isn't visible here.
+  await expect(page.getByTestId("library-menu")).toBeVisible()
   return email
 }
 

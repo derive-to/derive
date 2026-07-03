@@ -1,6 +1,8 @@
 import { Link } from "@tanstack/react-router"
 import type { Collection } from "@/api"
 import { Icon } from "@/components/icons"
+import { Count } from "@/components/shared/section-eyebrow"
+import { Button } from "@/components/ui/button"
 import { prTitle, prUrl } from "@/lib/pr"
 import { cn } from "@/lib/utils"
 
@@ -24,11 +26,11 @@ export function RepoPullRequests({
       className="mb-4 overflow-hidden rounded-xl border border-border bg-card"
     >
       <header className="flex items-center gap-2 border-b border-border-soft px-3.5 py-2.5">
-        <Icon name="review" size={16} />
-        <span className="font-display text-sm font-semibold text-foreground">Pull requests</span>
-        <span className="font-mono text-2xs text-muted-foreground">{prs.length}</span>
+        <Icon name="review" className="text-muted-foreground" />
+        <span className="text-sm font-medium text-foreground">Pull requests</span>
+        <Count>{prs.length}</Count>
       </header>
-      <ul className="flex flex-col">
+      <ul role="list" className="flex flex-col">
         {prs.map((pr) => {
           const active = pr.id === activeId
           return (
@@ -42,15 +44,16 @@ export function RepoPullRequests({
                 data-testid={`repo-pr-${pr.id}`}
                 aria-current={active ? "page" : undefined}
                 className={cn(
-                  "flex min-w-0 flex-1 items-center gap-2.5 px-3.5 py-2.5 text-sm transition-colors hover:bg-hover",
+                  // Full-bleed row in an overflow-clipped card → inset focus outline.
+                  "flex min-w-0 flex-1 items-center gap-2.5 px-3.5 py-2.5 text-sm outline-none hover:bg-secondary focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring",
                   active && "bg-accent text-accent-foreground hover:bg-accent",
                 )}
               >
-                <Icon name="review" size={15} className="shrink-0" />
+                <Icon name="review" className="shrink-0 text-muted-foreground" />
                 {pr.prNumber !== undefined && (
                   <span
                     className={cn(
-                      "shrink-0 font-mono text-2xs text-muted-foreground",
+                      "shrink-0 font-mono text-2xs text-muted-foreground tabular-nums",
                       active && "text-accent-foreground",
                     )}
                   >
@@ -62,7 +65,7 @@ export function RepoPullRequests({
                 </span>
                 <span
                   className={cn(
-                    "shrink-0 font-mono text-2xs text-muted-foreground",
+                    "shrink-0 font-mono text-2xs text-muted-foreground tabular-nums",
                     active && "text-accent-foreground",
                   )}
                 >
@@ -70,17 +73,23 @@ export function RepoPullRequests({
                 </span>
               </Link>
               {repo && pr.prNumber !== undefined && (
-                <a
-                  href={prUrl(repo, pr.prNumber)}
-                  target="_blank"
-                  rel="noreferrer"
-                  title={`Open PR #${pr.prNumber} on GitHub`}
-                  aria-label={`Open PR #${pr.prNumber} on GitHub`}
+                <Button
+                  asChild
+                  variant="ghost"
+                  size="icon"
                   data-testid={`repo-pr-${pr.id}-github`}
-                  className="flex h-9 w-9 shrink-0 items-center justify-center text-muted-foreground transition-colors hover:text-foreground"
+                  className="shrink-0 text-muted-foreground"
                 >
-                  <Icon name="link" size={15} />
-                </a>
+                  <a
+                    href={prUrl(repo, pr.prNumber)}
+                    target="_blank"
+                    rel="noreferrer"
+                    title={`Open PR #${pr.prNumber} on GitHub`}
+                    aria-label={`Open PR #${pr.prNumber} on GitHub`}
+                  >
+                    <Icon name="link" />
+                  </a>
+                </Button>
               )}
             </li>
           )

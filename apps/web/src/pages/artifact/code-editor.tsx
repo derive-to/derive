@@ -3,7 +3,7 @@ import { html } from "@codemirror/lang-html"
 import { markdown } from "@codemirror/lang-markdown"
 import {
   bracketMatching,
-  defaultHighlightStyle,
+  HighlightStyle,
   indentOnInput,
   syntaxHighlighting,
 } from "@codemirror/language"
@@ -16,7 +16,25 @@ import {
   keymap,
   lineNumbers,
 } from "@codemirror/view"
+import { tags as t } from "@lezer/highlight"
 import { useEffect, useRef } from "react"
+
+// Syntax colors ride the semantic CSS variables instead of hard-coded values, so
+// the highlight follows the active theme (dark and light) with a single style.
+const tokenHighlight = HighlightStyle.define([
+  { tag: [t.keyword, t.tagName], color: "var(--primary)" },
+  { tag: t.string, color: "var(--success)" },
+  { tag: [t.number, t.atom], color: "var(--warning)" },
+  { tag: t.comment, color: "var(--muted-foreground)", fontStyle: "italic" },
+  { tag: t.heading, color: "var(--foreground)", fontWeight: "600" },
+  { tag: t.strong, color: "var(--foreground)", fontWeight: "600" },
+  { tag: [t.link, t.url], color: "var(--primary)", textDecoration: "underline" },
+  {
+    tag: [t.punctuation, t.operator, t.processingInstruction],
+    color: "var(--muted-foreground)",
+  },
+  { tag: [t.propertyName, t.attributeName], color: "var(--foreground)" },
+])
 
 /**
  * A thin CodeMirror 6 wrapper for the source editor: syntax highlighting for
@@ -60,7 +78,7 @@ export function CodeEditor({
           history(),
           indentOnInput(),
           bracketMatching(),
-          syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
+          syntaxHighlighting(tokenHighlight, { fallback: true }),
           keymap.of([...defaultKeymap, ...historyKeymap]),
           format === "md" ? markdown() : html(),
           EditorView.lineWrapping,
@@ -73,9 +91,13 @@ export function CodeEditor({
               backgroundColor: "transparent",
               fontSize: "13px", // tokens-ignore: CodeMirror raw-CSS theme; editor font px, not a design token
             },
-            "&.cm-focused": { outline: "none" },
+            // Editable focus grammar: no outline, soft ink glow via the ring token.
+            "&.cm-focused": {
+              outline: "none",
+              boxShadow: "0 0 0 2px color-mix(in oklab, var(--ring) 40%, transparent)",
+            },
             ".cm-scroller": {
-              fontFamily: "ui-monospace, 'SF Mono', Menlo, Consolas, monospace",
+              fontFamily: "var(--font-mono)",
               lineHeight: "1.65",
               padding: "8px 0",
             },

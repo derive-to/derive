@@ -1,41 +1,32 @@
-import * as React from "react"
+import type * as React from "react"
+
 import { cn } from "@/lib/utils"
 
-export const Input = React.forwardRef<
-  HTMLInputElement,
-  React.InputHTMLAttributes<HTMLInputElement>
->(({ className, type, ...props }, ref) => {
+function Input({ className, type, ...props }: React.ComponentProps<"input">) {
   return (
     <input
       type={type}
-      ref={ref}
+      data-slot="input"
       className={cn(
-        "flex h-9 w-full rounded-md border border-input bg-card px-3 py-1 text-base text-foreground transition-colors",
-        "placeholder:text-muted-foreground focus-visible:border-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent",
-        "disabled:cursor-not-allowed disabled:opacity-50",
+        // Quiet well: hairline border-input; transparent on light (the themed shadow
+        // var adds depth there and zeroes in dark, where the well fill does the work).
+        // Native picker glyphs follow the theme via color-scheme on :root/.dark.
+        "h-8 w-full min-w-0 rounded-lg border border-input bg-transparent px-2.5 py-1 shadow-(--shadow-sm) outline-none selection:bg-selection dark:bg-input/30",
+        // WebKit autofill paints an opaque yellow well — repaint it with the theme
+        // canvas + ink so autofilled fields stay legible in both themes.
+        "autofill:shadow-[inset_0_0_0_1000px_var(--background)] autofill:[-webkit-text-fill-color:var(--foreground)]",
+        // iOS no-zoom: fields stay ≥16px on touch; 14px control base from sm up.
+        "text-base placeholder:text-muted-foreground sm:text-sm",
+        "file:inline-flex file:h-6 file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground",
+        // Editable focus grammar: ink border + soft glow, never outline-offset.
+        "focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40",
+        "aria-invalid:border-destructive aria-invalid:ring-2 aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40",
+        "disabled:cursor-not-allowed disabled:bg-input/50 disabled:opacity-50 dark:disabled:bg-input/80",
         className,
       )}
       {...props}
     />
   )
-})
-Input.displayName = "Input"
+}
 
-export const Textarea = React.forwardRef<
-  HTMLTextAreaElement,
-  React.TextareaHTMLAttributes<HTMLTextAreaElement>
->(({ className, ...props }, ref) => {
-  return (
-    <textarea
-      ref={ref}
-      className={cn(
-        "flex min-h-16 w-full rounded-md border border-input bg-card px-3 py-2 text-sm text-foreground transition-colors",
-        "placeholder:text-muted-foreground focus-visible:border-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent",
-        "disabled:cursor-not-allowed disabled:opacity-50",
-        className,
-      )}
-      {...props}
-    />
-  )
-})
-Textarea.displayName = "Textarea"
+export { Input }

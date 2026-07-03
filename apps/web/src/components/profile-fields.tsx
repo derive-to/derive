@@ -1,10 +1,18 @@
 import { useState } from "react"
-import { toast } from "sonner"
 import { api } from "@/api"
+import { FormField } from "@/components/shared/form-field"
 import { Button } from "@/components/ui/button"
-import { Input, Textarea } from "@/components/ui/input"
+import { Input } from "@/components/ui/input"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+import { toast } from "@/components/ui/sonner"
+import { Textarea } from "@/components/ui/textarea"
 import { useAuth } from "@/ctx"
-import { selectClass } from "@/pages/settings/roles"
 
 // The team roles offered in the picker, written casually with a plain-language
 // blurb so people self-identify by what they actually do, not a job title. Stored
@@ -64,36 +72,37 @@ export function ProfileFields({ onSaved }: { onSaved?: () => void }) {
   }
 
   return (
-    <div className="flex flex-col gap-3">
-      <div className="flex flex-wrap items-start gap-2">
-        <div className="flex flex-col gap-1">
-          <label htmlFor="profile-role" className="text-2xs font-medium text-muted-foreground">
-            Your role
-          </label>
-          <select
-            id="profile-role"
-            data-testid="profile-role"
-            aria-label="Your role"
-            value={preset}
-            onChange={(e) => setPreset(e.target.value)}
-            className={`${selectClass} w-[150px]`}
+    <div className="flex flex-col gap-4">
+      <div className="flex flex-wrap items-start gap-3">
+        <FormField
+          label="Your role"
+          htmlFor="profile-role"
+          hint={preset && preset !== OTHER && presetHint ? presetHint : undefined}
+        >
+          <Select
+            value={preset || "__unset"}
+            onValueChange={(v) => setPreset(v === "__unset" ? "" : v)}
           >
-            <option value="">Not set</option>
-            {PROFESSIONS.map((p) => (
-              <option key={p.value} value={p.value}>
-                {p.value}
-              </option>
-            ))}
-          </select>
-        </div>
-        {preset === OTHER && (
-          <div className="flex min-w-[150px] flex-1 flex-col gap-1">
-            <label
-              htmlFor="profile-role-other"
-              className="text-2xs font-medium text-muted-foreground"
+            <SelectTrigger
+              id="profile-role"
+              data-testid="profile-role"
+              aria-label="Your role"
+              className="w-37.5"
             >
-              Role name
-            </label>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__unset">Not set</SelectItem>
+              {PROFESSIONS.map((p) => (
+                <SelectItem key={p.value} value={p.value}>
+                  {p.value}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </FormField>
+        {preset === OTHER && (
+          <FormField label="Role name" htmlFor="profile-role-other" className="min-w-37.5 flex-1">
             <Input
               id="profile-role-other"
               data-testid="profile-role-other"
@@ -102,16 +111,10 @@ export function ProfileFields({ onSaved }: { onSaved?: () => void }) {
               placeholder="e.g. Data, Sales, Ops…"
               onChange={(e) => setCustom(e.target.value)}
             />
-          </div>
+          </FormField>
         )}
       </div>
-      {preset && preset !== OTHER && presetHint && (
-        <p className="-mt-1 text-2xs text-muted-foreground">{presetHint}</p>
-      )}
-      <div className="flex flex-col gap-1">
-        <label htmlFor="profile-about" className="text-2xs font-medium text-muted-foreground">
-          What you do
-        </label>
+      <FormField label="What you do" htmlFor="profile-about">
         <Textarea
           id="profile-about"
           data-testid="profile-about"
@@ -121,14 +124,14 @@ export function ProfileFields({ onSaved }: { onSaved?: () => void }) {
           placeholder="A line about what you work on, so teammates and agents know who you are."
           onChange={(e) => setAbout(e.target.value)}
         />
-      </div>
+      </FormField>
       <div>
         <Button
-          variant="primary"
-          size="sm"
+          variant="default"
           data-testid="profile-save"
           onClick={save}
-          disabled={saving || !dirty}
+          loading={saving}
+          disabled={!dirty}
         >
           {saving ? "Saving…" : "Save profile"}
         </Button>

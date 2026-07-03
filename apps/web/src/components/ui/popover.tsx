@@ -1,50 +1,107 @@
-import * as PopoverPrimitive from "@radix-ui/react-popover"
-import type * as React from "react"
-import { useEffect } from "react"
+import { Popover as PopoverPrimitive } from "radix-ui"
+import * as React from "react"
+
 import { cn } from "@/lib/utils"
 
-export const Popover = PopoverPrimitive.Root
-export const PopoverTrigger = PopoverPrimitive.Trigger
-export const PopoverAnchor = PopoverPrimitive.Anchor
+function Popover({ ...props }: React.ComponentProps<typeof PopoverPrimitive.Root>) {
+  return <PopoverPrimitive.Root data-slot="popover" {...props} />
+}
 
-// Radix dismisses a popover on a pointerdown outside it, but a click that lands
-// inside the artifact <iframe> never reaches this document (the iframe swallows
-// it), so the popover would stay open. When focus jumps into an iframe the window
-// fires `blur`; translate that into a synthetic outside pointerdown so Radix's own
-// dismissal runs. Fixes "click the artifact to dismiss the cursor/notification popover."
-function useDismissOnIframeBlur() {
-  useEffect(() => {
+function PopoverTrigger({ ...props }: React.ComponentProps<typeof PopoverPrimitive.Trigger>) {
+  return <PopoverPrimitive.Trigger data-slot="popover-trigger" {...props} />
+}
+
+// derive fix (the ONLY delta from stock): Radix dismisses on an outside
+// pointerdown, but a click inside the artifact <iframe> never reaches this
+// document — and DismissableLayer ignores a synthetically replayed pointerdown —
+// so while the content is open, an iframe stealing focus (a click into an
+// iframe fires window `blur`) programmatically clicks a hidden Popover.Close.
+// Radix runs its own close path, so controlled callers get onOpenChange(false).
+function IframeBlurClose() {
+  const ref = React.useRef<HTMLButtonElement>(null)
+  React.useEffect(() => {
     const onBlur = () => {
-      // activeElement settles to the iframe just after the blur event fires.
+      // Defer: activeElement settles after the blur event.
       setTimeout(() => {
-        if (document.activeElement instanceof HTMLIFrameElement)
-          document.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }))
+        if (document.activeElement instanceof HTMLIFrameElement) ref.current?.click()
       }, 0)
     }
     window.addEventListener("blur", onBlur)
     return () => window.removeEventListener("blur", onBlur)
   }, [])
+  return <PopoverPrimitive.Close ref={ref} className="hidden" tabIndex={-1} aria-hidden="true" />
 }
 
-export function PopoverContent({
+function PopoverContent({
   className,
-  align = "end",
-  sideOffset = 7,
+  align = "center",
+  sideOffset = 4,
+  collisionPadding = 8,
+  children,
   ...props
 }: React.ComponentProps<typeof PopoverPrimitive.Content>) {
-  useDismissOnIframeBlur()
   return (
     <PopoverPrimitive.Portal>
+      {/* Floating surface recipe: popover step + hairline ring; the shadow var
+          is zeroed in dark (elevation there = surface step + edge). */}
       <PopoverPrimitive.Content
+        data-slot="popover-content"
         align={align}
         sideOffset={sideOffset}
+        collisionPadding={collisionPadding}
         className={cn(
-          "z-50 rounded-lg border border-border bg-popover p-3 text-popover-foreground shadow-[var(--shadow)] outline-none",
-          "data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 data-[state=closed]:zoom-out-95",
+          "z-50 flex w-72 origin-(--radix-popover-content-transform-origin) flex-col gap-3 rounded-xl bg-popover p-3 text-sm text-popover-foreground shadow-[var(--shadow-pop)] ring-1 ring-foreground/10 outline-hidden duration-200 ease-out data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
           className,
         )}
         {...props}
-      />
+      >
+        {children}
+        <IframeBlurClose />
+      </PopoverPrimitive.Content>
     </PopoverPrimitive.Portal>
   )
+}
+
+function PopoverAnchor({ ...props }: React.ComponentProps<typeof PopoverPrimitive.Anchor>) {
+  return <PopoverPrimitive.Anchor data-slot="popover-anchor" {...props} />
+}
+
+function PopoverHeader({ className, ...props }: React.ComponentProps<"div">) {
+  return (
+    <div
+      data-slot="popover-header"
+      className={cn("flex flex-col gap-0.5 text-sm", className)}
+      {...props}
+    />
+  )
+}
+
+function PopoverTitle({ className, ...props }: React.ComponentProps<"h2">) {
+  return (
+    <h2
+      data-slot="popover-title"
+      className={cn("font-medium text-balance", className)}
+      {...props}
+    />
+  )
+}
+
+function PopoverDescription({ className, ...props }: React.ComponentProps<"p">) {
+  return (
+    <p
+      data-slot="popover-description"
+      className={cn("text-pretty text-muted-foreground", className)}
+      {...props}
+    />
+  )
+}
+
+export {
+  Popover,
+  PopoverAnchor,
+  PopoverContent,
+  PopoverDescription,
+  PopoverHeader,
+  PopoverTitle,
+  PopoverTrigger,
 }

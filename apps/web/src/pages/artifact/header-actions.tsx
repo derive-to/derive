@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react"
-import { toast } from "sonner"
 import { api, type Collection } from "@/api"
 import { Icon } from "@/components/icons"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -10,10 +10,15 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import { Input, Textarea } from "@/components/ui/input"
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { Input } from "@/components/ui/input"
+import { toast } from "@/components/ui/sonner"
+import { Textarea } from "@/components/ui/textarea"
 import { cn } from "@/lib/utils"
 
+// Favorite is the one property kept VISIBLE in the header — the filled star is a
+// glanceable state (you see at a glance that this artifact is starred), and a
+// sanctioned ink moment. Everything else (tags, collections, report) opens from the
+// ⋯ menu as a dialog.
 export function StarButton({
   shortId,
   favorite,
@@ -42,8 +47,9 @@ export function StarButton({
       size="sm"
       onClick={toggle}
       disabled={busy}
-      title={favorite ? "Remove from favorites" : "Add to favorites"}
-      aria-label="Toggle favorite"
+      // Icon-only chrome carries its label via aria-label + aria-pressed, not a
+      // `title` (invisible to keyboard + touch) — the house chrome pattern.
+      aria-label={favorite ? "Remove from favorites" : "Add to favorites"}
       aria-pressed={favorite}
       data-testid="artifact-star"
     >
@@ -51,15 +57,15 @@ export function StarButton({
         name="star"
         size={16}
         weight={favorite ? "fill" : "regular"}
-        className={favorite ? "text-foreground" : "text-muted-foreground"}
+        className={favorite ? "text-primary" : "text-muted-foreground"}
       />
     </Button>
   )
 }
 
 // Report dialog: anyone viewing can flag an artifact for moderation. Opened from
-// the ⋯ menu (a rare action — out of the always-visible toolbar). A short reason
-// is required; owners triage the queue in Settings.
+// the ⋯ menu (a rare action). A short reason is required; owners triage the queue
+// in Settings.
 export function ReportDialog({
   shortId,
   open,
@@ -88,7 +94,7 @@ export function ReportDialog({
   }
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-sm">
+      <DialogContent>
         <DialogHeader>
           <DialogTitle>Report artifact</DialogTitle>
           <DialogDescription>
@@ -107,9 +113,9 @@ export function ReportDialog({
               placeholder="What's wrong with this? (required)"
               rows={3}
               data-testid="report-reason"
-              className="resize-none text-sm"
+              className="resize-none"
             />
-            <div className="mt-3 flex justify-end gap-1.5">
+            <div className="flex justify-end gap-1.5">
               <Button
                 variant="ghost"
                 size="sm"
@@ -119,10 +125,11 @@ export function ReportDialog({
                 Cancel
               </Button>
               <Button
-                variant="primary"
+                variant="default"
                 size="sm"
                 onClick={submit}
-                disabled={!reason.trim() || busy}
+                loading={busy}
+                disabled={!reason.trim()}
                 data-testid="report-submit"
               >
                 {busy ? "Sending…" : "Report"}
@@ -135,19 +142,22 @@ export function ReportDialog({
   )
 }
 
-// Header collections popover: toggle this artifact in/out of collections, or
-// create one on the fly. Adding to a shared collection grants its members their
-// role on this artifact too.
-export function CollectionsMenu({
+// Collections dialog: toggle this artifact in/out of collections, or create one on
+// the fly. Adding to a shared collection grants its members their role on this
+// artifact too. Opened from the ⋯ menu (controlled).
+export function CollectionsDialog({
   shortId,
   inCollections,
   onChange,
+  open,
+  onOpenChange,
 }: {
   shortId: string
   inCollections: string[]
   onChange: (ids: string[]) => void
+  open: boolean
+  onOpenChange: (o: boolean) => void
 }) {
-  const [open, setOpen] = useState(false)
   const [all, setAll] = useState<Collection[]>([])
   const [draft, setDraft] = useState("")
   useEffect(() => {
@@ -183,31 +193,22 @@ export function CollectionsMenu({
     }
   }
   return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <Button
-          variant="ghost"
-          size="sm"
-          className="gap-1.5"
-          title="Collections"
-          aria-label="Add to collection"
-          data-testid="artifact-collections"
-        >
-          <Icon name="collections" size={16} className="text-muted-foreground" />
-          {inCollections.length > 0 && <b className="font-bold">{inCollections.length}</b>}
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent align="end" className="max-h-[340px] w-[248px] overflow-auto">
-        <div className="mb-2 font-mono text-2xs uppercase tracking-[0.06em] text-muted-foreground">
-          Add to collection
-        </div>
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Add to collection</DialogTitle>
+          <DialogDescription>
+            Collections group related artifacts; sharing a collection shares its artifacts with its
+            members.
+          </DialogDescription>
+        </DialogHeader>
         {all.length === 0 && (
-          <div className="mb-2 text-sm text-muted-foreground">
+          <div className="text-sm text-muted-foreground">
             No collections yet — create one below.
           </div>
         )}
         {all.length > 0 && (
-          <div className="mb-2.5 flex flex-col gap-px">
+          <div className="flex max-h-64 flex-col gap-px overflow-auto">
             {all.map((col) => (
               <button
                 key={col.id}
@@ -215,11 +216,15 @@ export function CollectionsMenu({
                 data-testid={`collections-menu-${col.id}`}
                 onClick={() => toggle(col)}
                 className={cn(
-                  "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm font-medium text-foreground transition-colors hover:bg-hover",
+                  // Menu-row grammar (the dropdown item recipe): rounded-lg,
+                  // neutral bg-accent hover — never a second wash token.
+                  "flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm font-medium text-foreground outline-none hover:bg-accent focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring",
                   inSet.has(col.id) && "bg-accent",
                 )}
               >
-                <span className="w-3.5 text-primary">{inSet.has(col.id) ? "✓" : ""}</span>
+                <span className="grid w-3.5 shrink-0 place-items-center">
+                  {inSet.has(col.id) && <Icon name="check" size={16} />}
+                </span>
                 <span className="flex-1 truncate">{col.title}</span>
               </button>
             ))}
@@ -234,7 +239,6 @@ export function CollectionsMenu({
             onKeyDown={(e) => {
               if (e.key === "Enter") create()
             }}
-            className="h-8 text-sm"
           />
           <Button
             variant="outline"
@@ -246,25 +250,28 @@ export function CollectionsMenu({
             Add
           </Button>
         </div>
-      </PopoverContent>
-    </Popover>
+      </DialogContent>
+    </Dialog>
   )
 }
 
-// Header tags popover: view tags; editors add/remove. Writes replace the full
-// set (the server normalizes: trim, lowercase, dedupe, cap).
-export function TagsMenu({
+// Tags dialog: view tags; editors add/remove. Writes replace the full set (the
+// server normalizes: trim, lowercase, dedupe, cap). Opened from the ⋯ menu.
+export function TagsDialog({
   shortId,
   tags,
   canEdit,
   onChange,
+  open,
+  onOpenChange,
 }: {
   shortId: string
   tags: string[]
   canEdit: boolean
   onChange: (t: string[]) => void
+  open: boolean
+  onOpenChange: (o: boolean) => void
 }) {
-  const [open, setOpen] = useState(false)
   const [draft, setDraft] = useState("")
   const save = async (next: string[]) => {
     onChange(next)
@@ -281,49 +288,37 @@ export function TagsMenu({
     if (v && !tags.includes(v)) save([...tags, v])
   }
   return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <Button
-          variant="ghost"
-          size="sm"
-          className="gap-1.5"
-          title="Tags"
-          aria-label="Manage tags"
-          data-testid="artifact-tags"
-        >
-          <Icon name="tag" size={16} className="text-muted-foreground" />
-          {tags.length > 0 && <b className="font-bold">{tags.length}</b>}
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent align="end" className="w-[244px]">
-        <div className="mb-2 font-mono text-2xs uppercase tracking-[0.06em] text-muted-foreground">
-          Tags
-        </div>
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Tags</DialogTitle>
+          <DialogDescription>
+            Workspace-wide labels for finding this artifact later.
+          </DialogDescription>
+        </DialogHeader>
         {tags.length === 0 && (
-          <div className={cn("text-sm text-muted-foreground", canEdit && "mb-2")}>
+          <div className="text-sm text-muted-foreground">
             {canEdit ? "No tags yet — add one below." : "No tags."}
           </div>
         )}
         {tags.length > 0 && (
-          <div className={cn("flex flex-wrap gap-1.5", canEdit && "mb-2.5")}>
+          <div className="flex flex-wrap gap-1.5">
             {tags.map((t) => (
-              <span
-                key={t}
-                className="inline-flex items-center gap-1 rounded-full bg-accent px-2 py-0.5 font-mono text-2xs text-primary"
-              >
+              <Badge key={t} variant="outline" className="gap-1">
                 #{t}
                 {canEdit && (
                   <button
                     type="button"
+                    data-icon="inline-end"
                     data-testid={`tag-remove-${t}`}
                     onClick={() => save(tags.filter((x) => x !== t))}
                     aria-label={`Remove ${t}`}
-                    className="leading-none text-primary"
+                    className="rounded-sm outline-none hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
                   >
-                    ×
+                    <Icon name="close" size={12} />
                   </button>
                 )}
-              </span>
+              </Badge>
             ))}
           </div>
         )}
@@ -337,7 +332,6 @@ export function TagsMenu({
               onKeyDown={(e) => {
                 if (e.key === "Enter") add()
               }}
-              className="h-8 text-sm"
             />
             <Button
               variant="outline"
@@ -350,13 +344,7 @@ export function TagsMenu({
             </Button>
           </div>
         )}
-      </PopoverContent>
-    </Popover>
+      </DialogContent>
+    </Dialog>
   )
 }
-
-// Phones: a slide-up sheet over the document. The pinned document-margin is a
-// desktop affordance (it needs a margin); here every open thread is a flat
-// card with its quote, and tapping the quote jumps to the text + closes the
-// sheet. Reuses CommentCard / Composer / ResolvedSection so behaviour (replies,
-// reactions, edit/delete, resolve, re-anchoring) matches desktop exactly.

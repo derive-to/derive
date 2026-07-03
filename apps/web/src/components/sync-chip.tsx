@@ -1,7 +1,8 @@
 import { useQuery } from "@tanstack/react-query"
 import { Link } from "@tanstack/react-router"
-import { Loader2 } from "lucide-react"
 import { api, parseProgress } from "@/api"
+import { Spinner } from "@/components/shared/spinner"
+import { SidebarMenuButton, SidebarMenuItem, useSidebar } from "@/components/ui/sidebar"
 import { cn } from "@/lib/utils"
 
 /**
@@ -9,9 +10,12 @@ import { cn } from "@/lib/utils"
  * ANY page — not just Settings. Polls the cheap `/active` endpoint (fast while a sync
  * runs, relaxed when idle), renders the repo + a live mini bar, and deep-links to the
  * GitHub settings tab (the full, giant bar). Renders nothing when nothing is syncing.
- * This is the "no matter where I navigate, I can see it" piece.
+ * This is the "no matter where I navigate, I can see it" piece. Renders as a
+ * SidebarMenuItem so it sits in the rail's utility menu; the collapsed icon rail
+ * shows just the spinner (detail in the tooltip).
  */
-export function SyncChip({ collapsed }: { collapsed: boolean }) {
+export function SyncChip() {
+  const { state, isMobile } = useSidebar()
   const { data } = useQuery({
     queryKey: ["sync-active"],
     queryFn: () => api.activeSyncs(),
@@ -35,46 +39,60 @@ export function SyncChip({ collapsed }: { collapsed: boolean }) {
   const detail =
     total > 0 ? `${done}/${total}` : prog?.phase === "listing" ? "listing…" : "starting…"
 
-  // Collapsed rail: just the spinner, with the detail in the tooltip.
-  if (collapsed) {
+  // Collapsed icon rail: just the spinner, with the detail in the tooltip. The
+  // spinner keeps the brand ink — sync is a sanctioned ink moment.
+  if (state === "collapsed" && !isMobile)
     return (
+      <SidebarMenuItem>
+        <SidebarMenuButton asChild tooltip={`${label} · ${detail}`}>
+          <Link
+            to="/settings"
+            search={{ tab: "github" }}
+            aria-label={`${label} · ${detail}`}
+            data-testid="sync-chip"
+            className="text-primary [&_svg]:text-primary"
+          >
+            <Spinner className="size-4 shrink-0 border-[1.5px]" />
+            <span>{label}</span>
+          </Link>
+        </SidebarMenuButton>
+      </SidebarMenuItem>
+    )
+
+  // The ink-tinted chip is a sanctioned brand moment (sync = "this matters");
+  // hover deepens the wash instantly — transitions are reserved for movement.
+  return (
+    <SidebarMenuItem className="pb-1">
       <Link
         to="/settings"
         search={{ tab: "github" }}
-        title={`${label} · ${detail}`}
-        aria-label={`${label} · ${detail}`}
         data-testid="sync-chip"
-        className="flex items-center justify-center rounded-[9px] py-2.5 text-primary transition-colors hover:bg-hover"
+        className="flex flex-col gap-1.5 rounded-lg border border-primary/30 bg-primary/5 px-2.5 py-2 outline-none hover:bg-primary/10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
       >
-        <Loader2 className="size-[18px] animate-spin" aria-hidden />
-      </Link>
-    )
-  }
-
-  return (
-    <Link
-      to="/settings"
-      search={{ tab: "github" }}
-      data-testid="sync-chip"
-      title={`${label} · ${detail}`}
-      className="flex flex-col gap-1.5 rounded-[9px] border border-primary/30 bg-primary/5 px-2.5 py-2 transition-colors hover:bg-primary/10"
-    >
-      <div className="flex items-center gap-2 text-xs font-semibold text-foreground">
-        <Loader2 className="size-3.5 shrink-0 animate-spin text-primary" aria-hidden />
-        <span className="truncate">{label}</span>
-        <span className="ml-auto shrink-0 font-mono text-2xs tabular-nums text-muted-foreground">
-          {detail}
-        </span>
-      </div>
-      <div className="h-1.5 w-full overflow-hidden rounded-full bg-secondary">
+        <div className="flex items-center gap-2 text-sm font-medium text-foreground">
+          <Spinner className="size-4 shrink-0 border-[1.5px]" />
+          <span className="truncate">{label}</span>
+          <span className="ml-auto shrink-0 font-mono text-2xs tabular-nums text-muted-foreground">
+            {detail}
+          </span>
+        </div>
         <div
-          className={cn(
-            "h-full rounded-full bg-primary transition-all duration-500",
-            indeterminate && "w-1/3 animate-pulse",
-          )}
-          style={indeterminate ? undefined : { width: `${pct}%` }}
-        />
-      </div>
-    </Link>
+          role="progressbar"
+          aria-label="Sync progress"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={indeterminate ? undefined : pct}
+          className="h-1.5 w-full overflow-hidden rounded-full bg-secondary"
+        >
+          <div
+            className={cn(
+              "h-full rounded-full bg-primary transition-[width] duration-500",
+              indeterminate && "w-1/3 animate-pulse",
+            )}
+            style={indeterminate ? undefined : { width: `${pct}%` }}
+          />
+        </div>
+      </Link>
+    </SidebarMenuItem>
   )
 }

@@ -9,9 +9,11 @@ import {
 import { api, type DirUser, type Mention } from "@/api"
 import { Icon } from "@/components/icons"
 import { Button } from "@/components/ui/button"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { PICKER_EMOJI } from "@/lib/emoji"
 import { cn } from "@/lib/utils"
 import { useCommentScope } from "./lib/comment-scope"
+import { quoteChipClass } from "./quote-chip"
 
 // Split the composer text into plain / mention runs for the highlight backdrop.
 // React renders each run (escaping text itself, so no innerHTML), and the inline
@@ -198,8 +200,9 @@ export function MentionField({
   // (with lit-up mentions) directly underneath, so a tag glows live as you type or
   // pick someone. Both share `textBox` exactly, or the highlight drifts off the caret.
   // 16px on phones so iOS doesn't zoom the page when the field focuses; the usual
-  // 12.5px from md up. Backdrop + field share this, so the highlight stays aligned.
-  const textBox = cn("px-2.5 py-1.5 pr-9 text-lg leading-relaxed md:text-sm", className)
+  // 14px control base from md up. Backdrop + field share this, so the highlight
+  // stays aligned.
+  const textBox = cn("px-2.5 py-1.5 pr-9 text-base md:text-sm", className)
   const handlers = {
     ref,
     "data-testid": testId,
@@ -229,8 +232,9 @@ export function MentionField({
   )
 
   return (
-    <div style={{ position: "relative" }}>
-      <div className="relative rounded-md border border-input bg-card transition-colors focus-within:border-primary focus-within:ring-2 focus-within:ring-accent">
+    <div className="relative">
+      {/* Editable focus grammar (mirrors ui/textarea): ink border + soft glow. */}
+      <div className="relative rounded-lg border border-input bg-transparent focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/40 dark:bg-input/30">
         <div
           ref={backdropRef}
           aria-hidden="true"
@@ -260,18 +264,27 @@ export function MentionField({
       </div>
 
       {/* Emoji picker: a one-tap grid of the common emoji. Typing :shortcode:
-          works too (rendered on display); this is the no-memorization path. */}
-      <button
-        type="button"
-        data-testid="emoji-trigger"
-        title="Add emoji"
-        aria-label="Add emoji"
-        aria-expanded={emojiOpen}
-        onClick={() => setEmojiOpen((o) => !o)}
-        className="absolute right-1.5 top-1.5 grid size-6 place-items-center rounded text-base leading-none text-muted-foreground transition-colors hover:bg-hover hover:text-foreground"
-      >
-        🙂
-      </button>
+          works too (rendered on display); this is the no-memorization path.
+          A Tooltip (not a title attr) labels the icon-only trigger — safe here
+          because the button is a plain toggle, not another asChild trigger. */}
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-xs"
+            data-testid="emoji-trigger"
+            aria-label="Add emoji"
+            aria-expanded={emojiOpen}
+            onClick={() => setEmojiOpen((o) => !o)}
+            className="absolute right-1 top-1 text-muted-foreground"
+          >
+            {/* Explicit size-4 class: icon-xs would otherwise downscale a bare svg. */}
+            <Icon name="react" className="size-4" />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>Add emoji</TooltipContent>
+      </Tooltip>
       {emojiOpen && (
         <>
           {/* click-catcher to dismiss */}
@@ -285,7 +298,7 @@ export function MentionField({
           />
           <div
             data-testid="emoji-picker"
-            className="absolute right-1.5 top-9 z-50 grid w-[244px] grid-cols-8 gap-0.5 rounded-lg border border-border bg-card p-1.5 shadow-[var(--shadow)]"
+            className="absolute right-1.5 top-9 z-50 grid w-61 grid-cols-8 gap-0.5 rounded-xl bg-popover p-1.5 shadow-[var(--shadow-pop)] ring-1 ring-foreground/10"
           >
             {PICKER_EMOJI.map((emo) => (
               <button
@@ -297,7 +310,7 @@ export function MentionField({
                 // actual insert is onClick so keyboard (Enter/Space) works too.
                 onMouseDown={(e) => e.preventDefault()}
                 onClick={() => insertEmoji(emo)}
-                className="grid size-7 place-items-center rounded text-lg leading-none hover:bg-hover"
+                className="grid size-7 place-items-center rounded-md text-lg leading-none outline-none hover:bg-accent focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
               >
                 {emo}
               </button>
@@ -307,7 +320,7 @@ export function MentionField({
       )}
 
       {menu && results.length > 0 && (
-        <div className="absolute inset-x-0 top-[calc(100%+4px)] z-40 max-h-[200px] overflow-auto rounded-lg border border-border bg-card p-1 shadow-[var(--shadow)]">
+        <div className="absolute inset-x-0 top-[calc(100%+4px)] z-40 max-h-50 overflow-auto rounded-xl bg-popover p-1 shadow-[var(--shadow-pop)] ring-1 ring-foreground/10">
           {results.map((u, i) => (
             <button
               key={u.id}
@@ -319,11 +332,11 @@ export function MentionField({
               }}
               onMouseEnter={() => setActive(i)}
               className={cn(
-                "flex w-full items-baseline gap-2 rounded-md px-2 py-1.5 text-left text-foreground",
+                "flex w-full items-baseline gap-2 rounded-lg px-2 py-1.5 text-left text-foreground outline-none focus-visible:bg-accent",
                 i === active ? "bg-accent" : "bg-transparent",
               )}
             >
-              <span className="text-sm font-semibold">
+              <span className="text-sm font-medium">
                 {u.name ?? (u.handle ? `@${u.handle}` : "")}
               </span>
               {u.name && u.handle && (
@@ -355,11 +368,15 @@ export function Composer({
     if (text.trim()) onSubmit(text, resolved)
   }
   return (
-    <div className="overflow-hidden rounded-lg border border-primary bg-card shadow-[var(--shadow)]">
+    <div className="overflow-hidden rounded-lg border border-border bg-card shadow-[var(--shadow)]">
       {quote && (
         // Phones get a longer multi-line preview of what you're commenting on; the
         // desktop margin composer stays a tight single line.
-        <div className="block w-full break-words border-l-[3px] border-primary bg-accent px-2.5 py-1.5 text-left text-xs italic text-foreground line-clamp-4 md:line-clamp-1">
+        <div
+          className={quoteChipClass({
+            className: "block w-full break-words line-clamp-4 md:line-clamp-1",
+          })}
+        >
           “{quote}”
         </div>
       )}
@@ -368,7 +385,7 @@ export function Composer({
           multiline
           autoFocus
           testId="composer-input"
-          className="min-h-[56px] resize-y"
+          className="min-h-14 resize-y"
           value={text}
           onChange={setText}
           mentions={mentions}
@@ -384,14 +401,14 @@ export function Composer({
           }
         />
         {personal && (
-          <div className="mt-1.5 flex items-center gap-1.5 text-2xs text-muted-foreground">
-            <Icon name="lock" size={11} />
+          <div className="mt-1.5 flex items-center gap-1.5 text-sm text-muted-foreground">
+            <Icon name="lock" />
             Visible only to you and the agents you've connected.
           </div>
         )}
         <div className="mt-1.5 flex gap-1.5">
           <Button
-            variant="primary"
+            variant="default"
             size="sm"
             className="flex-1"
             disabled={!text.trim()}

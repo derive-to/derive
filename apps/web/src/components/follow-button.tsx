@@ -30,8 +30,6 @@ export function FollowButton({
   if (!me || me.username?.toLowerCase() === username.toLowerCase()) return null
 
   const following = isFollowingUser(username)
-  const xs = size === "xs"
-  const sizing = xs ? "h-6 gap-1 px-2 text-2xs" : ""
   const onClick = (e: MouseEvent) => {
     e.stopPropagation()
     e.preventDefault()
@@ -49,33 +47,38 @@ export function FollowButton({
     return (
       <Button
         variant="outline"
-        size="sm"
+        size={size}
         disabled={isTogglingUser(username)}
         data-testid={`follow-${username}`}
         aria-pressed
-        // Always announce the action (unfollow), independent of the visual peek state,
-        // so a screen-reader/keyboard user knows activating this unfollows.
-        aria-label={`Unfollow @${username}`}
+        // Canonical toggle-button pattern: the accessible name stays FIXED
+        // ("Follow @x") and aria-pressed carries the state — a name that flips
+        // to "Unfollow" *plus* pressed would double-signal and read as negated.
+        // The visible label still flips for sighted users (peek shows intent).
+        aria-label={`Follow @${username}`}
         {...reveal}
         onClick={onClick}
-        className={cn(sizing, peek && "border-destructive/40 text-destructive", className)}
+        className={cn(peek && "border-destructive/40 text-destructive", className)}
       >
-        <Icon name={peek ? "close" : "check"} size={xs ? 12 : 14} />
+        <Icon name={peek ? "close" : "check"} />
         {peek ? "Unfollow" : "Following"}
       </Button>
     )
   }
   return (
+    // Secondary, never the ink fill: Follow is a row/header action wherever it
+    // appears — the page's one primary action lives elsewhere.
     <Button
-      size="sm"
+      variant="secondary"
+      size={size}
       disabled={isTogglingUser(username)}
       data-testid={`follow-${username}`}
       aria-pressed={false}
       aria-label={`Follow @${username}`}
       onClick={onClick}
-      className={cn(sizing, className)}
+      className={className}
     >
-      <Icon name="plus" size={xs ? 12 : 14} />
+      <Icon name="plus" />
       Follow
     </Button>
   )

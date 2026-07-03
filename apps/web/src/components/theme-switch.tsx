@@ -3,20 +3,16 @@ import { THEMES, useTheme } from "@/ctx"
 import { cn } from "@/lib/utils"
 
 // Segmented theme control: Light | Dark. Built on the shadcn Tabs primitive
-// (radix-backed, so roles + keyboard nav come for free). Lives in the account pod.
+// (radix-backed, so roles + keyboard nav come for free) at the compact `sm`
+// list size — no per-call-site size surgery. Lives in the account pod.
 // Keeps the `theme-option-<id>` test-ids the e2e net expects.
 export function ThemeSwitch({ className }: { className?: string }) {
   const { theme, setTheme } = useTheme()
   return (
     <Tabs value={theme} onValueChange={setTheme}>
-      <TabsList className={cn("h-8 w-full gap-0.5 p-0.5", className)}>
+      <TabsList size="sm" aria-label="Theme" className={cn("w-full", className)}>
         {THEMES.map((t) => (
-          <TabsTrigger
-            key={t.id}
-            value={t.id}
-            data-testid={`theme-option-${t.id}`}
-            className="flex-1 px-2 py-1 text-xs"
-          >
+          <TabsTrigger key={t.id} value={t.id} data-testid={`theme-option-${t.id}`}>
             {t.label}
           </TabsTrigger>
         ))}

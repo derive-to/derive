@@ -8,4 +8,6 @@ export const STORAGE_KEYS = {
   libraryRail: "derive.browse.rail",
   commentsPanel: "derive.comments.panel",
   navCollapsed: "derive.nav.collapsed",
+  // Legacy literal (predates the dot convention) — kept so saved prefs survive.
+  libraryFolders: "derive:show-folders",
 } as const

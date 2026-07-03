@@ -1,5 +1,6 @@
 import { Link } from "@tanstack/react-router"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
+import { colorForName } from "@/lib/avatar-tints"
 import { getInitials } from "@/lib/initials"
 import { cn } from "@/lib/utils"
 
@@ -20,6 +21,10 @@ export interface AuthorChipProps {
   handle: string | null
   /** "sm" (default) sits in a meta line; "xs" is the tightest variant. */
   size?: "xs" | "sm"
+  /** Avatar-only when false — the name moves to the accessible label + tooltip.
+   *  Used on dense grid cards, where a repeated full name is noise but the
+   *  avatar still says "who" at a glance. */
+  showName?: boolean
   /** When set, the chip is a button (e.g. to filter the list by `login`). */
   onClick?: () => void
   /** Stable id for the interactive variants (button / link). */
@@ -33,6 +38,7 @@ export function AuthorChip({
   avatar,
   handle,
   size = "sm",
+  showName = true,
   onClick,
   "data-testid": testId,
   className,
@@ -47,10 +53,22 @@ export function AuthorChip({
   const inner = (
     <>
       <Avatar className={cn(avatarSize, "shrink-0")}>
-        {avatar && <AvatarImage src={avatar} alt={label} />}
-        <AvatarFallback>{getInitials(label)}</AvatarFallback>
+        {/* With the name shown, it sits beside the image → alt stays empty;
+            avatar-only, the image carries the name itself. */}
+        {avatar && <AvatarImage src={avatar} alt={showName ? "" : label} />}
+        {/* The primitive's fallback type is scaled for size-8 avatars; at this
+            tiny scale the initials drop to the micro register (one glyph at
+            size-4) or they'd overflow the circle. Image-less authors get the
+            stable identity tint (house idiom — cf. people.tsx / profile.tsx)
+            so a person stays recognisable across surfaces. */}
+        <AvatarFallback
+          className="text-2xs font-medium text-scrim-foreground"
+          style={{ backgroundColor: colorForName(label) }}
+        >
+          {size === "xs" ? getInitials(label).charAt(0) : getInitials(label)}
+        </AvatarFallback>
       </Avatar>
-      <span className="truncate">{label}</span>
+      {showName && <span className="truncate">{label}</span>}
     </>
   )
 
@@ -60,12 +78,17 @@ export function AuthorChip({
       <button
         type="button"
         data-testid={testId}
-        title={`Filter by ${label}`}
+        // The action (filter) lives in the accessible name — a title attr is
+        // unreachable for keyboard/touch users.
+        aria-label={`Filter by ${label}`}
         onClick={(e) => {
           e.stopPropagation()
           onClick()
         }}
-        className={cn(base, "rounded-md transition-colors hover:text-foreground")}
+        className={cn(
+          base,
+          "rounded-md outline-none hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring",
+        )}
       >
         {inner}
       </button>
@@ -79,15 +102,23 @@ export function AuthorChip({
         to="/u/$handle"
         params={{ handle }}
         data-testid={testId}
-        title={`@${handle}`}
+        aria-label={`View @${handle}'s profile`}
         onClick={(e) => e.stopPropagation()}
-        className={cn(base, "transition-colors hover:text-foreground")}
+        className={cn(
+          base,
+          "rounded-md outline-none hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring",
+        )}
       >
         {inner}
       </Link>
     )
   }
 
-  // Anonymous / unmapped author: plain text, no link.
-  return <span className={base}>{inner}</span>
+  // Anonymous / unmapped author: plain text, no link. Avatar-only still needs the
+  // name reachable — it rides the title (and the image alt / initials fallback).
+  return (
+    <span className={base} title={showName ? undefined : label}>
+      {inner}
+    </span>
+  )
 }

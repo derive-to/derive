@@ -1,4 +1,6 @@
+import { Switch } from "@/components/ui/switch"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { useCursorPref } from "@/ctx"
 import { CURSOR_COLORS, CURSOR_EMOJI, type CursorKind } from "@/lib/cursors"
 import { cn } from "@/lib/utils"
@@ -10,9 +12,9 @@ import { CursorGlyph, NameTag } from "./glyph"
 export function CursorSwitch({ className }: { className?: string }) {
   const { pref, setPref } = useCursorPref()
   return (
-    <div className={cn("space-y-2", className)}>
+    <div className={cn("flex flex-col gap-2", className)}>
       {/* Live preview of your own cursor. */}
-      <div className="flex items-center gap-2 rounded-md bg-accent/40 px-2.5 py-2">
+      <div className="flex items-center gap-2 rounded-md bg-secondary px-2.5 py-2">
         <CursorGlyph color={pref.color} kind={pref.kind} emoji={pref.emoji} size={20} />
         <NameTag color={pref.color}>You</NameTag>
       </div>
@@ -38,64 +40,61 @@ export function CursorSwitch({ className }: { className?: string }) {
 
       {/* Style. */}
       <Tabs value={pref.kind} onValueChange={(k) => setPref({ ...pref, kind: k as CursorKind })}>
-        <TabsList className="h-8 w-full gap-0.5 p-0.5">
-          <TabsTrigger value="arrow" data-testid="cursor-kind-arrow" className="flex-1 text-xs">
+        <TabsList size="sm" className="w-full">
+          <TabsTrigger value="arrow" data-testid="cursor-kind-arrow">
             Arrow
           </TabsTrigger>
-          <TabsTrigger value="emoji" data-testid="cursor-kind-emoji" className="flex-1 text-xs">
+          <TabsTrigger value="emoji" data-testid="cursor-kind-emoji">
             Emoji
           </TabsTrigger>
         </TabsList>
       </Tabs>
 
       {pref.kind === "emoji" && (
-        <div className="grid grid-cols-5 gap-1">
+        <ToggleGroup
+          type="single"
+          size="sm"
+          spacing={1}
+          aria-label="Cursor emoji"
+          value={pref.emoji}
+          // Re-clicking the current pick emits "" (Radix deselect) — a cursor
+          // always has an emoji, so ignore it (the library view-toggle idiom).
+          onValueChange={(e) => e && setPref({ ...pref, kind: "emoji", emoji: e })}
+          className="grid w-full grid-cols-5"
+        >
           {CURSOR_EMOJI.map((e, i) => (
-            <button
+            <ToggleGroupItem
               key={e}
-              type="button"
+              value={e}
               data-testid={`cursor-emoji-${i}`}
               aria-label={`Emoji ${e}`}
-              aria-pressed={pref.emoji === e}
-              onClick={() => setPref({ ...pref, kind: "emoji", emoji: e })}
-              className={cn(
-                "grid h-7 place-items-center rounded-md text-base transition-colors hover:bg-hover",
-                pref.emoji === e && "bg-accent ring-1 ring-foreground",
-              )}
+              className="text-base"
             >
               {e}
-            </button>
+            </ToggleGroupItem>
           ))}
-        </div>
+        </ToggleGroup>
       )}
 
       {/* Opt out of the live layer entirely: you stop seeing peers' cursors and
-          stop broadcasting your own. Persisted per browser like the rest. */}
-      <button
-        type="button"
-        data-testid="cursor-hide"
-        aria-pressed={pref.hidden}
-        onClick={() => setPref({ ...pref, hidden: !pref.hidden })}
-        className={cn(
-          "mt-1 flex w-full items-center justify-between gap-2 rounded-md border border-border px-2.5 py-2 text-left text-xs font-medium transition-colors hover:bg-hover",
-          pref.hidden && "border-transparent bg-accent",
-        )}
-      >
-        <span className="flex flex-col">
-          <span>Hide cursors</span>
-          <span className="text-2xs font-normal text-muted-foreground">
-            Don't show others, or share yours
-          </span>
+          stop broadcasting your own. Persisted per browser like the rest. A real
+          Switch, not a hand-rolled On/Off pill; clicking the label row toggles it. */}
+      <label className="flex w-full items-center justify-between gap-2 rounded-md border border-border px-2.5 py-2">
+        <span className="flex flex-col text-sm">
+          <span className="font-medium">Hide cursors</span>
+          <span className="text-muted-foreground">Don't show others, or share yours</span>
         </span>
-        <span
-          className={cn(
-            "shrink-0 rounded-full px-2 py-0.5 font-mono text-2xs",
-            pref.hidden ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground",
-          )}
-        >
-          {pref.hidden ? "On" : "Off"}
-        </span>
-      </button>
+        <Switch
+          size="sm"
+          data-testid="cursor-hide"
+          // aria-pressed mirrors aria-checked for the e2e contract (asserted in
+          // cursor-hide.deep.spec.ts); the switch role still announces correctly.
+          aria-pressed={pref.hidden}
+          checked={pref.hidden}
+          onCheckedChange={(hidden) => setPref({ ...pref, hidden })}
+          aria-label="Hide cursors"
+        />
+      </label>
     </div>
   )
 }

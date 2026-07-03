@@ -1,6 +1,6 @@
 import type { Proposal } from "@/api"
 import { Button } from "@/components/ui/button"
-import { Textarea } from "@/components/ui/input"
+import { Textarea } from "@/components/ui/textarea"
 
 // The bottom decision bar. Request-changes / Approve open an inline note composer
 // first (confirm step); approve on a stale base is spelled out as "Approve anyway".
@@ -48,12 +48,12 @@ export function ReviewDecisionBar({
       {noteFor && (
         <div className="px-4 pt-2.5">
           {noteFor === "approve" && (
-            <div className="mb-2 text-xs leading-relaxed">
+            <div className="mb-2 text-sm">
               {stale ? (
-                <span className="text-destructive">
-                  <b>Heads up:</b> this was proposed against v{active?.base_version}, but the live
-                  version is now v{currentVersion}. Approving replaces v{currentVersion} entirely.
-                  Approve anyway?
+                <span className="text-warning">
+                  <strong className="font-medium">Heads up:</strong> this was proposed against v
+                  {active?.base_version}, but the live version is now v{currentVersion}. Approving
+                  replaces v{currentVersion} entirely. Approve anyway?
                 </span>
               ) : (
                 <span className="text-muted-foreground">
@@ -80,7 +80,7 @@ export function ReviewDecisionBar({
       )}
       <div className="flex items-center gap-2.5 px-4 py-2.5">
         {err ? (
-          <span data-testid="review-error" className="text-xs text-destructive">
+          <span data-testid="review-error" className="text-sm text-destructive">
             {err}
           </span>
         ) : (
@@ -88,7 +88,7 @@ export function ReviewDecisionBar({
           canApprove &&
           !narrow &&
           !noteFor && (
-            <span className="text-xs text-muted-foreground">
+            <span className="text-sm text-muted-foreground">
               Approving publishes this as the new live version.
             </span>
           )
@@ -107,9 +107,10 @@ export function ReviewDecisionBar({
               Cancel
             </Button>
             {noteFor === "changes" ? (
+              // Request changes is warning-toned (soft tint) — never a filled ink.
               <Button
                 data-testid="review-send-request"
-                variant="primary"
+                variant="warning"
                 size="sm"
                 disabled={busy || !note.trim()}
                 onClick={onSubmitChanges}
@@ -117,9 +118,10 @@ export function ReviewDecisionBar({
                 {busy ? "Sending…" : "Send request"}
               </Button>
             ) : (
+              // Approve is success-toned (soft tint) — never a filled ink.
               <Button
                 data-testid="review-approve-confirm"
-                variant="primary"
+                variant="success"
                 size="sm"
                 disabled={busy}
                 onClick={onConfirmApprove}
@@ -147,7 +149,7 @@ export function ReviewDecisionBar({
                 <>
                   <Button
                     data-testid="review-request-changes"
-                    variant="outline"
+                    variant="warning"
                     size="sm"
                     disabled={busy}
                     onClick={onOpenChanges}
@@ -156,7 +158,7 @@ export function ReviewDecisionBar({
                   </Button>
                   <Button
                     data-testid="review-approve"
-                    variant="primary"
+                    variant="success"
                     size="sm"
                     disabled={busy}
                     onClick={onOpenApprove}
@@ -166,7 +168,7 @@ export function ReviewDecisionBar({
                 </>
               ) : (
                 !isAuthor && (
-                  <span className="text-xs text-muted-foreground">Only an editor can approve.</span>
+                  <span className="text-sm text-muted-foreground">Only an editor can approve.</span>
                 )
               )}
             </>

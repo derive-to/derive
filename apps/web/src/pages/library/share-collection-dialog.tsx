@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react"
-import { toast } from "sonner"
 import { type ArtifactMember, api, type Collection, type Role } from "@/api"
+import { Icon } from "@/components/icons"
 import { EmptyState } from "@/components/shared/empty-state"
 import { RoleSelect } from "@/components/shared/role-select"
 import { Button } from "@/components/ui/button"
@@ -12,6 +12,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
+import { toast } from "@/components/ui/sonner"
 
 // Share a collection: add people by email at a role. A member's role applies to
 // every artifact in the collection (the headline of collection-level sharing).
@@ -72,12 +73,13 @@ export function ShareCollectionDialog({
         <DialogHeader>
           <DialogTitle>Share “{collection.title}”</DialogTitle>
           <DialogDescription>
-            People here get this role on <b className="text-foreground">every artifact</b> in the
-            collection.
+            People here get this role on{" "}
+            <b className="font-medium text-foreground">every artifact</b> in the collection.
           </DialogDescription>
         </DialogHeader>
 
-        <form onSubmit={add} className="mb-3 flex gap-1.5">
+        {/* DialogContent's grid gap spaces the sections — no child margins. */}
+        <form onSubmit={add} className="flex gap-1.5">
           <Input
             type="text"
             autoCapitalize="none"
@@ -87,49 +89,45 @@ export function ShareCollectionDialog({
             aria-label="Username or email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            className="flex-1"
+            className="min-w-0 flex-1"
           />
           <RoleSelect
             value={role}
             onChange={setRole}
             data-testid="collection-share-role"
-            className="w-[104px]"
+            className="w-26 shrink-0"
           />
-          <Button
-            variant="primary"
-            type="submit"
-            data-testid="collection-share-add"
-            disabled={busy}
-          >
-            {busy ? "…" : "Add"}
+          {/* Add is this dialog's one filled primary. */}
+          <Button variant="default" type="submit" data-testid="collection-share-add" loading={busy}>
+            {busy ? "Adding…" : "Add"}
           </Button>
         </form>
 
         {members.length === 0 ? (
-          <EmptyState className="p-6 text-xs">No one shared yet.</EmptyState>
+          <EmptyState className="p-6">No one shared yet.</EmptyState>
         ) : (
           <div className="flex flex-col gap-1.5">
             {members.map((m) => (
               <div key={m.user_id} className="flex items-center gap-2">
                 <div className="min-w-0 flex-1">
-                  <div className="truncate text-sm font-semibold">
+                  <div className="truncate text-sm font-medium text-foreground">
                     {m.name ?? (m.handle ? `@${m.handle}` : m.user_id)}
                   </div>
                   {m.name && m.handle && (
-                    <div className="truncate text-2xs text-muted-foreground">@{m.handle}</div>
+                    <div className="truncate font-mono text-2xs text-muted-foreground">
+                      @{m.handle}
+                    </div>
                   )}
                 </div>
-                <span className="font-mono text-xs text-muted-foreground">{m.role}</span>
+                <span className="font-mono text-2xs text-muted-foreground">{m.role}</span>
                 <Button
                   variant="ghost"
                   size="icon"
                   data-testid={`collection-share-remove-${m.user_id}`}
-                  className="size-7 text-muted-foreground hover:text-foreground"
                   onClick={() => remove(m)}
-                  title="Remove"
                   aria-label={`Remove ${m.name ?? (m.handle ? `@${m.handle}` : "member")}`}
                 >
-                  ✕
+                  <Icon name="close" />
                 </Button>
               </div>
             ))}

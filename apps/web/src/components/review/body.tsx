@@ -1,4 +1,6 @@
 import { API_BASE, type Proposal } from "@/api"
+import { StatusPanel } from "@/components/shared/status-panel"
+import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { STATE_META } from "./shared"
 
@@ -32,57 +34,73 @@ export function ReviewBody({
   const meta = active ? STATE_META[active.state] : null
 
   return (
-    <div className="relative min-w-0 flex-1 bg-card">
+    <div className="flex min-w-0 flex-1 flex-col bg-card">
       {decisionNote && meta && (
-        <div
-          className={cn(
-            "border-b border-border-soft px-4 py-2.5 text-xs leading-relaxed",
-            meta.banner,
-          )}
-        >
-          <b className={meta.text}>
-            {meta.label}
-            {decisionNote.decided_by ? ` by ${decisionNote.decided_by}` : ""}:
-          </b>{" "}
-          {decisionNote.decision_note}
+        <div className="border-b border-border-soft p-3">
+          <StatusPanel
+            tone={meta.tone}
+            layout="inline"
+            className="p-3"
+            title={`${meta.label}${decisionNote.decided_by ? ` by ${decisionNote.decided_by}` : ""}`}
+            description={decisionNote.decision_note}
+          />
         </div>
       )}
       {stale && active && (
-        <div className="border-b border-border-soft bg-destructive/10 px-4 py-2.5 text-xs leading-relaxed">
-          <b className="text-destructive">Out of date:</b> proposed against v{active.base_version},
-          but the live version is now v{currentVersion}. Approving replaces v{currentVersion}{" "}
-          entirely — compare against{" "}
-          <button
-            type="button"
-            data-testid="review-compare-current"
-            className="font-semibold text-primary underline-offset-2 hover:underline"
-            onClick={onCompareCurrent}
-          >
-            Current
-          </button>{" "}
-          before approving.
+        // A stale base is a warning, not a destructive failure.
+        <div className="border-b border-border-soft p-3">
+          <StatusPanel
+            tone="warning"
+            layout="inline"
+            className="p-3"
+            title="Out of date"
+            description={
+              <>
+                Proposed against v{active.base_version}, but the live version is now v
+                {currentVersion}. Approving replaces v{currentVersion} entirely — compare against{" "}
+                <Button
+                  type="button"
+                  data-testid="review-compare-current"
+                  variant="link"
+                  className="h-auto p-0 align-baseline"
+                  onClick={onCompareCurrent}
+                >
+                  Current
+                </Button>{" "}
+                before approving.
+              </>
+            }
+          />
         </div>
       )}
 
-      <div
-        className={cn("absolute inset-x-0 bottom-0", decisionNote || stale ? "top-11" : "top-0")}
-      >
+      <div className="relative min-h-0 flex-1">
         {view === "diff" ? (
           <pre
             data-testid="review-diff"
-            className="absolute inset-0 m-0 overflow-auto py-3 font-mono text-xs leading-relaxed"
+            className="absolute inset-0 m-0 overflow-auto py-3 font-mono text-xs"
           >
             {(active?.diff?.ops ?? []).map((o, i) => (
               <div
                 // biome-ignore lint/suspicious/noArrayIndexKey: diff lines are positional, no stable id
                 key={i}
                 className={cn(
+                  // Success/destructive tints carry add/remove — never raw greens/reds.
                   "whitespace-pre-wrap break-words px-4",
                   o.t === "add" && "bg-success/10",
                   o.t === "del" && "bg-destructive/10",
                 )}
               >
-                <span className="select-none text-muted-foreground">
+                <span
+                  className={cn(
+                    "select-none",
+                    o.t === "add"
+                      ? "text-success"
+                      : o.t === "del"
+                        ? "text-destructive"
+                        : "text-muted-foreground",
+                  )}
+                >
                   {o.t === "add" ? "+ " : o.t === "del" ? "− " : "  "}
                 </span>
                 {o.line}
@@ -92,7 +110,7 @@ export function ReviewBody({
         ) : (
           <iframe
             data-testid="review-frame"
-            title="review"
+            title="Proposed version preview"
             src={src}
             sandbox="allow-scripts allow-forms allow-popups allow-modals allow-downloads"
             className="size-full border-0 bg-white"

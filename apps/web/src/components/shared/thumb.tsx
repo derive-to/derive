@@ -1,13 +1,41 @@
 import { API_BASE } from "@/api"
+import { cn } from "@/lib/utils"
 
-// A live, scaled-down render of an artifact's current version. Sandboxed and
-// non-interactive (clicks fall through to the enclosing card); lazy so off-screen
-// cards don't fetch. The token gradient shows through until the frame paints.
-// Full-bleed: the enclosing card clips the top corners (overflow-hidden) and owns
-// the hover response (lift + shadow), so the frame reads as the artifact itself.
-export function Thumb({ id, v }: { id: string; v: number }) {
+// A live, scaled-down render of an artifact's current version — the hero of every
+// artifact card. Sandboxed and non-interactive (clicks fall through to the
+// enclosing card); lazy so off-screen cards don't fetch, and the virtualized grid
+// keeps only near-viewport rows mounted. The token gradient shows through until
+// the frame paints. The enclosing card owns clipping/rounding.
+//
+// Resting-dim → hover-wake: the render sits slightly knocked-back at rest (a light
+// page glares on the wall of cards) and clears to full on the card's hover/focus.
+// A `filter` (not `transform`) so the iframe never repaints — a translating iframe
+// visibly flashes, which is why cards never lift.
+//
+// One machine-register placard rides the bottom-left over a fixed scrim (legible
+// over any screenshot, both themes): the type, and the version when there's
+// history — `HTML · v3`. One chip, not a badge per fact.
+export function Thumb({
+  id,
+  v,
+  typeLabel,
+  version,
+  className,
+}: {
+  id: string
+  v: number
+  typeLabel?: string
+  /** The current version ordinal — shown only when there's history (chain > 1). */
+  version?: number
+  className?: string
+}) {
   return (
-    <div className="relative h-[120px] overflow-hidden bg-gradient-to-br from-accent to-secondary">
+    <div
+      className={cn(
+        "relative aspect-[16/10] overflow-hidden bg-linear-to-br from-accent to-secondary outline-1 -outline-offset-1 outline-foreground/10 group-hover:outline-foreground/20 group-focus-within:outline-foreground/20",
+        className,
+      )}
+    >
       <iframe
         title="Preview"
         aria-hidden
@@ -15,8 +43,16 @@ export function Thumb({ id, v }: { id: string; v: number }) {
         loading="lazy"
         src={`${API_BASE}/raw/${id}/v/${v}/index.html`}
         sandbox="allow-scripts"
-        className="pointer-events-none absolute left-0 top-0 h-[250%] w-[250%] origin-top-left scale-[0.4] border-0 bg-white"
+        className="pointer-events-none absolute left-0 top-0 h-[250%] w-[250%] origin-top-left scale-[0.4] border-0 bg-white brightness-[0.96] saturate-[0.98] transition-[filter] duration-200 group-hover:brightness-100 group-hover:saturate-100 group-focus-within:brightness-100 group-focus-within:saturate-100"
       />
+      {typeLabel && (
+        <span className="pointer-events-none absolute bottom-2 left-2 z-10 inline-flex items-center gap-1 rounded-md bg-scrim/85 px-1.5 py-0.5 font-mono text-2xs text-scrim-foreground ring-1 ring-scrim-foreground/15">
+          <span className="uppercase tracking-wide">{typeLabel}</span>
+          {version !== undefined && (
+            <span className="tabular-nums text-scrim-foreground/70">· v{version}</span>
+          )}
+        </span>
+      )}
     </div>
   )
 }

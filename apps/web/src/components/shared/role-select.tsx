@@ -1,40 +1,52 @@
 import type { Role } from "@/api"
-import { cn } from "@/lib/utils"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 
 const ROLES: Role[] = ["viewer", "commenter", "editor", "owner"]
 
-// Native <select> styled to match Input — used wherever a member's role is
-// chosen (collection share, artifact share). Native keeps keyboard + screen
-// reader behaviour for free; swap for a Radix Select later without call-site churn.
+// Rendered labels stay sentence-case ("Viewer"), matching ShareDialog's
+// read-only rows — one casing for the same data everywhere.
+const LABEL: Record<Role, string> = {
+  viewer: "Viewer",
+  commenter: "Commenter",
+  editor: "Editor",
+  owner: "Owner",
+}
+
+// The role picker — the ROLES list over the canonical shadcn Select, kept as one
+// thin wrapper so every share surface reads the same options with the same API.
 export function RoleSelect({
   value,
   onChange,
   className,
+  name = "role",
   "aria-label": ariaLabel = "Role",
   "data-testid": testId,
 }: {
   value: Role
   onChange: (role: Role) => void
   className?: string
+  name?: string
   "aria-label"?: string
   "data-testid"?: string
 }) {
   return (
-    <select
-      aria-label={ariaLabel}
-      data-testid={testId}
-      value={value}
-      onChange={(e) => onChange(e.target.value as Role)}
-      className={cn(
-        "rounded-md border border-input bg-card px-2 py-2 text-sm text-foreground outline-none transition-colors focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring",
-        className,
-      )}
-    >
-      {ROLES.map((r) => (
-        <option key={r} value={r}>
-          {r}
-        </option>
-      ))}
-    </select>
+    <Select name={name} value={value} onValueChange={(v) => onChange(v as Role)}>
+      <SelectTrigger aria-label={ariaLabel} data-testid={testId} className={className}>
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        {ROLES.map((r) => (
+          <SelectItem key={r} value={r}>
+            {LABEL[r]}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
   )
 }

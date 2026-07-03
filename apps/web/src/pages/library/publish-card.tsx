@@ -1,10 +1,11 @@
 import { useNavigate } from "@tanstack/react-router"
-import { Plus, Upload } from "lucide-react"
+import { Upload } from "lucide-react"
 import { useRef, useState } from "react"
-import { toast } from "sonner"
 import { api } from "@/api"
+import { Icon } from "@/components/icons"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
+import { toast } from "@/components/ui/sonner"
 import { cn } from "@/lib/utils"
 import { refFor } from "../artifact/parse-ref"
 
@@ -47,8 +48,12 @@ export function PublishCard() {
   return (
     <Card
       className={cn(
-        "mb-5.5 flex flex-wrap items-center gap-3.5 border-dashed p-4 transition-colors",
-        dragging && "border-primary bg-primary/5",
+        // flex-row overrides the Card base's flex-col: this launcher is one
+        // wrapping band, not a stacked card. Solid hairline at rest (the app's
+        // one resting dashed surface retired for consistency); the ink drop
+        // affordance lights up only while dragging — instant, no transition.
+        "mb-6 flex flex-row flex-wrap items-center gap-3.5 p-4",
+        dragging && "border-dashed border-primary bg-primary/5",
       )}
       onDragOver={(e) => {
         e.preventDefault()
@@ -62,11 +67,14 @@ export function PublishCard() {
         if (f) publishFile(f)
       }}
     >
-      <div className="min-w-[200px] flex-1">
-        <div className="font-display text-lg font-semibold">Publish an artifact</div>
-        <div className="text-sm text-muted-foreground">
+      <div className="min-w-50 flex-1">
+        {/* A label, not a headline: the home's one voice headline is the greeting
+            above it, so this launcher no longer stacks a second serif h2. On a
+            filtered view (no greeting) it quietly anchors the launcher. */}
+        <p className="text-sm font-medium text-foreground">Publish an artifact</p>
+        <p className="text-sm text-pretty text-muted-foreground">
           Write or paste Markdown or HTML, or drop a file.
-        </div>
+        </p>
       </div>
       <input
         ref={fileRef}
@@ -87,8 +95,8 @@ export function PublishCard() {
       >
         <Upload /> {busy ? "Publishing…" : "Upload a file"}
       </Button>
-      <Button variant="primary" data-testid="library-new" onClick={() => nav({ to: "/new" })}>
-        <Plus /> Write or paste
+      <Button variant="default" data-testid="library-new" onClick={() => nav({ to: "/new" })}>
+        <Icon name="plus" /> Write or paste
       </Button>
     </Card>
   )

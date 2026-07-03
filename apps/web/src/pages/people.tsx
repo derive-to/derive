@@ -3,10 +3,16 @@ import { Link } from "@tanstack/react-router"
 import { useEffect, useState } from "react"
 import { api, type PublicProfile } from "@/api"
 import { FollowButton } from "@/components/follow-button"
+import { Icon } from "@/components/icons"
 import { EmptyState } from "@/components/shared/empty-state"
+import { PageHeader } from "@/components/shared/page-header"
+import { PageShell } from "@/components/shared/page-shell"
+import { SearchField } from "@/components/shared/search-field"
 import { Spinner } from "@/components/shared/spinner"
+import { StatusPanel } from "@/components/shared/status-panel"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
-import { Input } from "@/components/ui/input"
+import { Button } from "@/components/ui/button"
+import { colorForName } from "@/lib/avatar-tints"
 import { getInitials } from "@/lib/initials"
 
 // The People directory — browse + search discoverable people and follow them. This is
@@ -20,7 +26,7 @@ export function People() {
     return () => clearTimeout(t)
   }, [q])
 
-  const { data, isPending, isError } = useQuery({
+  const { data, isPending, isError, isFetching, refetch } = useQuery({
     queryKey: ["people", debounced],
     queryFn: () => api.people(debounced || undefined).then((r) => r.users),
     placeholderData: keepPreviousData,
@@ -28,38 +34,60 @@ export function People() {
   const people = data ?? []
 
   return (
-    <div className="mx-auto w-full max-w-3xl p-6 sm:p-8">
-      <h1 className="font-display text-2xl font-medium tracking-tight text-foreground">People</h1>
-      <p className="mt-1 text-sm text-muted-foreground">
-        Find people on Derive and follow their work.
-      </p>
-      <Input
-        type="search"
-        value={q}
-        onChange={(e) => setQ(e.target.value)}
-        placeholder="Search people by name or @handle…"
-        aria-label="Search people"
-        data-testid="people-search"
-        className="mt-4"
-      />
+    <PageShell className="flex flex-col gap-5">
+      {/* Title + description + search form one tight header block (inner gaps);
+          the PageShell gap makes the larger step down to the results below. */}
+      <div className="flex flex-col gap-4">
+        <PageHeader title="People" subtitle="Find people on Derive and follow their work." />
+        <SearchField
+          value={q}
+          onValueChange={setQ}
+          placeholder="Search people…"
+          aria-label="Search people by name or handle"
+          testId="people-search"
+          hotkey
+          loading={isFetching && !isPending}
+        />
+      </div>
 
-      <div className="mt-5">
+      <div>
         {isPending ? (
-          <div className="py-10">
+          <div className="flex justify-center py-10">
             <Spinner />
           </div>
         ) : isError ? (
-          <EmptyState>Couldn't load people right now.</EmptyState>
+          // A failed fetch is status, not emptiness — the danger tone grammar.
+          <StatusPanel
+            tone="danger"
+            title="Couldn’t load people"
+            description="This is usually temporary."
+            action={
+              <Button
+                variant="outline"
+                size="sm"
+                data-testid="people-retry"
+                onClick={() => refetch()}
+              >
+                Try again
+              </Button>
+            }
+          />
         ) : people.length === 0 ? (
           <div data-testid="people-empty">
-            <EmptyState>
-              {debounced
-                ? `No people match "${debounced}".`
-                : "No discoverable people yet. People who turn on discoverability show up here."}
-            </EmptyState>
+            <EmptyState
+              icon={<Icon name="following" strokeWidth={1.75} />}
+              title={debounced ? `No people match “${debounced}”.` : "No discoverable people yet."}
+              description={
+                debounced
+                  ? "Try a different name or @handle."
+                  : "People who turn on discoverability show up here."
+              }
+            />
           </div>
         ) : (
+          // Deliberately 240px min, not CardGrid's 220px — a person row (identity + Follow) is wider than an artifact card.
           <ul
+            role="list"
             className="grid grid-cols-[repeat(auto-fill,minmax(240px,1fr))] gap-3"
             data-testid="people-grid"
           >
@@ -69,7 +97,7 @@ export function People() {
           </ul>
         )}
       </div>
-    </div>
+    </PageShell>
   )
 }
 
@@ -79,30 +107,38 @@ export function People() {
 function PersonCard({ person: p }: { person: PublicProfile }) {
   const initials = getInitials(p.name ?? p.username)
   return (
-    <li className="flex items-center gap-3 rounded-lg border border-border bg-card p-3 transition-colors hover:bg-hover">
+    // Interactive card via the stretched link — the whole card is the click
+    // target, so the hover edge-brighten sits on a genuinely clickable surface.
+    <li className="relative flex items-center gap-3 rounded-xl border bg-card p-3 hover:border-foreground/25">
       <Link
         to="/u/$handle"
         params={{ handle: p.username }}
         data-testid={`people-card-${p.username}`}
-        className="flex min-w-0 flex-1 items-center gap-3 outline-none"
+        className="flex min-w-0 flex-1 items-center gap-3 rounded-lg outline-none after:absolute after:inset-0 after:rounded-xl focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
       >
         <Avatar className="size-9 shrink-0">
           {p.image && <AvatarImage src={p.image} alt={p.name ?? p.username} />}
-          <AvatarFallback>{initials}</AvatarFallback>
+          {/* Identity tint (stable per person) + the outline frame images get. */}
+          <AvatarFallback
+            className="font-medium text-scrim-foreground outline-1 -outline-offset-1 outline-foreground/10"
+            style={{ backgroundColor: colorForName(p.name ?? p.username) }}
+          >
+            {initials}
+          </AvatarFallback>
         </Avatar>
         <span className="min-w-0">
           {p.name && (
             <span className="block truncate text-sm font-medium text-foreground">{p.name}</span>
           )}
-          <span className="block truncate font-mono text-xs text-muted-foreground">
+          <span className="block truncate font-mono text-2xs text-muted-foreground">
             @{p.username}
           </span>
           {p.profession && (
-            <span className="block truncate text-2xs text-muted-foreground">{p.profession}</span>
+            <span className="block truncate text-sm text-muted-foreground">{p.profession}</span>
           )}
         </span>
       </Link>
-      <FollowButton username={p.username} size="xs" className="shrink-0" />
+      <FollowButton username={p.username} size="sm" className="relative z-10 shrink-0" />
     </li>
   )
 }

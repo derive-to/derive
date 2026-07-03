@@ -2,6 +2,13 @@ import { useEffect, useRef, useState } from "react"
 import { api, type Proposal, type Role } from "@/api"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { useFocusTrap } from "@/lib/use-focus-trap"
 import { cn } from "@/lib/utils"
@@ -11,10 +18,6 @@ import { ReviewRail } from "./rail"
 import { ago, STATE_META, StateBadge, useNarrow } from "./shared"
 
 type View = "proposed" | "current" | "diff"
-
-// A native <select> styled to match Input (the narrow-viewport proposal switcher).
-const SELECT_CLASS =
-  "h-9 rounded-md border border-input bg-card px-2 text-sm text-foreground outline-none transition-colors focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-accent"
 
 /**
  * The review surface. A proposed version renders exactly like a live one so a
@@ -132,14 +135,14 @@ export function ReviewOverlay({
 
   const ViewTabs = (
     <Tabs value={view} onValueChange={(v) => setView(v as View)}>
-      <TabsList className="h-8">
-        <TabsTrigger value="proposed" data-testid="review-view-proposed" className="px-2.5 py-0.5">
+      <TabsList>
+        <TabsTrigger value="proposed" data-testid="review-view-proposed">
           Proposed
         </TabsTrigger>
-        <TabsTrigger value="current" data-testid="review-view-current" className="px-2.5 py-0.5">
+        <TabsTrigger value="current" data-testid="review-view-current">
           Current
         </TabsTrigger>
-        <TabsTrigger value="diff" data-testid="review-view-diff" className="px-2.5 py-0.5">
+        <TabsTrigger value="diff" data-testid="review-view-diff">
           Diff
         </TabsTrigger>
       </TabsList>
@@ -152,42 +155,46 @@ export function ReviewOverlay({
       role="dialog"
       aria-modal="true"
       aria-label="Review proposed changes"
-      className="fixed inset-0 z-[80] flex flex-col bg-background"
+      className="fixed inset-0 z-80 flex flex-col bg-background"
     >
       {/* Top bar: selected proposal identity + view controls. */}
       <div className="flex flex-wrap items-center gap-3 border-b border-border bg-card px-3 py-2.5 md:flex-nowrap md:px-5">
-        <Badge variant="accent" className="flex-none font-mono tracking-wider">
+        {/* Mono eyebrow grammar: the machine-register pill (uppercase needs tracking-wide). */}
+        <Badge variant="secondary" shape="pill" className="flex-none tracking-wide">
           REVIEW
         </Badge>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             <span
               data-testid="review-title"
-              className="truncate text-sm font-semibold text-foreground"
+              className="truncate text-sm font-medium text-foreground"
             >
               {active?.message ?? "Proposed change"}
             </span>
             {active && !narrow && <StateBadge state={active.state} />}
           </div>
-          <div className="truncate text-xs text-muted-foreground">
+          <div className="truncate font-mono text-2xs text-muted-foreground">
             {active ? `${active.author} · proposed ${ago(active.created_at)}` : "Loading…"}
           </div>
         </div>
         {narrow && proposals.length > 1 && (
-          <select
-            data-testid="review-proposal-select"
-            aria-label="Select proposal"
-            value={activeId ?? ""}
-            onChange={(e) => setActiveId(e.target.value)}
-            className={cn(SELECT_CLASS, "w-[150px] flex-none")}
-          >
-            {proposals.map((p, i) => (
-              <option key={p.id} value={p.id}>
-                {(p.message ? p.message.slice(0, 26) : `Proposal ${i + 1}`) +
-                  (p.state === "open" ? "" : ` · ${STATE_META[p.state].label}`)}
-              </option>
-            ))}
-          </select>
+          <Select value={activeId ?? undefined} onValueChange={setActiveId}>
+            <SelectTrigger
+              data-testid="review-proposal-select"
+              aria-label="Select proposal"
+              className="w-37.5 flex-none"
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {proposals.map((p, i) => (
+                <SelectItem key={p.id} value={p.id}>
+                  {(p.message ? p.message.slice(0, 26) : `Proposal ${i + 1}`) +
+                    (p.state === "open" ? "" : ` · ${STATE_META[p.state].label}`)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         )}
         {!narrow && ViewTabs}
         <Button
@@ -205,15 +212,16 @@ export function ReviewOverlay({
       {/* Context strip. */}
       <div
         className={cn(
-          "flex items-center gap-2 border-b border-l-[3px] border-border-soft px-5 py-1.5 text-xs font-medium",
+          "flex items-center gap-2 border-b border-l-[3px] border-border-soft px-5 py-1.5 text-sm font-medium",
+          // "Viewing the proposed version" is a brand moment: ink bar + soft tint.
           strip.accent
-            ? "border-l-primary bg-accent/10 text-accent-foreground"
+            ? "border-l-primary bg-primary/10 text-foreground"
             : "border-l-border bg-card text-muted-foreground",
         )}
       >
         {strip.text}
         {view === "diff" && (
-          <span className="ml-auto flex gap-3 font-mono">
+          <span className="ml-auto flex gap-3 font-mono tabular-nums">
             <span className="text-success">+{adds}</span>
             <span className="text-destructive">−{dels}</span>
           </span>

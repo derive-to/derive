@@ -1,14 +1,24 @@
 import { Bot } from "lucide-react"
 import { useCallback, useEffect, useState } from "react"
-import { toast } from "sonner"
 import { type Agent, api, type Role } from "@/api"
+import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { EmptyState } from "@/components/shared/empty-state"
+import { SettingsGroup } from "@/components/shared/settings-group"
 import { Spinner } from "@/components/shared/spinner"
+import { StatusPanel } from "@/components/shared/status-panel"
+import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Card } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
-import { selectClass } from "./roles"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+import { toast } from "@/components/ui/sonner"
+import { SettingsSection } from "./settings-section"
 
 export function AgentsSection() {
   const [agents, setAgents] = useState<Agent[] | null>(null)
@@ -25,14 +35,17 @@ export function AgentsSection() {
   }, [load])
 
   return (
-    <section>
-      <p className="mb-4 text-sm text-muted-foreground">
-        Register an agent so people can <code className="font-mono">@mention</code> it in a thread.
-        It gets a scoped token and acts as a commenter — it can propose changes for review, but a
-        human still approves. The agent reads its mentions from{" "}
-        <code className="font-mono">GET /v1/agent/inbox</code> with its token.
-      </p>
-
+    <SettingsSection
+      title="Agents"
+      description={
+        <>
+          Register an agent so people can <code className="font-mono">@mention</code> it in a
+          thread. It gets a scoped token and acts as a commenter — it can propose changes for
+          review, but a human still approves. The agent reads its mentions from{" "}
+          <code className="font-mono">GET /v1/agent/inbox</code> with its token.
+        </>
+      }
+    >
       <NewAgent
         onCreated={(msg) => {
           toast.success(msg)
@@ -40,15 +53,15 @@ export function AgentsSection() {
         }}
       />
 
-      <div className="mt-4 flex flex-col gap-2.5">
-        {agents === null ? (
-          <div className="flex h-20 items-center justify-center">
-            <Spinner />
-          </div>
-        ) : agents.length === 0 ? (
-          <EmptyState>No agents yet. Add one above.</EmptyState>
-        ) : (
-          agents.map((a) => (
+      {agents === null ? (
+        <div className="flex h-20 items-center justify-center">
+          <Spinner />
+        </div>
+      ) : agents.length === 0 ? (
+        <EmptyState>No agents yet. Add one above.</EmptyState>
+      ) : (
+        <SettingsGroup>
+          {agents.map((a) => (
             <AgentRow
               key={a.id}
               agent={a}
@@ -58,10 +71,10 @@ export function AgentsSection() {
               }}
               onError={(m) => toast.error(m)}
             />
-          ))
-        )}
-      </div>
-    </section>
+          ))}
+        </SettingsGroup>
+      )}
+    </SettingsSection>
   )
 }
 
@@ -87,7 +100,7 @@ function NewAgent({ onCreated }: { onCreated: (msg: string) => void }) {
   }
 
   return (
-    <Card className="p-4">
+    <div className="flex flex-col gap-3">
       <div className="flex flex-wrap gap-2">
         <Input
           data-testid="agent-name"
@@ -95,63 +108,69 @@ function NewAgent({ onCreated }: { onCreated: (msg: string) => void }) {
           placeholder="Agent name (e.g. Claude)"
           value={name}
           onChange={(e) => setName(e.target.value)}
-          className="min-w-[180px] flex-1"
+          onKeyDown={(e) => e.key === "Enter" && add()}
+          className="min-w-45 flex-1"
         />
-        <select
-          data-testid="agent-role"
-          aria-label="Agent role"
-          value={role}
-          onChange={(e) => setRole(e.target.value as Role)}
-          className={`${selectClass} w-[150px]`}
-        >
-          <option value="commenter">Commenter (propose)</option>
-          <option value="editor">Editor (publish)</option>
-        </select>
+        <Select value={role} onValueChange={(v) => setRole(v as Role)}>
+          <SelectTrigger data-testid="agent-role" aria-label="Agent role" className="w-37.5">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="commenter">Commenter (propose)</SelectItem>
+            <SelectItem value="editor">Editor (publish)</SelectItem>
+          </SelectContent>
+        </Select>
         <Button
           data-testid="agent-add"
-          variant="primary"
+          variant="secondary"
+          size="sm"
           onClick={add}
+          loading={busy}
           disabled={busy || !name.trim()}
         >
           {busy ? "Adding…" : "Add agent"}
         </Button>
       </div>
-      {/* The token is shown exactly once, right after creation. */}
+      {/* The token is shown exactly once, right after creation — a safety-orange
+          warning moment, never the accent. */}
       {created && (
-        <div
-          data-testid="agent-token"
-          className="mt-3 rounded-lg border border-primary bg-accent/15 p-3"
-        >
-          <div className="mb-1.5 text-xs font-semibold text-foreground">
-            Token for {created.name} — copy it now, it won't be shown again.
-          </div>
-          <div className="flex items-center gap-2">
-            <code className="flex-1 break-all rounded-md border border-border bg-card px-2.5 py-1.5 font-mono text-xs">
-              {created.token}
-            </code>
-            <Button
-              data-testid="agent-token-copy"
-              variant="ghost"
-              size="sm"
-              onClick={() => {
-                navigator.clipboard?.writeText(created.token)
-                onCreated("Token copied")
-              }}
-            >
-              Copy
-            </Button>
-            <Button
-              data-testid="agent-token-done"
-              variant="ghost"
-              size="sm"
-              onClick={() => setCreated(null)}
-            >
-              Done
-            </Button>
-          </div>
+        <div data-testid="agent-token">
+          <StatusPanel
+            tone="warning"
+            layout="inline"
+            title={`Token for ${created.name} — copy it now, it won't be shown again.`}
+            description={
+              <code className="block break-all rounded-md bg-secondary px-2.5 py-1.5 font-mono text-2xs text-foreground">
+                {created.token}
+              </code>
+            }
+            action={
+              <div className="flex items-center gap-2">
+                <Button
+                  data-testid="agent-token-copy"
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => {
+                    navigator.clipboard?.writeText(created.token)
+                    onCreated("Token copied")
+                  }}
+                >
+                  Copy
+                </Button>
+                <Button
+                  data-testid="agent-token-done"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setCreated(null)}
+                >
+                  Done
+                </Button>
+              </div>
+            }
+          />
         </div>
       )}
-    </Card>
+    </div>
   )
 }
 
@@ -164,45 +183,46 @@ function AgentRow({
   onChanged: (msg: string) => void
   onError: (msg: string) => void
 }) {
-  const [busy, setBusy] = useState(false)
-  const remove = async () => {
-    if (!confirm(`Remove agent ${agent.name}? Its token stops working.`)) return
-    setBusy(true)
-    try {
-      await api.deleteAgent(agent.id)
-      onChanged(`Agent ${agent.name} removed`)
-    } catch (e) {
-      onError((e as Error).message)
-    } finally {
-      setBusy(false)
-    }
-  }
+  const [confirming, setConfirming] = useState(false)
   return (
-    <Card data-testid={`agent-row-${agent.id}`} className="flex items-center gap-3 px-4 py-3">
-      <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-secondary text-muted-foreground">
-        <Bot className="size-4" aria-hidden />
-      </span>
+    <div data-testid={`agent-row-${agent.id}`} className="flex items-center gap-3 py-3">
+      <Avatar className="size-7 shrink-0">
+        <AvatarFallback>
+          <Bot className="size-4" aria-hidden />
+        </AvatarFallback>
+      </Avatar>
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-1.5 text-sm font-medium text-foreground">
           @{agent.name}
-          <Badge variant="accent" className="font-mono">
-            {agent.role}
-          </Badge>
+          <Badge variant="secondary">{agent.role}</Badge>
         </div>
-        <div className="text-2xs text-muted-foreground">
+        <div className="text-sm text-muted-foreground">
           Mention it in any thread to send it work.
         </div>
       </div>
       <Button
         data-testid={`agent-remove-${agent.id}`}
-        variant="ghost"
+        variant="destructive-ghost"
         size="sm"
-        className="text-destructive hover:text-destructive"
-        onClick={remove}
-        disabled={busy}
+        onClick={() => setConfirming(true)}
       >
         Remove
       </Button>
-    </Card>
+      <ConfirmDialog
+        open={confirming}
+        onOpenChange={setConfirming}
+        title={`Remove @${agent.name}?`}
+        description="Its token stops working immediately."
+        confirmLabel="Remove"
+        onConfirm={async () => {
+          try {
+            await api.deleteAgent(agent.id)
+            onChanged(`Agent ${agent.name} removed`)
+          } catch (e) {
+            onError((e as Error).message)
+          }
+        }}
+      />
+    </div>
   )
 }

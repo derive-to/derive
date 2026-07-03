@@ -1,7 +1,7 @@
 import type { QueryClient } from "@tanstack/react-query"
 import type { Dispatch, SetStateAction } from "react"
-import { toast } from "sonner"
 import { api, type Comment, type Mention } from "@/api"
+import { toast } from "@/components/ui/sonner"
 import { commentsQuery } from "@/lib/queries"
 import type { CommentActions } from "./comment-actions"
 import { toggleReaction } from "./lib/reactions"

@@ -8,18 +8,19 @@ test.use({ viewport: { width: 390, height: 844 } })
 test("the sidebar opens as a drawer and navigates on mobile", async ({ owner }) => {
   await owner.goto("/")
 
-  // The persistent sidebar is replaced by a menu button; its dimmer backdrop is
-  // always mounted and toggles opacity, so assert on that (not visibility).
-  const backdrop = owner.getByTestId("library-menu-backdrop")
-  await expect(backdrop).toHaveCSS("opacity", "0") // drawer starts closed
+  // The persistent sidebar is replaced by a menu button; the nav lives in the
+  // shadcn sidebar's off-canvas Sheet (a Radix dialog), which mounts on open
+  // and unmounts after close — so assert presence/visibility, not opacity.
+  const drawer = owner.locator('[data-slot="sidebar"][data-mobile="true"]')
+  await expect(drawer).toBeHidden() // drawer starts closed (not mounted)
 
   await owner.getByTestId("library-menu").click()
-  await expect(backdrop).toHaveCSS("opacity", "1") // drawer open
+  await expect(drawer).toBeVisible() // drawer open
 
   // Picking a destination applies the filter and closes the drawer.
   await owner.getByTestId("sidebar-favorites").click()
   await expect(owner.getByRole("heading", { name: /Favorites/ })).toBeVisible()
-  await expect(backdrop).toHaveCSS("opacity", "0") // drawer closed again
+  await expect(drawer).toBeHidden() // drawer closed again
 })
 
 test("the core publish, open, and comment loop works at phone width", async ({ owner }) => {

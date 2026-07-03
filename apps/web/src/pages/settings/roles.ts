@@ -15,8 +15,3 @@ export const roleValue = (r: Role): Role => (r === "viewer" ? "commenter" : r)
 
 // The events a webhook can subscribe to (all selected = no filter sent).
 export const ALL_EVENTS = ["comment.created", "comment.resolved", "version.published"] as const
-
-// Shared classes for the native <select>s styled to match Input (kind, ws-role).
-// RoleSelect (shared/) covers the artifact-role case; these are the others.
-export const selectClass =
-  "h-9 rounded-md border border-input bg-card px-2 text-sm text-foreground outline-none transition-colors focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-accent"

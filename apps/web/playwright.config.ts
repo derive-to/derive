@@ -46,6 +46,11 @@ export default defineConfig({
   projects: [
     { name: "smoke", testMatch: /smoke\/.*\.spec\.ts$/ },
     { name: "deep", testMatch: /deep\/.*\.spec\.ts$/ },
+    // Visual-QA capture harness (not a test gate): seeds a realistic workspace and
+    // screenshots the real, auth-walled dashboard across themes + viewports. Its
+    // specs self-skip unless SHOTS=1, so a bare `playwright test` never runs them.
+    // Use: `SHOTS=1 npx playwright test --project=screens` (see e2e/screens/).
+    { name: "screens", testMatch: /screens\/.*\.screens\.ts$/ },
   ],
   webServer: [
     {

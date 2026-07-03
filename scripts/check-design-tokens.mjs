@@ -20,7 +20,7 @@ const TOKEN_SOURCE = new Set(["styles/globals.css", "styles.css"])
 // files are the same shape: a viewer's chosen identity tint (and the fixed white
 // keyline / lift shadow) painted onto the multiplayer overlay.
 const ALLOW_FILES = new Set([
-  "components/shared/colored-avatar.tsx",
+  "lib/avatar-tints.ts",
   "ctx.tsx",
   "lib/cursors.ts",
   "components/cursor/glyph.tsx",
@@ -88,7 +88,10 @@ const walk = (dir, out = []) => {
 const violations = []
 for (const file of walk(WEB_SRC)) {
   const rel = relative(WEB_SRC, file)
-  if (TOKEN_SOURCE.has(rel) || ALLOW_FILES.has(rel)) continue
+  // components/ui/** is vendored stock shadcn (installed via the CLI) — it's not
+  // app-authored code, so it's held to shadcn's conventions (e.g. an occasional
+  // arbitrary text size), not derive's token guardrail.
+  if (TOKEN_SOURCE.has(rel) || ALLOW_FILES.has(rel) || rel.startsWith("components/ui/")) continue
   const lines = readFileSync(file, "utf8").split("\n")
   lines.forEach((raw, i) => {
     if (raw.includes("tokens-ignore")) return

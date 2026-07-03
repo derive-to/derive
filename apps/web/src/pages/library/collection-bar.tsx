@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react"
 import { Icon } from "@/components/icons"
+import { ConfirmDialog } from "@/components/shared/confirm-dialog"
+import { Count } from "@/components/shared/section-eyebrow"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 
@@ -20,6 +22,7 @@ export function CollectionBar({
   onDelete: () => void
 }) {
   const [renaming, setRenaming] = useState(false)
+  const [confirmingDelete, setConfirmingDelete] = useState(false)
   const [draft, setDraft] = useState(title)
   useEffect(() => setDraft(title), [title])
 
@@ -30,7 +33,7 @@ export function CollectionBar({
 
   return (
     <div className="mb-4 flex flex-wrap items-center gap-2.5 border-b border-border-soft pb-3.5">
-      <Icon name="collection" size={20} />
+      <Icon name="collection" className="text-muted-foreground" />
       {renaming ? (
         <Input
           value={draft}
@@ -42,22 +45,26 @@ export function CollectionBar({
             if (e.key === "Enter") commitRename()
             if (e.key === "Escape") setRenaming(false)
           }}
-          className="max-w-[280px] text-lg font-semibold"
+          className="max-w-70"
         />
       ) : (
-        <h2 className="font-display text-xl font-semibold">
-          {title} <span className="text-sm font-normal text-muted-foreground">· {count}</span>
+        // The collection's name is the user's content, not tool chrome — voice
+        // register; the count rides along in the machine register.
+        <h2 className="font-serif text-xl font-medium tracking-tight text-foreground">
+          {title} <Count className="font-normal tracking-normal">{count}</Count>
         </h2>
       )}
       <span className="flex-1" />
+      {/* Share is the collection view's one filled primary (the publish launcher
+          doesn't render on this view). */}
       <Button
-        variant="primary"
+        variant="default"
         size="sm"
         data-testid="collection-share"
         onClick={onShare}
         title="Share this collection"
       >
-        <Icon name="share" size={15} /> Share
+        <Icon name="share" size={16} /> Share
       </Button>
       <Button
         variant="outline"
@@ -68,17 +75,22 @@ export function CollectionBar({
         {renaming ? "Save" : "Rename"}
       </Button>
       <Button
-        variant="ghost"
+        variant="destructive"
         size="sm"
         data-testid="collection-delete"
-        className="text-destructive hover:text-destructive"
-        onClick={() => {
-          if (confirm(`Delete the collection “${title}”? The artifacts are not deleted.`))
-            onDelete()
-        }}
+        onClick={() => setConfirmingDelete(true)}
       >
         Delete
       </Button>
+      <ConfirmDialog
+        open={confirmingDelete}
+        onOpenChange={setConfirmingDelete}
+        title={`Delete “${title}”?`}
+        description="The artifacts in it are not deleted."
+        confirmLabel="Delete"
+        confirmTestId="collection-delete-confirm"
+        onConfirm={onDelete}
+      />
     </div>
   )
 }

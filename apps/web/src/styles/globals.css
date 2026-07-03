@@ -1,160 +1,324 @@
-/* Cascade layer order (low → high priority). Utilities outrank components and
-   base, so a converted element's `text-foreground` / `bg-card` always wins over
-   the base reset or the few component rules below. */
-@layer theme, base, components, utilities;
-
 @import "tailwindcss";
 @import "tw-animate-css";
+@import "shadcn/tailwind.css";
+/* Geist — Vercel's neo-grotesque family — self-hosted so the app makes no
+   third-party requests. Both cuts are weight-only (no optical-size axis); each
+   variable file carries every subset across the full 100–900 range. Geist Sans
+   is the app's one text face (chrome AND voice); Geist Mono carries the machine
+   layer (counts, versions, kbd, code) over a system-mono fallback. No serif ships. */
+@import "@fontsource-variable/geist";
+@import "@fontsource-variable/geist-mono";
 
-/* Dark variant keys off the theme attribute the app sets on <html>. */
-@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+/* Dark mode is the standard shadcn `.dark` class (toggled in ctx.tsx / __root.tsx). */
+@custom-variant dark (&:is(.dark *));
 
-/* Design tokens. shadcn-style semantic names mapped to derive's themed CSS vars
-   (defined per [data-theme] in the base layer below), so Tailwind utilities
-   (bg-card, text-foreground, ring-ring) follow the active theme. `inline` keeps
-   them var-based instead of frozen at build time. */
-@theme inline {
-  --color-background: var(--bg);
-  --color-foreground: var(--fg);
-  --color-card: var(--card);
-  --color-card-foreground: var(--fg);
-  --color-popover: var(--card);
-  --color-popover-foreground: var(--fg);
-  --color-primary: var(--ac);
-  --color-primary-foreground: var(--ac-fg);
-  --color-secondary: var(--card-2);
-  --color-secondary-foreground: var(--fg);
-  --color-muted: var(--card-2);
-  --color-muted-foreground: var(--fg-mut);
-  --color-accent: var(--ac-soft);
-  --color-accent-foreground: var(--ac);
-  --color-destructive: var(--bad);
-  --color-destructive-foreground: #fff;
-  --color-success: var(--good);
+/* ── Derive theme — the monochrome identity on shadcn ──────────────────────────
+   Foundation: Axiom Black #030712 + Origin White #F4F5F8. The accent is
+   MONOCHROME — near-black ink on light, near-white on dark — so the brand reads
+   as its two canvas colors, not a hue. Nothing is "the brand color": primary
+   actions, active nav, focus, and links all render in ink; selected/hover states
+   are quiet neutral washes. Only the semantic signals (success/destructive/
+   warning) and the calm low-chroma wayfinding tints stay chromatic — and those
+   stay muted on purpose: "calm tints, not a rainbow." See docs/design-system.md. */
+:root {
+  --radius: 0.25rem; /* 4px — tight corners are part of the register */
+  --background: #f7f8fa;
+  --foreground: #14161a; /* near-black ink, never pure black */
+  --card: #ffffff;
+  --card-foreground: #14161a;
+  --popover: #ffffff;
+  --popover-foreground: #14161a;
+  --primary: #14161a; /* MONOCHROME — the accent is ink, never a hue */
+  --primary-foreground: #f7f8fa;
+  --secondary: #eff1f4;
+  --secondary-foreground: #14161a;
+  --muted: #eff1f4;
+  --muted-foreground: #5c616b; /* ≥4.5:1 on the canvas */
+  --accent: #e8eaee; /* quiet selected/hover wash */
+  --accent-foreground: #14161a;
+  --destructive: #b4402c;
+  --destructive-foreground: #ffffff;
+  --success: #2f7d4f;
+  --warning: #a24200; /* safety orange (semantic) — never a brand note */
+  --border: #e5e7eb;
+  --input: #e5e7eb;
+  --ring: #14161a; /* focus is ink, never a hue */
+  --sidebar: #e9ebf1; /* the recessed backdrop the inset content card floats above (shell is variant="inset") */
+  --sidebar-foreground: #14161a;
+  --sidebar-primary: #14161a;
+  --sidebar-primary-foreground: #f7f8fa;
+  --sidebar-accent: #e3e6eb; /* hover row wash, a step down from the recessed rail so hover reads */
+  --sidebar-accent-foreground: #14161a;
+  --sidebar-border: #dde0e6; /* defines the rail edge + the raised active-chip ring against the recessed surface */
+  --sidebar-ring: #14161a;
+
+  /* derive app vocabulary. */
+  --border-soft: #eef0f3;
+  --disabled-foreground: #aeb2ba; /* decoration only */
+  --selection: rgba(20, 22, 26, 0.18); /* ink wash, never a hue */
+  /* On-image placard scrim — fixed in both themes (rides over user render content). */
+  --scrim: #030712; /* Axiom Black */
+  --scrim-foreground: #f4f5f8; /* Origin White */
+  /* Light keeps soft shadows; the no-shadow rule is dark-only. */
+  --shadow-sm: 0 1px 2px rgba(20, 22, 26, 0.06);
+  --shadow: 0 1px 2px rgba(20, 22, 26, 0.05), 0 12px 28px -16px rgba(20, 22, 26, 0.14);
+  --shadow-pop: 0 4px 10px -3px rgba(20, 22, 26, 0.1), 0 22px 44px -14px rgba(20, 22, 26, 0.24);
+}
+
+.dark {
+  --background: #0a0b0d; /* the canvas */
+  --foreground: #f3f4f6; /* never pure white */
+  --card: #101216; /* raised: dialogs, palette */
+  --card-foreground: #f3f4f6;
+  --popover: #101216; /* floating: menus, toasts */
+  --popover-foreground: #f3f4f6;
+  --primary: #f3f4f6; /* MONOCHROME — near-white ink on the dark canvas */
+  --primary-foreground: #0a0b0d;
+  --secondary: #16181d;
+  --secondary-foreground: #f3f4f6;
+  --muted: #16181d;
+  --muted-foreground: #969aa2;
+  --accent: #1b1d23; /* quiet selected/hover wash */
+  --accent-foreground: #f3f4f6;
+  --destructive: #d98c74;
+  --destructive-foreground: #ffffff;
+  --success: #74b085;
+  --warning: #fb923c;
+  --border: #23252b;
+  --input: #23252b;
+  --ring: #f3f4f6;
+  --sidebar: #060709; /* the recessed near-black backdrop the inset content card floats above (a step darker than the canvas so content lifts) */
+  --sidebar-foreground: #f3f4f6;
+  --sidebar-primary: #f3f4f6;
+  --sidebar-primary-foreground: #0a0b0d;
+  --sidebar-accent: #1c1e24; /* hover row wash, a step up from the raised rail */
+  --sidebar-accent-foreground: #f3f4f6;
+  --sidebar-border: #26282f; /* defines the rail edge + the raised active-chip ring */
+  --sidebar-ring: #f3f4f6;
+
+  --border-soft: #191b1f;
+  --disabled-foreground: #4b4f57; /* decoration only */
+  --selection: rgba(243, 244, 246, 0.18);
+  --scrim: #030712;
+  --scrim-foreground: #f4f5f8;
+  /* No shadows in the dark UI: elevation is a surface step plus a border edge.
+     The vars stay defined so recipes can reference them unconditionally. */
+  --shadow-sm: 0 0 #0000;
+  --shadow: 0 0 #0000;
+  --shadow-pop: 0 0 #0000;
+}
+
+/* The calm categorical family — muted, low-chroma tints for DATA surfaces
+   (categorical charts, chart-1…5) and any deliberate category label. Theme-
+   invariant by design ("calm tints, not a rainbow"), surfaced as text-share /
+   bg-review / … utilities. Chrome icons are NOT tinted from here: the chrome
+   stays monochrome so the user's own artifact colour is what stands out. */
+@theme {
   --color-gold: #c2a15e;
-  /* Categorical icon accents — a deliberately muted, low-chroma family so feature
-     wayfinding reads as calm tints, not a rainbow. Surfaced as text-share /
-     text-comments / … utilities the <Icon> component applies (color stays a token,
-     never a raw hex in tsx; see check-design-tokens.mjs). */
   --color-share: #8781b0;
   --color-comments: #6b8bac;
   --color-tag: #5f9a90;
   --color-collection: #bd8b62;
   --color-insights: #7f97c2;
   --color-review: #7a9f70;
-  --color-border: var(--line);
-  --color-border-soft: var(--line-soft);
-  --color-input: var(--line);
-  --color-ring: var(--ac);
-  --color-hover: var(--hover);
+}
 
-  /* Type scale — the only allowed text sizes. */
-  --text-2xs: 10px;
+@theme inline {
+  --radius-sm: 0.1875rem; /* 3px */
+  --radius-md: 0.375rem; /* 6px */
+  --radius-lg: 0.5rem; /* 8px */
+  --radius-xl: 0.625rem; /* 10px */
+  --radius-2xl: 0.75rem; /* 12px — dialogs; tight register, not radius*2 */
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  /* Categorical chart series map straight onto the calm wayfinding tints, so a
+     chart series and its feature tint are one value and can't drift. */
+  --color-chart-1: var(--color-review);
+  --color-chart-2: var(--color-insights);
+  --color-chart-3: var(--color-collection);
+  --color-chart-4: var(--color-share);
+  --color-chart-5: var(--color-comments);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  /* derive app vocabulary (bridged onto the monochrome palette). Quiet hover
+     washes ride --secondary (bg-secondary) — there is deliberately no separate
+     --hover token; two names for one value is how washes drift. */
+  --color-border-soft: var(--border-soft);
+  --color-disabled-foreground: var(--disabled-foreground);
+  --color-selection: var(--selection);
+  --color-scrim: var(--scrim);
+  --color-scrim-foreground: var(--scrim-foreground);
+
+  /* Type scale — the dense pro-tool register (14px body, 12.5px controls/secondary),
+     rem-based so it still respects the user's root font size. Density lives HERE,
+     not in control geometry: the h-9/h-8/h-7 chassis is unchanged — the type just
+     tightens, so a button reads as main's, not a roomier restyle. Line-heights
+     ride tighter as the step grows (headings hug). */
+  --text-2xs: 0.625rem; /* 10px — mono micro-labels only */
   --text-2xs--line-height: 1.4;
-  --text-xs: 11px;
+  --text-xs: 0.6875rem; /* 11px */
   --text-xs--line-height: 1.45;
-  --text-sm: 12.5px;
+  --text-sm: 0.78125rem; /* 12.5px — control + secondary-body base */
   --text-sm--line-height: 1.5;
-  --text-base: 14px;
+  --text-base: 0.875rem; /* 14px — body */
   --text-base--line-height: 1.55;
-  --text-lg: 16px;
+  --text-lg: 1rem; /* 16px */
   --text-lg--line-height: 1.4;
-  --text-xl: 18px;
+  --text-xl: 1.125rem; /* 18px */
   --text-xl--line-height: 1.3;
-  --text-2xl: 22px;
+  --text-2xl: 1.375rem; /* 22px */
   --text-2xl--line-height: 1.2;
-  --text-3xl: 28px;
+  --text-3xl: 1.75rem; /* 28px */
   --text-3xl--line-height: 1.1;
+  --text-4xl: 2rem; /* 32px — the single hero step */
+  --text-4xl--line-height: 1.05;
 
-  --font-sans: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  --font-mono: ui-monospace, Menlo, Consolas, monospace;
-  --font-display: "Inter", system-ui, sans-serif;
-
-  --radius-sm: 3px;
-  --radius: 4px;
-  --radius-md: 6px;
-  --radius-lg: 8px;
-  --radius-xl: 10px;
+  /* One text face. Geist Sans carries the working chrome AND the voice moments
+     (wordmark, greetings, artifact titles, empty-state headlines) — the app is
+     Geist-only, so --font-serif is an alias, not a second face. The machine layer
+     (counts, versions, kbd, code) rides Geist Mono, over a system-mono fallback. */
+  --font-sans: "Geist Variable", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  /* Aliased to Geist, so the ~15 `font-serif` "voice" call-sites render in the
+     same face (not a second cut) — one text face, one rendering. The hook stays a
+     named token in case a real editorial face is ever wanted; today it is chrome. */
+  --font-serif: var(--font-sans);
+  --font-mono: "Geist Mono Variable", ui-monospace, Menlo, Consolas, monospace;
+  --font-heading: var(--font-sans);
 }
 
 @layer base {
-  /* The two theme palettes — the source of truth the @theme bridge references.
-     Set via [data-theme] on <html>; runtime switching rules out a static @theme.
-     Derive foundation: Axiom Black #030712 + Origin White #F4F5F8. The accent is
-     monochrome — near-black on light, near-white on dark — so the brand reads as
-     the two colors; only the semantic good/bad stay chromatic. */
-  [data-theme="light"] {
-    --bg: #f7f8fa;--card: #ffffff;--card-2: #eff1f4;--hover: #eaecf0;
-    --fg: #14161a;--fg-mut: #5c616b;--line: #e5e7eb;--line-soft: #eef0f3;
-    --ac: #14161a;--ac-fg: #f7f8fa;--ac-soft: #e8eaee;
-    --cmt-bg: #eff1f4;--cmt-tx: #33373f;--cmt-bd: #dee1e6;--good: #2f7d4f;--good-bg: #e6f1ea;--bad: #b4402c;
-    --shadow-sm: 0 1px 2px rgba(20,22,26,.06);
-    --shadow: 0 1px 2px rgba(20,22,26,.05),0 12px 28px -16px rgba(20,22,26,.14);
-    --shadow-pop: 0 4px 10px -3px rgba(20,22,26,.10),0 22px 44px -14px rgba(20,22,26,.24);--grain: .022;
-  }
-  [data-theme="dark"] {
-    --bg: #0a0b0d;--card: #101216;--card-2: #16181d;--hover: #1b1d23;
-    --fg: #f3f4f6;--fg-mut: #969aa2;--line: #23252b;--line-soft: #191b1f;
-    --ac: #f3f4f6;--ac-fg: #0a0b0d;--ac-soft: #1b1d23;
-    --cmt-bg: #16181d;--cmt-tx: #c7c9d0;--cmt-bd: #292c33;--good: #74b085;--good-bg: #131c17;--bad: #d98c74;
-    --shadow-sm: 0 1px 2px rgba(0,0,0,.4);
-    --shadow: 0 1px 2px rgba(0,0,0,.5),0 16px 34px -18px rgba(0,0,0,.72);
-    --shadow-pop: 0 4px 14px -3px rgba(0,0,0,.55),0 26px 50px -14px rgba(0,0,0,.75);--grain: .04;
-  }
-
   * {
-    box-sizing: border-box;
-    border-color: var(--color-border);
+    @apply border-border outline-ring/50;
+  }
+  /* Native chrome (scrollbars, form-control glyphs, popups) follows the active
+     theme — no per-control scheme-dark patches needed. */
+  :root {
+    color-scheme: light;
+  }
+  .dark {
+    color-scheme: dark;
+  }
+  ::selection {
+    background: var(--selection);
   }
   html,
   body,
   #root {
     height: 100%;
   }
+  html {
+    @apply font-sans;
+  }
   body {
+    @apply bg-background text-foreground;
     margin: 0;
-    background: var(--bg);
-    color: var(--fg);
-    font: 14px/1.55 Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-    /* Inter sits a touch loose at UI sizes; pull it in a hair. */
+    /* Geist runs a hair wide at UI sizes; pull it in slightly. */
     letter-spacing: -0.011em;
     -webkit-font-smoothing: antialiased;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.82' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E");
+    -moz-osx-font-smoothing: grayscale;
+  }
+  /* Film grain — the brand's material tell. It rides a fixed, non-interactive
+     overlay *above* the opaque surface fills (bg-background / -sidebar / -card),
+     because on <body> alone it sat beneath every page's background and never
+     composited onto anything. Blend flips per theme since the canvas sits at
+     opposite luminance extremes: screen lifts the near-black dark canvas while
+     multiply deepens the near-white light one — soft-light/overlay both collapse
+     to nothing against pure blacks and whites. Topmost + pointer-events:none, so
+     it never eats a click and reads uniformly across chrome and content. */
+  body::after {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: 200;
+    pointer-events: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.82' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+    mix-blend-mode: multiply; /* light canvas: grain deepens */
+    opacity: 0.05;
+  }
+  .dark body::after {
+    mix-blend-mode: screen; /* dark canvas: grain lifts */
+    opacity: 0.06;
+  }
+  /* Content mode: inside an artifact we're a guest in the author's document, so
+     Derive's material steps back entirely — while the artifact workbench is
+     mounted (marker on artifact/index.tsx) the grain overlay isn't generated.
+     Marker-based rather than cutting a hole around the sandboxed iframe: the
+     overlay sits above the isolate-hardened app frame, out of the iframe's reach.
+     Also spares the near-white artifact canvas from the light-mode multiply. */
+  body:has([data-artifact-view])::after {
+    content: none;
   }
   a {
-    color: var(--ac);
+    color: var(--primary);
     text-decoration: none;
-    /* Links use the default cursor, not the pointer hand — hover states carry the
-       affordance instead (Linear-style). Buttons are already default via the UA. */
-    cursor: default;
+    /* Links carry the pointer affordance on hover. */
+    cursor: pointer;
+  }
+  /* Tighten heading tracking a hair — the "this was designed" tell. */
+  h1,
+  h2 {
+    letter-spacing: -0.02em;
+  }
+  h3,
+  h4,
+  h5,
+  h6 {
+    letter-spacing: -0.012em;
   }
 }
 
 @layer components {
-  /* The only hand-written rules left: styling parser-generated HTML we can't put
-     utilities on. .cmt-body's nested code/link/strong come from the markdown
-     renderer; .mention is the @mention pill markdown.ts emits as <span>. */
+  /* Styling for parser-generated HTML we can't put utilities on: .cmt-body's nested
+     code/link/strong come from the markdown renderer; .mention is the @mention pill. */
   .cmt-body code {
-    font-family: ui-monospace, Menlo, monospace;
-    font-size: 11.5px;
-    background: var(--card-2);
-    border: 1px solid var(--line-soft);
+    font-family: var(--font-mono);
+    font-size: var(--text-2xs); /* the mono micro step — no off-scale sizes */
+    background: var(--muted);
+    border: 1px solid var(--border-soft);
     border-radius: 5px;
     padding: 1px 4px;
   }
   .cmt-body a {
-    color: var(--ac);
+    color: var(--primary);
     text-decoration: underline;
     text-underline-offset: 2px;
   }
   .cmt-body strong {
     font-weight: 700;
   }
-  /* A mention reads as a solid tag, not faint coloured text, so the tagged
-     person can't miss it: full accent fill + its contrasting foreground. */
+  /* A mention reads as a solid tag, not faint coloured text, so the tagged person
+     can't miss it: full ink fill + its contrasting foreground. With a monochrome
+     accent there is no coloured CTA for it to compete with. */
   .mention {
-    color: var(--ac-fg);
-    background: var(--ac);
+    color: var(--primary-foreground);
+    background: var(--primary);
     font-weight: 700;
     border-radius: 5px;
     padding: 1px 6px;
@@ -162,17 +326,12 @@
     box-decoration-break: clone;
     -webkit-box-decoration-break: clone;
   }
-
-  /* The live highlight painted behind the composer textarea (see MentionField's
-     overlay). It reads as the same solid accent tag as a delivered .mention, so a
-     tag is unmistakable the instant you pick someone — but it must NOT shift the
-     text's metrics or it drifts off the caret. So: a solid fill + contrasting ink
-     (both paint-only), and the horizontal breathing room is net-zero (padding out,
-     equal negative margin back in), so following glyphs keep their exact advance.
-     No font-weight/size change for the same reason. */
+  /* The live highlight behind the composer textarea (MentionField overlay). Must not
+     shift text metrics (padding out, equal negative margin back) so glyphs keep their
+     advance and the highlight stays under the caret. */
   .mention-live {
-    color: var(--ac-fg);
-    background: var(--ac);
+    color: var(--primary-foreground);
+    background: var(--primary);
     border-radius: 4px;
     padding: 0 3px;
     margin: 0 -3px;
@@ -181,9 +340,7 @@
   }
 }
 
-/* A peer's click ripple on the live-cursor overlay: a ring that expands from the
-   click point and fades once. Centered via the transform so percentage left/top
-   place the click point itself (see cursor-layer.tsx RippleDot). */
+/* A peer's click ripple on the live-cursor overlay (see cursor-layer.tsx RippleDot). */
 @keyframes derive-cursor-ripple {
   from {
     opacity: 0.55;
@@ -195,12 +352,7 @@
   }
 }
 
-/* Honor prefers-reduced-motion: near-zero out CSS animations, transitions, and
-   view transitions for vestibular-sensitive users. These rules are unlayered, so
-   the cascade-layer order above puts them ahead of every Tailwind utility (no
-   !important needed). The live-cursor rAF loop is JS-driven (transforms, not CSS),
-   so it snaps instead of gliding and skips click ripples in code too: see
-   use-live-cursors. */
+/* Honor prefers-reduced-motion (unlayered → wins over utilities without !important). */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

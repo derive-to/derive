@@ -1,3 +1,4 @@
+import { ThemeProvider as NextThemesProvider, useTheme as useNextTheme } from "next-themes"
 import { createContext, type ReactNode, useContext, useEffect, useState } from "react"
 import { api, type Me } from "./api"
 import { type CursorPref, defaultPrefFor, normalizePref } from "./lib/cursors"
@@ -28,33 +29,32 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 /* ---- theme ---- */
 // Swatches are raw hex (identity color data, not theming) — see check-design-tokens.
 export const THEMES = [
-  { id: "light", label: "Light", sw: "#f4f5f8" },
-  { id: "dark", label: "Dark", sw: "#030712" },
+  { id: "light", label: "Light", sw: "#f7f8fa" },
+  { id: "dark", label: "Dark", sw: "#0a0b0d" },
 ] as const
 
-// Resolve the active theme: an explicit stored choice wins; otherwise follow the
-// OS preference. Anything else (an empty store, or a stale "paper"/"dusk" from
-// before those themes were retired) falls through to the system default.
-function resolveTheme(): "light" | "dark" {
-  if (typeof localStorage === "undefined") return "dark"
-  const stored = localStorage.getItem(STORAGE_KEYS.theme)
-  if (stored === "light" || stored === "dark") return stored
-  return matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark"
+// next-themes owns the theme: it toggles the `.dark`/`.light` class the shadcn tokens
+// key off, persists to STORAGE_KEYS.theme, and — with the head boot script in
+// __root — paints the right theme before hydration. Stock <Toaster/> (sonner) reads
+// this same next-themes context, so it follows the app with zero derive glue.
+export function useTheme() {
+  const { theme, setTheme } = useNextTheme()
+  return { theme: theme ?? "dark", setTheme }
 }
 
-const ThemeCtx = createContext<{ theme: string; setTheme: (t: string) => void }>({
-  theme: "dark",
-  setTheme: () => {},
-})
-export const useTheme = () => useContext(ThemeCtx)
-
 export function ThemeProvider({ children }: { children: ReactNode }) {
-  const [theme, setTheme] = useState<string>(resolveTheme)
-  useEffect(() => {
-    document.documentElement.dataset.theme = theme
-    localStorage.setItem(STORAGE_KEYS.theme, theme)
-  }, [theme])
-  return <ThemeCtx.Provider value={{ theme, setTheme }}>{children}</ThemeCtx.Provider>
+  return (
+    <NextThemesProvider
+      attribute="class"
+      themes={["light", "dark"]}
+      defaultTheme="dark"
+      enableSystem={false}
+      storageKey={STORAGE_KEYS.theme}
+      disableTransitionOnChange
+    >
+      {children}
+    </NextThemesProvider>
+  )
 }
 
 /* ---- cursor preference (your live multiplayer cursor look) ---- */

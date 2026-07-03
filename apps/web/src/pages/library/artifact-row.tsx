@@ -1,16 +1,15 @@
-import { Folder } from "lucide-react"
 import type { Artifact } from "@/api"
 import { AuthorChip } from "@/components/author-chip"
 import { FollowButton } from "@/components/follow-button"
 import { Icon } from "@/components/icons"
-import { TypeTag } from "@/components/shared/type-tag"
+import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { IconButton } from "@/components/ui/icon-button"
 import { ago } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { artifactTypeLabel, dirOf } from "./artifact-card"
@@ -54,10 +53,13 @@ export function ArtifactRow({
   return (
     <div
       className={cn(
-        "group relative flex items-center gap-3 rounded-lg border border-border bg-card px-3.5 py-2.5 transition-colors hover:bg-hover",
+        "group relative flex items-center gap-3 rounded-lg border bg-card px-3.5 py-2.5 hover:bg-secondary",
+        // Needs-your-feedback accents — the ink accent is the sanctioned attention signal.
         a.mentions_me
           ? "border-primary ring-1 ring-primary/30"
-          : a.i_participated && "border-primary/60",
+          : a.i_participated
+            ? "border-primary/60"
+            : "border-border",
       )}
     >
       <button
@@ -67,19 +69,21 @@ export function ArtifactRow({
         onMouseEnter={onPrefetch}
         onFocus={onPrefetch}
         aria-label={`Open ${a.title ?? a.short_id}`}
-        className="flex min-w-0 flex-1 flex-col gap-0.5 text-left outline-none after:absolute after:inset-0 after:z-[1] after:rounded-lg after:content-[''] focus-visible:after:outline-2 focus-visible:after:-outline-offset-2 focus-visible:after:outline-ring"
+        className="flex min-w-0 flex-1 flex-col gap-0.5 text-left outline-none after:absolute after:inset-0 after:z-1 after:rounded-lg after:content-[''] focus-visible:after:outline-2 focus-visible:after:-outline-offset-2 focus-visible:after:outline-ring"
       >
-        <span className="truncate font-display text-base font-semibold text-foreground">
+        {/* The title is the work — Geist voice (text-base clears the size floor). */}
+        <span className="truncate font-serif text-base font-medium tracking-tight text-foreground">
           {a.title ?? a.short_id}
         </span>
         {updated && (
           <span className="font-mono text-2xs text-muted-foreground">updated {ago(updated)}</span>
         )}
-        <span className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 font-mono text-2xs text-muted-foreground">
-          <TypeTag>{artifactTypeLabel(a)}</TypeTag>
+        <span className="flex flex-wrap items-center gap-x-2 gap-y-1 font-mono text-2xs tabular-nums text-muted-foreground">
+          <Badge shape="pill">{artifactTypeLabel(a)}</Badge>
           {dir && (
             <span className="inline-flex items-center gap-1 truncate" title={a.source_path ?? ""}>
-              <Folder className="size-3 shrink-0 text-primary" aria-hidden />
+              {/* Neutral metadata — a folder path is not a brand moment. */}
+              <Icon name="collection" size={12} />
               {dir}/
             </span>
           )}
@@ -96,7 +100,7 @@ export function ArtifactRow({
       {/* "Who last changed this" — above the stretched link so the click-to-filter
           button (and the profile link) stay independently clickable. */}
       {hasAuthor && (
-        <div className="relative z-20 hidden shrink-0 items-center sm:flex">
+        <div className="relative z-20 hidden shrink-0 items-center gap-2 sm:flex">
           <AuthorChip
             name={author?.name ?? a.author_name ?? null}
             login={authorLogin}
@@ -107,62 +111,83 @@ export function ArtifactRow({
           />
           {/* Ambient follow: when the author is a known Derive person, follow them right
               from the row (self-hides for your own work / signed-out). */}
-          {author?.handle && <FollowButton username={author.handle} size="xs" className="ml-2" />}
+          {author?.handle && <FollowButton username={author.handle} size="xs" />}
         </div>
       )}
 
-      {/* Tags sit above the stretched link so they stay independently clickable. */}
+      {/* Tags sit above the stretched link so they stay independently clickable.
+          Badges rendered as buttons (asChild) — same chip grammar as ArtifactCard. */}
       {tags.length > 0 && (
-        <div className="relative z-20 hidden max-w-[40%] flex-wrap justify-end gap-1.5 sm:flex">
+        <div className="relative z-20 hidden max-w-2/5 flex-wrap justify-end gap-1.5 sm:flex">
           {tags.slice(0, 4).map((t) => (
-            <button
+            <Badge
               key={t}
-              type="button"
-              data-testid={`artifact-row-tag-${t}`}
-              onClick={(e) => {
-                e.stopPropagation()
-                onPickTag(t)
-              }}
-              className="rounded-md border border-border bg-card px-1.5 py-px font-mono text-2xs text-primary transition hover:border-primary"
+              asChild
+              variant="outline"
+              className="px-1.5 font-mono text-2xs hover:border-foreground/25 hover:text-foreground"
             >
-              #{t}
-            </button>
+              <button
+                type="button"
+                data-testid={`artifact-row-tag-${t}`}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onPickTag(t)
+                }}
+              >
+                #{t}
+              </button>
+            </Badge>
           ))}
         </div>
       )}
 
-      <IconButton
-        variant="chip"
+      <Button
+        size="icon"
+        variant="outline"
         data-testid={`artifact-row-favorite-${a.short_id}`}
-        title={a.favorite ? "Remove from favorites" : "Add to favorites"}
         aria-label="Toggle favorite"
         aria-pressed={a.favorite}
         onClick={(e) => {
           e.stopPropagation()
           onToggleFavorite()
         }}
-        className={cn("relative z-20", a.favorite ? "border-gold" : "opacity-90")}
+        className="relative z-20"
       >
-        <Icon name="star" size={14} className={cn(!a.favorite && "text-muted-foreground")} />
-      </IconButton>
+        {/* Favorited = ink-filled star (the sanctioned brand tint); muted when off. */}
+        <Icon
+          name="star"
+          size={16}
+          weight={a.favorite ? "fill" : "regular"}
+          className={a.favorite ? "text-primary" : "text-muted-foreground"}
+        />
+        <span
+          aria-hidden
+          className="absolute top-1/2 left-1/2 size-[max(100%,3rem)] -translate-1/2 pointer-fine:hidden"
+        />
+      </Button>
 
       {isOwner && onDelete && (
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <IconButton
-              variant="chip"
+            <Button
+              size="icon"
+              variant="outline"
               data-testid={`artifact-row-more-${a.short_id}`}
               aria-label="More actions"
               onClick={(e) => e.stopPropagation()}
-              className="relative z-20 opacity-0 group-hover:opacity-100 focus:opacity-100"
+              className="relative z-20 opacity-0 transition-opacity group-hover:opacity-100 focus:opacity-100"
             >
-              <Icon name="more" size={14} />
-            </IconButton>
+              <Icon name="more" size={16} />
+              <span
+                aria-hidden
+                className="absolute top-1/2 left-1/2 size-[max(100%,3rem)] -translate-1/2 pointer-fine:hidden"
+              />
+            </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent onClick={(e) => e.stopPropagation()}>
             <DropdownMenuItem
               data-testid={`artifact-row-delete-${a.short_id}`}
-              className="text-destructive focus:text-destructive"
+              variant="destructive"
               onSelect={() => onDelete()}
             >
               <Icon name="delete" size={16} />

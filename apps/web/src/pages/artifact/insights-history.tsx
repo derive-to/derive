@@ -2,20 +2,24 @@ import { useEffect, useState } from "react"
 import { type Analytics, type Artifact as Art, api } from "@/api"
 import { AuthorChip } from "@/components/author-chip"
 import { Icon } from "@/components/icons"
-import { ColoredAvatar } from "@/components/shared/colored-avatar"
+import { Eyebrow } from "@/components/shared/section-eyebrow"
 import { Spinner } from "@/components/shared/spinner"
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
+import { Badge } from "@/components/ui/badge"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
-import { Sheet, SheetBody, SheetContent, SheetHeader } from "@/components/ui/sheet"
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
+import { getInitials } from "@/lib/initials"
 import { ago } from "@/lib/time"
 import { cn } from "@/lib/utils"
 
+// Stat grid per the surfaces doctrine: siblings separated by hairline dividers,
+// not boxed wells — the number/label contrast carries the hierarchy.
 function StatTile({ value, label }: { value: number; label: string }) {
   return (
-    <div className="rounded-lg border border-border-soft bg-secondary px-4 py-3">
-      <div className="font-display text-3xl font-bold leading-none">{value.toLocaleString()}</div>
-      <div className="mt-1 font-mono text-2xs uppercase tracking-wider text-muted-foreground">
-        {label}
-      </div>
+    <div className="flex flex-col gap-1 px-4 first:pl-0 last:pr-0">
+      {/* Machine register: counts read as data, not display type. */}
+      <div className="font-mono text-3xl font-medium tabular-nums">{value.toLocaleString()}</div>
+      <Eyebrow as="div">{label}</Eyebrow>
     </div>
   )
 }
@@ -49,7 +53,8 @@ export function Insights({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl">
+      {/* The stat row + charts are the content — no prose description (Radix opt-out). */}
+      <DialogContent className="sm:max-w-2xl" aria-describedby={undefined}>
         <DialogHeader>
           <DialogTitle>Insights{title ? ` · ${title}` : ""}</DialogTitle>
         </DialogHeader>
@@ -59,21 +64,23 @@ export function Insights({
           </div>
         ) : (
           <div className="flex flex-col gap-5">
-            <div className="flex flex-wrap items-end gap-3">
-              <StatTile value={data.unique} label={data.unique === 1 ? "viewer" : "viewers"} />
-              <StatTile value={data.total} label={data.total === 1 ? "view" : "views"} />
-              <StatTile value={today} label="today" />
+            <div className="flex flex-wrap items-end gap-6">
+              <div className="flex divide-x divide-border">
+                <StatTile value={data.unique} label={data.unique === 1 ? "viewer" : "viewers"} />
+                <StatTile value={data.total} label={data.total === 1 ? "view" : "views"} />
+                <StatTile value={today} label="today" />
+              </div>
               {data.daily.length > 0 && (
-                <div className="ml-auto min-w-[160px] flex-1">
-                  <div className="mb-1 font-mono text-2xs uppercase tracking-wider text-muted-foreground">
+                <div className="ml-auto min-w-40 flex-1">
+                  <Eyebrow as="div" className="mb-1">
                     Last 30 days
-                  </div>
+                  </Eyebrow>
                   <div className="flex h-12 items-end gap-px">
                     {data.daily.map((d) => (
                       <div
                         key={d.day}
                         title={`${d.day}: ${d.count}`}
-                        className="min-w-px flex-1 rounded-[1.5px] bg-primary opacity-90"
+                        className="min-w-px flex-1 rounded-xs bg-chart-1 opacity-90"
                         style={{ height: `${Math.max(5, (d.count / max) * 100)}%` }}
                       />
                     ))}
@@ -84,24 +91,24 @@ export function Insights({
 
             <div className="grid gap-6 sm:grid-cols-2">
               <div>
-                <div className="mb-2 font-mono text-2xs uppercase tracking-wider text-muted-foreground">
+                <Eyebrow as="div" className="mb-2">
                   Per version
-                </div>
+                </Eyebrow>
                 <div className="flex flex-col gap-1.5">
                   {[...data.perVersion]
                     .sort((a, b) => b.version - a.version)
                     .map((v) => (
                       <div key={v.version} className="flex items-center gap-2 text-sm">
-                        <span className="w-8 shrink-0 font-mono text-2xs text-muted-foreground">
+                        <span className="w-8 shrink-0 font-mono text-2xs text-muted-foreground tabular-nums">
                           v{v.version}
                         </span>
                         <div className="h-2.5 flex-1 overflow-hidden rounded-full bg-secondary">
                           <div
-                            className="h-full rounded-full bg-primary"
+                            className="h-full rounded-full bg-chart-1"
                             style={{ width: `${(v.count / vmax) * 100}%` }}
                           />
                         </div>
-                        <span className="w-10 shrink-0 text-right font-mono text-2xs text-muted-foreground">
+                        <span className="w-10 shrink-0 text-right font-mono text-2xs text-muted-foreground tabular-nums">
                           {v.count}
                         </span>
                       </div>
@@ -110,24 +117,21 @@ export function Insights({
               </div>
 
               <div>
-                <div className="mb-2 font-mono text-2xs uppercase tracking-wider text-muted-foreground">
+                <Eyebrow as="div" className="mb-2">
                   Viewed by
-                </div>
+                </Eyebrow>
                 {namedRecent.length === 0 && data.anonViewers === 0 ? (
                   <div className="text-sm text-muted-foreground">No views yet.</div>
                 ) : (
                   <div className="flex flex-col gap-1.5">
                     {namedRecent.map((r) => (
                       <div key={r.viewer + r.at} className="flex items-center gap-2 text-sm">
-                        {r.avatar ? (
-                          <img
-                            src={r.avatar}
-                            alt=""
-                            className="size-[18px] shrink-0 rounded-full object-cover"
-                          />
-                        ) : (
-                          <ColoredAvatar name={r.viewer} size={18} />
-                        )}
+                        <Avatar className="size-4.5">
+                          {r.avatar && <AvatarImage src={r.avatar} alt="" />}
+                          <AvatarFallback className="text-2xs">
+                            {getInitials(r.viewer)}
+                          </AvatarFallback>
+                        </Avatar>
                         <span className="flex-1 truncate font-medium">{r.viewer}</span>
                         <span className="font-mono text-2xs text-muted-foreground">
                           {ago(r.at)}
@@ -135,7 +139,7 @@ export function Insights({
                       </div>
                     ))}
                     {data.anonViewers > 0 && (
-                      <div className="text-sm text-muted-foreground">
+                      <div className="text-sm text-muted-foreground tabular-nums">
                         + {data.anonViewers.toLocaleString()} anonymous
                       </div>
                     )}
@@ -197,12 +201,14 @@ export function HistoryDrawer({
   let lastDay = ""
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent title="Version history">
+      <SheetContent>
         <SheetHeader>
-          <Icon name="history" size={18} />
-          Version history
+          <SheetTitle className="flex items-center gap-2">
+            <Icon name="history" size={16} />
+            Version history
+          </SheetTitle>
         </SheetHeader>
-        <SheetBody>
+        <div className="min-h-0 flex-1 overflow-y-auto p-2">
           {sessions.map((s) => {
             const cur = s.n === shown
             const day = dayLabel(s.created_at)
@@ -211,16 +217,17 @@ export function HistoryDrawer({
             return (
               <div key={s.n}>
                 {header && (
-                  <div className="px-2 pb-1 pt-3 font-mono text-2xs uppercase tracking-[0.05em] text-muted-foreground">
+                  <Eyebrow as="div" className="px-2 pb-1 pt-3">
                     {header}
-                  </div>
+                  </Eyebrow>
                 )}
                 {/* Stretched-link row: the select button covers the row (::after) while
                     the author chip sits above it (z-20) so its profile link stays
                     independently clickable — no anchor nested in a button. */}
                 <div
                   className={cn(
-                    "group relative mb-px rounded-md px-2 py-2 transition-colors hover:bg-hover",
+                    "group relative mb-px rounded-md p-2 hover:bg-secondary",
+                    // The selected version is a neutral wash — never an ink tint.
                     cur && "bg-accent",
                   )}
                 >
@@ -231,29 +238,25 @@ export function HistoryDrawer({
                       goTo(s.n)
                       onOpenChange(false)
                     }}
-                    className="block w-full text-left outline-none after:absolute after:inset-0 after:z-[1] after:rounded-md after:content-[''] focus-visible:after:outline-2 focus-visible:after:-outline-offset-2 focus-visible:after:outline-ring"
+                    className="block w-full text-left outline-none after:absolute after:inset-0 after:z-1 after:rounded-md after:content-[''] focus-visible:after:outline-2 focus-visible:after:-outline-offset-2 focus-visible:after:outline-ring"
                   >
                     <div className="flex items-center gap-1.5">
                       {s.name ? (
-                        <Icon name="pin" size={13} />
+                        <Icon name="pin" size={16} />
                       ) : (
                         <span className="size-1.5 shrink-0 rounded-full bg-muted-foreground" />
                       )}
-                      <span
-                        className={cn(
-                          "truncate text-sm font-semibold",
-                          cur ? "text-primary" : "text-foreground",
-                        )}
-                      >
+                      <span className="truncate text-sm font-medium text-foreground">
                         {s.name ?? clock(s.created_at)}
                       </span>
                       {s.n === art.current_version && (
-                        <span className="rounded-full bg-success/15 px-1.5 py-px font-mono text-2xs font-bold text-success">
+                        // The live version gets the sanctioned soft brand chip.
+                        <Badge shape="pill" variant="brand">
                           current
-                        </span>
+                        </Badge>
                       )}
                       {s.count > 1 && (
-                        <span className="ml-auto font-mono text-2xs text-muted-foreground">
+                        <span className="ml-auto font-mono text-2xs text-muted-foreground tabular-nums">
                           {s.count} edits
                         </span>
                       )}
@@ -262,7 +265,7 @@ export function HistoryDrawer({
                   {(() => {
                     const v = versionByN.get(s.n)
                     return (
-                      <div className="relative z-20 mt-0.5 flex pl-[18px]">
+                      <div className="relative z-20 mt-0.5 flex pl-4.5">
                         <AuthorChip
                           name={s.author || v?.author || null}
                           login={v?.author_login ?? null}
@@ -278,7 +281,7 @@ export function HistoryDrawer({
               </div>
             )
           })}
-        </SheetBody>
+        </div>
       </SheetContent>
     </Sheet>
   )

@@ -1,22 +1,42 @@
 import { useNavigate } from "@tanstack/react-router"
-import { Camera, Check, Copy } from "lucide-react"
-import { useMemo, useRef, useState } from "react"
-import { toast } from "sonner"
+import { Copy } from "lucide-react"
+import { useMemo, useState } from "react"
 import { ApiError, api } from "@/api"
+import { Icon } from "@/components/icons"
 import { PROFESSIONS } from "@/components/profile-fields"
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
+import { AvatarPicker } from "@/components/shared/avatar-picker"
+import { FormField } from "@/components/shared/form-field"
+import { SectionEyebrow } from "@/components/shared/section-eyebrow"
+import { StatusPanel } from "@/components/shared/status-panel"
 import { Button } from "@/components/ui/button"
-import { Card } from "@/components/ui/card"
-import { Input, Textarea } from "@/components/ui/input"
+import { Input } from "@/components/ui/input"
+import {
+  InputGroup,
+  InputGroupAddon,
+  InputGroupInput,
+  InputGroupText,
+} from "@/components/ui/input-group"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+import { toast } from "@/components/ui/sonner"
+import { Switch } from "@/components/ui/switch"
+import { Textarea } from "@/components/ui/textarea"
 import { useAuth } from "@/ctx"
 import { getInitials } from "@/lib/initials"
 import { usernameError } from "@/lib/username"
-import { cn } from "@/lib/utils"
-import { selectClass } from "@/pages/settings/roles"
 
 const OTHER = "Other"
 const PRESET_VALUES = PROFESSIONS.map((p) => p.value)
 const presetFor = (p: string | null): string => (!p ? "" : PRESET_VALUES.includes(p) ? p : OTHER)
+
+// A present account — the stateful onboarding body only mounts once `me` resolves
+// (see Welcome's guard), so the profile fields can safely initialize from it.
+type Account = NonNullable<ReturnType<typeof useAuth>["me"]>
 
 // Set once the user finishes (or skips) onboarding, so the post-signup redirect
 // (app-shell.tsx) doesn't bounce them back here on every visit.
@@ -74,11 +94,33 @@ Please:
 
 Then you can publish, read review comments, and run the propose -> review -> revise loop over MCP.`
 
+// Gate on the session BEFORE the stateful body so the profile fields initialize from
+// a resolved account (a direct visit to /welcome renders once with me=null first).
 export function Welcome() {
   const { me } = useAuth()
+  if (!me) return null
+  return <Onboarding me={me} />
+}
+
+function Onboarding({ me }: { me: Account }) {
+  const { setMe } = useAuth()
   const nav = useNavigate()
   // Self-host mode swaps the connect snippet for run-it-yourself instructions.
   const [devMode, setDevMode] = useState(false)
+
+  // Profile state lives on the page (not a child) so the single primary action —
+  // "Continue to Derive" — persists it and advances in one step. The old flow had a
+  // separate "Save profile" button, so filled fields were silently lost if you hit
+  // Continue without saving first.
+  const [uploading, setUploading] = useState(false)
+  const [handle, setHandle] = useState(me.username ?? "")
+  const [preset, setPreset] = useState(presetFor(me.profession ?? null))
+  const [custom, setCustom] = useState(
+    me.profession && presetFor(me.profession) === OTHER ? me.profession : "",
+  )
+  const [about, setAbout] = useState(me.about ?? "")
+  const [saving, setSaving] = useState(false)
+  const [err, setErr] = useState("")
 
   const publicUrl = useMemo(
     () => (typeof window !== "undefined" ? publicUrlOf(window.location.origin) : PLACEHOLDER_URL),
@@ -87,110 +129,7 @@ export function Welcome() {
   const hostedText = useMemo(() => hostedPrompt(publicUrl), [publicUrl])
   const devText = useMemo(() => selfHostPrompt(), [])
 
-  if (!me) return null
-
   const firstName = (me.name ?? me.username ?? me.email).split(/[@\s]/)[0]
-
-  const finish = () => {
-    markOnboarded()
-    nav({ to: "/" })
-  }
-
-  return (
-    <div className="min-h-full overflow-y-auto bg-background">
-      <div className="mx-auto w-full max-w-2xl px-5 py-10 sm:py-14">
-        <div className="mb-6">
-          <h1 className="font-display text-2xl font-medium tracking-tight text-foreground sm:text-3xl">
-            Welcome to Derive, {firstName}.
-          </h1>
-          <p className="mt-1.5 text-sm text-muted-foreground">
-            A minute of setup so your team and your agents know who you are. You can change any of
-            this later in Settings.
-          </p>
-        </div>
-
-        {/* 1 — Profile: photo + handle + role + bio, one block, one save */}
-        <Card className="p-5">
-          <div className="font-mono text-2xs uppercase tracking-[0.08em] text-muted-foreground">
-            Step 1 · Your profile
-          </div>
-          <WelcomeProfile />
-        </Card>
-
-        {/* 2 — Connect your tools (paste-into-an-agent) */}
-        <Card className="mt-4 p-5">
-          <div className="flex items-center justify-between gap-3">
-            <div className="font-mono text-2xs uppercase tracking-[0.08em] text-muted-foreground">
-              Step 2 · Connect your tools
-            </div>
-            {/* Compact Self-host mode switch — swaps the snippet in place for the
-                run-it-yourself path. Most people never touch it. */}
-            <label className="flex shrink-0 items-center gap-1.5 text-2xs font-medium text-muted-foreground">
-              <span title="Running your own Derive instance">Self-host mode</span>
-              <button
-                type="button"
-                role="switch"
-                aria-checked={devMode}
-                aria-label="Self-host mode"
-                data-testid="welcome-dev-toggle"
-                onClick={() => setDevMode((v) => !v)}
-                className={cn(
-                  "flex h-[18px] w-8 items-center rounded-full p-[3px] transition-colors",
-                  devMode ? "justify-end bg-primary" : "justify-start bg-foreground/15",
-                )}
-              >
-                <span className="size-3 rounded-full bg-white shadow-sm" />
-              </button>
-            </label>
-          </div>
-          <p className="mb-3 mt-1 text-sm text-muted-foreground">
-            {devMode
-              ? "Spin up your own Derive, then connect your agent to it. Paste this into Claude Code, Codex, or any agent."
-              : "Paste this into Claude Code, Codex, ChatGPT, or any agent — it connects Derive so the agent can publish, review, and revise for you."}
-          </p>
-
-          <PromptBlock
-            key={devMode ? "dev" : "hosted"}
-            text={devMode ? devText : hostedText}
-            testid="welcome-prompt"
-          />
-        </Card>
-
-        <div className="mt-6 flex items-center justify-between gap-3">
-          <Button
-            variant="ghost"
-            data-testid="welcome-skip"
-            className="text-muted-foreground"
-            onClick={finish}
-          >
-            Skip for now
-          </Button>
-          <Button variant="primary" data-testid="welcome-continue" onClick={finish}>
-            Continue to Derive
-          </Button>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-// Profile photo (left) + handle, role, and a one-line bio (right), saved together
-// with a single button. Handle is validated client-side; the server stays
-// authoritative (409 on a clash). Empty role/bio just clears those fields.
-function WelcomeProfile() {
-  const { me, setMe } = useAuth()
-  const fileRef = useRef<HTMLInputElement>(null)
-  const [uploading, setUploading] = useState(false)
-  const [handle, setHandle] = useState(me?.username ?? "")
-  const [preset, setPreset] = useState(presetFor(me?.profession ?? null))
-  const [custom, setCustom] = useState(
-    me?.profession && presetFor(me.profession) === OTHER ? me.profession : "",
-  )
-  const [about, setAbout] = useState(me?.about ?? "")
-  const [saving, setSaving] = useState(false)
-  const [err, setErr] = useState("")
-  if (!me) return null
-
   const initials = getInitials(me.name ?? me.email)
   const normalized = handle.trim().toLowerCase()
   const handleErr = normalized ? usernameError(normalized) : null
@@ -209,7 +148,15 @@ function WelcomeProfile() {
     }
   }
 
-  const save = async () => {
+  // Skip = leave now, persist nothing. Continue = save the profile (handle + role +
+  // bio) and THEN enter — the one action that finishes onboarding without dropping
+  // input. Both set the onboarded flag so the app-shell gate won't bounce back here.
+  const skip = () => {
+    markOnboarded()
+    nav({ to: "/" })
+  }
+
+  const continueToApp = async () => {
     if (handleErr) return
     setSaving(true)
     setErr("")
@@ -223,146 +170,175 @@ function WelcomeProfile() {
       }
       const res = await api.setProfile({ profession, about: about.trim() })
       setMe({ ...me, username, profession: res.profession, about: res.about })
-      toast.success("Profile saved")
+      markOnboarded()
+      nav({ to: "/" })
     } catch (caught) {
       setErr(caught instanceof ApiError ? caught.message : "Could not save your profile.")
-    } finally {
       setSaving(false)
     }
   }
 
   return (
-    <div className="mt-3 flex flex-wrap items-start gap-4">
-      {/* Avatar (left) */}
-      <div className="flex flex-col items-center gap-1">
-        <button
-          type="button"
-          data-testid="welcome-avatar"
-          onClick={() => fileRef.current?.click()}
-          disabled={uploading}
-          className="group relative size-16 overflow-hidden rounded-full border border-dashed border-input transition-colors hover:border-primary disabled:opacity-60"
-          aria-label="Add a profile photo"
-        >
-          <Avatar className="size-full rounded-full">
-            {me.image && <AvatarImage src={me.image} alt="Your avatar" />}
-            <AvatarFallback className="rounded-full bg-card text-muted-foreground">
-              {me.name ? (
-                <span className="font-display text-xl font-medium">{initials}</span>
-              ) : (
-                <Camera className="size-5" aria-hidden />
-              )}
-            </AvatarFallback>
-          </Avatar>
-        </button>
-        <span className="text-2xs text-muted-foreground">
-          {uploading ? "Uploading…" : me.image ? "Change" : "Add a photo"}
-        </span>
-        <input
-          ref={fileRef}
-          type="file"
-          accept="image/png,image/jpeg,image/gif,image/webp"
-          data-testid="welcome-avatar-input"
-          className="hidden"
-          onChange={(e) => pickPhoto(e.target.files?.[0] ?? null)}
-        />
-      </div>
+    <div className="min-h-dvh bg-background">
+      <div className="mx-auto flex w-full max-w-2xl flex-col gap-8 px-5 py-10 sm:px-8 sm:py-14">
+        <div className="flex flex-col gap-1.5">
+          {/* First-run greeting — a voice moment, so it renders in Geist display. */}
+          <h1 className="font-serif text-2xl font-medium tracking-tight text-balance text-foreground sm:text-3xl">
+            Welcome to Derive, {firstName}.
+          </h1>
+          <p className="text-sm text-pretty text-muted-foreground">
+            A minute of setup — tell us who you are, then connect an agent to publish your first
+            artifact. You can change any of this later in Settings.
+          </p>
+        </div>
 
-      {/* Handle + role (one row), description (below), one save */}
-      <div className="min-w-[260px] flex-1">
-        <div className="flex flex-wrap gap-2">
-          <div className="min-w-[150px] flex-1">
-            <div className="mb-1 text-2xs font-medium text-muted-foreground">Username</div>
-            <div
-              className={cn(
-                "flex items-center rounded-md border border-input bg-card transition-colors",
-                "focus-within:border-primary focus-within:ring-2 focus-within:ring-accent",
-                handleErr && "border-destructive",
+        {/* Step 1 — Your profile. No per-section save: Continue persists it. */}
+        <section className="flex flex-col gap-4">
+          <SectionEyebrow as="h2">Step 1 · Your profile</SectionEyebrow>
+          <div className="flex flex-wrap items-start gap-4">
+            {/* Your own initials take the soft brand tint (the user-pod idiom). */}
+            <AvatarPicker
+              image={me.image}
+              initials={me.name ? initials : null}
+              uploading={uploading}
+              onPick={pickPhoto}
+              ariaLabel="Add a profile photo"
+              testId="welcome-avatar"
+              fallbackClassName={me.name ? "bg-primary/10 text-primary" : undefined}
+            />
+
+            <div className="flex min-w-65 flex-1 flex-col gap-3">
+              <div className="flex flex-wrap gap-2">
+                <FormField label="Username" className="min-w-37.5 flex-1">
+                  <InputGroup>
+                    <InputGroupAddon>
+                      <InputGroupText>@</InputGroupText>
+                    </InputGroupAddon>
+                    <InputGroupInput
+                      data-testid="welcome-username"
+                      aria-label="Username"
+                      aria-invalid={!!handleErr}
+                      name="username"
+                      autoCapitalize="none"
+                      autoCorrect="off"
+                      spellCheck={false}
+                      value={handle}
+                      onChange={(e) => {
+                        setHandle(e.target.value)
+                        setErr("")
+                      }}
+                      placeholder="yourname"
+                    />
+                  </InputGroup>
+                </FormField>
+                <FormField label="Role" className="w-37.5">
+                  <Select value={preset || undefined} onValueChange={setPreset}>
+                    <SelectTrigger
+                      data-testid="welcome-role"
+                      aria-label="Your role"
+                      className="w-full"
+                    >
+                      <SelectValue placeholder="Who are you?" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {PROFESSIONS.map((p) => (
+                        <SelectItem key={p.value} value={p.value}>
+                          {p.value}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </FormField>
+              </div>
+
+              {preset === OTHER && (
+                <Input
+                  data-testid="welcome-role-other"
+                  aria-label="Custom role"
+                  name="custom-role"
+                  value={custom}
+                  maxLength={40}
+                  placeholder="e.g. Data, Sales, Ops…"
+                  onChange={(e) => setCustom(e.target.value)}
+                />
               )}
-            >
-              <span className="select-none pl-3 text-sm font-medium text-muted-foreground">@</span>
-              <input
-                data-testid="welcome-username"
-                aria-label="Username"
-                autoCapitalize="none"
-                autoCorrect="off"
-                spellCheck={false}
-                value={handle}
-                onChange={(e) => {
-                  setHandle(e.target.value)
-                  setErr("")
-                }}
-                placeholder="yourname"
-                className="h-9 w-full rounded-md bg-transparent pl-1 pr-3 text-sm text-foreground outline-none placeholder:text-muted-foreground"
-              />
+
+              <FormField label="What you do" htmlFor="welcome-about">
+                <Textarea
+                  id="welcome-about"
+                  data-testid="welcome-about"
+                  name="about"
+                  value={about}
+                  maxLength={280}
+                  rows={2}
+                  placeholder="A line about what you work on, so teammates and agents know who you are."
+                  onChange={(e) => setAbout(e.target.value)}
+                />
+              </FormField>
+
+              {(err || handleErr) && (
+                // The house form-error surface (matches Login): StatusPanel inline
+                // danger announces via role="alert"; the wrapper only carries the id.
+                <div data-testid="welcome-profile-error">
+                  <StatusPanel tone="danger" layout="inline" title={err || handleErr} />
+                </div>
+              )}
+
+              <p className="text-sm text-muted-foreground">
+                <span className="font-medium text-foreground">{me.email}</span> stays private.
+              </p>
             </div>
           </div>
-          <div className="w-[150px]">
-            <div className="mb-1 text-2xs font-medium text-muted-foreground">Role</div>
-            <select
-              data-testid="welcome-role"
-              aria-label="Your role"
-              value={preset}
-              onChange={(e) => setPreset(e.target.value)}
-              className={cn(selectClass, "w-full", preset === "" && "text-muted-foreground")}
-            >
-              <option value="" disabled hidden>
-                Who are you?
-              </option>
-              {PROFESSIONS.map((p) => (
-                <option key={p.value} value={p.value} className="text-foreground">
-                  {p.value}
-                </option>
-              ))}
-            </select>
-          </div>
-        </div>
+        </section>
 
-        {preset === OTHER && (
-          <Input
-            data-testid="welcome-role-other"
-            value={custom}
-            maxLength={40}
-            placeholder="e.g. Data, Sales, Ops…"
-            onChange={(e) => setCustom(e.target.value)}
-            className="mt-2"
-          />
-        )}
-
-        <div className="mt-2">
-          <div className="mb-1 text-2xs font-medium text-muted-foreground">What you do</div>
-          <Textarea
-            data-testid="welcome-about"
-            value={about}
-            maxLength={280}
-            rows={2}
-            placeholder="A line about what you work on, so teammates and agents know who you are."
-            onChange={(e) => setAbout(e.target.value)}
-          />
-        </div>
-
-        {(err || handleErr) && (
-          <p
-            role="alert"
-            data-testid="welcome-profile-error"
-            className="mt-1.5 text-xs text-destructive"
-          >
-            {err || handleErr}
+        {/* Step 2 — Connect an agent: the activation moment (paste-into-an-agent). */}
+        <section className="flex flex-col gap-4">
+          <SectionEyebrow as="h2">Step 2 · Connect an agent</SectionEyebrow>
+          <p className="text-sm text-pretty text-muted-foreground">
+            {devMode
+              ? "Spin up your own Derive, then connect your agent to it. Paste this into Claude Code, Codex, or any agent."
+              : "Paste this into Claude Code, Codex, ChatGPT, or any agent — it connects Derive so the agent can publish, review, and revise for you."}
           </p>
-        )}
+          <div className="flex flex-col gap-2">
+            {/* The self-host switch rides just above the snippet it swaps — a rarely-
+                touched option, so it sits quiet and right-aligned, not in the header. */}
+            <label className="flex items-center gap-1.5 self-end text-sm font-medium text-muted-foreground">
+              <span>Self-host mode</span>
+              <Switch
+                checked={devMode}
+                aria-label="Self-host mode"
+                data-testid="welcome-dev-toggle"
+                onCheckedChange={setDevMode}
+              />
+            </label>
+            <PromptBlock
+              key={devMode ? "dev" : "hosted"}
+              text={devMode ? devText : hostedText}
+              testid="welcome-prompt"
+            />
+          </div>
+        </section>
 
-        <div className="mt-3 flex items-center gap-3">
+        {/* Finish — one primary action that saves the profile and enters; skip leaves
+            now without saving. */}
+        <div className="flex items-center justify-between gap-3">
           <Button
-            variant="primary"
-            size="sm"
-            data-testid="welcome-profile-save"
-            onClick={save}
-            disabled={saving || !!handleErr}
+            variant="ghost"
+            data-testid="welcome-skip"
+            className="text-muted-foreground"
+            onClick={skip}
           >
-            {saving ? "Saving…" : "Save profile"}
+            Skip for now
           </Button>
-          <span className="text-2xs text-muted-foreground">
-            <span className="font-medium text-foreground">{me.email}</span> stays private.
-          </span>
+          <Button
+            variant="default"
+            data-testid="welcome-continue"
+            onClick={continueToApp}
+            loading={saving}
+            disabled={!!handleErr}
+          >
+            {saving ? "Finishing…" : "Continue to Derive"}
+          </Button>
         </div>
       </div>
     </div>
@@ -385,21 +361,22 @@ function PromptBlock({ text, testid }: { text: string; testid: string }) {
   }
   return (
     <div className="relative">
+      {/* The machine register on a quiet well: mono text, bg-secondary, hairline edge. */}
       <pre
         data-testid={testid}
-        className="max-h-64 overflow-auto whitespace-pre-wrap rounded-lg border border-border bg-secondary/40 p-3 pr-12 font-mono text-xs leading-relaxed text-foreground"
+        className="max-h-64 overflow-auto whitespace-pre-wrap rounded-lg border bg-secondary p-3 pr-12 font-mono text-sm text-foreground"
       >
         {text}
       </pre>
       <Button
         variant="outline"
-        size="icon"
+        size="icon-sm"
         data-testid={`${testid}-copy`}
         aria-label="Copy setup prompt"
         className="absolute right-2 top-2"
         onClick={copy}
       >
-        {copied ? <Check className="size-4" /> : <Copy className="size-4" />}
+        {copied ? <Icon name="check" className="text-success" /> : <Copy className="size-4" />}
       </Button>
     </div>
   )

@@ -245,7 +245,7 @@ export function useArtifactFrame(p: {
               suffix: x.sel.suffix,
               // The frame scopes resolution to this slide first (deck artifacts only).
               slide: x.sel.slide,
-              // Paints amber (vs lavender) so personal anchors are obviously distinct.
+              // Paints ink (vs lavender) so personal anchors are obviously distinct.
               personal: x.personal,
             },
       )
