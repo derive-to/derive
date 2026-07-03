@@ -1,3 +1,4 @@
+import { Maximize2 } from "lucide-react"
 import { useState } from "react"
 import type { GeneralRole, Role } from "@/api"
 import { Icon } from "@/components/icons"
@@ -61,12 +62,13 @@ export function ArtifactTopBar(props: {
   onToggleComments: () => void
   onPresent: () => void
   onLockToggle: () => void
+  /** Enter focus/hero mode — strip the chrome to just the render. */
+  onFocus: () => void
 }) {
   const { shortId, openProposals, proposalsTotal } = props
   const [reportOpen, setReportOpen] = useState(false)
   const [tagsOpen, setTagsOpen] = useState(false)
   const [collectionsOpen, setCollectionsOpen] = useState(false)
-  const hasView = props.showReader || props.isDeck
   return (
     <>
       {/* Actions cluster — the filled Share leads (the one primary), then the favorited
@@ -100,7 +102,11 @@ export function ArtifactTopBar(props: {
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent>
-            {/* View modes (contextual) — a check marks the active one. */}
+            {/* View modes — focus strips the chrome to just the render; a check marks
+                the active reader toggle. */}
+            <DropdownMenuItem data-testid="artifact-focus" onSelect={props.onFocus}>
+              <Maximize2 className="size-4" /> Focus mode
+            </DropdownMenuItem>
             {props.showReader && (
               <DropdownMenuItem data-testid="artifact-reader" onSelect={props.onReaderToggle}>
                 <Icon name="reader" size={16} /> Reader
@@ -112,7 +118,7 @@ export function ArtifactTopBar(props: {
                 <Icon name="present" size={16} /> Present
               </DropdownMenuItem>
             )}
-            {hasView && <DropdownMenuSeparator />}
+            <DropdownMenuSeparator />
 
             {/* Organize — open as dialogs. */}
             <DropdownMenuItem data-testid="artifact-tags" onSelect={() => setTagsOpen(true)}>

@@ -36,6 +36,7 @@ export function ArtifactDocument({
   onDeckPrev,
   onDeckNext,
   onFullscreen,
+  bare,
 }: {
   shown: number
   currentVersion: number
@@ -58,6 +59,8 @@ export function ArtifactDocument({
   onDeckPrev: () => void
   onDeckNext: () => void
   onFullscreen: () => void
+  /** Focus mode: full-bleed render, no mat gap/frame. */
+  bare?: boolean
 }) {
   const past = shown !== currentVersion
   return (
@@ -109,6 +112,7 @@ export function ArtifactDocument({
           rawSrc={rawSrc}
           title={title}
           version={shown}
+          bare={bare}
           frameRef={frameRef}
           wrapRef={presentWrapRef}
           onFrameLoad={onFrameLoad}

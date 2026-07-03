@@ -1,10 +1,12 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useNavigate, useParams } from "@tanstack/react-router"
+import { Minimize2 } from "lucide-react"
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react"
 import { API_BASE, ApiError, api, type Comment } from "@/api"
 import { CursorButton } from "@/components/cursor/cursor-button"
 import { Icon } from "@/components/icons"
-import { Button } from "@/components/ui/button"
+import { FloatingControl } from "@/components/shared/floating-control"
+import { useSidebar } from "@/components/ui/sidebar"
 import { toast } from "@/components/ui/sonner"
 import { useAuth } from "@/ctx"
 import { artifactQuery, commentsQuery } from "@/lib/queries"
@@ -61,23 +63,35 @@ function DocFab({
   children: React.ReactNode
 }) {
   return (
-    <Button
-      variant="outline"
+    <FloatingControl
       size="lg"
       title={title}
       data-testid={testId}
       onClick={onClick}
-      // Floats over the white document, so the fill must stay opaque: the
-      // outline variant's hover:bg-secondary is a ~4% wash meant to sit over a
-      // surface, and over the iframe it would erase the pill. Composite the
-      // neutral hover step into the opaque card instead (darkens in light,
-      // lightens in dark — same ink direction as --secondary).
-      className="absolute right-4.5 bottom-4.5 rounded-full bg-card tabular-nums shadow-[var(--shadow)] hover:bg-[color-mix(in_oklab,var(--card)_95%,var(--foreground))]"
+      className="absolute right-4.5 bottom-4.5 tabular-nums"
     >
       <Icon name="comments" size={16} />
       {children}
-    </Button>
+    </FloatingControl>
   )
+}
+
+// Focus mode also collapses the app nav rail (the render is the hero — the rail is
+// the shell's, not the page's, so this authed-only helper drives it through the
+// sidebar context). Restores the viewer's prior rail state on exit.
+function FocusRailSync({ focus }: { focus: boolean }) {
+  const { open, setOpen } = useSidebar()
+  const prior = useRef(open)
+  // biome-ignore lint/correctness/useExhaustiveDependencies: react to focus flips only, not rail toggles.
+  useEffect(() => {
+    if (focus) {
+      prior.current = open
+      setOpen(false)
+    } else if (prior.current) {
+      setOpen(true)
+    }
+  }, [focus])
+  return null
 }
 
 export function Artifact() {
@@ -98,6 +112,16 @@ export function Artifact() {
   // password prompt rather than the not-found state or a bounce to login.
   const locked = failed && error instanceof ApiError && error.status === 401
   const [editing, setEditing] = useState(false)
+  // Focus/hero mode — strip the workbench chrome to just the matted render (Esc exits).
+  const [focus, setFocus] = useState(false)
+  useEffect(() => {
+    if (!focus) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setFocus(false)
+    }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [focus])
   const [reviewing, setReviewing] = useState(false)
   // Which "⋯ More" surface is open (large dialog / drawer).
   const [surface, setSurface] = useState<null | "insights" | "history">(null)
@@ -532,13 +556,21 @@ export function Artifact() {
       {/* data-artifact-view: while the workbench is mounted, globals.css drops the
           film-grain overlay so Derive's material steps back inside the author's document. */}
       <div data-artifact-view className="flex min-h-0 flex-1 flex-col">
+        <FocusRailSync focus={focus} />
         {/* The workbench bar — full-width now (sidebar-first shell), so the
               comments panel docks BELOW it instead of squeezing it into the
               remaining width. The page owns its toolbar: the artifact title (the
               Geist content register) on the left, presence/cursors + the header
               actions on the right. shrink-0 keeps the split row below it on the
               min-h-0 flex-1 height chain. */}
-        <div className="flex shrink-0 items-center gap-3 border-b border-border px-4 py-2.5 max-sm:flex-wrap max-sm:px-3">
+        {/* The header stays mounted but hidden in focus mode — unmounting it while
+            its ⋯ menu is mid-close trips a Radix ref-composition loop. */}
+        <div
+          className={cn(
+            "flex shrink-0 items-center gap-3 border-b border-border px-4 py-2.5 max-sm:flex-wrap max-sm:px-3",
+            focus && "hidden",
+          )}
+        >
           {/* Identity — a two-line document header, the reframe: the artifact title,
               then a machine-register state line (type · version · freshness). The
               bar's job is to say WHAT you're viewing and its state, not to be a run
@@ -626,6 +658,7 @@ export function Artifact() {
               onReview={() => setReviewing(true)}
               onStartEdit={startEdit}
               onToggleComments={() => setPanel((pn) => (pn === "open" ? "hidden" : "open"))}
+              onFocus={() => setFocus(true)}
             />
           )}
         </div>
@@ -639,7 +672,7 @@ export function Artifact() {
               // that space so the document stays visible above it (and a
               // jumped-to highlight lands in view, not behind the sheet).
               "relative flex min-w-0 flex-1 flex-col transition-[padding] duration-200",
-              isMobile && panel === "open" && "pb-[50vh]",
+              isMobile && !focus && panel === "open" && "pb-[50vh]",
             )}
           >
             {art.bundle && !editing && (
@@ -663,6 +696,7 @@ export function Artifact() {
               />
             ) : (
               <ArtifactDocument
+                bare={focus}
                 shown={shown}
                 currentVersion={art.current_version}
                 title={art.title ?? shortId}
@@ -691,7 +725,7 @@ export function Artifact() {
                 onFullscreen={toggleFullscreen}
               />
             )}
-            {!isAnon && panel === "hidden" && (
+            {!isAnon && !focus && panel === "hidden" && (
               <DocFab
                 title="Show comments (c)"
                 testId="artifact-comments-fab"
@@ -720,47 +754,62 @@ export function Artifact() {
                 Sign in to comment
               </DocFab>
             )}
+            {/* Focus mode: the one way back (the header is hidden). Esc also exits. */}
+            {focus && (
+              <FloatingControl
+                size="sm"
+                data-testid="artifact-focus-exit"
+                aria-label="Exit focus mode"
+                onClick={() => setFocus(false)}
+                className="absolute top-3 right-3 z-10"
+              >
+                <Minimize2 className="size-4" />
+                Exit focus
+              </FloatingControl>
+            )}
           </div>
 
-          <ArtifactComments
-            shortId={shortId}
-            isMobile={isMobile}
-            isAnon={isAnon}
-            canComment={canComment}
-            docLive={docLive}
-            panel={panel}
-            tab={commentTab}
-            setTab={setCommentTab}
-            personalCount={personalCount}
-            publicCount={publicCount}
-            asideWidth={asideWidth}
-            openCount={openCount}
-            scrollY={scrollY}
-            onScrollDoc={scrollBy}
-            pinned={pinned}
-            general={general}
-            resolved={resolvedThreads}
-            openThreads={openThreads}
-            activeThread={activeThread}
-            hoverThread={hoverThread}
-            inDoc={inDoc}
-            composer={composer}
-            sel={sel}
-            setPanel={setPanel}
-            setComposer={setComposer}
-            setSel={setSel}
-            setActiveThread={setActiveThread}
-            setHoverThread={setHoverThread}
-            activate={activateThread}
-            toggleResolve={toggleResolve}
-            reply={reply}
-            submitNew={submitNew}
-            jumpTo={jumpTo}
-            startSelComment={startSelComment}
-            currentSlide={deck?.i ?? null}
-            landedSlides={landedSlides}
-            anchorConf={anchorConf}
-          />
+          {!focus && (
+            <ArtifactComments
+              shortId={shortId}
+              isMobile={isMobile}
+              isAnon={isAnon}
+              canComment={canComment}
+              docLive={docLive}
+              panel={panel}
+              tab={commentTab}
+              setTab={setCommentTab}
+              personalCount={personalCount}
+              publicCount={publicCount}
+              asideWidth={asideWidth}
+              openCount={openCount}
+              scrollY={scrollY}
+              onScrollDoc={scrollBy}
+              pinned={pinned}
+              general={general}
+              resolved={resolvedThreads}
+              openThreads={openThreads}
+              activeThread={activeThread}
+              hoverThread={hoverThread}
+              inDoc={inDoc}
+              composer={composer}
+              sel={sel}
+              setPanel={setPanel}
+              setComposer={setComposer}
+              setSel={setSel}
+              setActiveThread={setActiveThread}
+              setHoverThread={setHoverThread}
+              activate={activateThread}
+              toggleResolve={toggleResolve}
+              reply={reply}
+              submitNew={submitNew}
+              jumpTo={jumpTo}
+              startSelComment={startSelComment}
+              currentSlide={deck?.i ?? null}
+              landedSlides={landedSlides}
+              anchorConf={anchorConf}
+            />
+          )}
         </div>
       </div>
     </ActionsCtx.Provider>
