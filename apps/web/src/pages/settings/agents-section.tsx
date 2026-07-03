@@ -3,12 +3,12 @@ import { useCallback, useEffect, useState } from "react"
 import { type Agent, api, type Role } from "@/api"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { EmptyState } from "@/components/shared/empty-state"
+import { SettingsGroup } from "@/components/shared/settings-group"
 import { Spinner } from "@/components/shared/spinner"
 import { StatusPanel } from "@/components/shared/status-panel"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Card } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import {
   Select,
@@ -18,6 +18,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { toast } from "@/components/ui/sonner"
+import { SettingsSection } from "./settings-section"
 
 export function AgentsSection() {
   const [agents, setAgents] = useState<Agent[] | null>(null)
@@ -34,14 +35,17 @@ export function AgentsSection() {
   }, [load])
 
   return (
-    <section className="flex flex-col gap-6">
-      <p className="text-sm text-muted-foreground">
-        Register an agent so people can <code className="font-mono">@mention</code> it in a thread.
-        It gets a scoped token and acts as a commenter — it can propose changes for review, but a
-        human still approves. The agent reads its mentions from{" "}
-        <code className="font-mono">GET /v1/agent/inbox</code> with its token.
-      </p>
-
+    <SettingsSection
+      title="Agents"
+      description={
+        <>
+          Register an agent so people can <code className="font-mono">@mention</code> it in a
+          thread. It gets a scoped token and acts as a commenter — it can propose changes for
+          review, but a human still approves. The agent reads its mentions from{" "}
+          <code className="font-mono">GET /v1/agent/inbox</code> with its token.
+        </>
+      }
+    >
       <NewAgent
         onCreated={(msg) => {
           toast.success(msg)
@@ -49,15 +53,15 @@ export function AgentsSection() {
         }}
       />
 
-      <div className="flex flex-col gap-2.5">
-        {agents === null ? (
-          <div className="flex h-20 items-center justify-center">
-            <Spinner />
-          </div>
-        ) : agents.length === 0 ? (
-          <EmptyState>No agents yet. Add one above.</EmptyState>
-        ) : (
-          agents.map((a) => (
+      {agents === null ? (
+        <div className="flex h-20 items-center justify-center">
+          <Spinner />
+        </div>
+      ) : agents.length === 0 ? (
+        <EmptyState>No agents yet. Add one above.</EmptyState>
+      ) : (
+        <SettingsGroup>
+          {agents.map((a) => (
             <AgentRow
               key={a.id}
               agent={a}
@@ -67,10 +71,10 @@ export function AgentsSection() {
               }}
               onError={(m) => toast.error(m)}
             />
-          ))
-        )}
-      </div>
-    </section>
+          ))}
+        </SettingsGroup>
+      )}
+    </SettingsSection>
   )
 }
 
@@ -96,7 +100,7 @@ function NewAgent({ onCreated }: { onCreated: (msg: string) => void }) {
   }
 
   return (
-    <Card className="p-4">
+    <div className="flex flex-col gap-3">
       <div className="flex flex-wrap gap-2">
         <Input
           data-testid="agent-name"
@@ -104,6 +108,7 @@ function NewAgent({ onCreated }: { onCreated: (msg: string) => void }) {
           placeholder="Agent name (e.g. Claude)"
           value={name}
           onChange={(e) => setName(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && add()}
           className="min-w-45 flex-1"
         />
         <Select value={role} onValueChange={(v) => setRole(v as Role)}>
@@ -120,13 +125,14 @@ function NewAgent({ onCreated }: { onCreated: (msg: string) => void }) {
           variant="secondary"
           size="sm"
           onClick={add}
+          loading={busy}
           disabled={busy || !name.trim()}
         >
           {busy ? "Adding…" : "Add agent"}
         </Button>
       </div>
-      {/* The token is shown exactly once, right after creation — the one-time
-          reveal is a safety-orange warning moment, never the accent. */}
+      {/* The token is shown exactly once, right after creation — a safety-orange
+          warning moment, never the accent. */}
       {created && (
         <div data-testid="agent-token">
           <StatusPanel
@@ -164,7 +170,7 @@ function NewAgent({ onCreated }: { onCreated: (msg: string) => void }) {
           />
         </div>
       )}
-    </Card>
+    </div>
   )
 }
 
@@ -179,8 +185,8 @@ function AgentRow({
 }) {
   const [confirming, setConfirming] = useState(false)
   return (
-    <Card data-testid={`agent-row-${agent.id}`} className="flex-row items-center gap-3 px-4 py-3">
-      <Avatar className="size-7">
+    <div data-testid={`agent-row-${agent.id}`} className="flex items-center gap-3 py-3">
+      <Avatar className="size-7 shrink-0">
         <AvatarFallback>
           <Bot className="size-4" aria-hidden />
         </AvatarFallback>
@@ -217,6 +223,6 @@ function AgentRow({
           }
         }}
       />
-    </Card>
+    </div>
   )
 }
