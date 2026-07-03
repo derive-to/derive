@@ -18,6 +18,7 @@ import { EmptyState } from "@/components/shared/empty-state"
 import { SearchField } from "@/components/shared/search-field"
 import { Eyebrow } from "@/components/shared/section-eyebrow"
 import { SectionTitle } from "@/components/shared/section-title"
+import { SettingsGroup } from "@/components/shared/settings-group"
 import { Spinner } from "@/components/shared/spinner"
 import { StatusPanel } from "@/components/shared/status-panel"
 import { Button } from "@/components/ui/button"
@@ -34,6 +35,7 @@ import { Input } from "@/components/ui/input"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { toast } from "@/components/ui/sonner"
 import { ago } from "@/lib/time"
+import { SettingsSection } from "./settings-section"
 
 // "owner/name", tolerating a github.com URL or a trailing .git (mirrors the
 // server's parseRepo) — gates the Connect button so we don't POST junk.
@@ -138,12 +140,10 @@ export function GithubSection() {
   const appConfigured = status?.app.configured ?? false
 
   return (
-    <section className="flex flex-col gap-6">
-      <p className="text-sm text-muted-foreground">
-        Mirror a GitHub repo's Markdown and HTML into a collection. Sync is one-way: GitHub stays
-        the source of truth, so synced docs are read-only here but stay fully commentable.
-      </p>
-
+    <SettingsSection
+      title="GitHub"
+      description="Mirror a GitHub repo's Markdown and HTML into a collection. Sync is one-way: GitHub stays the source of truth, so synced docs are read-only here but stay fully commentable."
+    >
       {status === null ? (
         <div className="flex h-20 items-center justify-center">
           <Spinner />
@@ -159,14 +159,13 @@ export function GithubSection() {
         <SetUpApp />
       )}
 
-      {/* Rendered only once status is known — an empty placeholder div would still
-          claim a flex gap slot and double the section rhythm. */}
-      {status !== null && (
-        <div className="flex flex-col gap-2.5">
-          {status.sources.length === 0 ? (
-            <EmptyState>No repos connected yet. Add one above.</EmptyState>
-          ) : (
-            status.sources.map((s) => (
+      {/* Rendered only once status is known. */}
+      {status !== null &&
+        (status.sources.length === 0 ? (
+          <EmptyState>No repos connected yet. Add one above.</EmptyState>
+        ) : (
+          <SettingsGroup title="Mirrored repositories">
+            {status.sources.map((s) => (
               <RepoSourceRow
                 key={s.id}
                 source={s}
@@ -176,27 +175,22 @@ export function GithubSection() {
                 }}
                 onError={(m) => toast.error(m)}
               />
-            ))
-          )}
-        </div>
-      )}
+            ))}
+          </SettingsGroup>
+        ))}
 
       {/* PR previews — read-only mirrors of the docs an OPEN pull request changes,
           each in its own "PR #<n>" collection. Created automatically as PRs open; they
           disappear when the PR closes/merges. Review the plan in Derive during the PR. */}
       {status !== null && status.prs.length > 0 && (
-        <div>
-          <SectionTitle>Pull request previews</SectionTitle>
-          <p className="mt-0.5 mb-2 text-sm text-muted-foreground">
-            Open PRs that change docs appear here while they're open. Review them in Derive; on
-            merge they fold into the collection above.
-          </p>
-          <div className="flex flex-col gap-2.5">
-            {status.prs.map((pr) => (
-              <PrPreviewRow key={pr.id} pr={pr} />
-            ))}
-          </div>
-        </div>
+        <SettingsGroup
+          title="Pull request previews"
+          description="Open PRs that change docs appear here while they're open. Review them in Derive; on merge they fold into the collection above."
+        >
+          {status.prs.map((pr) => (
+            <PrPreviewRow key={pr.id} pr={pr} />
+          ))}
+        </SettingsGroup>
       )}
 
       {/* The PAT path stays available as an advanced fallback (self-host without a
@@ -221,7 +215,7 @@ export function GithubSection() {
           onError={(m) => toast.error(m)}
         />
       )}
-    </section>
+    </SettingsSection>
   )
 }
 
@@ -658,10 +652,7 @@ function PrPreviewRow({ pr }: { pr: PrPreview }) {
   // The API titles a preview "PR #<n>: <title>"; show just the <title> here.
   const label = pr.title.replace(/^PR #\d+:\s*/, "") || pr.title
   return (
-    <Card
-      data-testid={`github-pr-${pr.pr_number}`}
-      className="flex-row items-center gap-3 px-4 py-3"
-    >
+    <div data-testid={`github-pr-${pr.pr_number}`} className="flex items-center gap-3 py-3">
       <Icon name="review" className="text-muted-foreground" />
       <div className="min-w-0 flex-1">
         <div className="truncate text-sm font-medium text-foreground">{label}</div>
@@ -698,7 +689,7 @@ function PrPreviewRow({ pr }: { pr: PrPreview }) {
           View
         </Link>
       </Button>
-    </Card>
+    </div>
   )
 }
 
@@ -796,7 +787,7 @@ function RepoSourceRow({
   const indeterminate = active && (!prog || prog.total === 0)
 
   return (
-    <Card data-testid={`github-row-${source.id}`} className="flex flex-col gap-3 px-4 py-3">
+    <div data-testid={`github-row-${source.id}`} className="flex flex-col gap-3 py-3">
       <div className="flex items-center gap-2.5">
         <div className="min-w-0 flex-1">
           <div className="truncate font-mono text-sm text-foreground">
@@ -935,7 +926,7 @@ function RepoSourceRow({
           />
         </div>
       )}
-    </Card>
+    </div>
   )
 }
 

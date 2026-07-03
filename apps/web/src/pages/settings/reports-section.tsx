@@ -1,18 +1,18 @@
 import { useState } from "react"
 import { api, type Report } from "@/api"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
+import { SettingsGroup } from "@/components/shared/settings-group"
 import { Button } from "@/components/ui/button"
-import { Card } from "@/components/ui/card"
 import { toast } from "@/components/ui/sonner"
+import { SettingsSection } from "./settings-section"
 
 export function ReportsSection({ reports, reload }: { reports: Report[]; reload: () => void }) {
   return (
-    <section className="flex flex-col gap-6">
-      <p className="text-sm text-muted-foreground">
-        Abuse reports against artifacts in this workspace. Take an artifact down to 410 its content
-        everywhere (the record is kept), or dismiss the report.
-      </p>
-      <div className="flex flex-col gap-2.5">
+    <SettingsSection
+      title="Reports"
+      description="Abuse reports against artifacts in this workspace. Take an artifact down to 410 its content everywhere (the record is kept), or dismiss the report."
+    >
+      <SettingsGroup>
         {reports.map((r) => (
           <ReportRow
             key={r.id}
@@ -24,8 +24,8 @@ export function ReportsSection({ reports, reload }: { reports: Report[]; reload:
             onError={(m) => toast.error(m)}
           />
         ))}
-      </div>
-    </section>
+      </SettingsGroup>
+    </SettingsSection>
   )
 }
 
@@ -52,7 +52,7 @@ function ReportRow({
     }
   }
   return (
-    <Card data-testid={`report-row-${report.id}`} className="flex-row gap-3 px-4 py-3">
+    <div data-testid={`report-row-${report.id}`} className="flex flex-wrap items-start gap-3 py-3">
       <div className="min-w-0 flex-1">
         <div className="text-sm font-medium text-foreground">
           {report.reason}{" "}
@@ -64,7 +64,7 @@ function ReportRow({
           </a>
         </div>
         {report.detail && (
-          <div className="mt-0.5 text-sm text-muted-foreground">{report.detail}</div>
+          <div className="mt-0.5 text-sm text-pretty text-muted-foreground">{report.detail}</div>
         )}
         <div className="mt-1 font-mono text-2xs text-muted-foreground">
           {report.reporter ? `reported from ${report.reporter}` : "reported anonymously"}
@@ -99,6 +99,6 @@ function ReportRow({
         confirmTestId={`report-takedown-confirm-${report.id}`}
         onConfirm={() => act(() => api.takedown(report.artifact_id), "Artifact taken down")}
       />
-    </Card>
+    </div>
   )
 }

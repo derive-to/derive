@@ -2,12 +2,13 @@ import { useCallback, useEffect, useState } from "react"
 import { api, type WorkspaceDomain } from "@/api"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { EmptyState } from "@/components/shared/empty-state"
+import { SettingsGroup } from "@/components/shared/settings-group"
 import { Spinner } from "@/components/shared/spinner"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Card } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { toast } from "@/components/ui/sonner"
+import { SettingsSection } from "./settings-section"
 
 type State = { enabled: boolean; cname_target: string | null; domains: WorkspaceDomain[] }
 
@@ -25,38 +26,39 @@ export function CustomDomainsSection() {
     load()
   }, [load])
 
+  const description =
+    "Put your own domain on this workspace. Every artifact is then served at your-domain/<id>. Cloudflare for SaaS issues and renews the TLS cert."
+
   if (state === null)
     return (
-      <div className="flex h-20 items-center justify-center">
-        <Spinner />
-      </div>
+      <SettingsSection title="Domains" description={description}>
+        <div className="flex h-20 items-center justify-center">
+          <Spinner />
+        </div>
+      </SettingsSection>
     )
 
   if (!state.enabled)
     return (
-      <section className="flex flex-col gap-6">
+      <SettingsSection title="Domains" description={description}>
         <EmptyState>Custom domains aren't enabled on this server.</EmptyState>
-      </section>
+      </SettingsSection>
     )
 
   return (
-    <section className="flex flex-col gap-6">
-      <p className="text-sm text-muted-foreground">
-        Put your own domain on this workspace. Every artifact is then served at{" "}
-        <code className="font-mono">your-domain/&lt;id&gt;</code>. Cloudflare for SaaS issues and
-        renews the TLS cert.
-      </p>
-
+    <SettingsSection title="Domains" description={description}>
       <NewDomain cnameTarget={state.cname_target} onCreated={load} />
 
-      <div className="flex flex-col gap-2.5">
-        {state.domains.length === 0 ? (
-          <EmptyState>No custom domains yet. Add one above.</EmptyState>
-        ) : (
-          state.domains.map((d) => <DomainRow key={d.host} domain={d} onChanged={load} />)
-        )}
-      </div>
-    </section>
+      {state.domains.length === 0 ? (
+        <EmptyState>No custom domains yet. Add one above.</EmptyState>
+      ) : (
+        <SettingsGroup>
+          {state.domains.map((d) => (
+            <DomainRow key={d.host} domain={d} onChanged={load} />
+          ))}
+        </SettingsGroup>
+      )}
+    </SettingsSection>
   )
 }
 
@@ -85,13 +87,14 @@ function NewDomain({
     }
   }
   return (
-    <Card className="gap-2 p-4">
+    <div className="flex flex-col gap-2">
       <div className="flex flex-wrap items-center gap-2">
         <Input
           data-testid="domain-host"
           aria-label="Custom domain"
           value={host}
           onChange={(e) => setHost(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && add()}
           placeholder="docs.acme.com"
           className="min-w-60 flex-1 font-mono"
         />
@@ -100,6 +103,7 @@ function NewDomain({
           variant="secondary"
           size="sm"
           onClick={add}
+          loading={busy}
           disabled={busy || !host.trim()}
         >
           {busy ? "Adding…" : "Add"}
@@ -110,7 +114,7 @@ function NewDomain({
           CNAME your domain to <span className="text-foreground">{cnameTarget}</span>.
         </p>
       )}
-    </Card>
+    </div>
   )
 }
 
@@ -146,8 +150,8 @@ function DomainRow({ domain, onChanged }: { domain: WorkspaceDomain; onChanged: 
     }
   }
   return (
-    <Card data-testid={`domain-row-${domain.host}`} className="gap-0 overflow-hidden p-0">
-      <div className="flex items-center gap-2.5 px-3.5 py-3">
+    <div data-testid={`domain-row-${domain.host}`} className="flex flex-col gap-2 py-3">
+      <div className="flex items-center gap-2.5">
         <div className="min-w-0 flex-1 truncate font-mono text-sm text-foreground">
           {domain.host}
         </div>
@@ -177,7 +181,7 @@ function DomainRow({ domain, onChanged }: { domain: WorkspaceDomain; onChanged: 
         onConfirm={remove}
       />
       {domain.status !== "active" && domain.records && domain.records.length > 0 && (
-        <div className="border-t border-border-soft bg-secondary px-3.5 py-2">
+        <div className="rounded-lg bg-secondary px-3 py-2">
           <p className="mb-1 font-mono text-2xs text-muted-foreground">
             Add these DNS records at your registrar:
           </p>
@@ -191,6 +195,6 @@ function DomainRow({ domain, onChanged }: { domain: WorkspaceDomain; onChanged: 
           ))}
         </div>
       )}
-    </Card>
+    </div>
   )
 }

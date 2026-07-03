@@ -2,42 +2,18 @@ import { useCallback, useEffect, useState } from "react"
 import { api, type OrgSettings, type SlackStatus } from "@/api"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { FormField } from "@/components/shared/form-field"
-import { SectionTitle } from "@/components/shared/section-title"
+import { SettingRow } from "@/components/shared/setting-row"
+import { SettingsGroup } from "@/components/shared/settings-group"
 import { Spinner } from "@/components/shared/spinner"
 import { Button } from "@/components/ui/button"
-import { Card } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { toast } from "@/components/ui/sonner"
 import { Switch } from "@/components/ui/switch"
+import { SettingsSection } from "./settings-section"
 
-/** A labelled on/off row built on the Switch primitive (the switch itself carries
- *  the testid and keyboard focus). Colours come from theme tokens only. */
-function Toggle(props: {
-  id: string
-  label: string
-  hint: string
-  on: boolean
-  disabled?: boolean
-  onChange: (next: boolean) => void
-}) {
-  return (
-    <div className="flex items-start justify-between gap-4 py-3">
-      <div>
-        <div className="text-sm font-medium">{props.label}</div>
-        <div className="text-sm text-muted-foreground">{props.hint}</div>
-      </div>
-      <Switch
-        checked={props.on}
-        disabled={props.disabled}
-        data-testid={`toggle-${props.id}`}
-        aria-label={props.label}
-        onCheckedChange={props.onChange}
-        className="mt-1"
-      />
-    </div>
-  )
-}
-
+// The five workspace activity channels (email + GitHub mirroring + Slack posting)
+// as instant toggles, plus the Slack connection. Toggles apply optimistically
+// with no save (the toggle contract); the Slack channel id is an explicit save.
 export function IntegrationsSection() {
   const [settings, setSettings] = useState<OrgSettings | null>(null)
   const [slack, setSlack] = useState<SlackStatus | null>(null)
@@ -92,91 +68,111 @@ export function IntegrationsSection() {
         toast.error(e?.message ?? "Could not disconnect")
       })
 
-  if (!settings) {
-    return (
-      <div className="flex h-20 items-center justify-center">
-        <Spinner />
-      </div>
-    )
-  }
-
   return (
-    <section className="flex flex-col gap-6">
-      <div>
-        <p className="mb-2 text-sm text-muted-foreground">
-          Turn each integration channel on or off for this workspace.
-        </p>
-        <Card className="gap-0 divide-y px-4 py-1">
-          <Toggle
-            id="email"
+    <SettingsSection
+      title="Integrations"
+      description="Route comment and PR activity to the tools your team already uses. Each switch applies instantly."
+    >
+      {settings ? (
+        <SettingsGroup>
+          <SettingRow
+            htmlFor="toggle-email"
             label="Email notifications"
-            hint="Email collaborators when a comment mentions them or lands on a thread they're in."
-            on={settings.emailNotifications}
-            onChange={flip("emailNotifications")}
-          />
-          <Toggle
-            id="github-post"
+            description="Email collaborators when a comment mentions them or lands on a thread they're in."
+          >
+            <Switch
+              id="toggle-email"
+              data-testid="toggle-email"
+              checked={settings.emailNotifications}
+              onCheckedChange={flip("emailNotifications")}
+            />
+          </SettingRow>
+          <SettingRow
+            htmlFor="toggle-github-post"
             label="Post comments to GitHub"
-            hint="When you comment on a PR-sourced doc, mirror it onto the pull request."
-            on={settings.githubPostComments}
-            onChange={flip("githubPostComments")}
-          />
-          <Toggle
-            id="github-mirror"
+            description="When you comment on a PR-sourced doc, mirror it onto the pull request."
+          >
+            <Switch
+              id="toggle-github-post"
+              data-testid="toggle-github-post"
+              checked={settings.githubPostComments}
+              onCheckedChange={flip("githubPostComments")}
+            />
+          </SettingRow>
+          <SettingRow
+            htmlFor="toggle-github-mirror"
             label="Mirror PR comments into Derive"
-            hint="Comments made on the pull request show up on the Derive artifact."
-            on={settings.githubMirrorComments}
-            onChange={flip("githubMirrorComments")}
-          />
-          <Toggle
-            id="github-preview-link"
+            description="Comments made on the pull request show up on the Derive artifact."
+          >
+            <Switch
+              id="toggle-github-mirror"
+              data-testid="toggle-github-mirror"
+              checked={settings.githubMirrorComments}
+              onCheckedChange={flip("githubMirrorComments")}
+            />
+          </SettingRow>
+          <SettingRow
+            htmlFor="toggle-github-preview-link"
             label="Comment a preview link on PRs"
-            hint="When a pull request opens, post (and keep updated) a comment linking to the Derive preview of its docs."
-            on={settings.githubPreviewLink}
-            onChange={flip("githubPreviewLink")}
-          />
-          <Toggle
-            id="slack-post"
+            description="When a pull request opens, post (and keep updated) a comment linking to the Derive preview of its docs."
+          >
+            <Switch
+              id="toggle-github-preview-link"
+              data-testid="toggle-github-preview-link"
+              checked={settings.githubPreviewLink}
+              onCheckedChange={flip("githubPreviewLink")}
+            />
+          </SettingRow>
+          <SettingRow
+            htmlFor="toggle-slack-post"
             label="Post activity to Slack"
-            hint="Send comments to the connected Slack channel; replies there post back to Derive."
-            on={settings.slackPost}
-            onChange={flip("slackPost")}
-          />
-        </Card>
-      </div>
+            description="Send comments to the connected Slack channel; replies there post back to Derive."
+          >
+            <Switch
+              id="toggle-slack-post"
+              data-testid="toggle-slack-post"
+              checked={settings.slackPost}
+              onCheckedChange={flip("slackPost")}
+            />
+          </SettingRow>
+        </SettingsGroup>
+      ) : (
+        <div className="flex h-20 items-center justify-center">
+          <Spinner />
+        </div>
+      )}
 
-      <div>
-        <SectionTitle className="mb-1">Slack</SectionTitle>
+      <SettingsGroup title="Slack">
         {slack && !slack.available ? (
-          <p className="text-sm text-muted-foreground">
+          <p className="py-1 text-sm text-muted-foreground">
             Slack isn't configured on this Derive instance.
           </p>
         ) : slack?.connected ? (
-          <Card className="flex flex-col gap-3 p-4">
+          <div className="flex flex-col gap-4 py-1">
             <p className="text-sm">
               Connected to{" "}
               <span className="font-medium">{slack.team_name ?? "your Slack workspace"}</span>.
             </p>
-            <div className="flex items-end gap-2">
-              <FormField label="Default channel ID" htmlFor="slack-channel" className="flex-1">
+            <FormField label="Default channel ID" htmlFor="slack-channel" className="max-w-sm">
+              <div className="flex gap-2">
                 <Input
                   id="slack-channel"
                   data-testid="slack-channel"
                   value={channel}
                   onChange={(e) => setChannel(e.target.value)}
                   placeholder="C0123ABC456"
-                  className="font-mono"
+                  className="flex-1 font-mono"
                 />
-              </FormField>
-              <Button
-                data-testid="slack-channel-save"
-                variant="default"
-                size="sm"
-                onClick={saveChannel}
-              >
-                Save
-              </Button>
-            </div>
+                <Button
+                  data-testid="slack-channel-save"
+                  variant="default"
+                  size="sm"
+                  onClick={saveChannel}
+                >
+                  Save
+                </Button>
+              </div>
+            </FormField>
             <p className="text-sm text-muted-foreground">
               Find a channel ID in Slack: open the channel, click its name, and copy the ID at the
               bottom. Invite the Derive app to that channel.
@@ -200,18 +196,18 @@ export function IntegrationsSection() {
               onConfirm={disconnectSlack}
               confirmTestId="slack-disconnect-confirm"
             />
-          </Card>
+          </div>
         ) : (
-          <Card className="flex flex-col items-start gap-3 p-4">
+          <div className="flex flex-col items-start gap-3 py-1">
             <p className="text-sm text-muted-foreground">
               Connect a Slack workspace to get comments in a channel and reply back from Slack.
             </p>
             <Button data-testid="slack-connect" variant="default" asChild>
               <a href="/v1/slack/install">Add to Slack</a>
             </Button>
-          </Card>
+          </div>
         )}
-      </div>
-    </section>
+      </SettingsGroup>
+    </SettingsSection>
   )
 }

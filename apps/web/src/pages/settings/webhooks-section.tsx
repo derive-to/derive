@@ -2,10 +2,10 @@ import { useCallback, useEffect, useState } from "react"
 import { api, type Delivery, type Webhook } from "@/api"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { EmptyState } from "@/components/shared/empty-state"
+import { SettingsGroup } from "@/components/shared/settings-group"
 import { Spinner } from "@/components/shared/spinner"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Card } from "@/components/ui/card"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
 import {
@@ -17,6 +17,7 @@ import {
 } from "@/components/ui/select"
 import { toast } from "@/components/ui/sonner"
 import { ALL_EVENTS } from "./roles"
+import { SettingsSection } from "./settings-section"
 
 export function WebhooksSection() {
   const [hooks, setHooks] = useState<Webhook[] | null>(null)
@@ -33,22 +34,25 @@ export function WebhooksSection() {
   }, [load])
 
   return (
-    <section className="flex flex-col gap-6">
-      <p className="text-sm text-muted-foreground">
-        Get a POST (or a Slack message) when a comment is added or resolved, or a new version is
-        published. Generic payloads are signed with{" "}
-        <a
-          href="https://www.standardwebhooks.com"
-          target="_blank"
-          rel="noreferrer"
-          className="text-primary underline underline-offset-2"
-        >
-          Standard Webhooks
-        </a>{" "}
-        headers (<code className="font-mono">webhook-signature</code>), and the legacy{" "}
-        <code className="font-mono">X-Derive-Signature</code>.
-      </p>
-
+    <SettingsSection
+      title="Webhooks"
+      description={
+        <>
+          Get a POST (or a Slack message) when a comment is added or resolved, or a new version is
+          published. Generic payloads are signed with{" "}
+          <a
+            href="https://www.standardwebhooks.com"
+            target="_blank"
+            rel="noreferrer"
+            className="text-primary underline underline-offset-2"
+          >
+            Standard Webhooks
+          </a>{" "}
+          headers (<code className="font-mono">webhook-signature</code>), and the legacy{" "}
+          <code className="font-mono">X-Derive-Signature</code>.
+        </>
+      }
+    >
       <NewWebhook
         onCreated={(msg) => {
           toast.success(msg)
@@ -56,15 +60,15 @@ export function WebhooksSection() {
         }}
       />
 
-      <div className="flex flex-col gap-2.5">
-        {hooks === null ? (
-          <div className="flex h-20 items-center justify-center">
-            <Spinner />
-          </div>
-        ) : hooks.length === 0 ? (
-          <EmptyState>No webhooks yet. Add one above.</EmptyState>
-        ) : (
-          hooks.map((w) => (
+      {hooks === null ? (
+        <div className="flex h-20 items-center justify-center">
+          <Spinner />
+        </div>
+      ) : hooks.length === 0 ? (
+        <EmptyState>No webhooks yet. Add one above.</EmptyState>
+      ) : (
+        <SettingsGroup>
+          {hooks.map((w) => (
             <WebhookRow
               key={w.id}
               hook={w}
@@ -74,10 +78,10 @@ export function WebhooksSection() {
               }}
               onError={(m) => toast.error(m)}
             />
-          ))
-        )}
-      </div>
-    </section>
+          ))}
+        </SettingsGroup>
+      )}
+    </SettingsSection>
   )
 }
 
@@ -107,7 +111,7 @@ function NewWebhook({ onCreated }: { onCreated: (msg: string) => void }) {
     }
   }
   return (
-    <Card className="p-4">
+    <div className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center gap-2">
         <Select value={kind} onValueChange={(v) => setKind(v as "generic" | "slack")}>
           <SelectTrigger data-testid="webhook-kind" aria-label="Webhook type" className="w-27.5">
@@ -123,6 +127,7 @@ function NewWebhook({ onCreated }: { onCreated: (msg: string) => void }) {
           aria-label="Endpoint URL"
           value={url}
           onChange={(e) => setUrl(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && add()}
           placeholder={
             kind === "slack"
               ? "Slack incoming-webhook URL"
@@ -135,6 +140,7 @@ function NewWebhook({ onCreated }: { onCreated: (msg: string) => void }) {
           variant="secondary"
           size="sm"
           onClick={add}
+          loading={busy}
           disabled={busy || !valid}
         >
           {busy ? "Adding…" : "Add"}
@@ -155,7 +161,7 @@ function NewWebhook({ onCreated }: { onCreated: (msg: string) => void }) {
           </label>
         ))}
       </div>
-    </Card>
+    </div>
   )
 }
 
@@ -204,8 +210,8 @@ function WebhookRow({
     }
   }
   return (
-    <Card data-testid={`webhook-row-${hook.id}`} className="gap-0 overflow-hidden p-0">
-      <div className="flex items-center gap-2.5 px-3.5 py-3">
+    <div data-testid={`webhook-row-${hook.id}`} className="flex flex-col gap-2 py-3">
+      <div className="flex items-center gap-2.5">
         <Badge>{hook.kind === "slack" ? "Slack" : "Webhook"}</Badge>
         <div className="min-w-0 flex-1">
           <div className="truncate font-mono text-sm text-foreground">{hook.url}</div>
@@ -237,7 +243,7 @@ function WebhookRow({
         onConfirm={remove}
       />
       {open && (
-        <div className="border-t border-border-soft bg-secondary px-3.5 py-2">
+        <div className="rounded-lg bg-secondary px-3 py-2">
           {deliveries === null ? (
             <div className="flex justify-center py-2">
               <Spinner />
@@ -245,25 +251,23 @@ function WebhookRow({
           ) : deliveries.length === 0 ? (
             <div className="text-sm text-muted-foreground">No deliveries yet. Hit Test.</div>
           ) : (
-            deliveries.map((d) => {
-              return (
-                <div key={d.id} className="flex items-center gap-2 py-0.5 text-2xs">
-                  <Badge variant={deliveryBadge(d.status)}>{d.status}</Badge>
-                  <span className="font-mono text-muted-foreground">{d.event_type}</span>
-                  {d.attempts > 1 && (
-                    <span className="font-mono text-muted-foreground tabular-nums">
-                      · {d.attempts} tries
-                    </span>
-                  )}
-                  {d.last_error && (
-                    <span className="truncate font-mono text-destructive">· {d.last_error}</span>
-                  )}
-                </div>
-              )
-            })
+            deliveries.map((d) => (
+              <div key={d.id} className="flex items-center gap-2 py-0.5 text-2xs">
+                <Badge variant={deliveryBadge(d.status)}>{d.status}</Badge>
+                <span className="font-mono text-muted-foreground">{d.event_type}</span>
+                {d.attempts > 1 && (
+                  <span className="font-mono text-muted-foreground tabular-nums">
+                    · {d.attempts} tries
+                  </span>
+                )}
+                {d.last_error && (
+                  <span className="truncate font-mono text-destructive">· {d.last_error}</span>
+                )}
+              </div>
+            ))
           )}
         </div>
       )}
-    </Card>
+    </div>
   )
 }
