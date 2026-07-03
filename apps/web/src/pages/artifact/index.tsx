@@ -555,14 +555,13 @@ export function Artifact() {
               {art.updated_at ? ` · updated ${ago(art.updated_at)}` : ""}
             </span>
           </div>
-          {/* Collaboration — presence facepile + your cursor, one ambient cluster,
-              held apart from the actions by spacing (no vertical rule). */}
-          {!isMobile && (
-            <div className="flex items-center gap-0.5">
-              <Presence viewers={live.viewers} selfId={me?.id} />
-              <CursorButton />
-            </div>
-          )}
+          {/* Collaboration — presence facepile + your cursor. Presence rides even the
+              phone header (compact) so multiplayer identity never vanishes on mobile;
+              the cursor picker stays desktop-only (no hovering cursor to style on touch). */}
+          <div className="flex items-center gap-0.5">
+            <Presence viewers={live.viewers} selfId={me?.id} compact={isMobile} />
+            {!isMobile && <CursorButton />}
+          </div>
           {!isAnon && (
             <ArtifactTopBar
               shortId={shortId}

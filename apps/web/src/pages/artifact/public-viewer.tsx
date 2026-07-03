@@ -79,8 +79,8 @@ export function PublicViewer({
           </div>
         </div>
 
-        {/* A shared link that's being viewed feels alive. */}
-        {!isMobile && <Presence viewers={viewers} selfId={selfId} />}
+        {/* A shared link that's being viewed feels alive — even on a phone (compact). */}
+        <Presence viewers={viewers} selfId={selfId} compact={isMobile} />
 
         {/* The growth verb (the page's one filled primary) + a quiet sign-in. */}
         <Button asChild variant="default" size="sm" data-testid="public-make-your-own">
