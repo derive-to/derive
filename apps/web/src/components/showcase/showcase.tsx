@@ -106,7 +106,7 @@ function Group({ title, children }: { title: string; children: ReactNode }) {
 
 // ── Foundations ───────────────────────────────────────────────────────────────
 
-// The one typeface (Inter) across the scale — chrome and voice share it.
+// The one text face (Geist) across the scale — chrome and voice share it.
 const TYPE_SPECIMEN = [
   {
     cls: "text-3xl font-semibold tracking-tight",
@@ -130,19 +130,19 @@ const TYPE_SPECIMEN = [
   },
 ]
 
-/** Type — one typeface (Inter) shown as it is used: the display "voice" line, the
- *  working chrome scale, and the system-mono machine layer for counts + keys. */
+/** Type — one text face (Geist) shown as it is used: the display "voice" line, the
+ *  working chrome scale, and the Geist Mono machine layer for counts + keys. */
 function TypeDemo() {
   return (
     <div className="space-y-8">
       <div>
-        <Eyebrow>Voice · Inter display</Eyebrow>
+        <Eyebrow>Voice · Geist display</Eyebrow>
         <p className="mt-2 max-w-xl text-2xl font-medium tracking-tight text-balance">
           The permanent home for your AI artifacts.
         </p>
       </div>
       <div>
-        <Eyebrow>Chrome · Inter</Eyebrow>
+        <Eyebrow>Chrome · Geist</Eyebrow>
         <div className="mt-3 space-y-3.5">
           {TYPE_SPECIMEN.map((t) => (
             <div
@@ -156,7 +156,7 @@ function TypeDemo() {
         </div>
       </div>
       <div>
-        <Eyebrow>Machine · mono</Eyebrow>
+        <Eyebrow>Machine · Geist Mono</Eyebrow>
         <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2.5">
           <span className="font-mono text-2xs tabular-nums text-muted-foreground">
             v3 · updated 2d · 128 views
@@ -634,7 +634,7 @@ function ArtifactCardDemo({
         </div>
       </div>
       <div className="flex min-w-0 flex-col gap-2 border-t border-border-soft p-3.5">
-        {/* Artifact titles are the work, not the tool — Inter, the voice at display size. */}
+        {/* Artifact titles are the work, not the tool — Geist, the voice at display size. */}
         <span className="truncate text-lg font-medium tracking-tight text-foreground">{title}</span>
         <span className="flex items-center gap-2 font-mono text-2xs text-muted-foreground">
           <span>updated 2d</span>
@@ -841,7 +841,7 @@ function ToolbarDemo() {
   )
 }
 
-/** Empty state — boxless, straight on the canvas: a muted icon, an Inter
+/** Empty state — boxless, straight on the canvas: a muted icon, a Geist
  *  headline, one plain line, one quiet action. */
 function EmptyStateDemo() {
   return (
@@ -1091,7 +1091,7 @@ export function Showcase() {
         <Group title="Foundations">
           <Row
             title="Type"
-            note="One typeface — Inter carries chrome and voice; the machine layer (counts, keys, code) rides the system mono."
+            note="One family — Geist Sans carries chrome and voice; Geist Mono carries the machine layer (counts, keys, code)."
           >
             <TypeDemo />
           </Row>
@@ -1196,7 +1196,7 @@ export function Showcase() {
           </Row>
           <Row
             title="Empty state"
-            note="Boxless — a muted icon, an Inter headline, one plain line, and one quiet action, straight on the canvas."
+            note="Boxless — a muted icon, a Geist headline, one plain line, and one quiet action, straight on the canvas."
           >
             <EmptyStateDemo />
           </Row>

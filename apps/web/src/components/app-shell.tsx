@@ -36,14 +36,14 @@ export function AppShell({ children }: { children: ReactNode }) {
   const isMobile = useIsMobile()
 
   // The provider is controlled so the state round-trips through the app's
-  // storage contract ("1" = collapsed; collapsed by default) instead of the
-  // component's cookie.
+  // storage contract ("1" = collapsed, "0" = expanded; expanded by default)
+  // instead of the component's cookie.
   const [sidebarOpen, setSidebarOpen] = useState<boolean>(() => {
     try {
       const v = localStorage.getItem(COLLAPSE_KEY)
-      return v === null ? false : v !== "1"
+      return v === null ? true : v !== "1"
     } catch {
-      return false
+      return true
     }
   })
   const onSidebarOpenChange = useCallback((open: boolean) => {

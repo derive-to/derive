@@ -208,12 +208,8 @@ test("capture the dashboard across themes and viewports", async ({ page: p }) =>
   await p.goto("/")
   await settle(p)
 
-  // Expand the collapse-by-default rail so the nav (warm active bar, section
-  // labels, search field) is visible, and favorite a couple of cards.
-  await p
-    .getByTestId("library-menu")
-    .click()
-    .catch(() => {})
+  // The rail is expanded by default, so the nav (warm active bar, section labels,
+  // search field) is in view. Favorite a couple of cards for a populated rail.
   for (const id of [ids[0], ids[2]]) {
     await p
       .getByTestId(`artifact-card-favorite-${id}`)
@@ -247,16 +243,6 @@ test("capture the dashboard across themes and viewports", async ({ page: p }) =>
     await p.goto("/")
     await settle(p)
     await shot(`library-${theme}-desktop`)
-
-    // TEMP: open the account menu and shoot it (revert after).
-    await p
-      .getByTestId("user-menu-trigger")
-      .click()
-      .catch(() => {})
-    await p.waitForTimeout(300)
-    await shot(`usermenu-${theme}`)
-    await p.keyboard.press("Escape").catch(() => {})
-    await p.waitForTimeout(150)
 
     // Card hover — verify the render "wakes" (glare-dim clears) + shadow lift.
     if (theme === "dark") {

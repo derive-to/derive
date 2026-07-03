@@ -173,7 +173,7 @@ export function ArtifactCard({
           aria-label={`Open ${a.title ?? a.short_id}`}
           className="flex w-full min-w-0 flex-col gap-0.5 text-left outline-none after:absolute after:inset-0 after:z-1 after:rounded-xl after:content-[''] focus-visible:after:outline-2 focus-visible:after:-outline-offset-2 focus-visible:after:outline-ring"
         >
-          {/* The title is the work, not the tool — Inter voice, sized to caption so
+          {/* The title is the work, not the tool — Geist voice, sized to caption so
               the preview stays the hero. */}
           <span className="truncate font-serif text-base font-medium tracking-tight text-foreground">
             {a.title ?? a.short_id}

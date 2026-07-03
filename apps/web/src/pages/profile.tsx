@@ -69,7 +69,7 @@ export function Profile() {
 
   if (isError || !data) {
     return (
-      // The shared EmptyState carries the voice grammar (Inter headline +
+      // The shared EmptyState carries the voice grammar (Geist headline +
       // supporting line); PageShell keeps it on the same reading measure as
       // every other page, centered in the pane (a terminal 404 state, like the
       // pending spinner — not an in-context empty pinned below a header).
@@ -116,7 +116,7 @@ export function Profile() {
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
                 {data.name && (
-                  // A person's name is content, not chrome — Inter at display size.
+                  // A person's name is content, not chrome — Geist at display size.
                   <h1
                     className="truncate font-serif text-2xl font-medium tracking-tight text-foreground"
                     data-testid="profile-name"

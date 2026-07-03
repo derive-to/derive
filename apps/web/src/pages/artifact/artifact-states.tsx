@@ -34,7 +34,7 @@ export function ArtifactNotFound({ onBack }: { onBack: () => void }) {
 // from a real 404/403. The query already auto-retries with backoff; this is the
 // recoverable fallback once those are exhausted, so the page comes back with one
 // click instead of dead-ending on "not found". Deliberately NOT the boxless
-// empty-state voice — an error is tool chrome, so the headline stays Inter.
+// empty-state voice — an error is tool chrome, so the headline stays Geist.
 export function ArtifactLoadError({
   onRetry,
   onBack,

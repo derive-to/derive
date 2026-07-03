@@ -182,7 +182,7 @@ function Onboarding({ me }: { me: Account }) {
     <div className="min-h-dvh bg-background">
       <div className="mx-auto flex w-full max-w-2xl flex-col gap-8 px-5 py-10 sm:px-8 sm:py-14">
         <div className="flex flex-col gap-1.5">
-          {/* First-run greeting — a voice moment, so it renders in Inter display. */}
+          {/* First-run greeting — a voice moment, so it renders in Geist display. */}
           <h1 className="font-serif text-2xl font-medium tracking-tight text-balance text-foreground sm:text-3xl">
             Welcome to Derive, {firstName}.
           </h1>

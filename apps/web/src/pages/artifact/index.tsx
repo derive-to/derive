@@ -482,11 +482,13 @@ export function Artifact() {
           />
         </Suspense>
       )}
-      <div className="flex min-h-0 flex-1 flex-col">
+      {/* data-artifact-view: while the workbench is mounted, globals.css drops the
+          film-grain overlay so Derive's material steps back inside the author's document. */}
+      <div data-artifact-view className="flex min-h-0 flex-1 flex-col">
         {/* The workbench bar — full-width now (sidebar-first shell), so the
               comments panel docks BELOW it instead of squeezing it into the
               remaining width. The page owns its toolbar: the artifact title (the
-              Inter content register) on the left, presence/cursors + the header
+              Geist content register) on the left, presence/cursors + the header
               actions on the right. shrink-0 keeps the split row below it on the
               min-h-0 flex-1 height chain. */}
         <div className="flex shrink-0 items-center gap-3 border-b border-border px-4 py-2.5 max-sm:flex-wrap max-sm:px-3">

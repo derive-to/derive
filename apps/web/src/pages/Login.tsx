@@ -103,7 +103,7 @@ export function Login() {
               <span className="font-serif text-lg font-medium tracking-tight">Derive</span>
             </div>
 
-            {/* Login/signup headlines are voice moments (Inter display via the
+            {/* Login/signup headlines are voice moments (Geist display via the
                 font-serif alias); this is also the page's one functional <h1>. */}
             <div className="flex flex-col gap-1.5">
               <h1 className="font-serif text-3xl font-medium tracking-tight text-balance text-foreground">

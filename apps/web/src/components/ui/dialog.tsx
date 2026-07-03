@@ -113,7 +113,7 @@ function DialogFooter({
   )
 }
 
-// Dialogs are tool chrome: the title stays Inter (font-heading), never serif.
+// Dialogs are tool chrome: the title stays Geist (font-heading), never serif.
 function DialogTitle({ className, ...props }: React.ComponentProps<typeof DialogPrimitive.Title>) {
   return (
     <DialogPrimitive.Title

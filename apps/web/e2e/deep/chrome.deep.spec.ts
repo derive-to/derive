@@ -20,8 +20,8 @@ test("the user menu switches between themes and the choice persists", async ({ o
 
 test("the notification bell opens an empty panel", async ({ owner }) => {
   await owner.getByTestId("notif-bell").click()
-  // Scoped to the popover: the bell row itself also carries a "Notifications"
-  // label (clipped in the collapsed rail, but still in the DOM).
+  // Scoped to the popover: the bell row on the rail also carries a "Notifications"
+  // label, so an unscoped lookup would match two nodes.
   await expect(
     owner.locator('[data-slot="popover-content"]').getByText("Notifications", { exact: true }),
   ).toBeVisible()

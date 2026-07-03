@@ -121,7 +121,7 @@ function RailHeader({ showSearch }: { showSearch: boolean }) {
               <SidebarTrigger
                 data-testid="library-menu"
                 aria-label={open ? "Collapse sidebar" : "Expand sidebar"}
-                className="text-muted-foreground hover:text-foreground"
+                className="text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
               />
             </TooltipTrigger>
             <TooltipContent side="right">
@@ -269,7 +269,7 @@ export function NavRail() {
             <SidebarGroup>
               <SidebarGroupContent className="flex flex-col gap-3">
                 {/* The one card in the rail — a conversion moment that must lift off
-                    the flush canvas; its headline is a voice moment (Inter). */}
+                    the flush canvas; its headline is a voice moment (Geist). */}
                 <div className="rounded-xl border border-border bg-card p-3.5">
                   <div className="flex items-center gap-2">
                     <Logo size={22} />

@@ -71,7 +71,7 @@ export function ArtifactRow({
         aria-label={`Open ${a.title ?? a.short_id}`}
         className="flex min-w-0 flex-1 flex-col gap-0.5 text-left outline-none after:absolute after:inset-0 after:z-1 after:rounded-lg after:content-[''] focus-visible:after:outline-2 focus-visible:after:-outline-offset-2 focus-visible:after:outline-ring"
       >
-        {/* The title is the work — Inter voice (text-base clears the size floor). */}
+        {/* The title is the work — Geist voice (text-base clears the size floor). */}
         <span className="truncate font-serif text-base font-medium tracking-tight text-foreground">
           {a.title ?? a.short_id}
         </span>

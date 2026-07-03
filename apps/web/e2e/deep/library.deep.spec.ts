@@ -28,11 +28,10 @@ test("search narrows the grid to the matching title", async ({ owner }) => {
 test("favorite a card, filter to favorites, then un-star to drop it", async ({ owner }) => {
   const id = await publishArtifact(owner, "fav-me.md", "# Fav\n\nbody")
   await owner.goto("/")
-  // The rail is collapsed by default; expand it to read counts + use its controls.
-  await owner.getByTestId("library-menu").click()
 
   // Star it. The sidebar favorites count reaching 1 confirms the server committed
-  // (the summary refreshes after the favorite POST) — a race-free gate.
+  // (the summary refreshes after the favorite POST) — a race-free gate. The rail
+  // is expanded by default, so the count is in view without toggling it open.
   await owner.getByTestId(`artifact-card-favorite-${id}`).click()
   await expect(owner.getByTestId("sidebar-favorites")).toContainText("1")
 
@@ -47,7 +46,7 @@ test("favorite a card, filter to favorites, then un-star to drop it", async ({ o
 
 test("create a collection from the sidebar", async ({ owner }) => {
   await owner.goto("/")
-  await owner.getByTestId("library-menu").click() // expand the collapsed-by-default rail
+  // The rail is expanded by default, so its collection controls are in view.
 
   await owner.getByTestId("sidebar-new-collection").click()
   await owner.getByTestId("sidebar-new-collection-input").fill("Specs")

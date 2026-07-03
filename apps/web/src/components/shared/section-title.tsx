@@ -1,7 +1,7 @@
 import type { ReactNode } from "react"
 import { cn } from "@/lib/utils"
 
-// A section title in the chrome register (Inter, medium — never bold) — heads a
+// A section title in the chrome register (Geist, medium — never bold) — heads a
 // block of settings/controls with an optional trailing action. The louder
 // counterpart to SectionEyebrow's mono smallcaps.
 export function SectionTitle({

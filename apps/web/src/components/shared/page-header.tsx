@@ -4,7 +4,7 @@ import { Eyebrow } from "./section-eyebrow"
 
 // The one page-level header, shared across every screen so page titles stop
 // diverging: People and Settings used a heavier `text-2xl font-semibold` sans
-// while Library/Profile/Welcome used the house "voice" (Inter via the `font-serif`
+// while Library/Profile/Welcome used the house "voice" (Geist via the `font-serif`
 // alias + `font-medium`). This is that voice, once. Heading-group grammar: an
 // optional mono eyebrow, the title, an optional muted subtitle, and an optional
 // right-aligned action cluster that drops below the title on narrow widths.

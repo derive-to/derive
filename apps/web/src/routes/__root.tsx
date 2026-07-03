@@ -44,8 +44,7 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       { rel: "icon", type: "image/png", href: "/brand/favicon.png" },
       { rel: "apple-touch-icon", href: "/brand/favicon.png" },
       // Fonts are self-hosted via @fontsource-variable imports in globals.css —
-      // Inter's opsz build keeps the Display optical axis the old rsms.me link
-      // provided, without the third-party request.
+      // Geist Sans + Geist Mono (both weight-only), so no third-party request.
     ],
   }),
   component: RootComponent,

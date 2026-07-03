@@ -98,7 +98,7 @@ function SheetFooter({ className, ...props }: React.ComponentProps<"div">) {
   )
 }
 
-// Sheets are tool chrome: the title stays Inter (font-heading), never serif.
+// Sheets are tool chrome: the title stays Geist (font-heading), never serif.
 function SheetTitle({ className, ...props }: React.ComponentProps<typeof SheetPrimitive.Title>) {
   return (
     <SheetPrimitive.Title

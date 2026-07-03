@@ -2,7 +2,10 @@
 
 The monochrome "ink on paper" identity, built on Derive's stack: Vite + React 19 +
 TanStack Router + Tailwind v4 + shadcn/Radix. The brand reads as its two canvas colors —
-**Axiom Black `#030712`** and **Origin White `#F4F5F8`** — never a hue. Light (paper) and
+**Axiom Black `#030712`** and **Origin White `#F4F5F8`** — no chromatic brand accent. They aren't
+pure gray, though: the whole scale carries a deliberate, faint cool cast (one hue ~264°,
+near-zinc chroma — Axiom Black is Tailwind `gray-950`), kept low enough to read as a
+temperature, not a color. That's what "monochrome" means here — one hue, not zero. Light (paper) and
 dark (ink) are both first-class: light is the `:root` base, dark is the `.dark` override,
 and the accent in each is simply ink — near-black on the paper canvas, near-white on the
 dark one. This file is the source of truth for every component in
@@ -11,14 +14,14 @@ dark one. This file is the source of truth for every component in
 ## Personality
 
 Editorial, calm, precise. Closer to a well-set magazine or Linear than to a busy SaaS
-dashboard. One typeface — **Inter** — carries everything: the working UI and the moments
-of voice (greetings, artifact titles, empty-state headlines) alike; a system-mono stack
+dashboard. One family — **Geist** — carries everything: Geist Sans for the working UI and
+the moments of voice (greetings, artifact titles, empty-state headlines) alike; Geist Mono
 handles the machine-facing layer (counts, versions, timestamps, kbd, code). Ink, never
 pure black; paper, never pure white. The accent is **monochrome ink** — near-black on
 paper, near-white on the dark canvas — so nothing is "the brand color"; the identity is
-the two canvases themselves. Color is rationed: only the semantic signals (success /
-warning / destructive) and a small family of calm, low-chroma wayfinding tints carry any
-hue at all — calm tints, not a rainbow.
+the two canvases themselves. Color is rationed: past the neutrals' own faint cool cast, only the semantic signals
+(success / warning / destructive) and a small family of calm, low-chroma wayfinding
+tints carry any *saturated* hue — calm tints, not a rainbow.
 
 ## Color
 
@@ -29,13 +32,19 @@ holds itself to the same standard voluntarily.
 
 ### The palette (defined once in globals.css)
 
-- **Monochrome neutrals** — the whole chrome rides one near-neutral scale. Light: canvas
+- **Monochrome neutrals** — the whole chrome rides one near-neutral scale. "Monochrome"
+  is literal but means *one hue, not none*: every neutral sits at a single cool hue
+  (~264°, the gray/slate family) held at near-zinc chroma (~0.005–0.013), so it reads as a
+  temperature, not a color — the white `#ffffff` card is the lone true-neutral token.
+  Light: canvas
   `#f7f8fa` (paper), card/popover white `#ffffff`, ink `#14161a` (the "black" — never
   `#000`), secondary text `#5c616b` (≥4.5:1 on the canvas), decoration-only `#aeb2ba`.
   Dark: canvas `#0a0b0d`, raised card/popover `#101216`, ink `#f3f4f6` (the "white" —
   never `#fff`), secondary text `#969aa2`. The foundation colors are **Axiom Black
-  `#030712`** and **Origin White `#F4F5F8`** — the fixed on-image scrim pair, and the
-  origin the two canvases resolve toward.
+  `#030712`** (Tailwind `gray-950`) and **Origin White `#F4F5F8`** — the fixed on-image
+  scrim pair, and the origin the two canvases resolve toward. The scrim is the most
+  chromatic neutral in the system (`gray-950`, chroma ~0.028), on purpose: it dims
+  rendered content with a cinematic cool-black, not a flat gray.
 - **Accent — monochrome ink.** `--primary` *is* the ink: `#14161a` on light, `#f3f4f6`
   on dark. There is no brand hue and no brand ramp — soft "brand" chips are just the ink
   at low opacity (`bg-primary/10 text-primary`). Primary actions, active nav, focus,
@@ -67,7 +76,7 @@ The paper canvas `#f7f8fa` carries white cards that lift off it by a fill step +
 | `primary` / `primary-foreground` | `#14161a` / `#f7f8fa` | monochrome ink; a primary fill carries the canvas color as its text, never a third color |
 | `secondary` / `muted` | `#eff1f4` | quiet fills: secondary buttons, input wells, skeletons, kbd |
 | `muted-foreground` | `#5c616b` | secondary text (≥4.5:1 on the canvas) |
-| `accent` | `#e8eaee` | selected/hover wash — neutral, never a hue |
+| `accent` | `#e8eaee` | selected/hover wash — near-neutral (the same faint cool cast, not a saturated hue) |
 | `border` / `input` | `#e5e7eb` | the standard hairline; `border-soft` `#eef0f3` is the quietest divider |
 | `ring` | `#14161a` | focus is ink, never blue |
 | `destructive` / `success` / `warning` | `#b4402c` / `#2f7d4f` / `#a24200` | the only chromatic tokens besides the wayfinding tints |
@@ -115,20 +124,18 @@ machine/brand moments** (spinner head, sync chip). Everything else stays neutral
 
 ## Typography
 
-One typeface. **Inter Variable** (opsz axis; OpenType features cv02 cv03 cv04 cv11 ss01
-ss03) carries the entire app — the working chrome *and* the moments of voice — with a
-system-mono stack for the machine layer. Inter is the only self-hosted face (via
-fontsource, so the app makes no third-party font requests); there is no serif or mono
-webfont.
+One family. **Geist Variable** (`font-sans`) carries the entire app — the working chrome
+*and* the moments of voice — and **Geist Mono Variable** (`font-mono`) carries the machine
+layer. Both cuts are weight-only (no optical-size axis) and self-hosted via fontsource, so
+the app makes no third-party font requests; there is no serif webfont.
 
 | Register | Family | Used for |
 |---|---|---|
-| chrome & voice | `Inter Variable` (`font-sans`) | all working UI — controls, labels, headings, dialog/card titles — and the voice moments: the wordmark, login/welcome headlines, empty-state headlines, artifact (content) titles |
-| machine | system mono (`font-mono` = `ui-monospace, Menlo, Consolas`) | counts, versions, timestamps, kbd, code, uppercase micro-eyebrows |
+| chrome & voice | `Geist Variable` (`font-sans`) | all working UI — controls, labels, headings, dialog/card titles — and the voice moments: the wordmark, login/welcome headlines, empty-state headlines, artifact (content) titles |
+| machine | `Geist Mono Variable` (`font-mono`, over a `ui-monospace, Menlo, Consolas` fallback) | counts, versions, timestamps, kbd, code, uppercase micro-eyebrows |
 
-`font-serif` still exists as a utility, but it is **aliased to Inter** (`--font-serif:
-var(--font-sans)`) — a per-call-site marker for voice moments, not a second face. Inter's
-Display optical cut auto-activates at large sizes (`font-optical-sizing: auto`).
+`font-serif` still exists as a utility, but it is **aliased to Geist** (`--font-serif:
+var(--font-sans)`) — a per-call-site marker for voice moments, not a second face.
 
 Rules:
 
@@ -142,8 +149,8 @@ Rules:
   grammar).
 - Numbers that change (counts, stats, timers): `tabular-nums`.
 - Voice moments are set per call-site (`font-serif font-medium tracking-tight` —
-  `font-serif` being the Inter alias), NOT via a `--font-heading` override; every heading
-  is Inter.
+  `font-serif` being the Geist alias), NOT via a `--font-heading` override; every heading
+  is Geist.
 
 ## Surfaces, edges, elevation
 
@@ -242,7 +249,7 @@ variants.
   `color-scheme` on `:root`/`.dark` in globals.css — never per-control `scheme-dark`
   patches. Textarea auto-grows via `field-sizing-content`.
 - **Dialog / Sheet** — overlay `bg-scrim/50` (the fixed Axiom-Black scrim); panel `bg-card
-  rounded-2xl ring-1 ring-foreground/10`; 200ms entrance. Titles are chrome (plain Inter),
+  rounded-2xl ring-1 ring-foreground/10`; 200ms entrance. Titles are chrome (plain Geist),
   not a `font-serif` voice moment. Content caps at `100dvh-2rem` with internal scroll.
   Every DialogContent has a DialogDescription or passes `aria-describedby={undefined}`
   (the Radix opt-out — no dangling refs). Bottom sheets pad `env(safe-area-inset-bottom)`.
@@ -293,7 +300,7 @@ variants.
 
 - **EmptyState** — no container, no dashed border: icon `size-6 strokeWidth={1.75}` in a
   faint ink tint (`text-primary/70`), a one-line **voice headline** (`font-serif` — the
-  Inter alias — `text-xl font-medium tracking-tight text-balance`), `text-pretty`
+  Geist alias — `text-xl font-medium tracking-tight text-balance`), `text-pretty`
   supporting line, ONE plain action.
 - **StatusPanel** — `bg-<tone>/10 ring-1 ring-inset ring-<tone>/25`; tones: neutral,
   brand, success, warning, danger (brand = the soft **ink** tint `bg-primary/10
@@ -367,7 +374,7 @@ variants.
   edge of its floating content card). The shell is the shadcn `inset` variant — rail =
   recessed `bg-sidebar` backdrop, content = a rounded card floating on it. The wordmark
   lives in the rail header — the `Logo` mark (`currentColor`) + `<span class="font-serif
-  text-lg font-medium tracking-tight">Derive</span>` (`font-serif` = the Inter alias). On
+  text-lg font-medium tracking-tight">Derive</span>` (`font-serif` = the Geist alias). On
   mobile a sticky `MobileTopBar` (`bg-background/95 border-b`, hamburger + page label +
   search) stands in for the hidden rail; the inset collapses below `sm` (640px — the
   app's one mobile breakpoint, in lockstep with the rail; mobile is full-bleed).
@@ -390,8 +397,14 @@ variants.
   chip). Rows are `rounded-lg` with the **ink** inset focus outline; `SidebarGroupLabel` is
   the mono 2xs uppercase eyebrow; `SidebarMenuBadge` is `font-mono text-2xs tabular-nums`,
   muted by default (a rail count is not an ink moment), rendered only when nonzero.
-- **UserPod** — initials avatar in a soft **ink** tint (`bg-primary/10 text-primary`);
-  popover per the menu recipe.
+- **UserPod** — the account menu at the rail foot, on the app's ONE menu primitive (a real
+  `DropdownMenu` — roving focus, `role=menu`, arrow-key nav, typeahead — not a hand-rolled
+  popover of look-alike rows). Initials avatar in a soft **ink** tint (`bg-primary/10
+  text-primary`). Four zones top→bottom: identity (avatar + name + public handle) · account
+  (View profile, Settings) · context (the workspace switcher when you're in more than one,
+  then the segmented Theme control — a Tabs, so toggling it doesn't dismiss the menu) · a
+  set-off Sign out (muted; focus re-inks). Separators bracket only the unlabelled breaks
+  (after identity, before sign out); the mono Workspace/Theme labels divide their own sections.
 - **NotificationBell** — unread signal = `size-1.5 rounded-full bg-primary` **ink** dot
   (in both the collapsed strip and the expanded rail); the count badge beside it stays
   neutral (`text-muted-foreground`), like every other sidebar count.
@@ -418,7 +431,7 @@ variants.
 ## Voice
 
 Buttons are verbs: Open, Pin, Approve, Delete, Upgrade. Empty states have a one-line voice
-headline (Inter) + one plain next action, never a bare "No artifacts yet." Errors go
+headline (Geist) + one plain next action, never a bare "No artifacts yet." Errors go
 through toasts (never `alert()`); destructive confirms via the shared `ConfirmDialog`
 (never `window.confirm()`). Busy buttons keep their verb ("Saving…", never a bare "…").
 Sentences and standalone descriptions end with a period; list items don't. Never emojis.
