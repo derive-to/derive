@@ -57,7 +57,7 @@ function ReportRow({
         <div className="text-sm font-medium text-foreground">
           {report.reason}{" "}
           <a
-            href={`/a/${report.artifact_short_id}`}
+            href={`/artifacts/${report.artifact_short_id}`}
             className="font-mono text-2xs font-medium text-primary"
           >
             {report.artifact_short_id}

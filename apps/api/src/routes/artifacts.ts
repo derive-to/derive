@@ -62,7 +62,7 @@ export const artifactRoutes = (ctx: AppContext) => {
   const app = new Hono()
 
   // Newest-first, keyset-paginated (?cursor=<created_at>&limit=N), with optional
-  // server-side ?q= (title search), ?tag=, and ?favorite=true. Returns
+  // server-side ?query= (title search), ?tag=, and ?favorite=true. Returns
   // { artifacts, next_cursor }. tag/favorite resolve to an id set first.
   app.get("/v1/artifacts", async (c) => {
     const me = await currentUser(c)
@@ -79,7 +79,7 @@ export const artifactRoutes = (ctx: AppContext) => {
         : undefined
     // Cap the search term: it goes into a SQL LIKE, and an oversized value tripped
     // an unhandled DB error (a long-q 500). No real title search needs > 200 chars.
-    const q = c.req.query("q")?.trim().slice(0, 200) || undefined
+    const q = c.req.query("query")?.trim().slice(0, 200) || undefined
     const tag = c.req.query("tag")?.trim() || undefined
     const collectionId = c.req.query("collection")?.trim() || undefined
     const favOnly = c.req.query("favorite") === "true"
@@ -146,7 +146,7 @@ export const artifactRoutes = (ctx: AppContext) => {
 
     // A listing only shows non-public artifacts to a MEMBER of that workspace (or the
     // operator token). Anyone else — anonymous, or a signed-in user who isn't a member
-    // — sees public artifacts only, so org/link titles never leak via the list or ?q=.
+    // — sees public artifacts only, so org/link titles never leak via the list or ?query=.
     // For a collection, collection access (member/creator/share) also unlocks it.
     const publicOnly = collectionId
       ? !collectionAccess
@@ -444,7 +444,7 @@ export const artifactRoutes = (ctx: AppContext) => {
     if (artifact.removed_at)
       return c.json({
         short_id: artifact.short_id,
-        url: `${deps.baseUrl.replace(/\/$/, "")}/a/${artifact.short_id}`,
+        url: `${deps.baseUrl.replace(/\/$/, "")}/artifacts/${artifact.short_id}`,
         title: null,
         kind: artifact.kind,
         visibility: artifact.visibility,

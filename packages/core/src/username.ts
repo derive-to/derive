@@ -16,7 +16,7 @@ export const USERNAME_MAX = 30
 const USERNAME_RE = /^[a-z0-9](?:[a-z0-9]|[-_](?=[a-z0-9])){1,29}$/
 
 // Handles that would collide with a top-level route or carry reserved meaning.
-// Lowercased. Profiles live at /u/:handle today, but reserving these keeps a
+// Lowercased. Profiles live at /users/:handle today, but reserving these keeps a
 // handle safe even as more top-level routes (a vanity /:handle, /following, …)
 // get added later.
 export const RESERVED_USERNAMES: ReadonlySet<string> = new Set([

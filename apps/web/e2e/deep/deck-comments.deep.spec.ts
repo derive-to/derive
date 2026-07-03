@@ -97,7 +97,7 @@ test.describe("deck comments — slide-scoped anchoring", () => {
     const dup = await anchorComment(owner, shortId, "dup-on-slide-2", "Shared phrase alpha", 2)
     const s1 = await anchorComment(owner, shortId, "on-slide-1", "Roadmap for the year", 1)
 
-    await owner.goto(`/a/${shortId}`)
+    await owner.goto(`/artifacts/${shortId}`)
     await expect(owner.getByTestId("deck-position")).toHaveText("1 / 5")
 
     // The crux: the duplicate-text comment resolves to slide 2 → "Slide 3", NOT the
@@ -128,7 +128,7 @@ test.describe("deck comments — slide-scoped anchoring", () => {
     // Out-of-range slide index → global fallback still finds the text (slide 4).
     const oob = await anchorComment(owner, shortId, "oob-comment", "Appendix with extra", 99)
 
-    await owner.goto(`/a/${shortId}`)
+    await owner.goto(`/artifacts/${shortId}`)
 
     await expect(owner.getByTestId(`comment-slide-${moved}`)).toHaveText("Slide 4")
     await expect(owner.getByTestId(`comment-moved-${moved}`)).toBeVisible()
@@ -143,7 +143,7 @@ test.describe("deck comments — slide-scoped anchoring", () => {
     )
     await anchorComment(owner, shortId, "jump-target", "Third slide outro", 2)
 
-    await owner.goto(`/a/${shortId}`)
+    await owner.goto(`/artifacts/${shortId}`)
     await expect(owner.getByTestId("deck-position")).toHaveText("1 / 3")
     // Activating the card flips the deck to the comment's slide (goto).
     await owner.getByText("jump-target").first().click()
@@ -155,7 +155,7 @@ test.describe("deck comments — slide-scoped anchoring", () => {
     const shortId = await publishDeck(owner, deckHtml(v1))
     const id = await anchorComment(owner, shortId, "follows-text", "Beta roadmap unique line", 1)
 
-    await owner.goto(`/a/${shortId}`)
+    await owner.goto(`/artifacts/${shortId}`)
     await expect(owner.getByTestId(`comment-slide-${id}`)).toHaveText("Slide 2")
     await expect(owner.getByTestId(`comment-moved-${id}`)).toHaveCount(0)
 
@@ -182,7 +182,7 @@ window.addEventListener('message',function(e){var d=e.data;if(!d||d.source!=='de
 if(d.action==='next')show(i+1);else if(d.action==='prev')show(i-1);else if(d.action==='goto')show(d.n)});show(0);r()})();</script></body></html>`
     const shortId = await publishDeck(owner, html)
     const id = await anchorComment(owner, shortId, "doc-order", "Two beta unique", 1)
-    await owner.goto(`/a/${shortId}`)
+    await owner.goto(`/artifacts/${shortId}`)
     await expect(owner.getByTestId(`comment-slide-${id}`)).toHaveText("Slide 2")
   })
 })

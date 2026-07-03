@@ -470,7 +470,7 @@ function buildServer(
           .record(z.string(), z.string())
           .optional()
           .describe(
-            'A MULTI-PAGE bundle as a map of path → content — the whole site. Text pages are plain strings; binary assets (screenshots, images, fonts) are base64 data: URIs, e.g. {"index.html":"<img src=shot.png>","styles.css":"…","shot.png":"data:image/png;base64,iVBORw0K…","logo.svg":"…"}. The root index.html (else the shallowest .html) becomes the entry page; pages reference assets by relative path. Served content-type comes from the file extension, so give binary entries a real extension (.png/.jpg/.svg/.woff2). A plain republish REPLACES the bundle (include every page and asset). The map travels in one call, so keep each call to a few MB; for a large or image-heavy site, publish the pages first, then add assets in batches with `merge` (below).',
+            'A MULTI-PAGE bundle as a map of path → content — the whole site. Each value is one of: a text page (plain string); a base64 data: URI for a small inline binary ("shot.png":"data:image/png;base64,iVBORw0K…"); or — PREFERRED for real images — an "asset:<hash>" handle returned by uploading the raw bytes to POST /v1/assets first ("shot.png":"asset:9f86d0818…"). The asset handle keeps the call tiny: stream each screenshot up as raw binary (no base64 transcription), then reference the handles here. Example: {"index.html":"<img src=shot.png>","styles.css":"…","shot.png":"asset:9f86d0818…","logo.png":"data:image/png;base64,iVBORw0K…"}. The root index.html (else the shallowest .html) becomes the entry page; pages reference assets by relative path. Served content-type comes from the file extension, so give binary entries a real extension (.png/.jpg/.webp/.woff2). A plain republish REPLACES the bundle (include every page and asset). Keep each call to a few MB; for many/large images, upload them to /v1/assets and reference the handles (or publish pages first, then `merge` asset batches).',
           ),
         title: z
           .string()
@@ -633,7 +633,7 @@ function buildServer(
           bytes = await mergeBundleZip(ctx.blobs, manifest, files as Record<string, string>)
           bundleSpa = manifest.spa
         } else {
-          bytes = zipBundleFiles(files as Record<string, string>)
+          bytes = await zipBundleFiles(files as Record<string, string>, ctx.blobs)
         }
         const { artifact, version } = await publishVersion(
           ctx.meta,

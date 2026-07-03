@@ -65,10 +65,10 @@ describe("rewriteCrossDocLinks", () => {
     ["docs/plans/competitor-tracking/competitive.html", "competitor-tracking-competitive-aaaaaa11"],
   ])
 
-  it("rewrites resolved siblings to /a/<ref> and tags them for interception", () => {
+  it("rewrites resolved siblings to /artifacts/<ref> and tags them for interception", () => {
     const out = rewriteCrossDocLinks(`<a href="walkthrough.html">Walkthrough</a>`, SRC, refByPath)
     expect(out).toBe(
-      `<a href="/a/competitor-tracking-walkthrough-kbthvh7s" data-derive-nav="competitor-tracking-walkthrough-kbthvh7s">Walkthrough</a>`,
+      `<a href="/artifacts/competitor-tracking-walkthrough-kbthvh7s" data-derive-nav="competitor-tracking-walkthrough-kbthvh7s">Walkthrough</a>`,
     )
   })
 
@@ -78,7 +78,7 @@ describe("rewriteCrossDocLinks", () => {
       SRC,
       refByPath,
     )
-    expect(out).toContain(`href="/a/competitor-tracking-competitive-aaaaaa11"`)
+    expect(out).toContain(`href="/artifacts/competitor-tracking-competitive-aaaaaa11"`)
     expect(out).toContain(`class="tab"`)
     expect(out).toContain(`data-x="1"`)
     expect(out).toContain(`data-derive-nav="competitor-tracking-competitive-aaaaaa11"`)

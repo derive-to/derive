@@ -131,7 +131,7 @@ describe("github app install callback", () => {
     )
     expect(res.status).toBe(302)
     const loc = res.headers.get("location") ?? ""
-    expect(loc).toContain("/settings?tab=github")
+    expect(loc).toContain("/settings/github")
     expect(loc).toContain("gh_install=991")
     expect(await meta.getGithubInstallation("991")).toMatchObject({ org_id: "default" })
   })
@@ -177,6 +177,7 @@ describe("github app auto-heal (GET /app verification)", () => {
     status: number,
     perms: Record<string, string> = {
       contents: "read",
+      issues: "read",
       metadata: "read",
       pull_requests: "write",
     },

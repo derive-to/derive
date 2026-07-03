@@ -42,7 +42,7 @@ export const enqueueSlackComment = async (
   if (parseMeta(cm.meta).slack) return // came from Slack — don't echo back
   const install = await meta.getSlackInstall(artifact.org_id)
   if (!install?.default_channel) return
-  const link = `${baseUrl.replace(/\/$/, "")}/a/${artifact.short_id}?c=${encodeURIComponent(cm.thread_id)}`
+  const link = `${baseUrl.replace(/\/$/, "")}/artifacts/${artifact.short_id}?comment=${encodeURIComponent(cm.thread_id)}`
   const payload: SlackCommentPayload = {
     orgId: artifact.org_id,
     artifactId: artifact.id,

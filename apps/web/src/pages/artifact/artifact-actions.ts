@@ -216,7 +216,7 @@ export function artifactActions(p: {
         .catch((e) => toast.error((e as Error).message))
     },
     copyLink: (threadId) => {
-      const url = `${window.location.origin}${window.location.pathname}?c=${threadId}`
+      const url = `${window.location.origin}${window.location.pathname}?comment=${threadId}`
       navigator.clipboard
         ?.writeText(url)
         .then(() => toast.success("Link copied"))

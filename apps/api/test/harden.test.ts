@@ -24,9 +24,9 @@ describe("read-path exposure hardening", () => {
     expect(mem.artifacts.map((a: { title: string }) => a.title)).toContain("OrgSecret")
   })
 
-  it("B-015: an oversized ?q= is capped, not a 500", async () => {
+  it("B-015: an oversized ?query= is capped, not a 500", async () => {
     const { app } = makeAuthedApp("harden-q", [owner])
-    const res = await app.request(`/v1/artifacts?q=${"a".repeat(5000)}`, {
+    const res = await app.request(`/v1/artifacts?query=${"a".repeat(5000)}`, {
       headers: as(owner.email),
     })
     expect(res.status).toBe(200)

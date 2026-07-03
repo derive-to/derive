@@ -3,7 +3,7 @@ import { Eyebrow } from "@/components/shared/section-eyebrow"
 import { cn } from "@/lib/utils"
 
 export type SettingsNavItem = {
-  /** The section id — mirrors the `?tab=` value. */
+  /** The section id — mirrors the `/settings/$section` path value. */
   id: string
   label: string
   testId: string

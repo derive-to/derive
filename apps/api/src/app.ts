@@ -17,6 +17,7 @@ import { consentHTML } from "./oauth-consent"
 import { agentRoutes } from "./routes/agents"
 import { analyticsRoutes } from "./routes/analytics"
 import { artifactRoutes } from "./routes/artifacts"
+import { assetRoutes } from "./routes/assets"
 import { collectionRoutes } from "./routes/collections"
 import { commentRoutes } from "./routes/comments"
 import { domainRoutes } from "./routes/domains"
@@ -449,6 +450,7 @@ export function createApp(deps: AppDeps): Hono {
     workspaceRoutes,
     agentRoutes,
     artifactRoutes,
+    assetRoutes,
     sharingRoutes,
     favoriteRoutes,
     followRoutes,

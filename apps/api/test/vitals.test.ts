@@ -8,7 +8,7 @@ describe("POST /v1/vitals", () => {
   it("accepts a beacon from an anonymous visitor (204, no body)", async () => {
     const r = await anonApp.request(
       "/v1/vitals",
-      json({ name: "LCP", value: 1234.5, rating: "good", id: "v1-abc", path: "/a/xyz" }),
+      json({ name: "LCP", value: 1234.5, rating: "good", id: "v1-abc", path: "/artifacts/xyz" }),
     )
     expect(r.status).toBe(204)
     expect(await r.text()).toBe("")

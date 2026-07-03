@@ -360,7 +360,7 @@ describe("discoverability (on by default) + people search", () => {
   const { app } = makeAuthedApp("discover", [nova, dox])
   const handles = (r: { users: { username: string }[] }) => r.users.map((u) => u.username)
   const search = async (q: string, by?: string) =>
-    (await app.request(`/v1/users/search?q=${q}`, by ? { headers: as(by) } : {})).json()
+    (await app.request(`/v1/users/search?query=${q}`, by ? { headers: as(by) } : {})).json()
 
   it("finds default-on users (never email), hides opt-outs; needs a query + auth", async () => {
     // Nova is findable without ever opting in; the opted-out Dox never appears.
@@ -370,7 +370,7 @@ describe("discoverability (on by default) + people search", () => {
     expect(handles(await search("dox", nova.email))).toHaveLength(0)
     // Empty query returns nothing (no full enumeration); anonymous is refused.
     expect(handles(await search("", nova.email))).toHaveLength(0)
-    expect((await app.request("/v1/users/search?q=nov")).status).toBe(401)
+    expect((await app.request("/v1/users/search?query=nov")).status).toBe(401)
   })
 
   it("opting back in makes you findable; opting out hides you", async () => {
@@ -409,7 +409,9 @@ describe("people directory (/v1/people)", () => {
     expect(browse.users[0]).not.toHaveProperty("email") // public fields only
 
     // With a query it searches within the discoverable set.
-    const searched = await (await app.request("/v1/people?q=iv", { headers: as(ivy.email) })).json()
+    const searched = await (
+      await app.request("/v1/people?query=iv", { headers: as(ivy.email) })
+    ).json()
     expect(handles(searched)).toEqual(["ivy"])
 
     // Signed-in only — anonymous is refused.

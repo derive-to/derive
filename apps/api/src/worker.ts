@@ -83,7 +83,7 @@ export interface Env {
   RL_COMMENT: RateLimit
   RL_STRICT: RateLimit
   // The static-assets binding: lets the Worker read the SPA shell to inject unfurl
-  // meta into /a/:ref (the share URL). Declared in wrangler.toml `[assets] binding`.
+  // meta into /artifacts/:ref (the share URL). Declared in wrangler.toml `[assets] binding`.
   ASSETS: Fetcher
   BASE_URL?: string
   DERIVE_AUTH_SECRET?: string
@@ -121,7 +121,7 @@ function pokeSync(env: Env, sourceId: string): Promise<unknown> {
 
 let app: ReturnType<typeof createApp> | null = null
 // The SPA shell, fetched from ASSETS once per isolate and reused (it's immutable for
-// a deployment). Injected with per-artifact unfurl meta on each /a/:ref request.
+// a deployment). Injected with per-artifact unfurl meta on each /artifacts/:ref request.
 let shellCache: string | null = null
 
 // The request handler behind both tiers. Split from `fetch` so the pg tier can
@@ -214,14 +214,14 @@ const handle = (req: Request, env: Env, ctx: ExecutionContext): Response | Promi
           if (c) c.waitUntil(p)
           else void p
         },
-        // Read the SPA shell from static assets so /a/:ref can carry unfurl meta.
+        // Read the SPA shell from static assets so /artifacts/:ref can carry unfurl meta.
         // Cached per isolate; null on any miss leaves the shell untouched.
         shellFetch: async () => {
           if (shellCache !== null) return shellCache
           try {
             // Fetch "/" (the canonical shell URL), NOT "/index.html": Static Assets
             // 307-redirects /index.html -> /, so a non-2xx would null the shell and
-            // drop unfurl/OG injection on /a/:ref (crawlers/social cards get no meta).
+            // drop unfurl/OG injection on /artifacts/:ref (crawlers/social cards get no meta).
             const res = await env.ASSETS.fetch(new URL("/", baseUrl).toString())
             shellCache = res.ok ? await res.text() : null
           } catch {

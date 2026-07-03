@@ -12,13 +12,14 @@ import {
 } from "@/components/ui/sidebar"
 import { useAuth } from "@/ctx"
 import { ago } from "@/lib/time"
+import { usePageVisible } from "@/lib/use-page-visible"
 import { cn } from "@/lib/utils"
 import { refFor } from "@/pages/artifact/parse-ref"
 import { Icon } from "./icons"
 
 // Notifications: an unread badge + a panel of recent @mentions, kept live over
 // SSE. Lives in the rail's utility menu (a SidebarMenuItem); clicking an item
-// deep-links to its comment thread (?c=) and marks it read. Built on the
+// deep-links to its comment thread (?comment=) and marks it read. Built on the
 // Popover primitive with a SidebarMenuButton trigger.
 export function NotificationBell() {
   const { me } = useAuth()
@@ -27,6 +28,7 @@ export function NotificationBell() {
   const [items, setItems] = useState<Notification[]>([])
   const [unread, setUnread] = useState(0)
   const [open, setOpen] = useState(false)
+  const visible = usePageVisible()
 
   const load = useCallback(() => {
     api
@@ -38,14 +40,16 @@ export function NotificationBell() {
       .catch(() => {})
   }, [])
 
-  // Initial load + live updates. EventSource reconnects on its own.
+  // Initial load + live updates. EventSource reconnects on its own. Closed
+  // while the tab is hidden (and reopened + re-loaded on focus) so a
+  // backgrounded tab doesn't keep the per-user room Durable Object active.
   useEffect(() => {
-    if (!me) return
+    if (!me || !visible) return
     load()
     const ev = new EventSource(api.notificationsStreamUrl(), { withCredentials: true })
     ev.addEventListener("notification", load)
     return () => ev.close()
-  }, [me, load])
+  }, [me, load, visible])
 
   // Mirror the unread count into the tab title — "(3) Derive" (the house
   // grammar). Strip any previous prefix first so updates replace, never stack.
@@ -68,14 +72,14 @@ export function NotificationBell() {
     }
     // A follow notification has no artifact — open the follower's profile instead.
     if (n.kind === "follow") {
-      nav({ to: "/u/$handle", params: { handle: n.actor } })
+      nav({ to: "/users/$handle", params: { handle: n.actor } })
       return
     }
     nav({
-      to: "/a/$ref",
+      to: "/artifacts/$ref",
       params: { ref: refFor({ short_id: n.artifact_short_id, title: n.artifact_title }) },
       // A share/publish notification has no thread; open the artifact itself.
-      search: n.thread_id ? { c: n.thread_id } : {},
+      search: n.thread_id ? { comment: n.thread_id } : {},
     })
   }
 

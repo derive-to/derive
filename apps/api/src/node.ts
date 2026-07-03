@@ -131,7 +131,7 @@ const blobs: BlobStore = cfg.objectStoreUrl
   ? s3FromUrl(cfg.objectStoreUrl)
   : new FsBlobStore(join(cfg.dataDir, "blobs"))
 
-// The SPA shell, read once: passed to createApp (so /a/:ref can inject unfurl
+// The SPA shell, read once: passed to createApp (so /artifacts/:ref can inject unfurl
 // meta) and to mountWeb (the client-router fallback). Only when serving the web.
 const shellHtml = cfg.serveWeb ? readFileSync(cfg.webShell, "utf8") : undefined
 

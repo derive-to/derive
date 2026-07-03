@@ -55,8 +55,8 @@ describe("workspace scoping: collections + favorites", () => {
     // for a collection in another workspace (not in the active sidebar list).
     expect(body.collection).toMatchObject({ id: colId, title: "B Collection" })
 
-    // in-collection search (?q=) works the same way.
-    const res2 = await app.request(`/v1/artifacts?collection=${colId}&q=Doc%20in%20B`, {
+    // in-collection search (?query=) works the same way.
+    const res2 = await app.request(`/v1/artifacts?collection=${colId}&query=Doc%20in%20B`, {
       headers: as(owner.email),
     })
     expect((await res2.json()).artifacts.map((a: { short_id: string }) => a.short_id)).toContain(

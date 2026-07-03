@@ -148,7 +148,7 @@ export function createClient(opts: ClientOptions): DeriveClient {
 
   return {
     async list(query) {
-      const q = query ? `?q=${encodeURIComponent(query)}` : ""
+      const q = query ? `?query=${encodeURIComponent(query)}` : ""
       const r = (await ok(await f(`${base}/v1/artifacts${q}`, { headers: authHeaders }))) as {
         artifacts: ArtifactSummaryJson[]
       }

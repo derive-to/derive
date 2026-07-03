@@ -26,7 +26,7 @@ describe("slugify", () => {
   })
 })
 
-describe("parseRef — /a/:ref → { shortId, version }", () => {
+describe("parseRef — /artifacts/:ref → { shortId, version }", () => {
   it("reads a bare short id and a name-first ref", () => {
     expect(parseRef("abc12345")).toEqual({ shortId: "abc12345", version: undefined })
     expect(parseRef("my-title-abc12345")).toEqual({ shortId: "abc12345", version: undefined })
@@ -60,7 +60,7 @@ describe("candidateShortIds — resolve-in-order for ambiguous refs", () => {
   })
 })
 
-describe("refFor — build a readable /a/:ref", () => {
+describe("refFor — build a readable /artifacts/:ref", () => {
   it("prefers an explicit slug, else slugifies the title, else bare short id", () => {
     expect(refFor({ short_id: "abc12345", slug: "my-doc" })).toBe("my-doc-abc12345")
     expect(refFor({ short_id: "abc12345", title: "My Doc!" })).toBe("my-doc-abc12345")

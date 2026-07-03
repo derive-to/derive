@@ -24,34 +24,88 @@ const frame = (event: string, data: string) => enc.encode(`event: ${event}\ndata
  * Realtime room: one Durable Object per channel (an artifact id, or `u:<userId>`
  * for the notification bell). It owns the SSE connections for that channel and
  * broadcasts events to them, so fan-out works across Worker isolates — every
- * client for a channel reaches the same DO. Presence is tracked here too.
+ * client for a channel reaches the same DO.
  *
- * Plain SSE (not WebSocket) keeps the existing EventSource client unchanged; an
- * alarm pings open streams so intermediaries don't drop idle connections. This is
- * the connection-owning half of the Backplane port (see bus.ts).
+ * Presence is tied to those connections: a viewer is present while they hold ≥1 open
+ * `/events` stream. Connect registers them (identity rides a query param, derived
+ * server-side upstream); `cancel()` — which fires the instant the SSE client
+ * disconnects — drops them and re-broadcasts, so a tab-close or crash reflects in
+ * ~a second (the ping doubles as the crash detector). A bare `POST /heartbeat`
+ * (a streamless caller with no `/events` open) is the TTL-backstopped fallback.
  */
 export class ArtifactRoom {
   private streams = new Set<ReadableStreamDefaultController<Uint8Array>>()
-  private viewers = new Map<string, { v: Viewer; t: number }>()
+  // Each open stream's viewer id, so a closed stream drops the right viewer.
+  private streamViewer = new Map<ReadableStreamDefaultController<Uint8Array>, string>()
+  // Roster: viewer id → identity + open-stream count. Present while `n > 0`; a
+  // streamless heartbeat (n === 0) ages out on the TTL.
+  private viewers = new Map<string, { v: Viewer; t: number; n: number }>()
   constructor(private state: DurableObjectState) {}
+
+  private roster(now: number): Viewer[] {
+    for (const [id, e] of this.viewers)
+      if (e.n === 0 && now - e.t > PRESENCE_TTL_MS) this.viewers.delete(id)
+    return [...this.viewers.values()].map((e) => e.v)
+  }
+
+  private broadcastPresence(): void {
+    const f = frame(
+      "presence",
+      JSON.stringify({ type: "presence", viewers: this.roster(Date.now()) }),
+    )
+    for (const c of this.streams)
+      try {
+        c.enqueue(f)
+      } catch {
+        this.drop(c)
+      }
+  }
+
+  // Forget a closed/dead stream; if it was the viewer's last, drop them. Returns
+  // whether the roster changed (so the caller can decide to re-broadcast).
+  private drop(c: ReadableStreamDefaultController<Uint8Array>): boolean {
+    if (!this.streams.delete(c)) return false
+    const vid = this.streamViewer.get(c)
+    this.streamViewer.delete(c)
+    if (vid == null) return false
+    const e = this.viewers.get(vid)
+    if (e && --e.n <= 0) {
+      this.viewers.delete(vid)
+      return true
+    }
+    return false
+  }
 
   async fetch(req: Request): Promise<Response> {
     const url = new URL(req.url)
 
-    // SSE connect: hold an open stream for this client.
+    // SSE connect: hold an open stream, register the viewer, tell everyone.
     if (req.method === "GET") {
-      const streams = this.streams
+      const viewer = JSON.parse(url.searchParams.get("v") ?? "null") as Viewer | null
+      const room = this
       const storage = this.state.storage
       let ctrl: ReadableStreamDefaultController<Uint8Array>
       const body = new ReadableStream<Uint8Array>({
         start(c) {
           ctrl = c
-          streams.add(c)
+          room.streams.add(c)
           c.enqueue(frame("ready", "{}"))
-          if (streams.size === 1) void storage.setAlarm(Date.now() + PING_MS)
+          if (room.streams.size === 1) void storage.setAlarm(Date.now() + PING_MS)
+          if (viewer) {
+            room.streamViewer.set(c, viewer.id)
+            const e = room.viewers.get(viewer.id)
+            if (e) {
+              e.v = viewer
+              e.t = Date.now()
+              e.n++
+            } else {
+              room.viewers.set(viewer.id, { v: viewer, t: Date.now(), n: 1 })
+            }
+            room.broadcastPresence()
+          }
         },
         cancel() {
-          streams.delete(ctrl)
+          if (room.drop(ctrl)) room.broadcastPresence()
         },
       })
       return new Response(body, {
@@ -68,46 +122,55 @@ export class ArtifactRoom {
       const raw = await req.text()
       const ev = JSON.parse(raw) as DeriveEvent
       const f = frame(ev.type, raw)
-      for (const c of this.streams) {
+      for (const c of this.streams)
         try {
           c.enqueue(f)
         } catch {
-          this.streams.delete(c)
+          this.drop(c)
         }
-      }
       return new Response("ok")
     }
 
-    // Presence heartbeat: record + return the live viewers.
+    // Presence heartbeat (keep-alive / streamless join): upsert + return the roster.
     if (req.method === "POST" && url.pathname.endsWith("/heartbeat")) {
       const { viewer, now } = (await req.json()) as { viewer: Viewer; now: number }
-      this.viewers.set(viewer.id, { v: viewer, t: now })
-      for (const [id, e] of this.viewers) if (now - e.t > PRESENCE_TTL_MS) this.viewers.delete(id)
-      return Response.json([...this.viewers.values()].map((e) => e.v))
+      const e = this.viewers.get(viewer.id)
+      if (e) {
+        e.v = viewer
+        e.t = now
+      } else {
+        this.viewers.set(viewer.id, { v: viewer, t: now, n: 0 })
+      }
+      return Response.json(this.roster(now))
     }
 
     return new Response("not found", { status: 404 })
   }
 
-  // Keep-alive: ping open streams (SSE comment), reschedule while any remain.
+  // Keep-alive: ping open streams; a stream that's gone drops its viewer (the crash
+  // backstop, since a hard-killed client may never fire `cancel`). Reschedule while
+  // any remain.
   async alarm(): Promise<void> {
     const ping = enc.encode(": ping\n\n")
-    for (const c of this.streams) {
+    let changed = false
+    for (const c of this.streams)
       try {
         c.enqueue(ping)
       } catch {
-        this.streams.delete(c)
+        if (this.drop(c)) changed = true
       }
-    }
+    if (changed) this.broadcastPresence()
     if (this.streams.size > 0) await this.state.storage.setAlarm(Date.now() + PING_MS)
   }
 }
 
 /**
  * Durable Object backplane (the Workers adapter). Routes the SSE stream to the
- * per-channel DO, fans events out through it, and tracks presence in it. `subscribe`
- * is unused — the DO owns the streams, so `handleStream` returns the DO's Response
- * and the route never falls back to local SSE.
+ * per-channel DO, fans events out through it, and tracks presence in it via the
+ * stream lifecycle. `subscribe` is unused — the DO owns the streams, so `handleStream`
+ * returns the DO's Response and the route never falls back to local SSE. Presence
+ * `join`/`leave` are likewise handled inside the DO (connect/cancel), so the route
+ * never calls them here; only `heartbeat` (the streamless path) round-trips.
  *
  * The `as unknown as Response` casts reconcile the two Response types in scope here
  * (the Workers `DurableObjectStub.fetch` Response vs the ambient global one); the
@@ -123,6 +186,10 @@ export function createDoBackplane(rooms: DurableObjectNamespace): Backplane {
       })
       return (await res.json()) as Viewer[]
     },
+    // The DO drives join/leave off its own SSE connect/cancel, so these are never
+    // called for the DO path (the route only calls them when handleStream is absent).
+    join: () => [],
+    leave: () => [],
   }
   return {
     publish(channel, e) {
@@ -137,8 +204,10 @@ export function createDoBackplane(rooms: DurableObjectNamespace): Backplane {
       return () => {}
     },
     presence,
-    handleStream(_c: Context, channel: string) {
-      return stub(channel).fetch("https://do/sse", { method: "GET" }) as unknown as Response
+    handleStream(_c: Context, channel: string, viewer?: Viewer) {
+      // Only /events carries a viewer; the notification channel has no presence.
+      const q = viewer ? `?v=${encodeURIComponent(JSON.stringify(viewer))}` : ""
+      return stub(channel).fetch(`https://do/sse${q}`, { method: "GET" }) as unknown as Response
     },
   }
 }

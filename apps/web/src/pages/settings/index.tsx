@@ -17,21 +17,22 @@ import { ReportsSection } from "./reports-section"
 import { SettingsNav, type SettingsNavGroup } from "./settings-nav"
 import { WebhooksSection } from "./webhooks-section"
 
-// The route owns the typed `?tab=` search; getRouteApi avoids a circular import
-// back to routes/settings.tsx while still giving typed useSearch/useNavigate.
-const route = getRouteApi("/settings")
+// The active section rides the URL path (/settings/$section); getRouteApi avoids a
+// circular import back to routes/settings.$section.tsx while still giving typed
+// useParams/useNavigate.
+const route = getRouteApi("/settings/$section")
 
 // Settings, reconceived as a scope-grouped two-pane: a sticky category rail
 // (Account · Workspace · Developer · Moderation) beside a readable detail column,
-// reflowing to a horizontal strip on a narrow pane. The active section rides the
-// URL's `?tab=` (deep-linkable, back-button-friendly) rather than the old local
-// window.location hack — and the GitHub App install still lands on
-// `/settings?tab=github&gh_install=…` unchanged. AppShell gates auth, so `me` is
-// present whenever Settings renders.
+// reflowing to a horizontal strip on a narrow pane. The active section is a path
+// segment (/settings/$section) — deep-linkable, back-button-friendly, and a peer of
+// the server's own /settings/github/app/* pages — and the GitHub App install lands on
+// `/settings/github?gh_install=…`. AppShell gates auth, so `me` is present whenever
+// Settings renders.
 export function Settings() {
   const { me } = useAuth()
   const [reports, setReports] = useState<Report[] | null>(null)
-  const { tab } = route.useSearch()
+  const { section } = route.useParams()
   const nav = route.useNavigate()
 
   const loadReports = useCallback(
@@ -96,11 +97,12 @@ export function Settings() {
     })
   }
 
-  // Guard the `?tab=` against unknown/stale values (e.g. `reports` after the last
-  // report clears) — fall back to Profile so the pane never strands blank.
+  // Guard the `$section` against unknown/stale values (e.g. `reports` after the last
+  // report clears, or a hand-typed path) — fall back to Profile so the pane never
+  // strands blank.
   const ids = groups.flatMap((g) => g.items.map((i) => i.id))
-  const active = tab && ids.includes(tab) ? tab : "profile"
-  const select = (id: string) => nav({ search: (prev) => ({ ...prev, tab: id }) })
+  const active = ids.includes(section) ? section : "profile"
+  const select = (id: string) => nav({ to: "/settings/$section", params: { section: id } })
 
   return (
     <PageShell width="wide">

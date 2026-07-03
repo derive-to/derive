@@ -1,5 +1,5 @@
 import { effectiveRole } from "@derive/core"
-import { Hono } from "hono"
+import { type Context, Hono } from "hono"
 import { streamSSE } from "hono/streaming"
 import { z } from "zod"
 import type { Viewer } from "../bus"
@@ -21,19 +21,53 @@ export const realtimeRoutes = (ctx: AppContext) => {
   } = ctx
   const app = new Hono()
 
+  // Server-derived presence identity (never client-supplied): a signed-in user by
+  // their public @handle, an anonymous viewer by a stable friendly handle keyed to
+  // their viewer cookie (no PII, no impersonation). `role` is their effective role on
+  // this artifact, so name/role can't be forged either. Shared by the SSE-lifecycle
+  // presence (join/leave) and the heartbeat backstop.
+  const deriveViewer = async (
+    c: Context,
+    artifact: Parameters<typeof actorFor>[1],
+  ): Promise<Viewer> => {
+    const me = await currentUser(c)
+    const role = effectiveRole(await actorFor(c, artifact), artifact.visibility)
+    return me
+      ? { id: me.id, name: me.username ?? "someone", role }
+      : { id: anonViewerId(c), name: anonName(anonViewerId(c)), role }
+  }
+  // Per-connection key so a viewer's multiple tabs ref-count correctly on the
+  // in-process backplane (the DO keys presence on the stream object itself).
+  let streamSeq = 0
+
   app.get("/v1/artifacts/:shortId/events", async (c) => {
     const artifact = await meta.getByShortId(c.req.param("shortId"))
     if (!artifact || !(await authorize(c, "read", artifact))) return c.text("not found", 404)
-    // A Durable Object backplane owns the stream itself (edge); relay adapters
-    // (in-process, Redis) return null and we hold the SSE here.
-    const direct = backplane.handleStream?.(c, artifact.id)
+    const viewer = await deriveViewer(c, artifact)
+    // A Durable Object backplane owns the stream itself (edge) AND tracks presence off
+    // its connect/disconnect lifecycle; relay adapters (in-process, Redis) return null,
+    // so we hold the SSE here and drive presence around it.
+    const direct = backplane.handleStream?.(c, artifact.id, viewer)
     if (direct) return direct
     c.header("Access-Control-Allow-Origin", "*")
+    const streamKey = `s${++streamSeq}`
     return streamSSE(c, async (stream) => {
       const unsub = bus.subscribe(artifact.id, (e) => {
         void stream.writeSSE({ event: e.type, data: JSON.stringify(e) })
       })
-      stream.onAbort(unsub)
+      // Present for as long as this stream stays open; leave the moment it aborts —
+      // so a tab-close reflects for everyone in ~a second, not after the TTL.
+      bus.publish(artifact.id, {
+        type: "presence",
+        viewers: await presence.join(artifact.id, viewer, streamKey, Date.now()),
+      })
+      stream.onAbort(async () => {
+        unsub()
+        bus.publish(artifact.id, {
+          type: "presence",
+          viewers: await presence.leave(artifact.id, viewer.id, streamKey, Date.now()),
+        })
+      })
       await stream.writeSSE({
         event: "ready",
         data: JSON.stringify({ short_id: artifact.short_id }),
@@ -45,23 +79,14 @@ export const realtimeRoutes = (ctx: AppContext) => {
     })
   })
 
+  // Presence heartbeat — the TTL-backstopped keep-alive. Most viewers are tracked by
+  // their live /events stream (join/leave above); this keeps a streamless caller (or a
+  // viewer between reconnects) on the roster, and stays anon-allowed — the one write an
+  // anonymous viewer may do beyond reading (lockdown in app.ts).
   app.post("/v1/artifacts/:shortId/presence", async (c) => {
     const artifact = await meta.getByShortId(c.req.param("shortId"))
     if (!artifact || !(await authorize(c, "read", artifact))) return fail(c, 404, "not found")
-    // Presence identity is built entirely server-side, never client-supplied: a
-    // signed-in user by their account (name + email), an anonymous viewer by a
-    // stable, friendly handle (`helpful-kitty-95`) keyed to their viewer cookie and
-    // no email, so nobody can impersonate or spam names. `role` is their effective
-    // role on this artifact (so email/role can't be forged either). Presence is the
-    // only thing an anonymous caller may do beyond reading (lockdown in app.ts).
-    const me = await currentUser(c)
-    const role = effectiveRole(await actorFor(c, artifact), artifact.visibility)
-    const viewer: Viewer = me
-      ? // Handle-based identity, never PII: presence reaches anonymous co-viewers and
-        // rides the wildcard-CORS /events SSE. Always the public @handle (every account
-        // has one post-migration); never any part of the email, even the local-part.
-        { id: me.id, name: me.username ?? "someone", role }
-      : { id: anonViewerId(c), name: anonName(anonViewerId(c)), role }
+    const viewer = await deriveViewer(c, artifact)
     const viewers = await presence.heartbeat(artifact.id, viewer, Date.now())
     bus.publish(artifact.id, { type: "presence", viewers })
     return c.json({ viewers })

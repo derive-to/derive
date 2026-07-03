@@ -25,12 +25,12 @@ const PNG_BYTES = new Uint8Array(Buffer.from(PNG_B64, "base64"))
 const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]
 
 describe("zipBundleFiles carries binary assets, not just text", () => {
-  it("decodes a base64 data: URI to raw bytes and keeps text pages as UTF-8", () => {
+  it("decodes a base64 data: URI to raw bytes and keeps text pages as UTF-8", async () => {
     const files = {
       "index.html": "<h1>Réport</h1><img src=shot.png>", // non-ASCII to prove UTF-8 text
       "shot.png": `data:image/png;base64,${PNG_B64}`,
     }
-    const unzipped = unzipSync(zipBundleFiles(files))
+    const unzipped = unzipSync(await zipBundleFiles(files))
 
     // The image is intact binary — the actual PNG, not the UTF-8 bytes of the data
     // URI string (which is what the old text-only packer produced).
@@ -42,9 +42,66 @@ describe("zipBundleFiles carries binary assets, not just text", () => {
     expect(new TextDecoder().decode(unzipped["index.html"])).toBe(files["index.html"])
   })
 
-  it("throws an actionable error on a malformed base64 data: URI", () => {
-    expect(() => zipBundleFiles({ "x.png": "data:image/png;base64,@@not base64@@" })).toThrow(
-      /invalid base64 data URI for "x\.png"/,
+  it("throws an actionable error on a malformed base64 data: URI", async () => {
+    await expect(
+      zipBundleFiles({ "x.png": "data:image/png;base64,@@not base64@@" }),
+    ).rejects.toThrow(/invalid base64 data URI for "x\.png"/)
+  })
+})
+
+describe("an asset: reference resolves a pre-uploaded blob (images without base64)", () => {
+  it("pulls the stored bytes for asset:<hash>, keeping text pages as text", async () => {
+    const blobs = new FsBlobStore(join(dir, "ref-blobs"))
+    // Simulate POST /v1/assets having stored the screenshot already.
+    const key = await blobs.put(PNG_BYTES)
+    const files = {
+      "index.html": "<img src=shot.png>",
+      "shot.png": `asset:${key}`,
+    }
+    const unzipped = unzipSync(await zipBundleFiles(files, blobs))
+    expect(Array.from((unzipped["shot.png"] as Uint8Array).slice(0, 8))).toEqual(PNG_SIGNATURE)
+    expect(unzipped["shot.png"]).toEqual(PNG_BYTES)
+    expect(new TextDecoder().decode(unzipped["index.html"])).toBe("<img src=shot.png>")
+  })
+
+  it("publishes a multi-file bundle referencing an asset handle end to end (the MCP path)", async () => {
+    // Exactly what MCP `publish` does for a bundle: build the zip from a {path: content}
+    // map via zipBundleFiles(files, blobs), then hand it to the core publish path.
+    const meta = new SqliteMetaStore(join(dir, "asset-pub.db"))
+    const blobs = new FsBlobStore(join(dir, "asset-pub-blobs"))
+    const key = await blobs.put(PNG_BYTES) // POST /v1/assets stored the screenshot
+    const { version } = await publish(meta, blobs, {
+      bytes: await zipBundleFiles(
+        { "index.html": "<!doctype html><img src=shot.png>", "shot.png": `asset:${key}` },
+        blobs,
+      ),
+      filename: "site.zip",
+      isBundle: true,
+      title: "Site",
+      author: "Tester",
+    })
+    const manifest = await manifestOf(blobs, version)
+    expect(manifest, "published as a bundle").not.toBeNull()
+    const png = manifest?.files["/shot.png"]
+    expect(png?.type).toBe("image/png") // served type from the .png extension
+    const stored = await blobs.get(png?.key as string)
+    expect(new Uint8Array(stored as Uint8Array)).toEqual(PNG_BYTES) // exact bytes, no base64
+    const entry = manifest?.files[manifest.entry]
+    const html = new TextDecoder().decode((await blobs.get(entry?.key as string)) as Uint8Array)
+    expect(html).toContain("<img src=shot.png>")
+    meta.close()
+  })
+
+  it("rejects an unknown asset handle with an actionable 400", async () => {
+    const blobs = new FsBlobStore(join(dir, "ref-blobs2"))
+    await expect(zipBundleFiles({ "x.png": `asset:${"0".repeat(64)}` }, blobs)).rejects.toThrow(
+      /unknown asset for "x\.png"/,
+    )
+  })
+
+  it("rejects an asset reference when no blob store is available", async () => {
+    await expect(zipBundleFiles({ "x.png": `asset:${"a".repeat(64)}` })).rejects.toThrow(
+      /asset references are not supported/,
     )
   })
 })
@@ -59,7 +116,7 @@ describe("a binary bundle publishes and serves the asset with the right type", (
     }
 
     const { version } = await publish(meta, blobs, {
-      bytes: zipBundleFiles(files),
+      bytes: await zipBundleFiles(files),
       filename: "site.zip",
       isBundle: true,
       title: "Site",
@@ -91,7 +148,7 @@ describe("incremental merge grows a bundle without re-sending it", () => {
 
     // First publish: an index page + one screenshot.
     const first = await publish(meta, blobs, {
-      bytes: zipBundleFiles({
+      bytes: await zipBundleFiles({
         "index.html": "<img src=a.png>",
         "a.png": `data:image/png;base64,${PNG_B64}`,
       }),

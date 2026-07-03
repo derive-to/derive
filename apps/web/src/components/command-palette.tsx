@@ -19,8 +19,8 @@ import { refFor } from "@/pages/artifact/parse-ref"
 import { Icon } from "./icons"
 import { useShell } from "./shell-context"
 
-// ⌘K palette: jump to any artifact (server search) or to a view (All / Favorites),
-// a collection, or another workspace — from anywhere, including inside an artifact.
+// ⌘K palette: jump to any artifact (server search) or to a feed (All / Favorites /
+// Following), a collection, or another workspace — from anywhere, incl. inside an artifact.
 // Artifact search is async, so cmdk's built-in filtering is off and we render
 // exactly the rows we want; the static rows are filtered against the query here.
 export function CommandPalette() {
@@ -97,6 +97,7 @@ export function CommandPalette() {
     : []
   const showAll = "all artifacts".includes(q) || "library".includes(q)
   const showFav = "favorites".includes(q)
+  const showFollowing = "following".includes(q)
 
   return (
     <CommandDialog
@@ -115,7 +116,7 @@ export function CommandPalette() {
         <CommandList>
           <CommandEmpty>{loading ? "Searching…" : "No results."}</CommandEmpty>
 
-          {(showAll || showFav) && (
+          {(showAll || showFav || showFollowing) && (
             <CommandGroup heading="Jump to">
               {showAll && (
                 <CommandItem
@@ -128,9 +129,17 @@ export function CommandPalette() {
               {showFav && (
                 <CommandItem
                   value="jump-favorites"
-                  onSelect={() => go(() => nav({ to: "/", search: { f: "favorites" } }))}
+                  onSelect={() => go(() => nav({ to: "/favorites" }))}
                 >
                   <Icon name="favorites" size={16} /> Favorites
+                </CommandItem>
+              )}
+              {showFollowing && (
+                <CommandItem
+                  value="jump-following"
+                  onSelect={() => go(() => nav({ to: "/following" }))}
+                >
+                  <Icon name="following" size={16} /> Following
                 </CommandItem>
               )}
             </CommandGroup>
@@ -142,7 +151,9 @@ export function CommandPalette() {
                 <CommandItem
                   key={a.short_id}
                   value={`artifact-${a.short_id}`}
-                  onSelect={() => go(() => nav({ to: "/a/$ref", params: { ref: refFor(a) } }))}
+                  onSelect={() =>
+                    go(() => nav({ to: "/artifacts/$ref", params: { ref: refFor(a) } }))
+                  }
                   onMouseEnter={() => prefetch(a.short_id, a.current_version)}
                   onFocus={() => prefetch(a.short_id, a.current_version)}
                 >
@@ -163,7 +174,7 @@ export function CommandPalette() {
                   key={u.username}
                   value={`person-${u.username}`}
                   onSelect={() =>
-                    go(() => nav({ to: "/u/$handle", params: { handle: u.username } }))
+                    go(() => nav({ to: "/users/$handle", params: { handle: u.username } }))
                   }
                 >
                   <Avatar className="size-5">

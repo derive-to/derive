@@ -14,7 +14,7 @@ test("tap a paragraph to comment: bar + composer, anchored to the block", async 
     "m.md",
     "# Mobile\n\nFirst paragraph, short.\n\nSecond paragraph here with enough text to anchor a comment onto cleanly on a phone.",
   )
-  await page.goto(`/a/${shortId}`)
+  await page.goto(`/artifacts/${shortId}`)
   // Let the sandbox iframe load + the anchor client wire up.
   await page.waitForTimeout(2000)
 
@@ -49,7 +49,7 @@ test("the bottom bar dismisses without commenting", async ({ page }) => {
     "m.md",
     "# Doc\n\nA paragraph to tap and then dismiss.",
   )
-  await page.goto(`/a/${shortId}`)
+  await page.goto(`/artifacts/${shortId}`)
   await page.waitForTimeout(2000)
 
   await page.frameLocator("iframe").getByText("A paragraph to tap").tap()
@@ -61,7 +61,7 @@ test("the bottom bar dismisses without commenting", async ({ page }) => {
 test("collapse the full list to a peek bar, and reopen", async ({ page }) => {
   await signUp(page)
   const shortId = await publishArtifact(page, "m.md", "# Doc\n\nA paragraph to comment on here.")
-  await page.goto(`/a/${shortId}`)
+  await page.goto(`/artifacts/${shortId}`)
   await page.waitForTimeout(2000)
 
   // Post a comment; the sheet opens to the full list so the new comment shows.
@@ -76,7 +76,7 @@ test("collapse the full list to a peek bar, and reopen", async ({ page }) => {
   await page.getByTestId("comments-sheet-backdrop").tap({ position: { x: 180, y: 36 } })
   await expect(page.getByText("First note.")).toHaveCount(0)
   await expect(page.getByText("Comments", { exact: true })).toBeVisible()
-  await expect(page.getByTestId("comments-sheet-resize")).toHaveAttribute("title", "Expand")
+  await expect(page.getByTestId("comments-sheet-resize")).toHaveAttribute("aria-label", "Expand")
 
   // Tap the peek bar's expand control -> the full list returns.
   await page.getByTestId("comments-sheet-resize").tap()

@@ -18,16 +18,21 @@ export type Summary = {
   workspace: string
 }
 
-// The library filter, encoded in the URL so the persistent nav rail can navigate
-// to a view (Favorites / a tag / a collection) from any page and so a filtered
-// library is shareable and survives reload. `q` is the free-text search.
+// The base library feed, chosen by ROUTE (path), not a query param: "/" = all,
+// "/favorites", "/following". Path = the feed you're viewing; query (LibrarySearch)
+// = how it's filtered. See routes/favorites.tsx + docs/decisions/0002.
+export type LibraryView = "all" | "favorites" | "following"
+
+// The library's URL-encoded filters + search (query params on the home route), so
+// the persistent nav rail can drive them from any page and a filtered/searched
+// library is shareable and survives reload. These compose ON TOP of the base view
+// (a tag within all, a search within favorites). The named feeds themselves are
+// routes, not params — see LibraryView.
 export type LibrarySearch = {
-  f?: "favorites"
-  // "following" → the activity feed (followed authors + repo path prefixes).
-  scope?: "following"
   tag?: string
   collection?: string
-  q?: string
+  // Free-text title search; composes with any view.
+  query?: string
   // Narrow to artifacts last changed by this GitHub login (synced collections).
   author?: string
 }

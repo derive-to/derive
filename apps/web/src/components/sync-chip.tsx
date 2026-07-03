@@ -46,8 +46,8 @@ export function SyncChip() {
       <SidebarMenuItem>
         <SidebarMenuButton asChild tooltip={`${label} · ${detail}`}>
           <Link
-            to="/settings"
-            search={{ tab: "github" }}
+            to="/settings/$section"
+            params={{ section: "github" }}
             aria-label={`${label} · ${detail}`}
             data-testid="sync-chip"
             className="text-primary [&_svg]:text-primary"
@@ -64,8 +64,8 @@ export function SyncChip() {
   return (
     <SidebarMenuItem className="pb-1">
       <Link
-        to="/settings"
-        search={{ tab: "github" }}
+        to="/settings/$section"
+        params={{ section: "github" }}
         data-testid="sync-chip"
         className="flex flex-col gap-1.5 rounded-lg border border-primary/30 bg-primary/5 px-2.5 py-2 outline-none hover:bg-primary/10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
       >

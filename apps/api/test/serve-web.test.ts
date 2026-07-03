@@ -30,14 +30,14 @@ describe("serve-web: SPA vs API path contract", () => {
       "/.well-known/oauth-protected-resource",
     ])
       expect(isApiPath(p)).toBe(true)
-    for (const p of ["/", "/a/abc123", "/login", "/settings/agents", "/library"])
+    for (const p of ["/", "/artifacts/abc123", "/login", "/settings/agents", "/library"])
       expect(isApiPath(p)).toBe(false)
   })
 
   it("falls back to the SPA shell for non-API GETs, JSON 404 for unknown API paths", async () => {
     const app = makeApp("SHELL_MARKER")
     expect((await app.request("/v1/ping")).status).toBe(200) // a real API route still wins
-    for (const p of ["/", "/a/xyz", "/settings/agents"]) {
+    for (const p of ["/", "/artifacts/xyz", "/settings/agents"]) {
       const r = await app.request(p)
       expect(r.status).toBe(200)
       expect(await r.text()).toContain("SHELL_MARKER") // deep client links → shell

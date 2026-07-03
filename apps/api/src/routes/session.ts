@@ -89,7 +89,7 @@ export const sessionRoutes = (ctx: AppContext) => {
   // Registered before /v1/users/:handle so "search" isn't read as a handle.
   app.get("/v1/users/search", async (c) => {
     if (!(await currentUser(c))) return fail(c, 401, "unauthenticated")
-    const q = (c.req.query("q") ?? "").trim()
+    const q = (c.req.query("query") ?? "").trim()
     if (!q) return c.json({ users: [] })
     const found = await meta.searchDiscoverableUsers(q, 20)
     return c.json({
@@ -103,13 +103,13 @@ export const sessionRoutes = (ctx: AppContext) => {
   })
 
   // The People directory — browse opted-in (discoverable) people to find someone to
-  // follow, the home the search backend never got. With `?q=` it searches; without, it
+  // follow, the home the search backend never got. With `?query=` it searches; without, it
   // BROWSES (the deliberate difference from /v1/users/search, which never enumerates).
   // Discoverable is opt-in, so browsing only surfaces people who chose to be found.
   // Signed-in only; public fields only (handle/name/avatar/role) — never email.
   app.get("/v1/people", async (c) => {
     if (!(await currentUser(c))) return fail(c, 401, "unauthenticated")
-    const q = (c.req.query("q") ?? "").trim()
+    const q = (c.req.query("query") ?? "").trim()
     const found = q
       ? await meta.searchDiscoverableUsers(q, 60)
       : await meta.listDiscoverableUsers(60)
@@ -264,7 +264,7 @@ export const sessionRoutes = (ctx: AppContext) => {
 
   // Directory for the @mention picker — people AND agents, so an agent can be
   // @mentioned like anyone. Authenticated callers only (a signed-in user or the
-  // static token); an anonymous visitor can never enumerate anyone. Optional ?q=
+  // static token); an anonymous visitor can never enumerate anyone. Optional ?query=
   // filters by name/email prefix.
   //
   // Scope: with ?artifact=<shortId> (and read access to it) the directory is the
@@ -276,7 +276,7 @@ export const sessionRoutes = (ctx: AppContext) => {
     const me = await currentUser(c)
     const isToken = safeEqual(bearer(c), deps.token)
     if (!me && !isToken) return fail(c, 401, "unauthenticated")
-    const q = (c.req.query("q") ?? "").trim().toLowerCase()
+    const q = (c.req.query("query") ?? "").trim().toLowerCase()
 
     const shortId = c.req.query("artifact")
     const found = shortId ? await meta.getByShortId(shortId) : null
