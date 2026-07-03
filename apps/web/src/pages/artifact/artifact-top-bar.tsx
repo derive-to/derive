@@ -105,7 +105,7 @@ export function ArtifactTopBar(props: {
             {/* View modes — focus strips the chrome to just the render; a check marks
                 the active reader toggle. */}
             <DropdownMenuItem data-testid="artifact-focus" onSelect={props.onFocus}>
-              <Maximize2 className="size-4" /> Focus mode
+              <Maximize2 className="size-4" aria-hidden /> Focus mode
             </DropdownMenuItem>
             {props.showReader && (
               <DropdownMenuItem data-testid="artifact-reader" onSelect={props.onReaderToggle}>

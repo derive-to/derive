@@ -6,6 +6,7 @@ import { API_BASE, ApiError, api, type Comment } from "@/api"
 import { CursorButton } from "@/components/cursor/cursor-button"
 import { Icon } from "@/components/icons"
 import { FloatingControl } from "@/components/shared/floating-control"
+import { Kbd } from "@/components/ui/kbd"
 import { useSidebar } from "@/components/ui/sidebar"
 import { toast } from "@/components/ui/sonner"
 import { useAuth } from "@/ctx"
@@ -763,8 +764,9 @@ export function Artifact() {
                 onClick={() => setFocus(false)}
                 className="absolute top-3 right-3 z-10"
               >
-                <Minimize2 className="size-4" />
+                <Minimize2 className="size-4" aria-hidden />
                 Exit focus
+                <Kbd className="max-sm:hidden">Esc</Kbd>
               </FloatingControl>
             )}
           </div>

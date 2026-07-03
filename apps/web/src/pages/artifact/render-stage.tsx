@@ -161,16 +161,22 @@ export function RenderStage({
               className="max-w-sm"
               action={
                 <Button variant="outline" data-testid="render-retry" onClick={retry}>
-                  Retry
+                  Try again
                 </Button>
               }
             />
           </div>
         )}
 
-        {/* Soft "updated in place" cue after a new version auto-swaps in. */}
+        {/* Soft "updated in place" cue after a new version auto-swaps in. Announced
+            politely so a screen-reader viewer hears the swap too — matching the boot
+            state's live region (the render's own status must be legible, not silent). */}
         {updatedTo != null && (
-          <div className="pointer-events-none absolute inset-x-0 top-3 z-10 flex justify-center">
+          <div
+            role="status"
+            aria-live="polite"
+            className="pointer-events-none absolute inset-x-0 top-3 z-10 flex justify-center"
+          >
             <span className="animate-in fade-in slide-in-from-top-1 rounded-full bg-card px-3 py-1 font-mono text-2xs text-muted-foreground shadow-[var(--shadow)] ring-1 ring-foreground/10">
               Updated · v{updatedTo}
             </span>
