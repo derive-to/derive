@@ -24,7 +24,6 @@ import {
   ResolvedSection,
 } from "./comment-thread"
 import { useCommentScope } from "./lib/comment-scope"
-import { MAT_GAP_PX } from "./render-stage"
 import { type PinItem, type Sel, selLabel } from "./types"
 
 type Tab = "comments" | "personal"
@@ -455,9 +454,7 @@ export function OpenPanel(props: {
         <PinnedZone
           pins={pinned}
           personal={tab === "personal"}
-          // The render floats in a matted frame (a MAT_GAP_PX top gap on desktop),
-          // so shift the pins down by that much to re-align with their highlights.
-          topInset={Math.max(0, headerH - MAT_GAP_PX)}
+          topInset={headerH}
           scrollY={scrollY}
           onScrollDoc={onScrollDoc}
           composer={composer}

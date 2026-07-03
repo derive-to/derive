@@ -697,7 +697,6 @@ export function Artifact() {
               />
             ) : (
               <ArtifactDocument
-                bare={focus}
                 shown={shown}
                 currentVersion={art.current_version}
                 title={art.title ?? shortId}

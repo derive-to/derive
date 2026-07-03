@@ -12,24 +12,17 @@ import { cn } from "@/lib/utils"
 // must be legible, not indistinguishable from "still loading").
 const BOOT_TIMEOUT_MS = 15_000
 
-// The desktop mat gap around the framed render (must match the `sm:p-3` below —
-// p-3 = 0.75rem = 12px). Exported so the comment margin can compensate: pins live
-// in the aside and anchor to the render's top, so shifting the render down by the
-// mat gap would misalign them by exactly this much unless the pinned zone accounts
-// for it (see comment-panels OpenPanel → PinnedZone topInset).
-export const MAT_GAP_PX = 12
-
 /**
- * The render stage — the artifact is the hero, framed as a matted object floating
- * on the workbench canvas (research: "the render is the hero; full-bleed inside a
- * matted panel"). The panel is a rounded, hairline-outlined white surface
- * (`outline-foreground/10`, no border — the images rule) with a soft shadow in
- * light / just the surface step + outline in dark. Boot and failure are explicit
- * states rendered INSIDE the mat so the frame's geometry never jumps.
+ * The render stage — the artifact is the hero. The sandboxed iframe fills the stage
+ * edge-to-edge (research: "the render is the hero; the iframe fills the panel
+ * edge-to-edge, zero internal padding"), framed by the workbench header above it and
+ * clipped to the content card's rounded corners (the shell's SidebarInset is
+ * `overflow-hidden rounded-xl`). NO mat gap: an artifact carries its own background,
+ * which can be any color, so a gap would frame a dark artifact in an awkward light
+ * border. Boot + failure are explicit states rendered inside so geometry never jumps.
  *
  * The frame/wrapper refs are owned by the page (the postMessage bridge + fullscreen
- * drive them) and passed in. `overlays` (deck bar, cursor layer, past-version
- * banner) mount inside the mat in later phases.
+ * drive them) and passed in. `overlays` (deck bar, cursor layer) mount inside.
  */
 export function RenderStage({
   rawSrc,
@@ -40,7 +33,6 @@ export function RenderStage({
   onFrameLoad,
   banner,
   overlays,
-  bare,
   className,
 }: {
   rawSrc: string
@@ -49,16 +41,14 @@ export function RenderStage({
    *  soft "Updated" badge flashes over the render (research: auto-swap + soft cue). */
   version?: number
   frameRef: RefObject<HTMLIFrameElement | null>
-  /** The fullscreen/present target — the mat itself. */
+  /** The fullscreen/present target — the render surface itself. */
   wrapRef: RefObject<HTMLDivElement | null>
   /** Called on the iframe's own `load` (the page's bridge handshakes off it). */
   onFrameLoad?: () => void
   /** A strip above the render (the past-version banner). */
   banner?: ReactNode
-  /** Absolutely-positioned children inside the mat (deck bar, cursor overlay). */
+  /** Absolutely-positioned children inside the render (deck bar, cursor overlay). */
   overlays?: ReactNode
-  /** Full-bleed, no mat gap (mobile / focus mode want max render area). */
-  bare?: boolean
   className?: string
 }) {
   // Boot/failure state is per-source: a new rawSrc (version swap, retry) resets it.
@@ -101,25 +91,12 @@ export function RenderStage({
   }, [version])
 
   return (
-    <div
-      className={cn(
-        "relative flex min-h-0 flex-1 flex-col",
-        // The mat gap: the framed render floats on the workbench canvas on desktop;
-        // full-bleed on phones / focus mode where every pixel of render counts.
-        bare ? "p-0" : "p-0 sm:p-3",
-        className,
-      )}
-    >
+    <div className={cn("relative flex min-h-0 flex-1 flex-col", className)}>
       {banner}
-      <div
-        ref={wrapRef}
-        className={cn(
-          "relative flex min-h-0 flex-1 flex-col overflow-hidden bg-white outline-1 -outline-offset-1 outline-foreground/10",
-          // Framed as a matted object off the canvas; dark drops the shadow (the
-          // surface step + outline carry it), matching the elevation rules.
-          bare ? "rounded-none outline-0" : "rounded-xl shadow-[var(--shadow)]",
-        )}
-      >
+      {/* The render fills edge-to-edge; the content card's rounded overflow-hidden
+          clips it, and the header above carries its top edge. bg-white is the
+          backdrop the boot state paints on before the iframe takes over. */}
+      <div ref={wrapRef} className="relative flex min-h-0 flex-1 flex-col overflow-hidden bg-white">
         <iframe
           key={attempt}
           ref={frameRef}
