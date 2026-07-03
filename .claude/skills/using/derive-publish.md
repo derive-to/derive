@@ -106,6 +106,42 @@ The `filename` parameter is a hint for content type detection:
 
 ---
 
+## Images & binary assets in a bundle
+
+A bundle's `files` map carries binary assets (screenshots, images, fonts) alongside the
+HTML/CSS/JS pages. Each `files` value is one of:
+
+- **text** — a plain string (a page).
+- **base64 data URI** — `"shot.png": "data:image/png;base64,iVBORw0K…"`. Fine for a small
+  icon, but a real screenshot balloons the tool call and you have to transcribe the
+  base64 exactly.
+- **asset handle (preferred for real images)** — upload the raw bytes first, then
+  reference the returned handle:
+
+  ```
+  # 1. Stream the bytes up as binary — no base64, nothing to transcribe.
+  curl -s -X POST "$DERIVE_URL/v1/assets" \
+    -H "authorization: Bearer $DERIVE_TOKEN" \
+    -H "content-type: image/png" \
+    --data-binary @shot.png
+  # → { "key": "9f86d081…", "ref": "asset:9f86d081…", "type": "image/png", "size": 20531 }
+
+  # 2. Reference the handle in publish (the map stays tiny):
+  publish(files = {
+    "index.html": "<img src=shot.png>",
+    "shot.png":   "asset:9f86d081…"
+  })
+  ```
+
+  `POST /v1/assets` accepts a raw binary body (as above) or a multipart `file` field, and
+  stores the bytes content-addressed (identical bytes dedup to one blob; re-uploading is
+  free). Supported: PNG, JPEG, GIF, WebP (max 25 MB each; SVG is rejected). The asset is
+  served with the doc's own visibility once published — it is not a public URL on its own.
+
+  Mix and match: base64 for a tiny inline icon, `asset:` handles for the screenshots.
+
+---
+
 ## Reading back what you published
 
 ```

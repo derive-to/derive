@@ -15,6 +15,13 @@ export const cleanPath = (p: string): string => p.replace(/^\//, "")
 // carry parameters (;charset=…), so match through to the required `;base64,` marker.
 const DATA_URI_BASE64 = /^data:[\w.+-]*\/?[\w.+-]*(?:;[\w.+-]+=[\w.+-]+)*;base64,/i
 
+// An asset reference — `asset:<64-hex sha256>`. A binary asset uploaded ahead of time
+// to POST /v1/assets (which returns exactly this string) is referenced by its
+// content-hash instead of inlined as base64. Lets an agent carry real screenshots in a
+// bundle without transcribing multi-MB base64 into the publish call — the bytes were
+// already streamed up as raw binary; the map only carries the 71-char handle.
+const ASSET_REF = /^asset:([0-9a-f]{64})$/i
+
 const base64ToBytes = (b64: string): Uint8Array => {
   const bin = atob(b64.replace(/\s+/g, ""))
   const out = new Uint8Array(bin.length)
@@ -23,19 +30,40 @@ const base64ToBytes = (b64: string): Uint8Array => {
 }
 
 /**
- * Decode a {path: content} map to {path: bytes}: a value that is a base64 data: URI
- * (`data:image/png;base64,…`) becomes raw bytes, everything else is UTF-8 text — so
- * screenshots, fonts, and any binary asset that makes up a site ride the SAME map as
- * the HTML/CSS/JS pages, carried over MCP without inlining multi-MB base64 into one
- * HTML string. The served content-type comes from the path extension (mimeFor), so
+ * Decode a {path: content} map to {path: bytes}. A value is, in priority order:
+ *  - an `asset:<sha256>` reference (from POST /v1/assets) → the stored blob's bytes,
+ *  - a base64 data: URI (`data:image/png;base64,…`) → raw decoded bytes,
+ *  - anything else → UTF-8 text.
+ * So HTML/CSS/JS pages, base64-inlined assets, AND pre-uploaded binary assets all ride
+ * the SAME map. The served content-type comes from the path extension (mimeFor), so
  * binary entries must be named with a real extension (shot.png, logo.svg, font.woff2).
  *
- * Throws if a value looks like a base64 data: URI but isn't decodable.
+ * `blobs` is required to resolve `asset:` references (omit it only where the map is
+ * known to be inline-only). Throws on a bad base64 data: URI or an unknown asset.
  */
-export const decodeBundleFiles = (files: Record<string, string>): Record<string, Uint8Array> => {
+export const decodeBundleFiles = async (
+  files: Record<string, string>,
+  blobs?: BlobStore,
+): Promise<Record<string, Uint8Array>> => {
   const enc = new TextEncoder()
   const entries: Record<string, Uint8Array> = {}
   for (const [path, value] of Object.entries(files)) {
+    const asset = ASSET_REF.exec(value.trim())
+    if (asset?.[1]) {
+      if (!blobs)
+        throw new PublishError(
+          400,
+          `asset references are not supported in this context ("${path}")`,
+        )
+      const bytes = await blobs.get(asset[1].toLowerCase())
+      if (!bytes)
+        throw new PublishError(
+          400,
+          `unknown asset for "${path}" — upload it to /v1/assets and reference the returned handle`,
+        )
+      entries[path] = bytes
+      continue
+    }
     const marker = DATA_URI_BASE64.exec(value)
     if (!marker) {
       entries[path] = enc.encode(value)
@@ -53,9 +81,12 @@ export const decodeBundleFiles = (files: Record<string, string>): Record<string,
 /**
  * Pack a {path: content} map into a zip the core publish path ingests exactly like an
  * HTTP bundle upload (it re-validates size, file count, paths, and entry point).
+ * `blobs` resolves any `asset:` references in the map.
  */
-export const zipBundleFiles = (files: Record<string, string>): Uint8Array =>
-  zipSync(decodeBundleFiles(files))
+export const zipBundleFiles = async (
+  files: Record<string, string>,
+  blobs?: BlobStore,
+): Promise<Uint8Array> => zipSync(await decodeBundleFiles(files, blobs))
 
 /**
  * Build the zip for an INCREMENTAL bundle publish: every file already in the bundle
@@ -76,7 +107,7 @@ export const mergeBundleZip = async (
     const bytes = await blobs.get(entry.key)
     if (bytes) entries[cleanPath(path)] = bytes
   }
-  for (const [path, bytes] of Object.entries(decodeBundleFiles(newFiles))) {
+  for (const [path, bytes] of Object.entries(await decodeBundleFiles(newFiles, blobs))) {
     entries[cleanPath(path)] = bytes
   }
   return zipSync(entries)

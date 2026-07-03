@@ -16,6 +16,7 @@ import { cliCallbackHTML } from "./oauth-cli-callback"
 import { consentHTML } from "./oauth-consent"
 import { agentRoutes } from "./routes/agents"
 import { analyticsRoutes } from "./routes/analytics"
+import { assetRoutes } from "./routes/assets"
 import { artifactRoutes } from "./routes/artifacts"
 import { collectionRoutes } from "./routes/collections"
 import { commentRoutes } from "./routes/comments"
@@ -448,6 +449,7 @@ export function createApp(deps: AppDeps): Hono {
     workspaceRoutes,
     agentRoutes,
     artifactRoutes,
+    assetRoutes,
     sharingRoutes,
     favoriteRoutes,
     followRoutes,
