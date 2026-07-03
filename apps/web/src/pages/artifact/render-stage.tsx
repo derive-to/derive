@@ -12,6 +12,13 @@ import { cn } from "@/lib/utils"
 // must be legible, not indistinguishable from "still loading").
 const BOOT_TIMEOUT_MS = 15_000
 
+// The desktop mat gap around the framed render (must match the `sm:p-3` below —
+// p-3 = 0.75rem = 12px). Exported so the comment margin can compensate: pins live
+// in the aside and anchor to the render's top, so shifting the render down by the
+// mat gap would misalign them by exactly this much unless the pinned zone accounts
+// for it (see comment-panels OpenPanel → PinnedZone topInset).
+export const MAT_GAP_PX = 12
+
 /**
  * The render stage — the artifact is the hero, framed as a matted object floating
  * on the workbench canvas (research: "the render is the hero; full-bleed inside a
