@@ -80,7 +80,10 @@ if (PG_URL) {
             `CREATE TABLE ${schema}."oauthClient" ("clientId" text primary key, name text, "userId" text, "createdAt" timestamptz)`,
           )
           await boot.query(
-            `CREATE TABLE ${schema}."oauthAccessToken" ("token" text primary key, "clientId" text, "userId" text, "scopes" text, "expiresAt" timestamptz)`,
+            // scopes is jsonb to match Better Auth's real table: node-postgres then
+            // returns it PARSED (a real array). The old text fixture is exactly why
+            // this lane never caught the prod 500 (`s.split is not a function`).
+            `CREATE TABLE ${schema}."oauthAccessToken" ("token" text primary key, "clientId" text, "userId" text, "scopes" jsonb, "expiresAt" timestamptz)`,
           )
           await boot.query(
             `CREATE TABLE ${schema}."oauthConsent" (id text primary key, "clientId" text, "userId" text)`,

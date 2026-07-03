@@ -9,6 +9,7 @@ import { resolveUserRef } from "../lib/resolve-user"
  *  list / create / switch. A workspace always keeps at least one Admin. */
 export const workspaceRoutes = (ctx: AppContext) => {
   const { meta, currentUser, activeWorkspace, setWsCookie, workspaceRole, workspaceCan } = ctx
+  const { privateOwnerId } = ctx
   const app = new Hono()
 
   // A workspace must always keep at least one Admin, so it stays manageable:
@@ -171,6 +172,17 @@ export const workspaceRoutes = (ctx: AppContext) => {
     const active = await activeWorkspace(c)
     const me = await currentUser(c)
     if (!me) {
+      // An OAuth agent lists its granting user's workspaces — the discovery
+      // surface for choosing an X-Derive-Workspace target. Registered workspace
+      // agents (no granting user) still see only their own workspace.
+      const owner = await privateOwnerId(c)
+      const mine = owner ? await meta.listWorkspaces(owner) : []
+      if (mine.length)
+        return c.json({
+          multi: true,
+          active,
+          workspaces: mine.map((w) => ({ id: w.id, name: w.name, role: w.role })),
+        })
       const ws = await meta.getWorkspace(active)
       return c.json({
         multi: true,

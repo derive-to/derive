@@ -211,9 +211,13 @@ type RunResult = { changes?: number; meta?: { changes?: number } }
  *  `{ [repoPath]: { artifact_id, sha } }`; a managed artifact is any id therein.
  *  Shared by both drivers so "is this artifact synced?" reads identically. */
 /** The oauth-provider stores granted scopes as a JSON array string
- *  (`["openid","derive:publish"]`); tolerate a space-separated form too. */
-export const parseOAuthScopes = (s: string | null): string[] => {
+ *  (`["openid","derive:publish"]`); tolerate a space-separated form too. On the
+ *  Postgres tier the driver hands json/jsonb columns back ALREADY PARSED, so the
+ *  value can arrive as an actual array — without the array branch every OAuth
+ *  bearer 500'd on prod (`s.split is not a function` inside getOAuthGrant). */
+export const parseOAuthScopes = (s: string | string[] | null): string[] => {
   if (!s) return []
+  if (Array.isArray(s)) return s.filter((x): x is string => typeof x === "string")
   try {
     const a = JSON.parse(s)
     if (Array.isArray(a)) return a.filter((x): x is string => typeof x === "string")

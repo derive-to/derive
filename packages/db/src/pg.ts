@@ -1580,7 +1580,9 @@ export class PgMetaStore implements MetaStore {
       user_email: string
       user_name: string | null
       client_id: string
-      scopes: string | null
+      // node-postgres returns json/jsonb columns already parsed, so this can be a
+      // real array; text columns stay strings. parseOAuthScopes handles both.
+      scopes: string | string[] | null
       expires_at: Date | string | number
       client_name: string
     }

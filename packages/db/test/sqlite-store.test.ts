@@ -142,6 +142,18 @@ describe("parseOAuthScopes", () => {
     expect(parseOAuthScopes("")).toEqual([])
     expect(parseOAuthScopes(null)).toEqual([])
   })
+
+  it("handles an already-parsed array (pg json/jsonb columns come back parsed)", () => {
+    // node-postgres parses json/jsonb before we ever see it: the value is a real
+    // array, not a string. This was the prod 500 — `s.split is not a function`
+    // in getOAuthGrant — for every OAuth bearer on the Postgres tier.
+    expect(parseOAuthScopes(["derive:read", "derive:publish"])).toEqual([
+      "derive:read",
+      "derive:publish",
+    ])
+    expect(parseOAuthScopes([])).toEqual([])
+    expect(parseOAuthScopes(["a", 1, "b"] as unknown as string[])).toEqual(["a", "b"]) // drops non-strings
+  })
 })
 
 // The people directory (browse), follower/following lists (the user-table JOIN), and the
