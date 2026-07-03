@@ -177,6 +177,7 @@ describe("github app auto-heal (GET /app verification)", () => {
     status: number,
     perms: Record<string, string> = {
       contents: "read",
+      issues: "read",
       metadata: "read",
       pull_requests: "write",
     },
