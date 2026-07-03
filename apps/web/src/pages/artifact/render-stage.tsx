@@ -1,4 +1,4 @@
-import { type ReactNode, type RefObject, useEffect, useState } from "react"
+import { type ReactNode, type RefObject, useEffect, useRef, useState } from "react"
 import { Icon } from "@/components/icons"
 import { Spinner } from "@/components/shared/spinner"
 import { StatusPanel } from "@/components/shared/status-panel"
@@ -34,6 +34,7 @@ export const MAT_GAP_PX = 12
 export function RenderStage({
   rawSrc,
   title,
+  version,
   frameRef,
   wrapRef,
   onFrameLoad,
@@ -44,6 +45,9 @@ export function RenderStage({
 }: {
   rawSrc: string
   title: string
+  /** The shown version — when it steps UP (a new version published in place), a
+   *  soft "Updated" badge flashes over the render (research: auto-swap + soft cue). */
+  version?: number
   frameRef: RefObject<HTMLIFrameElement | null>
   /** The fullscreen/present target — the mat itself. */
   wrapRef: RefObject<HTMLDivElement | null>
@@ -79,6 +83,22 @@ export function RenderStage({
     setPhase("booting")
     setAttempt((n) => n + 1)
   }
+
+  // "Updated" cue: when the shown version steps up (a peer published a new version
+  // and the render auto-swapped in place), flash a soft, non-blocking badge instead
+  // of jolting the viewer (research: soft cue, never a modal). Skips the initial
+  // mount and any backward navigation (viewing an earlier version).
+  const prevVersion = useRef<number | undefined>(undefined)
+  const [updatedTo, setUpdatedTo] = useState<number | null>(null)
+  useEffect(() => {
+    if (version == null) return
+    const prev = prevVersion.current
+    prevVersion.current = version
+    if (prev == null || version <= prev) return
+    setUpdatedTo(version)
+    const t = setTimeout(() => setUpdatedTo(null), 3500)
+    return () => clearTimeout(t)
+  }, [version])
 
   return (
     <div
@@ -145,6 +165,15 @@ export function RenderStage({
                 </Button>
               }
             />
+          </div>
+        )}
+
+        {/* Soft "updated in place" cue after a new version auto-swaps in. */}
+        {updatedTo != null && (
+          <div className="pointer-events-none absolute inset-x-0 top-3 z-10 flex justify-center">
+            <span className="animate-in fade-in slide-in-from-top-1 rounded-full bg-card px-3 py-1 font-mono text-2xs text-muted-foreground shadow-[var(--shadow)] ring-1 ring-foreground/10">
+              Updated · v{updatedTo}
+            </span>
           </div>
         )}
 

@@ -108,6 +108,7 @@ export function ArtifactDocument({
         <RenderStage
           rawSrc={rawSrc}
           title={title}
+          version={shown}
           frameRef={frameRef}
           wrapRef={presentWrapRef}
           onFrameLoad={onFrameLoad}
