@@ -525,6 +525,14 @@ export function buildContext(deps: AppDeps) {
     let ws: string
     if (ag) {
       ws = ag.org_id
+      // An OAuth agent may act in any workspace its granting user belongs to: an
+      // explicit X-Derive-Workspace header, validated against the OWNER's
+      // membership, overrides the grant's default. Fail-closed — an unknown or
+      // foreign id keeps the default — and registered workspace agents (no
+      // granting user) never roam.
+      const want = c.req.header("x-derive-workspace")
+      const owner = onBehalfCache.get(c)
+      if (want && owner && want !== ws && (await meta.getMembership(want, owner))) ws = want
     } else if (!me) {
       ws = getCookie(c, WS_COOKIE) || defaultOrg
     } else {
