@@ -15,10 +15,10 @@ describe("email content", () => {
     })
     expect(subject).toBe("Ann commented on Roadmap")
     const link = commentDeepLink("https://derive.to", artifact, "t_123")
-    expect(link).toBe("https://derive.to/a/spec0001?c=t_123")
+    expect(link).toBe("https://derive.to/artifacts/spec0001?comment=t_123")
     expect(html).toContain(link)
     expect(html).toContain("the second milestone")
-    expect(text).toContain("View in Derive: https://derive.to/a/spec0001?c=t_123")
+    expect(text).toContain("View in Derive: https://derive.to/artifacts/spec0001?comment=t_123")
   })
 
   it("uses mention phrasing when the email is for a mention", () => {

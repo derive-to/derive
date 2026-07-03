@@ -60,11 +60,15 @@ export function AppShell({ children }: { children: ReactNode }) {
   const [collections, setCollections] = useState<Collection[]>([])
   const [workspaces, setWorkspaces] = useState<Workspaces | null>(null)
 
-  // Public pages render for anonymous visitors too: artifact pages (/a/:ref,
-  // read-only with a sign-up CTA — the viral path) and profiles (/u/:handle,
+  // Public pages render for anonymous visitors too: artifact pages (/artifacts/:ref,
+  // read-only with a sign-up CTA — the viral path) and profiles (/users/:handle,
   // GitHub-style shareable). Every other route requires a session.
   const pathname = useRouterState({ select: (s) => s.location.pathname })
-  const publicView = pathname.startsWith("/a/") || pathname.startsWith("/u/")
+  const publicView = pathname.startsWith("/artifacts/") || pathname.startsWith("/users/")
+  // An anonymous visitor on a shared artifact gets the chrome-light PublicViewer
+  // (its own slim public header) — drop the app nav rail entirely so the render is
+  // the whole page (the viral view; research: the render is the hero).
+  const bareArtifact = !me && pathname.startsWith("/artifacts/")
 
   // Auth gate: bounce to /login on auth-only routes once we know there's no session.
   useEffect(() => {
@@ -74,7 +78,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   // First-run onboarding gate: a signed-in user who hasn't set a role yet (and
   // hasn't finished/skipped onboarding) gets the dedicated /welcome step. A role
   // being set, or the onboarded flag, clears it — so it shows once after signup,
-  // never loops. Public views (/a, /u) are left alone.
+  // never loops. Public views (/artifacts, /users) are left alone.
   useEffect(() => {
     if (loading || !me || publicView) return
     let onboarded = false
@@ -227,6 +231,19 @@ export function AppShell({ children }: { children: ReactNode }) {
   // connect-your-tools) instead, so the shell only ever renders for onboarded or
   // skipped users.
 
+  // Chrome-light shell for an anon shared artifact: no rail, no mobile top bar —
+  // the PublicViewer owns its own header/footer and the render fills the frame.
+  if (bareArtifact)
+    return (
+      <ShellCtx.Provider value={value}>
+        <TooltipProvider>
+          <div id="main-content" className="isolate flex h-full min-h-0 flex-col outline-none">
+            {children}
+          </div>
+        </TooltipProvider>
+      </ShellCtx.Provider>
+    )
+
   return (
     <ShellCtx.Provider value={value}>
       {/* Tooltips ride the sidebar's collapsed icon rows (the official
@@ -312,10 +329,12 @@ function MobileTopBar({
 // A pathname switch, not route metadata — labels are chrome, not content.
 function PageLabel({ pathname }: { pathname: string }) {
   if (pathname === "/") return "Library"
+  if (pathname === "/favorites") return "Favorites"
+  if (pathname === "/following") return "Following"
   if (pathname === "/people") return "People"
   if (pathname === "/new") return "New artifact"
   if (pathname.startsWith("/settings")) return "Settings"
-  if (pathname.startsWith("/a/")) return "Artifact"
-  if (pathname.startsWith("/u/")) return "Profile"
+  if (pathname.startsWith("/artifacts/")) return "Artifact"
+  if (pathname.startsWith("/users/")) return "Profile"
   return "Derive"
 }

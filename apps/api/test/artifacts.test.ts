@@ -129,13 +129,13 @@ describe("publish html file", () => {
     expect(res.status).toBe(201)
     const json = await res.json()
     shortId = json.short_id
-    expect(json.url).toBe(`http://derive.test/a/q1-review-${shortId}`)
+    expect(json.url).toBe(`http://derive.test/artifacts/q1-review-${shortId}`)
     expect(json.kind).toBe("file")
     expect(json.current_version).toBe(1)
   })
 
   it("serves artifact metadata and sandboxed raw content", async () => {
-    // The viewer at /a/:ref is the SPA (client-rendered); the server exposes the
+    // The viewer at /artifacts/:ref is the SPA (client-rendered); the server exposes the
     // artifact's metadata over the data API and the bytes over the sandboxed /raw.
     const detail = await app.request(`/v1/artifacts/${shortId}`)
     expect(detail.status).toBe(200)
@@ -308,7 +308,7 @@ describe("server-side search + cursor pagination", () => {
   it("searches by title server-side, case-insensitive", async () => {
     await upload("s1.md", "x", { title: "Quarterly ZZUNIQUE Report" })
     await upload("s2.md", "x", { title: "Totally unrelated" })
-    const r = await (await app.request("/v1/artifacts?q=zzunique")).json()
+    const r = await (await app.request("/v1/artifacts?query=zzunique")).json()
     const titles = r.artifacts.map((a: { title: string | null }) => a.title)
     expect(titles).toContain("Quarterly ZZUNIQUE Report")
     expect(titles.every((t: string | null) => /zzunique/i.test(t ?? ""))).toBe(true)
@@ -316,12 +316,12 @@ describe("server-side search + cursor pagination", () => {
 
   it("paginates newest-first with a keyset cursor (no overlap)", async () => {
     for (const n of ["A", "B", "C"]) await upload(`pg${n}.md`, "x", { title: `PGSEED ${n}` })
-    const p1 = await (await app.request("/v1/artifacts?q=PGSEED&limit=2")).json()
+    const p1 = await (await app.request("/v1/artifacts?query=PGSEED&limit=2")).json()
     expect(p1.artifacts).toHaveLength(2)
     expect(typeof p1.next_cursor).toBe("string")
     const p2 = await (
       await app.request(
-        `/v1/artifacts?q=PGSEED&limit=2&cursor=${encodeURIComponent(p1.next_cursor)}`,
+        `/v1/artifacts?query=PGSEED&limit=2&cursor=${encodeURIComponent(p1.next_cursor)}`,
       )
     ).json()
     expect(p2.artifacts).toHaveLength(1)

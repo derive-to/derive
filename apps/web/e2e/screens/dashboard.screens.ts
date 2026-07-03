@@ -263,7 +263,7 @@ test("capture the dashboard across themes and viewports", async ({ page: p }) =>
     await shot(`favorites-${theme}-desktop`)
 
     // An artifact page (open the metrics dashboard — visual render)
-    await p.goto(`/a/${ids[2]}`)
+    await p.goto(`/artifacts/${ids[2]}`)
     await settle(p)
     await shot(`artifact-${theme}-desktop`)
 

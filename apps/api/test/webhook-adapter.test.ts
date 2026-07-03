@@ -37,7 +37,7 @@ const makeDelivery = (over: Partial<DeliveryRecord> = {}): DeliveryRecord => ({
   payload: JSON.stringify({
     event: "version.published",
     at: "2026-01-01T00:00:00Z",
-    artifact: { short_id: "sample00", title: "Spec", url: "http://h/a/sample00" },
+    artifact: { short_id: "sample00", title: "Spec", url: "http://h/artifacts/sample00" },
     data: { version: 1 },
   }),
   status: "pending",

@@ -45,7 +45,7 @@ export function UserPod({
   const multi = !!workspaces?.multi
 
   const goProfile = () => {
-    if (me.username) nav({ to: "/u/$handle", params: { handle: me.username } })
+    if (me.username) nav({ to: "/users/$handle", params: { handle: me.username } })
   }
   const goSettings = () => nav({ to: "/settings" })
   const signOut = async () => {

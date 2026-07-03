@@ -57,10 +57,11 @@ export const slackRoutes = (ctx: AppContext) => {
         default_channel: null,
         created_at: new Date().toISOString(),
       } satisfies SlackInstallRecord)
-      return c.redirect("/settings?tab=slack")
+      // Slack lives under the Integrations section (there is no standalone Slack page).
+      return c.redirect("/settings/integrations")
     } catch (err) {
       log.warn("slack oauth failed", { error: err instanceof Error ? err.message : String(err) })
-      return c.redirect("/settings?tab=slack&error=oauth")
+      return c.redirect("/settings/integrations?error=oauth")
     }
   })
 

@@ -62,7 +62,7 @@ export const collectSiblingPaths = (html: string, sourcePath: string): string[] 
 
 /**
  * Rewrite each relative `<a href>` that resolves to a known sibling: point it at the
- * sibling's `/a/<ref>` URL and tag it `data-derive-nav="<ref>"` so the iframe client
+ * sibling's `/artifacts/<ref>` URL and tag it `data-derive-nav="<ref>"` so the iframe client
  * intercepts the click for an in-app transition. `refByPath` maps a resolved repo
  * path → its artifact ref (`<slug>-<short_id>`); paths absent from it are left as-is.
  * Already-tagged anchors are skipped so the pass is idempotent.
@@ -78,6 +78,6 @@ export const rewriteCrossDocLinks = (
     const path = resolveSiblingPath(sourcePath, href)
     const ref = path && refByPath.get(path)
     if (!ref) return tag
-    return `<a${pre} href=${q}/a/${ref}${q} data-derive-nav=${q}${ref}${q}${post}>`
+    return `<a${pre} href=${q}/artifacts/${ref}${q} data-derive-nav=${q}${ref}${q}${post}>`
   })
 }

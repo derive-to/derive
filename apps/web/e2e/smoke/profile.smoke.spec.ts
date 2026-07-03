@@ -24,7 +24,7 @@ test("follow a person → their public work shows on the profile and in the foll
   const shortId = ((await published.json()) as { short_id: string }).short_id
 
   // Bob visits Maya's profile (he's in a different workspace) — her public work is listed.
-  await bob.goto(`/u/${maya.username}`)
+  await bob.goto(`/users/${maya.username}`)
   await expect(bob.getByTestId("profile-card")).toBeVisible()
   await expect(bob.getByTestId(`profile-work-${shortId}`)).toBeVisible()
 
@@ -37,11 +37,11 @@ test("follow a person → their public work shows on the profile and in the foll
 
   // Her public work now appears in Bob's Following feed — even though it lives in Maya's
   // workspace, not Bob's (the cross-workspace people-follow path).
-  await bob.goto("/?scope=following")
+  await bob.goto("/following")
   await expect(bob.getByTestId(`artifact-card-open-${shortId}`)).toBeVisible()
 
   // The follow persists across a reload (it's server state, not just local).
-  await bob.goto(`/u/${maya.username}`)
+  await bob.goto(`/users/${maya.username}`)
   await expect(bob.getByTestId(`follow-${maya.username}`)).toHaveAttribute("aria-pressed", "true")
 })
 
@@ -64,7 +64,7 @@ test("follow a person from the command-palette people search", async ({ owner, s
   await expect(followBtn).toHaveAttribute("aria-pressed", "true")
 
   // And the follow really landed: it shows on the person's profile.
-  await bob.goto(`/u/${maya.username}`)
+  await bob.goto(`/users/${maya.username}`)
   await expect(bob.getByTestId(`follow-${maya.username}`)).toHaveAttribute("aria-pressed", "true")
 })
 
@@ -85,14 +85,14 @@ test("browse + follow from the People directory", async ({ owner, secondUser }) 
   await expect(followBtn).toHaveAttribute("aria-pressed", "true") // optimistic flip
 
   // The follow really landed — it shows on the person's profile.
-  await bob.goto(`/u/${maya.username}`)
+  await bob.goto(`/users/${maya.username}`)
   await expect(bob.getByTestId(`follow-${maya.username}`)).toHaveAttribute("aria-pressed", "true")
 })
 
 // A person can't follow themselves: the Follow button never renders on your own profile.
 test("the Follow button is absent on your own profile", async ({ owner }) => {
   const me = (await (await owner.request.get("/v1/me")).json()).user as { username: string }
-  await owner.goto(`/u/${me.username}`)
+  await owner.goto(`/users/${me.username}`)
   await expect(owner.getByTestId("profile-card")).toBeVisible()
   await expect(owner.getByTestId(`follow-${me.username}`)).toHaveCount(0)
   // …but you can edit your own handle from there.

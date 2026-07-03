@@ -39,7 +39,7 @@ describe("security: sandbox serving origin (A4)", () => {
   it("the sandbox host exposes ONLY raw bytes — never the API, auth, or the app", async () => {
     expect((await app.request("http://sandbox.test/v1/artifacts")).status).toBe(404)
     expect((await app.request("http://sandbox.test/api/auth/get-session")).status).toBe(404)
-    expect((await app.request(`http://sandbox.test/a/${shortId}`)).status).toBe(404)
+    expect((await app.request(`http://sandbox.test/artifacts/${shortId}`)).status).toBe(404)
     // Health stays reachable on the sandbox host (for its own monitoring).
     expect((await app.request("http://sandbox.test/healthz")).status).toBe(200)
   })

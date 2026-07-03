@@ -111,7 +111,7 @@ function PersonCard({ person: p }: { person: PublicProfile }) {
     // target, so the hover edge-brighten sits on a genuinely clickable surface.
     <li className="relative flex items-center gap-3 rounded-xl border bg-card p-3 hover:border-foreground/25">
       <Link
-        to="/u/$handle"
+        to="/users/$handle"
         params={{ handle: p.username }}
         data-testid={`people-card-${p.username}`}
         className="flex min-w-0 flex-1 items-center gap-3 rounded-lg outline-none after:absolute after:inset-0 after:rounded-xl focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"

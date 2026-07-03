@@ -91,6 +91,46 @@ function FilterItem({
   )
 }
 
+// A fixed-feed nav row: navigates to a top-level ROUTE (a named feed like /favorites
+// or /following, or the /people directory) rather than a library filter. The path IS
+// the destination — the FilterItem counterpart for feeds that earned their own route
+// (docs/decisions/0002). The optional count badge only inks once nonzero (a zero is noise).
+function NavItem({
+  icon,
+  label,
+  count,
+  to,
+  active,
+  testId,
+}: {
+  icon: IconName
+  label: string
+  count?: number
+  to: "/favorites" | "/following" | "/people"
+  active: boolean
+  testId?: string
+}) {
+  const { setOpenMobile } = useSidebar()
+  return (
+    <SidebarMenuItem>
+      <SidebarMenuButton asChild isActive={active} tooltip={label}>
+        <Link
+          to={to}
+          aria-label={label}
+          data-testid={testId}
+          aria-current={active ? "page" : undefined}
+          onClick={() => setOpenMobile(false)}
+          className={cn(ROW_ICON, (count ?? 0) > 0 && "pr-7")}
+        >
+          <Icon name={icon} />
+          <span>{label}</span>
+          {(count ?? 0) > 0 && <SidebarMenuBadge className={COUNT_BADGE}>{count}</SidebarMenuBadge>}
+        </Link>
+      </SidebarMenuButton>
+    </SidebarMenuItem>
+  )
+}
+
 // The brand header shared by the signed-in and anon rails: wordmark (the app's
 // one wordmark — there is no top bar on desktop), the collapse trigger (desktop
 // only; app-shell renders its own `library-menu` hamburger on mobile, and the
@@ -178,9 +218,11 @@ export function NavRail() {
   const loc = useLocation()
   const search = loc.search as LibrarySearch
   const onLibrary = loc.pathname === "/"
-  const isAll = onLibrary && !search.f && !search.scope && !search.tag && !search.collection
-  const isFav = onLibrary && search.f === "favorites"
-  const isFollowing = onLibrary && search.scope === "following"
+  // Feeds are routes now; the home library reads "active > All" only when no tag/
+  // collection filter narrows it. (A ?query= search doesn't change which feed you're in.)
+  const isAll = onLibrary && !search.tag && !search.collection
+  const isFav = loc.pathname === "/favorites"
+  const isFollowing = loc.pathname === "/following"
   const onPeople = loc.pathname === "/people"
   const onSettings = loc.pathname === "/settings"
   const tags = summary?.tags ?? []
@@ -329,38 +371,29 @@ export function NavRail() {
                 active={isAll}
                 testId="sidebar-all"
               />
-              <FilterItem
+              <NavItem
                 icon="favorites"
                 label="Favorites"
                 count={summary?.favorites}
-                search={{ f: "favorites" }}
+                to="/favorites"
                 active={isFav}
                 testId="sidebar-favorites"
               />
-              <FilterItem
+              <NavItem
                 icon="following"
                 label="Following"
-                search={{ scope: "following" }}
+                to="/following"
                 active={isFollowing}
                 testId="nav-following"
               />
-              {/* People directory — a real route, not a library filter (FilterItem
-                  always links to "/"). Find + follow people. */}
-              <SidebarMenuItem>
-                <SidebarMenuButton asChild isActive={onPeople} tooltip="People">
-                  <Link
-                    to="/people"
-                    aria-label="People"
-                    data-testid="nav-people"
-                    aria-current={onPeople ? "page" : undefined}
-                    onClick={closeMobile}
-                    className={ROW_ICON}
-                  >
-                    <Icon name="user" />
-                    <span>People</span>
-                  </Link>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
+              {/* People directory — the other fixed-feed route, a peer of the two feeds. */}
+              <NavItem
+                icon="user"
+                label="People"
+                to="/people"
+                active={onPeople}
+                testId="nav-people"
+              />
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>

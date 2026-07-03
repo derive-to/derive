@@ -31,7 +31,7 @@ test("the presence stack opens a popover listing each viewer by handle and role"
   await openArtifact(owner, id)
 
   // A second account opens the same artifact → they join presence (heartbeat).
-  await secondUser.page.goto(`/a/${id}`)
+  await secondUser.page.goto(`/artifacts/${id}`)
   await expect(secondUser.page.getByText("Comments", { exact: true })).toBeVisible()
 
   // The second user's server-assigned public handle — the identity presence shows.

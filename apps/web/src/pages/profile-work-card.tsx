@@ -14,7 +14,7 @@ export function ProfileWorkCard({ artifact: a }: { artifact: Artifact }) {
   const updated = a.updated_at ?? a.created_at ?? a.versions[0]?.created_at
   return (
     <Link
-      to="/a/$ref"
+      to="/artifacts/$ref"
       params={{ ref: refFor(a) }}
       data-testid={`profile-work-${a.short_id}`}
       // Interactive card, mirroring the library card exactly: a resting soft shadow

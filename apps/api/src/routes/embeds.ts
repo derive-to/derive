@@ -23,16 +23,16 @@ import type { AppContext } from "../context"
 import { fail } from "../lib/http"
 
 /**
- * Unfurl + embed surface. Turns a `/a/:ref` share link into a rich card and an
+ * Unfurl + embed surface. Turns a `/artifacts/:ref` share link into a rich card and an
  * embeddable iframe, so a Derive link looks good in Slack / Discord / X / Notion and
  * can be dropped into any page. Three public, anonymous-readable endpoints under
- * `/v1` (worker-first in both runtimes) plus a server-rendered `/a/:ref` that
+ * `/v1` (worker-first in both runtimes) plus a server-rendered `/artifacts/:ref` that
  * injects OG/Twitter meta into the SPA shell for crawlers (which don't run JS):
  *
  *   GET /v1/og/:ref        the OG card image (SVG, 1200x630)
  *   GET /v1/oembed?url=…   the oEmbed document (rich; a sandboxed iframe)
  *   GET /v1/embed/:ref     the embeddable view (iframe target)
- *   GET /a/:ref            the SPA shell with per-artifact unfurl meta injected
+ *   GET /artifacts/:ref            the SPA shell with per-artifact unfurl meta injected
  *
  * Visibility is honored against the *request* actor: a crawler is anonymous, so
  * org/password artifacts never leak a title — they get a generic locked card.
@@ -51,7 +51,7 @@ export const embedRoutes = (ctx: AppContext) => {
       meta.listComments(artifact.id),
       meta.getVersion(artifact.id, artifact.current_version),
     ])
-    const ref = artifactUrl(baseUrl, artifact).slice(`${baseUrl}/a/`.length)
+    const ref = artifactUrl(baseUrl, artifact).slice(`${baseUrl}/artifacts/`.length)
     return {
       title: artifact.title ?? "Untitled",
       kindLabel: kindLabel(version?.content_type, artifact.kind === "bundle"),
@@ -125,7 +125,7 @@ export const embedRoutes = (ctx: AppContext) => {
 
   // The profile OG card image (SVG, 1200x630). Anonymous-readable; a missing handle gets
   // a generic Derive card (still 200 so the unfurl shows something). Cached hard.
-  app.get("/v1/og/u/:handle", async (c) => {
+  app.get("/v1/og/users/:handle", async (c) => {
     const card = await profileCardFor(c.req.param("handle"))
     const svg = ogProfileCardSvg(
       card ?? {
@@ -153,7 +153,7 @@ export const embedRoutes = (ctx: AppContext) => {
     let ref: string
     try {
       const path = new URL(url).pathname
-      const m = path.match(/^\/a\/([^/]+)$/)
+      const m = path.match(/^\/artifacts\/([^/]+)$/)
       if (!m?.[1]) return fail(c, 404, "not an artifact url")
       ref = decodeURIComponent(m[1])
     } catch {
@@ -192,7 +192,7 @@ export const embedRoutes = (ctx: AppContext) => {
   const getShell = async (): Promise<string | null> =>
     ctx.deps.shell ?? (ctx.deps.shellFetch ? await ctx.deps.shellFetch() : null)
   if (ctx.deps.shell || ctx.deps.shellFetch)
-    app.get("/a/:ref", async (c) => {
+    app.get("/artifacts/:ref", async (c) => {
       const shell = await getShell()
       if (!shell) return c.notFound()
       const ref = c.req.param("ref")
@@ -201,20 +201,21 @@ export const embedRoutes = (ctx: AppContext) => {
       // injects NO unfurl meta, so the removed title doesn't live on for crawlers.
       if (!artifact || artifact.removed_at) return c.html(shell)
       // Canonicalise any non-canonical ref (bare id, stale name, legacy order) to
-      // /a/<name>-<shortId> so the browser/crawler holds the readable URL. 302 (not 301)
+      // /artifacts/<name>-<shortId> so the browser/crawler holds the readable URL. 302 (not 301)
       // so a later rename re-canonicalises instead of being cached. Only ever for an
       // artifact the actor may read (readable() already authorised), so a gated title
       // can't leak via the redirect. Preserves the @vN suffix and the query string.
       const { version } = parseRef(ref)
       const canonical = version ? `${refFor(artifact)}@v${version}` : refFor(artifact)
-      if (ref !== canonical) return c.redirect(`/a/${canonical}${new URL(c.req.url).search}`, 302)
+      if (ref !== canonical)
+        return c.redirect(`/artifacts/${canonical}${new URL(c.req.url).search}`, 302)
       return c.html(injectHead(shell, unfurlMetaTags(await infoFor(artifact))))
     })
   // Server-rendered profile URL: the SPA shell with profile OG/Twitter meta injected for
   // crawlers (which don't run JS). Humans get the SPA as usual (the meta is inert). Only
   // public profile fields go into the head; an unclaimed handle serves the bare shell.
   if (ctx.deps.shell || ctx.deps.shellFetch)
-    app.get("/u/:handle", async (c) => {
+    app.get("/users/:handle", async (c) => {
       const shell = await getShell()
       if (!shell) return c.notFound()
       const card = await profileCardFor(c.req.param("handle"))
@@ -226,15 +227,15 @@ export const embedRoutes = (ctx: AppContext) => {
             username: card.username,
             name: card.name,
             description: profileSummary(card),
-            pageUrl: `${baseUrl}/u/${card.username}`,
-            imageUrl: `${baseUrl}/v1/og/u/${card.username}`,
+            pageUrl: `${baseUrl}/users/${card.username}`,
+            imageUrl: `${baseUrl}/v1/og/users/${card.username}`,
           }),
         ),
       )
     })
-  // A copy-pasted share link with a trailing slash ("/a/slug-id/") would otherwise
+  // A copy-pasted share link with a trailing slash ("/artifacts/slug-id/") would otherwise
   // 404; canonicalize it to the no-slash form.
-  app.get("/a/:ref/", (c) => c.redirect(`/a/${c.req.param("ref")}`, 301))
+  app.get("/artifacts/:ref/", (c) => c.redirect(`/artifacts/${c.req.param("ref")}`, 301))
 
   return app
 }

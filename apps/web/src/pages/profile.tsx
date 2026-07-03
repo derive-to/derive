@@ -26,7 +26,7 @@ import { profileArtifactsQuery, profileQuery } from "@/lib/queries"
 import { CardGrid } from "./library/card-grid"
 import { ProfileWorkCard } from "./profile-work-card"
 
-const route = getRouteApi("/u/$handle")
+const route = getRouteApi("/users/$handle")
 
 // The rich public profile: an identity card (avatar, name, @handle, role, bio, GitHub
 // link), a stats row (works / followers / following), a Follow button, and a grid of
@@ -187,7 +187,7 @@ export function Profile() {
                       onClaimed={(username) => {
                         setMe(me ? { ...me, username } : me)
                         setEditing(false)
-                        nav({ to: "/u/$handle", params: { handle: username } })
+                        nav({ to: "/users/$handle", params: { handle: username } })
                       }}
                     />
                   </div>
@@ -267,7 +267,7 @@ function PeopleStat({
             {people.map((p) => (
               <li key={p.username}>
                 <Link
-                  to="/u/$handle"
+                  to="/users/$handle"
                   params={{ handle: p.username }}
                   onClick={() => setOpen(false)}
                   className="flex items-center gap-3 rounded-md p-2 outline-none hover:bg-secondary focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"

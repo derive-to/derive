@@ -61,7 +61,7 @@ export async function publishArtifact(
 // Open an artifact's page and wait for the comment panel to be ready — the
 // deterministic "artifact view is interactive" gate every comment test needs.
 export async function openArtifact(page: Page, shortId: string): Promise<void> {
-  await page.goto(`/a/${shortId}`)
+  await page.goto(`/artifacts/${shortId}`)
   await expect(page.getByText("Comments", { exact: true })).toBeVisible()
 }
 

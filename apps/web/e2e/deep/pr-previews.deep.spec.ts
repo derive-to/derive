@@ -59,7 +59,7 @@ test("PR previews render in the GitHub settings tab", async ({ owner }) => {
     await route.fulfill({ json: SYNC_PAYLOAD })
   })
 
-  await owner.goto("/settings?tab=github")
+  await owner.goto("/settings/github")
 
   await expect(owner.getByText("Pull request previews")).toBeVisible()
   // Both previews render. The title drops the "PR #<n>:" prefix the API adds; the

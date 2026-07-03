@@ -38,7 +38,7 @@ export function PublishCard() {
     setBusy(true)
     try {
       const a = await api.publish(f, { title: f.name.replace(/\.[^.]+$/, ""), visibility: "org" })
-      nav({ to: "/a/$ref", params: { ref: refFor(a) } })
+      nav({ to: "/artifacts/$ref", params: { ref: refFor(a) } })
     } catch (e) {
       toast.error((e as Error).message)
       setBusy(false)

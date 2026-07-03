@@ -28,6 +28,7 @@ import { canCommentWithRole, shouldPromptSignInToComment } from "./lib/comment-a
 import { groupThreads, parseAnchor } from "./lib/layout"
 import { parseRef, refFor } from "./parse-ref"
 import { PasswordGate } from "./password-gate"
+import { PublicViewer } from "./public-viewer"
 import { Presence } from "./rail-deck"
 import { SourceEditor } from "./source-editor"
 import type { PinItem, Sel } from "./types"
@@ -80,7 +81,7 @@ function DocFab({
 }
 
 export function Artifact() {
-  const { ref } = useParams({ from: "/a/$ref" })
+  const { ref } = useParams({ from: "/artifacts/$ref" })
   const { shortId, version } = parseRef(ref)
   const { me, loading } = useAuth()
   const nav = useNavigate()
@@ -110,7 +111,7 @@ export function Artifact() {
   const [editTitle, setEditTitle] = useState("")
 
   // Canonicalise the URL client-side: once the artifact is loaded, rewrite any
-  // non-canonical ref (bare id, stale name, legacy order) to /a/<name>-<shortId> so
+  // non-canonical ref (bare id, stale name, legacy order) to /artifacts/<name>-<shortId> so
   // the browser holds the readable URL. replace:true so Back doesn't bounce through
   // the old ref; preserves the @vN suffix and the current search.
   useEffect(() => {
@@ -119,7 +120,7 @@ export function Artifact() {
       ? `${refFor({ short_id: shortId, title: art.title })}@v${version}`
       : refFor({ short_id: shortId, title: art.title })
     if (ref !== canonical)
-      nav({ to: "/a/$ref", params: { ref: canonical }, search: (s) => s, replace: true })
+      nav({ to: "/artifacts/$ref", params: { ref: canonical }, search: (s) => s, replace: true })
   }, [art, ref, version, shortId, nav])
 
   // Comments UI state shared across the page, the panel, and the iframe bridge.
@@ -196,8 +197,8 @@ export function Artifact() {
     onNavigate: (ref, newTab) => {
       // Same-origin SPA route. A modified/middle click opens it un-sandboxed in a new
       // tab (the frame's own new tab would inherit the sandbox and break the app).
-      if (newTab) window.open(`/a/${ref}`, "_blank", "noopener")
-      else nav({ to: "/a/$ref", params: { ref } })
+      if (newTab) window.open(`/artifacts/${ref}`, "_blank", "noopener")
+      else nav({ to: "/artifacts/$ref", params: { ref } })
     },
   })
 
@@ -260,13 +261,13 @@ export function Artifact() {
     if (!loading && !me && failed && !locked && gated) nav({ to: "/login" })
   }, [loading, me, failed, locked, error, nav])
 
-  // Deep link: ?c=<thread> opens the panel, activates that thread, and jumps to
+  // Deep link: ?comment=<thread> opens the panel, activates that thread, and jumps to
   // its text. Runs once, after comments are in.
   const deepLinked = useRef(false)
   useEffect(() => {
     if (deepLinked.current || comments.length === 0) return
     deepLinked.current = true
-    const cid = new URLSearchParams(window.location.search).get("c")
+    const cid = new URLSearchParams(window.location.search).get("comment")
     const target = cid ? comments.find((c) => c.thread_id === cid) : undefined
     if (target) {
       // Open the tab the thread lives on, or its anchor won't be live in the doc.
@@ -419,7 +420,10 @@ export function Artifact() {
     load,
     refetchComments,
     onRestoredJump: () =>
-      nav({ to: "/a/$ref", params: { ref: refFor({ short_id: shortId, title: art.title }) } }),
+      nav({
+        to: "/artifacts/$ref",
+        params: { ref: refFor({ short_id: shortId, title: art.title }) },
+      }),
     setEditing,
     setSrc,
     setTitle: setEditTitle,
@@ -440,6 +444,49 @@ export function Artifact() {
   // On phones the comments live in a slide-up sheet, so the in-flow aside has
   // no width and the document gets the full screen.
   const asideWidth = isMobile ? 0 : panel === "open" ? 340 : 0
+
+  // Anonymous visitor → the chrome-light public/viral viewer (the app shell has
+  // dropped the rail). The render is the hero; a slim public header carries the
+  // brand, the creator byline, presence, and the growth verbs. The comment/editor
+  // chrome is absent — the API gates every write for anon anyway.
+  if (isAnon)
+    return (
+      <PublicViewer
+        art={art}
+        returnTo={`/artifacts/${ref}`}
+        viewers={live.viewers}
+        isMobile={isMobile}
+      >
+        <ArtifactDocument
+          shown={shown}
+          currentVersion={art.current_version}
+          title={art.title ?? shortId}
+          rawSrc={rawSrc}
+          view={view}
+          diff={diff}
+          diffFailed={diffFailed}
+          onDiffRetry={retryDiff}
+          restoring={restoring}
+          deck={deck}
+          frameRef={frame}
+          presentWrapRef={presentWrap}
+          cursor={live.cursor}
+          onScrollDoc={scrollBy}
+          onFrameLoad={onFrameLoad}
+          onToggleDiff={() => setView(view === "diff" ? "preview" : "diff")}
+          onRestore={() => restore(shown)}
+          onBackToCurrent={() =>
+            nav({
+              to: "/artifacts/$ref",
+              params: { ref: refFor({ short_id: shortId, title: art.title }) },
+            })
+          }
+          onDeckPrev={() => deckCmd("prev")}
+          onDeckNext={() => deckCmd("next")}
+          onFullscreen={toggleFullscreen}
+        />
+      </PublicViewer>
+    )
 
   return (
     <ActionsCtx.Provider value={actions}>
@@ -473,7 +520,7 @@ export function Artifact() {
             goTo={(n) => {
               const base = refFor({ short_id: shortId, title: art.title })
               nav({
-                to: "/a/$ref",
+                to: "/artifacts/$ref",
                 params: { ref: n === art.current_version ? base : `${base}@v${n}` },
               })
             }}
@@ -636,7 +683,7 @@ export function Artifact() {
                 onRestore={() => restore(shown)}
                 onBackToCurrent={() =>
                   nav({
-                    to: "/a/$ref",
+                    to: "/artifacts/$ref",
                     params: { ref: refFor({ short_id: shortId, title: art.title }) },
                   })
                 }
@@ -665,7 +712,9 @@ export function Artifact() {
                 onClick={() =>
                   nav({
                     to: "/login",
-                    search: { return_to: `/a/${refFor({ short_id: shortId, title: art.title })}` },
+                    search: {
+                      return_to: `/artifacts/${refFor({ short_id: shortId, title: art.title })}`,
+                    },
                   })
                 }
               >
