@@ -82,6 +82,16 @@ describe.skipIf(process.env.DERIVE_TEST_DB === "pg")("OAuth agent workspace targ
     expect(res.status).toBe(201)
     const { short_id } = (await res.json()) as { short_id: string }
     expect((await meta.getByShortId(short_id))?.org_id).toBe("ws_two")
+
+    // authorize() must agree with the override: commenting on the artifact just
+    // published into ws_two works through the same header (this 403'd when the
+    // override lived only in activeWorkspace and not on the agent record).
+    const cm = await app.request(`/v1/artifacts/${short_id}/comments`, {
+      method: "POST",
+      headers: { ...bearer, "x-derive-workspace": "ws_two", "content-type": "application/json" },
+      body: JSON.stringify({ body_md: "anchored question" }),
+    })
+    expect(cm.status).toBe(201)
   })
 
   it("fails closed: a workspace the owner is NOT a member of keeps the default", async () => {

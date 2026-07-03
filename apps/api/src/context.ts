@@ -332,6 +332,15 @@ export function buildContext(deps: AppDeps) {
         if (o) {
           a = o.rec
           owner = o.ownerId
+          // An OAuth agent may act in any workspace its granting user belongs to:
+          // an explicit X-Derive-Workspace header, validated against the OWNER's
+          // membership, re-homes the agent record itself — so activeWorkspace AND
+          // every authorize() comparison agree on the target. Fail-closed: an
+          // unknown or foreign id keeps the grant's default workspace. Registered
+          // workspace agents (no granting user) never roam.
+          const want = c.req.header("x-derive-workspace")
+          if (want && want !== a.org_id && (await meta.getMembership(want, owner)))
+            a = { ...a, org_id: want }
         }
       }
     }
@@ -524,15 +533,10 @@ export function buildContext(deps: AppDeps) {
     const me = ag ? null : await currentUser(c)
     let ws: string
     if (ag) {
+      // agentFor already re-homed an OAuth agent's org_id when a validated
+      // X-Derive-Workspace header was present, so authorize() and this resolver
+      // can never disagree on the workspace.
       ws = ag.org_id
-      // An OAuth agent may act in any workspace its granting user belongs to: an
-      // explicit X-Derive-Workspace header, validated against the OWNER's
-      // membership, overrides the grant's default. Fail-closed — an unknown or
-      // foreign id keeps the default — and registered workspace agents (no
-      // granting user) never roam.
-      const want = c.req.header("x-derive-workspace")
-      const owner = onBehalfCache.get(c)
-      if (want && owner && want !== ws && (await meta.getMembership(want, owner))) ws = want
     } else if (!me) {
       ws = getCookie(c, WS_COOKIE) || defaultOrg
     } else {
