@@ -48,6 +48,7 @@ export const artifactRoutes = (ctx: AppContext) => {
     currentUser,
     actingUser,
     activeWorkspace,
+    privateOwnerId,
     actorFor,
     authorize,
     workspaceCan,
@@ -387,6 +388,31 @@ export const artifactRoutes = (ctx: AppContext) => {
           thread_id: t.thread_id,
           state: t.state,
         })
+      // Open a review round if the publisher asked for one (the /derive loop). The
+      // reviewer is the human the agent acts for; falls back to the workspace's first
+      // owner so a headless publish still has someone to ask. No human to ask → skip.
+      if (body["request_review"] === "true" || body["request_review"] === "1") {
+        const owner = user?.id ?? (await privateOwnerId(c))
+        const reviewer =
+          owner ??
+          (await meta.listMemberships(org)).find((m) => m.role === "owner")?.user_id ??
+          null
+        if (reviewer) {
+          const round = await meta.createReviewRound({
+            id: newId("rr"),
+            artifact_id: artifact.id,
+            version: version.n,
+            requested_by: actor?.id ?? "agent",
+            requested_for: reviewer,
+            note: str(body["review_note"]) ?? null,
+          })
+          bus.publish(artifact.id, { type: "review.requested", round_id: round.id })
+          await notify(artifact, "review.requested", {
+            version: version.n,
+            requested_by: actor?.name ?? "An agent",
+          })
+        }
+      }
       const versions = await meta.listVersions(artifact.id)
       return c.json({ ...toJson(deps.baseUrl, artifact, versions), published: version.n }, 201)
     } catch (err) {

@@ -18,6 +18,9 @@ export const DOMAIN_EVENTS = [
   "proposal.created",
   "proposal.approved",
   "proposal.changes_requested",
+  "review.requested",
+  "review.sent_back",
+  "review.approved",
   "presence",
   "cursor",
   "notification",
@@ -33,6 +36,9 @@ export const WEBHOOK_EVENTS = [
   "proposal.created",
   "proposal.approved",
   "proposal.changes_requested",
+  "review.requested",
+  "review.sent_back",
+  "review.approved",
 ] as const
 export type WebhookEvent = (typeof WEBHOOK_EVENTS)[number]
 

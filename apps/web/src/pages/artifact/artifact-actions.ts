@@ -124,7 +124,6 @@ export function artifactActions(p: {
       author: me?.name ?? me?.email ?? "You",
       state: "open",
       created_at: new Date().toISOString(),
-      visibility: opts?.visibility ?? "public",
       reactions: {},
       mentions: opts?.mentions,
     }
@@ -135,8 +134,6 @@ export function artifactActions(p: {
         thread_id: opts?.threadId,
         anchor: opts?.threadId ? undefined : (opts?.anchor ?? undefined),
         mentions: opts?.mentions?.length ? opts.mentions : undefined,
-        // New thread only — a reply inherits its thread's visibility server-side.
-        visibility: opts?.threadId ? undefined : opts?.visibility,
       })
       qc.setQueryData<Comment[]>(key, (old) =>
         (old ?? []).map((cmt) => (cmt.id === tempId ? real : cmt)),

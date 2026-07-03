@@ -37,7 +37,6 @@ export function ArtifactComments(p: {
   /** Active comment surface: public team thread vs your personal notes. */
   tab: "comments" | "personal"
   setTab: Dispatch<SetStateAction<"comments" | "personal">>
-  personalCount: number
   publicCount: number
   asideWidth: number
   openCount: number
@@ -119,7 +118,6 @@ export function ArtifactComments(p: {
             <OpenPanel
               tab={p.tab}
               setTab={p.setTab}
-              personalCount={p.personalCount}
               publicCount={p.publicCount}
               openCount={p.openCount}
               scrollY={p.scrollY}
@@ -152,7 +150,6 @@ export function ArtifactComments(p: {
           open={panel === "open"}
           tab={p.tab}
           setTab={p.setTab}
-          personalCount={p.personalCount}
           publicCount={p.publicCount}
           openThreads={p.openThreads}
           resolved={p.resolved}

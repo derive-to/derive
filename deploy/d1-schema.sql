@@ -58,8 +58,6 @@ CREATE TABLE IF NOT EXISTS comment (
   author TEXT NOT NULL,
   author_id TEXT,
   state TEXT NOT NULL DEFAULT 'open',
-  visibility TEXT NOT NULL DEFAULT 'public',
-  owner_id TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   meta TEXT,
   FOREIGN KEY (artifact_id) REFERENCES artifact(id)
@@ -311,6 +309,21 @@ CREATE TABLE IF NOT EXISTS proposal (
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   FOREIGN KEY (artifact_id) REFERENCES artifact(id)
 );
+
+CREATE TABLE IF NOT EXISTS review_round (
+  id TEXT PRIMARY KEY,
+  artifact_id TEXT NOT NULL,
+  version INTEGER NOT NULL,
+  requested_by TEXT NOT NULL,
+  requested_for TEXT NOT NULL,
+  state TEXT NOT NULL DEFAULT 'pending',
+  note TEXT,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  resolved_at TEXT,
+  FOREIGN KEY (artifact_id) REFERENCES artifact(id)
+);
+
+CREATE INDEX IF NOT EXISTS review_round_artifact ON review_round (artifact_id, requested_for);
 
 CREATE TABLE IF NOT EXISTS report (
   id TEXT PRIMARY KEY,

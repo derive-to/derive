@@ -40,6 +40,7 @@ import type {
   NewProposal,
   NewReport,
   NewRepoSource,
+  NewReviewRound,
   NewVersion,
   NewView,
   NewWebhook,
@@ -51,6 +52,8 @@ import type {
   ReportRecord,
   ReportState,
   RepoSourceRecord,
+  ReviewRoundRecord,
+  ReviewRoundState,
   Role,
   SlackInstallRecord,
   SlackThreadLinkRecord,
@@ -104,6 +107,7 @@ import {
   proposal,
   report,
   repoSource,
+  reviewRound,
   slackInstall,
   slackThreadLink,
   version,
@@ -135,6 +139,7 @@ export const schema = {
   follow,
   artifactTag,
   proposal,
+  reviewRound,
   agent,
   agentMention,
   collection,
@@ -164,6 +169,7 @@ const _schemaShapes: Shapes<typeof schema> = {
   notification: true,
   follow: true,
   proposal: true,
+  reviewRound: true,
   agent: true,
   agentMention: true,
   collection: true,
@@ -351,17 +357,9 @@ export class PgMetaStore implements MetaStore {
   }
 
   listComments(artifactId: string, opts?: CommentListOpts): Promise<CommentRecord[]> {
-    // Visibility filter: fail-closed (see MetaStore.listComments). Default → public
-    // only; a viewer also sees their own personal comments; includeAll bypasses.
-    const vis = opts?.includeAll
-      ? undefined
-      : opts?.viewerOwnerId
-        ? or(eq(comment.visibility, "public"), eq(comment.owner_id, opts.viewerOwnerId))
-        : eq(comment.visibility, "public")
     const where = and(
       eq(comment.artifact_id, artifactId),
       opts?.state ? eq(comment.state, opts.state) : undefined,
-      vis,
     )
     return this.db.select().from(comment).where(where).orderBy(asc(comment.created_at))
   }
@@ -1380,6 +1378,60 @@ export class PgMetaStore implements MetaStore {
       .update(proposal)
       .set({ ...fields, decided_at: new Date().toISOString() })
       .where(eq(proposal.id, id))
+      .returning()
+    return rows[0] ?? null
+  }
+
+  // ---- Review rounds -----------------------------------------------------
+  async createReviewRound(r: NewReviewRound): Promise<ReviewRoundRecord> {
+    // Replace this person's prior pending round so the re-request wins and the
+    // partial unique index holds.
+    await this.db
+      .delete(reviewRound)
+      .where(
+        and(
+          eq(reviewRound.artifact_id, r.artifact_id),
+          eq(reviewRound.requested_for, r.requested_for),
+          eq(reviewRound.state, "pending"),
+        ),
+      )
+    const rows = await this.db.insert(reviewRound).values(r).returning()
+    return one(rows)
+  }
+  async getPendingRound(
+    artifactId: string,
+    requestedFor?: string,
+  ): Promise<ReviewRoundRecord | null> {
+    const where = requestedFor
+      ? and(
+          eq(reviewRound.artifact_id, artifactId),
+          eq(reviewRound.requested_for, requestedFor),
+          eq(reviewRound.state, "pending"),
+        )
+      : and(eq(reviewRound.artifact_id, artifactId), eq(reviewRound.state, "pending"))
+    const rows = await this.db
+      .select()
+      .from(reviewRound)
+      .where(where)
+      .orderBy(asc(reviewRound.created_at))
+      .limit(1)
+    return rows[0] ?? null
+  }
+  listReviewRounds(artifactId: string): Promise<ReviewRoundRecord[]> {
+    return this.db
+      .select()
+      .from(reviewRound)
+      .where(eq(reviewRound.artifact_id, artifactId))
+      .orderBy(desc(reviewRound.created_at))
+  }
+  async resolveReviewRound(
+    id: string,
+    fields: { state: Extract<ReviewRoundState, "sent_back" | "approved">; note?: string | null },
+  ): Promise<ReviewRoundRecord | null> {
+    const rows = await this.db
+      .update(reviewRound)
+      .set({ ...fields, resolved_at: new Date().toISOString() })
+      .where(eq(reviewRound.id, id))
       .returning()
     return rows[0] ?? null
   }

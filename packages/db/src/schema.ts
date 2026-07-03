@@ -3,7 +3,6 @@ import type {
   ArtifactKind,
   AuditAction,
   CommentState,
-  CommentVisibility,
   DeliveryKind,
   DeliveryStatus,
   DomainKind,
@@ -13,12 +12,20 @@ import type {
   NotificationKind,
   ProposalState,
   ReportState,
+  ReviewRoundState,
   Role,
   Visibility,
   WebhookKind,
 } from "@derive/core"
 import { sql } from "drizzle-orm"
-import { getTableConfig, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core"
+import {
+  getTableConfig,
+  index,
+  integer,
+  sqliteTable,
+  text,
+  uniqueIndex,
+} from "drizzle-orm/sqlite-core"
 import { generateDdl, PERF_INDEXES, placeholderTables } from "./ddl"
 
 const now = sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`
@@ -111,10 +118,6 @@ export const comment = sqliteTable("comment", {
   // rows + anonymous comments, which fall back to the name check.
   author_id: text("author_id"),
   state: text("state").$type<CommentState>().notNull().default("open"),
-  // `personal` comments are visible only to `owner_id` (the human) and the agents
-  // that human has authed; `public` (default) to everyone. Enforced in listComments.
-  visibility: text("visibility").$type<CommentVisibility>().notNull().default("public"),
-  owner_id: text("owner_id"),
   created_at: text("created_at").notNull().default(now),
   meta: text("meta"),
 })
@@ -442,6 +445,37 @@ export const proposal = sqliteTable("proposal", {
   created_at: text("created_at").notNull().default(now),
 })
 
+// A review round: an agent asks a specific person to review a live version, and
+// polls for the answer. Keyed per (artifact, requested_for) — one PENDING round
+// per person, so several reviewers can be asked in parallel without collision; a
+// re-request replaces only that person's pending row. `sent_back` is the human
+// "here are my answers" ack; `approved` is the go-signal. History is the row set.
+export const reviewRound = sqliteTable(
+  "review_round",
+  {
+    id: text("id").primaryKey(),
+    artifact_id: text("artifact_id")
+      .notNull()
+      .references(() => artifact.id),
+    // The version the review was requested on.
+    version: integer("version").notNull(),
+    // Stable id of the agent (or user) that requested the review.
+    requested_by: text("requested_by").notNull(),
+    // The user asked to review (the grant owner for an OAuth agent).
+    requested_for: text("requested_for").notNull(),
+    state: text("state").$type<ReviewRoundState>().notNull().default("pending"),
+    note: text("note"),
+    created_at: text("created_at").notNull().default(now),
+    resolved_at: text("resolved_at"),
+  },
+  // "One pending round per (artifact, person)" is enforced in the store
+  // (createReviewRound deletes the prior pending row first) — a partial unique index
+  // isn't portable through the boot-DDL generator, and a full unique index would
+  // wrongly block a sent_back row from coexisting with a fresh pending one. A plain
+  // lookup index covers getPendingRound / listReviewRounds.
+  (t) => [index("review_round_artifact").on(t.artifact_id, t.requested_for)],
+)
+
 // Abuse reports against public artifacts; anyone can file one.
 export const report = sqliteTable("report", {
   id: text("id").primaryKey(),
@@ -502,6 +536,7 @@ const TABLES = [
   githubInstallation,
   domain,
   proposal,
+  reviewRound,
   report,
   auditLog,
 ]

@@ -7,6 +7,9 @@
 //   derive open [--id]                     open the artifact in a browser
 //   derive reply <thread_id> <message…>    reply in a thread
 //   derive resolve|reopen <comment_id>     set a thread's state
+//   derive status [--id] [--json]          the review round state + open threads
+//   derive send-back [--id] [--note m]     (human) return your answers to the agent
+//   derive approve [--id] [--note m]       (human) approve — the build go-signal
 import { spawn } from "node:child_process"
 import { createHash, randomBytes } from "node:crypto"
 import { readdirSync, readFileSync, statSync } from "node:fs"
@@ -32,6 +35,7 @@ const positional = []
 for (let i = 0; i < args.length; i++) {
   const a = args[i]
   if (a === "--spa") flags.spa = "true"
+  else if (a === "--review") flags.review = "true"
   else if (a === "--json") flags.json = "true"
   else if (a.startsWith("--")) flags[a.slice(2)] = args[++i]
   else positional.push(a)
@@ -145,7 +149,7 @@ if (cmd === "login") {
 }
 
 // ---- Loop verbs (comments / open / reply / resolve / reopen) --------------
-const LOOP = ["comments", "open", "reply", "resolve", "reopen"]
+const LOOP = ["comments", "open", "reply", "resolve", "reopen", "status", "send-back", "approve"]
 if (LOOP.includes(cmd)) {
   let cfg = null
   try {
@@ -202,6 +206,44 @@ if (LOOP.includes(cmd)) {
     process.exit(0)
   }
 
+  if (cmd === "status") {
+    const res = await fetch(`${base}/review`, { headers: auth })
+    if (!res.ok) await die(res)
+    const rv = await res.json()
+    const cr = await fetch(`${base}/comments?state=open`, { headers: auth })
+    const open = cr.ok ? (await cr.json()).comments : []
+    if (flags.json) {
+      console.log(JSON.stringify({ review: rv.pending, rounds: rv.rounds, open_threads: open }))
+      process.exit(0)
+    }
+    const p = rv.pending
+    console.log(
+      p
+        ? `review: ${p.state} on v${p.version} (requested ${p.created_at})`
+        : rv.rounds[0]
+          ? `review: ${rv.rounds[0].state} (no round pending)`
+          : "review: none requested",
+    )
+    console.log(`open threads: ${open.length}`)
+    for (const c of open) console.log(`  · ${c.thread_id}  ${(c.body_md || "").slice(0, 60)}`)
+    process.exit(0)
+  }
+
+  if (cmd === "send-back" || cmd === "approve") {
+    const path = cmd === "send-back" ? "review/send-back" : "review/approve"
+    const res = await fetch(`${base}/${path}`, {
+      method: "POST",
+      headers: { "content-type": "application/json", ...auth },
+      body: JSON.stringify({ note: flags.note ?? "" }),
+    })
+    if (!res.ok) await die(res)
+    const { round } = await res.json()
+    console.log(
+      `✓ ${cmd === "send-back" ? "sent back to the agent" : "approved"} (round ${round.state})`,
+    )
+    process.exit(0)
+  }
+
   // resolve | reopen
   const commentId = positional[0]
   if (!commentId) {
@@ -226,7 +268,10 @@ if (cmd !== "publish") {
   derive comments [--id X]                 list comment threads
   derive open [--id X]                     open the artifact in a browser
   derive reply <thread_id> <message…>      reply in a thread
-  derive resolve|reopen <comment_id>       set a thread's state`)
+  derive resolve|reopen <comment_id>       set a thread's state
+  derive status [--id X] [--json]          review-round state + open threads (the loop's poll target)
+  derive send-back [--id X] [--note m]     (human) return your answers to the waiting agent
+  derive approve [--id X] [--note m]       (human) approve — the build go-signal`)
   process.exit(cmd ? 1 : 0)
 }
 
@@ -291,6 +336,7 @@ if (p.visibility) form.append("visibility", p.visibility)
 // --password is a per-publish secret for `--visibility password`; never put it in
 // derive.json (it isn't a config field), only pass it on the command line.
 if (p.password) form.append("password", p.password)
+if (flags.review) form.append("request_review", "true")
 
 const url = p.id ? `${p.server}/v1/artifacts/${p.id}/versions` : `${p.server}/v1/artifacts`
 const headers = p.token ? { authorization: `Bearer ${p.token}` } : {}
@@ -316,5 +362,7 @@ if (flags.json) {
 } else {
   console.log(`✓ ${json.url}`)
   console.log(`  short_id ${json.short_id} · v${json.current_version} · ${json.kind}`)
+  if (flags.review)
+    console.log(`  ↩ review requested — the human reviews in the app, then Send back`)
   if (savedId) console.log(`  saved id to ${CONFIG_FILE} — future publishes target this artifact`)
 }

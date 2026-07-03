@@ -29,6 +29,7 @@ import { groupThreads, parseAnchor } from "./lib/layout"
 import { parseRef, refFor } from "./parse-ref"
 import { PasswordGate } from "./password-gate"
 import { Presence } from "./rail-deck"
+import { ReviewCard } from "./review-card"
 import { SourceEditor } from "./source-editor"
 import type { PinItem, Sel } from "./types"
 import { useArtifactFrame } from "./use-artifact-frame"
@@ -133,14 +134,10 @@ export function Artifact() {
   // panel shows the active tab; the document highlights BOTH (shared lavender +
   // personal ink), and clicking a highlight switches to its tab.
   const [commentTab, setCommentTab] = useState<"comments" | "personal">("comments")
-  const personalComments = comments.filter((c) => c.visibility === "personal")
-  const publicComments = comments.filter((c) => c.visibility !== "personal")
-  const activeComments = commentTab === "personal" ? personalComments : publicComments
+  const publicComments = comments
+  const activeComments = publicComments
   // Stable so the iframe message listener subscribes once (it lives in onAnchorTab's deps).
-  const onAnchorTab = useCallback(
-    (personal: boolean) => setCommentTab(personal ? "personal" : "comments"),
-    [],
-  )
+  const onAnchorTab = useCallback((_personal: boolean) => setCommentTab("comments"), [])
 
   // Server-truth refetch after a write or an SSE ping (defined up here so the
   // realtime hook + the iframe message bridge below can both lean on them).
@@ -270,7 +267,7 @@ export function Artifact() {
     const target = cid ? comments.find((c) => c.thread_id === cid) : undefined
     if (target) {
       // Open the tab the thread lives on, or its anchor won't be live in the doc.
-      setCommentTab(target.visibility === "personal" ? "personal" : "comments")
+      setCommentTab("comments")
       setPanel("open")
       setActiveThread(target.thread_id)
       setTimeout(() => post({ type: "focus-anchor", id: target.thread_id }), 320)
@@ -349,7 +346,6 @@ export function Artifact() {
   // set are computed up top, before the iframe hook, so the doc can scope to it).
   const openCountOf = (cs: Comment[]) =>
     groupThreads(cs).filter((t) => t[0] && t[0].state !== "resolved").length
-  const personalCount = openCountOf(personalComments)
   const publicCount = openCountOf(publicComments)
   const all = groupThreads(activeComments)
   // `outdated` threads (their quoted text changed in a later version) stay in the
@@ -674,6 +670,8 @@ export function Artifact() {
             )}
           </div>
 
+          <ReviewCard shortId={shortId} canApprove={canPublish} />
+
           <ArtifactComments
             shortId={shortId}
             isMobile={isMobile}
@@ -683,7 +681,6 @@ export function Artifact() {
             panel={panel}
             tab={commentTab}
             setTab={setCommentTab}
-            personalCount={personalCount}
             publicCount={publicCount}
             asideWidth={asideWidth}
             openCount={openCount}

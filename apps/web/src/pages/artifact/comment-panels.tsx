@@ -39,12 +39,10 @@ function CommentTabs({
   tab,
   setTab,
   publicCount,
-  personalCount,
 }: {
   tab: Tab
   setTab: Dispatch<SetStateAction<Tab>>
   publicCount: number
-  personalCount: number
 }) {
   return (
     <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)} className="min-w-0 flex-1">
@@ -56,11 +54,6 @@ function CommentTabs({
           <span>Comments</span>
           {publicCount > 0 && <TabCount n={publicCount} />}
         </TabsTrigger>
-        <TabsTrigger value="personal" data-testid="comment-tab-personal" className="flex-1">
-          <Icon name="lock" size={12} />
-          <span>Personal</span>
-          {personalCount > 0 && <TabCount n={personalCount} />}
-        </TabsTrigger>
       </TabsList>
     </Tabs>
   )
@@ -70,7 +63,6 @@ export function MobileComments({
   open,
   tab,
   setTab,
-  personalCount,
   publicCount,
   openThreads,
   resolved,
@@ -89,7 +81,6 @@ export function MobileComments({
   open: boolean
   tab: Tab
   setTab: Dispatch<SetStateAction<Tab>>
-  personalCount: number
   publicCount: number
   openThreads: Comment[][]
   resolved: Comment[][]
@@ -207,12 +198,7 @@ export function MobileComments({
           <div className="h-1 w-10 rounded-full bg-border" />
         </div>
         <div className="flex items-center gap-2 border-b border-border-soft pb-3 pl-3 pr-2.5 pt-2">
-          <CommentTabs
-            tab={tab}
-            setTab={setTab}
-            publicCount={publicCount}
-            personalCount={personalCount}
-          />
+          <CommentTabs tab={tab} setTab={setTab} publicCount={publicCount} />
           {canComment && (
             <Button
               variant="outline"
@@ -335,7 +321,6 @@ export function MobileComments({
 export function OpenPanel(props: {
   tab: Tab
   setTab: Dispatch<SetStateAction<Tab>>
-  personalCount: number
   publicCount: number
   openCount: number
   scrollY: number
@@ -360,7 +345,6 @@ export function OpenPanel(props: {
   const {
     tab,
     setTab,
-    personalCount,
     publicCount,
     openCount,
     scrollY,
@@ -408,12 +392,7 @@ export function OpenPanel(props: {
         ref={headerRef}
         className="flex items-center gap-1 border-b border-border-soft py-1.5 pl-2.5 pr-2"
       >
-        <CommentTabs
-          tab={tab}
-          setTab={setTab}
-          publicCount={publicCount}
-          personalCount={personalCount}
-        />
+        <CommentTabs tab={tab} setTab={setTab} publicCount={publicCount} />
         {canComment && (
           <Tooltip>
             <TooltipTrigger asChild>
