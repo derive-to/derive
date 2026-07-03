@@ -39,19 +39,23 @@ import { LibrarySkeleton } from "./library-skeleton"
 import { PublishCard } from "./publish-card"
 import { RepoPullRequests } from "./repo-pull-requests"
 import { ShareCollectionDialog } from "./share-collection-dialog"
-import type { Filter } from "./types"
+import type { Filter, LibrarySearch, LibraryView } from "./types"
 
-// Route component for "/". The persistent AppShell (mounted once around the
-// router Outlet) owns the rail/pod and the auth gate, so this just renders the
-// library body. The filter lives in the URL, so the body reads it from search
-// rather than local state.
-export function Library() {
-  return <LibraryBody />
+// The library surface, shared by three routes: "/" (all artifacts), "/favorites",
+// and "/following". The base feed comes from the route (the `view` prop); the
+// filters + search come from the URL query. The persistent AppShell (mounted once
+// around the router Outlet) owns the rail/pod and the auth gate, so this just
+// renders the library body.
+export function Library({ view }: { view: LibraryView }) {
+  return <LibraryBody view={view} />
 }
 
-function LibraryBody() {
+function LibraryBody({ view }: { view: LibraryView }) {
   const nav = useNavigate()
-  const search = useSearch({ from: "/" })
+  // Read the query params loosely: this one body renders under three routes, so it
+  // can't bind to a single route's search shape. The base feed is `view` (the route);
+  // tag/collection/q/author are the filters that compose on top (docs/decisions/0002).
+  const search = useSearch({ strict: false }) as LibrarySearch
   const { me } = useAuth()
   const { summary, collections, refreshSummary } = useShell()
   const prefetch = usePrefetchArtifact()
@@ -60,8 +64,8 @@ function LibraryBody() {
   const scrollRef = useRef<HTMLDivElement>(null)
 
   const [shareCol, setShareCol] = useState<(typeof collections)[number] | null>(null)
-  const [query, setQuery] = useState(search.q ?? "")
-  const [debouncedQ, setDebouncedQ] = useState((search.q ?? "").trim())
+  const [query, setQuery] = useState(search.query ?? "")
+  const [debouncedQ, setDebouncedQ] = useState((search.query ?? "").trim())
   // Folder vs flat-list view (synced collections). Off by default (a flat,
   // most-recently-updated list is the default for a synced collection); remembered.
   const [showFolders, setShowFolders] = useState(
@@ -73,11 +77,13 @@ function LibraryBody() {
     localStorage.setItem(STORAGE_KEYS.libraryFolders, on ? "1" : "0")
   }
 
-  // Derive the active filter from the URL search params.
+  // The active filter = the base feed (from the route: `view`) unless it's the home
+  // library, where a tag/collection query param narrows it. Favorites/Following are
+  // their own routes now, so tag/collection (which live only on "/") can't apply.
   const filter: Filter =
-    search.f === "favorites"
+    view === "favorites"
       ? { kind: "favorites" }
-      : search.scope === "following"
+      : view === "following"
         ? { kind: "following" }
         : search.tag
           ? { kind: "tag", tag: search.tag }
@@ -100,9 +106,9 @@ function LibraryBody() {
     q: debouncedQ || undefined,
     tag: search.tag,
     collection: search.collection,
-    favorite: search.f === "favorites" || undefined,
+    favorite: view === "favorites" || undefined,
     author: search.author,
-    scope: filter.kind === "following" ? "following" : undefined,
+    scope: view === "following" ? "following" : undefined,
   }
   const listQuery = libraryArtifactsQuery(params)
   const { data, isPending, isError, refetch, fetchNextPage, hasNextPage, isFetchingNextPage } =
@@ -390,22 +396,17 @@ function LibraryBody() {
           hotkey
           className="min-w-50 flex-1"
         />
-        {filter.kind !== "all" && (
+        {/* The clear-filter pill is for the home library's filters (a tag or a
+            collection) — a way back to All. Favorites/Following are their own routes
+            (with their own active rail rows), not filters you "clear" here. */}
+        {(filter.kind === "tag" || filter.kind === "collection") && (
           <Button
             variant="outline"
             size="sm"
             data-testid="library-clear-filter"
             onClick={() => nav({ to: "/", search: {} })}
           >
-            {filter.kind === "favorites" ? (
-              <>
-                <Icon name="favorites" size={16} /> Favorites
-              </>
-            ) : filter.kind === "following" ? (
-              <>
-                <Icon name="following" size={16} /> Following
-              </>
-            ) : filter.kind === "tag" ? (
+            {filter.kind === "tag" ? (
               `#${filter.tag}`
             ) : (
               <>
@@ -479,7 +480,7 @@ function LibraryBody() {
               <ArtifactCard
                 key={a.short_id}
                 artifact={a}
-                onOpen={() => nav({ to: "/a/$ref", params: { ref: refFor(a) } })}
+                onOpen={() => nav({ to: "/artifacts/$ref", params: { ref: refFor(a) } })}
                 onToggleFavorite={() => openFeedback(a)}
                 onPickTag={(tag) => nav({ to: "/", search: { tag } })}
                 onPrefetch={() => prefetch(a.short_id, a.current_version)}
@@ -499,7 +500,7 @@ function LibraryBody() {
               <ArtifactCard
                 key={a.short_id}
                 artifact={a}
-                onOpen={() => nav({ to: "/a/$ref", params: { ref: refFor(a) } })}
+                onOpen={() => nav({ to: "/artifacts/$ref", params: { ref: refFor(a) } })}
                 onToggleFavorite={() => openShared(a)}
                 onPickTag={(tag) => nav({ to: "/", search: { tag } })}
                 onPrefetch={() => prefetch(a.short_id, a.current_version)}
@@ -586,7 +587,7 @@ function LibraryBody() {
               hasNextPage={!!hasNextPage}
               isFetchingNextPage={isFetchingNextPage}
               onLoadMore={() => fetchNextPage()}
-              onOpen={(a) => nav({ to: "/a/$ref", params: { ref: refFor(a) } })}
+              onOpen={(a) => nav({ to: "/artifacts/$ref", params: { ref: refFor(a) } })}
               onToggleFavorite={toggleFav}
               onPickTag={(tag) => nav({ to: "/", search: { tag } })}
               onPickAuthor={pickAuthor}
@@ -598,7 +599,7 @@ function LibraryBody() {
                 <ArtifactRow
                   key={a.short_id}
                   artifact={a}
-                  onOpen={() => nav({ to: "/a/$ref", params: { ref: refFor(a) } })}
+                  onOpen={() => nav({ to: "/artifacts/$ref", params: { ref: refFor(a) } })}
                   onToggleFavorite={() => toggleFav(a)}
                   onPickTag={(tag) => nav({ to: "/", search: { tag } })}
                   onPickAuthor={pickAuthor}
@@ -622,7 +623,7 @@ function LibraryBody() {
             hasNextPage={!!hasNextPage}
             isFetchingNextPage={isFetchingNextPage}
             onLoadMore={() => fetchNextPage()}
-            onOpen={(a) => nav({ to: "/a/$ref", params: { ref: refFor(a) } })}
+            onOpen={(a) => nav({ to: "/artifacts/$ref", params: { ref: refFor(a) } })}
             onToggleFavorite={toggleFav}
             onPickTag={(tag) => nav({ to: "/", search: { tag } })}
             onDelete={setPendingDelete}

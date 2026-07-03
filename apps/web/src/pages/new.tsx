@@ -44,7 +44,7 @@ export function NewArtifact() {
       const fields: Record<string, string> = { title: name, visibility: "org" }
       if (message.trim()) fields.message = message.trim()
       const a = await api.publish(new File([src], `inline.${ext}`, { type }), fields)
-      nav({ to: "/a/$ref", params: { ref: refFor(a) } })
+      nav({ to: "/artifacts/$ref", params: { ref: refFor(a) } })
     } catch (e) {
       toast.error((e as Error).message)
     }

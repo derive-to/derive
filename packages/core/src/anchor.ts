@@ -545,7 +545,7 @@ document.addEventListener("click",function(e){
 /* Cross-document links: a relative <a> the server resolved to a sibling artifact
    (data-derive-nav="<ref>"). The sandboxed frame can't navigate the host, so hand the
    click off for an in-app transition (or a new tab on a modified / middle click —
-   the host opens that un-sandboxed). preventDefault stops the frame loading /a/… into
+   the host opens that un-sandboxed). preventDefault stops the frame loading /artifacts/… into
    itself. Only marked links are touched; ordinary and in-page links are untouched. */
 function navLink(e){
   var a=e.target&&e.target.closest?e.target.closest("a[data-derive-nav]"):null;

@@ -9,11 +9,11 @@ test("owner shares an artifact, changes the role, and removes the member", async
   const id = await publishArtifact(owner) // owner publishes (link visibility)
 
   // The non-owner (second user) opens the artifact: no share affordance.
-  await secondUser.page.goto(`/a/${id}`)
+  await secondUser.page.goto(`/artifacts/${id}`)
   await expect(secondUser.page.getByTestId("share-trigger")).toBeHidden()
 
   // The owner opens the dialog: starts empty.
-  await owner.goto(`/a/${id}`)
+  await owner.goto(`/artifacts/${id}`)
   await owner.getByTestId("share-trigger").click()
   await expect(owner.getByTestId("share-email")).toBeVisible()
   await expect(owner.getByTestId("share-empty")).toBeVisible()

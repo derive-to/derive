@@ -41,7 +41,7 @@ export default defineConfig({
   },
   server: {
     port: 3090,
-    // /a is the SPA's own route — only proxy API + raw artifact bytes + the
+    // /artifacts is the SPA's own route — only proxy API + raw artifact bytes + the
     // server-rendered OAuth consent page.
     proxy: Object.fromEntries(
       [

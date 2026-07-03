@@ -8,7 +8,7 @@ test("owner approves a proposed change", async ({ owner, secondUser }) => {
   await shareArtifact(owner.request, shortId, secondUser.email, "commenter")
   await proposeEdit(secondUser.page.request, shortId, "Tighten the intro", "# Doc\n\ntighter intro")
 
-  await owner.goto(`/a/${shortId}`)
+  await owner.goto(`/artifacts/${shortId}`)
   await owner.getByTestId("artifact-more").click()
   await owner.getByTestId("artifact-review").click()
   await expect(owner.getByTestId("review-title")).toBeVisible()

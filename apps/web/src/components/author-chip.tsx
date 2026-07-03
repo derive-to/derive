@@ -11,7 +11,7 @@ import { cn } from "@/lib/utils"
 //
 // Three shapes, picked by the props:
 //  - `onClick`  → a button (used to filter the list by this author).
-//  - `handle`   → a Link to the author's /u/<handle> profile.
+//  - `handle`   → a Link to the author's /users/<handle> profile.
 //  - neither    → plain, non-interactive text.
 export interface AuthorChipProps {
   name: string | null
@@ -99,7 +99,7 @@ export function AuthorChip({
   if (handle) {
     return (
       <Link
-        to="/u/$handle"
+        to="/users/$handle"
         params={{ handle }}
         data-testid={testId}
         aria-label={`View @${handle}'s profile`}

@@ -114,15 +114,15 @@ export interface AppDeps {
   serveWeb?: boolean
   /**
    * The SPA shell HTML (index.html), when this process serves the bundled web app.
-   * Lets the server-rendered `/a/:ref` route return the shell with per-artifact
+   * Lets the server-rendered `/artifacts/:ref` route return the shell with per-artifact
    * unfurl meta injected, so crawlers (which don't run JS) get OG/Twitter cards.
-   * Unset = no injection (API-only, or the edge Worker where assets serve `/a/*`).
+   * Unset = no injection (API-only, or the edge Worker where assets serve `/artifacts/*`).
    */
   shell?: string
   /**
    * Async shell provider for runtimes that can't read the SPA shell synchronously:
    * the edge Worker fetches `index.html` from its static-assets binding. Used to
-   * inject unfurl meta into `/a/:ref` when `shell` (the sync string) isn't set.
+   * inject unfurl meta into `/artifacts/:ref` when `shell` (the sync string) isn't set.
    * Returns null if the shell can't be read (the route then serves it untouched).
    */
   shellFetch?: () => Promise<string | null>

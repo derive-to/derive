@@ -19,7 +19,7 @@ const info: UnfurlInfo = {
   kindLabel: "Markdown",
   versionCount: 3,
   commentCount: 1,
-  pageUrl: "http://derive.test/a/my-report-abc12345",
+  pageUrl: "http://derive.test/artifacts/my-report-abc12345",
   imageUrl: "http://derive.test/v1/og/abc12345",
   oembedUrl: "http://derive.test/v1/oembed?url=http%3A%2F%2Fderive.test%2Fa%2Fabc12345",
   embedUrl: "http://derive.test/v1/embed/abc12345",
@@ -146,14 +146,14 @@ describe("profileMetaTags", () => {
       username: "maya",
       name: "Maya <Chen>",
       description: "Engineering · 4 works · on Derive",
-      pageUrl: "http://derive.test/u/maya",
-      imageUrl: "http://derive.test/v1/og/u/maya",
+      pageUrl: "http://derive.test/users/maya",
+      imageUrl: "http://derive.test/v1/og/users/maya",
     })
     expect(html).toContain('property="og:type" content="profile"')
     expect(html).toContain('property="profile:username" content="maya"')
     expect(html).toContain("Maya &lt;Chen&gt; (@maya)") // name + handle, angle brackets escaped
     expect(html).toContain('name="twitter:card" content="summary_large_image"')
-    expect(html).toContain('content="http://derive.test/v1/og/u/maya"')
+    expect(html).toContain('content="http://derive.test/v1/og/users/maya"')
     expect(html).not.toContain("Maya <Chen>") // no unescaped markup leaks
   })
   it("falls back to just the handle when the name is null", () => {
@@ -161,8 +161,8 @@ describe("profileMetaTags", () => {
       username: "ada",
       name: null,
       description: "on Derive",
-      pageUrl: "http://derive.test/u/ada",
-      imageUrl: "http://derive.test/v1/og/u/ada",
+      pageUrl: "http://derive.test/users/ada",
+      imageUrl: "http://derive.test/v1/og/users/ada",
     })
     expect(html).toContain('content="@ada"')
   })

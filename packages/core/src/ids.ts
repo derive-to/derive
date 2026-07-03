@@ -20,7 +20,7 @@ export const slugify = (s: string): string =>
  *   my-title-abc12345@v4  → { shortId: "abc12345", version: 4 }
  * The short id is taken from the last token, falling back to the first (legacy
  * short-id-first links) then the whole ref. Mirrors the SPA's own `parse-ref.ts`
- * (kept separate so the client bundle doesn't pull in core) so the same `/a/:ref`
+ * (kept separate so the client bundle doesn't pull in core) so the same `/artifacts/:ref`
  * link resolves identically on the server and the client.
  */
 export const parseRef = (ref: string): { shortId: string; version?: number } => {
@@ -33,7 +33,7 @@ export const parseRef = (ref: string): { shortId: string; version?: number } => 
   return { shortId, version: v ? Number(v) : undefined }
 }
 
-/** Ordered, de-duped short-id candidates for a `/a/:ref`: the trailing token first
+/** Ordered, de-duped short-id candidates for a `/artifacts/:ref`: the trailing token first
  *  (name-first links), then the leading token (legacy short-id-first). Resolve by
  *  trying each in order so any link form finds the right artifact — even a name whose
  *  tail looks like an id. Falls back to the whole base when neither token is id-shaped. */
@@ -47,7 +47,7 @@ export const candidateShortIds = (ref: string): string[] => {
   return out.length ? out : [base]
 }
 
-/** Build a readable `/a/:ref`: `<name>-<shortId>`, the name from an explicit slug or
+/** Build a readable `/artifacts/:ref`: `<name>-<shortId>`, the name from an explicit slug or
  *  the current title. Decorative — `parseRef` resolves by the trailing short id, so
  *  renames and stale names still resolve. */
 export const refFor = (a: {

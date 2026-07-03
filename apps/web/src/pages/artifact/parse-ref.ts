@@ -14,7 +14,7 @@ export const parseRef = (ref: string): { shortId: string; version?: number } => 
   return { shortId, version: v ? Number(v) : undefined }
 }
 
-/** Ordered, de-duped short-id candidates for a `/a/:ref`: the trailing token first
+/** Ordered, de-duped short-id candidates for a `/artifacts/:ref`: the trailing token first
  *  (name-first links), then the leading token (legacy short-id-first). Resolve by
  *  trying each in order so any link form finds the right artifact — even a name whose
  *  tail looks like an id. Falls back to the whole base when neither token is id-shaped. */
@@ -36,7 +36,7 @@ const slugify = (s: string): string =>
     .replace(/^-+|-+$/g, "")
     .slice(0, 48)
 
-/** Readable `/a/:ref`: `<name>-<shortId>`. Name from an explicit slug or the current
+/** Readable `/artifacts/:ref`: `<name>-<shortId>`. Name from an explicit slug or the current
  *  title; decorative (parseRef resolves by the short id), so renames still work. */
 export const refFor = (a: {
   short_id: string

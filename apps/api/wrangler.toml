@@ -123,11 +123,11 @@ namespace_id = "1005"
 crons = ["* * * * *"]
 
 # The web SPA (apps/web) ships from this same Worker via Static Assets, so the whole
-# app — login, library, settings, the /a/:ref artifact viewer — lives same-origin with
+# app — login, library, settings, the /artifacts/:ref artifact viewer — lives same-origin with
 # the API (no CORS, first-party cookies). Prepare the build first:
 # `pnpm --filter @derive/api build:web` (builds apps/web and preps dist/client for Workers:
 # _shell.html -> index.html, drops the Pages _redirects).
-# The API/data paths run the Worker first; so do /a/* and /u/* — the share + profile
+# The API/data paths run the Worker first; so do /artifacts/* and /users/* — the share + profile
 # URLs, where the Worker serves the SPA shell with per-artifact / per-profile OG/unfurl
 # meta injected for crawlers (it reads the shell via the ASSETS binding). Every other
 # path serves a static asset,
@@ -136,7 +136,7 @@ crons = ["* * * * *"]
 [assets]
 directory = "../web/dist/client"
 binding = "ASSETS"
-run_worker_first = ["/v1/*", "/api/*", "/raw/*", "/oauth/*", "/settings/github/*", "/a/*", "/u/*", "/healthz", "/mcp", "/.well-known/oauth-authorization-server", "/.well-known/oauth-protected-resource", "/.well-known/openid-configuration"]
+run_worker_first = ["/v1/*", "/api/*", "/raw/*", "/oauth/*", "/settings/github/*", "/artifacts/*", "/users/*", "/healthz", "/mcp", "/.well-known/oauth-authorization-server", "/.well-known/oauth-protected-resource", "/.well-known/openid-configuration"]
 not_found_handling = "single-page-application"
 
 # Public hosts: the derive.to apex is canonical, app.derive.to an alias. Cloudflare

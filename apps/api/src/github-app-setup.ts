@@ -152,6 +152,6 @@ export function setupResultHTML(props: { ok: boolean; slug?: string; error?: str
     `<span class="badge ok">Connected</span>`,
     `<h1>Your GitHub App is ready</h1>
     <p class="sub">${props.slug ? `<code>${esc(props.slug)}</code> ` : ""}is set up. Head back to Settings to install it on your repos.</p>
-    <p class="foot"><a class="btn" href="/settings?tab=github">Back to Settings</a></p>`,
+    <p class="foot"><a class="btn" href="/settings/github">Back to Settings</a></p>`,
   )
 }

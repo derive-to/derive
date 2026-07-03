@@ -32,8 +32,8 @@ Why not for Derive:
 - **Tenancy shape.** Nemonic's tenant boundary comes free from Slack (one team =
   one workspace; users live in exactly one DO; no global identity). Derive is the
   inverse: users belong to multiple workspaces, everyone gets a personal
-  workspace at signup, and the core surfaces are global — anonymous `/a/:ref`
-  links, `/u/` profiles, cross-workspace shares, eventually search. Each of those
+  workspace at signup, and the core surfaces are global — anonymous `/artifacts/:ref`
+  links, `/users/` profiles, cross-workspace shares, eventually search. Each of those
   would need a control-plane index kept consistent with thousands of DOs.
 - **Ops and global visibility** (the deciding argument in the thread): schema
   migrations are one statement on one database instead of a lazy fleet-wide

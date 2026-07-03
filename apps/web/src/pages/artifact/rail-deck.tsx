@@ -77,12 +77,21 @@ const presenceTint = (self: boolean) =>
 // wildcard-CORS SSE), so nothing here is spoofable or leaky. Hidden when you're
 // the only viewer. Built on the shared Popover, so it dismisses on outside/iframe
 // click.
-export function Presence({ viewers, selfId }: { viewers: Viewer[]; selfId?: string }) {
+export function Presence({
+  viewers,
+  selfId,
+  compact,
+}: {
+  viewers: Viewer[]
+  selfId?: string
+  /** Tight header (mobile): fewer avatars + a count only, no "viewing" word. */
+  compact?: boolean
+}) {
   const self = viewers.find((v) => v.id === selfId) ?? null
   const others = viewers.filter((v) => v.id !== selfId)
   if (others.length === 0) return null
   const ordered = self ? [self, ...others] : others
-  const shown = ordered.slice(0, 4)
+  const shown = ordered.slice(0, compact ? 3 : 4)
   const extra = ordered.length - shown.length
   return (
     <Popover>
@@ -107,7 +116,8 @@ export function Presence({ viewers, selfId }: { viewers: Viewer[]; selfId?: stri
           </AvatarGroup>
           <span className="flex items-center gap-1 font-mono text-2xs tabular-nums text-muted-foreground">
             <span className="size-1.5 rounded-full bg-muted-foreground" />
-            {ordered.length} viewing{extra > 0 ? ` (+${extra})` : ""}
+            {ordered.length}
+            {compact ? "" : ` viewing${extra > 0 ? ` (+${extra})` : ""}`}
           </span>
         </Button>
       </PopoverTrigger>

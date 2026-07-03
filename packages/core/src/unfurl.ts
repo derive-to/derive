@@ -17,7 +17,7 @@ export interface UnfurlInfo {
   kindLabel: string
   versionCount: number
   commentCount: number
-  /** Canonical share URL (`/a/:ref`). */
+  /** Canonical share URL (`/artifacts/:ref`). */
   pageUrl: string
   /** Absolute OG image URL (`/v1/og/:ref`). */
   imageUrl: string
@@ -173,7 +173,7 @@ export interface OgCard {
   reveal?: boolean
 }
 
-// ---- Profile unfurl (people pages: /u/:handle) -----------------------------
+// ---- Profile unfurl (people pages: /users/:handle) -----------------------------
 
 /** Everything a profile unfurl card / meta block needs about one person. */
 export interface ProfileCard {

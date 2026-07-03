@@ -15,9 +15,13 @@ import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as PeopleRouteImport } from './routes/people'
 import { Route as NewRouteImport } from './routes/new'
 import { Route as LoginRouteImport } from './routes/login'
+import { Route as FollowingRouteImport } from './routes/following'
+import { Route as FavoritesRouteImport } from './routes/favorites'
 import { Route as IndexRouteImport } from './routes/index'
-import { Route as UHandleRouteImport } from './routes/u.$handle'
-import { Route as ARefRouteImport } from './routes/a.$ref'
+import { Route as SettingsIndexRouteImport } from './routes/settings.index'
+import { Route as UsersHandleRouteImport } from './routes/users.$handle'
+import { Route as SettingsSectionRouteImport } from './routes/settings.$section'
+import { Route as ArtifactsRefRouteImport } from './routes/artifacts.$ref'
 
 const WelcomeRoute = WelcomeRouteImport.update({
   id: '/welcome',
@@ -49,102 +53,146 @@ const LoginRoute = LoginRouteImport.update({
   path: '/login',
   getParentRoute: () => rootRouteImport,
 } as any)
+const FollowingRoute = FollowingRouteImport.update({
+  id: '/following',
+  path: '/following',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const FavoritesRoute = FavoritesRouteImport.update({
+  id: '/favorites',
+  path: '/favorites',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
-const UHandleRoute = UHandleRouteImport.update({
-  id: '/u/$handle',
-  path: '/u/$handle',
+const SettingsIndexRoute = SettingsIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => SettingsRoute,
+} as any)
+const UsersHandleRoute = UsersHandleRouteImport.update({
+  id: '/users/$handle',
+  path: '/users/$handle',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ARefRoute = ARefRouteImport.update({
-  id: '/a/$ref',
-  path: '/a/$ref',
+const SettingsSectionRoute = SettingsSectionRouteImport.update({
+  id: '/$section',
+  path: '/$section',
+  getParentRoute: () => SettingsRoute,
+} as any)
+const ArtifactsRefRoute = ArtifactsRefRouteImport.update({
+  id: '/artifacts/$ref',
+  path: '/artifacts/$ref',
   getParentRoute: () => rootRouteImport,
 } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/favorites': typeof FavoritesRoute
+  '/following': typeof FollowingRoute
   '/login': typeof LoginRoute
   '/new': typeof NewRoute
   '/people': typeof PeopleRoute
-  '/settings': typeof SettingsRoute
+  '/settings': typeof SettingsRouteWithChildren
   '/showcase': typeof ShowcaseRoute
   '/welcome': typeof WelcomeRoute
-  '/a/$ref': typeof ARefRoute
-  '/u/$handle': typeof UHandleRoute
+  '/artifacts/$ref': typeof ArtifactsRefRoute
+  '/settings/$section': typeof SettingsSectionRoute
+  '/users/$handle': typeof UsersHandleRoute
+  '/settings/': typeof SettingsIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/favorites': typeof FavoritesRoute
+  '/following': typeof FollowingRoute
   '/login': typeof LoginRoute
   '/new': typeof NewRoute
   '/people': typeof PeopleRoute
-  '/settings': typeof SettingsRoute
   '/showcase': typeof ShowcaseRoute
   '/welcome': typeof WelcomeRoute
-  '/a/$ref': typeof ARefRoute
-  '/u/$handle': typeof UHandleRoute
+  '/artifacts/$ref': typeof ArtifactsRefRoute
+  '/settings/$section': typeof SettingsSectionRoute
+  '/users/$handle': typeof UsersHandleRoute
+  '/settings': typeof SettingsIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/favorites': typeof FavoritesRoute
+  '/following': typeof FollowingRoute
   '/login': typeof LoginRoute
   '/new': typeof NewRoute
   '/people': typeof PeopleRoute
-  '/settings': typeof SettingsRoute
+  '/settings': typeof SettingsRouteWithChildren
   '/showcase': typeof ShowcaseRoute
   '/welcome': typeof WelcomeRoute
-  '/a/$ref': typeof ARefRoute
-  '/u/$handle': typeof UHandleRoute
+  '/artifacts/$ref': typeof ArtifactsRefRoute
+  '/settings/$section': typeof SettingsSectionRoute
+  '/users/$handle': typeof UsersHandleRoute
+  '/settings/': typeof SettingsIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/favorites'
+    | '/following'
     | '/login'
     | '/new'
     | '/people'
     | '/settings'
     | '/showcase'
     | '/welcome'
-    | '/a/$ref'
-    | '/u/$handle'
+    | '/artifacts/$ref'
+    | '/settings/$section'
+    | '/users/$handle'
+    | '/settings/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/favorites'
+    | '/following'
     | '/login'
     | '/new'
     | '/people'
-    | '/settings'
     | '/showcase'
     | '/welcome'
-    | '/a/$ref'
-    | '/u/$handle'
+    | '/artifacts/$ref'
+    | '/settings/$section'
+    | '/users/$handle'
+    | '/settings'
   id:
     | '__root__'
     | '/'
+    | '/favorites'
+    | '/following'
     | '/login'
     | '/new'
     | '/people'
     | '/settings'
     | '/showcase'
     | '/welcome'
-    | '/a/$ref'
-    | '/u/$handle'
+    | '/artifacts/$ref'
+    | '/settings/$section'
+    | '/users/$handle'
+    | '/settings/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  FavoritesRoute: typeof FavoritesRoute
+  FollowingRoute: typeof FollowingRoute
   LoginRoute: typeof LoginRoute
   NewRoute: typeof NewRoute
   PeopleRoute: typeof PeopleRoute
-  SettingsRoute: typeof SettingsRoute
+  SettingsRoute: typeof SettingsRouteWithChildren
   ShowcaseRoute: typeof ShowcaseRoute
   WelcomeRoute: typeof WelcomeRoute
-  ARefRoute: typeof ARefRoute
-  UHandleRoute: typeof UHandleRoute
+  ArtifactsRefRoute: typeof ArtifactsRefRoute
+  UsersHandleRoute: typeof UsersHandleRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -191,6 +239,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LoginRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/following': {
+      id: '/following'
+      path: '/following'
+      fullPath: '/following'
+      preLoaderRoute: typeof FollowingRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/favorites': {
+      id: '/favorites'
+      path: '/favorites'
+      fullPath: '/favorites'
+      preLoaderRoute: typeof FavoritesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/': {
       id: '/'
       path: '/'
@@ -198,33 +260,63 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/u/$handle': {
-      id: '/u/$handle'
-      path: '/u/$handle'
-      fullPath: '/u/$handle'
-      preLoaderRoute: typeof UHandleRouteImport
+    '/settings/': {
+      id: '/settings/'
+      path: '/'
+      fullPath: '/settings/'
+      preLoaderRoute: typeof SettingsIndexRouteImport
+      parentRoute: typeof SettingsRoute
+    }
+    '/users/$handle': {
+      id: '/users/$handle'
+      path: '/users/$handle'
+      fullPath: '/users/$handle'
+      preLoaderRoute: typeof UsersHandleRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/a/$ref': {
-      id: '/a/$ref'
-      path: '/a/$ref'
-      fullPath: '/a/$ref'
-      preLoaderRoute: typeof ARefRouteImport
+    '/settings/$section': {
+      id: '/settings/$section'
+      path: '/$section'
+      fullPath: '/settings/$section'
+      preLoaderRoute: typeof SettingsSectionRouteImport
+      parentRoute: typeof SettingsRoute
+    }
+    '/artifacts/$ref': {
+      id: '/artifacts/$ref'
+      path: '/artifacts/$ref'
+      fullPath: '/artifacts/$ref'
+      preLoaderRoute: typeof ArtifactsRefRouteImport
       parentRoute: typeof rootRouteImport
     }
   }
 }
 
+interface SettingsRouteChildren {
+  SettingsSectionRoute: typeof SettingsSectionRoute
+  SettingsIndexRoute: typeof SettingsIndexRoute
+}
+
+const SettingsRouteChildren: SettingsRouteChildren = {
+  SettingsSectionRoute: SettingsSectionRoute,
+  SettingsIndexRoute: SettingsIndexRoute,
+}
+
+const SettingsRouteWithChildren = SettingsRoute._addFileChildren(
+  SettingsRouteChildren,
+)
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  FavoritesRoute: FavoritesRoute,
+  FollowingRoute: FollowingRoute,
   LoginRoute: LoginRoute,
   NewRoute: NewRoute,
   PeopleRoute: PeopleRoute,
-  SettingsRoute: SettingsRoute,
+  SettingsRoute: SettingsRouteWithChildren,
   ShowcaseRoute: ShowcaseRoute,
   WelcomeRoute: WelcomeRoute,
-  ARefRoute: ARefRoute,
-  UHandleRoute: UHandleRoute,
+  ArtifactsRefRoute: ArtifactsRefRoute,
+  UsersHandleRoute: UsersHandleRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

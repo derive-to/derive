@@ -72,8 +72,8 @@ describe("cross-document links between synced sibling artifacts", () => {
 
     const body = await (await app.request("/raw/cdprod1/v/1/index.html")).text()
 
-    // The sibling link → its canonical /a/<slug>-<short_id> URL + the interception marker.
-    expect(body).toContain('href="/a/ct-walkthrough-cdwalk1"')
+    // The sibling link → its canonical /artifacts/<slug>-<short_id> URL + the interception marker.
+    expect(body).toContain('href="/artifacts/ct-walkthrough-cdwalk1"')
     expect(body).toContain('data-derive-nav="ct-walkthrough-cdwalk1"')
     // A link with no sibling, an external link, and an in-page anchor are left as-is.
     expect(body).toContain('href="missing.html"')

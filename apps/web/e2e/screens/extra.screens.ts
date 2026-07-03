@@ -82,7 +82,7 @@ test("capture the remaining surfaces", async ({ page: p }) => {
   const id = ((await res.json()) as { short_id: string }).short_id
 
   // Artifact with an open comment thread.
-  await p.goto(`/a/${id}`)
+  await p.goto(`/artifacts/${id}`)
   await settle(p)
   await p.getByTestId("comment-new").click()
   await p.getByTestId("composer-input").fill("First pass looks good — one note on the intro.")

@@ -25,7 +25,7 @@ describe("unfurl + embed", () => {
   it("oembed returns a rich response with a sandboxed iframe", async () => {
     const short = await idOf(await upload("o.md", "# Hi", { visibility: "public", title: "Deck" }))
     const res = await app.request(
-      `/v1/oembed?url=${encodeURIComponent(`http://derive.test/a/${short}`)}`,
+      `/v1/oembed?url=${encodeURIComponent(`http://derive.test/artifacts/${short}`)}`,
     )
     expect(res.status).toBe(200)
     const body = await res.json()
@@ -53,7 +53,7 @@ describe("unfurl + embed", () => {
       await upload("priv.md", "# secret", { visibility: "org", title: "Secret" }),
     )
     const res = await anonApp.request(
-      `/v1/oembed?url=${encodeURIComponent(`http://derive.test/a/${short}`)}`,
+      `/v1/oembed?url=${encodeURIComponent(`http://derive.test/artifacts/${short}`)}`,
     )
     expect(res.status).toBe(404)
   })
@@ -83,7 +83,7 @@ describe("unfurl + embed", () => {
     expect(svg).toContain("private")
   })
 
-  it("injects unfurl meta into the /a/:ref shell for a public artifact", async () => {
+  it("injects unfurl meta into the /artifacts/:ref shell for a public artifact", async () => {
     const a = createApp({
       meta,
       blobs: new FsBlobStore(join(dir, "blobs-embed-shell")),
@@ -95,7 +95,9 @@ describe("unfurl + embed", () => {
       await upload("s.md", "# Hi", { visibility: "public", title: "Shared Page" }),
     )
     // A bare ref 302s to the canonical name-first URL; the unfurl meta lives there.
-    const bare = await a.request(`/a/${short}`, { headers: { authorization: "Bearer tok" } })
+    const bare = await a.request(`/artifacts/${short}`, {
+      headers: { authorization: "Bearer tok" },
+    })
     expect(bare.status).toBe(302)
     const res = await a.request(bare.headers.get("location") ?? "", {
       headers: { authorization: "Bearer tok" },
@@ -122,7 +124,9 @@ describe("unfurl + embed", () => {
       await upload("sf.md", "# Hi", { visibility: "public", title: "Worker Page" }),
     )
     // A bare ref 302s to the canonical name-first URL; the unfurl meta lives there.
-    const bare = await a.request(`/a/${short}`, { headers: { authorization: "Bearer tok" } })
+    const bare = await a.request(`/artifacts/${short}`, {
+      headers: { authorization: "Bearer tok" },
+    })
     expect(bare.status).toBe(302)
     const res = await a.request(bare.headers.get("location") ?? "", {
       headers: { authorization: "Bearer tok" },
@@ -144,14 +148,14 @@ describe("unfurl + embed", () => {
     const short = await idOf(
       await upload("s2.md", "# secret", { visibility: "org", title: "Private Page" }),
     )
-    const res = await a.request(`/a/${short}`) // anonymous (no token header)
+    const res = await a.request(`/artifacts/${short}`) // anonymous (no token header)
     const html = await res.text()
     expect(html).not.toContain("og:title")
     expect(html).not.toContain("Private Page")
   })
 })
 
-describe("profile unfurl (/u/:handle)", () => {
+describe("profile unfurl (/users/:handle)", () => {
   const nia: TestUser = {
     id: "u_og_nia",
     email: "ognia@d.test",
@@ -185,7 +189,7 @@ describe("profile unfurl (/u/:handle)", () => {
 
   it("renders the profile OG card SVG (name + work count)", async () => {
     await seedWork()
-    const res = await authed.request("/v1/og/u/niao")
+    const res = await authed.request("/v1/og/users/niao")
     expect(res.status).toBe(200)
     expect(res.headers.get("content-type")).toContain("image/svg+xml")
     const svg = await res.text()
@@ -195,7 +199,7 @@ describe("profile unfurl (/u/:handle)", () => {
     expect(svg).toContain("1 work")
   })
 
-  it("injects profile OG meta into the /u/:handle shell for crawlers", async () => {
+  it("injects profile OG meta into the /users/:handle shell for crawlers", async () => {
     const a = createApp({
       meta: m,
       blobs: new FsBlobStore(join(dir, "blobs-og-profile-shell")),
@@ -205,17 +209,17 @@ describe("profile unfurl (/u/:handle)", () => {
       shell: SHELL,
       defaultOrgId: "default",
     })
-    const res = await a.request("/u/niao")
+    const res = await a.request("/users/niao")
     expect(res.status).toBe(200)
     const html = await res.text()
     expect(html).toContain('property="og:type" content="profile"')
     expect(html).toContain("Nia Okoye (@niao)")
-    expect(html).toContain("/v1/og/u/niao")
+    expect(html).toContain("/v1/og/users/niao")
     expect(html).toContain("id=root") // still the SPA shell for humans
   })
 
   it("serves a generic card + bare shell for an unclaimed handle (no leak)", async () => {
-    const svg = await (await app.request("/v1/og/u/ghosthandle")).text()
+    const svg = await (await app.request("/v1/og/users/ghosthandle")).text()
     expect(svg).toContain("<svg")
     const a = createApp({
       meta,
@@ -224,7 +228,7 @@ describe("profile unfurl (/u/:handle)", () => {
       token: "tok",
       shell: SHELL,
     })
-    const html = await (await a.request("/u/ghosthandle")).text()
+    const html = await (await a.request("/users/ghosthandle")).text()
     expect(html).not.toContain("og:type")
     expect(html).toContain("id=root")
   })

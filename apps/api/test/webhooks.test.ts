@@ -29,7 +29,7 @@ describe("webhook formatting + signing", () => {
     expect(p.artifact).toEqual({
       short_id: "sample00",
       title: "Spec",
-      url: "http://h/a/spec-sample00",
+      url: "http://h/artifacts/spec-sample00",
     })
     expect(p.data.author).toBe("ann")
   })

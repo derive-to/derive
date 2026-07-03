@@ -13,7 +13,7 @@ test("owner reviews proposals: toggles views, approves one, requests changes on 
   await proposeEdit(secondUser.page.request, id, "Tighten the intro", "# Doc\n\ntighter intro")
   await proposeEdit(secondUser.page.request, id, "Fix the footer", "# Doc\n\nbody\n\nfixed footer")
 
-  await owner.goto(`/a/${id}`)
+  await owner.goto(`/artifacts/${id}`)
   // Review lives in the artifact's "⋯ More" menu while proposals are open.
   await owner.getByTestId("artifact-more").click()
   await owner.getByTestId("artifact-review").click()

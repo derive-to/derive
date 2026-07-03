@@ -4,7 +4,7 @@ import type { Hono } from "hono"
 /**
  * The single source of truth for which request paths the API/server owns. Every
  * other GET falls back to the SPA shell so the client router handles it (deep
- * links, refresh, /a/:ref, /settings, …).
+ * links, refresh, /artifacts/:ref, /settings, …).
  *
  * The same contract is declared in two other places that can't import a value —
  * the Cloudflare Worker (`wrangler.toml` `run_worker_first`) and the Vite dev
@@ -30,12 +30,12 @@ const API_EXACT = [
 ] as const
 
 // Page prefixes the SERVER renders before handing off to the SPA, but that are NOT
-// API paths: `/a/:ref` (per-artifact unfurl meta) and `/u/:handle` (per-profile unfurl
+// API paths: `/artifacts/:ref` (per-artifact unfurl meta) and `/users/:handle` (per-profile unfurl
 // meta) are served as the SPA shell with OpenGraph/Twitter meta injected for crawlers
 // (which don't run JS). The edge Worker must run first on these to inject; the dev proxy
 // and `isApiPath` deliberately ignore them (in dev the SPA owns the page, and an
 // unmatched one still falls back to the shell, never JSON).
-const SERVER_PAGE_PREFIXES = ["/a", "/u", "/settings/github"] as const
+const SERVER_PAGE_PREFIXES = ["/artifacts", "/users", "/settings/github"] as const
 
 /** Server-owned path tokens in declaration order (as the dev proxy lists them). */
 export const API_PATHS: readonly string[] = [...API_PREFIXES, ...API_EXACT]

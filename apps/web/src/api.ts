@@ -21,11 +21,11 @@ export interface PublicProfile {
   image: string | null
   /** Coarse team role; null if unset. (People-search results omit `about`.) */
   profession?: string | null
-  /** One-line "what you do" blurb; only present on the full /u/:handle profile. */
+  /** One-line "what you do" blurb; only present on the full /users/:handle profile. */
   about?: string | null
-  /** GitHub login, when known (the full /u/:handle profile only); null otherwise. */
+  /** GitHub login, when known (the full /users/:handle profile only); null otherwise. */
   github_login?: string | null
-  /** Work / follower / following counts (the full /u/:handle profile only). */
+  /** Work / follower / following counts (the full /users/:handle profile only). */
   stats?: { works: number; followers: number; following: number }
   /** Whether the signed-in viewer already follows this person (full profile only). */
   followed_by_me?: boolean
@@ -560,11 +560,11 @@ export const api = {
     f("/v1/me/discoverable", opts({ discoverable })).then(j),
   // Find opted-in people by @handle or name (signed-in; empty q → []).
   searchPeople: (q: string): Promise<{ users: PublicProfile[] }> =>
-    f(`/v1/users/search?q=${encodeURIComponent(q)}`, opts()).then(j),
+    f(`/v1/users/search?query=${encodeURIComponent(q)}`, opts()).then(j),
   // The People directory: browse opted-in people (empty q) or search them (signed-in).
   // Unlike searchPeople, an empty query BROWSES the discoverable set.
   people: (q?: string): Promise<{ users: PublicProfile[] }> =>
-    f(`/v1/people${q ? `?q=${encodeURIComponent(q)}` : ""}`, opts()).then(j),
+    f(`/v1/people${q ? `?query=${encodeURIComponent(q)}` : ""}`, opts()).then(j),
   // Upload a profile picture (raster image; server validates + stores it and sets
   // user.image to the served URL). Returns the new image URL.
   uploadAvatar: (file: File): Promise<{ image: string }> => {
@@ -614,7 +614,7 @@ export const api = {
     collection?: { id: string; title: string }
   }> => {
     const qs = new URLSearchParams()
-    if (params?.q) qs.set("q", params.q)
+    if (params?.q) qs.set("query", params.q)
     if (params?.tag) qs.set("tag", params.tag)
     if (params?.collection) qs.set("collection", params.collection)
     if (params?.favorite) qs.set("favorite", "true")
@@ -929,7 +929,7 @@ export const api = {
   // @ someone on the thread even if they're not in your workspace.
   users: (q?: string, artifact?: string): Promise<{ users: DirUser[] }> => {
     const p = new URLSearchParams()
-    if (q) p.set("q", q)
+    if (q) p.set("query", q)
     if (artifact) p.set("artifact", artifact)
     const qs = p.toString()
     return f(`/v1/users${qs ? `?${qs}` : ""}`, opts()).then(j)

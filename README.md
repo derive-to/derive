@@ -153,9 +153,9 @@ otherwise (or with `for_review:true`) it files a proposal a human approves. Full
 
 ## Embeds and unfurls
 
-Every share link (`/a/:ref`) unfurls as a rich card in Slack, Discord, X, and
+Every share link (`/artifacts/:ref`) unfurls as a rich card in Slack, Discord, X, and
 Notion, and can be dropped into any page. The server adds OG/Twitter meta to the
-artifact's `/a/:ref` HTML and exposes:
+artifact's `/artifacts/:ref` HTML and exposes:
 
 - `GET /v1/og/:ref` — the card image (1200×630 SVG; private artifacts get a
   no-leak locked card)

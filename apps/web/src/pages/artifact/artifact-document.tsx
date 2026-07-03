@@ -5,12 +5,14 @@ import { CursorLayer } from "./cursors/cursor-layer"
 import type { CursorLayerHandle } from "./cursors/use-live-cursors"
 import { DiffView } from "./diff-view"
 import { DeckBar } from "./rail-deck"
+import { RenderStage } from "./render-stage"
 
 /**
- * The document surface: a history banner when viewing a past version, then either
- * the line diff or the sandboxed iframe (with the live-cursor overlay + the deck
- * bar for slide artifacts). The refs are owned by the page (its anchor/presence/
- * fullscreen effects drive them) and passed in.
+ * The document surface: a past-version banner when off the live version, then the
+ * line diff or the matted live render (RenderStage owns the sandboxed iframe + its
+ * boot/failure states; the deck bar and live-cursor overlay ride inside the mat).
+ * The refs are owned by the page (its anchor/presence/fullscreen effects drive
+ * them) and threaded in.
  */
 export function ArtifactDocument({
   shown,
@@ -60,20 +62,15 @@ export function ArtifactDocument({
   const past = shown !== currentVersion
   return (
     <>
-      {/* History-viewing banner: only when looking at a past version. The current
-          version just shows the artifact, no version chrome. */}
+      {/* Off the live version: a brand-tinted strip (the sync-chip grammar — being
+          off-current is a "this matters" moment, not a status warning). */}
       {past && (
-        // A brand-tinted strip (the sync-chip grammar): being off the live version
-        // is a "this matters" moment, not a status warning.
         <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1.5 border-b border-primary/30 bg-primary/5 px-4 py-2 text-sm">
           <span className="font-medium text-primary">Viewing an earlier version</span>
           <span className="text-muted-foreground">·</span>
           <Button
             variant="link"
             data-testid="artifact-toggle-diff"
-            // In-flow with the banner text: strip the control box, keep the link
-            // recipe. Persistent underline (not the variant's hover-only) so the
-            // ink link stays legible as a control beside the ink banner label.
             className="h-auto p-0 underline"
             onClick={onToggleDiff}
           >
@@ -89,8 +86,6 @@ export function ArtifactDocument({
           >
             {restoring ? "Restoring…" : "Restore this version"}
           </Button>
-          {/* Secondary, not filled: the toolbar's Share is the page's one ink
-              primary — a second filled button in the history banner would compete. */}
           <Button
             variant="secondary"
             size="sm"
@@ -110,30 +105,30 @@ export function ArtifactDocument({
           toLabel="current"
         />
       ) : (
-        <div ref={presentWrapRef} className="relative flex min-h-0 flex-1 flex-col bg-white">
-          <iframe
-            ref={frameRef}
-            onLoad={onFrameLoad}
-            title={title}
-            src={rawSrc}
-            allow="fullscreen"
-            sandbox="allow-scripts allow-forms allow-popups allow-modals allow-downloads"
-            className="flex-1 border-0 bg-white"
-          />
-          {deck && (
-            <DeckBar
-              deck={deck}
-              onPrev={onDeckPrev}
-              onNext={onDeckNext}
-              onFullscreen={onFullscreen}
-            />
-          )}
-          {/* Live peer cursors (Figma/Notion style). The iframe is a separate opaque
-              origin, so its anchor script forwards pointer moves/leave/tap out via
-              postMessage; the overlay eases them in here in the parent, over the
-              frame. Anon viewers too. */}
-          <CursorLayer layer={cursor} onScrollDoc={onScrollDoc} />
-        </div>
+        <RenderStage
+          rawSrc={rawSrc}
+          title={title}
+          version={shown}
+          frameRef={frameRef}
+          wrapRef={presentWrapRef}
+          onFrameLoad={onFrameLoad}
+          overlays={
+            <>
+              {deck && (
+                <DeckBar
+                  deck={deck}
+                  onPrev={onDeckPrev}
+                  onNext={onDeckNext}
+                  onFullscreen={onFullscreen}
+                />
+              )}
+              {/* Live peer cursors ease in here, over the framed render (the iframe is
+                  a separate opaque origin — its script forwards pointer moves out via
+                  postMessage). Anon viewers too. */}
+              <CursorLayer layer={cursor} onScrollDoc={onScrollDoc} />
+            </>
+          }
+        />
       )}
     </>
   )

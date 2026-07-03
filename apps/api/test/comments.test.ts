@@ -178,7 +178,7 @@ describe("@mentions + in-app notifications", () => {
   const { app, meta: m } = makeAuthedApp("mentions", [alice, bob], "editor")
   let shortId: string
 
-  it("lists provisioned workspace members in the mention directory, filtered by ?q=", async () => {
+  it("lists provisioned workspace members in the mention directory, filtered by ?query=", async () => {
     shortId = (await (await publishAs(app, "<h1>doc</h1>", {}, as(alice.email))).json()).short_id
     await app.request("/v1/me", { headers: as(bob.email) }) // provisions bob as a member
     const all = await (await app.request("/v1/users", { headers: as(alice.email) })).json()
@@ -187,11 +187,11 @@ describe("@mentions + in-app notifications", () => {
     expect(ids).toContain(bob.id)
 
     const filtered = await (
-      await app.request("/v1/users?q=bob", { headers: as(alice.email) })
+      await app.request("/v1/users?query=bob", { headers: as(alice.email) })
     ).json()
     expect(filtered.users).toHaveLength(1)
     // The directory identifies people by handle + name, never email (you can still
-    // FIND someone by their address via ?q=, but it is never returned).
+    // FIND someone by their address via ?query=, but it is never returned).
     expect(filtered.users[0]).toMatchObject({ id: bob.id, name: "Bob" })
     expect(filtered.users[0].email).toBeUndefined()
   })

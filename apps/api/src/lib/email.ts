@@ -74,7 +74,7 @@ export const commentDeepLink = (
   artifact: ArtifactRecord,
   threadId: string,
 ): string =>
-  `${baseUrl.replace(/\/$/, "")}/a/${artifact.short_id}?c=${encodeURIComponent(threadId)}`
+  `${baseUrl.replace(/\/$/, "")}/artifacts/${artifact.short_id}?comment=${encodeURIComponent(threadId)}`
 
 export interface CommentEmailInput {
   author: string

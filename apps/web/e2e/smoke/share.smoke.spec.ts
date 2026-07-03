@@ -3,7 +3,7 @@ import { expect, publishArtifact, test } from "../fixtures"
 // Owner shares an artifact with a teammate; the member row lands in the dialog.
 test("owner shares an artifact and the member appears", async ({ owner, secondUser }) => {
   const shortId = await publishArtifact(owner)
-  await owner.goto(`/a/${shortId}`)
+  await owner.goto(`/artifacts/${shortId}`)
 
   await owner.getByTestId("share-trigger").click()
   await expect(owner.getByTestId("share-empty")).toBeVisible()
