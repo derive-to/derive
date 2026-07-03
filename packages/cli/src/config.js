@@ -30,19 +30,64 @@ export function loadCredentials() {
   }
 }
 
-/** Persist a token for `server` (0600, owner-only). Returns the store path. */
-export function saveToken(server, token) {
+/** Persist a grant for `server` (0600, owner-only). Stores the access token plus
+ *  the refresh token + client id + expiry, so `freshToken` can renew silently and
+ *  a one-time `derive login` never expires — the zero-click-after-connect default.
+ *  Returns the store path. Back-compat: a bare string is treated as {token}. */
+export function saveToken(server, grant) {
+  const g = typeof grant === "string" ? { token: grant } : grant
   const dir = configDir()
   mkdirSync(dir, { recursive: true })
   const all = loadCredentials()
-  all[originOf(server)] = { token, saved_at: new Date().toISOString() }
+  all[originOf(server)] = {
+    token: g.token,
+    refresh_token: g.refresh_token ?? null,
+    client_id: g.client_id ?? null,
+    // Refresh a minute early so an in-flight publish never races the expiry.
+    expires_at: g.expires_in
+      ? new Date(Date.now() + (g.expires_in - 60) * 1000).toISOString()
+      : null,
+    saved_at: new Date().toISOString(),
+  }
   writeFileSync(credsPath(), `${JSON.stringify(all, null, 2)}\n`, { mode: 0o600 })
   return credsPath()
 }
 
-/** The saved token for `server`, or null. */
+/** The saved access token for `server`, or null (no refresh). */
 export function tokenFor(server) {
   return loadCredentials()[originOf(server)]?.token ?? null
+}
+
+/** A live access token for `server`: the saved one if still valid, else refreshed
+ *  silently via the stored refresh token (rotating it). null if nothing is saved.
+ *  This is what makes `derive publish` zero-click after a one-time `derive login`. */
+export async function freshToken(server) {
+  const entry = loadCredentials()[originOf(server)]
+  if (!entry) return null
+  const valid = !entry.expires_at || new Date(entry.expires_at).getTime() > Date.now()
+  if (valid || !entry.refresh_token || !entry.client_id) return entry.token ?? null
+  try {
+    const res = await fetch(`${originOf(server)}/api/auth/oauth2/token`, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "refresh_token",
+        refresh_token: entry.refresh_token,
+        client_id: entry.client_id,
+      }),
+    })
+    const j = await res.json().catch(() => ({}))
+    if (!res.ok || !j.access_token) return entry.token ?? null
+    saveToken(server, {
+      token: j.access_token,
+      refresh_token: j.refresh_token ?? entry.refresh_token,
+      client_id: entry.client_id,
+      expires_in: j.expires_in,
+    })
+    return j.access_token
+  } catch {
+    return entry.token ?? null
+  }
 }
 
 /** The derive.json a fresh project starts with (no id until first publish). */

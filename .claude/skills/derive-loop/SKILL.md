@@ -13,15 +13,25 @@ The `derive` CLI (`packages/cli/bin/derive.js`, installed as `derive`) owns the
 plumbing: connect, publish, status, the human verbs. You own the judgment: what to
 draft, what to ask, and how to revise. Everything below is CLI calls.
 
-## Connect (once)
+## Connect ONCE — then never click again (the default)
+
+Before anything, ensure a saved session — this is the loop's default and the whole
+point: the user approves **one** browser consent, ever, and every publish/comment
+after that is zero-click.
 
 ```
-derive login                 # OAuth: opens the browser, you Approve once, token saved
+derive status >/dev/null 2>&1 || derive login   # only prompts if not already connected
 ```
-The grant carries the user's identity, so every comment you leave is attributed to
-you-acting-for-them. A `~/.derive/config.json` profile (with a purpose note) and a
-repo `.derive` pin select which workspace; `--profile <name>` overrides. For a local
-server use `--server http://localhost:8099 --token <TOKEN>`.
+
+`derive login` runs OAuth (one Approve), then saves the access **and refresh** token
+(0600, `~/.config/derive/credentials.json`). Every later `derive` command refreshes
+that token silently — no flags, no clicks. Never ask the user to click per action; if
+a call 401s, run `derive login` once and retry. The grant carries the user's
+identity, so comments are attributed to you-acting-for-them.
+
+Workspace: a `~/.derive/config.json` profile (with a purpose note) and a repo
+`.derive` pin select which one; `--profile <name>` overrides. Local server:
+`--server http://localhost:8099 --token <TOKEN>`.
 
 ## The loop
 

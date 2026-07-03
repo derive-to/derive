@@ -19,6 +19,7 @@ import { zipSync } from "fflate"
 import {
   CONFIG_FILE,
   formatComments,
+  freshToken,
   loadConfig,
   resolvePublish,
   saveToken,
@@ -74,7 +75,9 @@ if (cmd === "login") {
     "",
   )
   const redirect = `${server}/oauth/cli-callback`
-  const scope = flags.scope ?? "openid derive:read derive:publish"
+  const scope =
+    flags.scope ??
+    "openid offline_access derive:read derive:comment derive:propose derive:publish derive:review"
   const verifier = b64url(randomBytes(64))
   const challenge = b64url(createHash("sha256").update(verifier).digest())
   const state = b64url(randomBytes(16))
@@ -142,7 +145,12 @@ if (cmd === "login") {
     process.exit(1)
   }
 
-  const path = saveToken(server, tj.access_token)
+  const path = saveToken(server, {
+    token: tj.access_token,
+    refresh_token: tj.refresh_token,
+    client_id: client.client_id,
+    expires_in: tj.expires_in,
+  })
   console.log(`\n✓ Signed in to ${server}`)
   console.log(`  Token saved to ${path} — \`derive publish\` will use it automatically.`)
   process.exit(0)
@@ -159,6 +167,7 @@ if (LOOP.includes(cmd)) {
     process.exit(1)
   }
   const r = resolvePublish(flags, cfg)
+  r.token = flags.token ?? process.env.DERIVE_TOKEN ?? (await freshToken(r.server))
   if (!r.id) {
     console.error(`error: no artifact id. Set "id" in ${CONFIG_FILE} (publish once), or pass --id.`)
     process.exit(1)
@@ -338,6 +347,7 @@ if (p.visibility) form.append("visibility", p.visibility)
 if (p.password) form.append("password", p.password)
 if (flags.review) form.append("request_review", "true")
 
+p.token = flags.token ?? process.env.DERIVE_TOKEN ?? (await freshToken(p.server))
 const url = p.id ? `${p.server}/v1/artifacts/${p.id}/versions` : `${p.server}/v1/artifacts`
 const headers = p.token ? { authorization: `Bearer ${p.token}` } : {}
 const res = await fetch(url, { method: "POST", body: form, headers })
