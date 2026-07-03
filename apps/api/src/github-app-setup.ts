@@ -56,12 +56,19 @@ ${body}</main></body></html>`
 // the `installation`/`new_permissions_accepted` webhook + a live GET /app re-check
 // confirm it. So this constant drives "what we want"; GitHub holds "what we have".
 //
-// contents+metadata (read) mirror docs; pull_requests is now WRITE — Derive posts a PR
+// contents+metadata (read) mirror docs; pull_requests is WRITE — Derive posts a PR
 // review/issue comment when someone comments on a PR-sourced artifact, and receives
 // `pull_request` + comment events to preview PR docs and mirror PR comments back into
 // Derive (the bidirectional collaboration loop). push + pull_request drive auto-sync.
+// issues:READ backs the `issue_comment` event. GitHub's manifest-creation validator maps
+// that event to the Issues permission (NOT Pull requests), so omitting it fails creation
+// with "Default events are not supported by permissions: issue_comment". Read is enough:
+// we only RECEIVE issue_comment events. Posting a PR conversation comment goes through
+// pull_requests:write — the target is always a PR (see prSourceForArtifact), never a bare
+// issue — so we never need issues:write.
 export const REQUIRED_PERMISSIONS: Record<string, string> = {
   contents: "read",
+  issues: "read",
   metadata: "read",
   pull_requests: "write",
 }
@@ -124,7 +131,7 @@ export function manifestFormHTML(props: { baseUrl: string; state: string }): str
       <input type="hidden" name="manifest" value="${esc(manifestJson)}"/>
       <button class="btn" type="submit">Continue to GitHub</button>
     </form>
-    <p class="foot">Derive asks for <strong>Contents: read</strong>, <strong>Metadata: read</strong> to mirror your docs, and <strong>Pull requests: write</strong> to sync comments to and from PRs.</p>
+    <p class="foot">Derive asks for <strong>Contents: read</strong> and <strong>Metadata: read</strong> to mirror your docs, <strong>Issues: read</strong> to receive PR comment events, and <strong>Pull requests: write</strong> to sync comments to and from PRs.</p>
     <script>setTimeout(function(){document.getElementById("f").submit()},400)</script>`,
   )
 }
