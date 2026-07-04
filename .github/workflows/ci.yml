@@ -118,6 +118,61 @@ jobs:
       - name: Bundle budget
         run: pnpm lint:bundle
 
+  # CD: ship main to the hosted tier (Workers + Hyperdrive/Neon, derive.to) once
+  # the correctness lanes pass. Mirrors `pnpm --filter @derive/api deploy`: both
+  # schemas (D1 + Postgres) are brought current BEFORE the worker flips, so a new
+  # version never serves against stale DDL; the e2e smoke suite is dispatched
+  # after. Secrets: CLOUDFLARE_API_TOKEN (account-scoped — the deploy needs
+  # Workers Scripts *and* D1 edit; a workers-only token fails the D1 schema
+  # step), CLOUDFLARE_ACCOUNT_ID, DATABASE_URL (the pg schema step's direct
+  # Neon connection — Hyperdrive is only for the worker's data path).
+  deploy:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [check, pg, d1]
+    runs-on: ubicloud-standard-2
+    # One deploy at a time, in order, never cancelled mid-flight — a schema
+    # applied for a worker that then didn't ship is the state to avoid.
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      actions: write # dispatches e2e-smoke.yml after the deploy
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Build web client
+        run: pnpm --filter @derive/api build:web
+
+      - name: Apply schemas (D1 + Postgres)
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          pnpm --filter @derive/api deploy:schema
+          pnpm --filter @derive/api exec tsx migrate-auth-d1.ts --apply
+          pnpm --filter @derive/api deploy:pg-schema
+
+      - name: Deploy worker
+        run: pnpm --filter @derive/api exec wrangler deploy
+
+      - name: Verify deploy
+        run: curl -sf --max-time 20 https://derive.to/healthz
+
+      - name: Dispatch post-deploy smoke
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run e2e-smoke.yml --ref main
+
   # Supply-chain: a known-vulnerable production dependency, or a committed secret,
   # fails the build. Reads the lockfile + working tree, so no install is needed.
   security:
