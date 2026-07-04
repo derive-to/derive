@@ -681,17 +681,13 @@ export const api = {
     password?: string,
   ): Promise<{ visibility: string; general_role: GeneralRole }> =>
     f(`/v1/artifacts/${id}/visibility`, {
+      ...opts({ visibility, generalRole, password }),
       method: "PATCH",
-      credentials: "include",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ visibility, generalRole, password }),
     }).then(j),
   setLocked: (id: string, locked: boolean): Promise<{ locked: boolean }> =>
     f(`/v1/artifacts/${id}/locked`, {
+      ...opts({ locked }),
       method: "PATCH",
-      credentials: "include",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ locked }),
     }).then(j),
   diff: (id: string, from: number, to: number): Promise<Diff> =>
     f(`/v1/artifacts/${id}/diff?from=${from}&to=${to}&format=json`, opts()).then(j),

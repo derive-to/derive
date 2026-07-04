@@ -232,7 +232,6 @@ export function artifactActions(p: {
     startEdit,
     publishEdit,
     proposeEdit,
-    addComment,
     reply,
     submitNew,
     toggleResolve,

@@ -29,9 +29,6 @@ export type Sel = {
   snapshot?: ElementSnapshotLite
 }
 
-/** True if a selection pins to a non-text element rather than a quote. */
-export const isElementSel = (s: Sel | null | undefined): boolean => s?.type === "ElementSelector"
-
 /** The human label to show for a selection — the quote for text, the snapshot
  *  label (e.g. "Image — chart.png") for an element. */
 export const selLabel = (s: Sel | null | undefined): string | null =>

@@ -7,8 +7,8 @@ import { cn } from "@/lib/utils"
 import { CursorGlyph, NameTag } from "./glyph"
 
 // Pick your live cursor: a color, arrow-or-emoji, and (for emoji) the glyph.
-// Used both in the account pod and on the artifact page, so anonymous viewers
-// can customize too. Swatch colors are identity data, not theme tokens.
+// Opened from the artifact bar's cursor button, so anonymous viewers can
+// customize too. Swatch colors are identity data, not theme tokens.
 export function CursorSwitch({ className }: { className?: string }) {
   const { pref, setPref } = useCursorPref()
   return (

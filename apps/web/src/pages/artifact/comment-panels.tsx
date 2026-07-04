@@ -543,7 +543,3 @@ export function OpenPanel(props: {
     </>
   )
 }
-
-// Pinned margin: absolutely positions each thread card next to its highlight,
-// measuring heights and relaxing overlaps so cards never stack on top of each
-// other. The active card snaps to its true anchor; neighbours flow around it.

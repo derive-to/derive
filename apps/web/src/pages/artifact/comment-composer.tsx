@@ -425,5 +425,3 @@ export function Composer({
     </div>
   )
 }
-
-// Collapsed rail: a thin column of dots, each beside its comment's text.

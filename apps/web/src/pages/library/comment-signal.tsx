@@ -4,10 +4,6 @@ import { cn } from "@/lib/utils"
 
 type Signals = Pick<Artifact, "open_threads" | "mentions_me" | "i_participated">
 
-/** True when an item needs YOUR feedback: you're tagged in, or you authored, an open
- *  thread. Drives both the loud badge and the promoted "Needs your feedback" section. */
-export const needsMyFeedback = (a: Signals): boolean => !!(a.mentions_me || a.i_participated)
-
 /** Inline comment indicator for a list item. Plain comment activity reads quietly
  *  (a muted count, like views); an item that needs your feedback gets a soft brand
  *  chip — "Tagged you" (you were @mentioned) outranks "You're in this" (you commented).

@@ -38,10 +38,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 }
 
 /* ---- theme ---- */
-// Swatches are raw hex (identity color data, not theming) — see check-design-tokens.
 export const THEMES = [
-  { id: "light", label: "Light", sw: "#f7f8fa" },
-  { id: "dark", label: "Dark", sw: "#0a0b0d" },
+  { id: "light", label: "Light" },
+  { id: "dark", label: "Dark" },
 ] as const
 
 // next-themes owns the theme: it toggles the `.dark`/`.light` class the shadcn tokens

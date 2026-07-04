@@ -17,8 +17,8 @@ import { getInitials } from "@/lib/initials"
 import { useDelayedPending } from "@/lib/use-delayed-pending"
 
 // The people results grid geometry, defined once so the live grid and its skeleton
-// can't drift: deliberately 240px min (not CardGrid's 220px) — a person row (identity +
-// Follow) is wider than an artifact card.
+// can't drift. 240px min sizes each cell for a person row — an avatar + name beside a
+// Follow button, on one line.
 const PEOPLE_GRID = "grid grid-cols-[repeat(auto-fill,minmax(240px,1fr))] gap-3"
 
 // The People directory — browse + search discoverable people and follow them. This is

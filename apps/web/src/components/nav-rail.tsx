@@ -300,7 +300,7 @@ export function NavRail() {
   const isFav = loc.pathname === "/favorites"
   const isFollowing = loc.pathname === "/following"
   const onPeople = loc.pathname === "/people"
-  const onSettings = loc.pathname === "/settings"
+  const onSettings = loc.pathname.startsWith("/settings")
   const tags = summary?.tags ?? []
   // The icon strip shows only glyph rows; content that has no icon form (the
   // collections/tags lists, the anon conversion card) hides behind this.
