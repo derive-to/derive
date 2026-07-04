@@ -17,12 +17,12 @@ import {
 } from "@derive/core"
 import type { Context } from "hono"
 import { getCookie, setCookie } from "hono/cookie"
-import { createLocalJWKSet, type JWTPayload, jwtVerify } from "jose"
 import type { Auth } from "./auth-config"
 import { type Backplane, createInProcessBackplane } from "./bus"
 import type { CustomDomainProvider } from "./lib/cloudflare-saas"
 import { safeEqual, sha256, unlockCookie, unlockToken } from "./lib/crypto"
 import { fail, VIEWER_COOKIE, WS_COOKIE } from "./lib/http"
+import { makeOauthAgent } from "./lib/oauth-agent"
 import {
   clientIp,
   inMemoryRateLimiters,
@@ -309,15 +309,6 @@ export function buildContext(deps: AppDeps) {
   // A registered agent acting via its bearer token (memoized per request). An
   // agent is a workspace principal: same authorization path as a member, with
   // its own identity and (default commenter) role.
-  // The least-privilege role an OAuth-granted scope set maps to: publish/review
-  // earn editor; propose/comment earn commenter; read alone is viewer.
-  const roleFromScopes = (scopes: string[]): Role =>
-    scopes.includes("derive:publish") || scopes.includes("derive:review")
-      ? "editor"
-      : scopes.includes("derive:propose") || scopes.includes("derive:comment")
-        ? "commenter"
-        : "viewer"
-
   const agentCache = new WeakMap<Context, AgentRecord | null>()
   // The human an OAuth agent acts on behalf of (the user who consented). Null for a
   // registered workspace agent (no granting user) — kept in lockstep with agentCache.
@@ -364,106 +355,6 @@ export function buildContext(deps: AppDeps) {
     const ag = await agentFor(c)
     if (ag) return onBehalfCache.get(c) ?? null
     return (await currentUser(c))?.id ?? null
-  }
-
-  // The agent runs in the granting user's workspace, provisioned on first touch
-  // exactly as the user's own first request would (multi mode, lazy).
-  const oauthWorkspace = async (
-    userId: string,
-    email: string | null,
-    name: string | null,
-  ): Promise<string> => {
-    const mine = await meta.listWorkspaces(userId)
-    return mine[0]?.id ?? (await provisionPersonal({ id: userId, email: email ?? "", name }))
-  }
-
-  // Our own JWKS (served by the jwt plugin at /api/auth/jwks), read straight from
-  // Better Auth's store on this instance — NOT an HTTP self-fetch, which a
-  // Cloudflare Worker can't do against its own hostname. The local key set is
-  // cached per isolate, rebuilt on a verify miss (a rotated signing key).
-  const oauthIssuer = new URL("/api/auth", deps.baseUrl).toString()
-  let jwksCache: ReturnType<typeof createLocalJWKSet> | null = null
-  const loadJwks = async () => {
-    const res = (await deps.auth?.api.getJwks()) as
-      | Parameters<typeof createLocalJWKSet>[0]
-      | undefined
-    return res?.keys?.length ? createLocalJWKSet(res) : null
-  }
-
-  // An OAuth access token (granted via the consent screen) acts as a scoped agent:
-  // it runs in the granting user's workspace, authors as the client's name, and
-  // takes a role derived from the granted derive:* scopes. Expired/invalid tokens
-  // resolve to nothing — the caller is then anonymous (read-only), never the owner.
-  const oauthAgent = async (
-    token: string,
-  ): Promise<{ rec: AgentRecord; ownerId: string } | null> => {
-    // 1. Opaque access token (the `derive login` flow): stored hashed (sha256, like
-    //    agent tokens), so resolve by the hash of the presented bearer.
-    const grant = await meta.getOAuthGrant(sha256(token))
-    if (grant) {
-      if (grant.expiresAt.getTime() <= Date.now()) return null
-      const org = await oauthWorkspace(grant.userId, grant.userEmail, grant.userName)
-      return {
-        ownerId: grant.userId,
-        rec: {
-          id: `oauth:${grant.clientId}`,
-          org_id: org,
-          name: grant.clientName,
-          token: "",
-          role: roleFromScopes(grant.scopes),
-          created_at: new Date().toISOString(),
-        },
-      }
-    }
-    // 2. JWT access token: the oauth-provider issues a signed JWT (not stored in our
-    //    table) when a client sends an RFC 8707 `resource` indicator — which every
-    //    remote MCP client (Claude Code, claude.ai) does. Verify it against our own
-    //    JWKS and resolve the agent from its claims.
-    if (token.split(".").length === 3) return oauthAgentFromJwt(token)
-    return null
-  }
-
-  const oauthAgentFromJwt = async (
-    token: string,
-  ): Promise<{ rec: AgentRecord; ownerId: string } | null> => {
-    const verify = async (): Promise<JWTPayload | null> => {
-      jwksCache ??= await loadJwks()
-      if (!jwksCache) return null
-      return (await jwtVerify(token, jwksCache, { issuer: oauthIssuer })).payload
-    }
-    let claims: JWTPayload | null
-    try {
-      claims = await verify()
-    } catch {
-      // Bad signature/issuer/expiry — or a rotated key the cache misses. Rebuild
-      // the key set once and retry before giving up.
-      jwksCache = null
-      try {
-        claims = await verify()
-      } catch {
-        return null
-      }
-    }
-    if (!claims) return null
-    const userId = typeof claims.sub === "string" ? claims.sub : ""
-    if (!userId) return null
-    const scopes = String(claims.scope ?? "")
-      .split(/\s+/)
-      .filter(Boolean)
-    const clientId = String(claims.azp ?? claims.client_id ?? "")
-    const u = (await meta.getUsers([userId]))[0]
-    const org = await oauthWorkspace(userId, u?.email ?? null, u?.name ?? null)
-    return {
-      ownerId: userId,
-      rec: {
-        id: `oauth:${clientId}`,
-        org_id: org,
-        name: (await meta.getOAuthClientName(clientId)) || clientId || "An agent",
-        token: "",
-        role: roleFromScopes(scopes),
-        created_at: new Date().toISOString(),
-      },
-    }
   }
 
   // The acting identity (agent or signed-in user) for authorship; null when
@@ -523,6 +414,15 @@ export function buildContext(deps: AppDeps) {
     await meta.setMembership({ id: newId("m"), org_id: id, user_id: me.id, role: "owner" })
     return id
   }
+
+  // OAuth access-token resolution (opaque + RFC 8707 JWT) lives in its own module so the
+  // jose/JWKS dependency stays out of the context; `agentFor` dispatches to it above.
+  const { oauthAgent } = makeOauthAgent({
+    meta,
+    auth: deps.auth,
+    baseUrl: deps.baseUrl,
+    provisionPersonal,
+  })
 
   // The caller's active workspace for this request (memoized). Single mode: always
   // the bootstrap org. Multi mode: the derive_ws cookie (validated against
