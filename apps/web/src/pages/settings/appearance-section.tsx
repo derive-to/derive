@@ -1,6 +1,6 @@
+import { ThemeSwitch } from "@/components/chrome/theme-switch"
 import { SettingRow } from "@/components/shared/setting-row"
 import { SettingsGroup } from "@/components/shared/settings-group"
-import { ThemeSwitch } from "@/components/theme-switch"
 import { SettingsSection } from "./settings-section"
 
 // Personal appearance — theme lives here as its source-of-truth control (a quick

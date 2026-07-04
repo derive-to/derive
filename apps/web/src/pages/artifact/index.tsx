@@ -3,9 +3,7 @@ import { useNavigate, useParams } from "@tanstack/react-router"
 import { Minimize2 } from "lucide-react"
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react"
 import { API_BASE, ApiError, api, type Comment } from "@/api"
-import { CursorButton } from "@/components/cursor/cursor-button"
 import { Icon } from "@/components/icons"
-import { FloatingControl } from "@/components/shared/floating-control"
 import { Kbd } from "@/components/ui/kbd"
 import { useSidebar } from "@/components/ui/sidebar"
 import { toast } from "@/components/ui/sonner"
@@ -22,6 +20,8 @@ import { ArtifactLoadError, ArtifactNotFound, ArtifactRemoved } from "./artifact
 import { ArtifactTopBar } from "./artifact-top-bar"
 import { BundleBar } from "./bundle-bar"
 import { ActionsCtx } from "./comment-actions"
+import { CursorButton } from "./cursors/cursor-button"
+import { FloatingControl } from "./floating-control"
 import { canCommentWithRole, shouldPromptSignInToComment } from "./lib/comment-access"
 import { groupThreads, parseAnchor } from "./lib/layout"
 import { parseRef, refFor } from "./parse-ref"
@@ -38,9 +38,7 @@ import { WorkbenchSkeleton } from "./workbench-skeleton"
 
 // Heavy on-demand surfaces — split out of the artifact route's initial chunk and
 // loaded only when the user opens them (review proposals / insights / history).
-const ReviewOverlay = lazy(() =>
-  import("@/components/review").then((m) => ({ default: m.ReviewOverlay })),
-)
+const ReviewOverlay = lazy(() => import("./review").then((m) => ({ default: m.ReviewOverlay })))
 const Insights = lazy(() => import("./insights-history").then((m) => ({ default: m.Insights })))
 const HistoryDrawer = lazy(() =>
   import("./insights-history").then((m) => ({ default: m.HistoryDrawer })),

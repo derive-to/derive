@@ -1,7 +1,7 @@
 import type { Artifact } from "@/api"
-import { AuthorChip } from "@/components/author-chip"
-import { FollowButton } from "@/components/follow-button"
 import { Icon } from "@/components/icons"
+import { AuthorChip } from "@/components/shared/author-chip"
+import { FollowButton } from "@/components/shared/follow-button"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {

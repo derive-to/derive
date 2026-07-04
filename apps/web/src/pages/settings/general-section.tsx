@@ -1,9 +1,9 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useEffect, useState } from "react"
 import { api } from "@/api"
+import { useShell } from "@/components/chrome/shell-context"
 import { FormField } from "@/components/shared/form-field"
 import { StatusPanel } from "@/components/shared/status-panel"
-import { useShell } from "@/components/shell-context"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,

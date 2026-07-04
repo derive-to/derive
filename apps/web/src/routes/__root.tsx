@@ -8,7 +8,7 @@ import {
   useRouterState,
 } from "@tanstack/react-router"
 import { type ReactNode, useEffect, useState } from "react"
-import { AppShell } from "../components/app-shell"
+import { AppShell } from "../components/chrome/app-shell"
 import { AppBoot } from "../components/shared/app-boot"
 import { Toaster } from "../components/ui/sonner"
 import { AuthProvider, CursorPrefProvider, ThemeProvider } from "../ctx"

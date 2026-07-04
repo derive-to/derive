@@ -1,6 +1,7 @@
 import { useNavigate } from "@tanstack/react-router"
 import { useCallback, useEffect, useState } from "react"
 import { api, type Notification } from "@/api"
+import { Icon } from "@/components/icons"
 import { EmptyState } from "@/components/shared/empty-state"
 import { Button } from "@/components/ui/button"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
@@ -16,7 +17,6 @@ import { ago } from "@/lib/time"
 import { usePageVisible } from "@/lib/use-page-visible"
 import { cn } from "@/lib/utils"
 import { refFor } from "@/pages/artifact/parse-ref"
-import { Icon } from "./icons"
 
 // Notifications: an unread badge + a panel of recent @mentions, kept live over
 // SSE. Lives in the rail's utility menu (a SidebarMenuItem); clicking an item

@@ -2,13 +2,14 @@ import { useInfiniteQuery, useQuery } from "@tanstack/react-query"
 import { getRouteApi, Link, useNavigate } from "@tanstack/react-router"
 import { useEffect, useRef, useState } from "react"
 import { ApiError } from "@/api"
-import { FollowButton } from "@/components/follow-button"
 import { Icon } from "@/components/icons"
 import { EmptyState } from "@/components/shared/empty-state"
+import { FollowButton } from "@/components/shared/follow-button"
 import { PageShell } from "@/components/shared/page-shell"
 import { SectionEyebrow } from "@/components/shared/section-eyebrow"
 import { Spinner } from "@/components/shared/spinner"
 import { StatusPanel } from "@/components/shared/status-panel"
+import { UsernameForm } from "@/components/shared/username-form"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
 import {
@@ -18,7 +19,6 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog"
-import { UsernameForm } from "@/components/username-form"
 import { useAuth } from "@/ctx"
 import { colorForName } from "@/lib/avatar-tints"
 import { getInitials } from "@/lib/initials"

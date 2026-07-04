@@ -2,7 +2,8 @@ import { useQuery } from "@tanstack/react-query"
 import { useNavigate } from "@tanstack/react-router"
 import { useCallback, useEffect, useState } from "react"
 import { type Artifact, api, type PublicProfile } from "@/api"
-import { FollowButton } from "@/components/follow-button"
+import { Icon } from "@/components/icons"
+import { FollowButton } from "@/components/shared/follow-button"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import {
   Command,
@@ -18,7 +19,6 @@ import { getInitials } from "@/lib/initials"
 import { collectionsQuery, workspacesQuery } from "@/lib/queries"
 import { usePrefetchArtifact } from "@/lib/use-prefetch-artifact"
 import { refFor } from "@/pages/artifact/parse-ref"
-import { Icon } from "./icons"
 import { useShell } from "./shell-context"
 
 // ⌘K palette: jump to any artifact (server search) or to a feed (All / Favorites /

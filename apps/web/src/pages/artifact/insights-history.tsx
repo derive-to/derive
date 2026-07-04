@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react"
 import { type Analytics, type Artifact as Art, api } from "@/api"
-import { AuthorChip } from "@/components/author-chip"
 import { Icon } from "@/components/icons"
+import { AuthorChip } from "@/components/shared/author-chip"
 import { Eyebrow } from "@/components/shared/section-eyebrow"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"

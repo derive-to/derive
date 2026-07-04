@@ -1,6 +1,6 @@
 import type { Artifact } from "@/api"
-import { AuthorChip } from "@/components/author-chip"
 import { Icon } from "@/components/icons"
+import { AuthorChip } from "@/components/shared/author-chip"
 import { Thumb } from "@/components/shared/thumb"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"

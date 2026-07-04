@@ -2,7 +2,6 @@ import { Maximize2 } from "lucide-react"
 import { useState } from "react"
 import type { GeneralRole, Role } from "@/api"
 import { Icon } from "@/components/icons"
-import { ShareButton } from "@/components/share-dialog"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -13,6 +12,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { cn } from "@/lib/utils"
 import { CollectionsDialog, ReportDialog, StarButton, TagsDialog } from "./header-actions"
+import { ShareButton } from "./share-dialog"
 
 /**
  * The right side of the workbench header (signed-in viewers only). Grouped by spacing,
