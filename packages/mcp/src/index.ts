@@ -239,7 +239,9 @@ server.registerTool(
         .optional()
         .describe("Omit to create a new artifact; pass it to add a version."),
       title: z.string().optional(),
-      visibility: z.enum(["public", "link", "org"]).optional(),
+      // `password` stays CLI/web-only (it needs a password argument this tool
+      // doesn't take). Omitted ⇒ the server default, workspace-only `org`.
+      visibility: z.enum(["public", "link", "org", "private"]).optional(),
       message: z.string().optional().describe("What changed in this version."),
       for_review: z
         .boolean()

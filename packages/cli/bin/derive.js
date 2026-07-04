@@ -315,6 +315,14 @@ if (flags.json) {
   console.log(JSON.stringify(json))
 } else {
   console.log(`✓ ${json.url}`)
-  console.log(`  short_id ${json.short_id} · v${json.current_version} · ${json.kind}`)
+  console.log(
+    `  short_id ${json.short_id} · v${json.current_version} · ${json.kind} · ${json.visibility}`,
+  )
+  // Publishing is workspace-only by default; say so, so nobody mails a URL
+  // that 404s for the recipient.
+  if (json.visibility === "org" || json.visibility === "private")
+    console.log(
+      `  ${json.visibility === "org" ? "workspace-only" : "invite-only"} — pass --visibility link (or use the Share dialog) to make the URL readable by others`,
+    )
   if (savedId) console.log(`  saved id to ${CONFIG_FILE} — future publishes target this artifact`)
 }

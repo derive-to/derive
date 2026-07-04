@@ -301,7 +301,7 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
         return (
           (raw
             .prepare(
-              `SELECT id, name, image, username, profession, about FROM user WHERE username = ?`,
+              `SELECT id, name, image, username, profession, about, discoverable FROM user WHERE username = ?`,
             )
             .get(username) as UserProfile) ?? null
         )
@@ -376,6 +376,23 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
              ORDER BY username LIMIT ?`,
           )
           .all(limit) as UserProfile[]
+      } catch {
+        return []
+      }
+    },
+
+    listWorkspaceMates: async (userId, limit): Promise<UserProfile[]> => {
+      try {
+        return raw
+          .prepare(
+            `SELECT DISTINCT u.id, u.name, u.image, u.username, u.profession, u.about
+             FROM membership m1
+             JOIN membership m2 ON m2.org_id = m1.org_id AND m2.user_id != m1.user_id
+             JOIN user u ON u.id = m2.user_id
+             WHERE m1.user_id = ? AND u.username IS NOT NULL
+             ORDER BY u.username LIMIT ?`,
+          )
+          .all(userId, limit) as UserProfile[]
       } catch {
         return []
       }

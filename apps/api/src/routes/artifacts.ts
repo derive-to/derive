@@ -165,6 +165,9 @@ export const artifactRoutes = (ctx: AppContext) => {
       // feed back to the active workspace and strip a followed person's public work.
       orgId: shared || following ? undefined : listOrg,
       publicOnly: shared || following ? false : publicOnly,
+      // Private artifacts appear only for their explicit members; the operator
+      // token sees everything (viewerId omitted).
+      viewerId: isOperator ? undefined : (me?.id ?? undefined),
     })
     const hasMore = rows.length > limit
     const page = hasMore ? rows.slice(0, limit) : rows
@@ -182,6 +185,9 @@ export const artifactRoutes = (ctx: AppContext) => {
     // Per-artifact comment signals for the viewer (open-thread count + tagged/authored
     // flags) — drives the inline comment badge and the "needs your feedback" featuring.
     const feedback = me ? await meta.commentSignals(pageIds, me.id) : {}
+    // The viewer's per-artifact shares across the page, one query — folded into
+    // my_role below so shared and private rows gate their quick actions correctly.
+    const shareRoles = me ? await meta.artifactRolesFor(me.id, pageIds) : {}
     return c.json({
       artifacts: page.map((a) => ({
         ...toJson(deps.baseUrl, a, []),
@@ -189,10 +195,9 @@ export const artifactRoutes = (ctx: AppContext) => {
         tags: tags[a.id] ?? [],
         favorite: favorites.has(a.id),
         // Which actions the client may surface on the row (the card's quick-actions
-        // menu gates delete/tags on it). Baseline standing only — workspace
-        // membership + the general-access floor; per-artifact and collection shares
-        // aren't folded in at list granularity (no per-row member lookups), so the
-        // detail response's my_role stays authoritative.
+        // menu gates delete/tags on it). Workspace membership + per-artifact shares
+        // + the general-access floor; collection-share roles aren't folded in at
+        // list granularity, so the detail response's my_role stays authoritative.
         my_role: isOperator
           ? "owner"
           : effectiveRole(
@@ -200,6 +205,7 @@ export const artifactRoutes = (ctx: AppContext) => {
                 ? {
                     kind: "user",
                     userId: me.id,
+                    artifactRole: shareRoles[a.id] ?? null,
                     orgRole: a.org_id === listOrg ? (myMembership?.role ?? null) : null,
                   }
                 : { kind: "anon" },
@@ -302,11 +308,9 @@ export const artifactRoutes = (ctx: AppContext) => {
     // the artifact, only adds a version, so visibility/password are set-on-create).
     const visibility = visibilityOf(body["visibility"])
     // An explicitly-provided visibility that isn't a known value is rejected, not
-    // silently coerced. publish() defaults an *absent* visibility to `link`, so a
-    // natural-but-wrong value like "private" would otherwise become URL-readable —
-    // more open than intended, with no error. The enum is closed; surface the typo.
+    // silently coerced — a typo must not publish more openly than intended.
     if (str(body["visibility"]) && !visibility)
-      return fail(c, 400, "visibility must be one of: public, link, org, password")
+      return fail(c, 400, "visibility must be one of: public, link, org, password, private")
     const password = str(body["password"])
     if (!shortId && visibility === "password" && !password)
       return fail(c, 400, "a password is required for password visibility")
@@ -344,6 +348,18 @@ export const artifactRoutes = (ctx: AppContext) => {
         },
         shortId,
       )
+      // The publisher becomes the artifact's owner-member on creation. This is what
+      // makes `private` work — workspace role grants nothing there, so without this
+      // row the creator would lock themselves out — and it makes ownership explicit
+      // for every artifact instead of implied by workspace role. Agents get the row
+      // under their principal id (actorFor resolves members by that same id).
+      if (!shortId && actor)
+        await meta.setArtifactMember({
+          id: newId("am"),
+          artifact_id: artifact.id,
+          user_id: actor.id,
+          role: "owner",
+        })
       bus.publish(artifact.id, {
         type: "version.published",
         n: version.n,

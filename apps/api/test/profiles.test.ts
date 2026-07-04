@@ -270,18 +270,24 @@ describe("profile work-list (visibility-scoped)", () => {
     expect(carlProfile.user.stats.works).toBe(2)
   })
 
-  it("exposes follower/following lists as public profiles (no ids/email)", async () => {
+  it("exposes follower/following lists to signed-in viewers (no ids/email); anon gets 401", async () => {
     // carl follows amy.
     await app.request("/v1/follows", {
       method: "POST",
       headers: { "content-type": "application/json", ...as(carl.email) },
       body: JSON.stringify({ kind: "user", target: "amyw" }),
     })
-    const followers = await (await app.request("/v1/users/amyw/followers")).json()
+    // The follow graph is for participants — an anonymous crawler can't read it.
+    expect((await app.request("/v1/users/amyw/followers")).status).toBe(401)
+    const followers = await (
+      await app.request("/v1/users/amyw/followers", { headers: as(carl.email) })
+    ).json()
     expect(followers.users.map((u: { username: string }) => u.username)).toContain("carlw")
     expect(followers.users[0]).not.toHaveProperty("email")
     expect(followers.users[0]).not.toHaveProperty("id")
-    const following = await (await app.request("/v1/users/carlw/following")).json()
+    const following = await (
+      await app.request("/v1/users/carlw/following", { headers: as(carl.email) })
+    ).json()
     expect(following.users.map((u: { username: string }) => u.username)).toContain("amyw")
   })
 })

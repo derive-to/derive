@@ -75,6 +75,7 @@ import {
   isNotNull,
   isNull,
   lte,
+  ne,
   or,
   sql,
 } from "drizzle-orm"
@@ -752,13 +753,31 @@ export class PgMetaStore implements MetaStore {
   listArtifactMembers(artifactId: string): Promise<ArtifactMemberRecord[]> {
     return this.db.select().from(artifactMember).where(eq(artifactMember.artifact_id, artifactId))
   }
+  async artifactRolesFor(userId: string, artifactIds: string[]): Promise<Record<string, Role>> {
+    if (artifactIds.length === 0) return {}
+    const rows = await this.db
+      .select({ artifact_id: artifactMember.artifact_id, role: artifactMember.role })
+      .from(artifactMember)
+      .where(
+        and(eq(artifactMember.user_id, userId), inArray(artifactMember.artifact_id, artifactIds)),
+      )
+    return Object.fromEntries(rows.map((r) => [r.artifact_id, r.role]))
+  }
   // Artifacts explicitly shared with a user (per-artifact membership) — can span
-  // workspaces; drives the home's "Shared with you" section.
+  // workspaces; drives the home's "Shared with you" section. Excludes what they
+  // authored: the creator's own owner-member row (written at publish) is
+  // ownership, not a share (see repos.ts).
   async artifactIdsSharedWith(userId: string): Promise<string[]> {
     const rows = await this.db
       .select({ id: artifactMember.artifact_id })
       .from(artifactMember)
-      .where(eq(artifactMember.user_id, userId))
+      .innerJoin(artifact, eq(artifact.id, artifactMember.artifact_id))
+      .where(
+        and(
+          eq(artifactMember.user_id, userId),
+          or(isNull(artifact.author_id), ne(artifact.author_id, userId)),
+        ),
+      )
     return rows.map((r) => r.id)
   }
   async setArtifactMember(m: NewArtifactMember): Promise<ArtifactMemberRecord> {
@@ -959,9 +978,13 @@ export class PgMetaStore implements MetaStore {
     } else {
       conds.push(eq(artifact.author_id, userId))
     }
+    // Private drafts never ride a profile, shared workspace or not (see repos.ts).
     const orgs = opts.visibleOrgIds ?? []
     if (orgs.length > 0) {
-      const v = or(eq(artifact.visibility, "public"), inArray(artifact.org_id, orgs))
+      const v = or(
+        eq(artifact.visibility, "public"),
+        and(inArray(artifact.org_id, orgs), ne(artifact.visibility, "private")),
+      )
       if (v) conds.push(v)
     } else {
       conds.push(eq(artifact.visibility, "public"))
@@ -1446,7 +1469,7 @@ export class PgMetaStore implements MetaStore {
   async getUserByUsername(username: string): Promise<UserProfile | null> {
     try {
       const { rows } = await this.pool.query(
-        `SELECT id, name, image, username, profession, about FROM "user" WHERE username = $1`,
+        `SELECT id, name, image, username, profession, about, discoverable FROM "user" WHERE username = $1`,
         [username],
       )
       return (rows[0] as UserProfile) ?? null
@@ -1523,6 +1546,23 @@ export class PgMetaStore implements MetaStore {
          WHERE discoverable IS NOT FALSE AND username IS NOT NULL
          ORDER BY username LIMIT $1`,
         [limit],
+      )
+      return rows as UserProfile[]
+    } catch {
+      return []
+    }
+  }
+
+  async listWorkspaceMates(userId: string, limit: number): Promise<UserProfile[]> {
+    try {
+      const { rows } = await this.pool.query(
+        `SELECT DISTINCT u.id, u.name, u.image, u.username, u.profession, u.about
+         FROM membership m1
+         JOIN membership m2 ON m2.org_id = m1.org_id AND m2.user_id != m1.user_id
+         JOIN "user" u ON u.id = m2.user_id
+         WHERE m1.user_id = $1 AND u.username IS NOT NULL
+         ORDER BY u.username LIMIT $2`,
+        [userId, limit],
       )
       return rows as UserProfile[]
     } catch {

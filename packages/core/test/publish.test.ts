@@ -113,7 +113,9 @@ describe("publish: single file", () => {
     const { artifact, version } = await publish(meta, blobs, file("<h1>hi</h1>"))
     expect(artifact.kind).toBe("file")
     expect(artifact.title).toBe("page") // ".html" stripped
-    expect(artifact.visibility).toBe("link")
+    // Publishing without a visibility stays workspace-only — nothing becomes
+    // URL-readable by default.
+    expect(artifact.visibility).toBe("org")
     expect(version.n).toBe(1)
     expect(version.content_type).toBe("text/html")
     expect(new TextDecoder().decode((await blobs.get(version.blob_key)) ?? undefined)).toBe(

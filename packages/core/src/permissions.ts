@@ -88,7 +88,15 @@ export function effectiveRole(
 ): Role | null {
   if (actor.kind === "token") return "owner"
   // A per-artifact share or workspace membership — authenticated callers only.
-  const explicit = actor.kind === "user" ? (actor.artifactRole ?? actor.orgRole) : null
+  // `private` is the exception: workspace membership grants nothing there, so a
+  // team-workspace draft stays invisible to teammates until explicitly shared
+  // (per-artifact and collection shares both ride artifactRole).
+  const explicit =
+    actor.kind === "user"
+      ? visibility === "private"
+        ? actor.artifactRole
+        : (actor.artifactRole ?? actor.orgRole)
+      : null
   // The general-access floor for a reacher with no higher explicit grant. Only an
   // authenticated reacher gets the configured general role; an anonymous reacher is
   // clamped to `viewer` — never elevated to a writing role without an account.
