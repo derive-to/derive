@@ -127,7 +127,9 @@ jobs:
   # step), CLOUDFLARE_ACCOUNT_ID, DATABASE_URL (the pg schema step's direct
   # Neon connection — Hyperdrive is only for the worker's data path).
   deploy:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    # The repository guard keeps forks clean: a fork's push to main skips this
+    # job instead of failing against secrets it doesn't have.
+    if: github.repository == 'derive-to/derive' && github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: [check, pg, d1]
     runs-on: ubicloud-standard-2
     # One deploy at a time, in order, never cancelled mid-flight — a schema
