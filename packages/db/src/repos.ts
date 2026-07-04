@@ -38,6 +38,7 @@ import type {
   NewProposal,
   NewReport,
   NewRepoSource,
+  NewReviewRound,
   NewVersion,
   NewWebhook,
   NotificationRecord,
@@ -48,6 +49,8 @@ import type {
   ReportRecord,
   ReportState,
   RepoSourceRecord,
+  ReviewRoundRecord,
+  ReviewRoundState,
   Role,
   SlackInstallRecord,
   SlackThreadLinkRecord,
@@ -101,6 +104,7 @@ import {
   proposal,
   report,
   repoSource,
+  reviewRound,
   slackInstall,
   slackThreadLink,
   version,
@@ -152,6 +156,7 @@ export const schema = {
   follow,
   artifactTag,
   proposal,
+  reviewRound,
   agent,
   agentMention,
   collection,
@@ -181,6 +186,7 @@ const _schemaShapes: Shapes<typeof schema> = {
   notification: true,
   follow: true,
   proposal: true,
+  reviewRound: true,
   agent: true,
   agentMention: true,
   collection: true,
@@ -498,15 +504,6 @@ export function makeRepos(db: SqliteDb) {
     return getComment(id)
   }
 
-  // Visibility filter: fail-closed. Default → public only; a viewer sees their own
-  // personal comments too; includeAll bypasses (background/system only).
-  const visibilityCond = (opts?: CommentListOpts) =>
-    opts?.includeAll
-      ? undefined
-      : opts?.viewerOwnerId
-        ? or(eq(comment.visibility, "public"), eq(comment.owner_id, opts.viewerOwnerId))
-        : eq(comment.visibility, "public")
-
   const listComments = async (
     artifactId: string,
     opts?: CommentListOpts,
@@ -514,7 +511,6 @@ export function makeRepos(db: SqliteDb) {
     const where = and(
       eq(comment.artifact_id, artifactId),
       opts?.state ? eq(comment.state, opts.state) : undefined,
-      visibilityCond(opts),
     )
     return db.select().from(comment).where(where).orderBy(asc(comment.created_at)).all()
   }
@@ -1427,6 +1423,60 @@ export function makeRepos(db: SqliteDb) {
       .returning()
       .get()) ?? null
 
+  // ---- Review rounds -----------------------------------------------------
+  const createReviewRound = async (r: NewReviewRound): Promise<ReviewRoundRecord> => {
+    // One pending round per (artifact, person): clear this person's prior pending
+    // row first so the re-request replaces it (and the partial unique index holds).
+    await db
+      .delete(reviewRound)
+      .where(
+        and(
+          eq(reviewRound.artifact_id, r.artifact_id),
+          eq(reviewRound.requested_for, r.requested_for),
+          eq(reviewRound.state, "pending"),
+        ),
+      )
+      .run()
+    return (await db.insert(reviewRound).values(r).returning().get()) as ReviewRoundRecord
+  }
+  const getPendingRound = async (
+    artifactId: string,
+    requestedFor?: string,
+  ): Promise<ReviewRoundRecord | null> => {
+    const where = requestedFor
+      ? and(
+          eq(reviewRound.artifact_id, artifactId),
+          eq(reviewRound.requested_for, requestedFor),
+          eq(reviewRound.state, "pending"),
+        )
+      : and(eq(reviewRound.artifact_id, artifactId), eq(reviewRound.state, "pending"))
+    return (
+      (await db
+        .select()
+        .from(reviewRound)
+        .where(where)
+        .orderBy(asc(reviewRound.created_at))
+        .get()) ?? null
+    )
+  }
+  const listReviewRounds = async (artifactId: string): Promise<ReviewRoundRecord[]> =>
+    db
+      .select()
+      .from(reviewRound)
+      .where(eq(reviewRound.artifact_id, artifactId))
+      .orderBy(desc(reviewRound.created_at))
+      .all()
+  const resolveReviewRound = async (
+    id: string,
+    fields: { state: Extract<ReviewRoundState, "sent_back" | "approved">; note?: string | null },
+  ): Promise<ReviewRoundRecord | null> =>
+    (await db
+      .update(reviewRound)
+      .set({ ...fields, resolved_at: new Date().toISOString() })
+      .where(eq(reviewRound.id, id))
+      .returning()
+      .get()) ?? null
+
   // ---- Notifications -----------------------------------------------------
   const createNotification = async (n: NewNotification): Promise<void> => {
     await db.insert(notification).values(n).run()
@@ -1779,6 +1829,10 @@ export function makeRepos(db: SqliteDb) {
     updateDomain,
     deleteDomain,
     createProposal,
+    createReviewRound,
+    getPendingRound,
+    listReviewRounds,
+    resolveReviewRound,
     getProposal,
     listProposals,
     decideProposal,

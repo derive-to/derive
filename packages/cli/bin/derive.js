@@ -1,12 +1,15 @@
 #!/usr/bin/env node
 // derive — scaffold, publish, and run the review loop against a Derive server.
 //   derive init [dir] [--template md|html|slides|site] [--title t]
-//   derive login [--server url] [--scope "…"]   OAuth sign-in; saves a token
+//   derive login [--local] [--server url]   OAuth sign-in (default https://derive.to); saves a token
 //   derive publish [file|dir] [--id --title --slug --spa --message --name --visibility --server --token]
 //   derive comments [--id]                 list the artifact's comment threads
 //   derive open [--id]                     open the artifact in a browser
 //   derive reply <thread_id> <message…>    reply in a thread
 //   derive resolve|reopen <comment_id>     set a thread's state
+//   derive status [--id] [--json]          the review round state + open threads
+//   derive send-back [--id] [--note m]     (human) return your answers to the agent
+//   derive approve [--id] [--note m]       (human) approve — the build go-signal
 import { spawn } from "node:child_process"
 import { createHash, randomBytes } from "node:crypto"
 import { readdirSync, readFileSync, statSync } from "node:fs"
@@ -16,8 +19,10 @@ import { zipSync } from "fflate"
 import {
   CONFIG_FILE,
   formatComments,
+  freshToken,
   loadConfig,
   resolvePublish,
+  resolveServer,
   saveToken,
   scaffold,
   TEMPLATES,
@@ -32,6 +37,8 @@ const positional = []
 for (let i = 0; i < args.length; i++) {
   const a = args[i]
   if (a === "--spa") flags.spa = "true"
+  else if (a === "--review") flags.review = "true"
+  else if (a === "--local") flags.local = "true"
   else if (a === "--json") flags.json = "true"
   else if (a.startsWith("--")) flags[a.slice(2)] = args[++i]
   else positional.push(a)
@@ -65,12 +72,11 @@ if (cmd === "init") {
 if (cmd === "login") {
   const b64url = (b) =>
     b.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "")
-  const server = (flags.server ?? process.env.DERIVE_SERVER ?? "http://localhost:8080").replace(
-    /\/+$/,
-    "",
-  )
+  const server = resolveServer(flags)
   const redirect = `${server}/oauth/cli-callback`
-  const scope = flags.scope ?? "openid derive:read derive:publish"
+  const scope =
+    flags.scope ??
+    "openid offline_access derive:read derive:comment derive:propose derive:publish derive:review"
   const verifier = b64url(randomBytes(64))
   const challenge = b64url(createHash("sha256").update(verifier).digest())
   const state = b64url(randomBytes(16))
@@ -138,14 +144,19 @@ if (cmd === "login") {
     process.exit(1)
   }
 
-  const path = saveToken(server, tj.access_token)
+  const path = saveToken(server, {
+    token: tj.access_token,
+    refresh_token: tj.refresh_token,
+    client_id: client.client_id,
+    expires_in: tj.expires_in,
+  })
   console.log(`\n✓ Signed in to ${server}`)
   console.log(`  Token saved to ${path} — \`derive publish\` will use it automatically.`)
   process.exit(0)
 }
 
 // ---- Loop verbs (comments / open / reply / resolve / reopen) --------------
-const LOOP = ["comments", "open", "reply", "resolve", "reopen"]
+const LOOP = ["comments", "open", "reply", "resolve", "reopen", "status", "send-back", "approve"]
 if (LOOP.includes(cmd)) {
   let cfg = null
   try {
@@ -155,6 +166,7 @@ if (LOOP.includes(cmd)) {
     process.exit(1)
   }
   const r = resolvePublish(flags, cfg)
+  r.token = flags.token ?? process.env.DERIVE_TOKEN ?? (await freshToken(r.server))
   if (!r.id) {
     console.error(`error: no artifact id. Set "id" in ${CONFIG_FILE} (publish once), or pass --id.`)
     process.exit(1)
@@ -202,6 +214,44 @@ if (LOOP.includes(cmd)) {
     process.exit(0)
   }
 
+  if (cmd === "status") {
+    const res = await fetch(`${base}/review`, { headers: auth })
+    if (!res.ok) await die(res)
+    const rv = await res.json()
+    const cr = await fetch(`${base}/comments?state=open`, { headers: auth })
+    const open = cr.ok ? (await cr.json()).comments : []
+    if (flags.json) {
+      console.log(JSON.stringify({ review: rv.pending, rounds: rv.rounds, open_threads: open }))
+      process.exit(0)
+    }
+    const p = rv.pending
+    console.log(
+      p
+        ? `review: ${p.state} on v${p.version} (requested ${p.created_at})`
+        : rv.rounds[0]
+          ? `review: ${rv.rounds[0].state} (no round pending)`
+          : "review: none requested",
+    )
+    console.log(`open threads: ${open.length}`)
+    for (const c of open) console.log(`  · ${c.thread_id}  ${(c.body_md || "").slice(0, 60)}`)
+    process.exit(0)
+  }
+
+  if (cmd === "send-back" || cmd === "approve") {
+    const path = cmd === "send-back" ? "review/send-back" : "review/approve"
+    const res = await fetch(`${base}/${path}`, {
+      method: "POST",
+      headers: { "content-type": "application/json", ...auth },
+      body: JSON.stringify({ note: flags.note ?? "" }),
+    })
+    if (!res.ok) await die(res)
+    const { round } = await res.json()
+    console.log(
+      `✓ ${cmd === "send-back" ? "sent back to the agent" : "approved"} (round ${round.state})`,
+    )
+    process.exit(0)
+  }
+
   // resolve | reopen
   const commentId = positional[0]
   if (!commentId) {
@@ -221,12 +271,15 @@ if (LOOP.includes(cmd)) {
 if (cmd !== "publish") {
   console.error(`usage:
   derive init [dir] [--template md|html|slides|site] [--title t]
-  derive login [--server url] [--scope "openid derive:read derive:publish"]   OAuth sign-in; saves a token
+  derive login [--local] [--server url]    OAuth sign-in (defaults to https://derive.to); saves a persistent token
   derive publish [file|dir] [--id X] [--title t] [--slug s] [--spa] [--message m] [--name "x"] [--visibility v] [--password p] [--server url] [--token t] [--json]
   derive comments [--id X]                 list comment threads
   derive open [--id X]                     open the artifact in a browser
   derive reply <thread_id> <message…>      reply in a thread
-  derive resolve|reopen <comment_id>       set a thread's state`)
+  derive resolve|reopen <comment_id>       set a thread's state
+  derive status [--id X] [--json]          review-round state + open threads (the loop's poll target)
+  derive send-back [--id X] [--note m]     (human) return your answers to the waiting agent
+  derive approve [--id X] [--note m]       (human) approve — the build go-signal`)
   process.exit(cmd ? 1 : 0)
 }
 
@@ -291,7 +344,9 @@ if (p.visibility) form.append("visibility", p.visibility)
 // --password is a per-publish secret for `--visibility password`; never put it in
 // derive.json (it isn't a config field), only pass it on the command line.
 if (p.password) form.append("password", p.password)
+if (flags.review) form.append("request_review", "true")
 
+p.token = flags.token ?? process.env.DERIVE_TOKEN ?? (await freshToken(p.server))
 const url = p.id ? `${p.server}/v1/artifacts/${p.id}/versions` : `${p.server}/v1/artifacts`
 const headers = p.token ? { authorization: `Bearer ${p.token}` } : {}
 const res = await fetch(url, { method: "POST", body: form, headers })
@@ -316,5 +371,7 @@ if (flags.json) {
 } else {
   console.log(`✓ ${json.url}`)
   console.log(`  short_id ${json.short_id} · v${json.current_version} · ${json.kind}`)
+  if (flags.review)
+    console.log(`  ↩ review requested — the human reviews in the app, then Send back`)
   if (savedId) console.log(`  saved id to ${CONFIG_FILE} — future publishes target this artifact`)
 }

@@ -20,7 +20,6 @@ export const sessionRoutes = (ctx: AppContext) => {
     activeWorkspace,
     authorize,
     actorFor,
-    privateOwnerId,
     analyticsOn,
   } = ctx
   const app = new Hono()
@@ -299,12 +298,7 @@ export const sessionRoutes = (ctx: AppContext) => {
       (isToken(c) || can(await actorFor(c, artifact), "comment", artifact.visibility))
     ) {
       for (const m of await meta.listArtifactMembers(artifact.id)) ids.add(m.user_id)
-      // Public-thread participants + the caller's own personal threads — never expose
-      // another user's personal-comment authors in the mention directory.
-      for (const cm of await meta.listComments(artifact.id, {
-        viewerOwnerId: await privateOwnerId(c),
-      }))
-        if (cm.author_id) ids.add(cm.author_id)
+      for (const cm of await meta.listComments(artifact.id)) if (cm.author_id) ids.add(cm.author_id)
     }
 
     const users = await meta.getUsers([...ids])

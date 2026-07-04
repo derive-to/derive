@@ -113,7 +113,6 @@ export function artifactActions(p: {
       author: me?.name ?? me?.email ?? "You",
       state: "open",
       created_at: new Date().toISOString(),
-      visibility: opts?.visibility ?? "public",
       reactions: {},
       mentions: opts?.mentions,
     }
@@ -124,8 +123,6 @@ export function artifactActions(p: {
         thread_id: opts?.threadId,
         anchor: opts?.threadId ? undefined : (opts?.anchor ?? undefined),
         mentions: opts?.mentions?.length ? opts.mentions : undefined,
-        // New thread only — a reply inherits its thread's visibility server-side.
-        visibility: opts?.threadId ? undefined : opts?.visibility,
       })
       qc.setQueryData<Comment[]>(key, (old) =>
         (old ?? []).map((cmt) => (cmt.id === tempId ? real : cmt)),
@@ -153,8 +150,20 @@ export function artifactActions(p: {
   }
   const toggleResolve = async (root: Comment) => {
     // Resolve anything not already resolved (open or outdated); reopen a resolved thread.
-    await api.resolve(shortId, root.id, root.state === "resolved" ? "open" : "resolved")
-    refetchComments()
+    const next = root.state === "resolved" ? "open" : "resolved"
+    // Optimistic: flip the thread's state in the cache NOW so the click feels instant,
+    // snapshotting to roll back if the server rejects it (mirrors `react` below).
+    const key = commentsQuery(shortId).queryKey
+    const prev = qc.getQueryData(key)
+    qc.setQueryData<Comment[]>(key, (cs) =>
+      (cs ?? []).map((c) => (c.thread_id === root.id ? { ...c, state: next } : c)),
+    )
+    try {
+      await api.resolve(shortId, root.id, next)
+      refetchComments()
+    } catch {
+      qc.setQueryData(key, prev)
+    }
   }
   const activate = (id: string) => {
     p.setActiveThread((cur) => (cur === id ? cur : id))

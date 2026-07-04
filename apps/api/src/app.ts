@@ -25,6 +25,7 @@ import { oauthRoutes } from "./routes/oauth"
 import { proposalRoutes } from "./routes/proposals"
 import { rawRoutes } from "./routes/raw"
 import { realtimeRoutes } from "./routes/realtime"
+import { reviewRoutes } from "./routes/review"
 import { sessionRoutes } from "./routes/session"
 import { sharingRoutes } from "./routes/sharing"
 import { slackRoutes } from "./routes/slack"
@@ -297,6 +298,7 @@ export function createApp(deps: AppDeps): Hono {
     vitalsRoutes,
     moderationRoutes,
     proposalRoutes,
+    reviewRoutes,
     commentRoutes,
     realtimeRoutes,
     analyticsRoutes,

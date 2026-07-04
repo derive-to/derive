@@ -210,7 +210,7 @@ export function useArtifactFrame(p: {
       .filter((head): head is Comment => head?.state === "open" || head?.state === "addressed")
       .map((head) => ({
         id: head.thread_id,
-        personal: head.visibility === "personal",
+        personal: false,
         sel: parseAnchor(head.anchor),
       }))
       .filter(

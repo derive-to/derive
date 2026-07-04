@@ -17,7 +17,7 @@ import { PostgresDialect } from "kysely"
 import { createApp } from "./app"
 import { type AuthDb, makeAuth } from "./auth-config"
 import { authSchema } from "./auth-schema"
-import { hyperdrivePool, livePgPool, requestPg } from "./edge-pg"
+import { hyperdriveConn, livePgPool, requestPg } from "./edge-pg"
 import type { SendEmailBinding } from "./email-cf"
 import { customDomainsFromEnv } from "./lib/cloudflare-saas"
 import { slackFromEnv, subdomainBaseFromEnv, superAdminsFromEnv } from "./lib/env"
@@ -225,7 +225,7 @@ export default {
     // notifications/webhooks off mid-flight. Idle sockets reap themselves and the
     // rest dies with the request context.
     if (env.HYPERDRIVE)
-      return requestPg.run(hyperdrivePool(env.HYPERDRIVE), () => handle(req, env, ctx))
+      return requestPg.run(hyperdriveConn(env.HYPERDRIVE), () => handle(req, env, ctx))
     return handle(req, env, ctx)
   },
 

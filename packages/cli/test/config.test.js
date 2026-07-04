@@ -180,11 +180,17 @@ describe("resolvePublish", () => {
     expect(r.spa).toBe(true)
     expect(r.server).toBe("http://flag")
   })
-  it("falls back to defaults with no config", () => {
+  it("falls back to the cloud server with no config", () => {
     const r = resolvePublish({ target: "x.md" }, null)
     expect(r.id).toBeNull()
     expect(r.target).toBe("x.md")
-    expect(r.server).toBe("http://localhost:8080")
+    expect(r.server).toBe("https://derive.to")
+  })
+  it("--local targets a dev server; --server overrides", () => {
+    expect(resolvePublish({ local: true }, null).server).toBe("http://localhost:8080")
+    expect(resolvePublish({ server: "http://localhost:8099" }, null).server).toBe(
+      "http://localhost:8099",
+    )
   })
   it("--spa flag string coerces to boolean", () => {
     expect(resolvePublish({ spa: "true" }, null).spa).toBe(true)

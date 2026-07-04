@@ -1,4 +1,4 @@
-import { type Dispatch, type SetStateAction, useRef } from "react"
+import { type Dispatch, type ReactNode, type SetStateAction, useRef } from "react"
 import type { Comment, Mention } from "@/api"
 import { Icon } from "@/components/icons"
 import { Button } from "@/components/ui/button"
@@ -29,12 +29,12 @@ export function ArtifactComments(p: {
   /** May the caller create comments here (commenter+)? Gates every write affordance;
    *  reading stays open to any authenticated viewer. */
   canComment: boolean
+  reviewCard?: ReactNode
   docLive: boolean
   panel: Panel
   /** Active comment surface: public team thread vs your personal notes. */
   tab: "comments" | "personal"
   setTab: Dispatch<SetStateAction<"comments" | "personal">>
-  personalCount: number
   publicCount: number
   asideWidth: number
   openCount: number
@@ -116,7 +116,6 @@ export function ArtifactComments(p: {
             <OpenPanel
               tab={p.tab}
               setTab={p.setTab}
-              personalCount={p.personalCount}
               publicCount={p.publicCount}
               openCount={p.openCount}
               scrollY={p.scrollY}
@@ -137,6 +136,7 @@ export function ArtifactComments(p: {
               onNewGeneral={newGeneral}
               onSubmitNew={p.submitNew}
               onCancelNew={cancelNew}
+              reviewCard={p.reviewCard}
             />
           )}
         </aside>
@@ -149,7 +149,6 @@ export function ArtifactComments(p: {
           open={panel === "open"}
           tab={p.tab}
           setTab={p.setTab}
-          personalCount={p.personalCount}
           publicCount={p.publicCount}
           openThreads={p.openThreads}
           resolved={p.resolved}
@@ -167,6 +166,7 @@ export function ArtifactComments(p: {
           onJump={p.jumpTo}
           onSubmitNew={p.submitNew}
           onCancelNew={cancelNew}
+          reviewCard={p.reviewCard}
         />
       )}
       {/* Desktop: the "comment on selection" pill floats beside the selection (the

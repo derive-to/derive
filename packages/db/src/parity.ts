@@ -31,6 +31,7 @@ import type {
   ProposalRecord,
   ReportRecord,
   RepoSourceRecord,
+  ReviewRoundRecord,
   VersionRecord,
   WebhookRecord,
   WorkspaceRecord,
@@ -52,6 +53,7 @@ export interface TypedTables {
   notification: NotificationRecord
   follow: FollowRecord
   proposal: ProposalRecord
+  reviewRound: ReviewRoundRecord
   agent: AgentRecord
   agentMention: AgentMentionRecord
   collection: CollectionRecord

@@ -75,9 +75,8 @@ export async function sweepAnchors(
   artifactId: string,
   version: VersionRecord,
 ): Promise<AnchorTransition[]> {
-  // Re-anchor every thread regardless of visibility — personal comments keep their
-  // anchors maintained across versions too. Background sweep, never a client response.
-  const comments = await meta.listComments(artifactId, { includeAll: true })
+  // Re-anchor every thread across versions. Background sweep, never a client response.
+  const comments = await meta.listComments(artifactId)
   if (comments.length === 0) return []
 
   const byThread = new Map<string, Thread>()

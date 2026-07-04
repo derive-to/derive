@@ -134,7 +134,11 @@ const changeCount = (c: ReturnType<typeof bundleFileChanges>) =>
  * Identity rides in the server `instructions` (below), not a `whoami` tool — it's a
  * one-shot fact, not a per-call action.
  */
-function buildServer(ctx: AppContext, agent: AgentRecord, ownerId: string | null): McpServer {
+function buildServer(
+  ctx: AppContext,
+  agent: AgentRecord,
+  actingFor: { id: string; name: string | null } | null,
+): McpServer {
   // Steer the write guidance by what this grant can actually do: a publish-capable
   // grant gets the direct-publish path; a lower grant is told its writes go to review.
   const writeGuidance = roleAllows(agent.role, "publish")
@@ -146,7 +150,9 @@ function buildServer(ctx: AppContext, agent: AgentRecord, ownerId: string | null
     { name: "derive", version: "1.0.0" },
     {
       instructions:
-        `You are connected to Derive as "${agent.name}", acting in workspace ${agent.org_id} ` +
+        `You are connected to Derive as "${agent.name}"${
+          actingFor ? ` on behalf of ${actingFor.name ?? "your user"}` : ""
+        }, acting in workspace ${agent.org_id} ` +
         `with ${agent.role} permissions. Derive hosts living documents and plans with versioned ` +
         `history, text-anchored review comments, and a publish → review → revise loop. ` +
         `Start a session with catch_up to re-sync on what changed and what feedback is open; use ` +
@@ -276,7 +282,7 @@ function buildServer(ctx: AppContext, agent: AgentRecord, ownerId: string | null
 
       // `comments` filter → the feedback to-do queue (absorbs the old list_comments).
       if (comments) {
-        const list = await ctx.meta.listComments(a.id, { state: comments, viewerOwnerId: ownerId })
+        const list = await ctx.meta.listComments(a.id, { state: comments })
         return json({
           short_id,
           comments_state: comments,
@@ -302,21 +308,15 @@ function buildServer(ctx: AppContext, agent: AgentRecord, ownerId: string | null
           if (as_ !== null && ah !== null) entryDiff = clip(formatDiff(diffLines(as_, ah)))
         }
       }
-      const open = await ctx.meta.listComments(a.id, { state: "open", viewerOwnerId: ownerId })
+      const open = await ctx.meta.listComments(a.id, { state: "open" })
       // Threads whose quoted text changed in a landed version — feedback that may no
       // longer apply. Surfacing it tells the agent its edits touched commented text.
-      const outdated = await ctx.meta.listComments(a.id, {
-        state: "outdated",
-        viewerOwnerId: ownerId,
-      })
+      const outdated = await ctx.meta.listComments(a.id, { state: "outdated" })
       const outdatedBit = outdated.length
         ? ` ${outdated.length} now outdated (the quoted text changed).`
         : ""
       // Threads with a proposal already pending — the agent shouldn't re-address them.
-      const addressed = await ctx.meta.listComments(a.id, {
-        state: "addressed",
-        viewerOwnerId: ownerId,
-      })
+      const addressed = await ctx.meta.listComments(a.id, { state: "addressed" })
       const addressedBit = addressed.length
         ? ` ${addressed.length} addressed (a proposal is pending review).`
         : ""
@@ -330,12 +330,34 @@ function buildServer(ctx: AppContext, agent: AgentRecord, ownerId: string | null
               .filter(Boolean)
               .join(" ")}.`
           : ""
+      // The review round this agent is waiting on (the loop's poll target): the round
+      // it requested most recently. `pending` = still waiting; `sent_back` = the human
+      // returned answers — read the open threads and revise; `approved` = the go-signal.
+      const rounds = await ctx.meta.listReviewRounds(a.id)
+      const myRound = rounds.find((r) => r.requested_by === agent.id) ?? rounds[0] ?? null
+      const review = myRound
+        ? {
+            state: myRound.state,
+            version: myRound.version,
+            requested_at: myRound.created_at,
+            resolved_at: myRound.resolved_at,
+            note: myRound.note,
+          }
+        : null
+      const reviewBit = review
+        ? review.state === "pending"
+          ? ` Review requested on v${review.version} — waiting for the human.`
+          : review.state === "sent_back"
+            ? ` The human sent back their review of v${review.version} — read the open threads, revise, and re-request.`
+            : ` The human approved v${review.version} — you're clear to proceed.`
+        : ""
       const summary =
         since >= to
-          ? `You're up to date on "${a.title}" (v${head}); ${open.length} open comment${open.length === 1 ? "" : "s"}.${addressedBit}${outdatedBit}`
-          : `"${a.title}": ${newVersions.length} new version${newVersions.length === 1 ? "" : "s"} since v${since} (now v${to}).${pageBits} ${open.length} open comment${open.length === 1 ? "" : "s"}.${addressedBit}${outdatedBit}`
+          ? `You're up to date on "${a.title}" (v${head}); ${open.length} open comment${open.length === 1 ? "" : "s"}.${addressedBit}${outdatedBit}${reviewBit}`
+          : `"${a.title}": ${newVersions.length} new version${newVersions.length === 1 ? "" : "s"} since v${since} (now v${to}).${pageBits} ${open.length} open comment${open.length === 1 ? "" : "s"}.${addressedBit}${outdatedBit}${reviewBit}`
       return json({
         summary,
+        review,
         short_id,
         since,
         to,
@@ -393,16 +415,6 @@ function buildServer(ctx: AppContext, agent: AgentRecord, ownerId: string | null
         )
       if (!body && !set_state)
         return err("Provide `body` (to comment) or `set_state` (to resolve/reopen a thread).")
-      // A reply / state change inherits the TARGET thread's visibility: an agent must
-      // not post a public reply into a personal thread (that would leak it), and may
-      // only touch a personal thread that belongs to its own user. New top-level
-      // comments stay public feedback.
-      const target = reply_to ? await ctx.meta.getComment(reply_to) : null
-      if (target?.visibility === "personal" && target.owner_id !== ownerId)
-        return err("No such thread in your workspace.")
-      const visibility: "public" | "personal" =
-        target?.visibility === "personal" ? "personal" : "public"
-      const owner_id = visibility === "personal" ? ownerId : null
       let thread = reply_to
       let commentId: string | undefined
       if (body) {
@@ -419,8 +431,6 @@ function buildServer(ctx: AppContext, agent: AgentRecord, ownerId: string | null
           body_md: body,
           author: agent.name,
           author_id: agent.id,
-          visibility,
-          owner_id,
         })
         ctx.bus.publish(a.id, { type: "comment.created" })
       }
@@ -509,6 +519,12 @@ function buildServer(ctx: AppContext, agent: AgentRecord, ownerId: string | null
           .describe(
             "Thread ids (from catch_up) this revision resolves. On a live publish they resolve; on a proposal they flip to `addressed` and resolve on approval.",
           ),
+        request_review: z
+          .boolean()
+          .optional()
+          .describe(
+            "After a LIVE publish, open a review round asking your human to review this version — the /derive loop. They answer inline and hit Send back (or Approve); poll catch_up's `review` for the state. No effect on a proposal (that already IS a review).",
+          ),
       },
     },
     async ({
@@ -523,6 +539,7 @@ function buildServer(ctx: AppContext, agent: AgentRecord, ownerId: string | null
       filename,
       for_review,
       addresses,
+      request_review,
     }) => {
       const existing = short_id ? await own(short_id) : null
       if (short_id && !existing) return text(`No artifact "${short_id}" in this workspace.`)
@@ -652,9 +669,23 @@ function buildServer(ctx: AppContext, agent: AgentRecord, ownerId: string | null
           })
           resolved.push(threadId)
         }
+        // The /derive loop: ask the human to review this live version.
+        let review_round: string | null = null
+        if (request_review && actingFor) {
+          const round = await ctx.meta.createReviewRound({
+            id: newId("rr"),
+            artifact_id: artifact.id,
+            version: version.n,
+            requested_by: agent.id,
+            requested_for: actingFor.id,
+          })
+          review_round = round.id
+          ctx.bus.publish(artifact.id, { type: "review.requested", round_id: round.id })
+        }
         return json({
           published: true,
           short_id: artifact.short_id,
+          ...(review_round ? { review_requested: true } : {}),
           kind: artifact.kind,
           version: version.n,
           url: artifactUrl(ctx.deps.baseUrl, artifact),
@@ -694,7 +725,9 @@ export function mountMcp(app: Hono, ctx: AppContext): void {
         { "WWW-Authenticate": `Bearer resource_metadata="${meta}"` },
       )
     }
-    const server = buildServer(ctx, agent, await ctx.privateOwnerId(c))
+    const ownerId = await ctx.privateOwnerId(c)
+    const actingFor = ownerId ? ((await ctx.meta.getUsers([ownerId]))[0] ?? null) : null
+    const server = buildServer(ctx, agent, actingFor)
     const transport = new StreamableHTTPTransport()
     await server.connect(transport)
     return transport.handleRequest(c)
