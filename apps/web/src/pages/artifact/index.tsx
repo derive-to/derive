@@ -18,12 +18,7 @@ import { artifactTypeLabel } from "../library/artifact-card"
 import { artifactActions } from "./artifact-actions"
 import { ArtifactComments } from "./artifact-comments"
 import { ArtifactDocument } from "./artifact-document"
-import {
-  ArtifactLoadError,
-  ArtifactLoading,
-  ArtifactNotFound,
-  ArtifactRemoved,
-} from "./artifact-states"
+import { ArtifactLoadError, ArtifactNotFound, ArtifactRemoved } from "./artifact-states"
 import { ArtifactTopBar } from "./artifact-top-bar"
 import { BundleBar } from "./bundle-bar"
 import { ActionsCtx } from "./comment-actions"
@@ -39,6 +34,7 @@ import { useArtifactFrame } from "./use-artifact-frame"
 import { useArtifactLive } from "./use-artifact-live"
 import { useCommentsPanel } from "./use-comments-panel"
 import { useVersionDiff } from "./use-version-diff"
+import { WorkbenchSkeleton } from "./workbench-skeleton"
 
 // Heavy on-demand surfaces — split out of the artifact route's initial chunk and
 // loaded only when the user opens them (review proposals / insights / history).
@@ -316,7 +312,7 @@ export function Artifact() {
       <ArtifactLoadError onRetry={() => refetch()} onBack={() => nav({ to: "/" })} />
     )
   }
-  if (!art) return <ArtifactLoading />
+  if (!art) return <WorkbenchSkeleton />
   // Removed artifacts show a tombstone instead of the document — content is gone
   // (the server 410s the raw routes), but an owner can still reinstate.
   if (art.removed)

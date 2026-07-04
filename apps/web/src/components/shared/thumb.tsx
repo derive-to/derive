@@ -1,3 +1,4 @@
+import { useState } from "react"
 import { API_BASE } from "@/api"
 import { cn } from "@/lib/utils"
 
@@ -29,10 +30,15 @@ export function Thumb({
   version?: number
   className?: string
 }) {
+  // The frame fades up once it paints, so a blank white iframe never pops over the
+  // neutral placeholder. The placeholder itself stays STATIC (a plain bg-muted, no
+  // breath) — a wall of thumbnails must read calm. The opacity rides the same
+  // duration-200 declaration as the hover filter-wake (one transition covering both).
+  const [loaded, setLoaded] = useState(false)
   return (
     <div
       className={cn(
-        "relative aspect-[16/10] overflow-hidden bg-linear-to-br from-accent to-secondary outline-1 -outline-offset-1 outline-foreground/10 group-hover:outline-foreground/20 group-focus-within:outline-foreground/20",
+        "relative aspect-[16/10] overflow-hidden bg-muted outline-1 -outline-offset-1 outline-foreground/10 group-hover:outline-foreground/20 group-focus-within:outline-foreground/20",
         className,
       )}
     >
@@ -41,9 +47,13 @@ export function Thumb({
         aria-hidden
         tabIndex={-1}
         loading="lazy"
+        onLoad={() => setLoaded(true)}
         src={`${API_BASE}/raw/${id}/v/${v}/index.html`}
         sandbox="allow-scripts"
-        className="pointer-events-none absolute left-0 top-0 h-[250%] w-[250%] origin-top-left scale-[0.4] border-0 bg-white brightness-[0.96] saturate-[0.98] transition-[filter] duration-200 group-hover:brightness-100 group-hover:saturate-100 group-focus-within:brightness-100 group-focus-within:saturate-100"
+        className={cn(
+          "pointer-events-none absolute left-0 top-0 h-[250%] w-[250%] origin-top-left scale-[0.4] border-0 bg-white brightness-[0.96] saturate-[0.98] transition-[opacity,filter] duration-200 group-hover:brightness-100 group-hover:saturate-100 group-focus-within:brightness-100 group-focus-within:saturate-100",
+          loaded ? "opacity-100" : "opacity-0",
+        )}
       />
       {typeLabel && (
         <span className="pointer-events-none absolute bottom-2 left-2 z-10 inline-flex items-center gap-1 rounded-md bg-scrim/85 px-1.5 py-0.5 font-mono text-2xs text-scrim-foreground ring-1 ring-scrim-foreground/15">

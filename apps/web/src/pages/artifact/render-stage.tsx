@@ -94,9 +94,13 @@ export function RenderStage({
     <div className={cn("relative flex min-h-0 flex-1 flex-col", className)}>
       {banner}
       {/* The render fills edge-to-edge; the content card's rounded overflow-hidden
-          clips it, and the header above carries its top edge. bg-white is the
-          backdrop the boot state paints on before the iframe takes over. */}
-      <div ref={wrapRef} className="relative flex min-h-0 flex-1 flex-col overflow-hidden bg-white">
+          clips it, and the header above carries its top edge. bg-background (the app
+          canvas, NEVER bg-white) is the backdrop the boot state paints on — so a dark
+          artifact never flashes a white rectangle before it takes over. */}
+      <div
+        ref={wrapRef}
+        className="relative flex min-h-0 flex-1 flex-col overflow-hidden bg-background"
+      >
         <iframe
           key={attempt}
           ref={frameRef}
@@ -106,9 +110,15 @@ export function RenderStage({
           allow="fullscreen"
           // touch-action: pan-y lets the outer page scroll instead of the iframe
           // trapping the gesture on a phone (research's scroll-trap fix); the frame
-          // opts into its own pan only inside an explicit zoom mode.
+          // opts into its own pan only inside an explicit zoom mode. The iframe keeps
+          // its own bg-white (the right default for a transparent HTML doc) but starts
+          // hidden and cross-fades in on load, so the white→content swap resolves
+          // gently over the neutral canvas instead of hard-flashing.
           sandbox="allow-scripts allow-forms allow-popups allow-modals allow-downloads"
-          className="min-h-0 flex-1 touch-pan-y border-0 bg-white"
+          className={cn(
+            "min-h-0 flex-1 touch-pan-y border-0 bg-white opacity-0 transition-opacity duration-200",
+            phase === "ready" && "opacity-100",
+          )}
         />
 
         {/* Boot — a calm centered spinner over the white canvas until the render's
@@ -118,10 +128,12 @@ export function RenderStage({
           <div
             role="status"
             aria-live="polite"
-            className="absolute inset-0 grid place-items-center bg-white"
+            className="absolute inset-0 grid place-items-center bg-background"
           >
             <div className="flex flex-col items-center gap-3">
-              <Spinner />
+              {/* Decorative: the wrapping div is the live region (aria-live) with the
+                  visible label, so the spinner must not announce a second time. */}
+              <Spinner size="lg" role="presentation" aria-label={undefined} />
               <span className="font-mono text-2xs text-muted-foreground">Loading preview…</span>
             </div>
           </div>

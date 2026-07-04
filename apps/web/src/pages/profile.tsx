@@ -7,7 +7,7 @@ import { Icon } from "@/components/icons"
 import { EmptyState } from "@/components/shared/empty-state"
 import { PageShell } from "@/components/shared/page-shell"
 import { SectionEyebrow } from "@/components/shared/section-eyebrow"
-import { CenteredSpinner, Spinner } from "@/components/shared/spinner"
+import { Spinner } from "@/components/shared/spinner"
 import { StatusPanel } from "@/components/shared/status-panel"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
@@ -23,7 +23,9 @@ import { useAuth } from "@/ctx"
 import { colorForName } from "@/lib/avatar-tints"
 import { getInitials } from "@/lib/initials"
 import { profileArtifactsQuery, profileQuery } from "@/lib/queries"
+import { useDelayedPending } from "@/lib/use-delayed-pending"
 import { CardGrid } from "./library/card-grid"
+import { ProfilePending, ProfileWorkSkeleton } from "./profile-skeleton"
 import { ProfileWorkCard } from "./profile-work-card"
 
 const route = getRouteApi("/users/$handle")
@@ -39,8 +41,11 @@ export function Profile() {
   const [editing, setEditing] = useState(false)
 
   const { data, isPending, isError, error, refetch } = useQuery(profileQuery(handle))
+  // Hold the frame back ~150ms so a cache-warm profile flashes nothing; the route's
+  // pendingComponent (same ProfilePending) already covers the cold-nav auth window.
+  const showPending = useDelayedPending(isPending)
 
-  if (isPending) return <CenteredSpinner />
+  if (isPending) return showPending ? <ProfilePending /> : null
 
   // A transient fetch failure is status, not a genuine 404 — surface it as a
   // recoverable danger panel (matching ProfileWork + People), never the bare
@@ -304,6 +309,7 @@ function PeopleStat({
 function ProfileWork({ handle, isMe, name }: { handle: string; isMe: boolean; name: string }) {
   const { data, isPending, isError, fetchNextPage, hasNextPage, isFetchingNextPage, refetch } =
     useInfiniteQuery(profileArtifactsQuery(handle))
+  const showSkeleton = useDelayedPending(isPending)
   const items = data?.pages.flatMap((p) => p.artifacts) ?? []
   const sentinel = useRef<HTMLDivElement>(null)
 
@@ -321,9 +327,12 @@ function ProfileWork({ handle, isMe, name }: { handle: string; isMe: boolean; na
     <section className="flex flex-col gap-3">
       <SectionEyebrow>Work</SectionEyebrow>
       {isPending ? (
-        <div className="flex justify-center py-10">
-          <Spinner />
-        </div>
+        showSkeleton ? (
+          <div role="status">
+            <span className="sr-only">Loading work…</span>
+            <ProfileWorkSkeleton />
+          </div>
+        ) : null
       ) : isError ? (
         // A failed fetch is status, not emptiness — the danger tone grammar.
         <StatusPanel

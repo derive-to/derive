@@ -4,7 +4,6 @@ import { type Agent, api, type Role } from "@/api"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { EmptyState } from "@/components/shared/empty-state"
 import { SettingsGroup } from "@/components/shared/settings-group"
-import { Spinner } from "@/components/shared/spinner"
 import { StatusPanel } from "@/components/shared/status-panel"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
@@ -18,6 +17,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { toast } from "@/components/ui/sonner"
+import { SettingsListSkeleton } from "./settings-list-skeleton"
 import { SettingsSection } from "./settings-section"
 
 export function AgentsSection() {
@@ -54,9 +54,7 @@ export function AgentsSection() {
       />
 
       {agents === null ? (
-        <div className="flex h-20 items-center justify-center">
-          <Spinner />
-        </div>
+        <SettingsListSkeleton />
       ) : agents.length === 0 ? (
         <EmptyState>No agents yet. Add one above.</EmptyState>
       ) : (

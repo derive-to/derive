@@ -12,8 +12,9 @@ import { cn } from "@/lib/utils"
 // gutter (sidebar body p-4), so the content edge reads as a deliberate step of
 // the rail's rhythm rather than an unrelated inset; 20px below `sm` (the mobile
 // navbar already spends vertical room, so the top stays compact); 64px bottom
-// so a scrolled page never ends flush at the viewport edge. RouteSkeleton
-// renders PageShell itself, so the pending shimmer inherits this geometry.
+// so a scrolled page never ends flush at the viewport edge. The page pending
+// skeletons (LibraryPending, …) render PageShell itself, so their placeholder
+// geometry inherits this rhythm and nothing shifts when content arrives.
 export function PageShell({
   scrollRef,
   width = "reading",

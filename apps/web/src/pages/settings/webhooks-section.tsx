@@ -17,6 +17,7 @@ import {
 } from "@/components/ui/select"
 import { toast } from "@/components/ui/sonner"
 import { ALL_EVENTS } from "./roles"
+import { SettingsListSkeleton } from "./settings-list-skeleton"
 import { SettingsSection } from "./settings-section"
 
 export function WebhooksSection() {
@@ -61,9 +62,7 @@ export function WebhooksSection() {
       />
 
       {hooks === null ? (
-        <div className="flex h-20 items-center justify-center">
-          <Spinner />
-        </div>
+        <SettingsListSkeleton />
       ) : hooks.length === 0 ? (
         <EmptyState>No webhooks yet. Add one above.</EmptyState>
       ) : (

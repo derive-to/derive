@@ -1,3 +1,4 @@
+import { useQuery } from "@tanstack/react-query"
 import { useNavigate } from "@tanstack/react-router"
 import { useCallback, useEffect, useState } from "react"
 import { type Artifact, api, type PublicProfile } from "@/api"
@@ -14,6 +15,7 @@ import {
 } from "@/components/ui/command"
 import { colorForName } from "@/lib/avatar-tints"
 import { getInitials } from "@/lib/initials"
+import { collectionsQuery, workspacesQuery } from "@/lib/queries"
 import { usePrefetchArtifact } from "@/lib/use-prefetch-artifact"
 import { refFor } from "@/pages/artifact/parse-ref"
 import { Icon } from "./icons"
@@ -24,7 +26,11 @@ import { useShell } from "./shell-context"
 // Artifact search is async, so cmdk's built-in filtering is off and we render
 // exactly the rows we want; the static rows are filtered against the query here.
 export function CommandPalette() {
-  const { paletteOpen, setPaletteOpen, collections, workspaces, switchWorkspace } = useShell()
+  const { paletteOpen, setPaletteOpen, switchWorkspace } = useShell()
+  // Read straight from cache (the rail already warmed these); the palette is
+  // signed-in-only, so no `enabled` gate is needed.
+  const { data: collections = [] } = useQuery(collectionsQuery())
+  const { data: workspaces } = useQuery(workspacesQuery())
   const nav = useNavigate()
   const prefetch = usePrefetchArtifact()
   const [query, setQuery] = useState("")
