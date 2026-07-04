@@ -3,58 +3,84 @@ import type { D1Database, Hyperdrive } from "@cloudflare/workers-types"
 import type { MetaStore } from "@derive/core"
 import { createD1Store } from "@derive/db/d1"
 import { PgMetaStore } from "@derive/db/pg"
-import { Pool } from "pg"
+import { Client, type Pool, type PoolClient } from "pg"
 
 /**
  * Postgres plumbing for the Workers tier (the HYPERDRIVE binding).
  *
- * A Workers TCP socket belongs to the invocation (request or DO event) that
- * opened it — the TCP twin of the stale-binding problem request-d1.ts documents.
- * So pools are invocation-scoped, and cheaply so: node-postgres connects lazily,
- * and the dial goes to the colo-local Hyperdrive proxy, which owns the real
- * server-side connections.
+ * HYPERDRIVE ALREADY POOLS — a `pg.Pool` on top of it is broken. The Workers
+ * runtime can't keep a Pool's sockets alive across the request↔waitUntil boundary,
+ * and Hyperdrive terminates the extra/idle server connections a Pool opens; the
+ * next query then fails with **"Connection terminated unexpectedly"** (which took
+ * down sign-in / get-session / presence in prod). So the edge tier opens exactly
+ * ONE `pg.Client` per invocation and lets Hyperdrive multiplex server-side.
+ *
+ * NEVER use `pg.Pool` on this path — the `check-hyperdrive-no-pool` lint fails the
+ * build if `new Pool(` reappears in this file or worker.ts.
+ *
+ * drizzle and Better Auth's Kysely core both expect a Pool, so `pgFacade` wraps the
+ * single client in a Pool-shaped object (`.query` / `.connect` / `.end`) — one
+ * connection underneath, concurrent queries serialized by node-postgres's own queue.
  */
 
-/** One invocation's pool. Callers own the lifecycle: DO ticks end() it when the
- *  tick's work is fully awaited; the fetch path never end()s (see worker.ts) and
- *  relies on the idle timeout + context teardown instead. */
-export const hyperdrivePool = (hd: Hyperdrive): Pool => {
-  const pool = new Pool({
-    connectionString: hd.connectionString,
-    max: 5,
-    statement_timeout: 30_000,
-    connectionTimeoutMillis: 10_000,
-    // Idle sockets reap themselves, so a pool nobody end()s doesn't hold its
-    // invocation open longer than its last query.
-    idleTimeoutMillis: 5_000,
-  })
-  // An idle-socket error on an invocation-scoped pool just means that socket is
-  // gone; without a listener node-postgres escalates it to an isolate crash.
-  pool.on("error", () => {})
-  return pool
+/** The slice of `pg.Pool` drizzle + Kysely actually call. */
+export type PgConn = Pick<Pool, "query" | "connect" | "end">
+
+/** Pool-shaped facade over a SINGLE client — Hyperdrive multiplexes, so one socket
+ *  is all we open, and `connect()` hands back that same socket (release is a no-op:
+ *  there is no pool to return it to). */
+const pgFacade = (client: Client): PgConn => {
+  // An invocation socket dropping must not escalate to an isolate crash.
+  client.on("error", () => {})
+  let connected: Promise<unknown> | null = null
+  const ensure = () => {
+    connected ??= client.connect()
+    return connected
+  }
+  // biome-ignore lint/suspicious/noExplicitAny: pass args straight to node-postgres's overloaded query().
+  const query = (async (...args: any[]) => {
+    await ensure()
+    // biome-ignore lint/suspicious/noExplicitAny: same passthrough.
+    return (client.query as (...a: any[]) => unknown)(...args)
+  }) as Pool["query"]
+  const connect = (async () => {
+    await ensure()
+    return { query, release: () => {} } as unknown as PoolClient
+  }) as Pool["connect"]
+  return { query, connect, end: () => client.end() }
 }
 
-/** MetaStore for one DO tick: Postgres (fresh pool, released via `close`) when
+/** One invocation's Postgres handle — a single Hyperdrive-multiplexed connection. */
+export const hyperdriveConn = (hd: Hyperdrive): PgConn =>
+  pgFacade(
+    new Client({
+      connectionString: hd.connectionString,
+      statement_timeout: 30_000,
+      connectionTimeoutMillis: 10_000,
+    }),
+  )
+
+/** MetaStore for one DO tick: Postgres (fresh connection, released via `close`) when
  *  HYPERDRIVE is bound, else the DO-lifetime-stable D1 binding (no-op close). */
 export const tickStore = (env: {
   DB: D1Database
   HYPERDRIVE?: Hyperdrive
 }): { store: MetaStore; close: () => Promise<void> } => {
   if (!env.HYPERDRIVE) return { store: createD1Store(env.DB), close: async () => {} }
-  const pool = hyperdrivePool(env.HYPERDRIVE)
-  return { store: PgMetaStore.fromPool(pool), close: () => pool.end() }
+  const conn = hyperdriveConn(env.HYPERDRIVE)
+  return { store: PgMetaStore.fromPool(conn as unknown as Pool), close: () => conn.end() }
 }
 
-/** The fetch path's request-scoped pool, bound in worker.ts via `requestPg.run`.
- *  `livePgPool` forwards to the in-flight request's pool so the store and Better
- *  Auth — both built once per isolate — never capture a dead pool. */
-export const requestPg = new AsyncLocalStorage<Pool>()
+/** The fetch path's request-scoped connection, bound in worker.ts via `requestPg.run`.
+ *  `livePgPool` forwards to the in-flight request's connection so the store and Better
+ *  Auth — both built once per isolate — never capture a dead socket. */
+export const requestPg = new AsyncLocalStorage<PgConn>()
 
 export const livePgPool = new Proxy({} as Pool, {
   get(_target, prop) {
-    const pool = requestPg.getStore()
-    if (!pool) throw new Error("requestPg: no Postgres pool bound for this request")
-    const value = Reflect.get(pool as object, prop)
-    return typeof value === "function" ? value.bind(pool) : value
+    const conn = requestPg.getStore()
+    if (!conn) throw new Error("requestPg: no Postgres connection bound for this request")
+    const value = Reflect.get(conn as object, prop)
+    return typeof value === "function" ? value.bind(conn) : value
   },
 })
