@@ -4,7 +4,7 @@ import { FsBlobStore } from "@derive/storage/fs"
 import { zipSync } from "fflate"
 import { describe, expect, it } from "vitest"
 import { createApp } from "../src/app"
-import { app, dir, meta, ownerApp, postJson, upload } from "./helpers"
+import { app, as, dir, makeAuthedApp, meta, ownerApp, postJson, publishAs, upload } from "./helpers"
 
 describe("version sessions", () => {
   it("a named publish stores the checkpoint name on the version", async () => {
@@ -365,5 +365,38 @@ describe("single-container web serving", () => {
     // No placeholder here; the Node entry's static + index.html fallback (added
     // around createApp when a build is present) is what answers `/` in prod.
     expect((await webApp.request("/")).status).toBe(404)
+  })
+})
+
+// The list endpoint sends `my_role` per row so the library UI can gate the
+// card quick-actions menu (tags/delete) without opening the artifact. Baseline
+// standing only (workspace membership + general-access floor); the detail
+// response stays authoritative for per-artifact shares.
+describe("list rows carry my_role", () => {
+  const users = [
+    { id: "lr1", email: "list-owner@x.test", name: "Owner" },
+    { id: "lr2", email: "list-commenter@x.test", name: "Commenter" },
+  ]
+
+  it("workspace members see their baseline role on every row", async () => {
+    const { app: a } = makeAuthedApp("myrole-list", users, "commenter")
+    await publishAs(a, "<h1>role row</h1>", { title: "Role row" }, as("list-owner@x.test"))
+    const owner = await (
+      await a.request("/v1/artifacts", { headers: as("list-owner@x.test") })
+    ).json()
+    expect(owner.artifacts.length).toBeGreaterThan(0)
+    expect(owner.artifacts.every((r: { my_role?: string }) => r.my_role === "owner")).toBe(true)
+    const member = await (
+      await a.request("/v1/artifacts", { headers: as("list-commenter@x.test") })
+    ).json()
+    expect(member.artifacts.every((r: { my_role?: string }) => r.my_role === "commenter")).toBe(
+      true,
+    )
+  })
+
+  it("the operator token lists as owner", async () => {
+    await upload("op-role.md", "x", { title: "OPROLEROW" })
+    const r = await (await app.request("/v1/artifacts?query=OPROLEROW")).json()
+    expect(r.artifacts[0]?.my_role).toBe("owner")
   })
 })

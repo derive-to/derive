@@ -143,16 +143,15 @@ export const artifactRoutes = (ctx: AppContext) => {
     if (author) narrow(await meta.artifactIdsByAuthor(listOrg, author))
     if (ids && ids.length === 0) return c.json({ artifacts: [], next_cursor: null })
 
+    // The caller's baseline standing in the listing's workspace — reused for the
+    // public-only clamp below and the per-row `my_role`.
+    const isOperator = !!(deps.token && safeEqual(bearer(c), deps.token))
+    const myMembership = me ? await meta.getMembership(listOrg, me.id) : null
     // A listing only shows non-public artifacts to a MEMBER of that workspace (or the
     // operator token). Anyone else — anonymous, or a signed-in user who isn't a member
     // — sees public artifacts only, so org/link titles never leak via the list or ?query=.
     // For a collection, collection access (member/creator/share) also unlocks it.
-    const publicOnly = collectionId
-      ? !collectionAccess
-      : !(
-          (deps.token && safeEqual(bearer(c), deps.token)) ||
-          (!!me && !!(await meta.getMembership(listOrg, me.id)))
-        )
+    const publicOnly = collectionId ? !collectionAccess : !(isOperator || !!myMembership)
     const rows = await meta.listArtifacts({
       limit: limit + 1,
       cursor,
@@ -189,6 +188,24 @@ export const artifactRoutes = (ctx: AppContext) => {
         views: counts[a.id] ?? 0,
         tags: tags[a.id] ?? [],
         favorite: favorites.has(a.id),
+        // Which actions the client may surface on the row (the card's quick-actions
+        // menu gates delete/tags on it). Baseline standing only — workspace
+        // membership + the general-access floor; per-artifact and collection shares
+        // aren't folded in at list granularity (no per-row member lookups), so the
+        // detail response's my_role stays authoritative.
+        my_role: isOperator
+          ? "owner"
+          : effectiveRole(
+              me
+                ? {
+                    kind: "user",
+                    userId: me.id,
+                    orgRole: a.org_id === listOrg ? (myMembership?.role ?? null) : null,
+                  }
+                : { kind: "anon" },
+              a.visibility,
+              a.general_role,
+            ),
         // The current author as a resolved profile (name/login/avatar + Derive handle), so
         // the list can render the last editor + filter by them.
         author: authorProfile(a, handleByGhId),
