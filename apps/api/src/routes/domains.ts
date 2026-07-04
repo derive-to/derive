@@ -36,7 +36,7 @@ const refOf = (a: ArtifactRecord): string => (a.slug ? `${a.slug}-${a.short_id}`
  * the share dialog shows every URL an artifact is reachable at. Serving is in app.ts.
  */
 export const domainRoutes = (ctx: AppContext) => {
-  const { meta, authorize } = ctx
+  const { meta, requireArtifact, authorize } = ctx
   const base = ctx.deps.subdomainBase?.toLowerCase()
   const scheme = (() => {
     try {
@@ -58,8 +58,8 @@ export const domainRoutes = (ctx: AppContext) => {
   // The artifact's subdomains (manageable) + the workspace's active custom domains
   // (read-only here; managed in workspace settings), each with this artifact's URL.
   app.get("/v1/artifacts/:shortId/domains", async (c) => {
-    const artifact = await meta.getByShortId(c.req.param("shortId"))
-    if (!artifact || !(await authorize(c, "read", artifact))) return fail(c, 404, "not found")
+    const artifact = await requireArtifact(c, "read")
+    if (artifact instanceof Response) return artifact
     const [subs, wsDomains] = await Promise.all([
       meta.getArtifactDomains(artifact.id),
       meta.getWorkspaceDomains(artifact.org_id),
@@ -77,8 +77,8 @@ export const domainRoutes = (ctx: AppContext) => {
   // Claim `<label>.<base>` for the artifact. Idempotent if it is already yours.
   app.put("/v1/artifacts/:shortId/domains", async (c) => {
     if (!base) return fail(c, 501, "subdomains are not enabled on this server")
-    const artifact = await meta.getByShortId(c.req.param("shortId"))
-    if (!artifact || !(await authorize(c, "read", artifact))) return fail(c, 404, "not found")
+    const artifact = await requireArtifact(c, "read")
+    if (artifact instanceof Response) return artifact
     if (!(await authorize(c, "share", artifact))) return fail(c, 403, "forbidden")
     const body = await readJson(c, z.object({ label: z.string() }))
     if (body instanceof Response) return body
@@ -103,8 +103,8 @@ export const domainRoutes = (ctx: AppContext) => {
 
   // Release one of the artifact's subdomains (scoped to this artifact).
   app.delete("/v1/artifacts/:shortId/domains/:host", async (c) => {
-    const artifact = await meta.getByShortId(c.req.param("shortId"))
-    if (!artifact || !(await authorize(c, "read", artifact))) return fail(c, 404, "not found")
+    const artifact = await requireArtifact(c, "read")
+    if (artifact instanceof Response) return artifact
     if (!(await authorize(c, "share", artifact))) return fail(c, 403, "forbidden")
     const host = c.req.param("host").toLowerCase()
     const existing = await meta.getDomain(host)

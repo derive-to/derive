@@ -1,18 +1,11 @@
 import { Icon } from "@/components/icons"
 import { EmptyState } from "@/components/shared/empty-state"
-import { Spinner } from "@/components/shared/spinner"
 import { StatusPanel } from "@/components/shared/status-panel"
 import { Button } from "@/components/ui/button"
 
-/** Full-page states the artifact route renders before (or instead of) the doc. */
-
-export function ArtifactLoading() {
-  return (
-    <div className="grid h-full place-items-center">
-      <Spinner />
-    </div>
-  )
-}
+/** Full-page states the artifact route renders instead of the doc. The loading
+ *  frame is the shape-matched WorkbenchSkeleton (workbench-skeleton.tsx), not a
+ *  bare spinner. */
 
 export function ArtifactNotFound({ onBack }: { onBack: () => void }) {
   return (

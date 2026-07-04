@@ -1,10 +1,10 @@
+import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { getRouteApi } from "@tanstack/react-router"
-import { useCallback, useEffect, useState } from "react"
-import { api, type Report } from "@/api"
 import { PageShell } from "@/components/shared/page-shell"
 import { Eyebrow } from "@/components/shared/section-eyebrow"
 import { Badge } from "@/components/ui/badge"
 import { useAuth } from "@/ctx"
+import { reportsQuery } from "@/lib/queries"
 import { AgentsSection } from "./agents-section"
 import { AppearanceSection } from "./appearance-section"
 import { CustomDomainsSection } from "./custom-domains-section"
@@ -31,21 +31,10 @@ const route = getRouteApi("/settings/$section")
 // Settings renders.
 export function Settings() {
   const { me } = useAuth()
-  const [reports, setReports] = useState<Report[] | null>(null)
+  const qc = useQueryClient()
+  const { data: reports } = useQuery({ ...reportsQuery(), enabled: !!me })
   const { section } = route.useParams()
   const nav = route.useNavigate()
-
-  const loadReports = useCallback(
-    () =>
-      api
-        .listReports()
-        .then((r) => setReports(r.reports))
-        .catch(() => setReports([])),
-    [],
-  )
-  useEffect(() => {
-    if (me) loadReports()
-  }, [me, loadReports])
 
   if (!me) return null
 
@@ -128,7 +117,12 @@ export function Settings() {
             {active === "webhooks" && <WebhooksSection />}
             {active === "agents" && <AgentsSection />}
             {active === "domains" && <CustomDomainsSection />}
-            {active === "reports" && <ReportsSection reports={openReports} reload={loadReports} />}
+            {active === "reports" && (
+              <ReportsSection
+                reports={openReports}
+                reload={() => qc.invalidateQueries({ queryKey: reportsQuery().queryKey })}
+              />
+            )}
           </div>
         </div>
       </div>

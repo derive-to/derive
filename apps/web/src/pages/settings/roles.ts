@@ -12,6 +12,3 @@ export const roleLabel = (r: Role): string => WS_ROLES.find((x) => x.value === r
 
 // A historical bare "viewer" maps onto the Viewer (commenter) option.
 export const roleValue = (r: Role): Role => (r === "viewer" ? "commenter" : r)
-
-// The events a webhook can subscribe to (all selected = no filter sent).
-export const ALL_EVENTS = ["comment.created", "comment.resolved", "version.published"] as const

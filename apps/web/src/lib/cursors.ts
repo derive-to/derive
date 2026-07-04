@@ -53,7 +53,7 @@ export const CURSOR_EMOJI = ["👆", "🐱", "🦊", "🚀", "✨", "🌸", "�
 /** Server's fallback tint when a (stale) client sends a cursor with no color. */
 export const CURSOR_FALLBACK = "#655999"
 
-export const DEFAULT_EMOJI = CURSOR_EMOJI[0]
+const DEFAULT_EMOJI = CURSOR_EMOJI[0]
 
 // Animation + lifecycle tuning, all in one place so "feel" is a one-file tweak.
 export const CURSOR_TUNING = {

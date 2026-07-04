@@ -1,7 +1,7 @@
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useNavigate, useSearch } from "@tanstack/react-router"
 import { FolderTree, List } from "lucide-react"
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { type Artifact, api } from "@/api"
 import { Icon } from "@/components/icons"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
@@ -12,18 +12,20 @@ import { SearchField } from "@/components/shared/search-field"
 import { SectionEyebrow } from "@/components/shared/section-eyebrow"
 import { Spinner } from "@/components/shared/spinner"
 import { StatusPanel } from "@/components/shared/status-panel"
-import { useShell } from "@/components/shell-context"
 import { Button } from "@/components/ui/button"
 import { toast } from "@/components/ui/sonner"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { useAuth } from "@/ctx"
 import {
+  collectionsQuery,
   type LibraryParams,
   libraryArtifactsQuery,
   needsFeedbackArtifactsQuery,
   sharedArtifactsQuery,
+  summaryQuery,
 } from "@/lib/queries"
 import { STORAGE_KEYS } from "@/lib/storage-keys"
+import { useDelayedPending } from "@/lib/use-delayed-pending"
 import { useFollows } from "@/lib/use-follows"
 import { usePrefetchArtifact } from "@/lib/use-prefetch-artifact"
 import { refFor } from "../artifact/parse-ref"
@@ -57,7 +59,8 @@ function LibraryBody({ view }: { view: LibraryView }) {
   // tag/collection/q/author are the filters that compose on top (docs/decisions/0002).
   const search = useSearch({ strict: false }) as LibrarySearch
   const { me } = useAuth()
-  const { summary, collections, refreshSummary } = useShell()
+  const { data: summary } = useQuery({ ...summaryQuery(), enabled: !!me })
+  const { data: collections = [] } = useQuery({ ...collectionsQuery(), enabled: !!me })
   const prefetch = usePrefetchArtifact()
   const qc = useQueryClient()
   // The library is the scroll container; the virtualized grid windows against it.
@@ -113,6 +116,10 @@ function LibraryBody({ view }: { view: LibraryView }) {
   const listQuery = libraryArtifactsQuery(params)
   const { data, isPending, isError, refetch, fetchNextPage, hasNextPage, isFetchingNextPage } =
     useInfiniteQuery(listQuery)
+  // Hold the skeleton back ~150ms so a cache-warm / fast first load flashes nothing
+  // (keepPreviousData already keeps the current grid across filter changes, so this
+  // only ever gates the true first load).
+  const showSkeleton = useDelayedPending(isPending)
   const items = data?.pages.flatMap((p) => p.artifacts) ?? []
 
   // A synced repo collection (artifacts carry a source_path) gets the folder/flat
@@ -125,10 +132,7 @@ function LibraryBody({ view }: { view: LibraryView }) {
     if (isSyncedCollection && hasNextPage && !isFetchingNextPage) fetchNextPage()
   }, [isSyncedCollection, hasNextPage, isFetchingNextPage, fetchNextPage])
   // Default order everywhere a synced collection renders: most recently updated first.
-  const recencyItems = useMemo(
-    () => (isSyncedCollection ? [...items].sort(byRecency) : items),
-    [isSyncedCollection, items],
-  )
+  const recencyItems = isSyncedCollection ? [...items].sort(byRecency) : items
 
   // Star toggle is optimistic across every cached page; in the Favorites view an
   // un-star drops the card. Reconcile against the server on failure.
@@ -150,7 +154,7 @@ function LibraryBody({ view }: { view: LibraryView }) {
     )
     try {
       await api.favorite(a.short_id, on)
-      refreshSummary()
+      qc.invalidateQueries({ queryKey: summaryQuery().queryKey })
     } catch (e) {
       toast.error((e as Error).message)
       qc.invalidateQueries({ queryKey: listQuery.queryKey })
@@ -159,7 +163,7 @@ function LibraryBody({ view }: { view: LibraryView }) {
 
   const renameCollection = async (id: string, title: string) => {
     await api.renameCollection(id, title).catch((e) => toast.error((e as Error).message))
-    refreshSummary()
+    qc.invalidateQueries({ queryKey: summaryQuery().queryKey })
     nav({ to: "/", search: { collection: id } })
   }
   const deleteCollection = async (id: string) => {
@@ -184,7 +188,7 @@ function LibraryBody({ view }: { view: LibraryView }) {
     )
     try {
       await api.deleteArtifact(a.short_id)
-      refreshSummary()
+      qc.invalidateQueries({ queryKey: summaryQuery().queryKey })
       toast.success("Artifact deleted")
     } catch (e) {
       toast.error((e as Error).message)
@@ -326,7 +330,7 @@ function LibraryBody({ view }: { view: LibraryView }) {
     )
     try {
       await api.favorite(a.short_id, on)
-      refreshSummary()
+      qc.invalidateQueries({ queryKey: summaryQuery().queryKey })
     } catch (e) {
       toast.error((e as Error).message)
       qc.invalidateQueries({ queryKey: needsFeedbackArtifactsQuery().queryKey })
@@ -345,7 +349,7 @@ function LibraryBody({ view }: { view: LibraryView }) {
     )
     try {
       await api.favorite(a.short_id, on)
-      refreshSummary()
+      qc.invalidateQueries({ queryKey: summaryQuery().queryKey })
     } catch (e) {
       toast.error((e as Error).message)
       qc.invalidateQueries({ queryKey: sharedArtifactsQuery().queryKey })
@@ -532,7 +536,9 @@ function LibraryBody({ view }: { view: LibraryView }) {
       )}
 
       {isPending ? (
-        <LibrarySkeleton />
+        showSkeleton ? (
+          <LibrarySkeleton />
+        ) : null
       ) : isError ? (
         <StatusPanel
           tone="danger"

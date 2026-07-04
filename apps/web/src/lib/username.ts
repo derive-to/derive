@@ -98,18 +98,3 @@ export const usernameError = (raw: string): string | null => {
   if (RESERVED.has(u)) return "That username is reserved."
   return null
 }
-
-/** A starting suggestion from a display name or email local-part. Best-effort. */
-export const suggestUsername = (nameOrEmail: string): string => {
-  const base = nameOrEmail.split("@")[0] ?? ""
-  let s = base
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^[-_]+|[-_]+$/g, "")
-    .slice(0, USERNAME_MAX)
-    .replace(/[-_]+$/g, "")
-  // Pad a too-short stem past the minimum, and never collapse an all-punctuation
-  // input to a bare reserved word ("" → "newuser", not "user").
-  if (s.length < USERNAME_MIN) s = `${s || "new"}user`.slice(0, USERNAME_MAX)
-  return s
-}

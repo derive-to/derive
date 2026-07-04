@@ -20,9 +20,10 @@ import { authSchema } from "./auth-schema"
 import { hyperdriveConn, livePgPool, requestPg } from "./edge-pg"
 import type { SendEmailBinding } from "./email-cf"
 import { customDomainsFromEnv } from "./lib/cloudflare-saas"
+import { slackFromEnv, subdomainBaseFromEnv, superAdminsFromEnv } from "./lib/env"
 import { nativeLimiter } from "./lib/rate-limit"
 import { liveD1, requestD1 } from "./lib/request-d1"
-import { createDoBackplane, edgeCtx } from "./realtime-do"
+import { createDoBackplane, edgeCtx, edgeWaitUntil } from "./realtime-do"
 
 // The bound Durable Object classes — the realtime room (one per channel), the webhook
 // outbox drainer (a single named instance), and the GitHub-sync runner (one per source)
@@ -167,21 +168,10 @@ const handle = (req: Request, env: Env, ctx: ExecutionContext): Response | Promi
         auth,
         // Encrypt stored GitHub PATs at rest with the edge auth secret.
         encryptionKey: secret,
-        slack:
-          env.SLACK_CLIENT_ID && env.SLACK_CLIENT_SECRET && env.SLACK_SIGNING_SECRET
-            ? {
-                clientId: env.SLACK_CLIENT_ID,
-                clientSecret: env.SLACK_CLIENT_SECRET,
-                signingSecret: env.SLACK_SIGNING_SECRET,
-              }
-            : undefined,
-        superAdmins: (env.DERIVE_SUPERADMIN_EMAILS ?? "")
-          .split(",")
-          .map((s) => s.trim().toLowerCase())
-          .filter(Boolean),
+        slack: slackFromEnv(env),
+        superAdmins: superAdminsFromEnv(env),
         defaultOrgId: "default",
-        subdomainBase:
-          env.DERIVE_SUBDOMAIN_BASE?.toLowerCase().replace(/^\.+|\.+$/g, "") || undefined,
+        subdomainBase: subdomainBaseFromEnv(env),
         customDomains: customDomainsFromEnv(env),
         // Enable rate limiting on the edge, counted by Cloudflare's native per-colo
         // limiter (a plain in-memory Map would cap per isolate only). The native binding's
@@ -199,21 +189,11 @@ const handle = (req: Request, env: Env, ctx: ExecutionContext): Response | Promi
         },
         // Deliver freshly enqueued events now: poke the outbox DO so its alarm fires,
         // riding waitUntil so the subrequest isn't cancelled when the response is sent.
-        pokeWebhooks: () => {
-          const p = pokeOutbox(env)
-          const c = edgeCtx.getStore()
-          if (c) c.waitUntil(p)
-          else void p
-        },
+        pokeWebhooks: () => edgeWaitUntil(pokeOutbox(env)),
         // Run a triggered GitHub sync server-side: poke the per-source runner DO so
         // it mirrors to completion on our servers (tab-independent). waitUntil keeps
         // the poke subrequest alive past the 202 response.
-        startSync: (sourceId) => {
-          const p = pokeSync(env, sourceId)
-          const c = edgeCtx.getStore()
-          if (c) c.waitUntil(p)
-          else void p
-        },
+        startSync: (sourceId) => edgeWaitUntil(pokeSync(env, sourceId)),
         // Read the SPA shell from static assets so /artifacts/:ref can carry unfurl meta.
         // Cached per isolate; null on any miss leaves the shell untouched.
         shellFetch: async () => {

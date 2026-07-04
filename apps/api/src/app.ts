@@ -1,19 +1,13 @@
 import { type ArtifactRecord, parseRef } from "@derive/core"
 import { type Context, Hono } from "hono"
 import { compress } from "hono/compress"
-import { OAUTH_SCOPES } from "./auth-config"
 import { type AppDeps, buildContext } from "./context"
-import { manifestFormHTML, setupResultHTML } from "./github-app-setup"
-import { encryptSecret, signState, verifyState } from "./lib/crypto"
-import { convertManifestCode } from "./lib/github-app"
 import { cacheControlFor, corsFor, fail, TOMBSTONE } from "./lib/http"
 import { observability } from "./lib/observability"
 import { inMemoryRateLimiters, ipRateLimit } from "./lib/rate-limit"
 import { serveContent } from "./lib/serve-content"
 import { log } from "./log"
 import { mountMcp } from "./mcp"
-import { cliCallbackHTML } from "./oauth-cli-callback"
-import { consentHTML } from "./oauth-consent"
 import { agentRoutes } from "./routes/agents"
 import { analyticsRoutes } from "./routes/analytics"
 import { artifactRoutes } from "./routes/artifacts"
@@ -24,8 +18,10 @@ import { domainRoutes } from "./routes/domains"
 import { embedRoutes } from "./routes/embeds"
 import { favoriteRoutes } from "./routes/favorites"
 import { followRoutes } from "./routes/follows"
+import { githubAppRoutes } from "./routes/github-app"
 import { moderationRoutes } from "./routes/moderation"
 import { notificationRoutes } from "./routes/notifications"
+import { oauthRoutes } from "./routes/oauth"
 import { proposalRoutes } from "./routes/proposals"
 import { rawRoutes } from "./routes/raw"
 import { realtimeRoutes } from "./routes/realtime"
@@ -33,6 +29,7 @@ import { sessionRoutes } from "./routes/session"
 import { sharingRoutes } from "./routes/sharing"
 import { slackRoutes } from "./routes/slack"
 import { syncRoutes } from "./routes/sync"
+import { systemRoutes } from "./routes/system"
 import { vitalsRoutes } from "./routes/vitals"
 import { webhookRoutes } from "./routes/webhooks"
 import { workspaceRoutes } from "./routes/workspace"
@@ -250,170 +247,11 @@ export function createApp(deps: AppDeps): Hono {
     }
   })
 
-  // OAuth 2.0 discovery at the well-known root (RFC 8414 + RFC 9728), mirroring
-  // what the oidc-provider plugin serves under /api/auth — MCP clients and standard
-  // OAuth tooling probe the root. Issuer is the live request origin so it's correct
-  // behind any proxy / on workers.dev without configuration.
-  const asMeta = (c: Context) => {
-    const base = new URL(c.req.url).origin
-    return {
-      issuer: base,
-      authorization_endpoint: `${base}/api/auth/oauth2/authorize`,
-      token_endpoint: `${base}/api/auth/oauth2/token`,
-      registration_endpoint: `${base}/api/auth/oauth2/register`,
-      userinfo_endpoint: `${base}/api/auth/oauth2/userinfo`,
-      jwks_uri: `${base}/api/auth/jwks`,
-      scopes_supported: [...OAUTH_SCOPES],
-      response_types_supported: ["code"],
-      grant_types_supported: ["authorization_code", "refresh_token"],
-      code_challenge_methods_supported: ["S256"],
-      token_endpoint_auth_methods_supported: ["client_secret_basic", "client_secret_post", "none"],
-    }
-  }
-  app.get("/.well-known/oauth-authorization-server", (c) => c.json(asMeta(c)))
-  // OIDC discovery for standards-compliant OIDC clients. We issue id tokens (jwt
-  // plugin) + advertise the openid scope + a userinfo endpoint, so RPs that probe
-  // /.well-known/openid-configuration must get JSON here — previously this path fell
-  // through to the SPA shell (HTML 200), breaking discovery. Superset of the OAuth AS
-  // metadata with the two OIDC-required fields.
-  app.get("/.well-known/openid-configuration", (c) =>
-    c.json({
-      ...asMeta(c),
-      subject_types_supported: ["public"],
-      id_token_signing_alg_values_supported: ["EdDSA"],
-    }),
-  )
-  app.get("/.well-known/oauth-protected-resource", (c) => {
-    const base = new URL(c.req.url).origin
-    return c.json({
-      resource: base,
-      authorization_servers: [base],
-      scopes_supported: [...OAUTH_SCOPES],
-      bearer_methods_supported: ["header"],
-    })
-  })
-
-  // The consent screen the oauth-provider plugin redirects a signed-in user to
-  // (client_id + scope + code in the query). We render the branded grant page; on
-  // Approve it posts back to /api/auth/oauth2/consent, which completes the flow.
-  app.get("/oauth/consent", async (c) => {
-    const clientId = c.req.query("client_id") ?? ""
-    const scopes = (c.req.query("scope") ?? "").split(/\s+/).filter(Boolean)
-    const clientName = (await ctx.meta.getOAuthClientName(clientId)) || clientId || "An application"
-    return c.html(consentHTML({ clientName, scopes, query: new URL(c.req.url).search }))
-  })
-
-  // Hosted callback for the CLI/native OAuth flow (`derive login`). A command-line
-  // client registers this as its redirect_uri instead of localhost; after consent
-  // the browser lands here with the one-time code, which we display for the user to
-  // paste back into the terminal (the PKCE verifier stays on their machine).
-  app.get("/oauth/cli-callback", (c) => {
-    const code = c.req.query("code")
-    const error = c.req.query("error_description") ?? c.req.query("error")
-    return c.html(cliCallbackHTML({ code, error }))
-  })
-
-  // ---- One-click GitHub App registration (manifest flow) ----------------
-  // /new renders the auto-submitting manifest form (admins only); GitHub creates
-  // the App and redirects to /created with a temporary code we trade for the
-  // App's credentials. Both are top-level navigations (not the /v1 API), bound by
-  // a signed `state` carrying the initiating user. Needs an encryptionKey — App
-  // secrets are never stored in the clear.
-  app.get("/settings/github/app/new", async (c) => {
-    if (!deps.encryptionKey)
-      return c.html(
-        setupResultHTML({ ok: false, error: "Server is missing an encryption key." }),
-        500,
-      )
-    if (!(await ctx.workspaceCan(c, "publish")))
-      return c.redirect("/login?return_to=/settings/github/app/new")
-    const uid = (await ctx.currentUser(c))?.id ?? "anon"
-    const state = signState({ kind: "app-manifest", uid }, deps.encryptionKey)
-    return c.html(manifestFormHTML({ baseUrl: deps.baseUrl, state }))
-  })
-
-  app.get("/settings/github/app/created", async (c) => {
-    const code = c.req.query("code")
-    const stateRaw = c.req.query("state") ?? ""
-    if (!deps.encryptionKey || !code)
-      return c.html(setupResultHTML({ ok: false, error: "Missing setup code." }), 400)
-    const state = verifyState<{ kind?: string }>(stateRaw, deps.encryptionKey)
-    if (state?.kind !== "app-manifest")
-      return c.html(setupResultHTML({ ok: false, error: "This setup link has expired." }), 400)
-    try {
-      const conv = await convertManifestCode(code)
-      const key = deps.encryptionKey
-      await ctx.meta.setGithubApp({
-        id: "default",
-        app_id: conv.app_id,
-        slug: conv.slug,
-        client_id: conv.client_id,
-        client_secret: encryptSecret(conv.client_secret, key),
-        private_key: encryptSecret(conv.pem, key),
-        webhook_secret: encryptSecret(conv.webhook_secret, key),
-        created_at: new Date().toISOString(),
-      })
-      return c.html(setupResultHTML({ ok: true, slug: conv.slug }))
-    } catch (err) {
-      const detail = err instanceof Error ? err.message : String(err)
-      log.error("github app manifest conversion failed", { error: detail })
-      return c.html(
-        setupResultHTML({ ok: false, error: `Could not create the GitHub App. ${detail}` }),
-        502,
-      )
-    }
-  })
-
   // Better Auth owns /api/auth/* (sign-up/in/out, OAuth, OIDC/SSO, session).
   if (deps.auth) {
     const auth = deps.auth
     app.on(["GET", "POST"], "/api/auth/*", (c) => auth.handler(c.req.raw))
   }
-
-  app.get("/healthz", (c) => c.json({ ok: true }))
-
-  // Which social sign-in providers are configured (env-gated in auth-config), so
-  // the login page only renders buttons that actually work. Public + read-only.
-  app.get("/v1/auth/providers", (c) =>
-    c.json({
-      google: !!(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET),
-      github: !!(process.env.GITHUB_LOGIN_CLIENT_ID && process.env.GITHUB_LOGIN_CLIENT_SECRET),
-    }),
-  )
-
-  // Readiness (vs /healthz liveness): proves the datastore + blob store are
-  // actually reachable, so an orchestrator stops routing to an instance whose DB
-  // or blob backend is down instead of letting it 500 every request. 503 on any
-  // failure. Point the platform healthcheck here for rollout/traffic gating.
-  app.get("/readyz", async (c) => {
-    try {
-      await deps.meta.getWorkspace(deps.defaultOrgId ?? "default")
-      // A valid 64-hex key so the store does real I/O (fs read / S3 GET): the
-      // sentinel doesn't exist, so a healthy backend returns null, but an
-      // unreachable one throws — which is the signal we want. A non-hex key
-      // would short-circuit to null without touching the backend (no-op probe).
-      await deps.blobs.get("0".repeat(64))
-      return c.json({ ok: true })
-    } catch (err) {
-      log.error("readiness check failed", {
-        error: err instanceof Error ? err.message : String(err),
-      })
-      return c.json({ ok: false }, 503)
-    }
-  })
-
-  // A minimal API-origin landing. Skipped when the SPA is bundled in-process
-  // (serveWeb) so the app's own home page owns `/`.
-  if (!deps.serveWeb)
-    app.get("/", (c) =>
-      c.html(
-        `<!doctype html><meta charset="utf-8"><title>Derive</title>
-<body style="font:16px/1.6 system-ui;background:#f6f0e3;color:#2a2540;display:grid;place-items:center;height:100vh;margin:0">
-<div style="text-align:center"><h1 style="letter-spacing:-.02em">Derive</h1>
-<p>An open home for AI-generated artifacts.<br>
-<code style="background:#eee7d6;padding:2px 8px;border-radius:6px">derive publish ./your-thing</code></p></div>`,
-      ),
-    )
 
   // ---- Hard anonymous lockdown ------------------------------------------
   // An anonymous caller (no signed-in session, no agent, no static token) may
@@ -468,6 +306,9 @@ export function createApp(deps: AppDeps): Hono {
     embedRoutes,
     domainRoutes,
     workspaceDomainRoutes,
+    oauthRoutes,
+    githubAppRoutes,
+    systemRoutes,
   ])
     app.route("/", routes(ctx))
 

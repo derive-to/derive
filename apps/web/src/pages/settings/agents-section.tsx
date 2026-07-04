@@ -1,10 +1,10 @@
+import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { Bot } from "lucide-react"
-import { useCallback, useEffect, useState } from "react"
+import { useState } from "react"
 import { type Agent, api, type Role } from "@/api"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { EmptyState } from "@/components/shared/empty-state"
 import { SettingsGroup } from "@/components/shared/settings-group"
-import { Spinner } from "@/components/shared/spinner"
 import { StatusPanel } from "@/components/shared/status-panel"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
@@ -18,21 +18,14 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { toast } from "@/components/ui/sonner"
+import { agentsQuery } from "@/lib/queries"
+import { SettingsListSkeleton } from "./settings-list-skeleton"
 import { SettingsSection } from "./settings-section"
 
 export function AgentsSection() {
-  const [agents, setAgents] = useState<Agent[] | null>(null)
-  const load = useCallback(
-    () =>
-      api
-        .listAgents()
-        .then((r) => setAgents(r.agents))
-        .catch(() => setAgents([])),
-    [],
-  )
-  useEffect(() => {
-    load()
-  }, [load])
+  const qc = useQueryClient()
+  const { data: agents, isPending } = useQuery(agentsQuery())
+  const reload = () => qc.invalidateQueries({ queryKey: agentsQuery().queryKey })
 
   return (
     <SettingsSection
@@ -49,15 +42,13 @@ export function AgentsSection() {
       <NewAgent
         onCreated={(msg) => {
           toast.success(msg)
-          load()
+          reload()
         }}
       />
 
-      {agents === null ? (
-        <div className="flex h-20 items-center justify-center">
-          <Spinner />
-        </div>
-      ) : agents.length === 0 ? (
+      {isPending ? (
+        <SettingsListSkeleton />
+      ) : !agents || agents.length === 0 ? (
         <EmptyState>No agents yet. Add one above.</EmptyState>
       ) : (
         <SettingsGroup>
@@ -67,7 +58,7 @@ export function AgentsSection() {
               agent={a}
               onChanged={(m) => {
                 toast.success(m)
-                load()
+                reload()
               }}
               onError={(m) => toast.error(m)}
             />

@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useState } from "react"
-import { api, type Workspace } from "@/api"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
+import { useEffect, useState } from "react"
+import { api } from "@/api"
+import { useShell } from "@/components/chrome/shell-context"
 import { FormField } from "@/components/shared/form-field"
 import { StatusPanel } from "@/components/shared/status-panel"
-import { useShell } from "@/components/shell-context"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -14,6 +15,7 @@ import {
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { toast } from "@/components/ui/sonner"
+import { workspaceQuery, workspacesQuery } from "@/lib/queries"
 import { SettingsSection } from "./settings-section"
 
 // Workspace identity + lifecycle: rename it, spin up a new one, or (admins only)
@@ -21,8 +23,9 @@ import { SettingsSection } from "./settings-section"
 // delete are admin-gated by the server; we mirror the gate in the UI and surface
 // the server's guard messages.
 export function GeneralSection() {
-  const { refreshWorkspaces, createWorkspace } = useShell()
-  const [ws, setWs] = useState<Workspace | null>(null)
+  const { createWorkspace } = useShell()
+  const qc = useQueryClient()
+  const { data: ws } = useQuery(workspaceQuery())
   const [name, setName] = useState("")
   const [savingName, setSavingName] = useState(false)
   const [createOpen, setCreateOpen] = useState(false)
@@ -30,20 +33,11 @@ export function GeneralSection() {
   const [delName, setDelName] = useState("")
   const [deleting, setDeleting] = useState(false)
 
-  const load = useCallback(
-    () =>
-      api
-        .getWorkspace()
-        .then((w) => {
-          setWs(w)
-          setName(w.name)
-        })
-        .catch(() => setWs(null)),
-    [],
-  )
+  // Seed the editable name once the workspace loads (and re-seed on a rename that
+  // updates the cache). Focus refetches are off globally, so this won't clobber typing.
   useEffect(() => {
-    load()
-  }, [load])
+    if (ws) setName(ws.name)
+  }, [ws])
 
   const isAdmin = ws?.role === "owner"
 
@@ -63,9 +57,9 @@ export function GeneralSection() {
     setSavingName(true)
     try {
       const r = await api.renameWorkspace(n)
-      setWs((w) => (w ? { ...w, name: r.name } : w))
-      // Refresh the shell so the switcher + rail pick up the new name immediately.
-      refreshWorkspaces()
+      qc.setQueryData(workspaceQuery().queryKey, (w) => (w ? { ...w, name: r.name } : w))
+      // Invalidate so the switcher + rail pick up the new name immediately.
+      qc.invalidateQueries({ queryKey: workspacesQuery().queryKey })
       toast.success("Workspace renamed")
     } catch (e) {
       toast.error((e as Error).message)
@@ -143,7 +137,7 @@ export function GeneralSection() {
             aria-label="Workspace name"
             value={name}
             onChange={(e) => setName(e.target.value)}
-            disabled={!isAdmin || ws === null}
+            disabled={!isAdmin || !ws}
             maxLength={80}
             placeholder="My Workspace"
             className="flex-1"

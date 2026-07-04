@@ -7,7 +7,7 @@ import {
   InputGroupInput,
   InputGroupText,
 } from "@/components/ui/input-group"
-import { usernameError } from "@/lib/username"
+import { normalizeUsername, usernameError } from "@/lib/username"
 
 // The claim/rename handle form, shared by the onboarding gate and the profile
 // page's self-edit. Live client validation mirrors the server (lib/username);
@@ -28,7 +28,7 @@ export function UsernameForm({
   // Focus the field on mount — it's the only input on the onboarding screen, and
   // the sole action when renaming inline (a ref instead of autoFocus per a11y).
   useEffect(() => inputRef.current?.focus(), [])
-  const handle = value.trim().toLowerCase()
+  const handle = normalizeUsername(value)
   const localErr = handle ? usernameError(handle) : null
   const err = serverErr || (handle ? localErr : null)
 

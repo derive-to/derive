@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react"
+import { useEffect, useState } from "react"
 import { type ArtifactMember, api, type Collection, type Role } from "@/api"
 import { Icon } from "@/components/icons"
 import { EmptyState } from "@/components/shared/empty-state"
@@ -28,15 +28,16 @@ export function ShareCollectionDialog({
   const [role, setRole] = useState<Role>("editor")
   const [busy, setBusy] = useState(false)
 
-  const load = useCallback(() => {
+  const load = () => {
     api
       .listCollectionMembers(collection.id)
       .then((r) => setMembers(r.members))
       .catch(() => {})
-  }, [collection.id])
+  }
+  // biome-ignore lint/correctness/useExhaustiveDependencies: re-fetch members when the shared collection changes; load reads collection.id.
   useEffect(() => {
     load()
-  }, [load])
+  }, [collection.id])
 
   const add = async (e: React.FormEvent) => {
     e.preventDefault()

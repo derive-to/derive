@@ -23,8 +23,8 @@ const ALLOW_FILES = new Set([
   "lib/avatar-tints.ts",
   "ctx.tsx",
   "lib/cursors.ts",
-  "components/cursor/glyph.tsx",
-  "components/cursor/cursor-switch.tsx",
+  "pages/artifact/cursors/glyph.tsx",
+  "pages/artifact/cursors/cursor-switch.tsx",
   "pages/artifact/cursors/cursor-layer.tsx",
 ])
 

@@ -1,11 +1,5 @@
 import { describe, expect, it } from "vitest"
-import {
-  normalizeUsername,
-  suggestUsername,
-  USERNAME_MAX,
-  USERNAME_MIN,
-  usernameError,
-} from "./username"
+import { normalizeUsername, USERNAME_MAX, usernameError } from "./username"
 
 describe("normalizeUsername", () => {
   it("trims and lowercases", () => {
@@ -36,34 +30,5 @@ describe("usernameError", () => {
   it("rejects reserved names (after normalization)", () => {
     for (const r of ["admin", "derive", "ME", "Settings", "api"])
       expect(usernameError(r), r).toMatch(/reserved/)
-  })
-})
-
-describe("suggestUsername", () => {
-  it("derives from a display name", () => {
-    expect(suggestUsername("Alice Smith")).toBe("alice-smith")
-    expect(suggestUsername("Bob")).toBe("bob")
-  })
-
-  it("derives from an email local-part", () => {
-    expect(suggestUsername("john.doe@example.com")).toBe("john-doe")
-  })
-
-  it("never collapses an all-punctuation / empty input to a reserved word", () => {
-    expect(suggestUsername("!!!")).toBe("newuser") // not "user"
-    expect(suggestUsername("@example.com")).toBe("newuser") // empty local-part
-  })
-
-  it("pads a too-short stem past the minimum", () => {
-    expect(suggestUsername("a")).toBe("auser")
-    expect(suggestUsername("x@y.com")).toBe("xuser")
-    expect(suggestUsername("a").length).toBeGreaterThanOrEqual(USERNAME_MIN)
-  })
-
-  it("caps the suggestion at the maximum length with no trailing separator", () => {
-    const long = suggestUsername("a".repeat(50))
-    expect(long.length).toBeLessThanOrEqual(USERNAME_MAX)
-    expect(long.endsWith("-")).toBe(false)
-    expect(long.endsWith("_")).toBe(false)
   })
 })

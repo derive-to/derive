@@ -1,13 +1,13 @@
 import { useEffect, useState } from "react"
 import { type Analytics, type Artifact as Art, api } from "@/api"
-import { AuthorChip } from "@/components/author-chip"
 import { Icon } from "@/components/icons"
+import { AuthorChip } from "@/components/shared/author-chip"
 import { Eyebrow } from "@/components/shared/section-eyebrow"
-import { Spinner } from "@/components/shared/spinner"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
+import { Skeleton } from "@/components/ui/skeleton"
 import { getInitials } from "@/lib/initials"
 import { ago } from "@/lib/time"
 import { cn } from "@/lib/utils"
@@ -20,6 +20,66 @@ function StatTile({ value, label }: { value: number; label: string }) {
       {/* Machine register: counts read as data, not display type. */}
       <div className="font-mono text-3xl font-medium tabular-nums">{value.toLocaleString()}</div>
       <Eyebrow as="div">{label}</Eyebrow>
+    </div>
+  )
+}
+
+const INSIGHT_STATS = ["viewers", "views", "today"]
+const INSIGHT_ROWS = ["a", "b", "c", "d"]
+
+// First-load placeholder that mirrors the resolved dialog's own layout: the stat row
+// (three number-over-label stacks), the 30-day trend chart block, then the two-column
+// Per version / Viewed by grid. Same box model (dims, gaps) minus the dividers/tints,
+// so the real analytics land without a jump. role="status".
+function InsightsSkeleton() {
+  return (
+    <div className="flex flex-col gap-5" role="status">
+      <span className="sr-only">Loading insights…</span>
+      <div className="flex flex-wrap items-end gap-6">
+        {/* Stat tiles: a big number over a small label. */}
+        <div className="flex gap-8">
+          {INSIGHT_STATS.map((k) => (
+            <div key={k} className="flex flex-col gap-1.5">
+              <Skeleton className="h-8 w-14" />
+              <Skeleton className="h-3 w-12" />
+            </div>
+          ))}
+        </div>
+        {/* 30-day trend chart block. */}
+        <div className="ml-auto min-w-40 flex-1">
+          <Skeleton className="mb-1 h-3 w-20" />
+          <Skeleton className="h-12 w-full rounded-md" />
+        </div>
+      </div>
+
+      <div className="grid gap-6 sm:grid-cols-2">
+        {/* Per version: a version label, a bar track, a count. */}
+        <div>
+          <Skeleton className="mb-2 h-3 w-20" />
+          <div className="flex flex-col gap-1.5">
+            {INSIGHT_ROWS.map((k) => (
+              <div key={k} className="flex items-center gap-2">
+                <Skeleton className="h-3 w-8 shrink-0" />
+                <Skeleton className="h-2.5 flex-1 rounded-full" />
+                <Skeleton className="h-3 w-10 shrink-0" />
+              </div>
+            ))}
+          </div>
+        </div>
+        {/* Viewed by: an avatar, a name, a timestamp. */}
+        <div>
+          <Skeleton className="mb-2 h-3 w-20" />
+          <div className="flex flex-col gap-1.5">
+            {INSIGHT_ROWS.map((k) => (
+              <div key={k} className="flex items-center gap-2">
+                <Skeleton className="size-4.5 shrink-0 rounded-full" />
+                <Skeleton className="h-3.5 flex-1" />
+                <Skeleton className="h-3 w-10 shrink-0" />
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
     </div>
   )
 }
@@ -59,9 +119,7 @@ export function Insights({
           <DialogTitle>Insights{title ? ` · ${title}` : ""}</DialogTitle>
         </DialogHeader>
         {!data ? (
-          <div className="grid h-40 place-items-center">
-            <Spinner />
-          </div>
+          <InsightsSkeleton />
         ) : (
           <div className="flex flex-col gap-5">
             <div className="flex flex-wrap items-end gap-6">

@@ -1,6 +1,7 @@
 import { useNavigate } from "@tanstack/react-router"
 import { useCallback, useEffect, useState } from "react"
 import { api, type Notification } from "@/api"
+import { Icon } from "@/components/icons"
 import { EmptyState } from "@/components/shared/empty-state"
 import { Button } from "@/components/ui/button"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
@@ -8,14 +9,14 @@ import {
   SidebarMenuBadge,
   SidebarMenuButton,
   SidebarMenuItem,
-  useSidebar,
+  useIconRail,
 } from "@/components/ui/sidebar"
+import { Skeleton } from "@/components/ui/skeleton"
 import { useAuth } from "@/ctx"
 import { ago } from "@/lib/time"
 import { usePageVisible } from "@/lib/use-page-visible"
 import { cn } from "@/lib/utils"
 import { refFor } from "@/pages/artifact/parse-ref"
-import { Icon } from "./icons"
 
 // Notifications: an unread badge + a panel of recent @mentions, kept live over
 // SSE. Lives in the rail's utility menu (a SidebarMenuItem); clicking an item
@@ -23,11 +24,17 @@ import { Icon } from "./icons"
 // Popover primitive with a SidebarMenuButton trigger.
 export function NotificationBell() {
   const { me } = useAuth()
-  const { state, isMobile } = useSidebar()
   const nav = useNavigate()
+  // Icon rail: the unread signal collapses to the ink dot on the bell (never a solid
+  // count block). The hook lives here so it runs before the early return below.
+  const iconMode = useIconRail()
   const [items, setItems] = useState<Notification[]>([])
   const [unread, setUnread] = useState(0)
   const [open, setOpen] = useState(false)
+  // items starts [] — distinguish "haven't fetched yet" from "fetched, genuinely
+  // empty" so the panel shows row skeletons on first load instead of flashing the
+  // "Nothing yet." empty state. Flips true once (never back) on the first settle.
+  const [loaded, setLoaded] = useState(false)
   const visible = usePageVisible()
 
   const load = useCallback(() => {
@@ -38,6 +45,7 @@ export function NotificationBell() {
         setUnread(r.unread)
       })
       .catch(() => {})
+      .finally(() => setLoaded(true))
   }, [])
 
   // Initial load + live updates. EventSource reconnects on its own. Closed
@@ -92,10 +100,6 @@ export function NotificationBell() {
       .catch(() => {})
   }
 
-  // Icon rail: the unread signal collapses into the ink dot on the bell —
-  // the ink accent means "this matters", so it never inflates into a solid count block.
-  const iconMode = state === "collapsed" && !isMobile
-
   return (
     <SidebarMenuItem>
       <Popover open={open} onOpenChange={setOpen}>
@@ -142,7 +146,9 @@ export function NotificationBell() {
             )}
           </div>
           <div className="max-h-95 overflow-auto">
-            {items.length === 0 ? (
+            {!loaded ? (
+              <NotificationSkeleton />
+            ) : items.length === 0 ? (
               <EmptyState className="py-8">Nothing yet.</EmptyState>
             ) : (
               items.map((n) => (
@@ -230,5 +236,28 @@ export function NotificationBell() {
         </PopoverContent>
       </Popover>
     </SidebarMenuItem>
+  )
+}
+
+const NOTIF_ROWS = ["a", "b", "c", "d"]
+
+// Initial-fetch placeholder: notification-row silhouettes (a kind glyph, a message
+// line, a time line) mirroring the real row's box model — the px-3 py-2.5 inset and
+// gap-2.5 — minus its hairline divider. Stands in until the first fetch settles so the
+// panel never flashes "Nothing yet." before it's actually known to be empty.
+function NotificationSkeleton() {
+  return (
+    <div role="status">
+      <span className="sr-only">Loading notifications…</span>
+      {NOTIF_ROWS.map((k) => (
+        <div key={k} className="flex items-start gap-2.5 px-3 py-2.5">
+          <Skeleton className="mt-0.5 size-4 shrink-0 rounded-md" />
+          <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+            <Skeleton className="h-3.5 w-4/5" />
+            <Skeleton className="h-3 w-16" />
+          </div>
+        </div>
+      ))}
+    </div>
   )
 }

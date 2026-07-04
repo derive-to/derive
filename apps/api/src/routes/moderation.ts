@@ -3,6 +3,7 @@ import { Hono } from "hono"
 import { z } from "zod"
 import type { AppContext } from "../context"
 import { fail, readJson, str } from "../lib/http"
+import { clientIp } from "../lib/rate-limit"
 
 /** Abuse reports (public) + takedown / reinstate / audit (Admin). A taken-down
  *  artifact keeps its record but serves no content (410). */
@@ -25,11 +26,7 @@ export const moderationRoutes = (ctx: AppContext) => {
     )
     if (b instanceof Response) return b
     const reason = b.reason.trim()
-    const ip = (
-      c.req.header("x-forwarded-for")?.split(",")[0] ??
-      c.req.header("x-real-ip") ??
-      ""
-    ).trim()
+    const ip = clientIp(c, "")
     const id = newId("rep")
     await meta.createReport({
       id,

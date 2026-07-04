@@ -16,15 +16,10 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { useFocusTrap } from "@/lib/use-focus-trap"
 import { cn } from "@/lib/utils"
-import {
-  CommentCard,
-  Composer,
-  GeneralSection,
-  PinnedZone,
-  ResolvedSection,
-} from "./comment-thread"
+import { Composer } from "./comment-composer"
+import { CollapsibleThreadSection, CommentCard, PinnedZone } from "./comment-thread"
 import { useCommentScope } from "./lib/comment-scope"
-import { type PinItem, type Sel, selLabel } from "./types"
+import { type ComposerState, type PinItem, selLabel } from "./types"
 
 type Tab = "comments" | "personal"
 
@@ -93,7 +88,7 @@ export function MobileComments({
   publicCount: number
   openThreads: Comment[][]
   resolved: Comment[][]
-  composer: { anchor: Sel | null; top: number | null } | null
+  composer: ComposerState
   activeThread: string | null
   inDoc: Record<string, boolean>
   onClose: () => void
@@ -314,7 +309,11 @@ export function MobileComments({
               )
             })}
             {resolved.length > 0 && (
-              <ResolvedSection
+              <CollapsibleThreadSection
+                label="Resolved"
+                defaultOpen={false}
+                testId="resolved-section-toggle"
+                className="mt-1"
                 threads={resolved}
                 activeThread={activeThread}
                 hoverThread={null}
@@ -346,7 +345,7 @@ export function OpenPanel(props: {
   activeThread: string | null
   hoverThread: string | null
   inDoc: Record<string, boolean>
-  composer: { anchor: Sel | null; top: number | null } | null
+  composer: ComposerState
   onHide: () => void
   onActivate: (id: string) => void
   onHover: (id: string | null) => void
@@ -515,7 +514,10 @@ export function OpenPanel(props: {
             </div>
           )}
           {general.length > 0 && (
-            <GeneralSection
+            <CollapsibleThreadSection
+              label="General"
+              defaultOpen
+              testId="general-section-toggle"
               threads={general}
               activeThread={activeThread}
               hoverThread={hoverThread}
@@ -527,7 +529,11 @@ export function OpenPanel(props: {
             />
           )}
           {resolved.length > 0 && (
-            <ResolvedSection
+            <CollapsibleThreadSection
+              label="Resolved"
+              defaultOpen={false}
+              testId="resolved-section-toggle"
+              className="mt-1"
               threads={resolved}
               activeThread={activeThread}
               hoverThread={hoverThread}
@@ -543,7 +549,3 @@ export function OpenPanel(props: {
     </>
   )
 }
-
-// Pinned margin: absolutely positions each thread card next to its highlight,
-// measuring heights and relaxing overlaps so cards never stack on top of each
-// other. The active card snaps to its true anchor; neighbours flow around it.

@@ -1,8 +1,38 @@
 import type { Diff } from "@/api"
-import { Spinner } from "@/components/shared/spinner"
 import { StatusPanel } from "@/components/shared/status-panel"
 import { Button } from "@/components/ui/button"
+import { Skeleton } from "@/components/ui/skeleton"
 import { cn } from "@/lib/utils"
+
+// Diff-shaped first-load placeholder: a header-meta row (from→to + stat bars) over a
+// column of code-line bars at alternating widths. Neutral bg-muted only — no add/del
+// tint, since we don't yet know which lines changed. Mirrors DiffView's box model (the
+// px-4 line inset, the py-2.5 gutter) but never its border/background. role="status".
+const DIFF_WIDTHS = ["w-full", "w-2/3", "w-5/6", "w-1/2"]
+const DIFF_LINES = Array.from({ length: 12 }, (_, i) => ({
+  id: `l${i}`,
+  w: DIFF_WIDTHS[i % DIFF_WIDTHS.length],
+}))
+
+function DiffSkeleton() {
+  return (
+    <div className="flex-1 overflow-hidden" role="status">
+      <span className="sr-only">Loading changes…</span>
+      {/* Header meta row: from → to, then the +/− and line-count stats. */}
+      <div className="flex items-center gap-3 px-4 py-2">
+        <Skeleton className="mr-auto h-3.5 w-40" />
+        <Skeleton className="h-3.5 w-8" />
+        <Skeleton className="h-3.5 w-14" />
+      </div>
+      {/* Code lines. */}
+      <div className="flex flex-col gap-2 px-4 py-2.5">
+        {DIFF_LINES.map(({ id, w }) => (
+          <Skeleton key={id} className={cn("h-3", w)} />
+        ))}
+      </div>
+    </div>
+  )
+}
 
 export function DiffView({
   diff,
@@ -33,12 +63,7 @@ export function DiffView({
         />
       </div>
     )
-  if (!diff)
-    return (
-      <div className="grid flex-1 place-items-center">
-        <Spinner />
-      </div>
-    )
+  if (!diff) return <DiffSkeleton />
   const adds = diff.ops.filter((o) => o.t === "add").length
   const dels = diff.ops.filter((o) => o.t === "del").length
   return (

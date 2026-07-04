@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto"
 import { existsSync, readFileSync, writeFileSync } from "node:fs"
 import { join, resolve } from "node:path"
+import { slackFromEnv, subdomainBaseFromEnv, superAdminsFromEnv } from "./lib/env"
 import { log } from "./log"
 
 /** Parse a positive-integer env var; unset/blank = "no limit". A set-but-invalid
@@ -127,15 +128,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     token: env.DERIVE_TOKEN,
     // Comma-separated operator emails (case-insensitive). More than one person
     // can run + host a deployment, so this is a list, not a single owner.
-    superAdmins: (env.DERIVE_SUPERADMIN_EMAILS ?? "")
-      .split(",")
-      .map((s) => s.trim().toLowerCase())
-      .filter(Boolean),
+    superAdmins: superAdminsFromEnv(env),
     analytics: env.DERIVE_ANALYTICS !== "false",
     rateLimit: env.DERIVE_RATE_LIMIT !== "false",
     sandboxOrigin: env.DERIVE_SANDBOX_URL,
     crossSite: env.DERIVE_CROSS_SITE === "true",
-    subdomainBase: env.DERIVE_SUBDOMAIN_BASE?.toLowerCase().replace(/^\.+|\.+$/g, "") || undefined,
+    subdomainBase: subdomainBaseFromEnv(env),
     versionWindowMs: env.DERIVE_VERSION_WINDOW
       ? numOr("DERIVE_VERSION_WINDOW", env.DERIVE_VERSION_WINDOW, 0) * 60_000
       : undefined,
@@ -152,14 +150,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     objectStoreUrl: urlOr("OBJECT_STORE_URL", env.OBJECT_STORE_URL),
     emailFrom: env.EMAIL_FROM,
     resendApiKey: env.RESEND_API_KEY,
-    slack:
-      env.SLACK_CLIENT_ID && env.SLACK_CLIENT_SECRET && env.SLACK_SIGNING_SECRET
-        ? {
-            clientId: env.SLACK_CLIENT_ID,
-            clientSecret: env.SLACK_CLIENT_SECRET,
-            signingSecret: env.SLACK_SIGNING_SECRET,
-          }
-        : undefined,
+    slack: slackFromEnv(env),
     webDir,
     webShell,
     serveWeb: existsSync(webShell),

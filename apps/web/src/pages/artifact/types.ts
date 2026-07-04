@@ -29,13 +29,30 @@ export type Sel = {
   snapshot?: ElementSnapshotLite
 }
 
-/** True if a selection pins to a non-text element rather than a quote. */
-export const isElementSel = (s: Sel | null | undefined): boolean => s?.type === "ElementSelector"
-
 /** The human label to show for a selection — the quote for text, the snapshot
  *  label (e.g. "Image — chart.png") for an element. */
 export const selLabel = (s: Sel | null | undefined): string | null =>
   s?.exact ?? s?.snapshot?.label ?? null
+
+// The active text selection reported by the sandboxed artifact frame — the W3C
+// selector plus its viewport geometry, used to place the new-comment composer and its
+// pin. Null when the selection clears.
+export type Selection = {
+  selector: Sel
+  top: number
+  vTop: number
+  vBottom: number
+  vLeft: number
+  vRight: number
+} | null
+
+// A pending new-comment composer: the anchor it pins to (null = a general, unanchored
+// comment) and its resolved Y in the pinned margin (null until measured).
+export type ComposerState = { anchor: Sel | null; top: number | null } | null
+
+// Per-thread element-anchor resolution quality, keyed by thread id — how surely the
+// live element was re-found on this version (drives the quiet "moved" marker).
+export type AnchorConf = Record<string, { band: "high" | "medium" | "low"; confidence: number }>
 
 // Comments UI mode: full panel, collapsed rail of dots, or hidden.
 export type Panel = "open" | "hidden"

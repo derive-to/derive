@@ -1,6 +1,6 @@
-import { getRouteApi, useNavigate } from "@tanstack/react-router"
+import { getRouteApi } from "@tanstack/react-router"
 import type { FormEvent } from "react"
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { api } from "@/api"
 import { FormField } from "@/components/shared/form-field"
 import { Logo } from "@/components/shared/logo"
@@ -14,7 +14,6 @@ const loginRoute = getRouteApi("/login")
 
 export function Login() {
   const { me, loading, setMe } = useAuth()
-  const nav = useNavigate()
   const { signup: wantSignup, return_to: returnTo } = loginRoute.useSearch()
   const [mode, setMode] = useState<"login" | "signup">(wantSignup ? "signup" : "login")
   const [name, setName] = useState("")
@@ -48,7 +47,18 @@ export function Login() {
   // here to sign in), resume it by handing control back to the authorize endpoint
   // now that there's a session — it then renders the consent screen. Otherwise go
   // home. Captured from the raw query so it survives the route's search parsing.
+  //
+  // Every branch is a HARD navigation, not an SPA nav — this is load-bearing for the
+  // home case. A client nav to "/" runs the onboarding beforeLoad guard while /login
+  // is still in the router tree; the guard redirects a new user to /welcome before
+  // "/" commits, so /login never unmounts, remounts, and re-enters here — looping
+  // / ⇄ /welcome. A full load lands on the right place (home, or /welcome for a new
+  // user) with no /login left to re-trigger it. The one-shot latch guards the brief
+  // pre-navigation window where the effect below can fire more than once.
+  const redirected = useRef(false)
   const afterAuth = () => {
+    if (redirected.current) return
+    redirected.current = true
     const search = typeof window !== "undefined" ? window.location.search : ""
     if (new URLSearchParams(search).has("client_id")) {
       window.location.href = `/api/auth/oauth2/authorize${search}`
@@ -57,11 +67,11 @@ export function Login() {
       // comment"). Validated same-origin relative by the route, so this is safe.
       window.location.href = returnTo
     } else {
-      nav({ to: "/" })
+      window.location.href = "/"
     }
   }
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: afterAuth reads nav (stable), the URL, and returnTo (stable from search); keyed to the auth state.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: afterAuth reads window.location + returnTo (stable from search); keyed to the auth state.
   useEffect(() => {
     if (!loading && me) afterAuth()
   }, [loading, me])

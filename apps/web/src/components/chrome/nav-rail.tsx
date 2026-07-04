@@ -1,6 +1,9 @@
+import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link, useLocation, useNavigate } from "@tanstack/react-router"
 import { useState } from "react"
 import { api } from "@/api"
+import { Icon, type IconName } from "@/components/icons"
+import { Logo } from "@/components/shared/logo"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Kbd } from "@/components/ui/kbd"
@@ -18,20 +21,22 @@ import {
   SidebarMenuBadge,
   SidebarMenuButton,
   SidebarMenuItem,
+  SidebarMenuSkeleton,
   SidebarMenuSub,
   SidebarMenuSubButton,
   SidebarMenuSubItem,
   SidebarTrigger,
+  useIconRail,
   useSidebar,
 } from "@/components/ui/sidebar"
+import { Skeleton } from "@/components/ui/skeleton"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { useAuth } from "@/ctx"
 import { prTitle } from "@/lib/pr"
+import { collectionsQuery, summaryQuery, workspacesQuery } from "@/lib/queries"
 import { cn } from "@/lib/utils"
 import type { LibrarySearch } from "@/pages/library/types"
-import { Icon, type IconName } from "./icons"
 import { NotificationBell } from "./notification-bell"
-import { Logo } from "./shared/logo"
 import { useShell } from "./shell-context"
 import { SyncChip } from "./sync-chip"
 import { UserPod } from "./user-pod"
@@ -201,6 +206,69 @@ function RailHeader({ showSearch }: { showSearch: boolean }) {
   )
 }
 
+// Deterministic silhouette widths (no Math.random → no per-render jitter / SSR mismatch).
+const RAIL_SKELETON_ROWS = [
+  { id: "r1", w: "72%" },
+  { id: "r2", w: "58%" },
+  { id: "r3", w: "64%" },
+  { id: "r4", w: "50%" },
+]
+const RAIL_SKELETON_COLLECTIONS = [
+  { id: "c1", w: "80%" },
+  { id: "c2", w: "60%" },
+  { id: "c3", w: "70%" },
+]
+
+// Cold-boot rail: shown while the session (me) is still resolving, so the rail
+// never guesses anon-vs-authed and flashes the wrong one. The real Sidebar +
+// RailHeader (both data-free) render exactly, with silhouette rows for the nav +
+// collections and a skeleton pod at the foot. In-app navs have `me` cached, so
+// this only ever appears on a genuine cold load.
+function RailSkeleton() {
+  return (
+    <Sidebar collapsible="icon" variant="inset">
+      <RailHeader showSearch />
+      <SidebarContent>
+        <span role="status" className="sr-only">
+          Loading navigation…
+        </span>
+        <SidebarGroup>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {RAIL_SKELETON_ROWS.map((r) => (
+                <SidebarMenuSkeleton key={r.id} showIcon width={r.w} />
+              ))}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+        <SidebarGroup className="group-data-[collapsible=icon]:hidden">
+          <SidebarGroupLabel>Collections</SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {RAIL_SKELETON_COLLECTIONS.map((r) => (
+                <SidebarMenuSkeleton key={r.id} showIcon width={r.w} />
+              ))}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+      </SidebarContent>
+      <SidebarFooter>
+        <SidebarMenu>
+          <SidebarMenuItem>
+            <div className="flex h-12 items-center gap-2 px-2">
+              <Skeleton className="size-8 shrink-0 rounded-full" />
+              <div className="flex flex-1 flex-col gap-1.5 group-data-[collapsible=icon]:hidden">
+                <Skeleton className="h-3.5 w-24" />
+                <Skeleton className="h-3 w-16" />
+              </div>
+            </div>
+          </SidebarMenuItem>
+        </SidebarMenu>
+      </SidebarFooter>
+    </Sidebar>
+  )
+}
+
 // The persistent left nav — the app's only desktop chrome (there is no global
 // top bar). Built on the official shadcn sidebar primitives (ui/sidebar):
 // SidebarProvider (in app-shell) owns the collapse state; the desktop rail
@@ -211,9 +279,18 @@ function RailHeader({ showSearch }: { showSearch: boolean }) {
 // calm tiers top to bottom: brand + search → primary nav → your library
 // (collections + tags) → tools → account — separated by whitespace, not dividers.
 export function NavRail() {
-  const { summary, collections, workspaces, switchWorkspace, refreshCollections } = useShell()
-  const { me } = useAuth()
-  const { state, isMobile, setOpenMobile } = useSidebar()
+  const { switchWorkspace } = useShell()
+  const { me, loading } = useAuth()
+  const qc = useQueryClient()
+  // Nav data read straight from react-query (deduped with the loaders that warm
+  // it). enabled on a session so an anon never hits the authed endpoints.
+  const { data: summary } = useQuery({ ...summaryQuery(), enabled: !!me })
+  const { data: collections = [], isPending: collectionsPending } = useQuery({
+    ...collectionsQuery(),
+    enabled: !!me,
+  })
+  const { data: workspaces } = useQuery({ ...workspacesQuery(), enabled: !!me })
+  const { setOpenMobile } = useSidebar()
   const nav = useNavigate()
   const loc = useLocation()
   const search = loc.search as LibrarySearch
@@ -224,11 +301,11 @@ export function NavRail() {
   const isFav = loc.pathname === "/favorites"
   const isFollowing = loc.pathname === "/following"
   const onPeople = loc.pathname === "/people"
-  const onSettings = loc.pathname === "/settings"
+  const onSettings = loc.pathname.startsWith("/settings")
   const tags = summary?.tags ?? []
   // The icon strip shows only glyph rows; content that has no icon form (the
   // collections/tags lists, the anon conversion card) hides behind this.
-  const iconMode = state === "collapsed" && !isMobile
+  const iconMode = useIconRail()
 
   // Picking a destination on mobile closes the drawer (no-op on desktop).
   const closeMobile = () => setOpenMobile(false)
@@ -267,13 +344,17 @@ export function NavRail() {
     if (!t) return
     try {
       const col = await api.createCollection(t)
-      refreshCollections()
+      qc.invalidateQueries({ queryKey: collectionsQuery().queryKey })
       setOpenMobile(false)
       nav({ to: "/", search: { collection: col.id } })
     } catch {
       /* surfaced on the library on next action */
     }
   }
+
+  // Session still resolving → the neutral rail silhouette, so we never flash the
+  // anon rail before an authed user's data lands (in-app navs have `me` cached).
+  if (loading) return <RailSkeleton />
 
   // Anonymous visitor on a shared public artifact. There's no workspace to
   // navigate, so the rail becomes the conversion surface — a single path to
@@ -441,6 +522,12 @@ export function NavRail() {
               />
             )}
             <SidebarMenu>
+              {/* First load only — a refetch keeps the current list (no data → no
+                  isPending), so switching views never flashes the collections. */}
+              {collectionsPending &&
+                RAIL_SKELETON_COLLECTIONS.map((r) => (
+                  <SidebarMenuSkeleton key={r.id} showIcon width={r.w} />
+                ))}
               {topCollections.map((col) => {
                 const childPrs = childPrsByRepo.get(col.id)
                 const colActive = onLibrary && search.collection === col.id
@@ -612,7 +699,7 @@ export function NavRail() {
           <SidebarMenuItem>
             <UserPod
               workspaceLabel={summary?.workspace ?? ""}
-              workspaces={workspaces}
+              workspaces={workspaces ?? null}
               onSwitchWorkspace={switchWorkspace}
             />
           </SidebarMenuItem>

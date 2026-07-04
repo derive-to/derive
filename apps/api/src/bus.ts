@@ -50,6 +50,10 @@ export interface Viewer {
   role: string | null
 }
 
+// Presence heartbeat TTL — a streamless caller (a bare POST /presence with no /events
+// open) is counted gone this long after its last beat. Shared with the edge DO.
+export const PRESENCE_TTL_MS = 45_000
+
 /** Ephemeral presence per artifact. A viewer is present while they hold ≥1 open SSE
  *  stream — join on connect, leave the instant that stream closes, so a departure
  *  (tab-close or crash) reflects in ~a second, not after the heartbeat TTL. The TTL
@@ -58,7 +62,7 @@ export interface Viewer {
  *  Lost on restart. */
 export class Presence {
   private rooms = new Map<string, Map<string, { v: Viewer; t: number; streams: Set<string> }>>()
-  constructor(private ttlMs = 45_000) {}
+  constructor(private ttlMs = PRESENCE_TTL_MS) {}
 
   private room(artifactId: string) {
     let m = this.rooms.get(artifactId)

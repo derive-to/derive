@@ -17,7 +17,7 @@ import {
   type RepoSourceRecord,
 } from "@derive/core"
 import { type ChannelSendResult, enqueueChannelDelivery } from "../webhooks"
-import { parseMeta, quoteOf } from "./comments"
+import { commentDeepLink, parseMeta, quoteOf } from "./comments"
 import { decryptSecret } from "./crypto"
 import { parseRepo, type RepoRef } from "./github"
 import { installationToken } from "./github-app"
@@ -220,7 +220,7 @@ const MARK = "via Derive"
 /** Render the comment body posted to GitHub: the Derive author + body + a deep link back,
  *  tagged so the inbound webhook can recognise our own posts as a backstop to `meta`. */
 const ghBody = (baseUrl: string, artifact: ArtifactRecord, cm: CommentRecord): string => {
-  const link = `${baseUrl.replace(/\/$/, "")}/artifacts/${artifact.short_id}?comment=${encodeURIComponent(cm.thread_id)}`
+  const link = commentDeepLink(baseUrl, artifact, cm.thread_id)
   return `**${cm.author}** commented in [Derive](${link}):\n\n${cm.body_md}\n\n_— ${MARK}_`
 }
 
