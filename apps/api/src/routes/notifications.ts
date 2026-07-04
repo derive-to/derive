@@ -2,16 +2,16 @@ import { Hono } from "hono"
 import { streamSSE } from "hono/streaming"
 import { z } from "zod"
 import type { AppContext } from "../context"
-import { fail, readJson } from "../lib/http"
+import { readJson } from "../lib/http"
 
 /** In-app notifications (the header bell) for the signed-in user. */
 export const notificationRoutes = (ctx: AppContext) => {
-  const { meta, bus, backplane, currentUser } = ctx
+  const { meta, bus, backplane, requireUser, currentUser } = ctx
   const app = new Hono()
 
   app.get("/v1/notifications", async (c) => {
-    const me = await currentUser(c)
-    if (!me) return fail(c, 401, "unauthenticated")
+    const me = await requireUser(c)
+    if (me instanceof Response) return me
     const [notifications, unread] = await Promise.all([
       meta.listNotifications(me.id, 50),
       meta.unreadNotificationCount(me.id),
@@ -20,16 +20,14 @@ export const notificationRoutes = (ctx: AppContext) => {
   })
 
   app.post("/v1/notifications/read", async (c) => {
-    const me = await currentUser(c)
-    if (!me) return fail(c, 401, "unauthenticated")
-    const body = await readJson(c, z.object({}).catchall(z.unknown()))
+    const me = await requireUser(c)
+    if (me instanceof Response) return me
+    const body = await readJson(
+      c,
+      z.object({ all: z.boolean().optional(), ids: z.array(z.string()).optional() }),
+    )
     if (body instanceof Response) return body
-    const ids =
-      body.all === true
-        ? "all"
-        : Array.isArray(body.ids)
-          ? body.ids.filter((x): x is string => typeof x === "string")
-          : []
+    const ids = body.all === true ? "all" : (body.ids ?? [])
     await meta.markNotificationsRead(me.id, ids)
     const unread = await meta.unreadNotificationCount(me.id)
     return c.json({ unread })

@@ -17,7 +17,7 @@ import { log } from "../log"
  *  events endpoint is signature-gated (no session) — it's in the app's anon-write allow
  *  list. The connect endpoints require a signed-in workspace admin. */
 export const slackRoutes = (ctx: AppContext) => {
-  const { meta, deps, bus, currentUser, activeWorkspace, workspaceCan } = ctx
+  const { meta, deps, bus, requireUser, activeWorkspace, workspaceCan } = ctx
   const app = new Hono()
   const slack = deps.slack
   const redirectUri = new URL("/v1/slack/oauth/callback", deps.baseUrl).toString()
@@ -33,8 +33,8 @@ export const slackRoutes = (ctx: AppContext) => {
   app.get("/v1/slack/install", async (c) => {
     if (!slack || !deps.encryptionKey) return fail(c, 404, "Slack is not configured")
     if (!(await workspaceCan(c, "manage"))) return fail(c, 403, "forbidden")
-    const me = await currentUser(c)
-    if (!me) return fail(c, 401, "unauthenticated")
+    const me = await requireUser(c)
+    if (me instanceof Response) return me
     const state = signState({ org: await activeWorkspace(c), uid: me.id }, deps.encryptionKey)
     return c.redirect(slackAuthorizeUrl(slack.clientId, redirectUri, state))
   })
@@ -124,8 +124,8 @@ export const slackRoutes = (ctx: AppContext) => {
   // Connection status for the Settings UI: whether Slack is configured at all, whether
   // this workspace has connected one, and its team + default channel.
   app.get("/v1/slack", async (c) => {
-    const me = await currentUser(c)
-    if (!me) return fail(c, 401, "unauthenticated")
+    const me = await requireUser(c)
+    if (me instanceof Response) return me
     const install = await meta.getSlackInstall(await activeWorkspace(c))
     return c.json({
       available: !!slack,

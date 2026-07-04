@@ -23,22 +23,29 @@ export const webhookRoutes = (ctx: AppContext) => {
   app.post("/v1/webhooks", async (c) => {
     if (!(await workspaceCan(c, "manage"))) return fail(c, 403, "forbidden")
     const org = await activeWorkspace(c)
-    const b = await readJson(c, z.object({}).catchall(z.unknown()))
+    const b = await readJson(
+      c,
+      z.object({
+        url: z.string().optional(),
+        kind: z.string().optional(),
+        events: z.array(z.string()).optional(),
+        artifact: z.string().optional(),
+        secret: z.string().optional(),
+        label: z.string().optional(),
+      }),
+    )
     if (b instanceof Response) return b
-    if (typeof b.url !== "string" || !isPublicHttpUrl(b.url))
+    if (!b.url || !isPublicHttpUrl(b.url))
       return fail(c, 400, "a valid public http(s) url is required")
     const kind = b.kind === "slack" ? "slack" : "generic"
-    // events: array or "*"; validate against the known set
-    const events =
-      Array.isArray(b.events) && b.events.length
-        ? b.events
-            .filter((e): e is WebhookEvent =>
-              (WEBHOOK_EVENTS as readonly string[]).includes(e as string),
-            )
-            .join(",")
-        : "*"
+    // events: an explicit subset (filtered to the known set), else "*" (all).
+    const events = b.events?.length
+      ? b.events
+          .filter((e): e is WebhookEvent => (WEBHOOK_EVENTS as readonly string[]).includes(e))
+          .join(",")
+      : "*"
     let artifactRef: string | null = null
-    if (typeof b.artifact === "string" && b.artifact) {
+    if (b.artifact) {
       const a = await meta.getByShortId(b.artifact)
       if (!a || a.org_id !== org) return fail(c, 404, "artifact not found")
       artifactRef = a.id
@@ -48,10 +55,10 @@ export const webhookRoutes = (ctx: AppContext) => {
       org_id: org,
       artifact_id: artifactRef,
       url: b.url,
-      secret: typeof b.secret === "string" && b.secret ? b.secret : randomUUID().replace(/-/g, ""),
+      secret: b.secret || randomUUID().replace(/-/g, ""),
       kind,
       events,
-      label: typeof b.label === "string" ? b.label : null,
+      label: b.label ?? null,
     })
     return c.json(publicWebhook(created), 201)
   })

@@ -1,5 +1,14 @@
 import type { ArtifactRecord, CommentRecord, MetaStore } from "@derive/core"
 
+/** A deep link to a comment thread on an artifact — channel-neutral, shared by the email,
+ *  Slack, and GitHub notification builders. Normalizes a trailing slash on baseUrl. */
+export const commentDeepLink = (
+  baseUrl: string,
+  artifact: ArtifactRecord,
+  threadId: string,
+): string =>
+  `${baseUrl.replace(/\/$/, "")}/artifacts/${artifact.short_id}?comment=${encodeURIComponent(threadId)}`
+
 /** Is `actorId` a trusted author for OUTBOUND external posting (Slack / GitHub PR)?
  *  Those channels post as Derive's own bot/app into the customer's systems, so we only
  *  mirror comments authored by a real collaborator — a workspace member, an explicit
