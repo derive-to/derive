@@ -1,4 +1,4 @@
-import { useQueryClient } from "@tanstack/react-query"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useEffect, useRef, useState } from "react"
 import {
   API_BASE,
@@ -9,7 +9,7 @@ import {
   type PublicProfile,
   type Role,
 } from "@/api"
-import { Icon } from "@/components/icons"
+import { Icon, type IconName } from "@/components/icons"
 import { EmptyState } from "@/components/shared/empty-state"
 import { ROLE_LABELS, RoleSelect } from "@/components/shared/role-select"
 import { Eyebrow } from "@/components/shared/section-eyebrow"
@@ -34,6 +34,7 @@ import {
 } from "@/components/ui/select"
 import { toast } from "@/components/ui/sonner"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { useAuth } from "@/ctx"
 import { getInitials } from "@/lib/initials"
 import { artifactQuery } from "@/lib/queries"
 import { cn } from "@/lib/utils"
@@ -45,17 +46,51 @@ const BLURB: Record<Role, string> = {
   owner: "Full control, incl. sharing",
 }
 
-// General access (visibility) options, in order of decreasing reach.
-const ACCESS: { value: string; label: string; blurb: string }[] = [
-  { value: "public", label: "Public — listed", blurb: "In the public directory and indexable." },
-  { value: "link", label: "Anyone with the link", blurb: "Anyone with the link can view." },
-  { value: "org", label: "Workspace only", blurb: "Only members of this workspace." },
+// General access (visibility) options, in order of increasing reach — the ladder
+// reads top-to-bottom from most private to most open, each with the glyph the
+// Share trigger echoes.
+const ACCESS: { value: string; label: string; blurb: string; icon: IconName }[] = [
+  {
+    value: "private",
+    label: "Private",
+    blurb: "Only people added above. Workspace membership grants nothing.",
+    icon: "lock",
+  },
+  {
+    value: "org",
+    label: "Workspace only",
+    blurb: "Only members of this workspace.",
+    icon: "workspace",
+  },
+  {
+    value: "link",
+    label: "Anyone with the link",
+    blurb: "Anyone with the link can view.",
+    icon: "link",
+  },
+  {
+    value: "public",
+    label: "Public — listed",
+    blurb: "In the public directory and indexable.",
+    icon: "globe",
+  },
   {
     value: "password",
     label: "Password protected",
     blurb: "Anyone with the link and the password.",
+    icon: "lock",
   },
 ]
+
+// The state glyph the Share trigger carries so exposure is legible without
+// opening the dialog: a globe when the URL alone reads (link/public), a lock
+// for invite-only, the plain share glyph for workspace/password.
+export const visibilityIcon = (visibility: string): IconName =>
+  visibility === "public" || visibility === "link"
+    ? "globe"
+    : visibility === "private"
+      ? "lock"
+      : "share"
 
 /**
  * Per-artifact sharing, opened from the artifact header. Follows the Google Docs
@@ -76,6 +111,7 @@ export function ShareButton({
   generalRole?: GeneralRole
 }) {
   const qc = useQueryClient()
+  const { me } = useAuth()
   const [members, setMembers] = useState<ArtifactMember[]>([])
   const [email, setEmail] = useState("")
   const [role, setRole] = useState<Role>("editor")
@@ -107,6 +143,13 @@ export function ShareButton({
 
   // GDocs model: owners and editors manage access; everyone else gets view-only.
   const canManage = myRole === "owner" || myRole === "editor"
+
+  // The canonical share URL — the server-built artifact URL when the detail is
+  // cached (it is, on the artifact page), else reconstructed from the short id.
+  const { data: art } = useQuery({ ...artifactQuery(shortId), enabled: false })
+  const shareUrl =
+    art?.url ??
+    `${typeof window === "undefined" ? "" : window.location.origin}/artifacts/${shortId}`
 
   // Embed snippet: an iframe of the embeddable view. Same-origin by default; the
   // split-deploy SPA points at the API origin via API_BASE. The embed only shows
@@ -305,9 +348,10 @@ export function ShareButton({
       <DialogTrigger asChild>
         {/* The artifact page's ONE filled-ink primary — the toolbar's single focal
             point (design-system.md: one filled primary per page; ink is where the
-            eye lands). Everything else in the bar is ghost. */}
+            eye lands). Everything else in the bar is ghost. The glyph carries the
+            exposure state: globe = the URL alone reads, lock = invite-only. */}
         <Button data-testid="share-trigger" variant="default" size="sm">
-          <Icon name="share" />
+          <Icon name={visibilityIcon(visibility)} />
           Share
         </Button>
       </DialogTrigger>
@@ -333,6 +377,27 @@ export function ShareButton({
 
           {/* ---- People: who can access + general access ---- */}
           <TabsContent value="people">
+            {/* Copy link — the #1 share action, first and always available. Whether
+                the recipient can OPEN it is the general-access setting below. */}
+            <div className="mb-3.5 flex items-center gap-1.5">
+              <Input
+                readOnly
+                data-testid="share-url"
+                aria-label="Artifact link"
+                value={shareUrl}
+                onFocus={(e) => e.currentTarget.select()}
+                className="flex-1 bg-secondary font-mono"
+              />
+              <Button
+                data-testid="share-url-copy"
+                variant="secondary"
+                size="sm"
+                onClick={() => copyUrl(shareUrl)}
+              >
+                <Icon name="link" />
+                Copy link
+              </Button>
+            </div>
             {canManage ? (
               <>
                 <form onSubmit={add} className="flex items-center gap-1.5">
@@ -460,6 +525,9 @@ export function ShareButton({
                       <div className="min-w-0 flex-1">
                         <div className="truncate text-sm font-medium text-foreground">
                           {m.name ?? (m.handle ? `@${m.handle}` : m.user_id)}
+                          {m.user_id === me?.id && (
+                            <span className="text-muted-foreground"> (you)</span>
+                          )}
                         </div>
                         {m.name && m.handle && (
                           <div className="truncate font-mono text-2xs text-muted-foreground">
@@ -467,7 +535,12 @@ export function ShareButton({
                           </div>
                         )}
                       </div>
-                      {canManage ? (
+                      {/* The sole owner's row is fixed — the server refuses to
+                          downgrade or remove the last owner, so don't offer it. */}
+                      {canManage &&
+                      !(
+                        m.role === "owner" && members.filter((x) => x.role === "owner").length === 1
+                      ) ? (
                         <>
                           <div data-testid={`share-member-role-${m.user_id}`} className="w-23">
                             <RoleSelect
@@ -520,6 +593,7 @@ export function ShareButton({
                       <SelectContent>
                         {ACCESS.map((a) => (
                           <SelectItem key={a.value} value={a.value}>
+                            <Icon name={a.icon} className="text-muted-foreground" />
                             {a.label}
                           </SelectItem>
                         ))}

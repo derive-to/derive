@@ -50,6 +50,10 @@ export async function publishArtifact(
     const res = await page.request.post("/v1/artifacts", {
       multipart: {
         file: { name, mimeType: "text/markdown", buffer: Buffer.from(body) },
+        // Link-visible explicitly: most specs hand the artifact to a second user
+        // or an anonymous page, and the server default is now workspace-only.
+        // Specs about the default itself publish without this.
+        visibility: "link",
       },
     })
     expect(res.ok(), `publish failed: ${res.status()}`).toBeTruthy()

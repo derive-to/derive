@@ -142,3 +142,28 @@ describe("/v1/people?scope=workspace", () => {
     expect(all.users.map((u: { username: string }) => u.username)).not.toContain("outv")
   })
 })
+
+describe("the last owner is immovable", () => {
+  it("refuses to remove or downgrade the sole owner-member", async () => {
+    const { app } = makeAuthedApp("vis-last-owner", [ana], "editor")
+    const a = await (
+      await publishAs(app, "<h1>mine</h1>", { visibility: "private" }, as(ana.email))
+    ).json()
+    const del = await app.request(`/v1/artifacts/${a.short_id}/members/${ana.id}`, {
+      method: "DELETE",
+      headers: as(ana.email),
+    })
+    expect(del.status).toBe(400)
+    const demote = await app.request(`/v1/artifacts/${a.short_id}/members`, {
+      method: "PUT",
+      headers: { "content-type": "application/json", ...as(ana.email) },
+      body: JSON.stringify({ user: "anav", role: "viewer" }),
+    })
+    expect(demote.status).toBe(400)
+    // Still the owner; still readable.
+    const detail = await (
+      await app.request(`/v1/artifacts/${a.short_id}`, { headers: as(ana.email) })
+    ).json()
+    expect(detail.my_role).toBe("owner")
+  })
+})

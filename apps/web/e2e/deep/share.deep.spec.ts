@@ -12,11 +12,14 @@ test("owner shares an artifact, changes the role, and removes the member", async
   await secondUser.page.goto(`/artifacts/${id}`)
   await expect(secondUser.page.getByTestId("share-trigger")).toBeHidden()
 
-  // The owner opens the dialog: starts empty.
+  // The owner opens the dialog: the roster starts with themselves — the
+  // publisher is written as the owner-member at creation.
   await owner.goto(`/artifacts/${id}`)
   await owner.getByTestId("share-trigger").click()
   await expect(owner.getByTestId("share-email")).toBeVisible()
-  await expect(owner.getByTestId("share-empty")).toBeVisible()
+  const rows = owner.locator('[data-testid^="share-member-row-"]')
+  await expect(rows).toHaveCount(1)
+  await expect(rows.first()).toContainText("(you)")
 
   // Share with the teammate as a commenter.
   await owner.getByTestId("share-email").fill(secondUser.email)
@@ -24,17 +27,17 @@ test("owner shares an artifact, changes the role, and removes the member", async
   await owner.getByRole("option", { name: "Commenter", exact: true }).click()
   await owner.getByTestId("share-add").click()
 
-  const row = owner.locator('[data-testid^="share-member-row-"]')
-  await expect(row).toHaveCount(1)
-  await expect(row).not.toContainText(secondUser.email) // handle leads; the private email never renders
-  await expect(owner.locator('[data-testid^="share-member-role-"]')).toContainText("Commenter")
+  const teammate = rows.filter({ hasNotText: "(you)" })
+  await expect(rows).toHaveCount(2)
+  await expect(teammate).not.toContainText(secondUser.email) // handle leads; the private email never renders
+  await expect(teammate.locator('[data-testid^="share-member-role-"]')).toContainText("Commenter")
 
   // Promote them to editor.
-  await owner.locator('[data-testid^="share-member-role-"]').click()
+  await teammate.locator('[data-testid^="share-member-role-"]').click()
   await owner.getByRole("option", { name: "Editor", exact: true }).click()
-  await expect(owner.locator('[data-testid^="share-member-role-"]')).toContainText("Editor")
+  await expect(teammate.locator('[data-testid^="share-member-role-"]')).toContainText("Editor")
 
-  // Remove them: back to the empty state.
-  await owner.locator('[data-testid^="share-member-remove-"]').click()
-  await expect(owner.getByTestId("share-empty")).toBeVisible()
+  // Remove them: back to just the owner.
+  await teammate.locator('[data-testid^="share-member-remove-"]').click()
+  await expect(rows).toHaveCount(1)
 })

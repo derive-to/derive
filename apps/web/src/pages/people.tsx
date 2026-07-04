@@ -8,13 +8,14 @@ import { FollowButton } from "@/components/shared/follow-button"
 import { PageHeader } from "@/components/shared/page-header"
 import { PageShell } from "@/components/shared/page-shell"
 import { SearchField } from "@/components/shared/search-field"
+import { SectionEyebrow } from "@/components/shared/section-eyebrow"
 import { StatusPanel } from "@/components/shared/status-panel"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { colorForName } from "@/lib/avatar-tints"
 import { getInitials } from "@/lib/initials"
-import { peopleQuery } from "@/lib/queries"
+import { peopleQuery, workspacePeopleQuery } from "@/lib/queries"
 import { useDelayedPending } from "@/lib/use-delayed-pending"
 
 // The people results grid geometry, defined once so the live grid and its skeleton
@@ -38,6 +39,14 @@ export function People() {
   // the true first load; gate the skeleton so a cache-warm open flashes nothing.
   const showSkeleton = useDelayedPending(isPending)
   const people = data ?? []
+
+  // The people you actually work with lead the browse view (Slack's mental model);
+  // the global discoverable directory follows. A search collapses to one flat
+  // result list — sectioning search hits by workspace would just split matches.
+  const { data: mates = [] } = useQuery(workspacePeopleQuery())
+  const browsing = !debounced
+  const mateHandles = new Set(mates.map((m) => m.username))
+  const globalPeople = browsing ? people.filter((p) => !mateHandles.has(p.username)) : people
 
   return (
     <PageShell className="flex flex-col gap-5">
@@ -78,7 +87,7 @@ export function People() {
               </Button>
             }
           />
-        ) : people.length === 0 ? (
+        ) : people.length === 0 && mates.length === 0 ? (
           <div data-testid="people-empty">
             <EmptyState
               icon={<Icon name="following" strokeWidth={1.75} />}
@@ -91,11 +100,34 @@ export function People() {
             />
           </div>
         ) : (
-          <ul role="list" className={PEOPLE_GRID} data-testid="people-grid">
-            {people.map((p) => (
-              <PersonCard key={p.username} person={p} />
-            ))}
-          </ul>
+          <div className="flex flex-col gap-6">
+            {browsing && mates.length > 0 && (
+              <section data-testid="people-workspace">
+                <SectionEyebrow className="mb-3" count={mates.length}>
+                  Your workspaces
+                </SectionEyebrow>
+                <ul role="list" className={PEOPLE_GRID}>
+                  {mates.map((p) => (
+                    <PersonCard key={p.username} person={p} />
+                  ))}
+                </ul>
+              </section>
+            )}
+            {globalPeople.length > 0 && (
+              <section>
+                {browsing && mates.length > 0 && (
+                  <SectionEyebrow className="mb-3" count={globalPeople.length}>
+                    Everyone on Derive
+                  </SectionEyebrow>
+                )}
+                <ul role="list" className={PEOPLE_GRID} data-testid="people-grid">
+                  {globalPeople.map((p) => (
+                    <PersonCard key={p.username} person={p} />
+                  ))}
+                </ul>
+              </section>
+            )}
+          </div>
         )}
       </div>
     </PageShell>
