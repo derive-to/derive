@@ -10,9 +10,10 @@ permissions:
 
 jobs:
   check:
-    # Ubicloud runners (cheaper than GitHub-hosted). Bump the suffix (-4, -8) for
-    # more cores; falls back to a label your org's Ubicloud integration provides.
-    runs-on: ubicloud-standard-2
+    # GitHub-hosted (free for public repos). The org's Ubicloud integration
+    # vanished 2026-07-02 and every ubicloud-* job queued forever; if it comes
+    # back, weigh it against keeping deploys vendor-independent before reverting.
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
@@ -40,7 +41,7 @@ jobs:
   # container, via scripts/test-pg.sh) so the hosted-tier driver is covered by
   # the full behavioral suite, not just typecheck + parity guards.
   pg:
-    runs-on: ubicloud-standard-2
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
       - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
@@ -59,7 +60,7 @@ jobs:
   # host the D1 driver, so this is the only place src/d1.ts is exercised at runtime —
   # the edge tier runs on it.
   d1:
-    runs-on: ubicloud-standard-2
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
       - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
@@ -78,7 +79,7 @@ jobs:
   # stores (@derive/storage), the MCP client, and the web app's pure logic (@derive/web;
   # its user flows are covered separately by the Playwright e2e suite).
   coverage:
-    runs-on: ubicloud-standard-2
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
       - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
@@ -104,7 +105,7 @@ jobs:
   # budget (see scripts/check-bundle.mjs), so phosphor / radix / cmdk weight can't
   # regress silently.
   bundle:
-    runs-on: ubicloud-standard-2
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
       - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
@@ -132,7 +133,7 @@ jobs:
   deploy:
     if: github.repository == 'derive-to/derive' && github.event_name == 'push' # never PRs, never forks
     needs: [check, pg, d1, security]
-    runs-on: ubicloud-standard-2
+    runs-on: ubuntu-latest
     # A running deploy is never cancelled — a schema applied for a worker that
     # then didn't ship is the state to avoid. Queued runs are NOT ordered:
     # GitHub keeps only the newest pending run per group, so intermediate green
@@ -223,7 +224,7 @@ jobs:
   # Supply-chain: a known-vulnerable production dependency, or a committed secret,
   # fails the build. Reads the lockfile + working tree, so no install is needed.
   security:
-    runs-on: ubicloud-standard-2
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
       - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
