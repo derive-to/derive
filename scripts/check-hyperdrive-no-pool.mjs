@@ -33,7 +33,10 @@ const isHyperdrivePath = (src) =>
 
 const BANNED = [
   { re: /new\s+Pool\s*\(/, msg: "`new Pool()` on the Hyperdrive path — Hyperdrive pools already." },
-  { re: /\bhyperdrivePool\b/, msg: "`hyperdrivePool` is gone — use `hyperdriveConn` (a single client)." },
+  {
+    re: /\bhyperdrivePool\b/,
+    msg: "`hyperdrivePool` is gone — use `hyperdriveConn` (a single client).",
+  },
 ]
 
 const violations = []
