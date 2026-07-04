@@ -27,6 +27,8 @@ export function ArtifactGrid({
   onOpen,
   onToggleFavorite,
   onPickTag,
+  onEditTags,
+  onAddToCollection,
   onDelete,
   onPrefetch,
 }: {
@@ -39,6 +41,8 @@ export function ArtifactGrid({
   onOpen: (a: Artifact) => void
   onToggleFavorite: (a: Artifact) => void
   onPickTag: (tag: string) => void
+  onEditTags: (a: Artifact) => void
+  onAddToCollection: (a: Artifact) => void
   onDelete: (a: Artifact) => void
   onPrefetch: (a: Artifact) => void
 }) {
@@ -109,6 +113,8 @@ export function ArtifactGrid({
                 onOpen={() => onOpen(a)}
                 onToggleFavorite={() => onToggleFavorite(a)}
                 onPickTag={onPickTag}
+                onEditTags={() => onEditTags(a)}
+                onAddToCollection={() => onAddToCollection(a)}
                 onDelete={() => onDelete(a)}
                 onPrefetch={() => onPrefetch(a)}
               />

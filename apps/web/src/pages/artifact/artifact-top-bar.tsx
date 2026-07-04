@@ -2,6 +2,7 @@ import { Maximize2 } from "lucide-react"
 import { useState } from "react"
 import type { GeneralRole, Role } from "@/api"
 import { Icon } from "@/components/icons"
+import { CollectionsDialog, TagsDialog } from "@/components/shared/organize-dialogs"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -11,7 +12,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { cn } from "@/lib/utils"
-import { CollectionsDialog, ReportDialog, StarButton, TagsDialog } from "./header-actions"
+import { ReportDialog, StarButton } from "./header-actions"
 import { ShareButton } from "./share-dialog"
 
 /**

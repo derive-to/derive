@@ -15,6 +15,9 @@ interface Handlers {
   onToggleFavorite: (a: Artifact) => void
   onPickTag: (tag: string) => void
   onPickAuthor: (login: string) => void
+  onEditTags: (a: Artifact) => void
+  onAddToCollection: (a: Artifact) => void
+  onDelete: (a: Artifact) => void
   onPrefetch: (a: Artifact) => void
 }
 
@@ -144,6 +147,9 @@ function FolderSection({
               onToggleFavorite={() => handlers.onToggleFavorite(a)}
               onPickTag={handlers.onPickTag}
               onPickAuthor={handlers.onPickAuthor}
+              onEditTags={() => handlers.onEditTags(a)}
+              onAddToCollection={() => handlers.onAddToCollection(a)}
+              onDelete={() => handlers.onDelete(a)}
               onPrefetch={() => handlers.onPrefetch(a)}
             />
           ))}
