@@ -2,16 +2,7 @@ import type { Dispatch, SetStateAction } from "react"
 import { useCallback, useEffect, useRef, useState } from "react"
 import type { Comment } from "@/api"
 import { groupThreads, parseAnchor } from "./lib/layout"
-import type { Panel, Sel } from "./types"
-
-type Selection = {
-  selector: Sel
-  top: number
-  vTop: number
-  vBottom: number
-  vLeft: number
-  vRight: number
-} | null
+import type { AnchorConf, Panel, Selection } from "./types"
 
 /**
  * The entire conversation with the sandboxed artifact iframe, kept out of the
@@ -57,9 +48,7 @@ export function useArtifactFrame(p: {
   const [landedSlides, setLandedSlides] = useState<Record<string, number | null>>({})
   // Per-thread element-anchor resolution quality (band + confidence), reported by
   // the frame so a card can show a quiet "moved" marker on an uncertain relocation.
-  const [anchorConf, setAnchorConf] = useState<
-    Record<string, { band: "high" | "medium" | "low"; confidence: number }>
-  >({})
+  const [anchorConf, setAnchorConf] = useState<AnchorConf>({})
   const [anchorTops, setAnchorTops] = useState<Record<string, number>>({})
   const [scrollY, setScrollY] = useState(0)
   // The frame's own document height + visible height, reported alongside scroll.

@@ -5,14 +5,10 @@ import { Icon } from "@/components/icons"
 import { Count } from "@/components/shared/section-eyebrow"
 import { Spinner } from "@/components/shared/spinner"
 import { Button } from "@/components/ui/button"
+import { dirOf } from "@/lib/artifact"
 import { useFollows } from "@/lib/use-follows"
 import { cn } from "@/lib/utils"
 import { ArtifactRow } from "./artifact-row"
-
-const dirOf = (p: string): string => {
-  const i = p.lastIndexOf("/")
-  return i < 0 ? "" : p.slice(0, i)
-}
 
 interface Handlers {
   onOpen: (a: Artifact) => void

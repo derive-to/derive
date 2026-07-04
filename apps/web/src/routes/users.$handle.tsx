@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router"
 import { Profile } from "../pages/profile"
-import { ProfilePending } from "../pages/profile-skeleton"
+import { ProfilePending } from "../pages/profile/skeleton"
 
 // Public profile by handle: /users/:handle (Profiles & Accounts v1). Rendered inside
 // the shell; the shell treats /users/* as a public view, so a profile link is

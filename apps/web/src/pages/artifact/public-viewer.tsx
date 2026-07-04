@@ -3,8 +3,8 @@ import type { ReactNode } from "react"
 import type { Artifact, Viewer } from "@/api"
 import { Logo } from "@/components/shared/logo"
 import { Button } from "@/components/ui/button"
+import { artifactTypeLabel } from "@/lib/artifact"
 import { ago } from "@/lib/time"
-import { artifactTypeLabel } from "@/pages/library/artifact-card"
 import { Presence } from "./rail-deck"
 
 // The public / viral viewer — the chrome-light experience an anonymous visitor

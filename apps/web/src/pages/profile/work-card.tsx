@@ -2,9 +2,9 @@ import { Link } from "@tanstack/react-router"
 import type { Artifact } from "@/api"
 import { Icon } from "@/components/icons"
 import { Thumb } from "@/components/shared/thumb"
+import { artifactTypeLabel, dirOf } from "@/lib/artifact"
 import { ago } from "@/lib/time"
-import { refFor } from "./artifact/parse-ref"
-import { artifactTypeLabel, dirOf } from "./library/artifact-card"
+import { refFor } from "../artifact/parse-ref"
 
 // One piece of a person's work on their profile. A focused, link-first card (no
 // favorite/delete chrome — those are library affordances): thumbnail, title, type +

@@ -1,8 +1,8 @@
 import { PageShell } from "@/components/shared/page-shell"
 import { SectionEyebrow } from "@/components/shared/section-eyebrow"
 import { Skeleton } from "@/components/ui/skeleton"
-import { CardGrid } from "./library/card-grid"
-import { CardSkeletonCell } from "./library/library-skeleton"
+import { CardGrid } from "../library/card-grid"
+import { CardSkeletonCell } from "../library/library-skeleton"
 
 const WORK_CELLS = ["a", "b", "c", "d", "e", "f"]
 

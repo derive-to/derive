@@ -5,20 +5,9 @@ import { toast } from "@/components/ui/sonner"
 import { commentsQuery } from "@/lib/queries"
 import type { CommentActions } from "./comment-actions"
 import { toggleReaction } from "./lib/reactions"
-import type { Sel } from "./types"
+import type { ComposerState, Sel, Selection } from "./types"
 
 type Me = { name?: string | null; email?: string | null } | null
-type Composer = { anchor: Sel | null; top: number | null } | null
-// The page's full selection shape — the hook only reads selector + top, but the
-// setSel setter is typed against the whole thing (so the types line up).
-type Selection = {
-  selector: Sel
-  top: number
-  vTop: number
-  vBottom: number
-  vLeft: number
-  vRight: number
-} | null
 
 /**
  * Every mutating action the artifact page drives: editing (publish a version /
@@ -39,7 +28,7 @@ export function artifactActions(p: {
   proposeMsg: string
   message: string
   format: "md" | "html"
-  composer: Composer
+  composer: ComposerState
   sel: Selection
   post: (msg: Record<string, unknown>) => void
   load: () => void
@@ -49,7 +38,7 @@ export function artifactActions(p: {
   setSrc: Dispatch<SetStateAction<string>>
   setTitle: Dispatch<SetStateAction<string>>
   setProposeMsg: Dispatch<SetStateAction<string>>
-  setComposer: Dispatch<SetStateAction<Composer>>
+  setComposer: Dispatch<SetStateAction<ComposerState>>
   setSel: Dispatch<SetStateAction<Selection>>
   setActiveThread: Dispatch<SetStateAction<string | null>>
   setRestoring: Dispatch<SetStateAction<boolean>>

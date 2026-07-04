@@ -24,9 +24,9 @@ import { colorForName } from "@/lib/avatar-tints"
 import { getInitials } from "@/lib/initials"
 import { profileArtifactsQuery, profilePeopleQuery, profileQuery } from "@/lib/queries"
 import { useDelayedPending } from "@/lib/use-delayed-pending"
-import { CardGrid } from "./library/card-grid"
-import { ProfilePending, ProfileWorkSkeleton } from "./profile-skeleton"
-import { ProfileWorkCard } from "./profile-work-card"
+import { CardGrid } from "../library/card-grid"
+import { ProfilePending, ProfileWorkSkeleton } from "./skeleton"
+import { ProfileWorkCard } from "./work-card"
 
 const route = getRouteApi("/users/$handle")
 

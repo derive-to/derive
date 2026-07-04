@@ -1,4 +1,5 @@
 import { createContext, useContext } from "react"
+import type { AnchorConf } from "../types"
 
 /**
  * Comment-tree scope, provided once by ArtifactComments and read deep down without
@@ -20,7 +21,7 @@ const CommentScopeContext = createContext<{
   landedSlides?: Record<string, number | null>
   /** Per-thread element-anchor resolution quality, so a card can show a quiet
    *  "moved" marker when its element relocated with less than full confidence. */
-  anchorConf?: Record<string, { band: "high" | "medium" | "low"; confidence: number }>
+  anchorConf?: AnchorConf
 }>({
   shortId: null,
   canComment: true,

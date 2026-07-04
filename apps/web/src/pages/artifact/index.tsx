@@ -8,11 +8,11 @@ import { Kbd } from "@/components/ui/kbd"
 import { useSidebar } from "@/components/ui/sidebar"
 import { toast } from "@/components/ui/sonner"
 import { useAuth } from "@/ctx"
+import { artifactTypeLabel } from "@/lib/artifact"
 import { artifactQuery, commentsQuery } from "@/lib/queries"
 import { ago } from "@/lib/time"
 import { useIsMobile } from "@/lib/use-is-mobile"
 import { cn } from "@/lib/utils"
-import { artifactTypeLabel } from "../library/artifact-card"
 import { artifactActions } from "./artifact-actions"
 import { ArtifactComments } from "./artifact-comments"
 import { ArtifactDocument } from "./artifact-document"
@@ -29,7 +29,7 @@ import { PasswordGate } from "./password-gate"
 import { PublicViewer } from "./public-viewer"
 import { Presence } from "./rail-deck"
 import { SourceEditor } from "./source-editor"
-import type { PinItem, Sel } from "./types"
+import type { ComposerState, PinItem } from "./types"
 import { useArtifactFrame } from "./use-artifact-frame"
 import { useArtifactLive } from "./use-artifact-live"
 import { useCommentsPanel } from "./use-comments-panel"
@@ -143,7 +143,7 @@ export function Artifact() {
   }, [art, ref, version, shortId, nav])
 
   // Comments UI state shared across the page, the panel, and the iframe bridge.
-  const [composer, setComposer] = useState<{ anchor: Sel | null; top: number | null } | null>(null)
+  const [composer, setComposer] = useState<ComposerState>(null)
   const [activeThread, setActiveThread] = useState<string | null>(null)
   const [hoverThread, setHoverThread] = useState<string | null>(null)
   // The open/hidden comments panel, with its persistence + `c`/Esc hotkeys.
@@ -464,6 +464,39 @@ export function Artifact() {
   // no width and the document gets the full screen.
   const asideWidth = isMobile ? 0 : panel === "open" ? 340 : 0
 
+  // The rendered artifact frame — identical for the anon public viewer and the authed
+  // workbench, so build it once and place it in both branches (no prop drift).
+  const documentEl = (
+    <ArtifactDocument
+      shown={shown}
+      currentVersion={art.current_version}
+      title={art.title ?? shortId}
+      rawSrc={rawSrc}
+      view={view}
+      diff={diff}
+      diffFailed={diffFailed}
+      onDiffRetry={retryDiff}
+      restoring={restoring}
+      deck={deck}
+      frameRef={frame}
+      presentWrapRef={presentWrap}
+      cursor={live.cursor}
+      onScrollDoc={scrollBy}
+      onFrameLoad={onFrameLoad}
+      onToggleDiff={() => setView(view === "diff" ? "preview" : "diff")}
+      onRestore={() => restore(shown)}
+      onBackToCurrent={() =>
+        nav({
+          to: "/artifacts/$ref",
+          params: { ref: refFor({ short_id: shortId, title: art.title }) },
+        })
+      }
+      onDeckPrev={() => deckCmd("prev")}
+      onDeckNext={() => deckCmd("next")}
+      onFullscreen={toggleFullscreen}
+    />
+  )
+
   // Anonymous visitor → the chrome-light public/viral viewer (the app shell has
   // dropped the rail). The render is the hero; a slim public header carries the
   // brand, the creator byline, presence, and the growth verbs. The comment/editor
@@ -476,34 +509,7 @@ export function Artifact() {
         viewers={live.viewers}
         isMobile={isMobile}
       >
-        <ArtifactDocument
-          shown={shown}
-          currentVersion={art.current_version}
-          title={art.title ?? shortId}
-          rawSrc={rawSrc}
-          view={view}
-          diff={diff}
-          diffFailed={diffFailed}
-          onDiffRetry={retryDiff}
-          restoring={restoring}
-          deck={deck}
-          frameRef={frame}
-          presentWrapRef={presentWrap}
-          cursor={live.cursor}
-          onScrollDoc={scrollBy}
-          onFrameLoad={onFrameLoad}
-          onToggleDiff={() => setView(view === "diff" ? "preview" : "diff")}
-          onRestore={() => restore(shown)}
-          onBackToCurrent={() =>
-            nav({
-              to: "/artifacts/$ref",
-              params: { ref: refFor({ short_id: shortId, title: art.title }) },
-            })
-          }
-          onDeckPrev={() => deckCmd("prev")}
-          onDeckNext={() => deckCmd("next")}
-          onFullscreen={toggleFullscreen}
-        />
+        {documentEl}
       </PublicViewer>
     )
 
@@ -690,34 +696,7 @@ export function Artifact() {
                 onPropose={proposeEdit}
               />
             ) : (
-              <ArtifactDocument
-                shown={shown}
-                currentVersion={art.current_version}
-                title={art.title ?? shortId}
-                rawSrc={rawSrc}
-                view={view}
-                diff={diff}
-                diffFailed={diffFailed}
-                onDiffRetry={retryDiff}
-                restoring={restoring}
-                deck={deck}
-                frameRef={frame}
-                presentWrapRef={presentWrap}
-                cursor={live.cursor}
-                onScrollDoc={scrollBy}
-                onFrameLoad={onFrameLoad}
-                onToggleDiff={() => setView(view === "diff" ? "preview" : "diff")}
-                onRestore={() => restore(shown)}
-                onBackToCurrent={() =>
-                  nav({
-                    to: "/artifacts/$ref",
-                    params: { ref: refFor({ short_id: shortId, title: art.title }) },
-                  })
-                }
-                onDeckPrev={() => deckCmd("prev")}
-                onDeckNext={() => deckCmd("next")}
-                onFullscreen={toggleFullscreen}
-              />
+              documentEl
             )}
             {!isAnon && !focus && panel === "hidden" && (
               <DocFab

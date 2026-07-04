@@ -11,26 +11,10 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import { artifactTypeLabel, dirOf } from "@/lib/artifact"
 import { ago } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { CommentSignal } from "./comment-signal"
-
-export const dirOf = (path: string): string => {
-  const i = path.lastIndexOf("/")
-  return i < 0 ? "" : path.slice(0, i)
-}
-
-export function artifactTypeLabel(a: Artifact): string {
-  // A skill rides the denormalized content type (derive/skill), so the grid badges it
-  // without opening the bundle — string mirrored from @derive/core SKILL_CONTENT_TYPE.
-  if (a.current_content_type === "derive/skill") return "Skill"
-  if (a.kind === "bundle") return "Site"
-  const ct = a.current_content_type
-  if (ct === "text/x-derive-deck") return "Deck"
-  if (ct === "text/markdown") return "MD"
-  if (ct?.startsWith("text/html")) return "HTML"
-  return "Doc"
-}
 
 // One card in the library grid, rebuilt preview-first: the live render bleeds to
 // the card's top edge as the hero, carrying a single machine-register `TYPE · vN`

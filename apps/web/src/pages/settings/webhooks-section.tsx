@@ -18,9 +18,9 @@ import {
 } from "@/components/ui/select"
 import { toast } from "@/components/ui/sonner"
 import { webhookDeliveriesQuery, webhooksQuery } from "@/lib/queries"
-import { ALL_EVENTS } from "./roles"
 import { SettingsListSkeleton } from "./settings-list-skeleton"
 import { SettingsSection } from "./settings-section"
+import { ALL_EVENTS } from "./webhook-events"
 
 export function WebhooksSection() {
   const qc = useQueryClient()
