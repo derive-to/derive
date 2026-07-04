@@ -190,11 +190,14 @@ export function prefetchArtifactRaw(shortId: string, version: number) {
 // The active workspace: its name, the caller's role, and the member roster. One
 // SHARED key read by BOTH the General section (name + lifecycle) and the Members
 // section (roster + isAdmin), so the two panes dedupe into a single cache entry.
-// Kept fresh by explicit setQueryData / invalidation on rename + membership edits.
+// Kept fresh by explicit setQueryData / invalidation on rename + membership edits;
+// staleTime Infinity so a background refetch (e.g. on reconnect) never re-seeds the
+// editable name field mid-edit — matching the section's prior fetch-once behavior.
 export const workspaceQuery = () =>
   queryOptions({
     queryKey: ["workspace"] as const,
     queryFn: () => api.getWorkspace(),
+    staleTime: Number.POSITIVE_INFINITY,
   })
 
 // Per-workspace integration switches (email + GitHub mirroring + Slack posting)
@@ -207,11 +210,13 @@ export const workspaceSettingsQuery = () =>
   })
 
 // Slack connection status for the Integrations section (availability, connected
-// team, default channel). Invalidated on disconnect.
+// team, default channel). Invalidated on disconnect; staleTime Infinity so a
+// background refetch can't re-seed the editable channel field mid-edit.
 export const slackQuery = () =>
   queryOptions({
     queryKey: ["slack"] as const,
     queryFn: () => api.getSlack(),
+    staleTime: Number.POSITIVE_INFINITY,
   })
 
 // The workspace's outbound webhooks. Invalidated on add / remove.
@@ -223,11 +228,13 @@ export const webhooksQuery = () =>
 
 // One webhook's recent delivery log, fetched lazily when its row's log opens
 // (the caller gates it with `enabled`). Keyed by webhook id so each row caches
-// apart; refreshed after a test send.
+// apart; staleTime 0 so every open fetches a fresh log (as the old code did on
+// each open), plus the explicit refetch after a test send.
 export const webhookDeliveriesQuery = (id: string) =>
   queryOptions({
     queryKey: ["webhook-deliveries", id] as const,
     queryFn: () => api.webhookDeliveries(id).then((r) => r.deliveries),
+    staleTime: 0,
   })
 
 // This workspace's custom domains (Cloudflare for SaaS): whether the feature is on,
