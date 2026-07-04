@@ -53,9 +53,10 @@ test("follow a person from the command-palette people search", async ({ owner, s
 
   await bob.goto("/")
   await bob.getByTestId("open-command-palette").click()
-  // Owner's display name is "E2E Tester" (secondUser is "Second User"), so "Tester"
-  // resolves to exactly one discoverable person.
-  await bob.getByPlaceholder(/Search artifacts, people/).fill("Tester")
+  // Search the exact handle: a parallel run holds dozens of "E2E Tester"
+  // fixture accounts, and the people search caps its results — a name search
+  // can't guarantee THIS run's account makes the cut.
+  await bob.getByPlaceholder(/Search artifacts, people/).fill(maya.username)
 
   const followBtn = bob.getByTestId(`follow-${maya.username}`)
   await expect(followBtn).toBeVisible()
@@ -76,8 +77,10 @@ test("browse + follow from the People directory", async ({ owner, secondUser }) 
 
   await bob.goto("/people")
   await expect(bob.getByTestId("nav-people")).toBeVisible()
-  // The directory browses discoverable people (everyone is discoverable by default), so
-  // the owner shows up with an inline Follow.
+  // Search for the exact handle rather than relying on the capped browse list —
+  // a parallel run accumulates dozens of same-named fixture accounts, and the
+  // 60-row browse (username-ordered) can't guarantee this run's user is in it.
+  await bob.getByTestId("people-search").fill(maya.username)
   const followBtn = bob.getByTestId(`follow-${maya.username}`)
   await expect(followBtn).toBeVisible()
   await expect(followBtn).toHaveAttribute("aria-pressed", "false")
