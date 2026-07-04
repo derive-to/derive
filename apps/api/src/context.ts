@@ -22,7 +22,7 @@ import type { Auth } from "./auth-config"
 import { type Backplane, createInProcessBackplane } from "./bus"
 import type { CustomDomainProvider } from "./lib/cloudflare-saas"
 import { safeEqual, sha256, unlockCookie, unlockToken } from "./lib/crypto"
-import { VIEWER_COOKIE, WS_COOKIE } from "./lib/http"
+import { fail, VIEWER_COOKIE, WS_COOKIE } from "./lib/http"
 import { inMemoryRateLimiters, type Limiter, type RateLimiters } from "./lib/rate-limit"
 import { log } from "./log"
 import { edgeCtx } from "./realtime-do"
@@ -294,7 +294,7 @@ export function buildContext(deps: AppDeps) {
   // the global reports/audit queue); a workspace Admin stays scoped to their own.
   const superAdminEmails = new Set((deps.superAdmins ?? []).map((e) => e.toLowerCase()))
   const isSuperAdmin = async (c: Context): Promise<boolean> => {
-    if (deps.token && safeEqual(bearer(c), deps.token)) return true
+    if (isToken(c)) return true
     if (superAdminEmails.size === 0) return false
     const me = await currentUser(c)
     return !!me && superAdminEmails.has(me.email.toLowerCase())
@@ -588,7 +588,7 @@ export function buildContext(deps: AppDeps) {
       a.visibility === "password" &&
       !!a.password_hash &&
       safeEqual(getCookie(c, unlockCookie(a.short_id)) ?? "", unlockToken(a.id, a.password_hash))
-    if (deps.token && safeEqual(bearer(c), deps.token)) return { kind: "token" }
+    if (isToken(c)) return { kind: "token" }
     const ag = await agentFor(c)
     if (ag) {
       const am = await meta.getArtifactMember(a.id, ag.id)
@@ -641,13 +641,13 @@ export function buildContext(deps: AppDeps) {
    * lockdown so a new mutating route can never accidentally be exposed to anon.
    */
   const isPrincipal = async (c: Context): Promise<boolean> => {
-    if (deps.token && safeEqual(bearer(c), deps.token)) return true
+    if (isToken(c)) return true
     return !!(await actingUser(c))
   }
 
   /** The caller's role in their active workspace (creating artifacts, settings). */
   const workspaceRole = async (c: Context): Promise<Role | null> => {
-    if (deps.token && safeEqual(bearer(c), deps.token)) return "owner"
+    if (isToken(c)) return "owner"
     const ag = await agentFor(c)
     if (ag) return ag.role
     const me = await currentUser(c)
@@ -685,11 +685,38 @@ export function buildContext(deps: AppDeps) {
   // creator, else their explicit collection-member role, else null (no access).
   // Shared by the collections routes and the artifact listing (collection scoping).
   const collectionRole = async (c: Context, col: CollectionRecord): Promise<Role | null> => {
-    if (deps.token && safeEqual(bearer(c), deps.token)) return "owner"
+    if (isToken(c)) return "owner"
     const me = await currentUser(c)
     if (!me) return null
     if (col.created_by === me.id) return "owner"
     return (await meta.getCollectionMember(col.id, me.id))?.role ?? null
+  }
+
+  // ---- Route guard helpers: the return-or-Response idiom (mirrors `limited`), so a
+  // route opens with `const x = await require*(c); if (x instanceof Response) return x`.
+  // Resolve the :shortId artifact and gate it — 404 for BOTH missing and unauthorized,
+  // so a gated artifact you can't read is indistinguishable from one that isn't there
+  // (existence never leaks). Returns the artifact, or the Response to return.
+  const requireArtifact = async (
+    c: Context,
+    action: Action,
+  ): Promise<ArtifactRecord | Response> => {
+    const shortId = c.req.param("shortId")
+    const a = shortId ? await meta.getByShortId(shortId) : null
+    if (!a || !(await authorize(c, action, a))) return fail(c, 404, "not found")
+    return a
+  }
+  // The signed-in user, or the 401 to return — the guard every authed route opens with.
+  const requireUser = async (c: Context): Promise<SessionUser | Response> =>
+    (await currentUser(c)) ?? fail(c, 401, "unauthenticated")
+  // The static CI/agent token (DERIVE_TOKEN) presented as this request's bearer.
+  const isToken = (c: Context): boolean => !!deps.token && safeEqual(bearer(c), deps.token)
+  // Is the caller a member of this workspace? The static token counts as a member of
+  // every workspace. Callers still decide whether a non-member gets 403 or empty results.
+  const isMember = async (c: Context, orgId: string): Promise<boolean> => {
+    if (isToken(c)) return true
+    const me = await currentUser(c)
+    return !!me && !!(await meta.getMembership(orgId, me.id))
   }
 
   return {
@@ -708,7 +735,6 @@ export function buildContext(deps: AppDeps) {
     unlockLimiter,
     notify,
     background,
-    bearer,
     currentUser,
     agentFor,
     actingUser,
@@ -728,5 +754,9 @@ export function buildContext(deps: AppDeps) {
     workspaceCan,
     collectionRole,
     sourceText,
+    requireArtifact,
+    requireUser,
+    isToken,
+    isMember,
   }
 }

@@ -8,7 +8,15 @@ import { resolveUserRef } from "../lib/resolve-user"
 /** The workspace itself: name + members (Admin-managed), plus multi-workspace
  *  list / create / switch. A workspace always keeps at least one Admin. */
 export const workspaceRoutes = (ctx: AppContext) => {
-  const { meta, currentUser, activeWorkspace, setWsCookie, workspaceRole, workspaceCan } = ctx
+  const {
+    meta,
+    requireUser,
+    currentUser,
+    activeWorkspace,
+    setWsCookie,
+    workspaceRole,
+    workspaceCan,
+  } = ctx
   const { privateOwnerId } = ctx
   const app = new Hono()
 
@@ -200,8 +208,8 @@ export const workspaceRoutes = (ctx: AppContext) => {
 
   // Create a workspace. The creator becomes its Admin and is switched in.
   app.post("/v1/workspaces", async (c) => {
-    const me = await currentUser(c)
-    if (!me) return fail(c, 401, "unauthenticated")
+    const me = await requireUser(c)
+    if (me instanceof Response) return me
     const b = await readJson(
       c,
       z.object({ name: z.string().refine((s) => s.trim() !== "", "name required") }),
@@ -217,8 +225,8 @@ export const workspaceRoutes = (ctx: AppContext) => {
 
   // Switch the active workspace. Must be a member.
   app.post("/v1/workspace/switch", async (c) => {
-    const me = await currentUser(c)
-    if (!me) return fail(c, 401, "unauthenticated")
+    const me = await requireUser(c)
+    if (me instanceof Response) return me
     const b = await readJson(c, z.object({}).catchall(z.unknown()))
     if (b instanceof Response) return b
     const id = typeof b.id === "string" ? b.id : ""
@@ -232,8 +240,8 @@ export const workspaceRoutes = (ctx: AppContext) => {
   // it must be empty (no artifacts) — we don't cascade-delete content. If it was the
   // active workspace, switch to another one you own.
   app.delete("/v1/workspaces/:id", async (c) => {
-    const me = await currentUser(c)
-    if (!me) return fail(c, 401, "unauthenticated")
+    const me = await requireUser(c)
+    if (me instanceof Response) return me
     const id = c.req.param("id")
     const mem = await meta.getMembership(id, me.id)
     if (mem?.role !== "owner") return fail(c, 403, "only an admin can delete this workspace")

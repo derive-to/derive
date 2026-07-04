@@ -32,6 +32,7 @@ export const proposalRoutes = (ctx: AppContext) => {
     currentUser,
     actingUser,
     anonLocked,
+    requireArtifact,
     authorize,
     limited,
     overStorage,
@@ -141,8 +142,8 @@ export const proposalRoutes = (ctx: AppContext) => {
 
   // List proposals (read-gated). ?state=open filters to the review queue.
   app.get("/v1/artifacts/:shortId/proposals", async (c) => {
-    const artifact = await meta.getByShortId(c.req.param("shortId"))
-    if (!artifact || !(await authorize(c, "read", artifact))) return fail(c, 404, "not found")
+    const artifact = await requireArtifact(c, "read")
+    if (artifact instanceof Response) return artifact
     if (await anonLocked(c, artifact)) return fail(c, 404, "not found")
     const stateQ = c.req.query("state")
     const state =

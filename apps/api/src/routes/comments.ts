@@ -30,6 +30,7 @@ export const commentRoutes = (ctx: AppContext) => {
     actingUser,
     privateOwnerId,
     anonLocked,
+    requireArtifact,
     authorize,
     limited,
     commentLimiter,
@@ -269,8 +270,8 @@ export const commentRoutes = (ctx: AppContext) => {
   })
 
   app.get("/v1/artifacts/:shortId/comments", async (c) => {
-    const artifact = await meta.getByShortId(c.req.param("shortId"))
-    if (!artifact || !(await authorize(c, "read", artifact))) return fail(c, 404, "not found")
+    const artifact = await requireArtifact(c, "read")
+    if (artifact instanceof Response) return artifact
     // Comments are collaboration, not content: anonymous visitors (no account) never
     // see them, even on a public link. Authenticated readers — including a plain
     // viewer — do, the Google-Docs way. So the gate is "has an account", not the role.

@@ -7,7 +7,7 @@ import { fail, readJson, VIEW_DEDUP_MS } from "../lib/http"
 
 /** View recording (de-duped, owner self-views excluded) + per-artifact stats. */
 export const analyticsRoutes = (ctx: AppContext) => {
-  const { meta, deps, analyticsOn, currentUser, actorFor, authorize } = ctx
+  const { meta, deps, analyticsOn, currentUser, actorFor, requireArtifact, authorize } = ctx
   const app = new Hono()
 
   // Record a view. The viewer is the logged-in user, or a stable anonymous id
@@ -68,8 +68,8 @@ export const analyticsRoutes = (ctx: AppContext) => {
 
   app.get("/v1/artifacts/:shortId/analytics", async (c) => {
     if (!analyticsOn) return fail(c, 404, "analytics disabled")
-    const artifact = await meta.getByShortId(c.req.param("shortId"))
-    if (!artifact || !(await authorize(c, "read", artifact))) return fail(c, 404, "not found")
+    const artifact = await requireArtifact(c, "read")
+    if (artifact instanceof Response) return artifact
     // Who-viewed-this is for COLLABORATORS, not every signed-in reader. `read`
     // access is satisfied by any signed-in user on a public/link artifact, so the
     // not-anon check alone would expose the view counts + viewer identities to a
