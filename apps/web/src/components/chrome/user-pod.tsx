@@ -1,5 +1,6 @@
 import { useNavigate } from "@tanstack/react-router"
 import { api, type Workspaces } from "@/api"
+import { Icon } from "@/components/icons"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import {
   DropdownMenu,
@@ -13,7 +14,6 @@ import {
 import { SidebarMenuButton } from "@/components/ui/sidebar"
 import { useAuth } from "@/ctx"
 import { getInitials } from "@/lib/initials"
-import { Icon } from "./icons"
 import { ThemeSwitch } from "./theme-switch"
 
 // The account + workspace menu at the foot of the nav rail (bottom-left), on the

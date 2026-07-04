@@ -2,6 +2,7 @@ import { cva, type VariantProps } from "class-variance-authority"
 import { Slot } from "radix-ui"
 import type * as React from "react"
 
+import { Spinner } from "@/components/shared/spinner"
 import { cn } from "@/lib/utils"
 
 const buttonVariants = cva(
@@ -95,12 +96,17 @@ function Button({
       ) : (
         <>
           {loading && (
-            // current-ink ring so it adapts to every variant (canvas ink on the primary fill,
-            // destructive ink on the soft fill); aria-hidden — the verb carries
-            // the announcement, aria-busy rides the button itself.
-            <span
+            // The house Spinner in current-ink tone so it adapts to every variant
+            // (canvas ink on the primary fill, destructive ink on the soft fill) —
+            // one spinner recipe. Decorative: the verb carries the announcement and
+            // aria-busy rides the button itself.
+            <Spinner
+              size="sm"
+              tone="current"
+              role="presentation"
+              aria-label={undefined}
               aria-hidden="true"
-              className="size-4 shrink-0 animate-spin rounded-full border-2 border-current/25 border-t-current group-data-[size=xs]/button:size-3 group-data-[size=icon-xs]/button:size-3"
+              className="shrink-0 group-data-[size=xs]/button:size-3 group-data-[size=icon-xs]/button:size-3"
             />
           )}
           {children}

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 import type { Role } from "@/api"
-import { ALL_EVENTS, roleLabel, roleValue, WS_ROLES } from "./roles"
+import { roleLabel, roleValue, WS_ROLES } from "./roles"
 
 describe("workspace roles", () => {
   it("maps each canonical role to its display label", () => {
@@ -19,9 +19,7 @@ describe("workspace roles", () => {
     expect(roleValue("owner")).toBe("owner")
   })
 
-  it("exposes the three-role vocabulary and the webhook event set", () => {
+  it("exposes the three-role vocabulary", () => {
     expect(WS_ROLES.map((r) => r.value)).toEqual(["owner", "editor", "commenter"])
-    expect(ALL_EVENTS).toContain("version.published")
-    expect(ALL_EVENTS).toHaveLength(3)
   })
 })

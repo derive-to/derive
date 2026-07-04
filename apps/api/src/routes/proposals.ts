@@ -10,7 +10,7 @@ import { type Context, Hono } from "hono"
 import { z } from "zod"
 import type { AppContext } from "../context"
 import { markAddressed, releaseAddressed } from "../lib/addressed"
-import { sweepAnchors } from "../lib/anchor-sweep"
+import { publishSweepEvents } from "../lib/anchor-sweep"
 import { fail, MAX_UPLOAD_BYTES, readJson, str } from "../lib/http"
 
 /** Parse a comma-separated id list (the `addresses` multipart field). */
@@ -32,6 +32,7 @@ export const proposalRoutes = (ctx: AppContext) => {
     currentUser,
     actingUser,
     anonLocked,
+    requireArtifact,
     authorize,
     limited,
     overStorage,
@@ -141,8 +142,8 @@ export const proposalRoutes = (ctx: AppContext) => {
 
   // List proposals (read-gated). ?state=open filters to the review queue.
   app.get("/v1/artifacts/:shortId/proposals", async (c) => {
-    const artifact = await meta.getByShortId(c.req.param("shortId"))
-    if (!artifact || !(await authorize(c, "read", artifact))) return fail(c, 404, "not found")
+    const artifact = await requireArtifact(c, "read")
+    if (artifact instanceof Response) return artifact
     if (await anonLocked(c, artifact)) return fail(c, 404, "not found")
     const stateQ = c.req.query("state")
     const state =
@@ -195,12 +196,7 @@ export const proposalRoutes = (ctx: AppContext) => {
       })
       // The approved candidate is now live content — re-anchor existing threads
       // against it so feedback on changed text flips to `outdated`.
-      for (const t of await sweepAnchors(meta, blobs, artifact.id, version))
-        bus.publish(artifact.id, {
-          type: t.state === "outdated" ? "comment.outdated" : "comment.resolved",
-          thread_id: t.thread_id,
-          state: t.state,
-        })
+      await publishSweepEvents(meta, blobs, bus, artifact.id, version)
       // Threads this proposal addressed are now settled — the fix landed.
       for (const threadId of await releaseAddressed(meta, artifact.id, proposal.id, "resolved"))
         bus.publish(artifact.id, {

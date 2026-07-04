@@ -1,6 +1,7 @@
 import { createRouter } from "@tanstack/react-router"
+import { AppBoot } from "./components/shared/app-boot"
 import { RouteError, RouteNotFound } from "./components/shared/route-error"
-import { RouteSkeleton } from "./components/shared/route-skeleton"
+import { PENDING } from "./lib/pending"
 import { queryClient } from "./lib/query-client"
 import { routeTree } from "./routeTree.gen"
 
@@ -22,12 +23,16 @@ export function getRouter() {
     // Outlet, so only the content visibly morphs. No-ops where the View
     // Transitions API is unavailable.
     defaultViewTransition: true,
-    // Perceived-perf: hold the current page for 150ms before showing a skeleton
-    // (most cache-warm navs resolve first, so nothing flashes), and once shown
-    // keep it at least 300ms so a just-too-slow load doesn't strobe.
-    defaultPendingMs: 150,
-    defaultPendingMinMs: 300,
-    defaultPendingComponent: RouteSkeleton,
+    // Perceived-perf: hold the current page for delayMs before showing the pending
+    // frame (most cache-warm navs resolve first, so nothing flashes), and once shown
+    // keep it at least minShownMs so a just-too-slow load doesn't strobe. The same
+    // PENDING numbers drive in-component first loads via useDelayedPending. The
+    // default is the neutral branded AppBoot (the one place a generic frame is
+    // right); the data routes each override it with a shape-matched skeleton
+    // (LibraryPending, WorkbenchSkeleton, ProfilePending, …).
+    defaultPendingMs: PENDING.delayMs,
+    defaultPendingMinMs: PENDING.minShownMs,
+    defaultPendingComponent: AppBoot,
     // A thrown loader/render error or a missing route renders inside the content
     // area (chrome stays mounted, so the user can always navigate away) instead
     // of a blank screen or a raw stack trace.

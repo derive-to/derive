@@ -20,11 +20,7 @@ import { CommentRow } from "./comment-row"
 import { useCommentScope } from "./lib/comment-scope"
 import { COMPOSER_ID, layoutPins, parseAnchor } from "./lib/layout"
 import { quoteChipClass } from "./quote-chip"
-import { type ElementSnapshotLite, type PinItem, type Sel, selLabel } from "./types"
-
-// Composer is consumed by comment-panels through this module; re-export so its
-// import path is unchanged now that it lives in comment-composer.
-export { Composer }
+import { type ComposerState, type ElementSnapshotLite, type PinItem, selLabel } from "./types"
 
 export function PinnedZone({
   pins,
@@ -51,7 +47,7 @@ export function PinnedZone({
    *  subtracted to keep them lined up with their highlights. */
   topInset?: number
   onScrollDoc: (dy: number) => void
-  composer: { anchor: Sel | null; top: number | null } | null
+  composer: ComposerState
   personal?: boolean
   activeThread: string | null
   hoverThread: string | null
@@ -550,7 +546,13 @@ export function CommentCard({
   )
 }
 
-export function ResolvedSection({
+// A collapsible group of comment cards (Resolved / General). `defaultOpen` sets the
+// initial fold — resolved threads start collapsed (out of the way), general ones open.
+export function CollapsibleThreadSection({
+  label,
+  defaultOpen,
+  testId,
+  className,
   threads,
   activeThread,
   hoverThread,
@@ -560,6 +562,10 @@ export function ResolvedSection({
   onReply,
   onJump,
 }: {
+  label: string
+  defaultOpen: boolean
+  testId: string
+  className?: string
   threads: Comment[][]
   activeThread: string | null
   hoverThread: string | null
@@ -569,13 +575,13 @@ export function ResolvedSection({
   onReply: (text: string, threadId: string, mentions?: Mention[]) => void
   onJump: (id: string) => void
 }) {
-  const [open, setOpen] = useState(false)
+  const [open, setOpen] = useState(defaultOpen)
   return (
-    <div className="mt-1">
+    <div className={className}>
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
-        data-testid="resolved-section-toggle"
+        data-testid={testId}
         className="flex w-full items-center gap-1.5 rounded-sm px-0.5 py-1.5 text-muted-foreground outline-none focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
       >
         <ChevronRight
@@ -583,69 +589,7 @@ export function ResolvedSection({
           aria-hidden
         />
         <Eyebrow as="span" className="tabular-nums">
-          Resolved ({threads.length})
-        </Eyebrow>
-      </button>
-      {open &&
-        threads.map((t) => {
-          const head = t[0]
-          if (!head) return null
-          return (
-            <div key={head.thread_id} className="mb-2.5">
-              <CommentCard
-                thread={t}
-                active={activeThread === head.thread_id}
-                hovered={hoverThread === head.thread_id}
-                onActivate={onActivate}
-                onHover={onHover}
-                onResolve={onResolve}
-                onReply={onReply}
-                onJump={onJump}
-              />
-            </div>
-          )
-        })}
-    </div>
-  )
-}
-
-// The general (non-anchored) comments, collapsible so they don't crowd the panel.
-// Mirrors ResolvedSection but defaults OPEN — general comments are usually wanted,
-// you just want the option to fold them away.
-export function GeneralSection({
-  threads,
-  activeThread,
-  hoverThread,
-  onActivate,
-  onHover,
-  onResolve,
-  onReply,
-  onJump,
-}: {
-  threads: Comment[][]
-  activeThread: string | null
-  hoverThread: string | null
-  onActivate: (id: string) => void
-  onHover: (id: string | null) => void
-  onResolve: (c: Comment) => void
-  onReply: (text: string, threadId: string, mentions?: Mention[]) => void
-  onJump: (id: string) => void
-}) {
-  const [open, setOpen] = useState(true)
-  return (
-    <div>
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        data-testid="general-section-toggle"
-        className="flex w-full items-center gap-1.5 rounded-sm px-0.5 py-1.5 text-muted-foreground outline-none focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
-      >
-        <ChevronRight
-          className={cn("size-3 shrink-0 transition-transform", open && "rotate-90")}
-          aria-hidden
-        />
-        <Eyebrow as="span" className="tabular-nums">
-          General ({threads.length})
+          {label} ({threads.length})
         </Eyebrow>
       </button>
       {open &&

@@ -7,17 +7,14 @@ import { MobileComments, OpenPanel } from "./comment-panels"
 import { CommentScopeProvider } from "./lib/comment-scope"
 import { clamp } from "./lib/layout"
 import { quoteChipClass } from "./quote-chip"
-import { type Panel, type PinItem, type Sel, selLabel } from "./types"
-
-type Composer = { anchor: Sel | null; top: number | null } | null
-type Selection = {
-  selector: Sel
-  top: number
-  vTop: number
-  vBottom: number
-  vLeft: number
-  vRight: number
-} | null
+import {
+  type AnchorConf,
+  type ComposerState,
+  type Panel,
+  type PinItem,
+  type Selection,
+  selLabel,
+} from "./types"
 
 /**
  * All the comment surfaces for an artifact, in one place: the desktop margin aside,
@@ -50,10 +47,10 @@ export function ArtifactComments(p: {
   activeThread: string | null
   hoverThread: string | null
   inDoc: Record<string, boolean>
-  composer: Composer
+  composer: ComposerState
   sel: Selection
   setPanel: Dispatch<SetStateAction<Panel>>
-  setComposer: Dispatch<SetStateAction<Composer>>
+  setComposer: Dispatch<SetStateAction<ComposerState>>
   setSel: Dispatch<SetStateAction<Selection>>
   setActiveThread: Dispatch<SetStateAction<string | null>>
   setHoverThread: Dispatch<SetStateAction<string | null>>
@@ -68,7 +65,7 @@ export function ArtifactComments(p: {
   currentSlide?: number | null
   landedSlides?: Record<string, number | null>
   /** Per-thread element-anchor resolution quality for the quiet "moved" marker. */
-  anchorConf?: Record<string, { band: "high" | "medium" | "low"; confidence: number }>
+  anchorConf?: AnchorConf
 }) {
   const { isMobile, isAnon, canComment, panel, sel } = p
   // Focus primer: tapping "Comment" focuses this synchronously, inside the tap

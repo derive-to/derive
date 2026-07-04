@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
-import { useMemo, useState } from "react"
+import { useState } from "react"
 import { api, type Follow, type FollowKind } from "@/api"
 import { toast } from "@/components/ui/sonner"
 import { followsQuery } from "./queries"
@@ -7,16 +7,17 @@ import { followsQuery } from "./queries"
 // Path targets are stored verbatim as repo prefixes (e.g. "docs/plans/"); a
 // trailing slash keeps a LIKE prefix% from matching a sibling like "docs/plan2".
 // Normalize once so the toggle's add/remove and the isFollowingPath check agree.
-const normalizePath = (path: string): string => (path && !path.endsWith("/") ? `${path}/` : path)
+export const normalizePath = (path: string): string =>
+  path && !path.endsWith("/") ? `${path}/` : path
 
 // Author targets are stored lowercased (the backend matches on
 // `login.toLowerCase()`), so compare + send the lowercased login.
-const normalizeAuthor = (login: string): string => login.toLowerCase()
+export const normalizeAuthor = (login: string): string => login.toLowerCase()
 
 // The canonical key for a follow — the same value the isFollowing* sets use. People are
 // keyed by @handle (the API returns the handle in `target` for user-follows; an
 // optimistic row carries it too), authors lowercased, paths slash-normalized.
-const keyOf = (f: Pick<Follow, "kind" | "target" | "handle">): string =>
+export const keyOf = (f: Pick<Follow, "kind" | "target" | "handle">): string =>
   f.kind === "user"
     ? `user:${(f.handle ?? f.target).toLowerCase()}`
     : f.kind === "author"
@@ -44,19 +45,16 @@ export function useFollows() {
       return next
     })
 
-  const { authors, paths, users } = useMemo(() => {
-    const authors = new Set<string>()
-    const paths = new Set<string>()
-    // People-follows store the @handle in `target` (the API resolves it from the id),
-    // so we key follow-state by the (lowercased) username — what every Follow button has.
-    const users = new Set<string>()
-    for (const fol of follows) {
-      if (fol.kind === "author") authors.add(fol.target)
-      else if (fol.kind === "path") paths.add(fol.target)
-      else if (fol.kind === "user") users.add((fol.handle ?? fol.target).toLowerCase())
-    }
-    return { authors, paths, users }
-  }, [follows])
+  const authors = new Set<string>()
+  const paths = new Set<string>()
+  // People-follows store the @handle in `target` (the API resolves it from the id),
+  // so we key follow-state by the (lowercased) username — what every Follow button has.
+  const users = new Set<string>()
+  for (const fol of follows) {
+    if (fol.kind === "author") authors.add(fol.target)
+    else if (fol.kind === "path") paths.add(fol.target)
+    else if (fol.kind === "user") users.add((fol.handle ?? fol.target).toLowerCase())
+  }
 
   // Optimistically edit the follows cache so the button flips before the round-trip;
   // returns a rollback snapshot. `op` add inserts a placeholder row; remove filters it.

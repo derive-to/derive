@@ -9,7 +9,6 @@ import {
 import { type Context, Hono } from "hono"
 import { z } from "zod"
 import type { AppContext } from "../context"
-import { safeEqual } from "../lib/crypto"
 import { fail, readJson } from "../lib/http"
 import { resolveUserRef } from "../lib/resolve-user"
 
@@ -18,8 +17,8 @@ import { resolveUserRef } from "../lib/resolve-user"
 export const collectionRoutes = (ctx: AppContext) => {
   const {
     meta,
-    deps,
-    bearer,
+    isMember,
+    isToken,
     currentUser,
     activeWorkspace,
     workspaceCan,
@@ -33,16 +32,12 @@ export const collectionRoutes = (ctx: AppContext) => {
 
   app.get("/v1/collections", async (c) => {
     const me = await currentUser(c)
-    if (!me && deps.token && !safeEqual(bearer(c), deps.token))
-      return fail(c, 401, "unauthenticated")
+    if (!me && !isToken(c)) return fail(c, 401, "unauthenticated")
     const org = await activeWorkspace(c)
     // Collections are a workspace-internal organizer — only members (or the operator
     // token) see them. A non-member (incl. anon in open mode) gets an empty list, so
     // a workspace's collections can't be enumerated via a public artifact's workspace.
-    const isMember =
-      (deps.token && safeEqual(bearer(c), deps.token)) ||
-      (!!me && !!(await meta.getMembership(org, me.id)))
-    if (!isMember) return c.json({ collections: [] })
+    if (!(await isMember(c, org))) return c.json({ collections: [] })
     // Tag each collection with its origin so the client can nest PR previews under
     // their repo. A repo_source links a collection to a "owner/name" repo; pr_number
     // null = the branch mirror (the parent), set = a PR preview (a child). Derived

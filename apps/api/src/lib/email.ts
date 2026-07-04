@@ -5,9 +5,11 @@
 // pre-rendered at enqueue time (the drainer has no request context) and this sender
 // just transports the finished message.
 
-import type { ArtifactRecord, DeliveryRecord } from "@derive/core"
+import { type ArtifactRecord, type DeliveryRecord, escapeHtml } from "@derive/core"
 import { log } from "../log"
 import type { ChannelSendResult } from "../webhooks"
+import { commentDeepLink } from "./comments"
+import { truncate } from "./text"
 
 /** A finished message, ready to transport. `from` is filled by the sender's config. */
 export interface EmailMsg {
@@ -63,19 +65,6 @@ export const emailDeliverySender =
     return { ok: true, status: "sent" }
   }
 
-const esc = (s: string): string =>
-  s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;")
-
-const truncate = (s: string, n: number): string => (s.length > n ? `${s.slice(0, n - 1)}…` : s)
-
-/** A notification email's deep link to the comment thread. */
-export const commentDeepLink = (
-  baseUrl: string,
-  artifact: ArtifactRecord,
-  threadId: string,
-): string =>
-  `${baseUrl.replace(/\/$/, "")}/artifacts/${artifact.short_id}?comment=${encodeURIComponent(threadId)}`
-
 export interface CommentEmailInput {
   author: string
   body: string
@@ -102,10 +91,10 @@ export const buildCommentEmail = (
   const quote = input.quote ? truncate(input.quote, 200) : null
 
   const html = `<!doctype html><html><body style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;color:#1a1a1a;line-height:1.5">
-  <p><strong>${esc(input.author)}</strong> ${verb} <a href="${esc(link)}">${esc(title)}</a>.</p>
-  ${quote ? `<blockquote style="border-left:3px solid #ddd;margin:0 0 12px;padding:4px 12px;color:#666">${esc(quote)}</blockquote>` : ""}
-  <p style="white-space:pre-wrap">${esc(body)}</p>
-  <p><a href="${esc(link)}" style="display:inline-block;background:#111;color:#fff;padding:8px 16px;border-radius:6px;text-decoration:none">View in Derive</a></p>
+  <p><strong>${escapeHtml(input.author)}</strong> ${verb} <a href="${escapeHtml(link)}">${escapeHtml(title)}</a>.</p>
+  ${quote ? `<blockquote style="border-left:3px solid #ddd;margin:0 0 12px;padding:4px 12px;color:#666">${escapeHtml(quote)}</blockquote>` : ""}
+  <p style="white-space:pre-wrap">${escapeHtml(body)}</p>
+  <p><a href="${escapeHtml(link)}" style="display:inline-block;background:#111;color:#fff;padding:8px 16px;border-radius:6px;text-decoration:none">View in Derive</a></p>
   <hr style="border:none;border-top:1px solid #eee;margin:24px 0"/>
   <p style="color:#999;font-size:12px">You're receiving this because you collaborate on this artifact in Derive.</p>
   </body></html>`

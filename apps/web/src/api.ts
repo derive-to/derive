@@ -510,26 +510,52 @@ const authJson = async (r: Response) => {
   return data
 }
 
+// Map Better Auth's session user onto our Me (discoverable defaults on). Shared
+// by session() and me() so the shape is defined once.
+type SessionUser = {
+  id: string
+  email: string
+  name?: string | null
+  username?: string | null
+  image?: string | null
+  discoverable?: boolean
+  profession?: string | null
+  about?: string | null
+}
+const mapMe = (u: SessionUser): Me => ({
+  id: u.id,
+  email: u.email,
+  name: u.name ?? null,
+  username: u.username ?? null,
+  image: u.image ?? null,
+  // On by default: discoverable unless explicitly opted out.
+  discoverable: u.discoverable !== false,
+  role: "member",
+  profession: u.profession ?? null,
+  about: u.about ?? null,
+})
+
 export const api = {
+  // The session read behind meQuery. Prerender-safe (null at build — no document);
+  // a resolved null for an anon visitor (401, or a 200 with no user); a mapped Me
+  // when signed in; and a THROWN transient ApiError on a 5xx so the query's retry
+  // can self-heal. Distinguishing anon (null) from a blip (throw) is what lets the
+  // auth query resolve cleanly instead of dead-ending — unlike me(), which throws
+  // for both.
+  async session(): Promise<Me | null> {
+    if (typeof document === "undefined") return null
+    const r = await f("/api/auth/get-session", { credentials: "include" })
+    if (r.status === 401) return null
+    if (!r.ok) throw new ApiError(`HTTP ${r.status}`, r.status)
+    const s = await r.json().catch(() => null)
+    return s?.user ? mapMe(s.user) : null
+  },
   async me(): Promise<{ user: Me }> {
     const s = await f("/api/auth/get-session", { credentials: "include" }).then((r) =>
       r.ok ? r.json() : null,
     )
     if (!s?.user) throw new Error("unauthenticated")
-    return {
-      user: {
-        id: s.user.id,
-        email: s.user.email,
-        name: s.user.name ?? null,
-        username: s.user.username ?? null,
-        image: s.user.image ?? null,
-        // On by default: discoverable unless explicitly opted out.
-        discoverable: s.user.discoverable !== false,
-        role: "member",
-        profession: s.user.profession ?? null,
-        about: s.user.about ?? null,
-      },
-    }
+    return { user: mapMe(s.user) }
   },
   // Claim or change your handle (onboarding + rename). 409 when taken, 400 on a
   // bad shape — both surface their message via ApiError.
@@ -666,17 +692,13 @@ export const api = {
     password?: string,
   ): Promise<{ visibility: string; general_role: GeneralRole }> =>
     f(`/v1/artifacts/${id}/visibility`, {
+      ...opts({ visibility, generalRole, password }),
       method: "PATCH",
-      credentials: "include",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ visibility, generalRole, password }),
     }).then(j),
   setLocked: (id: string, locked: boolean): Promise<{ locked: boolean }> =>
     f(`/v1/artifacts/${id}/locked`, {
+      ...opts({ locked }),
       method: "PATCH",
-      credentials: "include",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ locked }),
     }).then(j),
   diff: (id: string, from: number, to: number): Promise<Diff> =>
     f(`/v1/artifacts/${id}/diff?from=${from}&to=${to}&format=json`, opts()).then(j),

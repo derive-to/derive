@@ -9,6 +9,7 @@ import {
 } from "@derive/core"
 import type { WebhookEvent } from "./events"
 import { isPrivateAddress } from "./lib/net"
+import { truncate } from "./lib/text"
 import { log } from "./log"
 
 // Event names live in one place (./events) so the webhook list and the bus list
@@ -81,8 +82,6 @@ export function buildPayload(
     data,
   }
 }
-
-const truncate = (s: string, n: number) => (s.length > n ? `${s.slice(0, n - 1)}…` : s)
 
 /** Format a normalized payload as a Slack incoming-webhook message. */
 export function slackMessage(p: EventPayload): unknown {

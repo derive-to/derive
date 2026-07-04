@@ -1,12 +1,13 @@
 import { type ReactNode, useState } from "react"
+import { ThemeSwitch } from "@/components/chrome/theme-switch"
 import { Icon, type IconName } from "@/components/icons"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { EmptyState } from "@/components/shared/empty-state"
 import { FormField } from "@/components/shared/form-field"
 import { SearchField } from "@/components/shared/search-field"
 import { Eyebrow, SectionEyebrow } from "@/components/shared/section-eyebrow"
+import { Spinner } from "@/components/shared/spinner"
 import { StatusPanel } from "@/components/shared/status-panel"
-import { ThemeSwitch } from "@/components/theme-switch"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -1044,6 +1045,49 @@ function StatusPanelDemo() {
 }
 
 /** Feedback — toasts (sonner) and skeleton loaders. */
+// The loading system: Spinner (actions / short or unknowable waits) in its three
+// sizes plus the current-ink tone a busy Button uses, and the redesigned Skeleton
+// "breath" shape-matched to a card so nothing shifts when content arrives.
+function LoadingDemo() {
+  return (
+    <div className="flex flex-col gap-6">
+      <div className="flex flex-wrap items-end gap-6">
+        <div className="flex flex-col items-center gap-2">
+          <Spinner size="sm" />
+          <span className="font-mono text-2xs text-muted-foreground">sm</span>
+        </div>
+        <div className="flex flex-col items-center gap-2">
+          <Spinner />
+          <span className="font-mono text-2xs text-muted-foreground">default</span>
+        </div>
+        <div className="flex flex-col items-center gap-2">
+          <Spinner size="lg" />
+          <span className="font-mono text-2xs text-muted-foreground">lg</span>
+        </div>
+        <Button loading>Saving…</Button>
+      </div>
+      <div className="grid max-w-md gap-5 sm:grid-cols-2">
+        <div className="flex flex-col">
+          <Skeleton className="aspect-[16/10] rounded-xl" />
+          <div className="flex flex-col gap-2.5 px-3.5 pt-3.5">
+            <Skeleton className="h-4 w-3/4" />
+            <div className="flex items-center gap-1.5">
+              <Skeleton className="size-3.5 shrink-0 rounded-full" />
+              <Skeleton className="h-3 w-16" />
+              <Skeleton className="ml-auto h-3 w-10" />
+            </div>
+          </div>
+        </div>
+        <div className="flex flex-col gap-3">
+          <Skeleton className="h-4 w-40" />
+          <Skeleton className="h-4 w-28" />
+          <Skeleton className="h-24 w-full rounded-lg" />
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function FeedbackDemo() {
   return (
     <div className="flex flex-col gap-5">
@@ -1232,6 +1276,12 @@ export function Showcase() {
             note="Toasts fire from the bottom; skeletons hold layout while data loads."
           >
             <FeedbackDemo />
+          </Row>
+          <Row
+            title="Loading states"
+            note="Spinner (sm · default · lg, plus the current-ink tone on a busy button) for actions and unknowable waits; the Skeleton breath — shape-matched to the content — for known layouts. Fast loads flash nothing; shaped skeletons only for slower ones."
+          >
+            <LoadingDemo />
           </Row>
         </Group>
       </div>

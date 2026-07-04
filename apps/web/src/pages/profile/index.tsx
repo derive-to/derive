@@ -1,14 +1,15 @@
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query"
 import { getRouteApi, Link, useNavigate } from "@tanstack/react-router"
 import { useEffect, useRef, useState } from "react"
-import { ApiError, api, type PublicProfile } from "@/api"
-import { FollowButton } from "@/components/follow-button"
+import { ApiError } from "@/api"
 import { Icon } from "@/components/icons"
 import { EmptyState } from "@/components/shared/empty-state"
+import { FollowButton } from "@/components/shared/follow-button"
 import { PageShell } from "@/components/shared/page-shell"
 import { SectionEyebrow } from "@/components/shared/section-eyebrow"
-import { CenteredSpinner, Spinner } from "@/components/shared/spinner"
+import { Spinner } from "@/components/shared/spinner"
 import { StatusPanel } from "@/components/shared/status-panel"
+import { UsernameForm } from "@/components/shared/username-form"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
 import {
@@ -18,13 +19,14 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog"
-import { UsernameForm } from "@/components/username-form"
 import { useAuth } from "@/ctx"
 import { colorForName } from "@/lib/avatar-tints"
 import { getInitials } from "@/lib/initials"
-import { profileArtifactsQuery, profileQuery } from "@/lib/queries"
-import { CardGrid } from "./library/card-grid"
-import { ProfileWorkCard } from "./profile-work-card"
+import { profileArtifactsQuery, profilePeopleQuery, profileQuery } from "@/lib/queries"
+import { useDelayedPending } from "@/lib/use-delayed-pending"
+import { CardGrid } from "../library/card-grid"
+import { ProfilePending, ProfileWorkSkeleton } from "./skeleton"
+import { ProfileWorkCard } from "./work-card"
 
 const route = getRouteApi("/users/$handle")
 
@@ -39,8 +41,11 @@ export function Profile() {
   const [editing, setEditing] = useState(false)
 
   const { data, isPending, isError, error, refetch } = useQuery(profileQuery(handle))
+  // Hold the frame back ~150ms so a cache-warm profile flashes nothing; the route's
+  // pendingComponent (same ProfilePending) already covers the cold-nav auth window.
+  const showPending = useDelayedPending(isPending)
 
-  if (isPending) return <CenteredSpinner />
+  if (isPending) return showPending ? <ProfilePending /> : null
 
   // A transient fetch failure is status, not a genuine 404 — surface it as a
   // recoverable danger panel (matching ProfileWork + People), never the bare
@@ -167,13 +172,13 @@ export function Profile() {
                 label="followers"
                 value={stats.followers}
                 handle={data.username}
-                load={() => api.profileFollowers(data.username).then((r) => r.users)}
+                kind="followers"
               />
               <PeopleStat
                 label="following"
                 value={stats.following}
                 handle={data.username}
-                load={() => api.profileFollowing(data.username).then((r) => r.users)}
+                kind="following"
               />
             </div>
 
@@ -227,17 +232,16 @@ function PeopleStat({
   label,
   value,
   handle,
-  load,
+  kind,
 }: {
   label: string
   value: number
   handle: string
-  load: () => Promise<PublicProfile[]>
+  kind: "followers" | "following"
 }) {
   const [open, setOpen] = useState(false)
   const { data: people, isPending } = useQuery({
-    queryKey: ["profile-people", handle, label],
-    queryFn: load,
+    ...profilePeopleQuery(handle, kind),
     enabled: open,
   })
   return (
@@ -304,6 +308,7 @@ function PeopleStat({
 function ProfileWork({ handle, isMe, name }: { handle: string; isMe: boolean; name: string }) {
   const { data, isPending, isError, fetchNextPage, hasNextPage, isFetchingNextPage, refetch } =
     useInfiniteQuery(profileArtifactsQuery(handle))
+  const showSkeleton = useDelayedPending(isPending)
   const items = data?.pages.flatMap((p) => p.artifacts) ?? []
   const sentinel = useRef<HTMLDivElement>(null)
 
@@ -321,9 +326,12 @@ function ProfileWork({ handle, isMe, name }: { handle: string; isMe: boolean; na
     <section className="flex flex-col gap-3">
       <SectionEyebrow>Work</SectionEyebrow>
       {isPending ? (
-        <div className="flex justify-center py-10">
-          <Spinner />
-        </div>
+        showSkeleton ? (
+          <div role="status">
+            <span className="sr-only">Loading work…</span>
+            <ProfileWorkSkeleton />
+          </div>
+        ) : null
       ) : isError ? (
         // A failed fetch is status, not emptiness — the danger tone grammar.
         <StatusPanel

@@ -70,8 +70,6 @@ function CommentBody({ html, compact }: { html: string; compact?: boolean }) {
   )
 }
 
-// Stack a set of cards by desired Y without overlap. The active card is pinned
-// to its exact anchor and its neighbours are pushed up/down to make room.
 export function CommentRow({ c, compact }: { c: Comment; compact?: boolean }) {
   const A = useActions()
   const [editing, setEditing] = useState(false)

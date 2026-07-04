@@ -7,8 +7,9 @@ import {
   Scripts,
   useRouterState,
 } from "@tanstack/react-router"
-import { type ReactNode, useEffect } from "react"
-import { AppShell } from "../components/app-shell"
+import { type ReactNode, useEffect, useState } from "react"
+import { AppShell } from "../components/chrome/app-shell"
+import { AppBoot } from "../components/shared/app-boot"
 import { Toaster } from "../components/ui/sonner"
 import { AuthProvider, CursorPrefProvider, ThemeProvider } from "../ctx"
 import { queryClient } from "../lib/query-client"
@@ -84,6 +85,15 @@ function RootComponent() {
 // mounted once here, so navigating between pages morphs only the content — the
 // rail never remounts. /login is the one chrome-less route.
 function AppFrame() {
+  // Hydration gate. Until the client has mounted, render the neutral AppBoot — the
+  // SAME thing the SPA prerender bakes into the static shell — so the first client
+  // paint matches the prerendered HTML exactly (clean hydration, no flash). One
+  // tick later the route-correct chrome renders, INSTANTLY, not gated on the me()
+  // query (identity atoms skeleton in during its latency). This is a one-time
+  // cold-boot frame: in-app navs keep the chrome mounted and never see it again.
+  const [hydrated, setHydrated] = useState(false)
+  useEffect(() => setHydrated(true), [])
+
   // /login and /welcome (first-run onboarding) render chrome-less — no rail/top bar.
   // /showcase is the design canvas and renders chrome-less too.
   const chromeless = useRouterState({
@@ -92,6 +102,8 @@ function AppFrame() {
       s.location.pathname === "/welcome" ||
       s.location.pathname === "/showcase",
   })
+
+  if (!hydrated) return <AppBoot />
   return chromeless ? (
     <Outlet />
   ) : (

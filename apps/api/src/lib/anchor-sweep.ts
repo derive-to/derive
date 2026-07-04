@@ -9,7 +9,29 @@ import {
   planElementForwardWalk,
   type VersionRecord,
 } from "@derive/core"
+import type { Backplane } from "../bus"
 import { pageTextResolver } from "./bundle"
+
+/**
+ * Re-anchor an artifact's threads against a new version (see {@link sweepAnchors})
+ * AND announce each transition on the realtime bus: feedback whose quoted text
+ * changed flips to `outdated`, and back to `resolved` when it reappears. The HTTP
+ * and MCP publish paths and proposal-approval all run this identical fan-out.
+ */
+export async function publishSweepEvents(
+  meta: SweepStore,
+  blobs: BlobStore,
+  bus: Backplane,
+  artifactId: string,
+  version: VersionRecord,
+): Promise<void> {
+  for (const t of await sweepAnchors(meta, blobs, artifactId, version))
+    bus.publish(artifactId, {
+      type: t.state === "outdated" ? "comment.outdated" : "comment.resolved",
+      thread_id: t.thread_id,
+      state: t.state,
+    })
+}
 
 /** Forward-walk recovery is one blob read + scan per version, on the publish path.
  *  A genuinely-removed element early-exits at the first hop (cheap), but a recoverable

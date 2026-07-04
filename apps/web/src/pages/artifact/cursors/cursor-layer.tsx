@@ -1,7 +1,7 @@
 import { memo } from "react"
-import { CursorGlyph, NameTag } from "@/components/cursor/glyph"
 import { Icon } from "@/components/icons"
 import { cn } from "@/lib/utils"
+import { CursorGlyph, NameTag } from "./glyph"
 import type { CursorLayerHandle, PeerView, Ripple } from "./use-live-cursors"
 
 // The peer-cursor overlay, painted over the artifact frame. Mount/unmount and

@@ -72,9 +72,16 @@ export function inMemoryRateLimiters(
   }
 }
 
-/** The caller's IP from the proxy headers, falling back to a shared bucket. */
-const ipOf = (c: Context): string =>
-  (c.req.header("x-forwarded-for")?.split(",")[0] ?? c.req.header("x-real-ip") ?? "global").trim()
+/** The caller's IP from the proxy headers (first x-forwarded-for hop, then x-real-ip),
+ *  falling back to `fallback` when neither is present ("global" = one shared bucket). */
+export const clientIp = (c: Context, fallback = "global"): string =>
+  (c.req.header("x-forwarded-for")?.split(",")[0] ?? c.req.header("x-real-ip") ?? fallback).trim()
+
+/** The 429 response for a caller over a rate cap: a Retry-After header + a consistent body. */
+export const rateLimited = (c: Context, retryAfter: number): Response => {
+  c.header("Retry-After", String(retryAfter))
+  return c.json({ error: "rate limit exceeded" }, 429)
+}
 
 /**
  * IP-keyed limiter middleware (brute-force / abuse backstop): 429 + Retry-After once the
@@ -82,9 +89,8 @@ const ipOf = (c: Context): string =>
  */
 export function ipRateLimit(limiter: Limiter) {
   return async (c: Context, next: Next) => {
-    const r = await limiter(ipOf(c))
+    const r = await limiter(clientIp(c))
     if (r.ok) return next()
-    c.header("Retry-After", String(r.retryAfter))
-    return c.json({ error: "rate limit exceeded" }, 429)
+    return rateLimited(c, r.retryAfter)
   }
 }

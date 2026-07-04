@@ -50,7 +50,7 @@ const toState = (cnameTarget: string, host: string, r: CfResult): CustomDomainSt
   return { cfHostnameId: r.id, status, records }
 }
 
-export const cloudflareCustomDomains = (cfg: {
+const cloudflareCustomDomains = (cfg: {
   apiToken: string
   zoneId: string
   cnameTarget: string

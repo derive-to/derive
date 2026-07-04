@@ -1,6 +1,7 @@
 import type { ArtifactRecord, DeliveryRecord } from "@derive/core"
 import { describe, expect, it, vi } from "vitest"
-import { buildCommentEmail, commentDeepLink, emailDeliverySender } from "../src/lib/email"
+import { commentDeepLink } from "../src/lib/comments"
+import { buildCommentEmail, emailDeliverySender } from "../src/lib/email"
 import { deliverOnce, edgeGuard } from "../src/webhooks"
 
 const artifact = { id: "a1", short_id: "spec0001", title: "Roadmap" } as ArtifactRecord

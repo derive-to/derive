@@ -100,15 +100,6 @@ export function parseAnchor(a: string | null): ParsedAnchor | null {
   }
 }
 
-/** Text quote of an anchor (null for element / unanchored) — the strict text path. */
-export const anchorExact = (a: string | null): string | null => parseAnchor(a)?.exact ?? null
-
-/** Display label for an anchor — the quote for text, the snapshot label for an element. */
-export const anchorLabel = (a: string | null): string | null => {
-  const p = parseAnchor(a)
-  return p?.exact ?? p?.label ?? null
-}
-
 export function groupThreads(comments: Comment[]): Comment[][] {
   const map = new Map<string, Comment[]>()
   for (const c of comments) {

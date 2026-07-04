@@ -17,13 +17,19 @@ import {
 } from "@derive/core"
 import type { Context } from "hono"
 import { getCookie, setCookie } from "hono/cookie"
-import { createLocalJWKSet, type JWTPayload, jwtVerify } from "jose"
 import type { Auth } from "./auth-config"
 import { type Backplane, createInProcessBackplane } from "./bus"
 import type { CustomDomainProvider } from "./lib/cloudflare-saas"
 import { safeEqual, sha256, unlockCookie, unlockToken } from "./lib/crypto"
-import { VIEWER_COOKIE, WS_COOKIE } from "./lib/http"
-import { inMemoryRateLimiters, type Limiter, type RateLimiters } from "./lib/rate-limit"
+import { fail, VIEWER_COOKIE, WS_COOKIE } from "./lib/http"
+import { makeOauthAgent } from "./lib/oauth-agent"
+import {
+  clientIp,
+  inMemoryRateLimiters,
+  type Limiter,
+  type RateLimiters,
+  rateLimited,
+} from "./lib/rate-limit"
 import { log } from "./log"
 import { edgeCtx } from "./realtime-do"
 import { enqueueForEvent, type WebhookEvent } from "./webhooks"
@@ -294,7 +300,7 @@ export function buildContext(deps: AppDeps) {
   // the global reports/audit queue); a workspace Admin stays scoped to their own.
   const superAdminEmails = new Set((deps.superAdmins ?? []).map((e) => e.toLowerCase()))
   const isSuperAdmin = async (c: Context): Promise<boolean> => {
-    if (deps.token && safeEqual(bearer(c), deps.token)) return true
+    if (isToken(c)) return true
     if (superAdminEmails.size === 0) return false
     const me = await currentUser(c)
     return !!me && superAdminEmails.has(me.email.toLowerCase())
@@ -303,15 +309,6 @@ export function buildContext(deps: AppDeps) {
   // A registered agent acting via its bearer token (memoized per request). An
   // agent is a workspace principal: same authorization path as a member, with
   // its own identity and (default commenter) role.
-  // The least-privilege role an OAuth-granted scope set maps to: publish/review
-  // earn editor; propose/comment earn commenter; read alone is viewer.
-  const roleFromScopes = (scopes: string[]): Role =>
-    scopes.includes("derive:publish") || scopes.includes("derive:review")
-      ? "editor"
-      : scopes.includes("derive:propose") || scopes.includes("derive:comment")
-        ? "commenter"
-        : "viewer"
-
   const agentCache = new WeakMap<Context, AgentRecord | null>()
   // The human an OAuth agent acts on behalf of (the user who consented). Null for a
   // registered workspace agent (no granting user) — kept in lockstep with agentCache.
@@ -360,106 +357,6 @@ export function buildContext(deps: AppDeps) {
     return (await currentUser(c))?.id ?? null
   }
 
-  // The agent runs in the granting user's workspace, provisioned on first touch
-  // exactly as the user's own first request would (multi mode, lazy).
-  const oauthWorkspace = async (
-    userId: string,
-    email: string | null,
-    name: string | null,
-  ): Promise<string> => {
-    const mine = await meta.listWorkspaces(userId)
-    return mine[0]?.id ?? (await provisionPersonal({ id: userId, email: email ?? "", name }))
-  }
-
-  // Our own JWKS (served by the jwt plugin at /api/auth/jwks), read straight from
-  // Better Auth's store on this instance — NOT an HTTP self-fetch, which a
-  // Cloudflare Worker can't do against its own hostname. The local key set is
-  // cached per isolate, rebuilt on a verify miss (a rotated signing key).
-  const oauthIssuer = new URL("/api/auth", deps.baseUrl).toString()
-  let jwksCache: ReturnType<typeof createLocalJWKSet> | null = null
-  const loadJwks = async () => {
-    const res = (await deps.auth?.api.getJwks()) as
-      | Parameters<typeof createLocalJWKSet>[0]
-      | undefined
-    return res?.keys?.length ? createLocalJWKSet(res) : null
-  }
-
-  // An OAuth access token (granted via the consent screen) acts as a scoped agent:
-  // it runs in the granting user's workspace, authors as the client's name, and
-  // takes a role derived from the granted derive:* scopes. Expired/invalid tokens
-  // resolve to nothing — the caller is then anonymous (read-only), never the owner.
-  const oauthAgent = async (
-    token: string,
-  ): Promise<{ rec: AgentRecord; ownerId: string } | null> => {
-    // 1. Opaque access token (the `derive login` flow): stored hashed (sha256, like
-    //    agent tokens), so resolve by the hash of the presented bearer.
-    const grant = await meta.getOAuthGrant(sha256(token))
-    if (grant) {
-      if (grant.expiresAt.getTime() <= Date.now()) return null
-      const org = await oauthWorkspace(grant.userId, grant.userEmail, grant.userName)
-      return {
-        ownerId: grant.userId,
-        rec: {
-          id: `oauth:${grant.clientId}`,
-          org_id: org,
-          name: grant.clientName,
-          token: "",
-          role: roleFromScopes(grant.scopes),
-          created_at: new Date().toISOString(),
-        },
-      }
-    }
-    // 2. JWT access token: the oauth-provider issues a signed JWT (not stored in our
-    //    table) when a client sends an RFC 8707 `resource` indicator — which every
-    //    remote MCP client (Claude Code, claude.ai) does. Verify it against our own
-    //    JWKS and resolve the agent from its claims.
-    if (token.split(".").length === 3) return oauthAgentFromJwt(token)
-    return null
-  }
-
-  const oauthAgentFromJwt = async (
-    token: string,
-  ): Promise<{ rec: AgentRecord; ownerId: string } | null> => {
-    const verify = async (): Promise<JWTPayload | null> => {
-      jwksCache ??= await loadJwks()
-      if (!jwksCache) return null
-      return (await jwtVerify(token, jwksCache, { issuer: oauthIssuer })).payload
-    }
-    let claims: JWTPayload | null
-    try {
-      claims = await verify()
-    } catch {
-      // Bad signature/issuer/expiry — or a rotated key the cache misses. Rebuild
-      // the key set once and retry before giving up.
-      jwksCache = null
-      try {
-        claims = await verify()
-      } catch {
-        return null
-      }
-    }
-    if (!claims) return null
-    const userId = typeof claims.sub === "string" ? claims.sub : ""
-    if (!userId) return null
-    const scopes = String(claims.scope ?? "")
-      .split(/\s+/)
-      .filter(Boolean)
-    const clientId = String(claims.azp ?? claims.client_id ?? "")
-    const u = (await meta.getUsers([userId]))[0]
-    const org = await oauthWorkspace(userId, u?.email ?? null, u?.name ?? null)
-    return {
-      ownerId: userId,
-      rec: {
-        id: `oauth:${clientId}`,
-        org_id: org,
-        name: (await meta.getOAuthClientName(clientId)) || clientId || "An agent",
-        token: "",
-        role: roleFromScopes(scopes),
-        created_at: new Date().toISOString(),
-      },
-    }
-  }
-
   // The acting identity (agent or signed-in user) for authorship; null when
   // anonymous. Agents author as their name, never spoofing a person.
   const actingUser = async (c: Context): Promise<{ id: string; name: string } | null> => {
@@ -472,13 +369,11 @@ export function buildContext(deps: AppDeps) {
     return me ? { id: me.id, name: me.name ?? me.username ?? me.email } : null
   }
 
-  const ipOf = (c: Context): string =>
-    (c.req.header("x-forwarded-for")?.split(",")[0] ?? c.req.header("x-real-ip") ?? "global").trim()
   // A stable rate-limit key for the caller: the signed-in user / agent if known,
   // otherwise their IP so anonymous floods are still bounded.
   const actorKey = async (c: Context): Promise<string> => {
     const a = await actingUser(c)
-    return a ? `id:${a.id}` : `ip:${ipOf(c)}`
+    return a ? `id:${a.id}` : `ip:${clientIp(c)}`
   }
 
   // Apply a keyed limiter to the caller; returns a 429 Response when over, else
@@ -487,8 +382,7 @@ export function buildContext(deps: AppDeps) {
     if (!limiter) return null
     const r = await limiter(await actorKey(c))
     if (r.ok) return null
-    c.header("Retry-After", String(r.retryAfter))
-    return c.json({ error: "rate limit exceeded" }, 429)
+    return rateLimited(c, r.retryAfter)
   }
   // Would storing `incoming` more bytes push THIS workspace over its storage cap?
   const overStorage = async (orgId: string, incoming: number): Promise<boolean> =>
@@ -520,6 +414,15 @@ export function buildContext(deps: AppDeps) {
     await meta.setMembership({ id: newId("m"), org_id: id, user_id: me.id, role: "owner" })
     return id
   }
+
+  // OAuth access-token resolution (opaque + RFC 8707 JWT) lives in its own module so the
+  // jose/JWKS dependency stays out of the context; `agentFor` dispatches to it above.
+  const { oauthAgent } = makeOauthAgent({
+    meta,
+    auth: deps.auth,
+    baseUrl: deps.baseUrl,
+    provisionPersonal,
+  })
 
   // The caller's active workspace for this request (memoized). Single mode: always
   // the bootstrap org. Multi mode: the derive_ws cookie (validated against
@@ -588,7 +491,7 @@ export function buildContext(deps: AppDeps) {
       a.visibility === "password" &&
       !!a.password_hash &&
       safeEqual(getCookie(c, unlockCookie(a.short_id)) ?? "", unlockToken(a.id, a.password_hash))
-    if (deps.token && safeEqual(bearer(c), deps.token)) return { kind: "token" }
+    if (isToken(c)) return { kind: "token" }
     const ag = await agentFor(c)
     if (ag) {
       const am = await meta.getArtifactMember(a.id, ag.id)
@@ -641,13 +544,13 @@ export function buildContext(deps: AppDeps) {
    * lockdown so a new mutating route can never accidentally be exposed to anon.
    */
   const isPrincipal = async (c: Context): Promise<boolean> => {
-    if (deps.token && safeEqual(bearer(c), deps.token)) return true
+    if (isToken(c)) return true
     return !!(await actingUser(c))
   }
 
   /** The caller's role in their active workspace (creating artifacts, settings). */
   const workspaceRole = async (c: Context): Promise<Role | null> => {
-    if (deps.token && safeEqual(bearer(c), deps.token)) return "owner"
+    if (isToken(c)) return "owner"
     const ag = await agentFor(c)
     if (ag) return ag.role
     const me = await currentUser(c)
@@ -685,11 +588,38 @@ export function buildContext(deps: AppDeps) {
   // creator, else their explicit collection-member role, else null (no access).
   // Shared by the collections routes and the artifact listing (collection scoping).
   const collectionRole = async (c: Context, col: CollectionRecord): Promise<Role | null> => {
-    if (deps.token && safeEqual(bearer(c), deps.token)) return "owner"
+    if (isToken(c)) return "owner"
     const me = await currentUser(c)
     if (!me) return null
     if (col.created_by === me.id) return "owner"
     return (await meta.getCollectionMember(col.id, me.id))?.role ?? null
+  }
+
+  // ---- Route guard helpers: the return-or-Response idiom (mirrors `limited`), so a
+  // route opens with `const x = await require*(c); if (x instanceof Response) return x`.
+  // Resolve the :shortId artifact and gate it — 404 for BOTH missing and unauthorized,
+  // so a gated artifact you can't read is indistinguishable from one that isn't there
+  // (existence never leaks). Returns the artifact, or the Response to return.
+  const requireArtifact = async (
+    c: Context,
+    action: Action,
+  ): Promise<ArtifactRecord | Response> => {
+    const shortId = c.req.param("shortId")
+    const a = shortId ? await meta.getByShortId(shortId) : null
+    if (!a || !(await authorize(c, action, a))) return fail(c, 404, "not found")
+    return a
+  }
+  // The signed-in user, or the 401 to return — the guard every authed route opens with.
+  const requireUser = async (c: Context): Promise<SessionUser | Response> =>
+    (await currentUser(c)) ?? fail(c, 401, "unauthenticated")
+  // The static CI/agent token (DERIVE_TOKEN) presented as this request's bearer.
+  const isToken = (c: Context): boolean => !!deps.token && safeEqual(bearer(c), deps.token)
+  // Is the caller a member of this workspace? The static token counts as a member of
+  // every workspace. Callers still decide whether a non-member gets 403 or empty results.
+  const isMember = async (c: Context, orgId: string): Promise<boolean> => {
+    if (isToken(c)) return true
+    const me = await currentUser(c)
+    return !!me && !!(await meta.getMembership(orgId, me.id))
   }
 
   return {
@@ -702,14 +632,12 @@ export function buildContext(deps: AppDeps) {
     analyticsOn,
     versionWindowMs,
     allowOrigins,
-    defaultOrg,
     defaultRole,
     publishLimiter,
     commentLimiter,
     unlockLimiter,
     notify,
     background,
-    bearer,
     currentUser,
     agentFor,
     actingUser,
@@ -717,7 +645,6 @@ export function buildContext(deps: AppDeps) {
     limited,
     overStorage,
     ensureMembership,
-    provisionPersonal,
     activeWorkspace,
     setWsCookie,
     anonViewerId,
@@ -730,5 +657,9 @@ export function buildContext(deps: AppDeps) {
     workspaceCan,
     collectionRole,
     sourceText,
+    requireArtifact,
+    requireUser,
+    isToken,
+    isMember,
   }
 }

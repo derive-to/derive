@@ -5,9 +5,10 @@
 export const STORAGE_KEYS = {
   theme: "derive_theme",
   cursorPref: "derive.cursor.pref",
-  libraryRail: "derive.browse.rail",
   commentsPanel: "derive.comments.panel",
   navCollapsed: "derive.nav.collapsed",
-  // Legacy literal (predates the dot convention) — kept so saved prefs survive.
+  // Legacy literals (the colon convention predates the dot switch) — kept as-is so a
+  // saved onboarding flag / folder pref survives the rename.
+  onboarded: "derive:onboarded",
   libraryFolders: "derive:show-folders",
 } as const

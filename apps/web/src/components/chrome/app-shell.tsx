@@ -1,17 +1,17 @@
-import { useNavigate, useRouterState } from "@tanstack/react-router"
-import { lazy, type ReactNode, Suspense, useCallback, useEffect, useMemo, useState } from "react"
-import { api, type Collection, type Workspaces } from "@/api"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
+import { useRouterState } from "@tanstack/react-router"
+import { lazy, type ReactNode, Suspense, useEffect, useState } from "react"
+import { api } from "@/api"
+import { Icon } from "@/components/icons"
 import { Button } from "@/components/ui/button"
 import { SidebarInset, SidebarProvider, useSidebar } from "@/components/ui/sidebar"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { useAuth } from "@/ctx"
+import { collectionsQuery, summaryQuery, workspacesQuery } from "@/lib/queries"
 import { STORAGE_KEYS } from "@/lib/storage-keys"
 import { useIsMobile } from "@/lib/use-is-mobile"
-import { ONBOARDED_KEY } from "@/pages/welcome"
-import { Icon } from "./icons"
 import { NavRail } from "./nav-rail"
-import { CenteredSpinner } from "./shared/spinner"
-import { ShellCtx, type ShellValue, type Summary } from "./shell-context"
+import { ShellCtx, type ShellValue } from "./shell-context"
 
 // The ⌘K palette pulls in cmdk; it's only needed once the user opens it, so keep
 // it (and cmdk) out of the shared bundle every route pays for. Loads on first open.
@@ -31,8 +31,7 @@ const COLLAPSE_KEY = STORAGE_KEYS.navCollapsed
 // navbar's hamburger. Fetches the nav data (summary, collections, workspaces)
 // once, so the rail + pod behave identically on every page.
 export function AppShell({ children }: { children: ReactNode }) {
-  const { me, loading } = useAuth()
-  const nav = useNavigate()
+  const { me } = useAuth()
   const isMobile = useIsMobile()
 
   // The provider is controlled so the state round-trips through the app's
@@ -46,49 +45,29 @@ export function AppShell({ children }: { children: ReactNode }) {
       return true
     }
   })
-  const onSidebarOpenChange = useCallback((open: boolean) => {
+  const onSidebarOpenChange = (open: boolean) => {
     setSidebarOpen(open)
     try {
       localStorage.setItem(COLLAPSE_KEY, open ? "0" : "1")
     } catch {
       /* private mode */
     }
-  }, [])
+  }
 
   const [paletteOpen, setPaletteOpen] = useState(false)
-  const [summary, setSummary] = useState<Summary | null>(null)
-  const [collections, setCollections] = useState<Collection[]>([])
-  const [workspaces, setWorkspaces] = useState<Workspaces | null>(null)
+  const qc = useQueryClient()
+  // Workspaces power the switcher's no-op check below; the rail + command palette
+  // read their own copies of the nav queries (deduped by key). enabled on a
+  // session so an anon visitor never fires the authed endpoints.
+  const { data: workspaces } = useQuery({ ...workspacesQuery(), enabled: !!me })
 
-  // Public pages render for anonymous visitors too: artifact pages (/artifacts/:ref,
-  // read-only with a sign-up CTA — the viral path) and profiles (/users/:handle,
-  // GitHub-style shareable). Every other route requires a session.
-  const pathname = useRouterState({ select: (s) => s.location.pathname })
-  const publicView = pathname.startsWith("/artifacts/") || pathname.startsWith("/users/")
   // An anonymous visitor on a shared artifact gets the chrome-light PublicViewer
   // (its own slim public header) — drop the app nav rail entirely so the render is
-  // the whole page (the viral view; research: the render is the hero).
+  // the whole page (the viral view; research: the render is the hero). Auth +
+  // onboarding redirects for every other route now live in the routes' beforeLoad
+  // guards (lib/route-guards), so an anon never renders authed chrome.
+  const pathname = useRouterState({ select: (s) => s.location.pathname })
   const bareArtifact = !me && pathname.startsWith("/artifacts/")
-
-  // Auth gate: bounce to /login on auth-only routes once we know there's no session.
-  useEffect(() => {
-    if (!loading && !me && !publicView) nav({ to: "/login" })
-  }, [loading, me, publicView, nav])
-
-  // First-run onboarding gate: a signed-in user who hasn't set a role yet (and
-  // hasn't finished/skipped onboarding) gets the dedicated /welcome step. A role
-  // being set, or the onboarded flag, clears it — so it shows once after signup,
-  // never loops. Public views (/artifacts, /users) are left alone.
-  useEffect(() => {
-    if (loading || !me || publicView) return
-    let onboarded = false
-    try {
-      onboarded = localStorage.getItem(ONBOARDED_KEY) === "1"
-    } catch {
-      /* private mode — fall through, role check still gates it */
-    }
-    if (!me.profession && !onboarded) nav({ to: "/welcome" })
-  }, [loading, me, publicView, nav])
 
   // ⌘K / Ctrl+K opens the command palette from anywhere. "/" (outside inputs)
   // focuses the page's primary SearchField when one is registered
@@ -121,110 +100,64 @@ export function AppShell({ children }: { children: ReactNode }) {
     return () => window.removeEventListener("keydown", onKey)
   }, [])
 
-  const refreshSummary = useCallback(() => {
-    api
-      .browseSummary()
-      .then(setSummary)
-      .catch(() => {})
-  }, [])
-  const refreshCollections = useCallback(() => {
-    api
-      .listCollections()
-      .then((r) => setCollections(r.collections))
-      .catch(() => {})
-  }, [])
-  const refreshWorkspaces = useCallback(() => {
-    api
-      .listWorkspaces()
-      .then(setWorkspaces)
-      .catch(() => {})
-  }, [])
-  // Workspaces only change via create/switch, which both hard-reload the page —
-  // so they can't go stale mid-session. Fetch once.
-  useEffect(() => {
-    if (me) refreshWorkspaces()
-  }, [me, refreshWorkspaces])
-
-  // Summary (rail counts) + collections refresh on every route change. The shell
-  // is mounted once now (it no longer remounts per nav), so without this the
-  // counts would freeze at their mount-time values after a publish / favorite /
+  // Rail counts + collections stay live via react-query. The rail is mounted once
+  // (it doesn't remount per nav), so a route change invalidates both keys — the
+  // mounted rail queries then refetch — to pick up any publish / favorite /
   // collection edit. Keyed to the pathname, so in-page filter changes (search,
-  // tag) on the library don't trigger a refetch. (pathname computed above.)
-  // biome-ignore lint/correctness/useExhaustiveDependencies: pathname is an intentional re-run trigger — the effect refetches on every route change, even though its body doesn't read pathname.
+  // tag) don't refetch. Mutations also invalidate at their call site for an
+  // immediate update; this is the catch-all so no count can silently go stale.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: pathname is an intentional re-run trigger — the effect invalidates on every route change, even though its body doesn't read pathname.
   useEffect(() => {
     if (me) {
-      refreshSummary()
-      refreshCollections()
+      qc.invalidateQueries({ queryKey: summaryQuery().queryKey })
+      qc.invalidateQueries({ queryKey: collectionsQuery().queryKey })
     }
-  }, [me, pathname, refreshSummary, refreshCollections])
+  }, [me, pathname, qc])
 
   // Switching/creating a workspace swaps the whole content context, so reload the
   // page rather than re-thread every list (a deliberate, infrequent action).
-  const switchWorkspace = useCallback(
-    async (id: string) => {
-      if (id === workspaces?.active) return
-      try {
-        await api.switchWorkspace(id)
-        window.location.reload()
-      } catch {
-        /* surfaced elsewhere */
-      }
-    },
-    [workspaces],
-  )
-  const createWorkspace = useCallback(async (name: string) => {
+  const switchWorkspace = async (id: string) => {
+    if (id === workspaces?.active) return
+    try {
+      await api.switchWorkspace(id)
+      window.location.reload()
+    } catch {
+      /* surfaced elsewhere */
+    }
+  }
+  const createWorkspace = async (name: string) => {
     try {
       await api.createWorkspace(name)
       window.location.reload()
     } catch {
       /* surfaced elsewhere */
     }
-  }, [])
+  }
   // Deleting may swap the active workspace (the server switches the cookie when you
   // delete the one you're in), so reload to pick up the new active context.
-  const deleteWorkspace = useCallback(async (id: string) => {
+  const deleteWorkspace = async (id: string) => {
     await api.deleteWorkspace(id)
     window.location.reload()
-  }, [])
+  }
 
-  // Memoized so the provider gets a stable value object — consumers re-render
-  // only when shell state actually changes, not on every AppShell render. The
-  // action fns are already stable (useCallback / setState), so the volatile
-  // deps are just the state.
-  const value = useMemo<ShellValue>(
-    () => ({
-      paletteOpen,
-      setPaletteOpen,
-      summary,
-      collections,
-      workspaces,
-      refreshSummary,
-      refreshCollections,
-      refreshWorkspaces,
-      switchWorkspace,
-      createWorkspace,
-      deleteWorkspace,
-    }),
-    // setPaletteOpen is a stable useState setter — intentionally not listed
-    // (React guarantees its identity).
-    [
-      paletteOpen,
-      summary,
-      collections,
-      workspaces,
-      refreshSummary,
-      refreshCollections,
-      refreshWorkspaces,
-      switchWorkspace,
-      createWorkspace,
-      deleteWorkspace,
-    ],
-  )
+  // A plain value object — the React Compiler keeps it reference-stable across
+  // renders, so consumers re-render only when the palette state or a workspace
+  // action changes (the nav data now lives in react-query, not here).
+  const value: ShellValue = {
+    paletteOpen,
+    setPaletteOpen,
+    switchWorkspace,
+    createWorkspace,
+    deleteWorkspace,
+  }
 
-  // Until the session resolves, hold the frame rather than flashing the rail
-  // (and the redirect above handles the signed-out case). Public pages render for
-  // anon visitors, so don't gate those on a session.
-  if (loading || (!me && !publicView)) return <CenteredSpinner />
+  // No full-screen hold: the known chrome renders immediately (the __root
+  // AppFrame hydration gate covers the pre-hydration frame with AppBoot). The
+  // rail's identity/nav atoms skeleton in during the me()/summary latency (see
+  // NavRail's 3-state); a signed-out user on an auth-only route is bounced by the
+  // route beforeLoad guards before this renders. `bareArtifact` keeps a
+  // pending/anon `me` on the chrome-light artifact view — the rail enhances in
+  // only once `me` resolves truthy (in-app navs have it cached, so no shift).
 
   // Note: profile setup isn't gated *inside* the shell — the onboarding effect
   // above redirects a new user to the dedicated /welcome step (handle + role +

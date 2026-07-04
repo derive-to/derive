@@ -9,9 +9,9 @@ import {
 
 const ROLES: Role[] = ["viewer", "commenter", "editor", "owner"]
 
-// Rendered labels stay sentence-case ("Viewer"), matching ShareDialog's
-// read-only rows — one casing for the same data everywhere.
-const LABEL: Record<Role, string> = {
+// Rendered role labels, sentence-case ("Viewer") — one casing for the same data
+// everywhere (ShareDialog's read-only rows import this map too).
+export const ROLE_LABELS: Record<Role, string> = {
   viewer: "Viewer",
   commenter: "Commenter",
   editor: "Editor",
@@ -43,7 +43,7 @@ export function RoleSelect({
       <SelectContent>
         {ROLES.map((r) => (
           <SelectItem key={r} value={r}>
-            {LABEL[r]}
+            {ROLE_LABELS[r]}
           </SelectItem>
         ))}
       </SelectContent>

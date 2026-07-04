@@ -6,7 +6,7 @@
 // list is a subset of the domain list — so the two can never silently diverge
 // the way two independent enums did before. Add an event in ONE place.
 
-export const DOMAIN_EVENTS = [
+const DOMAIN_EVENTS = [
   "comment.created",
   "comment.mention",
   "comment.resolved",

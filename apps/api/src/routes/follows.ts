@@ -9,7 +9,7 @@ import { fail, readJson } from "../lib/http"
  *  are scoped to the caller's active workspace; people (`user`) follows are global
  *  (org_id = "*"). All endpoints require a signed-in user. */
 export const followRoutes = (ctx: AppContext) => {
-  const { meta, currentUser, activeWorkspace } = ctx
+  const { meta, requireUser, activeWorkspace } = ctx
   const app = new Hono()
 
   // Author targets are normalized to lowercase so they match the (lowercased)
@@ -42,8 +42,8 @@ export const followRoutes = (ctx: AppContext) => {
   }
 
   app.get("/v1/follows", async (c) => {
-    const me = await currentUser(c)
-    if (!me) return fail(c, 401, "unauthenticated")
+    const me = await requireUser(c)
+    if (me instanceof Response) return me
     const org = await activeWorkspace(c)
     const follows = await meta.listFollows(me.id, org)
     // Resolve each people-follow's target id → a public handle so the client can render
@@ -73,8 +73,8 @@ export const followRoutes = (ctx: AppContext) => {
   })
 
   app.post("/v1/follows", async (c) => {
-    const me = await currentUser(c)
-    if (!me) return fail(c, 401, "unauthenticated")
+    const me = await requireUser(c)
+    if (me instanceof Response) return me
     const b = await readJson(c, followBody)
     if (b instanceof Response) return b
     const r = await resolve(c, me, b)
@@ -105,8 +105,8 @@ export const followRoutes = (ctx: AppContext) => {
   })
 
   app.delete("/v1/follows", async (c) => {
-    const me = await currentUser(c)
-    if (!me) return fail(c, 401, "unauthenticated")
+    const me = await requireUser(c)
+    if (me instanceof Response) return me
     const b = await readJson(c, followBody)
     if (b instanceof Response) return b
     const r = await resolve(c, me, b)

@@ -3,7 +3,6 @@ import { Hono } from "hono"
 import { z } from "zod"
 import type { AppContext } from "../context"
 import { authorProfile, resolveHandles } from "../lib/author"
-import { safeEqual } from "../lib/crypto"
 import { fail, IMMUTABLE_CACHE, readJson, toBody } from "../lib/http"
 import { MAX_AVATAR_BYTES, sniffImageType } from "../lib/image"
 
@@ -13,7 +12,9 @@ export const sessionRoutes = (ctx: AppContext) => {
     meta,
     blobs,
     deps,
-    bearer,
+    isMember,
+    isToken,
+    requireUser,
     currentUser,
     ensureMembership,
     activeWorkspace,
@@ -24,8 +25,8 @@ export const sessionRoutes = (ctx: AppContext) => {
   const app = new Hono()
 
   app.get("/v1/me", async (c) => {
-    const u = await currentUser(c)
-    if (!u) return fail(c, 401, "unauthenticated")
+    const u = await requireUser(c)
+    if (u instanceof Response) return u
     const role = await ensureMembership(await activeWorkspace(c), u.id) // provisions on first load
     return c.json({ user: { ...u, role }, multi: true })
   })
@@ -36,8 +37,8 @@ export const sessionRoutes = (ctx: AppContext) => {
   // is a 409. Only the signed-in user can set their own (the anon-write lockdown
   // already blocks unauthenticated POSTs).
   app.post("/v1/me/username", async (c) => {
-    const u = await currentUser(c)
-    if (!u) return fail(c, 401, "unauthenticated")
+    const u = await requireUser(c)
+    if (u instanceof Response) return u
     const body = await readJson(c, z.object({ username: z.string() }))
     if (body instanceof Response) return body
     const username = normalizeUsername(body.username)
@@ -53,8 +54,8 @@ export const sessionRoutes = (ctx: AppContext) => {
   // both optional. Server-set only (signed-in user edits their own). An omitted
   // field is left untouched; an empty string clears it.
   app.post("/v1/me/profile", async (c) => {
-    const u = await currentUser(c)
-    if (!u) return fail(c, 401, "unauthenticated")
+    const u = await requireUser(c)
+    if (u instanceof Response) return u
     const body = await readJson(
       c,
       z.object({
@@ -74,8 +75,8 @@ export const sessionRoutes = (ctx: AppContext) => {
   // Opt in/out of people search. Off by default, so you're only findable by
   // username if you choose to be (signed-in user sets their own).
   app.post("/v1/me/discoverable", async (c) => {
-    const u = await currentUser(c)
-    if (!u) return fail(c, 401, "unauthenticated")
+    const u = await requireUser(c)
+    if (u instanceof Response) return u
     const body = await readJson(c, z.object({ discoverable: z.boolean() }))
     if (body instanceof Response) return body
     await meta.setUserDiscoverable(u.id, body.discoverable)
@@ -230,8 +231,8 @@ export const sessionRoutes = (ctx: AppContext) => {
   // the blob store, pointing `user.image` at the served URL. Signed-in only (the
   // anon write-lockdown already blocks unauthenticated POSTs).
   app.post("/v1/me/avatar", async (c) => {
-    const u = await currentUser(c)
-    if (!u) return fail(c, 401, "unauthenticated")
+    const u = await requireUser(c)
+    if (u instanceof Response) return u
     const len = Number(c.req.header("content-length") ?? 0)
     if (len > MAX_AVATAR_BYTES + 4096) return fail(c, 413, "image too large (max 2MB)")
     const body = await c.req.parseBody()
@@ -274,8 +275,7 @@ export const sessionRoutes = (ctx: AppContext) => {
   // Without it, the caller's active-workspace members (composing outside a thread).
   app.get("/v1/users", async (c) => {
     const me = await currentUser(c)
-    const isToken = safeEqual(bearer(c), deps.token)
-    if (!me && !isToken) return fail(c, 401, "unauthenticated")
+    if (!me && !isToken(c)) return fail(c, 401, "unauthenticated")
     const q = (c.req.query("query") ?? "").trim().toLowerCase()
 
     const shortId = c.req.query("artifact")
@@ -288,12 +288,15 @@ export const sessionRoutes = (ctx: AppContext) => {
     // The full workspace roster is only for MEMBERS of that workspace — not a stranger
     // who can merely read one of its public artifacts. Without this, anyone could pull
     // an entire workspace's member list by passing any public artifact's short id.
-    const isOrgMember = isToken || (!!me && !!(await meta.getMembership(org, me.id)))
+    const isOrgMember = await isMember(c, org)
     if (isOrgMember) for (const m of await meta.listMemberships(org)) ids.add(m.user_id)
     // Thread participants (the artifact's members + people who've commented) are only
     // exposed to someone who can actually mention on the thread — i.e. has comment
     // access. A pure read-only viewer gets just themselves.
-    if (artifact && (isToken || can(await actorFor(c, artifact), "comment", artifact.visibility))) {
+    if (
+      artifact &&
+      (isToken(c) || can(await actorFor(c, artifact), "comment", artifact.visibility))
+    ) {
       for (const m of await meta.listArtifactMembers(artifact.id)) ids.add(m.user_id)
       for (const cm of await meta.listComments(artifact.id)) if (cm.author_id) ids.add(cm.author_id)
     }
