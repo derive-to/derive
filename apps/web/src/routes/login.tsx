@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router"
-import { Login } from "../pages/Login"
+import { Login } from "../pages/login"
 
 // OAuth authorize params the oidc-provider appends when it bounces an
 // unauthenticated /authorize to /login; preserved so login can resume the flow.

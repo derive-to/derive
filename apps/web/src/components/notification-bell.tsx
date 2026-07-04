@@ -8,7 +8,7 @@ import {
   SidebarMenuBadge,
   SidebarMenuButton,
   SidebarMenuItem,
-  useSidebar,
+  useIconRail,
 } from "@/components/ui/sidebar"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useAuth } from "@/ctx"
@@ -24,8 +24,10 @@ import { Icon } from "./icons"
 // Popover primitive with a SidebarMenuButton trigger.
 export function NotificationBell() {
   const { me } = useAuth()
-  const { state, isMobile } = useSidebar()
   const nav = useNavigate()
+  // Icon rail: the unread signal collapses to the ink dot on the bell (never a solid
+  // count block). The hook lives here so it runs before the early return below.
+  const iconMode = useIconRail()
   const [items, setItems] = useState<Notification[]>([])
   const [unread, setUnread] = useState(0)
   const [open, setOpen] = useState(false)
@@ -97,10 +99,6 @@ export function NotificationBell() {
       .then((r) => setUnread(r.unread))
       .catch(() => {})
   }
-
-  // Icon rail: the unread signal collapses into the ink dot on the bell —
-  // the ink accent means "this matters", so it never inflates into a solid count block.
-  const iconMode = state === "collapsed" && !isMobile
 
   return (
     <SidebarMenuItem>

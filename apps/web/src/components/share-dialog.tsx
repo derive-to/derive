@@ -11,7 +11,7 @@ import {
 } from "@/api"
 import { Icon } from "@/components/icons"
 import { EmptyState } from "@/components/shared/empty-state"
-import { RoleSelect } from "@/components/shared/role-select"
+import { ROLE_LABELS, RoleSelect } from "@/components/shared/role-select"
 import { Eyebrow } from "@/components/shared/section-eyebrow"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
@@ -42,13 +42,6 @@ const BLURB: Record<Role, string> = {
   commenter: "Can view and comment",
   editor: "Can publish new versions",
   owner: "Full control, incl. sharing",
-}
-
-const ROLE_LABEL: Record<Role, string> = {
-  viewer: "Viewer",
-  commenter: "Commenter",
-  editor: "Editor",
-  owner: "Owner",
 }
 
 // General access (visibility) options, in order of decreasing reach.
@@ -498,7 +491,7 @@ export function ShareButton({
                           data-testid={`share-member-role-${m.user_id}`}
                           className="text-sm text-muted-foreground"
                         >
-                          {ROLE_LABEL[m.role]}
+                          {ROLE_LABELS[m.role]}
                         </span>
                       )}
                     </div>

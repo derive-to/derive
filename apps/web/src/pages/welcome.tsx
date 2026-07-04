@@ -3,7 +3,6 @@ import { Copy } from "lucide-react"
 import { useMemo, useState } from "react"
 import { ApiError, api } from "@/api"
 import { Icon } from "@/components/icons"
-import { PROFESSIONS } from "@/components/profile-fields"
 import { AvatarPicker } from "@/components/shared/avatar-picker"
 import { FormField } from "@/components/shared/form-field"
 import { SectionEyebrow } from "@/components/shared/section-eyebrow"
@@ -28,11 +27,9 @@ import { Switch } from "@/components/ui/switch"
 import { Textarea } from "@/components/ui/textarea"
 import { useAuth } from "@/ctx"
 import { getInitials } from "@/lib/initials"
-import { usernameError } from "@/lib/username"
-
-const OTHER = "Other"
-const PRESET_VALUES = PROFESSIONS.map((p) => p.value)
-const presetFor = (p: string | null): string => (!p ? "" : PRESET_VALUES.includes(p) ? p : OTHER)
+import { OTHER, PROFESSIONS, presetFor } from "@/lib/professions"
+import { STORAGE_KEYS } from "@/lib/storage-keys"
+import { normalizeUsername, usernameError } from "@/lib/username"
 
 // A present account — the stateful onboarding body only mounts once `me` resolves
 // (see Welcome's guard), so the profile fields can safely initialize from it.
@@ -40,11 +37,9 @@ type Account = NonNullable<ReturnType<typeof useAuth>["me"]>
 
 // Set once the user finishes (or skips) onboarding, so the post-signup redirect
 // (app-shell.tsx) doesn't bounce them back here on every visit.
-export const ONBOARDED_KEY = "derive:onboarded"
-
 export const markOnboarded = () => {
   try {
-    localStorage.setItem(ONBOARDED_KEY, "1")
+    localStorage.setItem(STORAGE_KEYS.onboarded, "1")
   } catch {
     /* private mode — the in-session redirect guard still won't loop */
   }
@@ -131,7 +126,7 @@ function Onboarding({ me }: { me: Account }) {
 
   const firstName = (me.name ?? me.username ?? me.email).split(/[@\s]/)[0]
   const initials = getInitials(me.name ?? me.email)
-  const normalized = handle.trim().toLowerCase()
+  const normalized = normalizeUsername(handle)
   const handleErr = normalized ? usernameError(normalized) : null
   const profession = preset === OTHER ? custom.trim() : preset
 

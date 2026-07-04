@@ -45,6 +45,14 @@ function useSidebar() {
   return context
 }
 
+// True when the rail is in its desktop icon-collapsed strip (not the mobile drawer)
+// — the shared predicate for chrome that swaps to an icon-only form (nav rows, the
+// notification bell's ink dot, the sync spinner).
+function useIconRail() {
+  const { state, isMobile } = useSidebar()
+  return state === "collapsed" && !isMobile
+}
+
 function SidebarProvider({
   defaultOpen = true,
   open: openProp,
@@ -689,5 +697,6 @@ export {
   SidebarRail,
   SidebarSeparator,
   SidebarTrigger,
+  useIconRail,
   useSidebar,
 }

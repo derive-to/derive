@@ -1,7 +1,7 @@
 import type { QueryClient } from "@tanstack/react-query"
 import { redirect } from "@tanstack/react-router"
-import { ONBOARDED_KEY } from "@/pages/welcome"
 import { meQuery } from "./queries"
+import { STORAGE_KEYS } from "./storage-keys"
 
 // The beforeLoad fields the guards read. Kept structural so a guard doesn't depend
 // on the full generated route types (any route's beforeLoad opts is assignable to
@@ -29,7 +29,7 @@ export const requireOnboarded = async (args: GuardArgs) => {
   const { me } = await requireAuth(args)
   let onboarded = false
   try {
-    onboarded = localStorage.getItem(ONBOARDED_KEY) === "1"
+    onboarded = localStorage.getItem(STORAGE_KEYS.onboarded) === "1"
   } catch {
     /* private mode — the profession check still gates it */
   }

@@ -24,6 +24,7 @@ import {
   SidebarMenuSubButton,
   SidebarMenuSubItem,
   SidebarTrigger,
+  useIconRail,
   useSidebar,
 } from "@/components/ui/sidebar"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -289,7 +290,7 @@ export function NavRail() {
     enabled: !!me,
   })
   const { data: workspaces } = useQuery({ ...workspacesQuery(), enabled: !!me })
-  const { state, isMobile, setOpenMobile } = useSidebar()
+  const { setOpenMobile } = useSidebar()
   const nav = useNavigate()
   const loc = useLocation()
   const search = loc.search as LibrarySearch
@@ -304,7 +305,7 @@ export function NavRail() {
   const tags = summary?.tags ?? []
   // The icon strip shows only glyph rows; content that has no icon form (the
   // collections/tags lists, the anon conversion card) hides behind this.
-  const iconMode = state === "collapsed" && !isMobile
+  const iconMode = useIconRail()
 
   // Picking a destination on mobile closes the drawer (no-op on desktop).
   const closeMobile = () => setOpenMobile(false)

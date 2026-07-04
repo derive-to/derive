@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query"
 import { Link } from "@tanstack/react-router"
 import { api, parseProgress } from "@/api"
 import { Spinner } from "@/components/shared/spinner"
-import { SidebarMenuButton, SidebarMenuItem, useSidebar } from "@/components/ui/sidebar"
+import { SidebarMenuButton, SidebarMenuItem, useIconRail } from "@/components/ui/sidebar"
 import { cn } from "@/lib/utils"
 
 /**
@@ -15,7 +15,7 @@ import { cn } from "@/lib/utils"
  * shows just the spinner (detail in the tooltip).
  */
 export function SyncChip() {
-  const { state, isMobile } = useSidebar()
+  const iconMode = useIconRail()
   const { data } = useQuery({
     queryKey: ["sync-active"],
     queryFn: () => api.activeSyncs(),
@@ -41,7 +41,7 @@ export function SyncChip() {
 
   // Collapsed icon rail: just the spinner, with the detail in the tooltip. The
   // spinner keeps the brand ink — sync is a sanctioned ink moment.
-  if (state === "collapsed" && !isMobile)
+  if (iconMode)
     return (
       <SidebarMenuItem>
         <SidebarMenuButton asChild tooltip={`${label} · ${detail}`}>
