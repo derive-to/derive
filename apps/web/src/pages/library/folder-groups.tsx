@@ -1,5 +1,5 @@
 import { ChevronRight } from "lucide-react"
-import { useMemo, useState } from "react"
+import { useState } from "react"
 import type { Artifact } from "@/api"
 import { Icon } from "@/components/icons"
 import { Count } from "@/components/shared/section-eyebrow"
@@ -38,7 +38,7 @@ export function FolderGroups({
   // Follow state for the per-folder toggle: one query for the whole tree, derived
   // into the isFollowingPath check + the togglePath action each header drives.
   const { isFollowingPath, togglePath } = useFollows()
-  const groups = useMemo(() => {
+  const groups = (() => {
     const m = new Map<string, Artifact[]>()
     for (const a of items) {
       const key = a.source_path ? dirOf(a.source_path) || "/" : "Other"
@@ -53,7 +53,7 @@ export function FolderGroups({
         dir,
         items: arts,
       }))
-  }, [items])
+  })()
 
   return (
     <div className="flex flex-col gap-3">

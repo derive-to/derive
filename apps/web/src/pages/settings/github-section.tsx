@@ -1,5 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query"
-import { useCallback, useEffect, useState } from "react"
+import { useEffect, useState } from "react"
 import { api, type GithubSyncStatus } from "@/api"
 import { EmptyState } from "@/components/shared/empty-state"
 import { SettingsGroup } from "@/components/shared/settings-group"
@@ -23,25 +23,23 @@ export function GithubSection() {
   const [status, setStatus] = useState<GithubSyncStatus | null>(null)
   const [pickerInstall, setPickerInstall] = useState<string | null>(null)
 
-  const load = useCallback(
-    () =>
-      api
-        .githubSync()
-        .then(setStatus)
-        .catch(() =>
-          setStatus({ sources: [], prs: [], app: { configured: false }, installations: [] }),
-        ),
-    [],
-  )
+  const load = () =>
+    api
+      .githubSync()
+      .then(setStatus)
+      .catch(() =>
+        setStatus({ sources: [], prs: [], app: { configured: false }, installations: [] }),
+      )
   // After a sync/connect, the mirrored collection changed → drop the library's
   // artifact caches so a freshly-populated collection isn't shown stale/empty.
-  const refresh = useCallback(() => {
+  const refresh = () => {
     load()
     qc.invalidateQueries({ queryKey: ["artifacts"] })
-  }, [load, qc])
+  }
+  // biome-ignore lint/correctness/useExhaustiveDependencies: fetch the GitHub status once on mount; load is stable (reads only api + setStatus).
   useEffect(() => {
     load()
-  }, [load])
+  }, [])
 
   // After the GitHub redirect (?gh_install / ?gh_error), open the picker or toast.
   useEffect(() => {

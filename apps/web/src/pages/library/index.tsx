@@ -1,7 +1,7 @@
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useNavigate, useSearch } from "@tanstack/react-router"
 import { FolderTree, List } from "lucide-react"
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { type Artifact, api } from "@/api"
 import { Icon } from "@/components/icons"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
@@ -132,10 +132,7 @@ function LibraryBody({ view }: { view: LibraryView }) {
     if (isSyncedCollection && hasNextPage && !isFetchingNextPage) fetchNextPage()
   }, [isSyncedCollection, hasNextPage, isFetchingNextPage, fetchNextPage])
   // Default order everywhere a synced collection renders: most recently updated first.
-  const recencyItems = useMemo(
-    () => (isSyncedCollection ? [...items].sort(byRecency) : items),
-    [isSyncedCollection, items],
-  )
+  const recencyItems = isSyncedCollection ? [...items].sort(byRecency) : items
 
   // Star toggle is optimistic across every cached page; in the Favorites view an
   // un-star drops the card. Reconcile against the server on failure.

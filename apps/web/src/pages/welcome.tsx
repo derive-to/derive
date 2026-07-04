@@ -1,6 +1,6 @@
 import { useNavigate } from "@tanstack/react-router"
 import { Copy } from "lucide-react"
-import { useMemo, useState } from "react"
+import { useState } from "react"
 import { ApiError, api } from "@/api"
 import { Icon } from "@/components/icons"
 import { AvatarPicker } from "@/components/shared/avatar-picker"
@@ -117,12 +117,10 @@ function Onboarding({ me }: { me: Account }) {
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState("")
 
-  const publicUrl = useMemo(
-    () => (typeof window !== "undefined" ? publicUrlOf(window.location.origin) : PLACEHOLDER_URL),
-    [],
-  )
-  const hostedText = useMemo(() => hostedPrompt(publicUrl), [publicUrl])
-  const devText = useMemo(() => selfHostPrompt(), [])
+  const publicUrl =
+    typeof window !== "undefined" ? publicUrlOf(window.location.origin) : PLACEHOLDER_URL
+  const hostedText = hostedPrompt(publicUrl)
+  const devText = selfHostPrompt()
 
   const firstName = (me.name ?? me.username ?? me.email).split(/[@\s]/)[0]
   const initials = getInitials(me.name ?? me.email)

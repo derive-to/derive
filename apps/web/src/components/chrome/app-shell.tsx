@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useRouterState } from "@tanstack/react-router"
-import { lazy, type ReactNode, Suspense, useCallback, useEffect, useMemo, useState } from "react"
+import { lazy, type ReactNode, Suspense, useEffect, useState } from "react"
 import { api } from "@/api"
 import { Icon } from "@/components/icons"
 import { Button } from "@/components/ui/button"
@@ -45,14 +45,14 @@ export function AppShell({ children }: { children: ReactNode }) {
       return true
     }
   })
-  const onSidebarOpenChange = useCallback((open: boolean) => {
+  const onSidebarOpenChange = (open: boolean) => {
     setSidebarOpen(open)
     try {
       localStorage.setItem(COLLAPSE_KEY, open ? "0" : "1")
     } catch {
       /* private mode */
     }
-  }, [])
+  }
 
   const [paletteOpen, setPaletteOpen] = useState(false)
   const qc = useQueryClient()
@@ -116,47 +116,40 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   // Switching/creating a workspace swaps the whole content context, so reload the
   // page rather than re-thread every list (a deliberate, infrequent action).
-  const switchWorkspace = useCallback(
-    async (id: string) => {
-      if (id === workspaces?.active) return
-      try {
-        await api.switchWorkspace(id)
-        window.location.reload()
-      } catch {
-        /* surfaced elsewhere */
-      }
-    },
-    [workspaces],
-  )
-  const createWorkspace = useCallback(async (name: string) => {
+  const switchWorkspace = async (id: string) => {
+    if (id === workspaces?.active) return
+    try {
+      await api.switchWorkspace(id)
+      window.location.reload()
+    } catch {
+      /* surfaced elsewhere */
+    }
+  }
+  const createWorkspace = async (name: string) => {
     try {
       await api.createWorkspace(name)
       window.location.reload()
     } catch {
       /* surfaced elsewhere */
     }
-  }, [])
+  }
   // Deleting may swap the active workspace (the server switches the cookie when you
   // delete the one you're in), so reload to pick up the new active context.
-  const deleteWorkspace = useCallback(async (id: string) => {
+  const deleteWorkspace = async (id: string) => {
     await api.deleteWorkspace(id)
     window.location.reload()
-  }, [])
+  }
 
-  // Memoized so the provider gets a stable value object — consumers re-render only
-  // when the palette state changes, not on every AppShell render (the nav data now
-  // lives in react-query, not here). setPaletteOpen is a stable useState setter;
-  // the workspace actions are useCallback-stable.
-  const value = useMemo<ShellValue>(
-    () => ({
-      paletteOpen,
-      setPaletteOpen,
-      switchWorkspace,
-      createWorkspace,
-      deleteWorkspace,
-    }),
-    [paletteOpen, switchWorkspace, createWorkspace, deleteWorkspace],
-  )
+  // A plain value object — the React Compiler keeps it reference-stable across
+  // renders, so consumers re-render only when the palette state or a workspace
+  // action changes (the nav data now lives in react-query, not here).
+  const value: ShellValue = {
+    paletteOpen,
+    setPaletteOpen,
+    switchWorkspace,
+    createWorkspace,
+    deleteWorkspace,
+  }
 
   // No full-screen hold: the known chrome renders immediately (the __root
   // AppFrame hydration gate covers the pre-hydration frame with AppBoot). The

@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query"
 import { useNavigate } from "@tanstack/react-router"
-import { useCallback, useEffect, useState } from "react"
+import { useEffect, useState } from "react"
 import { type Artifact, api, type PublicProfile } from "@/api"
 import { Icon } from "@/components/icons"
 import { FollowButton } from "@/components/shared/follow-button"
@@ -86,13 +86,10 @@ export function CommandPalette() {
     }
   }, [query, paletteOpen])
 
-  const go = useCallback(
-    (fn: () => void) => {
-      setPaletteOpen(false)
-      fn()
-    },
-    [setPaletteOpen],
-  )
+  const go = (fn: () => void) => {
+    setPaletteOpen(false)
+    fn()
+  }
 
   const q = query.trim().toLowerCase()
   const matchedCollections = collections.filter((c) => c.title.toLowerCase().includes(q))

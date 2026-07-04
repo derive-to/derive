@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
-import { useMemo, useState } from "react"
+import { useState } from "react"
 import { api, type Follow, type FollowKind } from "@/api"
 import { toast } from "@/components/ui/sonner"
 import { followsQuery } from "./queries"
@@ -44,19 +44,16 @@ export function useFollows() {
       return next
     })
 
-  const { authors, paths, users } = useMemo(() => {
-    const authors = new Set<string>()
-    const paths = new Set<string>()
-    // People-follows store the @handle in `target` (the API resolves it from the id),
-    // so we key follow-state by the (lowercased) username — what every Follow button has.
-    const users = new Set<string>()
-    for (const fol of follows) {
-      if (fol.kind === "author") authors.add(fol.target)
-      else if (fol.kind === "path") paths.add(fol.target)
-      else if (fol.kind === "user") users.add((fol.handle ?? fol.target).toLowerCase())
-    }
-    return { authors, paths, users }
-  }, [follows])
+  const authors = new Set<string>()
+  const paths = new Set<string>()
+  // People-follows store the @handle in `target` (the API resolves it from the id),
+  // so we key follow-state by the (lowercased) username — what every Follow button has.
+  const users = new Set<string>()
+  for (const fol of follows) {
+    if (fol.kind === "author") authors.add(fol.target)
+    else if (fol.kind === "path") paths.add(fol.target)
+    else if (fol.kind === "user") users.add((fol.handle ?? fol.target).toLowerCase())
+  }
 
   // Optimistically edit the follows cache so the button flips before the round-trip;
   // returns a rollback snapshot. `op` add inserts a placeholder row; remove filters it.
