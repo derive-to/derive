@@ -10,7 +10,7 @@ import { type Context, Hono } from "hono"
 import { z } from "zod"
 import type { AppContext } from "../context"
 import { markAddressed, releaseAddressed } from "../lib/addressed"
-import { sweepAnchors } from "../lib/anchor-sweep"
+import { publishSweepEvents } from "../lib/anchor-sweep"
 import { fail, MAX_UPLOAD_BYTES, readJson, str } from "../lib/http"
 
 /** Parse a comma-separated id list (the `addresses` multipart field). */
@@ -196,12 +196,7 @@ export const proposalRoutes = (ctx: AppContext) => {
       })
       // The approved candidate is now live content — re-anchor existing threads
       // against it so feedback on changed text flips to `outdated`.
-      for (const t of await sweepAnchors(meta, blobs, artifact.id, version))
-        bus.publish(artifact.id, {
-          type: t.state === "outdated" ? "comment.outdated" : "comment.resolved",
-          thread_id: t.thread_id,
-          state: t.state,
-        })
+      await publishSweepEvents(meta, blobs, bus, artifact.id, version)
       // Threads this proposal addressed are now settled — the fix landed.
       for (const threadId of await releaseAddressed(meta, artifact.id, proposal.id, "resolved"))
         bus.publish(artifact.id, {

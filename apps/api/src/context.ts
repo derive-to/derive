@@ -23,7 +23,13 @@ import { type Backplane, createInProcessBackplane } from "./bus"
 import type { CustomDomainProvider } from "./lib/cloudflare-saas"
 import { safeEqual, sha256, unlockCookie, unlockToken } from "./lib/crypto"
 import { fail, VIEWER_COOKIE, WS_COOKIE } from "./lib/http"
-import { inMemoryRateLimiters, type Limiter, type RateLimiters } from "./lib/rate-limit"
+import {
+  clientIp,
+  inMemoryRateLimiters,
+  type Limiter,
+  type RateLimiters,
+  rateLimited,
+} from "./lib/rate-limit"
 import { log } from "./log"
 import { edgeCtx } from "./realtime-do"
 import { enqueueForEvent, type WebhookEvent } from "./webhooks"
@@ -472,13 +478,11 @@ export function buildContext(deps: AppDeps) {
     return me ? { id: me.id, name: me.name ?? me.username ?? me.email } : null
   }
 
-  const ipOf = (c: Context): string =>
-    (c.req.header("x-forwarded-for")?.split(",")[0] ?? c.req.header("x-real-ip") ?? "global").trim()
   // A stable rate-limit key for the caller: the signed-in user / agent if known,
   // otherwise their IP so anonymous floods are still bounded.
   const actorKey = async (c: Context): Promise<string> => {
     const a = await actingUser(c)
-    return a ? `id:${a.id}` : `ip:${ipOf(c)}`
+    return a ? `id:${a.id}` : `ip:${clientIp(c)}`
   }
 
   // Apply a keyed limiter to the caller; returns a 429 Response when over, else
@@ -487,8 +491,7 @@ export function buildContext(deps: AppDeps) {
     if (!limiter) return null
     const r = await limiter(await actorKey(c))
     if (r.ok) return null
-    c.header("Retry-After", String(r.retryAfter))
-    return c.json({ error: "rate limit exceeded" }, 429)
+    return rateLimited(c, r.retryAfter)
   }
   // Would storing `incoming` more bytes push THIS workspace over its storage cap?
   const overStorage = async (orgId: string, incoming: number): Promise<boolean> =>

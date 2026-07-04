@@ -14,11 +14,10 @@ import {
   type SlackThreadLinkRecord,
 } from "@derive/core"
 import { type ChannelSendResult, enqueueChannelDelivery } from "../webhooks"
-import { parseMeta } from "./comments"
+import { commentDeepLink, parseMeta } from "./comments"
 import { decryptSecret } from "./crypto"
 import { isPermanentSlackError, joinSlackChannel, postSlackMessage, SlackApiError } from "./slack"
-
-const truncate = (s: string, n: number): string => (s.length > n ? `${s.slice(0, n - 1)}…` : s)
+import { truncate } from "./text"
 
 /** The Slack message payload an enqueued slack_app delivery carries (self-contained). */
 interface SlackCommentPayload {
@@ -42,7 +41,7 @@ export const enqueueSlackComment = async (
   if (parseMeta(cm.meta).slack) return // came from Slack — don't echo back
   const install = await meta.getSlackInstall(artifact.org_id)
   if (!install?.default_channel) return
-  const link = `${baseUrl.replace(/\/$/, "")}/artifacts/${artifact.short_id}?comment=${encodeURIComponent(cm.thread_id)}`
+  const link = commentDeepLink(baseUrl, artifact, cm.thread_id)
   const payload: SlackCommentPayload = {
     orgId: artifact.org_id,
     artifactId: artifact.id,
