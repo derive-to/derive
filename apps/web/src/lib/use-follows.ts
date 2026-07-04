@@ -7,16 +7,17 @@ import { followsQuery } from "./queries"
 // Path targets are stored verbatim as repo prefixes (e.g. "docs/plans/"); a
 // trailing slash keeps a LIKE prefix% from matching a sibling like "docs/plan2".
 // Normalize once so the toggle's add/remove and the isFollowingPath check agree.
-const normalizePath = (path: string): string => (path && !path.endsWith("/") ? `${path}/` : path)
+export const normalizePath = (path: string): string =>
+  path && !path.endsWith("/") ? `${path}/` : path
 
 // Author targets are stored lowercased (the backend matches on
 // `login.toLowerCase()`), so compare + send the lowercased login.
-const normalizeAuthor = (login: string): string => login.toLowerCase()
+export const normalizeAuthor = (login: string): string => login.toLowerCase()
 
 // The canonical key for a follow — the same value the isFollowing* sets use. People are
 // keyed by @handle (the API returns the handle in `target` for user-follows; an
 // optimistic row carries it too), authors lowercased, paths slash-normalized.
-const keyOf = (f: Pick<Follow, "kind" | "target" | "handle">): string =>
+export const keyOf = (f: Pick<Follow, "kind" | "target" | "handle">): string =>
   f.kind === "user"
     ? `user:${(f.handle ?? f.target).toLowerCase()}`
     : f.kind === "author"

@@ -316,6 +316,19 @@ variants.
 - **FormField** — label + control + hint/error, WIRED: the message gets an id and a
   single-element child is cloned with `aria-describedby` (+ `aria-invalid` while an error
   shows). Errors are `text-destructive`.
+- **SettingRow** (`shared/setting-row.tsx`) — a single setting as a horizontal
+  label-left / control-right row (a toggle or select on the line). The counterpart to
+  FormField's stacked layout: SettingRow for a one-line setting, FormField for a text
+  input (their docstrings cross-reference each other, so neither is re-rolled inline).
+- **SettingsGroup** (`shared/settings-group.tsx`) — a hairline-divided container grouping
+  related SettingRows / list rows within a settings section, so a section's rows read as
+  one set instead of loose lines.
+- **AvatarPicker** (`shared/avatar-picker.tsx`) — the avatar upload control (onboarding +
+  Settings › Profile): the current avatar (image, else identity-tint initials) with an
+  upload affordance; hands the chosen `File` up. One control so both surfaces can't drift.
+- **RoleSelect** (`shared/role-select.tsx`) — the workspace/share role picker over the
+  shadcn Select — the canonical `ROLES` list with sentence-case labels; exports
+  `ROLE_LABELS` so read-only surfaces (ShareDialog's member rows) render the same casing.
 - **SearchField** (`shared/search-field.tsx`, on InputGroup) — the one search/filter
   field: search-icon scent, scoped placeholder, in-field Spinner while an async lookup is
   in flight, one cross-browser clear ✕ (native WebKit cancel suppressed), Esc clears then
