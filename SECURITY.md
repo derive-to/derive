@@ -36,7 +36,14 @@ Derive ships safe defaults, but a few choices matter for an internet-facing depl
   | Anyone with link, **comment**  | View only (sign in to comment) | View + comment                         | Their role (at least comment)  |
   | Public (listed), view/comment  | same as link row               | same as link row                       | Their role                     |
   | Password, view/comment         | Unlock, then as above          | Unlock, then as above                  | Their role (no password needed)|
-  | Workspace only (org)           | No access                      | No access                              | Their role (members only)      |
+  | Workspace only (org) — default | No access                      | No access                              | Their role (members only)      |
+  | Private (invite-only)          | No access                      | No access                              | Explicit share only — workspace role grants nothing |
+
+  Publishing defaults to **workspace only** on every path (API, CLI, MCP, web), so
+  nothing is URL-readable unless the publisher widens it. `private` narrows further:
+  only per-artifact members (the publisher is written as the owner-member at
+  creation) can see it — it never appears in workspace listings, profile work
+  lists, or the People-visible surfaces.
 
   `packages/core/src/permissions.ts` (`effectiveRole`) is the single source of truth for
   this table, enforced on every request by the one `can()` gate and surfaced in the UI so

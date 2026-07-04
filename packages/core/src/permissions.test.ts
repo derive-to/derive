@@ -14,7 +14,7 @@ import {
 import type { Visibility } from "./ports"
 
 const ACTIONS: Action[] = ["read", "comment", "propose", "publish", "approve", "share", "manage"]
-const VISIBILITIES: Visibility[] = ["public", "link", "password", "org"]
+const VISIBILITIES: Visibility[] = ["public", "link", "password", "org", "private"]
 const WRITE_ACTIONS: Action[] = ["comment", "propose", "publish", "approve", "share", "manage"]
 
 // The authoritative access matrix: the minimum role each action requires. This is
@@ -122,6 +122,21 @@ describe("effectiveRole — the documented access table", () => {
     expect(effectiveRole(user({ orgRole: "viewer" }), "link", "commenter")).toBe("commenter")
     // ...but an editor stays editor (max of explicit and floor).
     expect(effectiveRole(user({ orgRole: "editor" }), "link", "commenter")).toBe("editor")
+  })
+
+  it("private admits only per-artifact members — workspace role grants nothing", () => {
+    // The distinction from org: a workspace editor cannot see a teammate's
+    // private draft, but an explicit share (or the creator's owner-member row,
+    // written at publish) opens it. Collection shares ride artifactRole too.
+    expect(effectiveRole(user({ orgRole: "owner" }), "private")).toBeNull()
+    expect(effectiveRole(user({ orgRole: "editor" }), "private", "commenter")).toBeNull()
+    expect(effectiveRole(user({ artifactRole: "owner" }), "private")).toBe("owner")
+    expect(effectiveRole(user({ artifactRole: "commenter", orgRole: "editor" }), "private")).toBe(
+      "commenter",
+    )
+    expect(effectiveRole(anon, "private")).toBeNull()
+    // The operator token stays owner everywhere.
+    expect(effectiveRole(token, "private")).toBe("owner")
   })
 })
 

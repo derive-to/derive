@@ -9,7 +9,7 @@ CREATE TABLE IF NOT EXISTS artifact (
   org_id TEXT NOT NULL DEFAULT 'local',
   slug TEXT,
   title TEXT,
-  visibility TEXT NOT NULL DEFAULT 'link',
+  visibility TEXT NOT NULL DEFAULT 'org',
   password_hash TEXT,
   general_role TEXT NOT NULL DEFAULT 'viewer',
   kind TEXT NOT NULL,

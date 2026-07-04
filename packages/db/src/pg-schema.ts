@@ -32,7 +32,7 @@ export const artifact = pgTable("artifact", {
   org_id: text("org_id").notNull().default("local"),
   slug: text("slug"),
   title: text("title"),
-  visibility: text("visibility").$type<Visibility>().notNull().default("link"),
+  visibility: text("visibility").$type<Visibility>().notNull().default("org"),
   password_hash: text("password_hash"),
   general_role: text("general_role").$type<GeneralRole>().notNull().default("viewer"),
   kind: text("kind").$type<ArtifactKind>().notNull(),

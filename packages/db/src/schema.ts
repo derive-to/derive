@@ -31,7 +31,7 @@ export const artifact = sqliteTable("artifact", {
   org_id: text("org_id").notNull().default("local"),
   slug: text("slug"),
   title: text("title"),
-  visibility: text("visibility").$type<Visibility>().notNull().default("link"),
+  visibility: text("visibility").$type<Visibility>().notNull().default("org"),
   password_hash: text("password_hash"),
   // The role general access (the link) grants a reacher with no higher explicit
   // grant. viewer = view-only (default); commenter = authed reachers may comment

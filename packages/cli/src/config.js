@@ -45,12 +45,14 @@ export function tokenFor(server) {
   return loadCredentials()[originOf(server)]?.token ?? null
 }
 
-/** The derive.json a fresh project starts with (no id until first publish). */
+/** The derive.json a fresh project starts with (no id until first publish).
+ *  Workspace-only visibility, like every other publish path — a scaffolded
+ *  project opts into URL sharing by editing this field, not by accident. */
 export const defaultConfig = (title = "My artifact", entry = "index.md") => ({
   $schema: "./derive.schema.json",
   title,
   entry,
-  visibility: "link",
+  visibility: "org",
   spa: false,
   id: null,
 })
@@ -176,7 +178,7 @@ export const DERIVE_SCHEMA = {
   properties: {
     title: { type: "string", description: "Artifact title." },
     entry: { type: "string", description: "File or directory `derive publish` targets." },
-    visibility: { enum: ["public", "link", "org", "password"], default: "link" },
+    visibility: { enum: ["public", "link", "org", "password", "private"], default: "org" },
     spa: {
       type: "boolean",
       description: "Serve a single-page-app fallback for unknown paths.",

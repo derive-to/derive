@@ -262,7 +262,10 @@ export async function publish(
     org_id: input.orgId ?? "local",
     slug: input.slug ? slugify(input.slug) : slugify(title) || null,
     title,
-    visibility: input.visibility ?? "link",
+    // Workspace-only unless the publisher says otherwise — nothing becomes
+    // URL-readable as a side effect of publishing. Widening is an explicit act
+    // (the Share dialog, --visibility link, or visibility in derive.json).
+    visibility: input.visibility ?? "org",
     password_hash: input.passwordHash ?? null,
     kind,
     spa: input.spa ? 1 : 0,

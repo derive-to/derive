@@ -7,7 +7,21 @@ import { artifactQuery } from "@/lib/queries"
 // Library-level mounts for the card ⋯ menu's organize actions. The shared
 // dialogs own the API calls; these wrappers own the state the dialogs render
 // from, and report changes up so LibraryBody can sync its caches. Mounted only
-// while staged (`{pending && <…/>}`), the same pattern as ShareCollectionDialog.
+// while staged (`{pending && <…/>}`).
+
+// Close by letting Radix finish first: the dialog holds a pointer-events lock
+// on <body> until its exit transition ends, and unmounting it mid-close leaks
+// the lock — the page keeps rendering but stops accepting clicks. So flip
+// `open` (Radix animates out and releases), THEN unmount.
+function useDialogClose(onClose: () => void) {
+  const [open, setOpen] = useState(true)
+  const onOpenChange = (o: boolean) => {
+    if (o) return
+    setOpen(false)
+    window.setTimeout(onClose, 200)
+  }
+  return { open, onOpenChange }
+}
 
 export function LibraryTagsDialog({
   artifact,
@@ -18,6 +32,7 @@ export function LibraryTagsDialog({
   onChange: (shortId: string, tags: string[]) => void
   onClose: () => void
 }) {
+  const close = useDialogClose(onClose)
   // Tags ride on the list payload; local state keeps the dialog's chips live
   // across its optimistic + server-normalized onChange calls.
   const [tags, setTags] = useState(artifact.tags ?? [])
@@ -30,10 +45,7 @@ export function LibraryTagsDialog({
         setTags(t)
         onChange(artifact.short_id, t)
       }}
-      open
-      onOpenChange={(o) => {
-        if (!o) onClose()
-      }}
+      {...close}
     />
   )
 }
@@ -47,6 +59,7 @@ export function LibraryCollectionsDialog({
   onChange: (shortId: string, ids: string[]) => void
   onClose: () => void
 }) {
+  const close = useDialogClose(onClose)
   // Collection membership rides only on the detail payload, so fetch it on
   // open — one cached request, usually already warmed by the card-hover
   // prefetch. Until the first toggle, membership reads straight off the query.
@@ -60,10 +73,7 @@ export function LibraryCollectionsDialog({
         setIds(next)
         onChange(artifact.short_id, next)
       }}
-      open
-      onOpenChange={(o) => {
-        if (!o) onClose()
-      }}
+      {...close}
     />
   )
 }

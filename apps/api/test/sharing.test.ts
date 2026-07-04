@@ -34,7 +34,9 @@ describe("artifact share → notification", () => {
   })
 
   it("does not notify when you share with yourself", async () => {
-    expect((await share(alice.email, "editor", alice.email)).status).toBe(201)
+    // Owner-role: Alice is the artifact's sole owner-member (written at publish),
+    // and the last owner can't be downgraded — a self-share stays owner.
+    expect((await share(alice.email, "owner", alice.email)).status).toBe(201)
     const aliceN = await (
       await app.request("/v1/notifications", { headers: as(alice.email) })
     ).json()

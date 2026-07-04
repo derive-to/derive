@@ -72,8 +72,10 @@ export const sessionRoutes = (ctx: AppContext) => {
     return c.json({ profession: patch.profession ?? null, about: patch.about ?? null })
   })
 
-  // Opt in/out of people search. Off by default, so you're only findable by
-  // username if you choose to be (signed-in user sets their own).
+  // Opt in/out of being findable. On by default (auth-config sets it at signup and
+  // the queries treat unset as on). Turning it OFF is real privacy, not just
+  // directory removal: the profile page, work list, and follow lists all 404 for
+  // anyone who doesn't share a workspace (see profileVisibleTo below).
   app.post("/v1/me/discoverable", async (c) => {
     const u = await currentUser(c)
     if (!u) return fail(c, 401, "unauthenticated")
@@ -109,11 +111,18 @@ export const sessionRoutes = (ctx: AppContext) => {
   // Discoverable is opt-in, so browsing only surfaces people who chose to be found.
   // Signed-in only; public fields only (handle/name/avatar/role) — never email.
   app.get("/v1/people", async (c) => {
-    if (!(await currentUser(c))) return fail(c, 401, "unauthenticated")
+    const me = await currentUser(c)
+    if (!me) return fail(c, 401, "unauthenticated")
     const q = (c.req.query("query") ?? "").trim()
-    const found = q
-      ? await meta.searchDiscoverableUsers(q, 60)
-      : await meta.listDiscoverableUsers(60)
+    // ?scope=workspace → the people you actually work with (any shared workspace),
+    // discoverable or not — membership already implies you can see each other.
+    // Default → the global discoverable directory, as before.
+    const found =
+      c.req.query("scope") === "workspace"
+        ? await meta.listWorkspaceMates(me.id, 60)
+        : q
+          ? await meta.searchDiscoverableUsers(q, 60)
+          : await meta.listDiscoverableUsers(60)
     return c.json({
       users: found.map((u) => ({
         username: u.username,
@@ -124,13 +133,31 @@ export const sessionRoutes = (ctx: AppContext) => {
     })
   })
 
+  // Whether this viewer may see this profile at all. Discoverable (the default) ⇒
+  // yes, anyone — a public artifact's author chip must resolve to a profile.
+  // Discoverable OFF ⇒ only the person themselves and people who share a workspace
+  // with them; everyone else gets the same 404 as an unknown handle, so an opted-out
+  // account can't be confirmed to exist by probing handles.
+  const profileVisibleTo = async (
+    c: Parameters<typeof currentUser>[0],
+    p: { id: string; discoverable?: boolean | number | null },
+  ): Promise<boolean> => {
+    if (p.discoverable !== false && p.discoverable !== 0) return true
+    const me = await currentUser(c)
+    if (!me) return false
+    if (me.id === p.id) return true
+    return (await meta.sharedOrgIds(me.id, p.id)).length > 0
+  }
+
   // A public profile by handle — the GitHub-style discovery surface. Email is
   // intentionally omitted (private); the handle, name, avatar, stats, GitHub link, and
-  // (for a signed-in viewer) whether they already follow are public. Readable by anyone.
+  // (for a signed-in viewer) whether they already follow are public. Readable by anyone
+  // while the account is discoverable; hidden otherwise (profileVisibleTo).
   app.get("/v1/users/:handle", async (c) => {
     const handle = normalizeUsername(c.req.param("handle"))
     const p = await meta.getUserByUsername(handle)
     if (!p) return fail(c, 404, "no profile with that username")
+    if (!(await profileVisibleTo(c, p))) return fail(c, 404, "no profile with that username")
     const me = await currentUser(c)
     const ghIds = await meta.githubIdsForUser(p.id)
     // A signed-in viewer also sees the owner's non-public work in workspaces they share.
@@ -170,6 +197,7 @@ export const sessionRoutes = (ctx: AppContext) => {
   app.get("/v1/users/:handle/artifacts", async (c) => {
     const p = await meta.getUserByUsername(normalizeUsername(c.req.param("handle")))
     if (!p) return fail(c, 404, "no profile with that username")
+    if (!(await profileVisibleTo(c, p))) return fail(c, 404, "no profile with that username")
     const me = await currentUser(c)
     const ghIds = await meta.githubIdsForUser(p.id)
     const sharedOrgs = me ? await meta.sharedOrgIds(me.id, p.id) : []
@@ -215,14 +243,21 @@ export const sessionRoutes = (ctx: AppContext) => {
     image: string | null
     profession?: string | null
   }) => ({ username: u.username, name: u.name, image: u.image, profession: u.profession ?? null })
+  // The follow graph is for participants: sign in to read it. (The counts on the
+  // profile stay public; who exactly follows whom does not — that's the part a
+  // crawler could mine.)
   app.get("/v1/users/:handle/followers", async (c) => {
+    if (!(await currentUser(c))) return fail(c, 401, "unauthenticated")
     const p = await meta.getUserByUsername(normalizeUsername(c.req.param("handle")))
     if (!p) return fail(c, 404, "no profile with that username")
+    if (!(await profileVisibleTo(c, p))) return fail(c, 404, "no profile with that username")
     return c.json({ users: (await meta.listFollowers(p.id, 100)).map(publicCard) })
   })
   app.get("/v1/users/:handle/following", async (c) => {
+    if (!(await currentUser(c))) return fail(c, 401, "unauthenticated")
     const p = await meta.getUserByUsername(normalizeUsername(c.req.param("handle")))
     if (!p) return fail(c, 404, "no profile with that username")
+    if (!(await profileVisibleTo(c, p))) return fail(c, 404, "no profile with that username")
     return c.json({ users: (await meta.listFollowing(p.id, 100)).map(publicCard) })
   })
 

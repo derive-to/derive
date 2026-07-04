@@ -141,6 +141,16 @@ export const peopleQuery = (query: string) =>
     placeholderData: keepPreviousData,
   })
 
+// The directory's "your workspaces" section — people you already work with,
+// listed ahead of the global browse (and regardless of their discoverability).
+export const workspacePeopleQuery = () =>
+  queryOptions({
+    // Not ["people", <query>] — a literal search for "workspace" must not
+    // collide with this cache entry.
+    queryKey: ["workspace-people"] as const,
+    queryFn: () => api.workspacePeople().then((r) => r.users),
+  })
+
 // The active-sync poll behind the rail's SyncChip. Fast cadence while a sync runs
 // (smooth progress bar), relaxed when idle; unlike the app default this DOES refetch
 // on focus, so returning to the tab surfaces a sync that started elsewhere.

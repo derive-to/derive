@@ -591,6 +591,9 @@ export const api = {
   // Unlike searchPeople, an empty query BROWSES the discoverable set.
   people: (q?: string): Promise<{ users: PublicProfile[] }> =>
     f(`/v1/people${q ? `?query=${encodeURIComponent(q)}` : ""}`, opts()).then(j),
+  // The people you share a workspace with — the directory's leading section.
+  workspacePeople: (): Promise<{ users: PublicProfile[] }> =>
+    f("/v1/people?scope=workspace", opts()).then(j),
   // Upload a profile picture (raster image; server validates + stores it and sets
   // user.image to the served URL). Returns the new image URL.
   uploadAvatar: (file: File): Promise<{ image: string }> => {
@@ -772,12 +775,17 @@ export const api = {
   // Follows (track GitHub authors + repo path prefixes) — the activity feed is
   // listArtifacts({ scope: "following" }). All scoped to the active workspace.
   listFollows: (): Promise<{ follows: Follow[] }> => f("/v1/follows", opts()).then(j),
+  // keepalive: a follow toggle is optimistic fire-and-forget, and the click often
+  // immediately precedes a navigation (a palette result row navigates on select) —
+  // without keepalive a full-document load aborts the POST mid-flight and the
+  // follow silently never lands. Tiny body, well under the keepalive 64KB cap.
   addFollow: (kind: FollowKind, target: string): Promise<{ follow: Follow }> =>
-    f("/v1/follows", opts({ kind, target })).then(j),
+    f("/v1/follows", { ...opts({ kind, target }), keepalive: true }).then(j),
   removeFollow: (kind: FollowKind, target: string): Promise<void> =>
     f("/v1/follows", {
       ...opts({ kind, target }),
       method: "DELETE",
+      keepalive: true,
     }).then(() => undefined),
 
   deleteArtifact: (id: string): Promise<void> =>
