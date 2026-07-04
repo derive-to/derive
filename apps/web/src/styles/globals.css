@@ -352,6 +352,26 @@
   }
 }
 
+/* Skeleton "breath" — the app's one loading-placeholder motion. A single quiet
+   tonal step between two neutral tokens (--muted ↔ --accent, ~one step apart in
+   both themes), NOT an opacity fade (the block stays a solid, present block — never
+   a ghost fading toward the canvas) and NOT a sweeping shimmer (too kinetic for the
+   register, and it multiplies into noise on a wall of cards). Theme-aware via the
+   tokens; at rest / under prefers-reduced-motion the animation is disabled and the
+   primitive's own bg-muted shows. See docs/design-system.md (Skeleton doctrine). */
+@keyframes derive-skeleton-breath {
+  0%,
+  100% {
+    background-color: var(--muted);
+  }
+  50% {
+    background-color: var(--accent);
+  }
+}
+@utility animate-skeleton {
+  animation: derive-skeleton-breath 1.6s ease-in-out infinite;
+}
+
 /* Honor prefers-reduced-motion (unlayered → wins over utilities without !important). */
 @media (prefers-reduced-motion: reduce) {
   *,

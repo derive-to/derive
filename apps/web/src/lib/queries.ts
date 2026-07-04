@@ -1,6 +1,44 @@
 import { infiniteQueryOptions, keepPreviousData, queryOptions } from "@tanstack/react-query"
 import { API_BASE, api } from "@/api"
 
+// The signed-in user (or null for an anon visitor). One key read by the thin
+// AuthProvider (useQuery) AND the route guards (ensureQueryData) — they dedupe
+// through this factory. staleTime Infinity: identity is session-stable, and
+// login/logout mutate it explicitly via setMe(setQueryData). The queryFn returns
+// null for anon (no error boundary) and only throws on a transient 5xx, so the
+// query-client's default transient-retry self-heals a blip.
+export const meQuery = () =>
+  queryOptions({
+    queryKey: ["me"] as const,
+    queryFn: () => api.session(),
+    staleTime: Number.POSITIVE_INFINITY,
+  })
+
+// Nav-rail data (counts + tag list, collections, workspaces). Warmed
+// fire-and-forget by the authed routes' loaders and read via useQuery by the rail
+// / library / command palette — one key each, so loader-warm and component-read
+// dedupe. Kept fresh by explicit invalidation on the relevant mutations (create
+// collection, publish, favorite, …) and on route change.
+export const summaryQuery = () =>
+  queryOptions({
+    queryKey: ["summary"] as const,
+    queryFn: () => api.browseSummary(),
+  })
+
+export const collectionsQuery = () =>
+  queryOptions({
+    queryKey: ["collections"] as const,
+    queryFn: () => api.listCollections().then((r) => r.collections),
+  })
+
+// Workspaces only change via create/switch/delete — all of which hard-reload — so
+// this is effectively fetch-once per session.
+export const workspacesQuery = () =>
+  queryOptions({
+    queryKey: ["workspaces"] as const,
+    queryFn: () => api.listWorkspaces(),
+  })
+
 const LIBRARY_PAGE = 30
 
 // The library list as an infinite query: each page is a keyset slice, and the

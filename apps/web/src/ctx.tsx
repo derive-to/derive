@@ -1,7 +1,9 @@
+import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { ThemeProvider as NextThemesProvider, useTheme as useNextTheme } from "next-themes"
 import { createContext, type ReactNode, useContext, useEffect, useState } from "react"
-import { api, type Me } from "./api"
+import type { Me } from "./api"
 import { type CursorPref, defaultPrefFor, normalizePref } from "./lib/cursors"
+import { meQuery } from "./lib/queries"
 import { STORAGE_KEYS } from "./lib/storage-keys"
 
 /* ---- auth ---- */
@@ -13,16 +15,25 @@ interface AuthState {
 const AuthCtx = createContext<AuthState>({ me: null, loading: true, setMe: () => {} })
 export const useAuth = () => useContext(AuthCtx)
 
+// A thin, NON-suspending context over the `me` query — so it never blocks the
+// tree (the anon viral path and /login must always render). `loading` is the
+// first-fetch pending flag; `me` resolves to null for an anon visitor (a real
+// value, not an error). setMe writes the cache, so the post-login path in
+// Login.tsx seeds it and the next route guard is a cache hit. The value object
+// and setMe are memoized by the React Compiler.
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [me, setMe] = useState<Me | null>(null)
-  const [loading, setLoading] = useState(true)
-  useEffect(() => {
-    api
-      .me()
-      .then((r) => setMe(r.user))
-      .catch(() => setMe(null))
-      .finally(() => setLoading(false))
-  }, [])
+  const qc = useQueryClient()
+  const { data: me = null, isPending: loading } = useQuery(meQuery())
+  const setMe = (m: Me | null) => {
+    // Cancel any in-flight meQuery fetch BEFORE writing. On /login the anon
+    // session() started at page load; it can resolve a beat later and clobber this
+    // authoritative post-login value back to null — after which the route guards
+    // see no session and bounce to /login. Login/logout are the source of truth for
+    // `me`, not a background refetch, so cancel then set (the idiomatic optimistic
+    // guard). A no-op when nothing is in flight.
+    qc.cancelQueries({ queryKey: meQuery().queryKey })
+    qc.setQueryData(meQuery().queryKey, m)
+  }
   return <AuthCtx.Provider value={{ me, loading, setMe }}>{children}</AuthCtx.Provider>
 }
 

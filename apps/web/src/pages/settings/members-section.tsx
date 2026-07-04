@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState } from "react"
 import { type ArtifactMember, api, type PublicProfile, type Role, type Workspace } from "@/api"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { SettingsGroup } from "@/components/shared/settings-group"
-import { Spinner } from "@/components/shared/spinner"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -18,6 +17,7 @@ import { toast } from "@/components/ui/sonner"
 import { getInitials } from "@/lib/initials"
 import { cn } from "@/lib/utils"
 import { roleLabel, roleValue, WS_ROLES } from "./roles"
+import { SettingsListSkeleton } from "./settings-list-skeleton"
 import { SettingsSection } from "./settings-section"
 
 // Who's in the workspace and what they can do. Admins invite by @handle (a
@@ -239,9 +239,7 @@ export function MembersSection({ meId }: { meId: string }) {
       )}
 
       {ws === null ? (
-        <div className="flex h-20 items-center justify-center">
-          <Spinner />
-        </div>
+        <SettingsListSkeleton />
       ) : (
         <SettingsGroup>
           {ws.members.map((m) => (

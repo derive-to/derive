@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router"
 import { artifactQuery, commentsQuery, prefetchArtifactRaw } from "../lib/queries"
 import { Artifact } from "../pages/artifact"
 import { candidateShortIds, parseRef } from "../pages/artifact/parse-ref"
+import { WorkbenchSkeleton } from "../pages/artifact/workbench-skeleton"
 
 export const Route = createFileRoute("/artifacts/$ref")({
   // `comment` deep-links to a comment thread (opens the panel + focuses its anchor).
@@ -22,5 +23,8 @@ export const Route = createFileRoute("/artifacts/$ref")({
       }
     }
   },
+  // Shape-matched workbench frame while the loader warms the artifact (replaces the
+  // generic route skeleton — this is a full-bleed workbench, not a page column).
+  pendingComponent: WorkbenchSkeleton,
   component: Artifact,
 })

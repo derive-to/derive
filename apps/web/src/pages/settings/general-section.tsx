@@ -1,3 +1,4 @@
+import { useQueryClient } from "@tanstack/react-query"
 import { useCallback, useEffect, useState } from "react"
 import { api, type Workspace } from "@/api"
 import { FormField } from "@/components/shared/form-field"
@@ -14,6 +15,7 @@ import {
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { toast } from "@/components/ui/sonner"
+import { workspacesQuery } from "@/lib/queries"
 import { SettingsSection } from "./settings-section"
 
 // Workspace identity + lifecycle: rename it, spin up a new one, or (admins only)
@@ -21,7 +23,8 @@ import { SettingsSection } from "./settings-section"
 // delete are admin-gated by the server; we mirror the gate in the UI and surface
 // the server's guard messages.
 export function GeneralSection() {
-  const { refreshWorkspaces, createWorkspace } = useShell()
+  const { createWorkspace } = useShell()
+  const qc = useQueryClient()
   const [ws, setWs] = useState<Workspace | null>(null)
   const [name, setName] = useState("")
   const [savingName, setSavingName] = useState(false)
@@ -64,8 +67,8 @@ export function GeneralSection() {
     try {
       const r = await api.renameWorkspace(n)
       setWs((w) => (w ? { ...w, name: r.name } : w))
-      // Refresh the shell so the switcher + rail pick up the new name immediately.
-      refreshWorkspaces()
+      // Invalidate so the switcher + rail pick up the new name immediately.
+      qc.invalidateQueries({ queryKey: workspacesQuery().queryKey })
       toast.success("Workspace renamed")
     } catch (e) {
       toast.error((e as Error).message)

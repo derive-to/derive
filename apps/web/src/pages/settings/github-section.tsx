@@ -35,6 +35,7 @@ import { Input } from "@/components/ui/input"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { toast } from "@/components/ui/sonner"
 import { ago } from "@/lib/time"
+import { SettingsListSkeleton } from "./settings-list-skeleton"
 import { SettingsSection } from "./settings-section"
 
 // "owner/name", tolerating a github.com URL or a trailing .git (mirrors the
@@ -145,9 +146,7 @@ export function GithubSection() {
       description="Mirror a GitHub repo's Markdown and HTML into a collection. Sync is one-way: GitHub stays the source of truth, so synced docs are read-only here but stay fully commentable."
     >
       {status === null ? (
-        <div className="flex h-20 items-center justify-center">
-          <Spinner />
-        </div>
+        <SettingsListSkeleton />
       ) : appConfigured ? (
         <ConnectViaApp
           status={status}
@@ -516,9 +515,7 @@ function RepoPicker({
 
         <div className="max-h-[34vh] overflow-y-auto">
           {repos === null ? (
-            <div className="flex h-24 items-center justify-center">
-              <Spinner />
-            </div>
+            <SettingsListSkeleton />
           ) : repos.length === 0 ? (
             <EmptyState>This installation has no repositories Derive can read.</EmptyState>
           ) : shown && shown.length === 0 ? (

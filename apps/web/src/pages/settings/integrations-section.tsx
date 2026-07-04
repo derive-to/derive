@@ -4,11 +4,11 @@ import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { FormField } from "@/components/shared/form-field"
 import { SettingRow } from "@/components/shared/setting-row"
 import { SettingsGroup } from "@/components/shared/settings-group"
-import { Spinner } from "@/components/shared/spinner"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { toast } from "@/components/ui/sonner"
 import { Switch } from "@/components/ui/switch"
+import { SettingsListSkeleton } from "./settings-list-skeleton"
 import { SettingsSection } from "./settings-section"
 
 // The five workspace activity channels (email + GitHub mirroring + Slack posting)
@@ -137,9 +137,7 @@ export function IntegrationsSection() {
           </SettingRow>
         </SettingsGroup>
       ) : (
-        <div className="flex h-20 items-center justify-center">
-          <Spinner />
-        </div>
+        <SettingsListSkeleton />
       )}
 
       <SettingsGroup title="Slack">

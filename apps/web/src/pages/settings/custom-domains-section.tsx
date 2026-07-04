@@ -3,11 +3,11 @@ import { api, type WorkspaceDomain } from "@/api"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { EmptyState } from "@/components/shared/empty-state"
 import { SettingsGroup } from "@/components/shared/settings-group"
-import { Spinner } from "@/components/shared/spinner"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { toast } from "@/components/ui/sonner"
+import { SettingsListSkeleton } from "./settings-list-skeleton"
 import { SettingsSection } from "./settings-section"
 
 type State = { enabled: boolean; cname_target: string | null; domains: WorkspaceDomain[] }
@@ -32,9 +32,7 @@ export function CustomDomainsSection() {
   if (state === null)
     return (
       <SettingsSection title="Domains" description={description}>
-        <div className="flex h-20 items-center justify-center">
-          <Spinner />
-        </div>
+        <SettingsListSkeleton />
       </SettingsSection>
     )
 
