@@ -555,7 +555,7 @@ export const artifactRoutes = (ctx: AppContext) => {
     if (!artifact) return fail(c, 404, "not found")
     if (!(await authorize(c, "manage", artifact))) return fail(c, 403, "forbidden")
     await meta.deleteArtifact(artifact.id, artifact.org_id)
-    return new Response(null, { status: 204 })
+    return c.body(null, 204)
   })
 
   // Unlock a `password` artifact: verify the password and drop a cookie whose

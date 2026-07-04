@@ -5,7 +5,13 @@ import type {
   ExecutionContext,
 } from "@cloudflare/workers-types"
 import type { Context } from "hono"
-import type { Backplane, DeriveEvent, PresenceStore, Viewer } from "./bus"
+import {
+  type Backplane,
+  type DeriveEvent,
+  PRESENCE_TTL_MS,
+  type PresenceStore,
+  type Viewer,
+} from "./bus"
 
 /**
  * Per-request execution context, so the DO backplane's fire-and-forget publish can
@@ -16,7 +22,6 @@ import type { Backplane, DeriveEvent, PresenceStore, Viewer } from "./bus"
 export const edgeCtx = new AsyncLocalStorage<ExecutionContext>()
 
 const PING_MS = 20_000
-const PRESENCE_TTL_MS = 45_000
 const enc = new TextEncoder()
 const frame = (event: string, data: string) => enc.encode(`event: ${event}\ndata: ${data}\n\n`)
 

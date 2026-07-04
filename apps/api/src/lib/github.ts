@@ -168,20 +168,6 @@ export async function lastCommit(
   }
 }
 
-/**
- * The committer date of the most recent commit that touched `path` on `ref` — a thin
- * wrapper over {@link lastCommit} kept for callers that only need the date. Best-effort:
- * null on any error or empty history.
- */
-export async function lastCommitDate(
-  repo: RepoRef,
-  path: string,
-  ref: string,
-  token: string | null,
-): Promise<string | null> {
-  return (await lastCommit(repo, path, ref, token)).date
-}
-
 /** Raw bytes of one blob by its git sha. */
 export async function fetchBlob(
   repo: RepoRef,
