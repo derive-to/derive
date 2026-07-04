@@ -22,14 +22,12 @@ export const notificationRoutes = (ctx: AppContext) => {
   app.post("/v1/notifications/read", async (c) => {
     const me = await requireUser(c)
     if (me instanceof Response) return me
-    const body = await readJson(c, z.object({}).catchall(z.unknown()))
+    const body = await readJson(
+      c,
+      z.object({ all: z.boolean().optional(), ids: z.array(z.string()).optional() }),
+    )
     if (body instanceof Response) return body
-    const ids =
-      body.all === true
-        ? "all"
-        : Array.isArray(body.ids)
-          ? body.ids.filter((x): x is string => typeof x === "string")
-          : []
+    const ids = body.all === true ? "all" : (body.ids ?? [])
     await meta.markNotificationsRead(me.id, ids)
     const unread = await meta.unreadNotificationCount(me.id)
     return c.json({ unread })

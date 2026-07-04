@@ -48,11 +48,9 @@ export const analyticsRoutes = (ctx: AppContext) => {
       viewer = vid
       kind = "anon"
     }
-    const body = await readJson(c, z.object({}).catchall(z.unknown()))
+    const body = await readJson(c, z.object({ version: z.number().int().optional() }))
     if (body instanceof Response) return body
-    const version = Number.isInteger(body.version)
-      ? (body.version as number)
-      : artifact.current_version
+    const version = body.version ?? artifact.current_version
     // De-dup: skip if this viewer already saw this version recently (a refresh).
     const since = new Date(Date.now() - VIEW_DEDUP_MS).toISOString()
     if (await meta.viewedSince(artifact.id, viewer, version, since)) return c.body(null, 204)

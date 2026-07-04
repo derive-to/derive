@@ -227,9 +227,9 @@ export const workspaceRoutes = (ctx: AppContext) => {
   app.post("/v1/workspace/switch", async (c) => {
     const me = await requireUser(c)
     if (me instanceof Response) return me
-    const b = await readJson(c, z.object({}).catchall(z.unknown()))
+    const b = await readJson(c, z.object({ id: z.string().optional() }))
     if (b instanceof Response) return b
-    const id = typeof b.id === "string" ? b.id : ""
+    const id = b.id ?? ""
     if (!id || !(await meta.getMembership(id, me.id)))
       return fail(c, 403, "not a member of that workspace")
     setWsCookie(c, id)
