@@ -1,7 +1,7 @@
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query"
 import { getRouteApi, Link, useNavigate } from "@tanstack/react-router"
 import { useEffect, useRef, useState } from "react"
-import { ApiError, api, type PublicProfile } from "@/api"
+import { ApiError } from "@/api"
 import { FollowButton } from "@/components/follow-button"
 import { Icon } from "@/components/icons"
 import { EmptyState } from "@/components/shared/empty-state"
@@ -22,7 +22,7 @@ import { UsernameForm } from "@/components/username-form"
 import { useAuth } from "@/ctx"
 import { colorForName } from "@/lib/avatar-tints"
 import { getInitials } from "@/lib/initials"
-import { profileArtifactsQuery, profileQuery } from "@/lib/queries"
+import { profileArtifactsQuery, profilePeopleQuery, profileQuery } from "@/lib/queries"
 import { useDelayedPending } from "@/lib/use-delayed-pending"
 import { CardGrid } from "./library/card-grid"
 import { ProfilePending, ProfileWorkSkeleton } from "./profile-skeleton"
@@ -172,13 +172,13 @@ export function Profile() {
                 label="followers"
                 value={stats.followers}
                 handle={data.username}
-                load={() => api.profileFollowers(data.username).then((r) => r.users)}
+                kind="followers"
               />
               <PeopleStat
                 label="following"
                 value={stats.following}
                 handle={data.username}
-                load={() => api.profileFollowing(data.username).then((r) => r.users)}
+                kind="following"
               />
             </div>
 
@@ -232,17 +232,16 @@ function PeopleStat({
   label,
   value,
   handle,
-  load,
+  kind,
 }: {
   label: string
   value: number
   handle: string
-  load: () => Promise<PublicProfile[]>
+  kind: "followers" | "following"
 }) {
   const [open, setOpen] = useState(false)
   const { data: people, isPending } = useQuery({
-    queryKey: ["profile-people", handle, label],
-    queryFn: load,
+    ...profilePeopleQuery(handle, kind),
     enabled: open,
   })
   return (

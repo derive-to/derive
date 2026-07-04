@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from "react"
-import { type ArtifactMember, api, type PublicProfile, type Role, type Workspace } from "@/api"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
+import { useEffect, useRef, useState } from "react"
+import { type ArtifactMember, api, type PublicProfile, type Role } from "@/api"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { SettingsGroup } from "@/components/shared/settings-group"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
@@ -15,6 +16,7 @@ import {
 } from "@/components/ui/select"
 import { toast } from "@/components/ui/sonner"
 import { getInitials } from "@/lib/initials"
+import { workspaceQuery } from "@/lib/queries"
 import { cn } from "@/lib/utils"
 import { roleLabel, roleValue, WS_ROLES } from "./roles"
 import { SettingsListSkeleton } from "./settings-list-skeleton"
@@ -24,7 +26,8 @@ import { SettingsSection } from "./settings-section"
 // discoverable-people typeahead, mirroring ShareDialog) or full email, change
 // roles inline, and remove people; everyone else sees a read-only roster.
 export function MembersSection({ meId }: { meId: string }) {
-  const [ws, setWs] = useState<Workspace | null>(null)
+  const qc = useQueryClient()
+  const { data: ws } = useQuery(workspaceQuery())
   const [email, setEmail] = useState("")
   const [addRole, setAddRole] = useState<Role>("commenter")
   const [adding, setAdding] = useState(false)
@@ -35,18 +38,6 @@ export function MembersSection({ meId }: { meId: string }) {
   const [active, setActive] = useState(-1)
   const picked = useRef("")
   const [removing, setRemoving] = useState<ArtifactMember | null>(null)
-
-  const load = useCallback(
-    () =>
-      api
-        .getWorkspace()
-        .then(setWs)
-        .catch(() => setWs(null)),
-    [],
-  )
-  useEffect(() => {
-    load()
-  }, [load])
 
   const isAdmin = ws?.role === "owner"
 
@@ -118,7 +109,7 @@ export function MembersSection({ meId }: { meId: string }) {
       setEmail("")
       setSuggest([])
       toast.success("Member added")
-      load()
+      qc.invalidateQueries({ queryKey: workspaceQuery().queryKey })
     } catch (e) {
       toast.error((e as Error).message)
     } finally {
@@ -129,7 +120,7 @@ export function MembersSection({ meId }: { meId: string }) {
   const changeRole = async (userId: string, role: Role) => {
     try {
       await api.setWorkspaceMemberRole(userId, role)
-      setWs((w) =>
+      qc.setQueryData(workspaceQuery().queryKey, (w) =>
         w
           ? { ...w, members: w.members.map((m) => (m.user_id === userId ? { ...m, role } : m)) }
           : w,
@@ -137,14 +128,16 @@ export function MembersSection({ meId }: { meId: string }) {
       toast.success("Role updated")
     } catch (e) {
       toast.error((e as Error).message)
-      load()
+      qc.invalidateQueries({ queryKey: workspaceQuery().queryKey })
     }
   }
 
   const removeMember = async (m: ArtifactMember) => {
     try {
       await api.removeWorkspaceMember(m.user_id)
-      setWs((w) => (w ? { ...w, members: w.members.filter((x) => x.user_id !== m.user_id) } : w))
+      qc.setQueryData(workspaceQuery().queryKey, (w) =>
+        w ? { ...w, members: w.members.filter((x) => x.user_id !== m.user_id) } : w,
+      )
       toast.success("Member removed")
     } catch (e) {
       toast.error((e as Error).message)
@@ -238,7 +231,7 @@ export function MembersSection({ meId }: { meId: string }) {
         </div>
       )}
 
-      {ws === null ? (
+      {!ws ? (
         <SettingsListSkeleton />
       ) : (
         <SettingsGroup>

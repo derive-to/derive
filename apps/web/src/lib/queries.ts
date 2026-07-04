@@ -120,6 +120,38 @@ export const profileArtifactsQuery = (handle: string) =>
     getNextPageParam: (last) => last.next_cursor ?? undefined,
   })
 
+// The follower / following list behind a profile's stat, fetched lazily when its
+// dialog opens. Keyed by (handle, kind) so followers and following cache apart.
+export const profilePeopleQuery = (handle: string, kind: "followers" | "following") =>
+  queryOptions({
+    queryKey: ["profile-people", handle, kind] as const,
+    queryFn: () =>
+      (kind === "followers" ? api.profileFollowers(handle) : api.profileFollowing(handle)).then(
+        (r) => r.users,
+      ),
+  })
+
+// The People directory search. Empty query browses everyone discoverable; a term
+// searches (debounced by the caller). keepPreviousData holds results across
+// keystrokes so the grid never flashes its skeleton mid-search.
+export const peopleQuery = (query: string) =>
+  queryOptions({
+    queryKey: ["people", query] as const,
+    queryFn: () => api.people(query || undefined).then((r) => r.users),
+    placeholderData: keepPreviousData,
+  })
+
+// The active-sync poll behind the rail's SyncChip. Fast cadence while a sync runs
+// (smooth progress bar), relaxed when idle; unlike the app default this DOES refetch
+// on focus, so returning to the tab surfaces a sync that started elsewhere.
+export const activeSyncsQuery = () =>
+  queryOptions({
+    queryKey: ["sync-active"] as const,
+    queryFn: () => api.activeSyncs(),
+    refetchInterval: (q) => (q.state.data?.active.length ? 1500 : 8000),
+    refetchOnWindowFocus: true,
+  })
+
 // Typed query options shared by route loaders (ensureQueryData, for intent
 // preloading) and components (useQuery). One source of truth for keys +
 // fetchers, so a preloaded route and the page that renders it resolve to the
@@ -152,3 +184,72 @@ export function prefetchArtifactRaw(shortId: string, version: number) {
   link.dataset.raw = key
   document.head.appendChild(link)
 }
+
+// ---- Settings ---------------------------------------------------------------
+
+// The active workspace: its name, the caller's role, and the member roster. One
+// SHARED key read by BOTH the General section (name + lifecycle) and the Members
+// section (roster + isAdmin), so the two panes dedupe into a single cache entry.
+// Kept fresh by explicit setQueryData / invalidation on rename + membership edits.
+export const workspaceQuery = () =>
+  queryOptions({
+    queryKey: ["workspace"] as const,
+    queryFn: () => api.getWorkspace(),
+  })
+
+// Per-workspace integration switches (email + GitHub mirroring + Slack posting)
+// behind the Integrations section. The toggles flip this cache entry optimistically
+// and roll it back on error.
+export const workspaceSettingsQuery = () =>
+  queryOptions({
+    queryKey: ["workspace-settings"] as const,
+    queryFn: () => api.getWorkspaceSettings(),
+  })
+
+// Slack connection status for the Integrations section (availability, connected
+// team, default channel). Invalidated on disconnect.
+export const slackQuery = () =>
+  queryOptions({
+    queryKey: ["slack"] as const,
+    queryFn: () => api.getSlack(),
+  })
+
+// The workspace's outbound webhooks. Invalidated on add / remove.
+export const webhooksQuery = () =>
+  queryOptions({
+    queryKey: ["webhooks"] as const,
+    queryFn: () => api.listWebhooks().then((r) => r.webhooks),
+  })
+
+// One webhook's recent delivery log, fetched lazily when its row's log opens
+// (the caller gates it with `enabled`). Keyed by webhook id so each row caches
+// apart; refreshed after a test send.
+export const webhookDeliveriesQuery = (id: string) =>
+  queryOptions({
+    queryKey: ["webhook-deliveries", id] as const,
+    queryFn: () => api.webhookDeliveries(id).then((r) => r.deliveries),
+  })
+
+// This workspace's custom domains (Cloudflare for SaaS): whether the feature is on,
+// the CNAME target, and the domain list. Invalidated on add / refresh / remove.
+export const customDomainsQuery = () =>
+  queryOptions({
+    queryKey: ["custom-domains"] as const,
+    queryFn: () => api.listWorkspaceDomains(),
+  })
+
+// Registered agents (scoped tokens that can @mention-reply + propose). Invalidated
+// on create / delete.
+export const agentsQuery = () =>
+  queryOptions({
+    queryKey: ["agents"] as const,
+    queryFn: () => api.listAgents().then((r) => r.agents),
+  })
+
+// Open abuse reports for the active workspace — drives the owner-only Moderation
+// nav item's visibility + the Reports section. Invalidated after a takedown / dismiss.
+export const reportsQuery = () =>
+  queryOptions({
+    queryKey: ["reports"] as const,
+    queryFn: () => api.listReports().then((r) => r.reports),
+  })

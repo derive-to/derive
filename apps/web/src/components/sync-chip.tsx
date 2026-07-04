@@ -1,8 +1,9 @@
 import { useQuery } from "@tanstack/react-query"
 import { Link } from "@tanstack/react-router"
-import { api, parseProgress } from "@/api"
+import { parseProgress } from "@/api"
 import { Spinner } from "@/components/shared/spinner"
 import { SidebarMenuButton, SidebarMenuItem, useIconRail } from "@/components/ui/sidebar"
+import { activeSyncsQuery } from "@/lib/queries"
 import { cn } from "@/lib/utils"
 
 /**
@@ -16,14 +17,7 @@ import { cn } from "@/lib/utils"
  */
 export function SyncChip() {
   const iconMode = useIconRail()
-  const { data } = useQuery({
-    queryKey: ["sync-active"],
-    queryFn: () => api.activeSyncs(),
-    // Tight cadence while a sync is in flight (smooth bar); relaxed when idle so the
-    // shell isn't polling hard forever — just often enough to notice a new sync start.
-    refetchInterval: (q) => (q.state.data?.active.length ? 1500 : 8000),
-    refetchOnWindowFocus: true,
-  })
+  const { data } = useQuery(activeSyncsQuery())
 
   const active = data?.active ?? []
   if (active.length === 0) return null

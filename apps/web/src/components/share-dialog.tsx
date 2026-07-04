@@ -35,6 +35,7 @@ import {
 import { toast } from "@/components/ui/sonner"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { getInitials } from "@/lib/initials"
+import { artifactQuery } from "@/lib/queries"
 import { cn } from "@/lib/utils"
 
 const BLURB: Record<Role, string> = {
@@ -134,7 +135,7 @@ export function ShareButton({
       await api.setVisibility(shortId, vis, genRole, vis === "password" && pw ? pw : undefined)
       setPw("")
       // Refresh the artifact (drives the toolbar/visibility) and the library.
-      qc.invalidateQueries({ queryKey: ["artifact", shortId] })
+      qc.invalidateQueries({ queryKey: artifactQuery(shortId).queryKey })
       qc.invalidateQueries({ queryKey: ["artifacts"] })
     } catch (x) {
       setErr(x instanceof Error ? x.message : "Couldn't update access")
@@ -157,7 +158,7 @@ export function ShareButton({
   // query holds `my_role` (drives the toolbar), and the library reflects access.
   const synced = async () => {
     await load()
-    qc.invalidateQueries({ queryKey: ["artifact", shortId] })
+    qc.invalidateQueries({ queryKey: artifactQuery(shortId).queryKey })
     qc.invalidateQueries({ queryKey: ["artifacts"] })
   }
 

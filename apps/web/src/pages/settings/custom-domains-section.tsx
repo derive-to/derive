@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from "react"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
+import { useState } from "react"
 import { api, type WorkspaceDomain } from "@/api"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { EmptyState } from "@/components/shared/empty-state"
@@ -7,36 +8,26 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { toast } from "@/components/ui/sonner"
+import { customDomainsQuery } from "@/lib/queries"
 import { SettingsListSkeleton } from "./settings-list-skeleton"
 import { SettingsSection } from "./settings-section"
 
-type State = { enabled: boolean; cname_target: string | null; domains: WorkspaceDomain[] }
-
 export function CustomDomainsSection() {
-  const [state, setState] = useState<State | null>(null)
-  const load = useCallback(
-    () =>
-      api
-        .listWorkspaceDomains()
-        .then(setState)
-        .catch(() => setState({ enabled: false, cname_target: null, domains: [] })),
-    [],
-  )
-  useEffect(() => {
-    load()
-  }, [load])
+  const qc = useQueryClient()
+  const { data: state, isPending } = useQuery(customDomainsQuery())
+  const reload = () => qc.invalidateQueries({ queryKey: customDomainsQuery().queryKey })
 
   const description =
     "Put your own domain on this workspace. Every artifact is then served at your-domain/<id>. Cloudflare for SaaS issues and renews the TLS cert."
 
-  if (state === null)
+  if (isPending)
     return (
       <SettingsSection title="Domains" description={description}>
         <SettingsListSkeleton />
       </SettingsSection>
     )
 
-  if (!state.enabled)
+  if (!state?.enabled)
     return (
       <SettingsSection title="Domains" description={description}>
         <EmptyState>Custom domains aren't enabled on this server.</EmptyState>
@@ -45,14 +36,14 @@ export function CustomDomainsSection() {
 
   return (
     <SettingsSection title="Domains" description={description}>
-      <NewDomain cnameTarget={state.cname_target} onCreated={load} />
+      <NewDomain cnameTarget={state.cname_target} onCreated={reload} />
 
       {state.domains.length === 0 ? (
         <EmptyState>No custom domains yet. Add one above.</EmptyState>
       ) : (
         <SettingsGroup>
           {state.domains.map((d) => (
-            <DomainRow key={d.host} domain={d} onChanged={load} />
+            <DomainRow key={d.host} domain={d} onChanged={reload} />
           ))}
         </SettingsGroup>
       )}

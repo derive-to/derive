@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useState } from "react"
-import { api, type Delivery, type Webhook } from "@/api"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
+import { useState } from "react"
+import { api, type Webhook } from "@/api"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { EmptyState } from "@/components/shared/empty-state"
 import { SettingsGroup } from "@/components/shared/settings-group"
@@ -16,23 +17,15 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { toast } from "@/components/ui/sonner"
+import { webhookDeliveriesQuery, webhooksQuery } from "@/lib/queries"
 import { ALL_EVENTS } from "./roles"
 import { SettingsListSkeleton } from "./settings-list-skeleton"
 import { SettingsSection } from "./settings-section"
 
 export function WebhooksSection() {
-  const [hooks, setHooks] = useState<Webhook[] | null>(null)
-  const load = useCallback(
-    () =>
-      api
-        .listWebhooks()
-        .then((r) => setHooks(r.webhooks))
-        .catch(() => setHooks([])),
-    [],
-  )
-  useEffect(() => {
-    load()
-  }, [load])
+  const qc = useQueryClient()
+  const { data: hooks, isPending } = useQuery(webhooksQuery())
+  const reload = () => qc.invalidateQueries({ queryKey: webhooksQuery().queryKey })
 
   return (
     <SettingsSection
@@ -57,13 +50,13 @@ export function WebhooksSection() {
       <NewWebhook
         onCreated={(msg) => {
           toast.success(msg)
-          load()
+          reload()
         }}
       />
 
-      {hooks === null ? (
+      {isPending ? (
         <SettingsListSkeleton />
-      ) : hooks.length === 0 ? (
+      ) : !hooks || hooks.length === 0 ? (
         <EmptyState>No webhooks yet. Add one above.</EmptyState>
       ) : (
         <SettingsGroup>
@@ -73,7 +66,7 @@ export function WebhooksSection() {
               hook={w}
               onChanged={(m) => {
                 toast.success(m)
-                load()
+                reload()
               }}
               onError={(m) => toast.error(m)}
             />
@@ -178,23 +171,23 @@ function WebhookRow({
   onChanged: (m: string) => void
   onError: (m: string) => void
 }) {
+  const qc = useQueryClient()
   const [open, setOpen] = useState(false)
-  const [deliveries, setDeliveries] = useState<Delivery[] | null>(null)
-  const loadLog = () =>
-    api
-      .webhookDeliveries(hook.id)
-      .then((r) => setDeliveries(r.deliveries))
-      .catch(() => setDeliveries([]))
-  const showLog = () => {
-    const next = !open
-    setOpen(next)
-    if (next) loadLog()
-  }
+  // Lazily load this webhook's delivery log only while the row's log is open.
+  const { data: deliveries, isPending } = useQuery({
+    ...webhookDeliveriesQuery(hook.id),
+    enabled: open,
+  })
+  const showLog = () => setOpen((o) => !o)
   const test = async () => {
     try {
       await api.testWebhook(hook.id)
       onChanged("Test event queued")
-      if (open) setTimeout(loadLog, 1500)
+      if (open)
+        setTimeout(
+          () => qc.invalidateQueries({ queryKey: webhookDeliveriesQuery(hook.id).queryKey }),
+          1500,
+        )
     } catch (e) {
       onError((e as Error).message)
     }
@@ -243,11 +236,11 @@ function WebhookRow({
       />
       {open && (
         <div className="rounded-lg bg-secondary px-3 py-2">
-          {deliveries === null ? (
+          {isPending ? (
             <div className="flex justify-center py-2">
               <Spinner />
             </div>
-          ) : deliveries.length === 0 ? (
+          ) : !deliveries || deliveries.length === 0 ? (
             <div className="text-sm text-muted-foreground">No deliveries yet. Hit Test.</div>
           ) : (
             deliveries.map((d) => (

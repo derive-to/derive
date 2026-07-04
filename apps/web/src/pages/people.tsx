@@ -1,7 +1,7 @@
-import { keepPreviousData, useQuery } from "@tanstack/react-query"
+import { useQuery } from "@tanstack/react-query"
 import { Link } from "@tanstack/react-router"
 import { useEffect, useState } from "react"
-import { api, type PublicProfile } from "@/api"
+import type { PublicProfile } from "@/api"
 import { FollowButton } from "@/components/follow-button"
 import { Icon } from "@/components/icons"
 import { EmptyState } from "@/components/shared/empty-state"
@@ -14,6 +14,7 @@ import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { colorForName } from "@/lib/avatar-tints"
 import { getInitials } from "@/lib/initials"
+import { peopleQuery } from "@/lib/queries"
 import { useDelayedPending } from "@/lib/use-delayed-pending"
 
 // The people results grid geometry, defined once so the live grid and its skeleton
@@ -32,11 +33,7 @@ export function People() {
     return () => clearTimeout(t)
   }, [q])
 
-  const { data, isPending, isError, isFetching, refetch } = useQuery({
-    queryKey: ["people", debounced],
-    queryFn: () => api.people(debounced || undefined).then((r) => r.users),
-    placeholderData: keepPreviousData,
-  })
+  const { data, isPending, isError, isFetching, refetch } = useQuery(peopleQuery(debounced))
   // keepPreviousData holds the current results across searches, so isPending is only
   // the true first load; gate the skeleton so a cache-warm open flashes nothing.
   const showSkeleton = useDelayedPending(isPending)

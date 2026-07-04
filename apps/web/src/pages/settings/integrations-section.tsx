@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useState } from "react"
-import { api, type OrgSettings, type SlackStatus } from "@/api"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
+import { useEffect, useState } from "react"
+import { api, type OrgSettings } from "@/api"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { FormField } from "@/components/shared/form-field"
 import { SettingRow } from "@/components/shared/setting-row"
@@ -8,6 +9,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { toast } from "@/components/ui/sonner"
 import { Switch } from "@/components/ui/switch"
+import { slackQuery, workspaceSettingsQuery } from "@/lib/queries"
 import { SettingsListSkeleton } from "./settings-list-skeleton"
 import { SettingsSection } from "./settings-section"
 
@@ -15,38 +17,29 @@ import { SettingsSection } from "./settings-section"
 // as instant toggles, plus the Slack connection. Toggles apply optimistically
 // with no save (the toggle contract); the Slack channel id is an explicit save.
 export function IntegrationsSection() {
-  const [settings, setSettings] = useState<OrgSettings | null>(null)
-  const [slack, setSlack] = useState<SlackStatus | null>(null)
+  const qc = useQueryClient()
+  const { data: settings } = useQuery(workspaceSettingsQuery())
+  const { data: slack } = useQuery(slackQuery())
   const [channel, setChannel] = useState("")
   const [disconnecting, setDisconnecting] = useState(false)
 
-  const load = useCallback(() => {
-    api
-      .getWorkspaceSettings()
-      .then(setSettings)
-      .catch(() => setSettings(null))
-    api
-      .getSlack()
-      .then((s) => {
-        setSlack(s)
-        setChannel(s.default_channel ?? "")
-      })
-      .catch(() => setSlack(null))
-  }, [])
+  // Seed the editable channel id from the Slack status once it loads.
   useEffect(() => {
-    load()
-  }, [load])
+    if (slack) setChannel(slack.default_channel ?? "")
+  }, [slack])
 
-  // Optimistically flip a toggle, persisting the single key; revert on error.
+  // Optimistically flip a toggle in the cache, persisting the single key; revert on
+  // error. Reads/writes the shared settings cache entry so the switch stays live.
   const flip = (key: keyof OrgSettings) => (next: boolean) => {
-    if (!settings) return
-    const prev = settings
-    setSettings({ ...settings, [key]: next })
+    const qk = workspaceSettingsQuery().queryKey
+    const prev = qc.getQueryData(qk)
+    if (!prev) return
+    qc.setQueryData(qk, { ...prev, [key]: next })
     api
       .updateWorkspaceSettings({ [key]: next })
-      .then(setSettings)
+      .then((s) => qc.setQueryData(qk, s))
       .catch((e) => {
-        setSettings(prev)
+        qc.setQueryData(qk, prev)
         toast.error(e?.message ?? "Could not save")
       })
   }
@@ -62,7 +55,8 @@ export function IntegrationsSection() {
       .disconnectSlack()
       .then(() => {
         toast.success("Slack disconnected")
-        load()
+        qc.invalidateQueries({ queryKey: slackQuery().queryKey })
+        qc.invalidateQueries({ queryKey: workspaceSettingsQuery().queryKey })
       })
       .catch((e) => {
         toast.error(e?.message ?? "Could not disconnect")
