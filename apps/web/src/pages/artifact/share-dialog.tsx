@@ -85,7 +85,7 @@ const ACCESS: { value: string; label: string; blurb: string; icon: IconName }[] 
 // The state glyph the Share trigger carries so exposure is legible without
 // opening the dialog: a globe when the URL alone reads (link/public), a lock
 // for invite-only, the plain share glyph for workspace/password.
-export const visibilityIcon = (visibility: string): IconName =>
+const visibilityIcon = (visibility: string): IconName =>
   visibility === "public" || visibility === "link"
     ? "globe"
     : visibility === "private"
