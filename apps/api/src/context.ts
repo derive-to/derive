@@ -7,6 +7,7 @@ import {
   type BundleManifest,
   type CollectionRecord,
   can,
+  capRole,
   DEFAULT_VERSION_WINDOW_MS,
   isBundleContentType,
   type MetaStore,
@@ -496,16 +497,29 @@ export function buildContext(deps: AppDeps) {
     if (isToken(c)) return { kind: "token" }
     const ag = await agentFor(c)
     if (ag) {
-      const am = await meta.getArtifactMember(a.id, ag.id)
-      // An agent (registered token or OAuth-consent grant) carries its role ONLY
-      // within its OWN workspace, never onto an artifact owned by another one — it
-      // can resolve any artifact by its global short_id, so binding here is the
-      // gate. Mirrors the human branch below: orgRole is scoped to the ARTIFACT's
-      // workspace; on a foreign artifact it drops to the visibility floor while its
-      // own per-artifact shares (artifactRole) still apply. Without this an agent's
-      // home-workspace editor role would let it publish/share/mutate anything.
+      // An agent acts AS ITS REGISTRANT, capped at its registered role and bound
+      // to its home workspace. Its per-artifact standing DERIVES from the human's
+      // member rows — agents hold no rows of their own (an agent in a share
+      // roster is a category error: you share with people; agents borrow). The
+      // cap means no agent reaches `manage` (registration tops out at editor),
+      // and the workspace binding keeps tokens scoped per ADR-0001. Rows written
+      // to an agent id before this model (or by hand) still count, uncapped —
+      // they were explicit grants.
+      const own = await meta.getArtifactMember(a.id, ag.id)
+      let derived: Role | null = null
+      const ownerId = onBehalfCache.get(c) ?? null
+      if (ownerId && ag.org_id === a.org_id) {
+        const m = await meta.getArtifactMember(a.id, ownerId)
+        const cRoles = await meta.collectionRolesForArtifact(a.id, ownerId)
+        derived = capRole(maxRole(m?.role ?? null, ...cRoles), ag.role)
+      }
       const orgRole = ag.org_id === a.org_id ? ag.role : null
-      return { kind: "user", userId: ag.id, artifactRole: am?.role ?? null, orgRole }
+      return {
+        kind: "user",
+        userId: ag.id,
+        artifactRole: maxRole(own?.role ?? null, derived),
+        orgRole,
+      }
     }
     const me = await currentUser(c)
     if (!me) return { kind: "anon", unlocked }

@@ -16,13 +16,15 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it reache
   artifacts and existing `derive.json` files (which carry an explicit value) are
   unaffected; GitHub-mirror syncs stay workspace-visible. The CLI prints the
   published visibility and how to widen it.
-- **Agents publish on behalf of the person who registered them.** The `agent`
-  table gains `created_by`; a registered agent's publishes are attributed
-  (`author_id`) and owned (the owner-member row) by that user, with the agent
-  itself added as editor so it can keep operating on the artifact — matching how
-  OAuth agents already carried their granting user. Applies to the HTTP route and
-  the remote-MCP publish alike. Agents created before the
-  column publish as themselves; recreate the agent to link it.
+- **Agents act as their registrant.** The `agent` table gains `created_by`; an
+  agent's publishes are attributed (`author_id`) and owned by that user, and the
+  agent's per-artifact standing is *derived* from the human's member rows —
+  capped at the agent's registered role and bound to its home workspace. Agents
+  hold no member rows, so share rosters stay a human contract, and no agent can
+  `manage` (delete/transfer) anything. Applies to the HTTP routes and the
+  remote-MCP tools alike (MCP reads and listings now also scope `private`
+  artifacts to the agent's human). Agents created before the column act as
+  themselves; recreate the agent to link it.
 - **`discoverable` is real profile privacy now.** Turning it off hides your
   profile page, work list, and follow lists from everyone except people who share
   a workspace with you (they 404, same as an unknown handle). Follower/following

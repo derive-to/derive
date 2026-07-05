@@ -4,6 +4,7 @@ import {
   type BundleManifest,
   bundleDoc,
   can,
+  capRole,
   diffLines,
   effectiveRole,
   formatDiff,
@@ -72,10 +73,11 @@ export const artifactRoutes = (ctx: AppContext) => {
     // finds work. Anonymous stays 401: nothing in the product lists tokenless.
     const agent = me ? null : await agentFor(c)
     if (!me && !agent && !isToken(c)) return fail(c, 401, "unauthenticated")
-    // The acting principal. Listing must mirror can(read), and actorFor resolves
-    // an agent's per-artifact shares by the AGENT's id (its registrant's rows
-    // don't transfer) — so member-row checks below key on this id, never onBehalf.
-    const actorId = me?.id ?? agent?.id ?? null
+    // Whose member rows count. Listing must mirror can(read): an agent derives
+    // its standing from its registrant's rows (capped at its registered role —
+    // see actorFor), so a linked agent's key is the REGISTRANT; an agent with
+    // no registrant on record falls back to its own legacy rows.
+    const memberKey = me?.id ?? agent?.created_by ?? agent?.id ?? null
     const limit = Math.min(100, Math.max(1, Number(c.req.query("limit")) || 30))
     // Opaque compound cursor "<created_at>|<id>" — the id tiebreak keeps paging
     // correct when many artifacts share a created_at.
@@ -180,7 +182,7 @@ export const artifactRoutes = (ctx: AppContext) => {
       publicOnly: shared || following ? false : publicOnly,
       // Private artifacts appear only for their explicit members; the operator
       // token sees everything (viewerId omitted).
-      viewerId: isOperator ? undefined : (actorId ?? undefined),
+      viewerId: isOperator ? undefined : (memberKey ?? undefined),
     })
     const hasMore = rows.length > limit
     const page = hasMore ? rows.slice(0, limit) : rows
@@ -200,7 +202,8 @@ export const artifactRoutes = (ctx: AppContext) => {
     const feedback = me ? await meta.commentSignals(pageIds, me.id) : {}
     // The viewer's per-artifact shares across the page, one query — folded into
     // my_role below so shared and private rows gate their quick actions correctly.
-    const shareRoles = actorId ? await meta.artifactRolesFor(actorId, pageIds) : {}
+    // For a linked agent these are the registrant's rows, so the cap applies.
+    const shareRoles = memberKey ? await meta.artifactRolesFor(memberKey, pageIds) : {}
     return c.json({
       artifacts: page.map((a) => ({
         ...toJson(deps.baseUrl, a, []),
@@ -214,11 +217,14 @@ export const artifactRoutes = (ctx: AppContext) => {
         my_role: isOperator
           ? "owner"
           : effectiveRole(
-              actorId
+              memberKey
                 ? {
                     kind: "user",
-                    userId: actorId,
-                    artifactRole: shareRoles[a.id] ?? null,
+                    userId: memberKey,
+                    artifactRole:
+                      agent?.created_by != null
+                        ? capRole(shareRoles[a.id] ?? null, agent.role)
+                        : (shareRoles[a.id] ?? null),
                     orgRole: a.org_id === listOrg ? baselineRole : null,
                   }
                 : { kind: "anon" },
@@ -359,28 +365,21 @@ export const artifactRoutes = (ctx: AppContext) => {
         },
         shortId,
       )
-      // Ownership on creation. The HUMAN behind the publish becomes the owner-member
-      // (an agent publishes on behalf of whoever registered it), which is what makes
-      // `private` work — workspace role grants nothing there. The agent principal
-      // additionally gets an editor row so it can keep operating on the artifact
-      // (republish, address review) even when it's private. An agent with no
-      // registrant on record (created_by null) owns as itself.
-      if (!shortId) {
-        if (onBehalf)
-          await meta.setArtifactMember({
-            id: newId("am"),
-            artifact_id: artifact.id,
-            user_id: onBehalf,
-            role: "owner",
-          })
-        if (actor && actor.id !== onBehalf)
-          await meta.setArtifactMember({
-            id: newId("am"),
-            artifact_id: artifact.id,
-            user_id: actor.id,
-            role: onBehalf ? "editor" : "owner",
-          })
-      }
+      // Ownership on creation: ONE row, the human behind the publish (an agent
+      // publishes on behalf of whoever registered it) — this is what makes
+      // `private` work, since workspace role grants nothing there. The agent
+      // needs no row: it borrows its registrant's standing, capped at its
+      // registered role (see actorFor). An agent with no registrant on record
+      // owns as itself. Members stay a human sharing contract — no robots in
+      // the roster.
+      const ownerId = onBehalf ?? actor?.id ?? null
+      if (!shortId && ownerId)
+        await meta.setArtifactMember({
+          id: newId("am"),
+          artifact_id: artifact.id,
+          user_id: ownerId,
+          role: "owner",
+        })
       bus.publish(artifact.id, {
         type: "version.published",
         n: version.n,

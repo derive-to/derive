@@ -163,10 +163,17 @@ function buildServer(
   )
   const org = agent.org_id
 
-  // Resolve a short id within the caller's workspace (never another org's artifact).
+  // Resolve a short id within the caller's workspace (never another org's
+  // artifact). `private` narrows further: the agent sees it only through its
+  // human's standing (or a legacy row of its own) — a teammate's private draft
+  // is as invisible over MCP as it is over HTTP.
   const own = async (shortId: string): Promise<ArtifactRecord | null> => {
     const a = await ctx.meta.getByShortId(shortId)
-    return a && a.org_id === org ? a : null
+    if (!a || a.org_id !== org) return null
+    if (a.visibility !== "private") return a
+    if (actingFor && (await ctx.meta.getArtifactMember(a.id, actingFor.id))) return a
+    if (await ctx.meta.getArtifactMember(a.id, agent.id)) return a
+    return null
   }
   const notFound = (shortId: string) =>
     err(`No artifact "${shortId}" in your workspace. Call list_artifacts to see what's here.`)
@@ -180,7 +187,12 @@ function buildServer(
       inputSchema: { query: z.string().optional().describe("Optional title search filter.") },
     },
     async ({ query }) => {
-      const arts = await ctx.meta.listArtifacts({ orgId: org, q: query })
+      // viewerId keeps private rows scoped to the agent's human (mirrors `own`).
+      const arts = await ctx.meta.listArtifacts({
+        orgId: org,
+        q: query,
+        viewerId: actingFor?.id ?? agent.id,
+      })
       return json({ count: arts.length, artifacts: arts.map(summarizeArtifact) })
     },
   )
@@ -663,24 +675,15 @@ function buildServer(
           },
           short_id,
         )
-        // Ownership, same as the HTTP route: the human owns it, the agent keeps an
-        // editor row so it can republish (essential for private artifacts).
-        if (!short_id) {
-          if (actingFor)
-            await ctx.meta.setArtifactMember({
-              id: newId("am"),
-              artifact_id: artifact.id,
-              user_id: actingFor.id,
-              role: "owner",
-            })
-          if (agent.id !== actingFor?.id)
-            await ctx.meta.setArtifactMember({
-              id: newId("am"),
-              artifact_id: artifact.id,
-              user_id: agent.id,
-              role: actingFor ? "editor" : "owner",
-            })
-        }
+        // Ownership, same as the HTTP route: one row, the human the agent acts
+        // for (the agent borrows that standing — no agent rows in the roster).
+        if (!short_id)
+          await ctx.meta.setArtifactMember({
+            id: newId("am"),
+            artifact_id: artifact.id,
+            user_id: actingFor?.id ?? agent.id,
+            role: "owner",
+          })
         // Re-anchor existing threads: feedback whose quoted text changed flips to
         // `outdated` (and back to `open` if the text reappears). Same sweep the
         // HTTP route runs — MCP publish must call it too.

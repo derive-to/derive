@@ -28,8 +28,8 @@ describe("publish defaults to private", () => {
   })
 })
 
-describe("agents publish on behalf of who registered them", () => {
-  it("the registering user owns the publish; the agent keeps editor access", async () => {
+describe("agents act as their registrant, capped at their registered role", () => {
+  it("the registrant owns the publish; the agent borrows access with no roster row", async () => {
     const { app } = makeAuthedApp("vis-agent", [ana, ben], "editor")
     await app.request("/v1/me", { headers: as(ana.email) }) // provision the workspace
     const reg = await (
@@ -57,6 +57,25 @@ describe("agents publish on behalf of who registered them", () => {
       await app.request(`/v1/artifacts/${a.short_id}`, { headers: as(ana.email) })
     ).json()
     expect(hers.my_role).toBe("owner")
+
+    // The share roster is a human contract: Ana is the only member — the agent
+    // borrows her standing rather than holding a row of its own.
+    const roster = await (
+      await app.request(`/v1/artifacts/${a.short_id}/members`, { headers: as(ana.email) })
+    ).json()
+    expect(roster.members).toHaveLength(1)
+    expect(roster.members[0].user_id).toBe(ana.id)
+
+    // Borrowed standing is capped at the agent's registered role: editor can
+    // republish but never manage — the agent cannot delete its own publish.
+    expect(
+      (
+        await app.request(`/v1/artifacts/${a.short_id}`, {
+          method: "DELETE",
+          headers: { authorization: `Bearer ${reg.token}` },
+        })
+      ).status,
+    ).toBe(403)
     expect(
       (await app.request(`/v1/artifacts/${a.short_id}`, { headers: as(ben.email) })).status,
     ).toBe(404)
@@ -75,8 +94,8 @@ describe("agents publish on behalf of who registered them", () => {
     const list = await (await app.request("/v1/artifacts", { headers: as(ana.email) })).json()
     expect(list.artifacts.map((x: { short_id: string }) => x.short_id)).toContain(a.short_id)
 
-    // The agent lists too (MCP list_artifacts rides this) and sees its own
-    // private publish — its editor member-row passes the private filter.
+    // The agent lists too (MCP list_artifacts rides this) and sees the private
+    // publish through its registrant's owner row, capped to its own rank.
     const agentList = await (
       await app.request("/v1/artifacts", {
         headers: { authorization: `Bearer ${reg.token}` },
@@ -87,6 +106,47 @@ describe("agents publish on behalf of who registered them", () => {
 
     // Anonymous listing stays 401.
     expect((await app.request("/v1/artifacts")).status).toBe(401)
+  })
+
+  it("the agent can work on what its human made by hand — and not on a teammate's private draft", async () => {
+    const { app } = makeAuthedApp("vis-agent-derived", [ana, ben], "editor")
+    await app.request("/v1/me", { headers: as(ana.email) })
+    const reg = await (
+      await app.request("/v1/agents", {
+        method: "POST",
+        headers: { "content-type": "application/json", ...as(ana.email) },
+        body: JSON.stringify({ name: "Scribe", role: "editor" }),
+      })
+    ).json()
+
+    // Ana publishes a private draft herself; her agent republishes it.
+    const hers = await (
+      await publishAs(app, "<h1>draft</h1>", { visibility: "private" }, as(ana.email))
+    ).json()
+    const form = new FormData()
+    form.append("file", new Blob([new TextEncoder().encode("<h1>v2</h1>")]), "draft.html")
+    expect(
+      (
+        await app.request(`/v1/artifacts/${hers.short_id}/versions`, {
+          method: "POST",
+          body: form,
+          headers: { authorization: `Bearer ${reg.token}` },
+        })
+      ).status,
+    ).toBe(201)
+
+    // Ben's private draft stays invisible to Ana's agent — derived standing is
+    // Ana's, and Ana has none here.
+    const bens = await (
+      await publishAs(app, "<h1>secret</h1>", { visibility: "private" }, as(ben.email))
+    ).json()
+    expect(
+      (
+        await app.request(`/v1/artifacts/${bens.short_id}`, {
+          headers: { authorization: `Bearer ${reg.token}` },
+        })
+      ).status,
+    ).toBe(404)
   })
 })
 
