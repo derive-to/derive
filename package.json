@@ -55,7 +55,7 @@
     "ci": "biome ci && pnpm lint:tokens && pnpm lint:frontend && pnpm lint:testids && pnpm lint:api && pnpm lint:schema && pnpm lint:hyperdrive && pnpm lint:filesize && pnpm lint:anchor-client && pnpm lint:deadcode",
     "precommit": "biome check && pnpm lint:tokens && pnpm lint:frontend && pnpm lint:testids && pnpm lint:api && pnpm lint:schema && pnpm lint:hyperdrive && pnpm lint:filesize && pnpm lint:anchor-client",
     "prepare": "git config core.hooksPath .githooks || true",
-    "lint:hyperdrive": "node scripts/check-hyperdrive-no-pool.mjs"
+    "lint:hyperdrive": "node scripts/check-hyperdrive-adapter.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.0",

@@ -17,7 +17,7 @@ import { PostgresDialect } from "kysely"
 import { createApp } from "./app"
 import { type AuthDb, makeAuth } from "./auth-config"
 import { authSchema } from "./auth-schema"
-import { hyperdriveConn, livePgPool, requestPg } from "./edge-pg"
+import { hyperdrivePool, livePgPool, requestPg } from "./edge-pg"
 import type { SendEmailBinding } from "./email-cf"
 import { customDomainsFromEnv } from "./lib/cloudflare-saas"
 import { slackFromEnv, subdomainBaseFromEnv, superAdminsFromEnv } from "./lib/env"
@@ -219,14 +219,33 @@ const handle = (req: Request, env: Env, ctx: ExecutionContext): Response | Promi
 
 export default {
   fetch(req: Request, env: Env, ctx: ExecutionContext): Response | Promise<Response> {
-    // Postgres tier: bind a request-scoped pool (see edge-pg.ts) for livePgPool to
-    // resolve. Never end()ed here — `background()` fan-out (context.ts) keeps
-    // querying it on waitUntil after the response, so an eager end() would cut
-    // notifications/webhooks off mid-flight. Idle sockets reap themselves and the
-    // rest dies with the request context.
-    if (env.HYPERDRIVE)
-      return requestPg.run(hyperdriveConn(env.HYPERDRIVE), () => handle(req, env, ctx))
-    return handle(req, env, ctx)
+    if (!env.HYPERDRIVE) return handle(req, env, ctx)
+    // Postgres tier: bind a request-scoped pool (edge-pg.ts) for livePgPool to resolve,
+    // and EXPLICITLY end() it once the response drains.
+    //
+    // Cloudflare Hyperdrive troubleshooting, "Connection terminated unexpectedly":
+    //   "The underlying connection was dropped without an explicit .end() call — for
+    //    example, when a previous request's context was garbage collected."
+    //   Fix: "Create a new Client inside your handler for every request" and do not
+    //   cache/reuse it across requests.
+    //   https://developers.cloudflare.com/hyperdrive/observability/troubleshooting/
+    // The store + Better Auth are built once per isolate and reused; if we leak the
+    // pool to GC instead of ending it, the next request inherits a dropped socket and
+    // every query 500s with that error. So the pool is per-request AND end()ed here.
+    // pool.end() waits for in-flight clients, and background() (context.ts) hands us an
+    // ALREADY-started promise — its connection is checked out before waitUntil — so
+    // notifications/webhooks finish before the socket closes.
+    const pool = hyperdrivePool(env.HYPERDRIVE)
+    return requestPg.run(pool, () => {
+      const res = handle(req, env, ctx)
+      ctx.waitUntil(
+        Promise.resolve(res).then(
+          () => pool.end(),
+          () => pool.end(),
+        ),
+      )
+      return res
+    })
   },
 
   // Cron backstop (wrangler.toml `[triggers] crons`): the outbox DO goes idle once it
