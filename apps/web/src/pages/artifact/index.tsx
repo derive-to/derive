@@ -377,6 +377,7 @@ export function Artifact() {
         to: "/artifacts/$ref",
         params: { ref: refFor({ short_id: shortId, title: art.title }) },
       }),
+    onOpenReview: () => setReviewing(true),
     setEditing,
     setSrc,
     setTitle: setEditTitle,

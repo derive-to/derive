@@ -114,8 +114,12 @@ test.describe("agent revision requests — the select→agent→propose→review
       threadId,
     )
 
-    // The request flips to "revision ready · review" once the proposal cites it.
+    // The request flips to "revision ready" once the proposal cites it, with a direct
+    // Review button that opens the review overlay — the loop closed in one click.
     await expect(page.getByTestId("agent-request-ready")).toBeVisible({ timeout: 10_000 })
+    await page.getByTestId("agent-request-review").click()
+    await expect(page.getByTestId("review-close")).toBeVisible({ timeout: 10_000 })
+    await page.getByTestId("review-close").click()
 
     // --- Approve → the request resolves and reads "applied" -------------------------
     await approve(owner.request, shortId, proposalId)

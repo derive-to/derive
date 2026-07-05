@@ -32,6 +32,8 @@ export function artifactActions(p: {
   load: () => void
   refetchComments: () => void
   onRestoredJump: () => void
+  /** Open the review overlay (from an agent-request card whose revision is ready). */
+  onOpenReview: () => void
   setEditing: Dispatch<SetStateAction<boolean>>
   setSrc: Dispatch<SetStateAction<string>>
   setTitle: Dispatch<SetStateAction<string>>
@@ -215,6 +217,7 @@ export function artifactActions(p: {
         .then(() => toast.success("Link copied"))
         .catch(() => toast(url))
     },
+    openReview: p.onOpenReview,
   }
   const restore = async (n: number) => {
     p.setRestoring(true)

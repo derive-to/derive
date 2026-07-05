@@ -16,6 +16,7 @@ import { Eyebrow } from "@/components/shared/section-eyebrow"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
+import { useActions } from "./comment-actions"
 import { Composer, MentionField } from "./comment-composer"
 import { CommentRow } from "./comment-row"
 import { useCommentScope } from "./lib/comment-scope"
@@ -348,6 +349,7 @@ export function CommentCard({
   onJump: (id: string) => void
 }) {
   const { canComment, currentSlide, landedSlides, anchorConf, agentIds } = useCommentScope()
+  const { openReview } = useActions()
   const [reply, setReply] = useState("")
   const [replyMentions, setReplyMentions] = useState<Mention[]>([])
   const root = thread[0]
@@ -439,11 +441,28 @@ export function CommentCard({
             size={14}
             className={requestStage === "ready" ? "text-primary" : "text-muted-foreground"}
           />
-          {requestStage === "requested"
-            ? "Agent request · awaiting revision"
-            : requestStage === "ready"
-              ? "Revision ready · review"
-              : "Revision applied"}
+          <span className="min-w-0 flex-1 truncate">
+            {requestStage === "requested"
+              ? "Agent request · awaiting revision"
+              : requestStage === "ready"
+                ? "Revision ready"
+                : "Revision applied"}
+          </span>
+          {/* Ready → the one click from "the agent proposed" to the review overlay that
+              lets you approve it, closing the loop without hunting through the ⋯ menu. */}
+          {requestStage === "ready" && canComment && (
+            <Button
+              variant="default"
+              size="xs"
+              data-testid="agent-request-review"
+              onClick={(e) => {
+                e.stopPropagation()
+                openReview()
+              }}
+            >
+              Review
+            </Button>
+          )}
         </div>
       )}
       {onDeck && slideNum != null && (
