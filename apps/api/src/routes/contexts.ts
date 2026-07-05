@@ -20,7 +20,16 @@ import { fail, readJson } from "../lib/http"
  * with the agent's own bearer and answers through the messages endpoint.
  */
 export const contextRoutes = (ctx: AppContext) => {
-  const { meta, activeWorkspace, agentFor, authorize, currentUser, requireUser, workspaceCan } = ctx
+  const {
+    meta,
+    activeWorkspace,
+    agentFor,
+    authorize,
+    currentUser,
+    requireUser,
+    sourceText,
+    workspaceCan,
+  } = ctx
   const app = new Hono()
 
   const contextJson = (x: ContextRecord, manifestShortId: string | null) => ({
@@ -121,6 +130,16 @@ export const contextRoutes = (ctx: AppContext) => {
       ? agent.id === x.agent_id
       : manifest !== null && (await authorize(c, "read", manifest))
     if (!allowed) return fail(c, 404, "not found")
+    // The runner's one config fetch: its system prompt is the manifest's current
+    // source, so a manifest edit reconfigures the runner with no deploy.
+    if (agent && manifest) {
+      const v = await meta.getVersion(manifest.id, manifest.current_version)
+      return c.json({
+        ...contextJson(x, manifest.short_id),
+        manifest_version: manifest.current_version,
+        manifest_md: v ? await sourceText(v) : null,
+      })
+    }
     return c.json(contextJson(x, manifest?.short_id ?? null))
   })
 
