@@ -33,6 +33,7 @@ import { SourceEditor } from "./source-editor"
 import { type ComposerState, parseAnchor } from "./types"
 import { useArtifactFrame } from "./use-artifact-frame"
 import { useArtifactLive } from "./use-artifact-live"
+import { useArtifactRoute } from "./use-artifact-route"
 import { useCommentsPanel } from "./use-comments-panel"
 import { useVersionDiff } from "./use-version-diff"
 import { WorkbenchSkeleton } from "./workbench-skeleton"
@@ -129,19 +130,6 @@ export function Artifact() {
   // Editable title while editing (seeded from the artifact in startEdit); editors
   // can rename, and it republishes with the new name.
   const [editTitle, setEditTitle] = useState("")
-
-  // Canonicalise the URL client-side: once the artifact is loaded, rewrite any
-  // non-canonical ref (bare id, stale name, legacy order) to /artifacts/<name>-<shortId> so
-  // the browser holds the readable URL. replace:true so Back doesn't bounce through
-  // the old ref; preserves the @vN suffix and the current search.
-  useEffect(() => {
-    if (!art || art.removed) return
-    const canonical = version
-      ? `${refFor({ short_id: shortId, title: art.title })}@v${version}`
-      : refFor({ short_id: shortId, title: art.title })
-    if (ref !== canonical)
-      nav({ to: "/artifacts/$ref", params: { ref: canonical }, search: (s) => s, replace: true })
-  }, [art, ref, version, shortId, nav])
 
   // Comments UI state shared across the page, the panel, and the iframe bridge.
   const [composer, setComposer] = useState<ComposerState>(null)
@@ -254,31 +242,26 @@ export function Artifact() {
     post({ type: "focus-anchor", id: threadId, bias: isMobile ? 0.28 : undefined })
   }
 
-  useEffect(() => {
-    // Anonymous can view a public artifact (read-only, with a sign-up CTA). Bounce
-    // to login ONLY when the artifact is genuinely gated (404/403) for a logged-out
-    // visitor — then an account is required. A TRANSIENT failure (5xx/network) also
-    // nulls `me` (the session check failed too), but must NOT eject the user to
-    // login mid-outage — the recoverable error state below handles that, so the
-    // page comes back cleanly once the server does.
-    const gated = error instanceof ApiError && (error.status === 404 || error.status === 403)
-    if (!loading && !me && failed && !locked && gated) nav({ to: "/login" })
-  }, [loading, me, failed, locked, error, nav])
-
-  // Deep link: ?comment=<thread> opens the panel, activates that thread, and jumps to
-  // its text. Runs once, after comments are in.
-  const deepLinked = useRef(false)
-  useEffect(() => {
-    if (deepLinked.current || comments.length === 0) return
-    deepLinked.current = true
-    const cid = new URLSearchParams(window.location.search).get("comment")
-    const target = cid ? comments.find((c) => c.thread_id === cid) : undefined
-    if (target) {
-      setPanel("open")
-      setActiveThread(target.thread_id)
-      setTimeout(() => post({ type: "focus-anchor", id: target.thread_id }), 320)
-    }
-  }, [comments, post, setPanel])
+  // URL canonicalisation, the anon-bounce gate, and the ?comment deep link — the
+  // page's routing side-effects. `nav` stays here; the hook takes decoupled callbacks.
+  useArtifactRoute({
+    art,
+    ref,
+    shortId,
+    version,
+    comments,
+    authed: !!me,
+    loading,
+    failed,
+    locked,
+    error,
+    onCanonical: (canonical) =>
+      nav({ to: "/artifacts/$ref", params: { ref: canonical }, search: (s) => s, replace: true }),
+    onLoginBounce: () => nav({ to: "/login" }),
+    post,
+    setPanel,
+    setActiveThread,
+  })
 
   if (locked) return <PasswordGate shortId={shortId} onUnlocked={() => refetch()} />
   if (failed) {
