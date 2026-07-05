@@ -1028,6 +1028,141 @@ export function runStoreContract(
     })
   })
 
+  describe(`${label}: contexts + sessions`, () => {
+    const newContext = async () => {
+      const manifest = await store.createArtifact(newArtifact({ kind: "bundle" }))
+      return store.createContext({
+        id: uuid(),
+        org_id: ORG,
+        name: `analytics_${uuid().slice(0, 8)}`,
+        agent_id: uuid(),
+        manifest_artifact_id: manifest.id,
+        created_by: "rob",
+      })
+    }
+
+    it("creates a context, lists it by workspace, resolves by id", async () => {
+      const ctx = await newContext()
+      expect(await store.getContext(ctx.id)).toMatchObject({ name: ctx.name })
+      expect((await store.listContexts(ORG)).some((x) => x.id === ctx.id)).toBe(true)
+      expect(await store.listContexts(`other_${uuid()}`)).toHaveLength(0)
+    })
+
+    it("rejects a duplicate context name within a workspace", async () => {
+      const ctx = await newContext()
+      await expect(
+        store.createContext({
+          id: uuid(),
+          org_id: ORG,
+          name: ctx.name,
+          agent_id: uuid(),
+          manifest_artifact_id: ctx.manifest_artifact_id,
+          created_by: "rob",
+        }),
+      ).rejects.toThrow()
+    })
+
+    it("runs a session through the ask → answer → follow-up → close turn cycle", async () => {
+      const ctx = await newContext()
+      const s = await store.createSession({
+        id: uuid(),
+        context_id: ctx.id,
+        org_id: ORG,
+        asker_id: "daniel",
+        context_version: 1,
+      })
+      expect(s.state).toBe("open")
+
+      // The asker's question is already "open"; the agent's answer settles it.
+      await store.addSessionMessage(
+        {
+          id: uuid(),
+          session_id: s.id,
+          author_kind: "asker",
+          author_id: "daniel",
+          body_md: "churn?",
+        },
+        "open",
+      )
+      expect(await store.pendingSessions(ctx.id, 10)).toHaveLength(1)
+      await store.addSessionMessage(
+        {
+          id: uuid(),
+          session_id: s.id,
+          author_kind: "agent",
+          author_id: "ag_x",
+          body_md: "32%",
+          meta: JSON.stringify({ query: "select …", confidence: 0.9 }),
+        },
+        "answered",
+      )
+      expect(await store.pendingSessions(ctx.id, 10)).toHaveLength(0)
+      expect((await store.getSession(s.id))?.state).toBe("answered")
+      expect((await store.getSession(s.id))?.updated_at).not.toBeNull()
+
+      // A follow-up re-opens (back on the queue); closing takes it off for good.
+      await store.addSessionMessage(
+        {
+          id: uuid(),
+          session_id: s.id,
+          author_kind: "asker",
+          author_id: "daniel",
+          body_md: "and Feb?",
+        },
+        "open",
+      )
+      expect(await store.pendingSessions(ctx.id, 10)).toHaveLength(1)
+      expect(await store.setSessionState(s.id, "closed")).toMatchObject({ state: "closed" })
+      expect(await store.pendingSessions(ctx.id, 10)).toHaveLength(0)
+
+      const transcript = await store.listSessionMessages(s.id)
+      expect(transcript.map((m) => m.author_kind)).toEqual(["asker", "agent", "asker"])
+      expect(JSON.parse(transcript[1].meta ?? "{}").confidence).toBe(0.9)
+    })
+
+    it("scopes session listings to one asker and orders the queue oldest first", async () => {
+      const ctx = await newContext()
+      const ask = (asker: string) =>
+        store.createSession({
+          id: uuid(),
+          context_id: ctx.id,
+          org_id: ORG,
+          asker_id: asker,
+          context_version: 1,
+        })
+      const first = await ask("daniel")
+      await ask("sarah")
+      expect(await store.listSessions(ctx.id)).toHaveLength(2)
+      expect(await store.listSessions(ctx.id, { askerId: "daniel" })).toHaveLength(1)
+      expect((await store.pendingSessions(ctx.id, 10))[0]?.id).toBe(first.id)
+      expect(await store.pendingSessions(ctx.id, 1)).toHaveLength(1)
+    })
+
+    it("deleteContext cascades sessions and messages, scoped to its workspace", async () => {
+      const ctx = await newContext()
+      const s = await store.createSession({
+        id: uuid(),
+        context_id: ctx.id,
+        org_id: ORG,
+        asker_id: "daniel",
+        context_version: 1,
+      })
+      await store.addSessionMessage(
+        { id: uuid(), session_id: s.id, author_kind: "asker", author_id: "daniel", body_md: "hi" },
+        "open",
+      )
+      // Wrong workspace: a no-op — the scope gates the whole cascade, so another
+      // tenant's delete can't wipe the sessions either.
+      await store.deleteContext(ctx.id, `other_${uuid()}`)
+      expect(await store.getContext(ctx.id)).not.toBeNull()
+      expect(await store.getSession(s.id)).not.toBeNull()
+      await store.deleteContext(ctx.id, ORG)
+      expect(await store.getContext(ctx.id)).toBeNull()
+      expect(await store.getSession(s.id)).toBeNull()
+      expect(await store.listSessionMessages(s.id)).toHaveLength(0)
+    })
+  })
+
   describe(`${label}: deleteArtifact`, () => {
     it("hard-deletes the artifact row and all FK-dependent rows", async () => {
       const a = await store.createArtifact(newArtifact())

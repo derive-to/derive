@@ -10,6 +10,7 @@ import type {
   CommentRecord,
   CommentSignals,
   CommentState,
+  ContextRecord,
   DeliveryRecord,
   DeliveryStatus,
   DomainRecord,
@@ -32,6 +33,7 @@ import type {
   NewCollection,
   NewCollectionMember,
   NewComment,
+  NewContext,
   NewDelivery,
   NewDomain,
   NewFollow,
@@ -41,6 +43,8 @@ import type {
   NewReport,
   NewRepoSource,
   NewReviewRound,
+  NewSession,
+  NewSessionMessage,
   NewVersion,
   NewView,
   NewWebhook,
@@ -55,6 +59,9 @@ import type {
   ReviewRoundRecord,
   ReviewRoundState,
   Role,
+  SessionMessageRecord,
+  SessionRecord,
+  SessionState,
   SlackInstallRecord,
   SlackThreadLinkRecord,
   TakedownInput,
@@ -97,6 +104,8 @@ import {
   collectionItem,
   collectionMember,
   comment,
+  context,
+  contextSession,
   domain,
   follow,
   githubApp,
@@ -109,6 +118,7 @@ import {
   report,
   repoSource,
   reviewRound,
+  sessionMessage,
   slackInstall,
   slackThreadLink,
   version,
@@ -143,6 +153,9 @@ export const schema = {
   reviewRound,
   agent,
   agentMention,
+  context,
+  contextSession,
+  sessionMessage,
   collection,
   collectionItem,
   collectionMember,
@@ -173,6 +186,9 @@ const _schemaShapes: Shapes<typeof schema> = {
   reviewRound: true,
   agent: true,
   agentMention: true,
+  context: true,
+  contextSession: true,
+  sessionMessage: true,
   collection: true,
   collectionMember: true,
   repoSource: true,
@@ -1457,6 +1473,109 @@ export class PgMetaStore implements MetaStore {
       .where(eq(reviewRound.id, id))
       .returning()
     return rows[0] ?? null
+  }
+
+  // ---- Contexts + sessions -------------------------------------------------
+  async createContext(x: NewContext): Promise<ContextRecord> {
+    const rows = await this.db.insert(context).values(x).returning()
+    return one(rows)
+  }
+  async getContext(id: string): Promise<ContextRecord | null> {
+    const rows = await this.db.select().from(context).where(eq(context.id, id)).limit(1)
+    return rows[0] ?? null
+  }
+  listContexts(orgId: string): Promise<ContextRecord[]> {
+    return this.db
+      .select()
+      .from(context)
+      .where(eq(context.org_id, orgId))
+      .orderBy(desc(context.created_at))
+  }
+  // Sequential cascade (messages → sessions → context), like deleteCollection.
+  // The org scope gates the WHOLE cascade, not just the context row — otherwise a
+  // wrong-workspace call would wipe another tenant's sessions and leave the context.
+  async deleteContext(id: string, orgId: string): Promise<void> {
+    const owned = await this.db
+      .select({ id: context.id })
+      .from(context)
+      .where(and(eq(context.id, id), eq(context.org_id, orgId)))
+      .limit(1)
+    if (owned.length === 0) return
+    const sessions = await this.db
+      .select({ id: contextSession.id })
+      .from(contextSession)
+      .where(eq(contextSession.context_id, id))
+    if (sessions.length > 0)
+      await this.db.delete(sessionMessage).where(
+        inArray(
+          sessionMessage.session_id,
+          sessions.map((s) => s.id),
+        ),
+      )
+    await this.db.delete(contextSession).where(eq(contextSession.context_id, id))
+    await this.db.delete(context).where(eq(context.id, id))
+  }
+  async createSession(s: NewSession): Promise<SessionRecord> {
+    const rows = await this.db.insert(contextSession).values(s).returning()
+    return one(rows)
+  }
+  async getSession(id: string): Promise<SessionRecord | null> {
+    const rows = await this.db
+      .select()
+      .from(contextSession)
+      .where(eq(contextSession.id, id))
+      .limit(1)
+    return rows[0] ?? null
+  }
+  listSessions(
+    contextId: string,
+    opts?: { askerId?: string; limit?: number },
+  ): Promise<SessionRecord[]> {
+    const where = opts?.askerId
+      ? and(eq(contextSession.context_id, contextId), eq(contextSession.asker_id, opts.askerId))
+      : eq(contextSession.context_id, contextId)
+    return this.db
+      .select()
+      .from(contextSession)
+      .where(where)
+      .orderBy(desc(contextSession.created_at))
+      .limit(opts?.limit ?? 50)
+  }
+  pendingSessions(contextId: string, limit: number): Promise<SessionRecord[]> {
+    return this.db
+      .select()
+      .from(contextSession)
+      .where(and(eq(contextSession.context_id, contextId), eq(contextSession.state, "open")))
+      .orderBy(asc(contextSession.created_at))
+      .limit(limit)
+  }
+  async setSessionState(id: string, state: SessionState): Promise<SessionRecord | null> {
+    const rows = await this.db
+      .update(contextSession)
+      .set({ state, updated_at: new Date().toISOString() })
+      .where(eq(contextSession.id, id))
+      .returning()
+    return rows[0] ?? null
+  }
+  // Two writes, no transaction — house pattern (createReviewRound). If the state
+  // write is lost to a crash, the next poll or message repairs it.
+  async addSessionMessage(
+    m: NewSessionMessage,
+    state: SessionState,
+  ): Promise<SessionMessageRecord> {
+    const rows = await this.db.insert(sessionMessage).values(m).returning()
+    await this.db
+      .update(contextSession)
+      .set({ state, updated_at: new Date().toISOString() })
+      .where(eq(contextSession.id, m.session_id))
+    return one(rows)
+  }
+  listSessionMessages(sessionId: string): Promise<SessionMessageRecord[]> {
+    return this.db
+      .select()
+      .from(sessionMessage)
+      .where(eq(sessionMessage.session_id, sessionId))
+      .orderBy(asc(sessionMessage.created_at))
   }
 
   // ---- User directory (Better Auth's "user" table; raw, may be absent) ---

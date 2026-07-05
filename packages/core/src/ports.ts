@@ -492,6 +492,33 @@ export interface MetaStore {
     fields: { state: Extract<ReviewRoundState, "sent_back" | "approved">; note?: string | null },
   ): Promise<ReviewRoundRecord | null>
 
+  // ---- Contexts + sessions (ask a context; its runner answers) -----------
+  createContext(x: NewContext): Promise<ContextRecord>
+  getContext(id: string): Promise<ContextRecord | null>
+  /** A workspace's contexts, newest first. */
+  listContexts(orgId: string): Promise<ContextRecord[]>
+  /** Remove a context and its sessions + messages, scoped to its workspace. */
+  deleteContext(id: string, orgId: string): Promise<void>
+  createSession(s: NewSession): Promise<SessionRecord>
+  getSession(id: string): Promise<SessionRecord | null>
+  /** Sessions on a context, newest first; `askerId` narrows to one person's. */
+  listSessions(
+    contextId: string,
+    opts?: { askerId?: string; limit?: number },
+  ): Promise<SessionRecord[]>
+  /** The runner's queue: `open` sessions on a context, oldest first. A plain
+   *  polling read — claiming/leasing is unnecessary while a context has one
+   *  runner (the daniel-prototype topology); revisit if runners multiply. */
+  pendingSessions(contextId: string, limit: number): Promise<SessionRecord[]>
+  /** Set a session's state and bump updated_at; null if the session is unknown. */
+  setSessionState(id: string, state: SessionState): Promise<SessionRecord | null>
+  /** Append a message and set the session's state in the same call (the turn flip:
+   *  an asker message re-opens; an agent message settles to answered/escalated).
+   *  The caller decides the state — the store just applies both writes. */
+  addSessionMessage(m: NewSessionMessage, state: SessionState): Promise<SessionMessageRecord>
+  /** A session's transcript, oldest first. */
+  listSessionMessages(sessionId: string): Promise<SessionMessageRecord[]>
+
   // ---- User directory (reads Better Auth's `user` table) ----------------
   findUserByEmail(email: string): Promise<UserDir | null>
   getUsers(ids: string[]): Promise<UserDir[]>
@@ -846,6 +873,90 @@ export interface NewReviewRound {
   requested_by: string
   requested_for: string
   note?: string | null
+}
+
+/**
+ * A context: a named, askable agent setup — the registered agent that runs it
+ * linked to the manifest artifact that defines it (instructions, referenced docs,
+ * connection definitions). The manifest is a normal versioned artifact, so
+ * sharing, review, and history come from the artifact machinery; v1's ask grant
+ * is "viewer on the manifest". Credentials are never part of a context — they
+ * live wherever its runner executes.
+ */
+export interface ContextRecord {
+  id: string
+  org_id: string
+  name: string
+  /** The registered agent that answers this context's sessions (plain column —
+   *  an agent row may be deleted out from under a context; the queue just goes
+   *  quiet until a new agent is wired). */
+  agent_id: string
+  /** The versioned definition. Hard FK: a context cannot outlive its manifest. */
+  manifest_artifact_id: string
+  created_by: string
+  created_at: string
+}
+export interface NewContext {
+  id: string
+  org_id: string
+  name: string
+  agent_id: string
+  manifest_artifact_id: string
+  created_by: string
+}
+
+/** A session's lifecycle. `state` also encodes whose turn it is: `open` means the
+ *  runner owes a reply (the queue predicate); an asker follow-up on an `answered`
+ *  session flips it back to `open`. `escalated` = the runner filed its draft for
+ *  the owner's approval; `failed` = the run crashed (surfaced, never auto-retried);
+ *  `closed` = the asker or owner ended it. */
+export type SessionState = "open" | "answered" | "escalated" | "failed" | "closed"
+
+/** Who wrote a session message: the human asking, or the context's agent. */
+export type SessionMessageAuthor = "asker" | "agent"
+
+/** One ask-conversation with a context, on behalf of one asker. Private to the
+ *  asker and the context owner — session content is bounded by whatever the
+ *  runner's credentials can reach, so it never gets artifact-style visibility. */
+export interface SessionRecord {
+  id: string
+  context_id: string
+  org_id: string
+  asker_id: string
+  /** The manifest version the session started against (provenance). */
+  context_version: number
+  state: SessionState
+  created_at: string
+  /** Bumped on every message/state change; null until then (read as ?? created_at). */
+  updated_at: string | null
+}
+export interface NewSession {
+  id: string
+  context_id: string
+  org_id: string
+  asker_id: string
+  context_version: number
+}
+
+export interface SessionMessageRecord {
+  id: string
+  session_id: string
+  author_kind: SessionMessageAuthor
+  /** The asker's user id, or the agent's id — stable identity, like comment.author_id. */
+  author_id: string
+  body_md: string
+  /** JSON blob from the runner: { query?, confidence?, caveats?, artifacts?, escalation? }.
+   *  TEXT like comment.meta — parsed by clients, never by the store. */
+  meta: string | null
+  created_at: string
+}
+export interface NewSessionMessage {
+  id: string
+  session_id: string
+  author_kind: SessionMessageAuthor
+  author_id: string
+  body_md: string
+  meta?: string | null
 }
 
 /** A GitHub commit author, denormalized onto an artifact / stored per version.

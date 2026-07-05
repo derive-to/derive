@@ -21,6 +21,7 @@ import type {
   CollectionMemberRecord,
   CollectionRecord,
   CommentRecord,
+  ContextRecord,
   DeliveryRecord,
   DomainRecord,
   FollowRecord,
@@ -32,6 +33,8 @@ import type {
   ReportRecord,
   RepoSourceRecord,
   ReviewRoundRecord,
+  SessionMessageRecord,
+  SessionRecord,
   VersionRecord,
   WebhookRecord,
   WorkspaceRecord,
@@ -56,6 +59,9 @@ export interface TypedTables {
   reviewRound: ReviewRoundRecord
   agent: AgentRecord
   agentMention: AgentMentionRecord
+  context: ContextRecord
+  contextSession: SessionRecord
+  sessionMessage: SessionMessageRecord
   collection: CollectionRecord
   collectionMember: CollectionMemberRecord
   repoSource: RepoSourceRecord

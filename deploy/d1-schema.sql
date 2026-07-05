@@ -326,6 +326,47 @@ CREATE TABLE IF NOT EXISTS review_round (
 
 CREATE INDEX IF NOT EXISTS review_round_artifact ON review_round (artifact_id, requested_for);
 
+CREATE TABLE IF NOT EXISTS context (
+  id TEXT PRIMARY KEY,
+  org_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  agent_id TEXT NOT NULL,
+  manifest_artifact_id TEXT NOT NULL,
+  created_by TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  UNIQUE (org_id, name),
+  FOREIGN KEY (manifest_artifact_id) REFERENCES artifact(id)
+);
+
+CREATE TABLE IF NOT EXISTS context_session (
+  id TEXT PRIMARY KEY,
+  context_id TEXT NOT NULL,
+  org_id TEXT NOT NULL,
+  asker_id TEXT NOT NULL,
+  context_version INTEGER NOT NULL,
+  state TEXT NOT NULL DEFAULT 'open',
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at TEXT,
+  FOREIGN KEY (context_id) REFERENCES context(id)
+);
+
+CREATE INDEX IF NOT EXISTS context_session_queue ON context_session (context_id, state, created_at);
+
+CREATE INDEX IF NOT EXISTS context_session_asker ON context_session (asker_id, created_at);
+
+CREATE TABLE IF NOT EXISTS session_message (
+  id TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL,
+  author_kind TEXT NOT NULL,
+  author_id TEXT NOT NULL,
+  body_md TEXT NOT NULL,
+  meta TEXT,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  FOREIGN KEY (session_id) REFERENCES context_session(id)
+);
+
+CREATE INDEX IF NOT EXISTS session_message_session ON session_message (session_id, created_at);
+
 CREATE TABLE IF NOT EXISTS report (
   id TEXT PRIMARY KEY,
   org_id TEXT NOT NULL DEFAULT 'default',

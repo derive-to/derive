@@ -14,6 +14,7 @@ import { artifactRoutes } from "./routes/artifacts"
 import { assetRoutes } from "./routes/assets"
 import { collectionRoutes } from "./routes/collections"
 import { commentRoutes } from "./routes/comments"
+import { contextRoutes } from "./routes/contexts"
 import { domainRoutes } from "./routes/domains"
 import { embedRoutes } from "./routes/embeds"
 import { favoriteRoutes } from "./routes/favorites"
@@ -300,6 +301,7 @@ export function createApp(deps: AppDeps): Hono {
     proposalRoutes,
     reviewRoutes,
     commentRoutes,
+    contextRoutes,
     realtimeRoutes,
     analyticsRoutes,
     notificationRoutes,

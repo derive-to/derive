@@ -14,6 +14,8 @@ import type {
   ReportState,
   ReviewRoundState,
   Role,
+  SessionMessageAuthor,
+  SessionState,
   Visibility,
   WebhookKind,
 } from "@derive/core"
@@ -408,6 +410,61 @@ export const reviewRound = pgTable(
   (t) => [index("review_round_artifact").on(t.artifact_id, t.requested_for)],
 )
 
+// A context: an askable agent setup — agent + manifest artifact. Mirror of the
+// sqlite def; see schema.ts for the design notes (loose agent_id, hard manifest FK,
+// context_session naming vs Better Auth's `session` table).
+export const context = pgTable(
+  "context",
+  {
+    id: text("id").primaryKey(),
+    org_id: text("org_id").notNull(),
+    name: text("name").notNull(),
+    agent_id: text("agent_id").notNull(),
+    manifest_artifact_id: text("manifest_artifact_id")
+      .notNull()
+      .references(() => artifact.id),
+    created_by: text("created_by").notNull(),
+    created_at: text("created_at").notNull().$defaultFn(isoNow),
+  },
+  (t) => [uniqueIndex("context_org_name").on(t.org_id, t.name)],
+)
+
+export const contextSession = pgTable(
+  "context_session",
+  {
+    id: text("id").primaryKey(),
+    context_id: text("context_id")
+      .notNull()
+      .references(() => context.id),
+    org_id: text("org_id").notNull(),
+    asker_id: text("asker_id").notNull(),
+    context_version: integer("context_version").notNull(),
+    state: text("state").$type<SessionState>().notNull().default("open"),
+    created_at: text("created_at").notNull().$defaultFn(isoNow),
+    updated_at: text("updated_at"),
+  },
+  (t) => [
+    index("context_session_queue").on(t.context_id, t.state, t.created_at),
+    index("context_session_asker").on(t.asker_id, t.created_at),
+  ],
+)
+
+export const sessionMessage = pgTable(
+  "session_message",
+  {
+    id: text("id").primaryKey(),
+    session_id: text("session_id")
+      .notNull()
+      .references(() => contextSession.id),
+    author_kind: text("author_kind").$type<SessionMessageAuthor>().notNull(),
+    author_id: text("author_id").notNull(),
+    body_md: text("body_md").notNull(),
+    meta: text("meta"),
+    created_at: text("created_at").notNull().$defaultFn(isoNow),
+  },
+  (t) => [index("session_message_session").on(t.session_id, t.created_at)],
+)
+
 export const report = pgTable("report", {
   id: text("id").primaryKey(),
   org_id: text("org_id").notNull().default("default"),
@@ -469,6 +526,9 @@ const TABLES = [
   domain,
   proposal,
   reviewRound,
+  context,
+  contextSession,
+  sessionMessage,
   report,
   auditLog,
 ]
