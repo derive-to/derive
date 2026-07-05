@@ -507,8 +507,8 @@ export interface MetaStore {
     opts?: { askerId?: string; limit?: number },
   ): Promise<SessionRecord[]>
   /** The runner's queue: `open` sessions on a context, oldest first. A plain
-   *  polling read — claiming/leasing is unnecessary while a context has one
-   *  runner (the daniel-prototype topology); revisit if runners multiply. */
+   *  polling read — claiming/leasing is unnecessary while each context has one
+   *  runner; revisit if runners multiply. */
   pendingSessions(contextId: string, limit: number): Promise<SessionRecord[]>
   /** Set a session's state and bump updated_at; null if the session is unknown. */
   setSessionState(id: string, state: SessionState): Promise<SessionRecord | null>

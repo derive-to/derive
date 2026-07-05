@@ -1557,8 +1557,10 @@ export class PgMetaStore implements MetaStore {
       .returning()
     return rows[0] ?? null
   }
-  // Two writes, no transaction — house pattern (createReviewRound). If the state
-  // write is lost to a crash, the next poll or message repairs it.
+  // Two writes, no transaction (the createReviewRound pattern, kept identical to
+  // the sqlite/d1 layer). A crash between them leaves state stale: an unsettled
+  // agent turn is caught by the runner's last-turn guard; a lost asker `open`
+  // waits for the asker's next message. Both windows are milliseconds.
   async addSessionMessage(
     m: NewSessionMessage,
     state: SessionState,
@@ -1942,6 +1944,29 @@ export class PgMetaStore implements MetaStore {
   // Atomic delete: all FK-dependent rows and the artifact row commit together.
   async deleteArtifact(id: string): Promise<void> {
     await this.db.transaction(async (tx) => {
+      // A context's manifest FK means deleting a manifest deletes its context
+      // (and sessions) — a context cannot outlive its definition, by design.
+      const linked = await tx
+        .select({ id: context.id })
+        .from(context)
+        .where(eq(context.manifest_artifact_id, id))
+      if (linked.length > 0) {
+        const ctxIds = linked.map((x) => x.id)
+        const sessions = await tx
+          .select({ id: contextSession.id })
+          .from(contextSession)
+          .where(inArray(contextSession.context_id, ctxIds))
+        if (sessions.length > 0)
+          await tx.delete(sessionMessage).where(
+            inArray(
+              sessionMessage.session_id,
+              sessions.map((s) => s.id),
+            ),
+          )
+        await tx.delete(contextSession).where(inArray(contextSession.context_id, ctxIds))
+        await tx.delete(context).where(inArray(context.id, ctxIds))
+      }
+      await tx.delete(reviewRound).where(eq(reviewRound.artifact_id, id))
       await tx.delete(version).where(eq(version.artifact_id, id))
       await tx.delete(comment).where(eq(comment.artifact_id, id))
       await tx.delete(artifactMember).where(eq(artifactMember.artifact_id, id))

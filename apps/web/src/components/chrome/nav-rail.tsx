@@ -486,7 +486,6 @@ export function NavRail() {
                 active={onPeople}
                 testId="nav-people"
               />
-              {/* Contexts — askable agent setups (the ask loop's console). */}
               <NavItem
                 icon="context"
                 label="Contexts"

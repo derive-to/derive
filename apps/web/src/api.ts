@@ -860,8 +860,6 @@ export const api = {
     agent_id: string
     manifest_short_id: string
   }): Promise<ContextInfo> => f("/v1/contexts", opts(input)).then(j),
-  deleteContext: (id: string): Promise<void> =>
-    f(`/v1/contexts/${id}`, { method: "DELETE", credentials: "include" }).then(() => undefined),
   askContext: (
     id: string,
     body_md: string,

@@ -41,15 +41,27 @@ export const contextRoutes = (ctx: AppContext) => {
     created_at: x.created_at,
   })
 
-  const messageJson = (m: SessionMessageRecord) => ({
-    id: m.id,
-    author_kind: m.author_kind,
-    author_id: m.author_id,
-    body_md: m.body_md,
-    // Stored as TEXT (see ports); parsed here so clients never re-parse.
-    meta: m.meta ? (JSON.parse(m.meta) as unknown) : null,
-    created_at: m.created_at,
-  })
+  const messageJson = (m: SessionMessageRecord) => {
+    // Stored as TEXT (see ports); parsed here so clients never re-parse. Only
+    // this route ever writes it (JSON.stringify), but a hand-edited row
+    // shouldn't 500 a whole transcript — treat unparseable meta as absent.
+    let meta: unknown = null
+    if (m.meta) {
+      try {
+        meta = JSON.parse(m.meta)
+      } catch {
+        meta = null
+      }
+    }
+    return {
+      id: m.id,
+      author_kind: m.author_kind,
+      author_id: m.author_id,
+      body_md: m.body_md,
+      meta,
+      created_at: m.created_at,
+    }
+  }
 
   const sessionJson = (s: SessionRecord) => ({
     id: s.id,
@@ -126,9 +138,14 @@ export const contextRoutes = (ctx: AppContext) => {
     // agent, which needs its wiring (name, manifest) to run.
     const agent = await agentFor(c)
     const manifest = await meta.getArtifactById(x.manifest_artifact_id)
+    // Users need manifest read AND a session: a public manifest makes its
+    // CONTENT world-readable, but the context's wiring (agent id, creator)
+    // stays behind sign-in.
     const allowed = agent
       ? agent.id === x.agent_id
-      : manifest !== null && (await authorize(c, "read", manifest))
+      : manifest !== null &&
+        (await currentUser(c)) !== null &&
+        (await authorize(c, "read", manifest))
     if (!allowed) return fail(c, 404, "not found")
     // The runner's one config fetch: its system prompt is the manifest's current
     // source, so a manifest edit reconfigures the runner with no deploy.
@@ -147,7 +164,11 @@ export const contextRoutes = (ctx: AppContext) => {
     const me = await requireUser(c)
     if (me instanceof Response) return me
     const x = await meta.getContext(c.req.param("id"))
-    if (!x) return fail(c, 404, "not found")
+    // workspaceCan reads the CALLER's active workspace, so it only authorizes
+    // deletes of that workspace's contexts — without the org check, a manager of
+    // workspace B would pass it and reach into workspace A. Cross-workspace
+    // callers get the same 404 as a missing id.
+    if (!x || x.org_id !== (await activeWorkspace(c))) return fail(c, 404, "not found")
     if (x.created_by !== me.id && !(await workspaceCan(c, "manage")))
       return fail(c, 403, "forbidden")
     await meta.deleteContext(x.id, x.org_id)
@@ -239,9 +260,28 @@ export const contextRoutes = (ctx: AppContext) => {
           body_md: z.string().trim().min(1).max(100_000),
           meta: z.unknown().optional(),
           state: z.enum(["answered", "escalated", "failed"]).optional(),
+          // The asker message this answer addresses (from the runner's queue
+          // snapshot) — the guard against the lost-turn race below.
+          answers: z.string().optional(),
         }),
       )
       if (b instanceof Response) return b
+      // A model run takes minutes; the asker may follow up mid-run. An answer
+      // generated before that follow-up must not settle the session — it would
+      // take the follow-up off the queue unanswered, permanently. When the
+      // runner says which message it answered and a newer asker message exists,
+      // keep the session open (the re-serve sees the full transcript) and stamp
+      // the answer stale so the runner's duplicate guard knows to re-serve.
+      let state: SessionState = b.state ?? "answered"
+      let payloadMeta = b.meta
+      if (b.answers !== undefined && state !== "failed") {
+        const transcript = await meta.listSessionMessages(s.id)
+        const lastAsker = transcript.filter((t) => t.author_kind === "asker").at(-1)
+        if (lastAsker && lastAsker.id !== b.answers) {
+          state = "open"
+          payloadMeta = { ...(typeof b.meta === "object" ? b.meta : {}), stale: true }
+        }
+      }
       const m = await meta.addSessionMessage(
         {
           id: newId("sm"),
@@ -249,9 +289,9 @@ export const contextRoutes = (ctx: AppContext) => {
           author_kind: "agent",
           author_id: agent.id,
           body_md: b.body_md,
-          meta: b.meta === undefined ? null : JSON.stringify(b.meta),
+          meta: payloadMeta === undefined ? null : JSON.stringify(payloadMeta),
         },
-        b.state ?? "answered",
+        state,
       )
       return c.json({ message: messageJson(m) }, 201)
     }
@@ -285,9 +325,12 @@ export const contextRoutes = (ctx: AppContext) => {
     const agent = await agentFor(c)
     if (agent) {
       if (agent.id !== linked.context.agent_id) return fail(c, 404, "not found")
+      // The asker may close mid-run; the run's eventual failure must not reopen
+      // a conversation they deliberately ended.
+      if (s.state === "closed") return fail(c, 409, "session is closed")
       const b = await readJson(c, z.object({ state: z.literal("failed") }))
       if (b instanceof Response) return b
-      const updated = await meta.setSessionState(s.id, b.state as SessionState)
+      const updated = await meta.setSessionState(s.id, b.state)
       return updated ? c.json({ session: sessionJson(updated) }) : fail(c, 404, "not found")
     }
 
@@ -297,7 +340,7 @@ export const contextRoutes = (ctx: AppContext) => {
       return fail(c, 404, "not found")
     const b = await readJson(c, z.object({ state: z.literal("closed") }))
     if (b instanceof Response) return b
-    const updated = await meta.setSessionState(s.id, b.state as SessionState)
+    const updated = await meta.setSessionState(s.id, b.state)
     return updated ? c.json({ session: sessionJson(updated) }) : fail(c, 404, "not found")
   })
 

@@ -1,8 +1,8 @@
-// Spawn `claude -p` and extract a structured answer — harvested from the daniel
-// prototype's worker (May 2026), which settled this shape: stream-json for live
-// visibility, the final `result` event for parsing, and an <answer> JSON block as
-// the model's output contract. The IO contract lives HERE, appended to the
-// manifest at spawn time — the manifest carries domain knowledge, not mechanics.
+// Spawn `claude -p` and extract a structured answer. stream-json events give
+// live visibility while the run works; the final `result` event carries the text
+// to parse; the <answer> JSON block is the model's output contract. That contract
+// is appended HERE, not written in the manifest — the manifest is author-editable
+// domain knowledge, and an edit to it must not be able to break the parser.
 
 import { spawn } from "node:child_process"
 import type { QueueMessage } from "./client"
@@ -45,12 +45,15 @@ JSON in the final message):
 Escalate (escalate: true, with a short reason) when the manifest's escalation
 rules say so — still produce your best draft in body_md.`
 
-/** The prompt for one run: the session transcript, then the standing question. */
+/** The prompt for one run: the session transcript, then the standing question.
+ *  "Latest message" is the latest ASKER message — on a stale re-serve the
+ *  transcript ends with the runner's own superseded answer, and the follow-up
+ *  to address sits above it. */
 export function buildPrompt(messages: QueueMessage[]): string {
   const transcript = messages
     .map((m) => `[${m.author_kind === "asker" ? "asker" : "you"}] ${m.body_md}`)
     .join("\n\n")
-  return `Session transcript:\n\n${transcript}\n\nAnswer the asker's latest message.`
+  return `Session transcript:\n\n${transcript}\n\nAnswer the asker's latest message (it may sit above your own last reply, if they followed up while you were answering).`
 }
 
 /** Extract + validate the <answer> block from the assistant's final text. */
@@ -106,8 +109,8 @@ export function runClaude(opts: ClaudeOpts): Promise<RunResult> {
     "--verbose",
     "--append-system-prompt",
     opts.systemPrompt + OUTPUT_CONTRACT,
-    // Read-only credentials are the safety boundary (the daniel decision):
-    // interactive permission prompts would hang a headless subprocess.
+    // Headless: an interactive permission prompt would hang the subprocess.
+    // The safety boundary is the credentials the MCP config carries — read-only.
     "--dangerously-skip-permissions",
   ]
   return new Promise((resolve) => {
@@ -120,10 +123,11 @@ export function runClaude(opts: ClaudeOpts): Promise<RunResult> {
     let resultText = ""
     let stderr = ""
     let timedOut = false
+    let killTimer: ReturnType<typeof setTimeout> | undefined
     const timer = setTimeout(() => {
       timedOut = true
       child.kill("SIGTERM")
-      setTimeout(() => child.kill("SIGKILL"), 5_000)
+      killTimer = setTimeout(() => child.kill("SIGKILL"), 5_000)
     }, opts.timeoutMs)
 
     child.stdout.on("data", (b: Buffer) => {
@@ -148,6 +152,18 @@ export function runClaude(opts: ClaudeOpts): Promise<RunResult> {
     })
     child.on("close", (code) => {
       clearTimeout(timer)
+      clearTimeout(killTimer)
+      // The stream can end without a trailing newline; the unterminated line may
+      // be the `result` event itself.
+      const tail = buffer.trim()
+      if (tail) {
+        try {
+          const event = JSON.parse(tail) as { type?: string; result?: string }
+          if (event.type === "result" && typeof event.result === "string") resultText = event.result
+        } catch {
+          // not JSON — nothing to salvage
+        }
+      }
       if (timedOut) return resolve({ ok: false, error: "timed out" })
       if (code !== 0) return resolve({ ok: false, error: `exit ${code}: ${stderr.slice(0, 500)}` })
       const parsed = parseAnswer(resultText)
@@ -157,6 +173,7 @@ export function runClaude(opts: ClaudeOpts): Promise<RunResult> {
     })
     child.on("error", (err) => {
       clearTimeout(timer)
+      clearTimeout(killTimer)
       resolve({ ok: false, error: String(err) })
     })
   })

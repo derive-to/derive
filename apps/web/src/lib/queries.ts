@@ -260,7 +260,8 @@ export const agentsQuery = () =>
 
 // ---- Contexts + sessions ------------------------------------------------------
 
-// The workspace's askable contexts. Invalidated on create / delete.
+// The workspace's askable contexts. Invalidated on create (deletion is
+// API-only for now — no web surface).
 export const contextsQuery = () =>
   queryOptions({
     queryKey: ["contexts"] as const,

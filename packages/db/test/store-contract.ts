@@ -1138,6 +1138,25 @@ export function runStoreContract(
       expect(await store.pendingSessions(ctx.id, 1)).toHaveLength(1)
     })
 
+    it("deleteArtifact on a manifest cascades its context, sessions, and messages", async () => {
+      const ctx = await newContext()
+      const s = await store.createSession({
+        id: uuid(),
+        context_id: ctx.id,
+        org_id: ORG,
+        asker_id: "daniel",
+        context_version: 1,
+      })
+      await store.addSessionMessage(
+        { id: uuid(), session_id: s.id, author_kind: "asker", author_id: "daniel", body_md: "q" },
+        "open",
+      )
+      // Without the cascade this FK-throws on pg/D1 (context.manifest_artifact_id).
+      await store.deleteArtifact(ctx.manifest_artifact_id, ORG)
+      expect(await store.getContext(ctx.id)).toBeNull()
+      expect(await store.getSession(s.id)).toBeNull()
+    })
+
     it("deleteContext cascades sessions and messages, scoped to its workspace", async () => {
       const ctx = await newContext()
       const s = await store.createSession({

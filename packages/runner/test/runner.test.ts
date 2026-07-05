@@ -57,7 +57,7 @@ describe("buildPrompt", () => {
     ])
     expect(p).toContain("[asker] churn?")
     expect(p).toContain("[you] 32%")
-    expect(p.trim().endsWith("Answer the asker's latest message.")).toBe(true)
+    expect(p).toContain("Answer the asker's latest message")
   })
 })
 

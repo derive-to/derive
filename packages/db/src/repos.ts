@@ -1608,8 +1608,10 @@ export function makeRepos(db: SqliteDb) {
       .where(eq(contextSession.id, id))
       .returning()
       .get()) ?? null
-  // Two writes, no transaction — house pattern (createReviewRound). If the state
-  // write is lost to a crash, the next poll or message repairs it.
+  // Two writes, no transaction (the createReviewRound pattern; D1 has no txn in
+  // this driver). A crash between them leaves state stale: an unsettled agent
+  // turn is caught by the runner's last-turn guard; a lost asker `open` waits
+  // for the asker's next message. Both windows are milliseconds.
   const addSessionMessage = async (
     m: NewSessionMessage,
     state: SessionState,
@@ -1817,7 +1819,16 @@ export function makeRepos(db: SqliteDb) {
   }
   // Sequential cascade (used by D1). better-sqlite3 + pg override with a transaction.
   const deleteArtifact = async (id: string): Promise<void> => {
-    // Delete FK-referencing tables before the artifact row itself.
+    // Delete FK-referencing tables before the artifact row itself. A context's
+    // manifest FK means deleting a manifest deletes its context (and sessions) —
+    // a context cannot outlive its definition, by design.
+    const linked = await db
+      .select({ id: context.id, org_id: context.org_id })
+      .from(context)
+      .where(eq(context.manifest_artifact_id, id))
+      .all()
+    for (const x of linked) await deleteContext(x.id, x.org_id)
+    await db.delete(reviewRound).where(eq(reviewRound.artifact_id, id)).run()
     await db.delete(version).where(eq(version.artifact_id, id)).run()
     await db.delete(comment).where(eq(comment.artifact_id, id)).run()
     await db.delete(artifactMember).where(eq(artifactMember.artifact_id, id)).run()

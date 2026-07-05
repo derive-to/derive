@@ -1,8 +1,10 @@
 // The context runner: an owner-operated daemon that answers a Derive context's
 // sessions. Poll the queue → run Claude against the manifest → post the answer.
-// Polling (not realtime), drain-on-startup (the first poll IS the drain), and
-// no auto-retry (failures surface as `failed`) are all inherited from the daniel
-// prototype's decision log.
+// It polls because the API deliberately has no held connection (Workers
+// constraint), and polling makes drain-on-startup free: a closed laptop just
+// delays answers, and the first poll after reopening catches up. Failures
+// surface as `failed` sessions and are never auto-retried — a retry would mask
+// exactly the manifest/tooling bugs the owner needs to see.
 
 import { buildPrompt, runClaude } from "./claude"
 import { type AnswerMeta, DeriveClient, type QueueSession } from "./client"
@@ -46,7 +48,14 @@ async function serveSession(
     caveats: a.caveats,
     ...(a.escalate ? { escalation_reason: a.escalation_reason ?? "escalated" } : {}),
   }
-  await client.answer(session.id, a.body_md, meta, a.escalate ? "escalated" : "answered")
+  const lastAsker = session.messages.filter((m) => m.author_kind === "asker").at(-1)
+  await client.answer(
+    session.id,
+    a.body_md,
+    meta,
+    a.escalate ? "escalated" : "answered",
+    lastAsker?.id,
+  )
   console.log(
     `[runner] session ${session.id} ${a.escalate ? "escalated" : "answered"} (confidence ${a.confidence ?? "?"})`,
   )
@@ -66,13 +75,29 @@ async function main(): Promise<void> {
     try {
       // Re-read the manifest each cycle only when the queue has work — an edit to
       // the manifest applies from the next answer, and idle polls stay one call.
-      const sessions = await client.queue(cfg.contextId)
+      // An open session ending on an agent turn is one of two things: a settle
+      // whose state write was lost (the store's two writes aren't transactional)
+      // — re-answering would double-post, skip it — or an answer the server
+      // marked stale because a follow-up landed mid-run: that one MUST re-serve,
+      // and the transcript above the stale answer carries the follow-up.
+      const sessions = (await client.queue(cfg.contextId)).filter((s) => {
+        const last = s.messages.at(-1)
+        if (last?.author_kind !== "agent") return true
+        return (last.meta as { stale?: boolean } | null)?.stale === true
+      })
       if (sessions.length > 0) {
         const fresh = await client.getContext(cfg.contextId)
         const manifest = fresh.manifest_md ?? info.manifest_md
-        // Sessions are served sequentially: one runner, one model, no fan-out —
-        // fairness comes from the queue's oldest-first order.
-        for (const s of sessions) await serveSession(client, s, manifest, cfg)
+        // Sequential on purpose: one runner, one model, no fan-out — fairness
+        // comes from the queue's oldest-first order. One session's failure must
+        // not starve the rest of the batch.
+        for (const s of sessions) {
+          try {
+            await serveSession(client, s, manifest, cfg)
+          } catch (err) {
+            console.error(`[runner] session ${s.id}: ${(err as Error).message}`)
+          }
+        }
       }
     } catch (err) {
       console.error(`[runner] poll error: ${(err as Error).message}`)

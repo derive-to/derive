@@ -260,4 +260,66 @@ describe("sessions: the ask → answer → follow-up loop", () => {
     expect(failed.status).toBe(200)
     expect((await failed.json()).session.state).toBe("failed")
   })
+
+  it("a crash after the asker closed must not reopen the session as failed", async () => {
+    const asked = await (
+      await app.request(
+        `/v1/contexts/${contextId}/sessions`,
+        jsonAs(as(daniel.email), { body_md: "closing this one" }),
+      )
+    ).json()
+    await app.request(`/v1/sessions/${asked.session.id}`, {
+      method: "PATCH",
+      headers: { ...as(daniel.email), "content-type": "application/json" },
+      body: JSON.stringify({ state: "closed" }),
+    })
+    const late = await app.request(`/v1/sessions/${asked.session.id}`, {
+      method: "PATCH",
+      headers: { ...bearer(agentToken), "content-type": "application/json" },
+      body: JSON.stringify({ state: "failed" }),
+    })
+    expect(late.status).toBe(409)
+  })
+
+  it("an answer generated before a mid-run follow-up does not settle the session", async () => {
+    const asked = await (
+      await app.request(
+        `/v1/contexts/${contextId}/sessions`,
+        jsonAs(as(daniel.email), { body_md: "slow question" }),
+      )
+    ).json()
+    const sid = asked.session.id
+    const firstAskerMsg = asked.messages[0].id
+
+    // The follow-up lands while the runner is still generating…
+    await app.request(
+      `/v1/sessions/${sid}/messages`,
+      jsonAs(as(daniel.email), { body_md: "also this!" }),
+    )
+
+    // …so the answer (which names the message it addressed) must not close the turn.
+    await app.request(
+      `/v1/sessions/${sid}/messages`,
+      jsonAs(bearer(agentToken), {
+        body_md: "answer to the slow question only",
+        answers: firstAskerMsg,
+      }),
+    )
+    const view = await (
+      await app.request(`/v1/sessions/${sid}`, { headers: as(daniel.email) })
+    ).json()
+    expect(view.session.state).toBe("open") // still the runner's turn
+    expect(view.messages.at(-1).meta.stale).toBe(true) // and the answer is marked superseded
+
+    // The re-serve (answering the follow-up) settles it normally.
+    const followUpId = view.messages[1].id
+    await app.request(
+      `/v1/sessions/${sid}/messages`,
+      jsonAs(bearer(agentToken), { body_md: "and the follow-up", answers: followUpId }),
+    )
+    const settled = await (
+      await app.request(`/v1/sessions/${sid}`, { headers: as(daniel.email) })
+    ).json()
+    expect(settled.session.state).toBe("answered")
+  })
 })

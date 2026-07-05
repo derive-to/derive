@@ -23,6 +23,13 @@ import { mdToHtml } from "../artifact/lib/markdown"
 // fast only while the runner owes a reply (sessionQuery's refetchInterval).
 export function ContextConsole() {
   const { id } = useParams({ from: "/contexts/$id" })
+  // Keyed by context id: the router keeps this route's component mounted across
+  // /contexts/A → /contexts/B, and a `picked` session id from A must not
+  // survive into B's console.
+  return <Console key={id} id={id} />
+}
+
+function Console({ id }: { id: string }) {
   const { me } = useAuth()
   const qc = useQueryClient()
   const { data: context } = useQuery(contextQuery(id))
@@ -30,6 +37,9 @@ export function ContextConsole() {
 
   // The session on screen: sticky once picked; defaults to the most recent.
   const [picked, setPicked] = useState<string | null>(null)
+  // Controlled tabs so the Activity view can hand a session to the Ask view —
+  // with defaultValue the row click would select a thread inside a hidden tab.
+  const [tab, setTab] = useState("ask")
   const mine = (sessions ?? []).filter((s) => s.asker_id === me?.id)
   const active = picked === "new" ? null : (picked ?? mine[0]?.id ?? null)
   const isOwner = !!context && context.created_by === me?.id
@@ -60,7 +70,7 @@ export function ContextConsole() {
         )}
       </div>
 
-      <Tabs defaultValue="ask">
+      <Tabs value={tab} onValueChange={setTab}>
         <TabsList variant="line">
           <TabsTrigger value="ask" data-testid="console-tab-ask">
             Ask
@@ -75,6 +85,8 @@ export function ContextConsole() {
         <TabsContent value="ask" className="flex flex-col gap-4 pt-4">
           {mine.length > 0 && (
             <div className="flex flex-wrap items-center gap-1.5">
+              {/* Recent conversations only — the full history is the owner's
+                  Activity view, not a chat surface's job. */}
               {mine.slice(0, 6).map((s) => (
                 <Button
                   key={s.id}
@@ -120,7 +132,13 @@ export function ContextConsole() {
 
         {isOwner && (
           <TabsContent value="activity" className="pt-4">
-            <ActivityList sessions={sessions ?? []} onOpen={(sid) => setPicked(sid)} />
+            <ActivityList
+              sessions={sessions ?? []}
+              onOpen={(sid) => {
+                setPicked(sid)
+                setTab("ask")
+              }}
+            />
           </TabsContent>
         )}
       </Tabs>
@@ -182,6 +200,7 @@ function SessionThread({
   contextName: string
   onClosed: () => void
 }) {
+  const { me } = useAuth()
   const qc = useQueryClient()
   const { data } = useQuery(sessionQuery(sessionId))
   const [text, setText] = useState("")
@@ -196,10 +215,15 @@ function SessionThread({
   }, [state, contextId, qc])
   if (!data) return <Spinner className="mx-auto mt-8" />
   const { session, messages } = data
+  // Only the asker may post (the server 404s anyone else) — the owner reads
+  // someone else's session from Activity and can close it, nothing more.
+  const isMine = session.asker_id === me?.id
   const refresh = () => qc.invalidateQueries({ queryKey: sessionQuery(sessionId).queryKey })
 
   const send = async () => {
-    if (!text.trim()) return
+    // Guards the keyboard path too — Cmd+Enter must respect the same turn gate
+    // as the disabled Send button.
+    if (!text.trim() || busy || session.state === "open") return
     setBusy(true)
     try {
       await api.postSessionMessage(sessionId, text.trim())
@@ -241,7 +265,9 @@ function SessionThread({
         )}
       </div>
 
-      {session.state !== "closed" ? (
+      {session.state === "closed" ? (
+        <p className="border-t pt-3 text-sm text-muted-foreground">This conversation is closed.</p>
+      ) : isMine ? (
         <div className="flex flex-col gap-2 border-t pt-3">
           <Textarea
             data-testid="console-followup-input"
@@ -275,7 +301,17 @@ function SessionThread({
           </div>
         </div>
       ) : (
-        <p className="border-t pt-3 text-sm text-muted-foreground">This conversation is closed.</p>
+        <div className="flex items-center border-t pt-3">
+          <Button
+            variant="ghost"
+            size="sm"
+            data-testid="console-close-session"
+            onClick={close}
+            className="text-muted-foreground"
+          >
+            Close conversation
+          </Button>
+        </div>
       )}
     </div>
   )

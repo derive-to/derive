@@ -4,9 +4,10 @@ The context runner: an owner-operated daemon that answers a Derive context's
 sessions. It polls the context's queue, runs `claude -p` with the manifest as
 system prompt (plus the transcript), and posts structured answers back. The
 manifest is fetched at spawn time, so editing it on Derive reconfigures the
-runner with no restart. Failures surface as `failed` sessions — never retried
-silently. See the daniel prototype's decision log for why polling, why
-drain-on-startup, why no retry.
+runner with no restart. It polls rather than holding a connection (the API has
+none to hold), which also makes catch-up free: a closed laptop just delays
+answers. Failures surface as `failed` sessions and are never retried silently —
+a retry would mask the manifest/tooling bugs the owner needs to see.
 
 ## Run
 

@@ -8,7 +8,7 @@ import type {
   ViewStats,
 } from "@derive/core"
 import Database from "better-sqlite3"
-import { and, eq } from "drizzle-orm"
+import { and, eq, inArray } from "drizzle-orm"
 import { drizzle } from "drizzle-orm/better-sqlite3"
 import { makeRepos, schema } from "./repos"
 import {
@@ -22,12 +22,16 @@ import {
   collectionItem,
   collectionMember,
   comment,
+  context,
+  contextSession,
   domain,
   MIGRATION_STATEMENTS,
   notification,
   proposal,
   report,
+  reviewRound,
   SCHEMA_STATEMENTS,
+  sessionMessage,
   version,
 } from "./schema"
 
@@ -118,6 +122,33 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
     // Atomic delete: all FK-dependent rows and the artifact itself commit together.
     deleteArtifact: async (id: string): Promise<void> => {
       raw.transaction(() => {
+        // A context's manifest FK means deleting a manifest deletes its context
+        // (and sessions) — a context cannot outlive its definition, by design.
+        const linked = db
+          .select({ id: context.id })
+          .from(context)
+          .where(eq(context.manifest_artifact_id, id))
+          .all()
+        if (linked.length > 0) {
+          const ctxIds = linked.map((x) => x.id)
+          const sessions = db
+            .select({ id: contextSession.id })
+            .from(contextSession)
+            .where(inArray(contextSession.context_id, ctxIds))
+            .all()
+          if (sessions.length > 0)
+            db.delete(sessionMessage)
+              .where(
+                inArray(
+                  sessionMessage.session_id,
+                  sessions.map((s) => s.id),
+                ),
+              )
+              .run()
+          db.delete(contextSession).where(inArray(contextSession.context_id, ctxIds)).run()
+          db.delete(context).where(inArray(context.id, ctxIds)).run()
+        }
+        db.delete(reviewRound).where(eq(reviewRound.artifact_id, id)).run()
         db.delete(version).where(eq(version.artifact_id, id)).run()
         db.delete(comment).where(eq(comment.artifact_id, id)).run()
         db.delete(artifactMember).where(eq(artifactMember.artifact_id, id)).run()

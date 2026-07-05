@@ -62,15 +62,19 @@ export class DeriveClient {
     return r.sessions
   }
 
+  /** Post an answer. `answers` names the asker message it addresses — if a
+   *  follow-up landed mid-run, the server keeps the session open for re-serve
+   *  instead of settling it over the unseen follow-up. */
   answer(
     sessionId: string,
     bodyMd: string,
     meta: AnswerMeta,
-    state: "answered" | "escalated" = "answered",
+    state: "answered" | "escalated",
+    answers: string | undefined,
   ): Promise<unknown> {
     return this.call(`/v1/sessions/${sessionId}/messages`, {
       method: "POST",
-      body: JSON.stringify({ body_md: bodyMd, meta, state }),
+      body: JSON.stringify({ body_md: bodyMd, meta, state, answers }),
     })
   }
 

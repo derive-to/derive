@@ -14,8 +14,16 @@ export interface RunnerConfig {
   claudeBin: string
   timeoutMs: number
   pollMs: number
-  /** Skip Claude and return a canned answer — the smoke-test mode (daniel's Day 1). */
+  /** Skip Claude and post a canned answer — verifies the wiring without a model. */
   mock: boolean
+}
+
+// A malformed value must not pass through as NaN: setTimeout(NaN) fires
+// immediately, which would turn the poll loop into a busy-loop against the API
+// (and an instant "timeout" for every model run).
+const positiveMs = (raw: string | undefined, fallback: number, floor: number): number => {
+  const n = Number(raw)
+  return Number.isFinite(n) && n >= floor ? n : fallback
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): RunnerConfig {
@@ -30,8 +38,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): RunnerConfig {
     contextId,
     cwd: env.RUNNER_CWD ?? process.cwd(),
     claudeBin: env.CLAUDE_BIN ?? "claude",
-    timeoutMs: Number(env.RUNNER_TIMEOUT_MS ?? 600_000),
-    pollMs: Number(env.RUNNER_POLL_MS ?? 5_000),
+    timeoutMs: positiveMs(env.RUNNER_TIMEOUT_MS, 600_000, 10_000),
+    pollMs: positiveMs(env.RUNNER_POLL_MS, 5_000, 500),
     mock: env.RUNNER_MOCK === "1",
   }
 }
