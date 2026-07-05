@@ -11,6 +11,7 @@ import { cn } from "@/lib/utils"
 import { Composer } from "./comment-composer"
 import { CollapsibleThreadSection, CommentCard, PinnedZone } from "./comment-thread"
 import { useCommentScope } from "./lib/comment-scope"
+import { CommentTreeProvider, useCommentTree } from "./lib/comment-tree"
 import { type ComposerState, type PinItem, selLabel } from "./types"
 
 // The comments panel header: a label + the open-thread count (a neutral mono pill,
@@ -30,14 +31,8 @@ export function MobileComments({
   openThreads,
   resolved,
   composer,
-  activeThread,
-  inDoc,
   onClose,
   onNewGeneral,
-  onActivate,
-  onResolve,
-  onReply,
-  onJump,
   onSubmitNew,
   onCancelNew,
 }: {
@@ -45,14 +40,8 @@ export function MobileComments({
   openThreads: Comment[][]
   resolved: Comment[][]
   composer: ComposerState
-  activeThread: string | null
-  inDoc: Record<string, boolean>
   onClose: () => void
   onNewGeneral: () => void
-  onActivate: (id: string) => void
-  onResolve: (c: Comment) => void
-  onReply: (text: string, threadId: string, mentions?: Mention[]) => void
-  onJump: (id: string) => void
   onSubmitNew: (text: string, mentions?: Mention[]) => void
   onCancelNew: () => void
   reviewCard?: ReactNode
@@ -62,6 +51,7 @@ export function MobileComments({
   // keyboard (see the height + `kb` style below), so the box sits flush above the
   // keyboard with the document visible above — no awkward half-height middle state.
   const { canComment } = useCommentScope()
+  const tree = useCommentTree()
   const [size, setSize] = useState<"peek" | "full">("peek")
   const sheetRef = useRef<HTMLDivElement>(null)
   useFocusTrap(sheetRef, open)
@@ -114,8 +104,11 @@ export function MobileComments({
   // Jumping to text: drop to the peek bar so the highlight is visible in the doc.
   const jumpToText = (id: string) => {
     setSize("peek")
-    onJump(id)
+    tree.onJump(id)
   }
+  // The sheet's cards read this overridden tree: jumping also collapses the sheet, and
+  // touch has no hover (so no emphasis state) — everything else is the page's tree.
+  const sheetTree = { ...tree, hoverThread: null, onHover: () => {}, onJump: jumpToText }
   return (
     <>
       {/* Backdrop only at full height (reading mode). At half the document above
@@ -211,66 +204,51 @@ export function MobileComments({
             />
           </div>
         ) : size === "full" ? (
-          <div className="min-h-0 flex-1 overflow-auto p-3 pb-[max(14px,env(safe-area-inset-bottom))]">
-            {empty && (
-              <EmptyState
-                className="p-8"
-                icon={<Icon name="comments" strokeWidth={1.75} />}
-                title="Start the conversation."
-                description="Select text in the document, or add a general comment."
-                action={
-                  canComment ? (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      data-testid="comments-sheet-empty-new"
-                      onClick={() => {
-                        setSize("full")
-                        onNewGeneral()
-                      }}
-                    >
-                      New comment
-                    </Button>
-                  ) : undefined
-                }
-              />
-            )}
-            {openThreads.map((t) => {
-              const head = t[0]
-              if (!head) return null
-              return (
-                <div key={head.thread_id} className="mb-2.5">
-                  <CommentCard
-                    thread={t}
-                    active={activeThread === head.thread_id}
-                    hovered={false}
-                    present={inDoc[head.thread_id]}
-                    onActivate={onActivate}
-                    onHover={() => {}}
-                    onResolve={onResolve}
-                    onReply={onReply}
-                    onJump={jumpToText}
-                  />
-                </div>
-              )
-            })}
-            {resolved.length > 0 && (
-              <CollapsibleThreadSection
-                label="Resolved"
-                defaultOpen={false}
-                testId="resolved-section-toggle"
-                className="mt-1"
-                threads={resolved}
-                activeThread={activeThread}
-                hoverThread={null}
-                onActivate={onActivate}
-                onHover={() => {}}
-                onResolve={onResolve}
-                onReply={onReply}
-                onJump={jumpToText}
-              />
-            )}
-          </div>
+          <CommentTreeProvider value={sheetTree}>
+            <div className="min-h-0 flex-1 overflow-auto p-3 pb-[max(14px,env(safe-area-inset-bottom))]">
+              {empty && (
+                <EmptyState
+                  className="p-8"
+                  icon={<Icon name="comments" strokeWidth={1.75} />}
+                  title="Start the conversation."
+                  description="Select text in the document, or add a general comment."
+                  action={
+                    canComment ? (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        data-testid="comments-sheet-empty-new"
+                        onClick={() => {
+                          setSize("full")
+                          onNewGeneral()
+                        }}
+                      >
+                        New comment
+                      </Button>
+                    ) : undefined
+                  }
+                />
+              )}
+              {openThreads.map((t) => {
+                const head = t[0]
+                if (!head) return null
+                return (
+                  <div key={head.thread_id} className="mb-2.5">
+                    <CommentCard thread={t} />
+                  </div>
+                )
+              })}
+              {resolved.length > 0 && (
+                <CollapsibleThreadSection
+                  label="Resolved"
+                  defaultOpen={false}
+                  testId="resolved-section-toggle"
+                  className="mt-1"
+                  threads={resolved}
+                />
+              )}
+            </div>
+          </CommentTreeProvider>
         ) : null}
       </div>
     </>
@@ -284,16 +262,8 @@ export function OpenPanel(props: {
   pinned: PinItem[]
   general: Comment[][]
   resolved: Comment[][]
-  activeThread: string | null
-  hoverThread: string | null
-  inDoc: Record<string, boolean>
   composer: ComposerState
   onHide: () => void
-  onActivate: (id: string) => void
-  onHover: (id: string | null) => void
-  onResolve: (c: Comment) => void
-  onReply: (text: string, threadId: string, mentions?: Mention[]) => void
-  onJump: (id: string) => void
   onNewGeneral: () => void
   onSubmitNew: (text: string, mentions?: Mention[]) => void
   onCancelNew: () => void
@@ -306,16 +276,8 @@ export function OpenPanel(props: {
     pinned,
     general,
     resolved,
-    activeThread,
-    hoverThread,
-    inDoc,
     composer,
     onHide,
-    onActivate,
-    onHover,
-    onResolve,
-    onReply,
-    onJump,
     onNewGeneral,
     onSubmitNew,
     onCancelNew,
@@ -395,14 +357,6 @@ export function OpenPanel(props: {
           scrollY={scrollY}
           onScrollDoc={onScrollDoc}
           composer={composer}
-          activeThread={activeThread}
-          hoverThread={hoverThread}
-          inDoc={inDoc}
-          onActivate={onActivate}
-          onHover={onHover}
-          onResolve={onResolve}
-          onReply={onReply}
-          onJump={onJump}
           onSubmitNew={onSubmitNew}
           onCancelNew={onCancelNew}
         />
@@ -446,13 +400,6 @@ export function OpenPanel(props: {
               defaultOpen
               testId="general-section-toggle"
               threads={general}
-              activeThread={activeThread}
-              hoverThread={hoverThread}
-              onActivate={onActivate}
-              onHover={onHover}
-              onResolve={onResolve}
-              onReply={onReply}
-              onJump={onJump}
             />
           )}
           {resolved.length > 0 && (
@@ -462,13 +409,6 @@ export function OpenPanel(props: {
               testId="resolved-section-toggle"
               className="mt-1"
               threads={resolved}
-              activeThread={activeThread}
-              hoverThread={hoverThread}
-              onActivate={onActivate}
-              onHover={onHover}
-              onResolve={onResolve}
-              onReply={onReply}
-              onJump={onJump}
             />
           )}
         </div>

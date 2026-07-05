@@ -20,6 +20,7 @@ import { useActions } from "./comment-actions"
 import { Composer, MentionField } from "./comment-composer"
 import { CommentRow } from "./comment-row"
 import { useCommentScope } from "./lib/comment-scope"
+import { useCommentTree } from "./lib/comment-tree"
 import { COMPOSER_ID, layoutPins } from "./lib/layout"
 import { quoteChipClass } from "./quote-chip"
 import {
@@ -35,14 +36,6 @@ export function PinnedZone({
   scrollY,
   onScrollDoc,
   composer,
-  activeThread,
-  hoverThread,
-  inDoc,
-  onActivate,
-  onHover,
-  onResolve,
-  onReply,
-  onJump,
   onSubmitNew,
   onCancelNew,
   topInset = 0,
@@ -55,17 +48,12 @@ export function PinnedZone({
   topInset?: number
   onScrollDoc: (dy: number) => void
   composer: ComposerState
-  activeThread: string | null
-  hoverThread: string | null
-  inDoc: Record<string, boolean>
-  onActivate: (id: string) => void
-  onHover: (id: string | null) => void
-  onResolve: (c: Comment) => void
-  onReply: (text: string, threadId: string, mentions?: Mention[]) => void
-  onJump: (id: string) => void
   onSubmitNew: (text: string, mentions?: Mention[]) => void
   onCancelNew: () => void
 }) {
+  // The active/hover state drives this zone's layout math (which card is pinned to its
+  // exact Y, z-order, opacity); it comes from the tree context, same as the cards read.
+  const { activeThread, hoverThread } = useCommentTree()
   const [heights, setHeights] = useState<Record<string, number>>({})
   const obs = useRef<ResizeObserver | null>(null)
   useEffect(() => {
@@ -169,17 +157,7 @@ export function PinnedZone({
               opacity: p.located ? 1 : 0,
             }}
           >
-            <CommentCard
-              thread={p.thread}
-              active={active}
-              hovered={hoverThread === id}
-              present={inDoc[id]}
-              onActivate={onActivate}
-              onHover={onHover}
-              onResolve={onResolve}
-              onReply={onReply}
-              onJump={onJump}
-            />
+            <CommentCard thread={p.thread} />
           </div>
         )
       })}
@@ -326,34 +304,21 @@ function roleGuess(snapshot: ElementSnapshotLite | undefined, label: string): st
 }
 
 // One comment thread. Compact until activated; the active card shows the full
-// thread, a reply box, and resolve controls.
-export function CommentCard({
-  thread,
-  active,
-  hovered,
-  present,
-  onActivate,
-  onHover,
-  onResolve,
-  onReply,
-  onJump,
-}: {
-  thread: Comment[]
-  active: boolean
-  hovered: boolean
-  present?: boolean
-  onActivate: (id: string) => void
-  onHover: (id: string | null) => void
-  onResolve: (c: Comment) => void
-  onReply: (text: string, threadId: string, mentions?: Mention[]) => void
-  onJump: (id: string) => void
-}) {
+// thread, a reply box, and resolve controls. Its interaction state (active/hovered/
+// present) and handlers come from the CommentTree context — the card is the leaf, so a
+// render site is just `<CommentCard thread={t} />` with no drilled props.
+export function CommentCard({ thread }: { thread: Comment[] }) {
   const { canComment, currentSlide, landedSlides, anchorConf, agentIds } = useCommentScope()
+  const { activeThread, hoverThread, inDoc, onActivate, onHover, onResolve, onReply, onJump } =
+    useCommentTree()
   const { openReview } = useActions()
   const [reply, setReply] = useState("")
   const [replyMentions, setReplyMentions] = useState<Mention[]>([])
   const root = thread[0]
   if (!root) return null
+  const active = activeThread === root.thread_id
+  const hovered = hoverThread === root.thread_id
+  const present = inDoc[root.thread_id]
   const sendReply = (resolved: Mention[]) => {
     if (!reply.trim()) return
     onReply(reply, root.thread_id, resolved)
@@ -623,26 +588,12 @@ export function CollapsibleThreadSection({
   testId,
   className,
   threads,
-  activeThread,
-  hoverThread,
-  onActivate,
-  onHover,
-  onResolve,
-  onReply,
-  onJump,
 }: {
   label: string
   defaultOpen: boolean
   testId: string
   className?: string
   threads: Comment[][]
-  activeThread: string | null
-  hoverThread: string | null
-  onActivate: (id: string) => void
-  onHover: (id: string | null) => void
-  onResolve: (c: Comment) => void
-  onReply: (text: string, threadId: string, mentions?: Mention[]) => void
-  onJump: (id: string) => void
 }) {
   const [open, setOpen] = useState(defaultOpen)
   return (
@@ -667,16 +618,7 @@ export function CollapsibleThreadSection({
           if (!head) return null
           return (
             <div key={head.thread_id} className="mb-2.5">
-              <CommentCard
-                thread={t}
-                active={activeThread === head.thread_id}
-                hovered={hoverThread === head.thread_id}
-                onActivate={onActivate}
-                onHover={onHover}
-                onResolve={onResolve}
-                onReply={onReply}
-                onJump={onJump}
-              />
+              <CommentCard thread={t} />
             </div>
           )
         })}
