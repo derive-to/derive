@@ -230,10 +230,17 @@ interface ElReg {
   /* -- highlight styles (mark's default yellow is overridden) -- */
   const st = document.createElement("style")
   st.textContent =
-    "mark.derive-hl{background:rgba(100,116,139,.20);color:inherit;border-bottom:2px solid rgba(100,116,139,.5);border-radius:2px;cursor:pointer;transition:background .15s,border-color .15s}" +
-    "mark.derive-hl:hover,mark.derive-hl.derive-hl-on{background:rgba(100,116,139,.42);border-bottom-color:rgba(100,116,139,.95)}" +
-    "mark.derive-hl-flash{animation:derive-flash 1s ease 2}" +
-    "@keyframes derive-flash{50%{background:rgba(100,116,139,.7)}}" +
+    /* Text-comment highlights paint through the CSS Custom Highlight API (::highlight),
+       NOT <mark> DOM wraps — so we never mutate the artifact's own DOM, and OVERLAPPING
+       comments render correctly (the old mark-wrapping nested awkwardly). `::highlight`
+       only supports color / background / text-decoration / text-shadow (no border or
+       radius), so the underline is a text-decoration. The `overlap` layer paints the
+       intersection of two+ comments a step darker so a stacked region reads as such;
+       `on` (hovered/active) and `flash` (jump target) sit above it by priority. */
+    "::highlight(derive-hl){background-color:rgba(100,116,139,.20);text-decoration-line:underline;text-decoration-color:rgba(100,116,139,.55);text-decoration-thickness:2px}" +
+    "::highlight(derive-hl-overlap){background-color:rgba(100,116,139,.30);text-decoration-line:underline;text-decoration-color:rgba(100,116,139,.85);text-decoration-thickness:2px}" +
+    "::highlight(derive-hl-on){background-color:rgba(100,116,139,.42);text-decoration-color:rgba(100,116,139,.95)}" +
+    "::highlight(derive-hl-flash){background-color:rgba(100,116,139,.72)}" +
     /* element overlays: a non-text anchor draws an outline box (pointer-events off so
        the element stays interactive) with a clickable comment badge in its corner. A
        low-confidence relocation reads dashed to signal "we think it moved here". */
@@ -723,15 +730,144 @@ interface ElReg {
     while ((n = w.nextNode())) out.push(n as Text)
     return out
   }
-  const clearMarks = () => {
-    const ms = document.querySelectorAll("mark[data-derive-id]")
-    for (const m of Array.from(ms)) {
-      const p = m.parentNode
-      if (!p) continue
-      while (m.firstChild) p.insertBefore(m.firstChild, m)
-      p.removeChild(m)
-      p.normalize()
+  /* === Text-comment highlights via the CSS Custom Highlight API ==============
+     Each text comment's live Range is kept in `textEntries` (for hit-testing +
+     rect reporting), and — where the API exists — painted as a CSS Highlight. No
+     <mark> DOM wrapping, so we never touch the artifact's own DOM and overlaps
+     paint correctly. Where the API is missing the comments still work (cards pin +
+     jump via range rects); only the in-document tint + click-on-text are skipped. */
+  interface TextEntry {
+    id: string
+    range: Range
+  }
+  let textEntries: TextEntry[] = []
+  // biome-ignore lint/suspicious/noExplicitAny: the Highlight registry types vary by lib version; feature-detected + guarded.
+  const hlReg: any =
+    typeof CSS !== "undefined" && (CSS as unknown as { highlights?: unknown }).highlights
+  const HL_SUPPORTED =
+    !!hlReg && typeof (globalThis as { Highlight?: unknown }).Highlight === "function"
+  // biome-ignore lint/suspicious/noExplicitAny: Highlight is feature-detected above.
+  const HighlightCtor = (globalThis as any).Highlight
+  const baseHl = HL_SUPPORTED ? new HighlightCtor() : null
+  const overlapHl = HL_SUPPORTED ? new HighlightCtor() : null
+  const onHl = HL_SUPPORTED ? new HighlightCtor() : null
+  const flashHl = HL_SUPPORTED ? new HighlightCtor() : null
+  if (HL_SUPPORTED) {
+    // Priority orders the painters where ranges overlap: base < overlap < on < flash.
+    hlReg.set("derive-hl", baseHl)
+    hlReg.set("derive-hl-overlap", overlapHl)
+    hlReg.set("derive-hl-on", onHl)
+    hlReg.set("derive-hl-flash", flashHl)
+    if (overlapHl) overlapHl.priority = 1
+    if (onHl) onHl.priority = 2
+    if (flashHl) flashHl.priority = 3
+  }
+
+  /* A DOM Range spanning [s,e) of root's concatenated text — the counterpart to the
+     old wrapIn, but it MUTATES NOTHING: it just locates the boundary text nodes. */
+  const rangeAt = (root: Node, s: number, e: number): Range | null => {
+    const nodes = textNodes(root)
+    const range = document.createRange()
+    let acc = 0
+    let started = false
+    let lastNode: Text | null = null
+    for (const node of nodes) {
+      const len = node.nodeValue?.length ?? 0
+      if (!started && s <= acc + len) {
+        range.setStart(node, Math.max(0, Math.min(len, s - acc)))
+        started = true
+      }
+      if (started && e <= acc + len) {
+        range.setEnd(node, Math.max(0, Math.min(len, e - acc)))
+        return range
+      }
+      acc += len
+      lastNode = node
     }
+    // `e` ran past the available text — clamp the end to the last node so a slightly
+    // over-long stored quote still paints (never returns a half-open range).
+    if (started && lastNode) {
+      range.setEnd(lastNode, lastNode.nodeValue?.length ?? 0)
+      return range
+    }
+    return null
+  }
+  const clearText = () => {
+    textEntries = []
+    baseHl?.clear()
+    overlapHl?.clear()
+    onHl?.clear()
+    flashHl?.clear()
+  }
+  const addText = (id: string, range: Range) => {
+    textEntries.push({ id, range })
+  }
+  // Intersection of two ranges (the later start, the earlier end), or null if disjoint.
+  const intersect = (a: Range, b: Range): Range | null => {
+    try {
+      const r = document.createRange()
+      if (a.compareBoundaryPoints(Range.START_TO_START, b) >= 0)
+        r.setStart(a.startContainer, a.startOffset)
+      else r.setStart(b.startContainer, b.startOffset)
+      if (a.compareBoundaryPoints(Range.END_TO_END, b) <= 0) r.setEnd(a.endContainer, a.endOffset)
+      else r.setEnd(b.endContainer, b.endOffset)
+      return r.collapsed ? null : r
+    } catch (_e) {
+      return null
+    }
+  }
+  // Repaint the base highlight from every entry, plus an overlap layer for the regions
+  // two+ comments share, so a stacked span reads a step darker.
+  const paintText = () => {
+    if (!HL_SUPPORTED || !baseHl) return
+    baseHl.clear()
+    overlapHl?.clear()
+    for (const t of textEntries) baseHl.add(t.range)
+    if (overlapHl)
+      for (let i = 0; i < textEntries.length; i++)
+        for (let j = i + 1; j < textEntries.length; j++) {
+          const a = textEntries[i]
+          const b = textEntries[j]
+          if (!a || !b) continue
+          const inter = intersect(a.range, b.range)
+          if (inter) overlapHl.add(inter)
+        }
+  }
+  /* The caret node+offset under a viewport point, across the two browser APIs, for
+     hit-testing a click/hover against the comment ranges (there are no <mark> elements
+     to catch the event anymore). */
+  const caretAt = (x: number, y: number): { node: Node; offset: number } | null => {
+    const d = document as unknown as {
+      caretPositionFromPoint?: (x: number, y: number) => { offsetNode: Node; offset: number } | null
+      caretRangeFromPoint?: (x: number, y: number) => Range | null
+    }
+    if (d.caretPositionFromPoint) {
+      const p = d.caretPositionFromPoint(x, y)
+      return p ? { node: p.offsetNode, offset: p.offset } : null
+    }
+    if (d.caretRangeFromPoint) {
+      const r = d.caretRangeFromPoint(x, y)
+      return r ? { node: r.startContainer, offset: r.startOffset } : null
+    }
+    return null
+  }
+  // Which comment covers a viewport point — the SMALLEST covering range wins, so a
+  // click on a stacked region focuses the most specific comment (the others stay
+  // reachable as pinned cards in the margin).
+  const textHitAt = (x: number, y: number): string | null => {
+    if (!textEntries.length) return null
+    const c = caretAt(x, y)
+    if (!c) return null
+    let best: { id: string; len: number } | null = null
+    for (const { id, range } of textEntries) {
+      try {
+        if (range.comparePoint(c.node, c.offset) === 0) {
+          const len = range.toString().length
+          if (!best || len < best.len) best = { id, len }
+        }
+      } catch (_e) {}
+    }
+    return best?.id ?? null
   }
   /* same resolution order as the server: context match first, then exact */
   const find = (full: string, a: Anchor): number => {
@@ -745,45 +881,17 @@ interface ElReg {
     }
     return full.indexOf(exact)
   }
-  /* wrap [s,e) of root's concatenated text in marks; reverse order keeps offsets valid */
-  const wrapIn = (root: Node, id: string, s: number, e: number) => {
-    const nodes = textNodes(root)
-    const offs: number[] = []
-    let full = ""
-    for (const node of nodes) {
-      offs.push(full.length)
-      full += node.nodeValue
-    }
-    const segs: { n: Text; a: number; b: number }[] = []
-    for (let i = 0; i < nodes.length; i++) {
-      const node = nodes[i]
-      const ns = offs[i]
-      if (!node || ns === undefined) continue
-      const len = node.nodeValue?.length ?? 0
-      const ne = ns + len
-      if (ne <= s || ns >= e) continue
-      segs.push({ n: node, a: Math.max(0, s - ns), b: Math.min(len, e - ns) })
-    }
-    for (let q = segs.length - 1; q >= 0; q--) {
-      const g = segs[q]
-      if (!g) continue
-      const t = g.n
-      if (g.b < (t.nodeValue?.length ?? 0)) t.splitText(g.b)
-      const mid = g.a > 0 ? t.splitText(g.a) : t
-      const mk = document.createElement("mark")
-      mk.setAttribute("data-derive-id", id)
-      mk.className = "derive-hl"
-      mk.title = "View comment"
-      mid.parentNode?.insertBefore(mk, mid)
-      mk.appendChild(mid)
-    }
-  }
   /* root's concatenated-text offset for an anchor (context match first, then exact) */
   const findIn = (root: Node, a: Anchor): number => {
     const nodes = textNodes(root)
     let full = ""
     for (const node of nodes) full += node.nodeValue
     return find(full, a)
+  }
+  // The element ancestor of a range's start (its start is a text node) — for slide lookup.
+  const rangeStartEl = (r: Range): Element | null => {
+    const n = r.startContainer
+    return n.nodeType === 1 ? (n as Element) : n.parentElement
   }
   /* deck slides, ordered: explicit [data-derive-slide] (sorted) else .slide in document
      order. Empty on a non-deck artifact — then anchors resolve against the whole doc. */
@@ -796,12 +904,7 @@ interface ElReg {
       )
     return Array.from(document.querySelectorAll(".slide"))
   }
-  /* which slide an already-painted anchor landed in (its mark's nearest slide ancestor) */
-  const slideOf = (id: string, slides: Element[]): number | null => {
-    const m = document.querySelector(`mark[data-derive-id="${id}"]`)
-    return slideOfEl(m, slides)
-  }
-  /* nearest slide ancestor of a DOM element (for element anchors) */
+  /* nearest slide ancestor of a DOM element (element anchors + a text range's start) */
   const slideOfEl = (el: Element | null, slides: Element[]): number | null => {
     for (let s = el; s; s = s.parentElement) {
       const k = slides.indexOf(s)
@@ -821,12 +924,10 @@ interface ElReg {
     const tops: Record<string, number> = {}
     const seen: Record<string, number> = {}
     const sy = scrollTop()
-    const ms = document.querySelectorAll("mark[data-derive-id]")
-    for (const m of Array.from(ms)) {
-      const id = m.getAttribute("data-derive-id")
-      if (!id || seen[id]) continue
+    for (const { id, range } of textEntries) {
+      if (seen[id]) continue
       seen[id] = 1
-      tops[id] = m.getBoundingClientRect().top + sy
+      tops[id] = range.getBoundingClientRect().top + sy
     }
     positionEls()
     for (const e of elReg) {
@@ -862,7 +963,7 @@ interface ElReg {
   let lastAnchors: Anchor[] | null = null
   const applyAnchors = (anchors: Anchor[]) => {
     lastAnchors = anchors /* kept so we can re-resolve if an element is replaced */
-    clearMarks()
+    clearText()
     clearEls()
     const slides = slideEls()
     const resolved: Record<string, boolean> = {}
@@ -887,30 +988,31 @@ interface ElReg {
       }
       /* text anchor: scope a deck comment to its recorded slide FIRST (so the same
          phrase on two slides can't collide), then fall back to a whole-document
-         search if the text moved off that slide. */
-      let placed = false
-      let where: number | null = null
+         search if the text moved off that slide. Builds a Range (no DOM mutation);
+         the highlight is painted from every range together, below. */
       const exactLen = a.exact?.length ?? 0
       const slide = a.slide != null ? slides[a.slide] : undefined
+      let range: Range | null = null
+      let where: number | null = null
       if (a.slide != null && slide) {
         const s1 = findIn(slide, a)
         if (s1 >= 0) {
-          wrapIn(slide, a.id, s1, s1 + exactLen)
-          placed = true
+          range = rangeAt(slide, s1, s1 + exactLen)
           where = a.slide
         }
       }
-      if (!placed) {
+      if (!range) {
         const s2 = findIn(document.body, a)
         if (s2 >= 0) {
-          wrapIn(document.body, a.id, s2, s2 + exactLen)
-          placed = true
-          where = slides.length ? slideOf(a.id, slides) : null
+          range = rangeAt(document.body, s2, s2 + exactLen)
+          where = slides.length && range ? slideOfEl(rangeStartEl(range), slides) : null
         }
       }
-      resolved[a.id] = placed
-      landed[a.id] = where
+      if (range) addText(a.id, range)
+      resolved[a.id] = !!range
+      landed[a.id] = range ? where : null
     }
+    paintText()
     post({ type: "anchors-resolved", resolved, slides: landed, conf })
     reportRects()
   }
@@ -935,6 +1037,15 @@ interface ElReg {
     rTick = requestAnimationFrame(() => {
       rTick = 0
       positionEls()
+      // A text Range whose start node was detached (the artifact re-rendered that
+      // subtree) can't be repositioned — re-resolve from the stored anchors, debounced,
+      // the same way positionEls re-resolves a detached element overlay.
+      const stale = textEntries.some((t) => !t.range.startContainer.isConnected)
+      if (stale && lastAnchors && !reTick)
+        reTick = window.setTimeout(() => {
+          reTick = 0
+          if (lastAnchors) applyAnchors(lastAnchors)
+        }, 150)
       reportRects()
     })
   }
@@ -962,22 +1073,43 @@ interface ElReg {
       })
   } catch (_m) {}
 
-  /* hover a highlight (text mark or element badge) -> emphasize its card in the host */
-  document.addEventListener("mouseover", (e) => {
-    const m = asEl(e.target)?.closest("mark[data-derive-id],.derive-el-badge[data-derive-id]")
-    if (m) post({ type: "anchor-hover", id: m.getAttribute("data-derive-id") })
+  /* hover a highlight -> emphasize its card in the host. Text highlights are painted
+     ranges (no element to catch mouseover), so we hit-test the pointer against the
+     comment ranges on a throttled mousemove; an element badge is a real node, caught by
+     closest(). One posted id (or null) whichever it is; deduped so we don't spam. */
+  let hoverId: string | null = null
+  let hoverTick = 0
+  document.addEventListener("mousemove", (e) => {
+    if (hoverTick) return
+    const x = e.clientX
+    const y = e.clientY
+    const target = e.target
+    hoverTick = window.setTimeout(() => {
+      hoverTick = 0
+      const badge = asEl(target)?.closest(".derive-el-badge[data-derive-id]")
+      const id = badge
+        ? badge.getAttribute("data-derive-id")
+        : HL_SUPPORTED
+          ? textHitAt(x, y)
+          : null
+      if (id !== hoverId) {
+        hoverId = id
+        post({ type: "anchor-hover", id })
+      }
+    }, 60)
   })
-  document.addEventListener("mouseout", (e) => {
-    const m = asEl(e.target)?.closest("mark[data-derive-id],.derive-el-badge[data-derive-id]")
-    if (m) post({ type: "anchor-hover", id: null })
-  })
-  /* clicking a highlight (text mark or element badge) focuses its thread in the host */
+  /* clicking a highlight (text range or element badge) focuses its thread in the host */
   document.addEventListener(
     "click",
     (e) => {
-      const m = asEl(e.target)?.closest("mark[data-derive-id],.derive-el-badge[data-derive-id]")
-      if (m) {
-        post({ type: "anchor-click", id: m.getAttribute("data-derive-id") })
+      const badge = asEl(e.target)?.closest(".derive-el-badge[data-derive-id]")
+      if (badge) {
+        post({ type: "anchor-click", id: badge.getAttribute("data-derive-id") })
+        return
+      }
+      const hit = HL_SUPPORTED ? textHitAt(e.clientX, e.clientY) : null
+      if (hit) {
+        post({ type: "anchor-click", id: hit })
         return
       }
       navLink(e)
@@ -1007,18 +1139,37 @@ interface ElReg {
     true,
   )
 
+  // Emphasize one thread: its text range lifts into the `on` highlight layer; its
+  // element overlay takes the `on` class. Both clear first so only one is lit.
   const setOn = (id: string | null) => {
-    for (const on of Array.from(
-      document.querySelectorAll("mark.derive-hl-on,.derive-el-hl.derive-el-on"),
-    )) {
-      on.classList.remove("derive-hl-on")
-      on.classList.remove("derive-el-on")
-    }
+    onHl?.clear()
+    for (const ov of Array.from(document.querySelectorAll(".derive-el-hl.derive-el-on")))
+      ov.classList.remove("derive-el-on")
     if (!id) return
-    for (const m of Array.from(document.querySelectorAll(`mark[data-derive-id="${id}"]`)))
-      m.classList.add("derive-hl-on")
+    if (onHl) for (const t of textEntries) if (t.id === id) onHl.add(t.range)
     for (const ov of Array.from(document.querySelectorAll(`.derive-el-hl[data-derive-id="${id}"]`)))
       ov.classList.add("derive-el-on")
+  }
+
+  // Flash a text range a couple of times by toggling it in the `flash` highlight
+  // (::highlight can't run a keyframe animation, so we blink it in JS — element
+  // overlays keep their CSS animation).
+  let flashTimer = 0
+  const flashRange = (range: Range) => {
+    if (!flashHl) return
+    if (flashTimer) clearTimeout(flashTimer)
+    let n = 0
+    const tick = () => {
+      flashHl.clear()
+      if (n % 2 === 0) flashHl.add(range)
+      n++
+      if (n <= 4) flashTimer = window.setTimeout(tick, 250)
+      else {
+        flashHl.clear()
+        flashTimer = 0
+      }
+    }
+    tick()
   }
 
   window.addEventListener("message", (e: MessageEvent) => {
@@ -1029,29 +1180,24 @@ interface ElReg {
     else if (d.type === "emphasize") setOn(d.id)
     else if (d.type === "scroll-by") window.scrollBy(0, d.dy || 0)
     else if (d.type === "focus-anchor") {
-      /* text marks flash with derive-hl-flash; element overlays with derive-el-flash. */
-      const ms = Array.from(document.querySelectorAll(`mark[data-derive-id="${d.id}"]`))
-      const ov = Array.from(document.querySelectorAll(`.derive-el-hl[data-derive-id="${d.id}"]`))
-      const first = ms[0] || ov[0]
-      if (!first) return
+      const entry = textEntries.find((t) => t.id === d.id)
+      const ovEl = document.querySelector<HTMLElement>(`.derive-el-hl[data-derive-id="${d.id}"]`)
+      const rect = entry ? entry.range.getBoundingClientRect() : ovEl?.getBoundingClientRect()
+      if (!rect) return
       /* bias (0..1) places the target at that fraction of the viewport instead of
          dead-center — phones pass ~0.28 so it lands above the comments sheet. */
-      if (typeof d.bias === "number") {
-        const br = first.getBoundingClientRect()
-        window.scrollTo({
-          top: scrollTop() + br.top - window.innerHeight * d.bias,
-          behavior: "smooth",
-        })
-      } else first.scrollIntoView({ behavior: "smooth", block: "center" })
-      for (const m of ms) {
-        m.classList.remove("derive-hl-flash")
-        void (m as HTMLElement).offsetWidth
-        m.classList.add("derive-hl-flash")
-      }
-      for (const o of ov) {
-        o.classList.remove("derive-el-flash")
-        void (o as HTMLElement).offsetWidth
-        o.classList.add("derive-el-flash")
+      const bias = typeof d.bias === "number" ? d.bias : null
+      const top =
+        bias != null
+          ? scrollTop() + rect.top - window.innerHeight * bias
+          : scrollTop() + rect.top - Math.max(0, (window.innerHeight - rect.height) / 2)
+      window.scrollTo({ top, behavior: "smooth" })
+      /* text ranges flash via the flash highlight; element overlays via their class. */
+      if (entry) flashRange(entry.range)
+      if (ovEl) {
+        ovEl.classList.remove("derive-el-flash")
+        void ovEl.offsetWidth
+        ovEl.classList.add("derive-el-flash")
       }
       setTimeout(reportScroll, 360)
     }
