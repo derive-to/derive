@@ -48,6 +48,15 @@ export function maxRole(...roles: (Role | null | undefined)[]): Role | null {
   return best
 }
 
+/** Clamp a role to a ceiling. An agent borrows its registrant's standing but
+ *  never rises above the role it was registered with — a workspace owner's
+ *  agent registered as editor acts as editor, so no agent can `manage`
+ *  (delete, transfer) regardless of whose authority it borrows. */
+export function capRole(role: Role | null, cap: Role): Role | null {
+  if (!role) return null
+  return RANK[role] > RANK[cap] ? cap : role
+}
+
 /**
  * Who is making a request, with their standing already resolved from the store.
  * Every surface (web session, static token, MCP agent) becomes one of these.
