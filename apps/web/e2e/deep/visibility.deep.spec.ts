@@ -31,25 +31,29 @@ test("a default publish is private: invisible to another user until the link is 
   await secondUser.page.goto(`/artifacts/${id}`)
   await expect(secondUser.page.getByText("Draft")).toBeHidden()
 
-  // The owner widens access to "Anyone with the link" from the share dialog.
+  // The owner widens access to "Anyone with the link" from the share dialog —
+  // the pick applies instantly (no Save button); wait for the PATCH to land.
   await owner.goto(`/artifacts/${id}`)
   await owner.getByTestId("share-trigger").click()
+  const saved = owner.waitForResponse((r) => r.url().includes("/visibility") && r.ok())
   await owner.getByTestId("share-visibility").click()
   await owner.getByRole("option", { name: "Anyone with the link" }).click()
-  await owner.getByTestId("share-visibility-save").click()
-  // The save round-trip re-enables the button; the trigger glyph flips to globe.
-  await expect(owner.getByTestId("share-visibility-save")).toBeDisabled()
+  await saved
 
   // Now the second user can read it.
   await secondUser.page.reload()
   await expect(secondUser.page.getByText("Draft").first()).toBeVisible()
 })
 
-test("the copy-link row carries the canonical URL", async ({ owner }) => {
+test("copy link puts the canonical URL on the clipboard", async ({ owner }) => {
+  await owner.context().grantPermissions(["clipboard-read", "clipboard-write"])
   const id = await publishDefault(owner)
   await owner.goto(`/artifacts/${id}`)
   await owner.getByTestId("share-trigger").click()
-  await expect(owner.getByTestId("share-url")).toHaveValue(new RegExp(`/artifacts/.*${id}`))
+  await owner.getByTestId("share-url-copy").click()
+  await expect(owner.getByTestId("share-url-copy")).toContainText("Copied")
+  const copied = await owner.evaluate(() => navigator.clipboard.readText())
+  expect(copied).toMatch(new RegExp(`/artifacts/.*${id}`))
 })
 
 test("private hides an artifact from a workspace member until they're invited", async ({
