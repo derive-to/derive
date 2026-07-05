@@ -1,3 +1,4 @@
+import { useQueryClient } from "@tanstack/react-query"
 import { useNavigate } from "@tanstack/react-router"
 import { Upload } from "lucide-react"
 import { useRef, useState } from "react"
@@ -6,14 +7,17 @@ import { Icon } from "@/components/icons"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { toast } from "@/components/ui/sonner"
+import { collectionsQuery, summaryQuery } from "@/lib/queries"
 import { cn } from "@/lib/utils"
 import { refFor } from "../artifact/parse-ref"
 
 // The home launcher. "Write or paste" opens /new — the same editor as edit mode
 // (paste/write Markdown or HTML with a live preview). Dropping or choosing a file
-// publishes it directly. New artifacts default to Workspace (private) access.
+// publishes it directly. New artifacts are private by default (the server default
+// governs — no visibility sent); widen access from the artifact's Share menu.
 export function PublishCard() {
   const nav = useNavigate()
+  const qc = useQueryClient()
   const fileRef = useRef<HTMLInputElement>(null)
   const [busy, setBusy] = useState(false)
   const [dragging, setDragging] = useState(false)
@@ -39,6 +43,10 @@ export function PublishCard() {
     try {
       // No visibility: the server default (private) governs; widen from the Share dialog.
       const a = await api.publish(f, { title: f.name.replace(/\.[^.]+$/, "") })
+      // Freshen the library so the new artifact + bumped total are correct on return.
+      qc.invalidateQueries({ queryKey: summaryQuery().queryKey })
+      qc.invalidateQueries({ queryKey: collectionsQuery().queryKey })
+      qc.invalidateQueries({ queryKey: ["artifacts"] })
       nav({ to: "/artifacts/$ref", params: { ref: refFor(a) } })
     } catch (e) {
       toast.error((e as Error).message)

@@ -1,7 +1,7 @@
+import { CardGrid } from "@/components/shared/card-grid"
 import { PageShell } from "@/components/shared/page-shell"
 import { SectionEyebrow } from "@/components/shared/section-eyebrow"
 import { Skeleton } from "@/components/ui/skeleton"
-import { CardGrid } from "../library/card-grid"
 import { CardSkeletonCell } from "../library/library-skeleton"
 
 const WORK_CELLS = ["a", "b", "c", "d", "e", "f"]
@@ -21,13 +21,13 @@ export function ProfileWorkSkeleton() {
   )
 }
 
-// The profile's first-load frame: the identity-header silhouette (a round avatar, the
-// name + @handle lines, a Follow-button-sized block, a profession line, a two-line bio,
-// and a stats row) over the real static "Work" eyebrow and a CardSkeletonCell grid.
-// Mirrors profile.tsx's box model (dims, gaps, radius, counts) but never its
-// borders/backgrounds/shadows — those arrive with the content, so omitting them yields
-// zero CLS. Used both as the route pendingComponent and the Profile component's
-// in-component first-load state, so the two are seamless.
+// The profile's first-load frame: the identity-header silhouette over the real static
+// "Work" eyebrow and a CardSkeletonCell grid. Reserves ONLY the always-present spine —
+// avatar, name line, @handle line, Follow-button block, and the stats row — and NOT the
+// optional profession/bio, which vary per profile: reserving them would over-tall a
+// sparse profile and shift it UP when the real (shorter) header lands. The optional lines
+// are additive, so a fuller profile grows DOWN (the natural direction) instead. Since the
+// header is preloaded in the route loader, this only ever shows on a genuine cold load.
 export function ProfilePending() {
   return (
     <PageShell className="flex flex-col gap-8">
@@ -48,14 +48,8 @@ export function ProfilePending() {
               {/* Follow button (size sm → h-8, rounded-lg). */}
               <Skeleton className="h-8 w-20 shrink-0 rounded-lg" />
             </div>
-            {/* Profession. */}
-            <Skeleton className="mt-3 h-4 w-40" />
-            {/* Bio (two lines). */}
-            <div className="mt-2 flex flex-col gap-1.5">
-              <Skeleton className="h-4 w-full" />
-              <Skeleton className="h-4 w-2/3" />
-            </div>
-            {/* Stats row (works / followers / following). */}
+            {/* Stats row (works / followers / following) — the next always-present line
+                after the handle. Profession + bio are deliberately not reserved. */}
             <div className="mt-4 flex items-center gap-5">
               <Skeleton className="h-4 w-14" />
               <Skeleton className="h-4 w-20" />
