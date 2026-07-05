@@ -253,6 +253,10 @@ export interface SlackStatus {
   connected: boolean
   team_name: string | null
   default_channel: string | null
+  /** The stored bot token failed auth/scope checks; prompt a reconnect. */
+  needs_reauth: boolean
+  /** The signed-in user has linked their own Slack account in this workspace. */
+  linked: boolean
 }
 /** One entry in the workspace switcher. */
 export interface WorkspaceSummary {
@@ -878,6 +882,9 @@ export const api = {
     f("/v1/slack", { ...opts({ default_channel }), method: "PATCH" }).then(j),
   disconnectSlack: (): Promise<void> =>
     f("/v1/slack", { method: "DELETE", credentials: "include" }).then(() => undefined),
+  // Account linking: connect is a redirect to /v1/slack/link (full-page nav); unlink is a fetch.
+  unlinkSlack: (): Promise<void> =>
+    f("/v1/slack/link", { method: "DELETE", credentials: "include" }).then(() => undefined),
 
   // Workspace name + members (Admin / Creator / Viewer = owner / editor / commenter)
   getWorkspace: (): Promise<Workspace> => f("/v1/workspace", opts()).then(j),

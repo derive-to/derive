@@ -11,7 +11,21 @@ import type { WebhookEvent } from "../events"
 import type { ChannelSendResult } from "../webhooks"
 import { enqueueChannelDelivery } from "../webhooks"
 import { decryptSecret } from "./crypto"
-import { isPermanentSlackError, joinSlackChannel, postSlackMessage, SlackApiError } from "./slack"
+import {
+  isPermanentSlackError,
+  isSlackAuthError,
+  joinSlackChannel,
+  postSlackMessage,
+  SlackApiError,
+} from "./slack"
+
+/** Flag a workspace's Slack install as needing re-auth after a Slack call failed for auth
+ *  or scope reasons, so the Settings UI prompts a reconnect. Best-effort. */
+export const flagSlackReauth = async (meta: MetaStore, orgId: string): Promise<void> => {
+  const full = await meta.getSlackInstall(orgId)
+  if (full && full.needs_reauth !== 1) await meta.setSlackInstall({ ...full, needs_reauth: 1 })
+}
+
 import { type CardInput, cardForEvent, isThreadedEvent } from "./slack-cards"
 
 /** The self-contained payload an enqueued slack_app_event delivery carries. */
@@ -118,6 +132,7 @@ export const makeSlackEventSender =
           return { ok: false, status: `slack: ${code}`, permanent: true }
         }
       }
+      if (isSlackAuthError(err.code)) await flagSlackReauth(meta, p.orgId)
       const permanent = isPermanentSlackError(err.code) || err.code === "not_in_channel"
       return { ok: false, status: `slack: ${err.code}`, permanent }
     }

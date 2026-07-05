@@ -16,7 +16,14 @@ import {
 import { type ChannelSendResult, enqueueChannelDelivery } from "../webhooks"
 import { commentDeepLink, parseMeta } from "./comments"
 import { decryptSecret } from "./crypto"
-import { isPermanentSlackError, joinSlackChannel, postSlackMessage, SlackApiError } from "./slack"
+import {
+  isPermanentSlackError,
+  isSlackAuthError,
+  joinSlackChannel,
+  postSlackMessage,
+  SlackApiError,
+} from "./slack"
+import { flagSlackReauth } from "./slack-events"
 import { truncate } from "./text"
 
 /** The Slack message payload an enqueued slack_app delivery carries (self-contained). */
@@ -107,6 +114,7 @@ export const makeSlackSender =
       } else {
         // not_in_channel without a successful join is permanent (a private channel the
         // bot can't self-join) — surface it rather than retrying fruitlessly.
+        if (isSlackAuthError(err.code)) await flagSlackReauth(meta, p.orgId)
         const permanent = isPermanentSlackError(err.code) || err.code === "not_in_channel"
         return { ok: false, status: `slack: ${err.code}`, permanent }
       }

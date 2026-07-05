@@ -364,8 +364,36 @@ export const slackInstall = sqliteTable("slack_install", {
   bot_token: text("bot_token").notNull(),
   bot_user_id: text("bot_user_id"),
   default_channel: text("default_channel"),
+  // Comma-separated OAuth scopes the bot token was granted, recorded at install. Lets
+  // the app tell whether an older install predates a newly-required scope.
+  granted_scopes: text("granted_scopes"),
+  // Flipped to 1 when Slack rejects a call for auth/scope reasons (invalid_auth,
+  // token_revoked, missing_scope); the Settings UI shows a reconnect banner. Cleared on
+  // a fresh OAuth connect.
+  needs_reauth: integer("needs_reauth").notNull().default(0).$type<0 | 1>(),
   created_at: text("created_at").notNull().default(now),
 })
+
+// Links a Slack user to a Derive user within a workspace, so Slack actions and DMs can
+// act as that Derive user. `status` is 'pending' (email-matched, awaiting confirmation)
+// or 'confirmed' (proven via account-link OAuth or a confirm click). `dm_channel_id`
+// caches the opened IM channel.
+export const slackUserLink = sqliteTable(
+  "slack_user_link",
+  {
+    id: text("id").primaryKey(),
+    org_id: text("org_id").notNull(),
+    slack_user_id: text("slack_user_id").notNull(),
+    user_id: text("user_id").notNull(),
+    status: text("status").notNull().default("pending").$type<"pending" | "confirmed">(),
+    dm_channel_id: text("dm_channel_id"),
+    created_at: text("created_at").notNull().default(now),
+  },
+  (t) => [
+    uniqueIndex("slack_user_link_slack").on(t.org_id, t.slack_user_id),
+    uniqueIndex("slack_user_link_user").on(t.org_id, t.user_id),
+  ],
+)
 
 // Derive comment thread ↔ the Slack message Derive posted for it (for two-way threading).
 export const slackThreadLink = sqliteTable(
@@ -537,6 +565,7 @@ const TABLES = [
   orgSettings,
   slackInstall,
   slackThreadLink,
+  slackUserLink,
   githubApp,
   githubInstallation,
   domain,

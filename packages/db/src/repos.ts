@@ -54,6 +54,7 @@ import type {
   Role,
   SlackInstallRecord,
   SlackThreadLinkRecord,
+  SlackUserLinkRecord,
   TakedownInput,
   UserProfile,
   VersionRecord,
@@ -108,6 +109,7 @@ import {
   reviewRound,
   slackInstall,
   slackThreadLink,
+  slackUserLink,
   version,
   webhook,
   webhookDelivery,
@@ -1368,6 +1370,39 @@ export function makeRepos(db: SqliteDb) {
       .onConflictDoUpdate({ target: slackThreadLink.thread_id, set })
       .run()
   }
+  const getSlackUserLinkBySlackId = async (
+    orgId: string,
+    slackUserId: string,
+  ): Promise<SlackUserLinkRecord | null> =>
+    (await db
+      .select()
+      .from(slackUserLink)
+      .where(and(eq(slackUserLink.org_id, orgId), eq(slackUserLink.slack_user_id, slackUserId)))
+      .get()) ?? null
+  const getSlackUserLinkByUser = async (
+    orgId: string,
+    userId: string,
+  ): Promise<SlackUserLinkRecord | null> =>
+    (await db
+      .select()
+      .from(slackUserLink)
+      .where(and(eq(slackUserLink.org_id, orgId), eq(slackUserLink.user_id, userId)))
+      .get()) ?? null
+  const setSlackUserLink = async (l: SlackUserLinkRecord): Promise<void> => {
+    const { id: _i, created_at: _c, ...set } = l
+    await db
+      .insert(slackUserLink)
+      .values(l)
+      // One link per (org, slack user); reconnecting/confirming updates in place.
+      .onConflictDoUpdate({ target: [slackUserLink.org_id, slackUserLink.slack_user_id], set })
+      .run()
+  }
+  const deleteSlackUserLink = async (orgId: string, slackUserId: string): Promise<void> => {
+    await db
+      .delete(slackUserLink)
+      .where(and(eq(slackUserLink.org_id, orgId), eq(slackUserLink.slack_user_id, slackUserId)))
+      .run()
+  }
 
   const upsertGithubInstallation = async (
     i: GitHubInstallationRecord,
@@ -1860,6 +1895,10 @@ export function makeRepos(db: SqliteDb) {
     getSlackThreadLinkByThread,
     getSlackThreadLinkByTs,
     setSlackThreadLink,
+    getSlackUserLinkBySlackId,
+    getSlackUserLinkByUser,
+    setSlackUserLink,
+    deleteSlackUserLink,
     upsertGithubInstallation,
     getGithubInstallation,
     listGithubInstallations,

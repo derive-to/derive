@@ -111,6 +111,14 @@ export function IntegrationsSection() {
       .catch((e) => {
         toast.error(e?.message ?? "Could not disconnect")
       })
+  const unlinkSlack = () =>
+    api
+      .unlinkSlack()
+      .then(() => {
+        toast.success("Slack account unlinked")
+        qc.invalidateQueries({ queryKey: slackQuery().queryKey })
+      })
+      .catch((e) => toast.error(e?.message ?? "Could not unlink"))
 
   return (
     <SettingsSection
@@ -195,6 +203,47 @@ export function IntegrationsSection() {
               Connected to{" "}
               <span className="font-medium">{slack.team_name ?? "your Slack workspace"}</span>.
             </p>
+            {slack.needs_reauth && (
+              <div
+                data-testid="slack-reauth-banner"
+                className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm"
+              >
+                Slack rejected the saved connection (it may have been revoked, or it needs a
+                permission that was added since. Reconnect to fix it.
+                <div className="mt-2">
+                  <Button data-testid="slack-reconnect" variant="default" size="sm" asChild>
+                    <a href="/v1/slack/install">Reconnect Slack</a>
+                  </Button>
+                </div>
+              </div>
+            )}
+            <SettingRow
+              htmlFor="slack-link"
+              label="Your Slack account"
+              description="Link your Slack identity so actions and notifications can act as you."
+            >
+              {slack.linked ? (
+                <Button
+                  id="slack-link"
+                  data-testid="slack-unlink"
+                  variant="outline"
+                  size="sm"
+                  onClick={unlinkSlack}
+                >
+                  Unlink
+                </Button>
+              ) : (
+                <Button
+                  id="slack-link"
+                  data-testid="slack-link"
+                  variant="default"
+                  size="sm"
+                  asChild
+                >
+                  <a href="/v1/slack/link">Link Slack account</a>
+                </Button>
+              )}
+            </SettingRow>
             <FormField label="Default channel ID" htmlFor="slack-channel" className="max-w-sm">
               <div className="flex gap-2">
                 <Input

@@ -195,4 +195,16 @@ describe("makeSlackEventSender (delivery)", () => {
     expect(res2.ok).toBe(true)
     expect(posts.length).toBe(before) // nothing posted
   })
+
+  it("flags the install needs_reauth when Slack rejects the token (invalid_auth)", async () => {
+    const meta = freshStore()
+    await connectSlack(meta)
+    const artifact = await makeArtifact(meta)
+    await enqueueSlackEvent({ meta, baseUrl }, artifact, "version.published", { version: 1 })
+    mockSlack({ failFirstWith: "invalid_auth" })
+    const res = await deliverOne(meta)
+    expect(res.ok).toBe(false)
+    expect(res.permanent).toBe(true)
+    expect((await meta.getSlackInstall("default"))?.needs_reauth).toBe(1)
+  })
 })

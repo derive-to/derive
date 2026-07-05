@@ -319,8 +319,26 @@ export const slackInstall = pgTable("slack_install", {
   bot_token: text("bot_token").notNull(),
   bot_user_id: text("bot_user_id"),
   default_channel: text("default_channel"),
+  granted_scopes: text("granted_scopes"),
+  needs_reauth: integer("needs_reauth").notNull().default(0).$type<0 | 1>(),
   created_at: text("created_at").notNull().$defaultFn(isoNow),
 })
+export const slackUserLink = pgTable(
+  "slack_user_link",
+  {
+    id: text("id").primaryKey(),
+    org_id: text("org_id").notNull(),
+    slack_user_id: text("slack_user_id").notNull(),
+    user_id: text("user_id").notNull(),
+    status: text("status").notNull().default("pending").$type<"pending" | "confirmed">(),
+    dm_channel_id: text("dm_channel_id"),
+    created_at: text("created_at").notNull().$defaultFn(isoNow),
+  },
+  (t) => [
+    uniqueIndex("slack_user_link_slack").on(t.org_id, t.slack_user_id),
+    uniqueIndex("slack_user_link_user").on(t.org_id, t.user_id),
+  ],
+)
 export const slackThreadLink = pgTable(
   "slack_thread_link",
   {
@@ -464,6 +482,7 @@ const TABLES = [
   orgSettings,
   slackInstall,
   slackThreadLink,
+  slackUserLink,
   githubApp,
   githubInstallation,
   domain,

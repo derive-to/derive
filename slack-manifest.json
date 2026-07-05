@@ -21,8 +21,9 @@
     ]
   },
   "oauth_config": {
-    "redirect_urls": ["<BASE_URL>/v1/slack/oauth/callback"],
+    "redirect_urls": ["<BASE_URL>/v1/slack/oauth/callback", "<BASE_URL>/v1/slack/link/callback"],
     "scopes": {
+      "user": ["openid", "email", "profile"],
       "bot": [
         "chat:write",
         "chat:write.public",

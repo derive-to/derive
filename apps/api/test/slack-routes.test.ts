@@ -1,6 +1,6 @@
 import { createHmac } from "node:crypto"
 import { afterEach, describe, expect, it, vi } from "vitest"
-import { encryptSecret } from "../src/lib/crypto"
+import { encryptSecret, signState } from "../src/lib/crypto"
 import { as, quotaApp, type TestUser } from "./helpers"
 
 const KEY = "enc-key-slack-routes-123456"
@@ -342,5 +342,111 @@ describe("slack interactivity endpoint", () => {
     })
     expect(r.status).toBe(200)
     expect(replies).toHaveLength(0)
+  })
+})
+
+describe("slack account linking + status", () => {
+  const install = (meta: Awaited<ReturnType<typeof make>>["meta"]) =>
+    meta.setSlackInstall({
+      org_id: "default",
+      team_id: "T1",
+      team_name: "Acme",
+      bot_token: encryptSecret("xoxb-1", KEY),
+      bot_user_id: "UBOT",
+      default_channel: "C1",
+      created_at: new Date().toISOString(),
+    })
+
+  it("status reports needs_reauth and the caller's link state", async () => {
+    const { app, meta } = make("slack-link-status")
+    await install(meta)
+    const before = await (await app.request("/v1/slack", { headers: as(owner.email) })).json()
+    expect(before).toMatchObject({ connected: true, needs_reauth: false, linked: false })
+
+    const cur = await meta.getSlackInstall("default")
+    if (!cur) throw new Error("expected an install")
+    await meta.setSlackInstall({ ...cur, needs_reauth: 1 })
+    await meta.setSlackUserLink({
+      id: "sul-1",
+      org_id: "default",
+      slack_user_id: "U-owner",
+      user_id: owner.id,
+      status: "confirmed",
+      dm_channel_id: null,
+      created_at: new Date().toISOString(),
+    })
+    const after = await (await app.request("/v1/slack", { headers: as(owner.email) })).json()
+    expect(after).toMatchObject({ needs_reauth: true, linked: true })
+  })
+
+  it("starts the link OAuth pinned to the connected team", async () => {
+    const { app, meta } = make("slack-link-start")
+    await install(meta)
+    const r = await app.request("/v1/slack/link", { headers: as(owner.email), redirect: "manual" })
+    expect(r.status).toBe(302)
+    const loc = new URL(r.headers.get("location") ?? "")
+    expect(loc.origin + loc.pathname).toBe("https://slack.com/openid/connect/authorize")
+    expect(loc.searchParams.get("team")).toBe("T1")
+    expect(loc.searchParams.get("scope")).toContain("openid")
+  })
+
+  it("callback creates a confirmed link for the same team, and rejects a different team", async () => {
+    const { app, meta } = make("slack-link-cb")
+    await install(meta)
+    const openId = (teamId: string) =>
+      vi.fn(async (url: string) => {
+        if (url.endsWith("/openid.connect.token"))
+          return new Response(JSON.stringify({ ok: true, access_token: "xoxp-1" }))
+        return new Response(
+          JSON.stringify({
+            ok: true,
+            "https://slack.com/user_id": "U-linked",
+            "https://slack.com/team_id": teamId,
+            email: owner.email,
+          }),
+        )
+      })
+
+    // Same team → confirmed link.
+    vi.stubGlobal("fetch", openId("T1"))
+    const state = signState({ org: "default", uid: owner.id }, KEY)
+    const ok = await app.request(
+      `/v1/slack/link/callback?code=c&state=${encodeURIComponent(state)}`,
+      {
+        redirect: "manual",
+      },
+    )
+    expect(ok.headers.get("location")).toContain("linked=1")
+    const link = await meta.getSlackUserLinkByUser("default", owner.id)
+    expect(link).toMatchObject({ slack_user_id: "U-linked", status: "confirmed" })
+
+    // Different team → rejected, no clobber.
+    await meta.deleteSlackUserLink("default", "U-linked")
+    vi.stubGlobal("fetch", openId("T-other"))
+    const bad = await app.request(
+      `/v1/slack/link/callback?code=c&state=${encodeURIComponent(state)}`,
+      {
+        redirect: "manual",
+      },
+    )
+    expect(bad.headers.get("location")).toContain("error=link_team")
+    expect(await meta.getSlackUserLinkByUser("default", owner.id)).toBe(null)
+  })
+
+  it("unlinks the caller's own account", async () => {
+    const { app, meta } = make("slack-unlink")
+    await install(meta)
+    await meta.setSlackUserLink({
+      id: "sul-2",
+      org_id: "default",
+      slack_user_id: "U-owner",
+      user_id: owner.id,
+      status: "confirmed",
+      dm_channel_id: null,
+      created_at: new Date().toISOString(),
+    })
+    const r = await app.request("/v1/slack/link", { method: "DELETE", headers: as(owner.email) })
+    expect(r.status).toBe(204)
+    expect(await meta.getSlackUserLinkByUser("default", owner.id)).toBe(null)
   })
 })

@@ -438,6 +438,14 @@ export interface MetaStore {
   getSlackThreadLinkByTs(channel: string, ts: string): Promise<SlackThreadLinkRecord | null>
   /** Record the Slack message ↔ Derive thread mapping (idempotent on thread_id). */
   setSlackThreadLink(l: SlackThreadLinkRecord): Promise<void>
+  /** The Derive user a Slack user is linked to in a workspace, or null. */
+  getSlackUserLinkBySlackId(orgId: string, slackUserId: string): Promise<SlackUserLinkRecord | null>
+  /** The Slack link for a Derive user in a workspace, or null. */
+  getSlackUserLinkByUser(orgId: string, userId: string): Promise<SlackUserLinkRecord | null>
+  /** Upsert a Slack↔Derive user link (idempotent on the workspace + slack user). */
+  setSlackUserLink(l: SlackUserLinkRecord): Promise<void>
+  /** Remove a Slack↔Derive user link. */
+  deleteSlackUserLink(orgId: string, slackUserId: string): Promise<void>
   // ---- Domain mode: a hostname serving artifact(s) at its own origin ------
   // A domain row is either bound to one artifact (`artifact_id` set: a vanity
   // subdomain today, a per-artifact custom domain later — served at the host root)
@@ -1115,6 +1123,25 @@ export interface SlackInstallRecord {
   bot_token: string
   bot_user_id: string | null
   default_channel: string | null
+  /** Comma-separated OAuth scopes granted at install; lets the app detect installs that
+   *  predate a newly-required scope. Optional so existing writers need not set it. */
+  granted_scopes?: string | null
+  /** 1 when a Slack call failed for auth/scope reasons (invalid_auth, token_revoked,
+   *  missing_scope); the Settings UI shows a reconnect banner. Cleared on reconnect. */
+  needs_reauth?: 0 | 1
+  created_at: string
+}
+
+/** Links a Slack user to a Derive user within a workspace, so Slack-side actions and DMs
+ *  can act as / reach that Derive user. `status` is `pending` (email-matched, unconfirmed)
+ *  or `confirmed` (proven via account-link OAuth). `dm_channel_id` caches the opened IM. */
+export interface SlackUserLinkRecord {
+  id: string
+  org_id: string
+  slack_user_id: string
+  user_id: string
+  status: "pending" | "confirmed"
+  dm_channel_id: string | null
   created_at: string
 }
 

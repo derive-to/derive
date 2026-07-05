@@ -1,4 +1,4 @@
-import type { SlackInstallRecord } from "@derive/core"
+import { newId, type SlackInstallRecord } from "@derive/core"
 import { Hono } from "hono"
 import { z } from "zod"
 import type { AppContext } from "../context"
@@ -6,8 +6,10 @@ import { decryptSecret, encryptSecret, signState, verifyState } from "../lib/cry
 import { fail, readJson } from "../lib/http"
 import {
   exchangeSlackOAuth,
+  exchangeSlackOpenId,
   respondEphemeral,
   slackAuthorizeUrl,
+  slackOpenIdAuthorizeUrl,
   slackUserName,
   verifySlackSignature,
 } from "../lib/slack"
@@ -23,6 +25,7 @@ export const slackRoutes = (ctx: AppContext) => {
   const app = new Hono()
   const slack = deps.slack
   const redirectUri = new URL("/v1/slack/oauth/callback", deps.baseUrl).toString()
+  const linkRedirectUri = new URL("/v1/slack/link/callback", deps.baseUrl).toString()
 
   interface ConnectState {
     org: string
@@ -50,14 +53,19 @@ export const slackRoutes = (ctx: AppContext) => {
     if (!code || !state) return fail(c, 400, "invalid Slack callback")
     try {
       const r = await exchangeSlackOAuth(slack.clientId, slack.clientSecret, code, redirectUri)
+      // Preserve an existing default channel + links across a reconnect (re-auth for a new
+      // scope shouldn't wipe the workspace's config).
+      const existing = await meta.getSlackInstall(state.org)
       await meta.setSlackInstall({
         org_id: state.org,
         team_id: r.teamId,
         team_name: r.teamName,
         bot_token: encryptSecret(r.botToken, deps.encryptionKey),
         bot_user_id: r.botUserId,
-        default_channel: null,
-        created_at: new Date().toISOString(),
+        default_channel: existing?.default_channel ?? null,
+        granted_scopes: r.scopes,
+        needs_reauth: 0,
+        created_at: existing?.created_at ?? new Date().toISOString(),
       } satisfies SlackInstallRecord)
       // Slack lives under the Integrations section (there is no standalone Slack page).
       return c.redirect("/settings/integrations")
@@ -168,13 +176,77 @@ export const slackRoutes = (ctx: AppContext) => {
   app.get("/v1/slack", async (c) => {
     const me = await requireUser(c)
     if (me instanceof Response) return me
-    const install = await meta.getSlackInstall(await activeWorkspace(c))
+    const org = await activeWorkspace(c)
+    const install = await meta.getSlackInstall(org)
+    // Whether the signed-in user has linked their own Slack account in this workspace.
+    const link = install ? await meta.getSlackUserLinkByUser(org, me.id) : null
     return c.json({
       available: !!slack,
       connected: !!install,
       team_name: install?.team_name ?? null,
       default_channel: install?.default_channel ?? null,
+      needs_reauth: install?.needs_reauth === 1,
+      linked: link?.status === "confirmed",
     })
+  })
+
+  // Account linking: prove which Slack user the signed-in Derive user is, via Slack's
+  // OpenID Connect ("Sign in with Slack"). Separate from the bot install — this only
+  // establishes identity, so Slack-side actions and DMs can act as / reach this user.
+  app.get("/v1/slack/link", async (c) => {
+    if (!slack || !deps.encryptionKey) return fail(c, 404, "Slack is not configured")
+    const me = await requireUser(c)
+    if (me instanceof Response) return me
+    const org = await activeWorkspace(c)
+    const install = await meta.getSlackInstall(org)
+    if (!install) return fail(c, 404, "Slack is not connected")
+    const state = signState({ org, uid: me.id }, deps.encryptionKey)
+    return c.redirect(
+      slackOpenIdAuthorizeUrl(slack.clientId, linkRedirectUri, state, install.team_id),
+    )
+  })
+
+  app.get("/v1/slack/link/callback", async (c) => {
+    if (!slack || !deps.encryptionKey) return fail(c, 404, "Slack is not configured")
+    const code = c.req.query("code")
+    const stateRaw = c.req.query("state")
+    const state = stateRaw ? verifyState<ConnectState>(stateRaw, deps.encryptionKey) : null
+    if (!code || !state) return fail(c, 400, "invalid Slack callback")
+    try {
+      const install = await meta.getSlackInstall(state.org)
+      if (!install) return c.redirect("/settings/integrations?error=link")
+      const id = await exchangeSlackOpenId(
+        slack.clientId,
+        slack.clientSecret,
+        code,
+        linkRedirectUri,
+      )
+      // The linked Slack identity must belong to the workspace's connected team.
+      if (id.teamId !== install.team_id) return c.redirect("/settings/integrations?error=link_team")
+      await meta.setSlackUserLink({
+        id: newId("sul"),
+        org_id: state.org,
+        slack_user_id: id.slackUserId,
+        user_id: state.uid,
+        status: "confirmed",
+        dm_channel_id: null,
+        created_at: new Date().toISOString(),
+      })
+      return c.redirect("/settings/integrations?linked=1")
+    } catch (err) {
+      log.warn("slack link failed", { error: err instanceof Error ? err.message : String(err) })
+      return c.redirect("/settings/integrations?error=link")
+    }
+  })
+
+  // Unlink the signed-in user's own Slack account.
+  app.delete("/v1/slack/link", async (c) => {
+    const me = await requireUser(c)
+    if (me instanceof Response) return me
+    const org = await activeWorkspace(c)
+    const link = await meta.getSlackUserLinkByUser(org, me.id)
+    if (link) await meta.deleteSlackUserLink(org, link.slack_user_id)
+    return c.body(null, 204)
   })
 
   // Set the channel Derive posts to (Slack channel id, e.g. "C0123ABC"). Admin only.
