@@ -104,7 +104,14 @@ export function MentionField({
   }
 
   useLayoutEffect(() => {
-    if (autoFocus) ref.current?.focus()
+    const el = ref.current
+    if (!autoFocus || !el) return
+    el.focus()
+    // Place the caret AT THE END of any seeded text (e.g. the "@Agent " an agent
+    // request pre-fills) — `focus()` alone leaves the caret position browser-defined
+    // (Safari/Firefox can land it at 0), which would drop typing before the mention.
+    const end = el.value.length
+    el.setSelectionRange(end, end)
   }, [autoFocus])
 
   // Fetch directory matches as the @query under the caret changes.
@@ -365,8 +372,9 @@ export function Composer({
   agent?: AgentTarget
 }) {
   // A request seeds `@Agent ` + the mention up front, so the note is addressed the
-  // moment it opens; a plain comment starts empty. Keyed to the agent so re-targeting
-  // re-seeds. The caret lands after the seeded mention (autoFocus + selection at end).
+  // moment it opens; a plain comment starts empty. The composer unmounts between opens
+  // (it only renders for a live composer), so this initial state re-seeds each time.
+  // MentionField's autofocus drops the caret after the seed (see its setSelectionRange).
   const [text, setText] = useState(agent ? `@${agent.name} ` : "")
   const [mentions, setMentions] = useState<Mention[]>(
     agent ? [{ id: agent.id, name: agent.name }] : [],

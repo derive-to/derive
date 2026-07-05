@@ -1079,6 +1079,11 @@ interface ElReg {
      closest(). One posted id (or null) whichever it is; deduped so we don't spam. */
   let hoverId: string | null = null
   let hoverTick = 0
+  const setHover = (id: string | null) => {
+    if (id === hoverId) return
+    hoverId = id
+    post({ type: "anchor-hover", id })
+  }
   document.addEventListener("mousemove", (e) => {
     if (hoverTick) return
     const x = e.clientX
@@ -1087,17 +1092,12 @@ interface ElReg {
     hoverTick = window.setTimeout(() => {
       hoverTick = 0
       const badge = asEl(target)?.closest(".derive-el-badge[data-derive-id]")
-      const id = badge
-        ? badge.getAttribute("data-derive-id")
-        : HL_SUPPORTED
-          ? textHitAt(x, y)
-          : null
-      if (id !== hoverId) {
-        hoverId = id
-        post({ type: "anchor-hover", id })
-      }
+      setHover(badge ? badge.getAttribute("data-derive-id") : HL_SUPPORTED ? textHitAt(x, y) : null)
     }, 60)
   })
+  // The pointer left the document — clear any emphasis (no more mousemoves will fire to
+  // hit-test it off). Without this a card stays lit after the mouse exits the iframe.
+  document.addEventListener("mouseleave", () => setHover(null))
   /* clicking a highlight (text range or element badge) focuses its thread in the host */
   document.addEventListener(
     "click",

@@ -366,15 +366,12 @@ export function CommentCard({
   // A "revision request" thread is a comment addressed to an agent (the moat flow). We
   // detect it from the root's mentions overlapping the known agent ids — no schema
   // change. Its lifecycle reads as a legible machine: Requested → Revision ready ·
-  // Review (agent proposed → addressed) → Applied (approved → resolved).
+  // Review (agent proposed → addressed) → Applied (approved → resolved). An `outdated`
+  // request (its anchored text changed before the agent responded) falls through to the
+  // normal "outdated" badge — "awaiting revision" would misread a stale request as live.
   const isAgentRequest = !!root.mentions?.some((m) => agentIds?.has(m.id))
-  const requestStage: "requested" | "ready" | "applied" | null = !isAgentRequest
-    ? null
-    : resolved
-      ? "applied"
-      : addressed
-        ? "ready"
-        : "requested"
+  const requestStage: "requested" | "ready" | "applied" | null =
+    !isAgentRequest || outdated ? null : resolved ? "applied" : addressed ? "ready" : "requested"
   const parsed = parseAnchor(root.anchor)
   const isEl = !!parsed?.element
   // The reference label: a text quote, or an element's snapshot label.

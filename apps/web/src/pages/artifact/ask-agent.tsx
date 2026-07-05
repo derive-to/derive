@@ -30,58 +30,45 @@ export function AskAgentButton({
   className?: string
 }) {
   const usable = agents.filter((a): a is DirUser & { name: string } => !!a.name)
-  if (usable.length === 0) return null
+  const single = usable.length === 1 ? usable[0] : null
+  if (usable.length === 0 || (usable.length === 1 && !single)) return null
 
-  const label =
-    size === "bar"
-      ? "Ask an agent"
-      : usable.length === 1
-        ? `Ask ${firstName(usable[0])}`
-        : "Ask an agent"
+  // The desktop pill names a lone agent ("Ask Reviser"); the mobile bar and the
+  // multi-agent picker use the generic verb.
+  const label = single && size === "default" ? `Ask ${single.name.split(/\s+/)[0]}` : "Ask an agent"
 
-  // The single-agent fast path — no menu, straight into the request composer.
-  if (usable.length === 1) {
-    const only = usable[0]
-    if (!only) return null
-    return (
-      <Button
-        variant="outline"
-        size="sm"
-        title={`Ask ${only.name} to revise the selection`}
-        data-testid="ask-agent"
-        onMouseDown={(e) => e.preventDefault()}
-        onClick={() => onPick({ id: only.id, name: only.name })}
-        className={cn(
-          "rounded-full border-primary/30 text-foreground hover:border-primary/50",
-          size === "bar" && "shrink-0",
-          className,
-        )}
-      >
-        <Icon name="sparkles" size={16} className="text-primary" />
-        {label}
-      </Button>
-    )
-  }
+  // One Button recipe, whether it fires directly (single agent) or triggers the picker
+  // (several) — so the pill's look can't drift between the two paths. onMouseDown
+  // preventDefault keeps it from stealing the document selection it acts on.
+  const trigger = (extra?: React.ComponentProps<typeof Button>) => (
+    <Button
+      variant="outline"
+      size="sm"
+      data-testid="ask-agent"
+      onMouseDown={(e) => e.preventDefault()}
+      className={cn(
+        "rounded-full border-primary/30 text-foreground hover:border-primary/50",
+        size === "bar" && "shrink-0",
+        className,
+      )}
+      {...extra}
+    >
+      <Icon name="sparkles" size={16} className="text-primary" />
+      {label}
+    </Button>
+  )
 
-  // Several agents — a picker so the human chooses whom to hand the change to.
+  // Single agent → straight into the request composer, no menu.
+  if (single)
+    return trigger({
+      title: `Ask ${single.name} to revise the selection`,
+      onClick: () => onPick({ id: single.id, name: single.name }),
+    })
+
+  // Several agents → a picker so the human chooses whom to hand the change to.
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button
-          variant="outline"
-          size="sm"
-          data-testid="ask-agent"
-          onMouseDown={(e) => e.preventDefault()}
-          className={cn(
-            "rounded-full border-primary/30 text-foreground hover:border-primary/50",
-            size === "bar" && "shrink-0",
-            className,
-          )}
-        >
-          <Icon name="sparkles" size={16} className="text-primary" />
-          {label}
-        </Button>
-      </DropdownMenuTrigger>
+      <DropdownMenuTrigger asChild>{trigger()}</DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="w-56">
         <DropdownMenuLabel>Ask an agent to revise</DropdownMenuLabel>
         {usable.map((a) => (
@@ -100,6 +87,3 @@ export function AskAgentButton({
     </DropdownMenu>
   )
 }
-
-const firstName = (a: DirUser | undefined): string =>
-  (a?.name ?? "agent").split(/\s+/)[0] ?? "agent"

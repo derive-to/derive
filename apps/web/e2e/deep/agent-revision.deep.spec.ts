@@ -9,6 +9,25 @@ import { expect, publishArtifact, test } from "../fixtures"
 // created and approved. Drives the real UI for the human side and the real agent
 // token/API for the agent side, so the whole loop is covered — not a mock.
 
+// Select the first paragraph's text inside the sandboxed render frame and fire mouseup
+// — the exact path the anchor client turns into a `select` message, floating the host's
+// selection pill (Comment · Ask an agent). Playwright reaches the frame over CDP.
+async function selectFirstParagraph(page: Page): Promise<void> {
+  await expect(page.frameLocator("iframe").locator("p").first()).toBeVisible()
+  const frame = page.frames().find((f) => f.url().includes("/raw/"))
+  if (!frame) throw new Error("render frame not found")
+  await frame.evaluate(() => {
+    const p = document.querySelector("p")
+    if (!p) throw new Error("no paragraph")
+    const range = document.createRange()
+    range.selectNodeContents(p)
+    const sel = window.getSelection()
+    sel?.removeAllRanges()
+    sel?.addRange(range)
+    document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }))
+  })
+}
+
 // Register an agent in the owner's workspace; returns its bearer token + id.
 async function createAgent(
   req: APIRequestContext,
@@ -71,23 +90,7 @@ test.describe("agent revision requests — the select→agent→propose→review
     // --- Human side (real UI): select text in the render → the desktop pill appears --
     const page: Page = owner
     await page.goto(`/artifacts/doc-${shortId}`)
-    const frame = page.frameLocator("iframe")
-    await expect(frame.getByText(/could be tightened/)).toBeVisible()
-    // Programmatically select the paragraph's text inside the sandboxed frame and fire
-    // mouseup — the exact path the anchor client turns into a `select` message, so the
-    // host floats its selection pill (Comment · Ask an agent).
-    const renderFrame = page.frames().find((f) => f.url().includes("/raw/"))
-    if (!renderFrame) throw new Error("render frame not found")
-    await renderFrame.evaluate(() => {
-      const p = document.querySelector("p")
-      if (!p) throw new Error("no paragraph")
-      const range = document.createRange()
-      range.selectNodeContents(p)
-      const sel = window.getSelection()
-      sel?.removeAllRanges()
-      sel?.addRange(range)
-      document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }))
-    })
+    await selectFirstParagraph(page)
     // The selection pill surfaces both actions; hand the selection to the agent.
     await expect(page.getByTestId("ask-agent")).toBeVisible({ timeout: 10_000 })
     await page.getByTestId("ask-agent").click()
@@ -130,5 +133,25 @@ test.describe("agent revision requests — the select→agent→propose→review
     })
     await page.getByRole("button", { name: /Resolved \(\d+\)/ }).click()
     await expect(page.getByTestId("agent-request-applied")).toBeVisible({ timeout: 10_000 })
+  })
+
+  test("with several agents, the affordance opens a picker to choose whom to ask", async ({
+    owner,
+  }) => {
+    const a1 = await createAgent(owner.request, "Reviser")
+    const a2 = await createAgent(owner.request, "Copyeditor")
+    const shortId = await publishArtifact(owner, "doc.md", "# Title\n\nA paragraph to revise.")
+    await owner.goto(`/artifacts/doc-${shortId}`)
+    await selectFirstParagraph(owner)
+
+    // With >1 agent the pill opens a picker (not a direct fire); both agents are listed.
+    await owner.getByTestId("ask-agent").click()
+    await expect(owner.getByTestId(`ask-agent-${a1.id}`)).toBeVisible()
+    await expect(owner.getByTestId(`ask-agent-${a2.id}`)).toBeVisible()
+
+    // Choosing one opens the request composer pre-addressed to exactly that agent.
+    await owner.getByTestId(`ask-agent-${a2.id}`).click()
+    await expect(owner.getByTestId("agent-request-composer")).toBeVisible()
+    await expect(owner.getByTestId("composer-input")).toHaveValue(/@Copyeditor/)
   })
 })
