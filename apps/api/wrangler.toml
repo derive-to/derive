@@ -158,3 +158,9 @@ custom_domain = true
 [vars]
 # DERIVE_SUPERADMIN_EMAILS (operator allow-list) is optional; BASE_URL optional;
 # DERIVE_AUTH_SECRET is a secret (`wrangler secret put`). Workspaces are always multi.
+#
+# Optional Slack app (all three are secrets; set them to enable Slack, else it stays off):
+#   wrangler secret put SLACK_CLIENT_ID
+#   wrangler secret put SLACK_CLIENT_SECRET
+#   wrangler secret put SLACK_SIGNING_SECRET
+# Create the app from slack-manifest.json (repo root); see DEPLOY.md → Slack app.

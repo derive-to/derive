@@ -13,6 +13,36 @@ import { slackQuery, workspaceSettingsQuery } from "@/lib/queries"
 import { SettingsListSkeleton } from "./settings-list-skeleton"
 import { SettingsSection } from "./settings-section"
 
+// Grouped Slack event toggles for the connected app. Each group flips one or more
+// event keys together (see the server's WEBHOOK_EVENTS); comment posts stay under the
+// separate "Post activity to Slack" switch.
+const SLACK_EVENT_GROUPS: { id: string; label: string; description: string; events: string[] }[] = [
+  {
+    id: "versions",
+    label: "Version publishes",
+    description: "Post a card when a new version is published.",
+    events: ["version.published"],
+  },
+  {
+    id: "proposals",
+    label: "Proposals",
+    description: "New proposals, plus approvals and change requests.",
+    events: ["proposal.created", "proposal.approved", "proposal.changes_requested"],
+  },
+  {
+    id: "reviews",
+    label: "Reviews",
+    description: "Review requested, approved, and sent back.",
+    events: ["review.requested", "review.approved", "review.sent_back"],
+  },
+  {
+    id: "resolutions",
+    label: "Thread resolutions",
+    description: "When a comment thread is resolved or reopened.",
+    events: ["comment.resolved"],
+  },
+]
+
 // The five workspace activity channels (email + GitHub mirroring + Slack posting)
 // as instant toggles, plus the Slack connection. Toggles apply optimistically
 // with no save (the toggle contract); the Slack channel id is an explicit save.
@@ -43,6 +73,26 @@ export function IntegrationsSection() {
         toast.error(e?.message ?? "Could not save")
       })
   }
+
+  // Flip a group of Slack event keys together (absent key = on), persisting the whole
+  // slackEvents map. Same optimistic-with-revert contract as `flip`.
+  const flipEvents = (events: string[]) => (next: boolean) => {
+    const qk = workspaceSettingsQuery().queryKey
+    const prev = qc.getQueryData(qk)
+    if (!prev) return
+    const slackEvents = { ...(prev.slackEvents ?? {}) }
+    for (const e of events) slackEvents[e] = next
+    qc.setQueryData(qk, { ...prev, slackEvents })
+    api
+      .updateWorkspaceSettings({ slackEvents })
+      .then((s) => qc.setQueryData(qk, s))
+      .catch((e) => {
+        qc.setQueryData(qk, prev)
+        toast.error(e?.message ?? "Could not save")
+      })
+  }
+  // A group reads as on unless every member event is explicitly turned off.
+  const eventsOn = (events: string[]) => events.some((e) => settings?.slackEvents?.[e] !== false)
 
   const saveChannel = () => {
     api
@@ -169,6 +219,25 @@ export function IntegrationsSection() {
               Find a channel ID in Slack: open the channel, click its name, and copy the ID at the
               bottom. Invite the Derive app to that channel.
             </p>
+            {settings && (
+              <SettingsGroup title="What Derive posts">
+                {SLACK_EVENT_GROUPS.map((g) => (
+                  <SettingRow
+                    key={g.id}
+                    htmlFor={`toggle-slack-${g.id}`}
+                    label={g.label}
+                    description={g.description}
+                  >
+                    <Switch
+                      id={`toggle-slack-${g.id}`}
+                      data-testid={`toggle-slack-${g.id}`}
+                      checked={eventsOn(g.events)}
+                      onCheckedChange={flipEvents(g.events)}
+                    />
+                  </SettingRow>
+                ))}
+              </SettingsGroup>
+            )}
             <div>
               <Button
                 data-testid="slack-disconnect"

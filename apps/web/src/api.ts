@@ -243,6 +243,9 @@ export interface OrgSettings {
   githubMirrorComments: boolean
   githubPreviewLink: boolean
   slackPost: boolean
+  /** Per-event toggles for the connected Slack app's event cards (publishes, proposals,
+   *  reviews, resolutions). Keyed by event name; an absent key means on. */
+  slackEvents?: Record<string, boolean>
 }
 /** Slack connection status for the Settings UI. */
 export interface SlackStatus {

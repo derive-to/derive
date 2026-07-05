@@ -16,6 +16,7 @@ describe("workspace integration settings", () => {
       githubMirrorComments: true,
       githubPreviewLink: true,
       slackPost: true,
+      slackEvents: {},
     })
   })
 

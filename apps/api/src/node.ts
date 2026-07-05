@@ -16,6 +16,7 @@ import { emailDeliverySender, logEmailSender, resendEmailSender } from "./lib/em
 import { makeGithubCommentSender } from "./lib/github-comments"
 import { mountWeb } from "./lib/serve-web"
 import { makeSlackSender } from "./lib/slack-comments"
+import { makeSlackEventSender } from "./lib/slack-events"
 import { makeShutdown } from "./lifecycle"
 import { log } from "./log"
 import { createNodeSyncRunner } from "./node-sync"
@@ -153,8 +154,10 @@ const channelSenders: ChannelSenders = {
   // stored App (encrypted with the auth secret).
   github_review_comment: makeGithubCommentSender(meta, authSecret),
   github_issue_comment: makeGithubCommentSender(meta, authSecret),
-  // Slack App posting (bot token decrypted with the auth secret per delivery).
+  // Slack App posting (bot token decrypted with the auth secret per delivery): the
+  // comment thread mirror and the richer event cards (publishes, proposals, reviews).
   slack_app: makeSlackSender(meta, authSecret),
+  slack_app_event: makeSlackEventSender(meta, authSecret),
 }
 const webhookWorker = startWebhookWorker(meta, nodeDnsGuard, channelSenders)
 

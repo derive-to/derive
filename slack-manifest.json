@@ -1,0 +1,65 @@
+{
+  "_note": "Derive Slack app manifest. Create the app at https://api.slack.com/apps -> Create New App -> From a manifest, then replace every <BASE_URL> below with your Derive API origin (e.g. https://api.derive.to). Some scopes and events are forward-declared for later features: the assistant (assistant:write + assistant_thread_started) needs 'Agents & AI Apps' enabled on the app, and link unfurls (links:read/write + link_shared) need Unfurl Domains configured for derive.to. Both are wired in later PRs; the connect + event + interactivity flow works with the rest as-is. After creating the app, set SLACK_CLIENT_ID / SLACK_CLIENT_SECRET / SLACK_SIGNING_SECRET (see .env.example / DEPLOY.md).",
+  "display_information": {
+    "name": "Derive",
+    "description": "Get Derive comments, publishes, proposals and reviews in Slack, and reply back from a thread.",
+    "background_color": "#1a1a2e"
+  },
+  "features": {
+    "bot_user": {
+      "display_name": "Derive",
+      "always_online": true
+    },
+    "slash_commands": [
+      {
+        "command": "/derive",
+        "url": "<BASE_URL>/v1/slack/command",
+        "description": "Search Derive artifacts and share them into this channel",
+        "usage_hint": "find <query>",
+        "should_escape": false
+      }
+    ]
+  },
+  "oauth_config": {
+    "redirect_urls": ["<BASE_URL>/v1/slack/oauth/callback"],
+    "scopes": {
+      "bot": [
+        "chat:write",
+        "chat:write.public",
+        "channels:read",
+        "channels:join",
+        "channels:history",
+        "groups:read",
+        "groups:history",
+        "users:read",
+        "users:read.email",
+        "im:history",
+        "im:write",
+        "app_mentions:read",
+        "assistant:write",
+        "links:read",
+        "links:write",
+        "commands"
+      ]
+    }
+  },
+  "settings": {
+    "event_subscriptions": {
+      "request_url": "<BASE_URL>/v1/slack/events",
+      "bot_events": [
+        "message.channels",
+        "message.groups",
+        "message.im",
+        "app_mention",
+        "link_shared"
+      ]
+    },
+    "interactivity": {
+      "is_enabled": true,
+      "request_url": "<BASE_URL>/v1/slack/interactivity"
+    },
+    "org_deploy_enabled": false,
+    "socket_mode_enabled": false,
+    "token_rotation_enabled": false
+  }
+}

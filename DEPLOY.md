@@ -101,6 +101,7 @@ the default role. Sign up at `/login`.
 | `DERIVE_WEB_DIR` | (auto) | Override the bundled SPA path |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | (none) | Google sign-in |
 | `OIDC_ISSUER` / `OIDC_CLIENT_ID` / `OIDC_CLIENT_SECRET` / `OIDC_PROVIDER_ID` | (none) | Enterprise SSO |
+| `SLACK_CLIENT_ID` / `SLACK_CLIENT_SECRET` / `SLACK_SIGNING_SECRET` | (none) | Optional Slack app (all three required). Create it from [`slack-manifest.json`](slack-manifest.json); connect from Settings → Integrations. Bot tokens are encrypted at rest with `DERIVE_AUTH_SECRET`. |
 
 ### OAuth / SSO (optional)
 
@@ -110,6 +111,19 @@ If you set `GOOGLE_*` or `OIDC_*`, register the callback with the provider:
 https://derive.example.com/api/auth/callback/google
 https://derive.example.com/api/auth/oauth2/callback/<OIDC_PROVIDER_ID>
 ```
+
+### Slack app (optional)
+
+To connect Slack workspaces (comments, publishes, proposals and reviews in a channel,
+plus reply-back and interactive buttons), create one Slack app for this instance:
+
+1. At [api.slack.com/apps](https://api.slack.com/apps) → **Create New App → From a manifest**, paste [`slack-manifest.json`](slack-manifest.json) and replace every `<BASE_URL>` with this instance's API origin (e.g. `https://api.derive.example.com`).
+2. From the app's **Basic Information** page, set `SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET`, and `SLACK_SIGNING_SECRET` (all three required, or Slack stays off). On Workers these are secrets: `wrangler secret put SLACK_CLIENT_ID` (and the other two).
+3. Workspace admins connect from **Settings → Integrations → Add to Slack**, then set a default channel and invite the Derive bot to it.
+
+Bot tokens are stored per workspace, encrypted at rest with `DERIVE_AUTH_SECRET`. The
+assistant and link-unfurl features are forward-declared in the manifest but need extra
+app configuration (Agents & AI Apps; Unfurl Domains) enabled when those ship.
 
 ---
 

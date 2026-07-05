@@ -152,6 +152,20 @@ export const slackUserName = async (token: string, userId: string): Promise<stri
   }
 }
 
+/** Reply to an interactive action with an ephemeral message (only the clicking user sees
+ *  it), by POSTing to the `response_url` Slack included in the payload. Best-effort. */
+export const respondEphemeral = async (responseUrl: string, text: string): Promise<void> => {
+  try {
+    await fetch(responseUrl, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ response_type: "ephemeral", replace_original: false, text }),
+    })
+  } catch {
+    // The action was still acknowledged (200) — a failed ephemeral reply is non-fatal.
+  }
+}
+
 /** The OAuth authorize URL for the "Add to Slack" button. Bot scopes cover posting,
  *  channel listing/join, and reading message/user info for reply-back. */
 export const slackAuthorizeUrl = (clientId: string, redirectUri: string, state: string): string => {

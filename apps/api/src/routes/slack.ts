@@ -6,10 +6,12 @@ import { decryptSecret, encryptSecret, signState, verifyState } from "../lib/cry
 import { fail, readJson } from "../lib/http"
 import {
   exchangeSlackOAuth,
+  respondEphemeral,
   slackAuthorizeUrl,
   slackUserName,
   verifySlackSignature,
 } from "../lib/slack"
+import type { ButtonValue } from "../lib/slack-cards"
 import { ingestSlackReply } from "../lib/slack-comments"
 import { log } from "../log"
 
@@ -17,7 +19,7 @@ import { log } from "../log"
  *  events endpoint is signature-gated (no session) — it's in the app's anon-write allow
  *  list. The connect endpoints require a signed-in workspace admin. */
 export const slackRoutes = (ctx: AppContext) => {
-  const { meta, deps, bus, requireUser, activeWorkspace, workspaceCan } = ctx
+  const { meta, deps, bus, background, requireUser, activeWorkspace, workspaceCan } = ctx
   const app = new Hono()
   const slack = deps.slack
   const redirectUri = new URL("/v1/slack/oauth/callback", deps.baseUrl).toString()
@@ -121,6 +123,46 @@ export const slackRoutes = (ctx: AppContext) => {
     return c.json({ ok: true })
   })
 
+  // Interactive components (Block Kit button clicks). Signature-gated like the events
+  // endpoint (no session). Slack posts application/x-www-form-urlencoded with a single
+  // `payload` field (URL-encoded JSON) and expects a fast 200; the real reply is sent
+  // out-of-band to the payload's response_url. In PR-1 (before Slack↔Derive identity
+  // linking) an action button just points the clicker back into Derive to act; PR-2 makes
+  // approve / request-changes / resolve execute inline once the user is linked.
+  // authz-exempt: Slack signs every request with the signing secret (verifySlackSignature); no session on an interaction.
+  app.post("/v1/slack/interactivity", async (c) => {
+    if (!slack) return fail(c, 404, "Slack is not configured")
+    const raw = await c.req.text()
+    if (
+      !verifySlackSignature(
+        slack.signingSecret,
+        c.req.header("x-slack-request-timestamp"),
+        raw,
+        c.req.header("x-slack-signature"),
+      )
+    )
+      return fail(c, 401, "bad signature")
+
+    const encoded = new URLSearchParams(raw).get("payload")
+    if (!encoded) return c.json({})
+    let payload: SlackInteractionPayload
+    try {
+      payload = JSON.parse(encoded) as SlackInteractionPayload
+    } catch {
+      return fail(c, 400, "invalid payload")
+    }
+
+    if (payload.type === "block_actions" && payload.response_url) {
+      const responseUrl = payload.response_url
+      for (const action of payload.actions ?? []) {
+        const text = ephemeralForAction(action, deps.baseUrl)
+        // Reply out-of-band so the 200 ack stays well under Slack's 3s window.
+        if (text) background(respondEphemeral(responseUrl, text))
+      }
+    }
+    return c.json({})
+  })
+
   // Connection status for the Settings UI: whether Slack is configured at all, whether
   // this workspace has connected one, and its team + default channel.
   app.get("/v1/slack", async (c) => {
@@ -170,5 +212,42 @@ interface SlackEventEnvelope {
     channel?: string
     ts?: string
     thread_ts?: string
+  }
+}
+
+interface SlackInteractionAction {
+  action_id?: string
+  value?: string
+}
+interface SlackInteractionPayload {
+  type?: string
+  response_url?: string
+  user?: { id?: string }
+  actions?: SlackInteractionAction[]
+}
+
+/** Parse an interaction button and return the ephemeral message to send back, or null to
+ *  ignore it. PR-1 always points the clicker into Derive to act (identity linking, which
+ *  lets approve / request-changes / resolve run inline, lands in PR-2). */
+const ephemeralForAction = (action: SlackInteractionAction, baseUrl: string): string | null => {
+  if (!action.action_id?.startsWith("slack_act:") || !action.value) return null
+  let v: ButtonValue
+  try {
+    v = JSON.parse(action.value) as ButtonValue
+  } catch {
+    return null
+  }
+  const settings = `${baseUrl.replace(/\/$/, "")}/settings/integrations`
+  switch (v.act) {
+    case "approve":
+      return `Open this proposal in Derive to approve it: ${v.url}`
+    case "request_changes":
+      return `Open this proposal in Derive to request changes: ${v.url}`
+    case "resolve":
+      return `Open this thread in Derive to resolve it: ${v.url}`
+    case "link_account":
+      return `Link your Slack account to act from here: ${settings}`
+    default:
+      return null
   }
 }

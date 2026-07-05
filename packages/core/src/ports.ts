@@ -1088,8 +1088,12 @@ export interface OrgSettings {
   /** When a PR opens (and on each push), post + keep updated a single comment on the
    *  pull request linking to the Derive preview of its docs. */
   githubPreviewLink: boolean
-  /** Post Derive activity to the connected Slack workspace. */
+  /** Post Derive comment activity to the connected Slack workspace (the thread mirror). */
   slackPost: boolean
+  /** Per-event toggles for the connected app's richer event cards (version.published,
+   *  proposal.*, review.*). Keyed by webhook event name; an absent key means on. Comment
+   *  posts stay governed by `slackPost`. */
+  slackEvents?: Record<string, boolean>
 }
 
 export const DEFAULT_ORG_SETTINGS: OrgSettings = {
@@ -1098,6 +1102,7 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
   githubMirrorComments: true,
   githubPreviewLink: true,
   slackPost: true,
+  slackEvents: {},
 }
 
 /** A connected Slack workspace (one per Derive workspace). `bot_token` is the OAuth bot
@@ -1179,6 +1184,7 @@ export type DeliveryStatus = "pending" | "delivered" | "dead"
 export type DeliveryKind =
   | WebhookKind
   | "slack_app"
+  | "slack_app_event"
   | "github_review_comment"
   | "github_issue_comment"
   | "email"

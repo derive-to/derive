@@ -160,6 +160,7 @@ export const workspaceRoutes = (ctx: AppContext) => {
           githubMirrorComments: z.boolean(),
           githubPreviewLink: z.boolean(),
           slackPost: z.boolean(),
+          slackEvents: z.record(z.string(), z.boolean()),
         })
         .partial(),
     )

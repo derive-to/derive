@@ -253,3 +253,94 @@ describe("slack events endpoint", () => {
     expect(await meta.listComments(artifact.id)).toHaveLength(0)
   })
 })
+
+describe("slack interactivity endpoint", () => {
+  // Slack posts interactive actions as form-encoded `payload=<urlencoded JSON>`.
+  const interact = (obj: unknown) => `payload=${encodeURIComponent(JSON.stringify(obj))}`
+
+  it("rejects a badly-signed interaction", async () => {
+    const { app } = make("slack-int-badsig")
+    const r = await app.request("/v1/slack/interactivity", {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: interact({ type: "block_actions" }),
+    })
+    expect(r.status).toBe(401)
+  })
+
+  it("acks a proposal button and replies with a deep link into Derive (PR-1 fallback)", async () => {
+    const { app } = make("slack-int-approve")
+    // Capture the out-of-band ephemeral reply Slack would receive on response_url.
+    const replies: { url: string; body: unknown }[] = []
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: { body?: string }) => {
+        replies.push({ url, body: JSON.parse(init?.body ?? "{}") })
+        return new Response("{}", { status: 200 })
+      }),
+    )
+    const ts = String(Math.floor(Date.now() / 1000))
+    const body = interact({
+      type: "block_actions",
+      user: { id: "U1" },
+      response_url: "https://hooks.slack.com/actions/resp-1",
+      actions: [
+        {
+          action_id: "slack_act:approve",
+          value: JSON.stringify({
+            v: 1,
+            act: "approve",
+            org: "default",
+            id: "p1",
+            url: "https://derive.to/artifacts/x",
+          }),
+        },
+      ],
+    })
+    const r = await app.request("/v1/slack/interactivity", {
+      method: "POST",
+      headers: {
+        "content-type": "application/x-www-form-urlencoded",
+        "x-slack-request-timestamp": ts,
+        "x-slack-signature": sign(ts, body),
+      },
+      body,
+    })
+    expect(r.status).toBe(200)
+    expect(replies).toHaveLength(1)
+    expect(replies[0]?.url).toBe("https://hooks.slack.com/actions/resp-1")
+    const reply = replies[0]?.body as { response_type: string; text: string }
+    expect(reply.response_type).toBe("ephemeral")
+    expect(reply.text).toContain("https://derive.to/artifacts/x")
+    expect(reply.text.toLowerCase()).toContain("approve")
+  })
+
+  it("ignores unknown action ids without replying", async () => {
+    const { app } = make("slack-int-unknown")
+    const replies: unknown[] = []
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        replies.push(1)
+        return new Response("{}", { status: 200 })
+      }),
+    )
+    const ts = String(Math.floor(Date.now() / 1000))
+    const body = interact({
+      type: "block_actions",
+      response_url: "https://hooks.slack.com/actions/resp-2",
+      actions: [{ action_id: "not_ours", value: "{}" }],
+    })
+    const r = await app.request("/v1/slack/interactivity", {
+      method: "POST",
+      headers: {
+        "content-type": "application/x-www-form-urlencoded",
+        "x-slack-request-timestamp": ts,
+        "x-slack-signature": sign(ts, body),
+      },
+      body,
+    })
+    expect(r.status).toBe(200)
+    expect(replies).toHaveLength(0)
+  })
+})
