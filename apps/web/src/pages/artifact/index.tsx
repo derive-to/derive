@@ -149,15 +149,6 @@ export function Artifact() {
   const [hoverThread, setHoverThread] = useState<string | null>(null)
   // The open/hidden comments panel, with its persistence + `c`/Esc hotkeys.
   const { panel, setPanel } = useCommentsPanel(() => setComposer(null))
-  // Which comment surface is showing: the public team thread, or your personal notes
-  // (private to you + the agents you've authed). Two filtered views of one list. The
-  // panel shows the active tab; the document highlights BOTH (shared lavender +
-  // personal ink), and clicking a highlight switches to its tab.
-  const [commentTab, setCommentTab] = useState<"comments" | "personal">("comments")
-  const publicComments = comments
-  const activeComments = publicComments
-  // Stable so the iframe message listener subscribes once (it lives in onAnchorTab's deps).
-  const onAnchorTab = useCallback((_personal: boolean) => setCommentTab("comments"), [])
 
   // Server-truth refetch after a write or an SSE ping (defined up here so the
   // realtime hook + the iframe message bridge below can both lean on them).
@@ -196,11 +187,8 @@ export function Artifact() {
     docH,
     viewH,
   } = useArtifactFrame({
-    // Paint BOTH the shared and your personal anchors in the doc (the server already
-    // limits personal ones to you), color-differentiated; a click jumps to the right
-    // tab. The panel itself stays scoped to the active tab.
+    // Paint the open/addressed thread anchors in the doc; a click focuses the thread.
     comments,
-    onAnchorTab,
     shortId,
     version,
     hoverThread,
@@ -286,8 +274,6 @@ export function Artifact() {
     const cid = new URLSearchParams(window.location.search).get("comment")
     const target = cid ? comments.find((c) => c.thread_id === cid) : undefined
     if (target) {
-      // Open the tab the thread lives on, or its anchor won't be live in the doc.
-      setCommentTab("comments")
       setPanel("open")
       setActiveThread(target.thread_id)
       setTimeout(() => post({ type: "focus-anchor", id: target.thread_id }), 320)
@@ -362,12 +348,7 @@ export function Artifact() {
   // (unanchored or orphaned), and resolved. Pins drive both the margin cards
   // and the collapsed rail dots.
   const docLive = !editing && view === "preview"
-  // Per-tab open-thread counts for the tab badges (the split itself + the active
-  // set are computed up top, before the iframe hook, so the doc can scope to it).
-  const openCountOf = (cs: Comment[]) =>
-    groupThreads(cs).filter((t) => t[0] && t[0].state !== "resolved").length
-  const publicCount = openCountOf(publicComments)
-  const all = groupThreads(activeComments)
+  const all = groupThreads(comments)
   // `outdated` threads (their quoted text changed in a later version) stay in the
   // active list, not the resolved drawer — their anchor no longer resolves, so
   // they fall into the general/orphaned bucket below and stay visible to triage.
@@ -423,7 +404,6 @@ export function Artifact() {
     art,
     qc,
     me,
-    tab: commentTab,
     src,
     title: editTitle,
     proposeMsg,
@@ -751,9 +731,6 @@ export function Artifact() {
               }
               docLive={docLive}
               panel={panel}
-              tab={commentTab}
-              setTab={setCommentTab}
-              publicCount={publicCount}
               asideWidth={asideWidth}
               openCount={openCount}
               scrollY={scrollY}

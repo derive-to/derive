@@ -21,8 +21,6 @@ export function artifactActions(p: {
   art: { title?: string | null; short_id: string; current_version: number }
   qc: QueryClient
   me: Me
-  /** Which comment tab is active — a new thread inherits its visibility. */
-  tab: "comments" | "personal"
   src: string
   title: string
   proposeMsg: string
@@ -93,7 +91,6 @@ export function artifactActions(p: {
       threadId?: string
       anchor?: Sel | null
       mentions?: Mention[]
-      visibility?: "public" | "personal"
     },
   ) => {
     if (!text.trim()) return
@@ -145,7 +142,6 @@ export function artifactActions(p: {
     await addComment(text, {
       anchor,
       mentions,
-      visibility: p.tab === "personal" ? "personal" : "public",
     })
   }
   const toggleResolve = async (root: Comment) => {

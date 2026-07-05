@@ -32,10 +32,6 @@ export function ArtifactComments(p: {
   reviewCard?: ReactNode
   docLive: boolean
   panel: Panel
-  /** Active comment surface: public team thread vs your personal notes. */
-  tab: "comments" | "personal"
-  setTab: Dispatch<SetStateAction<"comments" | "personal">>
-  publicCount: number
   asideWidth: number
   openCount: number
   scrollY: number
@@ -114,9 +110,6 @@ export function ArtifactComments(p: {
         >
           {panel !== "hidden" && (
             <OpenPanel
-              tab={p.tab}
-              setTab={p.setTab}
-              publicCount={p.publicCount}
               openCount={p.openCount}
               scrollY={p.scrollY}
               onScrollDoc={p.onScrollDoc}
@@ -147,9 +140,6 @@ export function ArtifactComments(p: {
       {isMobile && !isAnon && (
         <MobileComments
           open={panel === "open"}
-          tab={p.tab}
-          setTab={p.setTab}
-          publicCount={p.publicCount}
           openThreads={p.openThreads}
           resolved={p.resolved}
           composer={p.composer}

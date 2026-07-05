@@ -354,13 +354,10 @@ export function Composer({
   quote,
   onSubmit,
   onCancel,
-  personal,
 }: {
   quote: string | null
   onSubmit: (t: string, mentions: Mention[]) => void
   onCancel: () => void
-  /** Personal tab: a private note for you + your agents — reflected in the copy. */
-  personal?: boolean
 }) {
   const [text, setText] = useState("")
   const [mentions, setMentions] = useState<Mention[]>([])
@@ -393,19 +390,9 @@ export function Composer({
           onSubmit={submit}
           onCancel={onCancel}
           placeholder={
-            personal
-              ? "Add a personal note… (@ to mention)"
-              : quote
-                ? "Comment on the selection… (@ to mention)"
-                : "Add a comment… (@ to mention)"
+            quote ? "Comment on the selection… (@ to mention)" : "Add a comment… (@ to mention)"
           }
         />
-        {personal && (
-          <div className="mt-1.5 flex items-center gap-1.5 text-sm text-muted-foreground">
-            <Icon name="lock" />
-            Visible only to you and the agents you've connected.
-          </div>
-        )}
         <div className="mt-1.5 flex gap-1.5">
           <Button
             variant="default"
@@ -415,7 +402,7 @@ export function Composer({
             data-testid="composer-submit"
             onClick={() => submit(mentions.filter((m) => text.includes(`@${m.name}`)))}
           >
-            {personal ? "Post note" : "Comment"}
+            Comment
           </Button>
           <Button variant="outline" size="sm" data-testid="composer-cancel" onClick={onCancel}>
             Cancel

@@ -37,7 +37,6 @@ export function PinnedZone({
   onJump,
   onSubmitNew,
   onCancelNew,
-  personal,
   topInset = 0,
 }: {
   pins: PinItem[]
@@ -48,7 +47,6 @@ export function PinnedZone({
   topInset?: number
   onScrollDoc: (dy: number) => void
   composer: ComposerState
-  personal?: boolean
   activeThread: string | null
   hoverThread: string | null
   inDoc: Record<string, boolean>
@@ -186,12 +184,7 @@ export function PinnedZone({
             transform: `translateY(${Math.round(pos[COMPOSER_ID] ?? align(activeComposer.top))}px)`,
           }}
         >
-          <Composer
-            quote={activeComposer.quote}
-            onSubmit={onSubmitNew}
-            onCancel={onCancelNew}
-            personal={personal}
-          />
+          <Composer quote={activeComposer.quote} onSubmit={onSubmitNew} onCancel={onCancelNew} />
         </div>
       )}
     </div>
