@@ -56,12 +56,11 @@ test("private hides an artifact from a workspace member until they're invited", 
   owner,
   secondUser,
 }) => {
-  // Both users in ONE workspace: the owner invites the second user into theirs
-  // via the workspace members flow is heavyweight here, so instead assert the
-  // API-level contract the UI rides: publish private, share, and watch the
-  // second user's access flip. (Cross-workspace 404s are already covered by the
-  // default-visibility test above; same-workspace exclusion is pinned in the
-  // API tests.)
+  // Publish private via the API, then drive the share dialog: the second user's
+  // access flips from 404 to readable the moment they're invited. (Same-workspace
+  // exclusion — a teammate who can't see a private draft — is pinned in the API
+  // tests; standing up a shared workspace through the UI isn't worth the weight
+  // here.)
   let id = ""
   await expect(async () => {
     const res = await owner.request.post("/v1/artifacts", {

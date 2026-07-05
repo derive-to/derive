@@ -204,12 +204,11 @@ export function CommentRow({ c, compact }: { c: Comment; compact?: boolean }) {
         // biome-ignore lint/a11y/noStaticElementInteractions: stopPropagation wrapper around the action toolbar, not a control
         // biome-ignore lint/a11y/useKeyWithClickEvents: stopPropagation wrapper around the action toolbar, not a control
         <div
-          // Hover reveals via opacity ONLY — never a pointer-events toggle (the
-          // artifact-card ⋯ pattern). Gating pointer-events on :hover leaves a
-          // dead button when the row remounts under a stationary pointer (a
-          // comments refetch after edit-save): the browser doesn't re-apply
-          // :hover until the mouse MOVES, so the toolbar stays unclickable
-          // exactly where the user's cursor already is.
+          // Reveal via opacity only, never a pointer-events toggle (the
+          // artifact-card ⋯ pattern): gating pointer-events on :hover leaves a
+          // dead toolbar when the row remounts under a stationary pointer (the
+          // comments refetch after an edit) — :hover isn't re-applied to a
+          // replaced node until the mouse moves.
           className={cn(
             "absolute right-2 top-1.5 z-6 flex gap-px rounded-lg bg-popover p-0.5 shadow-[var(--shadow)] ring-1 ring-foreground/10 transition-opacity",
             open

@@ -1,5 +1,5 @@
 import { can, normalizeUsername, toJson, usernameError } from "@derive/core"
-import { Hono } from "hono"
+import { type Context, Hono } from "hono"
 import { z } from "zod"
 import type { AppContext } from "../context"
 import { authorProfile, resolveHandles } from "../lib/author"
@@ -108,8 +108,9 @@ export const sessionRoutes = (ctx: AppContext) => {
   // The People directory — browse opted-in (discoverable) people to find someone to
   // follow, the home the search backend never got. With `?query=` it searches; without, it
   // BROWSES (the deliberate difference from /v1/users/search, which never enumerates).
-  // Discoverable is opt-in, so browsing only surfaces people who chose to be found.
-  // Signed-in only; public fields only (handle/name/avatar/role) — never email.
+  // Browsing surfaces discoverable people only (on by default; opting out also
+  // hides the profile — see profileVisibleTo). Signed-in only; public fields only
+  // (handle/name/avatar/role) — never email.
   app.get("/v1/people", async (c) => {
     const me = await currentUser(c)
     if (!me) return fail(c, 401, "unauthenticated")
@@ -139,7 +140,7 @@ export const sessionRoutes = (ctx: AppContext) => {
   // with them; everyone else gets the same 404 as an unknown handle, so an opted-out
   // account can't be confirmed to exist by probing handles.
   const profileVisibleTo = async (
-    c: Parameters<typeof currentUser>[0],
+    c: Context,
     p: { id: string; discoverable?: boolean | number | null },
   ): Promise<boolean> => {
     if (p.discoverable !== false && p.discoverable !== 0) return true

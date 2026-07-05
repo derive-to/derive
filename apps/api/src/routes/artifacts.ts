@@ -349,8 +349,8 @@ export const artifactRoutes = (ctx: AppContext) => {
       // (an agent publishes on behalf of whoever registered it), which is what makes
       // `private` work — workspace role grants nothing there. The agent principal
       // additionally gets an editor row so it can keep operating on the artifact
-      // (republish, address review) even when it's private. A pre-column agent with
-      // no owner link falls back to owning as itself.
+      // (republish, address review) even when it's private. An agent with no
+      // registrant on record (created_by null) owns as itself.
       if (!shortId) {
         if (onBehalf)
           await meta.setArtifactMember({
