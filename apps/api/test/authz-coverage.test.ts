@@ -18,16 +18,19 @@ const MUTATIONS = new Set(["post", "put", "patch", "delete"])
 // that touches NONE of them is almost certainly unauthenticated by accident.
 const AUTHZ = new Set([
   "authorize",
+  "requireArtifact",
   "workspaceCan",
   "collectionRole",
   "canManageCollection",
   "ensureMembership",
+  "isMember",
   "activeWorkspace",
   "actingUser",
   "currentUser",
+  "requireUser",
   "isLastOwner",
   "agentFor",
-  "bearer",
+  "isToken",
 ])
 
 const EXEMPT = "authz-exempt"

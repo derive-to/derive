@@ -28,8 +28,8 @@ export const commentRoutes = (ctx: AppContext) => {
     notify,
     background,
     actingUser,
-    privateOwnerId,
     anonLocked,
+    requireArtifact,
     authorize,
     limited,
     commentLimiter,
@@ -103,14 +103,7 @@ export const commentRoutes = (ctx: AppContext) => {
     return notified
   }
 
-  // A `personal` comment is invisible to anyone but its owner (the human) and that
-  // human's authed agents. Treat it as not-found for everyone else on EVERY by-id
-  // path (read or mutate) — a 404, never a 403, so its existence doesn't leak.
-  const hiddenPersonal = async (c: Context, cm: CommentRecord): Promise<boolean> =>
-    cm.visibility === "personal" && cm.owner_id !== (await privateOwnerId(c))
-
-  // Loads (artifact, comment) for a mutation, 404ing on mismatch or a personal
-  // comment the caller can't see.
+  // Loads (artifact, comment) for a mutation, 404ing on mismatch.
   const loadComment = async (
     c: Context,
   ): Promise<{ artifact: ArtifactRecord; cm: CommentRecord } | { error: Response }> => {
@@ -118,7 +111,6 @@ export const commentRoutes = (ctx: AppContext) => {
     if (!artifact) return { error: fail(c, 404, "not found") }
     const cm = await meta.getComment(c.req.param("commentId") ?? "")
     if (!cm || cm.artifact_id !== artifact.id) return { error: fail(c, 404, "not found") }
-    if (await hiddenPersonal(c, cm)) return { error: fail(c, 404, "not found") }
     return { artifact, cm }
   }
   // The acting display name (agent or signed-in user); null for an anonymous
@@ -178,27 +170,6 @@ export const commentRoutes = (ctx: AppContext) => {
         : "anonymous"
     const mentions = parseMentions(body.mentions)
 
-    // Visibility. A reply INHERITS its thread's visibility (the root comment's id is
-    // the thread_id), so a reply can't change a thread's privacy and a personal
-    // thread stays personal end-to-end. A new thread takes the requested visibility.
-    // `personal` requires a human identity (signed-in user, or the user an OAuth
-    // agent acts for); a workspace agent / anon has none → it can't open one.
-    const root = threadId !== id ? await meta.getComment(threadId) : null
-    let visibility: "public" | "personal" = "public"
-    let ownerId: string | null = null
-    if (root && root.artifact_id === artifact.id && root.visibility === "personal") {
-      // Replying into a personal thread: only its owner (or their agent) may, and the
-      // reply joins the same private channel.
-      if (root.owner_id !== (await privateOwnerId(c))) return fail(c, 404, "not found")
-      visibility = "personal"
-      ownerId = root.owner_id
-    } else if (!root && body.visibility === "personal") {
-      ownerId = await privateOwnerId(c)
-      if (!ownerId) return fail(c, 400, "personal comments need a signed-in user or your own agent")
-      visibility = "personal"
-    }
-    const personal = visibility === "personal"
-
     let created = await meta.createComment({
       id,
       artifact_id: artifact.id,
@@ -209,8 +180,6 @@ export const commentRoutes = (ctx: AppContext) => {
       body_md: body.body_md,
       author,
       author_id: acting?.id ?? null,
-      visibility,
-      owner_id: ownerId,
     })
     // Mentions live in the comment's meta JSON (the picker supplies user ids, so
     // there's no fragile server-side @name parsing); persist them with the row.
@@ -228,49 +197,44 @@ export const commentRoutes = (ctx: AppContext) => {
     // fan-out, so they run after the response instead of stacking sequential D1
     // round-trips onto the post (the "couple of seconds to send" people felt).
     bus.publish(artifact.id, { type: "comment.created" })
-    // Personal comments never fan out: no team webhook and no notifications to other
-    // people. They're a private channel — the owner's agent reads them by pulling
-    // over MCP, not by a broadcast. (The bus signal above is bodyless; non-owners
-    // refetch and the server filter returns nothing.)
-    if (!personal)
-      await background(
-        (async () => {
-          await notify(artifact, "comment.created", {
+    await background(
+      (async () => {
+        await notify(artifact, "comment.created", {
+          author: created.author,
+          body: created.body_md,
+          quote: quoteOf(created.anchor),
+          thread_id: created.thread_id,
+        })
+        const notified = await notifyMentions(artifact, created, mentions, acting?.id ?? null)
+        if (notified.length)
+          await notify(artifact, "comment.mention", {
             author: created.author,
+            mentioned: notified,
             body: created.body_md,
             quote: quoteOf(created.anchor),
             thread_id: created.thread_id,
           })
-          const notified = await notifyMentions(artifact, created, mentions, acting?.id ?? null)
-          if (notified.length)
-            await notify(artifact, "comment.mention", {
-              author: created.author,
-              mentioned: notified,
-              body: created.body_md,
-              quote: quoteOf(created.anchor),
-              thread_id: created.thread_id,
-            })
-          // Channel fan-out is gated per workspace (Settings -> integrations toggles).
-          const settings = await meta.getOrgSettings(artifact.org_id)
-          if (settings.emailNotifications)
-            await enqueueCommentEmails({ meta, baseUrl: deps.baseUrl }, artifact, created, {
-              mentionIds: new Set(mentions.map((m) => m.id)),
-              actorId: acting?.id ?? null,
-            })
-          const trustedAuthor = await isCollaboratorAuthor(meta, artifact, acting?.id ?? null)
-          if (trustedAuthor && settings.githubPostComments)
-            await enqueueGithubPrComment({ meta, blobs, baseUrl: deps.baseUrl }, artifact, created)
-          if (trustedAuthor && settings.slackPost)
-            await enqueueSlackComment({ meta, baseUrl: deps.baseUrl }, artifact, created)
-          deps.pokeWebhooks?.()
-        })(),
-      )
+        // Channel fan-out is gated per workspace (Settings -> integrations toggles).
+        const settings = await meta.getOrgSettings(artifact.org_id)
+        if (settings.emailNotifications)
+          await enqueueCommentEmails({ meta, baseUrl: deps.baseUrl }, artifact, created, {
+            mentionIds: new Set(mentions.map((m) => m.id)),
+            actorId: acting?.id ?? null,
+          })
+        const trustedAuthor = await isCollaboratorAuthor(meta, artifact, acting?.id ?? null)
+        if (trustedAuthor && settings.githubPostComments)
+          await enqueueGithubPrComment({ meta, blobs, baseUrl: deps.baseUrl }, artifact, created)
+        if (trustedAuthor && settings.slackPost)
+          await enqueueSlackComment({ meta, baseUrl: deps.baseUrl }, artifact, created)
+        deps.pokeWebhooks?.()
+      })(),
+    )
     return c.json(commentJson(created), 201)
   })
 
   app.get("/v1/artifacts/:shortId/comments", async (c) => {
-    const artifact = await meta.getByShortId(c.req.param("shortId"))
-    if (!artifact || !(await authorize(c, "read", artifact))) return fail(c, 404, "not found")
+    const artifact = await requireArtifact(c, "read")
+    if (artifact instanceof Response) return artifact
     // Comments are collaboration, not content: anonymous visitors (no account) never
     // see them, even on a public link. Authenticated readers — including a plain
     // viewer — do, the Google-Docs way. So the gate is "has an account", not the role.
@@ -278,12 +242,7 @@ export const commentRoutes = (ctx: AppContext) => {
     const q = c.req.query("state")
     const state =
       q === "open" || q === "resolved" || q === "outdated" || q === "addressed" ? q : undefined
-    // Public comments + the caller's own personal ones (their agents resolve to the
-    // same owner id). Enforced in the store so it can't be bypassed here.
-    const comments = await meta.listComments(artifact.id, {
-      state,
-      viewerOwnerId: await privateOwnerId(c),
-    })
+    const comments = await meta.listComments(artifact.id, { state })
     // Flag whether each anchor still resolves against the current version.
     const cur = await meta.getVersion(artifact.id, artifact.current_version)
     const src = cur ? await sourceText(cur) : null
@@ -301,7 +260,6 @@ export const commentRoutes = (ctx: AppContext) => {
     if (!(await authorize(c, "comment", artifact))) return fail(c, 403, "forbidden")
     const cm = await meta.getComment(c.req.param("commentId"))
     if (!cm || cm.artifact_id !== artifact.id) return fail(c, 404, "not found")
-    if (await hiddenPersonal(c, cm)) return fail(c, 404, "not found")
     const body = await readJson(c, z.object({ state: z.string().optional() }))
     if (body instanceof Response) return body
     const state = body.state === "open" ? "open" : "resolved"

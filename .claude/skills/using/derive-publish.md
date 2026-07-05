@@ -16,7 +16,7 @@ publish(
   filename:   string,      // e.g. "report.html" or "notes.md" — determines artifact type
   title?:     string,      // display title (required when creating a new artifact)
   slug?:      string,      // custom URL slug
-  visibility? "public" | "link" | "org" | "password",  // default: "link"
+  visibility? "public" | "link" | "org" | "password" | "private",  // default: "private"
   for_review? boolean      // file a proposal instead of going live
 )
 ```

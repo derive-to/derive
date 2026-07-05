@@ -20,7 +20,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it reache
   table gains `created_by`; a registered agent's publishes are attributed
   (`author_id`) and owned (the owner-member row) by that user, with the agent
   itself added as editor so it can keep operating on the artifact — matching how
-  OAuth agents already carried their granting user. Agents created before the
+  OAuth agents already carried their granting user. Applies to the HTTP route and
+  the remote-MCP publish alike. Agents created before the
   column publish as themselves; recreate the agent to link it.
 - **`discoverable` is real profile privacy now.** Turning it off hides your
   profile page, work list, and follow lists from everyone except people who share

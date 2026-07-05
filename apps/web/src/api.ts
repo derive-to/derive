@@ -276,6 +276,20 @@ export interface Mention {
   id: string
   name: string
 }
+/** A review round: the agent asked this person to review a version, and polls for
+ *  the answer. `pending` = waiting; `sent_back` = they returned answers; `approved`. */
+export interface ReviewRound {
+  id: string
+  artifact_id: string
+  version: number
+  requested_by: string
+  requested_for: string
+  state: "pending" | "sent_back" | "approved"
+  note: string | null
+  created_at: string
+  resolved_at: string | null
+}
+
 export interface Comment {
   id: string
   thread_id: string
@@ -289,9 +303,6 @@ export interface Comment {
   // version (set by the server's re-anchor sweep); the feedback may no longer apply.
   state: "open" | "addressed" | "resolved" | "outdated"
   created_at: string
-  // `personal` = a private note scoped to you and the agents you've authed; the
-  // server only ever returns your own. `public` (default) = everyone on the artifact.
-  visibility?: "public" | "personal"
   anchored?: boolean
   reactions?: Record<string, string[]>
   edited?: boolean
@@ -935,9 +946,16 @@ export const api = {
       thread_id?: string
       anchor?: unknown
       mentions?: Mention[]
-      visibility?: "public" | "personal"
     },
   ): Promise<Comment> => f(`/v1/artifacts/${id}/comments`, opts(body)).then(j),
+  // Review rounds (the /derive loop). getReview → the pending round + history;
+  // sendBack / approve settle the pending round (the sidebar review card's buttons).
+  getReview: (id: string): Promise<{ pending: ReviewRound | null; rounds: ReviewRound[] }> =>
+    f(`/v1/artifacts/${id}/review`, opts()).then(j),
+  sendBackReview: (id: string, note?: string): Promise<{ round: ReviewRound }> =>
+    f(`/v1/artifacts/${id}/review/send-back`, opts({ note })).then(j),
+  approveReview: (id: string, note?: string): Promise<{ round: ReviewRound }> =>
+    f(`/v1/artifacts/${id}/review/approve`, opts({ note })).then(j),
   resolve: (id: string, commentId: string, state: "open" | "resolved") =>
     f(`/v1/artifacts/${id}/comments/${commentId}/resolve`, opts({ state })).then(j),
   react: (id: string, commentId: string, emoji: string): Promise<Comment> =>

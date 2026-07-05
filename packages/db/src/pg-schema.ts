@@ -3,7 +3,6 @@ import type {
   ArtifactKind,
   AuditAction,
   CommentState,
-  CommentVisibility,
   DeliveryKind,
   DeliveryStatus,
   DomainKind,
@@ -13,11 +12,12 @@ import type {
   NotificationKind,
   ProposalState,
   ReportState,
+  ReviewRoundState,
   Role,
   Visibility,
   WebhookKind,
 } from "@derive/core"
-import { getTableConfig, integer, pgTable, text, uniqueIndex } from "drizzle-orm/pg-core"
+import { getTableConfig, index, integer, pgTable, text, uniqueIndex } from "drizzle-orm/pg-core"
 import { generateDdl, PERF_INDEXES, placeholderTables } from "./ddl"
 
 // Postgres drizzle schema — the query source of truth, dialect-paired with the
@@ -102,10 +102,6 @@ export const comment = pgTable("comment", {
   // never the mutable display `author` name. Nullable for legacy/anonymous rows.
   author_id: text("author_id"),
   state: text("state").$type<CommentState>().notNull().default("open"),
-  // `personal` comments are visible only to `owner_id` (the human) and the agents
-  // that human has authed; `public` (default) to everyone. Enforced in listComments.
-  visibility: text("visibility").$type<CommentVisibility>().notNull().default("public"),
-  owner_id: text("owner_id"),
   created_at: text("created_at").notNull().$defaultFn(isoNow),
   meta: text("meta"),
 })
@@ -391,6 +387,27 @@ export const proposal = pgTable("proposal", {
   created_at: text("created_at").notNull().$defaultFn(isoNow),
 })
 
+// A review round: an agent asks a person to review a live version and polls for the
+// answer. One PENDING round per (artifact, requested_for) — parallel reviewers safe;
+// a re-request replaces that person's pending row. See the sqlite schema for detail.
+export const reviewRound = pgTable(
+  "review_round",
+  {
+    id: text("id").primaryKey(),
+    artifact_id: text("artifact_id")
+      .notNull()
+      .references(() => artifact.id),
+    version: integer("version").notNull(),
+    requested_by: text("requested_by").notNull(),
+    requested_for: text("requested_for").notNull(),
+    state: text("state").$type<ReviewRoundState>().notNull().default("pending"),
+    note: text("note"),
+    created_at: text("created_at").notNull().$defaultFn(isoNow),
+    resolved_at: text("resolved_at"),
+  },
+  (t) => [index("review_round_artifact").on(t.artifact_id, t.requested_for)],
+)
+
 export const report = pgTable("report", {
   id: text("id").primaryKey(),
   org_id: text("org_id").notNull().default("default"),
@@ -451,6 +468,7 @@ const TABLES = [
   githubInstallation,
   domain,
   proposal,
+  reviewRound,
   report,
   auditLog,
 ]

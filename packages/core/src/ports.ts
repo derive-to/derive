@@ -189,14 +189,7 @@ export interface MetaStore {
   reclassifyVersion(artifactId: string, n: number, contentType: string): Promise<void>
 
   createComment(c: NewComment): Promise<CommentRecord>
-  /**
-   * Comments on an artifact, oldest-first. Visibility is enforced here so it can't
-   * be bypassed by a caller forgetting to filter:
-   *   - default (no `viewerOwnerId`, no `includeAll`) → PUBLIC only (fail-closed).
-   *   - `viewerOwnerId` set → public + that owner's `personal` comments.
-   *   - `includeAll` → every comment regardless of visibility (background/system
-   *     paths only: re-anchor sweep, addressed release — never a client response).
-   */
+  /** Comments on an artifact, oldest-first; optionally filtered by thread state. */
   listComments(artifactId: string, opts?: CommentListOpts): Promise<CommentRecord[]>
   getComment(id: string): Promise<CommentRecord | null>
   /** Patch a single comment's body, meta (reactions, edited, deleted), and/or
@@ -483,6 +476,21 @@ export interface MetaStore {
       decision_note?: string | null
     },
   ): Promise<ProposalRecord | null>
+
+  // ---- Review rounds (the agent↔human review loop) ----------------------
+  /** Open a review round for a person, replacing their existing pending round on
+   *  this artifact (one pending per (artifact, requested_for)). */
+  createReviewRound(r: NewReviewRound): Promise<ReviewRoundRecord>
+  /** This person's pending round on the artifact, if any. Omit `requestedFor` to
+   *  get any pending round (whichever was created first). */
+  getPendingRound(artifactId: string, requestedFor?: string): Promise<ReviewRoundRecord | null>
+  /** All rounds on an artifact, newest first (the audit trail). */
+  listReviewRounds(artifactId: string): Promise<ReviewRoundRecord[]>
+  /** Settle a round (`sent_back` or `approved`), stamping resolved_at + note. */
+  resolveReviewRound(
+    id: string,
+    fields: { state: Extract<ReviewRoundState, "sent_back" | "approved">; note?: string | null },
+  ): Promise<ReviewRoundRecord | null>
 
   // ---- User directory (reads Better Auth's `user` table) ----------------
   findUserByEmail(email: string): Promise<UserDir | null>
@@ -808,6 +816,36 @@ export interface NewProposal {
   author: string
   author_id?: string | null
   base_version: number
+}
+
+/** A review round's lifecycle. `pending` = the agent asked and is waiting;
+ *  `sent_back` = the human returned their answers (the poll target); `approved` =
+ *  the human signed off (the build go-signal). One pending round per person. */
+export type ReviewRoundState = "pending" | "sent_back" | "approved"
+
+export interface ReviewRoundRecord {
+  id: string
+  artifact_id: string
+  /** The version the review was requested on. */
+  version: number
+  /** Stable id of the requester (the agent). */
+  requested_by: string
+  /** The user asked to review (the grant owner for an OAuth agent). */
+  requested_for: string
+  state: ReviewRoundState
+  /** Optional message from the requester, or the human's send-back note. */
+  note: string | null
+  created_at: string
+  resolved_at: string | null
+}
+
+export interface NewReviewRound {
+  id: string
+  artifact_id: string
+  version: number
+  requested_by: string
+  requested_for: string
+  note?: string | null
 }
 
 /** A GitHub commit author, denormalized onto an artifact / stored per version.
@@ -1232,10 +1270,6 @@ export interface ViewStats {
 //             the quoted text reappears. Never overwrites `resolved`/`addressed`.
 export type CommentState = "open" | "addressed" | "resolved" | "outdated"
 
-/** Who a comment is visible to. `public` = everyone on the artifact (today's
- *  behavior). `personal` = only the human owner (`owner_id`) and the agents that
- *  human has authed — a private side-channel, never part of the shared file. */
-export type CommentVisibility = "public" | "personal"
 /** Per-artifact comment signals for a viewer (see `MetaStore.commentSignals`).
  *  `open_threads` is the count of distinct OPEN threads; `mentions_me` / `i_participated`
  *  flag that the viewer is tagged in or has authored an open thread on this artifact —
@@ -1259,11 +1293,6 @@ export interface CommentRecord {
    *  Null for legacy rows and anonymous comments. */
   author_id: string | null
   state: CommentState
-  /** `personal` comments are scoped to `owner_id`; `public` (default) to everyone. */
-  visibility: CommentVisibility
-  /** For a `personal` comment, the human user who owns the private thread (both the
-   *  human and their agent author into it with this set). Null for `public`. */
-  owner_id: string | null
   created_at: string
   /** JSON blob: { reactions?: {emoji: author[]}, edited_at?: string, deleted?: boolean }. */
   meta: string | null
@@ -1279,17 +1308,11 @@ export interface NewComment {
   body_md: string
   author: string
   author_id?: string | null
-  visibility?: CommentVisibility
-  owner_id?: string | null
 }
 
-/** Options for {@link MetaStore.listComments}. See its doc for visibility rules. */
+/** Options for {@link MetaStore.listComments}. */
 export interface CommentListOpts {
   state?: CommentState
-  /** The human identity reading: public + this owner's `personal` comments. */
-  viewerOwnerId?: string | null
-  /** Background/system reads that need every comment regardless of visibility. */
-  includeAll?: boolean
 }
 
 /** A bundle version's blob is this manifest; file versions point at content directly. */

@@ -19,9 +19,9 @@ import { type Context, Hono } from "hono"
 import { setCookie } from "hono/cookie"
 import { z } from "zod"
 import type { AppContext } from "../context"
-import { sweepAnchors } from "../lib/anchor-sweep"
+import { publishSweepEvents } from "../lib/anchor-sweep"
 import { authorProfile, resolveHandles } from "../lib/author"
-import { hashPassword, safeEqual, unlockCookie, unlockToken, verifyPassword } from "../lib/crypto"
+import { hashPassword, unlockCookie, unlockToken, verifyPassword } from "../lib/crypto"
 import {
   DEFAULT_WORKSPACE_NAME,
   fail,
@@ -44,7 +44,8 @@ export const artifactRoutes = (ctx: AppContext) => {
     bus,
     notify,
     background,
-    bearer,
+    isMember,
+    isToken,
     currentUser,
     actingUser,
     privateOwnerId,
@@ -66,8 +67,7 @@ export const artifactRoutes = (ctx: AppContext) => {
   // { artifacts, next_cursor }. tag/favorite resolve to an id set first.
   app.get("/v1/artifacts", async (c) => {
     const me = await currentUser(c)
-    if (!me && deps.token && !safeEqual(bearer(c), deps.token))
-      return fail(c, 401, "unauthenticated")
+    if (!me && !isToken(c)) return fail(c, 401, "unauthenticated")
     const limit = Math.min(100, Math.max(1, Number(c.req.query("limit")) || 30))
     // Opaque compound cursor "<created_at>|<id>" — the id tiebreak keeps paging
     // correct when many artifacts share a created_at.
@@ -134,10 +134,7 @@ export const artifactRoutes = (ctx: AppContext) => {
       // D1's 100-bound-parameter cap and 500 the whole listing.
       listOrg = col.org_id
       collectionInfo = { id: col.id, title: col.title }
-      collectionAccess =
-        (deps.token && safeEqual(bearer(c), deps.token)) ||
-        (!!me && !!(await meta.getMembership(col.org_id, me.id))) ||
-        (await collectionRole(c, col)) !== null
+      collectionAccess = (await isMember(c, col.org_id)) || (await collectionRole(c, col)) !== null
     }
     // Author filter narrows to artifacts last changed by a GitHub login, scoped to the
     // listing's workspace (after collection scope has settled listOrg). Mirrors ?tag=.
@@ -145,8 +142,9 @@ export const artifactRoutes = (ctx: AppContext) => {
     if (ids && ids.length === 0) return c.json({ artifacts: [], next_cursor: null })
 
     // The caller's baseline standing in the listing's workspace — reused for the
-    // public-only clamp below and the per-row `my_role`.
-    const isOperator = !!(deps.token && safeEqual(bearer(c), deps.token))
+    // public-only clamp below and the per-row `my_role` (which needs the ROLE, so
+    // the membership row is fetched rather than the boolean isMember helper).
+    const isOperator = isToken(c)
     const myMembership = me ? await meta.getMembership(listOrg, me.id) : null
     // A listing only shows non-public artifacts to a MEMBER of that workspace (or the
     // operator token). Anyone else — anonymous, or a signed-in user who isn't a member
@@ -228,17 +226,14 @@ export const artifactRoutes = (ctx: AppContext) => {
   // and tag → count (so counts stay accurate independent of the current page).
   app.get("/v1/tags", async (c) => {
     const me = await currentUser(c)
-    if (!me && deps.token && !safeEqual(bearer(c), deps.token))
-      return fail(c, 401, "unauthenticated")
+    if (!me && !isToken(c)) return fail(c, 401, "unauthenticated")
     const org = await activeWorkspace(c)
     // The sidebar summary (workspace name, total artifact count, tag breakdown) is a
     // member view. A non-member — including an anonymous caller in open mode — gets an
     // empty summary with no workspace name, so it can't be used to enumerate a private
     // workspace's name + size.
-    const isMember =
-      (deps.token && safeEqual(bearer(c), deps.token)) ||
-      (!!me && !!(await meta.getMembership(org, me.id)))
-    if (!isMember) return c.json({ total: 0, favorites: 0, tags: [], workspace: null })
+    if (!(await isMember(c, org)))
+      return c.json({ total: 0, favorites: 0, tags: [], workspace: null })
     const [total, tags, favIds, ws] = await Promise.all([
       meta.countArtifacts(org),
       meta.tagCounts(org),
@@ -428,12 +423,32 @@ export const artifactRoutes = (ctx: AppContext) => {
       }
       // Re-anchor existing threads against the new version: feedback whose quoted
       // text changed flips to `outdated` (and back to `open` if it reappears).
-      for (const t of await sweepAnchors(meta, blobs, artifact.id, version))
-        bus.publish(artifact.id, {
-          type: t.state === "outdated" ? "comment.outdated" : "comment.resolved",
-          thread_id: t.thread_id,
-          state: t.state,
-        })
+      await publishSweepEvents(meta, blobs, bus, artifact.id, version)
+      // Open a review round if the publisher asked for one (the /derive loop). The
+      // reviewer is the human behind the publish (onBehalf covers both a session
+      // user and an agent's registrant); falls back to the workspace's first owner
+      // so a headless publish still has someone to ask. No human to ask → skip.
+      if (body["request_review"] === "true" || body["request_review"] === "1") {
+        const reviewer =
+          onBehalf ??
+          (await meta.listMemberships(org)).find((m) => m.role === "owner")?.user_id ??
+          null
+        if (reviewer) {
+          const round = await meta.createReviewRound({
+            id: newId("rr"),
+            artifact_id: artifact.id,
+            version: version.n,
+            requested_by: actor?.id ?? "agent",
+            requested_for: reviewer,
+            note: str(body["review_note"]) ?? null,
+          })
+          bus.publish(artifact.id, { type: "review.requested", round_id: round.id })
+          await notify(artifact, "review.requested", {
+            version: version.n,
+            requested_by: actor?.name ?? "An agent",
+          })
+        }
+      }
       const versions = await meta.listVersions(artifact.id)
       return c.json({ ...toJson(deps.baseUrl, artifact, versions), published: version.n }, 201)
     } catch (err) {
@@ -602,7 +617,7 @@ export const artifactRoutes = (ctx: AppContext) => {
     if (!artifact) return fail(c, 404, "not found")
     if (!(await authorize(c, "manage", artifact))) return fail(c, 403, "forbidden")
     await meta.deleteArtifact(artifact.id, artifact.org_id)
-    return new Response(null, { status: 204 })
+    return c.body(null, 204)
   })
 
   // Unlock a `password` artifact: verify the password and drop a cookie whose
@@ -664,12 +679,7 @@ export const artifactRoutes = (ctx: AppContext) => {
     })
     bus.publish(artifact.id, { type: "version.published", n: version.n, message: version.message })
     // Restoring an old blob is a content change too — re-anchor threads against it.
-    for (const t of await sweepAnchors(meta, blobs, artifact.id, version))
-      bus.publish(artifact.id, {
-        type: t.state === "outdated" ? "comment.outdated" : "comment.resolved",
-        thread_id: t.thread_id,
-        state: t.state,
-      })
+    await publishSweepEvents(meta, blobs, bus, artifact.id, version)
     const fresh = (await meta.getByShortId(artifact.short_id)) as ArtifactRecord
     const versions = await meta.listVersions(artifact.id)
     return c.json(

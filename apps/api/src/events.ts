@@ -6,7 +6,7 @@
 // list is a subset of the domain list — so the two can never silently diverge
 // the way two independent enums did before. Add an event in ONE place.
 
-export const DOMAIN_EVENTS = [
+const DOMAIN_EVENTS = [
   "comment.created",
   "comment.mention",
   "comment.resolved",
@@ -18,6 +18,9 @@ export const DOMAIN_EVENTS = [
   "proposal.created",
   "proposal.approved",
   "proposal.changes_requested",
+  "review.requested",
+  "review.sent_back",
+  "review.approved",
   "presence",
   "cursor",
   "notification",
@@ -33,6 +36,9 @@ export const WEBHOOK_EVENTS = [
   "proposal.created",
   "proposal.approved",
   "proposal.changes_requested",
+  "review.requested",
+  "review.sent_back",
+  "review.approved",
 ] as const
 export type WebhookEvent = (typeof WEBHOOK_EVENTS)[number]
 
