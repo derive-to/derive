@@ -43,6 +43,88 @@ const SLACK_EVENT_GROUPS: { id: string; label: string; description: string; even
   },
 ]
 
+// Collection → channel routes. Advanced: post a collection's event cards to a specific
+// channel instead of the workspace default. Kept compact (id inputs) since it's a
+// power-user surface; the default channel lives in the field above.
+function SlackRoutesEditor() {
+  const qc = useQueryClient()
+  const routesQuery = { queryKey: ["slack-routes"], queryFn: () => api.listSlackRoutes() }
+  const { data } = useQuery(routesQuery)
+  const [collectionId, setCollectionId] = useState("")
+  const [routeChannel, setRouteChannel] = useState("")
+  const refresh = () => qc.invalidateQueries({ queryKey: ["slack-routes"] })
+  const collectionRoutes = (data?.routes ?? []).filter((r) => r.target_type === "collection")
+
+  const add = () => {
+    if (!collectionId.trim() || !routeChannel.trim()) return
+    api
+      .setSlackRoute({
+        target_type: "collection",
+        target_id: collectionId.trim(),
+        channel_id: routeChannel.trim(),
+      })
+      .then(() => {
+        setCollectionId("")
+        setRouteChannel("")
+        toast.success("Route saved")
+        refresh()
+      })
+      .catch((e) => toast.error(e?.message ?? "Could not save"))
+  }
+  const remove = (targetId: string) =>
+    api
+      .deleteSlackRoute("collection", targetId)
+      .then(refresh)
+      .catch((e) => toast.error(e?.message ?? "Could not remove"))
+
+  return (
+    <div className="flex flex-col gap-3 py-1">
+      <p className="text-sm font-medium">Channel routes</p>
+      <p className="text-sm text-muted-foreground">
+        Send a collection's activity to a specific channel instead of the default.
+      </p>
+      {collectionRoutes.length > 0 && (
+        <ul className="flex flex-col gap-1.5">
+          {collectionRoutes.map((r) => (
+            <li key={r.id} className="flex items-center gap-2 text-sm">
+              <span className="font-mono text-2xs text-muted-foreground">{r.target_id}</span>
+              <span aria-hidden>→</span>
+              <span className="font-mono text-2xs">{r.channel_id}</span>
+              <Button
+                data-testid={`slack-route-remove-${r.target_id}`}
+                variant="destructive-ghost"
+                size="sm"
+                onClick={() => remove(r.target_id)}
+              >
+                Remove
+              </Button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <div className="flex flex-wrap items-end gap-2">
+        <Input
+          data-testid="slack-route-collection"
+          value={collectionId}
+          onChange={(e) => setCollectionId(e.target.value)}
+          placeholder="Collection ID"
+          className="max-w-[16rem] font-mono"
+        />
+        <Input
+          data-testid="slack-route-channel"
+          value={routeChannel}
+          onChange={(e) => setRouteChannel(e.target.value)}
+          placeholder="C0123ABC456"
+          className="max-w-[12rem] font-mono"
+        />
+        <Button data-testid="slack-route-add" variant="default" size="sm" onClick={add}>
+          Add route
+        </Button>
+      </div>
+    </div>
+  )
+}
+
 // The five workspace activity channels (email + GitHub mirroring + Slack posting)
 // as instant toggles, plus the Slack connection. Toggles apply optimistically
 // with no save (the toggle contract); the Slack channel id is an explicit save.
@@ -119,6 +201,22 @@ export function IntegrationsSection() {
         qc.invalidateQueries({ queryKey: slackQuery().queryKey })
       })
       .catch((e) => toast.error(e?.message ?? "Could not unlink"))
+  // Optimistically flip the caller's "DM me when mentioned" preference in the slack cache.
+  const toggleMentionDm = (next: boolean) => {
+    const qk = slackQuery().queryKey
+    const prev = qc.getQueryData(qk)
+    if (!prev) return
+    qc.setQueryData(qk, { ...prev, mention_dm: next })
+    api.setSlackMentionDm(next).catch((e) => {
+      qc.setQueryData(qk, prev)
+      toast.error(e?.message ?? "Could not save")
+    })
+  }
+  const sendTestDm = () =>
+    api
+      .sendSlackTestDm()
+      .then(() => toast.success("Test DM sent"))
+      .catch((e) => toast.error(e?.message ?? "Could not send"))
 
   return (
     <SettingsSection
@@ -244,6 +342,30 @@ export function IntegrationsSection() {
                 </Button>
               )}
             </SettingRow>
+            {slack.linked && (
+              <SettingRow
+                htmlFor="toggle-slack-dm"
+                label="DM me when I'm mentioned"
+                description="Get a Slack direct message when someone @mentions you on a doc."
+              >
+                <div className="flex items-center gap-2">
+                  <Button
+                    data-testid="slack-test-dm"
+                    variant="outline"
+                    size="sm"
+                    onClick={sendTestDm}
+                  >
+                    Send test DM
+                  </Button>
+                  <Switch
+                    id="toggle-slack-dm"
+                    data-testid="toggle-slack-dm"
+                    checked={slack.mention_dm}
+                    onCheckedChange={toggleMentionDm}
+                  />
+                </div>
+              </SettingRow>
+            )}
             <FormField label="Default channel ID" htmlFor="slack-channel" className="max-w-sm">
               <div className="flex gap-2">
                 <Input
@@ -287,6 +409,7 @@ export function IntegrationsSection() {
                 ))}
               </SettingsGroup>
             )}
+            <SlackRoutesEditor />
             <div>
               <Button
                 data-testid="slack-disconnect"

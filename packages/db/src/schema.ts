@@ -395,6 +395,35 @@ export const slackUserLink = sqliteTable(
   ],
 )
 
+// Per-user notification preferences within a workspace. `prefs` is a JSON blob (absent =
+// defaults on), so preference types can be added without a migration.
+export const userNotificationPref = sqliteTable(
+  "user_notification_pref",
+  {
+    id: text("id").primaryKey(),
+    org_id: text("org_id").notNull(),
+    user_id: text("user_id").notNull(),
+    prefs: text("prefs").notNull().default("{}"),
+    created_at: text("created_at").notNull().default(now),
+  },
+  (t) => [uniqueIndex("user_notification_pref_key").on(t.org_id, t.user_id)],
+)
+
+// Routes a workspace's Slack posts to a channel by target: a collection (its artifacts) or
+// the workspace default. `target_id` is the collection id, or "" for the default route.
+export const slackChannelRoute = sqliteTable(
+  "slack_channel_route",
+  {
+    id: text("id").primaryKey(),
+    org_id: text("org_id").notNull(),
+    target_type: text("target_type").notNull().$type<"collection" | "default">(),
+    target_id: text("target_id").notNull().default(""),
+    channel_id: text("channel_id").notNull(),
+    created_at: text("created_at").notNull().default(now),
+  },
+  (t) => [uniqueIndex("slack_channel_route_key").on(t.org_id, t.target_type, t.target_id)],
+)
+
 // Derive comment thread ↔ the Slack message Derive posted for it (for two-way threading).
 export const slackThreadLink = sqliteTable(
   "slack_thread_link",
@@ -566,6 +595,8 @@ const TABLES = [
   slackInstall,
   slackThreadLink,
   slackUserLink,
+  userNotificationPref,
+  slackChannelRoute,
   githubApp,
   githubInstallation,
   domain,

@@ -274,6 +274,25 @@ CREATE TABLE IF NOT EXISTS slack_user_link (
   UNIQUE (org_id, user_id)
 );
 
+CREATE TABLE IF NOT EXISTS user_notification_pref (
+  id TEXT PRIMARY KEY,
+  org_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  prefs TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  UNIQUE (org_id, user_id)
+);
+
+CREATE TABLE IF NOT EXISTS slack_channel_route (
+  id TEXT PRIMARY KEY,
+  org_id TEXT NOT NULL,
+  target_type TEXT NOT NULL,
+  target_id TEXT NOT NULL DEFAULT '',
+  channel_id TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  UNIQUE (org_id, target_type, target_id)
+);
+
 CREATE TABLE IF NOT EXISTS github_app (
   id TEXT PRIMARY KEY,
   app_id TEXT NOT NULL,

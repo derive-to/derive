@@ -52,10 +52,12 @@ import type {
   ReviewRoundRecord,
   ReviewRoundState,
   Role,
+  SlackChannelRouteRecord,
   SlackInstallRecord,
   SlackThreadLinkRecord,
   SlackUserLinkRecord,
   TakedownInput,
+  UserNotificationPrefRecord,
   UserProfile,
   VersionRecord,
   Visibility,
@@ -107,9 +109,11 @@ import {
   report,
   repoSource,
   reviewRound,
+  slackChannelRoute,
   slackInstall,
   slackThreadLink,
   slackUserLink,
+  userNotificationPref,
   version,
   webhook,
   webhookDelivery,
@@ -1403,6 +1407,59 @@ export function makeRepos(db: SqliteDb) {
       .where(and(eq(slackUserLink.org_id, orgId), eq(slackUserLink.slack_user_id, slackUserId)))
       .run()
   }
+  const getUserNotificationPref = async (
+    orgId: string,
+    userId: string,
+  ): Promise<UserNotificationPrefRecord | null> =>
+    (await db
+      .select()
+      .from(userNotificationPref)
+      .where(and(eq(userNotificationPref.org_id, orgId), eq(userNotificationPref.user_id, userId)))
+      .get()) ?? null
+  const setUserNotificationPref = async (p: UserNotificationPrefRecord): Promise<void> => {
+    const { id: _i, created_at: _c, ...set } = p
+    await db
+      .insert(userNotificationPref)
+      .values(p)
+      .onConflictDoUpdate({
+        target: [userNotificationPref.org_id, userNotificationPref.user_id],
+        set,
+      })
+      .run()
+  }
+  const listSlackChannelRoutes = async (orgId: string): Promise<SlackChannelRouteRecord[]> =>
+    db.select().from(slackChannelRoute).where(eq(slackChannelRoute.org_id, orgId)).all()
+  const setSlackChannelRoute = async (r: SlackChannelRouteRecord): Promise<void> => {
+    const { id: _i, created_at: _c, ...set } = r
+    await db
+      .insert(slackChannelRoute)
+      .values(r)
+      .onConflictDoUpdate({
+        target: [
+          slackChannelRoute.org_id,
+          slackChannelRoute.target_type,
+          slackChannelRoute.target_id,
+        ],
+        set,
+      })
+      .run()
+  }
+  const deleteSlackChannelRoute = async (
+    orgId: string,
+    targetType: string,
+    targetId: string,
+  ): Promise<void> => {
+    await db
+      .delete(slackChannelRoute)
+      .where(
+        and(
+          eq(slackChannelRoute.org_id, orgId),
+          eq(slackChannelRoute.target_type, targetType as "collection" | "default"),
+          eq(slackChannelRoute.target_id, targetId),
+        ),
+      )
+      .run()
+  }
 
   const upsertGithubInstallation = async (
     i: GitHubInstallationRecord,
@@ -1899,6 +1956,11 @@ export function makeRepos(db: SqliteDb) {
     getSlackUserLinkByUser,
     setSlackUserLink,
     deleteSlackUserLink,
+    getUserNotificationPref,
+    setUserNotificationPref,
+    listSlackChannelRoutes,
+    setSlackChannelRoute,
+    deleteSlackChannelRoute,
     upsertGithubInstallation,
     getGithubInstallation,
     listGithubInstallations,

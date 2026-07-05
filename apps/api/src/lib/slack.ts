@@ -152,6 +152,22 @@ export const joinSlackChannel = async (token: string, channel: string): Promise<
   }
 }
 
+/** Open (or fetch) the DM channel with a Slack user, for a bot DM. Returns the IM channel
+ *  id. Throws SlackApiError on a Slack-level failure (e.g. missing im:write scope). */
+export const openSlackDm = async (token: string, userId: string): Promise<string> => {
+  const res = await fetch(`${API}/conversations.open`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${token}`,
+      "content-type": "application/json; charset=utf-8",
+    },
+    body: JSON.stringify({ users: userId }),
+  })
+  const data = (await res.json()) as { ok: boolean; error?: string; channel?: { id?: string } }
+  if (!data.ok || !data.channel?.id) throw new SlackApiError(data.error ?? "unknown")
+  return data.channel.id
+}
+
 /** A Slack user's display name (best-effort; falls back to the raw id on any error). */
 export const slackUserName = async (token: string, userId: string): Promise<string> => {
   try {
@@ -179,6 +195,25 @@ export const respondEphemeral = async (responseUrl: string, text: string): Promi
     })
   } catch {
     // The action was still acknowledged (200) — a failed ephemeral reply is non-fatal.
+  }
+}
+
+/** Replace the original message a button lived on (visible to the whole channel), via the
+ *  interaction's `response_url` — used to swap an action card's buttons for a result line
+ *  after the action ran. No bot token needed. Best-effort. */
+export const replaceOriginal = async (
+  responseUrl: string,
+  text: string,
+  blocks?: unknown,
+): Promise<void> => {
+  try {
+    await fetch(responseUrl, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ replace_original: true, text, ...(blocks ? { blocks } : {}) }),
+    })
+  } catch {
+    // Non-fatal — the action already ran; only the message cosmetics failed to update.
   }
 }
 

@@ -1,6 +1,5 @@
 import {
   type ArtifactRecord,
-  approveProposal,
   diffLines,
   type ProposalRecord,
   PublishError,
@@ -10,8 +9,8 @@ import { type Context, Hono } from "hono"
 import { z } from "zod"
 import type { AppContext } from "../context"
 import { markAddressed, releaseAddressed } from "../lib/addressed"
-import { publishSweepEvents } from "../lib/anchor-sweep"
 import { fail, MAX_UPLOAD_BYTES, readJson, str } from "../lib/http"
+import { approveProposalAction, requestChangesAction } from "../lib/proposal-actions"
 
 /** Parse a comma-separated id list (the `addresses` multipart field). */
 const idList = (raw: string | undefined): string[] =>
@@ -183,32 +182,13 @@ export const proposalRoutes = (ctx: AppContext) => {
     const body = await readJson(c, z.object({ note: z.unknown().optional() }))
     if (body instanceof Response) return body
     try {
-      const version = await approveProposal(meta, blobs, proposal, approver, str(body.note) ?? null)
-      bus.publish(artifact.id, {
-        type: "proposal.approved",
-        proposal_id: proposal.id,
-        n: version.n,
-      })
-      bus.publish(artifact.id, {
-        type: "version.published",
-        n: version.n,
-        message: version.message,
-      })
-      // The approved candidate is now live content — re-anchor existing threads
-      // against it so feedback on changed text flips to `outdated`.
-      await publishSweepEvents(meta, blobs, bus, artifact.id, version)
-      // Threads this proposal addressed are now settled — the fix landed.
-      for (const threadId of await releaseAddressed(meta, artifact.id, proposal.id, "resolved"))
-        bus.publish(artifact.id, {
-          type: "comment.addressed",
-          thread_id: threadId,
-          state: "resolved",
-        })
-      await notify(artifact, "proposal.approved", {
-        proposal_id: proposal.id,
-        version: version.n,
+      const version = await approveProposalAction(
+        { meta, blobs, bus, notify },
+        artifact,
+        proposal,
         approver,
-      })
+        str(body.note) ?? null,
+      )
       const fresh = (await meta.getProposal(proposal.id)) as ProposalRecord
       return c.json({ ...proposalJson(artifact, fresh), published: version.n })
     } catch (err) {
@@ -228,17 +208,13 @@ export const proposalRoutes = (ctx: AppContext) => {
     const reviewer = me ? (me.name ?? me.username ?? me.email) : null
     const body = await readJson(c, z.object({ note: z.unknown().optional() }))
     if (body instanceof Response) return body
-    await meta.decideProposal(proposal.id, {
-      state: "changes_requested",
-      decided_by: reviewer,
-      decided_version: null,
-      decision_note: str(body.note) ?? null,
-    })
-    bus.publish(artifact.id, { type: "proposal.changes_requested", proposal_id: proposal.id })
-    // The fix didn't land — reopen the threads it had staged as addressed.
-    for (const threadId of await releaseAddressed(meta, artifact.id, proposal.id, "open"))
-      bus.publish(artifact.id, { type: "comment.addressed", thread_id: threadId, state: "open" })
-    await notify(artifact, "proposal.changes_requested", { proposal_id: proposal.id, reviewer })
+    await requestChangesAction(
+      { meta, blobs, bus, notify },
+      artifact,
+      proposal,
+      reviewer,
+      str(body.note) ?? null,
+    )
     const fresh = (await meta.getProposal(proposal.id)) as ProposalRecord
     return c.json(proposalJson(artifact, fresh))
   })

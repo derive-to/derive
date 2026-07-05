@@ -339,6 +339,29 @@ export const slackUserLink = pgTable(
     uniqueIndex("slack_user_link_user").on(t.org_id, t.user_id),
   ],
 )
+export const userNotificationPref = pgTable(
+  "user_notification_pref",
+  {
+    id: text("id").primaryKey(),
+    org_id: text("org_id").notNull(),
+    user_id: text("user_id").notNull(),
+    prefs: text("prefs").notNull().default("{}"),
+    created_at: text("created_at").notNull().$defaultFn(isoNow),
+  },
+  (t) => [uniqueIndex("user_notification_pref_key").on(t.org_id, t.user_id)],
+)
+export const slackChannelRoute = pgTable(
+  "slack_channel_route",
+  {
+    id: text("id").primaryKey(),
+    org_id: text("org_id").notNull(),
+    target_type: text("target_type").notNull().$type<"collection" | "default">(),
+    target_id: text("target_id").notNull().default(""),
+    channel_id: text("channel_id").notNull(),
+    created_at: text("created_at").notNull().$defaultFn(isoNow),
+  },
+  (t) => [uniqueIndex("slack_channel_route_key").on(t.org_id, t.target_type, t.target_id)],
+)
 export const slackThreadLink = pgTable(
   "slack_thread_link",
   {
@@ -483,6 +506,8 @@ const TABLES = [
   slackInstall,
   slackThreadLink,
   slackUserLink,
+  userNotificationPref,
+  slackChannelRoute,
   githubApp,
   githubInstallation,
   domain,

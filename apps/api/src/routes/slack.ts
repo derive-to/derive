@@ -4,9 +4,12 @@ import { z } from "zod"
 import type { AppContext } from "../context"
 import { decryptSecret, encryptSecret, signState, verifyState } from "../lib/crypto"
 import { fail, readJson } from "../lib/http"
+import { notifyMentions } from "../lib/mentions"
+import { approveProposalAction, requestChangesAction } from "../lib/proposal-actions"
 import {
   exchangeSlackOAuth,
   exchangeSlackOpenId,
+  replaceOriginal,
   respondEphemeral,
   slackAuthorizeUrl,
   slackOpenIdAuthorizeUrl,
@@ -14,18 +17,77 @@ import {
   verifySlackSignature,
 } from "../lib/slack"
 import type { ButtonValue } from "../lib/slack-cards"
-import { ingestSlackReply } from "../lib/slack-comments"
+import { ingestSlackReply, resolveSlackMentions } from "../lib/slack-comments"
+import { enqueueSlackDm, wantsMentionDm } from "../lib/slack-dm"
 import { log } from "../log"
 
 /** Slack App: connect a workspace (OAuth) and receive its Events API (reply-back). The
  *  events endpoint is signature-gated (no session) — it's in the app's anon-write allow
  *  list. The connect endpoints require a signed-in workspace admin. */
 export const slackRoutes = (ctx: AppContext) => {
-  const { meta, deps, bus, background, requireUser, activeWorkspace, workspaceCan } = ctx
+  const { meta, deps, bus, blobs, notify, background, authorizeUser, requireUser } = ctx
+  const { activeWorkspace, workspaceCan } = ctx
   const app = new Hono()
   const slack = deps.slack
   const redirectUri = new URL("/v1/slack/oauth/callback", deps.baseUrl).toString()
   const linkRedirectUri = new URL("/v1/slack/link/callback", deps.baseUrl).toString()
+
+  // Run one interactive action out-of-band (backgrounded from the fast ack). Proposal
+  // buttons execute inline for a linked user who's authorized in Derive (same `can` check
+  // as the HTTP route, via authorizeUser), then swap the card for a result line. An
+  // unlinked user, an unauthorized user, or a settled proposal gets an ephemeral reply
+  // only they see — the action is never taken on an unverified identity.
+  const runInteraction = async (
+    action: SlackInteractionAction,
+    responseUrl: string,
+    slackUserId: string | undefined,
+  ): Promise<void> => {
+    if (!action.action_id?.startsWith("slack_act:") || !action.value) return
+    let v: ButtonValue
+    try {
+      v = JSON.parse(action.value) as ButtonValue
+    } catch {
+      return
+    }
+
+    if (v.act === "approve" || v.act === "request_changes") {
+      const link = slackUserId ? await meta.getSlackUserLinkBySlackId(v.org, slackUserId) : null
+      if (link?.status !== "confirmed") {
+        // Not linked: point them into Derive (where their session authorizes the action).
+        await respondEphemeral(responseUrl, ephemeralForAction(action, deps.baseUrl) ?? v.url)
+        return
+      }
+      const proposal = await meta.getProposal(v.id)
+      const artifact = proposal ? await meta.getArtifactById(proposal.artifact_id) : null
+      if (!proposal || !artifact) {
+        await respondEphemeral(responseUrl, "That proposal is no longer available.")
+        return
+      }
+      if (!(await authorizeUser(link.user_id, "approve", artifact))) {
+        await respondEphemeral(responseUrl, "You do not have permission to review this in Derive.")
+        return
+      }
+      if (proposal.state !== "open") {
+        await respondEphemeral(responseUrl, `This proposal is already ${proposal.state}.`)
+        return
+      }
+      const [user] = await meta.getUsers([link.user_id])
+      const who = user?.name ?? user?.username ?? "Someone"
+      const actionDeps = { meta, blobs, bus, notify }
+      if (v.act === "approve") {
+        await approveProposalAction(actionDeps, artifact, proposal, who, null)
+        await replaceOriginal(responseUrl, `:white_check_mark: Approved by ${who} — published.`)
+      } else {
+        await requestChangesAction(actionDeps, artifact, proposal, who, null)
+        await replaceOriginal(responseUrl, `:leftwards_arrow_with_hook: ${who} requested changes.`)
+      }
+      return
+    }
+
+    // link_account (or anything else): ephemeral guidance only.
+    const text = ephemeralForAction(action, deps.baseUrl)
+    if (text) await respondEphemeral(responseUrl, text)
+  }
 
   interface ConnectState {
     org: string
@@ -124,7 +186,22 @@ export const slackRoutes = (ctx: AppContext) => {
             text: ev.text,
             botUserId: install.bot_user_id,
           })
-          if (created) bus.publish(created.artifact_id, { type: "comment.created" })
+          if (created) {
+            bus.publish(created.artifact_id, { type: "comment.created" })
+            // @mentions of linked teammates in the Slack reply notify them in Derive.
+            const mentions = await resolveSlackMentions(meta, link.org_id, ev.text)
+            const artifact = mentions.length ? await meta.getArtifactById(link.artifact_id) : null
+            if (artifact) {
+              const actor = await meta.getSlackUserLinkBySlackId(link.org_id, ev.user)
+              await notifyMentions(
+                { meta, bus },
+                artifact,
+                created,
+                mentions,
+                actor?.user_id ?? null,
+              )
+            }
+          }
         }
       }
     }
@@ -162,11 +239,10 @@ export const slackRoutes = (ctx: AppContext) => {
 
     if (payload.type === "block_actions" && payload.response_url) {
       const responseUrl = payload.response_url
-      for (const action of payload.actions ?? []) {
-        const text = ephemeralForAction(action, deps.baseUrl)
-        // Reply out-of-band so the 200 ack stays well under Slack's 3s window.
-        if (text) background(respondEphemeral(responseUrl, text))
-      }
+      const slackUserId = payload.user?.id
+      // Run out-of-band so the 200 ack stays well under Slack's 3s window.
+      for (const action of payload.actions ?? [])
+        background(runInteraction(action, responseUrl, slackUserId))
     }
     return c.json({})
   })
@@ -180,6 +256,7 @@ export const slackRoutes = (ctx: AppContext) => {
     const install = await meta.getSlackInstall(org)
     // Whether the signed-in user has linked their own Slack account in this workspace.
     const link = install ? await meta.getSlackUserLinkByUser(org, me.id) : null
+    const pref = install ? await meta.getUserNotificationPref(org, me.id) : null
     return c.json({
       available: !!slack,
       connected: !!install,
@@ -187,7 +264,48 @@ export const slackRoutes = (ctx: AppContext) => {
       default_channel: install?.default_channel ?? null,
       needs_reauth: install?.needs_reauth === 1,
       linked: link?.status === "confirmed",
+      mention_dm: wantsMentionDm(pref?.prefs),
     })
+  })
+
+  // Toggle the caller's "DM me when I'm @mentioned" preference.
+  app.patch("/v1/slack/prefs", async (c) => {
+    const me = await requireUser(c)
+    if (me instanceof Response) return me
+    const b = await readJson(c, z.object({ mention_dm: z.boolean() }))
+    if (b instanceof Response) return b
+    const org = await activeWorkspace(c)
+    const cur = await meta.getUserNotificationPref(org, me.id)
+    let existing: Record<string, unknown> = {}
+    try {
+      if (cur) existing = JSON.parse(cur.prefs) as Record<string, unknown>
+    } catch {}
+    const prefs = { ...existing, slackMentionDm: b.mention_dm }
+    await meta.setUserNotificationPref({
+      id: cur?.id ?? newId("unp"),
+      org_id: org,
+      user_id: me.id,
+      prefs: JSON.stringify(prefs),
+      created_at: cur?.created_at ?? new Date().toISOString(),
+    })
+    return c.json({ mention_dm: b.mention_dm })
+  })
+
+  // Send the caller a test DM (verifies their link + the bot's im:write scope).
+  app.post("/v1/slack/test-dm", async (c) => {
+    const me = await requireUser(c)
+    if (me instanceof Response) return me
+    const org = await activeWorkspace(c)
+    const link = await meta.getSlackUserLinkByUser(org, me.id)
+    if (link?.status !== "confirmed") return fail(c, 400, "link your Slack account first")
+    await enqueueSlackDm(meta, org, me.id, "Derive test DM — notifications are working.", [
+      {
+        type: "section",
+        text: { type: "mrkdwn", text: ":wave: This is a test DM from Derive. You're all set." },
+      },
+    ])
+    deps.pokeWebhooks?.()
+    return c.json({ ok: true })
   })
 
   // Account linking: prove which Slack user the signed-in Derive user is, via Slack's
@@ -266,6 +384,52 @@ export const slackRoutes = (ctx: AppContext) => {
   app.delete("/v1/slack", async (c) => {
     if (!(await workspaceCan(c, "manage"))) return fail(c, 403, "forbidden")
     await meta.deleteSlackInstall(await activeWorkspace(c))
+    return c.body(null, 204)
+  })
+
+  // Channel routing: which channel a workspace's event cards post to, by target (a
+  // collection's artifacts, or the workspace default). Admin only.
+  app.get("/v1/slack/routes", async (c) => {
+    if (!(await workspaceCan(c, "manage"))) return fail(c, 403, "forbidden")
+    return c.json({ routes: await meta.listSlackChannelRoutes(await activeWorkspace(c)) })
+  })
+
+  app.put("/v1/slack/routes", async (c) => {
+    if (!(await workspaceCan(c, "manage"))) return fail(c, 403, "forbidden")
+    const b = await readJson(
+      c,
+      z.object({
+        target_type: z.enum(["collection", "default"]),
+        target_id: z.string().default(""),
+        channel_id: z.string().min(1),
+      }),
+    )
+    if (b instanceof Response) return b
+    // A default route has no target; a collection route needs one.
+    const targetId = b.target_type === "default" ? "" : b.target_id.trim()
+    if (b.target_type === "collection" && !targetId) return fail(c, 400, "target_id required")
+    await meta.setSlackChannelRoute({
+      id: newId("scr"),
+      org_id: await activeWorkspace(c),
+      target_type: b.target_type,
+      target_id: targetId,
+      channel_id: b.channel_id.trim(),
+      created_at: new Date().toISOString(),
+    })
+    return c.json({ ok: true })
+  })
+
+  app.delete("/v1/slack/routes", async (c) => {
+    if (!(await workspaceCan(c, "manage"))) return fail(c, 403, "forbidden")
+    const b = await readJson(
+      c,
+      z.object({
+        target_type: z.enum(["collection", "default"]),
+        target_id: z.string().default(""),
+      }),
+    )
+    if (b instanceof Response) return b
+    await meta.deleteSlackChannelRoute(await activeWorkspace(c), b.target_type, b.target_id)
     return c.body(null, 204)
   })
 

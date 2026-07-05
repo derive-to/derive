@@ -446,6 +446,16 @@ export interface MetaStore {
   setSlackUserLink(l: SlackUserLinkRecord): Promise<void>
   /** Remove a Slack↔Derive user link. */
   deleteSlackUserLink(orgId: string, slackUserId: string): Promise<void>
+  /** A user's notification preferences in a workspace, or null (⇒ defaults). */
+  getUserNotificationPref(orgId: string, userId: string): Promise<UserNotificationPrefRecord | null>
+  /** Upsert a user's notification preferences (idempotent on workspace + user). */
+  setUserNotificationPref(p: UserNotificationPrefRecord): Promise<void>
+  /** All Slack channel routes for a workspace (artifact/collection → channel). */
+  listSlackChannelRoutes(orgId: string): Promise<SlackChannelRouteRecord[]>
+  /** Upsert a Slack channel route (idempotent on workspace + target). */
+  setSlackChannelRoute(r: SlackChannelRouteRecord): Promise<void>
+  /** Remove a Slack channel route. */
+  deleteSlackChannelRoute(orgId: string, targetType: string, targetId: string): Promise<void>
   // ---- Domain mode: a hostname serving artifact(s) at its own origin ------
   // A domain row is either bound to one artifact (`artifact_id` set: a vanity
   // subdomain today, a per-artifact custom domain later — served at the host root)
@@ -1145,6 +1155,28 @@ export interface SlackUserLinkRecord {
   created_at: string
 }
 
+/** A user's per-workspace notification preferences. `prefs` is a JSON blob (an absent key
+ *  means the default is in effect), so new preference types don't need a migration. */
+export interface UserNotificationPrefRecord {
+  id: string
+  org_id: string
+  user_id: string
+  prefs: string
+  created_at: string
+}
+
+/** Routes a workspace's Slack posts to a channel by target: a `collection` (matched to an
+ *  artifact via its collection membership) or the workspace `default`. `target_id` is the
+ *  collection id, or "" for the default route. */
+export interface SlackChannelRouteRecord {
+  id: string
+  org_id: string
+  target_type: "collection" | "default"
+  target_id: string
+  channel_id: string
+  created_at: string
+}
+
 /** Links a Derive comment thread to the Slack message Derive posted for it, so replies
  *  thread under it (Derive→Slack) and Slack thread replies map back (Slack→Derive). */
 export interface SlackThreadLinkRecord {
@@ -1212,6 +1244,7 @@ export type DeliveryKind =
   | WebhookKind
   | "slack_app"
   | "slack_app_event"
+  | "slack_dm"
   | "github_review_comment"
   | "github_issue_comment"
   | "email"

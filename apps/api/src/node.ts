@@ -16,6 +16,7 @@ import { emailDeliverySender, logEmailSender, resendEmailSender } from "./lib/em
 import { makeGithubCommentSender } from "./lib/github-comments"
 import { mountWeb } from "./lib/serve-web"
 import { makeSlackSender } from "./lib/slack-comments"
+import { makeSlackDmSender } from "./lib/slack-dm"
 import { makeSlackEventSender } from "./lib/slack-events"
 import { makeShutdown } from "./lifecycle"
 import { log } from "./log"
@@ -158,6 +159,7 @@ const channelSenders: ChannelSenders = {
   // comment thread mirror and the richer event cards (publishes, proposals, reviews).
   slack_app: makeSlackSender(meta, authSecret),
   slack_app_event: makeSlackEventSender(meta, authSecret),
+  slack_dm: makeSlackDmSender(meta, authSecret),
 }
 const webhookWorker = startWebhookWorker(meta, nodeDnsGuard, channelSenders)
 
