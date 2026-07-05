@@ -35,6 +35,7 @@ export function SourceEditor({
   onPublish,
   onPropose,
   onTitle,
+  placeholder,
 }: {
   canPublish: boolean
   title: string
@@ -51,6 +52,8 @@ export function SourceEditor({
   // When set, the title becomes an editable field (the new-artifact flow at /new);
   // omitted for editing an existing artifact, where the title is shown read-only.
   onTitle?: (v: string) => void
+  // First-use hint for the empty editor (the /new flow); omitted when editing.
+  placeholder?: string
 }) {
   const [pane, setPane] = useState<"edit" | "preview">("edit")
   // Desktop preview-pane visibility (mobile uses the Edit/Preview tabs instead).
@@ -202,11 +205,12 @@ export function SourceEditor({
                 spellCheck={false}
                 aria-label="Artifact source"
                 data-testid="artifact-source-editor"
+                placeholder={placeholder}
                 className="h-full flex-1 resize-none border border-input bg-card px-5 py-4 font-mono text-sm text-foreground outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40"
               />
             }
           >
-            <CodeEditor value={src} format={format} onChange={onSrc} />
+            <CodeEditor value={src} format={format} onChange={onSrc} placeholder={placeholder} />
           </Suspense>
         </div>
         <div

@@ -111,7 +111,7 @@ function NavItem({
   icon: IconName
   label: string
   count?: number
-  to: "/favorites" | "/following" | "/people"
+  to: "/favorites" | "/following" | "/shared" | "/people"
   active: boolean
   testId?: string
 }) {
@@ -300,6 +300,7 @@ export function NavRail() {
   const isAll = onLibrary && !search.tag && !search.collection
   const isFav = loc.pathname === "/favorites"
   const isFollowing = loc.pathname === "/following"
+  const onShared = loc.pathname === "/shared"
   const onPeople = loc.pathname === "/people"
   const onSettings = loc.pathname.startsWith("/settings")
   const tags = summary?.tags ?? []
@@ -466,6 +467,15 @@ export function NavRail() {
                 to="/following"
                 active={isFollowing}
                 testId="nav-following"
+              />
+              {/* Shared with you — a durable named feed (things others gave you access to),
+                  a peer of the feeds above; not a home strip (that's the whole IA move). */}
+              <NavItem
+                icon="share"
+                label="Shared with you"
+                to="/shared"
+                active={onShared}
+                testId="nav-shared"
               />
               {/* People directory — the other fixed-feed route, a peer of the two feeds. */}
               <NavItem

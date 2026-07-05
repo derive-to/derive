@@ -1,8 +1,10 @@
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query"
 import { getRouteApi, Link, useNavigate } from "@tanstack/react-router"
-import { useEffect, useRef, useState } from "react"
+import { LayoutGrid, List } from "lucide-react"
+import { type RefObject, useEffect, useRef, useState } from "react"
 import { ApiError } from "@/api"
 import { Icon } from "@/components/icons"
+import { CardGrid } from "@/components/shared/card-grid"
 import { EmptyState } from "@/components/shared/empty-state"
 import { FollowButton } from "@/components/shared/follow-button"
 import { PageShell } from "@/components/shared/page-shell"
@@ -19,37 +21,41 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog"
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { useAuth } from "@/ctx"
 import { colorForName } from "@/lib/avatar-tints"
 import { getInitials } from "@/lib/initials"
 import { profileArtifactsQuery, profilePeopleQuery, profileQuery } from "@/lib/queries"
-import { useDelayedPending } from "@/lib/use-delayed-pending"
-import { CardGrid } from "../library/card-grid"
 import { ProfilePending, ProfileWorkSkeleton } from "./skeleton"
-import { ProfileWorkCard } from "./work-card"
+import { ProfileWorkCard, ProfileWorkRow } from "./work-card"
 
 const route = getRouteApi("/users/$handle")
 
-// The rich public profile: an identity card (avatar, name, @handle, role, bio, GitHub
-// link), a stats row (works / followers / following), a Follow button, and a grid of
-// everything this person has worked on that the viewer is allowed to see. Single scroll;
-// the activity feed of people you follow lives at the library's Following view.
+// The rich public profile: an identity header (avatar, name, @handle, role, bio, GitHub
+// link), a stats row (works / followers / following), a Follow button, and the person's
+// work — everything the viewer is allowed to see, as a grid of live previews or a compact
+// list. Header-first: the identity is preloaded in the route loader, so it paints with
+// real data on the first frame (and a profile A→B nav never shows A's details while B
+// loads); only the work grid carries its own load state.
 export function Profile() {
   const { handle } = route.useParams()
   const { me, setMe } = useAuth()
   const nav = useNavigate()
   const [editing, setEditing] = useState(false)
+  // The profile is the scroll container; the Work grid's infinite-scroll sentinel
+  // observes against IT (not the viewport), so a short profile doesn't count its
+  // below-the-fold sentinel as "in view" and fire an immediate extra page fetch.
+  const scrollRef = useRef<HTMLDivElement>(null)
 
   const { data, isPending, isError, error, refetch } = useQuery(profileQuery(handle))
-  // Hold the frame back ~150ms so a cache-warm profile flashes nothing; the route's
-  // pendingComponent (same ProfilePending) already covers the cold-nav auth window.
-  const showPending = useDelayedPending(isPending)
 
-  if (isPending) return showPending ? <ProfilePending /> : null
+  // The identity is preloaded, so isPending here is only ever a genuine cold load; the
+  // route's ProfilePending (same skeleton) already covers that window, so a null here
+  // just avoids a double-frame.
+  if (isPending) return <ProfilePending />
 
-  // A transient fetch failure is status, not a genuine 404 — surface it as a
-  // recoverable danger panel (matching ProfileWork + People), never the bare
-  // "No such profile" empty state. Only a real 404 (or missing data) falls through.
+  // A transient fetch failure is status, not a genuine 404 — surface it as a recoverable
+  // danger panel (matching the Work section + People), never the bare "No such profile".
   if (isError && !(error instanceof ApiError && error.status === 404)) {
     return (
       <PageShell className="grid min-h-full place-items-center">
@@ -74,10 +80,6 @@ export function Profile() {
 
   if (isError || !data) {
     return (
-      // The shared EmptyState carries the voice grammar (Geist headline +
-      // supporting line); PageShell keeps it on the same reading measure as
-      // every other page, centered in the pane (a terminal 404 state, like the
-      // pending spinner — not an in-context empty pinned below a header).
       <PageShell className="grid min-h-full place-items-center">
         <div data-testid="profile-not-found">
           <EmptyState
@@ -99,16 +101,13 @@ export function Profile() {
   const stats = data.stats ?? { works: 0, followers: 0, following: 0 }
 
   return (
-    // The Work grid's IntersectionObserver sentinel observes against the
-    // viewport (null root), which still fires as the PageShell scrolls.
-    <PageShell className="flex flex-col gap-8">
-      {/* The identity header sits flush on the canvas — whitespace over a card,
-          per the surfaces doctrine (it's a page header, not a liftable object). */}
+    <PageShell scrollRef={scrollRef} className="flex flex-col gap-8">
+      {/* The identity header sits flush on the canvas — whitespace over a card, per the
+          surfaces doctrine (it's a page header, not a liftable object). */}
       <section data-testid="profile-card">
         <div className="flex flex-col gap-5 sm:flex-row sm:items-start sm:gap-6">
           <Avatar className="size-20 shrink-0 sm:size-24">
             {data.image && <AvatarImage src={data.image} alt={data.name ?? data.username} />}
-            {/* Identity tint (stable per person) + the outline frame images get. */}
             <AvatarFallback
               className="text-2xl font-medium text-scrim-foreground outline-1 -outline-offset-1 outline-foreground/10"
               style={{ backgroundColor: colorForName(data.name ?? data.username) }}
@@ -121,7 +120,6 @@ export function Profile() {
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
                 {data.name && (
-                  // A person's name is content, not chrome — Geist at display size.
                   <h1
                     className="truncate font-serif text-2xl font-medium tracking-tight text-foreground"
                     data-testid="profile-name"
@@ -136,7 +134,6 @@ export function Profile() {
                   @{data.username}
                 </p>
               </div>
-              {/* Self-hides for a signed-out viewer or your own profile. */}
               <FollowButton username={data.username} className="shrink-0" />
             </div>
 
@@ -165,7 +162,6 @@ export function Profile() {
               </a>
             )}
 
-            {/* Stats: works (static), followers + following (open a people dialog). */}
             <div className="mt-4 flex items-center gap-5 text-sm" data-testid="profile-stats">
               <Stat label="works" value={stats.works} />
               <PeopleStat
@@ -212,7 +208,12 @@ export function Profile() {
         </div>
       </section>
 
-      <ProfileWork handle={data.username} isMe={isMe} name={data.name ?? data.username} />
+      <ProfileWork
+        handle={data.username}
+        isMe={isMe}
+        name={data.name ?? data.username}
+        scrollRef={scrollRef}
+      />
     </PageShell>
   )
 }
@@ -227,7 +228,9 @@ function Stat({ label, value }: { label: string; value: number }) {
   )
 }
 
-// A clickable stat that opens a dialog listing the people, fetched lazily on open.
+// A clickable stat that opens a dialog listing the people, fetched lazily on open. The
+// dialog's own header count reflects the LOADED list (not the profile's cached stat), so
+// a just-changed follow can't show "12 followers" and open to an empty list.
 function PeopleStat({
   label,
   value,
@@ -257,7 +260,6 @@ function PeopleStat({
           <span className="text-muted-foreground">{label}</span>
         </button>
       </DialogTrigger>
-      {/* Title + the list itself are the content — no prose description (Radix opt-out). */}
       <DialogContent className="max-w-sm" aria-describedby={undefined}>
         <DialogHeader>
           <DialogTitle className="capitalize">{label}</DialogTitle>
@@ -303,37 +305,72 @@ function PeopleStat({
   )
 }
 
-// The person's work — an infinite grid, paged by keyset cursor. A sentinel pulls the
-// next page as it scrolls into view.
-function ProfileWork({ handle, isMe, name }: { handle: string; isMe: boolean; name: string }) {
+// The person's work — an infinite grid/list, paged by keyset cursor. A sentinel pulls the
+// next page as it scrolls into view (observed against the profile's scroll container, so
+// a short profile doesn't fire an immediate extra fetch). Grid (live previews, the
+// portfolio default) or list (scan a prolific profile by title) via a session toggle.
+function ProfileWork({
+  handle,
+  isMe,
+  name,
+  scrollRef,
+}: {
+  handle: string
+  isMe: boolean
+  name: string
+  scrollRef: RefObject<HTMLDivElement | null>
+}) {
   const { data, isPending, isError, fetchNextPage, hasNextPage, isFetchingNextPage, refetch } =
     useInfiniteQuery(profileArtifactsQuery(handle))
-  const showSkeleton = useDelayedPending(isPending)
   const items = data?.pages.flatMap((p) => p.artifacts) ?? []
   const sentinel = useRef<HTMLDivElement>(null)
+  const [view, setView] = useState<"grid" | "list">("grid")
 
   useEffect(() => {
     const el = sentinel.current
     if (!el || !hasNextPage) return
-    const io = new IntersectionObserver((entries) => {
-      if (entries[0]?.isIntersecting && !isFetchingNextPage) fetchNextPage()
-    })
+    // Observe against the profile's scroll container (null → viewport only as a fallback
+    // before the ref attaches), so the sentinel counts as "in view" only when it actually
+    // enters the scroll viewport — not the moment it mounts below the fold on a short profile.
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting && !isFetchingNextPage) fetchNextPage()
+      },
+      { root: scrollRef.current ?? null, rootMargin: "200px" },
+    )
     io.observe(el)
     return () => io.disconnect()
-  }, [hasNextPage, isFetchingNextPage, fetchNextPage])
+  }, [hasNextPage, isFetchingNextPage, fetchNextPage, scrollRef])
 
   return (
     <section className="flex flex-col gap-3">
-      <SectionEyebrow>Work</SectionEyebrow>
+      <div className="flex items-center justify-between gap-3">
+        <SectionEyebrow className="flex-1">Work</SectionEyebrow>
+        {/* The grid/list toggle only earns its place once there's work to reshape. */}
+        {!isPending && !isError && items.length > 0 && (
+          <ToggleGroup
+            type="single"
+            variant="outline"
+            size="sm"
+            aria-label="Work view"
+            value={view}
+            onValueChange={(v) => v && setView(v as "grid" | "list")}
+          >
+            <ToggleGroupItem value="grid" aria-label="Grid" data-testid="profile-work-view-grid">
+              <LayoutGrid aria-hidden />
+            </ToggleGroupItem>
+            <ToggleGroupItem value="list" aria-label="List" data-testid="profile-work-view-list">
+              <List aria-hidden />
+            </ToggleGroupItem>
+          </ToggleGroup>
+        )}
+      </div>
       {isPending ? (
-        showSkeleton ? (
-          <div role="status">
-            <span className="sr-only">Loading work…</span>
-            <ProfileWorkSkeleton />
-          </div>
-        ) : null
+        <div role="status">
+          <span className="sr-only">Loading work…</span>
+          <ProfileWorkSkeleton />
+        </div>
       ) : isError ? (
-        // A failed fetch is status, not emptiness — the danger tone grammar.
         <StatusPanel
           tone="danger"
           title="Couldn’t load this work"
@@ -363,14 +400,21 @@ function ProfileWork({ handle, isMe, name }: { handle: string; isMe: boolean; na
         </div>
       ) : (
         <>
-          {/* CardGrid owns the card-grid geometry; the wrapper only carries the testid. */}
-          <div data-testid="profile-work-grid">
-            <CardGrid>
+          {view === "grid" ? (
+            <div data-testid="profile-work-grid">
+              <CardGrid>
+                {items.map((a) => (
+                  <ProfileWorkCard key={a.short_id} artifact={a} />
+                ))}
+              </CardGrid>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-2" data-testid="profile-work-list">
               {items.map((a) => (
-                <ProfileWorkCard key={a.short_id} artifact={a} />
+                <ProfileWorkRow key={a.short_id} artifact={a} />
               ))}
-            </CardGrid>
-          </div>
+            </div>
+          )}
           <div ref={sentinel} className="h-8" />
           {isFetchingNextPage && (
             <div className="flex justify-center py-2">

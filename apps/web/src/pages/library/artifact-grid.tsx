@@ -1,9 +1,9 @@
 import { useVirtualizer } from "@tanstack/react-virtual"
 import { type RefObject, useEffect, useRef, useState } from "react"
 import type { Artifact } from "@/api"
+import { CARD_GRID_COLS, MIN_CARD_PX } from "@/components/shared/card-grid"
 import { cn } from "@/lib/utils"
 import { ArtifactCard } from "./artifact-card"
-import { CARD_GRID_COLS, MIN_CARD_PX } from "./card-grid"
 
 // Grid geometry comes from card-grid.tsx (one source with the live grid and the
 // skeleton). We virtualize ROWS (each row = `columns` cards), so we derive the
@@ -52,7 +52,14 @@ export function ArtifactGrid({
 
   // How many cards fit per row, and how far the grid sits below the scroll
   // container's top (everything above it — search, publish card, heading — is
-  // the virtualizer's scrollMargin). Both recompute on resize.
+  // the virtualizer's scrollMargin). Recompute on resize AND on any above-grid
+  // height change: we observe the scroll container, the grid, and the scroll
+  // container's content wrapper (the PageShell measure element). That last one is
+  // the key — when content ABOVE the grid changes height (a header greeting/triage
+  // landing, filter pills wrapping) the grid moves without resizing itself, so
+  // observing only the grid would leave scrollMargin stale and every windowed row
+  // translated to the wrong offset. The wrapper's height DOES change, so observing
+  // it catches the drift.
   useEffect(() => {
     const grid = gridRef.current
     const scroll = scrollRef.current
@@ -68,6 +75,9 @@ export function ArtifactGrid({
     const ro = new ResizeObserver(measure)
     ro.observe(grid)
     ro.observe(scroll)
+    // The content wrapper between the scroll top and the grid — its height changes
+    // whenever above-grid content does, which a grid-only observer misses.
+    if (scroll.firstElementChild) ro.observe(scroll.firstElementChild)
     return () => ro.disconnect()
   }, [scrollRef])
 

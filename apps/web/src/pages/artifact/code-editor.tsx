@@ -9,6 +9,7 @@ import {
 } from "@codemirror/language"
 import { EditorState } from "@codemirror/state"
 import {
+  placeholder as cmPlaceholder,
   drawSelection,
   EditorView,
   highlightActiveLine,
@@ -46,10 +47,13 @@ export function CodeEditor({
   value,
   format,
   onChange,
+  placeholder,
 }: {
   value: string
   format: "md" | "html"
   onChange: (v: string) => void
+  /** First-use hint shown in the empty editor (the /new flow); omitted when editing. */
+  placeholder?: string
 }) {
   const host = useRef<HTMLDivElement>(null)
   const view = useRef<EditorView | null>(null)
@@ -81,6 +85,7 @@ export function CodeEditor({
           syntaxHighlighting(tokenHighlight, { fallback: true }),
           keymap.of([...defaultKeymap, ...historyKeymap]),
           format === "md" ? markdown() : html(),
+          ...(placeholder ? [cmPlaceholder(placeholder)] : []),
           EditorView.lineWrapping,
           EditorView.updateListener.of((u) => {
             if (u.docChanged) cb.current(u.state.doc.toString())

@@ -1,6 +1,6 @@
+import { CardGrid } from "@/components/shared/card-grid"
 import { PageShell } from "@/components/shared/page-shell"
 import { Skeleton } from "@/components/ui/skeleton"
-import { CardGrid } from "./card-grid"
 
 // One card-shaped placeholder: the live ArtifactCard's box model — a 16:10 preview,
 // then a p-3.5 caption of a title line over a two-cluster provenance/activity meta

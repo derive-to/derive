@@ -51,9 +51,11 @@ export type LibraryParams = {
   favorite?: boolean
   // Narrow to artifacts last changed by this GitHub login.
   author?: string
-  // "following" → the activity feed: artifacts in the active workspace matching
-  // your follows (followed authors + repo path prefixes).
-  scope?: "following"
+  // The named-feed scopes, each its own route (see LibraryView):
+  // "following" → the activity feed (followed authors + repo path prefixes);
+  // "shared" → artifacts explicitly shared with you (can span workspaces);
+  // "needs_feedback" → artifacts with an open thread you're tagged in or commented on.
+  scope?: "following" | "shared" | "needs_feedback"
 }
 export const libraryArtifactsQuery = (params: LibraryParams) =>
   infiniteQueryOptions({
@@ -71,17 +73,10 @@ export const libraryArtifactsQuery = (params: LibraryParams) =>
     refetchOnMount: "always",
   })
 
-// "Shared with you": artifacts explicitly shared with the caller (can span
-// workspaces). A flat first page (no infinite scroll) — the home section shows a
-// handful; opening one is the deep path.
-export const sharedArtifactsQuery = () =>
-  queryOptions({
-    queryKey: ["artifacts", "shared"] as const,
-    queryFn: () => api.listArtifacts({ scope: "shared", limit: 12 }).then((r) => r.artifacts),
-  })
-
 // Artifacts that need YOUR feedback: an open comment thread you're tagged in or have
-// commented on. Surfaced as a promoted strip at the top of the unfiltered home.
+// commented on. Read as a COUNT for the home's quiet triage line (the full list is the
+// /feedback feed, an infinite libraryArtifactsQuery({ scope: "needs_feedback" })). Kept a
+// flat capped fetch — the home only needs "is there anything, and how much".
 export const needsFeedbackArtifactsQuery = () =>
   queryOptions({
     queryKey: ["artifacts", "needs_feedback"] as const,
