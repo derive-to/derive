@@ -586,6 +586,14 @@ describe("slack channel routes + DM prefs", () => {
     expect(after.mention_dm).toBe(false)
   })
 
+  it("reports the stored mention-DM pref even before Slack is connected", async () => {
+    const { app } = make("slack-prefs-noinstall")
+    // No install; set the pref, and status must reflect it (not just report the default).
+    await app.request("/v1/slack/prefs", json(as(owner.email), "PATCH", { mention_dm: false }))
+    const s = await (await app.request("/v1/slack", { headers: as(owner.email) })).json()
+    expect(s).toMatchObject({ connected: false, mention_dm: false })
+  })
+
   it("test DM requires a link, then enqueues a slack_dm", async () => {
     const { app, meta } = make("slack-testdm")
     await install(meta)

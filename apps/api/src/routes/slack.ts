@@ -256,7 +256,9 @@ export const slackRoutes = (ctx: AppContext) => {
     const install = await meta.getSlackInstall(org)
     // Whether the signed-in user has linked their own Slack account in this workspace.
     const link = install ? await meta.getSlackUserLinkByUser(org, me.id) : null
-    const pref = install ? await meta.getUserNotificationPref(org, me.id) : null
+    // Read the DM preference regardless of connection state so the reported value always
+    // reflects what's stored (the toggle can be set before/after connecting).
+    const pref = await meta.getUserNotificationPref(org, me.id)
     return c.json({
       available: !!slack,
       connected: !!install,
