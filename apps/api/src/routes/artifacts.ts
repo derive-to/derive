@@ -51,6 +51,7 @@ export const artifactRoutes = (ctx: AppContext) => {
     privateOwnerId,
     activeWorkspace,
     actorFor,
+    agentFor,
     authorize,
     workspaceCan,
     collectionRole,
@@ -67,7 +68,14 @@ export const artifactRoutes = (ctx: AppContext) => {
   // { artifacts, next_cursor }. tag/favorite resolve to an id set first.
   app.get("/v1/artifacts", async (c) => {
     const me = await currentUser(c)
-    if (!me && !isToken(c)) return fail(c, 401, "unauthenticated")
+    // Registered/OAuth agents list too — their library is how MCP list_artifacts
+    // finds work. Anonymous stays 401: nothing in the product lists tokenless.
+    const agent = me ? null : await agentFor(c)
+    if (!me && !agent && !isToken(c)) return fail(c, 401, "unauthenticated")
+    // The acting principal. Listing must mirror can(read), and actorFor resolves
+    // an agent's per-artifact shares by the AGENT's id (its registrant's rows
+    // don't transfer) — so member-row checks below key on this id, never onBehalf.
+    const actorId = me?.id ?? agent?.id ?? null
     const limit = Math.min(100, Math.max(1, Number(c.req.query("limit")) || 30))
     // Opaque compound cursor "<created_at>|<id>" — the id tiebreak keeps paging
     // correct when many artifacts share a created_at.
@@ -143,14 +151,20 @@ export const artifactRoutes = (ctx: AppContext) => {
 
     // The caller's baseline standing in the listing's workspace — reused for the
     // public-only clamp below and the per-row `my_role` (which needs the ROLE, so
-    // the membership row is fetched rather than the boolean isMember helper).
+    // the boolean isMember helper doesn't fit). A user's standing is their
+    // membership row; an agent's is its registered role, valid only in its home
+    // workspace (the same scoping actorFor applies).
     const isOperator = isToken(c)
-    const myMembership = me ? await meta.getMembership(listOrg, me.id) : null
+    const baselineRole = me
+      ? ((await meta.getMembership(listOrg, me.id))?.role ?? null)
+      : agent && agent.org_id === listOrg
+        ? agent.role
+        : null
     // A listing only shows non-public artifacts to a MEMBER of that workspace (or the
-    // operator token). Anyone else — anonymous, or a signed-in user who isn't a member
-    // — sees public artifacts only, so org/link titles never leak via the list or ?query=.
+    // operator token). Anyone else — a non-member user, a foreign-workspace agent —
+    // sees public artifacts only, so org/link titles never leak via the list or ?query=.
     // For a collection, collection access (member/creator/share) also unlocks it.
-    const publicOnly = collectionId ? !collectionAccess : !(isOperator || !!myMembership)
+    const publicOnly = collectionId ? !collectionAccess : !(isOperator || baselineRole !== null)
     const rows = await meta.listArtifacts({
       limit: limit + 1,
       cursor,
@@ -166,7 +180,7 @@ export const artifactRoutes = (ctx: AppContext) => {
       publicOnly: shared || following ? false : publicOnly,
       // Private artifacts appear only for their explicit members; the operator
       // token sees everything (viewerId omitted).
-      viewerId: isOperator ? undefined : (me?.id ?? undefined),
+      viewerId: isOperator ? undefined : (actorId ?? undefined),
     })
     const hasMore = rows.length > limit
     const page = hasMore ? rows.slice(0, limit) : rows
@@ -186,7 +200,7 @@ export const artifactRoutes = (ctx: AppContext) => {
     const feedback = me ? await meta.commentSignals(pageIds, me.id) : {}
     // The viewer's per-artifact shares across the page, one query — folded into
     // my_role below so shared and private rows gate their quick actions correctly.
-    const shareRoles = me ? await meta.artifactRolesFor(me.id, pageIds) : {}
+    const shareRoles = actorId ? await meta.artifactRolesFor(actorId, pageIds) : {}
     return c.json({
       artifacts: page.map((a) => ({
         ...toJson(deps.baseUrl, a, []),
@@ -200,12 +214,12 @@ export const artifactRoutes = (ctx: AppContext) => {
         my_role: isOperator
           ? "owner"
           : effectiveRole(
-              me
+              actorId
                 ? {
                     kind: "user",
-                    userId: me.id,
+                    userId: actorId,
                     artifactRole: shareRoles[a.id] ?? null,
-                    orgRole: a.org_id === listOrg ? (myMembership?.role ?? null) : null,
+                    orgRole: a.org_id === listOrg ? baselineRole : null,
                   }
                 : { kind: "anon" },
               a.visibility,

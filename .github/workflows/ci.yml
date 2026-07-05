@@ -202,14 +202,20 @@ jobs:
       - name: Verify prod
         if: steps.head.outputs.stale != 'true'
         run: |
+          # Healthy = the worker answers AND the database path answers. The listing
+          # is auth-gated (401 for a tokenless probe), so assert "not a 5xx/timeout"
+          # rather than success — a dead Postgres path shows up as 500 here while
+          # /healthz stays green (it doesn't touch the DB; the July 4 outage proved
+          # both properties).
           for _ in 1 2 3 4 5 6 7 8 9 10; do
+            db=$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 https://derive.to/v1/artifacts || echo 000)
             if curl -sf --max-time 15 https://derive.to/healthz > /dev/null &&
-               curl -sf --max-time 15 https://derive.to/v1/artifacts > /dev/null; then
+               [ "$db" -ge 200 ] && [ "$db" -lt 500 ]; then
               exit 0
             fi
             sleep 6
           done
-          echo "prod not healthy after deploy" >&2
+          echo "prod not healthy after deploy (last /v1/artifacts status: $db)" >&2
           exit 1
 
       # Regression signal on main HEAD (the suite runs against localhost dev
