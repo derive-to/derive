@@ -89,8 +89,8 @@ export function ProfileSection() {
       <SettingsGroup title="Discoverability">
         <SettingRow
           htmlFor="account-discoverable"
-          label="List me in people search"
-          description={`On by default. Your @${me.username ?? "handle"}, name, role, and photo appear in people search; turn it off to hide yourself.`}
+          label="Public profile"
+          description={`On by default. Your profile at @${me.username ?? "handle"} — name, role, photo, and public work — is visible to anyone, and you appear in people search. Turn it off and only people who share a workspace with you can see it.`}
         >
           <Switch
             id="account-discoverable"

@@ -37,6 +37,15 @@ Derive ships safe defaults, but a few choices matter for an internet-facing depl
   | Public (listed), view/comment  | same as link row               | same as link row                       | Their role                     |
   | Password, view/comment         | Unlock, then as above          | Unlock, then as above                  | Their role (no password needed)|
   | Workspace only (org)           | No access                      | No access                              | Their role (members only)      |
+  | Private (invite-only) — default | No access                     | No access                              | Explicit share only — workspace role grants nothing |
+
+  Publishing defaults to **private** on every path (API, CLI, MCP, web): only the
+  publisher — for an agent, the user it acts on behalf of, who is written as the
+  owner-member at creation, plus the agent itself as editor — can see a fresh
+  artifact. Private artifacts never appear in workspace listings, profile work
+  lists, or the People-visible surfaces. Widening (workspace, link, public) is
+  always an explicit act. GitHub-mirror syncs publish workspace-visible — a
+  mirrored repo is a workspace resource, not a personal draft.
 
   `packages/core/src/permissions.ts` (`effectiveRole`) is the single source of truth for
   this table, enforced on every request by the one `can()` gate and surfaced in the UI so

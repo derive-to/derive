@@ -18,7 +18,7 @@ const claim = (
   )
 
 const newArtifact = async (app: ReturnType<typeof makeAuthedApp>["app"]) => {
-  const r = await pub(app, "# Doc", {}, undefined, as(owner.email))
+  const r = await pub(app, "# Doc", { visibility: "org" }, undefined, as(owner.email))
   return (await r.json()).short_id as string
 }
 

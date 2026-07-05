@@ -69,6 +69,15 @@ export const sharingRoutes = (ctx: AppContext) => {
     const id = await resolveUserRef(meta, (b.user ?? b.username ?? b.email) as string)
     const [user] = id ? await meta.getUsers([id]) : []
     if (!user) return fail(c, 404, "no Derive user with that username or email")
+    // An artifact keeps at least one owner-member: downgrading the sole owner
+    // would orphan it — on `private` visibility, irrecoverably (workspace role
+    // grants nothing there, so no one could share it back open).
+    if (b.role !== "owner") {
+      const members = await meta.listArtifactMembers(artifact.id)
+      const owners = members.filter((m) => m.role === "owner")
+      if (owners.length === 1 && owners[0]?.user_id === user.id)
+        return fail(c, 400, "an artifact keeps at least one owner")
+    }
     await meta.setArtifactMember({
       id: newId("am"),
       artifact_id: artifact.id,
@@ -107,11 +116,13 @@ export const sharingRoutes = (ctx: AppContext) => {
     const artifact = await meta.getByShortId(c.req.param("shortId"))
     if (!artifact) return fail(c, 404, "not found")
     if (!(await authorize(c, "share", artifact))) return fail(c, 403, "forbidden")
-    const target = (await meta.listArtifactMembers(artifact.id)).find(
-      (m) => m.user_id === c.req.param("userId"),
-    )
+    const members = await meta.listArtifactMembers(artifact.id)
+    const target = members.find((m) => m.user_id === c.req.param("userId"))
     if (target && rank(target.role) > (await callerRank(c, artifact)))
       return fail(c, 403, "you can't remove a collaborator who outranks you")
+    // Same invariant as the role-change guard above: never remove the last owner.
+    if (target?.role === "owner" && members.filter((m) => m.role === "owner").length === 1)
+      return fail(c, 400, "an artifact keeps at least one owner")
     await meta.removeArtifactMember(artifact.id, c.req.param("userId"))
     return c.body(null, 204)
   })

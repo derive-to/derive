@@ -103,12 +103,14 @@ export async function freshToken(server) {
   }
 }
 
-/** The derive.json a fresh project starts with (no id until first publish). */
+/** The derive.json a fresh project starts with (no id until first publish).
+ *  Private visibility, like every other publish path — a scaffolded project
+ *  opts into wider sharing by editing this field, not by accident. */
 export const defaultConfig = (title = "My artifact", entry = "index.md") => ({
   $schema: "./derive.schema.json",
   title,
   entry,
-  visibility: "link",
+  visibility: "private",
   spa: false,
   id: null,
 })
@@ -234,7 +236,7 @@ export const DERIVE_SCHEMA = {
   properties: {
     title: { type: "string", description: "Artifact title." },
     entry: { type: "string", description: "File or directory `derive publish` targets." },
-    visibility: { enum: ["public", "link", "org", "password"], default: "link" },
+    visibility: { enum: ["public", "link", "org", "password", "private"], default: "private" },
     spa: {
       type: "boolean",
       description: "Serve a single-page-app fallback for unknown paths.",

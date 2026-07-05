@@ -78,8 +78,9 @@ describe("str / visibilityOf — input coercion", () => {
   })
 
   it("visibilityOf accepts only the known visibilities", () => {
-    for (const v of ["public", "link", "org", "password"]) expect(visibilityOf(v)).toBe(v)
-    for (const bad of ["private", "", "PUBLIC", null, 3]) expect(visibilityOf(bad)).toBeUndefined()
+    for (const v of ["public", "link", "org", "password", "private"])
+      expect(visibilityOf(v)).toBe(v)
+    for (const bad of ["secret", "", "PUBLIC", null, 3]) expect(visibilityOf(bad)).toBeUndefined()
   })
 })
 

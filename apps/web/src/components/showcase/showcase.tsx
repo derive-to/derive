@@ -1008,6 +1008,54 @@ function ConfirmDemo() {
   )
 }
 
+/** The share dialog's general-access ladder — the five visibility steps as the
+ *  dialog renders them (glyph + label + consequence), most private first. Static
+ *  data; the live control is ShareButton's Select in pages/artifact/share-dialog. */
+function GeneralAccessDemo() {
+  const steps: { icon: IconName; label: string; blurb: string; current?: boolean }[] = [
+    {
+      icon: "lock",
+      label: "Private",
+      blurb: "Only people added. Workspace membership grants nothing.",
+      current: true,
+    },
+    {
+      icon: "workspace",
+      label: "Workspace only",
+      blurb: "Only members of this workspace.",
+    },
+    { icon: "link", label: "Anyone with the link", blurb: "Anyone with the link can view." },
+    { icon: "globe", label: "Public — listed", blurb: "In the public directory and indexable." },
+    { icon: "lock", label: "Password protected", blurb: "Anyone with the link and the password." },
+  ]
+  return (
+    <div className="max-w-md rounded-xl border border-border bg-card p-1.5">
+      {steps.map((s) => (
+        <div
+          key={s.label}
+          className={cn(
+            "flex items-start gap-2.5 rounded-lg px-2.5 py-2",
+            s.current && "bg-accent",
+          )}
+        >
+          <Icon name={s.icon} className="mt-0.5 shrink-0 text-muted-foreground" />
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 text-sm font-medium text-foreground">
+              {s.label}
+              {s.current && (
+                <Badge variant="secondary" className="text-2xs">
+                  Default
+                </Badge>
+              )}
+            </div>
+            <p className="text-sm text-muted-foreground">{s.blurb}</p>
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 /** Status panel — the tinted callout across its tones and both layouts. */
 function StatusPanelDemo() {
   return (
@@ -1264,6 +1312,12 @@ export function Showcase() {
             note="The one destructive-confirm surface — the dialog carries the gravity, not a loud red fill."
           >
             <ConfirmDemo />
+          </Row>
+          <Row
+            title="General access"
+            note="The share dialog's visibility ladder, most private to most open. Each step is a glyph + label + one-line consequence; the Share trigger echoes the glyph (globe = the URL alone reads, lock = invite-only)."
+          >
+            <GeneralAccessDemo />
           </Row>
           <Row
             title="Status panel"

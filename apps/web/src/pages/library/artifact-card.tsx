@@ -9,6 +9,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { artifactTypeLabel, dirOf } from "@/lib/artifact"
@@ -20,7 +21,7 @@ import { CommentSignal } from "./comment-signal"
 // the card's top edge as the hero, carrying a single machine-register `TYPE · vN`
 // chip; a hairline-divided caption below holds the title and one split meta row —
 // identity (who · when) on the left, signals (feedback · views) on the right.
-// The card is clean at rest and reveals its actions (star, owner menu) on hover.
+// The card is clean at rest and reveals its actions (star, ⋯ menu) on hover.
 //
 // Stretched-link pattern: the open button's ::after covers the whole card, so a
 // click anywhere (preview included) opens it, while the star / menu / author / tag
@@ -33,6 +34,8 @@ export function ArtifactCard({
   onOpen,
   onToggleFavorite,
   onPickTag,
+  onEditTags,
+  onAddToCollection,
   onDelete,
   onPrefetch,
 }: {
@@ -40,12 +43,20 @@ export function ArtifactCard({
   onOpen: () => void
   onToggleFavorite: () => void
   onPickTag: (tag: string) => void
+  // Quick actions in the ⋯ menu — organize without opening the artifact. Tags
+  // are gated per-item (owner/editor), collections apply to any signed-in
+  // viewer (you're organizing your collections, not mutating the artifact).
+  onEditTags?: () => void
+  onAddToCollection?: () => void
   onDelete?: () => void
   // Warm the artifact (metadata + comments + rendered HTML) when the card is
   // hovered or focused, so the click that follows opens instantly.
   onPrefetch?: () => void
 }) {
   const isOwner = a.my_role === "owner"
+  const showTags = !!onEditTags && (a.my_role === "owner" || a.my_role === "editor")
+  const showDelete = isOwner && !!onDelete
+  const showMenu = showTags || !!onAddToCollection || showDelete
   const author = a.author ?? null
   const hasAuthor = !!(author?.name || author?.login || a.author_login || a.author_name)
   const updated = a.updated_at ?? a.created_at ?? a.versions[0]?.created_at
@@ -84,7 +95,7 @@ export function ArtifactCard({
             pointers (no hover to reveal them). A favourited star also persists at
             rest. Adaptive translucent pills read over any render, both themes. */}
         <div className="absolute right-2 top-2 z-20 flex items-center gap-1.5">
-          {isOwner && onDelete && (
+          {showMenu && (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button
@@ -103,14 +114,39 @@ export function ArtifactCard({
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent onClick={(e) => e.stopPropagation()}>
-                <DropdownMenuItem
-                  data-testid={`artifact-card-delete-${a.short_id}`}
-                  variant="destructive"
-                  onSelect={() => onDelete()}
-                >
-                  <Icon name="delete" size={16} />
-                  Delete
-                </DropdownMenuItem>
+                {/* Same organize order as the workbench ⋯ menu: Tags, then
+                    Add to collection; Delete stays last behind a separator. */}
+                {showTags && (
+                  <DropdownMenuItem
+                    data-testid={`artifact-card-tags-${a.short_id}`}
+                    onSelect={() => onEditTags?.()}
+                  >
+                    <Icon name="tag" size={16} />
+                    Tags
+                  </DropdownMenuItem>
+                )}
+                {onAddToCollection && (
+                  <DropdownMenuItem
+                    data-testid={`artifact-card-collections-${a.short_id}`}
+                    onSelect={() => onAddToCollection()}
+                  >
+                    <Icon name="collections" size={16} />
+                    Add to collection
+                  </DropdownMenuItem>
+                )}
+                {showDelete && (
+                  <>
+                    {(showTags || onAddToCollection) && <DropdownMenuSeparator />}
+                    <DropdownMenuItem
+                      data-testid={`artifact-card-delete-${a.short_id}`}
+                      variant="destructive"
+                      onSelect={() => onDelete?.()}
+                    >
+                      <Icon name="delete" size={16} />
+                      Delete
+                    </DropdownMenuItem>
+                  </>
+                )}
               </DropdownMenuContent>
             </DropdownMenu>
           )}

@@ -262,7 +262,11 @@ export async function publish(
     org_id: input.orgId ?? "local",
     slug: input.slug ? slugify(input.slug) : slugify(title) || null,
     title,
-    visibility: input.visibility ?? "link",
+    // Private unless the publisher says otherwise — the Google Docs default.
+    // Nothing is visible to anyone but the publisher (the route writes them as
+    // the owner-member) as a side effect of publishing; widening is an explicit
+    // act (the Share dialog, --visibility, or visibility in derive.json).
+    visibility: input.visibility ?? "private",
     password_hash: input.passwordHash ?? null,
     kind,
     spa: input.spa ? 1 : 0,

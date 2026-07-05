@@ -8,6 +8,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { artifactTypeLabel, dirOf } from "@/lib/artifact"
@@ -27,6 +28,8 @@ export function ArtifactRow({
   onToggleFavorite,
   onPickTag,
   onPickAuthor,
+  onEditTags,
+  onAddToCollection,
   onDelete,
   onPrefetch,
 }: {
@@ -37,10 +40,18 @@ export function ArtifactRow({
   // Clicking the author filters the list by their GitHub login. Omit to render
   // the author as a non-filtering chip (still links to a known profile).
   onPickAuthor?: (login: string) => void
+  // Quick actions in the ⋯ menu — organize without opening the artifact. Tags
+  // are gated per-item (owner/editor), collections apply to any signed-in
+  // viewer (you're organizing your collections, not mutating the artifact).
+  onEditTags?: () => void
+  onAddToCollection?: () => void
   onDelete?: () => void
   onPrefetch?: () => void
 }) {
   const isOwner = a.my_role === "owner"
+  const showTags = !!onEditTags && (a.my_role === "owner" || a.my_role === "editor")
+  const showDelete = isOwner && !!onDelete
+  const showMenu = showTags || !!onAddToCollection || showDelete
   const updated = a.updated_at ?? a.created_at ?? a.versions[0]?.created_at
   const dir = a.source_path ? dirOf(a.source_path) : ""
   const tags = a.tags ?? []
@@ -166,7 +177,7 @@ export function ArtifactRow({
         />
       </Button>
 
-      {isOwner && onDelete && (
+      {showMenu && (
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button
@@ -185,14 +196,39 @@ export function ArtifactRow({
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent onClick={(e) => e.stopPropagation()}>
-            <DropdownMenuItem
-              data-testid={`artifact-row-delete-${a.short_id}`}
-              variant="destructive"
-              onSelect={() => onDelete()}
-            >
-              <Icon name="delete" size={16} />
-              Delete
-            </DropdownMenuItem>
+            {/* Same organize order as the workbench ⋯ menu: Tags, then
+                Add to collection; Delete stays last behind a separator. */}
+            {showTags && (
+              <DropdownMenuItem
+                data-testid={`artifact-row-tags-${a.short_id}`}
+                onSelect={() => onEditTags?.()}
+              >
+                <Icon name="tag" size={16} />
+                Tags
+              </DropdownMenuItem>
+            )}
+            {onAddToCollection && (
+              <DropdownMenuItem
+                data-testid={`artifact-row-collections-${a.short_id}`}
+                onSelect={() => onAddToCollection()}
+              >
+                <Icon name="collections" size={16} />
+                Add to collection
+              </DropdownMenuItem>
+            )}
+            {showDelete && (
+              <>
+                {(showTags || onAddToCollection) && <DropdownMenuSeparator />}
+                <DropdownMenuItem
+                  data-testid={`artifact-row-delete-${a.short_id}`}
+                  variant="destructive"
+                  onSelect={() => onDelete?.()}
+                >
+                  <Icon name="delete" size={16} />
+                  Delete
+                </DropdownMenuItem>
+              </>
+            )}
           </DropdownMenuContent>
         </DropdownMenu>
       )}

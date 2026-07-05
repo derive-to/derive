@@ -76,6 +76,7 @@ import {
   like,
   lt,
   lte,
+  ne,
   or,
   type SQL,
   sql,
@@ -128,6 +129,16 @@ export function artifactListConditions(
   // Anonymous / non-member callers only ever see public artifacts in a listing — an
   // org/link/password title must not leak to someone who can't open it.
   if (opts?.publicOnly) conds.push(eq(art.visibility, "public"))
+  // `private` artifacts are invisible even to workspace members unless they're an
+  // explicit artifact member. The subquery names the table literally — sqlite, D1,
+  // and pg all call it artifact_member, and this function serves all three.
+  else if (opts?.viewerId)
+    conds.push(
+      sql`(${art.visibility} != 'private' OR EXISTS (
+        SELECT 1 FROM artifact_member am
+        WHERE am.artifact_id = ${art.id} AND am.user_id = ${opts.viewerId}
+      ))`,
+    )
   if (opts?.q) conds.push(like(sql`lower(${art.title})`, `%${opts.q.toLowerCase()}%`))
   if (opts?.cursor) {
     const cursor = or(
@@ -752,14 +763,39 @@ export function makeRepos(db: SqliteDb) {
       .get()) ?? null
   const listArtifactMembers = async (artifactId: string): Promise<ArtifactMemberRecord[]> =>
     db.select().from(artifactMember).where(eq(artifactMember.artifact_id, artifactId)).all()
+  const artifactRolesFor = async (
+    userId: string,
+    artifactIds: string[],
+  ): Promise<Record<string, Role>> => {
+    if (artifactIds.length === 0) return {}
+    const rows = await db
+      .select({ artifact_id: artifactMember.artifact_id, role: artifactMember.role })
+      .from(artifactMember)
+      .where(
+        and(eq(artifactMember.user_id, userId), inArray(artifactMember.artifact_id, artifactIds)),
+      )
+      .all()
+    return Object.fromEntries(rows.map((r) => [r.artifact_id, r.role]))
+  }
   // Artifacts explicitly shared with a user (they hold a per-artifact membership) —
   // the "Shared with you" set, which can span workspaces.
+  // "Shared with me" excludes what I authored: publishing writes the creator an
+  // owner-member row (that's how `private` knows its owner), and without the
+  // author check every artifact you make would land in your own shared feed.
   const artifactIdsSharedWith = async (userId: string): Promise<string[]> =>
     (
       await db
         .select({ id: artifactMember.artifact_id })
         .from(artifactMember)
-        .where(eq(artifactMember.user_id, userId))
+        .innerJoin(artifact, eq(artifact.id, artifactMember.artifact_id))
+        .where(
+          and(
+            eq(artifactMember.user_id, userId),
+            // NULL-safe: a token-published artifact (author_id null) shared with
+            // you still counts — plain != would drop the NULL rows.
+            or(isNull(artifact.author_id), ne(artifact.author_id, userId)),
+          ),
+        )
         .all()
     ).map((r) => r.id)
   const setArtifactMember = async (m: NewArtifactMember): Promise<ArtifactMemberRecord> =>
@@ -989,10 +1025,15 @@ export function makeRepos(db: SqliteDb) {
     } else {
       conds.push(eq(artifact.author_id, userId))
     }
-    // Visible to the viewer: public OR in a workspace they share with the profile owner.
+    // Visible to the viewer: public OR in a workspace they share with the profile
+    // owner. Private drafts never ride a profile, shared workspace or not — the
+    // owner finds them in their library, not on their public face.
     const orgs = opts.visibleOrgIds ?? []
     if (orgs.length > 0) {
-      const v = or(eq(artifact.visibility, "public"), inArray(artifact.org_id, orgs))
+      const v = or(
+        eq(artifact.visibility, "public"),
+        and(inArray(artifact.org_id, orgs), ne(artifact.visibility, "private")),
+      )
       if (v) conds.push(v)
     } else {
       conds.push(eq(artifact.visibility, "public"))
@@ -1764,6 +1805,7 @@ export function makeRepos(db: SqliteDb) {
     listWorkspaces,
     getArtifactMember,
     listArtifactMembers,
+    artifactRolesFor,
     artifactIdsSharedWith,
     setArtifactMember,
     removeArtifactMember,

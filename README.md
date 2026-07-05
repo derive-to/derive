@@ -91,9 +91,11 @@ The user/session tables are created automatically on first boot; see
 `.env.example` for the full list.
 
 Writes are authorized by a login session **or** a static `DERIVE_TOKEN` (for
-CI/agents). Publish with `--visibility public|link|org|password` (default `link`);
-when `DERIVE_TOKEN` is set, gated artifacts 404 for anyone without a session or the
-token.
+CI/agents). Publish with `--visibility public|link|org|password|private` — the
+default is `private` (you and the people you invite; for an agent publish, the
+user the agent acts on behalf of owns it), so nothing is visible to anyone else
+unless you say so. When `DERIVE_TOKEN` is set, gated artifacts 404 for anyone
+without a session or the token.
 
 ## Architecture
 

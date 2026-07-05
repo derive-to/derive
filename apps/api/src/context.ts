@@ -319,12 +319,15 @@ export function buildContext(deps: AppDeps) {
     let a: AgentRecord | null = null
     let owner: string | null = null
     if (b && !(deps.token && safeEqual(b, deps.token))) {
-      // Either a registered agent token (stored hashed) — a workspace principal with
-      // no granting user — or an OAuth access token from the browser consent flow,
-      // which carries the user who authed it.
+      // Either a registered agent token (stored hashed) — acting on behalf of the
+      // user who registered it (created_by; null for pre-column agents) — or an
+      // OAuth access token from the browser consent flow, which carries the user
+      // who authed it. Both resolve to an on-behalf human where one is known.
       const reg = await meta.getAgentByToken(sha256(b))
-      if (reg) a = reg
-      else {
+      if (reg) {
+        a = reg
+        owner = reg.created_by ?? null
+      } else {
         const o = await oauthAgent(b)
         if (o) {
           a = o.rec
@@ -347,10 +350,9 @@ export function buildContext(deps: AppDeps) {
     return a
   }
 
-  // The human identity that owns `personal` comments for this request: a signed-in
-  // user is themselves; an OAuth agent acts on behalf of the user who consented; a
-  // registered workspace agent and anonymous callers have none (→ public only). This
-  // is what every personal-comment read/write keys on.
+  // The human identity behind this request: a signed-in user is themselves; an
+  // agent (OAuth or registered) is the user it acts on behalf of, when known.
+  // Keys `personal` comments, and publish attribution + ownership.
   const privateOwnerId = async (c: Context): Promise<string | null> => {
     const ag = await agentFor(c)
     if (ag) return onBehalfCache.get(c) ?? null

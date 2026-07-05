@@ -17,6 +17,7 @@ import { toast } from "@/components/ui/sonner"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { useAuth } from "@/ctx"
 import {
+  artifactQuery,
   collectionsQuery,
   type LibraryParams,
   libraryArtifactsQuery,
@@ -39,6 +40,7 @@ import { FollowingStrip } from "./following-strip"
 import { HowItWorks } from "./how-it-works"
 import { LibrarySkeleton } from "./library-skeleton"
 import { PublishCard } from "./publish-card"
+import { LibraryCollectionsDialog, LibraryTagsDialog } from "./quick-organize"
 import { RepoPullRequests } from "./repo-pull-requests"
 import { ShareCollectionDialog } from "./share-collection-dialog"
 import type { Filter, LibrarySearch, LibraryView } from "./types"
@@ -194,6 +196,44 @@ function LibraryBody({ view }: { view: LibraryView }) {
       toast.error((e as Error).message)
       qc.invalidateQueries({ queryKey: listQuery.queryKey })
     }
+  }
+
+  // Quick organize from the card ⋯ menu. The dialogs own the API calls and
+  // report the result here; these handlers sync every cache that carries the
+  // artifact. When the change can alter the ACTIVE filter's membership
+  // (un-tagging on a tag view, removing on a collection view) we refetch
+  // instead of optimistically dropping the card — the dialogs roll back on
+  // failure, and a dropped card can't be rolled back in.
+  const [pendingTags, setPendingTags] = useState<Artifact | null>(null)
+  const [pendingCollections, setPendingCollections] = useState<Artifact | null>(null)
+  const tagsChanged = (shortId: string, tags: string[]) => {
+    qc.setQueryData(listQuery.queryKey, (old) =>
+      old
+        ? {
+            ...old,
+            pages: old.pages.map((pg) => ({
+              ...pg,
+              artifacts: pg.artifacts.map((x) => (x.short_id === shortId ? { ...x, tags } : x)),
+            })),
+          }
+        : old,
+    )
+    qc.setQueryData(sharedArtifactsQuery().queryKey, (old) =>
+      old?.map((x) => (x.short_id === shortId ? { ...x, tags } : x)),
+    )
+    qc.setQueryData(needsFeedbackArtifactsQuery().queryKey, (old) =>
+      old?.map((x) => (x.short_id === shortId ? { ...x, tags } : x)),
+    )
+    qc.setQueryData(artifactQuery(shortId).queryKey, (a) => (a ? { ...a, tags } : a))
+    // Tag counts in the rail come from the summary.
+    qc.invalidateQueries({ queryKey: summaryQuery().queryKey })
+    if (filter.kind === "tag") qc.invalidateQueries({ queryKey: listQuery.queryKey })
+  }
+  const collectionsChanged = (shortId: string, ids: string[]) => {
+    qc.setQueryData(artifactQuery(shortId).queryKey, (a) => (a ? { ...a, collections: ids } : a))
+    // Collection counts in the rail.
+    qc.invalidateQueries({ queryKey: collectionsQuery().queryKey })
+    if (filter.kind === "collection") qc.invalidateQueries({ queryKey: listQuery.queryKey })
   }
 
   // Filter by author. Keep the collection context (you're narrowing the synced
@@ -487,6 +527,8 @@ function LibraryBody({ view }: { view: LibraryView }) {
                 onOpen={() => nav({ to: "/artifacts/$ref", params: { ref: refFor(a) } })}
                 onToggleFavorite={() => openFeedback(a)}
                 onPickTag={(tag) => nav({ to: "/", search: { tag } })}
+                onEditTags={() => setPendingTags(a)}
+                onAddToCollection={() => setPendingCollections(a)}
                 onPrefetch={() => prefetch(a.short_id, a.current_version)}
               />
             ))}
@@ -507,6 +549,8 @@ function LibraryBody({ view }: { view: LibraryView }) {
                 onOpen={() => nav({ to: "/artifacts/$ref", params: { ref: refFor(a) } })}
                 onToggleFavorite={() => openShared(a)}
                 onPickTag={(tag) => nav({ to: "/", search: { tag } })}
+                onEditTags={() => setPendingTags(a)}
+                onAddToCollection={() => setPendingCollections(a)}
                 onPrefetch={() => prefetch(a.short_id, a.current_version)}
               />
             ))}
@@ -597,6 +641,9 @@ function LibraryBody({ view }: { view: LibraryView }) {
               onToggleFavorite={toggleFav}
               onPickTag={(tag) => nav({ to: "/", search: { tag } })}
               onPickAuthor={pickAuthor}
+              onEditTags={setPendingTags}
+              onAddToCollection={setPendingCollections}
+              onDelete={setPendingDelete}
               onPrefetch={(a) => prefetch(a.short_id, a.current_version)}
             />
           ) : (
@@ -609,6 +656,8 @@ function LibraryBody({ view }: { view: LibraryView }) {
                   onToggleFavorite={() => toggleFav(a)}
                   onPickTag={(tag) => nav({ to: "/", search: { tag } })}
                   onPickAuthor={pickAuthor}
+                  onEditTags={() => setPendingTags(a)}
+                  onAddToCollection={() => setPendingCollections(a)}
                   onDelete={() => setPendingDelete(a)}
                   onPrefetch={() => prefetch(a.short_id, a.current_version)}
                 />
@@ -632,6 +681,8 @@ function LibraryBody({ view }: { view: LibraryView }) {
             onOpen={(a) => nav({ to: "/artifacts/$ref", params: { ref: refFor(a) } })}
             onToggleFavorite={toggleFav}
             onPickTag={(tag) => nav({ to: "/", search: { tag } })}
+            onEditTags={setPendingTags}
+            onAddToCollection={setPendingCollections}
             onDelete={setPendingDelete}
             onPrefetch={(a) => prefetch(a.short_id, a.current_version)}
           />
@@ -645,6 +696,20 @@ function LibraryBody({ view }: { view: LibraryView }) {
 
       {shareCol && (
         <ShareCollectionDialog collection={shareCol} onClose={() => setShareCol(null)} />
+      )}
+      {pendingTags && (
+        <LibraryTagsDialog
+          artifact={pendingTags}
+          onChange={tagsChanged}
+          onClose={() => setPendingTags(null)}
+        />
+      )}
+      {pendingCollections && (
+        <LibraryCollectionsDialog
+          artifact={pendingCollections}
+          onChange={collectionsChanged}
+          onClose={() => setPendingCollections(null)}
+        />
       )}
       <ConfirmDialog
         open={!!pendingDelete}

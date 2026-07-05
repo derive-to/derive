@@ -13,7 +13,9 @@ export interface BlobStore {
 export type ArtifactKind = "file" | "bundle"
 // `password`: world-reachable by URL like `link`, but the bytes stay gated until
 // the visitor enters the password (then a viewer; members/owners see it by role).
-export type Visibility = "public" | "link" | "org" | "password"
+// `private`: only per-artifact members (the publisher becomes the owner-member at
+// creation) — workspace membership grants nothing, unlike `org`.
+export type Visibility = "public" | "link" | "org" | "password" | "private"
 
 /** A platform subdomain (`name.derived.app`) or a customer's own domain. */
 export type DomainKind = "subdomain" | "custom"
@@ -89,6 +91,10 @@ export interface ListArtifactsOpts {
   /** Only `public` artifacts. Set for anonymous / non-member callers so a workspace
    *  listing never leaks `org`/`link`/`password` titles to someone who can't open them. */
   publicOnly?: boolean
+  /** Who is reading the list. `private` artifacts only appear for their explicit
+   *  members, so the query needs the viewer to check membership against. Omitted ⇒
+   *  a trusted caller (the operator token / internal jobs) that sees everything. */
+  viewerId?: string
   /** Profile work-list visibility gate: a row is included when it is `public` OR its
    *  `org_id` is in this set (the workspaces the viewer shares with the profile owner).
    *  An empty/omitted set with a profile query ⇒ public-only. Used by `listUserWorks`
@@ -343,6 +349,9 @@ export interface MetaStore {
   listFollowing(userId: string, limit: number): Promise<UserProfile[]>
   /** Tags per artifact, batched (no N+1). Missing ids map to no entry. */
   tagsForArtifacts(artifactIds: string[]): Promise<Record<string, string[]>>
+  /** The user's per-artifact share roles across a page of artifacts, one query —
+   *  lets a listing fold shares into `my_role` without a per-row member lookup. */
+  artifactRolesFor(userId: string, artifactIds: string[]): Promise<Record<string, Role>>
   /** Replace an artifact's full tag set (deduped, trimmed, lowercased upstream). */
   setArtifactTags(artifactId: string, tags: string[]): Promise<void>
 
@@ -531,6 +540,10 @@ export interface MetaStore {
    *  ordered by handle, capped to `limit`. The browse counterpart to
    *  searchDiscoverableUsers — powers the People page's default view. */
   listDiscoverableUsers(limit: number): Promise<UserProfile[]>
+  /** Distinct people sharing any workspace with `userId` (themselves excluded) —
+   *  the People page's "your workspaces" section. Membership already implies you
+   *  can see each other, so `discoverable` doesn't apply here. */
+  listWorkspaceMates(userId: string, limit: number): Promise<UserProfile[]>
 
   // ---- Notifications (in-app, one row per recipient) --------------------
   createNotification(n: NewNotification): Promise<void>
@@ -716,6 +729,9 @@ export interface AgentRecord {
   name: string
   token: string
   role: Role
+  /** The user who registered the agent — who it publishes on behalf of.
+   *  Null for pre-column agents (they publish as themselves). */
+  created_by: string | null
   created_at: string
 }
 export interface NewAgent {
@@ -724,6 +740,7 @@ export interface NewAgent {
   name: string
   token: string
   role: Role
+  created_by?: string | null
 }
 
 export type AgentMentionState = "pending" | "done"
@@ -881,6 +898,10 @@ export interface UserProfile {
   profession?: string | null
   /** One-line "what you do" blurb; null if unset. */
   about?: string | null
+  /** Findable in the People directory AND profile-visible to strangers. False hides
+   *  the profile from everyone but workspace-mates; unset/null reads as true (the
+   *  pre-column accounts). SQLite/D1 store it as 0/1, so number rides along. */
+  discoverable?: boolean | number | null
 }
 
 /** `mention`/`comment`/`share` are artifact-anchored. `follow` (someone followed you)

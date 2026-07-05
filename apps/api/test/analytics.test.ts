@@ -21,7 +21,7 @@ import {
 
 describe("view analytics", () => {
   it("de-dups rapid re-opens and aggregates uniques, per-version, recent viewers", async () => {
-    const { short_id } = await (await upload("a.md", "# A")).json()
+    const { short_id } = await (await upload("a.md", "# A", { visibility: "link" })).json()
     await upload("a.md", "# A v2", { message: "v2" }, short_id) // now at v2
 
     // Three rapid opens from one anonymous viewer (cookie reused) collapse to ONE
@@ -179,7 +179,9 @@ describe("analytics: identity + retention", () => {
   const { app, meta: m } = makeAuthedApp("analytics-id", [ann, bob], "commenter")
 
   it("excludes the owner's own opens; counts a viewer (by name + avatar) and anon", async () => {
-    const sid = (await (await publishAs(app, "<h1>v</h1>", {}, as(ann.email))).json()).short_id
+    const sid = (
+      await (await publishAs(app, "<h1>v</h1>", { visibility: "link" }, as(ann.email))).json()
+    ).short_id
     // Ann is the workspace owner (first member). Her own opens don't count.
     for (let i = 0; i < 2; i++)
       await app.request(`/v1/artifacts/${sid}/view`, jsonAs(as(ann.email), { version: 1 }))
@@ -245,6 +247,7 @@ describe("analytics: identity + retention", () => {
     })
     const fd = new FormData()
     fd.append("file", new Blob([new TextEncoder().encode("# x")]), "x.md")
+    fd.append("visibility", "link")
     // Publish as the token (owner); the view below is anonymous so it sets the cookie.
     const { short_id } = await (
       await xs.request("/v1/artifacts", { method: "POST", body: fd, headers: bearer(TEST_TOKEN) })

@@ -40,7 +40,12 @@ describe("scaffold", () => {
       "index.md",
     ])
     const cfg = JSON.parse(readFileSync(join(d, CONFIG_FILE), "utf8"))
-    expect(cfg).toMatchObject({ title: "Report", entry: "index.md", id: null, visibility: "link" })
+    expect(cfg).toMatchObject({
+      title: "Report",
+      entry: "index.md",
+      id: null,
+      visibility: "private",
+    })
     // The MCP config + skill are present and reference the published server.
     expect(JSON.parse(readFileSync(join(d, ".mcp.json"), "utf8")).mcpServers.derive.args).toContain(
       "@derive/mcp",

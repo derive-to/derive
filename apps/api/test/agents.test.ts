@@ -56,7 +56,9 @@ describe("agents: @mention → pull inbox → propose → ack", () => {
   })
 
   it("a comment @mentioning the agent lands in the agent's inbox, not a notification", async () => {
-    shortId = (await (await publishAs(app, "<h1>draft</h1>", {}, as(owner.email))).json()).short_id
+    shortId = (
+      await (await publishAs(app, "<h1>draft</h1>", { visibility: "org" }, as(owner.email))).json()
+    ).short_id
     const cm = await app.request(
       `/v1/artifacts/${shortId}/comments`,
       jsonAs(as(owner.email), {

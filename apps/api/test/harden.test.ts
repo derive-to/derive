@@ -147,25 +147,25 @@ describe("B-019: @mention notifies only collaborators", () => {
 })
 
 // B-018: an explicitly-provided visibility that isn't a known value is rejected, not
-// silently coerced to `link` (URL-readable). Absent visibility still defaults to link.
+// silently coerced. Absent visibility defaults to `private`.
 describe("B-018: publish rejects an unknown visibility", () => {
   const owner: TestUser = { id: "u_b18_owner", email: "o18@derive.test", name: "Owner18" }
 
-  it("400s on an unknown visibility; valid values store; absent defaults to link", async () => {
+  it("400s on an unknown visibility; valid values store; absent defaults to private", async () => {
     const { app } = makeAuthedApp("harden-b18", [owner])
     const bad = await publishAs(
       app,
       "<h1>x</h1>",
-      { title: "v", visibility: "private" },
+      { title: "v", visibility: "secret" },
       as(owner.email),
     )
     expect(bad.status).toBe(400)
-    const org = await (
-      await publishAs(app, "<h1>x</h1>", { title: "v2", visibility: "org" }, as(owner.email))
+    const link = await (
+      await publishAs(app, "<h1>x</h1>", { title: "v2", visibility: "link" }, as(owner.email))
     ).json()
-    expect(org.visibility).toBe("org")
+    expect(link.visibility).toBe("link")
     const def = await (await publishAs(app, "<h1>x</h1>", { title: "v3" }, as(owner.email))).json()
-    expect(def.visibility).toBe("link")
+    expect(def.visibility).toBe("private")
   })
 })
 

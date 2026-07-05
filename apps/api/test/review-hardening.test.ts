@@ -22,7 +22,9 @@ describe("authorship is keyed on id, not display name", () => {
   let commentId: string
 
   it("seeds an artifact + a comment authored by sam1", async () => {
-    shortId = (await (await publishAs(authed, "<h1>doc</h1>", {}, as(sam1.email))).json()).short_id
+    shortId = (
+      await (await publishAs(authed, "<h1>doc</h1>", { visibility: "org" }, as(sam1.email))).json()
+    ).short_id
     const res = await authed.request(
       `/v1/artifacts/${shortId}/comments`,
       jsonAs(as(sam1.email), { body_md: "sam1's note" }),

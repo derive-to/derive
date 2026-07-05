@@ -7,7 +7,7 @@ export interface PublishArgs {
   slug?: string
   spa?: boolean
   message?: string
-  visibility?: "public" | "link" | "org" | "password"
+  visibility?: "public" | "link" | "org" | "password" | "private"
   /** Unlock password, required when visibility is "password". */
   password?: string
   /** When set, publishes a new version of this artifact instead of a new one. */

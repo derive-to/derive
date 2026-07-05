@@ -32,7 +32,7 @@ export const artifact = pgTable("artifact", {
   org_id: text("org_id").notNull().default("local"),
   slug: text("slug"),
   title: text("title"),
-  visibility: text("visibility").$type<Visibility>().notNull().default("link"),
+  visibility: text("visibility").$type<Visibility>().notNull().default("private"),
   password_hash: text("password_hash"),
   general_role: text("general_role").$type<GeneralRole>().notNull().default("viewer"),
   kind: text("kind").$type<ArtifactKind>().notNull(),
@@ -190,6 +190,8 @@ export const agent = pgTable(
     name: text("name").notNull(),
     token: text("token").notNull(),
     role: text("role").$type<Role>().notNull().default("commenter"),
+    // Who registered the agent — the person it publishes on behalf of (see schema.ts).
+    created_by: text("created_by"),
     created_at: text("created_at").notNull().$defaultFn(isoNow),
   },
   (t) => [

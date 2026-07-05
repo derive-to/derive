@@ -23,7 +23,7 @@ const detectFormat = (t: string): "md" | "html" => {
 
 // Create a new artifact using the exact same editor as edit mode (SourceEditor):
 // paste or write Markdown/HTML on the left, live preview on the right, editable
-// title. Publishing creates the artifact (Workspace visibility by default; widen
+// title. Publishing creates the artifact (private by default; widen
 // access from its Share menu) and opens it.
 export function NewArtifact() {
   const nav = useNavigate()
@@ -41,7 +41,7 @@ export function NewArtifact() {
       const name = title.trim() || "Untitled"
       const ext = format === "md" ? "md" : "html"
       const type = format === "md" ? "text/markdown" : "text/html"
-      const fields: Record<string, string> = { title: name, visibility: "org" }
+      const fields: Record<string, string> = { title: name }
       if (message.trim()) fields.message = message.trim()
       const a = await api.publish(new File([src], `inline.${ext}`, { type }), fields)
       nav({ to: "/artifacts/$ref", params: { ref: refFor(a) } })

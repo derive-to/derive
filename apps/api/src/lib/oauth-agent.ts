@@ -75,6 +75,7 @@ export function makeOauthAgent({ meta, auth, baseUrl, provisionPersonal }: Oauth
           name: grant.clientName,
           token: "",
           role: roleFromScopes(grant.scopes),
+          created_by: grant.userId,
           created_at: new Date().toISOString(),
         },
       }
@@ -123,6 +124,7 @@ export function makeOauthAgent({ meta, auth, baseUrl, provisionPersonal }: Oauth
         name: (await meta.getOAuthClientName(clientId)) || clientId || "An agent",
         token: "",
         role: roleFromScopes(scopes),
+        created_by: userId,
         created_at: new Date().toISOString(),
       },
     }

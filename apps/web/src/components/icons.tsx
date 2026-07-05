@@ -22,6 +22,7 @@ import {
   Folder,
   Folders,
   GitPullRequest,
+  Globe,
   History,
   Layers,
   Link,
@@ -91,6 +92,7 @@ const REG = {
   present: Maximize,
   lock: Lock,
   unlock: LockOpen,
+  globe: Globe,
   // comment toolbar / menu
   react: Smile,
   pencil: Pencil,

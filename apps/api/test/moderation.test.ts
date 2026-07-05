@@ -10,7 +10,13 @@ describe("moderation: report → takedown (410) → reinstate + audit (C4a)", ()
   it("anyone can report a public artifact; reason is required", async () => {
     await app.request("/v1/me", { headers: as(owner.email) })
     await app.request("/v1/me", { headers: as(dev.email) })
-    shortId = (await (await publishAs(app, "<h1>spammy</h1>", {}, as(owner.email))).json()).short_id
+    // Link-visible on purpose: the takedown assertions below read anonymously
+    // (the 410 must outrank the read gate on a reachable artifact).
+    shortId = (
+      await (
+        await publishAs(app, "<h1>spammy</h1>", { visibility: "link" }, as(owner.email))
+      ).json()
+    ).short_id
     // Anonymous (no session) can't report at all — refused at the door.
     expect(
       (await app.request(`/v1/artifacts/${shortId}/report`, jsonAs({}, { reason: "x" }))).status,

@@ -48,8 +48,8 @@ export const artifactRoutes = (ctx: AppContext) => {
     isToken,
     currentUser,
     actingUser,
-    activeWorkspace,
     privateOwnerId,
+    activeWorkspace,
     actorFor,
     authorize,
     workspaceCan,
@@ -141,11 +141,16 @@ export const artifactRoutes = (ctx: AppContext) => {
     if (author) narrow(await meta.artifactIdsByAuthor(listOrg, author))
     if (ids && ids.length === 0) return c.json({ artifacts: [], next_cursor: null })
 
+    // The caller's baseline standing in the listing's workspace — reused for the
+    // public-only clamp below and the per-row `my_role` (which needs the ROLE, so
+    // the membership row is fetched rather than the boolean isMember helper).
+    const isOperator = isToken(c)
+    const myMembership = me ? await meta.getMembership(listOrg, me.id) : null
     // A listing only shows non-public artifacts to a MEMBER of that workspace (or the
     // operator token). Anyone else — anonymous, or a signed-in user who isn't a member
     // — sees public artifacts only, so org/link titles never leak via the list or ?query=.
     // For a collection, collection access (member/creator/share) also unlocks it.
-    const publicOnly = collectionId ? !collectionAccess : !(await isMember(c, listOrg))
+    const publicOnly = collectionId ? !collectionAccess : !(isOperator || !!myMembership)
     const rows = await meta.listArtifacts({
       limit: limit + 1,
       cursor,
@@ -159,6 +164,9 @@ export const artifactRoutes = (ctx: AppContext) => {
       // feed back to the active workspace and strip a followed person's public work.
       orgId: shared || following ? undefined : listOrg,
       publicOnly: shared || following ? false : publicOnly,
+      // Private artifacts appear only for their explicit members; the operator
+      // token sees everything (viewerId omitted).
+      viewerId: isOperator ? undefined : (me?.id ?? undefined),
     })
     const hasMore = rows.length > limit
     const page = hasMore ? rows.slice(0, limit) : rows
@@ -176,12 +184,33 @@ export const artifactRoutes = (ctx: AppContext) => {
     // Per-artifact comment signals for the viewer (open-thread count + tagged/authored
     // flags) — drives the inline comment badge and the "needs your feedback" featuring.
     const feedback = me ? await meta.commentSignals(pageIds, me.id) : {}
+    // The viewer's per-artifact shares across the page, one query — folded into
+    // my_role below so shared and private rows gate their quick actions correctly.
+    const shareRoles = me ? await meta.artifactRolesFor(me.id, pageIds) : {}
     return c.json({
       artifacts: page.map((a) => ({
         ...toJson(deps.baseUrl, a, []),
         views: counts[a.id] ?? 0,
         tags: tags[a.id] ?? [],
         favorite: favorites.has(a.id),
+        // Which actions the client may surface on the row (the card's quick-actions
+        // menu gates delete/tags on it). Workspace membership + per-artifact shares
+        // + the general-access floor; collection-share roles aren't folded in at
+        // list granularity, so the detail response's my_role stays authoritative.
+        my_role: isOperator
+          ? "owner"
+          : effectiveRole(
+              me
+                ? {
+                    kind: "user",
+                    userId: me.id,
+                    artifactRole: shareRoles[a.id] ?? null,
+                    orgRole: a.org_id === listOrg ? (myMembership?.role ?? null) : null,
+                  }
+                : { kind: "anon" },
+              a.visibility,
+              a.general_role,
+            ),
         // The current author as a resolved profile (name/login/avatar + Derive handle), so
         // the list can render the last editor + filter by them.
         author: authorProfile(a, handleByGhId),
@@ -275,11 +304,9 @@ export const artifactRoutes = (ctx: AppContext) => {
     // the artifact, only adds a version, so visibility/password are set-on-create).
     const visibility = visibilityOf(body["visibility"])
     // An explicitly-provided visibility that isn't a known value is rejected, not
-    // silently coerced. publish() defaults an *absent* visibility to `link`, so a
-    // natural-but-wrong value like "private" would otherwise become URL-readable —
-    // more open than intended, with no error. The enum is closed; surface the typo.
+    // silently coerced — a typo must not publish more openly than intended.
     if (str(body["visibility"]) && !visibility)
-      return fail(c, 400, "visibility must be one of: public, link, org, password")
+      return fail(c, 400, "visibility must be one of: public, link, org, password, private")
     const password = str(body["password"])
     if (!shortId && visibility === "password" && !password)
       return fail(c, 400, "a password is required for password visibility")
@@ -287,11 +314,12 @@ export const artifactRoutes = (ctx: AppContext) => {
 
     try {
       // The authenticated principal behind this publish (signed-in user or agent) — its
-      // `name` is the display author. The Derive-USER behind it (null for an agent / bare
-      // static token) is what we attribute work to: `author_id` keys a person's profile
-      // + their followers' feed, so it must be a real user id, never an agent principal.
+      // `name` is the display author. The Derive-USER behind it is what we attribute
+      // work to: for an agent, the user it acts on behalf of (created_by / the OAuth
+      // grantor). `author_id` keys a person's profile + their followers' feed, so it
+      // must be a real user id, never an agent principal.
       const actor = await actingUser(c)
-      const user = await currentUser(c)
+      const onBehalf = await privateOwnerId(c)
       const { artifact, version } = await publish(
         meta,
         blobs,
@@ -309,7 +337,7 @@ export const artifactRoutes = (ctx: AppContext) => {
           // always attributed to a real principal (the token's optional `author`
           // label is the one headless exception).
           author: actor?.name ?? str(body["author"]),
-          authorId: user?.id ?? null,
+          authorId: onBehalf,
           name: str(body["name"]),
           orgId: org,
           visibility,
@@ -317,6 +345,28 @@ export const artifactRoutes = (ctx: AppContext) => {
         },
         shortId,
       )
+      // Ownership on creation. The HUMAN behind the publish becomes the owner-member
+      // (an agent publishes on behalf of whoever registered it), which is what makes
+      // `private` work — workspace role grants nothing there. The agent principal
+      // additionally gets an editor row so it can keep operating on the artifact
+      // (republish, address review) even when it's private. An agent with no
+      // registrant on record (created_by null) owns as itself.
+      if (!shortId) {
+        if (onBehalf)
+          await meta.setArtifactMember({
+            id: newId("am"),
+            artifact_id: artifact.id,
+            user_id: onBehalf,
+            role: "owner",
+          })
+        if (actor && actor.id !== onBehalf)
+          await meta.setArtifactMember({
+            id: newId("am"),
+            artifact_id: artifact.id,
+            user_id: actor.id,
+            role: onBehalf ? "editor" : "owner",
+          })
+      }
       bus.publish(artifact.id, {
         type: "version.published",
         n: version.n,
@@ -327,16 +377,18 @@ export const artifactRoutes = (ctx: AppContext) => {
         message: version.message,
         author: version.author,
       })
-      // Fan out to the publisher's followers: "someone you follow published X". Gated to:
-      // a real signed-in USER (agents/tokens have no human followers), a publicly-visible
-      // artifact (a follow never surfaces a private title), and a NEW artifact only —
-      // `shortId` means a republish/new version, which would otherwise spam followers on
-      // every edit. Done in the background so a popular author's fan-out never adds to
-      // publish latency (it's off the response path, like the comment-mention fan-out).
-      if (!shortId && user?.id && artifact.visibility === "public") {
-        const author = user
+      // Fan out to the publisher's followers: "someone you follow published X". Gated
+      // to a known HUMAN behind the publish (their followers are who care — an agent
+      // publish fans out to the followers of the person it acts for), a publicly-
+      // visible artifact (a follow never surfaces a private title), and a NEW artifact
+      // only — `shortId` means a republish/new version, which would otherwise spam
+      // followers on every edit. Done in the background so a popular author's fan-out
+      // never adds to publish latency (like the comment-mention fan-out).
+      if (!shortId && onBehalf && artifact.visibility === "public") {
         background(
           (async () => {
+            const [author] = await meta.getUsers([onBehalf])
+            if (!author) return
             for (const follower of await meta.listFollowers(author.id, 200)) {
               if (follower.id === author.id) continue
               await meta.createNotification({
@@ -373,12 +425,12 @@ export const artifactRoutes = (ctx: AppContext) => {
       // text changed flips to `outdated` (and back to `open` if it reappears).
       await publishSweepEvents(meta, blobs, bus, artifact.id, version)
       // Open a review round if the publisher asked for one (the /derive loop). The
-      // reviewer is the human the agent acts for; falls back to the workspace's first
-      // owner so a headless publish still has someone to ask. No human to ask → skip.
+      // reviewer is the human behind the publish (onBehalf covers both a session
+      // user and an agent's registrant); falls back to the workspace's first owner
+      // so a headless publish still has someone to ask. No human to ask → skip.
       if (body["request_review"] === "true" || body["request_review"] === "1") {
-        const owner = user?.id ?? (await privateOwnerId(c))
         const reviewer =
-          owner ??
+          onBehalf ??
           (await meta.listMemberships(org)).find((m) => m.role === "owner")?.user_id ??
           null
         if (reviewer) {

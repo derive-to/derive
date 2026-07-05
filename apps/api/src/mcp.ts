@@ -483,10 +483,10 @@ function buildServer(
           .optional()
           .describe("Omit to create a new artifact; pass it to revise one you own."),
         visibility: z
-          .enum(["workspace", "link", "public"])
+          .enum(["private", "workspace", "link", "public"])
           .optional()
           .describe(
-            "Who can see a NEW artifact: workspace (your team, default), link (anyone with the link), or public (discoverable). Ignored on republish.",
+            "Who can see a NEW artifact: private (you and people you invite — the default), workspace (your team), link (anyone with the link), or public (discoverable). Ignored on republish.",
           ),
         spa: z
           .boolean()
@@ -646,13 +646,41 @@ function buildServer(
             title: title?.trim(),
             message,
             author: agent.name,
-            // New artifacts land in the granting user's workspace, private to the
-            // team by default (never link-public unless they ask).
+            // Attributed to the human the agent acts for — their profile, their
+            // followers' feed (same as the HTTP publish route).
+            authorId: actingFor?.id ?? null,
+            // New artifacts land in the granting user's workspace, private by
+            // default like every other publish path (never wider unless asked).
             orgId: agent.org_id,
-            visibility: visibility === "link" ? "link" : visibility === "public" ? "public" : "org",
+            visibility:
+              visibility === "link"
+                ? "link"
+                : visibility === "public"
+                  ? "public"
+                  : visibility === "workspace"
+                    ? "org"
+                    : "private",
           },
           short_id,
         )
+        // Ownership, same as the HTTP route: the human owns it, the agent keeps an
+        // editor row so it can republish (essential for private artifacts).
+        if (!short_id) {
+          if (actingFor)
+            await ctx.meta.setArtifactMember({
+              id: newId("am"),
+              artifact_id: artifact.id,
+              user_id: actingFor.id,
+              role: "owner",
+            })
+          if (agent.id !== actingFor?.id)
+            await ctx.meta.setArtifactMember({
+              id: newId("am"),
+              artifact_id: artifact.id,
+              user_id: agent.id,
+              role: actingFor ? "editor" : "owner",
+            })
+        }
         // Re-anchor existing threads: feedback whose quoted text changed flips to
         // `outdated` (and back to `open` if the text reappears). Same sweep the
         // HTTP route runs — MCP publish must call it too.

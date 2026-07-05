@@ -38,7 +38,7 @@ export const artifact = sqliteTable("artifact", {
   org_id: text("org_id").notNull().default("local"),
   slug: text("slug"),
   title: text("title"),
-  visibility: text("visibility").$type<Visibility>().notNull().default("link"),
+  visibility: text("visibility").$type<Visibility>().notNull().default("private"),
   password_hash: text("password_hash"),
   // The role general access (the link) grants a reacher with no higher explicit
   // grant. viewer = view-only (default); commenter = authed reachers may comment
@@ -207,6 +207,11 @@ export const agent = sqliteTable(
     name: text("name").notNull(),
     token: text("token").notNull(),
     role: text("role").$type<Role>().notNull().default("commenter"),
+    // The user who registered the agent. An agent acts ON BEHALF of this person:
+    // publishes are attributed and owned by them (like OAuth agents' granting
+    // user). Null for agents from before the column existed — those publish as
+    // themselves, so recreating the agent is the upgrade path.
+    created_by: text("created_by"),
     created_at: text("created_at").notNull().default(now),
   },
   (t) => [

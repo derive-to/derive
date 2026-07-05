@@ -8,7 +8,7 @@ import { fail, readJson } from "../lib/http"
 
 /** Agent registry (Admin-managed) + the agent's pull inbox of @mentions. */
 export const agentRoutes = (ctx: AppContext) => {
-  const { meta, activeWorkspace, agentFor, workspaceCan } = ctx
+  const { meta, activeWorkspace, agentFor, currentUser, workspaceCan } = ctx
   const app = new Hono()
 
   const agentJson = (a: AgentRecord) => ({
@@ -50,6 +50,9 @@ export const agentRoutes = (ctx: AppContext) => {
         name,
         token: sha256(token),
         role,
+        // The agent publishes on behalf of whoever registered it: their id keys
+        // attribution (author_id) and ownership (the owner-member row) at publish.
+        created_by: (await currentUser(c))?.id ?? null,
       })
       // The only place the raw token is ever exposed.
       return c.json({ ...agentJson(agent), token }, 201)
