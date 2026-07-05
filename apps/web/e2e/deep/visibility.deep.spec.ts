@@ -37,7 +37,7 @@ test("a default publish is private: invisible to another user until the link is 
   await owner.getByTestId("share-trigger").click()
   const saved = owner.waitForResponse((r) => r.url().includes("/visibility") && r.ok())
   await owner.getByTestId("share-visibility").click()
-  await owner.getByRole("option", { name: "Anyone with the link" }).click()
+  await owner.getByRole("menuitemradio", { name: "Anyone with the link" }).click()
   await saved
 
   // Now the second user can read it.

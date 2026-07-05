@@ -24,7 +24,7 @@ test("owner shares an artifact, changes the role, and removes the member", async
   // Share with the teammate as a commenter.
   await owner.getByTestId("share-email").fill(secondUser.email)
   await owner.getByTestId("share-role").click()
-  await owner.getByRole("option", { name: "Commenter", exact: true }).click()
+  await owner.getByRole("menuitemradio", { name: "Commenter", exact: true }).click()
   await owner.getByTestId("share-add").click()
 
   const teammate = rows.filter({ hasNotText: "(you)" })
@@ -34,7 +34,7 @@ test("owner shares an artifact, changes the role, and removes the member", async
 
   // Promote them to editor.
   await teammate.locator('[data-testid^="share-member-role-"]').click()
-  await owner.getByRole("option", { name: "Editor", exact: true }).click()
+  await owner.getByRole("menuitemradio", { name: "Editor", exact: true }).click()
   await expect(teammate.locator('[data-testid^="share-member-role-"]')).toContainText("Editor")
 
   // Remove them: back to just the owner.
