@@ -726,6 +726,12 @@ interface ElReg {
       if (!chipEl) return
       const el = chipEl
       const r = el.getBoundingClientRect()
+      // Guard the element selection we're about to place, exactly as the touch element-
+      // tap does: this click was preceded by a mouseup, which scheduled emitSelection —
+      // and with no text selected that would post a null `select` a beat later, wiping
+      // this one out (the reason clicking the chip appeared to do nothing). tapGuard
+      // makes emitSelection / selectionchange skip their null-post for a short window.
+      tapGuard = Date.now()
       /* the host stamps the deck slide onto the selector, same as the text path. */
       post({
         type: "select",
