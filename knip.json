@@ -8,6 +8,9 @@
     "apps/web": {
       "entry": ["src/components/ui/**", "e2e/**/*.screens.ts"]
     },
+    "packages/core": {
+      "entry": ["src/anchor-client.ts"]
+    },
     "packages/db": {
       "ignore": ["test/env.d.ts"],
       "ignoreDependencies": ["cloudflare"]
