@@ -74,6 +74,19 @@ describe("agents publish on behalf of who registered them", () => {
     // And it lands in Ana's own library listing.
     const list = await (await app.request("/v1/artifacts", { headers: as(ana.email) })).json()
     expect(list.artifacts.map((x: { short_id: string }) => x.short_id)).toContain(a.short_id)
+
+    // The agent lists too (MCP list_artifacts rides this) and sees its own
+    // private publish — its editor member-row passes the private filter.
+    const agentList = await (
+      await app.request("/v1/artifacts", {
+        headers: { authorization: `Bearer ${reg.token}` },
+      })
+    ).json()
+    const row = agentList.artifacts.find((x: { short_id: string }) => x.short_id === a.short_id)
+    expect(row?.my_role).toBe("editor")
+
+    // Anonymous listing stays 401.
+    expect((await app.request("/v1/artifacts")).status).toBe(401)
   })
 })
 
