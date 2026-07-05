@@ -258,6 +258,18 @@ export const agentsQuery = () =>
     queryFn: () => api.listAgents().then((r) => r.agents),
   })
 
+// The agents an artifact viewer may address (the "ask an agent to revise" flow). Read
+// off the @mention directory (which any commenter can see, unlike /v1/agents which is
+// owner-only), filtered to kind:"agent". Stable per artifact.
+export const artifactAgentsQuery = (shortId: string) =>
+  queryOptions({
+    queryKey: ["artifact-agents", shortId] as const,
+    queryFn: () =>
+      api
+        .users(undefined, shortId)
+        .then((r) => r.users.filter((u) => u.kind === "agent" && u.name)),
+  })
+
 // Open abuse reports for the active workspace — drives the owner-only Moderation
 // nav item's visibility + the Reports section. Invalidated after a takedown / dismiss.
 export const reportsQuery = () =>

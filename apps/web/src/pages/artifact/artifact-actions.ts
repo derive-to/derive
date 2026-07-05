@@ -5,7 +5,7 @@ import { toast } from "@/components/ui/sonner"
 import { commentsQuery } from "@/lib/queries"
 import type { CommentActions } from "./comment-actions"
 import { toggleReaction } from "./lib/reactions"
-import type { ComposerState, Sel, Selection } from "./types"
+import type { AgentTarget, ComposerState, Sel, Selection } from "./types"
 
 type Me = { name?: string | null; email?: string | null } | null
 
@@ -21,8 +21,6 @@ export function artifactActions(p: {
   art: { title?: string | null; short_id: string; current_version: number }
   qc: QueryClient
   me: Me
-  /** Which comment tab is active — a new thread inherits its visibility. */
-  tab: "comments" | "personal"
   src: string
   title: string
   proposeMsg: string
@@ -34,6 +32,8 @@ export function artifactActions(p: {
   load: () => void
   refetchComments: () => void
   onRestoredJump: () => void
+  /** Open the review overlay (from an agent-request card whose revision is ready). */
+  onOpenReview: () => void
   setEditing: Dispatch<SetStateAction<boolean>>
   setSrc: Dispatch<SetStateAction<string>>
   setTitle: Dispatch<SetStateAction<string>>
@@ -93,7 +93,6 @@ export function artifactActions(p: {
       threadId?: string
       anchor?: Sel | null
       mentions?: Mention[]
-      visibility?: "public" | "personal"
     },
   ) => {
     if (!text.trim()) return
@@ -145,7 +144,6 @@ export function artifactActions(p: {
     await addComment(text, {
       anchor,
       mentions,
-      visibility: p.tab === "personal" ? "personal" : "public",
     })
   }
   const toggleResolve = async (root: Comment) => {
@@ -172,6 +170,14 @@ export function artifactActions(p: {
   const startSelComment = () => {
     if (!p.sel) return
     p.setComposer({ anchor: p.sel.selector, top: p.sel.top })
+    p.setActiveThread(null)
+  }
+  // Open the composer as a revision REQUEST addressed to `agent` (the "ask an agent to
+  // revise this selection" flow) — same anchored composer, pre-seeded with the mention
+  // so the posted note lands in the agent's MCP pull inbox.
+  const startSelAgent = (agent: AgentTarget) => {
+    if (!p.sel) return
+    p.setComposer({ anchor: p.sel.selector, top: p.sel.top, agent })
     p.setActiveThread(null)
   }
   const actions: CommentActions = {
@@ -211,6 +217,7 @@ export function artifactActions(p: {
         .then(() => toast.success("Link copied"))
         .catch(() => toast(url))
     },
+    openReview: p.onOpenReview,
   }
   const restore = async (n: number) => {
     p.setRestoring(true)
@@ -235,6 +242,7 @@ export function artifactActions(p: {
     toggleResolve,
     activate,
     startSelComment,
+    startSelAgent,
     actions,
     restore,
   }

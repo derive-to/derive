@@ -22,6 +22,9 @@ const CommentScopeContext = createContext<{
   /** Per-thread element-anchor resolution quality, so a card can show a quiet
    *  "moved" marker when its element relocated with less than full confidence. */
   anchorConf?: AnchorConf
+  /** Ids of the workspace's agents — so a card can tell a "revision request" thread
+   *  (one addressed to an agent) from a plain comment, and label its lifecycle. */
+  agentIds?: Set<string>
 }>({
   shortId: null,
   canComment: true,

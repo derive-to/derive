@@ -14,6 +14,7 @@ import { PICKER_EMOJI } from "@/lib/emoji"
 import { cn } from "@/lib/utils"
 import { useCommentScope } from "./lib/comment-scope"
 import { quoteChipClass } from "./quote-chip"
+import type { AgentTarget } from "./types"
 
 // Split the composer text into plain / mention runs for the highlight backdrop.
 // React renders each run (escaping text itself, so no innerHTML), and the inline
@@ -103,7 +104,14 @@ export function MentionField({
   }
 
   useLayoutEffect(() => {
-    if (autoFocus) ref.current?.focus()
+    const el = ref.current
+    if (!autoFocus || !el) return
+    el.focus()
+    // Place the caret AT THE END of any seeded text (e.g. the "@Agent " an agent
+    // request pre-fills) — `focus()` alone leaves the caret position browser-defined
+    // (Safari/Firefox can land it at 0), which would drop typing before the mention.
+    const end = el.value.length
+    el.setSelectionRange(end, end)
   }, [autoFocus])
 
   // Fetch directory matches as the @query under the caret changes.
@@ -354,21 +362,42 @@ export function Composer({
   quote,
   onSubmit,
   onCancel,
-  personal,
+  agent,
 }: {
   quote: string | null
   onSubmit: (t: string, mentions: Mention[]) => void
   onCancel: () => void
-  /** Personal tab: a private note for you + your agents — reflected in the copy. */
-  personal?: boolean
+  /** Set when this is a revision REQUEST addressed to an agent — seeds the mention,
+   *  reframes the copy, and posts so the request drops into the agent's MCP inbox. */
+  agent?: AgentTarget
 }) {
-  const [text, setText] = useState("")
-  const [mentions, setMentions] = useState<Mention[]>([])
+  // A request seeds `@Agent ` + the mention up front, so the note is addressed the
+  // moment it opens; a plain comment starts empty. The composer unmounts between opens
+  // (it only renders for a live composer), so this initial state re-seeds each time.
+  // MentionField's autofocus drops the caret after the seed (see its setSelectionRange).
+  const [text, setText] = useState(agent ? `@${agent.name} ` : "")
+  const [mentions, setMentions] = useState<Mention[]>(
+    agent ? [{ id: agent.id, name: agent.name }] : [],
+  )
   const submit = (resolved: Mention[]) => {
     if (text.trim()) onSubmit(text, resolved)
   }
   return (
-    <div className="overflow-hidden rounded-lg border border-border bg-card shadow-[var(--shadow)]">
+    <div
+      data-testid={agent ? "agent-request-composer" : "comment-composer"}
+      className={cn(
+        "overflow-hidden rounded-lg border bg-card shadow-[var(--shadow)]",
+        // A request reads as a distinct, ink-tinted moment (the one place the accent
+        // carries a "hand this to an agent" action), not a plain neutral comment box.
+        agent ? "border-primary/40 ring-1 ring-primary/15" : "border-border",
+      )}
+    >
+      {agent && (
+        <div className="flex items-center gap-1.5 border-b border-primary/20 bg-primary/5 px-2.5 py-1.5 text-sm font-medium text-foreground">
+          <Icon name="sparkles" size={14} className="text-primary" />
+          Ask {agent.name} to revise
+        </div>
+      )}
       {quote && (
         // Phones get a longer multi-line preview of what you're commenting on; the
         // desktop margin composer stays a tight single line.
@@ -393,19 +422,13 @@ export function Composer({
           onSubmit={submit}
           onCancel={onCancel}
           placeholder={
-            personal
-              ? "Add a personal note… (@ to mention)"
+            agent
+              ? "Describe the change… e.g. tighten this paragraph"
               : quote
                 ? "Comment on the selection… (@ to mention)"
                 : "Add a comment… (@ to mention)"
           }
         />
-        {personal && (
-          <div className="mt-1.5 flex items-center gap-1.5 text-sm text-muted-foreground">
-            <Icon name="lock" />
-            Visible only to you and the agents you've connected.
-          </div>
-        )}
         <div className="mt-1.5 flex gap-1.5">
           <Button
             variant="default"
@@ -415,7 +438,7 @@ export function Composer({
             data-testid="composer-submit"
             onClick={() => submit(mentions.filter((m) => text.includes(`@${m.name}`)))}
           >
-            {personal ? "Post note" : "Comment"}
+            {agent ? "Send request" : "Comment"}
           </Button>
           <Button variant="outline" size="sm" data-testid="composer-cancel" onClick={onCancel}>
             Cancel

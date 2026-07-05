@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs"
 import { fileURLToPath } from "node:url"
 import { describe, expect, it } from "vitest"
+import { fingerprintFrom } from "../src/anchor-shared"
 import {
   type ElementSelector,
   elementLabel,
@@ -394,80 +395,20 @@ describe("resolveElement edge cases", () => {
   })
 })
 
-// The iframe client (ANCHOR_CLIENT_JS in anchor.ts) duplicates `fnv` verbatim so a
-// fingerprint made in the browser equals one made here. If they drift, element
-// anchors created in the browser silently stop resolving server-side. Pin parity by
-// extracting the client's fnv and comparing it to fnv1a.
+// Fingerprint parity: the browser client (anchor-client.ts) and this server resolver
+// BOTH import fnv1a/normWs/fingerprintFrom from the shared `anchor-shared` module, so a
+// fingerprint made in the browser equals one made here BY CONSTRUCTION — there's no
+// hand-copied vanilla-JS transcription to drift (it used to, silently: an empty-string
+// vs a control-char separator once made every browser-made anchor fail server-side).
+// These pin the hash output, prove the server routes through the shared assembly, and
+// confirm the generated client bundle actually CARRIES that shared hash.
 describe("client/server fingerprint parity", () => {
-  it("the browser client's fnv() equals fnv1a()", () => {
-    const path = fileURLToPath(new URL("../src/anchor.ts", import.meta.url))
-    const src = readFileSync(path, "utf8")
-    const marker = "export const ANCHOR_CLIENT_JS = `"
-    const start = src.indexOf(marker) + marker.length
-    let i = start
-    let end = -1
-    while (i < src.length) {
-      if (src[i] === "\\") {
-        i += 2
-        continue
-      }
-      if (src[i] === "`") {
-        end = i
-        break
-      }
-      i++
-    }
-    const js = src.slice(start, end).replace(/\\(.)/g, (_, c) => c) // one unescape level
-    const body = js.match(/function fnv\(s\)\{[\s\S]*?return h\.toString\(36\)\}/)
-    expect(body).not.toBeNull()
-    const clientFnv = new Function(`${body?.[0]};return fnv`)() as (s: string) => string
-    for (const c of ["", "abc", "img/charts/revenue.pngRevenue by region", "tableweird", "héllo"]) {
-      expect(clientFnv(c)).toBe(fnv1a(c))
-    }
+  it("pins the FNV hash output — a change here is a cross-side parity break", () => {
+    expect(fnv1a("")).toBe("ztntfp")
+    expect(fnv1a("hello")).toBe("m3bicr")
   })
 
-  // The hash matching isn't enough: the two sides also have to JOIN the fields the
-  // same way. They once differed (empty string vs a control-char separator), so every
-  // browser-made anchor failed to resolve server-side. This extracts the client's real
-  // elFp chain and pins it to fingerprintOf, end to end.
-  it("the browser client's elFp() equals fingerprintOf() — fields AND separator", () => {
-    const path = fileURLToPath(new URL("../src/anchor.ts", import.meta.url))
-    const src = readFileSync(path, "utf8")
-    const head = "export const ANCHOR_CLIENT_JS = `"
-    const m = src.indexOf(head)
-    let i = m + head.length
-    let end = -1
-    while (i < src.length) {
-      if (src[i] === "\\") {
-        i += 2
-        continue
-      }
-      if (src[i] === "`") {
-        end = i
-        break
-      }
-      i++
-    }
-    const js = src.slice(m + head.length, end).replace(/\\(.)/g, (_, c) => c)
-    const grab = (re: RegExp) => {
-      const g = js.match(re)
-      if (!g) throw new Error(`client fn not found: ${re}`)
-      return g[0]
-    }
-    const clientElFp = new Function(
-      `${grab(/function fnv\(s\)\{[\s\S]*?return h\.toString\(36\)\}/)}
-       ${grab(/function nw\(s\)\{[\s\S]*?\}/)}
-       ${grab(/function elSrc\(el\)\{[\s\S]*?\}/)}
-       ${grab(/function elAlt\(el\)\{[\s\S]*?\}/)}
-       ${grab(/function elText\(el\)\{[\s\S]*?\}/)}
-       ${grab(/function elFp\(el\)\{[\s\S]*?\}/)}
-       return elFp`,
-    )() as (el: unknown) => string
-    const stub = (tag: string, attrs: Record<string, string>, text = "") => ({
-      tagName: tag.toUpperCase(),
-      textContent: text,
-      getAttribute: (k: string) => attrs[k] ?? null,
-    })
+  it("the server routes fingerprintOf through the shared fingerprintFrom — fields AND separator", () => {
     const cases: Array<[string, Record<string, string>, string]> = [
       ["img", { src: "https://x.test/a.png?text=Hero%2BChart", alt: "Unique Hero Chart" }, ""],
       ["iframe", { src: "https://youtube.com/embed/abc" }, ""],
@@ -475,11 +416,25 @@ describe("client/server fingerprint parity", () => {
       ["img", { src: "a", alt: "b" }, ""], // boundary the separator defends
     ]
     for (const [tag, attrs, text] of cases) {
-      expect(clientElFp(stub(tag, attrs, text))).toBe(fingerprintOf({ tag, attrs, text }))
+      // The client extracts src/href, alt/aria-label/title, and normalized text the same
+      // way (see anchor-client.ts elSrc/elAlt/elText), then calls the SAME fingerprintFrom.
+      const src = attrs.src || attrs.href || ""
+      const alt = attrs.alt || attrs["aria-label"] || attrs.title || ""
+      expect(fingerprintOf({ tag, attrs, text })).toBe(fingerprintFrom(tag, src, alt, text))
     }
     // Proof the separator is load-bearing: these collide if fields are joined with "".
     expect(fingerprintOf({ tag: "img", attrs: { src: "a", alt: "b" }, text: "" })).not.toBe(
       fingerprintOf({ tag: "img", attrs: { alt: "ab" }, text: "" }),
     )
+  })
+
+  it("the generated browser client inlines the shared fingerprint hash (esbuild kept it intact)", () => {
+    const path = fileURLToPath(new URL("../src/anchor-client.gen.ts", import.meta.url))
+    const gen = readFileSync(path, "utf8")
+    // esbuild emits the FNV-1a offset basis (0x811c9dc5) in decimal, and the field
+    // separator (U+0001) survives into the bundled string — so the real shared hash is
+    // present in the client, not tree-shaken away or transformed.
+    expect(gen).toContain("2166136261")
+    expect(gen).toContain("\\u0001")
   })
 })

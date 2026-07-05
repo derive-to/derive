@@ -2,14 +2,14 @@ import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useNavigate, useParams } from "@tanstack/react-router"
 import { Minimize2 } from "lucide-react"
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react"
-import { API_BASE, ApiError, api, type Comment } from "@/api"
+import { API_BASE, ApiError, api } from "@/api"
 import { Icon } from "@/components/icons"
 import { Kbd } from "@/components/ui/kbd"
 import { useSidebar } from "@/components/ui/sidebar"
 import { toast } from "@/components/ui/sonner"
 import { useAuth } from "@/ctx"
 import { artifactTypeLabel } from "@/lib/artifact"
-import { artifactQuery, commentsQuery } from "@/lib/queries"
+import { artifactAgentsQuery, artifactQuery, commentsQuery } from "@/lib/queries"
 import { ago } from "@/lib/time"
 import { useIsMobile } from "@/lib/use-is-mobile"
 import { cn } from "@/lib/utils"
@@ -23,16 +23,17 @@ import { ActionsCtx } from "./comment-actions"
 import { CursorButton } from "./cursors/cursor-button"
 import { FloatingControl } from "./floating-control"
 import { canCommentWithRole, shouldPromptSignInToComment } from "./lib/comment-access"
-import { groupThreads, parseAnchor } from "./lib/layout"
+import { bucketThreads } from "./lib/layout"
 import { parseRef, refFor } from "./parse-ref"
 import { PasswordGate } from "./password-gate"
 import { PublicViewer } from "./public-viewer"
 import { Presence } from "./rail-deck"
 import { ReviewCard } from "./review-card"
 import { SourceEditor } from "./source-editor"
-import type { ComposerState, PinItem } from "./types"
+import { type ComposerState, parseAnchor } from "./types"
 import { useArtifactFrame } from "./use-artifact-frame"
 import { useArtifactLive } from "./use-artifact-live"
+import { useArtifactRoute } from "./use-artifact-route"
 import { useCommentsPanel } from "./use-comments-panel"
 import { useVersionDiff } from "./use-version-diff"
 import { WorkbenchSkeleton } from "./workbench-skeleton"
@@ -104,6 +105,10 @@ export function Artifact() {
   const qc = useQueryClient()
   const { data: art, isError: failed, error, refetch } = useQuery(artifactQuery(shortId))
   const { data: comments = [] } = useQuery(commentsQuery(shortId))
+  // Agents this viewer can hand a revision to (the "ask an agent" flow). Empty for
+  // an anon viewer (the query is authed) or a workspace with no agents — then the
+  // affordance simply doesn't appear.
+  const { data: agents = [] } = useQuery({ ...artifactAgentsQuery(shortId), enabled: !!me })
   // A password artifact returns 401 until the visitor unlocks it — show the
   // password prompt rather than the not-found state or a bounce to login.
   const locked = failed && error instanceof ApiError && error.status === 401
@@ -130,34 +135,12 @@ export function Artifact() {
   // can rename, and it republishes with the new name.
   const [editTitle, setEditTitle] = useState("")
 
-  // Canonicalise the URL client-side: once the artifact is loaded, rewrite any
-  // non-canonical ref (bare id, stale name, legacy order) to /artifacts/<name>-<shortId> so
-  // the browser holds the readable URL. replace:true so Back doesn't bounce through
-  // the old ref; preserves the @vN suffix and the current search.
-  useEffect(() => {
-    if (!art || art.removed) return
-    const canonical = version
-      ? `${refFor({ short_id: shortId, title: art.title })}@v${version}`
-      : refFor({ short_id: shortId, title: art.title })
-    if (ref !== canonical)
-      nav({ to: "/artifacts/$ref", params: { ref: canonical }, search: (s) => s, replace: true })
-  }, [art, ref, version, shortId, nav])
-
   // Comments UI state shared across the page, the panel, and the iframe bridge.
   const [composer, setComposer] = useState<ComposerState>(null)
   const [activeThread, setActiveThread] = useState<string | null>(null)
   const [hoverThread, setHoverThread] = useState<string | null>(null)
   // The open/hidden comments panel, with its persistence + `c`/Esc hotkeys.
   const { panel, setPanel } = useCommentsPanel(() => setComposer(null))
-  // Which comment surface is showing: the public team thread, or your personal notes
-  // (private to you + the agents you've authed). Two filtered views of one list. The
-  // panel shows the active tab; the document highlights BOTH (shared lavender +
-  // personal ink), and clicking a highlight switches to its tab.
-  const [commentTab, setCommentTab] = useState<"comments" | "personal">("comments")
-  const publicComments = comments
-  const activeComments = publicComments
-  // Stable so the iframe message listener subscribes once (it lives in onAnchorTab's deps).
-  const onAnchorTab = useCallback((_personal: boolean) => setCommentTab("comments"), [])
 
   // Server-truth refetch after a write or an SSE ping (defined up here so the
   // realtime hook + the iframe message bridge below can both lean on them).
@@ -196,11 +179,8 @@ export function Artifact() {
     docH,
     viewH,
   } = useArtifactFrame({
-    // Paint BOTH the shared and your personal anchors in the doc (the server already
-    // limits personal ones to you), color-differentiated; a click jumps to the right
-    // tab. The panel itself stays scoped to the active tab.
+    // Paint the open/addressed thread anchors in the doc; a click focuses the thread.
     comments,
-    onAnchorTab,
     shortId,
     version,
     hoverThread,
@@ -266,33 +246,26 @@ export function Artifact() {
     post({ type: "focus-anchor", id: threadId, bias: isMobile ? 0.28 : undefined })
   }
 
-  useEffect(() => {
-    // Anonymous can view a public artifact (read-only, with a sign-up CTA). Bounce
-    // to login ONLY when the artifact is genuinely gated (404/403) for a logged-out
-    // visitor — then an account is required. A TRANSIENT failure (5xx/network) also
-    // nulls `me` (the session check failed too), but must NOT eject the user to
-    // login mid-outage — the recoverable error state below handles that, so the
-    // page comes back cleanly once the server does.
-    const gated = error instanceof ApiError && (error.status === 404 || error.status === 403)
-    if (!loading && !me && failed && !locked && gated) nav({ to: "/login" })
-  }, [loading, me, failed, locked, error, nav])
-
-  // Deep link: ?comment=<thread> opens the panel, activates that thread, and jumps to
-  // its text. Runs once, after comments are in.
-  const deepLinked = useRef(false)
-  useEffect(() => {
-    if (deepLinked.current || comments.length === 0) return
-    deepLinked.current = true
-    const cid = new URLSearchParams(window.location.search).get("comment")
-    const target = cid ? comments.find((c) => c.thread_id === cid) : undefined
-    if (target) {
-      // Open the tab the thread lives on, or its anchor won't be live in the doc.
-      setCommentTab("comments")
-      setPanel("open")
-      setActiveThread(target.thread_id)
-      setTimeout(() => post({ type: "focus-anchor", id: target.thread_id }), 320)
-    }
-  }, [comments, post, setPanel])
+  // URL canonicalisation, the anon-bounce gate, and the ?comment deep link — the
+  // page's routing side-effects. `nav` stays here; the hook takes decoupled callbacks.
+  useArtifactRoute({
+    art,
+    ref,
+    shortId,
+    version,
+    comments,
+    authed: !!me,
+    loading,
+    failed,
+    locked,
+    error,
+    onCanonical: (canonical) =>
+      nav({ to: "/artifacts/$ref", params: { ref: canonical }, search: (s) => s, replace: true }),
+    onLoginBounce: () => nav({ to: "/login" }),
+    post,
+    setPanel,
+    setActiveThread,
+  })
 
   if (locked) return <PasswordGate shortId={shortId} onUnlocked={() => refetch()} />
   if (failed) {
@@ -359,53 +332,18 @@ export function Artifact() {
   const promptSignInToComment = shouldPromptSignInToComment(isAnon, art.general_role, !!art.removed)
 
   // Sort threads into pinned (anchored & present in this live doc), general
-  // (unanchored or orphaned), and resolved. Pins drive both the margin cards
-  // and the collapsed rail dots.
+  // (unanchored / orphaned / off-slide), and resolved — pure, from the frame's
+  // reported geometry. Pins drive the margin cards; general waits in the drawer.
   const docLive = !editing && view === "preview"
-  // Per-tab open-thread counts for the tab badges (the split itself + the active
-  // set are computed up top, before the iframe hook, so the doc can scope to it).
-  const openCountOf = (cs: Comment[]) =>
-    groupThreads(cs).filter((t) => t[0] && t[0].state !== "resolved").length
-  const publicCount = openCountOf(publicComments)
-  const all = groupThreads(activeComments)
-  // `outdated` threads (their quoted text changed in a later version) stay in the
-  // active list, not the resolved drawer — their anchor no longer resolves, so
-  // they fall into the general/orphaned bucket below and stay visible to triage.
-  const openThreads = all.filter((t) => t[0] && t[0].state !== "resolved")
-  const resolvedThreads = all.filter((t) => t[0]?.state === "resolved")
-  const pinned: PinItem[] = []
-  const general: Comment[][] = []
-  const pinHere = (t: Comment[], id: string) => {
-    const top = anchorTops[id]
-    pinned.push({ thread: t, desiredY: top != null ? top - scrollY : 0, located: top != null })
-  }
-  for (const t of openThreads) {
-    const head = t[0]
-    if (!head) continue
-    const id = head.thread_id
-    const a = parseAnchor(head.anchor)
-    // Does this thread's anchor resolve in the live doc? The frame reports `inDoc`
-    // for the anchors it was sent (open/addressed). An `outdated` thread is NOT sent
-    // to the frame, so `inDoc[id]` is undefined — fall back to the server's `anchored`
-    // flag rather than defaulting to "present" (which would pin it invisibly at
-    // opacity 0 instead of showing it as an orphan in the general list).
-    const present = id in inDoc ? inDoc[id] !== false : head.anchored !== false
-    if (deck && a) {
-      // Deck: a comment belongs to the slide its text actually resolved on (landed),
-      // or, until that's known, the slide it was made on (recorded). Pin it only on
-      // that slide; otherwise it waits in the drawer with a "Slide N" badge.
-      const landed = landedSlides[id]
-      const effSlide = landed != null ? landed : a.slide
-      if (effSlide != null && effSlide !== deck.i) general.push(t)
-      else if (docLive && present) pinHere(t, id)
-      else general.push(t)
-    } else if (docLive && a && present) {
-      pinHere(t, id)
-    } else {
-      general.push(t)
-    }
-  }
-  const openCount = openThreads.length
+  const { openThreads, resolvedThreads, pinned, general, openCount } = bucketThreads({
+    comments,
+    docLive,
+    deck,
+    inDoc,
+    landedSlides,
+    anchorTops,
+    scrollY,
+  })
 
   const {
     startEdit,
@@ -416,6 +354,7 @@ export function Artifact() {
     toggleResolve,
     activate,
     startSelComment,
+    startSelAgent,
     actions,
     restore,
   } = artifactActions({
@@ -423,7 +362,6 @@ export function Artifact() {
     art,
     qc,
     me,
-    tab: commentTab,
     src,
     title: editTitle,
     proposeMsg,
@@ -439,6 +377,7 @@ export function Artifact() {
         to: "/artifacts/$ref",
         params: { ref: refFor({ short_id: shortId, title: art.title }) },
       }),
+    onOpenReview: () => setReviewing(true),
     setEditing,
     setSrc,
     setTitle: setEditTitle,
@@ -751,9 +690,6 @@ export function Artifact() {
               }
               docLive={docLive}
               panel={panel}
-              tab={commentTab}
-              setTab={setCommentTab}
-              publicCount={publicCount}
               asideWidth={asideWidth}
               openCount={openCount}
               scrollY={scrollY}
@@ -778,6 +714,8 @@ export function Artifact() {
               submitNew={submitNew}
               jumpTo={jumpTo}
               startSelComment={startSelComment}
+              startSelAgent={startSelAgent}
+              agents={agents}
               currentSlide={deck?.i ?? null}
               landedSlides={landedSlides}
               anchorConf={anchorConf}

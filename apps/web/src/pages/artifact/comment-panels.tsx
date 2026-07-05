@@ -1,94 +1,50 @@
-import {
-  type Dispatch,
-  type ReactNode,
-  type SetStateAction,
-  useEffect,
-  useLayoutEffect,
-  useRef,
-  useState,
-} from "react"
+import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react"
 import type { Comment, Mention } from "@/api"
 import { Icon } from "@/components/icons"
 import { EmptyState } from "@/components/shared/empty-state"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Kbd } from "@/components/ui/kbd"
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { useFocusTrap } from "@/lib/use-focus-trap"
 import { cn } from "@/lib/utils"
 import { Composer } from "./comment-composer"
 import { CollapsibleThreadSection, CommentCard, PinnedZone } from "./comment-thread"
 import { useCommentScope } from "./lib/comment-scope"
+import { CommentTreeProvider, useCommentTree } from "./lib/comment-tree"
 import { type ComposerState, type PinItem, selLabel } from "./types"
 
-type Tab = "comments" | "personal"
+// Touch has no hover, so the mobile sheet overrides the tree's onHover with this.
+const NO_HOVER = () => {}
 
-// Machine register: a neutral mono count, not an ink signal.
-const TabCount = ({ n }: { n: number }) => <Badge shape="pill">{n}</Badge>
-
-/** The Comments | Personal switch in a panel header — the shared shadcn Tabs control,
- *  so it matches Settings/Share. Personal is your private notes, visible only to you
- *  and the agents you've authed (the server enforces it); the parent owns which list
- *  shows, so there's no TabsContent here. */
-function CommentTabs({
-  tab,
-  setTab,
-  publicCount,
-}: {
-  tab: Tab
-  setTab: Dispatch<SetStateAction<Tab>>
-  publicCount: number
-}) {
+// The comments panel header: a label + the open-thread count (a neutral mono pill,
+// not an ink signal). This was a Comments|Personal tab switch until personal comments
+// were removed; a single surface needs only a heading.
+function CommentsHeading({ count }: { count: number }) {
   return (
-    <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)} className="min-w-0 flex-1">
-      <TabsList size="sm" className="w-full">
-        {/* Labels get their own element (never a bare text node beside the count
-            pill): truncation stays controllable and the label reads as exactly
-            "Comments" to tests/AT even when a count rides along. */}
-        <TabsTrigger value="comments" data-testid="comment-tab-comments" className="flex-1">
-          <span>Comments</span>
-          {publicCount > 0 && <TabCount n={publicCount} />}
-        </TabsTrigger>
-      </TabsList>
-    </Tabs>
+    <div className="flex min-w-0 flex-1 items-center gap-1.5 pl-1.5">
+      <span className="text-sm font-medium text-foreground">Comments</span>
+      {count > 0 && <Badge shape="pill">{count}</Badge>}
+    </div>
   )
 }
 
 export function MobileComments({
   open,
-  tab,
-  setTab,
-  publicCount,
   openThreads,
   resolved,
   composer,
-  activeThread,
-  inDoc,
   onClose,
   onNewGeneral,
-  onActivate,
-  onResolve,
-  onReply,
-  onJump,
   onSubmitNew,
   onCancelNew,
 }: {
   open: boolean
-  tab: Tab
-  setTab: Dispatch<SetStateAction<Tab>>
-  publicCount: number
   openThreads: Comment[][]
   resolved: Comment[][]
   composer: ComposerState
-  activeThread: string | null
-  inDoc: Record<string, boolean>
   onClose: () => void
   onNewGeneral: () => void
-  onActivate: (id: string) => void
-  onResolve: (c: Comment) => void
-  onReply: (text: string, threadId: string, mentions?: Mention[]) => void
-  onJump: (id: string) => void
   onSubmitNew: (text: string, mentions?: Mention[]) => void
   onCancelNew: () => void
   reviewCard?: ReactNode
@@ -98,6 +54,7 @@ export function MobileComments({
   // keyboard (see the height + `kb` style below), so the box sits flush above the
   // keyboard with the document visible above — no awkward half-height middle state.
   const { canComment } = useCommentScope()
+  const tree = useCommentTree()
   const [size, setSize] = useState<"peek" | "full">("peek")
   const sheetRef = useRef<HTMLDivElement>(null)
   useFocusTrap(sheetRef, open)
@@ -150,8 +107,11 @@ export function MobileComments({
   // Jumping to text: drop to the peek bar so the highlight is visible in the doc.
   const jumpToText = (id: string) => {
     setSize("peek")
-    onJump(id)
+    tree.onJump(id)
   }
+  // The sheet's cards read this overridden tree: jumping also collapses the sheet, and
+  // touch has no hover (so no emphasis state) — everything else is the page's tree.
+  const sheetTree = { ...tree, hoverThread: null, onHover: NO_HOVER, onJump: jumpToText }
   return (
     <>
       {/* Backdrop only at full height (reading mode). At half the document above
@@ -195,7 +155,7 @@ export function MobileComments({
           <div className="h-1 w-10 rounded-full bg-border" />
         </div>
         <div className="flex items-center gap-2 border-b border-border-soft pb-3 pl-3 pr-2.5 pt-2">
-          <CommentTabs tab={tab} setTab={setTab} publicCount={publicCount} />
+          <CommentsHeading count={openThreads.length} />
           {canComment && (
             <Button
               variant="outline"
@@ -236,7 +196,7 @@ export function MobileComments({
           <div className="overflow-auto p-3 pb-[max(14px,env(safe-area-inset-bottom))]">
             <Composer
               quote={selLabel(composer.anchor)}
-              personal={tab === "personal"}
+              agent={composer.agent}
               // After posting, open the full list so the new comment is visible (the
               // sheet would otherwise drop back to the peek bar and hide it).
               onSubmit={(text, mentions) => {
@@ -247,72 +207,51 @@ export function MobileComments({
             />
           </div>
         ) : size === "full" ? (
-          <div className="min-h-0 flex-1 overflow-auto p-3 pb-[max(14px,env(safe-area-inset-bottom))]">
-            {empty && (
-              <EmptyState
-                className="p-8"
-                icon={<Icon name={tab === "personal" ? "lock" : "comments"} strokeWidth={1.75} />}
-                title={
-                  tab === "personal" ? "A private layer, just for you." : "Start the conversation."
-                }
-                description={
-                  tab === "personal"
-                    ? "Only you and your agents can see these notes."
-                    : "Select text in the document, or add a general comment."
-                }
-                action={
-                  canComment ? (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      data-testid="comments-sheet-empty-new"
-                      onClick={() => {
-                        setSize("full")
-                        onNewGeneral()
-                      }}
-                    >
-                      New comment
-                    </Button>
-                  ) : undefined
-                }
-              />
-            )}
-            {openThreads.map((t) => {
-              const head = t[0]
-              if (!head) return null
-              return (
-                <div key={head.thread_id} className="mb-2.5">
-                  <CommentCard
-                    thread={t}
-                    active={activeThread === head.thread_id}
-                    hovered={false}
-                    present={inDoc[head.thread_id]}
-                    onActivate={onActivate}
-                    onHover={() => {}}
-                    onResolve={onResolve}
-                    onReply={onReply}
-                    onJump={jumpToText}
-                  />
-                </div>
-              )
-            })}
-            {resolved.length > 0 && (
-              <CollapsibleThreadSection
-                label="Resolved"
-                defaultOpen={false}
-                testId="resolved-section-toggle"
-                className="mt-1"
-                threads={resolved}
-                activeThread={activeThread}
-                hoverThread={null}
-                onActivate={onActivate}
-                onHover={() => {}}
-                onResolve={onResolve}
-                onReply={onReply}
-                onJump={jumpToText}
-              />
-            )}
-          </div>
+          <CommentTreeProvider value={sheetTree}>
+            <div className="min-h-0 flex-1 overflow-auto p-3 pb-[max(14px,env(safe-area-inset-bottom))]">
+              {empty && (
+                <EmptyState
+                  className="p-8"
+                  icon={<Icon name="comments" strokeWidth={1.75} />}
+                  title="Start the conversation."
+                  description="Select text in the document, or add a general comment."
+                  action={
+                    canComment ? (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        data-testid="comments-sheet-empty-new"
+                        onClick={() => {
+                          setSize("full")
+                          onNewGeneral()
+                        }}
+                      >
+                        New comment
+                      </Button>
+                    ) : undefined
+                  }
+                />
+              )}
+              {openThreads.map((t) => {
+                const head = t[0]
+                if (!head) return null
+                return (
+                  <div key={head.thread_id} className="mb-2.5">
+                    <CommentCard thread={t} />
+                  </div>
+                )
+              })}
+              {resolved.length > 0 && (
+                <CollapsibleThreadSection
+                  label="Resolved"
+                  defaultOpen={false}
+                  testId="resolved-section-toggle"
+                  className="mt-1"
+                  threads={resolved}
+                />
+              )}
+            </div>
+          </CommentTreeProvider>
         ) : null}
       </div>
     </>
@@ -320,50 +259,28 @@ export function MobileComments({
 }
 
 export function OpenPanel(props: {
-  tab: Tab
-  setTab: Dispatch<SetStateAction<Tab>>
-  publicCount: number
   openCount: number
   scrollY: number
   onScrollDoc: (dy: number) => void
   pinned: PinItem[]
   general: Comment[][]
   resolved: Comment[][]
-  activeThread: string | null
-  hoverThread: string | null
-  inDoc: Record<string, boolean>
   composer: ComposerState
   onHide: () => void
-  onActivate: (id: string) => void
-  onHover: (id: string | null) => void
-  onResolve: (c: Comment) => void
-  onReply: (text: string, threadId: string, mentions?: Mention[]) => void
-  onJump: (id: string) => void
   onNewGeneral: () => void
   onSubmitNew: (text: string, mentions?: Mention[]) => void
   onCancelNew: () => void
   reviewCard?: ReactNode
 }) {
   const {
-    tab,
-    setTab,
-    publicCount,
     openCount,
     scrollY,
     onScrollDoc,
     pinned,
     general,
     resolved,
-    activeThread,
-    hoverThread,
-    inDoc,
     composer,
     onHide,
-    onActivate,
-    onHover,
-    onResolve,
-    onReply,
-    onJump,
     onNewGeneral,
     onSubmitNew,
     onCancelNew,
@@ -395,7 +312,7 @@ export function OpenPanel(props: {
         ref={headerRef}
         className="flex items-center gap-1 border-b border-border-soft py-1.5 pl-2.5 pr-2"
       >
-        <CommentTabs tab={tab} setTab={setTab} publicCount={publicCount} />
+        <CommentsHeading count={openCount} />
         {canComment && (
           <Tooltip>
             <TooltipTrigger asChild>
@@ -439,19 +356,10 @@ export function OpenPanel(props: {
             highlighted text, sharing one overlap-free layout. */}
         <PinnedZone
           pins={pinned}
-          personal={tab === "personal"}
           topInset={headerH}
           scrollY={scrollY}
           onScrollDoc={onScrollDoc}
           composer={composer}
-          activeThread={activeThread}
-          hoverThread={hoverThread}
-          inDoc={inDoc}
-          onActivate={onActivate}
-          onHover={onHover}
-          onResolve={onResolve}
-          onReply={onReply}
-          onJump={onJump}
           onSubmitNew={onSubmitNew}
           onCancelNew={onCancelNew}
         />
@@ -461,15 +369,9 @@ export function OpenPanel(props: {
           <div className="absolute inset-0 grid place-items-center p-6">
             <EmptyState
               className="p-0"
-              icon={<Icon name={tab === "personal" ? "lock" : "comments"} strokeWidth={1.75} />}
-              title={
-                tab === "personal" ? "A private layer, just for you." : "Start the conversation."
-              }
-              description={
-                tab === "personal"
-                  ? "Jot one for yourself, or leave instructions your agents will pick up."
-                  : "Select text in the document, or add a general comment."
-              }
+              icon={<Icon name="comments" strokeWidth={1.75} />}
+              title="Start the conversation."
+              description="Select text in the document, or add a general comment."
               action={
                 canComment ? (
                   <Button
@@ -492,12 +394,7 @@ export function OpenPanel(props: {
         <div className="max-h-[44%] shrink-0 overflow-auto border-t border-border-soft p-2.5">
           {generalComposer && (
             <div className="mb-2.5">
-              <Composer
-                quote={null}
-                personal={tab === "personal"}
-                onSubmit={onSubmitNew}
-                onCancel={onCancelNew}
-              />
+              <Composer quote={null} onSubmit={onSubmitNew} onCancel={onCancelNew} />
             </div>
           )}
           {general.length > 0 && (
@@ -506,13 +403,6 @@ export function OpenPanel(props: {
               defaultOpen
               testId="general-section-toggle"
               threads={general}
-              activeThread={activeThread}
-              hoverThread={hoverThread}
-              onActivate={onActivate}
-              onHover={onHover}
-              onResolve={onResolve}
-              onReply={onReply}
-              onJump={onJump}
             />
           )}
           {resolved.length > 0 && (
@@ -522,13 +412,6 @@ export function OpenPanel(props: {
               testId="resolved-section-toggle"
               className="mt-1"
               threads={resolved}
-              activeThread={activeThread}
-              hoverThread={hoverThread}
-              onActivate={onActivate}
-              onHover={onHover}
-              onResolve={onResolve}
-              onReply={onReply}
-              onJump={onJump}
             />
           )}
         </div>

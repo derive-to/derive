@@ -1,6 +1,7 @@
 import {
   type AnchorThread,
   type AnchorTransition,
+  anchorContentFor,
   type BlobStore,
   type ElementSelector,
   type MetaStore,
@@ -116,9 +117,13 @@ export async function sweepAnchors(
 
   const transitions: AnchorTransition[] = []
   for (const [path, threads] of byPage) {
-    const content = await resolveText(path)
-    if (content == null) continue // page no longer resolvable — leave its threads alone
-    const planned = planAnchorSweep(threads, content)
+    const raw = await resolveText(path)
+    if (raw == null) continue // page no longer resolvable — leave its threads alone
+    // Build the anchor content (tag-stripping HTML for text-quote matching). The entry
+    // page (path == null) carries the version's authoritative content type; a bundle
+    // sub-page's type isn't tracked per-file, so infer HTML from a .htm(l) extension.
+    const ct = path == null ? version.content_type : /\.html?$/i.test(path) ? "text/html" : path
+    const planned = planAnchorSweep(threads, anchorContentFor(raw, ct))
     // Element threads about to be marked outdated get a forward-walk rescue.
     const rescued = await rescueElements(meta, blobs, artifactId, version, threads, planned)
     transitions.push(...planned.filter((t) => !rescued.has(t.thread_id)))

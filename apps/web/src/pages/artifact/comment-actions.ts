@@ -8,6 +8,9 @@ export type CommentActions = {
   edit: (commentId: string, body: string) => Promise<void> | void
   remove: (commentId: string) => void
   copyLink: (threadId: string) => void
+  /** Open the review overlay — the direct path from an agent-request card whose
+   *  revision is ready to the proposal that fulfills it. */
+  openReview: () => void
 }
 
 const NOOP_ACTIONS: CommentActions = {
@@ -16,6 +19,7 @@ const NOOP_ACTIONS: CommentActions = {
   edit: () => {},
   remove: () => {},
   copyLink: () => {},
+  openReview: () => {},
 }
 
 export const ActionsCtx = createContext<CommentActions | null>(null)
