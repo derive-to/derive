@@ -36,6 +36,25 @@ for (const envPath of [join(import.meta.dirname, "../../../.env"), resolve(".env
 }
 
 const cfg = loadConfig()
+
+// A dev server must never point at a remote database silently. The .env load
+// above makes that a one-line accident: a production DATABASE_URL left in the
+// repo root (say, from debugging an outage) turns every `pnpm dev` — and the
+// e2e harness — into a writer against prod. It happened. `pnpm dev` runs under
+// npm_lifecycle_event="dev"; deployments launch the entry directly, so they are
+// unaffected by this gate.
+const remoteDb = cfg.databaseUrl && !/localhost|127\.0\.0\.1/.test(cfg.databaseUrl)
+if (remoteDb && process.env.npm_lifecycle_event === "dev") {
+  if (process.env.DERIVE_ALLOW_REMOTE_DB !== "1") {
+    log.error(
+      "refusing to start: dev mode with a remote DATABASE_URL (set DERIVE_ALLOW_REMOTE_DB=1 to override)",
+      { host: cfg.databaseUrl?.replace(/^.*@/, "").split("/")[0] },
+    )
+    process.exit(1)
+  }
+  log.warn("dev mode is using a REMOTE database (DERIVE_ALLOW_REMOTE_DB=1)")
+}
+
 mkdirSync(join(cfg.dataDir, "blobs"), { recursive: true })
 
 // Metadata + auth share one datastore: Postgres when DATABASE_URL is set (the
