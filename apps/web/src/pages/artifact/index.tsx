@@ -2,7 +2,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useNavigate, useParams } from "@tanstack/react-router"
 import { Minimize2 } from "lucide-react"
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react"
-import { API_BASE, ApiError, api, type Comment } from "@/api"
+import { API_BASE, ApiError, api } from "@/api"
 import { Icon } from "@/components/icons"
 import { Kbd } from "@/components/ui/kbd"
 import { useSidebar } from "@/components/ui/sidebar"
@@ -23,14 +23,14 @@ import { ActionsCtx } from "./comment-actions"
 import { CursorButton } from "./cursors/cursor-button"
 import { FloatingControl } from "./floating-control"
 import { canCommentWithRole, shouldPromptSignInToComment } from "./lib/comment-access"
-import { groupThreads } from "./lib/layout"
+import { bucketThreads } from "./lib/layout"
 import { parseRef, refFor } from "./parse-ref"
 import { PasswordGate } from "./password-gate"
 import { PublicViewer } from "./public-viewer"
 import { Presence } from "./rail-deck"
 import { ReviewCard } from "./review-card"
 import { SourceEditor } from "./source-editor"
-import { type ComposerState, type PinItem, parseAnchor } from "./types"
+import { type ComposerState, parseAnchor } from "./types"
 import { useArtifactFrame } from "./use-artifact-frame"
 import { useArtifactLive } from "./use-artifact-live"
 import { useCommentsPanel } from "./use-comments-panel"
@@ -345,48 +345,18 @@ export function Artifact() {
   const promptSignInToComment = shouldPromptSignInToComment(isAnon, art.general_role, !!art.removed)
 
   // Sort threads into pinned (anchored & present in this live doc), general
-  // (unanchored or orphaned), and resolved. Pins drive both the margin cards
-  // and the collapsed rail dots.
+  // (unanchored / orphaned / off-slide), and resolved — pure, from the frame's
+  // reported geometry. Pins drive the margin cards; general waits in the drawer.
   const docLive = !editing && view === "preview"
-  const all = groupThreads(comments)
-  // `outdated` threads (their quoted text changed in a later version) stay in the
-  // active list, not the resolved drawer — their anchor no longer resolves, so
-  // they fall into the general/orphaned bucket below and stay visible to triage.
-  const openThreads = all.filter((t) => t[0] && t[0].state !== "resolved")
-  const resolvedThreads = all.filter((t) => t[0]?.state === "resolved")
-  const pinned: PinItem[] = []
-  const general: Comment[][] = []
-  const pinHere = (t: Comment[], id: string) => {
-    const top = anchorTops[id]
-    pinned.push({ thread: t, desiredY: top != null ? top - scrollY : 0, located: top != null })
-  }
-  for (const t of openThreads) {
-    const head = t[0]
-    if (!head) continue
-    const id = head.thread_id
-    const a = parseAnchor(head.anchor)
-    // Does this thread's anchor resolve in the live doc? The frame reports `inDoc`
-    // for the anchors it was sent (open/addressed). An `outdated` thread is NOT sent
-    // to the frame, so `inDoc[id]` is undefined — fall back to the server's `anchored`
-    // flag rather than defaulting to "present" (which would pin it invisibly at
-    // opacity 0 instead of showing it as an orphan in the general list).
-    const present = id in inDoc ? inDoc[id] !== false : head.anchored !== false
-    if (deck && a) {
-      // Deck: a comment belongs to the slide its text actually resolved on (landed),
-      // or, until that's known, the slide it was made on (recorded). Pin it only on
-      // that slide; otherwise it waits in the drawer with a "Slide N" badge.
-      const landed = landedSlides[id]
-      const effSlide = landed != null ? landed : a.slide
-      if (effSlide != null && effSlide !== deck.i) general.push(t)
-      else if (docLive && present) pinHere(t, id)
-      else general.push(t)
-    } else if (docLive && a && present) {
-      pinHere(t, id)
-    } else {
-      general.push(t)
-    }
-  }
-  const openCount = openThreads.length
+  const { openThreads, resolvedThreads, pinned, general, openCount } = bucketThreads({
+    comments,
+    docLive,
+    deck,
+    inDoc,
+    landedSlides,
+    anchorTops,
+    scrollY,
+  })
 
   const {
     startEdit,
