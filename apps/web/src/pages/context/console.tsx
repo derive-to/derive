@@ -1,0 +1,361 @@
+import { useQuery, useQueryClient } from "@tanstack/react-query"
+import { Link, useParams } from "@tanstack/react-router"
+import { useState } from "react"
+import { ApiError, api, type Session, type SessionMessage } from "@/api"
+import { Icon } from "@/components/icons"
+import { EmptyState } from "@/components/shared/empty-state"
+import { PageShell } from "@/components/shared/page-shell"
+import { Spinner } from "@/components/shared/spinner"
+import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
+import { toast } from "@/components/ui/sonner"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Textarea } from "@/components/ui/textarea"
+import { useAuth } from "@/ctx"
+import { contextQuery, contextSessionsQuery, sessionQuery } from "@/lib/queries"
+import { ago } from "@/lib/time"
+import { cn } from "@/lib/utils"
+import { mdToHtml } from "../artifact/lib/markdown"
+
+// The context console: ask, read the answer (with the query/confidence/caveats the
+// runner attaches), follow up. One conversation at a time — older sessions are a
+// picker away; the owner additionally gets the activity view. The transcript polls
+// fast only while the runner owes a reply (sessionQuery's refetchInterval).
+export function ContextConsole() {
+  const { id } = useParams({ from: "/contexts/$id" })
+  const { me } = useAuth()
+  const qc = useQueryClient()
+  const { data: context } = useQuery(contextQuery(id))
+  const { data: sessions } = useQuery(contextSessionsQuery(id))
+
+  // The session on screen: sticky once picked; defaults to the most recent.
+  const [picked, setPicked] = useState<string | null>(null)
+  const mine = (sessions ?? []).filter((s) => s.asker_id === me?.id)
+  const active = picked === "new" ? null : (picked ?? mine[0]?.id ?? null)
+  const isOwner = !!context && context.created_by === me?.id
+
+  if (!context)
+    return (
+      <PageShell className="flex justify-center pt-16">
+        <Spinner />
+      </PageShell>
+    )
+
+  return (
+    <PageShell className="flex flex-col gap-5">
+      <div className="flex flex-wrap items-center gap-3">
+        <Icon name="context" className="text-muted-foreground" />
+        <h1 className="font-serif text-2xl font-medium tracking-tight text-foreground">
+          {context.name}
+        </h1>
+        {context.manifest_short_id && (
+          <Link
+            to="/artifacts/$ref"
+            params={{ ref: context.manifest_short_id }}
+            data-testid="console-manifest-link"
+            className="ml-auto text-sm text-muted-foreground underline-offset-4 hover:underline"
+          >
+            Manifest ↗
+          </Link>
+        )}
+      </div>
+
+      <Tabs defaultValue="ask">
+        <TabsList variant="line">
+          <TabsTrigger value="ask" data-testid="console-tab-ask">
+            Ask
+          </TabsTrigger>
+          {isOwner && (
+            <TabsTrigger value="activity" data-testid="console-tab-activity">
+              Activity
+            </TabsTrigger>
+          )}
+        </TabsList>
+
+        <TabsContent value="ask" className="flex flex-col gap-4 pt-4">
+          {mine.length > 0 && (
+            <div className="flex flex-wrap items-center gap-1.5">
+              {mine.slice(0, 6).map((s) => (
+                <Button
+                  key={s.id}
+                  variant={s.id === active ? "secondary" : "ghost"}
+                  size="sm"
+                  data-testid="console-session-pick"
+                  onClick={() => setPicked(s.id)}
+                  className="text-muted-foreground data-[here=true]:text-foreground"
+                  data-here={s.id === active}
+                >
+                  {ago(s.created_at)}
+                  <StateBadge state={s.state} />
+                </Button>
+              ))}
+              <Button
+                variant="ghost"
+                size="sm"
+                data-testid="console-new-session"
+                onClick={() => setPicked("new")}
+                className="text-muted-foreground"
+              >
+                <Icon name="plus" /> New question
+              </Button>
+            </div>
+          )}
+          {active ? (
+            <SessionThread
+              sessionId={active}
+              contextName={context.name}
+              onClosed={() => qc.invalidateQueries({ queryKey: contextSessionsQuery(id).queryKey })}
+            />
+          ) : (
+            <AskComposer
+              contextId={id}
+              onAsked={(s) => {
+                setPicked(s.id)
+                qc.invalidateQueries({ queryKey: contextSessionsQuery(id).queryKey })
+              }}
+            />
+          )}
+        </TabsContent>
+
+        {isOwner && (
+          <TabsContent value="activity" className="pt-4">
+            <ActivityList sessions={sessions ?? []} onOpen={(sid) => setPicked(sid)} />
+          </TabsContent>
+        )}
+      </Tabs>
+    </PageShell>
+  )
+}
+
+// Ask the first question — the empty-conversation state.
+function AskComposer({ contextId, onAsked }: { contextId: string; onAsked: (s: Session) => void }) {
+  const [text, setText] = useState("")
+  const [busy, setBusy] = useState(false)
+  const ask = async () => {
+    if (!text.trim()) return
+    setBusy(true)
+    try {
+      const r = await api.askContext(contextId, text.trim())
+      setText("")
+      onAsked(r.session)
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : "Could not send the question")
+      setBusy(false)
+    }
+  }
+  return (
+    <div className="flex flex-col gap-2">
+      <Textarea
+        data-testid="console-ask-input"
+        aria-label="Your question"
+        placeholder="Ask a question — the answer arrives here, with the query behind it."
+        value={text}
+        rows={3}
+        onChange={(e) => setText(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) ask()
+        }}
+      />
+      <Button
+        data-testid="console-ask-submit"
+        onClick={ask}
+        loading={busy}
+        disabled={busy || !text.trim()}
+        className="self-end"
+      >
+        Ask
+      </Button>
+    </div>
+  )
+}
+
+// One conversation: transcript + follow-up composer + close.
+function SessionThread({
+  sessionId,
+  contextName,
+  onClosed,
+}: {
+  sessionId: string
+  contextName: string
+  onClosed: () => void
+}) {
+  const qc = useQueryClient()
+  const { data } = useQuery(sessionQuery(sessionId))
+  const [text, setText] = useState("")
+  const [busy, setBusy] = useState(false)
+  if (!data) return <Spinner className="mx-auto mt-8" />
+  const { session, messages } = data
+  const refresh = () => qc.invalidateQueries({ queryKey: sessionQuery(sessionId).queryKey })
+
+  const send = async () => {
+    if (!text.trim()) return
+    setBusy(true)
+    try {
+      await api.postSessionMessage(sessionId, text.trim())
+      setText("")
+      refresh()
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : "Could not send")
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const close = async () => {
+    try {
+      await api.closeSession(sessionId)
+      refresh()
+      onClosed()
+    } catch {
+      /* already closed is fine */
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="flex flex-col gap-3" data-testid="console-thread">
+        {messages.map((m) => (
+          <MessageRow key={m.id} m={m} contextName={contextName} />
+        ))}
+        {session.state === "open" && (
+          <div className="flex items-center gap-2 px-1 text-sm text-muted-foreground">
+            <Spinner size="sm" tone="current" data-testid="console-waiting" />
+            Thinking — the runner picks this up on its next poll.
+          </div>
+        )}
+        {session.state === "failed" && (
+          <p className="px-1 text-sm text-destructive" data-testid="console-failed">
+            The run failed. Ask again, or check the runner's log.
+          </p>
+        )}
+      </div>
+
+      {session.state !== "closed" ? (
+        <div className="flex flex-col gap-2 border-t pt-3">
+          <Textarea
+            data-testid="console-followup-input"
+            aria-label="Follow-up"
+            placeholder="Follow up…"
+            value={text}
+            rows={2}
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) send()
+            }}
+          />
+          <div className="flex items-center justify-between">
+            <Button
+              variant="ghost"
+              size="sm"
+              data-testid="console-close-session"
+              onClick={close}
+              className="text-muted-foreground"
+            >
+              Close conversation
+            </Button>
+            <Button
+              data-testid="console-followup-submit"
+              onClick={send}
+              loading={busy}
+              disabled={busy || !text.trim() || session.state === "open"}
+            >
+              Send
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <p className="border-t pt-3 text-sm text-muted-foreground">This conversation is closed.</p>
+      )}
+    </div>
+  )
+}
+
+function MessageRow({ m, contextName }: { m: SessionMessage; contextName: string }) {
+  const [showQuery, setShowQuery] = useState(false)
+  const fromAgent = m.author_kind === "agent"
+  return (
+    <div
+      data-testid="console-message"
+      className={cn("rounded-xl px-4 py-3", fromAgent ? "border bg-card" : "bg-secondary")}
+    >
+      <div className="mb-1 flex items-center gap-2 text-xs text-muted-foreground">
+        <span className="font-medium">{fromAgent ? contextName : "You"}</span>
+        <span>{ago(m.created_at)}</span>
+        {m.meta?.escalation_reason && (
+          <Badge variant="outline" data-testid="console-escalated">
+            Escalated — {m.meta.escalation_reason}
+          </Badge>
+        )}
+        {typeof m.meta?.confidence === "number" && (
+          <span className="ml-auto tabular-nums">
+            confidence {Math.round(m.meta.confidence * 100)}%
+          </span>
+        )}
+      </div>
+      <div
+        className="cmt-body text-sm [word-break:break-word]"
+        // biome-ignore lint/security/noDangerouslySetInnerHtml: input is escaped first in mdToHtml.
+        dangerouslySetInnerHTML={{ __html: mdToHtml(m.body_md) }}
+      />
+      {m.meta?.caveats && m.meta.caveats.length > 0 && (
+        <ul className="mt-2 flex flex-col gap-0.5 text-xs text-muted-foreground">
+          {m.meta.caveats.map((c) => (
+            <li key={c}>⚠ {c}</li>
+          ))}
+        </ul>
+      )}
+      {m.meta?.query && (
+        <div className="mt-2">
+          <Button
+            variant="link"
+            size="xs"
+            data-testid="console-query-toggle"
+            onClick={() => setShowQuery((v) => !v)}
+            className="px-0 text-muted-foreground"
+          >
+            {showQuery ? "Hide query" : "Show query"}
+          </Button>
+          {showQuery && (
+            <pre className="mt-1 overflow-x-auto rounded-lg bg-secondary p-2.5 font-mono text-xs">
+              {m.meta.query}
+            </pre>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// The owner's view: every session on this context, most recent first.
+function ActivityList({ sessions, onOpen }: { sessions: Session[]; onOpen: (id: string) => void }) {
+  if (sessions.length === 0)
+    return <EmptyState title="No sessions yet" description="Questions will show up here." />
+  return (
+    <ul className="flex flex-col">
+      {sessions.map((s) => (
+        <li key={s.id} className="border-b last:border-0">
+          <button
+            type="button"
+            data-testid="console-activity-row"
+            onClick={() => onOpen(s.id)}
+            className="flex w-full items-center gap-3 px-1 py-2.5 text-left text-sm hover:bg-accent"
+          >
+            <span className="text-foreground">{ago(s.created_at)}</span>
+            <StateBadge state={s.state} />
+            <span className="ml-auto font-mono text-xs text-muted-foreground">
+              v{s.context_version}
+            </span>
+          </button>
+        </li>
+      ))}
+    </ul>
+  )
+}
+
+function StateBadge({ state }: { state: Session["state"] }) {
+  return (
+    <Badge variant="outline" shape="pill" className="text-xs">
+      {state}
+    </Badge>
+  )
+}

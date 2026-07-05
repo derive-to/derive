@@ -11,6 +11,7 @@ import {
   BarChart3,
   Bell,
   BookOpen,
+  Bot,
   Building2,
   Check,
   ChevronDown,
@@ -60,6 +61,8 @@ const REG = {
   following: Users,
   collections: Folders,
   collection: Folder,
+  // Askable agent setups (the contexts console).
+  context: Bot,
   tag: Tag,
   search: Search,
   settings: Settings,
