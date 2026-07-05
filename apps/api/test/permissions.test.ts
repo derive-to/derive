@@ -76,7 +76,7 @@ describe("permissions: workspace roles gate writes", () => {
   let shortId: string
 
   it("makes the first member the owner, who can create artifacts", async () => {
-    const res = await publishAs(app, "<h1>a</h1>", {}, as(alice.email))
+    const res = await publishAs(app, "<h1>a</h1>", { visibility: "org" }, as(alice.email))
     expect(res.status).toBe(201)
     shortId = (await res.json()).short_id
   })
@@ -87,8 +87,12 @@ describe("permissions: workspace roles gate writes", () => {
   })
 
   it("blocks a commenter from creating or republishing", async () => {
-    expect((await publishAs(app, "<h1>b</h1>", {}, as(bob.email))).status).toBe(403)
-    expect((await publishAs(app, "<h1>a2</h1>", {}, as(bob.email), shortId)).status).toBe(403)
+    expect((await publishAs(app, "<h1>b</h1>", { visibility: "org" }, as(bob.email))).status).toBe(
+      403,
+    )
+    expect(
+      (await publishAs(app, "<h1>a2</h1>", { visibility: "org" }, as(bob.email), shortId)).status,
+    ).toBe(403)
   })
 
   it("lets a commenter comment, but not an unauthenticated caller", async () => {
@@ -119,7 +123,10 @@ describe("permissions: a per-artifact share overrides the workspace role", () =>
     expect(
       (await app.request(`/v1/artifacts/${shortId}`, { headers: as(carol.email) })).status,
     ).toBe(200)
-    expect((await publishAs(app, "<h1>edit</h1>", {}, as(carol.email), shortId)).status).toBe(403)
+    expect(
+      (await publishAs(app, "<h1>edit</h1>", { visibility: "org" }, as(carol.email), shortId))
+        .status,
+    ).toBe(403)
   })
 
   it("sharing the artifact as editor lets the viewer republish, and my_role reflects it", async () => {
@@ -129,7 +136,10 @@ describe("permissions: a per-artifact share overrides the workspace role", () =>
       body: JSON.stringify({ email: carol.email, role: "editor" }),
     })
     expect(share.status).toBe(201)
-    expect((await publishAs(app, "<h1>edit</h1>", {}, as(carol.email), shortId)).status).toBe(201)
+    expect(
+      (await publishAs(app, "<h1>edit</h1>", { visibility: "org" }, as(carol.email), shortId))
+        .status,
+    ).toBe(201)
     const meta = await (
       await app.request(`/v1/artifacts/${shortId}`, { headers: as(carol.email) })
     ).json()

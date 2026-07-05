@@ -37,7 +37,8 @@ export function PublishCard() {
     }
     setBusy(true)
     try {
-      const a = await api.publish(f, { title: f.name.replace(/\.[^.]+$/, ""), visibility: "org" })
+      // No visibility: the server default (private) governs; widen from the Share dialog.
+      const a = await api.publish(f, { title: f.name.replace(/\.[^.]+$/, "") })
       nav({ to: "/artifacts/$ref", params: { ref: refFor(a) } })
     } catch (e) {
       toast.error((e as Error).message)

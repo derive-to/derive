@@ -47,6 +47,7 @@ export const artifactRoutes = (ctx: AppContext) => {
     bearer,
     currentUser,
     actingUser,
+    privateOwnerId,
     activeWorkspace,
     actorFor,
     authorize,
@@ -318,11 +319,12 @@ export const artifactRoutes = (ctx: AppContext) => {
 
     try {
       // The authenticated principal behind this publish (signed-in user or agent) — its
-      // `name` is the display author. The Derive-USER behind it (null for an agent / bare
-      // static token) is what we attribute work to: `author_id` keys a person's profile
-      // + their followers' feed, so it must be a real user id, never an agent principal.
+      // `name` is the display author. The Derive-USER behind it is what we attribute
+      // work to: for an agent, the user it acts on behalf of (created_by / the OAuth
+      // grantor). `author_id` keys a person's profile + their followers' feed, so it
+      // must be a real user id, never an agent principal.
       const actor = await actingUser(c)
-      const user = await currentUser(c)
+      const onBehalf = await privateOwnerId(c)
       const { artifact, version } = await publish(
         meta,
         blobs,
@@ -340,7 +342,7 @@ export const artifactRoutes = (ctx: AppContext) => {
           // always attributed to a real principal (the token's optional `author`
           // label is the one headless exception).
           author: actor?.name ?? str(body["author"]),
-          authorId: user?.id ?? null,
+          authorId: onBehalf,
           name: str(body["name"]),
           orgId: org,
           visibility,
@@ -348,18 +350,28 @@ export const artifactRoutes = (ctx: AppContext) => {
         },
         shortId,
       )
-      // The publisher becomes the artifact's owner-member on creation. This is what
-      // makes `private` work — workspace role grants nothing there, so without this
-      // row the creator would lock themselves out — and it makes ownership explicit
-      // for every artifact instead of implied by workspace role. Agents get the row
-      // under their principal id (actorFor resolves members by that same id).
-      if (!shortId && actor)
-        await meta.setArtifactMember({
-          id: newId("am"),
-          artifact_id: artifact.id,
-          user_id: actor.id,
-          role: "owner",
-        })
+      // Ownership on creation. The HUMAN behind the publish becomes the owner-member
+      // (an agent publishes on behalf of whoever registered it), which is what makes
+      // `private` work — workspace role grants nothing there. The agent principal
+      // additionally gets an editor row so it can keep operating on the artifact
+      // (republish, address review) even when it's private. A pre-column agent with
+      // no owner link falls back to owning as itself.
+      if (!shortId) {
+        if (onBehalf)
+          await meta.setArtifactMember({
+            id: newId("am"),
+            artifact_id: artifact.id,
+            user_id: onBehalf,
+            role: "owner",
+          })
+        if (actor && actor.id !== onBehalf)
+          await meta.setArtifactMember({
+            id: newId("am"),
+            artifact_id: artifact.id,
+            user_id: actor.id,
+            role: onBehalf ? "editor" : "owner",
+          })
+      }
       bus.publish(artifact.id, {
         type: "version.published",
         n: version.n,
@@ -370,16 +382,18 @@ export const artifactRoutes = (ctx: AppContext) => {
         message: version.message,
         author: version.author,
       })
-      // Fan out to the publisher's followers: "someone you follow published X". Gated to:
-      // a real signed-in USER (agents/tokens have no human followers), a publicly-visible
-      // artifact (a follow never surfaces a private title), and a NEW artifact only —
-      // `shortId` means a republish/new version, which would otherwise spam followers on
-      // every edit. Done in the background so a popular author's fan-out never adds to
-      // publish latency (it's off the response path, like the comment-mention fan-out).
-      if (!shortId && user?.id && artifact.visibility === "public") {
-        const author = user
+      // Fan out to the publisher's followers: "someone you follow published X". Gated
+      // to a known HUMAN behind the publish (their followers are who care — an agent
+      // publish fans out to the followers of the person it acts for), a publicly-
+      // visible artifact (a follow never surfaces a private title), and a NEW artifact
+      // only — `shortId` means a republish/new version, which would otherwise spam
+      // followers on every edit. Done in the background so a popular author's fan-out
+      // never adds to publish latency (like the comment-mention fan-out).
+      if (!shortId && onBehalf && artifact.visibility === "public") {
         background(
           (async () => {
+            const [author] = await meta.getUsers([onBehalf])
+            if (!author) return
             for (const follower of await meta.listFollowers(author.id, 200)) {
               if (follower.id === author.id) continue
               await meta.createNotification({

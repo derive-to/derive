@@ -2,7 +2,7 @@ import { Buffer } from "node:buffer"
 import type { Page } from "@playwright/test"
 import { expect, test } from "../fixtures"
 
-// The sharing & visibility model through the real UI: the workspace-only
+// The sharing & visibility model through the real UI: the private
 // default, the general-access picker (the share dialog's Google-Docs ladder),
 // private (invite-only), and profile privacy. Server-side authz is pinned in
 // apps/api/test/visibility.test.ts; this drives the surfaces.
@@ -21,7 +21,7 @@ async function publishDefault(page: Page, name = "draft.md"): Promise<string> {
   return shortId
 }
 
-test("a default publish is workspace-only: invisible to another user until the link is opened up", async ({
+test("a default publish is private: invisible to another user until the link is opened up", async ({
   owner,
   secondUser,
 }) => {

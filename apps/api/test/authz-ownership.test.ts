@@ -27,8 +27,9 @@ describe("authz: an agent cannot act on artifacts outside its own workspace", ()
     const agentToken = (await reg.json()).token as string
 
     // Bob publishes an artifact in HIS workspace.
-    const bobId = (await (await publishAs(app, "<h1>Bob's</h1>", {}, as(bob.email))).json())
-      .short_id
+    const bobId = (
+      await (await publishAs(app, "<h1>Bob's</h1>", { visibility: "org" }, as(bob.email))).json()
+    ).short_id
 
     // The agent (workspace A, editor) must NOT mutate Bob's artifact (workspace B):
     // republishing a version and commenting are both refused — its home-workspace
@@ -49,8 +50,11 @@ describe("authz: an agent cannot act on artifacts outside its own workspace", ()
     expect(after.current_version).toBe(1)
 
     // No over-reach: the SAME agent CAN still act in its OWN workspace.
-    const aliceId = (await (await publishAs(app, "<h1>Alice's</h1>", {}, as(alice.email))).json())
-      .short_id
+    const aliceId = (
+      await (
+        await publishAs(app, "<h1>Alice's</h1>", { visibility: "org" }, as(alice.email))
+      ).json()
+    ).short_id
     expect(
       (await pub(app, "<h1>v2</h1>", { message: "bump" }, aliceId, bearer(agentToken))).ok,
     ).toBe(true)

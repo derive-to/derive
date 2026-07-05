@@ -147,11 +147,11 @@ describe("B-019: @mention notifies only collaborators", () => {
 })
 
 // B-018: an explicitly-provided visibility that isn't a known value is rejected, not
-// silently coerced. Absent visibility defaults to `org` (workspace-only).
+// silently coerced. Absent visibility defaults to `private`.
 describe("B-018: publish rejects an unknown visibility", () => {
   const owner: TestUser = { id: "u_b18_owner", email: "o18@derive.test", name: "Owner18" }
 
-  it("400s on an unknown visibility; valid values store; absent defaults to org", async () => {
+  it("400s on an unknown visibility; valid values store; absent defaults to private", async () => {
     const { app } = makeAuthedApp("harden-b18", [owner])
     const bad = await publishAs(
       app,
@@ -165,7 +165,7 @@ describe("B-018: publish rejects an unknown visibility", () => {
     ).json()
     expect(link.visibility).toBe("link")
     const def = await (await publishAs(app, "<h1>x</h1>", { title: "v3" }, as(owner.email))).json()
-    expect(def.visibility).toBe("org")
+    expect(def.visibility).toBe("private")
   })
 })
 

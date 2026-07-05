@@ -53,8 +53,11 @@ describe("personal comments — visibility", () => {
   let sid: string
 
   it("creates a public and a personal comment as the owner", async () => {
-    sid = (await (await publishAs(app, "<h1>doc</h1>", { title: "Doc" }, as(A.email))).json())
-      .short_id
+    sid = (
+      await (
+        await publishAs(app, "<h1>doc</h1>", { title: "Doc", visibility: "org" }, as(A.email))
+      ).json()
+    ).short_id
     const pub = await app.request(
       `/v1/artifacts/${sid}/comments`,
       jsonAs(as(A.email), { body_md: "public note" }),
@@ -142,19 +145,24 @@ describe("personal comments — visibility", () => {
     expect(await list(sid, as(B.email))).toHaveLength(1)
   })
 
-  it("a registered workspace agent sees only public, and can't open a personal comment", async () => {
+  it("a registered agent shares its registrant's personal channel, like an OAuth agent", async () => {
+    // The agent acts on behalf of A (created_by, stamped at registration) — so it
+    // sees A's personal comments and writes into A's channel, exactly as A's OAuth
+    // agents do. Pre-column agents (created_by null) still have no channel.
     const reg = await (
       await app.request("/v1/agents", jsonAs(as(A.email), { name: "WorkspaceBot" }))
     ).json()
     const agentList = await list(sid, bearer(reg.token))
-    expect(agentList.every((c) => c.visibility !== "personal")).toBe(true)
-    // No human behind a workspace agent → it can't own a personal channel.
+    expect(agentList.some((c) => c.visibility === "personal")).toBe(true)
     const create = await app.request(`/v1/artifacts/${sid}/comments`, {
       method: "POST",
       headers: { ...bearer(reg.token), "content-type": "application/json" },
-      body: JSON.stringify({ body_md: "secret", visibility: "personal" }),
+      body: JSON.stringify({ body_md: "noted for A", visibility: "personal" }),
     })
-    expect(create.status).toBe(400)
+    expect(create.status).toBe(201)
+    expect((await create.json()).visibility).toBe("personal")
+    // B never sees A's channel, agent-authored or not.
+    expect((await list(sid, as(B.email))).every((c) => c.visibility !== "personal")).toBe(true)
   })
 
   // Grant seeding writes to the sqlite test file; on the pg lane the store is

@@ -1017,12 +1017,12 @@ function GeneralAccessDemo() {
       icon: "lock",
       label: "Private",
       blurb: "Only people added. Workspace membership grants nothing.",
+      current: true,
     },
     {
       icon: "workspace",
       label: "Workspace only",
       blurb: "Only members of this workspace.",
-      current: true,
     },
     { icon: "link", label: "Anyone with the link", blurb: "Anyone with the link can view." },
     { icon: "globe", label: "Public — listed", blurb: "In the public directory and indexable." },

@@ -8,18 +8,72 @@ import { as, makeAuthedApp, publishAs, type TestUser } from "./helpers"
 const ana: TestUser = { id: "u_vis_ana", email: "ana@vis.test", name: "Ana", username: "anav" }
 const ben: TestUser = { id: "u_vis_ben", email: "ben@vis.test", name: "Ben", username: "benv" }
 
-describe("publish defaults to workspace-only", () => {
-  it("no visibility field ⇒ org; the artifact is unreadable anonymously", async () => {
+describe("publish defaults to private", () => {
+  it("no visibility field ⇒ private; unreadable to anonymous AND workspace members", async () => {
     const { app } = makeAuthedApp("vis-default", [ana, ben], "editor")
     const a = await (await publishAs(app, "<h1>draft</h1>", {}, as(ana.email))).json()
-    expect(a.visibility).toBe("org")
-    // Anonymous (no session header): the detail 404s and the bytes don't serve.
+    expect(a.visibility).toBe("private")
+    // Anonymous: the detail 404s and the bytes don't serve.
     expect((await app.request(`/v1/artifacts/${a.short_id}`)).status).toBe(404)
     expect((await app.request(`/raw/${a.short_id}/v/1/index.html`)).status).toBe(404)
-    // A workspace member reads it fine.
+    // Even a workspace EDITOR can't see it — private means invited people only.
     expect(
       (await app.request(`/v1/artifacts/${a.short_id}`, { headers: as(ben.email) })).status,
-    ).toBe(200)
+    ).toBe(404)
+    // The publisher owns it (the owner-member row written at publish).
+    const mine = await (
+      await app.request(`/v1/artifacts/${a.short_id}`, { headers: as(ana.email) })
+    ).json()
+    expect(mine.my_role).toBe("owner")
+  })
+})
+
+describe("agents publish on behalf of who registered them", () => {
+  it("the registering user owns the publish; the agent keeps editor access", async () => {
+    const { app } = makeAuthedApp("vis-agent", [ana, ben], "editor")
+    await app.request("/v1/me", { headers: as(ana.email) }) // provision the workspace
+    const reg = await (
+      await app.request("/v1/agents", {
+        method: "POST",
+        headers: { "content-type": "application/json", ...as(ana.email) },
+        body: JSON.stringify({ name: "Scribe", role: "editor" }),
+      })
+    ).json()
+
+    // The agent publishes (no visibility ⇒ private).
+    const form = new FormData()
+    form.append("file", new Blob([new TextEncoder().encode("# memo")]), "memo.md")
+    const pub = await app.request("/v1/artifacts", {
+      method: "POST",
+      body: form,
+      headers: { authorization: `Bearer ${reg.token}` },
+    })
+    expect(pub.status).toBe(201)
+    const a = await pub.json()
+    expect(a.visibility).toBe("private")
+
+    // Ana can open and owns it; her teammate can't see it; the agent can republish.
+    const hers = await (
+      await app.request(`/v1/artifacts/${a.short_id}`, { headers: as(ana.email) })
+    ).json()
+    expect(hers.my_role).toBe("owner")
+    expect(
+      (await app.request(`/v1/artifacts/${a.short_id}`, { headers: as(ben.email) })).status,
+    ).toBe(404)
+    const form2 = new FormData()
+    form2.append("file", new Blob([new TextEncoder().encode("# memo v2")]), "memo.md")
+    expect(
+      (
+        await app.request(`/v1/artifacts/${a.short_id}/versions`, {
+          method: "POST",
+          body: form2,
+          headers: { authorization: `Bearer ${reg.token}` },
+        })
+      ).status,
+    ).toBe(201)
+    // And it lands in Ana's own library listing.
+    const list = await (await app.request("/v1/artifacts", { headers: as(ana.email) })).json()
+    expect(list.artifacts.map((x: { short_id: string }) => x.short_id)).toContain(a.short_id)
   })
 })
 

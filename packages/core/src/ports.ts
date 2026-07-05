@@ -721,6 +721,9 @@ export interface AgentRecord {
   name: string
   token: string
   role: Role
+  /** The user who registered the agent — who it publishes on behalf of.
+   *  Null for pre-column agents (they publish as themselves). */
+  created_by: string | null
   created_at: string
 }
 export interface NewAgent {
@@ -729,6 +732,7 @@ export interface NewAgent {
   name: string
   token: string
   role: Role
+  created_by?: string | null
 }
 
 export type AgentMentionState = "pending" | "done"

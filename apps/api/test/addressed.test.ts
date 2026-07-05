@@ -35,8 +35,9 @@ describe("addressed: propose cites threads → pending → resolve on approve", 
   const { app } = makeAuthedApp("addressed-approve", [owner, ed], "editor")
 
   it("flips cited threads to addressed, then resolves them when the proposal is approved", async () => {
-    const shortId = (await (await publishAs(app, "<h1>v1</h1>", {}, as(owner.email))).json())
-      .short_id
+    const shortId = (
+      await (await publishAs(app, "<h1>v1</h1>", { visibility: "org" }, as(owner.email))).json()
+    ).short_id
     const cm = await comment(app, shortId, "please fix the headline")
     expect(await stateOf(app, shortId, cm.thread_id)).toBe("open")
 
@@ -71,8 +72,9 @@ describe("addressed: reopens when the proposal doesn't land", () => {
   const { app } = makeAuthedApp("addressed-revert", [owner, ed], "editor")
 
   it("reopens on withdraw and on request-changes", async () => {
-    const shortId = (await (await publishAs(app, "<h1>v1</h1>", {}, as(owner.email))).json())
-      .short_id
+    const shortId = (
+      await (await publishAs(app, "<h1>v1</h1>", { visibility: "org" }, as(owner.email))).json()
+    ).short_id
 
     // Withdraw path.
     const cm1 = await comment(app, shortId, "tweak intro")

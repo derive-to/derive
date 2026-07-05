@@ -9,8 +9,11 @@ describe("reviews: propose → approve goes live; commenter can't approve", () =
   let proposalId: string
 
   it("owner publishes v1; a commenter proposes a candidate that does NOT go live", async () => {
-    shortId = (await (await publishAs(app, "<h1>v1 live</h1>", {}, as(owner.email))).json())
-      .short_id
+    shortId = (
+      await (
+        await publishAs(app, "<h1>v1 live</h1>", { visibility: "org" }, as(owner.email))
+      ).json()
+    ).short_id
     const res = await proposeAs(app, shortId, "<h1>candidate</h1>", as(cassie.email), {
       message: "tighten the headline",
     })
@@ -82,7 +85,9 @@ describe("reviews: request changes and withdraw keep content live-unchanged", ()
   let shortId: string
 
   it("request-changes carries the reviewer's note back to the proposer, content unchanged", async () => {
-    shortId = (await (await publishAs(app, "<h1>base</h1>", {}, as(owner.email))).json()).short_id
+    shortId = (
+      await (await publishAs(app, "<h1>base</h1>", { visibility: "org" }, as(owner.email))).json()
+    ).short_id
     const pid = (await (await proposeAs(app, shortId, "<h1>try</h1>", as(dana.email))).json()).id
     const res = await app.request(`/v1/artifacts/${shortId}/proposals/${pid}/request-changes`, {
       method: "POST",
