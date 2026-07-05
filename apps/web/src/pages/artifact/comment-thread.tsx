@@ -11,6 +11,7 @@ import {
 } from "lucide-react"
 import { useCallback, useEffect, useRef, useState } from "react"
 import type { Comment, Mention } from "@/api"
+import { Icon } from "@/components/icons"
 import { Eyebrow } from "@/components/shared/section-eyebrow"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -96,7 +97,7 @@ export function PinnedZone({
   // exactly when there's an anchored composer with a resolved position.
   const activeComposer =
     composer?.anchor && composer.top != null
-      ? { top: composer.top, quote: selLabel(composer.anchor) }
+      ? { top: composer.top, quote: selLabel(composer.anchor), agent: composer.agent }
       : null
   // The pinned zone sits `topInset` px below the document's top (the panel header
   // above it), so a card at desiredY (measured from the document top) must render
@@ -190,7 +191,12 @@ export function PinnedZone({
             transform: `translateY(${Math.round(pos[COMPOSER_ID] ?? align(activeComposer.top))}px)`,
           }}
         >
-          <Composer quote={activeComposer.quote} onSubmit={onSubmitNew} onCancel={onCancelNew} />
+          <Composer
+            quote={activeComposer.quote}
+            agent={activeComposer.agent}
+            onSubmit={onSubmitNew}
+            onCancel={onCancelNew}
+          />
         </div>
       )}
     </div>
@@ -341,7 +347,7 @@ export function CommentCard({
   onReply: (text: string, threadId: string, mentions?: Mention[]) => void
   onJump: (id: string) => void
 }) {
-  const { canComment, currentSlide, landedSlides, anchorConf } = useCommentScope()
+  const { canComment, currentSlide, landedSlides, anchorConf, agentIds } = useCommentScope()
   const [reply, setReply] = useState("")
   const [replyMentions, setReplyMentions] = useState<Mention[]>([])
   const root = thread[0]
@@ -355,6 +361,18 @@ export function CommentCard({
   const resolved = root.state === "resolved"
   const outdated = root.state === "outdated"
   const addressed = root.state === "addressed"
+  // A "revision request" thread is a comment addressed to an agent (the moat flow). We
+  // detect it from the root's mentions overlapping the known agent ids — no schema
+  // change. Its lifecycle reads as a legible machine: Requested → Revision ready ·
+  // Review (agent proposed → addressed) → Applied (approved → resolved).
+  const isAgentRequest = !!root.mentions?.some((m) => agentIds?.has(m.id))
+  const requestStage: "requested" | "ready" | "applied" | null = !isAgentRequest
+    ? null
+    : resolved
+      ? "applied"
+      : addressed
+        ? "ready"
+        : "requested"
   const parsed = parseAnchor(root.anchor)
   const isEl = !!parsed?.element
   // The reference label: a text quote, or an element's snapshot label.
@@ -395,6 +413,39 @@ export function CommentCard({
         resolved && !active && "opacity-60",
       )}
     >
+      {/* Agent-revision request ribbon — the moat's status machine, read at a glance:
+          Requested (waiting on the agent) → Revision ready (a proposal is in review) →
+          Applied (approved). A quiet ink-tinted strip so it's clearly "an agent task",
+          distinct from a plain comment. */}
+      {requestStage && (
+        <div
+          data-testid={`agent-request-${requestStage}`}
+          className={cn(
+            "flex items-center gap-1.5 border-b px-2.5 py-1.5 text-sm font-medium",
+            requestStage === "ready"
+              ? "border-primary/25 bg-primary/10 text-foreground"
+              : "border-border-soft bg-secondary text-muted-foreground",
+          )}
+          title={
+            requestStage === "requested"
+              ? "Sent to an agent — waiting for it to revise and propose a change"
+              : requestStage === "ready"
+                ? "The agent proposed a revision — open Review to see it and approve"
+                : "The agent's revision was approved and applied"
+          }
+        >
+          <Icon
+            name="sparkles"
+            size={14}
+            className={requestStage === "ready" ? "text-primary" : "text-muted-foreground"}
+          />
+          {requestStage === "requested"
+            ? "Agent request · awaiting revision"
+            : requestStage === "ready"
+              ? "Revision ready · review"
+              : "Revision applied"}
+        </div>
+      )}
       {onDeck && slideNum != null && (
         <div className="flex items-center gap-1.5 px-2.5 pb-0.5 pt-1.5">
           <Badge shape="pill" data-testid={`comment-slide-${root.thread_id}`}>
@@ -497,20 +548,23 @@ export function CommentCard({
           <div className="flex items-center gap-1.5 bg-secondary px-3 py-1.5">
             {/* Status tones are success/warning/neutral — the ink accent is reserved, so
                 addressed and open both take the neutral wash; the label text and
-                title tooltip carry the distinction. */}
-            <Badge
-              shape="pill"
-              variant={resolved ? "success" : outdated ? "warning" : "default"}
-              title={
-                outdated
-                  ? "The text this thread was attached to changed in a later version — this feedback may no longer apply"
-                  : addressed
-                    ? "A proposed revision addressing this thread is pending review"
-                    : undefined
-              }
-            >
-              {resolved ? "resolved" : outdated ? "outdated" : addressed ? "addressed" : "open"}
-            </Badge>
+                title tooltip carry the distinction. An agent request shows its state in
+                the ribbon above, so the plain badge is suppressed to avoid doubling up. */}
+            {!requestStage && (
+              <Badge
+                shape="pill"
+                variant={resolved ? "success" : outdated ? "warning" : "default"}
+                title={
+                  outdated
+                    ? "The text this thread was attached to changed in a later version — this feedback may no longer apply"
+                    : addressed
+                      ? "A proposed revision addressing this thread is pending review"
+                      : undefined
+                }
+              >
+                {resolved ? "resolved" : outdated ? "outdated" : addressed ? "addressed" : "open"}
+              </Badge>
+            )}
             {refLabel && !textPresent && !resolved && !outdated && !addressed && (
               <Badge
                 shape="pill"

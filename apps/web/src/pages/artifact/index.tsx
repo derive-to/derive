@@ -9,7 +9,7 @@ import { useSidebar } from "@/components/ui/sidebar"
 import { toast } from "@/components/ui/sonner"
 import { useAuth } from "@/ctx"
 import { artifactTypeLabel } from "@/lib/artifact"
-import { artifactQuery, commentsQuery } from "@/lib/queries"
+import { artifactAgentsQuery, artifactQuery, commentsQuery } from "@/lib/queries"
 import { ago } from "@/lib/time"
 import { useIsMobile } from "@/lib/use-is-mobile"
 import { cn } from "@/lib/utils"
@@ -105,6 +105,10 @@ export function Artifact() {
   const qc = useQueryClient()
   const { data: art, isError: failed, error, refetch } = useQuery(artifactQuery(shortId))
   const { data: comments = [] } = useQuery(commentsQuery(shortId))
+  // Agents this viewer can hand a revision to (the "ask an agent" flow). Empty for
+  // an anon viewer (the query is authed) or a workspace with no agents — then the
+  // affordance simply doesn't appear.
+  const { data: agents = [] } = useQuery({ ...artifactAgentsQuery(shortId), enabled: !!me })
   // A password artifact returns 401 until the visitor unlocks it — show the
   // password prompt rather than the not-found state or a bounce to login.
   const locked = failed && error instanceof ApiError && error.status === 401
@@ -350,6 +354,7 @@ export function Artifact() {
     toggleResolve,
     activate,
     startSelComment,
+    startSelAgent,
     actions,
     restore,
   } = artifactActions({
@@ -708,6 +713,8 @@ export function Artifact() {
               submitNew={submitNew}
               jumpTo={jumpTo}
               startSelComment={startSelComment}
+              startSelAgent={startSelAgent}
+              agents={agents}
               currentSlide={deck?.i ?? null}
               landedSlides={landedSlides}
               anchorConf={anchorConf}

@@ -70,9 +70,19 @@ export type Selection = {
   vRight: number
 } | null
 
+// An agent the composer is pre-addressed to (the "ask an agent to revise" flow): its
+// id + display name, so the request opens with `@Name ` seeded and posts a mention that
+// drops into the agent's MCP pull inbox.
+export type AgentTarget = { id: string; name: string }
+
 // A pending new-comment composer: the anchor it pins to (null = a general, unanchored
-// comment) and its resolved Y in the pinned margin (null until measured).
-export type ComposerState = { anchor: Sel | null; top: number | null } | null
+// comment) and its resolved Y in the pinned margin (null until measured). `agent` is set
+// when this is a revision REQUEST addressed to an agent, not a plain comment.
+export type ComposerState = {
+  anchor: Sel | null
+  top: number | null
+  agent?: AgentTarget
+} | null
 
 // A parsed anchor — text (a quote) or element (a non-text selector), read back from a
 // stored comment's `anchor` JSON (the counterpart to the live `Sel` above). Both may

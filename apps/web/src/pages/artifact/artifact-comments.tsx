@@ -1,13 +1,15 @@
 import { type Dispatch, type ReactNode, type SetStateAction, useRef } from "react"
-import type { Comment, Mention } from "@/api"
+import type { Comment, DirUser, Mention } from "@/api"
 import { Icon } from "@/components/icons"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
+import { AskAgentButton } from "./ask-agent"
 import { MobileComments, OpenPanel } from "./comment-panels"
 import { CommentScopeProvider } from "./lib/comment-scope"
 import { clamp } from "./lib/layout"
 import { quoteChipClass } from "./quote-chip"
 import {
+  type AgentTarget,
   type AnchorConf,
   type ComposerState,
   type Panel,
@@ -56,6 +58,10 @@ export function ArtifactComments(p: {
   submitNew: (text: string, mentions?: Mention[]) => void
   jumpTo: (threadId: string) => void
   startSelComment: () => void
+  /** Open the composer as a revision request addressed to `agent`. */
+  startSelAgent: (agent: AgentTarget) => void
+  /** Agents this viewer can hand a revision to (empty ⇒ the affordance is hidden). */
+  agents: DirUser[]
   /** Deck artifacts: the slide being viewed, and where each thread's text resolved.
    *  Used by comment cards to show a "Slide N" / "moved" badge. */
   currentSlide?: number | null
@@ -87,6 +93,7 @@ export function ArtifactComments(p: {
         currentSlide: p.currentSlide,
         landedSlides: p.landedSlides,
         anchorConf: p.anchorConf,
+        agentIds: new Set(p.agents.map((a) => a.id)),
       }}
     >
       {isMobile && canComment && (
@@ -164,29 +171,44 @@ export function ArtifactComments(p: {
           this would land under iOS's own selection menu, so mobile uses the bottom
           bar below instead. Clicking opens the panel and starts a pinned composer. */}
       {!isMobile && canComment && p.docLive && sel && !p.composer && (
-        <Button
-          variant="outline"
-          className="fixed z-50 rounded-full bg-card shadow-[var(--shadow)]"
-          title="Comment on the selection"
-          data-testid="comment-on-selection"
+        // biome-ignore lint/a11y/noStaticElementInteractions: onMouseDown only prevents the pill from stealing the selection; the real controls inside are buttons.
+        <div
+          className="fixed z-50 flex items-center gap-1 rounded-full bg-card p-1 shadow-[var(--shadow)] ring-1 ring-border"
           onMouseDown={(e) => e.preventDefault()}
-          onClick={() => {
-            if (panel !== "open") p.setPanel("open")
-            p.startSelComment()
-          }}
           style={{
             // Float just above the selection, centered on it, clamped into the
-            // document column (left of the aside) and below the top header.
-            top: clamp(sel.vTop - 44, 64, window.innerHeight - 52),
+            // document column (left of the aside) and below the top header. A wider
+            // half-width offset accounts for the two-action row (Comment · Ask agent).
+            top: clamp(sel.vTop - 46, 64, window.innerHeight - 54),
             left: clamp(
-              (sel.vLeft + sel.vRight) / 2 - 60,
+              (sel.vLeft + sel.vRight) / 2 - 90,
               12,
-              window.innerWidth - p.asideWidth - 132,
+              window.innerWidth - p.asideWidth - 210,
             ),
           }}
         >
-          <Icon name="comments" size={16} /> Comment
-        </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="rounded-full"
+            title="Comment on the selection"
+            data-testid="comment-on-selection"
+            onClick={() => {
+              if (panel !== "open") p.setPanel("open")
+              p.startSelComment()
+            }}
+          >
+            <Icon name="comments" size={16} /> Comment
+          </Button>
+          {/* The agent-native moat: hand the selected span to an agent to revise. */}
+          <AskAgentButton
+            agents={p.agents}
+            onPick={(agent) => {
+              if (panel !== "open") p.setPanel("open")
+              p.startSelAgent(agent)
+            }}
+          />
+        </div>
       )}
       {/* Phones: a selection (drag) OR a tapped paragraph surfaces this bottom bar,
           pinned below iOS's own selection menu and big enough to thumb. It shows
@@ -202,6 +224,15 @@ export function ArtifactComments(p: {
               ? selLabel(sel.selector)
               : `“${selLabel(sel.selector) ?? ""}”`}
           </span>
+          <AskAgentButton
+            agents={p.agents}
+            size="bar"
+            onPick={(agent) => {
+              primer.current?.focus()
+              p.setPanel("open")
+              p.startSelAgent(agent)
+            }}
+          />
           <Button
             data-testid="mobile-comment-start"
             onClick={() => {

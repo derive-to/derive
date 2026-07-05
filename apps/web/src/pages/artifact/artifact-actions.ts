@@ -5,7 +5,7 @@ import { toast } from "@/components/ui/sonner"
 import { commentsQuery } from "@/lib/queries"
 import type { CommentActions } from "./comment-actions"
 import { toggleReaction } from "./lib/reactions"
-import type { ComposerState, Sel, Selection } from "./types"
+import type { AgentTarget, ComposerState, Sel, Selection } from "./types"
 
 type Me = { name?: string | null; email?: string | null } | null
 
@@ -170,6 +170,14 @@ export function artifactActions(p: {
     p.setComposer({ anchor: p.sel.selector, top: p.sel.top })
     p.setActiveThread(null)
   }
+  // Open the composer as a revision REQUEST addressed to `agent` (the "ask an agent to
+  // revise this selection" flow) — same anchored composer, pre-seeded with the mention
+  // so the posted note lands in the agent's MCP pull inbox.
+  const startSelAgent = (agent: AgentTarget) => {
+    if (!p.sel) return
+    p.setComposer({ anchor: p.sel.selector, top: p.sel.top, agent })
+    p.setActiveThread(null)
+  }
   const actions: CommentActions = {
     meName: me?.name ?? me?.email ?? "",
     react: (commentId, emoji) => {
@@ -231,6 +239,7 @@ export function artifactActions(p: {
     toggleResolve,
     activate,
     startSelComment,
+    startSelAgent,
     actions,
     restore,
   }

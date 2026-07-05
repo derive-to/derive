@@ -200,6 +200,7 @@ export function MobileComments({
           <div className="overflow-auto p-3 pb-[max(14px,env(safe-area-inset-bottom))]">
             <Composer
               quote={selLabel(composer.anchor)}
+              agent={composer.agent}
               // After posting, open the full list so the new comment is visible (the
               // sheet would otherwise drop back to the peek bar and hide it).
               onSubmit={(text, mentions) => {
