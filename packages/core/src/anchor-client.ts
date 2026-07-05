@@ -17,7 +17,7 @@
  * bundles into one small self-contained script.
  */
 
-import { fingerprintFrom, normWs } from "./anchor-shared"
+import { findQuoteWithContext, fingerprintFrom, normWs } from "./anchor-shared"
 
 // The element-anchor selector as it arrives from the host (mirrors core's ElementSelector).
 interface ElWire {
@@ -67,6 +67,48 @@ interface ElReg {
 
   /* -- selection capture: a text selection becomes a TextQuoteSelector + the
         on-screen rect of the selection, so the host can float a button beside it -- */
+  // Build a text quote from a selection Range using the SAME text-node concatenation the
+  // resolver greps — so a selection spanning multiple elements captures a quote that
+  // actually resolves, with real prefix/suffix context. (The old path took `exact` from
+  // Selection.toString(), whose block-boundary newlines don't match the DOM text, and
+  // took context from only the anchor node's textContent — so a multi-element comment
+  // stored a mismatched quote with empty context and orphaned as "text changed".)
+  const quoteFromRange = (
+    range: Range,
+  ): { exact: string; prefix: string; suffix: string } | null => {
+    const nodes = textNodes(document.body)
+    let full = ""
+    let start = -1
+    let end = -1
+    const { startContainer: sc, startOffset: so, endContainer: ec, endOffset: eo } = range
+    for (const n of nodes) {
+      const base = full.length
+      const len = n.nodeValue?.length ?? 0
+      if (n === sc) start = base + Math.min(so, len)
+      if (n === ec) end = base + Math.min(eo, len)
+      full += n.nodeValue
+    }
+    // Element-boundary containers (rare: select-all / triple-click land on an element,
+    // not a text node) — map through the range's intersected text nodes instead.
+    if (start < 0 || end < 0) {
+      let base = 0
+      for (const n of nodes) {
+        const len = n.nodeValue?.length ?? 0
+        if (range.intersectsNode(n)) {
+          if (start < 0) start = base
+          end = base + len
+        }
+        base += len
+      }
+    }
+    if (start < 0 || end <= start) return null
+    return {
+      exact: full.slice(start, end),
+      prefix: full.slice(Math.max(0, start - 24), start),
+      suffix: full.slice(end, end + 24),
+    }
+  }
+
   const emitSelection = () => {
     const s = window.getSelection()
     const t = s ? s.toString().trim() : ""
@@ -77,22 +119,26 @@ interface ElReg {
       post({ type: "select", selector: null, rect: null })
       return
     }
-    const ctx = (s?.anchorNode?.textContent || t) as string
-    const i = ctx.indexOf(t)
     let rect: { top: number; bottom: number; left: number; right: number } | null = null
+    let quote: { exact: string; prefix: string; suffix: string } | null = null
     try {
-      const r = s?.getRangeAt(0).getBoundingClientRect()
-      if (r && (r.height || r.width))
-        rect = { top: r.top, bottom: r.bottom, left: r.left, right: r.right }
+      const range = s?.getRangeAt(0)
+      if (range) {
+        quote = quoteFromRange(range)
+        const r = range.getBoundingClientRect()
+        if (r && (r.height || r.width))
+          rect = { top: r.top, bottom: r.bottom, left: r.left, right: r.right }
+      }
     } catch (_e) {}
     post({
       type: "select",
       rect,
       selector: {
         type: "TextQuoteSelector",
-        exact: t,
-        prefix: i >= 0 ? ctx.slice(Math.max(0, i - 24), i) : "",
-        suffix: i >= 0 ? ctx.slice(i + t.length, i + t.length + 24) : "",
+        // Fall back to the raw selection text if the range walk didn't yield a quote.
+        exact: quote?.exact ?? t,
+        prefix: quote?.prefix ?? "",
+        suffix: quote?.suffix ?? "",
       },
     })
   }
@@ -869,24 +915,16 @@ interface ElReg {
     }
     return best?.id ?? null
   }
-  /* same resolution order as the server: context match first, then exact */
-  const find = (full: string, a: Anchor): number => {
-    const pre = a.prefix || ""
-    const suf = a.suffix || ""
-    const exact = a.exact || ""
-    const ctx = pre + exact + suf
-    if (ctx !== exact) {
-      const i = full.indexOf(ctx)
-      if (i >= 0) return i + pre.length
-    }
-    return full.indexOf(exact)
-  }
-  /* root's concatenated-text offset for an anchor (context match first, then exact) */
-  const findIn = (root: Node, a: Anchor): number => {
+  /* root's concatenated-text span for a text anchor — context match first (to
+     disambiguate a repeated quote), then the exact, both WHITESPACE-FLEXIBLE via the
+     SHARED findQuoteWithContext, so a quote spanning block elements (whose inter-block
+     whitespace differs between the Selection, the DOM text, and the source) still
+     resolves, and identically to the server's reanchor. Returns the exact's span. */
+  const findIn = (root: Node, a: Anchor): { start: number; end: number } | null => {
     const nodes = textNodes(root)
     let full = ""
     for (const node of nodes) full += node.nodeValue
-    return find(full, a)
+    return findQuoteWithContext(full, a.exact || "", a.prefix, a.suffix)
   }
   // The element ancestor of a range's start (its start is a text node) — for slide lookup.
   const rangeStartEl = (r: Range): Element | null => {
@@ -988,23 +1026,22 @@ interface ElReg {
       }
       /* text anchor: scope a deck comment to its recorded slide FIRST (so the same
          phrase on two slides can't collide), then fall back to a whole-document
-         search if the text moved off that slide. Builds a Range (no DOM mutation);
-         the highlight is painted from every range together, below. */
-      const exactLen = a.exact?.length ?? 0
+         search if the text moved off that slide. Builds a Range (no DOM mutation) from
+         the resolved span; the highlight is painted from every range together, below. */
       const slide = a.slide != null ? slides[a.slide] : undefined
       let range: Range | null = null
       let where: number | null = null
       if (a.slide != null && slide) {
-        const s1 = findIn(slide, a)
-        if (s1 >= 0) {
-          range = rangeAt(slide, s1, s1 + exactLen)
+        const span = findIn(slide, a)
+        if (span) {
+          range = rangeAt(slide, span.start, span.end)
           where = a.slide
         }
       }
       if (!range) {
-        const s2 = findIn(document.body, a)
-        if (s2 >= 0) {
-          range = rangeAt(document.body, s2, s2 + exactLen)
+        const span = findIn(document.body, a)
+        if (span) {
+          range = rangeAt(document.body, span.start, span.end)
           where = slides.length && range ? slideOfEl(rangeStartEl(range), slides) : null
         }
       }

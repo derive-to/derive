@@ -47,3 +47,70 @@ export function normWs(s: string): string {
 export function fingerprintFrom(tag: string, src: string, alt: string, text: string): string {
   return fnv1a([tag, src, alt, normWs(text).slice(0, FP_TEXT_CAP)].join(FP_SEP))
 }
+
+/** Escape a string for literal use inside a RegExp. */
+function escapeRe(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+}
+
+/**
+ * Locate `quote` inside `text`, tolerating any difference in WHITESPACE between them.
+ * A quote that spans block elements serializes its inter-block gaps differently in each
+ * place it's read — a browser Selection renders them as "\n\n", concatenated DOM text
+ * nodes carry the source indentation ("\n    "), and HTML source has yet another form —
+ * so a strict indexOf is far too brittle (it silently orphaned every multi-element
+ * comment). Here each run of whitespace in the quote matches ANY run of whitespace in
+ * the text; everything else matches literally. Returns the [start, end) offsets of the
+ * match in `text`, or null. Deterministic, no ML — the same primitive the browser client
+ * and the server resolver both call, so a quote resolves identically on both.
+ */
+export function findQuote(text: string, quote: string): { start: number; end: number } | null {
+  return findQuoteWithContext(text, quote)
+}
+
+/** Whitespace-flexible regex source for a literal string: escape to a literal pattern
+ *  (never introduces whitespace), then let every whitespace run flex to `\s+`. */
+const flexPattern = (s: string): string => escapeRe(s).replace(/\s+/g, "\\s+")
+
+/**
+ * Locate `exact` in `text` whitespace-flexibly, using `prefix`/`suffix` as CONTEXT to
+ * disambiguate a quote that repeats — then return the span of `exact` itself (not the
+ * context). The context is matched as one pattern with `exact` in a capture group, and
+ * the group's own offsets are read via the RegExp `d` (indices) flag, so an `exact` that
+ * also appears inside the prefix can't hijack the result. Falls back to the bare exact
+ * anywhere when the context doesn't resolve. The single primitive both the browser client
+ * and the server call, so a quote resolves identically on both. Returns null if unfound.
+ */
+export function findQuoteWithContext(
+  text: string,
+  exact: string,
+  prefix?: string,
+  suffix?: string,
+): { start: number; end: number } | null {
+  const q = exact.trim()
+  if (!q) return null
+  const pre = (prefix ?? "").trim()
+  const suf = (suffix ?? "").trim()
+  // Context phase: prefix + (exact) + suffix, whitespace-flexible, exact captured. The
+  // `d` flag exposes the capture group's [start,end] directly.
+  if (pre || suf) {
+    try {
+      const joinPre = pre ? `${flexPattern(pre)}\\s+` : ""
+      const joinSuf = suf ? `\\s+${flexPattern(suf)}` : ""
+      const re = new RegExp(`${joinPre}(${flexPattern(q)})${joinSuf}`, "d")
+      const m = re.exec(text) as (RegExpExecArray & { indices?: Array<[number, number]> }) | null
+      const gi = m?.indices?.[1]
+      if (gi) return { start: gi[0], end: gi[1] }
+    } catch {
+      /* fall through to the bare exact */
+    }
+  }
+  // Exact anywhere (no/failed context).
+  try {
+    const m = new RegExp(flexPattern(q)).exec(text)
+    return m ? { start: m.index, end: m.index + m[0].length } : null
+  } catch {
+    const i = text.indexOf(q)
+    return i >= 0 ? { start: i, end: i + q.length } : null
+  }
+}
