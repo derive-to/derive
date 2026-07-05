@@ -18,9 +18,15 @@ import { cn } from "@/lib/utils"
 import { Composer, MentionField } from "./comment-composer"
 import { CommentRow } from "./comment-row"
 import { useCommentScope } from "./lib/comment-scope"
-import { COMPOSER_ID, layoutPins, parseAnchor } from "./lib/layout"
+import { COMPOSER_ID, layoutPins } from "./lib/layout"
 import { quoteChipClass } from "./quote-chip"
-import { type ComposerState, type ElementSnapshotLite, type PinItem, selLabel } from "./types"
+import {
+  type ComposerState,
+  type ElementSnapshotLite,
+  type PinItem,
+  parseAnchor,
+  selLabel,
+} from "./types"
 
 export function PinnedZone({
   pins,

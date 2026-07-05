@@ -1,25 +1,9 @@
 import type { Comment } from "@/api"
-import type { ElementSnapshotLite } from "../types"
+
+// Pure geometry + grouping for the comment margin. The anchor MODEL (Sel, ParsedAnchor,
+// parseAnchor, ElementWire) lives in `../types`; this file only arranges threads.
 
 export const COMPOSER_ID = "__composer__"
-
-// The element-anchor selector as it crosses to the iframe client (`anchors` msg).
-// Mirrors core's ElementSelector; the snapshot rides along (display only — the
-// client doesn't need it to resolve).
-export type ElementWire = {
-  type: "ElementSelector"
-  tag: string
-  role?: string
-  id?: string
-  css?: string
-  fingerprint: string
-  ordinal: number
-  docFraction: number
-  before?: string
-  after?: string
-  slide?: number
-  snapshot?: ElementSnapshotLite
-}
 
 export const clamp = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, n))
 
@@ -69,35 +53,6 @@ export function layoutPins(
     }
   }
   return pos
-}
-
-// A parsed anchor — text (a quote) or element (a non-text selector). Both may carry
-// a `slide` (decks). `label` is the display string for either; `element` is set for
-// element anchors (and fed to the iframe client to relocate the element).
-export type ParsedAnchor = {
-  exact?: string
-  prefix?: string
-  suffix?: string
-  slide?: number
-  element?: ElementWire
-  label?: string
-}
-
-export function parseAnchor(a: string | null): ParsedAnchor | null {
-  if (!a) return null
-  try {
-    const s = JSON.parse(a) as ElementWire & {
-      exact?: string
-      prefix?: string
-      suffix?: string
-    }
-    if (s.type === "ElementSelector" && s.fingerprint && s.tag) {
-      return { element: s, label: s.snapshot?.label ?? "Element", slide: s.slide }
-    }
-    return s.exact ? { exact: s.exact, prefix: s.prefix, suffix: s.suffix, slide: s.slide } : null
-  } catch {
-    return null
-  }
 }
 
 export function groupThreads(comments: Comment[]): Comment[][] {

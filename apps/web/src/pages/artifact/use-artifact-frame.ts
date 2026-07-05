@@ -1,8 +1,8 @@
 import type { Dispatch, SetStateAction } from "react"
 import { useCallback, useEffect, useRef, useState } from "react"
 import type { Comment } from "@/api"
-import { groupThreads, parseAnchor } from "./lib/layout"
-import type { AnchorConf, Panel, Selection } from "./types"
+import { groupThreads } from "./lib/layout"
+import { type AnchorConf, type Panel, parseAnchor, type Selection } from "./types"
 
 /**
  * The entire conversation with the sandboxed artifact iframe, kept out of the
