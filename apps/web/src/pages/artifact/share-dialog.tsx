@@ -11,7 +11,7 @@ import {
 } from "@/api"
 import { Icon, type IconName } from "@/components/icons"
 import { ROLE_LABELS, RoleSelect } from "@/components/shared/role-select"
-import { Eyebrow } from "@/components/shared/section-eyebrow"
+import { Eyebrow, SectionEyebrow } from "@/components/shared/section-eyebrow"
 import { Spinner } from "@/components/shared/spinner"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
@@ -24,12 +24,11 @@ import {
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
+  SelectMenu,
+  SelectMenuContent,
+  SelectMenuItem,
+  SelectMenuTrigger,
+} from "@/components/ui/select-menu"
 import { toast } from "@/components/ui/sonner"
 import { useAuth } from "@/ctx"
 import { getInitials } from "@/lib/initials"
@@ -165,6 +164,11 @@ export function ShareButton({
     }
   }
 
+  // The ladder entry for the draft pick (editable) and the server's own value
+  // (view-only render) — looked up once and reused, rather than re-scanning
+  // ACCESS at every place the icon/label/blurb is needed.
+  const currentAccess = ACCESS.find((a) => a.value === vis)
+  const visibilityAccess = ACCESS.find((a) => a.value === visibility)
   // Reach visibilities (anyone with the link / public / password) carry a general-access
   // permission; private/workspace do not, so the view/comment control hides for them.
   const reach = vis === "link" || vis === "public" || vis === "password"
@@ -379,312 +383,328 @@ export function ShareButton({
           Share
         </Button>
       </DialogTrigger>
-      {/* One surface, Docs-shaped: add people → who has access → general access,
-          with a copy-link footer. Embed + domains fold behind a disclosure — the
+      {/* One surface: general access → who has access → add more, with a
+          copy-link footer. The order reads top-down as one flow — the
+          coarse-grained setting first, then the roster it governs, then the
+          way to extend it. Embed + domains fold behind a disclosure — the
           dialog's job is access, and everything applies as it's chosen (no Save). */}
-      <DialogContent className="sm:max-w-md" aria-describedby={undefined}>
+      <DialogContent className="sm:max-w-lg" aria-describedby={undefined}>
         <DialogHeader>
           <DialogTitle className="line-clamp-1 pr-6">
             {art?.title ? `Share “${art.title}”` : "Share"}
           </DialogTitle>
         </DialogHeader>
 
-        {canManage ? (
-          <form onSubmit={add} className="flex items-center gap-1.5">
-            <div className="relative flex-1">
-              {/* WAI-APG combobox wiring: the input announces the popup and the
-                  arrow-key highlight (aria-activedescendant). */}
-              <Input
-                data-testid="share-email"
-                type="text"
-                autoCapitalize="none"
-                autoCorrect="off"
-                autoComplete="off"
-                placeholder="Add people by @username or email…"
-                aria-label="Username or email"
-                role="combobox"
-                aria-expanded={suggest.length > 0}
-                aria-autocomplete="list"
-                aria-controls="share-suggest-list"
-                aria-activedescendant={
-                  active >= 0 && suggest[active] ? `share-suggest-opt-${active}` : undefined
-                }
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                onKeyDown={onAddKeyDown}
-                className="w-full"
-              />
-              {suggest.length > 0 && (
-                <div
-                  data-testid="share-suggest"
-                  id="share-suggest-list"
-                  role="listbox"
-                  aria-label="People suggestions"
-                  className="absolute inset-x-0 top-[calc(100%+4px)] z-40 max-h-56 overflow-y-auto rounded-xl bg-popover p-1 shadow-[var(--shadow-pop)] ring-1 ring-foreground/10"
-                >
-                  {suggest.map((u, i) => (
-                    <button
-                      key={u.username}
-                      type="button"
-                      data-testid="share-suggest-item"
-                      id={`share-suggest-opt-${i}`}
-                      role="option"
-                      aria-selected={i === active}
-                      // Keep the input focused so the click registers without blurring first.
-                      onMouseDown={(e) => e.preventDefault()}
-                      onClick={() => pick(u)}
-                      onMouseEnter={() => setActive(i)}
-                      className={cn(
-                        "flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left outline-none focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring",
-                        i === active ? "bg-accent" : "hover:bg-accent",
-                      )}
+        <div className="flex flex-col gap-6">
+          <div>
+            <SectionEyebrow action={savingVis && <Spinner className="size-3" />}>
+              General access
+            </SectionEyebrow>
+            {canManage ? (
+              <div className="mt-2 flex flex-col gap-2 rounded-lg bg-secondary p-3">
+                <div className="flex gap-1.5">
+                  <SelectMenu value={vis} onValueChange={pickVisibility}>
+                    <SelectMenuTrigger
+                      aria-label="General access"
+                      data-testid="share-visibility"
+                      disabled={savingVis}
+                      className="flex-1 bg-card"
                     >
-                      <Avatar className="size-6">
-                        {u.image && <AvatarImage src={u.image} alt={u.name ?? u.username} />}
-                        <AvatarFallback>{getInitials(u.name ?? u.username)}</AvatarFallback>
-                      </Avatar>
-                      <span className="min-w-0 flex-1">
-                        {u.name && (
-                          <span className="block truncate text-sm font-medium text-foreground">
-                            {u.name}
-                          </span>
-                        )}
-                        <span className="block truncate font-mono text-2xs text-muted-foreground">
-                          @{u.username}
-                        </span>
-                      </span>
-                    </button>
-                  ))}
+                      <Icon
+                        name={currentAccess?.icon ?? "share"}
+                        className="text-muted-foreground"
+                      />
+                      {currentAccess?.label ?? vis}
+                    </SelectMenuTrigger>
+                    <SelectMenuContent>
+                      {ACCESS.map((a) => (
+                        <SelectMenuItem key={a.value} value={a.value}>
+                          <Icon name={a.icon} className="text-muted-foreground" />
+                          {a.label}
+                        </SelectMenuItem>
+                      ))}
+                    </SelectMenuContent>
+                  </SelectMenu>
+                  {reach && (
+                    <SelectMenu
+                      value={genRole}
+                      onValueChange={(v) => pickGenRole(v as GeneralRole)}
+                    >
+                      <SelectMenuTrigger
+                        aria-label="Link permission"
+                        data-testid="share-general-role"
+                        disabled={savingVis}
+                        className="bg-card"
+                      >
+                        {genRole === "commenter" ? "Can comment" : "Can view"}
+                      </SelectMenuTrigger>
+                      <SelectMenuContent>
+                        <SelectMenuItem value="viewer">Can view</SelectMenuItem>
+                        <SelectMenuItem value="commenter">Can comment</SelectMenuItem>
+                      </SelectMenuContent>
+                    </SelectMenu>
+                  )}
                 </div>
-              )}
-            </div>
-            <div data-testid="share-role" className="w-26 shrink-0">
-              <RoleSelect
-                value={role}
-                onChange={setRole}
-                aria-label="Role for new member"
-                className="w-full"
-              />
-            </div>
-            <Button
-              data-testid="share-add"
-              variant="default"
-              size="sm"
-              type="submit"
-              loading={busy}
-            >
-              {busy ? "Adding…" : "Add"}
-            </Button>
-          </form>
-        ) : (
-          <div
-            data-testid="share-viewonly"
-            className="flex items-center gap-2 rounded-lg bg-secondary px-3 py-2 text-sm text-muted-foreground"
-          >
-            <Icon name="lock" />
-            View only · ask an owner or editor to change access.
+                {pendingPw ? (
+                  <div className="flex gap-1.5">
+                    <Input
+                      type="password"
+                      data-testid="share-visibility-password"
+                      placeholder="Set a password"
+                      aria-label="Password"
+                      value={pw}
+                      onChange={(e) => setPw(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && pw) void applyVisibility("password", genRole, pw)
+                      }}
+                      className="flex-1"
+                    />
+                    <Button
+                      data-testid="share-visibility-save"
+                      variant="secondary"
+                      size="sm"
+                      disabled={!pw}
+                      loading={savingVis}
+                      onClick={() => void applyVisibility("password", genRole, pw)}
+                    >
+                      {savingVis ? "Setting…" : "Set password"}
+                    </Button>
+                  </div>
+                ) : vis === "password" && pwOpen ? (
+                  <div className="flex gap-1.5">
+                    <Input
+                      type="password"
+                      data-testid="share-visibility-password"
+                      placeholder="New password"
+                      aria-label="New password"
+                      value={pw}
+                      onChange={(e) => setPw(e.target.value)}
+                      className="flex-1"
+                    />
+                    <Button
+                      data-testid="share-visibility-save"
+                      variant="secondary"
+                      size="sm"
+                      disabled={!pw}
+                      loading={savingVis}
+                      onClick={() => void applyVisibility("password", genRole, pw)}
+                    >
+                      {savingVis ? "Setting…" : "Set"}
+                    </Button>
+                  </div>
+                ) : null}
+                <p className="text-sm text-muted-foreground">
+                  {pendingPw ? "Applies once a password is set." : (currentAccess?.blurb ?? "")}
+                  {!pendingPw &&
+                    reach &&
+                    genRole === "commenter" &&
+                    " Signed-in visitors can comment."}
+                  {!pendingPw && vis === "password" && (
+                    <Button
+                      variant="link"
+                      size="xs"
+                      data-testid="share-password-change"
+                      className="ml-1 px-0"
+                      onClick={() => setPwOpen(true)}
+                    >
+                      Change password
+                    </Button>
+                  )}
+                </p>
+              </div>
+            ) : (
+              <p className="mt-2 flex items-center gap-1.5 text-sm text-muted-foreground">
+                <Icon name={visibilityAccess?.icon ?? "share"} />
+                {visibilityAccess?.label ?? visibility}
+              </p>
+            )}
           </div>
-        )}
-        {err && (
-          <p data-testid="share-error" role="alert" className="text-sm text-destructive">
-            {err}
-          </p>
-        )}
 
-        <div>
-          <Eyebrow as="div" className="mb-1">
-            People with access
-          </Eyebrow>
-          {members.length === 0 ? (
-            <p data-testid="share-empty" className="px-2 py-1.5 text-sm text-muted-foreground">
-              {canManage ? "No one shared yet." : "Just you and the workspace."}
-            </p>
-          ) : (
-            <div className="-mx-2 flex flex-col">
-              {members.map((m) => (
-                <div
-                  key={m.user_id}
-                  data-testid={`share-member-row-${m.user_id}`}
-                  className="flex items-center gap-2.5 rounded-lg px-2 py-1.5 hover:bg-secondary"
-                >
-                  <Avatar className="size-6 shrink-0">
-                    <AvatarFallback className="text-2xs">
-                      {getInitials(m.name ?? m.handle ?? "?")}
-                    </AvatarFallback>
-                  </Avatar>
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate text-sm font-medium text-foreground">
-                      {m.name ?? (m.handle ? `@${m.handle}` : m.user_id)}
-                      {m.user_id === me?.id && (
-                        <span className="text-muted-foreground"> (you)</span>
+          <div>
+            <SectionEyebrow count={members.length || undefined}>People with access</SectionEyebrow>
+            {members.length === 0 ? (
+              <p data-testid="share-empty" className="px-2 py-2.5 text-sm text-muted-foreground">
+                {canManage ? "No one shared yet." : "Just you and the workspace."}
+              </p>
+            ) : (
+              <div className="-mx-2 mt-1 flex flex-col">
+                {members.map((m) => (
+                  <div
+                    key={m.user_id}
+                    data-testid={`share-member-row-${m.user_id}`}
+                    className="flex items-center gap-3 rounded-lg px-2 py-2 hover:bg-secondary"
+                  >
+                    <Avatar className="size-8 shrink-0">
+                      <AvatarFallback className="text-xs">
+                        {getInitials(m.name ?? m.handle ?? "?")}
+                      </AvatarFallback>
+                    </Avatar>
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-sm font-medium text-foreground">
+                        {m.name ?? (m.handle ? `@${m.handle}` : m.user_id)}
+                        {m.user_id === me?.id && (
+                          <span className="text-muted-foreground"> (you)</span>
+                        )}
+                      </div>
+                      {m.name && m.handle && (
+                        <div className="truncate font-mono text-2xs text-muted-foreground">
+                          @{m.handle}
+                        </div>
                       )}
                     </div>
-                    {m.name && m.handle && (
-                      <div className="truncate font-mono text-2xs text-muted-foreground">
-                        @{m.handle}
+                    {/* The sole owner's row is fixed — the server refuses to downgrade
+                      or remove the last owner, so don't offer it. */}
+                    {canManage &&
+                    !(
+                      m.role === "owner" && members.filter((x) => x.role === "owner").length === 1
+                    ) ? (
+                      <>
+                        <div
+                          data-testid={`share-member-role-${m.user_id}`}
+                          className="w-25 shrink-0"
+                        >
+                          <RoleSelect
+                            value={m.role}
+                            onChange={(next) => change(m, next)}
+                            aria-label={`Role for ${m.name ?? (m.handle ? `@${m.handle}` : "member")}`}
+                            className="w-full"
+                          />
+                        </div>
+                        <Button
+                          data-testid={`share-member-remove-${m.user_id}`}
+                          variant="ghost"
+                          size="icon-sm"
+                          onClick={() => remove(m)}
+                          aria-label={`Remove ${m.name ?? (m.handle ? `@${m.handle}` : "member")}`}
+                        >
+                          <Icon name="close" />
+                        </Button>
+                      </>
+                    ) : (
+                      <span
+                        data-testid={`share-member-role-${m.user_id}`}
+                        className="shrink-0 text-sm text-muted-foreground"
+                      >
+                        {ROLE_LABELS[m.role]}
+                      </span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Adding people is the natural next step after seeing who already has
+                access — the roster reads top-to-bottom as one flow: who's in, then
+                bring in more. */}
+            <div className="mt-3 flex flex-col gap-2">
+              {canManage ? (
+                <form onSubmit={add} className="flex items-center gap-1.5">
+                  <div className="relative flex-1">
+                    {/* WAI-APG combobox wiring: the input announces the popup and the
+                    arrow-key highlight (aria-activedescendant). */}
+                    <Input
+                      data-testid="share-email"
+                      type="text"
+                      autoCapitalize="none"
+                      autoCorrect="off"
+                      autoComplete="off"
+                      placeholder="Add people by @username or email…"
+                      aria-label="Username or email"
+                      role="combobox"
+                      aria-expanded={suggest.length > 0}
+                      aria-autocomplete="list"
+                      aria-controls="share-suggest-list"
+                      aria-activedescendant={
+                        active >= 0 && suggest[active] ? `share-suggest-opt-${active}` : undefined
+                      }
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      onKeyDown={onAddKeyDown}
+                      className="w-full"
+                    />
+                    {suggest.length > 0 && (
+                      <div
+                        data-testid="share-suggest"
+                        id="share-suggest-list"
+                        role="listbox"
+                        aria-label="People suggestions"
+                        className="absolute inset-x-0 top-[calc(100%+4px)] z-40 max-h-56 overflow-y-auto rounded-xl bg-popover p-1 shadow-[var(--shadow-pop)] ring-1 ring-foreground/10"
+                      >
+                        {suggest.map((u, i) => (
+                          <button
+                            key={u.username}
+                            type="button"
+                            data-testid="share-suggest-item"
+                            id={`share-suggest-opt-${i}`}
+                            role="option"
+                            aria-selected={i === active}
+                            // Keep the input focused so the click registers without blurring first.
+                            onMouseDown={(e) => e.preventDefault()}
+                            onClick={() => pick(u)}
+                            onMouseEnter={() => setActive(i)}
+                            className={cn(
+                              "flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left outline-none focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring",
+                              i === active ? "bg-accent" : "hover:bg-accent",
+                            )}
+                          >
+                            <Avatar className="size-6">
+                              {u.image && <AvatarImage src={u.image} alt={u.name ?? u.username} />}
+                              <AvatarFallback>{getInitials(u.name ?? u.username)}</AvatarFallback>
+                            </Avatar>
+                            <span className="min-w-0 flex-1">
+                              {u.name && (
+                                <span className="block truncate text-sm font-medium text-foreground">
+                                  {u.name}
+                                </span>
+                              )}
+                              <span className="block truncate font-mono text-2xs text-muted-foreground">
+                                @{u.username}
+                              </span>
+                            </span>
+                          </button>
+                        ))}
                       </div>
                     )}
                   </div>
-                  {/* The sole owner's row is fixed — the server refuses to downgrade
-                      or remove the last owner, so don't offer it. */}
-                  {canManage &&
-                  !(
-                    m.role === "owner" && members.filter((x) => x.role === "owner").length === 1
-                  ) ? (
-                    <>
-                      <div data-testid={`share-member-role-${m.user_id}`} className="w-23 shrink-0">
-                        <RoleSelect
-                          value={m.role}
-                          onChange={(next) => change(m, next)}
-                          aria-label={`Role for ${m.name ?? (m.handle ? `@${m.handle}` : "member")}`}
-                          className="w-full"
-                        />
-                      </div>
-                      <Button
-                        data-testid={`share-member-remove-${m.user_id}`}
-                        variant="ghost"
-                        size="icon-sm"
-                        onClick={() => remove(m)}
-                        aria-label={`Remove ${m.name ?? (m.handle ? `@${m.handle}` : "member")}`}
-                      >
-                        <Icon name="close" />
-                      </Button>
-                    </>
-                  ) : (
-                    <span
-                      data-testid={`share-member-role-${m.user_id}`}
-                      className="shrink-0 text-sm text-muted-foreground"
-                    >
-                      {ROLE_LABELS[m.role]}
-                    </span>
-                  )}
+                  <div data-testid="share-role" className="w-28 shrink-0">
+                    <RoleSelect
+                      value={role}
+                      onChange={setRole}
+                      aria-label="Role for new member"
+                      className="w-full"
+                    />
+                  </div>
+                  <Button
+                    data-testid="share-add"
+                    variant="default"
+                    size="sm"
+                    type="submit"
+                    loading={busy}
+                  >
+                    {busy ? "Adding…" : "Add"}
+                  </Button>
+                </form>
+              ) : (
+                <div
+                  data-testid="share-viewonly"
+                  className="flex items-center gap-2 rounded-lg bg-secondary px-3 py-2 text-sm text-muted-foreground"
+                >
+                  <Icon name="lock" />
+                  View only · ask an owner or editor to change access.
                 </div>
-              ))}
+              )}
+              {err && (
+                <p data-testid="share-error" role="alert" className="text-sm text-destructive">
+                  {err}
+                </p>
+              )}
             </div>
-          )}
-        </div>
-
-        <div>
-          <div className="mb-1 flex items-center gap-2">
-            <Eyebrow as="div">General access</Eyebrow>
-            {savingVis && <Spinner className="size-3" />}
           </div>
-          {canManage ? (
-            <>
-              <div className="flex gap-1.5">
-                <Select value={vis} onValueChange={pickVisibility} disabled={savingVis}>
-                  <SelectTrigger
-                    aria-label="General access"
-                    data-testid="share-visibility"
-                    className="flex-1"
-                  >
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {ACCESS.map((a) => (
-                      <SelectItem key={a.value} value={a.value}>
-                        <Icon name={a.icon} className="text-muted-foreground" />
-                        {a.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                {reach && (
-                  <Select
-                    value={genRole}
-                    onValueChange={(v) => pickGenRole(v as GeneralRole)}
-                    disabled={savingVis}
-                  >
-                    <SelectTrigger aria-label="Link permission" data-testid="share-general-role">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="viewer">Can view</SelectItem>
-                      <SelectItem value="commenter">Can comment</SelectItem>
-                    </SelectContent>
-                  </Select>
-                )}
-              </div>
-              {pendingPw ? (
-                <div className="mt-1.5 flex gap-1.5">
-                  <Input
-                    type="password"
-                    data-testid="share-visibility-password"
-                    placeholder="Set a password"
-                    aria-label="Password"
-                    value={pw}
-                    onChange={(e) => setPw(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" && pw) void applyVisibility("password", genRole, pw)
-                    }}
-                    className="flex-1"
-                  />
-                  <Button
-                    data-testid="share-visibility-save"
-                    variant="secondary"
-                    size="sm"
-                    disabled={!pw}
-                    loading={savingVis}
-                    onClick={() => void applyVisibility("password", genRole, pw)}
-                  >
-                    {savingVis ? "Setting…" : "Set password"}
-                  </Button>
-                </div>
-              ) : vis === "password" && pwOpen ? (
-                <div className="mt-1.5 flex gap-1.5">
-                  <Input
-                    type="password"
-                    data-testid="share-visibility-password"
-                    placeholder="New password"
-                    aria-label="New password"
-                    value={pw}
-                    onChange={(e) => setPw(e.target.value)}
-                    className="flex-1"
-                  />
-                  <Button
-                    data-testid="share-visibility-save"
-                    variant="secondary"
-                    size="sm"
-                    disabled={!pw}
-                    loading={savingVis}
-                    onClick={() => void applyVisibility("password", genRole, pw)}
-                  >
-                    {savingVis ? "Setting…" : "Set"}
-                  </Button>
-                </div>
-              ) : null}
-              <p className="mt-1.5 text-sm text-muted-foreground">
-                {pendingPw
-                  ? "Applies once a password is set."
-                  : (ACCESS.find((a) => a.value === vis)?.blurb ?? "")}
-                {!pendingPw &&
-                  reach &&
-                  genRole === "commenter" &&
-                  " Signed-in visitors can comment."}
-                {!pendingPw && vis === "password" && (
-                  <Button
-                    variant="link"
-                    size="xs"
-                    data-testid="share-password-change"
-                    className="ml-1 px-0"
-                    onClick={() => setPwOpen(true)}
-                  >
-                    Change password
-                  </Button>
-                )}
-              </p>
-            </>
-          ) : (
-            <p className="flex items-center gap-1.5 text-sm text-muted-foreground">
-              <Icon name={ACCESS.find((a) => a.value === visibility)?.icon ?? "share"} />
-              {ACCESS.find((a) => a.value === visibility)?.label ?? visibility}
-            </p>
-          )}
         </div>
 
         {/* Footer: the universal action on the left, distribution mechanics folded
             behind a quiet disclosure on the right. */}
-        <div className="flex items-center justify-between border-t border-border pt-3">
+        <div className="flex items-center justify-between border-t border-border pt-4">
           <Button data-testid="share-url-copy" variant="outline" size="sm" onClick={copyLink}>
             <Icon name={copiedLink ? "check" : "link"} />
             {copiedLink ? "Copied" : "Copy link"}

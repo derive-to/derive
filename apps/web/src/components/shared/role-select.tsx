@@ -1,11 +1,10 @@
 import type { Role } from "@/api"
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
+  SelectMenu,
+  SelectMenuContent,
+  SelectMenuItem,
+  SelectMenuTrigger,
+} from "@/components/ui/select-menu"
 
 const ROLES: Role[] = ["viewer", "commenter", "editor", "owner"]
 
@@ -18,35 +17,36 @@ export const ROLE_LABELS: Record<Role, string> = {
   owner: "Owner",
 }
 
-// The role picker — the ROLES list over the canonical shadcn Select, kept as one
-// thin wrapper so every share surface reads the same options with the same API.
+// The role picker — the ROLES list over SelectMenu, not the real Select. Both
+// call sites (this dialog and the collection share dialog) live inside a modal
+// Dialog, and Radix's Select can't opt out of the outside-pointer-events lock
+// that fights a host Dialog (see ui/select-menu.tsx). One thin wrapper so every
+// share surface reads the same options with the same API.
 export function RoleSelect({
   value,
   onChange,
   className,
-  name = "role",
   "aria-label": ariaLabel = "Role",
   "data-testid": testId,
 }: {
   value: Role
   onChange: (role: Role) => void
   className?: string
-  name?: string
   "aria-label"?: string
   "data-testid"?: string
 }) {
   return (
-    <Select name={name} value={value} onValueChange={(v) => onChange(v as Role)}>
-      <SelectTrigger aria-label={ariaLabel} data-testid={testId} className={className}>
-        <SelectValue />
-      </SelectTrigger>
-      <SelectContent>
+    <SelectMenu value={value} onValueChange={(v) => onChange(v as Role)}>
+      <SelectMenuTrigger aria-label={ariaLabel} data-testid={testId} className={className}>
+        {ROLE_LABELS[value]}
+      </SelectMenuTrigger>
+      <SelectMenuContent>
         {ROLES.map((r) => (
-          <SelectItem key={r} value={r}>
+          <SelectMenuItem key={r} value={r}>
             {ROLE_LABELS[r]}
-          </SelectItem>
+          </SelectMenuItem>
         ))}
-      </SelectContent>
-    </Select>
+      </SelectMenuContent>
+    </SelectMenu>
   )
 }
