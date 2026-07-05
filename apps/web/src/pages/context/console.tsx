@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link, useParams } from "@tanstack/react-router"
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { ApiError, api, type Session, type SessionMessage } from "@/api"
 import { Icon } from "@/components/icons"
 import { EmptyState } from "@/components/shared/empty-state"
@@ -103,6 +103,7 @@ export function ContextConsole() {
           {active ? (
             <SessionThread
               sessionId={active}
+              contextId={id}
               contextName={context.name}
               onClosed={() => qc.invalidateQueries({ queryKey: contextSessionsQuery(id).queryKey })}
             />
@@ -172,10 +173,12 @@ function AskComposer({ contextId, onAsked }: { contextId: string; onAsked: (s: S
 // One conversation: transcript + follow-up composer + close.
 function SessionThread({
   sessionId,
+  contextId,
   contextName,
   onClosed,
 }: {
   sessionId: string
+  contextId: string
   contextName: string
   onClosed: () => void
 }) {
@@ -183,6 +186,14 @@ function SessionThread({
   const { data } = useQuery(sessionQuery(sessionId))
   const [text, setText] = useState("")
   const [busy, setBusy] = useState(false)
+  // The picker pills read the sessions LIST; the transcript polls its own key.
+  // Sync the list whenever this session's state settles, so a pill never keeps
+  // saying "open" after the answer has already rendered below it.
+  const state = data?.session.state
+  useEffect(() => {
+    if (state && state !== "open")
+      qc.invalidateQueries({ queryKey: contextSessionsQuery(contextId).queryKey })
+  }, [state, contextId, qc])
   if (!data) return <Spinner className="mx-auto mt-8" />
   const { session, messages } = data
   const refresh = () => qc.invalidateQueries({ queryKey: sessionQuery(sessionId).queryKey })
