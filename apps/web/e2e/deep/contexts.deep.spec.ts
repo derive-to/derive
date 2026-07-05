@@ -1,3 +1,5 @@
+import { Buffer } from "node:buffer"
+import { request as pwRequest } from "@playwright/test"
 import { expect, publishArtifact, shareArtifact, test } from "../fixtures"
 
 // The ask loop, end-to-end through the console, with the runner stubbed as raw
@@ -37,8 +39,21 @@ test("ask → stub-runner answer with meta → follow-up → close", async ({ ow
   expect(sessions).toHaveLength(1)
   expect(sessions[0].messages[0].body_md).toBe("What was March churn?")
   // The runner may attach published artifacts (the promotion channel) — the
-  // console must render them as chips linking into the app.
-  const chartShortId = await publishArtifact(owner, "chart.html", "<h1>chart</h1>")
+  // console must render them as chips linking into the app. Publish it the way
+  // the real runner does: the AGENT bearer on a cookie-less context, so the
+  // token→registrant-ownership→link-visibility path is what's exercised.
+  const agentReq = await pwRequest.newContext({ baseURL: new URL(owner.url()).origin })
+  const chartRes = await agentReq.post("/v1/artifacts", {
+    headers: { authorization: `Bearer ${agent.token}` },
+    multipart: {
+      file: { name: "chart.html", mimeType: "text/html", buffer: Buffer.from("<h1>chart</h1>") },
+      title: "Churn by month",
+      visibility: "link",
+    },
+  })
+  expect(chartRes.ok()).toBeTruthy()
+  const chartShortId = ((await chartRes.json()) as { short_id: string }).short_id
+  await agentReq.dispose()
   await owner.request.post(`/v1/sessions/${sessions[0].id}/messages`, {
     headers: { authorization: `Bearer ${agent.token}` },
     data: {

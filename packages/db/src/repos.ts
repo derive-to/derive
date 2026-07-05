@@ -1556,21 +1556,21 @@ export function makeRepos(db: SqliteDb) {
       .where(and(eq(context.id, id), eq(context.org_id, orgId)))
       .get()
     if (!owned) return
-    const sessions = await db
-      .select({ id: contextSession.id })
-      .from(contextSession)
-      .where(eq(contextSession.context_id, id))
-      .all()
-    if (sessions.length > 0)
-      await db
-        .delete(sessionMessage)
-        .where(
-          inArray(
-            sessionMessage.session_id,
-            sessions.map((s) => s.id),
-          ),
-        )
-        .run()
+    // Subqueries, never materialized id lists: a long-lived context accumulates
+    // one session per ask, and an expanded IN (...) would blow D1's
+    // 100-bound-parameter cap (the same constraint listArtifacts documents).
+    await db
+      .delete(sessionMessage)
+      .where(
+        inArray(
+          sessionMessage.session_id,
+          db
+            .select({ id: contextSession.id })
+            .from(contextSession)
+            .where(eq(contextSession.context_id, id)),
+        ),
+      )
+      .run()
     await db.delete(contextSession).where(eq(contextSession.context_id, id)).run()
     await db.delete(context).where(eq(context.id, id)).run()
   }
@@ -1821,13 +1821,26 @@ export function makeRepos(db: SqliteDb) {
   const deleteArtifact = async (id: string): Promise<void> => {
     // Delete FK-referencing tables before the artifact row itself. A context's
     // manifest FK means deleting a manifest deletes its context (and sessions) —
-    // a context cannot outlive its definition, by design.
-    const linked = await db
-      .select({ id: context.id, org_id: context.org_id })
+    // a context cannot outlive its definition, by design. Subqueries throughout
+    // (D1's 100-bound-parameter cap; see deleteContext).
+    const ctxIds = db
+      .select({ id: context.id })
       .from(context)
       .where(eq(context.manifest_artifact_id, id))
-      .all()
-    for (const x of linked) await deleteContext(x.id, x.org_id)
+    await db
+      .delete(sessionMessage)
+      .where(
+        inArray(
+          sessionMessage.session_id,
+          db
+            .select({ id: contextSession.id })
+            .from(contextSession)
+            .where(inArray(contextSession.context_id, ctxIds)),
+        ),
+      )
+      .run()
+    await db.delete(contextSession).where(inArray(contextSession.context_id, ctxIds)).run()
+    await db.delete(context).where(eq(context.manifest_artifact_id, id)).run()
     await db.delete(reviewRound).where(eq(reviewRound.artifact_id, id)).run()
     await db.delete(version).where(eq(version.artifact_id, id)).run()
     await db.delete(comment).where(eq(comment.artifact_id, id)).run()

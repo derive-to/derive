@@ -99,7 +99,8 @@ export function parseAnswer(text: string): { answer?: RunnerAnswer; error?: stri
     typeof a.html === "string" &&
     a.html.trim() &&
     a.html.length <= 2_000_000
-      ? { title: a.title.trim(), html: a.html }
+      ? // Title is model-generated: clamp it to card width, not to trust it less.
+        { title: a.title.trim().slice(0, 120), html: a.html }
       : null
   return {
     answer: {

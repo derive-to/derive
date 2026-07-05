@@ -1,4 +1,4 @@
-// The runner's Derive client: four calls, plain fetch, the agent bearer on each.
+// The runner's Derive client: plain fetch, the agent bearer on each call.
 
 export interface QueueMessage {
   id: string
@@ -12,14 +12,12 @@ export interface QueueMessage {
 export interface QueueSession {
   id: string
   state: string
-  context_version: number
   messages: QueueMessage[]
 }
 
 export interface ContextInfo {
   id: string
   name: string
-  manifest_short_id: string | null
   manifest_version?: number
   /** The manifest's current source — the runner's system prompt. */
   manifest_md?: string | null
@@ -88,9 +86,10 @@ export class DeriveClient {
   }
 
   /** Publish a model-produced visual as a link-visible artifact. Link (not
-   *  private): the artifact is owned by the context OWNER (the agent publishes
-   *  on the registrant's behalf), so a private one would be unreadable to the
-   *  very asker it was made for. Only session participants ever see the URL. */
+   *  private): the artifact lands in the AGENT'S REGISTRANT'S library (the
+   *  on-behalf model), so a private one would be unreadable to the very asker
+   *  it was made for. Link means the URL is the gate — it only travels as far
+   *  as session participants choose to send it. */
   async publishArtifact(title: string, html: string): Promise<{ short_id: string }> {
     const form = new FormData()
     form.set("file", new Blob([html], { type: "text/html" }), "chart.html")

@@ -50,25 +50,45 @@ async function serveSession(
     ...(a.escalate ? { escalation_reason: a.escalation_reason ?? "escalated" } : {}),
   }
   // Publish the answer's visual, if it produced one. A publish failure demotes
-  // to a caveat rather than failing the session — the prose answer still stands.
-  if (a.artifact) {
+  // to a caveat rather than failing the session — the prose answer still stands
+  // — and the caveat carries the reason, because a permanent 403 (agent below
+  // editor) would otherwise look identical to a network blip. Per-session cap:
+  // every artifact spends the OWNER's storage/artifact quota, so an asker
+  // looping "add a chart" must hit a floor before the workspace does.
+  const priorArtifacts = session.messages.reduce((n, m) => {
+    const arts = (m.meta as { artifacts?: unknown[] } | null)?.artifacts
+    return n + (Array.isArray(arts) ? arts.length : 0)
+  }, 0)
+  if (a.artifact && priorArtifacts >= 10) {
+    meta.caveats = [...a.caveats, "chart skipped — this session already published 10 artifacts"]
+  } else if (a.artifact) {
     try {
       const pub = await client.publishArtifact(a.artifact.title, a.artifact.html)
       meta.artifacts = [{ short_id: pub.short_id, title: a.artifact.title }]
       console.log(`[runner] published artifact ${pub.short_id} ("${a.artifact.title}")`)
     } catch (err) {
-      meta.caveats = [...a.caveats, "a chart was produced but failed to publish"]
-      console.error(`[runner] artifact publish failed: ${(err as Error).message}`)
+      const reason = (err as Error).message.slice(0, 120)
+      meta.caveats = [...a.caveats, `a chart was produced but failed to publish (${reason})`]
+      console.error(`[runner] artifact publish failed: ${reason}`)
     }
   }
   const lastAsker = session.messages.filter((m) => m.author_kind === "asker").at(-1)
-  await client.answer(
-    session.id,
-    a.body_md,
-    meta,
-    a.escalate ? "escalated" : "answered",
-    lastAsker?.id,
-  )
+  try {
+    await client.answer(
+      session.id,
+      a.body_md,
+      meta,
+      a.escalate ? "escalated" : "answered",
+      lastAsker?.id,
+    )
+  } catch (err) {
+    // The publish already happened; a failed answer post (asker closed mid-run
+    // → 409, network) strands it. Name the orphan so the owner can clean it up
+    // — the runner itself can't delete artifacts, by design.
+    if (meta.artifacts?.length)
+      console.error(`[runner] answer post failed; orphaned artifact ${meta.artifacts[0]?.short_id}`)
+    throw err
+  }
   console.log(
     `[runner] session ${session.id} ${a.escalate ? "escalated" : "answered"} (confidence ${a.confidence ?? "?"})`,
   )

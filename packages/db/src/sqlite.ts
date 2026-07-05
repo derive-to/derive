@@ -124,30 +124,24 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
       raw.transaction(() => {
         // A context's manifest FK means deleting a manifest deletes its context
         // (and sessions) — a context cannot outlive its definition, by design.
-        const linked = db
+        // Subqueries, matching the shared query layer (D1 bound-parameter cap).
+        const ctxIds = db
           .select({ id: context.id })
           .from(context)
           .where(eq(context.manifest_artifact_id, id))
-          .all()
-        if (linked.length > 0) {
-          const ctxIds = linked.map((x) => x.id)
-          const sessions = db
-            .select({ id: contextSession.id })
-            .from(contextSession)
-            .where(inArray(contextSession.context_id, ctxIds))
-            .all()
-          if (sessions.length > 0)
-            db.delete(sessionMessage)
-              .where(
-                inArray(
-                  sessionMessage.session_id,
-                  sessions.map((s) => s.id),
-                ),
-              )
-              .run()
-          db.delete(contextSession).where(inArray(contextSession.context_id, ctxIds)).run()
-          db.delete(context).where(inArray(context.id, ctxIds)).run()
-        }
+        db.delete(sessionMessage)
+          .where(
+            inArray(
+              sessionMessage.session_id,
+              db
+                .select({ id: contextSession.id })
+                .from(contextSession)
+                .where(inArray(contextSession.context_id, ctxIds)),
+            ),
+          )
+          .run()
+        db.delete(contextSession).where(inArray(contextSession.context_id, ctxIds)).run()
+        db.delete(context).where(eq(context.manifest_artifact_id, id)).run()
         db.delete(reviewRound).where(eq(reviewRound.artifact_id, id)).run()
         db.delete(version).where(eq(version.artifact_id, id)).run()
         db.delete(comment).where(eq(comment.artifact_id, id)).run()

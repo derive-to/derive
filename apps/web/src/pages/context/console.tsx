@@ -1,7 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link, useParams } from "@tanstack/react-router"
 import { useEffect, useState } from "react"
-import { ApiError, api, type Session, type SessionMessage } from "@/api"
+import { ApiError, api, type Session, type SessionMessage, type SessionMeta } from "@/api"
 import { Icon } from "@/components/icons"
 import { EmptyState } from "@/components/shared/empty-state"
 import { PageShell } from "@/components/shared/page-shell"
@@ -317,9 +317,29 @@ function SessionThread({
   )
 }
 
+// meta is runner-supplied and schema-free on the server (deliberately, for
+// forward compat) — so the renderer must not trust its shape. A malformed blob
+// would otherwise throw during render and brick the transcript for BOTH
+// participants, permanently (the message is persisted). Narrow every field here.
+function safeMeta(meta: SessionMeta | null) {
+  const m = meta && typeof meta === "object" ? meta : {}
+  return {
+    query: typeof m.query === "string" ? m.query : null,
+    confidence: typeof m.confidence === "number" ? m.confidence : null,
+    escalation: typeof m.escalation_reason === "string" ? m.escalation_reason : null,
+    caveats: Array.isArray(m.caveats) ? m.caveats.filter((c) => typeof c === "string") : [],
+    artifacts: Array.isArray(m.artifacts)
+      ? m.artifacts.filter(
+          (a) => a && typeof a.short_id === "string" && typeof a.title === "string",
+        )
+      : [],
+  }
+}
+
 function MessageRow({ m, contextName }: { m: SessionMessage; contextName: string }) {
   const [showQuery, setShowQuery] = useState(false)
   const fromAgent = m.author_kind === "agent"
+  const meta = safeMeta(m.meta)
   return (
     <div
       data-testid="console-message"
@@ -328,14 +348,14 @@ function MessageRow({ m, contextName }: { m: SessionMessage; contextName: string
       <div className="mb-1 flex items-center gap-2 text-xs text-muted-foreground">
         <span className="font-medium">{fromAgent ? contextName : "You"}</span>
         <span>{ago(m.created_at)}</span>
-        {m.meta?.escalation_reason && (
+        {meta.escalation && (
           <Badge variant="outline" data-testid="console-escalated">
-            Escalated — {m.meta.escalation_reason}
+            Escalated — {meta.escalation}
           </Badge>
         )}
-        {typeof m.meta?.confidence === "number" && (
+        {meta.confidence !== null && (
           <span className="ml-auto tabular-nums">
-            confidence {Math.round(m.meta.confidence * 100)}%
+            confidence {Math.round(meta.confidence * 100)}%
           </span>
         )}
       </div>
@@ -344,9 +364,9 @@ function MessageRow({ m, contextName }: { m: SessionMessage; contextName: string
         // biome-ignore lint/security/noDangerouslySetInnerHtml: input is escaped first in mdToHtml.
         dangerouslySetInnerHTML={{ __html: mdToHtml(m.body_md) }}
       />
-      {m.meta?.artifacts && m.meta.artifacts.length > 0 && (
+      {meta.artifacts.length > 0 && (
         <div className="mt-2 flex flex-wrap gap-1.5">
-          {m.meta.artifacts.map((a) => (
+          {meta.artifacts.map((a) => (
             <Link
               key={a.short_id}
               to="/artifacts/$ref"
@@ -360,14 +380,14 @@ function MessageRow({ m, contextName }: { m: SessionMessage; contextName: string
           ))}
         </div>
       )}
-      {m.meta?.caveats && m.meta.caveats.length > 0 && (
+      {meta.caveats.length > 0 && (
         <ul className="mt-2 flex flex-col gap-0.5 text-xs text-muted-foreground">
-          {m.meta.caveats.map((c) => (
+          {meta.caveats.map((c) => (
             <li key={c}>⚠ {c}</li>
           ))}
         </ul>
       )}
-      {m.meta?.query && (
+      {meta.query && (
         <div className="mt-2">
           <Button
             variant="link"
@@ -380,7 +400,7 @@ function MessageRow({ m, contextName }: { m: SessionMessage; contextName: string
           </Button>
           {showQuery && (
             <pre className="mt-1 overflow-x-auto rounded-lg bg-secondary p-2.5 font-mono text-xs">
-              {m.meta.query}
+              {meta.query}
             </pre>
           )}
         </div>

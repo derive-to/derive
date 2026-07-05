@@ -23,6 +23,11 @@ Optional: `RUNNER_POLL_MS` (default 5000), `RUNNER_TIMEOUT_MS` (default 600000),
 `CLAUDE_BIN`, and `RUNNER_MOCK=1` (skip Claude, post a canned answer — wiring
 smoke test).
 
+Register the agent as **editor** if the context should publish charts: answers
+can carry a visual the runner publishes as an artifact, and publishing needs
+workspace editor standing. A commenter-role agent still answers fine — its
+charts just demote to a caveat naming the 403.
+
 Credentials never touch Derive: the MCP servers configured in `RUNNER_CWD`'s
 `.mcp.json` carry them (use read-only credentials — that boundary is the entire
 safety model; the subprocess runs with permissions prompts disabled). Extra env

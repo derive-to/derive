@@ -945,8 +945,10 @@ export interface SessionMessageRecord {
   /** The asker's user id, or the agent's id — stable identity, like comment.author_id. */
   author_id: string
   body_md: string
-  /** JSON blob from the runner: { query?, confidence?, caveats?, artifacts?, escalation? }.
-   *  TEXT like comment.meta — parsed by clients, never by the store. */
+  /** JSON blob: the runner's { query?, confidence?, caveats?, escalation_reason?,
+   *  artifacts? } plus the server-stamped `stale` (an answer superseded by a
+   *  mid-run follow-up — the runner's re-serve filter keys on it). TEXT like
+   *  comment.meta — parsed at the route layer, never by the store. */
   meta: string | null
   created_at: string
 }

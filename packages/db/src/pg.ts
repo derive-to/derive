@@ -1501,15 +1501,17 @@ export class PgMetaStore implements MetaStore {
       .where(and(eq(context.id, id), eq(context.org_id, orgId)))
       .limit(1)
     if (owned.length === 0) return
-    const sessions = await this.db
-      .select({ id: contextSession.id })
-      .from(contextSession)
-      .where(eq(contextSession.context_id, id))
-    if (sessions.length > 0)
-      await this.db.delete(sessionMessage).where(
+    // Subquery, not a materialized id list — kept identical to the sqlite/d1
+    // layer, where an expanded IN (...) would blow D1's bound-parameter cap.
+    await this.db
+      .delete(sessionMessage)
+      .where(
         inArray(
           sessionMessage.session_id,
-          sessions.map((s) => s.id),
+          this.db
+            .select({ id: contextSession.id })
+            .from(contextSession)
+            .where(eq(contextSession.context_id, id)),
         ),
       )
     await this.db.delete(contextSession).where(eq(contextSession.context_id, id))
@@ -1946,26 +1948,24 @@ export class PgMetaStore implements MetaStore {
     await this.db.transaction(async (tx) => {
       // A context's manifest FK means deleting a manifest deletes its context
       // (and sessions) — a context cannot outlive its definition, by design.
-      const linked = await tx
+      // Subqueries, matching the sqlite/d1 layer (D1 bound-parameter cap).
+      const ctxIds = tx
         .select({ id: context.id })
         .from(context)
         .where(eq(context.manifest_artifact_id, id))
-      if (linked.length > 0) {
-        const ctxIds = linked.map((x) => x.id)
-        const sessions = await tx
-          .select({ id: contextSession.id })
-          .from(contextSession)
-          .where(inArray(contextSession.context_id, ctxIds))
-        if (sessions.length > 0)
-          await tx.delete(sessionMessage).where(
-            inArray(
-              sessionMessage.session_id,
-              sessions.map((s) => s.id),
-            ),
-          )
-        await tx.delete(contextSession).where(inArray(contextSession.context_id, ctxIds))
-        await tx.delete(context).where(inArray(context.id, ctxIds))
-      }
+      await tx
+        .delete(sessionMessage)
+        .where(
+          inArray(
+            sessionMessage.session_id,
+            tx
+              .select({ id: contextSession.id })
+              .from(contextSession)
+              .where(inArray(contextSession.context_id, ctxIds)),
+          ),
+        )
+      await tx.delete(contextSession).where(inArray(contextSession.context_id, ctxIds))
+      await tx.delete(context).where(eq(context.manifest_artifact_id, id))
       await tx.delete(reviewRound).where(eq(reviewRound.artifact_id, id))
       await tx.delete(version).where(eq(version.artifact_id, id))
       await tx.delete(comment).where(eq(comment.artifact_id, id))

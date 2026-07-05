@@ -26,6 +26,10 @@ import { nodeDnsGuard } from "./webhooks-node"
 // wiring up Postgres / OAuth / S3 locally is just editing .env instead of exporting
 // vars each shell. Real deployments inject env vars directly, so a missing file is
 // expected — hence the swallowed throw.
+// Snapshot BEFORE the .env load: the override for the remote-database gate
+// below must come from the actual shell, not from the same .env file whose
+// contents the gate exists to distrust.
+const allowRemoteDbFromShell = process.env.DERIVE_ALLOW_REMOTE_DB === "1"
 for (const envPath of [join(import.meta.dirname, "../../../.env"), resolve(".env")]) {
   try {
     process.loadEnvFile(envPath)
@@ -43,12 +47,23 @@ const cfg = loadConfig()
 // e2e harness — into a writer against prod. It happened. `pnpm dev` runs under
 // npm_lifecycle_event="dev"; deployments launch the entry directly, so they are
 // unaffected by this gate.
-const remoteDb = cfg.databaseUrl && !/localhost|127\.0\.0\.1/.test(cfg.databaseUrl)
+const LOCAL_DB_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]", "0.0.0.0"])
+const dbHost = (() => {
+  try {
+    // Lowercased by hand: postgres:// is a non-special scheme, so the WHATWG
+    // parser keeps the host's original case.
+    return cfg.databaseUrl ? new URL(cfg.databaseUrl).hostname.toLowerCase() : null
+  } catch {
+    return null // unparseable URL: treat as remote — fail toward the gate
+  }
+})()
+const localDb = !!dbHost && (LOCAL_DB_HOSTS.has(dbHost) || dbHost.endsWith(".localhost"))
+const remoteDb = !!cfg.databaseUrl && !localDb
 if (remoteDb && process.env.npm_lifecycle_event === "dev") {
-  if (process.env.DERIVE_ALLOW_REMOTE_DB !== "1") {
+  if (!allowRemoteDbFromShell) {
     log.error(
       "refusing to start: dev mode with a remote DATABASE_URL (set DERIVE_ALLOW_REMOTE_DB=1 to override)",
-      { host: cfg.databaseUrl?.replace(/^.*@/, "").split("/")[0] },
+      { host: dbHost ?? "unparseable" },
     )
     process.exit(1)
   }
