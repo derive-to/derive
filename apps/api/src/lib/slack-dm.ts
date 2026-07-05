@@ -7,15 +7,9 @@ import type { ArtifactRecord, CommentRecord, DeliveryRecord, MetaStore } from "@
 import type { ChannelSendResult } from "../webhooks"
 import { enqueueChannelDelivery } from "../webhooks"
 import { commentDeepLink, type Mention } from "./comments"
-import { decryptSecret } from "./crypto"
-import {
-  isPermanentSlackError,
-  isSlackAuthError,
-  openSlackDm,
-  postSlackMessage,
-  SlackApiError,
-} from "./slack"
-import { flagSlackReauth } from "./slack-events"
+import { openSlackDm } from "./slack"
+import { actions, openButton, section } from "./slack-cards"
+import { postWithRecovery, resolveBotToken, slackFailure } from "./slack-delivery"
 import { truncate } from "./text"
 
 /** The self-contained payload a slack_dm delivery carries. */
@@ -38,15 +32,9 @@ export const wantsMentionDm = (prefsJson: string | undefined): boolean => {
 }
 
 const mentionBlocks = (author: string, title: string, body: string, link: string): unknown[] => [
-  {
-    type: "section",
-    text: { type: "mrkdwn", text: `:wave: *${author}* mentioned you on <${link}|${title}>` },
-  },
-  { type: "section", text: { type: "mrkdwn", text: `> ${truncate(body, 600)}` } },
-  {
-    type: "actions",
-    elements: [{ type: "button", text: { type: "plain_text", text: "Open in Derive" }, url: link }],
-  },
+  section(`:wave: *${author}* mentioned you on <${link}|${title}>`),
+  section(`> ${truncate(body, 600)}`),
+  actions([openButton(link)]),
 ]
 
 /** Enqueue a DM to each mentioned Derive user who has a confirmed Slack link, is still a
@@ -106,21 +94,19 @@ export const makeSlackDmSender =
   (meta: MetaStore, encryptionKey: string | undefined) =>
   async (d: DeliveryRecord): Promise<ChannelSendResult> => {
     const p = JSON.parse(d.payload) as SlackDmPayload
-    const install = await meta.getSlackInstall(p.orgId)
+    const bot = await resolveBotToken(meta, p.orgId, encryptionKey)
     const userLink = await meta.getSlackUserLinkByUser(p.orgId, p.userId)
-    if (!install || !encryptionKey || userLink?.status !== "confirmed")
+    if (!bot || userLink?.status !== "confirmed")
       return { ok: true, status: "skipped: user not linked" }
-    const token = decryptSecret(install.bot_token, encryptionKey)
+    // Resolve the IM channel (cached, or open one and cache it). Then reuse the shared
+    // post-with-recovery path so DMs classify + flag re-auth like every other post.
+    let channel: string
     try {
-      const channel = userLink.dm_channel_id ?? (await openSlackDm(token, userLink.slack_user_id))
+      channel = userLink.dm_channel_id ?? (await openSlackDm(bot.token, userLink.slack_user_id))
       if (!userLink.dm_channel_id)
         await meta.setSlackUserLink({ ...userLink, dm_channel_id: channel })
-      const res = await postSlackMessage(token, { channel, text: p.text, blocks: p.blocks })
-      return { ok: true, status: `dm ${res.ts}` }
     } catch (err) {
-      if (!(err instanceof SlackApiError))
-        return { ok: false, status: (err as Error).message.slice(0, 160) }
-      if (isSlackAuthError(err.code)) await flagSlackReauth(meta, p.orgId)
-      return { ok: false, status: `slack: ${err.code}`, permanent: isPermanentSlackError(err.code) }
+      return slackFailure(meta, p.orgId, err)
     }
+    return postWithRecovery(meta, p.orgId, bot.token, { channel, text: p.text, blocks: p.blocks })
   }

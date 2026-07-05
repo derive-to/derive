@@ -10,23 +10,8 @@ import { artifactUrl } from "@derive/core"
 import type { WebhookEvent } from "../events"
 import type { ChannelSendResult } from "../webhooks"
 import { enqueueChannelDelivery } from "../webhooks"
-import { decryptSecret } from "./crypto"
-import {
-  isPermanentSlackError,
-  isSlackAuthError,
-  joinSlackChannel,
-  postSlackMessage,
-  SlackApiError,
-} from "./slack"
-
-/** Flag a workspace's Slack install as needing re-auth after a Slack call failed for auth
- *  or scope reasons, so the Settings UI prompts a reconnect. Best-effort. */
-export const flagSlackReauth = async (meta: MetaStore, orgId: string): Promise<void> => {
-  const full = await meta.getSlackInstall(orgId)
-  if (full && full.needs_reauth !== 1) await meta.setSlackInstall({ ...full, needs_reauth: 1 })
-}
-
 import { type CardInput, cardForEvent, isThreadedEvent } from "./slack-cards"
+import { postWithRecovery, resolveBotToken } from "./slack-delivery"
 
 /** The self-contained payload an enqueued slack_app_event delivery carries. */
 export interface SlackEventPayload {
@@ -100,9 +85,8 @@ export const makeSlackEventSender =
   (meta: MetaStore, encryptionKey: string | undefined) =>
   async (d: DeliveryRecord): Promise<ChannelSendResult> => {
     const p = JSON.parse(d.payload) as SlackEventPayload
-    const install = await meta.getSlackInstall(p.orgId)
-    if (!install?.default_channel || !encryptionKey)
-      return { ok: true, status: "skipped: slack not connected" }
+    const bot = await resolveBotToken(meta, p.orgId, encryptionKey)
+    if (!bot?.install.default_channel) return { ok: true, status: "skipped: slack not connected" }
 
     const card = cardForEvent(p as CardInput)
     if (!card) return { ok: true, status: `skipped: no card for ${p.event}` }
@@ -110,7 +94,12 @@ export const makeSlackEventSender =
     // Threading: comment.resolved posts under the Slack message that mirrors its thread
     // (when one exists); a resolution with no mirrored thread is skipped rather than posted
     // as context-free noise. Everything else posts top-level to the routed/default channel.
-    let channel = await resolveSlackChannel(meta, p.orgId, p.artifactId, install.default_channel)
+    let channel = await resolveSlackChannel(
+      meta,
+      p.orgId,
+      p.artifactId,
+      bot.install.default_channel,
+    )
     let threadTs: string | undefined
     if (isThreadedEvent(p.event)) {
       const threadId = typeof p.data.thread_id === "string" ? p.data.thread_id : null
@@ -120,39 +109,11 @@ export const makeSlackEventSender =
       threadTs = linkRow.message_ts
     }
 
-    const token = decryptSecret(install.bot_token, encryptionKey)
-    const post = (blocks: unknown) =>
-      postSlackMessage(token, { channel, text: card.text, blocks, threadTs })
-
-    try {
-      const res = await post(card.blocks)
-      return { ok: true, status: `posted ${res.ts}` }
-    } catch (err) {
-      if (!(err instanceof SlackApiError))
-        return { ok: false, status: (err as Error).message.slice(0, 160) }
-      // Bot not in the channel yet: auto-join a public channel and retry once.
-      if (err.code === "not_in_channel" && (await joinSlackChannel(token, channel))) {
-        try {
-          const res = await post(card.blocks)
-          return { ok: true, status: `posted ${res.ts}` }
-        } catch (err2) {
-          const code = err2 instanceof SlackApiError ? err2.code : "unknown"
-          return { ok: false, status: `slack: ${code}`, permanent: isPermanentSlackError(code) }
-        }
-      }
-      // Malformed blocks: retry as plain text so the notification still lands, then treat
-      // a second failure as permanent (retrying identical blocks can't help).
-      if (err.code === "invalid_blocks") {
-        try {
-          const res = await post(undefined)
-          return { ok: true, status: `posted text-only ${res.ts}` }
-        } catch (err2) {
-          const code = err2 instanceof SlackApiError ? err2.code : "unknown"
-          return { ok: false, status: `slack: ${code}`, permanent: true }
-        }
-      }
-      if (isSlackAuthError(err.code)) await flagSlackReauth(meta, p.orgId)
-      const permanent = isPermanentSlackError(err.code) || err.code === "not_in_channel"
-      return { ok: false, status: `slack: ${err.code}`, permanent }
-    }
+    return postWithRecovery(
+      meta,
+      p.orgId,
+      bot.token,
+      { channel, text: card.text, blocks: card.blocks, threadTs },
+      { autoJoin: true, textFallback: true },
+    )
   }

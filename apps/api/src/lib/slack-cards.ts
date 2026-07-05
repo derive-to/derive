@@ -56,9 +56,12 @@ export const markdownToMrkdwn = (md: string): string => {
 const title = (a: CardInput["artifact"]) => a.title ?? a.short_id
 const link = (a: CardInput["artifact"]) => `<${a.url}|${title(a)}>`
 
-const section = (text: string) => ({ type: "section", text: { type: "mrkdwn", text } })
-const context = (text: string) => ({ type: "context", elements: [{ type: "mrkdwn", text }] })
-const openButton = (url: string, text = "Open in Derive") => ({
+// Block Kit primitives, shared by every Slack message builder (cards, the comment mirror,
+// DMs) so block scaffolding lives in one place.
+export const section = (text: string) => ({ type: "section", text: { type: "mrkdwn", text } })
+export const context = (text: string) => ({ type: "context", elements: [{ type: "mrkdwn", text }] })
+export const actions = (elements: unknown[]) => ({ type: "actions", elements })
+export const openButton = (url: string, text = "Open in Derive") => ({
   type: "button",
   text: { type: "plain_text", text },
   url,
@@ -70,7 +73,6 @@ const actionButton = (text: string, value: ButtonValue, style?: "primary" | "dan
   value: JSON.stringify(value),
   ...(style ? { style } : {}),
 })
-const actions = (elements: unknown[]) => ({ type: "actions", elements })
 
 const str = (v: unknown, fallback = "") => (v == null ? fallback : String(v))
 
