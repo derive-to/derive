@@ -6,17 +6,18 @@
 // surface as `failed` sessions and are never auto-retried — a retry would mask
 // exactly the manifest/tooling bugs the owner needs to see.
 
-import { buildPrompt, runClaude } from "./claude"
+import { buildPrompt, type RunnerAnswer, runClaude } from "./claude"
 import { type AnswerMeta, DeriveClient, type QueueSession } from "./client"
 import { loadConfig } from "./config"
 
-const MOCK_ANSWER = {
+const MOCK_ANSWER: RunnerAnswer = {
   body_md: "Mock answer: the runner is wired correctly (RUNNER_MOCK=1).",
   query: "select 1",
   confidence: 1,
   caveats: ["mock mode — no model was consulted"],
   escalate: false,
   escalation_reason: null,
+  artifact: null,
 }
 
 async function serveSession(
@@ -47,6 +48,18 @@ async function serveSession(
     confidence: a.confidence,
     caveats: a.caveats,
     ...(a.escalate ? { escalation_reason: a.escalation_reason ?? "escalated" } : {}),
+  }
+  // Publish the answer's visual, if it produced one. A publish failure demotes
+  // to a caveat rather than failing the session — the prose answer still stands.
+  if (a.artifact) {
+    try {
+      const pub = await client.publishArtifact(a.artifact.title, a.artifact.html)
+      meta.artifacts = [{ short_id: pub.short_id, title: a.artifact.title }]
+      console.log(`[runner] published artifact ${pub.short_id} ("${a.artifact.title}")`)
+    } catch (err) {
+      meta.caveats = [...a.caveats, "a chart was produced but failed to publish"]
+      console.error(`[runner] artifact publish failed: ${(err as Error).message}`)
+    }
   }
   const lastAsker = session.messages.filter((m) => m.author_kind === "asker").at(-1)
   await client.answer(

@@ -30,6 +30,8 @@ export interface AnswerMeta {
   confidence?: number | null
   caveats?: string[]
   escalation_reason?: string | null
+  /** Artifacts the runner published for this answer (the promotion channel). */
+  artifacts?: { short_id: string; title: string }[]
 }
 
 export class DeriveClient {
@@ -83,5 +85,23 @@ export class DeriveClient {
       method: "PATCH",
       body: JSON.stringify({ state: "failed" }),
     })
+  }
+
+  /** Publish a model-produced visual as a link-visible artifact. Link (not
+   *  private): the artifact is owned by the context OWNER (the agent publishes
+   *  on the registrant's behalf), so a private one would be unreadable to the
+   *  very asker it was made for. Only session participants ever see the URL. */
+  async publishArtifact(title: string, html: string): Promise<{ short_id: string }> {
+    const form = new FormData()
+    form.set("file", new Blob([html], { type: "text/html" }), "chart.html")
+    form.set("title", title)
+    form.set("visibility", "link")
+    const res = await fetch(`${this.server}/v1/artifacts`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${this.token}` },
+      body: form,
+    })
+    if (!res.ok) throw new Error(`publish → ${res.status}: ${await res.text()}`)
+    return res.json() as Promise<{ short_id: string }>
   }
 }

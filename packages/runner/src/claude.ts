@@ -14,6 +14,11 @@ export interface RunnerAnswer {
   caveats: string[]
   escalate: boolean
   escalation_reason: string | null
+  /** An optional visual (chart, report page): a self-contained HTML document the
+   *  RUNNER publishes to Derive. The model never touches Derive itself — this
+   *  field is the whole promotion channel, so the agent token stays with the
+   *  runner and the model gains no read access to the owner's library. */
+  artifact: { title: string; html: string } | null
 }
 
 export interface RunResult {
@@ -38,12 +43,19 @@ JSON in the final message):
   "confidence": 0.0,
   "caveats": ["..."],
   "escalate": false,
-  "escalation_reason": null
+  "escalation_reason": null,
+  "artifact": null
 }
 </answer>
 
 Escalate (escalate: true, with a short reason) when the manifest's escalation
-rules say so — still produce your best draft in body_md.`
+rules say so — still produce your best draft in body_md.
+
+When the asker wants a chart, visual, or report page, set "artifact" to
+{"title": "...", "html": "<!doctype html>..."} — ONE fully self-contained HTML
+document (inline CSS/JS/SVG, no external requests; it renders in a sandbox).
+It is published for you and linked under your answer; keep body_md as the
+prose summary. Otherwise leave artifact null.`
 
 /** The prompt for one run: the session transcript, then the standing question.
  *  "Latest message" is the latest ASKER message — on a stale re-serve the
@@ -76,8 +88,22 @@ export function parseAnswer(text: string): { answer?: RunnerAnswer; error?: stri
   const r = raw as Record<string, unknown>
   if (typeof r.body_md !== "string" || !r.body_md.trim())
     return { error: "body_md must be a non-empty string" }
+  // 2MB cap: big enough for any inline-SVG/JS chart, small enough that a
+  // runaway generation can't turn one answer into a storage-quota event.
+  const a = r.artifact as { title?: unknown; html?: unknown } | null | undefined
+  const artifact =
+    a &&
+    typeof a === "object" &&
+    typeof a.title === "string" &&
+    a.title.trim() &&
+    typeof a.html === "string" &&
+    a.html.trim() &&
+    a.html.length <= 2_000_000
+      ? { title: a.title.trim(), html: a.html }
+      : null
   return {
     answer: {
+      artifact,
       body_md: r.body_md,
       query: typeof r.query === "string" ? r.query : null,
       confidence: typeof r.confidence === "number" ? Math.max(0, Math.min(1, r.confidence)) : null,

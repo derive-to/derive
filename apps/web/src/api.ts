@@ -363,6 +363,8 @@ export interface SessionMeta {
   confidence?: number | null
   caveats?: string[]
   escalation_reason?: string | null
+  /** Artifacts the runner published for this answer (charts, report pages). */
+  artifacts?: { short_id: string; title: string }[]
 }
 export interface SessionMessage {
   id: string

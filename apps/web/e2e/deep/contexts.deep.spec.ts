@@ -36,11 +36,19 @@ test("ask → stub-runner answer with meta → follow-up → close", async ({ ow
   const { sessions } = await queue.json()
   expect(sessions).toHaveLength(1)
   expect(sessions[0].messages[0].body_md).toBe("What was March churn?")
+  // The runner may attach published artifacts (the promotion channel) — the
+  // console must render them as chips linking into the app.
+  const chartShortId = await publishArtifact(owner, "chart.html", "<h1>chart</h1>")
   await owner.request.post(`/v1/sessions/${sessions[0].id}/messages`, {
     headers: { authorization: `Bearer ${agent.token}` },
     data: {
       body_md: "March churn was **3.1%**.",
-      meta: { query: "select churn from metrics", confidence: 0.9, caveats: ["30-day window"] },
+      meta: {
+        query: "select churn from metrics",
+        confidence: 0.9,
+        caveats: ["30-day window"],
+        artifacts: [{ short_id: chartShortId, title: "Churn by month" }],
+      },
     },
   })
 
@@ -51,6 +59,7 @@ test("ask → stub-runner answer with meta → follow-up → close", async ({ ow
   await expect(secondUser.page.getByText("30-day window")).toBeVisible()
   await secondUser.page.getByTestId("console-query-toggle").click()
   await expect(secondUser.page.getByText("select churn from metrics")).toBeVisible()
+  await expect(secondUser.page.getByTestId("console-artifact-link")).toHaveText(/Churn by month/)
 
   // Follow-up re-opens (composer disables while the runner owes a reply).
   await secondUser.page.getByTestId("console-followup-input").fill("And February?")

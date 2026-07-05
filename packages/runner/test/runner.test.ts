@@ -32,6 +32,27 @@ describe("parseAnswer", () => {
     )
     expect(answer).toMatchObject({ escalate: true, escalation_reason: "pricing" })
   })
+
+  it("accepts a well-formed artifact and rejects malformed/oversized ones", () => {
+    const good = parseAnswer(
+      `<answer>{"body_md":"chart below","artifact":{"title":"Orgs by provider","html":"<!doctype html><svg></svg>"}}</answer>`,
+    )
+    expect(good.answer?.artifact).toMatchObject({ title: "Orgs by provider" })
+    // Missing html, blank title, or a >2MB document all demote to null — the
+    // prose answer still stands.
+    expect(
+      parseAnswer(`<answer>{"body_md":"x","artifact":{"title":"t"}}</answer>`).answer?.artifact,
+    ).toBeNull()
+    expect(
+      parseAnswer(`<answer>{"body_md":"x","artifact":{"title":" ","html":"<p>"}}</answer>`).answer
+        ?.artifact,
+    ).toBeNull()
+    const huge = JSON.stringify({
+      body_md: "x",
+      artifact: { title: "t", html: "a".repeat(2_000_001) },
+    })
+    expect(parseAnswer(`<answer>${huge}</answer>`).answer?.artifact).toBeNull()
+  })
 })
 
 describe("buildPrompt", () => {

@@ -344,6 +344,22 @@ function MessageRow({ m, contextName }: { m: SessionMessage; contextName: string
         // biome-ignore lint/security/noDangerouslySetInnerHtml: input is escaped first in mdToHtml.
         dangerouslySetInnerHTML={{ __html: mdToHtml(m.body_md) }}
       />
+      {m.meta?.artifacts && m.meta.artifacts.length > 0 && (
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {m.meta.artifacts.map((a) => (
+            <Link
+              key={a.short_id}
+              to="/artifacts/$ref"
+              params={{ ref: a.short_id }}
+              data-testid="console-artifact-link"
+              className="flex items-center gap-1.5 rounded-lg border bg-background px-2.5 py-1.5 text-sm font-medium text-foreground transition-colors hover:bg-accent"
+            >
+              <Icon name="all" size={14} className="text-muted-foreground" />
+              {a.title}
+            </Link>
+          ))}
+        </div>
+      )}
       {m.meta?.caveats && m.meta.caveats.length > 0 && (
         <ul className="mt-2 flex flex-col gap-0.5 text-xs text-muted-foreground">
           {m.meta.caveats.map((c) => (
