@@ -33,6 +33,9 @@ export function ArtifactComments(p: {
    *  reading stays open to any authenticated viewer. */
   canComment: boolean
   reviewCard?: ReactNode
+  /** Phones only: px the comment sheet occupies at the viewport bottom, so the page
+   *  can reserve that under the document (0 when the sheet is closed). */
+  onSheetHeight?: (px: number) => void
   docLive: boolean
   panel: Panel
   asideWidth: number
@@ -170,6 +173,7 @@ export function ArtifactComments(p: {
             onSubmitNew={p.submitNew}
             onCancelNew={cancelNew}
             reviewCard={p.reviewCard}
+            onHeightChange={p.onSheetHeight}
           />
         )}
         {/* Desktop: the "comment on selection" pill floats beside the selection (the

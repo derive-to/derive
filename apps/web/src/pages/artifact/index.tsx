@@ -131,6 +131,9 @@ export function Artifact() {
   const [restoring, setRestoring] = useState(false)
   const [reader, setReader] = useState(false)
   const [src, setSrc] = useState("")
+  // Phones: px the comment sheet occupies at the bottom, reported by MobileComments.
+  // The document column reserves exactly this so nothing black is left beneath it.
+  const [sheetInset, setSheetInset] = useState(0)
   // Editable title while editing (seeded from the artifact in startEdit); editors
   // can rename, and it republishes with the new name.
   const [editTitle, setEditTitle] = useState("")
@@ -603,13 +606,16 @@ export function Artifact() {
                 under the toolbar rather than beside it. */}
         <div className="flex min-h-0 flex-1">
           <div
-            className={cn(
-              // On phones, the comments sheet sits in the bottom half — reserve
-              // that space so the document stays visible above it (and a
-              // jumped-to highlight lands in view, not behind the sheet).
-              "relative flex min-w-0 flex-1 flex-col transition-[padding] duration-200",
-              isMobile && !focus && panel === "open" && "pb-[50vh]",
-            )}
+            className="relative flex min-w-0 flex-1 flex-col"
+            // On phones the comments sheet sits at the bottom — reserve exactly the
+            // space it occupies so the document stays visible above it (and a
+            // jumped-to highlight lands in view, not behind the sheet), with no
+            // black band below. `sheetInset` tracks the sheet's real height (peek
+            // bar, full list, or keyboard-pinned composer), so this never over- or
+            // under-reserves the way a fixed `pb-[50vh]` did.
+            style={
+              isMobile && !focus && panel === "open" ? { paddingBottom: sheetInset } : undefined
+            }
           >
             {art.bundle && !editing && (
               <BundleBar bundle={art.bundle} shortId={shortId} version={shown} />
@@ -688,6 +694,7 @@ export function Artifact() {
                 // Top of the comments rail, not its own pane; members who can act only.
                 canComment ? <ReviewCard shortId={shortId} canApprove={canPublish} /> : undefined
               }
+              onSheetHeight={setSheetInset}
               docLive={docLive}
               panel={panel}
               asideWidth={asideWidth}
