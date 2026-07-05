@@ -14,6 +14,9 @@ import { useCommentScope } from "./lib/comment-scope"
 import { CommentTreeProvider, useCommentTree } from "./lib/comment-tree"
 import { type ComposerState, type PinItem, selLabel } from "./types"
 
+// Touch has no hover, so the mobile sheet overrides the tree's onHover with this.
+const NO_HOVER = () => {}
+
 // The comments panel header: a label + the open-thread count (a neutral mono pill,
 // not an ink signal). This was a Comments|Personal tab switch until personal comments
 // were removed; a single surface needs only a heading.
@@ -108,7 +111,7 @@ export function MobileComments({
   }
   // The sheet's cards read this overridden tree: jumping also collapses the sheet, and
   // touch has no hover (so no emphasis state) — everything else is the page's tree.
-  const sheetTree = { ...tree, hoverThread: null, onHover: () => {}, onJump: jumpToText }
+  const sheetTree = { ...tree, hoverThread: null, onHover: NO_HOVER, onJump: jumpToText }
   return (
     <>
       {/* Backdrop only at full height (reading mode). At half the document above

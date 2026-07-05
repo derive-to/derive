@@ -1,4 +1,4 @@
-import { type Dispatch, type ReactNode, type SetStateAction, useMemo, useRef } from "react"
+import { type Dispatch, type ReactNode, type SetStateAction, useRef } from "react"
 import type { Comment, DirUser, Mention } from "@/api"
 import { Icon } from "@/components/icons"
 import { Button } from "@/components/ui/button"
@@ -6,7 +6,7 @@ import { cn } from "@/lib/utils"
 import { AskAgentButton } from "./ask-agent"
 import { MobileComments, OpenPanel } from "./comment-panels"
 import { CommentScopeProvider } from "./lib/comment-scope"
-import { CommentTreeProvider } from "./lib/comment-tree"
+import { type CommentTree, CommentTreeProvider } from "./lib/comment-tree"
 import { clamp } from "./lib/layout"
 import { quoteChipClass } from "./quote-chip"
 import {
@@ -87,32 +87,22 @@ export function ArtifactComments(p: {
   }
 
   // The interaction state + handlers every card reads directly (see CommentTree),
-  // instead of drilling them through OpenPanel / PinnedZone / the sheet. Stable across
-  // renders that don't touch the active/hover/anchored state (the handlers are the
-  // page's stable callbacks), so cards don't re-render on unrelated parent renders.
-  const { activate, setHoverThread, toggleResolve, reply, jumpTo } = p
-  const tree = useMemo(
-    () => ({
-      activeThread: p.activeThread,
-      hoverThread: p.hoverThread,
-      inDoc: p.inDoc,
-      onActivate: activate,
-      onHover: setHoverThread,
-      onResolve: toggleResolve,
-      onReply: reply,
-      onJump: jumpTo,
-    }),
-    [
-      p.activeThread,
-      p.hoverThread,
-      p.inDoc,
-      activate,
-      setHoverThread,
-      toggleResolve,
-      reply,
-      jumpTo,
-    ],
-  )
+  // instead of drilling them through OpenPanel / PinnedZone / the sheet — so a card
+  // render site is just `<CommentCard thread={t} />`. This is a STRUCTURAL fold, not a
+  // re-render optimization: the page rebuilds most of these handlers each render (they
+  // close over changing deck/comment data), so the value is intentionally a fresh object
+  // — no useMemo, which couldn't hit and would only add an empty dep check. Cards are
+  // descendants that re-render with this component regardless, as they did when drilled.
+  const tree: CommentTree = {
+    activeThread: p.activeThread,
+    hoverThread: p.hoverThread,
+    inDoc: p.inDoc,
+    onActivate: p.activate,
+    onHover: p.setHoverThread,
+    onResolve: p.toggleResolve,
+    onReply: p.reply,
+    onJump: p.jumpTo,
+  }
 
   return (
     <CommentScopeProvider
