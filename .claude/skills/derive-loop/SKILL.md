@@ -45,6 +45,12 @@ Workspace: a `~/.derive/config.json` profile (with a purpose note) and a repo
    `--review` opens a review round asking the user to review this version. The id is
    saved to `derive.json`, so later commands need no `--id`.
 
+   New artifacts land **unlisted** by default: hidden from the team library and
+   search, but one link away for any workspace member (view or comment, per the
+   workspace's setting). That is the draft state — never widen visibility yourself;
+   when the work is approved, the human shares it with the team from the share
+   dialog (that one act lists it for everyone).
+
 3. **Ask, anchored.** For every open decision, leave ONE comment anchored to the
    exact sentence it's about — question + options + your recommendation:
    ```
@@ -52,16 +58,23 @@ Workspace: a `~/.derive/config.json` profile (with a purpose note) and a repo
    # a NEW anchored question is a comment with a quote (use the API/MCP `quote`)
    ```
 
-4. **Open it and wait.**
+4. **It opens itself — then wait.** A publish reaches the user's open Derive tabs
+   live: a NEW artifact auto-opens in their browser, a revision live-reloads the
+   page they're reading. The publish result says whether that happened —
+   `opened_in_tab: true` means they're already looking at it. Only when it's
+   `false` (no tab open) open it for them:
    ```
-   derive open                            # opens the artifact for the user
+   derive open <short_id>                 # the fallback, not the default
    ```
-   Then poll:
+   Then wait. Over MCP, chain long-polls — each call blocks up to 50s and returns
+   the moment the human acts (Send back, Approve, or a new comment), so feedback
+   reaches you in seconds, not on a polling cadence:
    ```
-   derive status                          # review: pending | sent_back | approved
+   catch_up(short_id, wait: 50)           # returns early on any human action
    ```
-   Poll every ~60–90s while `pending`. In a harness with scheduled wakeups, sleep
-   between polls rather than busy-looping.
+   Loop the call while `review.state` is `pending`. Over the CLI (no long-poll),
+   fall back to `derive status` every ~60–90s. Stop cleanly after ~30 minutes of
+   silence: report the artifact URL and how to resume, and end the turn.
 
 5. **On `sent_back` — SWEEP and ACK (non-negotiable).** Read **every** thread on the
    artifact, not just the ones you opened — the user can comment anywhere, on
@@ -106,5 +119,6 @@ resolved threads across both are the decision log.
 - `derive status --json` → `{ review, rounds, open_threads }` for scripting.
 - `derive send-back` / `derive approve` are the human verbs (the app's Send
   back / Approve buttons hit the same routes).
-- MCP equivalents (claude.ai / Claude Code connector): `publish(request_review:true)`,
-  and `catch_up` reports a `review` field — the same poll target as `derive status`.
+- MCP equivalents (claude.ai / Claude Code connector): `publish(request_review:true)`
+  (its result carries `opened_in_tab` + the url), and `catch_up` reports a `review`
+  field — pass `wait: 50` to long-poll it instead of sleeping between polls.
