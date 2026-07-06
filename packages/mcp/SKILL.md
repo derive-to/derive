@@ -68,5 +68,5 @@ wrong place.
   same-author revisions into time-based sessions, but every revision is addressable.
 - Multi-page bundles are readable (`read` with a `section`, `catch_up`) and revisable
   over the remote `/mcp` server via `publish` with a `files` map. Over the stdio
-  `@derive/mcp` server, bundles are publish-via-remote/web only, and `comment` set_state
+  `@derive-to/mcp` server, bundles are publish-via-remote/web only, and `comment` set_state
   takes a `comment_id`. Both servers expose the same 5 tools.

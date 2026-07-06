@@ -149,9 +149,10 @@ plus the open feedback and version history), `comment` (leave/reply/resolve), an
 otherwise (or with `for_review:true`) it files a proposal a human approves. Full loop in
 [packages/mcp/SKILL.md](packages/mcp/SKILL.md).
 
-> The `@derive/cli` / `@derive/mcp` npm packages aren't published yet — run the CLI from the
-> repo (`node packages/cli/bin/derive.js`) and connect agents to the remote `/mcp` endpoint
-> above until they land.
+> The MCP server is on npm — connect a local agent with `npx -y @derive-to/mcp`
+> (set `DERIVE_SERVER`, and `DERIVE_TOKEN` for a static bearer). The `@derive-to/cli`
+> package isn't published yet — run the CLI from the repo (`node packages/cli/bin/derive.js`)
+> until it lands.
 
 ## Embeds and unfurls
 

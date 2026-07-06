@@ -36,7 +36,7 @@ inputs:
     required: false
     default: "true"
   cli-version:
-    description: "@derive/cli version or dist-tag to run via npx."
+    description: "@derive-to/cli version or dist-tag to run via npx."
     required: false
     default: "latest"
 
@@ -74,7 +74,7 @@ runs:
         [ -n "$IN_VIS" ] && args+=(--visibility "$IN_VIS")
         [ -n "$IN_NAME" ] && args+=(--name "$IN_NAME")
         args+=(--json)
-        out="$(npx -y "@derive/cli@${CLI_VERSION}" "${args[@]}")"
+        out="$(npx -y "@derive-to/cli@${CLI_VERSION}" "${args[@]}")"
         # --json prints one JSON line on stdout; take the last line to be safe.
         json="$(printf '%s\n' "$out" | tail -n 1)"
         node -e '

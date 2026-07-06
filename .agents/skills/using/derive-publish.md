@@ -16,17 +16,12 @@ publish(
   filename:   string,      // e.g. "report.html" or "notes.md" — determines artifact type
   title?:     string,      // display title (required when creating a new artifact)
   slug?:      string,      // custom URL slug
-  visibility? "unlisted" | "public" | "link" | "org" | "password" | "private",
-              // default for agent publishes: "unlisted" (hidden from the library,
-              // one link away for workspace members — the draft state)
-  for_review? boolean,     // file a proposal instead of going live
-  request_review? boolean  // open a review round for your human (the /derive loop)
+  visibility? "public" | "link" | "org" | "password" | "private",  // default: "private"
+  for_review? boolean      // file a proposal instead of going live
 )
 ```
 
-Returns: `{ short_id, url, current_version, opened_in_tab?, review_requested? }` —
-`opened_in_tab` says whether an open Derive tab caught the push (false ⇒ open the
-url for the user if they should see it now).
+Returns: `{ short_id, url, current_version }`.
 
 Whether a `publish` goes live or files a proposal is decided by your role (Creator/Admin
 publish live; a commenter role files a proposal), with `for_review:true` to force review.
