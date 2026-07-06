@@ -55,7 +55,10 @@ export function Thumb({
           aria-hidden
           loading="lazy"
           onLoad={() => setLoaded(true)}
-          onError={() => setImgFailed(true)}
+          onError={() => {
+            setImgFailed(true)
+            setLoaded(false)
+          }}
           className={cn(
             "absolute inset-0 h-full w-full object-cover transition-[opacity,filter] duration-200 group-hover:brightness-100 group-hover:saturate-100 group-focus-within:brightness-100 group-focus-within:saturate-100",
             loaded ? "opacity-100" : "opacity-0",
