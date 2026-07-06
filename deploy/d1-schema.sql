@@ -42,6 +42,9 @@ CREATE TABLE IF NOT EXISTS version (
   author_id TEXT,
   message TEXT,
   name TEXT,
+  preview_key TEXT,
+  preview_status TEXT,
+  preview_error TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   UNIQUE (artifact_id, n),
   FOREIGN KEY (artifact_id) REFERENCES artifact(id)

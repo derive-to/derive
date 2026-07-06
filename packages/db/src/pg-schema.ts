@@ -10,6 +10,7 @@ import type {
   FollowKind,
   GeneralRole,
   NotificationKind,
+  PreviewStatus,
   ProposalState,
   ReportState,
   ReviewRoundState,
@@ -79,6 +80,9 @@ export const version = pgTable(
     author_id: text("author_id"),
     message: text("message"),
     name: text("name"),
+    preview_key: text("preview_key"),
+    preview_status: text("preview_status").$type<PreviewStatus>(),
+    preview_error: text("preview_error"),
     created_at: text("created_at").notNull().$defaultFn(isoNow),
   },
   // (artifact_id, n) is unique — addVersion relies on it to turn a concurrent

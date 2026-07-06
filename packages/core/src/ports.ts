@@ -102,6 +102,8 @@ export interface ListArtifactsOpts {
   visibleOrgIds?: string[]
 }
 
+export type PreviewStatus = "pending" | "ready" | "failed"
+
 export interface VersionRecord {
   id: string
   artifact_id: string
@@ -122,6 +124,12 @@ export interface VersionRecord {
   message: string | null
   /** A named checkpoint (Docs-style). Null = an ordinary auto-saved revision. */
   name: string | null
+  /** Blob key of the rendered PNG preview of this version; null until generated. */
+  preview_key: string | null
+  /** Lifecycle of the preview render; null = never queued. */
+  preview_status: PreviewStatus | null
+  /** Short failure reason when preview_status === "failed". */
+  preview_error: string | null
   created_at: string
 }
 
@@ -187,6 +195,17 @@ export interface MetaStore {
    *  updates the artifact's current_content_type when n is the current version.
    *  Used to repair mis-classified content (e.g. HTML that was tagged markdown). */
   reclassifyVersion(artifactId: string, n: number, contentType: string): Promise<void>
+  /** Set a version's preview render result (blob key + status + error). Partial;
+   *  only given fields are written. */
+  setVersionPreview(
+    artifactId: string,
+    n: number,
+    fields: {
+      preview_key?: string | null
+      preview_status?: PreviewStatus | null
+      preview_error?: string | null
+    },
+  ): Promise<void>
 
   createComment(c: NewComment): Promise<CommentRecord>
   /** Comments on an artifact, oldest-first; optionally filtered by thread state. */

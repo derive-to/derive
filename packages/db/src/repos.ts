@@ -44,6 +44,7 @@ import type {
   NotificationRecord,
   OAuthGrant,
   OrgSettings,
+  PreviewStatus,
   ProposalRecord,
   ProposalState,
   ReportRecord,
@@ -386,6 +387,22 @@ export function makeRepos(db: SqliteDb) {
       .update(artifact)
       .set({ current_content_type: contentType })
       .where(and(eq(artifact.id, artifactId), eq(artifact.current_version, n)))
+      .run()
+  }
+
+  const setVersionPreview = async (
+    artifactId: string,
+    n: number,
+    fields: {
+      preview_key?: string | null
+      preview_status?: PreviewStatus | null
+      preview_error?: string | null
+    },
+  ): Promise<void> => {
+    await db
+      .update(version)
+      .set(fields)
+      .where(and(eq(version.artifact_id, artifactId), eq(version.n, n)))
       .run()
   }
 
@@ -1766,6 +1783,7 @@ export function makeRepos(db: SqliteDb) {
     listVersions,
     getVersion,
     reclassifyVersion,
+    setVersionPreview,
     listArtifacts,
     artifactIdsByTag,
     artifactIdsByAuthor,

@@ -47,6 +47,7 @@ import type {
   NotificationRecord,
   OAuthGrant,
   OrgSettings,
+  PreviewStatus,
   ProposalRecord,
   ProposalState,
   ReportRecord,
@@ -337,6 +338,21 @@ export class PgMetaStore implements MetaStore {
       .update(artifact)
       .set({ current_content_type: contentType })
       .where(and(eq(artifact.id, artifactId), eq(artifact.current_version, n)))
+  }
+
+  async setVersionPreview(
+    artifactId: string,
+    n: number,
+    fields: {
+      preview_key?: string | null
+      preview_status?: PreviewStatus | null
+      preview_error?: string | null
+    },
+  ): Promise<void> {
+    await this.db
+      .update(version)
+      .set(fields)
+      .where(and(eq(version.artifact_id, artifactId), eq(version.n, n)))
   }
 
   async createComment(c: NewComment): Promise<CommentRecord> {
