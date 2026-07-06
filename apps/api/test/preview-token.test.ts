@@ -11,7 +11,8 @@ import { signPreviewToken, verifyPreviewToken } from "../src/lib/preview-token"
 // ---- Unit tests: token sign/verify -----------------------------------------
 
 describe("preview token", () => {
-  const secret = "s3cr3t-long-enough"
+  // A throwaway HMAC key for the sign/verify tests, not a real credential.
+  const secret = "s3cr3t-long-enough" // gitleaks:allow
 
   it("verifies before expiry", async () => {
     const exp = 10_000
