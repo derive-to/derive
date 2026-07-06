@@ -125,6 +125,11 @@ export const postSlackMessage = async (
     body: JSON.stringify({
       channel: args.channel,
       text: args.text,
+      // The bot's own posts already render the artifact as a card, so don't let Slack
+      // ALSO unfurl a link in the text — that repeats the same card right below it.
+      // (Links a person pastes still unfurl, via the separate link_shared → chat.unfurl.)
+      unfurl_links: false,
+      unfurl_media: false,
       ...(args.blocks ? { blocks: args.blocks } : {}),
       ...(args.threadTs ? { thread_ts: args.threadTs } : {}),
     }),
