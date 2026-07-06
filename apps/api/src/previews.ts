@@ -80,13 +80,13 @@ const backoff = (attempts: number): number =>
  * Race a promise against a timeout. Rejects with a TimeoutError when the
  * timeout fires first. This keeps a hung browser from wedging the render loop.
  */
-const withTimeout = <T>(p: Promise<T>, ms: number): Promise<T> =>
-  Promise.race([
-    p,
-    new Promise<T>((_, reject) =>
-      setTimeout(() => reject(new Error(`render timed out after ${ms}ms`)), ms),
-    ),
-  ])
+const withTimeout = <T>(p: Promise<T>, ms: number): Promise<T> => {
+  let timer: ReturnType<typeof setTimeout>
+  const timeout = new Promise<T>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`render timed out after ${ms}ms`)), ms)
+  })
+  return Promise.race([p, timeout]).finally(() => clearTimeout(timer))
+}
 
 // ---------------------------------------------------------------------------
 // Public API

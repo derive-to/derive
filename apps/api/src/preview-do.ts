@@ -7,6 +7,7 @@ import type {
 } from "@cloudflare/workers-types"
 import { R2BlobStore } from "@derive/storage"
 import { tickStore } from "./edge-pg"
+import { log } from "./log"
 import { cfBrowserRenderer } from "./preview-cf"
 import { runRenderTick } from "./previews"
 
@@ -72,6 +73,10 @@ export class PreviewRenderer {
       close = opened.close
       const blobs = new R2BlobStore(this.env.BUCKET)
       const renderer = cfBrowserRenderer(this.env.BROWSER)
+      if (!this.env.BASE_URL)
+        log.warn(
+          "preview renderer: BASE_URL unset, defaulting to https://derive.to — set BASE_URL for non-prod deploys",
+        )
       const baseUrl = this.env.BASE_URL ?? "https://derive.to"
       const claimed = await runRenderTick({
         meta: opened.store,

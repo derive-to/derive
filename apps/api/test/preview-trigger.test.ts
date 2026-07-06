@@ -183,3 +183,53 @@ describe("preview-trigger: artifact id passed correctly", () => {
     expect(idCheckJob.artifact_id).toBe(artifact?.id)
   })
 })
+
+describe("preview-trigger: approval path enqueues for the new version", () => {
+  it("approving a proposal enqueues exactly ONE render job for the approved version", async () => {
+    const { app, enqueuedJobs } = makeApp("trigger-approve", true)
+
+    // Publish the base artifact (version 1) — enqueues job #1
+    const r1 = await publishArtifact(app)
+    expect(r1.status).toBe(201)
+    const b1 = (await r1.json()) as { short_id: string; current_version: number }
+    const baseVersion = b1.current_version
+
+    // Wait for the fire-and-forget to settle, then clear the counter
+    await new Promise((r) => setTimeout(r, 20))
+    const jobsAfterPublish = enqueuedJobs.length
+    expect(jobsAfterPublish).toBe(1)
+
+    // Create a proposal (does NOT go live, so no render job yet)
+    const propForm = new FormData()
+    propForm.append("file", new Blob([new TextEncoder().encode("<h1>proposed</h1>")]), "f.html")
+    const pr = await app.request(`/v1/artifacts/${b1.short_id}/proposals`, {
+      method: "POST",
+      body: propForm,
+      headers: TOKEN_HEADER,
+    })
+    expect(pr.status).toBe(201)
+    const proposal = (await pr.json()) as { id: string }
+
+    await new Promise((r) => setTimeout(r, 20))
+    // Proposing must NOT trigger a render job
+    expect(enqueuedJobs).toHaveLength(jobsAfterPublish)
+
+    // Approve the proposal — this publishes a new version and must trigger a render
+    const ap = await app.request(`/v1/artifacts/${b1.short_id}/proposals/${proposal.id}/approve`, {
+      method: "POST",
+      headers: TOKEN_HEADER,
+    })
+    expect(ap.status).toBe(200)
+    const approved = (await ap.json()) as { published: number }
+    const approvedVersion = approved.published
+    expect(approvedVersion).toBeGreaterThan(baseVersion)
+
+    await new Promise((r) => setTimeout(r, 20))
+
+    // Exactly one more render job should have been enqueued (for the approved version)
+    expect(enqueuedJobs).toHaveLength(jobsAfterPublish + 1)
+    const approvalJob = enqueuedJobs[jobsAfterPublish]
+    if (!approvalJob) throw new Error("expected render job from approval")
+    expect(approvalJob.version_n).toBe(approvedVersion)
+  })
+})
