@@ -21,6 +21,7 @@ export function Thumb({
   v,
   typeLabel,
   version,
+  hasPreview,
   className,
 }: {
   id: string
@@ -28,6 +29,8 @@ export function Thumb({
   typeLabel?: string
   /** The current version ordinal — shown only when there's history (chain > 1). */
   version?: number
+  /** When true, render the static PNG from /v1/og/:id instead of the live iframe. */
+  hasPreview?: boolean
   className?: string
 }) {
   // The frame fades up once it paints, so a blank white iframe never pops over the
@@ -35,6 +38,9 @@ export function Thumb({
   // breath) — a wall of thumbnails must read calm. The opacity rides the same
   // duration-200 declaration as the hover filter-wake (one transition covering both).
   const [loaded, setLoaded] = useState(false)
+  // If the static PNG fails to load (e.g. signed-out viewer, key mismatch), fall
+  // back to the live iframe so the card never shows a broken image slot.
+  const [imgFailed, setImgFailed] = useState(false)
   return (
     <div
       className={cn(
@@ -42,19 +48,34 @@ export function Thumb({
         className,
       )}
     >
-      <iframe
-        title="Preview"
-        aria-hidden
-        tabIndex={-1}
-        loading="lazy"
-        onLoad={() => setLoaded(true)}
-        src={`${API_BASE}/raw/${id}/v/${v}/index.html`}
-        sandbox="allow-scripts"
-        className={cn(
-          "pointer-events-none absolute left-0 top-0 h-[250%] w-[250%] origin-top-left scale-[0.4] border-0 bg-white brightness-[0.96] saturate-[0.98] transition-[opacity,filter] duration-200 group-hover:brightness-100 group-hover:saturate-100 group-focus-within:brightness-100 group-focus-within:saturate-100",
-          loaded ? "opacity-100" : "opacity-0",
-        )}
-      />
+      {hasPreview && !imgFailed ? (
+        <img
+          src={`${API_BASE}/v1/og/${id}`}
+          alt=""
+          aria-hidden
+          loading="lazy"
+          onLoad={() => setLoaded(true)}
+          onError={() => setImgFailed(true)}
+          className={cn(
+            "absolute inset-0 h-full w-full object-cover transition-[opacity,filter] duration-200 group-hover:brightness-100 group-hover:saturate-100 group-focus-within:brightness-100 group-focus-within:saturate-100",
+            loaded ? "opacity-100" : "opacity-0",
+          )}
+        />
+      ) : (
+        <iframe
+          title="Preview"
+          aria-hidden
+          tabIndex={-1}
+          loading="lazy"
+          onLoad={() => setLoaded(true)}
+          src={`${API_BASE}/raw/${id}/v/${v}/index.html`}
+          sandbox="allow-scripts"
+          className={cn(
+            "pointer-events-none absolute left-0 top-0 h-[250%] w-[250%] origin-top-left scale-[0.4] border-0 bg-white brightness-[0.96] saturate-[0.98] transition-[opacity,filter] duration-200 group-hover:brightness-100 group-hover:saturate-100 group-focus-within:brightness-100 group-focus-within:saturate-100",
+            loaded ? "opacity-100" : "opacity-0",
+          )}
+        />
+      )}
       {typeLabel && (
         <span className="pointer-events-none absolute bottom-2 left-2 z-10 inline-flex items-center gap-1 rounded-md bg-scrim/85 px-1.5 py-0.5 font-mono text-2xs text-scrim-foreground ring-1 ring-scrim-foreground/15">
           <span className="uppercase tracking-wide">{typeLabel}</span>

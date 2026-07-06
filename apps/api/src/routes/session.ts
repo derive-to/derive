@@ -221,6 +221,7 @@ export const sessionRoutes = (ctx: AppContext) => {
     const pageIds = page.map((a) => a.id)
     const counts = analyticsOn ? await meta.viewCounts(pageIds) : {}
     const tags = await meta.tagsForArtifacts(pageIds)
+    const previews = await meta.previewReady(pageIds)
     const handleByGhId = await resolveHandles(meta, [
       ...new Set(page.map((a) => a.author_gh_id).filter((x): x is string => !!x)),
     ])
@@ -229,6 +230,7 @@ export const sessionRoutes = (ctx: AppContext) => {
         ...toJson(deps.baseUrl, a, []),
         views: counts[a.id] ?? 0,
         tags: tags[a.id] ?? [],
+        has_preview: previews[a.id] === true,
         author: authorProfile(a, handleByGhId),
       })),
       next_cursor,
