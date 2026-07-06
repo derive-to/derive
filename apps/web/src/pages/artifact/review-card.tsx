@@ -12,7 +12,17 @@ import { cn } from "@/lib/utils"
  * replying to the anchored threads below; the buttons here settle the round. Once
  * settled it shows the last outcome quietly, so the card never nags.
  */
-export function ReviewCard({ shortId, canApprove }: { shortId: string; canApprove: boolean }) {
+export function ReviewCard({
+  shortId,
+  canApprove,
+  refreshKey = 0,
+}: {
+  shortId: string
+  canApprove: boolean
+  /** Bumped by the page on review.* SSE events, so an agent's re-request (or an
+   *  action taken in another tab) repaints the card live, never behind a reload. */
+  refreshKey?: number
+}) {
   const [state, setState] = useState<{ pending: ReviewRound | null; last: ReviewRound | null }>({
     pending: null,
     last: null,
@@ -29,8 +39,9 @@ export function ReviewCard({ shortId, canApprove }: { shortId: string; canApprov
   }, [shortId])
 
   useEffect(() => {
+    void refreshKey // the SSE-driven repaint signal; reading it ties the effect to it
     void refresh()
-  }, [refresh])
+  }, [refresh, refreshKey])
 
   const sendBack = async () => {
     setBusy("send")

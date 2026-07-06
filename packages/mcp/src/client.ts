@@ -7,13 +7,15 @@ export interface PublishArgs {
   slug?: string
   spa?: boolean
   message?: string
-  visibility?: "public" | "link" | "org" | "password" | "private"
+  visibility?: "public" | "link" | "org" | "password" | "private" | "unlisted"
   /** Unlock password, required when visibility is "password". */
   password?: string
   /** When set, publishes a new version of this artifact instead of a new one. */
   id?: string
   /** Comment ids whose threads to resolve as part of this (re)publish. */
   resolves?: string[]
+  /** Open a review round for this version (the /derive loop's ask). */
+  requestReview?: boolean
 }
 
 export type CommentState = "open" | "addressed" | "resolved" | "outdated"
@@ -86,6 +88,19 @@ export interface ArtifactJson {
   versions: VersionJson[]
   /** Time-grouped version view (newest-first); present on the detail endpoint. */
   sessions?: SessionJson[]
+  /** Publish-response extras (agent-credentialed publishes only). */
+  review_requested?: boolean
+  opened_in_tab?: boolean
+}
+
+/** One review round: the human-ack primitive of the /derive loop. */
+export interface ReviewRoundJson {
+  id: string
+  state: "pending" | "sent_back" | "approved"
+  version: number
+  note: string | null
+  created_at: string
+  resolved_at: string | null
 }
 
 export interface DiffOpJson {
@@ -120,6 +135,12 @@ export interface DeriveClient {
   setThreadState(shortId: string, commentId: string, state: "resolved" | "open"): Promise<void>
   /** Line diff between two versions (defaults: current-1 → current). */
   diff(shortId: string, from?: number, to?: number): Promise<DiffJson>
+  /** The artifact's review rounds (newest first) + the pending one, if any. */
+  getReview(
+    shortId: string,
+  ): Promise<{ rounds: ReviewRoundJson[]; pending: ReviewRoundJson | null }>
+  /** Toggle an emoji reaction on a comment (the loop's lightweight ack). */
+  react(shortId: string, commentId: string, emoji: string): Promise<void>
   /** Restore a past version as a new current revision. */
   restore(shortId: string, version: number): Promise<ArtifactJson>
   /** Aggregated view analytics. */
@@ -167,6 +188,7 @@ export function createClient(opts: ClientOptions): DeriveClient {
       if (args.password) form.append("password", args.password)
       if (args.spa) form.append("spa", "true")
       if (args.resolves?.length) form.append("resolves", args.resolves.join(","))
+      if (args.requestReview) form.append("request_review", "true")
       const url = args.id ? `${base}/v1/artifacts/${args.id}/versions` : `${base}/v1/artifacts`
       return ok(
         await f(url, { method: "POST", body: form, headers: authHeaders }),
@@ -242,6 +264,22 @@ export function createClient(opts: ClientOptions): DeriveClient {
       return ok(
         await f(`${base}/v1/artifacts/${shortId}/diff?${q}`, { headers: authHeaders }),
       ) as Promise<DiffJson>
+    },
+
+    async getReview(shortId) {
+      return ok(
+        await f(`${base}/v1/artifacts/${shortId}/review`, { headers: authHeaders }),
+      ) as Promise<{ rounds: ReviewRoundJson[]; pending: ReviewRoundJson | null }>
+    },
+
+    async react(shortId, commentId, emoji) {
+      await ok(
+        await f(`${base}/v1/artifacts/${shortId}/comments/${commentId}/react`, {
+          method: "POST",
+          headers: { ...authHeaders, "content-type": "application/json" },
+          body: JSON.stringify({ emoji }),
+        }),
+      )
     },
 
     async restore(shortId, version) {

@@ -1,5 +1,6 @@
 import {
   type ArtifactRecord,
+  artifactUrl,
   type BundleDoc,
   type BundleManifest,
   bundleDoc,
@@ -356,6 +357,16 @@ export const artifactRoutes = (ctx: AppContext) => {
       // must be a real user id, never an agent principal.
       const actor = await actingUser(c)
       const onBehalf = await privateOwnerId(c)
+      // An AGENT-credentialed create (registered token / OAuth bearer — the CLI
+      // and stdio-shim paths) lands with the workspace's agent default when no
+      // visibility was asked for: usually `unlisted`, the draft state. A
+      // signed-in human's own publish keeps the private default.
+      const agentPrincipal = await agentFor(c)
+      const resolvedVisibility =
+        visibility ??
+        (agentPrincipal && !shortId
+          ? (await meta.getOrgSettings(org)).defaultAgentVisibility
+          : undefined)
       const { artifact, version } = await publish(
         meta,
         blobs,
@@ -376,7 +387,7 @@ export const artifactRoutes = (ctx: AppContext) => {
           authorId: onBehalf,
           name: str(body["name"]),
           orgId: org,
-          visibility,
+          visibility: resolvedVisibility,
           passwordHash,
         },
         shortId,
@@ -467,6 +478,7 @@ export const artifactRoutes = (ctx: AppContext) => {
       // reviewer is the human behind the publish (onBehalf covers both a session
       // user and an agent's registrant); falls back to the workspace's first owner
       // so a headless publish still has someone to ask. No human to ask → skip.
+      let roundCreated = false
       if (body["request_review"] === "true" || body["request_review"] === "1") {
         const reviewer =
           onBehalf ??
@@ -481,6 +493,7 @@ export const artifactRoutes = (ctx: AppContext) => {
             requested_for: reviewer,
             note: str(body["review_note"]) ?? null,
           })
+          roundCreated = true
           bus.publish(artifact.id, { type: "review.requested", round_id: round.id })
           await notify(artifact, "review.requested", {
             version: version.n,
@@ -488,8 +501,67 @@ export const artifactRoutes = (ctx: AppContext) => {
           })
         }
       }
+      // The MCP loop over HTTP: an AGENT-credentialed publish (a registered
+      // dk_agt_ token or an OAuth bearer — the CLI and stdio-shim paths) reaches
+      // its human exactly like the /mcp path does: one bell row per push (a
+      // review ask beats a plain publish), then artifact.pushed on their user
+      // channel so an open tab auto-opens. A signed-in human's own save gets
+      // none of this — they're already looking at it.
+      let openedInTab: boolean | null = null
+      if (agentPrincipal && onBehalf) {
+        if (roundCreated || !shortId) {
+          const row = {
+            id: newId("n"),
+            user_id: onBehalf,
+            actor: agentPrincipal.name,
+            kind: roundCreated ? ("review" as const) : ("publish" as const),
+            artifact_id: artifact.id,
+            artifact_short_id: artifact.short_id,
+            artifact_title: artifact.title,
+            thread_id: "",
+            comment_id: "",
+            preview: roundCreated
+              ? `requested your review of v${version.n}`
+              : (artifact.title ?? "published something new"),
+          }
+          await meta.createNotification(row)
+          bus.publish(`u:${onBehalf}`, {
+            type: "notification",
+            notification: { ...row, read: 0, created_at: new Date().toISOString() },
+          })
+        }
+        const pushed = {
+          type: "artifact.pushed" as const,
+          event_id: newId("ev"),
+          short_id: artifact.short_id,
+          artifact_id: artifact.id,
+          title: artifact.title,
+          version: version.n,
+          kind: shortId ? "revised" : "created",
+          url: artifactUrl(deps.baseUrl, artifact),
+          agent: agentPrincipal.name,
+          review_requested: roundCreated,
+        }
+        if (bus.publishWithReceipt) {
+          openedInTab = await Promise.race([
+            bus.publishWithReceipt(`u:${onBehalf}`, pushed).then((n) => n > 0),
+            new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 1500)),
+          ])
+        } else {
+          bus.publish(`u:${onBehalf}`, pushed)
+          openedInTab = false
+        }
+      }
       const versions = await meta.listVersions(artifact.id)
-      return c.json({ ...toJson(deps.baseUrl, artifact, versions), published: version.n }, 201)
+      return c.json(
+        {
+          ...toJson(deps.baseUrl, artifact, versions),
+          published: version.n,
+          ...(roundCreated ? { review_requested: true } : {}),
+          ...(openedInTab !== null ? { opened_in_tab: openedInTab } : {}),
+        },
+        201,
+      )
     } catch (err) {
       if (err instanceof PublishError) return fail(c, err.statusCode as 400, err.message)
       throw err

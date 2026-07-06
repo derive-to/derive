@@ -84,8 +84,11 @@ Workspace: a `~/.derive/config.json` profile (with a purpose note) and a repo
    ```
    For **each** human comment: address it (fold the answer into the revision, or
    reply in-thread) AND leave an ack — a 👍 reaction at minimum, so nothing you were
-   told reads as silently dropped. Finalizing with an unaddressed human thread is a
-   bug.
+   told reads as silently dropped. Over MCP the ack is one call:
+   `comment(short_id, reply_to: <thread>, react: "👍")` — it lands on the thread's
+   latest human comment. Ack FIRST, then revise: the human should see uptake
+   before the new version replaces the page. Finalizing with an unaddressed human
+   thread is a bug.
 
 6. **Revise + re-request.**
    ```

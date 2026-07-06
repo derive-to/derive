@@ -40,13 +40,15 @@ Derive ships safe defaults, but a few choices matter for an internet-facing depl
   | Private (invite-only) — default | No access                     | No access                              | Explicit share only — workspace role grants nothing |
   | Unlisted, view/comment         | No access                      | No access (non-members)                | Members with the link: view/comment; explicit shares: their role |
 
-  Publishing defaults to **private** on every path (API, CLI, web): only the
-  publisher — for an agent, the user it acts on behalf of, who is written as the
-  owner-member at creation, plus the agent itself as editor — can see a fresh
-  artifact. Agent (MCP) publishes default to **unlisted** (a workspace setting):
-  hidden from every listing, but a workspace member with the link gets the
-  workspace's default general role — the agent-draft state between private and
-  workspace. Private and unlisted artifacts never appear in workspace listings,
+  A signed-in human's publish defaults to **private**: only the publisher (written
+  as the owner-member at creation) can see a fresh artifact. AGENT-credentialed
+  publishes — the /mcp server, and any /v1 publish carrying a registered agent
+  token or OAuth bearer (the CLI and stdio-shim paths) — default to **unlisted**,
+  a workspace setting (`defaultAgentVisibility`): hidden from every listing, but a
+  workspace member with the link gets the workspace's default general role — the
+  agent-draft state between private and workspace. Reach is only ever workspace-
+  inward of private's explicit-share-only model plus the link requirement, and the
+  setting restores private-by-default in one click. Private and unlisted artifacts never appear in workspace listings,
   profile work lists, or the People-visible surfaces (unlisted has one dedicated
   owner-scoped library filter). Widening (workspace, link, public) is always an
   explicit act. GitHub-mirror syncs publish workspace-visible — a mirrored repo

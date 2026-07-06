@@ -19,8 +19,11 @@ export function useArtifactLive(opts: {
   shortId: string
   onComment: () => void
   onVersion: () => void
+  /** A review round changed (requested / sent back / approved) — the review card
+   *  refetches, so an agent's re-request appears live instead of on reload. */
+  onReview?: () => void
 }) {
-  const { shortId, onComment, onVersion } = opts
+  const { shortId, onComment, onVersion, onReview } = opts
   const [viewers, setViewers] = useState<Viewer[]>([])
   const cursors = useLiveCursors(shortId)
   const { paintFrame } = cursors
@@ -42,6 +45,11 @@ export function useArtifactLive(opts: {
     ev.addEventListener("comment.reacted", onComment)
     ev.addEventListener("comment.updated", onComment)
     ev.addEventListener("version.published", onVersion)
+    if (onReview) {
+      ev.addEventListener("review.requested", onReview)
+      ev.addEventListener("review.sent_back", onReview)
+      ev.addEventListener("review.approved", onReview)
+    }
     ev.addEventListener("presence", (e) => {
       try {
         setViewers((JSON.parse((e as MessageEvent).data).viewers as Viewer[]) ?? [])
@@ -57,7 +65,7 @@ export function useArtifactLive(opts: {
       }
     })
     return () => ev.close()
-  }, [shortId, onComment, onVersion, paintFrame, visible])
+  }, [shortId, onComment, onVersion, onReview, paintFrame, visible])
 
   // Announce we're viewing (anon shows up by their server handle — Google-Docs
   // style) and keep the heartbeat alive (TTL 45s). Paused while the tab is

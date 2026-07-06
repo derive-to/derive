@@ -1,3 +1,4 @@
+import { useQueryClient } from "@tanstack/react-query"
 import { useNavigate } from "@tanstack/react-router"
 import { toast } from "@/components/ui/sonner"
 import { useAuth } from "@/ctx"
@@ -45,6 +46,7 @@ const inputHeld = (): boolean => {
 export function AgentPushListener() {
   const { me } = useAuth()
   const nav = useNavigate()
+  const qc = useQueryClient()
   const visible = usePageVisible()
 
   useUserEvent(
@@ -59,6 +61,11 @@ export function AgentPushListener() {
       const id = p.event_id ?? `${p.short_id}:${p.version}`
       if (seen.has(id)) return
       remember(id)
+
+      // The library should know about the draft without a reload: the grids and
+      // the rail's Unlisted count both ride these queries.
+      qc.invalidateQueries({ queryKey: ["artifacts"] })
+      qc.invalidateQueries({ queryKey: ["summary"] })
 
       // Already looking at it → the artifact channel's version.published
       // live-reloads in place; anything more here would be noise.

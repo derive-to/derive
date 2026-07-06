@@ -46,7 +46,7 @@ import {
   manifestOf as sharedManifestOf,
   zipBundleFiles,
 } from "./lib/bundle"
-import { quoteOf } from "./lib/comments"
+import { parseMeta, quoteOf, REACTIONS } from "./lib/comments"
 
 const text = (s: string) => ({ content: [{ type: "text" as const, text: s }] })
 // Bound a best-effort promise (the tab-delivery receipt) so it can never stall a
@@ -438,38 +438,46 @@ function buildServer(
     "comment",
     {
       description:
-        "Leave feedback on an artifact, reply in a thread, and/or resolve or reopen a thread — all in one tool. Anchor a NEW comment to a quoted span of the rendered text with `quote`. Reply by passing the thread id as `reply_to`. Resolve or reopen by passing `set_state` along with the thread's id in `reply_to`. Thread ids come from catch_up.",
+        "Leave feedback on an artifact, reply in a thread, react, and/or resolve or reopen a thread — all in one tool. Anchor a NEW comment to a quoted span of the rendered text with `quote`. Reply by passing the thread id as `reply_to`. Pass `react` (with `reply_to`) to acknowledge the latest human comment in a thread without the noise of a reply — the minimum ack the loop requires. Resolve or reopen by passing `set_state` along with the thread's id in `reply_to`. Thread ids come from catch_up.",
       inputSchema: {
         short_id: z.string(),
         body: z
           .string()
           .optional()
-          .describe("The comment text (Markdown). Omit only when just changing thread state."),
+          .describe("The comment text (Markdown). Omit when just reacting or changing state."),
         reply_to: z
           .string()
           .optional()
           .describe(
-            "A thread id (from catch_up): reply in that thread, and/or the thread to set_state on.",
+            "A thread id (from catch_up): reply in that thread, and/or the thread to react / set_state on.",
           ),
         quote: z
           .string()
           .optional()
           .describe("Exact text in the rendered document to anchor a NEW comment to."),
+        react: z
+          .enum(REACTIONS as [string, ...string[]])
+          .optional()
+          .describe(
+            "React to the thread's latest comment by someone else (with `reply_to`) — the lightweight ack. 👍 is the loop's default.",
+          ),
         set_state: z
           .enum(["resolved", "open"])
           .optional()
           .describe("Resolve the thread, or reopen it (with `reply_to`)."),
       },
     },
-    async ({ short_id, body, reply_to, quote, set_state }) => {
+    async ({ short_id, body, reply_to, quote, react, set_state }) => {
       const a = await own(short_id)
       if (!a) return notFound(short_id)
       if (!roleAllows(agent.role, "comment"))
         return err(
           "Your grant is read-only (derive:read). Re-authorize the connector with derive:comment to leave feedback.",
         )
-      if (!body && !set_state)
-        return err("Provide `body` (to comment) or `set_state` (to resolve/reopen a thread).")
+      if (!body && !set_state && !react)
+        return err(
+          "Provide `body` (to comment), `react` (to acknowledge), or `set_state` (to resolve/reopen).",
+        )
       let thread = reply_to
       let commentId: string | undefined
       if (body) {
@@ -489,6 +497,31 @@ function buildServer(
         })
         ctx.bus.publish(a.id, { type: "comment.created" })
       }
+      // The ack: land the emoji on the thread's newest comment by someone ELSE
+      // (the human being acknowledged), falling back to its newest comment.
+      // Idempotent — re-acking never toggles the reaction off.
+      let reactedTo: string | undefined
+      if (react) {
+        if (!thread) return err("`react` needs `reply_to` (the thread to acknowledge).")
+        const inThread = (await ctx.meta.listComments(a.id)).filter(
+          (c) => c.thread_id === thread && !parseMeta(c.meta).deleted,
+        )
+        if (inThread.length === 0) return err(`No thread "${thread}" on "${short_id}".`)
+        const target =
+          [...inThread].reverse().find((c) => c.author_id !== agent.id) ??
+          inThread[inThread.length - 1]
+        if (target) {
+          const md = parseMeta(target.meta)
+          const reactions = md.reactions ?? {}
+          const arr = reactions[react] ?? []
+          if (!arr.includes(agent.name)) arr.push(agent.name)
+          reactions[react] = arr
+          md.reactions = reactions
+          await ctx.meta.updateComment(target.id, { meta: JSON.stringify(md) })
+          ctx.bus.publish(a.id, { type: "comment.reacted", thread_id: thread })
+          reactedTo = target.id
+        }
+      }
       if (set_state) {
         if (!thread) return err("`set_state` needs `reply_to` (the thread id to resolve/reopen).")
         await ctx.meta.setThreadState(a.id, thread, set_state)
@@ -498,12 +531,15 @@ function buildServer(
         short_id,
         thread,
         ...(commentId ? { comment_id: commentId, anchored_to: quote ?? null } : {}),
+        ...(reactedTo ? { reacted: react, reacted_to: reactedTo } : {}),
         ...(set_state ? { state: set_state } : {}),
         note: body
           ? reply_to
             ? "Replied in the thread."
             : "New comment thread created."
-          : `Thread ${set_state}.`,
+          : reactedTo
+            ? `Acknowledged with ${react}.`
+            : `Thread ${set_state}.`,
       })
     },
   )

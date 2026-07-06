@@ -169,6 +169,75 @@ describe("MCP publish reaches the human (event parity + auto-open)", () => {
   })
 })
 
+describe("the ack: comment react over MCP", () => {
+  it("lands the emoji on the thread's latest HUMAN comment, idempotently", async () => {
+    const { app, meta, token } = loopApp("react")
+    const created = await call(app, token, "publish", {
+      content: "<h1>Q&A</h1>",
+      title: "Ack Target",
+    })
+    const q = await call(app, token, "comment", {
+      short_id: created.short_id,
+      body: "Q1: which option?",
+    })
+    const a = await meta.getByShortId(created.short_id as string)
+    if (!a) throw new Error("artifact missing")
+    // The human answers in the thread (store-level; the route needs a session).
+    await meta.createComment({
+      id: "c_human_1",
+      artifact_id: a.id,
+      thread_id: q.thread as string,
+      base_version: 1,
+      path: null,
+      anchor: null,
+      body_md: "(a), and note it in 5.2",
+      author: "Anir",
+      author_id: "u_o",
+    })
+    const ack = await call(app, token, "comment", {
+      short_id: created.short_id,
+      reply_to: q.thread,
+      react: "👍",
+    })
+    expect(ack.reacted).toBe("👍")
+    expect(ack.reacted_to).toBe("c_human_1") // the human's comment, not the agent's own
+    expect(ack.note).toContain("Acknowledged")
+    // Idempotent: acking twice never toggles the reaction back off.
+    await call(app, token, "comment", {
+      short_id: created.short_id,
+      reply_to: q.thread,
+      react: "👍",
+    })
+    const stored = await meta.getComment("c_human_1")
+    const reactions = JSON.parse(stored?.meta ?? "{}").reactions as Record<string, string[]>
+    expect(reactions["👍"]).toEqual(["Claude"])
+  })
+})
+
+describe("HTTP publish parity (the CLI / stdio-shim path)", () => {
+  it("an agent-credentialed HTTP publish pushes, bells, and reports opened_in_tab", async () => {
+    const { app, meta, backplane, token } = loopApp("httppar")
+    const userEvents = record(backplane, "u:u_o")
+    const form = new FormData()
+    form.append("file", new Blob([new TextEncoder().encode("<h1>via http</h1>")]), "index.html")
+    form.append("title", "CLI Draft")
+    form.append("request_review", "true")
+    const res = await app.request("/v1/artifacts", {
+      method: "POST",
+      body: form,
+      headers: { authorization: `Bearer ${token}` },
+    })
+    expect(res.status).toBe(201)
+    const out = (await res.json()) as Record<string, unknown>
+    expect(out.review_requested).toBe(true)
+    expect(out.opened_in_tab).toBe(true) // the recorder holds the user channel
+    expect(out.visibility).toBe("unlisted") // agent creates take the workspace default here too
+    expect(userEvents.some((e) => e.type === "artifact.pushed" && e.kind === "created")).toBe(true)
+    const rows = await meta.listNotifications("u_o", 10)
+    expect(rows.some((r) => r.kind === "review")).toBe(true)
+  })
+})
+
 describe("unlisted — the agent-draft default", () => {
   it("new MCP publishes land unlisted, seeded with the workspace default role, still findable by the agent", async () => {
     const { app, meta, token } = loopApp("unlisted")
