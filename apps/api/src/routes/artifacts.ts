@@ -124,6 +124,9 @@ export const artifactRoutes = (ctx: AppContext) => {
       if (!me) return c.json({ artifacts: [], next_cursor: null })
       narrow(await meta.artifactIdsNeedingFeedback(me.id, await activeWorkspace(c)))
     }
+    // scope=unlisted → the caller's own unlisted drafts in this workspace: the
+    // library's Unlisted filter. Ordinary listings hide unlisted entirely.
+    const unlistedScope = c.req.query("scope") === "unlisted"
     if (tag) narrow(await meta.artifactIdsByTag(tag))
     if (favOnly) narrow(favIds)
 
@@ -167,6 +170,10 @@ export const artifactRoutes = (ctx: AppContext) => {
     // sees public artifacts only, so org/link titles never leak via the list or ?query=.
     // For a collection, collection access (member/creator/share) also unlocks it.
     const publicOnly = collectionId ? !collectionAccess : !(isOperator || baselineRole !== null)
+    // The Unlisted filter is a members-only view of their OWN drafts — a caller
+    // with no standing here (or no member rows to match) has none by definition.
+    if (unlistedScope && (publicOnly || !memberKey))
+      return c.json({ artifacts: [], next_cursor: null })
     const rows = await meta.listArtifacts({
       limit: limit + 1,
       cursor,
@@ -183,6 +190,7 @@ export const artifactRoutes = (ctx: AppContext) => {
       // Private artifacts appear only for their explicit members; the operator
       // token sees everything (viewerId omitted).
       viewerId: isOperator ? undefined : (memberKey ?? undefined),
+      unlisted: unlistedScope ? "only" : undefined,
     })
     const hasMore = rows.length > limit
     const page = hasMore ? rows.slice(0, limit) : rows
@@ -253,8 +261,8 @@ export const artifactRoutes = (ctx: AppContext) => {
     // empty summary with no workspace name, so it can't be used to enumerate a private
     // workspace's name + size.
     if (!(await isMember(c, org)))
-      return c.json({ total: 0, favorites: 0, tags: [], workspace: null })
-    const [total, tags, favIds, ws] = await Promise.all([
+      return c.json({ total: 0, favorites: 0, unlisted: 0, tags: [], workspace: null })
+    const [total, tags, favIds, ws, unlisted] = await Promise.all([
       meta.countArtifacts(org),
       meta.tagCounts(org),
       // Scope the favorites count to THIS workspace's live artifacts — the favorites
@@ -262,11 +270,15 @@ export const artifactRoutes = (ctx: AppContext) => {
       // must not inflate the count (otherwise "Favorites · 1" with an empty list).
       me ? meta.listUserFavoriteIds(me.id, org) : Promise.resolve([]),
       meta.getWorkspace(org),
+      // The caller's own unlisted drafts — the Unlisted filter's badge. Zero hides
+      // the filter, so it only exists when there's something in it.
+      me ? meta.countUnlistedFor(org, me.id) : Promise.resolve(0),
     ])
     tags.sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag))
     return c.json({
       total,
       favorites: favIds.length,
+      unlisted,
       tags,
       workspace: ws?.name ?? DEFAULT_WORKSPACE_NAME,
     })
@@ -326,7 +338,11 @@ export const artifactRoutes = (ctx: AppContext) => {
     // An explicitly-provided visibility that isn't a known value is rejected, not
     // silently coerced — a typo must not publish more openly than intended.
     if (str(body["visibility"]) && !visibility)
-      return fail(c, 400, "visibility must be one of: public, link, org, password, private")
+      return fail(
+        c,
+        400,
+        "visibility must be one of: public, link, org, password, private, unlisted",
+      )
     const password = str(body["password"])
     if (!shortId && visibility === "password" && !password)
       return fail(c, 400, "a password is required for password visibility")
@@ -380,6 +396,16 @@ export const artifactRoutes = (ctx: AppContext) => {
           user_id: ownerId,
           role: "owner",
         })
+      // A NEW unlisted artifact takes the workspace's default link permission as
+      // its general_role (what a member with the link may do); the share dialog
+      // can still override per doc.
+      if (!shortId && artifact.visibility === "unlisted")
+        await meta.setVisibility(
+          artifact.id,
+          "unlisted",
+          null,
+          (await meta.getOrgSettings(org)).defaultUnlistedRole,
+        )
       bus.publish(artifact.id, {
         type: "version.published",
         n: version.n,
@@ -598,7 +624,13 @@ export const artifactRoutes = (ctx: AppContext) => {
     if (b instanceof Response) return b
     const visibility = visibilityOf(b.visibility)
     if (!visibility) return fail(c, 400, "invalid visibility")
-    const generalRole = b.generalRole ?? "viewer"
+    // Turning unlisted without an explicit choice seeds the workspace's default
+    // link permission (view or comment); the dialog's per-doc override still wins.
+    const generalRole =
+      b.generalRole ??
+      (visibility === "unlisted"
+        ? (await meta.getOrgSettings(artifact.org_id)).defaultUnlistedRole
+        : "viewer")
     let passwordHash: string | null = null
     if (visibility === "password") {
       if (b.password) passwordHash = hashPassword(b.password)

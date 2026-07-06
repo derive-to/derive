@@ -14,7 +14,7 @@ import {
 import type { Visibility } from "./ports"
 
 const ACTIONS: Action[] = ["read", "comment", "propose", "publish", "approve", "share", "manage"]
-const VISIBILITIES: Visibility[] = ["public", "link", "password", "org", "private"]
+const VISIBILITIES: Visibility[] = ["public", "link", "password", "org", "private", "unlisted"]
 const WRITE_ACTIONS: Action[] = ["comment", "propose", "publish", "approve", "share", "manage"]
 
 // The authoritative access matrix: the minimum role each action requires. This is
@@ -122,6 +122,25 @@ describe("effectiveRole — the documented access table", () => {
     expect(effectiveRole(user({ orgRole: "viewer" }), "link", "commenter")).toBe("commenter")
     // ...but an editor stays editor (max of explicit and floor).
     expect(effectiveRole(user({ orgRole: "editor" }), "link", "commenter")).toBe("editor")
+  })
+
+  it("unlisted opens for workspace members at the general role — nobody else", () => {
+    // The agent-draft state: a member WITH THE LINK gets the workspace's default
+    // (view or comment). Their workspace role itself grants nothing (that would
+    // be `org`), so an unlisted doc never rides membership into listings/standing.
+    expect(effectiveRole(user({ orgRole: "viewer" }), "unlisted")).toBe("viewer")
+    expect(effectiveRole(user({ orgRole: "viewer" }), "unlisted", "commenter")).toBe("commenter")
+    // An org editor still only gets the floor — membership is reach, not standing.
+    expect(effectiveRole(user({ orgRole: "editor" }), "unlisted")).toBe("viewer")
+    // Non-members (no orgRole) and anonymous visitors get nothing.
+    expect(effectiveRole(user(), "unlisted", "commenter")).toBeNull()
+    expect(effectiveRole(anon, "unlisted", "commenter")).toBeNull()
+    // An explicit share still opens it at the shared role (and can exceed the floor).
+    expect(effectiveRole(user({ artifactRole: "owner" }), "unlisted")).toBe("owner")
+    expect(effectiveRole(user({ artifactRole: "editor", orgRole: "viewer" }), "unlisted")).toBe(
+      "editor",
+    )
+    expect(effectiveRole(token, "unlisted")).toBe("owner")
   })
 
   it("private admits only per-artifact members — workspace role grants nothing", () => {

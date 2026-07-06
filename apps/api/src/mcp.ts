@@ -187,15 +187,18 @@ function buildServer(
     "list_artifacts",
     {
       description:
-        "List the artifacts (docs, plans, sites) in your workspace — short id, title, kind, current version, visibility. Start here to find what to work on, then catch_up or read it.",
+        "List the artifacts (docs, plans, sites) in your workspace — short id, title, kind, current version, visibility. Includes your own unlisted drafts (hidden from humans' listings, but you always find your work). Start here to find what to work on, then catch_up or read it.",
       inputSchema: { query: z.string().optional().describe("Optional title search filter.") },
     },
     async ({ query }) => {
-      // viewerId keeps private rows scoped to the agent's human (mirrors `own`).
+      // viewerId keeps private rows scoped to the agent's human (mirrors `own`);
+      // "include" folds in that human's own unlisted drafts, so the agent can
+      // always find the work it published even though listings hide it.
       const arts = await ctx.meta.listArtifacts({
         orgId: org,
         q: query,
         viewerId: actingFor?.id ?? agent.id,
+        unlisted: "include",
       })
       return json({ count: arts.length, artifacts: arts.map(summarizeArtifact) })
     },
@@ -535,10 +538,10 @@ function buildServer(
           .optional()
           .describe("Omit to create a new artifact; pass it to revise one you own."),
         visibility: z
-          .enum(["private", "workspace", "link", "public"])
+          .enum(["unlisted", "private", "workspace", "link", "public"])
           .optional()
           .describe(
-            "Who can see a NEW artifact: private (you and people you invite — the default), workspace (your team), link (anyone with the link), or public (discoverable). Ignored on republish.",
+            "Who can see a NEW artifact: unlisted (workspace members with the link; hidden from the library — the usual default for agent drafts), private (you and people you invite), workspace (your team, listed), link (anyone with the link), or public (discoverable). Omit to use the workspace's agent default. Ignored on republish — the human promotes via the share dialog.",
           ),
         spa: z
           .boolean()
@@ -687,6 +690,10 @@ function buildServer(
         } else {
           bytes = await zipBundleFiles(files as Record<string, string>, ctx.blobs)
         }
+        // The workspace decides where an agent's NEW artifact lands when the
+        // agent doesn't say — unlisted by default: out of the team library, one
+        // link away for the human. Sharing wider stays a deliberate human act.
+        const settings = short_id ? null : await ctx.meta.getOrgSettings(org)
         const { artifact, version } = await publishVersion(
           ctx.meta,
           ctx.blobs,
@@ -701,8 +708,8 @@ function buildServer(
             // Attributed to the human the agent acts for — their profile, their
             // followers' feed (same as the HTTP publish route).
             authorId: actingFor?.id ?? null,
-            // New artifacts land in the granting user's workspace, private by
-            // default like every other publish path (never wider unless asked).
+            // New artifacts land in the granting user's workspace, never wider
+            // than asked (the workspace's agent default when unspecified).
             orgId: agent.org_id,
             visibility:
               visibility === "link"
@@ -711,7 +718,11 @@ function buildServer(
                   ? "public"
                   : visibility === "workspace"
                     ? "org"
-                    : "private",
+                    : visibility === "private"
+                      ? "private"
+                      : visibility === "unlisted"
+                        ? "unlisted"
+                        : (settings?.defaultAgentVisibility ?? "private"),
           },
           short_id,
         )
@@ -724,6 +735,10 @@ function buildServer(
             user_id: actingFor?.id ?? agent.id,
             role: "owner",
           })
+        // A NEW unlisted artifact takes the workspace's default link permission
+        // as its general_role (what a member with the link may do).
+        if (!short_id && artifact.visibility === "unlisted" && settings)
+          await ctx.meta.setVisibility(artifact.id, "unlisted", null, settings.defaultUnlistedRole)
         // Event parity with the HTTP publish route: the artifact channel makes a
         // tab viewing this doc live-reload; the webhook outbox fans out to
         // integrations. Without these an MCP publish is invisible to open tabs.

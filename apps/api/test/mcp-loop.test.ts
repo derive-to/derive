@@ -169,6 +169,60 @@ describe("MCP publish reaches the human (event parity + auto-open)", () => {
   })
 })
 
+describe("unlisted — the agent-draft default", () => {
+  it("new MCP publishes land unlisted, seeded with the workspace default role, still findable by the agent", async () => {
+    const { app, meta, token } = loopApp("unlisted")
+    const created = await call(app, token, "publish", {
+      content: "<h1>Draft</h1>",
+      title: "Quiet Draft",
+    })
+    expect(created.visibility).toBe("unlisted")
+    const a = await meta.getByShortId(created.short_id as string)
+    expect(a?.general_role).toBe("viewer") // the workspace default, seeded on create
+
+    // Hidden from an ordinary listing, but the agent's list_artifacts folds the
+    // acting user's own drafts back in — it can always find its work.
+    const list = await call(app, token, "list_artifacts", {})
+    const shortIds = (list.artifacts as { short_id: string }[]).map((x) => x.short_id)
+    expect(shortIds).toContain(created.short_id)
+
+    // Explicit visibility still wins over the workspace default.
+    const open = await call(app, token, "publish", {
+      content: "<h1>Open</h1>",
+      title: "Open Doc",
+      visibility: "workspace",
+    })
+    expect(open.visibility).toBe("org")
+  })
+
+  it("honors the workspace's defaultUnlistedRole and defaultAgentVisibility settings", async () => {
+    const { app, meta, token } = loopApp("wsdefaults")
+    // The OAuth agent runs in the granting user's personal workspace.
+    const org = "ws_p_u_o"
+    const { DEFAULT_ORG_SETTINGS } = await import("@derive/core")
+    await meta.setOrgSettings(org, {
+      ...DEFAULT_ORG_SETTINGS,
+      defaultUnlistedRole: "commenter",
+    })
+    const created = await call(app, token, "publish", {
+      content: "<h1>C</h1>",
+      title: "Comment Draft",
+    })
+    expect(created.visibility).toBe("unlisted")
+    expect((await meta.getByShortId(created.short_id as string))?.general_role).toBe("commenter")
+
+    await meta.setOrgSettings(org, {
+      ...DEFAULT_ORG_SETTINGS,
+      defaultAgentVisibility: "private",
+    })
+    const priv = await call(app, token, "publish", {
+      content: "<h1>P</h1>",
+      title: "Private Draft",
+    })
+    expect(priv.visibility).toBe("private")
+  })
+})
+
 describe("catch_up `wait` long-poll", () => {
   it("blocks while the round is pending and wakes the moment it is sent back", async () => {
     const { app, meta, backplane, token } = loopApp("wake")

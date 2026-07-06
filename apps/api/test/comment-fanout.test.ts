@@ -1,4 +1,5 @@
 import type { DeliveryRecord } from "@derive/core"
+import { DEFAULT_ORG_SETTINGS } from "@derive/core"
 import { describe, expect, it } from "vitest"
 import { as, jsonAs, makeAuthedApp, pub, type TestUser } from "./helpers"
 
@@ -38,6 +39,7 @@ describe("comment channel fan-out", () => {
   it("does not email when the email toggle is off", async () => {
     const { app, meta } = makeAuthedApp("fanout-email-off", [owner, editor], "editor")
     await meta.setOrgSettings("default", {
+      ...DEFAULT_ORG_SETTINGS,
       emailNotifications: false,
       githubPostComments: true,
       githubMirrorComments: true,
@@ -79,6 +81,7 @@ describe("comment channel fan-out", () => {
       created_at: new Date().toISOString(),
     })
     await meta.setOrgSettings("default", {
+      ...DEFAULT_ORG_SETTINGS,
       emailNotifications: true,
       githubPostComments: true,
       githubMirrorComments: true,

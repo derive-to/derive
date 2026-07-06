@@ -508,6 +508,20 @@ export class PgMetaStore implements MetaStore {
     const rows = await (orgId ? q.where(eq(artifact.org_id, orgId)) : q)
     return Number(rows[0]?.c ?? 0)
   }
+  async countUnlistedFor(orgId: string, userId: string): Promise<number> {
+    const rows = await this.db
+      .select({ c: count() })
+      .from(artifact)
+      .where(
+        and(
+          eq(artifact.org_id, orgId),
+          eq(artifact.visibility, "unlisted"),
+          sql`EXISTS (SELECT 1 FROM artifact_member am
+            WHERE am.artifact_id = ${artifact.id} AND am.user_id = ${userId})`,
+        ),
+      )
+    return Number(rows[0]?.c ?? 0)
+  }
   async storageBytes(orgId: string): Promise<number> {
     // One row per distinct blob in the org (max size_bytes guards a stale 0 on a
     // restored row), then summed — so dedup'd content is counted once.
@@ -992,12 +1006,17 @@ export class PgMetaStore implements MetaStore {
     } else {
       conds.push(eq(artifact.author_id, userId))
     }
-    // Private drafts never ride a profile, shared workspace or not (see repos.ts).
+    // Private and unlisted drafts never ride a profile, shared workspace or not
+    // (see repos.ts).
     const orgs = opts.visibleOrgIds ?? []
     if (orgs.length > 0) {
       const v = or(
         eq(artifact.visibility, "public"),
-        and(inArray(artifact.org_id, orgs), ne(artifact.visibility, "private")),
+        and(
+          inArray(artifact.org_id, orgs),
+          ne(artifact.visibility, "private"),
+          ne(artifact.visibility, "unlisted"),
+        ),
       )
       if (v) conds.push(v)
     } else {

@@ -142,13 +142,24 @@ export function artifactListConditions(
   // `private` artifacts are invisible even to workspace members unless they're an
   // explicit artifact member. The subquery names the table literally — sqlite, D1,
   // and pg all call it artifact_member, and this function serves all three.
-  else if (opts?.viewerId)
-    conds.push(
-      sql`(${art.visibility} != 'private' OR EXISTS (
+  else if (opts?.viewerId) {
+    const isMember = sql`EXISTS (
         SELECT 1 FROM artifact_member am
         WHERE am.artifact_id = ${art.id} AND am.user_id = ${opts.viewerId}
-      ))`,
-    )
+      )`
+    conds.push(sql`(${art.visibility} != 'private' OR ${isMember})`)
+    // `unlisted` hides from every ordinary listing — even the owner's (they have
+    // the dedicated filter). "include" folds the viewer's own drafts back in (MCP
+    // list_artifacts, so an agent always finds its work); "only" IS the filter.
+    // Ownership = an explicit artifact_member row, the same contract `private` uses.
+    if (opts.unlisted === "only") conds.push(sql`(${art.visibility} = 'unlisted' AND ${isMember})`)
+    else if (opts.unlisted === "include")
+      conds.push(sql`(${art.visibility} != 'unlisted' OR ${isMember})`)
+    else conds.push(sql`${art.visibility} != 'unlisted'`)
+  }
+  // A trusted caller (operator token / internal jobs, no viewerId) sees everything;
+  // "only" still narrows so the scoped filter works for that path too.
+  else if (opts?.unlisted === "only") conds.push(eq(art.visibility, "unlisted"))
   if (opts?.q) conds.push(like(sql`lower(${art.title})`, `%${opts.q.toLowerCase()}%`))
   if (opts?.cursor) {
     const cursor = or(
@@ -457,6 +468,22 @@ export function makeRepos(db: SqliteDb) {
     const q = db.select({ c: count() }).from(artifact)
     return (await (orgId ? q.where(eq(artifact.org_id, orgId)) : q).get())?.c ?? 0
   }
+
+  const countUnlistedFor = async (orgId: string, userId: string): Promise<number> =>
+    (
+      await db
+        .select({ c: count() })
+        .from(artifact)
+        .where(
+          and(
+            eq(artifact.org_id, orgId),
+            eq(artifact.visibility, "unlisted"),
+            sql`EXISTS (SELECT 1 FROM artifact_member am
+              WHERE am.artifact_id = ${artifact.id} AND am.user_id = ${userId})`,
+          ),
+        )
+        .get()
+    )?.c ?? 0
 
   const storageBytes = async (orgId: string): Promise<number> => {
     // One row per distinct blob in the org (max size_bytes guards a stale 0 on a
@@ -1042,13 +1069,17 @@ export function makeRepos(db: SqliteDb) {
       conds.push(eq(artifact.author_id, userId))
     }
     // Visible to the viewer: public OR in a workspace they share with the profile
-    // owner. Private drafts never ride a profile, shared workspace or not — the
-    // owner finds them in their library, not on their public face.
+    // owner. Private and unlisted drafts never ride a profile, shared workspace or
+    // not — the owner finds them in their library, not on their public face.
     const orgs = opts.visibleOrgIds ?? []
     if (orgs.length > 0) {
       const v = or(
         eq(artifact.visibility, "public"),
-        and(inArray(artifact.org_id, orgs), ne(artifact.visibility, "private")),
+        and(
+          inArray(artifact.org_id, orgs),
+          ne(artifact.visibility, "private"),
+          ne(artifact.visibility, "unlisted"),
+        ),
       )
       if (v) conds.push(v)
     } else {
@@ -1910,6 +1941,7 @@ export function makeRepos(db: SqliteDb) {
     artifactIdsByTag,
     artifactIdsByAuthor,
     countArtifacts,
+    countUnlistedFor,
     storageBytes,
     tagCounts,
     deleteArtifact,
