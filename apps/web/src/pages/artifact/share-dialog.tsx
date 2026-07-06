@@ -46,6 +46,12 @@ const ACCESS: { value: string; label: string; blurb: string; icon: IconName }[] 
     icon: "lock",
   },
   {
+    value: "unlisted",
+    label: "Unlisted — workspace with link",
+    blurb: "Workspace members with the link. Hidden from the library and search.",
+    icon: "link",
+  },
+  {
     value: "org",
     label: "Workspace only",
     blurb: "Only members of this workspace.",
@@ -172,6 +178,9 @@ export function ShareButton({
   // Reach visibilities (anyone with the link / public / password) carry a general-access
   // permission; private/workspace do not, so the view/comment control hides for them.
   const reach = vis === "link" || vis === "public" || vis === "password"
+  // Unlisted carries the same view/comment choice, but the reachers are workspace
+  // members only (the default comes from workspace settings; this is the per-doc override).
+  const showRole = reach || vis === "unlisted"
   // Switching TO password can't apply until a password exists; everything else
   // applies the moment it's picked — a Save button between a select and its
   // effect is friction with no safety benefit here (the change is one more
@@ -425,7 +434,7 @@ export function ShareButton({
                       ))}
                     </SelectMenuContent>
                   </SelectMenu>
-                  {reach && (
+                  {showRole && (
                     <SelectMenu
                       value={genRole}
                       onValueChange={(v) => pickGenRole(v as GeneralRole)}
@@ -499,6 +508,9 @@ export function ShareButton({
                     reach &&
                     genRole === "commenter" &&
                     " Signed-in visitors can comment."}
+                  {!pendingPw &&
+                    vis === "unlisted" &&
+                    (genRole === "commenter" ? " Members can comment." : " Members can view.")}
                   {!pendingPw && vis === "password" && (
                     <Button
                       variant="link"

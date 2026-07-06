@@ -63,7 +63,9 @@ function scopeFor(view: LibraryView) {
       ? ("shared" as const)
       : view === "feedback"
         ? ("needs_feedback" as const)
-        : undefined
+        : view === "unlisted"
+          ? ("unlisted" as const)
+          : undefined
 }
 
 // The active filter = the base feed (from the route: `view`) unless it's the home
@@ -78,6 +80,7 @@ function deriveFilter(
   if (view === "following") return { kind: "following" }
   if (view === "shared") return { kind: "shared" }
   if (view === "feedback") return { kind: "feedback" }
+  if (view === "unlisted") return { kind: "unlisted" }
   if (search.tag) return { kind: "tag", tag: search.tag }
   if (search.collection)
     return {
@@ -273,9 +276,11 @@ function LibraryBody({ view }: { view: LibraryView }) {
             ? "Shared with you"
             : filter.kind === "feedback"
               ? "Needs your feedback"
-              : filter.kind === "tag"
-                ? `#${filter.tag}`
-                : collectionTitle
+              : filter.kind === "unlisted"
+                ? "Unlisted"
+                : filter.kind === "tag"
+                  ? `#${filter.tag}`
+                  : collectionTitle
   // Only the counts the server can state authoritatively (preloaded summary / the
   // collection's own count) get a number; the follow/shared/feedback feeds show none
   // rather than a misleading "loaded-so-far" count that grows as you scroll.
@@ -285,11 +290,13 @@ function LibraryBody({ view }: { view: LibraryView }) {
       ? summary?.total
       : filter.kind === "favorites"
         ? summary?.favorites
-        : filter.kind === "tag"
-          ? summary?.tags.find((t) => t.tag === filter.tag)?.count
-          : filter.kind === "collection"
-            ? activeCollection?.count
-            : undefined
+        : filter.kind === "unlisted"
+          ? summary?.unlisted
+          : filter.kind === "tag"
+            ? summary?.tags.find((t) => t.tag === filter.tag)?.count
+            : filter.kind === "collection"
+              ? activeCollection?.count
+              : undefined
 
   const showPublish =
     !isSearching && (filter.kind === "all" || filter.kind === "tag" || filter.kind === "favorites")
@@ -658,6 +665,12 @@ function emptyStateFor(
         icon: <Icon name="share" strokeWidth={1.75} />,
         title: "Nothing shared with you yet.",
         description: "When someone shares an artifact with you, it shows up here.",
+      }
+    case "unlisted":
+      return {
+        icon: <Icon name="link" strokeWidth={1.75} />,
+        title: "Nothing unlisted.",
+        description: "Agent drafts land here until you share them with the team.",
       }
     case "feedback":
       // Inbox-zero: a positive tone, no action — you're done, not stuck.

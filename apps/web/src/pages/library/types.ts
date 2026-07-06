@@ -12,6 +12,8 @@ export type Filter =
   // "Needs your feedback": artifacts with an open thread you're tagged in or have
   // commented on — the triage feed.
   | { kind: "feedback" }
+  // Your own unlisted drafts (agent publishes land here until shared wider).
+  | { kind: "unlisted" }
   | { kind: "tag"; tag: string }
   | { kind: "collection"; id: string; title: string }
 
@@ -20,6 +22,7 @@ export type TagCount = { tag: string; count: number }
 export type Summary = {
   total: number
   favorites: number
+  unlisted: number
   tags: TagCount[]
   workspace: string
 }
@@ -27,7 +30,7 @@ export type Summary = {
 // The base library feed, chosen by ROUTE (path), not a query param: "/" = all,
 // "/favorites", "/following", "/shared", "/feedback". Path = the feed you're viewing;
 // query (LibrarySearch) = how it's filtered. See routes/favorites.tsx + docs/decisions/0002.
-export type LibraryView = "all" | "favorites" | "following" | "shared" | "feedback"
+export type LibraryView = "all" | "favorites" | "following" | "shared" | "feedback" | "unlisted"
 
 // The library's URL-encoded filters + search (query params on the home route), so
 // the persistent nav rail can drive them from any page and a filtered/searched
