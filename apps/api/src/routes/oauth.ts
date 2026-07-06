@@ -1,5 +1,5 @@
 import { type Context, Hono } from "hono"
-import { OAUTH_SCOPES } from "../auth-config"
+import { OAUTH_SCOPES, resolvePasskey } from "../auth-config"
 import type { AppContext } from "../context"
 import { cliCallbackHTML } from "../oauth-cli-callback"
 import { consentHTML } from "../oauth-consent"
@@ -105,6 +105,13 @@ export const oauthRoutes = (ctx: AppContext) => {
       // operator script, and verification is moot without delivery).
       emailVerification: !!ctx.deps.emailEnabled,
       passwordReset: !!ctx.deps.emailEnabled,
+      // Passkeys: on wherever the rpID/origin resolves — same pure resolver the auth
+      // plugin uses, so this can never disagree with whether the endpoints exist.
+      passkey: resolvePasskey({
+        baseUrl: ctx.deps.baseUrl,
+        webOrigins: [...ctx.allowOrigins],
+        crossSite: !!ctx.deps.crossSite,
+      }).enabled,
     })
   })
 

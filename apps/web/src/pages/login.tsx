@@ -9,6 +9,7 @@ import { StatusPanel } from "@/components/shared/status-panel"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { useAuth } from "@/ctx"
+import { authClient } from "@/lib/auth-client"
 
 const loginRoute = getRouteApi("/login")
 
@@ -21,6 +22,7 @@ export function Login() {
   const [password, setPassword] = useState("")
   const [err, setErr] = useState("")
   const [busy, setBusy] = useState(false)
+  const [pkBusy, setPkBusy] = useState(false)
   // What sign-in methods this instance actually has (so we only render buttons that
   // work here — the capability-adaptive contract). Null while loading.
   const [caps, setCaps] = useState<AuthCapabilities | null>(null)
@@ -97,6 +99,39 @@ export function Login() {
     }
   }
 
+  // The OAuth-authorize resume path (agent consent bounced here). Conditional-UI passkey
+  // autofill shouldn't fire there — that flow drives its own navigation.
+  const oauthResume =
+    typeof window !== "undefined" && new URLSearchParams(window.location.search).has("client_id")
+
+  // Passkey (WebAuthn) sign-in via the Better Auth client. `autoFill` is the conditional-UI
+  // prime: the browser offers saved passkeys inline on the email field, resolving only if
+  // the user picks one — so on that path we stay silent on error. The explicit button
+  // (autoFill=false) surfaces failures.
+  const passkeySignIn = async (autoFill = false) => {
+    if (!autoFill) setPkBusy(true)
+    try {
+      const res = await authClient.signIn.passkey({ autoFill })
+      if (res?.data) {
+        setMe(await api.session())
+        afterAuth()
+      } else if (res?.error && !autoFill) {
+        setErr(res.error.message ?? "Passkey sign-in failed.")
+      }
+    } catch (e) {
+      if (!autoFill) setErr((e as Error).message)
+    } finally {
+      if (!autoFill) setPkBusy(false)
+    }
+  }
+
+  // Prime conditional-UI autofill once, when passkeys are available and we're in the plain
+  // sign-in flow. A no-op where the browser doesn't support it.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: one-shot autofill prime keyed to capability availability.
+  useEffect(() => {
+    if (caps?.passkey && !oauthResume && mode === "login") void passkeySignIn(true)
+  }, [caps?.passkey])
+
   const signup = mode === "signup"
   // SSO is capability-gated; capture as a const so the click closure keeps the
   // non-null narrowing (a const can't be reassigned, so TS carries it in).
@@ -137,9 +172,26 @@ export function Login() {
               mode toggle, grouped tighter than the break above so the form reads as
               one considered unit rather than four equidistant pieces. */}
           <div className="flex flex-col gap-6">
-            {(caps?.google || caps?.github || oidc) && (
+            {(caps?.google || caps?.github || oidc || (caps?.passkey && !signup)) && (
               <div className="flex flex-col gap-3">
                 <div className="flex flex-col gap-2">
+                  {/* Passkey is promoted by POSITION (top) + conditional-UI autofill on the
+                      email field — kept in the outline register so the email/password submit
+                      stays the page's one ink moment. Sign-in only (passkeys are added
+                      post-auth, never at sign-up). */}
+                  {caps?.passkey && !signup && (
+                    <Button
+                      data-testid="login-passkey"
+                      variant="outline"
+                      size="lg"
+                      type="button"
+                      className="w-full"
+                      loading={pkBusy}
+                      onClick={() => passkeySignIn(false)}
+                    >
+                      {pkBusy ? "Waiting for passkey…" : "Sign in with a passkey"}
+                    </Button>
+                  )}
                   {caps?.google && (
                     <Button
                       data-testid="login-google"
@@ -221,7 +273,9 @@ export function Login() {
                   data-testid="login-email"
                   type="email"
                   name="email"
-                  autoComplete="email"
+                  // "webauthn" lets the browser offer saved passkeys inline (conditional UI),
+                  // primed by passkeySignIn(true) on mount — the seamless one-tap path.
+                  autoComplete={caps?.passkey && !signup ? "username webauthn" : "email"}
                   required
                   // First field in login mode takes focus on mount (signup leads with name).
                   autoFocus={!signup}

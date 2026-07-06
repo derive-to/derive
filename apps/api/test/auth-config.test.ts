@@ -1,6 +1,6 @@
 import Database from "better-sqlite3"
 import { afterEach, describe, expect, it } from "vitest"
-import { makeAuth } from "../src/auth-config"
+import { makeAuth, resolvePasskey } from "../src/auth-config"
 
 // makeAuth wires optional identity providers off env: Google when its client
 // id/secret are set, and an enterprise OIDC provider (Okta/Entra/…) via the
@@ -55,14 +55,15 @@ describe("auth-config: optional providers", () => {
     process.env.OIDC_PROVIDER_ID = "okta"
     const ids = pluginIds(makeAuth(db(), "http://derive.test", "test-secret-0123456789abcd"))
     expect(ids).toContain("oauth-provider")
-    expect(ids).toHaveLength(3) // genericOAuth + jwt + oauth-provider
+    // genericOAuth + passkey (same-origin ⇒ enabled) + jwt + oauth-provider
+    expect(ids).toHaveLength(4)
   })
 
   it("omits the SSO plugin when the OIDC_* trio is incomplete (the OAuth server stays)", () => {
     process.env.OIDC_ISSUER = "https://issuer.example.com/"
     // no client id/secret
     const ids = pluginIds(makeAuth(db(), "http://derive.test", "test-secret-0123456789abcd"))
-    expect([...ids].sort()).toEqual(["jwt", "oauth-provider"])
+    expect([...ids].sort()).toEqual(["jwt", "oauth-provider", "passkey"])
   })
 
   it("applies SameSite=None;Secure cookies when DERIVE_CROSS_SITE=true", () => {
@@ -72,5 +73,64 @@ describe("auth-config: optional providers", () => {
       sameSite: "none",
       secure: true,
     })
+  })
+})
+
+describe("resolvePasskey — WebAuthn rpID/origin resolution", () => {
+  afterEach(() => {
+    delete process.env.DERIVE_PASSKEY_RPID
+  })
+
+  it("enables passkeys for a single-origin self-host (rpID derived, one allowed origin)", () => {
+    const r = resolvePasskey({
+      baseUrl: "https://derive.example",
+      webOrigins: [],
+      crossSite: false,
+    })
+    expect(r.enabled).toBe(true)
+    expect(r.rpID).toBeUndefined() // let SimpleWebAuthn derive it from the origin
+    expect(r.origin).toEqual(["https://derive.example"])
+  })
+
+  it("treats a different-PORT web origin (localhost dev) as same-origin (rpID=localhost)", () => {
+    const r = resolvePasskey({
+      baseUrl: "http://localhost:8787",
+      webOrigins: ["http://localhost:3090"],
+      crossSite: false,
+    })
+    expect(r.enabled).toBe(true)
+    expect(r.rpID).toBeUndefined()
+    expect(r.origin).toEqual(["http://localhost:8787", "http://localhost:3090"])
+  })
+
+  it("pins rpID to the shared registrable parent on a cross-site split, allowing both origins", () => {
+    const r = resolvePasskey({
+      baseUrl: "https://api.derive.to",
+      webOrigins: ["https://app.derive.to"],
+      crossSite: true,
+    })
+    expect(r.enabled).toBe(true)
+    expect(r.rpID).toBe("derive.to")
+    expect(r.origin).toEqual(["https://api.derive.to", "https://app.derive.to"])
+  })
+
+  it("disables passkeys when SPA + API span two different registrable domains", () => {
+    const r = resolvePasskey({
+      baseUrl: "https://api.derive.to",
+      webOrigins: ["https://app.example.com"],
+      crossSite: true,
+    })
+    expect(r.enabled).toBe(false)
+  })
+
+  it("honours an explicit DERIVE_PASSKEY_RPID override", () => {
+    process.env.DERIVE_PASSKEY_RPID = "derive.io"
+    const r = resolvePasskey({
+      baseUrl: "https://api.derive.io",
+      webOrigins: ["https://app.derive.io"],
+      crossSite: true,
+    })
+    expect(r.enabled).toBe(true)
+    expect(r.rpID).toBe("derive.io")
   })
 })

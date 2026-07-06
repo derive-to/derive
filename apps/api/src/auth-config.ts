@@ -1,4 +1,5 @@
 import { oauthProvider } from "@better-auth/oauth-provider"
+import { passkey } from "@better-auth/passkey"
 import { generateUsername } from "@derive/core"
 import { type BetterAuthOptions, betterAuth } from "better-auth"
 import { APIError, createAuthMiddleware } from "better-auth/api"
@@ -6,6 +7,64 @@ import { getMigrations } from "better-auth/db/migration"
 import { genericOAuth, jwt } from "better-auth/plugins"
 import { isBreachedPassword, sha256 } from "./lib/crypto"
 import { log } from "./log"
+
+// ---- Passkey (WebAuthn) rpID/origin resolution ----------------------------
+// A passkey is bound to an rpID (a registrable domain) and the ceremony's origin is
+// validated. Same-origin self-host: rpID + origin are just the one host — zero config.
+// Hosted split (SPA ≠ API): the ceremony runs on the SPA origin but Better Auth runs on
+// the API, so we ALLOW BOTH origins and pin rpID to the registrable parent they share.
+// If they share no parent (two different registrable domains), WebAuthn can't bridge them
+// and passkeys are disabled (capabilities reports passkey:false). DERIVE_PASSKEY_RPID
+// overrides the inference (e.g. an unusual public suffix the naive heuristic misjudges).
+export interface PasskeyConfig {
+  enabled: boolean
+  rpID?: string
+  origin: string[]
+}
+const hostOf = (u: string): string | null => {
+  try {
+    return new URL(u).hostname.toLowerCase()
+  } catch {
+    return null
+  }
+}
+const originOf = (u: string): string => {
+  try {
+    return new URL(u).origin
+  } catch {
+    return u.replace(/\/+$/, "")
+  }
+}
+// Longest shared dotted-label suffix of a set of hosts, requiring ≥2 labels — a naive
+// eTLD+1 heuristic (handles app.derive.to + api.derive.to → derive.to, and the 3-label
+// example.co.uk case); DERIVE_PASSKEY_RPID is the escape hatch for anything it misjudges.
+const commonParent = (hosts: string[]): string | null => {
+  const rev = hosts.map((h) => h.split(".").reverse())
+  const first = rev[0]
+  if (!first) return null
+  let n = 0
+  for (let i = 0; i < first.length; i++) {
+    const label = first[i]
+    if (rev.every((s) => s[i] === label)) n++
+    else break
+  }
+  return n >= 2 ? first.slice(0, n).reverse().join(".") : null
+}
+export function resolvePasskey(opts: {
+  baseUrl: string
+  webOrigins: string[]
+  crossSite: boolean
+}): PasskeyConfig {
+  const apiHost = hostOf(opts.baseUrl)
+  const origin = [...new Set([opts.baseUrl, ...opts.webOrigins].map(originOf))]
+  const override = process.env.DERIVE_PASSKEY_RPID
+  // Web origins on a DIFFERENT host than the API (the true cross-site case). A different
+  // port on the same host (localhost dev) is same-origin for WebAuthn.
+  const webHosts = opts.webOrigins.map(hostOf).filter((h): h is string => !!h && h !== apiHost)
+  if (webHosts.length === 0) return { enabled: !!apiHost, rpID: override, origin }
+  const parent = override ?? (apiHost ? commonParent([apiHost, ...webHosts]) : null)
+  return parent ? { enabled: true, rpID: parent, origin } : { enabled: false, origin }
+}
 
 // Scopes an agent can be granted via the OAuth consent. The derive:* scopes map to
 // what the issued token may do; openid/profile/email/offline_access are the
@@ -135,6 +194,11 @@ export function makeAuth(db: AuthDb, baseUrl: string, secret: string, hooks: Aut
   // When the SPA and API are on different sites (CDN web + container API), the
   // session cookie must be SameSite=None; Secure to ride cross-site fetches.
   const crossSite = env("DERIVE_CROSS_SITE") === "true" || env("DERIVE_CROSS_SITE") === "1"
+
+  // Passkeys (WebAuthn): on wherever the rpID/origin can be resolved (always for a
+  // single-origin self-host; for the hosted split only when the SPA + API share a
+  // registrable parent). See resolvePasskey.
+  const passkeyCfg = resolvePasskey({ baseUrl, webOrigins, crossSite })
 
   // Reject known-breached passwords on the password-setting endpoints (sign-up, reset,
   // change/set) via a before-hook — the public middleware API, so it doesn't couple to
@@ -278,6 +342,19 @@ export function makeAuth(db: AuthDb, baseUrl: string, secret: string, hooks: Aut
     trustedOrigins: trusted,
     plugins: [
       ...(oidc.length ? [genericOAuth({ config: oidc })] : []),
+      // Passkeys / WebAuthn — the phishing-resistant, passwordless factor, promoted on the
+      // login page. Added as a sign-in method + post-auth enrollment (requireSession stays
+      // on), never a passkey-first sign-UP, so registration stays simple. rpID/origin from
+      // resolvePasskey; the plugin adds a `passkey` table (created by migrateAuth).
+      ...(passkeyCfg.enabled
+        ? [
+            passkey({
+              rpName: "Derive",
+              ...(passkeyCfg.rpID ? { rpID: passkeyCfg.rpID } : {}),
+              origin: passkeyCfg.origin,
+            }),
+          ]
+        : []),
       // oauthProvider signs id tokens + serves JWKS through the jwt plugin.
       jwt(),
       // Derive as an OAuth 2.1 authorization server: agents (MCP clients) authenticate

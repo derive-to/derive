@@ -34,6 +34,10 @@ export interface AuthCapabilities {
    *  operator script). */
   emailVerification: boolean
   passwordReset: boolean
+  /** Passkeys (WebAuthn) — on wherever rpID/origin resolves (always same-origin; on the
+   *  hosted split only when SPA + API share a registrable parent). Off ⇒ hide the passkey
+   *  button + enrollment. */
+  passkey: boolean
 }
 /** A public profile, by handle. Email is private and never returned here. */
 export interface PublicProfile {
