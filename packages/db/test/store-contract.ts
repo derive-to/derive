@@ -1407,7 +1407,13 @@ export function runStoreContract(
       const theirs = await store.createArtifact(newArtifact({ org_id: org, author_id: other }))
       // The leaver's associations: a favorite and a follow.
       await store.setFavorite(theirs.id, leaver)
-      await store.addFollow({ user_id: leaver, org_id: org, kind: "user", target: other })
+      await store.addFollow({
+        id: uuid(),
+        user_id: leaver,
+        org_id: org,
+        kind: "user",
+        target: other,
+      })
 
       await store.deleteUserData(leaver)
 
