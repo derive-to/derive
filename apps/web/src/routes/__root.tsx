@@ -94,11 +94,12 @@ function AppFrame() {
   const [hydrated, setHydrated] = useState(false)
   useEffect(() => setHydrated(true), [])
 
-  // /login and /welcome (first-run onboarding) render chrome-less — no rail/top bar.
-  // /showcase is the design canvas and renders chrome-less too.
+  // /login, /reset-password, and /welcome (first-run onboarding) render chrome-less — no
+  // rail/top bar. /showcase is the design canvas and renders chrome-less too.
   const chromeless = useRouterState({
     select: (s) =>
       s.location.pathname === "/login" ||
+      s.location.pathname === "/reset-password" ||
       s.location.pathname === "/welcome" ||
       s.location.pathname === "/showcase",
   })

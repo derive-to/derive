@@ -527,6 +527,9 @@ export interface MetaStore {
   setUserImage(userId: string, image: string): Promise<void>
   /** Opt a user in/out of people search (discoverable column). */
   setUserDiscoverable(userId: string, discoverable: boolean): Promise<void>
+  /** Mark first-run onboarding finished/skipped (onboarded column). Server-authoritative,
+   *  so the /welcome gate syncs across devices instead of trusting per-browser storage. */
+  setUserOnboarded(userId: string, onboarded: boolean): Promise<void>
   /** Set a user's team role + "what you do" blurb (profession/about columns). An
    *  undefined field is left untouched; null clears it. */
   setUserProfile(

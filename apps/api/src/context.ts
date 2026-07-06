@@ -47,6 +47,11 @@ export interface SessionUser {
   profession: string | null
   /** One-line "what you do" blurb shown on the profile + member directory. */
   about: string | null
+  /** Finished/skipped first-run onboarding? Server-authoritative (syncs across devices). */
+  onboarded: boolean
+  /** Has the account's email been verified? Better Auth native field; soft-nudge only
+   *  (never gates sign-in), surfaced as a dismissible banner in the app. */
+  emailVerified: boolean
 }
 
 export interface AppDeps {
@@ -77,6 +82,11 @@ export interface AppDeps {
   webOrigins?: string[]
   /** Record + serve view analytics. Default on; set false to disable entirely. */
   analytics?: boolean
+  /** A real transactional email transport is configured (Resend on Node, the Cloudflare
+   *  Email binding on the edge) rather than the log-only fallback. Gates the mail-dependent
+   *  capabilities (password reset, email verification) in /v1/auth/capabilities, so the SPA
+   *  surfaces only the self-serve flows that can actually deliver. */
+  emailEnabled?: boolean
   /** Revisions within this window (ms) collapse into one displayed version. */
   versionWindowMs?: number
   /** Workspace role granted to a member who isn't the first user. Default "editor". */
@@ -276,6 +286,8 @@ export function buildContext(deps: AppDeps) {
           discoverable?: boolean | number | null
           profession?: string | null
           about?: string | null
+          onboarded?: boolean | number | null
+          emailVerified?: boolean | number | null
         }
       | undefined
     const u: SessionUser | null = su
@@ -288,6 +300,9 @@ export function buildContext(deps: AppDeps) {
           discoverable: su.discoverable !== false,
           profession: su.profession ?? null,
           about: su.about ?? null,
+          // Onboarded only when explicitly set (off by default; unset/null = not yet).
+          onboarded: su.onboarded === true || su.onboarded === 1,
+          emailVerified: su.emailVerified === true || su.emailVerified === 1,
         }
       : null
     userCache.set(c, u)

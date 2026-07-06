@@ -38,6 +38,11 @@ type Account = NonNullable<ReturnType<typeof useAuth>["me"]>
 // Set once the user finishes (or skips) onboarding, so the post-signup redirect
 // (app-shell.tsx) doesn't bounce them back here on every visit.
 export const markOnboarded = () => {
+  // Persist server-side (authoritative + cross-device) and cache locally for an instant
+  // guard on the very next nav. Fire-and-forget: the localStorage cache covers the gap
+  // while the request is in flight, and the flag is one-way, so a dropped write just
+  // re-shows /welcome once rather than corrupting anything.
+  api.setOnboarded().catch(() => {})
   try {
     localStorage.setItem(STORAGE_KEYS.onboarded, "1")
   } catch {
@@ -162,7 +167,7 @@ function Onboarding({ me }: { me: Account }) {
         username = r.username
       }
       const res = await api.setProfile({ profession, about: about.trim() })
-      setMe({ ...me, username, profession: res.profession, about: res.about })
+      setMe({ ...me, username, profession: res.profession, about: res.about, onboarded: true })
       markOnboarded()
       nav({ to: "/" })
     } catch (caught) {

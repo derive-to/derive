@@ -1,9 +1,11 @@
 import { oauthProvider } from "@better-auth/oauth-provider"
 import { generateUsername } from "@derive/core"
 import { type BetterAuthOptions, betterAuth } from "better-auth"
+import { APIError, createAuthMiddleware } from "better-auth/api"
 import { getMigrations } from "better-auth/db/migration"
 import { genericOAuth, jwt } from "better-auth/plugins"
-import { sha256 } from "./lib/crypto"
+import { isBreachedPassword, sha256 } from "./lib/crypto"
+import { log } from "./log"
 
 // Scopes an agent can be granted via the OAuth consent. The derive:* scopes map to
 // what the issued token may do; openid/profile/email/offline_access are the
@@ -36,6 +38,14 @@ export interface AuthHooks {
   /** Is this handle already taken? Lets the auto-assign hook pick a free one.
    *  Omitted in schema-gen / tests (no real user table); the unique index backstops. */
   usernameTaken?: (username: string) => Promise<boolean>
+  /** Send a transactional auth email — password reset, email verification, or email-change
+   *  confirmation. The caller renders it and enqueues onto the retrying email outbox, so
+   *  makeAuth stays decoupled from the email module + its runtime. Unset (tests, or an entry
+   *  with no outbox) ⇒ the email is simply not sent. */
+  sendAuthEmail?: (
+    kind: "reset" | "verify" | "change_email",
+    input: { to: string; name: string | null; url: string },
+  ) => void | Promise<void>
 }
 
 export function makeAuth(db: AuthDb, baseUrl: string, secret: string, hooks: AuthHooks = {}) {
@@ -126,11 +136,69 @@ export function makeAuth(db: AuthDb, baseUrl: string, secret: string, hooks: Aut
   // session cookie must be SameSite=None; Secure to ride cross-site fetches.
   const crossSite = env("DERIVE_CROSS_SITE") === "true" || env("DERIVE_CROSS_SITE") === "1"
 
+  // Reject known-breached passwords on the password-setting endpoints (sign-up, reset,
+  // change/set) via a before-hook — the public middleware API, so it doesn't couple to
+  // Better Auth internals the way the stock plugin's hasher-wrap does. Default ON;
+  // DERIVE_BREACH_CHECK=false opts out. Never runs under NODE_ENV=test (the suite signs up
+  // with throwaway passwords and must not make a network call). The check itself fails OPEN
+  // (see isBreachedPassword), so an air-gapped self-host is never blocked from creating an
+  // account — this hook only rejects on a POSITIVE breach match.
+  const breachCheck =
+    env("DERIVE_BREACH_CHECK") !== "false" &&
+    env("DERIVE_BREACH_CHECK") !== "0" &&
+    env("NODE_ENV") !== "test"
+  const BREACH_PATHS = new Set(["/sign-up/email", "/reset-password", "/change-password"])
+  const breachGuard = createAuthMiddleware(async (ctx) => {
+    if (!BREACH_PATHS.has(ctx.path)) return
+    const body = ctx.body as { password?: unknown; newPassword?: unknown } | undefined
+    const pw = typeof body?.password === "string" ? body.password : body?.newPassword
+    if (typeof pw !== "string" || !pw) return
+    try {
+      if (await isBreachedPassword(pw))
+        throw new APIError("BAD_REQUEST", {
+          message: "That password has appeared in a data breach. Please choose a different one.",
+          code: "PASSWORD_COMPROMISED",
+        })
+    } catch (e) {
+      // Re-throw our own rejection; swallow anything else so a checker bug can't wall off
+      // sign-in (defense in depth on top of isBreachedPassword's own fail-open).
+      if (e instanceof APIError) throw e
+      log.warn("breach check errored; allowing", {
+        error: e instanceof Error ? e.message : String(e),
+      })
+    }
+  })
+
   return betterAuth({
     database: db,
     baseURL: baseUrl,
     secret,
-    emailAndPassword: { enabled: true },
+    emailAndPassword: {
+      enabled: true,
+      // Reject too-short passwords server-side (the client enforces 8 too); the fail-open
+      // breach check (breachGuard plugin below) additionally rejects known-compromised ones.
+      minPasswordLength: 8,
+      // A reset re-establishes account control, so drop every other live session.
+      revokeSessionsOnPasswordReset: true,
+      resetPasswordTokenExpiresIn: 60 * 60, // 1h
+      // Self-serve "forgot password": render + enqueue the reset link on the outbox. With
+      // no real mail transport the link still rides the log sender (an operator reads it),
+      // and capabilities reports passwordReset:false so the SPA hides the self-serve flow —
+      // recovery is then the logged link + scripts/reset-password.mjs.
+      sendResetPassword: async ({ user, url }) => {
+        await hooks.sendAuthEmail?.("reset", { to: user.email, name: user.name ?? null, url })
+      },
+    },
+    // Soft-nudge email verification: send on sign-up and sign the user in right after they
+    // verify, but NEVER gate sign-in on it (requireEmailVerification would 403 the unverified),
+    // so the sign-up → publish activation moment stays frictionless.
+    emailVerification: {
+      sendOnSignUp: true,
+      autoSignInAfterVerification: true,
+      sendVerificationEmail: async ({ user, url }) => {
+        await hooks.sendAuthEmail?.("verify", { to: user.email, name: user.name ?? null, url })
+      },
+    },
     // Every account gets a handle the moment it's created — so the app can identify
     // people by @handle everywhere and never has to fall back to exposing an email.
     // Auto-assigned from the email/name (the user can change it later); it never
@@ -154,6 +222,26 @@ export function makeAuth(db: AuthDb, baseUrl: string, secret: string, hooks: Aut
       },
     },
     user: {
+      // Let a signed-in user change their account email, confirming the NEW address via a
+      // verification link (rendered + enqueued through the outbox, like reset/verify).
+      changeEmail: {
+        enabled: true,
+        sendChangeEmailVerification: async ({
+          user,
+          newEmail,
+          url,
+        }: {
+          user: { name?: string | null }
+          newEmail: string
+          url: string
+        }) => {
+          await hooks.sendAuthEmail?.("change_email", {
+            to: newEmail,
+            name: user.name ?? null,
+            url,
+          })
+        },
+      },
       additionalFields: {
         // The public handle (Profiles & Accounts v1). Claimed at onboarding via
         // POST /v1/me/username, so it's server-controlled and never accepted
@@ -179,6 +267,11 @@ export function makeAuth(db: AuthDb, baseUrl: string, secret: string, hooks: Aut
         // server-set via POST /v1/me/profile. Better Auth's migration adds the columns.
         profession: { type: "string", required: false, input: false },
         about: { type: "string", required: false, input: false },
+        // Has the account finished (or skipped) first-run onboarding? Server-authoritative
+        // so it syncs across devices and survives a cleared localStorage — the client flag
+        // is only a fast-path cache. Defaults false (new accounts land on /welcome); set
+        // true via POST /v1/me/onboarded. input:false, server-set only.
+        onboarded: { type: "boolean", required: false, defaultValue: false, input: false },
       },
     },
     socialProviders,
@@ -213,6 +306,7 @@ export function makeAuth(db: AuthDb, baseUrl: string, secret: string, hooks: Aut
         storeTokens: { hash: async (token) => sha256(token) },
       }),
     ],
+    ...(breachCheck ? { hooks: { before: breachGuard } } : {}),
     advanced: {
       // Keep the CSRF origin check on in every environment. Better Auth silently
       // disables it when NODE_ENV=test; pinning it false means a server mistakenly

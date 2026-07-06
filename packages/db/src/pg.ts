@@ -1551,6 +1551,9 @@ export class PgMetaStore implements MetaStore {
       userId,
     ])
   }
+  async setUserOnboarded(userId: string, onboarded: boolean): Promise<void> {
+    await this.pool.query(`UPDATE "user" SET onboarded = $1 WHERE id = $2`, [onboarded, userId])
+  }
   async setUserProfile(
     userId: string,
     fields: { profession?: string | null; about?: string | null },

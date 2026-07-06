@@ -1,7 +1,7 @@
-import { getRouteApi } from "@tanstack/react-router"
+import { getRouteApi, Link } from "@tanstack/react-router"
 import type { FormEvent } from "react"
 import { useEffect, useRef, useState } from "react"
-import { api } from "@/api"
+import { type AuthCapabilities, api } from "@/api"
 import { FormField } from "@/components/shared/form-field"
 import { Logo } from "@/components/shared/logo"
 import { Eyebrow, LabeledDivider } from "@/components/shared/section-eyebrow"
@@ -14,34 +14,39 @@ const loginRoute = getRouteApi("/login")
 
 export function Login() {
   const { me, loading, setMe } = useAuth()
-  const { signup: wantSignup, return_to: returnTo } = loginRoute.useSearch()
+  const { signup: wantSignup, return_to: returnTo, reset: didReset } = loginRoute.useSearch()
   const [mode, setMode] = useState<"login" | "signup">(wantSignup ? "signup" : "login")
   const [name, setName] = useState("")
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [err, setErr] = useState("")
   const [busy, setBusy] = useState(false)
-  // Which social providers the server has configured (so we only show buttons
-  // that actually work). Null while loading.
-  const [providers, setProviders] = useState<{ google: boolean; github: boolean } | null>(null)
+  // What sign-in methods this instance actually has (so we only render buttons that
+  // work here — the capability-adaptive contract). Null while loading.
+  const [caps, setCaps] = useState<AuthCapabilities | null>(null)
   useEffect(() => {
     api
-      .authProviders()
-      .then(setProviders)
-      .catch(() => setProviders({ google: false, github: false }))
+      .capabilities()
+      .then(setCaps)
+      .catch(() => setCaps(null))
   }, [])
 
-  // Hand off to the provider; afterwards Better Auth lands the user back where
-  // sign-in was prompted (an OAuth authorize resume, a return_to, or home).
-  const social = (provider: "google" | "github") => {
+  // Where a provider round-trip should land afterwards: back into an OAuth authorize
+  // resume (agent consent bounced us here to sign in), else the return_to, else home.
+  const oauthCallbackURL = () => {
     const search = typeof window !== "undefined" ? window.location.search : ""
-    const callbackURL = new URLSearchParams(search).has("client_id")
+    return new URLSearchParams(search).has("client_id")
       ? `/login${search}`
       : typeof returnTo === "string"
         ? returnTo
         : "/"
-    api.socialSignIn(provider, callbackURL).catch((e) => setErr((e as Error).message))
   }
+  // Hand off to a provider; afterwards Better Auth lands the user back where sign-in
+  // was prompted (an OAuth authorize resume, a return_to, or home).
+  const social = (provider: "google" | "github") =>
+    api.socialSignIn(provider, oauthCallbackURL()).catch((e) => setErr((e as Error).message))
+  const sso = (providerId: string) =>
+    api.ssoSignIn(providerId, oauthCallbackURL()).catch((e) => setErr((e as Error).message))
 
   // If we arrived from an OAuth authorize request (the agent consent flow bounced
   // here to sign in), resume it by handing control back to the authorize endpoint
@@ -83,8 +88,8 @@ export function Login() {
     try {
       if (mode === "signup") await api.signup(email, password, name)
       else await api.login(email, password)
-      const { user } = await api.me()
-      setMe(user)
+      // Seed the auth cache from the one identity read (session cookie is set now).
+      setMe(await api.session())
       afterAuth()
     } catch (e) {
       setErr((e as Error).message)
@@ -93,6 +98,9 @@ export function Login() {
   }
 
   const signup = mode === "signup"
+  // SSO is capability-gated; capture as a const so the click closure keeps the
+  // non-null narrowing (a const can't be reassigned, so TS carries it in).
+  const oidc = caps?.oidc ?? null
 
   // The auth screen is a calm gateway, not a landing page: one focused column,
   // centered on a solid canvas (the login-surface rule — white in light, the deep
@@ -129,10 +137,10 @@ export function Login() {
               mode toggle, grouped tighter than the break above so the form reads as
               one considered unit rather than four equidistant pieces. */}
           <div className="flex flex-col gap-6">
-            {(providers?.google || providers?.github) && (
+            {(caps?.google || caps?.github || oidc) && (
               <div className="flex flex-col gap-3">
                 <div className="flex flex-col gap-2">
-                  {providers.google && (
+                  {caps?.google && (
                     <Button
                       data-testid="login-google"
                       variant="outline"
@@ -144,7 +152,7 @@ export function Login() {
                       Continue with Google
                     </Button>
                   )}
-                  {providers.github && (
+                  {caps?.github && (
                     <Button
                       data-testid="login-github"
                       variant="outline"
@@ -156,6 +164,18 @@ export function Login() {
                       Continue with GitHub
                     </Button>
                   )}
+                  {oidc && (
+                    <Button
+                      data-testid="login-sso"
+                      variant="outline"
+                      size="lg"
+                      type="button"
+                      className="w-full"
+                      onClick={() => sso(oidc.providerId)}
+                    >
+                      Continue with {oidc.label}
+                    </Button>
+                  )}
                 </div>
                 <LabeledDivider>
                   <Eyebrow>or</Eyebrow>
@@ -164,6 +184,15 @@ export function Login() {
             )}
 
             <form onSubmit={submit} className="flex flex-col gap-4">
+              {/* Landed here from a completed password reset — every other session was
+                  revoked, so sign in fresh with the new password. */}
+              {didReset && !err && (
+                <StatusPanel
+                  tone="success"
+                  layout="inline"
+                  title="Password updated. Sign in with your new password."
+                />
+              )}
               {err && (
                 <div data-testid="login-error">
                   {/* StatusPanel (tone="danger") announces via role="alert" and bakes in
@@ -201,20 +230,34 @@ export function Login() {
                   placeholder="you@company.com"
                 />
               </FormField>
-              <FormField label="Password" htmlFor="login-password">
-                <Input
-                  id="login-password"
-                  data-testid="login-password"
-                  type="password"
-                  name="password"
-                  autoComplete={signup ? "new-password" : "current-password"}
-                  required
-                  minLength={8}
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder="At least 8 characters"
-                />
-              </FormField>
+              <div className="flex flex-col gap-1.5">
+                <FormField label="Password" htmlFor="login-password">
+                  <Input
+                    id="login-password"
+                    data-testid="login-password"
+                    type="password"
+                    name="password"
+                    autoComplete={signup ? "new-password" : "current-password"}
+                    required
+                    minLength={8}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder="At least 8 characters"
+                  />
+                </FormField>
+                {/* Self-serve recovery — only in sign-in mode, and only where a mail
+                    transport can actually deliver the link (capability-gated). */}
+                {!signup && caps?.passwordReset && (
+                  <Button
+                    asChild
+                    variant="link"
+                    data-testid="login-forgot"
+                    className="h-auto self-end p-0 text-xs font-normal text-muted-foreground"
+                  >
+                    <Link to="/reset-password">Forgot password?</Link>
+                  </Button>
+                )}
+              </div>
               <Button
                 data-testid="login-submit"
                 variant="default"

@@ -13,6 +13,27 @@ export interface Me {
   profession: string | null
   /** One-line "what you do" blurb; null if unset. */
   about: string | null
+  /** Finished/skipped first-run onboarding? Server-authoritative (syncs across devices). */
+  onboarded: boolean
+  /** Has the account's email been verified? Soft-nudge only (never gates anything); drives
+   *  the dismissible "verify your email" banner. */
+  emailVerified: boolean
+}
+/** What sign-in methods + auth flows THIS instance actually has (capability-adaptive:
+ *  a bare self-host reports fewer than a fully-wired hosted deploy). Drives the login
+ *  page + Security hub so nothing renders a button/flow that can't work here. Grows as
+ *  later phases land (emailVerification, passwordReset, passkey, twoFactor). */
+export interface AuthCapabilities {
+  password: boolean
+  google: boolean
+  github: boolean
+  /** Enterprise SSO (generic OIDC); carries the provider id to start sign-in + a label. */
+  oidc: { providerId: string; label: string } | null
+  /** Mail-dependent flows — true only when a real transport is configured. Off ⇒ the SPA
+   *  hides "Forgot password?" + the verify banner (recovery is then the logged link + the
+   *  operator script). */
+  emailVerification: boolean
+  passwordReset: boolean
 }
 /** A public profile, by handle. Email is private and never returned here. */
 export interface PublicProfile {
@@ -526,6 +547,8 @@ type SessionUser = {
   discoverable?: boolean
   profession?: string | null
   about?: string | null
+  onboarded?: boolean
+  emailVerified?: boolean
 }
 const mapMe = (u: SessionUser): Me => ({
   id: u.id,
@@ -538,15 +561,18 @@ const mapMe = (u: SessionUser): Me => ({
   role: "member",
   profession: u.profession ?? null,
   about: u.about ?? null,
+  // Off by default: onboarded only when explicitly set (unset = not yet).
+  onboarded: u.onboarded === true,
+  emailVerified: u.emailVerified === true,
 })
 
 export const api = {
-  // The session read behind meQuery. Prerender-safe (null at build — no document);
-  // a resolved null for an anon visitor (401, or a 200 with no user); a mapped Me
-  // when signed in; and a THROWN transient ApiError on a 5xx so the query's retry
-  // can self-heal. Distinguishing anon (null) from a blip (throw) is what lets the
-  // auth query resolve cleanly instead of dead-ending — unlike me(), which throws
-  // for both.
+  // The ONE identity read — behind meQuery, and re-read after login/signup to seed the
+  // auth cache. Prerender-safe (null at build — no document); a resolved null for an
+  // anon visitor (401, or a 200 with no user); a mapped Me when signed in; and a THROWN
+  // transient ApiError on a 5xx so the query's retry can self-heal. Distinguishing anon
+  // (null) from a blip (throw) is what lets the auth query resolve cleanly instead of
+  // dead-ending.
   async session(): Promise<Me | null> {
     if (typeof document === "undefined") return null
     const r = await f("/api/auth/get-session", { credentials: "include" })
@@ -554,13 +580,6 @@ export const api = {
     if (!r.ok) throw new ApiError(`HTTP ${r.status}`, r.status)
     const s = await r.json().catch(() => null)
     return s?.user ? mapMe(s.user) : null
-  },
-  async me(): Promise<{ user: Me }> {
-    const s = await f("/api/auth/get-session", { credentials: "include" }).then((r) =>
-      r.ok ? r.json() : null,
-    )
-    if (!s?.user) throw new Error("unauthenticated")
-    return { user: mapMe(s.user) }
   },
   // Claim or change your handle (onboarding + rename). 409 when taken, 400 on a
   // bad shape — both surface their message via ApiError.
@@ -600,6 +619,9 @@ export const api = {
   // Opt in/out of people search.
   setDiscoverable: (discoverable: boolean): Promise<{ discoverable: boolean }> =>
     f("/v1/me/discoverable", opts({ discoverable })).then(j),
+  // Mark first-run onboarding finished/skipped — server-authoritative, so the /welcome
+  // gate stays consistent across devices (the localStorage flag is only a fast-path cache).
+  setOnboarded: (): Promise<{ onboarded: boolean }> => f("/v1/me/onboarded", opts({})).then(j),
   // Find opted-in people by @handle or name (signed-in; empty q → []).
   searchPeople: (q: string): Promise<{ users: PublicProfile[] }> =>
     f(`/v1/users/search?query=${encodeURIComponent(q)}`, opts()).then(j),
@@ -627,15 +649,46 @@ export const api = {
   signup: (email: string, password: string, name: string): Promise<unknown> =>
     f("/api/auth/sign-up/email", opts({ email, password, name: name || email })).then(authJson),
   logout: () => f("/api/auth/sign-out", opts({})).then((r) => r.json().catch(() => ({}))),
-  // Which social providers are configured server-side (drives the login buttons).
-  authProviders: (): Promise<{ google: boolean; github: boolean }> =>
-    f("/v1/auth/providers", opts()).then(j),
+  // The auth capabilities of THIS instance — which sign-in methods + flows are live
+  // here (drives the login page + Security hub; capability-adaptive).
+  capabilities: (): Promise<AuthCapabilities> => f("/v1/auth/capabilities", opts()).then(j),
   // Better Auth social sign-in: POST returns the provider authorize URL, then we
-  // navigate there. callbackURL is where the provider lands the user afterwards.
-  async socialSignIn(provider: "google" | "github", callbackURL = "/app/home"): Promise<void> {
+  // navigate there. callbackURL is where the provider lands the user afterwards
+  // (default home; the login page passes the resume/return_to target explicitly).
+  async socialSignIn(provider: "google" | "github", callbackURL = "/"): Promise<void> {
     const data = await f("/api/auth/sign-in/social", opts({ provider, callbackURL })).then(authJson)
     if (data?.url) window.location.href = data.url
   },
+  // Enterprise SSO (generic OIDC) sign-in via Better Auth's genericOAuth plugin — same
+  // navigate-to-authorize-URL shape as social; providerId comes from capabilities().oidc.
+  async ssoSignIn(providerId: string, callbackURL = "/"): Promise<void> {
+    const data = await f("/api/auth/sign-in/oauth2", opts({ providerId, callbackURL })).then(
+      authJson,
+    )
+    if (data?.url) window.location.href = data.url
+  },
+  // "Forgot password" — email a reset link. The reply is a neutral OK even for an unknown
+  // address (the server simulates the work), so it can't be used to probe which emails have
+  // accounts. `redirectTo` is where the emailed link lands (our /reset-password page, which
+  // reads ?token=). Gated by capabilities.passwordReset (hidden with no mail transport).
+  requestPasswordReset: (email: string, redirectTo: string): Promise<unknown> =>
+    f("/api/auth/request-password-reset", opts({ email, redirectTo })).then(authJson),
+  // Complete a reset: the emailed token + the chosen new password.
+  resetPassword: (token: string, newPassword: string): Promise<unknown> =>
+    f("/api/auth/reset-password", opts({ token, newPassword })).then(authJson),
+  // Change your password while signed in (revokes every OTHER session).
+  changePassword: (currentPassword: string, newPassword: string): Promise<unknown> =>
+    f(
+      "/api/auth/change-password",
+      opts({ currentPassword, newPassword, revokeOtherSessions: true }),
+    ).then(authJson),
+  // Change your account email; a confirmation link goes to the NEW address, and the change
+  // only takes effect once it's clicked.
+  changeEmail: (newEmail: string, callbackURL: string): Promise<unknown> =>
+    f("/api/auth/change-email", opts({ newEmail, callbackURL })).then(authJson),
+  // Re-send the verification email to your address (the soft-nudge banner's action).
+  sendVerificationEmail: (email: string, callbackURL: string): Promise<unknown> =>
+    f("/api/auth/send-verification-email", opts({ email, callbackURL })).then(authJson),
 
   listArtifacts: (params?: {
     q?: string

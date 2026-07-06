@@ -329,6 +329,9 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
     setUserDiscoverable: async (userId, discoverable): Promise<void> => {
       raw.prepare(`UPDATE user SET discoverable = ? WHERE id = ?`).run(discoverable ? 1 : 0, userId)
     },
+    setUserOnboarded: async (userId, onboarded): Promise<void> => {
+      raw.prepare(`UPDATE user SET onboarded = ? WHERE id = ?`).run(onboarded ? 1 : 0, userId)
+    },
     setUserProfile: async (userId, fields): Promise<void> => {
       // Patch only the fields provided (undefined = leave as-is; null = clear).
       const sets: string[] = []

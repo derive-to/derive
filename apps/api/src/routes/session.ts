@@ -85,6 +85,17 @@ export const sessionRoutes = (ctx: AppContext) => {
     return c.json({ discoverable: body.discoverable })
   })
 
+  // Mark first-run onboarding finished (or skipped) — server-authoritative so the
+  // /welcome gate stays consistent across devices and a cleared localStorage can't
+  // re-trigger it. One-way (you never un-onboard), so it takes no body. Signed-in only
+  // (the anon write-lockdown already blocks unauthenticated POSTs).
+  app.post("/v1/me/onboarded", async (c) => {
+    const u = await requireUser(c)
+    if (u instanceof Response) return u
+    await meta.setUserOnboarded(u.id, true)
+    return c.json({ onboarded: true })
+  })
+
   // People search: find OPTED-IN accounts by handle or name (GitHub-style "add by
   // username"). Only users who turned on discoverability appear, and only the
   // public fields (handle, name, avatar) come back — never email. Signed-in only,

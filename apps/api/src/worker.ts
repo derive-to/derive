@@ -20,10 +20,12 @@ import { authSchema } from "./auth-schema"
 import { hyperdriveConn, livePgPool, requestPg } from "./edge-pg"
 import type { SendEmailBinding } from "./email-cf"
 import { customDomainsFromEnv } from "./lib/cloudflare-saas"
+import { buildAuthEmail } from "./lib/email"
 import { slackFromEnv, subdomainBaseFromEnv, superAdminsFromEnv } from "./lib/env"
 import { nativeLimiter } from "./lib/rate-limit"
 import { liveD1, requestD1 } from "./lib/request-d1"
 import { createDoBackplane, edgeCtx, edgeWaitUntil } from "./realtime-do"
+import { enqueueChannelDelivery } from "./webhooks"
 
 // The bound Durable Object classes — the realtime room (one per channel), the webhook
 // outbox drainer (a single named instance), and the GitHub-sync runner (one per source)
@@ -159,6 +161,10 @@ const handle = (req: Request, env: Env, ctx: ExecutionContext): Response | Promi
           })
       const auth = makeAuth(authDb, baseUrl, secret, {
         usernameTaken: (u) => meta.getUserByUsername(u).then(Boolean),
+        // Transactional auth emails ride the same outbox; the WebhookOutbox DO drains it
+        // with the Cloudflare Email sender (env.SEND_EMAIL). See webhook-do.ts.
+        sendAuthEmail: (kind, input) =>
+          enqueueChannelDelivery(meta, "email", `auth.${kind}`, buildAuthEmail(kind, input)),
       })
       app = createApp({
         meta,
@@ -166,6 +172,9 @@ const handle = (req: Request, env: Env, ctx: ExecutionContext): Response | Promi
         backplane: createDoBackplane(env.ROOMS),
         baseUrl,
         auth,
+        // Mail-dependent capabilities (password reset, email verification) light up only
+        // when the Cloudflare Email binding is present to actually deliver.
+        emailEnabled: !!env.SEND_EMAIL,
         // Encrypt stored GitHub PATs at rest with the edge auth secret.
         encryptionKey: secret,
         slack: slackFromEnv(env),
@@ -180,6 +189,9 @@ const handle = (req: Request, env: Env, ctx: ExecutionContext): Response | Promi
         rateLimit: true,
         rateLimiters: {
           auth: nativeLimiter(env.RL_AUTH, 60),
+          // Mail-triggering auth endpoints ride RL_STRICT (tight), namespaced so their
+          // count stays separate from unlock / oauth-register on the same binding.
+          authEmail: nativeLimiter(env.RL_STRICT, 60, "auth-email"),
           write: nativeLimiter(env.RL_WRITE, 60),
           publish: nativeLimiter(env.RL_PUBLISH, 60),
           comment: nativeLimiter(env.RL_COMMENT, 60),

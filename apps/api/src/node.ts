@@ -12,14 +12,14 @@ import { createApp } from "./app"
 import { type AuthDb, makeAuth, migrateAuth } from "./auth-config"
 import { loadConfig, resolveAuthSecret, resolveDefaultOrg } from "./config"
 import { customDomainsFromEnv } from "./lib/cloudflare-saas"
-import { emailDeliverySender, logEmailSender, resendEmailSender } from "./lib/email"
+import { buildAuthEmail, emailDeliverySender, logEmailSender, resendEmailSender } from "./lib/email"
 import { makeGithubCommentSender } from "./lib/github-comments"
 import { mountWeb } from "./lib/serve-web"
 import { makeSlackSender } from "./lib/slack-comments"
 import { makeShutdown } from "./lifecycle"
 import { log } from "./log"
 import { createNodeSyncRunner } from "./node-sync"
-import { type ChannelSenders, startWebhookWorker } from "./webhooks"
+import { type ChannelSenders, enqueueChannelDelivery, startWebhookWorker } from "./webhooks"
 import { nodeDnsGuard } from "./webhooks-node"
 
 // Best-effort load a local .env (repo root, then cwd) before reading config, so
@@ -76,8 +76,16 @@ if (cfg.databaseUrl) {
 }
 
 const authSecret = resolveAuthSecret(cfg.dataDir)
+// A real transactional email transport (Resend) is configured — else the log sender
+// still records each message (an operator can read a reset link from the container logs),
+// but the SPA hides the self-serve mail flows (see `emailEnabled` in createApp deps).
+const emailEnabled = !!(cfg.resendApiKey && cfg.emailFrom)
 const auth = makeAuth(authDb, cfg.baseUrl, authSecret, {
   usernameTaken: (u) => meta.getUserByUsername(u).then(Boolean),
+  // Render + enqueue transactional auth emails (reset / verify / change-email) onto the
+  // same retrying outbox as notifications; the configured sender transports them.
+  sendAuthEmail: (kind, input) =>
+    enqueueChannelDelivery(meta, "email", `auth.${kind}`, buildAuthEmail(kind, input)),
 })
 await migrateAuth(auth)
 
@@ -176,6 +184,9 @@ const app = createApp({
   auth,
   webOrigins: cfg.webOrigins,
   analytics: cfg.analytics,
+  // Gate the mail-dependent capabilities (password reset, email verification) so the SPA
+  // surfaces them only when a real transport can actually deliver.
+  emailEnabled,
   rateLimit: cfg.rateLimit,
   serveWeb: cfg.serveWeb,
   // Fly gives HTTP/2 but doesn't compress; gzip here. (The Worker edge does its

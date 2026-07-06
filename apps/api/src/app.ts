@@ -228,6 +228,16 @@ export function createApp(deps: AppDeps): Hono {
   if (deps.rateLimit) {
     // Strict on auth (credential brute-force); lenient on mutating API calls.
     app.use("/api/auth/*", ipRateLimit(rateLimiters.auth))
+    // Mail-triggering auth endpoints get a much tighter cap on top (each request emails an
+    // address, so this bounds inbox-bombing). Registered before the general auth limiter;
+    // Hono runs both, and the tighter one 429s first.
+    const authEmailLimiter = ipRateLimit(rateLimiters.authEmail)
+    for (const p of [
+      "/api/auth/request-password-reset",
+      "/api/auth/send-verification-email",
+      "/api/auth/change-email",
+    ])
+      app.use(p, authEmailLimiter)
     // Anonymous OAuth client registration (open DCR) gets a tighter per-IP cap on
     // top, so no single source can flood the client table.
     app.use("/api/auth/oauth2/register", ipRateLimit(rateLimiters.oauthRegister))
