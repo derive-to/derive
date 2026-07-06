@@ -74,7 +74,7 @@ new_sqlite_classes = ["RepoSyncRunner"]
 
 [[migrations]]
 tag = "v4"
-new_classes = ["PreviewRenderer"]
+new_sqlite_classes = ["PreviewRenderer"]
 
 # Cloudflare Browser Rendering binding — required for the PreviewRenderer DO.
 # Leave commented if Browser Rendering is not enabled on your account; the worker
