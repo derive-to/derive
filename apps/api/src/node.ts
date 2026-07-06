@@ -19,6 +19,8 @@ import { makeSlackSender } from "./lib/slack-comments"
 import { makeShutdown } from "./lifecycle"
 import { log } from "./log"
 import { createNodeSyncRunner } from "./node-sync"
+import { playwrightRenderer } from "./preview-node"
+import { startPreviewWorker } from "./previews"
 import { type ChannelSenders, startWebhookWorker } from "./webhooks"
 import { nodeDnsGuard } from "./webhooks-node"
 
@@ -158,6 +160,20 @@ const channelSenders: ChannelSenders = {
 }
 const webhookWorker = startWebhookWorker(meta, nodeDnsGuard, channelSenders)
 
+// Preview render worker: an in-process interval + poke that renders screenshot jobs via
+// Playwright Chromium. Only started when DERIVE_PREVIEWS=true; when off the render queue
+// is never enqueued (renderPreviews stays false below) and no worker runs.
+const previewWorker = cfg.previews
+  ? startPreviewWorker({
+      meta,
+      blobs,
+      renderer: playwrightRenderer(),
+      baseUrl: cfg.baseUrl,
+      sandboxOrigin: cfg.sandboxOrigin,
+      secret: authSecret,
+    })
+  : undefined
+
 // GitHub-sync runner: drives a triggered sync to completion in-process (detached from
 // the request) so it survives the user navigating away — the self-host counterpart to
 // the edge `RepoSyncRunner` DO. Resumed below on boot + a short interval.
@@ -199,6 +215,9 @@ const app = createApp({
   commentRate: cfg.commentRate,
   // Deliver freshly enqueued events immediately instead of on the next interval.
   pokeWebhooks: webhookWorker.poke,
+  // Enqueue a render job on publish and drain on demand when previews are enabled.
+  renderPreviews: cfg.previews,
+  pokePreviews: previewWorker?.poke,
   // Run a triggered GitHub sync in the background so it survives a closed tab.
   startSync: syncRunner.start,
 })
@@ -291,7 +310,10 @@ const shutdown = makeShutdown({
     closeIdleConnections:
       "closeIdleConnections" in server ? () => server.closeIdleConnections() : undefined,
   },
-  stopWorker: webhookWorker.stop,
+  stopWorker: () => {
+    webhookWorker.stop()
+    previewWorker?.stop()
+  },
   clearTimers: () => {
     if (pruneTimer) clearInterval(pruneTimer)
     clearInterval(syncResumeTimer)
