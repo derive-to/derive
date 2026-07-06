@@ -1767,6 +1767,12 @@ export function makeRepos(db: SqliteDb) {
           and "clientId" not in (select "clientId" from "oauthConsent")
           and "clientId" not in (select "clientId" from "oauthAccessToken")
       `)) as RunResult
+      // Workspace bindings for clients that no longer exist (pruned above, or
+      // any earlier sweep) have nothing left to resolve against — sweep them too.
+      await db.run(sql`
+        delete from oauth_client_workspace
+        where client_id not in (select "clientId" from "oauthClient")
+      `)
       return r.changes ?? r.meta?.changes ?? 0
     } catch {
       // OAuth tables absent → nothing to reap.

@@ -50,8 +50,10 @@ export function makeOauthAgent({ meta, auth, baseUrl, provisionPersonal }: Oauth
     email: string | null,
     name: string | null,
   ): Promise<{ org: string; memberRole: Role }> => {
-    const mine = await meta.listWorkspaces(userId)
-    const bound = clientId ? await meta.getOAuthClientWorkspace(userId, clientId) : null
+    const [mine, bound] = await Promise.all([
+      meta.listWorkspaces(userId),
+      clientId ? meta.getOAuthClientWorkspace(userId, clientId) : null,
+    ])
     const target = bound ? mine.find((w) => w.id === bound) : undefined
     if (target) return { org: target.id, memberRole: target.role }
     if (mine[0]) return { org: mine[0].id, memberRole: mine[0].role }
@@ -90,10 +92,10 @@ export function makeOauthAgent({ meta, auth, baseUrl, provisionPersonal }: Oauth
           org_id: ws.org,
           name: grant.clientName,
           token: "",
-          // Scopes propose the role; the owner's actual membership caps it. Without
-          // the cap, publish-scoped grants would act as editor in a workspace where
-          // the granting user is only a viewer.
-          role: capRole(scopeRole, ws.memberRole) ?? "viewer",
+          // Scopes propose the role; the owner's membership in the resolved
+          // workspace is the ceiling (a publish scope is not an editorship in a
+          // workspace where the granting user is only a viewer).
+          role: capRole(scopeRole, ws.memberRole),
           created_by: grant.userId,
           created_at: new Date().toISOString(),
         },
@@ -144,7 +146,7 @@ export function makeOauthAgent({ meta, auth, baseUrl, provisionPersonal }: Oauth
         org_id: ws.org,
         name: (await meta.getOAuthClientName(clientId)) || clientId || "An agent",
         token: "",
-        role: capRole(scopeRole, ws.memberRole) ?? "viewer",
+        role: capRole(scopeRole, ws.memberRole),
         created_by: userId,
         created_at: new Date().toISOString(),
       },

@@ -1868,6 +1868,12 @@ export class PgMetaStore implements MetaStore {
            AND "clientId" NOT IN (SELECT "clientId" FROM "oauthAccessToken")`,
         [cutoffIso],
       )
+      // Workspace bindings for clients that no longer exist (pruned above, or
+      // any earlier sweep) have nothing left to resolve against — sweep them too.
+      await this.pool.query(
+        `DELETE FROM oauth_client_workspace
+          WHERE client_id NOT IN (SELECT "clientId" FROM "oauthClient")`,
+      )
       return res.rowCount ?? 0
     } catch {
       return 0

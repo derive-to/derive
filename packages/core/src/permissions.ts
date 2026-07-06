@@ -52,6 +52,8 @@ export function maxRole(...roles: (Role | null | undefined)[]): Role | null {
  *  never rises above the role it was registered with — a workspace owner's
  *  agent registered as editor acts as editor, so no agent can `manage`
  *  (delete, transfer) regardless of whose authority it borrows. */
+export function capRole(role: Role, cap: Role): Role
+export function capRole(role: Role | null, cap: Role): Role | null
 export function capRole(role: Role | null, cap: Role): Role | null {
   if (!role) return null
   return RANK[role] > RANK[cap] ? cap : role

@@ -344,7 +344,7 @@ export function buildContext(deps: AppDeps) {
           const want = c.req.header("x-derive-workspace")
           if (want && want !== a.org_id) {
             const m = await meta.getMembership(want, owner)
-            if (m) a = { ...a, org_id: want, role: capRole(o.scopeRole, m.role) ?? "viewer" }
+            if (m) a = { ...a, org_id: want, role: capRole(o.scopeRole, m.role) }
           }
         }
       }

@@ -63,12 +63,18 @@ export const oauthRoutes = (ctx: AppContext) => {
     const clientId = c.req.query("client_id") ?? ""
     const scopes = (c.req.query("scope") ?? "").split(/\s+/).filter(Boolean)
     const clientName = (await meta.getOAuthClientName(clientId)) || clientId || "An application"
-    // The signed-in user's workspaces feed the picker (rendered only when there's
-    // a real choice); their active workspace — the one they're looking at in the
-    // app — is the preselection.
     const me = await currentUser(c)
     const mine = me ? await meta.listWorkspaces(me.id) : []
-    const selected = me && mine.length > 1 ? await activeWorkspace(c) : mine[0]?.id
+    // An existing (user, client) binding wins the preselection — re-consent must
+    // not re-point a deliberate earlier choice to whatever workspace the browser
+    // happens to be viewing. Only then the active workspace, then the first.
+    const bound = me && clientId ? await meta.getOAuthClientWorkspace(me.id, clientId) : null
+    const selected =
+      bound && mine.some((w) => w.id === bound)
+        ? bound
+        : mine.length > 1
+          ? await activeWorkspace(c)
+          : mine[0]?.id
     return c.html(
       consentHTML({
         clientName,
@@ -82,10 +88,17 @@ export const oauthRoutes = (ctx: AppContext) => {
   })
 
   // Persist the consent screen's workspace choice: this user's grants to this
-  // client act in org_id (resolved by oauthWorkspace, membership re-checked on
-  // every request). Session-only and membership-validated, so a hostile page
-  // can't bind someone else's client or a foreign workspace.
+  // client act in org_id. The binding is keyed by the session user, so it can
+  // only ever affect the caller's own grants; org_id is membership-checked.
   app.post("/oauth/consent/workspace", async (c) => {
+    // Strict same-origin. The consent page is served from this origin, so its
+    // fetch always carries a matching Origin header; a cross-site page never can
+    // — and in DERIVE_CROSS_SITE deployments the session cookie is SameSite=None,
+    // so without this check a text/plain form could smuggle a JSON body here
+    // with the victim's cookie attached.
+    const origin = c.req.header("origin")
+    if (!origin || origin !== new URL(c.req.url).origin)
+      return fail(c, 403, "cross-origin request refused")
     const me = await currentUser(c)
     if (!me) return fail(c, 401, "sign in to continue")
     const b = await readJson(

@@ -49,10 +49,12 @@ export function consentHTML(props: {
 }): string {
   const name = esc(props.clientName || "An application")
   const workspaces = props.workspaces ?? []
-  // One workspace needs no choice (it's the resolver's fallback anyway); the
-  // picker only appears when there is a real decision to make.
+  // Rendered (and bound on Approve) even for a single workspace: pinning the
+  // choice keeps the grant from migrating when the user later joins a workspace
+  // that sorts ahead of it in listWorkspaces. Without a clientId there is
+  // nothing to bind, so no picker — a choice we couldn't persist would be lies.
   const picker =
-    workspaces.length > 1
+    workspaces.length > 0 && props.clientId
       ? `<label class="ws-label" for="ws">Workspace this agent acts in</label>
     <select id="ws" class="ws">${workspaces
       .map(
@@ -164,32 +166,41 @@ export function consentHTML(props: {
     var allow = document.getElementById("allow"), deny = document.getElementById("deny"), err = document.getElementById("err");
     // Show our branded "Connected" card, then hand the code back to the client.
     // The auth code is short-lived but a ~1.1s beat is well within its window.
-    function goConnected(to){
+    // With a warning there is no auto-redirect — it would sweep the message away
+    // before it could be read; the manual return link still works.
+    function goConnected(to, warning){
       var card = document.querySelector("main.card");
       if (card) card.innerHTML = CONNECTED;
       var back = document.getElementById("back");
       if (back) back.setAttribute("href", to);
+      if (warning){
+        var w = document.createElement("p");
+        w.className = "err";
+        w.textContent = warning;
+        var done = document.querySelector(".done");
+        if (done) done.appendChild(w);
+        return;
+      }
       setTimeout(function(){ window.location.href = to; }, 1100);
+    }
+    // Saved only AFTER the consent completes: an abandoned or denied consent must
+    // not re-point tokens the client already holds from an earlier grant. There is
+    // no race on the other side — the client can't mint a token until the browser
+    // delivers the code, which happens after this settles.
+    async function saveWorkspace(){
+      var ws = document.getElementById("ws");
+      if (!ws || !CLIENT_ID) return true;
+      try{
+        var b = await fetch("/oauth/consent/workspace", {
+          method:"POST", headers:{"content-type":"application/json"}, credentials:"include",
+          body: JSON.stringify({ client_id: CLIENT_ID, org_id: ws.value })
+        });
+        return b.ok;
+      }catch(e){ return false; }
     }
     async function decide(accept){
       allow.disabled = deny.disabled = true; err.textContent = "";
       try{
-        // Persist the workspace choice BEFORE completing the consent, so the very
-        // first request the client makes with its new token resolves to it. Fail
-        // closed: if the binding can't be saved, don't complete the grant into the
-        // wrong (first-workspace) default.
-        var ws = document.getElementById("ws");
-        if (accept && ws && CLIENT_ID){
-          var b = await fetch("/oauth/consent/workspace", {
-            method:"POST", headers:{"content-type":"application/json"}, credentials:"include",
-            body: JSON.stringify({ client_id: CLIENT_ID, org_id: ws.value })
-          });
-          if (!b.ok){
-            err.textContent = "Couldn't save the workspace choice. Try again.";
-            allow.disabled = deny.disabled = false;
-            return;
-          }
-        }
         var r = await fetch("/api/auth/oauth2/consent", {
           method:"POST", headers:{"content-type":"application/json"},
           credentials:"include", redirect:"manual",
@@ -204,7 +215,12 @@ export function consentHTML(props: {
           to = data && (data.url || data.redirectURI || data.location);
         }
         // On approve, linger on our confirmation; on deny, bounce straight back.
-        if (to){ if (accept) goConnected(to); else window.location.href = to; return; }
+        if (to){
+          if (!accept){ window.location.href = to; return; }
+          var saved = await saveWorkspace();
+          goConnected(to, saved ? "" : "The workspace choice didn't save — this agent will act in your default workspace. Reconnect to change it.");
+          return;
+        }
         err.textContent = (data && (data.error_description || data.error)) || "Something went wrong.";
       }catch(e){ err.textContent = "Network error. Try again."; }
       allow.disabled = deny.disabled = false;
