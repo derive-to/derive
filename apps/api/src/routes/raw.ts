@@ -3,6 +3,7 @@ import { Hono } from "hono"
 import type { AppContext } from "../context"
 import { crossDocTransform } from "../lib/cross-doc"
 import { cacheControlFor, TOMBSTONE } from "../lib/http"
+import { verifyPreviewToken } from "../lib/preview-token"
 import { serveContent } from "../lib/serve-content"
 
 /** The sandbox: raw artifact + proposal bytes under /raw/*. Served with an
@@ -25,8 +26,26 @@ export const rawRoutes = (ctx: AppContext) => {
     const shortId = c.req.param("shortId")
     const n = Number(c.req.param("n"))
     const artifact = await meta.getByShortId(shortId)
-    if (!artifact || !Number.isInteger(n) || !(await authorize(c, "read", artifact)))
-      return c.text("not found", 404)
+    if (!artifact || !Number.isInteger(n)) return c.text("not found", 404)
+
+    // Preview-access token: a short-lived HMAC token minted by the screenshot
+    // renderer so it can load private/gated artifacts without a session. Grants
+    // read of exactly one artifact+version; never widens anything else.
+    const pv = c.req.query("pv")
+    const secret = ctx.deps.encryptionKey
+    let pvAuthorized = false
+    if (pv && secret) {
+      try {
+        const claim = await verifyPreviewToken(secret, pv, Date.now())
+        if (claim && claim.artifactId === artifact.id && claim.n === n) {
+          pvAuthorized = true
+        }
+      } catch {
+        // Malformed token — fall through to normal authorize
+      }
+    }
+
+    if (!pvAuthorized && !(await authorize(c, "read", artifact))) return c.text("not found", 404)
     if (artifact.removed_at) return c.text(TOMBSTONE, 410)
     const version = await meta.getVersion(artifact.id, n)
     if (!version) return c.text("not found", 404)
