@@ -193,8 +193,11 @@ export const artifactRoutes = (ctx: AppContext) => {
       viewerId: isOperator ? undefined : (memberKey ?? undefined),
       // Agents get their registrant's unlisted drafts folded back in (an agent
       // must always find the work it published — the stdio shim's list rides
-      // this route); humans keep the clean listing and use the Unlisted feed.
-      unlisted: unlistedScope ? "only" : agent ? "include" : undefined,
+      // this route). Shared-with-you and needs-feedback are deliberate human
+      // signals (an explicit share, a thread you're in), so a member's unlisted
+      // docs surface there too. Ordinary listings stay clean — the Unlisted
+      // feed is the finder.
+      unlisted: unlistedScope ? "only" : agent || shared || needsFeedback ? "include" : undefined,
     })
     const hasMore = rows.length > limit
     const page = hasMore ? rows.slice(0, limit) : rows

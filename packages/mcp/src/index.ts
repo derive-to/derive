@@ -132,15 +132,37 @@ server.registerTool(
     }
 
     // Long-poll (self-host shim flavor): the /v1 API has no blocking endpoint,
-    // so poll the round every 2.5s until it leaves `pending` or the wait runs
-    // out, then fall through and report fresh state. Same contract as the
-    // remote server's wait, a slightly coarser clock.
+    // so poll every 2.5s until the human acts or the wait runs out — the same
+    // contract as the remote server's wait on a coarser clock. "Acts" = the
+    // round changes OR the open-comment count moves (so waiting works with no
+    // round open, exactly like the server's comment.created wake). Transient
+    // errors retry; they never end the wait early. A settled round that still
+    // applies to the current head is already actionable and returns at once.
     if (wait) {
-      const started = Date.now()
+      const deadline = Date.now() + wait * 1000
+      const snap = () =>
+        Promise.all([
+          client.get(short_id),
+          client.getReview(short_id),
+          client.listComments(short_id, "open"),
+        ]).then(([art, rev, open]) => {
+          const round = rev.pending ?? rev.rounds[0] ?? null
+          return {
+            key: `${round?.id ?? "none"}:${round?.state ?? "none"}:${open.length}`,
+            actionable:
+              !!round && round.state !== "pending" && round.version >= art.current_version,
+          }
+        })
+      let baseline: string | null = null
       for (;;) {
-        const { pending } = await client.getReview(short_id).catch(() => ({ pending: null }))
-        if (!pending) break
-        if (Date.now() - started >= Math.min(wait, 50) * 1000) break
+        const cur = await snap().catch(() => null)
+        if (cur) {
+          if (baseline === null) {
+            baseline = cur.key
+            if (cur.actionable) break
+          } else if (cur.key !== baseline) break
+        }
+        if (Date.now() >= deadline) break
         await new Promise((r) => setTimeout(r, 2500))
       }
     }
@@ -254,20 +276,28 @@ server.registerTool(
     let reactNote = ""
     if (react) {
       // The ack target: an explicit comment, else the newest comment in the
-      // thread (any state — the human may have replied on a resolved thread).
+      // thread by someone ELSE — never the agent's own just-posted reply. One
+      // unfiltered fetch covers every thread state (the human may have replied
+      // on a resolved thread).
+      const all = await client.listComments(short_id)
       let target = comment_id
       if (!target && reply_to) {
-        const states = ["open", "addressed", "resolved", "outdated"] as const
-        const all = (await Promise.all(states.map((st) => client.listComments(short_id, st))))
-          .flat()
+        const thread = all
           .filter((cm) => cm.thread_id === reply_to)
           .sort((x, y) => x.created_at.localeCompare(y.created_at))
-        target = all[all.length - 1]?.id
+        const other = [...thread].reverse().find((cm) => cm.author !== "agent")
+        target = (other ?? thread[thread.length - 1])?.id
       }
       if (!target)
         return text("`react` needs a `comment_id` or a `reply_to` thread to acknowledge.")
-      await client.react(short_id, target, react)
-      reactNote = ` · acknowledged with ${react}`
+      // The /react route TOGGLES; skipping an already-present emoji keeps a
+      // retried ack from silently removing it.
+      if (all.find((cm) => cm.id === target)?.reactions?.[react]?.length) {
+        reactNote = ` · already acknowledged with ${react}`
+      } else {
+        await client.react(short_id, target, react)
+        reactNote = ` · acknowledged with ${react}`
+      }
     }
     let stateNote = ""
     if (set_state) {

@@ -1,5 +1,6 @@
 import { Buffer } from "node:buffer"
 import type { APIRequestContext } from "@playwright/test"
+import { STORAGE_KEYS } from "../../src/lib/storage-keys"
 import { expect, test } from "../fixtures"
 
 // The strong MCP loop, browser side: an agent-credentialed publish auto-opens the
@@ -95,7 +96,7 @@ test.describe("the MCP loop — auto-open, live rounds, unlisted drafts", () => 
     await expect(owner.getByTestId("notif-bell")).toBeVisible()
     // Auto-open off (the Appearance toggle writes the same key) → a created
     // draft must NOT yank navigation; it lands as a notification instead.
-    await owner.evaluate(() => localStorage.setItem("derive.autoopen", "off"))
+    await owner.evaluate((key) => localStorage.setItem(key, "off"), STORAGE_KEYS.autoOpen)
     await owner.waitForTimeout(500)
 
     const created = await agentPublish(owner.request, agent.token, {

@@ -30,6 +30,8 @@ export interface CommentJson {
   author: string
   state: CommentState
   created_at: string
+  /** emoji → actor display names (the ack surface). */
+  reactions?: Record<string, string[]>
 }
 
 export interface ArtifactSummaryJson {

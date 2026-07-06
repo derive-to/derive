@@ -242,13 +242,30 @@ export function createDoBackplane(rooms: DurableObjectNamespace): Backplane {
     // Long-poll by reading the room's own SSE stream: an isolate can't receive DO
     // fan-out in memory, but it can hold the same stream a browser tab would (no
     // viewer param, so presence is untouched) and wake on the first matching frame.
-    async waitFor(channel, types: DomainEvent[], timeoutMs) {
+    async waitFor(channel, types: DomainEvent[], timeoutMs, release) {
       let reader: ReadableStreamDefaultReader<Uint8Array> | null = null
-      const timer = setTimeout(() => reader?.cancel().catch(() => {}), timeoutMs)
+      // One controller bounds the WHOLE wait, including the stub connect: a slow
+      // DO cold-start must not outlive the deadline and leave the read unbounded.
+      const ctl = new AbortController()
+      const stop = () => {
+        ctl.abort()
+        void reader?.cancel().catch(() => {})
+      }
+      const timer = setTimeout(stop, timeoutMs)
+      release?.addEventListener("abort", stop, { once: true })
       try {
-        const res = await stub(channel).fetch("https://do/sse", { method: "GET" })
-        if (!res.body) return null
+        const res = await stub(channel).fetch("https://do/sse", {
+          method: "GET",
+          // Same two-Response-worlds reconciliation as handleStream below: the
+          // runtime value is a real signal; only the ambient vs workers types differ.
+          signal: ctl.signal as unknown as import("@cloudflare/workers-types").AbortSignal,
+        })
+        if (!res.body || ctl.signal.aborted) return null
         reader = res.body.getReader() as ReadableStreamDefaultReader<Uint8Array>
+        if (ctl.signal.aborted) {
+          await reader.cancel().catch(() => {})
+          return null
+        }
         const dec = new TextDecoder()
         let buf = ""
         for (;;) {
@@ -273,9 +290,10 @@ export function createDoBackplane(rooms: DurableObjectNamespace): Backplane {
           }
         }
       } catch {
-        return null // timeout-cancelled reads land here — a clean "nothing yet"
+        return null // timeout/release-aborted reads land here — a clean "nothing yet"
       } finally {
         clearTimeout(timer)
+        release?.removeEventListener("abort", stop)
         reader?.cancel().catch(() => {})
       }
     },

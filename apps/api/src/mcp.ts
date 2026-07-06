@@ -168,13 +168,15 @@ function buildServer(
   const org = agent.org_id
 
   // Resolve a short id within the caller's workspace (never another org's
-  // artifact). `private` narrows further: the agent sees it only through its
-  // human's standing (or a legacy row of its own) — a teammate's private draft
-  // is as invisible over MCP as it is over HTTP.
+  // artifact). `private` AND `unlisted` narrow further: the agent touches them
+  // only through its human's standing (or a legacy row of its own) — a
+  // teammate's draft is as untouchable over MCP as its listings are invisible.
+  // (Members reach a teammate's unlisted doc through the web link at the
+  // view/comment floor; agent tools are write-capable, so they stay stricter.)
   const own = async (shortId: string): Promise<ArtifactRecord | null> => {
     const a = await ctx.meta.getByShortId(shortId)
     if (!a || a.org_id !== org) return null
-    if (a.visibility !== "private") return a
+    if (a.visibility !== "private" && a.visibility !== "unlisted") return a
     if (actingFor && (await ctx.meta.getArtifactMember(a.id, actingFor.id))) return a
     if (await ctx.meta.getArtifactMember(a.id, agent.id)) return a
     return null
@@ -309,6 +311,50 @@ function buildServer(
       let a = await own(short_id)
       if (!a) return notFound(short_id)
 
+      // Long-poll: when the agent is waiting on the human, block on the artifact
+      // channel until they act, then fall through and build the response fresh
+      // (composes with the `comments` filter below — wait, then the queue). The
+      // event is only a wake signal — all state below is re-read from the store,
+      // so a missed or raced event can never produce a wrong answer. The
+      // subscription starts BEFORE the state check, so an action landing in that
+      // gap wakes us instead of slipping through; when something is already
+      // actionable the wait is released immediately.
+      if (wait && ctx.bus.waitFor) {
+        const release = new AbortController()
+        const waited = ctx.bus
+          .waitFor(
+            a.id,
+            [
+              "review.sent_back",
+              "review.approved",
+              "comment.created",
+              "comment.updated",
+              "version.published",
+            ],
+            wait * 1000,
+            release.signal,
+          )
+          .catch(() => null)
+        const rounds = await ctx.meta.listReviewRounds(a.id)
+        const round =
+          rounds.find((r) => r.state === "pending") ??
+          rounds.find((r) => r.requested_by === agent.id) ??
+          rounds[0] ??
+          null
+        // Actionable = a settled decision the agent hasn't built on yet (it still
+        // applies to the current head). A stale sent_back/approved from an older
+        // version never disables the long-poll — the agent already consumed it.
+        const actionable = round && round.state !== "pending" && round.version >= a.current_version
+        if (actionable) {
+          release.abort()
+          await waited
+        } else {
+          await waited
+          // Refresh: the head (or the artifact itself) may have moved while waiting.
+          a = (await own(short_id)) ?? a
+        }
+      }
+
       // `comments` filter → the feedback to-do queue (absorbs the old list_comments).
       if (comments) {
         const list = await ctx.meta.listComments(a.id, { state: comments })
@@ -318,32 +364,6 @@ function buildServer(
           count: list.length,
           comments: list.map(summarizeComment),
         })
-      }
-
-      // Long-poll: when the agent is waiting on the human (round pending, or no
-      // round at all), block on the artifact channel until they act, then fall
-      // through and build the payload fresh. The event is only a wake signal —
-      // all state below is re-read from the store, so a missed or raced event
-      // can never produce a wrong answer. Skipped when something is already
-      // actionable (sent_back/approved) or the backplane can't wait.
-      if (wait && ctx.bus.waitFor) {
-        const rounds = await ctx.meta.listReviewRounds(a.id)
-        const mine = rounds.find((r) => r.requested_by === agent.id) ?? rounds[0] ?? null
-        if (!mine || mine.state === "pending") {
-          await ctx.bus.waitFor(
-            a.id,
-            [
-              "review.sent_back",
-              "review.approved",
-              "comment.created",
-              "comment.updated",
-              "version.published",
-            ],
-            Math.min(Math.max(wait, 1), 50) * 1000,
-          )
-          // Refresh: the head (or the artifact itself) may have moved while waiting.
-          a = (await own(short_id)) ?? a
-        }
       }
 
       const head = a.current_version
@@ -389,7 +409,11 @@ function buildServer(
       // it requested most recently. `pending` = still waiting; `sent_back` = the human
       // returned answers — read the open threads and revise; `approved` = the go-signal.
       const rounds = await ctx.meta.listReviewRounds(a.id)
-      const myRound = rounds.find((r) => r.requested_by === agent.id) ?? rounds[0] ?? null
+      const myRound =
+        rounds.find((r) => r.state === "pending") ??
+        rounds.find((r) => r.requested_by === agent.id) ??
+        rounds[0] ??
+        null
       const review = myRound
         ? {
             state: myRound.state,

@@ -167,8 +167,15 @@ export interface Backplane {
   /** Block until an event of one of `types` lands on `channel`, or `timeoutMs`
    *  passes — the long-poll primitive behind catch_up's `wait`. The event is only
    *  a wake signal (callers re-read state from the store), so a missed event is
-   *  never a correctness problem. */
-  waitFor?(channel: string, types: DomainEvent[], timeoutMs: number): Promise<DeriveEvent | null>
+   *  never a correctness problem. `release` lets a caller that subscribed early
+   *  (before its state check, to close the check-then-wait gap) let go without
+   *  holding the wait open. */
+  waitFor?(
+    channel: string,
+    types: DomainEvent[],
+    timeoutMs: number,
+    release?: AbortSignal,
+  ): Promise<DeriveEvent | null>
 }
 
 /** Default backplane: in-memory bus + presence, single process. The route owns
@@ -186,7 +193,7 @@ export function createInProcessBackplane(): Backplane {
       bus.publish(channel, e)
       return Promise.resolve(delivered)
     },
-    waitFor(channel, types, timeoutMs) {
+    waitFor(channel, types, timeoutMs, release) {
       return new Promise((resolve) => {
         let done = false
         const finish = (e: DeriveEvent | null) => {
@@ -200,6 +207,7 @@ export function createInProcessBackplane(): Backplane {
           if (types.includes(e.type)) finish(e)
         })
         const timer = setTimeout(() => finish(null), timeoutMs)
+        release?.addEventListener("abort", () => finish(null), { once: true })
       })
     },
   }
