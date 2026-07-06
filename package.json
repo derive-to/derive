@@ -46,18 +46,21 @@
     "lint:schema": "node scripts/check-schema.mjs",
     "lint:filesize": "node scripts/check-file-size.mjs",
     "lint:bundle": "node scripts/check-bundle.mjs",
+    "lint:anchor-client": "node scripts/check-anchor-client.mjs",
     "lint:deadcode": "knip",
+    "build:anchor-client": "node scripts/build-anchor-client.mjs",
     "format": "biome format --write",
     "check": "biome check",
     "check:fix": "biome check --write",
-    "ci": "biome ci && pnpm lint:tokens && pnpm lint:frontend && pnpm lint:testids && pnpm lint:api && pnpm lint:schema && pnpm lint:hyperdrive && pnpm lint:filesize && pnpm lint:deadcode",
-    "precommit": "biome check && pnpm lint:tokens && pnpm lint:frontend && pnpm lint:testids && pnpm lint:api && pnpm lint:schema && pnpm lint:hyperdrive && pnpm lint:filesize",
+    "ci": "biome ci && pnpm lint:tokens && pnpm lint:frontend && pnpm lint:testids && pnpm lint:api && pnpm lint:schema && pnpm lint:hyperdrive && pnpm lint:filesize && pnpm lint:anchor-client && pnpm lint:deadcode",
+    "precommit": "biome check && pnpm lint:tokens && pnpm lint:frontend && pnpm lint:testids && pnpm lint:api && pnpm lint:schema && pnpm lint:hyperdrive && pnpm lint:filesize && pnpm lint:anchor-client",
     "prepare": "git config core.hooksPath .githooks || true",
     "lint:hyperdrive": "node scripts/check-hyperdrive-no-pool.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.0",
     "@vitest/coverage-v8": "^4.1.9",
+    "esbuild": "0.28.1",
     "knip": "^6.16.1",
     "typescript": "^6.0.3"
   }

@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest"
 import {
   type AnchorThread,
+  anchorContentFor,
   isAnchored,
+  pageText,
   planAnchorSweep,
   type QuoteSelector,
   quoteSelector,
@@ -83,6 +85,88 @@ describe("reanchor — deterministic resolution order", () => {
   it("works with no context fields (exact-only selector)", () => {
     const r = reanchor({ type: "TextQuoteSelector", exact: "two" }, "one two three")
     expect(r).toEqual({ found: true, index: 4 })
+  })
+})
+
+describe("reanchor — whitespace-flexible (multi-element quotes)", () => {
+  // The bug this fixes: a quote spanning a heading + a paragraph is captured by the
+  // browser Selection with a single "\n" between the blocks, but the DOM text (and the
+  // tag-stripped page text) carry the SOURCE indentation ("\n    "). A strict indexOf
+  // never matched → every multi-element comment orphaned as "text changed".
+  it("matches across a differing whitespace gap (the multi-element case)", () => {
+    const sel: QuoteSelector = {
+      type: "TextQuoteSelector",
+      exact: "Derive 👋\nA self-contained test", // single \n, as the Selection captured
+    }
+    const domText = "Hello, Derive 👋\n    A self-contained test artifact." // source indent
+    const r = reanchor(sel, domText)
+    expect(r.found).toBe(true)
+    expect(domText.slice(r.index)).toMatch(/^Derive 👋/)
+  })
+
+  it("collapses any whitespace run — tabs, multiple spaces, newlines all match", () => {
+    const sel = quoteSelector("alpha beta gamma", 0, 16) // "alpha beta gamma"
+    expect(reanchor(sel, "alpha\t\tbeta\n  gamma").found).toBe(true)
+  })
+
+  it("still disambiguates a repeat by context even when the exact recurs in the prefix", () => {
+    // "cat" is in both the prefix and the target; the capture-group match must land on
+    // the SECOND cat, not the one inside the prefix.
+    const text = "the cat sat. the cat ran."
+    const sel = quoteSelector(text, text.lastIndexOf("cat"), 3)
+    // Re-grep against the same text but with the whitespace flexed (tabs for spaces).
+    const flexed = text.replace(/ /g, "\t")
+    const r = reanchor(sel, flexed)
+    expect(r.found).toBe(true)
+    expect(flexed.slice(r.index, r.index + 3)).toBe("cat")
+    expect(r.index).toBe(flexed.lastIndexOf("cat"))
+  })
+})
+
+describe("pageText — visible text for HTML quote matching", () => {
+  it("turns tags into whitespace so a quote spanning elements is contiguous", () => {
+    const html = `<h1 id="h">Hello, Derive 👋</h1>\n    <p class="lede">A self-contained test</p>`
+    const sel: QuoteSelector = {
+      type: "TextQuoteSelector",
+      exact: "Derive 👋\nA self-contained test",
+    }
+    // Against the raw HTML the tags break the match; against pageText it resolves.
+    expect(reanchor(sel, html).found).toBe(false)
+    expect(reanchor(sel, pageText(html)).found).toBe(true)
+  })
+
+  it("drops script/style/comment content and decodes entities", () => {
+    const html = `<style>.x{color:red}</style><p>A &amp; B</p><script>var q="ignore me"</script><!--c-->`
+    const t = pageText(html)
+    expect(t).toContain("A & B")
+    expect(t).not.toContain("color:red")
+    expect(t).not.toContain("ignore me")
+  })
+})
+
+describe("anchorContentFor — HTML strips, markdown/plain stays raw", () => {
+  const sel: QuoteSelector = {
+    type: "TextQuoteSelector",
+    exact: "Derive 👋\nA self-contained test",
+  }
+  const html = `<h1>Hello, Derive 👋</h1>\n<p>A self-contained test artifact.</p>`
+
+  it("resolves a multi-element quote for HTML (text is tag-stripped)", () => {
+    expect(isAnchored(json(sel), anchorContentFor(html, "text/html"))).toBe(true)
+    // A deck is HTML-like too.
+    expect(isAnchored(json(sel), anchorContentFor(html, "text/x-derive-deck"))).toBe(true)
+  })
+
+  it("leaves markdown/plain source unstripped (its source is the visible text)", () => {
+    const md = "# Title\n\nA self-contained test."
+    expect(
+      isAnchored(
+        json(quoteSelector(md, md.indexOf("self"), 4)),
+        anchorContentFor(md, "text/markdown"),
+      ),
+    ).toBe(true)
+    // isAnchored also accepts a bare string (markdown callers pass it directly).
+    expect(isAnchored(json(quoteSelector(md, md.indexOf("self"), 4)), md)).toBe(true)
   })
 })
 

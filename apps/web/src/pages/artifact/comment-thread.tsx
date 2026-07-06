@@ -11,33 +11,33 @@ import {
 } from "lucide-react"
 import { useCallback, useEffect, useRef, useState } from "react"
 import type { Comment, Mention } from "@/api"
+import { Icon } from "@/components/icons"
 import { Eyebrow } from "@/components/shared/section-eyebrow"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
+import { useActions } from "./comment-actions"
 import { Composer, MentionField } from "./comment-composer"
 import { CommentRow } from "./comment-row"
 import { useCommentScope } from "./lib/comment-scope"
-import { COMPOSER_ID, layoutPins, parseAnchor } from "./lib/layout"
+import { useCommentTree } from "./lib/comment-tree"
+import { COMPOSER_ID, layoutPins } from "./lib/layout"
 import { quoteChipClass } from "./quote-chip"
-import { type ComposerState, type ElementSnapshotLite, type PinItem, selLabel } from "./types"
+import {
+  type ComposerState,
+  type ElementSnapshotLite,
+  type PinItem,
+  parseAnchor,
+  selLabel,
+} from "./types"
 
 export function PinnedZone({
   pins,
   scrollY,
   onScrollDoc,
   composer,
-  activeThread,
-  hoverThread,
-  inDoc,
-  onActivate,
-  onHover,
-  onResolve,
-  onReply,
-  onJump,
   onSubmitNew,
   onCancelNew,
-  personal,
   topInset = 0,
 }: {
   pins: PinItem[]
@@ -48,18 +48,12 @@ export function PinnedZone({
   topInset?: number
   onScrollDoc: (dy: number) => void
   composer: ComposerState
-  personal?: boolean
-  activeThread: string | null
-  hoverThread: string | null
-  inDoc: Record<string, boolean>
-  onActivate: (id: string) => void
-  onHover: (id: string | null) => void
-  onResolve: (c: Comment) => void
-  onReply: (text: string, threadId: string, mentions?: Mention[]) => void
-  onJump: (id: string) => void
   onSubmitNew: (text: string, mentions?: Mention[]) => void
   onCancelNew: () => void
 }) {
+  // The active/hover state drives this zone's layout math (which card is pinned to its
+  // exact Y, z-order, opacity); it comes from the tree context, same as the cards read.
+  const { activeThread, hoverThread } = useCommentTree()
   const [heights, setHeights] = useState<Record<string, number>>({})
   const obs = useRef<ResizeObserver | null>(null)
   useEffect(() => {
@@ -92,7 +86,7 @@ export function PinnedZone({
   // exactly when there's an anchored composer with a resolved position.
   const activeComposer =
     composer?.anchor && composer.top != null
-      ? { top: composer.top, quote: selLabel(composer.anchor) }
+      ? { top: composer.top, quote: selLabel(composer.anchor), agent: composer.agent }
       : null
   // The pinned zone sits `topInset` px below the document's top (the panel header
   // above it), so a card at desiredY (measured from the document top) must render
@@ -163,17 +157,7 @@ export function PinnedZone({
               opacity: p.located ? 1 : 0,
             }}
           >
-            <CommentCard
-              thread={p.thread}
-              active={active}
-              hovered={hoverThread === id}
-              present={inDoc[id]}
-              onActivate={onActivate}
-              onHover={onHover}
-              onResolve={onResolve}
-              onReply={onReply}
-              onJump={onJump}
-            />
+            <CommentCard thread={p.thread} />
           </div>
         )
       })}
@@ -188,9 +172,9 @@ export function PinnedZone({
         >
           <Composer
             quote={activeComposer.quote}
+            agent={activeComposer.agent}
             onSubmit={onSubmitNew}
             onCancel={onCancelNew}
-            personal={personal}
           />
         </div>
       )}
@@ -320,33 +304,21 @@ function roleGuess(snapshot: ElementSnapshotLite | undefined, label: string): st
 }
 
 // One comment thread. Compact until activated; the active card shows the full
-// thread, a reply box, and resolve controls.
-export function CommentCard({
-  thread,
-  active,
-  hovered,
-  present,
-  onActivate,
-  onHover,
-  onResolve,
-  onReply,
-  onJump,
-}: {
-  thread: Comment[]
-  active: boolean
-  hovered: boolean
-  present?: boolean
-  onActivate: (id: string) => void
-  onHover: (id: string | null) => void
-  onResolve: (c: Comment) => void
-  onReply: (text: string, threadId: string, mentions?: Mention[]) => void
-  onJump: (id: string) => void
-}) {
-  const { canComment, currentSlide, landedSlides, anchorConf } = useCommentScope()
+// thread, a reply box, and resolve controls. Its interaction state (active/hovered/
+// present) and handlers come from the CommentTree context — the card is the leaf, so a
+// render site is just `<CommentCard thread={t} />` with no drilled props.
+export function CommentCard({ thread }: { thread: Comment[] }) {
+  const { canComment, currentSlide, landedSlides, anchorConf, agentIds } = useCommentScope()
+  const { activeThread, hoverThread, inDoc, onActivate, onHover, onResolve, onReply, onJump } =
+    useCommentTree()
+  const { openReview } = useActions()
   const [reply, setReply] = useState("")
   const [replyMentions, setReplyMentions] = useState<Mention[]>([])
   const root = thread[0]
   if (!root) return null
+  const active = activeThread === root.thread_id
+  const hovered = hoverThread === root.thread_id
+  const present = inDoc[root.thread_id]
   const sendReply = (resolved: Mention[]) => {
     if (!reply.trim()) return
     onReply(reply, root.thread_id, resolved)
@@ -356,6 +328,15 @@ export function CommentCard({
   const resolved = root.state === "resolved"
   const outdated = root.state === "outdated"
   const addressed = root.state === "addressed"
+  // A "revision request" thread is a comment addressed to an agent (the moat flow). We
+  // detect it from the root's mentions overlapping the known agent ids — no schema
+  // change. Its lifecycle reads as a legible machine: Requested → Revision ready ·
+  // Review (agent proposed → addressed) → Applied (approved → resolved). An `outdated`
+  // request (its anchored text changed before the agent responded) falls through to the
+  // normal "outdated" badge — "awaiting revision" would misread a stale request as live.
+  const isAgentRequest = !!root.mentions?.some((m) => agentIds?.has(m.id))
+  const requestStage: "requested" | "ready" | "applied" | null =
+    !isAgentRequest || outdated ? null : resolved ? "applied" : addressed ? "ready" : "requested"
   const parsed = parseAnchor(root.anchor)
   const isEl = !!parsed?.element
   // The reference label: a text quote, or an element's snapshot label.
@@ -396,6 +377,56 @@ export function CommentCard({
         resolved && !active && "opacity-60",
       )}
     >
+      {/* Agent-revision request ribbon — the moat's status machine, read at a glance:
+          Requested (waiting on the agent) → Revision ready (a proposal is in review) →
+          Applied (approved). A quiet ink-tinted strip so it's clearly "an agent task",
+          distinct from a plain comment. */}
+      {requestStage && (
+        <div
+          data-testid={`agent-request-${requestStage}`}
+          className={cn(
+            "flex items-center gap-1.5 border-b px-2.5 py-1.5 text-sm font-medium",
+            requestStage === "ready"
+              ? "border-primary/25 bg-primary/10 text-foreground"
+              : "border-border-soft bg-secondary text-muted-foreground",
+          )}
+          title={
+            requestStage === "requested"
+              ? "Sent to an agent — waiting for it to revise and propose a change"
+              : requestStage === "ready"
+                ? "The agent proposed a revision — open Review to see it and approve"
+                : "The agent's revision was approved and applied"
+          }
+        >
+          <Icon
+            name="sparkles"
+            size={14}
+            className={requestStage === "ready" ? "text-primary" : "text-muted-foreground"}
+          />
+          <span className="min-w-0 flex-1 truncate">
+            {requestStage === "requested"
+              ? "Agent request · awaiting revision"
+              : requestStage === "ready"
+                ? "Revision ready"
+                : "Revision applied"}
+          </span>
+          {/* Ready → the one click from "the agent proposed" to the review overlay that
+              lets you approve it, closing the loop without hunting through the ⋯ menu. */}
+          {requestStage === "ready" && canComment && (
+            <Button
+              variant="default"
+              size="xs"
+              data-testid="agent-request-review"
+              onClick={(e) => {
+                e.stopPropagation()
+                openReview()
+              }}
+            >
+              Review
+            </Button>
+          )}
+        </div>
+      )}
       {onDeck && slideNum != null && (
         <div className="flex items-center gap-1.5 px-2.5 pb-0.5 pt-1.5">
           <Badge shape="pill" data-testid={`comment-slide-${root.thread_id}`}>
@@ -498,20 +529,23 @@ export function CommentCard({
           <div className="flex items-center gap-1.5 bg-secondary px-3 py-1.5">
             {/* Status tones are success/warning/neutral — the ink accent is reserved, so
                 addressed and open both take the neutral wash; the label text and
-                title tooltip carry the distinction. */}
-            <Badge
-              shape="pill"
-              variant={resolved ? "success" : outdated ? "warning" : "default"}
-              title={
-                outdated
-                  ? "The text this thread was attached to changed in a later version — this feedback may no longer apply"
-                  : addressed
-                    ? "A proposed revision addressing this thread is pending review"
-                    : undefined
-              }
-            >
-              {resolved ? "resolved" : outdated ? "outdated" : addressed ? "addressed" : "open"}
-            </Badge>
+                title tooltip carry the distinction. An agent request shows its state in
+                the ribbon above, so the plain badge is suppressed to avoid doubling up. */}
+            {!requestStage && (
+              <Badge
+                shape="pill"
+                variant={resolved ? "success" : outdated ? "warning" : "default"}
+                title={
+                  outdated
+                    ? "The text this thread was attached to changed in a later version — this feedback may no longer apply"
+                    : addressed
+                      ? "A proposed revision addressing this thread is pending review"
+                      : undefined
+                }
+              >
+                {resolved ? "resolved" : outdated ? "outdated" : addressed ? "addressed" : "open"}
+              </Badge>
+            )}
             {refLabel && !textPresent && !resolved && !outdated && !addressed && (
               <Badge
                 shape="pill"
@@ -554,26 +588,12 @@ export function CollapsibleThreadSection({
   testId,
   className,
   threads,
-  activeThread,
-  hoverThread,
-  onActivate,
-  onHover,
-  onResolve,
-  onReply,
-  onJump,
 }: {
   label: string
   defaultOpen: boolean
   testId: string
   className?: string
   threads: Comment[][]
-  activeThread: string | null
-  hoverThread: string | null
-  onActivate: (id: string) => void
-  onHover: (id: string | null) => void
-  onResolve: (c: Comment) => void
-  onReply: (text: string, threadId: string, mentions?: Mention[]) => void
-  onJump: (id: string) => void
 }) {
   const [open, setOpen] = useState(defaultOpen)
   return (
@@ -598,16 +618,7 @@ export function CollapsibleThreadSection({
           if (!head) return null
           return (
             <div key={head.thread_id} className="mb-2.5">
-              <CommentCard
-                thread={t}
-                active={activeThread === head.thread_id}
-                hovered={hoverThread === head.thread_id}
-                onActivate={onActivate}
-                onHover={onHover}
-                onResolve={onResolve}
-                onReply={onReply}
-                onJump={onJump}
-              />
+              <CommentCard thread={t} />
             </div>
           )
         })}

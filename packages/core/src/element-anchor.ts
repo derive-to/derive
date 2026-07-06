@@ -32,10 +32,17 @@
  *      or rewrapped one version at a time is recovered — each hop is a small,
  *      resolvable delta even though first-to-last looks unrecognizable.
  *
- * The fingerprint hash (`fnv1a`) is duplicated verbatim inside `ANCHOR_CLIENT_JS`
- * so a fingerprint computed in the browser equals one computed here — keep them in
- * lockstep if you touch the input shape.
+ * The fingerprint hash + assembly (`fnv1a`, `fingerprintFrom`) lives in the isomorphic
+ * `anchor-shared` module, imported by BOTH this server resolver and the in-iframe client
+ * (`anchor-client.ts`), so a fingerprint computed in the browser equals one computed here
+ * by construction — no hand-copied transcription to keep in lockstep.
  */
+
+import { fingerprintFrom, normWs } from "./anchor-shared"
+
+// Re-exported so existing importers (and the golden tests) keep reading these off
+// `element-anchor`; the definitions now live in the isomorphic `anchor-shared`.
+export { fnv1a, normWs } from "./anchor-shared"
 
 export type ElementRole =
   | "image"
@@ -125,13 +132,6 @@ export interface ElementMatch {
 }
 
 const TEXT_CAP = 4000
-const FP_TEXT_CAP = 120
-/** Field separator inside a content fingerprint, so a value ending and the next
- *  beginning can't blur into a collision (e.g. src "...a" + alt "b" vs src "..." +
- *  alt "ab"). A control char that never appears in real content. MUST stay identical
- *  to the client's `elFp` join in `ANCHOR_CLIENT_JS` — they were silently different
- *  ("" vs this) once, which made every browser-made anchor fail to resolve server-side. */
-const FP_SEP = "\u0001"
 
 const VOID_TAGS = new Set([
   "area",
@@ -239,38 +239,19 @@ const KEEP_ATTRS = new Set([
   "data-derive-id",
 ])
 
-/** Collapse runs of whitespace and trim. Used everywhere a value feeds matching. */
-export function normWs(s: string): string {
-  return s.replace(/\s+/g, " ").trim()
-}
-
-/**
- * FNV-1a (32-bit) → base36. A tiny, fast, dependency-free hash — we only need a
- * stable content fingerprint, not cryptographic strength. DUPLICATED VERBATIM in
- * `ANCHOR_CLIENT_JS`; the browser and server must produce identical fingerprints.
- */
-export function fnv1a(s: string): string {
-  let h = 0x811c9dc5
-  for (let i = 0; i < s.length; i++) {
-    h ^= s.charCodeAt(i)
-    h = (h + ((h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24))) >>> 0
-  }
-  return h.toString(36)
-}
-
 const srcOf = (d: { tag: string; attrs: Record<string, string> }): string =>
   d.attrs.src || d.attrs.href || ""
 const altOf = (d: { attrs: Record<string, string> }): string =>
   d.attrs.alt || d.attrs["aria-label"] || d.attrs.title || ""
 
-/** The canonical fingerprint input — keep byte-identical with the client. */
+/** The canonical fingerprint over {tag, src, alt, text}. The assembly lives in
+ *  `anchor-shared` (fingerprintFrom) so the browser client hashes identically. */
 export function fingerprintOf(d: {
   tag: string
   attrs: Record<string, string>
   text: string
 }): string {
-  const parts = [d.tag, srcOf(d), altOf(d), normWs(d.text).slice(0, FP_TEXT_CAP)]
-  return fnv1a(parts.join(FP_SEP))
+  return fingerprintFrom(d.tag, srcOf(d), altOf(d), d.text)
 }
 
 /** Classify an element into a coarse role for labels + capture affordances. */

@@ -41,6 +41,7 @@ import {
   Settings,
   Share2,
   Smile,
+  Sparkles,
   Star,
   Tag,
   Trash2,
@@ -87,6 +88,8 @@ const REG = {
   "caret-up": ChevronUp,
   edit: Code,
   review: GitPullRequest,
+  // The agent-revision affordance (ask an agent to revise a selection).
+  sparkles: Sparkles,
   pin: Pin,
   views: Eye,
   reader: BookOpen,

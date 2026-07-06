@@ -315,6 +315,11 @@ export interface DirUser {
   id: string
   name: string | null
   handle: string | null
+  /** "agent" for a registered MCP agent, "user" for a person. The @mention directory
+   *  returns both; the "ask an agent to revise" affordance targets the agents. */
+  kind?: "user" | "agent"
+  /** Role/profession, surfaced by the directory so the picker shows who's who. */
+  profession?: string | null
 }
 export interface Notification {
   id: string

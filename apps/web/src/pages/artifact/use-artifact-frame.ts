@@ -1,8 +1,8 @@
 import type { Dispatch, SetStateAction } from "react"
 import { useCallback, useEffect, useRef, useState } from "react"
 import type { Comment } from "@/api"
-import { groupThreads, parseAnchor } from "./lib/layout"
-import type { AnchorConf, Panel, Selection } from "./types"
+import { groupThreads } from "./lib/layout"
+import { type AnchorConf, type Panel, parseAnchor, type Selection } from "./types"
 
 /**
  * The entire conversation with the sandboxed artifact iframe, kept out of the
@@ -27,16 +27,13 @@ export function useArtifactFrame(p: {
   setHoverThread: Dispatch<SetStateAction<string | null>>
   setActiveThread: Dispatch<SetStateAction<string | null>>
   setPanel: Dispatch<SetStateAction<Panel>>
-  // Clicking a highlight: switch to the tab its thread lives on (personal vs shared)
-  // so the card it activates is actually visible in the panel.
-  onAnchorTab: (personal: boolean) => void
   // A cross-document link inside the frame was clicked: the server resolved it to a
   // sibling artifact `ref`. The frame is sandboxed and can't navigate the host, so it
   // hands the click here for an SPA transition (or a new tab on a modified click).
   onNavigate: (ref: string, newTab: boolean) => void
 }) {
   const { comments, shortId, version, hoverThread, onPointerMove, onPointerLeave, onTap } = p
-  const { setHoverThread, setActiveThread, setPanel, onNavigate, onAnchorTab } = p
+  const { setHoverThread, setActiveThread, setPanel, onNavigate } = p
   const frame = useRef<HTMLIFrameElement>(null)
   const presentWrap = useRef<HTMLDivElement>(null)
   const [frameReady, setFrameReady] = useState(0)
@@ -123,7 +120,6 @@ export function useArtifactFrame(p: {
         if (typeof d.viewH === "number") setViewH(d.viewH)
       } else if (d.type === "anchor-hover") setHoverThread(d.id ?? null)
       else if (d.type === "anchor-click") {
-        if (typeof d.personal === "boolean") onAnchorTab(d.personal)
         setActiveThread(d.id)
         setPanel((cur) => (cur === "open" ? cur : "open"))
       } else if (d.type === "cursor" && typeof d.x === "number" && typeof d.y === "number") {
@@ -138,16 +134,7 @@ export function useArtifactFrame(p: {
     }
     window.addEventListener("message", onMsg)
     return () => window.removeEventListener("message", onMsg)
-  }, [
-    onPointerMove,
-    onPointerLeave,
-    onTap,
-    setHoverThread,
-    setActiveThread,
-    setPanel,
-    onNavigate,
-    onAnchorTab,
-  ])
+  }, [onPointerMove, onPointerLeave, onTap, setHoverThread, setActiveThread, setPanel, onNavigate])
 
   // Two-way hover: emphasize the matching highlight in the doc when a comment
   // card is hovered (the inbound anchor-hover sets the same state the other way).
@@ -210,23 +197,14 @@ export function useArtifactFrame(p: {
       .filter((head): head is Comment => head?.state === "open" || head?.state === "addressed")
       .map((head) => ({
         id: head.thread_id,
-        personal: false,
         sel: parseAnchor(head.anchor),
       }))
-      .filter(
-        (
-          x,
-        ): x is {
-          id: string
-          personal: boolean
-          sel: NonNullable<ReturnType<typeof parseAnchor>>
-        } => !!x.sel,
-      )
+      .filter((x): x is { id: string; sel: NonNullable<ReturnType<typeof parseAnchor>> } => !!x.sel)
       .map((x) =>
         // Element anchor: hand the client the whole selector to relocate via the
         // cascade. Text anchor: the quote + context it greps for.
         x.sel.element
-          ? { id: x.id, el: x.sel.element, personal: x.personal }
+          ? { id: x.id, el: x.sel.element }
           : {
               id: x.id,
               exact: x.sel.exact,
@@ -234,8 +212,6 @@ export function useArtifactFrame(p: {
               suffix: x.sel.suffix,
               // The frame scopes resolution to this slide first (deck artifacts only).
               slide: x.sel.slide,
-              // Paints ink (vs lavender) so personal anchors are obviously distinct.
-              personal: x.personal,
             },
       )
     w.postMessage({ source: "derive-host", type: "anchors", anchors }, "*")

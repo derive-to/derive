@@ -1,4 +1,10 @@
-import { type ArtifactRecord, type CommentRecord, isAnchored, newId } from "@derive/core"
+import {
+  type ArtifactRecord,
+  anchorContentFor,
+  type CommentRecord,
+  isAnchored,
+  newId,
+} from "@derive/core"
 import { type Context, Hono } from "hono"
 import { z } from "zod"
 import type { AppContext } from "../context"
@@ -243,12 +249,14 @@ export const commentRoutes = (ctx: AppContext) => {
     const state =
       q === "open" || q === "resolved" || q === "outdated" || q === "addressed" ? q : undefined
     const comments = await meta.listComments(artifact.id, { state })
-    // Flag whether each anchor still resolves against the current version.
+    // Flag whether each anchor still resolves against the current version. Build the
+    // anchor content once (tag-stripping HTML for text-quote matching) and reuse it.
     const cur = await meta.getVersion(artifact.id, artifact.current_version)
-    const src = cur ? await sourceText(cur) : null
+    const raw = cur ? await sourceText(cur) : null
+    const content = raw === null ? null : anchorContentFor(raw, cur?.content_type ?? "")
     return c.json({
       comments: comments.map((cm) =>
-        commentJson(cm, src === null ? true : isAnchored(cm.anchor, src)),
+        commentJson(cm, content === null ? true : isAnchored(cm.anchor, content)),
       ),
     })
   })
