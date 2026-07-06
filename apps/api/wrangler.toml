@@ -52,6 +52,14 @@ class_name = "WebhookOutbox"
 name = "SYNC_RUNNER"
 class_name = "RepoSyncRunner"
 
+# The preview renderer (a single named instance). Its alarm drains the render_job
+# queue sequentially via Cloudflare Browser Rendering — one browser at a time so
+# concurrent-browser billing stays at the floor. Omit this block (and the browser
+# binding below) to disable preview rendering (e.g. D1-only or self-host deploys).
+[[durable_objects.bindings]]
+name = "PREVIEW_RENDERER"
+class_name = "PreviewRenderer"
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["ArtifactRoom"]
@@ -63,6 +71,16 @@ new_sqlite_classes = ["WebhookOutbox"]
 [[migrations]]
 tag = "v3"
 new_sqlite_classes = ["RepoSyncRunner"]
+
+[[migrations]]
+tag = "v4"
+new_classes = ["PreviewRenderer"]
+
+# Cloudflare Browser Rendering binding — required for the PreviewRenderer DO.
+# Leave commented if Browser Rendering is not enabled on your account; the worker
+# gates renderPreviews on !!env.BROWSER so this can be omitted safely.
+[browser]
+binding = "BROWSER"
 
 # Notification email (Cloudflare Email Service). Left commented because the binding only
 # resolves once the account has Email Service enabled and a sending domain verified — an
