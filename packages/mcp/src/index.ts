@@ -5,7 +5,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod"
 import { createClient } from "./client"
 
-// Stdio MCP server for self-hosters: `npx @derive/mcp` talks to a Derive instance over
+// Stdio MCP server for self-hosters: `npx @derive-to/mcp` talks to a Derive instance over
 // the /v1 HTTP API (DERIVE_SERVER) with a bearer (DERIVE_TOKEN). It exposes the SAME five
 // tools as the remote /mcp server — list_artifacts, read, catch_up, comment, publish —
 // so the vocabulary is identical whether an agent connects over OAuth or a static

@@ -48,7 +48,7 @@ describe("scaffold", () => {
     })
     // The MCP config + skill are present and reference the published server.
     expect(JSON.parse(readFileSync(join(d, ".mcp.json"), "utf8")).mcpServers.derive.args).toContain(
-      "@derive/mcp",
+      "@derive-to/mcp",
     )
     expect(readFileSync(join(d, ".claude/skills/derive/SKILL.md"), "utf8")).toContain(
       "name: derive-publish",

@@ -99,7 +99,7 @@ comment(short_id, set_state, ...)   # set_state: "resolved" | "open"
 ```
 
 Use `set_state: "resolved"` to close a thread (or `"open"` to reopen one). Target the thread
-by its id (over the stdio `@derive/mcp` server, set_state takes a `comment_id`, which can be any
+by its id (over the stdio `@derive-to/mcp` server, set_state takes a `comment_id`, which can be any
 comment in the thread).
 
 The most efficient pattern is to resolve threads at the same time as publishing a new version,

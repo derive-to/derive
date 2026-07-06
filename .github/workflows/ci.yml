@@ -97,7 +97,7 @@ jobs:
       - name: Storage coverage
         run: pnpm --filter @derive/storage test:coverage
       - name: MCP coverage
-        run: pnpm --filter @derive/mcp test:coverage
+        run: pnpm --filter @derive-to/mcp test:coverage
       - name: Web coverage
         run: pnpm --filter @derive/web test:coverage
 
