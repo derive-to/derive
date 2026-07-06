@@ -259,17 +259,28 @@ export const publishSlackHomeView = async (
   }
 }
 
-/** Bot scopes requested at install. Covers posting + reply-back, plus reading user emails
- *  (email↔member matching) and opening DMs (per-user notifications) for later features —
- *  requesting them now means a workspace won't have to reconnect when those land. */
+/** Bot scopes requested at install — the single source of truth, also what the manifest
+ *  declares (see slack-app-setup buildSlackManifest). One list so "Add to Slack" grants
+ *  exactly what every feature needs: posting + reply-back (chat/channels), email↔member
+ *  matching + DMs (users:read.email, im:*), the slash command (commands), link unfurls
+ *  (links:read/write) and @mention handling (app_mentions:read). Adding a scope here means
+ *  existing installs see the re-auth banner until they reconnect. */
 export const SLACK_BOT_SCOPES = [
   "chat:write",
+  "chat:write.public",
   "channels:read",
   "channels:join",
   "channels:history",
+  "groups:read",
+  "groups:history",
   "users:read",
   "users:read.email",
+  "im:history",
   "im:write",
+  "app_mentions:read",
+  "links:read",
+  "links:write",
+  "commands",
 ]
 
 /** The OAuth authorize URL for the "Add to Slack" button. */

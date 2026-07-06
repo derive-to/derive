@@ -37,11 +37,9 @@ describe("buildSlackManifest", () => {
     expect(m.features.unfurl_domains).toEqual([hostOf(BASE)])
   })
 
-  it("names the app after the host so multiple instances are distinguishable", () => {
-    expect(m.display_information.name).toBe("Derive · api.derive.example.com")
-    expect(buildSlackManifest("https://derive.to", "derive.to").display_information.name).toBe(
-      "Derive",
-    )
+  it("is named just Derive (Slack caps the app name at 35 chars)", () => {
+    expect(m.display_information.name).toBe("Derive")
+    expect(m.display_information.name.length).toBeLessThanOrEqual(35)
   })
 })
 

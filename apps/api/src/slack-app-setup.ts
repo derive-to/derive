@@ -7,29 +7,7 @@
 // is born with the events + interactivity + slash + App Home config, so a fresh
 // "Add to Slack" is two-way from the first message — nothing to toggle by hand.
 import { esc, brandShell as SHELL } from "./brand-page"
-
-// The bot scopes the app is BORN with — the app's full declared capability across
-// every feature (comment mirror, event cards, DMs, slash command, link unfurls, App
-// Home). The OAuth install (slackAuthorizeUrl / SLACK_BOT_SCOPES in lib/slack) can
-// request a subset of these as features land; the manifest declaring a scope only
-// makes it grantable, never auto-granted. Keep this the superset.
-export const SLACK_MANIFEST_BOT_SCOPES = [
-  "chat:write",
-  "chat:write.public",
-  "channels:read",
-  "channels:join",
-  "channels:history",
-  "groups:read",
-  "groups:history",
-  "users:read",
-  "users:read.email",
-  "im:history",
-  "im:write",
-  "app_mentions:read",
-  "links:read",
-  "links:write",
-  "commands",
-]
+import { SLACK_BOT_SCOPES } from "./lib/slack"
 
 /** The Slack app manifest, born with everything Derive's Slack integration needs and
  *  every URL pointed at THIS instance. Single source of truth: the setup page renders
@@ -40,7 +18,7 @@ export const buildSlackManifest = (baseUrl: string, host: string) => {
   const u = (path: string): string => new URL(path, baseUrl).toString()
   return {
     display_information: {
-      name: host === "derive.to" ? "Derive" : `Derive · ${host}`,
+      name: "Derive",
       description:
         "Get Derive comments, publishes, proposals and reviews in Slack, and reply back from a thread.",
       background_color: "#1a1a2e",
@@ -67,7 +45,7 @@ export const buildSlackManifest = (baseUrl: string, host: string) => {
     },
     oauth_config: {
       redirect_urls: [u("/v1/slack/oauth/callback"), u("/v1/slack/link/callback")],
-      scopes: { user: ["openid", "email", "profile"], bot: SLACK_MANIFEST_BOT_SCOPES },
+      scopes: { user: ["openid", "email", "profile"], bot: SLACK_BOT_SCOPES },
     },
     settings: {
       event_subscriptions: {
