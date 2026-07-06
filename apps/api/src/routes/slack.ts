@@ -20,6 +20,7 @@ import type { ButtonValue } from "../lib/slack-cards"
 import { ingestSlackReply, resolveSlackMentions } from "../lib/slack-comments"
 import { enqueueSlackDm, wantsMentionDm } from "../lib/slack-dm"
 import { log } from "../log"
+import { buildSlackManifest, hostOf, slackSetupHTML } from "../slack-app-setup"
 
 /** Slack App: connect a workspace (OAuth) and receive its Events API (reply-back). The
  *  events endpoint is signature-gated (no session) — it's in the app's anon-write allow
@@ -104,6 +105,23 @@ export const slackRoutes = (ctx: AppContext) => {
     if (me instanceof Response) return me
     const state = signState({ org: await activeWorkspace(c), uid: me.id }, deps.encryptionKey)
     return c.redirect(slackAuthorizeUrl(slack.clientId, redirectUri, state))
+  })
+
+  // One-place setup for a fresh deployment: the app manifest, already pointed at this
+  // instance's URL, plus the three steps to a live app. Works BEFORE Slack creds exist
+  // (that's the point — you create the app here, then set the secrets). Admin-only,
+  // top-level nav like the GitHub App setup page.
+  app.get("/settings/slack/app/new", async (c) => {
+    if (!(await workspaceCan(c, "manage")))
+      return c.redirect("/login?return_to=/settings/slack/app/new")
+    return c.html(slackSetupHTML(deps.baseUrl))
+  })
+
+  // The same manifest as JSON, filled for this instance — the copy-paste source (and
+  // what the setup page renders). No secrets in it, but admin-gated for tidiness.
+  app.get("/v1/slack/manifest.json", async (c) => {
+    if (!(await workspaceCan(c, "manage"))) return fail(c, 403, "forbidden")
+    return c.json(buildSlackManifest(deps.baseUrl, hostOf(deps.baseUrl)))
   })
 
   // OAuth callback: exchange the code for a bot token and store the install (encrypted).

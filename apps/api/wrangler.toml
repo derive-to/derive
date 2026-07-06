@@ -163,4 +163,5 @@ custom_domain = true
 #   wrangler secret put SLACK_CLIENT_ID
 #   wrangler secret put SLACK_CLIENT_SECRET
 #   wrangler secret put SLACK_SIGNING_SECRET
-# Create the app from slack-manifest.json (repo root); see DEPLOY.md → Slack app.
+# Create the app from Settings → Integrations → Set up Slack app (the manifest,
+# pre-filled, is served at /v1/slack/manifest.json); see DEPLOY.md → Slack app.

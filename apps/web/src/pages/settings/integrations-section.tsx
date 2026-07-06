@@ -292,9 +292,16 @@ export function IntegrationsSection() {
 
       <SettingsGroup title="Slack">
         {slack && !slack.available ? (
-          <p className="py-1 text-sm text-muted-foreground">
-            Slack isn't configured on this Derive instance.
-          </p>
+          <div className="flex flex-col items-start gap-3 py-1">
+            <p className="text-sm text-muted-foreground">
+              Slack isn't configured on this Derive instance yet. Create the app from a manifest
+              (event subscriptions, buttons and the /derive command come pre-wired), add the three
+              secrets, then connect.
+            </p>
+            <Button data-testid="slack-setup" variant="default" asChild>
+              <a href="/settings/slack/app/new">Set up Slack app</a>
+            </Button>
+          </div>
         ) : slack?.connected ? (
           <div className="flex flex-col gap-4 py-1">
             <p className="text-sm">
@@ -438,6 +445,17 @@ export function IntegrationsSection() {
             <Button data-testid="slack-connect" variant="default" asChild>
               <a href="/v1/slack/install">Add to Slack</a>
             </Button>
+            <p className="text-xs text-muted-foreground">
+              Haven't created the Slack app yet?{" "}
+              <a
+                className="underline"
+                href="/settings/slack/app/new"
+                data-testid="slack-setup-link"
+              >
+                Set it up from a manifest
+              </a>
+              .
+            </p>
           </div>
         )}
       </SettingsGroup>
