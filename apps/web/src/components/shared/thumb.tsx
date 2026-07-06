@@ -1,6 +1,7 @@
 import { useState } from "react"
 import { API_BASE } from "@/api"
 import { cn } from "@/lib/utils"
+import { thumbMedia } from "./thumb-media"
 
 // A live, scaled-down render of an artifact's current version — the hero of every
 // artifact card. Sandboxed and non-interactive (clicks fall through to the
@@ -48,7 +49,7 @@ export function Thumb({
         className,
       )}
     >
-      {hasPreview && !imgFailed ? (
+      {thumbMedia(hasPreview, imgFailed) === "img" ? (
         <img
           src={`${API_BASE}/v1/og/${id}`}
           alt=""
