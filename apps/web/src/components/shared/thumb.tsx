@@ -60,7 +60,7 @@ export function Thumb({
             setLoaded(false)
           }}
           className={cn(
-            "absolute inset-0 h-full w-full object-cover transition-[opacity,filter] duration-200 group-hover:brightness-100 group-hover:saturate-100 group-focus-within:brightness-100 group-focus-within:saturate-100",
+            "absolute inset-0 h-full w-full object-cover brightness-[0.96] saturate-[0.98] transition-[opacity,filter] duration-200 group-hover:brightness-100 group-hover:saturate-100 group-focus-within:brightness-100 group-focus-within:saturate-100",
             loaded ? "opacity-100" : "opacity-0",
           )}
         />
