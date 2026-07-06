@@ -138,9 +138,10 @@ as you would; a lower-scoped one reads and proposes.
 Or drive it from the CLI:
 
 ```bash
-node packages/cli/bin/derive.js login      # OAuth sign-in
-node packages/cli/bin/derive.js publish    # share a versioned URL
-node packages/cli/bin/derive.js comments   # read the review threads, then revise and publish again
+npm i -g @derive-to/cli
+derive login       # OAuth sign-in
+derive publish     # share a versioned URL
+derive comments    # read the review threads, then revise and publish again
 ```
 
 MCP tools (five): `list_artifacts` (find), `read` (content), `catch_up` (what changed
@@ -149,10 +150,9 @@ plus the open feedback and version history), `comment` (leave/reply/resolve), an
 otherwise (or with `for_review:true`) it files a proposal a human approves. Full loop in
 [packages/mcp/SKILL.md](packages/mcp/SKILL.md).
 
-> The MCP server is on npm — connect a local agent with `npx -y @derive-to/mcp`
-> (set `DERIVE_SERVER`, and `DERIVE_TOKEN` for a static bearer). The `@derive-to/cli`
-> package isn't published yet — run the CLI from the repo (`node packages/cli/bin/derive.js`)
-> until it lands.
+> Both are on npm: `npm i -g @derive-to/cli` gives you the `derive` command, and
+> `npx -y @derive-to/mcp` connects a local agent over stdio (set `DERIVE_SERVER`,
+> and `DERIVE_TOKEN` for a static bearer).
 
 ## Embeds and unfurls
 

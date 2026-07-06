@@ -236,6 +236,21 @@ export const agentMention = sqliteTable("agent_mention", {
   created_at: text("created_at").notNull().default(now),
 })
 
+// Which workspace an OAuth client's grants act in for one user — chosen on the
+// consent screen; re-consent upserts the row. Resolution falls back to the user's
+// first workspace when absent (pre-picker grants) or when membership has lapsed.
+export const oauthClientWorkspace = sqliteTable(
+  "oauth_client_workspace",
+  {
+    id: text("id").primaryKey(),
+    user_id: text("user_id").notNull(),
+    client_id: text("client_id").notNull(),
+    org_id: text("org_id").notNull(),
+    created_at: text("created_at").notNull().default(now),
+  },
+  (t) => [uniqueIndex("oauth_client_workspace_user_client").on(t.user_id, t.client_id)],
+)
+
 // Per-user stars. One row per (artifact, user); favorites are personal, never shared.
 export const artifactFavorite = sqliteTable(
   "artifact_favorite",
@@ -592,6 +607,7 @@ const TABLES = [
   notification,
   agent,
   agentMention,
+  oauthClientWorkspace,
   artifactFavorite,
   follow,
   artifactTag,

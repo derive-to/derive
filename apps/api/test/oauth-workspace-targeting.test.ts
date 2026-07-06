@@ -5,13 +5,12 @@ import Database from "better-sqlite3"
 import { describe, expect, it } from "vitest"
 import { createApp } from "../src/app"
 import { sha256 } from "../src/lib/crypto"
-import { dir, pub } from "./helpers"
+import { dir, pub, quotaApp } from "./helpers"
 
-// An OAuth agent acts in its granting user's FIRST workspace by default
-// (oauthWorkspace picks mine[0]) — which made it impossible to publish into any
-// other workspace the user belongs to. X-Derive-Workspace overrides the target,
-// validated against the OWNER's membership and fail-closed. Found while
-// publishing the /derive plan into the wrong workspace with no way to move it.
+// Where an OAuth agent acts, in precedence order: the X-Derive-Workspace header
+// (per-request), the consent screen's (user, client) binding, then the granting
+// user's first workspace. Every step is validated against the OWNER's membership
+// and fails closed to the next.
 describe.skipIf(process.env.DERIVE_TEST_DB === "pg")("OAuth agent workspace targeting", () => {
   // One OAuth grant (tok_ws → u_owner) and TWO workspaces the owner belongs to:
   // ws_one (older, the grant's default) and ws_two (the intended target).
@@ -111,5 +110,95 @@ describe.skipIf(process.env.DERIVE_TEST_DB === "pg")("OAuth agent workspace targ
     expect(res.status).toBe(200)
     const body = (await res.json()) as { workspaces: { id: string; name: string }[] }
     expect(body.workspaces.map((w) => w.id)).toEqual(["ws_one", "ws_two"])
+  })
+
+  // ---- Consent-time workspace binding (the consent screen's picker) ----------
+
+  it("a consent-time binding re-points the grant's default workspace", async () => {
+    const { app, meta } = twoWorkspaceApp("ws-bind-default")
+    await meta.setOAuthClientWorkspace("u_owner", "cli", "ws_two")
+    const res = await pub(app, "<h1>plan</h1>", { title: "Plan" }, undefined, bearer)
+    expect(res.status).toBe(201)
+    const { short_id } = (await res.json()) as { short_id: string }
+    expect((await meta.getByShortId(short_id))?.org_id).toBe("ws_two")
+  })
+
+  it("a binding to a workspace the owner has left falls back to the first", async () => {
+    const { app, meta } = twoWorkspaceApp("ws-bind-stale")
+    await meta.setOAuthClientWorkspace("u_owner", "cli", "ws_gone")
+    const res = await pub(app, "<h1>plan</h1>", { title: "Plan" }, undefined, bearer)
+    expect(res.status).toBe(201)
+    const { short_id } = (await res.json()) as { short_id: string }
+    expect((await meta.getByShortId(short_id))?.org_id).toBe("ws_one")
+  })
+
+  it("X-Derive-Workspace still overrides a consent-time binding", async () => {
+    const { app, meta } = twoWorkspaceApp("ws-bind-header")
+    await meta.setOAuthClientWorkspace("u_owner", "cli", "ws_two")
+    const res = await pub(app, "<h1>plan</h1>", { title: "Plan" }, undefined, {
+      ...bearer,
+      "x-derive-workspace": "ws_one",
+    })
+    expect(res.status).toBe(201)
+    const { short_id } = (await res.json()) as { short_id: string }
+    expect((await meta.getByShortId(short_id))?.org_id).toBe("ws_one")
+  })
+
+  it("re-consent re-points the binding (upsert on user+client)", async () => {
+    const { meta } = twoWorkspaceApp("ws-bind-upsert")
+    await meta.setOAuthClientWorkspace("u_owner", "cli", "ws_one")
+    await meta.setOAuthClientWorkspace("u_owner", "cli", "ws_two")
+    expect(await meta.getOAuthClientWorkspace("u_owner", "cli")).toBe("ws_two")
+  })
+
+  // ---- POST /oauth/consent/workspace (the picker's persistence endpoint) ----
+
+  it("the binding endpoint requires same-origin, a session, and membership", async () => {
+    const amy = { id: "u_amy", email: "amy@x.test", name: "Amy" }
+    const { app, meta } = quotaApp(
+      "ws-bind-endpoint",
+      {},
+      [amy],
+      [{ user_id: "u_amy", role: "editor" }],
+    )
+    const sameOrigin = { origin: "http://localhost" } // hono's app.request base
+    const post = (headers: Record<string, string>, orgId: string) =>
+      app.request("/oauth/consent/workspace", {
+        method: "POST",
+        headers: { "content-type": "application/json", ...headers },
+        body: JSON.stringify({ client_id: "cli", org_id: orgId }),
+      })
+    const asAmy = { ...sameOrigin, "x-test-user": "amy@x.test" }
+
+    // Cross-site posts carry a foreign Origin (or none, from a text/plain form):
+    // both refused even with a live session, since SameSite=None deployments
+    // would otherwise let a hostile page rebind a victim's client.
+    expect((await post({ "x-test-user": "amy@x.test" }, "default")).status).toBe(403)
+    const evil = { ...asAmy, origin: "https://evil.example" }
+    expect((await post(evil, "default")).status).toBe(403)
+
+    expect((await post(sameOrigin, "default")).status).toBe(401) // no session
+    expect((await post(asAmy, "ws_foreign")).status).toBe(403) // not a member
+    expect(await meta.getOAuthClientWorkspace("u_amy", "cli")).toBeNull()
+
+    expect((await post(asAmy, "default")).status).toBe(200)
+    expect(await meta.getOAuthClientWorkspace("u_amy", "cli")).toBe("default")
+  })
+
+  it("the consent screen preselects an existing binding over the active workspace", async () => {
+    const amy = { id: "u_amy", email: "amy@x.test", name: "Amy" }
+    const { app, meta } = quotaApp(
+      "ws-bind-preselect",
+      {},
+      [amy],
+      [{ user_id: "u_amy", role: "editor" }],
+    )
+    await meta.setOAuthClientWorkspace("u_amy", "cli", "default")
+    const res = await app.request("/oauth/consent?client_id=cli&scope=openid", {
+      headers: { "x-test-user": "amy@x.test" },
+    })
+    expect(res.status).toBe(200)
+    const page = await res.text()
+    expect(page).toContain('value="default" selected')
   })
 })

@@ -588,6 +588,11 @@ export interface MetaStore {
   getOAuthGrant(tokenHash: string): Promise<OAuthGrant | null>
   /** The display name of a registered OAuth client (for the consent screen). */
   getOAuthClientName(clientId: string): Promise<string | null>
+  /** Bind the workspace this user's grants to an OAuth client act in (the consent
+   *  screen's workspace picker). Upserts on (user, client): re-consent re-points. */
+  setOAuthClientWorkspace(userId: string, clientId: string, orgId: string): Promise<void>
+  /** The workspace a user bound an OAuth client to, or null (pre-picker grants). */
+  getOAuthClientWorkspace(userId: string, clientId: string): Promise<string | null>
   deleteAgent(id: string, orgId: string): Promise<void>
   /** Queue a mention into an agent's pull inbox. */
   createAgentMention(m: NewAgentMention): Promise<void>

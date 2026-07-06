@@ -112,6 +112,7 @@ import {
   githubInstallation,
   membership,
   notification,
+  oauthClientWorkspace,
   orgSettings,
   PG_SCHEMA_STATEMENTS,
   proposal,
@@ -153,6 +154,7 @@ export const schema = {
   reviewRound,
   agent,
   agentMention,
+  oauthClientWorkspace,
   context,
   contextSession,
   sessionMessage,
@@ -1840,6 +1842,24 @@ export class PgMetaStore implements MetaStore {
       return null
     }
   }
+  async setOAuthClientWorkspace(userId: string, clientId: string, orgId: string): Promise<void> {
+    await this.db
+      .insert(oauthClientWorkspace)
+      .values({ id: crypto.randomUUID(), user_id: userId, client_id: clientId, org_id: orgId })
+      .onConflictDoUpdate({
+        target: [oauthClientWorkspace.user_id, oauthClientWorkspace.client_id],
+        set: { org_id: orgId },
+      })
+  }
+  async getOAuthClientWorkspace(userId: string, clientId: string): Promise<string | null> {
+    const rows = await this.db
+      .select({ org_id: oauthClientWorkspace.org_id })
+      .from(oauthClientWorkspace)
+      .where(
+        and(eq(oauthClientWorkspace.user_id, userId), eq(oauthClientWorkspace.client_id, clientId)),
+      )
+    return rows[0]?.org_id ?? null
+  }
   async pruneStaleOAuthClients(cutoffIso: string): Promise<number> {
     try {
       const res = await this.pool.query(
@@ -1847,6 +1867,12 @@ export class PgMetaStore implements MetaStore {
            AND "clientId" NOT IN (SELECT "clientId" FROM "oauthConsent")
            AND "clientId" NOT IN (SELECT "clientId" FROM "oauthAccessToken")`,
         [cutoffIso],
+      )
+      // Workspace bindings for clients that no longer exist (pruned above, or
+      // any earlier sweep) have nothing left to resolve against — sweep them too.
+      await this.pool.query(
+        `DELETE FROM oauth_client_workspace
+          WHERE client_id NOT IN (SELECT "clientId" FROM "oauthClient")`,
       )
       return res.rowCount ?? 0
     } catch {

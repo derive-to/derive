@@ -1,13 +1,17 @@
-import type { AgentRecord, MetaStore, Role } from "@derive/core"
+import { type AgentRecord, capRole, type MetaStore, type Role } from "@derive/core"
 import { createLocalJWKSet, type JWTPayload, jwtVerify } from "jose"
 import type { Auth } from "../auth-config"
 import { sha256 } from "./crypto"
 
 /** What a valid OAuth access token resolves to: the synthetic agent record (a workspace
- *  principal) plus the id of the user who granted the consent. */
+ *  principal) plus the id of the user who granted the consent. `rec.role` is already
+ *  capped by the owner's membership role in `rec.org_id`; `scopeRole` keeps the uncapped
+ *  scope-derived role so an X-Derive-Workspace re-home can re-cap against the TARGET
+ *  workspace's membership instead of compounding caps. */
 export interface OauthAgentResolution {
   rec: AgentRecord
   ownerId: string
+  scopeRole: Role
 }
 
 interface OauthAgentDeps {
@@ -34,15 +38,27 @@ export function makeOauthAgent({ meta, auth, baseUrl, provisionPersonal }: Oauth
         ? "commenter"
         : "viewer"
 
-  // The agent runs in the granting user's workspace, provisioned on first touch
-  // exactly as the user's own first request would (multi mode, lazy).
+  // The workspace the agent runs in, and the owner's membership role there (the
+  // cap on the scope-derived role). Precedence: the workspace the user picked on
+  // the consent screen — keyed (user, client), honored only while they're still a
+  // member — then the first workspace (pre-picker grants), then a personal
+  // workspace provisioned on first touch exactly as the user's own first request
+  // would (multi mode, lazy; the user owns it).
   const oauthWorkspace = async (
     userId: string,
+    clientId: string,
     email: string | null,
     name: string | null,
-  ): Promise<string> => {
-    const mine = await meta.listWorkspaces(userId)
-    return mine[0]?.id ?? (await provisionPersonal({ id: userId, email: email ?? "", name }))
+  ): Promise<{ org: string; memberRole: Role }> => {
+    const [mine, bound] = await Promise.all([
+      meta.listWorkspaces(userId),
+      clientId ? meta.getOAuthClientWorkspace(userId, clientId) : null,
+    ])
+    const target = bound ? mine.find((w) => w.id === bound) : undefined
+    if (target) return { org: target.id, memberRole: target.role }
+    if (mine[0]) return { org: mine[0].id, memberRole: mine[0].role }
+    const org = await provisionPersonal({ id: userId, email: email ?? "", name })
+    return { org, memberRole: "owner" }
   }
 
   // Our own JWKS (served by the jwt plugin at /api/auth/jwks), read straight from
@@ -66,15 +82,20 @@ export function makeOauthAgent({ meta, auth, baseUrl, provisionPersonal }: Oauth
     const grant = await meta.getOAuthGrant(sha256(token))
     if (grant) {
       if (grant.expiresAt.getTime() <= Date.now()) return null
-      const org = await oauthWorkspace(grant.userId, grant.userEmail, grant.userName)
+      const ws = await oauthWorkspace(grant.userId, grant.clientId, grant.userEmail, grant.userName)
+      const scopeRole = roleFromScopes(grant.scopes)
       return {
         ownerId: grant.userId,
+        scopeRole,
         rec: {
           id: `oauth:${grant.clientId}`,
-          org_id: org,
+          org_id: ws.org,
           name: grant.clientName,
           token: "",
-          role: roleFromScopes(grant.scopes),
+          // Scopes propose the role; the owner's membership in the resolved
+          // workspace is the ceiling (a publish scope is not an editorship in a
+          // workspace where the granting user is only a viewer).
+          role: capRole(scopeRole, ws.memberRole),
           created_by: grant.userId,
           created_at: new Date().toISOString(),
         },
@@ -115,15 +136,17 @@ export function makeOauthAgent({ meta, auth, baseUrl, provisionPersonal }: Oauth
       .filter(Boolean)
     const clientId = String(claims.azp ?? claims.client_id ?? "")
     const u = (await meta.getUsers([userId]))[0]
-    const org = await oauthWorkspace(userId, u?.email ?? null, u?.name ?? null)
+    const ws = await oauthWorkspace(userId, clientId, u?.email ?? null, u?.name ?? null)
+    const scopeRole = roleFromScopes(scopes)
     return {
       ownerId: userId,
+      scopeRole,
       rec: {
         id: `oauth:${clientId}`,
-        org_id: org,
+        org_id: ws.org,
         name: (await meta.getOAuthClientName(clientId)) || clientId || "An agent",
         token: "",
-        role: roleFromScopes(scopes),
+        role: capRole(scopeRole, ws.memberRole),
         created_by: userId,
         created_at: new Date().toISOString(),
       },
