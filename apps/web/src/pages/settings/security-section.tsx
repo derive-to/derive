@@ -1,4 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
+import { useNavigate } from "@tanstack/react-router"
 import { useEffect, useState } from "react"
 import { ApiError, type AuthCapabilities, api } from "@/api"
 import { EmptyState } from "@/components/shared/empty-state"
@@ -54,7 +55,100 @@ export function SecuritySection() {
       {caps?.passkey && <Passkeys />}
       <TwoFactor />
       <Sessions />
+      <DeleteAccount />
     </SettingsSection>
+  )
+}
+
+// Danger zone — permanently delete the account. Gated by the current password + a typed
+// confirmation; the server blocks it if the user is the sole owner of a shared workspace.
+function DeleteAccount() {
+  const { setMe } = useAuth()
+  const nav = useNavigate()
+  const [open, setOpen] = useState(false)
+  const [password, setPassword] = useState("")
+  const [confirm, setConfirm] = useState("")
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState("")
+
+  const submit = async () => {
+    setErr("")
+    setBusy(true)
+    try {
+      const res = await authClient.deleteUser({ password })
+      if (res?.error) throw new Error(res.error.message ?? "Could not delete your account.")
+      setMe(null)
+      nav({ to: "/login" })
+    } catch (e) {
+      setErr((e as Error).message)
+      setBusy(false)
+    }
+  }
+
+  return (
+    <SettingsGroup>
+      <SettingRow
+        label={<span className="font-medium text-destructive">Delete account</span>}
+        description="Permanently delete your account and remove you from every workspace. This can't be undone."
+      >
+        <Dialog open={open} onOpenChange={setOpen}>
+          <DialogTrigger asChild>
+            <Button variant="destructive-ghost" size="sm" data-testid="delete-account">
+              Delete account
+            </Button>
+          </DialogTrigger>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Delete your account</DialogTitle>
+              <DialogDescription>
+                This permanently deletes your account, sessions, and passkeys, and removes you from
+                every workspace. Artifacts you authored in shared workspaces stay, but are
+                anonymized. This can't be undone.
+              </DialogDescription>
+            </DialogHeader>
+            <form
+              className="flex flex-col gap-4"
+              onSubmit={(e) => {
+                e.preventDefault()
+                submit()
+              }}
+            >
+              {err && <StatusPanel tone="danger" layout="inline" title={err} />}
+              <FormField label="Password" htmlFor="del-password">
+                <Input
+                  id="del-password"
+                  data-testid="delete-password"
+                  type="password"
+                  autoComplete="current-password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                />
+              </FormField>
+              <FormField label={'Type "delete" to confirm'} htmlFor="del-confirm">
+                <Input
+                  id="del-confirm"
+                  data-testid="delete-confirm"
+                  value={confirm}
+                  onChange={(e) => setConfirm(e.target.value)}
+                  placeholder="delete"
+                />
+              </FormField>
+              <DialogFooter>
+                <Button
+                  type="submit"
+                  variant="destructive"
+                  loading={busy}
+                  disabled={!password || confirm.trim().toLowerCase() !== "delete"}
+                  data-testid="delete-confirm-btn"
+                >
+                  {busy ? "Deleting…" : "Delete my account"}
+                </Button>
+              </DialogFooter>
+            </form>
+          </DialogContent>
+        </Dialog>
+      </SettingRow>
+    </SettingsGroup>
   )
 }
 

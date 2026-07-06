@@ -11,6 +11,7 @@ import { Pool } from "pg"
 import { createApp } from "./app"
 import { type AuthDb, makeAuth, migrateAuth } from "./auth-config"
 import { loadConfig, resolveAuthSecret, resolveDefaultOrg } from "./config"
+import { workspacesBlockingDeletion } from "./lib/account"
 import { customDomainsFromEnv } from "./lib/cloudflare-saas"
 import { buildAuthEmail, emailDeliverySender, logEmailSender, resendEmailSender } from "./lib/email"
 import { makeGithubCommentSender } from "./lib/github-comments"
@@ -86,6 +87,14 @@ const auth = makeAuth(authDb, cfg.baseUrl, authSecret, {
   // same retrying outbox as notifications; the configured sender transports them.
   sendAuthEmail: (kind, input) =>
     enqueueChannelDelivery(meta, "email", `auth.${kind}`, buildAuthEmail(kind, input)),
+  // Account deletion: block if they'd orphan a shared workspace, else purge domain data.
+  blockUserDeletion: async (userId) => {
+    const blocking = await workspacesBlockingDeletion(meta, userId)
+    return blocking.length
+      ? `Transfer ownership or remove the other members of ${blocking.join(", ")} before deleting your account.`
+      : null
+  },
+  purgeUserData: (userId) => meta.deleteUserData(userId),
 })
 await migrateAuth(auth)
 

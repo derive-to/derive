@@ -530,6 +530,13 @@ export interface MetaStore {
   /** Mark first-run onboarding finished/skipped (onboarded column). Server-authoritative,
    *  so the /welcome gate syncs across devices instead of trusting per-browser storage. */
   setUserOnboarded(userId: string, onboarded: boolean): Promise<void>
+  /** Purge a user's Derive-domain data on account deletion: remove their association rows
+   *  (memberships, artifact/collection members, follows, favorites, notifications), ANONYMIZE
+   *  their authorship (author_id → null on artifacts/versions/comments/proposals, so others'
+   *  threads survive), null their created_by/invited_by references, and drop their personal
+   *  workspace row. Better Auth removes the account itself + its sessions/passkeys/2FA. Does
+   *  NOT hard-delete artifacts/blobs — content is anonymized + orphaned (a GC concern). */
+  deleteUserData(userId: string): Promise<void>
   /** Set a user's team role + "what you do" blurb (profession/about columns). An
    *  undefined field is left untouched; null clears it. */
   setUserProfile(

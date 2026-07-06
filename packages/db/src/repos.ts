@@ -1679,6 +1679,33 @@ export function makeRepos(db: SqliteDb) {
       .where(eq(invitation.id, id))
       .run()
   }
+
+  // ---- Account deletion cascade (see MetaStore.deleteUserData) ------------
+  const deleteUserData = async (userId: string): Promise<void> => {
+    // The user's own association rows go entirely.
+    await db.delete(membership).where(eq(membership.user_id, userId)).run()
+    await db.delete(artifactMember).where(eq(artifactMember.user_id, userId)).run()
+    await db.delete(collectionMember).where(eq(collectionMember.user_id, userId)).run()
+    await db.delete(follow).where(eq(follow.user_id, userId)).run()
+    await db.delete(artifactFavorite).where(eq(artifactFavorite.user_id, userId)).run()
+    await db.delete(notification).where(eq(notification.user_id, userId)).run()
+    // Authorship is anonymized (nullable), so others' artifacts/threads survive intact.
+    await db.update(artifact).set({ author_id: null }).where(eq(artifact.author_id, userId)).run()
+    await db.update(version).set({ author_id: null }).where(eq(version.author_id, userId)).run()
+    await db.update(comment).set({ author_id: null }).where(eq(comment.author_id, userId)).run()
+    await db.update(proposal).set({ author_id: null }).where(eq(proposal.author_id, userId)).run()
+    await db.update(agent).set({ created_by: null }).where(eq(agent.created_by, userId)).run()
+    await db
+      .update(invitation)
+      .set({ invited_by: null })
+      .where(eq(invitation.invited_by, userId))
+      .run()
+    // Drop the personal workspace row (removes the "<name>'s Workspace" label).
+    await db
+      .delete(workspace)
+      .where(eq(workspace.id, `ws_p_${userId}`))
+      .run()
+  }
   const listPendingAgentMentions = async (
     agentId: string,
     limit: number,
@@ -1941,6 +1968,7 @@ export function makeRepos(db: SqliteDb) {
     deletePendingInvitationsFor,
     deleteInvitation,
     markInvitationAccepted,
+    deleteUserData,
     createReport,
     getReport,
     listReports,

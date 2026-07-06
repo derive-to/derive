@@ -1780,6 +1780,25 @@ export class PgMetaStore implements MetaStore {
       .set({ accepted_at: new Date().toISOString() })
       .where(eq(invitation.id, id))
   }
+  // ---- Account deletion cascade (see MetaStore.deleteUserData) ------------
+  async deleteUserData(userId: string): Promise<void> {
+    await this.db.delete(membership).where(eq(membership.user_id, userId))
+    await this.db.delete(artifactMember).where(eq(artifactMember.user_id, userId))
+    await this.db.delete(collectionMember).where(eq(collectionMember.user_id, userId))
+    await this.db.delete(follow).where(eq(follow.user_id, userId))
+    await this.db.delete(artifactFavorite).where(eq(artifactFavorite.user_id, userId))
+    await this.db.delete(notification).where(eq(notification.user_id, userId))
+    await this.db.update(artifact).set({ author_id: null }).where(eq(artifact.author_id, userId))
+    await this.db.update(version).set({ author_id: null }).where(eq(version.author_id, userId))
+    await this.db.update(comment).set({ author_id: null }).where(eq(comment.author_id, userId))
+    await this.db.update(proposal).set({ author_id: null }).where(eq(proposal.author_id, userId))
+    await this.db.update(agent).set({ created_by: null }).where(eq(agent.created_by, userId))
+    await this.db
+      .update(invitation)
+      .set({ invited_by: null })
+      .where(eq(invitation.invited_by, userId))
+    await this.db.delete(workspace).where(eq(workspace.id, `ws_p_${userId}`))
+  }
   listPendingAgentMentions(agentId: string, limit: number): Promise<AgentMentionRecord[]> {
     return this.db
       .select()

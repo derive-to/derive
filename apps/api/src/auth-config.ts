@@ -105,6 +105,13 @@ export interface AuthHooks {
     kind: "reset" | "verify" | "change_email",
     input: { to: string; name: string | null; url: string },
   ) => void | Promise<void>
+  /** Account-deletion guard: return a human reason to BLOCK deletion (e.g. the user is the
+   *  sole owner of a shared workspace), or null to allow. Runs before Better Auth removes
+   *  the account. */
+  blockUserDeletion?: (userId: string) => Promise<string | null>
+  /** Purge the user's Derive-domain data AFTER Better Auth deletes the account (the
+   *  deleteUserData cascade). Unset (tests) ⇒ no cascade. */
+  purgeUserData?: (userId: string) => Promise<void>
 }
 
 export function makeAuth(db: AuthDb, baseUrl: string, secret: string, hooks: AuthHooks = {}) {
@@ -286,6 +293,21 @@ export function makeAuth(db: AuthDb, baseUrl: string, secret: string, hooks: Aut
       },
     },
     user: {
+      // Let a signed-in user delete their account. beforeDelete guards it (blocks when
+      // they're the sole owner of a shared workspace); Better Auth then removes the account
+      // + its sessions/accounts/passkeys/2FA, and afterDelete purges the Derive-domain data
+      // (anonymize authorship, drop the personal workspace). No verification email is
+      // configured, so the delete is immediate and gated by the client's password prompt.
+      deleteUser: {
+        enabled: true,
+        beforeDelete: async (user: { id: string }) => {
+          const reason = await hooks.blockUserDeletion?.(user.id)
+          if (reason) throw new APIError("BAD_REQUEST", { message: reason })
+        },
+        afterDelete: async (user: { id: string }) => {
+          await hooks.purgeUserData?.(user.id)
+        },
+      },
       // Let a signed-in user change their account email, confirming the NEW address via a
       // verification link (rendered + enqueued through the outbox, like reset/verify).
       changeEmail: {

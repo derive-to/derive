@@ -19,6 +19,7 @@ import { type AuthDb, makeAuth } from "./auth-config"
 import { authSchema } from "./auth-schema"
 import { hyperdriveConn, livePgPool, requestPg } from "./edge-pg"
 import type { SendEmailBinding } from "./email-cf"
+import { workspacesBlockingDeletion } from "./lib/account"
 import { customDomainsFromEnv } from "./lib/cloudflare-saas"
 import { buildAuthEmail } from "./lib/email"
 import { slackFromEnv, subdomainBaseFromEnv, superAdminsFromEnv } from "./lib/env"
@@ -165,6 +166,13 @@ const handle = (req: Request, env: Env, ctx: ExecutionContext): Response | Promi
         // with the Cloudflare Email sender (env.SEND_EMAIL). See webhook-do.ts.
         sendAuthEmail: (kind, input) =>
           enqueueChannelDelivery(meta, "email", `auth.${kind}`, buildAuthEmail(kind, input)),
+        blockUserDeletion: async (userId) => {
+          const blocking = await workspacesBlockingDeletion(meta, userId)
+          return blocking.length
+            ? `Transfer ownership or remove the other members of ${blocking.join(", ")} before deleting your account.`
+            : null
+        },
+        purgeUserData: (userId) => meta.deleteUserData(userId),
       })
       app = createApp({
         meta,
