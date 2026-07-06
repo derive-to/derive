@@ -110,7 +110,6 @@ export const oauthRoutes = (ctx: AppContext) => {
       passkey: resolvePasskey({
         baseUrl: ctx.deps.baseUrl,
         webOrigins: [...ctx.allowOrigins],
-        crossSite: !!ctx.deps.crossSite,
       }).enabled,
     })
   })

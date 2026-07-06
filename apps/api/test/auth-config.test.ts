@@ -85,7 +85,6 @@ describe("resolvePasskey — WebAuthn rpID/origin resolution", () => {
     const r = resolvePasskey({
       baseUrl: "https://derive.example",
       webOrigins: [],
-      crossSite: false,
     })
     expect(r.enabled).toBe(true)
     expect(r.rpID).toBeUndefined() // let SimpleWebAuthn derive it from the origin
@@ -96,7 +95,6 @@ describe("resolvePasskey — WebAuthn rpID/origin resolution", () => {
     const r = resolvePasskey({
       baseUrl: "http://localhost:8787",
       webOrigins: ["http://localhost:3090"],
-      crossSite: false,
     })
     expect(r.enabled).toBe(true)
     expect(r.rpID).toBeUndefined()
@@ -107,7 +105,6 @@ describe("resolvePasskey — WebAuthn rpID/origin resolution", () => {
     const r = resolvePasskey({
       baseUrl: "https://api.derive.to",
       webOrigins: ["https://app.derive.to"],
-      crossSite: true,
     })
     expect(r.enabled).toBe(true)
     expect(r.rpID).toBe("derive.to")
@@ -118,7 +115,6 @@ describe("resolvePasskey — WebAuthn rpID/origin resolution", () => {
     const r = resolvePasskey({
       baseUrl: "https://api.derive.to",
       webOrigins: ["https://app.example.com"],
-      crossSite: true,
     })
     expect(r.enabled).toBe(false)
   })
@@ -128,7 +124,6 @@ describe("resolvePasskey — WebAuthn rpID/origin resolution", () => {
     const r = resolvePasskey({
       baseUrl: "https://api.derive.io",
       webOrigins: ["https://app.derive.io"],
-      crossSite: true,
     })
     expect(r.enabled).toBe(true)
     expect(r.rpID).toBe("derive.io")

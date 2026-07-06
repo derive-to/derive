@@ -50,11 +50,7 @@ const commonParent = (hosts: string[]): string | null => {
   }
   return n >= 2 ? first.slice(0, n).reverse().join(".") : null
 }
-export function resolvePasskey(opts: {
-  baseUrl: string
-  webOrigins: string[]
-  crossSite: boolean
-}): PasskeyConfig {
+export function resolvePasskey(opts: { baseUrl: string; webOrigins: string[] }): PasskeyConfig {
   const apiHost = hostOf(opts.baseUrl)
   const origin = [...new Set([opts.baseUrl, ...opts.webOrigins].map(originOf))]
   const override = process.env.DERIVE_PASSKEY_RPID
@@ -210,7 +206,7 @@ export function makeAuth(db: AuthDb, baseUrl: string, secret: string, hooks: Aut
   // Passkeys (WebAuthn): on wherever the rpID/origin can be resolved (always for a
   // single-origin self-host; for the hosted split only when the SPA + API share a
   // registrable parent). See resolvePasskey.
-  const passkeyCfg = resolvePasskey({ baseUrl, webOrigins, crossSite })
+  const passkeyCfg = resolvePasskey({ baseUrl, webOrigins })
 
   // Reject known-breached passwords on the password-setting endpoints (sign-up, reset,
   // change/set) via a before-hook — the public middleware API, so it doesn't couple to

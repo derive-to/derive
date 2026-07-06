@@ -533,9 +533,16 @@ export interface MetaStore {
   /** Purge a user's Derive-domain data on account deletion: remove their association rows
    *  (memberships, artifact/collection members, follows, favorites, notifications), ANONYMIZE
    *  their authorship (author_id → null on artifacts/versions/comments/proposals, so others'
-   *  threads survive), null their created_by/invited_by references, and drop their personal
-   *  workspace row. Better Auth removes the account itself + its sessions/passkeys/2FA. Does
-   *  NOT hard-delete artifacts/blobs — content is anonymized + orphaned (a GC concern). */
+   *  threads survive), null the nullable back-references keyed to them (agent.created_by,
+   *  invitation.invited_by), and drop their personal workspace row. Better Auth removes the
+   *  account itself + its sessions/passkeys/2FA.
+   *
+   *  NOT hard-deleted: artifact/collection content is anonymized + orphaned (a GC concern),
+   *  and NON-nullable historical metadata that merely records a past action (a proposal's
+   *  decided_by, a review round's requester, an audit-log actor, a repo/collection creator)
+   *  keeps the raw id. That id is safe: once Better Auth removes the user row it resolves to
+   *  nothing (getUsers → []), so it's an unresolvable tombstone, not recoverable identity —
+   *  the same shape as an orphaned git author. */
   deleteUserData(userId: string): Promise<void>
   /** Set a user's team role + "what you do" blurb (profession/about columns). An
    *  undefined field is left untouched; null clears it. */

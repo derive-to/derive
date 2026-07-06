@@ -120,7 +120,7 @@ export const proposalRoutes = (ctx: AppContext) => {
     // (the granting/registering user). For a direct human proposal the acting id equals the
     // owner, so there's no delegation to record (stays null).
     const owner = await privateOwnerId(c)
-    const onBehalfOf = acting && owner && owner !== acting.id ? owner : null
+    const onBehalfOfId = acting && owner && owner !== acting.id ? owner : null
     try {
       const { proposal } = await propose(meta, blobs, artifact.short_id, {
         bytes,
@@ -130,7 +130,7 @@ export const proposalRoutes = (ctx: AppContext) => {
         message: str(body.message),
         author,
         author_id: acting?.id ?? null,
-        on_behalf_of: onBehalfOf,
+        on_behalf_of: onBehalfOfId,
       })
       bus.publish(artifact.id, { type: "proposal.created", proposal_id: proposal.id })
       // Threads this revision claims to fix flip to `addressed` (pending review),

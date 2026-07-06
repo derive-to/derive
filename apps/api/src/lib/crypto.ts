@@ -125,9 +125,11 @@ export const isBreachedPassword = async (password: string): Promise<boolean> => 
     if (!res.ok) return false // fail open on a non-200
     const body = await res.text()
     // Each line is "SUFFIX:count"; a padded (synthetic) entry has count 0 — ignore those.
+    // A real hit has count > 0; `Number(count) > 0` also rejects a malformed/missing count
+    // (NaN > 0 is false), so a garbled line can never be read as a breach.
     return body.split("\n").some((line) => {
       const [suf, count] = line.trim().split(":")
-      return suf?.toUpperCase() === suffix && count !== "0"
+      return suf?.toUpperCase() === suffix && Number(count) > 0
     })
   } catch {
     return false // network error / timeout / air-gap — allow (fail open)
