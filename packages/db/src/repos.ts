@@ -10,6 +10,7 @@ import type {
   CommentRecord,
   CommentSignals,
   CommentState,
+  ContextRecord,
   DeliveryRecord,
   DeliveryStatus,
   DomainRecord,
@@ -30,6 +31,7 @@ import type {
   NewCollection,
   NewCollectionMember,
   NewComment,
+  NewContext,
   NewDelivery,
   NewDomain,
   NewFollow,
@@ -39,6 +41,8 @@ import type {
   NewReport,
   NewRepoSource,
   NewReviewRound,
+  NewSession,
+  NewSessionMessage,
   NewVersion,
   NewWebhook,
   NotificationRecord,
@@ -52,6 +56,9 @@ import type {
   ReviewRoundRecord,
   ReviewRoundState,
   Role,
+  SessionMessageRecord,
+  SessionRecord,
+  SessionState,
   SlackInstallRecord,
   SlackThreadLinkRecord,
   TakedownInput,
@@ -95,6 +102,8 @@ import {
   collectionItem,
   collectionMember,
   comment,
+  context,
+  contextSession,
   domain,
   follow,
   githubApp,
@@ -106,6 +115,7 @@ import {
   report,
   repoSource,
   reviewRound,
+  sessionMessage,
   slackInstall,
   slackThreadLink,
   version,
@@ -170,6 +180,9 @@ export const schema = {
   reviewRound,
   agent,
   agentMention,
+  context,
+  contextSession,
+  sessionMessage,
   collection,
   collectionItem,
   collectionMember,
@@ -200,6 +213,9 @@ const _schemaShapes: Shapes<typeof schema> = {
   reviewRound: true,
   agent: true,
   agentMention: true,
+  context: true,
+  contextSession: true,
+  sessionMessage: true,
   collection: true,
   collectionMember: true,
   repoSource: true,
@@ -1518,6 +1534,108 @@ export function makeRepos(db: SqliteDb) {
       .returning()
       .get()) ?? null
 
+  // ---- Contexts + sessions -------------------------------------------------
+  const createContext = async (x: NewContext): Promise<ContextRecord> =>
+    (await db.insert(context).values(x).returning().get()) as ContextRecord
+  const getContext = async (id: string): Promise<ContextRecord | null> =>
+    (await db.select().from(context).where(eq(context.id, id)).get()) ?? null
+  const listContexts = async (orgId: string): Promise<ContextRecord[]> =>
+    db
+      .select()
+      .from(context)
+      .where(eq(context.org_id, orgId))
+      .orderBy(desc(context.created_at))
+      .all()
+  // Sequential cascade (messages → sessions → context), like deleteCollection.
+  // The org scope gates the WHOLE cascade, not just the context row — otherwise a
+  // wrong-workspace call would wipe another tenant's sessions and leave the context.
+  const deleteContext = async (id: string, orgId: string): Promise<void> => {
+    const owned = await db
+      .select({ id: context.id })
+      .from(context)
+      .where(and(eq(context.id, id), eq(context.org_id, orgId)))
+      .get()
+    if (!owned) return
+    // Subqueries, never materialized id lists: a long-lived context accumulates
+    // one session per ask, and an expanded IN (...) would blow D1's
+    // 100-bound-parameter cap (the same constraint listArtifacts documents).
+    await db
+      .delete(sessionMessage)
+      .where(
+        inArray(
+          sessionMessage.session_id,
+          db
+            .select({ id: contextSession.id })
+            .from(contextSession)
+            .where(eq(contextSession.context_id, id)),
+        ),
+      )
+      .run()
+    await db.delete(contextSession).where(eq(contextSession.context_id, id)).run()
+    await db.delete(context).where(eq(context.id, id)).run()
+  }
+  const createSession = async (s: NewSession): Promise<SessionRecord> =>
+    (await db.insert(contextSession).values(s).returning().get()) as SessionRecord
+  const getSession = async (id: string): Promise<SessionRecord | null> =>
+    (await db.select().from(contextSession).where(eq(contextSession.id, id)).get()) ?? null
+  const listSessions = async (
+    contextId: string,
+    opts?: { askerId?: string; limit?: number },
+  ): Promise<SessionRecord[]> => {
+    const where = opts?.askerId
+      ? and(eq(contextSession.context_id, contextId), eq(contextSession.asker_id, opts.askerId))
+      : eq(contextSession.context_id, contextId)
+    return db
+      .select()
+      .from(contextSession)
+      .where(where)
+      .orderBy(desc(contextSession.created_at))
+      .limit(opts?.limit ?? 50)
+      .all()
+  }
+  const pendingSessions = async (contextId: string, limit: number): Promise<SessionRecord[]> =>
+    db
+      .select()
+      .from(contextSession)
+      .where(and(eq(contextSession.context_id, contextId), eq(contextSession.state, "open")))
+      .orderBy(asc(contextSession.created_at))
+      .limit(limit)
+      .all()
+  const setSessionState = async (id: string, state: SessionState): Promise<SessionRecord | null> =>
+    (await db
+      .update(contextSession)
+      .set({ state, updated_at: new Date().toISOString() })
+      .where(eq(contextSession.id, id))
+      .returning()
+      .get()) ?? null
+  // Two writes, no transaction (the createReviewRound pattern; D1 has no txn in
+  // this driver). A crash between them leaves state stale: an unsettled agent
+  // turn is caught by the runner's last-turn guard; a lost asker `open` waits
+  // for the asker's next message. Both windows are milliseconds.
+  const addSessionMessage = async (
+    m: NewSessionMessage,
+    state: SessionState,
+  ): Promise<SessionMessageRecord> => {
+    const row = (await db
+      .insert(sessionMessage)
+      .values(m)
+      .returning()
+      .get()) as SessionMessageRecord
+    await db
+      .update(contextSession)
+      .set({ state, updated_at: new Date().toISOString() })
+      .where(eq(contextSession.id, m.session_id))
+      .run()
+    return row
+  }
+  const listSessionMessages = async (sessionId: string): Promise<SessionMessageRecord[]> =>
+    db
+      .select()
+      .from(sessionMessage)
+      .where(eq(sessionMessage.session_id, sessionId))
+      .orderBy(asc(sessionMessage.created_at))
+      .all()
+
   // ---- Notifications -----------------------------------------------------
   const createNotification = async (n: NewNotification): Promise<void> => {
     await db.insert(notification).values(n).run()
@@ -1701,7 +1819,29 @@ export function makeRepos(db: SqliteDb) {
   }
   // Sequential cascade (used by D1). better-sqlite3 + pg override with a transaction.
   const deleteArtifact = async (id: string): Promise<void> => {
-    // Delete FK-referencing tables before the artifact row itself.
+    // Delete FK-referencing tables before the artifact row itself. A context's
+    // manifest FK means deleting a manifest deletes its context (and sessions) —
+    // a context cannot outlive its definition, by design. Subqueries throughout
+    // (D1's 100-bound-parameter cap; see deleteContext).
+    const ctxIds = db
+      .select({ id: context.id })
+      .from(context)
+      .where(eq(context.manifest_artifact_id, id))
+    await db
+      .delete(sessionMessage)
+      .where(
+        inArray(
+          sessionMessage.session_id,
+          db
+            .select({ id: contextSession.id })
+            .from(contextSession)
+            .where(inArray(contextSession.context_id, ctxIds)),
+        ),
+      )
+      .run()
+    await db.delete(contextSession).where(inArray(contextSession.context_id, ctxIds)).run()
+    await db.delete(context).where(eq(context.manifest_artifact_id, id)).run()
+    await db.delete(reviewRound).where(eq(reviewRound.artifact_id, id)).run()
     await db.delete(version).where(eq(version.artifact_id, id)).run()
     await db.delete(comment).where(eq(comment.artifact_id, id)).run()
     await db.delete(artifactMember).where(eq(artifactMember.artifact_id, id)).run()
@@ -1875,6 +2015,17 @@ export function makeRepos(db: SqliteDb) {
     getPendingRound,
     listReviewRounds,
     resolveReviewRound,
+    createContext,
+    getContext,
+    listContexts,
+    deleteContext,
+    createSession,
+    getSession,
+    listSessions,
+    pendingSessions,
+    setSessionState,
+    addSessionMessage,
+    listSessionMessages,
     getProposal,
     listProposals,
     decideProposal,

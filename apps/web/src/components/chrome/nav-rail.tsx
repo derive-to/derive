@@ -111,7 +111,7 @@ function NavItem({
   icon: IconName
   label: string
   count?: number
-  to: "/favorites" | "/following" | "/shared" | "/people"
+  to: "/favorites" | "/following" | "/shared" | "/people" | "/contexts"
   active: boolean
   testId?: string
 }) {
@@ -302,6 +302,7 @@ export function NavRail() {
   const isFollowing = loc.pathname === "/following"
   const onShared = loc.pathname === "/shared"
   const onPeople = loc.pathname === "/people"
+  const onContexts = loc.pathname.startsWith("/contexts")
   const onSettings = loc.pathname.startsWith("/settings")
   const tags = summary?.tags ?? []
   // The icon strip shows only glyph rows; content that has no icon form (the
@@ -484,6 +485,13 @@ export function NavRail() {
                 to="/people"
                 active={onPeople}
                 testId="nav-people"
+              />
+              <NavItem
+                icon="context"
+                label="Contexts"
+                to="/contexts"
+                active={onContexts}
+                testId="nav-contexts"
               />
             </SidebarMenu>
           </SidebarGroupContent>

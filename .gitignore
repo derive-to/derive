@@ -24,3 +24,5 @@ playwright-report/
 apps/api/.ab-data/
 apps/api/.e2e-data/
 
+.local-run-data/
+apps/api/.local-run-data/

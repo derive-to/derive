@@ -270,6 +270,41 @@ export const artifactAgentsQuery = (shortId: string) =>
         .then((r) => r.users.filter((u) => u.kind === "agent" && u.name)),
   })
 
+// ---- Contexts + sessions ------------------------------------------------------
+
+// The workspace's askable contexts. Invalidated on create (deletion is
+// API-only for now — no web surface).
+export const contextsQuery = () =>
+  queryOptions({
+    queryKey: ["contexts"] as const,
+    queryFn: () => api.listContexts().then((r) => r.contexts),
+  })
+
+export const contextQuery = (id: string) =>
+  queryOptions({
+    queryKey: ["context", id] as const,
+    queryFn: () => api.getContext(id),
+  })
+
+// The caller's sessions on a context (the owner sees everyone's). Invalidated
+// when a new session opens.
+export const contextSessionsQuery = (id: string) =>
+  queryOptions({
+    queryKey: ["context-sessions", id] as const,
+    queryFn: () => api.listContextSessions(id).then((r) => r.sessions),
+  })
+
+// One session + transcript, polled the activeSyncsQuery way: fast while the
+// runner owes a reply (`open`), off once the conversation is settled — the
+// composer's send flips it back by invalidating this key.
+export const sessionQuery = (id: string) =>
+  queryOptions({
+    queryKey: ["session", id] as const,
+    queryFn: () => api.getSession(id),
+    refetchInterval: (q) => (q.state.data?.session.state === "open" ? 1500 : false),
+    refetchOnWindowFocus: true,
+  })
+
 // Open abuse reports for the active workspace — drives the owner-only Moderation
 // nav item's visibility + the Reports section. Invalidated after a takedown / dismiss.
 export const reportsQuery = () =>
