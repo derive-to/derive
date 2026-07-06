@@ -12,6 +12,10 @@ export interface RunnerConfig {
   /** Where `claude -p` runs — the repo whose .mcp.json/tools the answers need. */
   cwd: string
   claudeBin: string
+  /** Model for answer runs. Defaults to sonnet: an asker is sitting in the
+   *  console waiting, and data Q&A is tool-call-bound — latency buys more here
+   *  than the top model's depth does. RUNNER_MODEL overrides per context. */
+  model: string
   timeoutMs: number
   pollMs: number
   /** Skip Claude and post a canned answer — verifies the wiring without a model. */
@@ -38,6 +42,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): RunnerConfig {
     contextId,
     cwd: env.RUNNER_CWD ?? process.cwd(),
     claudeBin: env.CLAUDE_BIN ?? "claude",
+    model: env.RUNNER_MODEL ?? "sonnet",
     timeoutMs: positiveMs(env.RUNNER_TIMEOUT_MS, 600_000, 10_000),
     pollMs: positiveMs(env.RUNNER_POLL_MS, 5_000, 500),
     mock: env.RUNNER_MOCK === "1",

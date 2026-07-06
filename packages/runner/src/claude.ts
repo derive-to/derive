@@ -120,6 +120,7 @@ export function parseAnswer(text: string): { answer?: RunnerAnswer; error?: stri
 export interface ClaudeOpts {
   bin: string
   cwd: string
+  model: string
   timeoutMs: number
   systemPrompt: string
   prompt: string
@@ -131,6 +132,8 @@ export function runClaude(opts: ClaudeOpts): Promise<RunResult> {
   const args = [
     "-p",
     opts.prompt,
+    "--model",
+    opts.model,
     "--output-format",
     "stream-json",
     "--verbose",

@@ -19,9 +19,11 @@ RUNNER_CWD=/path/to/repo     # where claude runs — its .mcp.json supplies the 
 pnpm --filter @derive/runner start
 ```
 
-Optional: `RUNNER_POLL_MS` (default 5000), `RUNNER_TIMEOUT_MS` (default 600000),
-`CLAUDE_BIN`, and `RUNNER_MOCK=1` (skip Claude, post a canned answer — wiring
-smoke test).
+Optional: `RUNNER_MODEL` (default `sonnet` — an asker is waiting, and data Q&A
+is tool-call-bound, so latency beats depth; set `opus` for harder analytical
+contexts), `RUNNER_POLL_MS` (default 5000), `RUNNER_TIMEOUT_MS` (default
+600000), `CLAUDE_BIN`, and `RUNNER_MOCK=1` (skip Claude, post a canned answer —
+wiring smoke test).
 
 Register the agent as **editor** if the context should publish charts: answers
 can carry a visual the runner publishes as an artifact, and publishing needs

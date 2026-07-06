@@ -33,6 +33,7 @@ async function serveSession(
     : await runClaude({
         bin: cfg.claudeBin,
         cwd: cfg.cwd,
+        model: cfg.model,
         timeoutMs: cfg.timeoutMs,
         systemPrompt: manifest,
         prompt: buildPrompt(session.messages),
@@ -101,7 +102,7 @@ async function main(): Promise<void> {
   if (!info.manifest_md) throw new Error("context has no readable manifest")
   console.log(
     `[runner] serving "${info.name}" (${cfg.contextId}) — manifest v${info.manifest_version}, ` +
-      `${cfg.mock ? "MOCK" : cfg.claudeBin}, poll ${cfg.pollMs}ms`,
+      `${cfg.mock ? "MOCK" : `${cfg.claudeBin} (${cfg.model})`}, poll ${cfg.pollMs}ms`,
   )
 
   for (;;) {
