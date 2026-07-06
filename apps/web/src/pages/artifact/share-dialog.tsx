@@ -47,8 +47,8 @@ const ACCESS: { value: string; label: string; blurb: string; icon: IconName }[] 
   },
   {
     value: "unlisted",
-    label: "Unlisted — workspace with link",
-    blurb: "Workspace members with the link. Hidden from the library and search.",
+    label: "Draft — workspace with link",
+    blurb: "Workspace members with the link. Stays out of the library until shared.",
     icon: "link",
   },
   {

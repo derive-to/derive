@@ -601,7 +601,7 @@ function buildServer(
           .enum(["unlisted", "private", "workspace", "link", "public"])
           .optional()
           .describe(
-            "Who can see a NEW artifact: unlisted (workspace members with the link; hidden from the library — the usual default for agent drafts), private (you and people you invite), workspace (your team, listed), link (anyone with the link), or public (discoverable). Omit to use the workspace's agent default. Ignored on republish — the human promotes via the share dialog.",
+            "Who can see a NEW artifact: unlisted (a DRAFT: hidden from the library, one link away for workspace members — the usual default for agent publishes), private (you and people you invite), workspace (your team, listed), link (anyone with the link), or public (discoverable). Omit to use the workspace's agent default. Ignored on republish — the human promotes via the share dialog.",
           ),
         spa: z
           .boolean()

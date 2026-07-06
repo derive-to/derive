@@ -1,18 +1,11 @@
-import { createFileRoute } from "@tanstack/react-router"
-import { requireOnboarded } from "../lib/route-guards"
-import { Library } from "../pages/library"
-import { LibraryPending } from "../pages/library/library-skeleton"
-import type { LibrarySearch } from "../pages/library/types"
+import { createFileRoute, redirect } from "@tanstack/react-router"
 
-// The Unlisted feed: /unlisted — your own agent drafts (unlisted artifacts you
-// own). They're hidden from every other listing on purpose, so this named feed is
-// the ONE place to find them without the link. Same route-as-feed contract as
-// /favorites: only free-text search composes on top (docs/decisions/0002).
+// Drafts moved into the home library as a tab (decided on the sidebar-cleanup
+// plan): a lifecycle state of your own work is a filter on All artifacts, not a
+// rail-level feed. This route survives purely as a redirect so deep links and
+// the agent's "open this draft's home" fallback keep working.
 export const Route = createFileRoute("/unlisted")({
-  beforeLoad: requireOnboarded,
-  pendingComponent: LibraryPending,
-  validateSearch: (s: Record<string, unknown>): Pick<LibrarySearch, "query"> => ({
-    query: typeof s.query === "string" ? s.query : undefined,
-  }),
-  component: () => <Library view="unlisted" />,
+  beforeLoad: () => {
+    throw redirect({ to: "/", search: { tab: "drafts" } })
+  },
 })

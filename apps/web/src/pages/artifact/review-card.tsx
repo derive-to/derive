@@ -7,18 +7,19 @@ import { cn } from "@/lib/utils"
 /**
  * The sidebar review card — the human side of the /derive loop. When an agent has
  * requested a review, this sits atop the comments sidebar: what version, how it's
- * going, and the one gesture that matters — **Send back** (return your answers) —
- * plus **Approve** for editors (the build go-signal). Answering questions is just
- * replying to the anchored threads below; the buttons here settle the round. Once
+ * going, and the ONE gesture the loop asks of you — **Send back** (return your
+ * answers). There is deliberately no Approve button: the loop is a live dialogue,
+ * and "looks good, go" is just something you SAY — in a reply here or in the
+ * terminal — not a second decision to make each round. (The formal approve
+ * primitive still exists server-side for CLI/headless flows: `derive approve`.)
+ * Answering questions is just replying to the anchored threads below. Once
  * settled it shows the last outcome quietly, so the card never nags.
  */
 export function ReviewCard({
   shortId,
-  canApprove,
   refreshKey = 0,
 }: {
   shortId: string
-  canApprove: boolean
   /** Bumped by the page on review.* SSE events, so an agent's re-request (or an
    *  action taken in another tab) repaints the card live, never behind a reload. */
   refreshKey?: number
@@ -27,7 +28,7 @@ export function ReviewCard({
     pending: null,
     last: null,
   })
-  const [busy, setBusy] = useState<"send" | "approve" | null>(null)
+  const [busy, setBusy] = useState<"send" | null>(null)
 
   const refresh = useCallback(async () => {
     try {
@@ -47,15 +48,6 @@ export function ReviewCard({
     setBusy("send")
     try {
       await api.sendBackReview(shortId)
-      await refresh()
-    } finally {
-      setBusy(null)
-    }
-  }
-  const approve = async () => {
-    setBusy("approve")
-    try {
-      await api.approveReview(shortId)
       await refresh()
     } finally {
       setBusy(null)
@@ -94,20 +86,10 @@ export function ReviewCard({
         <span className="ml-auto font-mono text-2xs text-muted-foreground">v{pending.version}</span>
       </div>
       <p className="text-xs text-muted-foreground">
-        Answer the questions inline, then send it back. You never have to resolve threads.
+        Answer inline, then send it back — say "good to go" in a reply when you're done. You never
+        have to resolve threads.
       </p>
-      <div className="flex items-center gap-1.5">
-        {canApprove && (
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={approve}
-            disabled={!!busy}
-            data-testid="review-approve"
-          >
-            {busy === "approve" ? "Approving…" : "Approve"}
-          </Button>
-        )}
+      <div className="flex items-center">
         <Button
           size="sm"
           onClick={sendBack}

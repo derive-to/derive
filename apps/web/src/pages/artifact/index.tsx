@@ -698,9 +698,7 @@ export function Artifact() {
               canComment={canComment}
               reviewCard={
                 // Top of the comments rail, not its own pane; members who can act only.
-                canComment ? (
-                  <ReviewCard shortId={shortId} canApprove={canPublish} refreshKey={reviewTick} />
-                ) : undefined
+                canComment ? <ReviewCard shortId={shortId} refreshKey={reviewTick} /> : undefined
               }
               onSheetHeight={setSheetInset}
               docLive={docLive}

@@ -242,8 +242,8 @@ function SharingDefaults() {
   return (
     <SettingsGroup>
       <SettingRow
-        label="Unlisted link permission"
-        description="What a workspace member opening an unlisted link can do. Each doc can override this in its share dialog."
+        label="Draft link permission"
+        description="What a workspace member opening a draft's link can do. Each doc can override this in its share dialog."
       >
         <SelectMenu
           value={settings.defaultUnlistedRole}
@@ -263,7 +263,7 @@ function SharingDefaults() {
       </SettingRow>
       <SettingRow
         label="Agent publishes as"
-        description="Where a new artifact published by a connected agent lands. Unlisted keeps drafts out of the library until shared."
+        description="Where a new artifact published by a connected agent lands. Draft keeps its work out of the library until shared."
       >
         <SelectMenu
           value={settings.defaultAgentVisibility}
@@ -278,7 +278,7 @@ function SharingDefaults() {
             {AGENT_VIS_LABELS[settings.defaultAgentVisibility] ?? settings.defaultAgentVisibility}
           </SelectMenuTrigger>
           <SelectMenuContent>
-            <SelectMenuItem value="unlisted">Unlisted</SelectMenuItem>
+            <SelectMenuItem value="unlisted">Draft</SelectMenuItem>
             <SelectMenuItem value="private">Private</SelectMenuItem>
             <SelectMenuItem value="org">Workspace</SelectMenuItem>
           </SelectMenuContent>
@@ -289,7 +289,7 @@ function SharingDefaults() {
 }
 
 const AGENT_VIS_LABELS: Record<string, string> = {
-  unlisted: "Unlisted",
+  unlisted: "Draft",
   private: "Private",
   org: "Workspace",
   link: "Anyone with the link",

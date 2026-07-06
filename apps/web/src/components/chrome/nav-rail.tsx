@@ -111,7 +111,7 @@ function NavItem({
   icon: IconName
   label: string
   count?: number
-  to: "/favorites" | "/following" | "/shared" | "/people" | "/contexts" | "/unlisted"
+  to: "/favorites" | "/following" | "/shared" | "/people" | "/contexts"
   active: boolean
   testId?: string
 }) {
@@ -299,7 +299,6 @@ export function NavRail() {
   // collection filter narrows it. (A ?query= search doesn't change which feed you're in.)
   const isAll = onLibrary && !search.tag && !search.collection
   const isFav = loc.pathname === "/favorites"
-  const onUnlisted = loc.pathname === "/unlisted"
   const isFollowing = loc.pathname === "/following"
   const onShared = loc.pathname === "/shared"
   const onPeople = loc.pathname === "/people"
@@ -463,18 +462,6 @@ export function NavRail() {
                 active={isFav}
                 testId="sidebar-favorites"
               />
-              {/* Unlisted — your own agent drafts. The feed exists exactly when
-                  there's something in it (they're hidden everywhere else). */}
-              {((summary?.unlisted ?? 0) > 0 || onUnlisted) && (
-                <NavItem
-                  icon="link"
-                  label="Unlisted"
-                  count={summary?.unlisted}
-                  to="/unlisted"
-                  active={onUnlisted}
-                  testId="sidebar-unlisted"
-                />
-              )}
               <NavItem
                 icon="following"
                 label="Following"

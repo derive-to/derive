@@ -341,7 +341,7 @@ server.registerTool(
       title: z.string().optional(),
       // `password` stays CLI/web-only (it needs a password argument this tool
       // doesn't take). Omitted ⇒ the workspace's agent default (usually
-      // `unlisted`: hidden from the library, one link away for members).
+      // `unlisted` — a DRAFT: hidden from the library, one link away for members).
       visibility: z.enum(["unlisted", "public", "link", "org", "private"]).optional(),
       message: z.string().optional().describe("What changed in this version."),
       for_review: z

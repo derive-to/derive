@@ -107,11 +107,12 @@ test.describe("the MCP loop — auto-open, live rounds, unlisted drafts", () => 
     await owner.waitForTimeout(1000)
     await expect(owner).toHaveURL(/\/$/) // still home — the toggle held navigation
 
-    // Hidden from the library grid + title search, but the Unlisted feed has it.
-    await expect(owner.getByTestId("sidebar-unlisted")).toBeVisible()
+    // Hidden from the All grid, but the Drafts tab (always present on home,
+    // even before the first draft existed) has it, with a live count.
+    await expect(owner.getByTestId("library-tab-drafts")).toBeVisible()
     await expect(owner.getByText("Hidden Draft")).toHaveCount(0)
-    await owner.getByTestId("sidebar-unlisted").click()
-    await expect(owner).toHaveURL(/\/unlisted/)
+    await owner.getByTestId("library-tab-drafts").click()
+    await expect(owner).toHaveURL(/tab=drafts/)
     await expect(owner.getByText("Hidden Draft").first()).toBeVisible()
 
     // Promote: share dialog → Workspace only. One gesture, now it lists.
@@ -123,7 +124,8 @@ test.describe("the MCP loop — auto-open, live rounds, unlisted drafts", () => 
 
     await owner.goto("/")
     await expect(owner.getByText("Hidden Draft").first()).toBeVisible({ timeout: 10_000 })
-    // The Unlisted feed emptied, so its rail entry withdraws.
-    await expect(owner.getByTestId("sidebar-unlisted")).toBeHidden()
+    // The Drafts tab stays (always-on chrome, the teaching surface) — it's just
+    // empty again now that the doc was promoted to the workspace.
+    await expect(owner.getByTestId("library-tab-drafts")).toBeVisible()
   })
 })

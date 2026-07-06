@@ -30,7 +30,7 @@ export type Summary = {
 // The base library feed, chosen by ROUTE (path), not a query param: "/" = all,
 // "/favorites", "/following", "/shared", "/feedback". Path = the feed you're viewing;
 // query (LibrarySearch) = how it's filtered. See routes/favorites.tsx + docs/decisions/0002.
-export type LibraryView = "all" | "favorites" | "following" | "shared" | "feedback" | "unlisted"
+export type LibraryView = "all" | "favorites" | "following" | "shared" | "feedback"
 
 // The library's URL-encoded filters + search (query params on the home route), so
 // the persistent nav rail can drive them from any page and a filtered/searched
@@ -44,4 +44,8 @@ export type LibrarySearch = {
   query?: string
   // Narrow to artifacts last changed by this GitHub login (synced collections).
   author?: string
+  // The home library's second tab: your own drafts (the `unlisted` visibility,
+  // renamed for humans). A query param, not a route — a view of YOUR OWN work
+  // is a filter on the home library, not a separate feed (docs/decisions/0002).
+  tab?: "drafts"
 }

@@ -98,10 +98,14 @@ Workspace: a `~/.derive/config.json` profile (with a purpose note) and a repo
    threads whose quoted text you changed re-anchor automatically or flip to
    "outdated" — they never attach to the wrong place.
 
-7. **Repeat 4–6 until `approved`.** Approval is the go-signal. The user can approve
-   from the app's review card OR say "go" in the terminal (`derive approve`); both
-   settle the round. The user is NEVER required to resolve threads — Send back is the
-   one gesture; you settle thread state.
+7. **Repeat 4–6 until the user says go.** The loop is a live dialogue — there is no
+   Approve button in the app. The go-signal arrives one of three ways, all equal:
+   a Send back whose feedback reads as "good, ship it" with no change requests
+   (read the replies — that IS the approval); the user saying it in the terminal;
+   or a formal `derive approve` / `approved` round state (CLI and headless flows).
+   When feedback contains both a go and change asks, the asks win — revise first.
+   The user is NEVER required to resolve threads — Send back is the one gesture;
+   you settle thread state.
 
 ## Modes
 
