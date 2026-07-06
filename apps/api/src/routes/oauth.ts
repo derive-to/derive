@@ -1,13 +1,16 @@
 import { type Context, Hono } from "hono"
+import { z } from "zod"
 import { OAUTH_SCOPES } from "../auth-config"
 import type { AppContext } from "../context"
+import { fail, readJson } from "../lib/http"
 import { cliCallbackHTML } from "../oauth-cli-callback"
 import { consentHTML } from "../oauth-consent"
 
 /** OAuth/OIDC discovery at the well-known root, the branded consent + CLI-callback
- *  screens, and the public list of configured social sign-in providers. All read-only. */
+ *  screens, and the public list of configured social sign-in providers. Read-only,
+ *  except the consent screen's workspace binding (POST /oauth/consent/workspace). */
 export const oauthRoutes = (ctx: AppContext) => {
-  const { meta } = ctx
+  const { meta, currentUser, activeWorkspace } = ctx
   const app = new Hono()
 
   // OAuth 2.0 discovery at the well-known root (RFC 8414 + RFC 9728), mirroring
@@ -60,7 +63,39 @@ export const oauthRoutes = (ctx: AppContext) => {
     const clientId = c.req.query("client_id") ?? ""
     const scopes = (c.req.query("scope") ?? "").split(/\s+/).filter(Boolean)
     const clientName = (await meta.getOAuthClientName(clientId)) || clientId || "An application"
-    return c.html(consentHTML({ clientName, scopes, query: new URL(c.req.url).search }))
+    // The signed-in user's workspaces feed the picker (rendered only when there's
+    // a real choice); their active workspace — the one they're looking at in the
+    // app — is the preselection.
+    const me = await currentUser(c)
+    const mine = me ? await meta.listWorkspaces(me.id) : []
+    const selected = me && mine.length > 1 ? await activeWorkspace(c) : mine[0]?.id
+    return c.html(
+      consentHTML({
+        clientName,
+        scopes,
+        query: new URL(c.req.url).search,
+        clientId,
+        workspaces: mine.map((w) => ({ id: w.id, name: w.name })),
+        selected,
+      }),
+    )
+  })
+
+  // Persist the consent screen's workspace choice: this user's grants to this
+  // client act in org_id (resolved by oauthWorkspace, membership re-checked on
+  // every request). Session-only and membership-validated, so a hostile page
+  // can't bind someone else's client or a foreign workspace.
+  app.post("/oauth/consent/workspace", async (c) => {
+    const me = await currentUser(c)
+    if (!me) return fail(c, 401, "sign in to continue")
+    const b = await readJson(
+      c,
+      z.object({ client_id: z.string().min(1), org_id: z.string().min(1) }),
+    )
+    if (b instanceof Response) return b
+    if (!(await meta.getMembership(b.org_id, me.id))) return fail(c, 403, "forbidden")
+    await meta.setOAuthClientWorkspace(me.id, b.client_id, b.org_id)
+    return c.json({ ok: true })
   })
 
   // Hosted callback for the CLI/native OAuth flow (`derive login`). A command-line

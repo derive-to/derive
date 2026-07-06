@@ -110,6 +110,7 @@ import {
   githubInstallation,
   membership,
   notification,
+  oauthClientWorkspace,
   orgSettings,
   proposal,
   report,
@@ -180,6 +181,7 @@ export const schema = {
   reviewRound,
   agent,
   agentMention,
+  oauthClientWorkspace,
   context,
   contextSession,
   sessionMessage,
@@ -1730,6 +1732,32 @@ export function makeRepos(db: SqliteDb) {
       return null
     }
   }
+  const setOAuthClientWorkspace = async (
+    userId: string,
+    clientId: string,
+    orgId: string,
+  ): Promise<void> => {
+    await db
+      .insert(oauthClientWorkspace)
+      .values({ id: crypto.randomUUID(), user_id: userId, client_id: clientId, org_id: orgId })
+      .onConflictDoUpdate({
+        target: [oauthClientWorkspace.user_id, oauthClientWorkspace.client_id],
+        set: { org_id: orgId },
+      })
+      .run()
+  }
+  const getOAuthClientWorkspace = async (
+    userId: string,
+    clientId: string,
+  ): Promise<string | null> => {
+    const rows = await db
+      .select({ org_id: oauthClientWorkspace.org_id })
+      .from(oauthClientWorkspace)
+      .where(
+        and(eq(oauthClientWorkspace.user_id, userId), eq(oauthClientWorkspace.client_id, clientId)),
+      )
+    return rows[0]?.org_id ?? null
+  }
   const pruneStaleOAuthClients = async (cutoffIso: string): Promise<number> => {
     try {
       const r = (await db.run(sql`
@@ -2038,6 +2066,8 @@ export function makeRepos(db: SqliteDb) {
     getAgentByToken,
     getOAuthGrant,
     getOAuthClientName,
+    setOAuthClientWorkspace,
+    getOAuthClientWorkspace,
     pruneStaleOAuthClients,
     deleteAgent,
     createAgentMention,

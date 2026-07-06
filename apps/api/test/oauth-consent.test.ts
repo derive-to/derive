@@ -37,6 +37,39 @@ describe("oauth consent screen", () => {
     expect(evil).toContain("&lt;script&gt;")
   })
 
+  it("renders the workspace picker when the user has more than one workspace", () => {
+    const multi = consentHTML({
+      clientName: "Claude Code",
+      scopes: ["openid"],
+      query: "",
+      clientId: "cli_1",
+      workspaces: [
+        { id: "w1", name: "Personal" },
+        { id: "w2", name: "Acme <evil>" },
+      ],
+      selected: "w2",
+    })
+    expect(multi).toContain('<select id="ws"')
+    expect(multi).toContain('value="w2" selected')
+    expect(multi).toContain("Acme &lt;evil&gt;") // workspace names are escaped
+    expect(multi).toContain('var CLIENT_ID = "cli_1"')
+    // Approve persists the choice before completing the consent, fail-closed.
+    expect(multi).toContain("/oauth/consent/workspace")
+  })
+
+  it("omits the picker when there is no real choice", () => {
+    const single = consentHTML({
+      clientName: "Claude Code",
+      scopes: ["openid"],
+      query: "",
+      clientId: "cli_1",
+      workspaces: [{ id: "w1", name: "Personal" }],
+      selected: "w1",
+    })
+    expect(single).not.toContain('<select id="ws"')
+    expect(html).not.toContain('<select id="ws"') // no workspaces prop at all
+  })
+
   // Emit preview HTML for visual review (both states), when a target dir is given.
   it("writes preview files", () => {
     const dir = process.env.CONSENT_PREVIEW_DIR

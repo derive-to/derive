@@ -112,6 +112,7 @@ import {
   githubInstallation,
   membership,
   notification,
+  oauthClientWorkspace,
   orgSettings,
   PG_SCHEMA_STATEMENTS,
   proposal,
@@ -153,6 +154,7 @@ export const schema = {
   reviewRound,
   agent,
   agentMention,
+  oauthClientWorkspace,
   context,
   contextSession,
   sessionMessage,
@@ -1839,6 +1841,24 @@ export class PgMetaStore implements MetaStore {
     } catch {
       return null
     }
+  }
+  async setOAuthClientWorkspace(userId: string, clientId: string, orgId: string): Promise<void> {
+    await this.db
+      .insert(oauthClientWorkspace)
+      .values({ id: crypto.randomUUID(), user_id: userId, client_id: clientId, org_id: orgId })
+      .onConflictDoUpdate({
+        target: [oauthClientWorkspace.user_id, oauthClientWorkspace.client_id],
+        set: { org_id: orgId },
+      })
+  }
+  async getOAuthClientWorkspace(userId: string, clientId: string): Promise<string | null> {
+    const rows = await this.db
+      .select({ org_id: oauthClientWorkspace.org_id })
+      .from(oauthClientWorkspace)
+      .where(
+        and(eq(oauthClientWorkspace.user_id, userId), eq(oauthClientWorkspace.client_id, clientId)),
+      )
+    return rows[0]?.org_id ?? null
   }
   async pruneStaleOAuthClients(cutoffIso: string): Promise<number> {
     try {

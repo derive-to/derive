@@ -77,7 +77,11 @@ export interface TypedTables {
  * isn't mirrored in @derive/core). Naming a table here is a deliberate opt-out of
  * shape parity — but it still has to be named, so it can't be forgotten.
  */
-export type JunctionTable = "artifactFavorite" | "artifactTag" | "collectionItem"
+export type JunctionTable =
+  | "artifactFavorite"
+  | "artifactTag"
+  | "collectionItem"
+  | "oauthClientWorkspace"
 
 type ClassifiedKey = keyof TypedTables | JunctionTable
 
