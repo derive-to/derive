@@ -1019,8 +1019,9 @@ export interface UserProfile {
 
 /** `mention`/`comment`/`share` are artifact-anchored. `follow` (someone followed you)
  *  and `publish` (someone you follow published) are the social kinds — `follow` carries
- *  no artifact (its artifact_* fields are ""), `publish` points at the new artifact. */
-export type NotificationKind = "mention" | "comment" | "share" | "follow" | "publish"
+ *  no artifact (its artifact_* fields are ""), `publish` points at the new artifact.
+ *  `review` is the /derive loop: your agent published and asked for your review. */
+export type NotificationKind = "mention" | "comment" | "share" | "follow" | "publish" | "review"
 export interface NotificationRecord {
   id: string
   user_id: string

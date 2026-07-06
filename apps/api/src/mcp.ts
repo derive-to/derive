@@ -49,6 +49,10 @@ import {
 import { quoteOf } from "./lib/comments"
 
 const text = (s: string) => ({ content: [{ type: "text" as const, text: s }] })
+// Bound a best-effort promise (the tab-delivery receipt) so it can never stall a
+// publish: past `ms`, resolve with the fallback and move on.
+const withTimeout = <T>(p: Promise<T>, ms: number, fallback: T): Promise<T> =>
+  Promise.race([p, new Promise<T>((resolve) => setTimeout(() => resolve(fallback), ms))])
 const json = (v: unknown) => text(JSON.stringify(v, null, 2))
 // An actionable error the model can recover from (per the MCP spec, isError text is
 // fed back to the agent so it self-corrects), rather than an opaque failure.
@@ -263,7 +267,8 @@ function buildServer(
       description:
         "START HERE on an artifact. The state of it in one call: a one-line summary, the versions that landed since `since_version`, which pages changed, the open (and outdated) comment threads, and the full version history. " +
         "Pass `comments` (open / addressed / resolved / outdated) to instead get that filtered thread list — your feedback to-do queue. " +
-        "Pass `response_format='detailed'` (optionally with `since_version`/`to_version`) to include the exact line-by-line diff between two versions.",
+        "Pass `response_format='detailed'` (optionally with `since_version`/`to_version`) to include the exact line-by-line diff between two versions. " +
+        "WAITING ON A REVIEW? Pass `wait` (seconds, max 50): the call blocks until the human sends back / approves / comments (or the time runs out), then returns the fresh state. Chain wait calls instead of sleeping between polls — feedback reaches you in seconds.",
       inputSchema: {
         short_id: z.string(),
         since_version: z
@@ -286,10 +291,19 @@ function buildServer(
           .describe(
             "'summary' (default, token-light) omits the line diff; 'detailed' includes it.",
           ),
+        wait: z
+          .number()
+          .int()
+          .min(1)
+          .max(50)
+          .optional()
+          .describe(
+            "Long-poll: block up to this many seconds for the human's next action (send back, approve, or a new comment) before returning. Returns immediately when something is already actionable.",
+          ),
       },
     },
-    async ({ short_id, since_version, to_version, comments, response_format }) => {
-      const a = await own(short_id)
+    async ({ short_id, since_version, to_version, comments, response_format, wait }) => {
+      let a = await own(short_id)
       if (!a) return notFound(short_id)
 
       // `comments` filter → the feedback to-do queue (absorbs the old list_comments).
@@ -301,6 +315,32 @@ function buildServer(
           count: list.length,
           comments: list.map(summarizeComment),
         })
+      }
+
+      // Long-poll: when the agent is waiting on the human (round pending, or no
+      // round at all), block on the artifact channel until they act, then fall
+      // through and build the payload fresh. The event is only a wake signal —
+      // all state below is re-read from the store, so a missed or raced event
+      // can never produce a wrong answer. Skipped when something is already
+      // actionable (sent_back/approved) or the backplane can't wait.
+      if (wait && ctx.bus.waitFor) {
+        const rounds = await ctx.meta.listReviewRounds(a.id)
+        const mine = rounds.find((r) => r.requested_by === agent.id) ?? rounds[0] ?? null
+        if (!mine || mine.state === "pending") {
+          await ctx.bus.waitFor(
+            a.id,
+            [
+              "review.sent_back",
+              "review.approved",
+              "comment.created",
+              "comment.updated",
+              "version.published",
+            ],
+            Math.min(Math.max(wait, 1), 50) * 1000,
+          )
+          // Refresh: the head (or the artifact itself) may have moved while waiting.
+          a = (await own(short_id)) ?? a
+        }
       }
 
       const head = a.current_version
@@ -684,6 +724,19 @@ function buildServer(
             user_id: actingFor?.id ?? agent.id,
             role: "owner",
           })
+        // Event parity with the HTTP publish route: the artifact channel makes a
+        // tab viewing this doc live-reload; the webhook outbox fans out to
+        // integrations. Without these an MCP publish is invisible to open tabs.
+        ctx.bus.publish(artifact.id, {
+          type: "version.published",
+          n: version.n,
+          message: version.message,
+        })
+        await ctx.notify(artifact, "version.published", {
+          version: version.n,
+          message: version.message,
+          author: version.author,
+        })
         // Re-anchor existing threads: feedback whose quoted text changed flips to
         // `outdated` (and back to `open` if the text reappears). Same sweep the
         // HTTP route runs — MCP publish must call it too.
@@ -712,6 +765,60 @@ function buildServer(
           })
           review_round = round.id
           ctx.bus.publish(artifact.id, { type: "review.requested", round_id: round.id })
+          await ctx.notify(artifact, "review.requested", {
+            version: version.n,
+            requested_by: agent.name,
+          })
+        }
+        const url = artifactUrl(ctx.deps.baseUrl, artifact)
+        // Bell entry for the human behind the grant, so a push reaches them even
+        // with no tab open (the on-the-go path). One row per push that warrants
+        // one: a review ask beats a plain "published" (never both).
+        if (actingFor && (review_round || !short_id)) {
+          const row = {
+            id: newId("n"),
+            user_id: actingFor.id,
+            actor: agent.name,
+            kind: review_round ? ("review" as const) : ("publish" as const),
+            artifact_id: artifact.id,
+            artifact_short_id: artifact.short_id,
+            artifact_title: artifact.title,
+            thread_id: "",
+            comment_id: "",
+            preview: review_round
+              ? `requested your review of v${version.n}`
+              : (artifact.title ?? "published something new"),
+          }
+          await ctx.meta.createNotification(row)
+          ctx.bus.publish(`u:${actingFor.id}`, {
+            type: "notification",
+            notification: { ...row, read: 0, created_at: new Date().toISOString() },
+          })
+        }
+        // Auto-open: tell the granting user's open tabs an agent just pushed. The
+        // delivery receipt (how many live streams caught it) becomes
+        // `opened_in_tab`, so the agent knows whether to open the URL locally.
+        let openedInTab = false
+        if (actingFor) {
+          const channel = `u:${actingFor.id}`
+          const pushed = {
+            type: "artifact.pushed" as const,
+            event_id: newId("ev"),
+            short_id: artifact.short_id,
+            artifact_id: artifact.id,
+            title: artifact.title,
+            version: version.n,
+            kind: short_id ? "revised" : "created",
+            url,
+            agent: agent.name,
+            review_requested: !!review_round,
+          }
+          if (ctx.bus.publishWithReceipt) {
+            openedInTab =
+              (await withTimeout(ctx.bus.publishWithReceipt(channel, pushed), 1500, 0)) > 0
+          } else {
+            ctx.bus.publish(channel, pushed)
+          }
         }
         return json({
           published: true,
@@ -719,15 +826,20 @@ function buildServer(
           ...(review_round ? { review_requested: true } : {}),
           kind: artifact.kind,
           version: version.n,
-          url: artifactUrl(ctx.deps.baseUrl, artifact),
+          url,
           title: artifact.title,
           visibility: artifact.visibility,
           ...(resolved.length ? { resolved } : {}),
-          note: merge
-            ? `Live now — merged ${Object.keys(files as Record<string, string>).length} file(s) into the bundle (new current version).`
-            : short_id
-              ? "Live now — published a new current version."
-              : "Live now — created a new artifact in your workspace.",
+          ...(actingFor ? { opened_in_tab: openedInTab } : {}),
+          note:
+            (merge
+              ? `Live now — merged ${Object.keys(files as Record<string, string>).length} file(s) into the bundle (new current version).`
+              : short_id
+                ? "Live now — published a new current version."
+                : "Live now — created a new artifact in your workspace.") +
+            (actingFor && !openedInTab
+              ? " No open Derive tab caught this push — open the url for the user (e.g. run `open <url>`) if they should see it now."
+              : ""),
         })
       } catch (e) {
         const msg = e instanceof PublishError ? e.message : "could not publish"

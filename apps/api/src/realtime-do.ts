@@ -12,6 +12,7 @@ import {
   type PresenceStore,
   type Viewer,
 } from "./bus"
+import type { DomainEvent } from "./events"
 
 /**
  * Per-request execution context, so the DO backplane's fire-and-forget publish can
@@ -130,18 +131,22 @@ export class ArtifactRoom {
       })
     }
 
-    // Broadcast an event to every open stream on this channel.
+    // Broadcast an event to every open stream on this channel. Reports how many
+    // live streams received it (the `opened_in_tab` receipt); existing callers
+    // ignore the body, so this stays backward compatible.
     if (req.method === "POST" && url.pathname.endsWith("/publish")) {
       const raw = await req.text()
       const ev = JSON.parse(raw) as DeriveEvent
       const f = frame(ev.type, raw)
+      let delivered = 0
       for (const c of this.streams)
         try {
           c.enqueue(f)
+          delivered++
         } catch {
           this.drop(c)
         }
-      return new Response("ok")
+      return Response.json({ delivered })
     }
 
     // Presence heartbeat (keep-alive / streamless join): upsert + return the roster.
@@ -220,6 +225,59 @@ export function createDoBackplane(rooms: DurableObjectNamespace): Backplane {
       // Only /events carries a viewer; the notification channel has no presence.
       const q = viewer ? `?v=${encodeURIComponent(JSON.stringify(viewer))}` : ""
       return stub(channel).fetch(`https://do/sse${q}`, { method: "GET" }) as unknown as Response
+    },
+    // Awaited (unlike `publish`) so the caller gets the room's live-stream count.
+    async publishWithReceipt(channel, e) {
+      try {
+        const res = await stub(channel).fetch("https://do/publish", {
+          method: "POST",
+          body: JSON.stringify(e),
+        })
+        const body = (await res.json()) as { delivered?: number }
+        return body.delivered ?? 0
+      } catch {
+        return 0
+      }
+    },
+    // Long-poll by reading the room's own SSE stream: an isolate can't receive DO
+    // fan-out in memory, but it can hold the same stream a browser tab would (no
+    // viewer param, so presence is untouched) and wake on the first matching frame.
+    async waitFor(channel, types: DomainEvent[], timeoutMs) {
+      let reader: ReadableStreamDefaultReader<Uint8Array> | null = null
+      const timer = setTimeout(() => reader?.cancel().catch(() => {}), timeoutMs)
+      try {
+        const res = await stub(channel).fetch("https://do/sse", { method: "GET" })
+        if (!res.body) return null
+        reader = res.body.getReader() as ReadableStreamDefaultReader<Uint8Array>
+        const dec = new TextDecoder()
+        let buf = ""
+        for (;;) {
+          const { done, value } = await reader.read()
+          if (done) return null
+          buf += dec.decode(value, { stream: true })
+          // Frames are `event: <type>\ndata: <json>\n\n` (plus `: ping` comments
+          // and the initial `ready` frame — neither matches a domain event type).
+          for (;;) {
+            const cut = buf.indexOf("\n\n")
+            if (cut < 0) break
+            const block = buf.slice(0, cut)
+            buf = buf.slice(cut + 2)
+            const type = block.match(/^event: (.+)$/m)?.[1]
+            if (!type || !(types as string[]).includes(type)) continue
+            const data = block.match(/^data: (.+)$/m)?.[1]
+            try {
+              return JSON.parse(data ?? "{}") as DeriveEvent
+            } catch {
+              return { type } as DeriveEvent
+            }
+          }
+        }
+      } catch {
+        return null // timeout-cancelled reads land here — a clean "nothing yet"
+      } finally {
+        clearTimeout(timer)
+        reader?.cancel().catch(() => {})
+      }
     },
   }
 }
