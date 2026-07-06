@@ -428,6 +428,9 @@ export interface MetaStore {
   // ---- Slack App (connected workspace + thread links) ---------------------
   /** The Slack workspace connected to this Derive workspace, or null. */
   getSlackInstall(orgId: string): Promise<SlackInstallRecord | null>
+  /** Reverse lookup: the install for a Slack team id. Inbound events + slash commands
+   *  arrive keyed by `team_id`, not our org id, so this resolves which workspace owns it. */
+  getSlackInstallByTeam(teamId: string): Promise<SlackInstallRecord | null>
   /** Upsert (connect / reconnect) the Slack install for a workspace. */
   setSlackInstall(s: SlackInstallRecord): Promise<void>
   /** Disconnect Slack for a workspace. */

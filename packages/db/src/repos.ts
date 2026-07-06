@@ -1338,6 +1338,8 @@ export function makeRepos(db: SqliteDb) {
   // ---- Slack App ----------------------------------------------------------
   const getSlackInstall = async (orgId: string): Promise<SlackInstallRecord | null> =>
     (await db.select().from(slackInstall).where(eq(slackInstall.org_id, orgId)).get()) ?? null
+  const getSlackInstallByTeam = async (teamId: string): Promise<SlackInstallRecord | null> =>
+    (await db.select().from(slackInstall).where(eq(slackInstall.team_id, teamId)).get()) ?? null
   const setSlackInstall = async (s: SlackInstallRecord): Promise<void> => {
     const { org_id: _o, created_at: _c, ...set } = s
     await db
@@ -1947,6 +1949,7 @@ export function makeRepos(db: SqliteDb) {
     getOrgSettings,
     setOrgSettings,
     getSlackInstall,
+    getSlackInstallByTeam,
     setSlackInstall,
     deleteSlackInstall,
     getSlackThreadLinkByThread,

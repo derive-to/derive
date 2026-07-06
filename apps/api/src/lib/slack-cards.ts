@@ -27,9 +27,9 @@ export interface CardInput {
  *  it. `v` is a format version; never trust it without re-authorizing the clicking user. */
 export interface ButtonValue {
   v: 1
-  act: "approve" | "request_changes" | "resolve" | "link_account"
+  act: "approve" | "request_changes" | "resolve" | "link_account" | "share"
   org: string
-  /** Proposal id or thread id, per action. */
+  /** Proposal id, thread id, or (for `share`) artifact short id, per action. */
   id: string
   /** Deep link used for the PR-1 "open in Derive" fallback (before identity linking). */
   url: string
@@ -187,3 +187,128 @@ export const cardForEvent = (p: CardInput): SlackCard | null => {
 /** Events that post threaded under the comment they concern (when that comment was itself
  *  mirrored to Slack). Everything else posts top-level to the resolved channel. */
 export const isThreadedEvent = (event: WebhookEvent): boolean => event === "comment.resolved"
+
+// ---- Link unfurls / slash command / App Home --------------------------------
+// These three surfaces show an artifact outside the event stream, so they read a small
+// self-contained summary rather than a CardInput.
+
+/** The compact artifact view the unfurl, share, search and Home builders render. */
+export interface ArtifactSummary {
+  short_id: string
+  title: string | null
+  url: string
+  kind?: string
+  version?: number
+  updatedAt?: string
+  openComments?: number
+}
+
+/** A localized "updated <date>" using Slack's date token (renders in the viewer's tz). */
+const updatedLabel = (iso?: string): string | null => {
+  if (!iso) return null
+  const unix = Math.floor(new Date(iso).getTime() / 1000)
+  if (!Number.isFinite(unix)) return null
+  return `updated <!date^${unix}^{date_short_pretty}|${iso.slice(0, 10)}>`
+}
+
+/** The dotted metadata line shared by the unfurl, share card and search rows. */
+const metaLine = (a: ArtifactSummary): string =>
+  [
+    a.kind,
+    a.version ? `v${a.version}` : null,
+    updatedLabel(a.updatedAt),
+    a.openComments ? `${a.openComments} open comment${a.openComments === 1 ? "" : "s"}` : null,
+  ]
+    .filter(Boolean)
+    .join("  ·  ")
+
+/** The rich preview attached to a shared derive.to link (chat.unfurl blocks). */
+export const unfurlCard = (a: ArtifactSummary): { blocks: unknown[] } => {
+  const meta = metaLine(a)
+  return {
+    blocks: [section(`*<${a.url}|${a.title ?? a.short_id}>*`), ...(meta ? [context(meta)] : [])],
+  }
+}
+
+/** A "Share to channel" button that carries the artifact short id for the interactivity
+ *  handler to re-resolve and post. */
+const shareButton = (org: string, a: ArtifactSummary) => ({
+  type: "button",
+  text: { type: "plain_text", text: "Share to channel" },
+  action_id: "slack_act:share",
+  value: JSON.stringify({
+    v: 1,
+    act: "share",
+    org,
+    id: a.short_id,
+    url: a.url,
+  } satisfies ButtonValue),
+})
+
+/** The card `/derive share` (or the Share button) posts into a channel. */
+export const shareCard = (a: ArtifactSummary): SlackCard => {
+  const meta = metaLine(a)
+  return {
+    blocks: [
+      section(`:page_facing_up: *<${a.url}|${a.title ?? a.short_id}>*`),
+      ...(meta ? [context(meta)] : []),
+      actions([openButton(a.url)]),
+    ],
+    text: `${a.title ?? a.short_id} — ${a.url}`,
+  }
+}
+
+/** The ephemeral result list for `/derive find <query>`: each hit is a titled row with a
+ *  Share-to-channel button. Empty query results render a friendly miss. */
+export const searchResultBlocks = (
+  query: string,
+  results: ArtifactSummary[],
+  org: string,
+): unknown[] => {
+  if (results.length === 0) return [section(`No artifacts match *${query || "your search"}*.`)]
+  const blocks: unknown[] = [context(`Top ${results.length} for *${query}*`)]
+  for (const a of results) {
+    const meta = metaLine(a)
+    blocks.push({
+      type: "section",
+      text: {
+        type: "mrkdwn",
+        text: `*<${a.url}|${a.title ?? a.short_id}>*${meta ? `\n${meta}` : ""}`,
+      },
+      accessory: shareButton(org, a),
+    })
+  }
+  return blocks
+}
+
+/** The per-user App Home tab (views.publish view). Linked users get a greeting + their
+ *  recent artifacts; unlinked users get a prompt to link from Derive settings. */
+export const homeView = (p: {
+  linkedName: string | null
+  items: ArtifactSummary[]
+  baseUrl: string
+}): { type: "home"; blocks: unknown[] } => {
+  const blocks: unknown[] = [{ type: "header", text: { type: "plain_text", text: "Derive" } }]
+  if (p.linkedName) {
+    blocks.push(section(`Hi *${p.linkedName}* :wave:`))
+  } else {
+    blocks.push(
+      section(
+        "Link your Slack account to Derive to approve proposals and get notified about what's waiting on you.",
+      ),
+      actions([openButton(`${p.baseUrl}/settings/integrations`, "Link account in Derive")]),
+    )
+  }
+  blocks.push({ type: "divider" })
+  if (p.items.length) {
+    blocks.push(context("Recent artifacts"))
+    for (const a of p.items) {
+      const meta = metaLine(a)
+      blocks.push(section(`*<${a.url}|${a.title ?? a.short_id}>*${meta ? `\n${meta}` : ""}`))
+    }
+  } else {
+    blocks.push(context("No recent artifacts yet."))
+  }
+  blocks.push({ type: "divider" }, actions([openButton(p.baseUrl, "Open Derive")]))
+  return { type: "home", blocks }
+}

@@ -18,6 +18,13 @@ import {
 } from "../lib/slack"
 import type { ButtonValue } from "../lib/slack-cards"
 import { ingestSlackReply, resolveSlackMentions } from "../lib/slack-comments"
+import {
+  type DiscoveryDeps,
+  handleAppHomeOpened,
+  handleLinkShared,
+  handleSlashCommand,
+  shareArtifact,
+} from "../lib/slack-discovery"
 import { enqueueSlackDm, wantsMentionDm } from "../lib/slack-dm"
 import { log } from "../log"
 import { buildSlackManifest, hostOf, slackSetupHTML } from "../slack-app-setup"
@@ -42,12 +49,31 @@ export const slackRoutes = (ctx: AppContext) => {
     action: SlackInteractionAction,
     responseUrl: string,
     slackUserId: string | undefined,
+    channelId: string | undefined,
   ): Promise<void> => {
     if (!action.action_id?.startsWith("slack_act:") || !action.value) return
     let v: ButtonValue
     try {
       v = JSON.parse(action.value) as ButtonValue
     } catch {
+      return
+    }
+
+    // Share to channel (from a /derive find result): re-resolve the artifact and post its
+    // card. No identity check — sharing only posts shareable-visibility artifacts anyway.
+    if (v.act === "share") {
+      const install = await meta.getSlackInstall(v.org)
+      if (!install || !channelId) return
+      const ok = await shareArtifact(
+        { meta, baseUrl: deps.baseUrl, encryptionKey: deps.encryptionKey },
+        install,
+        channelId,
+        v.id,
+      )
+      await respondEphemeral(
+        responseUrl,
+        ok ? "Shared to this channel." : "Couldn't share that artifact.",
+      )
       return
     }
 
@@ -223,6 +249,22 @@ export const slackRoutes = (ctx: AppContext) => {
         }
       }
     }
+
+    // Discovery events: link unfurls + App Home. Best-effort and out of band so the ack
+    // stays well under Slack's 3s window (background awaits inline on Node/tests).
+    if (body.type === "event_callback" && ev) {
+      const dd: DiscoveryDeps = { meta, baseUrl: deps.baseUrl, encryptionKey: deps.encryptionKey }
+      if (ev.type === "link_shared")
+        background(
+          handleLinkShared(dd, body.team_id, {
+            channel: ev.channel,
+            message_ts: ev.message_ts,
+            links: ev.links,
+          }),
+        )
+      else if (ev.type === "app_home_opened")
+        background(handleAppHomeOpened(dd, body.team_id, { user: ev.user, tab: ev.tab }))
+    }
     return c.json({ ok: true })
   })
 
@@ -258,11 +300,40 @@ export const slackRoutes = (ctx: AppContext) => {
     if (payload.type === "block_actions" && payload.response_url) {
       const responseUrl = payload.response_url
       const slackUserId = payload.user?.id
+      const channelId = payload.channel?.id
       // Run out-of-band so the 200 ack stays well under Slack's 3s window.
       for (const action of payload.actions ?? [])
-        background(runInteraction(action, responseUrl, slackUserId))
+        background(runInteraction(action, responseUrl, slackUserId, channelId))
     }
     return c.json({})
+  })
+
+  // Slash command (/derive find <query> | /derive share <ref>). Signature-gated like the
+  // events endpoint (no session); Slack posts application/x-www-form-urlencoded and shows
+  // whatever ephemeral body we return, so the reply is synchronous (a fast title search).
+  // authz-exempt: verifySlackSignature is the gate; it's in the app's anon-write allow list.
+  app.post("/v1/slack/command", async (c) => {
+    if (!slack) return fail(c, 404, "Slack is not configured")
+    const raw = await c.req.text()
+    if (
+      !verifySlackSignature(
+        slack.signingSecret,
+        c.req.header("x-slack-request-timestamp"),
+        raw,
+        c.req.header("x-slack-signature"),
+      )
+    )
+      return fail(c, 401, "bad signature")
+    const form = new URLSearchParams(raw)
+    const result = await handleSlashCommand(
+      { meta, baseUrl: deps.baseUrl, encryptionKey: deps.encryptionKey },
+      {
+        team_id: form.get("team_id") ?? undefined,
+        channel_id: form.get("channel_id") ?? undefined,
+        text: form.get("text") ?? undefined,
+      },
+    )
+    return c.json(result)
   })
 
   // Connection status for the Settings UI: whether Slack is configured at all, whether
@@ -459,6 +530,7 @@ export const slackRoutes = (ctx: AppContext) => {
 interface SlackEventEnvelope {
   type?: string
   challenge?: string
+  team_id?: string
   event?: {
     type?: string
     subtype?: string
@@ -468,6 +540,11 @@ interface SlackEventEnvelope {
     channel?: string
     ts?: string
     thread_ts?: string
+    // app_home_opened
+    tab?: string
+    // link_shared
+    message_ts?: string
+    links?: { url?: string; domain?: string }[]
   }
 }
 
@@ -479,6 +556,7 @@ interface SlackInteractionPayload {
   type?: string
   response_url?: string
   user?: { id?: string }
+  channel?: { id?: string }
   actions?: SlackInteractionAction[]
 }
 

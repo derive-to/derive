@@ -217,6 +217,48 @@ export const replaceOriginal = async (
   }
 }
 
+/** Attach rich previews to shared derive.to links in a message (link unfurls). `unfurls`
+ *  maps each shared URL to its Block Kit blocks. Best-effort: a Slack-level failure just
+ *  leaves the link as a plain URL, so this never throws. */
+export const unfurlSlackLink = async (
+  token: string,
+  args: { channel: string; ts: string; unfurls: Record<string, { blocks: unknown }> },
+): Promise<void> => {
+  try {
+    await fetch(`${API}/chat.unfurl`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${token}`,
+        "content-type": "application/json; charset=utf-8",
+      },
+      body: JSON.stringify({ channel: args.channel, ts: args.ts, unfurls: args.unfurls }),
+    })
+  } catch {
+    // Unfurling is decorative; a failure leaves the plain link.
+  }
+}
+
+/** Publish a user's App Home tab view (views.publish). Best-effort — a failure leaves the
+ *  tab showing its previous state, never an error to the user. */
+export const publishSlackHomeView = async (
+  token: string,
+  userId: string,
+  view: unknown,
+): Promise<void> => {
+  try {
+    await fetch(`${API}/views.publish`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${token}`,
+        "content-type": "application/json; charset=utf-8",
+      },
+      body: JSON.stringify({ user_id: userId, view }),
+    })
+  } catch {
+    // A failed home publish is non-fatal.
+  }
+}
+
 /** Bot scopes requested at install. Covers posting + reply-back, plus reading user emails
  *  (email↔member matching) and opening DMs (per-user notifications) for later features —
  *  requesting them now means a workspace won't have to reconnect when those land. */

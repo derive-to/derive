@@ -1275,6 +1275,10 @@ export class PgMetaStore implements MetaStore {
     const rows = await this.db.select().from(slackInstall).where(eq(slackInstall.org_id, orgId))
     return rows[0] ?? null
   }
+  async getSlackInstallByTeam(teamId: string): Promise<SlackInstallRecord | null> {
+    const rows = await this.db.select().from(slackInstall).where(eq(slackInstall.team_id, teamId))
+    return rows[0] ?? null
+  }
   async setSlackInstall(s: SlackInstallRecord): Promise<void> {
     const { org_id: _o, created_at: _c, ...set } = s
     await this.db
