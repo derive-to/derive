@@ -216,6 +216,9 @@ export interface Proposal {
   id: string
   state: ProposalState
   author: string
+  /** When an agent proposed this, the human it acted on behalf of (delegation provenance);
+   *  null for a direct human proposal. Reviewers see "Agent X on behalf of Alice." */
+  on_behalf_of?: { handle: string | null; name: string | null } | null
   message: string | null
   base_version: number
   kind: "file" | "bundle"

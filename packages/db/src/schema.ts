@@ -464,6 +464,8 @@ export const proposal = sqliteTable("proposal", {
   // Stable identity of the proposer (user or agent id). Withdraw authorization
   // keys on this, never the mutable display `author` name. Nullable for legacy.
   author_id: text("author_id"),
+  // When an agent proposed this, the human it acted on behalf of (delegation provenance).
+  on_behalf_of: text("on_behalf_of"),
   base_version: integer("base_version").notNull(),
   state: text("state").$type<ProposalState>().notNull().default("open"),
   decided_by: text("decided_by"),

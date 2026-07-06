@@ -866,6 +866,10 @@ export interface ProposalRecord {
   /** Stable id of the proposer (user/agent); withdraw authorization keys on this,
    *  not `author`. Null for legacy rows and anonymous proposals. */
   author_id: string | null
+  /** When an AGENT proposed this, the human it acted on behalf of (the granting/registering
+   *  user) — so a reviewer sees "proposed by Agent X on behalf of Alice." Null for a direct
+   *  human proposal or an agent with no known principal. The delegation made legible. */
+  on_behalf_of: string | null
   /** The current_version this candidate was proposed against (for the diff). */
   base_version: number
   state: ProposalState
@@ -889,6 +893,7 @@ export interface NewProposal {
   message?: string | null
   author: string
   author_id?: string | null
+  on_behalf_of?: string | null
   base_version: number
 }
 

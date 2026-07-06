@@ -316,6 +316,7 @@ CREATE TABLE IF NOT EXISTS proposal (
   message TEXT,
   author TEXT NOT NULL,
   author_id TEXT,
+  on_behalf_of TEXT,
   base_version INTEGER NOT NULL,
   state TEXT NOT NULL DEFAULT 'open',
   decided_by TEXT,

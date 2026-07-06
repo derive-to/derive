@@ -297,6 +297,8 @@ export interface ProposeInput {
   author?: string
   /** Stable id of the proposer (user/agent); persisted for withdraw authorization. */
   author_id?: string | null
+  /** When an agent proposed, the human it acted on behalf of (delegation provenance). */
+  on_behalf_of?: string | null
 }
 
 export interface ProposeResult {
@@ -338,6 +340,7 @@ export async function propose(
     message: input.message ?? null,
     author: input.author ?? "anonymous",
     author_id: input.author_id ?? null,
+    on_behalf_of: input.on_behalf_of ?? null,
     base_version: artifact.current_version,
   })
   return { artifact, proposal }

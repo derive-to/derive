@@ -24,7 +24,7 @@ function appWithGrant(name: string, scopes: string) {
   const meta = new SqliteMetaStore(path)
   const db = new Database(path)
   db.exec(`
-    CREATE TABLE IF NOT EXISTS "user" (id TEXT PRIMARY KEY, email TEXT, name TEXT, image TEXT);
+    CREATE TABLE IF NOT EXISTS "user" (id TEXT PRIMARY KEY, email TEXT, name TEXT, image TEXT, username TEXT, discoverable INTEGER, profession TEXT, about TEXT);
     CREATE TABLE IF NOT EXISTS "oauthClient" (clientId TEXT PRIMARY KEY, name TEXT);
     CREATE TABLE IF NOT EXISTS "oauthAccessToken" (token TEXT PRIMARY KEY, clientId TEXT, userId TEXT, scopes TEXT, expiresAt TEXT);
   `)
@@ -337,6 +337,15 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(p.proposed).toBe(true)
     expect(p.proposal_id).toBeTruthy()
     expect(p.base_version).toBe(1)
+
+    // Delegation provenance: the agent proposed on behalf of the human who authorized the
+    // grant (Owner / u_o), so the review surface can show "Claude on behalf of Owner."
+    const list = await (
+      await app.request(`/v1/artifacts/${shortId}/proposals`, {
+        headers: { authorization: `Bearer ${token}` },
+      })
+    ).json()
+    expect(list.proposals[0].on_behalf_of).toMatchObject({ name: "Owner" })
 
     // The live version is untouched — a proposal is not a publish.
     const read = JSON.parse(toolText(await call(app, token, "read", { short_id: shortId })))
