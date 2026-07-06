@@ -220,6 +220,29 @@ export const agent = sqliteTable(
   ],
 )
 
+// A pending workspace invitation: an email invited at a role, redeemable by token.
+// Bringing in someone who has no account yet (a membership needs an existing user).
+export const invitation = sqliteTable(
+  "invitation",
+  {
+    id: text("id").primaryKey(),
+    org_id: text("org_id").notNull(),
+    email: text("email").notNull(),
+    role: text("role").$type<Role>().notNull().default("editor"),
+    token: text("token").notNull(),
+    invited_by: text("invited_by"),
+    created_at: text("created_at").notNull().default(now),
+    expires_at: text("expires_at").notNull(),
+    accepted_at: text("accepted_at"),
+  },
+  (t) => [
+    uniqueIndex("invitation_token").on(t.token),
+    // One live invite per (workspace, email): the route deletes any prior pending row
+    // before inserting, so a re-invite supersedes rather than duplicating.
+    index("invitation_org_email").on(t.org_id, t.email),
+  ],
+)
+
 // An agent's pull inbox: one row per mention directed at the agent.
 export const agentMention = sqliteTable("agent_mention", {
   id: text("id").primaryKey(),
@@ -527,6 +550,7 @@ const TABLES = [
   notification,
   agent,
   agentMention,
+  invitation,
   artifactFavorite,
   follow,
   artifactTag,

@@ -200,6 +200,26 @@ export const agent = pgTable(
   ],
 )
 
+// A pending workspace invitation (see schema.ts) — invite-by-email → accept.
+export const invitation = pgTable(
+  "invitation",
+  {
+    id: text("id").primaryKey(),
+    org_id: text("org_id").notNull(),
+    email: text("email").notNull(),
+    role: text("role").$type<Role>().notNull().default("editor"),
+    token: text("token").notNull(),
+    invited_by: text("invited_by"),
+    created_at: text("created_at").notNull().$defaultFn(isoNow),
+    expires_at: text("expires_at").notNull(),
+    accepted_at: text("accepted_at"),
+  },
+  (t) => [
+    uniqueIndex("invitation_token").on(t.token),
+    index("invitation_org_email").on(t.org_id, t.email),
+  ],
+)
+
 export const agentMention = pgTable("agent_mention", {
   id: text("id").primaryKey(),
   agent_id: text("agent_id").notNull(),
@@ -454,6 +474,7 @@ const TABLES = [
   notification,
   agent,
   agentMention,
+  invitation,
   artifactFavorite,
   follow,
   artifactTag,

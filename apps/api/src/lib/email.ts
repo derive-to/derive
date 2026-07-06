@@ -110,6 +110,35 @@ export const buildAuthEmail = (
   return { to: input.to, toName: input.name ?? undefined, subject: copy.subject, html, text }
 }
 
+/** Render a workspace-invitation email: who invited you, to which workspace, and a link
+ *  to accept. Same plain house style; the link lands on the accept page (signed-in gate). */
+export const buildInviteEmail = (input: {
+  to: string
+  workspace: string
+  inviter?: string | null
+  url: string
+}): EmailMsg => {
+  const by = input.inviter ? `${input.inviter} invited you` : "You've been invited"
+  const href = escapeHtml(input.url)
+  const ws = escapeHtml(input.workspace)
+  const html = `<!doctype html><html><body style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;color:#1a1a1a;line-height:1.5">
+  <p style="font-size:16px;font-weight:600;margin:0 0 8px">${escapeHtml(by)} to join ${ws} on Derive</p>
+  <p>Derive is where teams publish living docs and review them together — with humans and agents in the same loop.</p>
+  <p><a href="${href}" style="display:inline-block;background:#111;color:#fff;padding:10px 18px;border-radius:6px;text-decoration:none">Accept invitation</a></p>
+  <p style="color:#666;font-size:13px">Or paste this link into your browser:<br/><a href="${href}" style="color:#666">${href}</a></p>
+  <hr style="border:none;border-top:1px solid #eee;margin:24px 0"/>
+  <p style="color:#999;font-size:12px">If you weren't expecting this, you can ignore this email.</p>
+  </body></html>`
+  const text = [
+    `${by} to join ${input.workspace} on Derive.`,
+    ``,
+    `Accept your invitation: ${input.url}`,
+    ``,
+    `If you weren't expecting this, ignore this email.`,
+  ].join("\n")
+  return { to: input.to, subject: `Join ${input.workspace} on Derive`, html, text }
+}
+
 export interface CommentEmailInput {
   author: string
   body: string

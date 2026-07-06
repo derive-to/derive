@@ -21,6 +21,7 @@ import type {
   GitHubInstallationRecord,
   GithubAuthor,
   GithubUserMapping,
+  InvitationRecord,
   ListArtifactsOpts,
   MembershipRecord,
   MetaStore,
@@ -35,6 +36,7 @@ import type {
   NewDelivery,
   NewDomain,
   NewFollow,
+  NewInvitation,
   NewMembership,
   NewNotification,
   NewProposal,
@@ -101,6 +103,7 @@ import {
   follow,
   githubApp,
   githubInstallation,
+  invitation,
   membership,
   notification,
   orgSettings,
@@ -143,6 +146,7 @@ export const schema = {
   reviewRound,
   agent,
   agentMention,
+  invitation,
   collection,
   collectionItem,
   collectionMember,
@@ -173,6 +177,7 @@ const _schemaShapes: Shapes<typeof schema> = {
   reviewRound: true,
   agent: true,
   agentMention: true,
+  invitation: true,
   collection: true,
   collectionMember: true,
   repoSource: true,
@@ -1738,6 +1743,42 @@ export class PgMetaStore implements MetaStore {
   }
   async createAgentMention(m: NewAgentMention): Promise<void> {
     await this.db.insert(agentMention).values(m)
+  }
+  // ---- Workspace invitations ---------------------------------------------
+  async createInvitation(i: NewInvitation): Promise<InvitationRecord> {
+    const rows = await this.db.insert(invitation).values(i).returning()
+    return one(rows) as InvitationRecord
+  }
+  async getInvitationByToken(tokenHash: string): Promise<InvitationRecord | null> {
+    const rows = await this.db.select().from(invitation).where(eq(invitation.token, tokenHash))
+    return (rows[0] as InvitationRecord | undefined) ?? null
+  }
+  listPendingInvitations(orgId: string): Promise<InvitationRecord[]> {
+    return this.db
+      .select()
+      .from(invitation)
+      .where(and(eq(invitation.org_id, orgId), isNull(invitation.accepted_at)))
+      .orderBy(desc(invitation.created_at)) as Promise<InvitationRecord[]>
+  }
+  async deletePendingInvitationsFor(orgId: string, email: string): Promise<void> {
+    await this.db
+      .delete(invitation)
+      .where(
+        and(
+          eq(invitation.org_id, orgId),
+          eq(invitation.email, email),
+          isNull(invitation.accepted_at),
+        ),
+      )
+  }
+  async deleteInvitation(id: string, orgId: string): Promise<void> {
+    await this.db.delete(invitation).where(and(eq(invitation.id, id), eq(invitation.org_id, orgId)))
+  }
+  async markInvitationAccepted(id: string): Promise<void> {
+    await this.db
+      .update(invitation)
+      .set({ accepted_at: new Date().toISOString() })
+      .where(eq(invitation.id, id))
   }
   listPendingAgentMentions(agentId: string, limit: number): Promise<AgentMentionRecord[]> {
     return this.db

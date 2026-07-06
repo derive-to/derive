@@ -257,6 +257,26 @@ export interface Workspace {
   role: Role
   members: ArtifactMember[]
 }
+/** A pending workspace invitation (Admin view; the token is never exposed). */
+export interface Invite {
+  id: string
+  email: string
+  role: Role
+  created_at: string
+  expires_at: string
+}
+/** The result of inviting by email: either the person was an existing Derive account
+ *  (added straight to the roster) or a pending, emailed invitation was created. */
+export type InviteResult =
+  | { kind: "member"; member: ArtifactMember }
+  | { kind: "invite"; invite: Invite; accept_url: string }
+/** What the accept page shows before you join. */
+export interface InvitePreview {
+  workspace: string
+  role: Role
+  email: string
+  inviter: string | null
+}
 /** Per-workspace integration switches (mirrors the server's OrgSettings). */
 export interface OrgSettings {
   emailNotifications: boolean
@@ -935,6 +955,21 @@ export const api = {
     f("/v1/workspace", { ...opts({ name }), method: "PATCH" }).then(j),
   addWorkspaceMember: (user: string, role: Role): Promise<ArtifactMember> =>
     f("/v1/workspace/members", { ...opts({ user, role }), method: "PUT" }).then(j),
+  // Bring someone in by @handle or email: an existing account joins directly, an unknown
+  // email gets a pending, emailed invitation (accept_url returned so it's copyable too).
+  inviteToWorkspace: (email: string, role: Role): Promise<InviteResult> =>
+    f("/v1/workspace/invites", opts({ email, role })).then(j),
+  listWorkspaceInvites: (): Promise<{ invites: Invite[] }> =>
+    f("/v1/workspace/invites", opts()).then(j),
+  revokeWorkspaceInvite: (id: string): Promise<void> =>
+    f(`/v1/workspace/invites/${id}`, { method: "DELETE", credentials: "include" }).then(
+      () => undefined,
+    ),
+  // The accept page: preview an invite by token, then join.
+  previewInvite: (token: string): Promise<InvitePreview> =>
+    f(`/v1/invites/${encodeURIComponent(token)}`, opts()).then(j),
+  acceptInvite: (token: string): Promise<{ org_id: string; role: Role }> =>
+    f(`/v1/invites/${encodeURIComponent(token)}/accept`, opts({})).then(j),
   setWorkspaceMemberRole: (userId: string, role: Role): Promise<{ user_id: string; role: Role }> =>
     f(`/v1/workspace/members/${userId}`, { ...opts({ role }), method: "PATCH" }).then(j),
   removeWorkspaceMember: (userId: string): Promise<void> =>

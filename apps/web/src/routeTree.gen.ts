@@ -24,6 +24,7 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as SettingsIndexRouteImport } from './routes/settings.index'
 import { Route as UsersHandleRouteImport } from './routes/users.$handle'
 import { Route as SettingsSectionRouteImport } from './routes/settings.$section'
+import { Route as InviteTokenRouteImport } from './routes/invite.$token'
 import { Route as ArtifactsRefRouteImport } from './routes/artifacts.$ref'
 
 const WelcomeRoute = WelcomeRouteImport.update({
@@ -101,6 +102,11 @@ const SettingsSectionRoute = SettingsSectionRouteImport.update({
   path: '/$section',
   getParentRoute: () => SettingsRoute,
 } as any)
+const InviteTokenRoute = InviteTokenRouteImport.update({
+  id: '/invite/$token',
+  path: '/invite/$token',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ArtifactsRefRoute = ArtifactsRefRouteImport.update({
   id: '/artifacts/$ref',
   path: '/artifacts/$ref',
@@ -121,6 +127,7 @@ export interface FileRoutesByFullPath {
   '/showcase': typeof ShowcaseRoute
   '/welcome': typeof WelcomeRoute
   '/artifacts/$ref': typeof ArtifactsRefRoute
+  '/invite/$token': typeof InviteTokenRoute
   '/settings/$section': typeof SettingsSectionRoute
   '/users/$handle': typeof UsersHandleRoute
   '/settings/': typeof SettingsIndexRoute
@@ -138,6 +145,7 @@ export interface FileRoutesByTo {
   '/showcase': typeof ShowcaseRoute
   '/welcome': typeof WelcomeRoute
   '/artifacts/$ref': typeof ArtifactsRefRoute
+  '/invite/$token': typeof InviteTokenRoute
   '/settings/$section': typeof SettingsSectionRoute
   '/users/$handle': typeof UsersHandleRoute
   '/settings': typeof SettingsIndexRoute
@@ -157,6 +165,7 @@ export interface FileRoutesById {
   '/showcase': typeof ShowcaseRoute
   '/welcome': typeof WelcomeRoute
   '/artifacts/$ref': typeof ArtifactsRefRoute
+  '/invite/$token': typeof InviteTokenRoute
   '/settings/$section': typeof SettingsSectionRoute
   '/users/$handle': typeof UsersHandleRoute
   '/settings/': typeof SettingsIndexRoute
@@ -177,6 +186,7 @@ export interface FileRouteTypes {
     | '/showcase'
     | '/welcome'
     | '/artifacts/$ref'
+    | '/invite/$token'
     | '/settings/$section'
     | '/users/$handle'
     | '/settings/'
@@ -194,6 +204,7 @@ export interface FileRouteTypes {
     | '/showcase'
     | '/welcome'
     | '/artifacts/$ref'
+    | '/invite/$token'
     | '/settings/$section'
     | '/users/$handle'
     | '/settings'
@@ -212,6 +223,7 @@ export interface FileRouteTypes {
     | '/showcase'
     | '/welcome'
     | '/artifacts/$ref'
+    | '/invite/$token'
     | '/settings/$section'
     | '/users/$handle'
     | '/settings/'
@@ -231,6 +243,7 @@ export interface RootRouteChildren {
   ShowcaseRoute: typeof ShowcaseRoute
   WelcomeRoute: typeof WelcomeRoute
   ArtifactsRefRoute: typeof ArtifactsRefRoute
+  InviteTokenRoute: typeof InviteTokenRoute
   UsersHandleRoute: typeof UsersHandleRoute
 }
 
@@ -341,6 +354,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsSectionRouteImport
       parentRoute: typeof SettingsRoute
     }
+    '/invite/$token': {
+      id: '/invite/$token'
+      path: '/invite/$token'
+      fullPath: '/invite/$token'
+      preLoaderRoute: typeof InviteTokenRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/artifacts/$ref': {
       id: '/artifacts/$ref'
       path: '/artifacts/$ref'
@@ -379,6 +399,7 @@ const rootRouteChildren: RootRouteChildren = {
   ShowcaseRoute: ShowcaseRoute,
   WelcomeRoute: WelcomeRoute,
   ArtifactsRefRoute: ArtifactsRefRoute,
+  InviteTokenRoute: InviteTokenRoute,
   UsersHandleRoute: UsersHandleRoute,
 }
 export const routeTree = rootRouteImport

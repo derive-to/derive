@@ -157,6 +157,21 @@ CREATE TABLE IF NOT EXISTS agent_mention (
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 
+CREATE TABLE IF NOT EXISTS invitation (
+  id TEXT PRIMARY KEY,
+  org_id TEXT NOT NULL,
+  email TEXT NOT NULL,
+  role TEXT NOT NULL DEFAULT 'editor',
+  token TEXT NOT NULL,
+  invited_by TEXT,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  expires_at TEXT NOT NULL,
+  accepted_at TEXT,
+  UNIQUE (token)
+);
+
+CREATE INDEX IF NOT EXISTS invitation_org_email ON invitation (org_id, email);
+
 CREATE TABLE IF NOT EXISTS artifact_favorite (
   id TEXT PRIMARY KEY,
   artifact_id TEXT NOT NULL,

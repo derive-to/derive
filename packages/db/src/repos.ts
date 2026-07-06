@@ -20,6 +20,7 @@ import type {
   GitHubAppRecord,
   GitHubInstallationRecord,
   GithubAuthor,
+  InvitationRecord,
   ListArtifactsOpts,
   MembershipRecord,
   NewAgent,
@@ -33,6 +34,7 @@ import type {
   NewDelivery,
   NewDomain,
   NewFollow,
+  NewInvitation,
   NewMembership,
   NewNotification,
   NewProposal,
@@ -99,6 +101,7 @@ import {
   follow,
   githubApp,
   githubInstallation,
+  invitation,
   membership,
   notification,
   orgSettings,
@@ -170,6 +173,7 @@ export const schema = {
   reviewRound,
   agent,
   agentMention,
+  invitation,
   collection,
   collectionItem,
   collectionMember,
@@ -200,6 +204,7 @@ const _schemaShapes: Shapes<typeof schema> = {
   reviewRound: true,
   agent: true,
   agentMention: true,
+  invitation: true,
   collection: true,
   collectionMember: true,
   repoSource: true,
@@ -1636,6 +1641,44 @@ export function makeRepos(db: SqliteDb) {
   const createAgentMention = async (m: NewAgentMention): Promise<void> => {
     await db.insert(agentMention).values(m).run()
   }
+
+  // ---- Workspace invitations ---------------------------------------------
+  const createInvitation = async (i: NewInvitation): Promise<InvitationRecord> =>
+    (await db.insert(invitation).values(i).returning().get()) as InvitationRecord
+  const getInvitationByToken = async (tokenHash: string): Promise<InvitationRecord | null> =>
+    (await db.select().from(invitation).where(eq(invitation.token, tokenHash)).get()) ?? null
+  const listPendingInvitations = async (orgId: string): Promise<InvitationRecord[]> =>
+    db
+      .select()
+      .from(invitation)
+      .where(and(eq(invitation.org_id, orgId), isNull(invitation.accepted_at)))
+      .orderBy(desc(invitation.created_at))
+      .all()
+  const deletePendingInvitationsFor = async (orgId: string, email: string): Promise<void> => {
+    await db
+      .delete(invitation)
+      .where(
+        and(
+          eq(invitation.org_id, orgId),
+          eq(invitation.email, email),
+          isNull(invitation.accepted_at),
+        ),
+      )
+      .run()
+  }
+  const deleteInvitation = async (id: string, orgId: string): Promise<void> => {
+    await db
+      .delete(invitation)
+      .where(and(eq(invitation.id, id), eq(invitation.org_id, orgId)))
+      .run()
+  }
+  const markInvitationAccepted = async (id: string): Promise<void> => {
+    await db
+      .update(invitation)
+      .set({ accepted_at: new Date().toISOString() })
+      .where(eq(invitation.id, id))
+      .run()
+  }
   const listPendingAgentMentions = async (
     agentId: string,
     limit: number,
@@ -1892,6 +1935,12 @@ export function makeRepos(db: SqliteDb) {
     createAgentMention,
     listPendingAgentMentions,
     ackAgentMention,
+    createInvitation,
+    getInvitationByToken,
+    listPendingInvitations,
+    deletePendingInvitationsFor,
+    deleteInvitation,
+    markInvitationAccepted,
     createReport,
     getReport,
     listReports,

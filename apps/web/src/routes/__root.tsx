@@ -101,7 +101,8 @@ function AppFrame() {
       s.location.pathname === "/login" ||
       s.location.pathname === "/reset-password" ||
       s.location.pathname === "/welcome" ||
-      s.location.pathname === "/showcase",
+      s.location.pathname === "/showcase" ||
+      s.location.pathname.startsWith("/invite/"),
   })
 
   if (!hydrated) return <AppBoot />

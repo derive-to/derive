@@ -565,6 +565,22 @@ export interface MetaStore {
   /** The display name of a registered OAuth client (for the consent screen). */
   getOAuthClientName(clientId: string): Promise<string | null>
   deleteAgent(id: string, orgId: string): Promise<void>
+
+  // ---- Workspace invitations (invite-by-email → accept) ------------------
+  /** Create a pending invitation. Any existing pending invite for the same
+   *  (org, email) should be replaced by the caller first (a fresh token supersedes). */
+  createInvitation(i: NewInvitation): Promise<InvitationRecord>
+  /** Resolve an invite by its hashed token (for the accept flow); null if unknown. */
+  getInvitationByToken(tokenHash: string): Promise<InvitationRecord | null>
+  /** Pending (unaccepted) invitations for a workspace — the Admin's pending list. */
+  listPendingInvitations(orgId: string): Promise<InvitationRecord[]>
+  /** Drop any pending invite for this (org, email) — used to supersede on re-invite
+   *  and to clear it once the person becomes a member. */
+  deletePendingInvitationsFor(orgId: string, email: string): Promise<void>
+  /** Revoke a specific pending invitation (Admin), scoped to its workspace. */
+  deleteInvitation(id: string, orgId: string): Promise<void>
+  /** Stamp accepted_at so the invite can't be redeemed twice. */
+  markInvitationAccepted(id: string): Promise<void>
   /** Queue a mention into an agent's pull inbox. */
   createAgentMention(m: NewAgentMention): Promise<void>
   /** Pending (unhandled) mentions for an agent, oldest first. */
@@ -771,6 +787,37 @@ export interface NewAgentMention {
   thread_id: string
   body: string
   author: string
+}
+
+/**
+ * A pending workspace invitation: an email invited to join a workspace at a role,
+ * redeemable via an emailed link before it expires. Distinct from a membership (which
+ * requires an existing account) — this is how you bring in someone who hasn't signed up
+ * yet. The token is stored hashed (like agent tokens); accepting it creates the membership.
+ */
+export interface InvitationRecord {
+  id: string
+  org_id: string
+  /** Normalized (lowercased) invitee email. */
+  email: string
+  role: Role
+  /** SHA-256 of the redeem token (the raw token only ever rides the emailed link). */
+  token: string
+  /** The Admin who sent it; null if their account was later removed. */
+  invited_by: string | null
+  created_at: string
+  expires_at: string
+  /** Set once redeemed; a non-null value means the invite is spent. */
+  accepted_at: string | null
+}
+export interface NewInvitation {
+  id: string
+  org_id: string
+  email: string
+  role: Role
+  token: string
+  invited_by?: string | null
+  expires_at: string
 }
 
 /**

@@ -1,15 +1,25 @@
-import { newId, type Role } from "@derive/core"
+import { randomUUID } from "node:crypto"
+import { type InvitationRecord, newId, type Role } from "@derive/core"
 import { Hono } from "hono"
 import { z } from "zod"
 import type { AppContext } from "../context"
+import { sha256 } from "../lib/crypto"
+import { buildInviteEmail } from "../lib/email"
 import { DEFAULT_WORKSPACE_NAME, fail, isWorkspaceRole, readJson } from "../lib/http"
 import { resolveUserRef } from "../lib/resolve-user"
+import { enqueueChannelDelivery } from "../webhooks"
+
+// A plausible email (loose check — the real gate is deliverability). Anything without a
+// single @ and a dotted domain is treated as a bad ref, not an invite.
+const looksLikeEmail = (s: string): boolean => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(s)
+const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000 // 7 days
 
 /** The workspace itself: name + members (Admin-managed), plus multi-workspace
  *  list / create / switch. A workspace always keeps at least one Admin. */
 export const workspaceRoutes = (ctx: AppContext) => {
   const {
     meta,
+    deps,
     requireUser,
     currentUser,
     activeWorkspace,
@@ -19,6 +29,15 @@ export const workspaceRoutes = (ctx: AppContext) => {
   } = ctx
   const { privateOwnerId } = ctx
   const app = new Hono()
+
+  // A pending invite, minus the secret token (never leaves the server).
+  const inviteJson = (i: InvitationRecord) => ({
+    id: i.id,
+    email: i.email,
+    role: i.role,
+    created_at: i.created_at,
+    expires_at: i.expires_at,
+  })
 
   // A workspace must always keep at least one Admin, so it stays manageable:
   // demoting or removing the last owner is refused.
@@ -138,6 +157,141 @@ export const workspaceRoutes = (ctx: AppContext) => {
       return fail(c, 409, "the workspace needs at least one admin")
     await meta.removeMembership(org, userId)
     return c.body(null, 204)
+  })
+
+  // ---- Invitations (bring in someone by email, incl. non-users) -----------
+  // The one "add a person" action (Admin only): if the ref resolves to an existing
+  // Derive account (by @handle or email) they're added straight to the roster; an
+  // unknown email becomes a pending, emailed invitation redeemable via a token link.
+  // The accept URL is always returned (so a mail-less self-host can copy the link),
+  // and also emailed when a transport is configured.
+  app.post("/v1/workspace/invites", async (c) => {
+    if (!(await workspaceCan(c, "manage"))) return fail(c, 403, "forbidden")
+    const b = await readJson(
+      c,
+      z.object({
+        email: z.string().min(1),
+        role: z.custom<Role>(isWorkspaceRole, "a valid role is required"),
+      }),
+    )
+    if (b instanceof Response) return b
+    const org = await activeWorkspace(c)
+    const ref = b.email.trim()
+
+    // Existing account → add directly (and clear any stale pending invite for them).
+    const existingId = await resolveUserRef(meta, ref)
+    if (existingId) {
+      const [user] = await meta.getUsers([existingId])
+      if (!user) return fail(c, 404, "no Derive user with that username or email")
+      await meta.setMembership({
+        id: (await meta.getMembership(org, existingId))?.id ?? newId("m"),
+        org_id: org,
+        user_id: existingId,
+        role: b.role,
+      })
+      if (user.email) await meta.deletePendingInvitationsFor(org, user.email.toLowerCase())
+      return c.json(
+        {
+          kind: "member" as const,
+          member: {
+            user_id: user.id,
+            handle: user.username,
+            name: user.name,
+            profession: user.profession ?? null,
+            role: b.role,
+          },
+        },
+        201,
+      )
+    }
+
+    // Otherwise it must look like an email — an unknown @handle is just a miss.
+    const email = ref.toLowerCase()
+    if (!looksLikeEmail(email)) return fail(c, 404, "no Derive user with that username or email")
+
+    // A fresh token supersedes any prior pending invite for this email.
+    await meta.deletePendingInvitationsFor(org, email)
+    const token = `dki_${randomUUID().replace(/-/g, "")}${randomUUID().replace(/-/g, "")}`
+    const me = await currentUser(c)
+    const invite = await meta.createInvitation({
+      id: newId("inv"),
+      org_id: org,
+      email,
+      role: b.role,
+      token: sha256(token),
+      invited_by: me?.id ?? null,
+      expires_at: new Date(Date.now() + INVITE_TTL_MS).toISOString(),
+    })
+    const acceptUrl = `${deps.baseUrl.replace(/\/$/, "")}/invite/${token}`
+    // Best-effort email through the retrying outbox; the returned link is the fallback
+    // (and the primary channel on a self-host with no mail transport).
+    const ws = await meta.getWorkspace(org)
+    await enqueueChannelDelivery(
+      meta,
+      "email",
+      "workspace.invite",
+      buildInviteEmail({
+        to: email,
+        workspace: ws?.name ?? DEFAULT_WORKSPACE_NAME,
+        inviter: me?.name ?? null,
+        url: acceptUrl,
+      }),
+    )
+    return c.json(
+      { kind: "invite" as const, invite: inviteJson(invite), accept_url: acceptUrl },
+      201,
+    )
+  })
+
+  // Pending invitations for the workspace (Admin only). Tokens are never included.
+  app.get("/v1/workspace/invites", async (c) => {
+    if (!(await workspaceCan(c, "manage"))) return fail(c, 403, "forbidden")
+    const invites = await meta.listPendingInvitations(await activeWorkspace(c))
+    return c.json({ invites: invites.map(inviteJson) })
+  })
+
+  // Revoke a pending invitation (Admin only; scoped to the workspace).
+  app.delete("/v1/workspace/invites/:id", async (c) => {
+    if (!(await workspaceCan(c, "manage"))) return fail(c, 403, "forbidden")
+    await meta.deleteInvitation(c.req.param("id"), await activeWorkspace(c))
+    return c.body(null, 204)
+  })
+
+  // Preview an invite before accepting — the accept page reads this to show the
+  // workspace + role. The token IS the secret (possession authorizes), mirroring the
+  // password-artifact model, so this is readable by anyone holding a valid, live token.
+  app.get("/v1/invites/:token", async (c) => {
+    const inv = await meta.getInvitationByToken(sha256(c.req.param("token")))
+    if (!inv || inv.accepted_at || new Date(inv.expires_at).getTime() < Date.now())
+      return fail(c, 404, "this invitation is invalid or has expired")
+    const ws = await meta.getWorkspace(inv.org_id)
+    const inviter = inv.invited_by ? (await meta.getUsers([inv.invited_by]))[0] : undefined
+    return c.json({
+      workspace: ws?.name ?? DEFAULT_WORKSPACE_NAME,
+      role: inv.role,
+      email: inv.email,
+      inviter: inviter?.name ?? null,
+    })
+  })
+
+  // Accept an invitation: the signed-in holder of the token joins the workspace at the
+  // invited role (no-op if already a member), and the invite is marked spent.
+  app.post("/v1/invites/:token/accept", async (c) => {
+    const me = await requireUser(c)
+    if (me instanceof Response) return me
+    const inv = await meta.getInvitationByToken(sha256(c.req.param("token")))
+    if (!inv || inv.accepted_at || new Date(inv.expires_at).getTime() < Date.now())
+      return fail(c, 404, "this invitation is invalid or has expired")
+    const existing = await meta.getMembership(inv.org_id, me.id)
+    if (!existing)
+      await meta.setMembership({
+        id: newId("m"),
+        org_id: inv.org_id,
+        user_id: me.id,
+        role: inv.role,
+      })
+    await meta.markInvitationAccepted(inv.id)
+    return c.json({ org_id: inv.org_id, role: existing?.role ?? inv.role })
   })
 
   // ---- Integration settings (enable/disable each channel) -----------------
