@@ -4,7 +4,7 @@ import { generateUsername } from "@derive/core"
 import { type BetterAuthOptions, betterAuth } from "better-auth"
 import { APIError, createAuthMiddleware } from "better-auth/api"
 import { getMigrations } from "better-auth/db/migration"
-import { genericOAuth, jwt } from "better-auth/plugins"
+import { genericOAuth, jwt, twoFactor } from "better-auth/plugins"
 import { isBreachedPassword, sha256 } from "./lib/crypto"
 import { log } from "./log"
 
@@ -355,6 +355,11 @@ export function makeAuth(db: AuthDb, baseUrl: string, secret: string, hooks: Aut
             }),
           ]
         : []),
+      // Opt-in TOTP two-factor (authenticator apps) + one-time backup codes. Zero external
+      // dependency — the secret + codes live in Better Auth's own tables (created by
+      // migrateAuth). A user enables it in Settings → Security; when on, sign-in becomes a
+      // two-step flow (password → code) the client handles via the twoFactorRedirect result.
+      twoFactor({ issuer: "Derive" }),
       // oauthProvider signs id tokens + serves JWKS through the jwt plugin.
       jwt(),
       // Derive as an OAuth 2.1 authorization server: agents (MCP clients) authenticate

@@ -23,6 +23,11 @@ export function Login() {
   const [err, setErr] = useState("")
   const [busy, setBusy] = useState(false)
   const [pkBusy, setPkBusy] = useState(false)
+  // Set when a password sign-in needs a second factor (the account has 2FA on); swaps the
+  // form for a TOTP/backup-code prompt. `useBackup` toggles between the two code types.
+  const [twoFactorPending, setTwoFactorPending] = useState(false)
+  const [code, setCode] = useState("")
+  const [useBackup, setUseBackup] = useState(false)
   // What sign-in methods this instance actually has (so we only render buttons that
   // work here — the capability-adaptive contract). Null while loading.
   const [caps, setCaps] = useState<AuthCapabilities | null>(null)
@@ -88,9 +93,37 @@ export function Login() {
     setErr("")
     setBusy(true)
     try {
-      if (mode === "signup") await api.signup(email, password, name)
-      else await api.login(email, password)
+      if (mode === "signup") {
+        await api.signup(email, password, name)
+      } else {
+        const res = (await api.login(email, password)) as { twoFactorRedirect?: boolean } | null
+        // The account has 2FA on: sign-in returned no session, just a redirect flag —
+        // switch to the code prompt instead of trying to read a (nonexistent) session.
+        if (res?.twoFactorRedirect) {
+          setTwoFactorPending(true)
+          setBusy(false)
+          return
+        }
+      }
       // Seed the auth cache from the one identity read (session cookie is set now).
+      setMe(await api.session())
+      afterAuth()
+    } catch (e) {
+      setErr((e as Error).message)
+      setBusy(false)
+    }
+  }
+
+  // Complete a 2FA sign-in with the entered TOTP (or backup) code.
+  const verifyCode = async (e: FormEvent) => {
+    e.preventDefault()
+    setErr("")
+    setBusy(true)
+    try {
+      const res = useBackup
+        ? await authClient.twoFactor.verifyBackupCode({ code })
+        : await authClient.twoFactor.verifyTotp({ code })
+      if (res?.error) throw new Error(res.error.message ?? "That code didn't work.")
       setMe(await api.session())
       afterAuth()
     } catch (e) {
@@ -160,193 +193,252 @@ export function Login() {
                 font-serif alias); this is also the page's one functional <h1>. */}
             <div className="flex flex-col gap-1.5">
               <h1 className="font-serif text-3xl font-medium tracking-tight text-balance text-foreground">
-                {signup ? "Create your account" : "Welcome back"}
+                {twoFactorPending
+                  ? "Two-step verification"
+                  : signup
+                    ? "Create your account"
+                    : "Welcome back"}
               </h1>
               <p className="text-sm text-pretty text-muted-foreground">
-                {signup ? "Start publishing artifacts in seconds." : "Sign in to your workspace."}
+                {twoFactorPending
+                  ? useBackup
+                    ? "Enter one of your saved backup codes."
+                    : "Enter the code from your authenticator app."
+                  : signup
+                    ? "Start publishing artifacts in seconds."
+                    : "Sign in to your workspace."}
               </p>
             </div>
           </div>
 
-          {/* Action zone — the sign-in methods (OAuth + email/password) and the
-              mode toggle, grouped tighter than the break above so the form reads as
-              one considered unit rather than four equidistant pieces. */}
-          <div className="flex flex-col gap-6">
-            {(caps?.google || caps?.github || oidc || (caps?.passkey && !signup)) && (
-              <div className="flex flex-col gap-3">
-                <div className="flex flex-col gap-2">
-                  {/* Passkey is promoted by POSITION (top) + conditional-UI autofill on the
-                      email field — kept in the outline register so the email/password submit
-                      stays the page's one ink moment. Sign-in only (passkeys are added
-                      post-auth, never at sign-up). */}
-                  {caps?.passkey && !signup && (
-                    <Button
-                      data-testid="login-passkey"
-                      variant="outline"
-                      size="lg"
-                      type="button"
-                      className="w-full"
-                      loading={pkBusy}
-                      onClick={() => passkeySignIn(false)}
-                    >
-                      {pkBusy ? "Waiting for passkey…" : "Sign in with a passkey"}
-                    </Button>
-                  )}
-                  {caps?.google && (
-                    <Button
-                      data-testid="login-google"
-                      variant="outline"
-                      size="lg"
-                      type="button"
-                      className="w-full"
-                      onClick={() => social("google")}
-                    >
-                      Continue with Google
-                    </Button>
-                  )}
-                  {caps?.github && (
-                    <Button
-                      data-testid="login-github"
-                      variant="outline"
-                      size="lg"
-                      type="button"
-                      className="w-full"
-                      onClick={() => social("github")}
-                    >
-                      Continue with GitHub
-                    </Button>
-                  )}
-                  {oidc && (
-                    <Button
-                      data-testid="login-sso"
-                      variant="outline"
-                      size="lg"
-                      type="button"
-                      className="w-full"
-                      onClick={() => sso(oidc.providerId)}
-                    >
-                      Continue with {oidc.label}
-                    </Button>
-                  )}
-                </div>
-                <LabeledDivider>
-                  <Eyebrow>or</Eyebrow>
-                </LabeledDivider>
-              </div>
-            )}
-
-            <form onSubmit={submit} className="flex flex-col gap-4">
-              {/* Landed here from a completed password reset — every other session was
-                  revoked, so sign in fresh with the new password. */}
-              {didReset && !err && (
-                <StatusPanel
-                  tone="success"
-                  layout="inline"
-                  title="Password updated. Sign in with your new password."
-                />
-              )}
+          {/* 2FA code prompt — swapped in for the whole action zone once a password
+              sign-in reports the account has two-factor on. */}
+          {twoFactorPending ? (
+            <form onSubmit={verifyCode} className="flex flex-col gap-4">
               {err && (
                 <div data-testid="login-error">
-                  {/* StatusPanel (tone="danger") announces via role="alert" and bakes in
-                    the inline padding — no wrapper role, no p-* override. */}
                   <StatusPanel tone="danger" layout="inline" title={err} />
                 </div>
               )}
-              {signup && (
-                <FormField label="Name" htmlFor="login-name">
-                  <Input
-                    id="login-name"
-                    data-testid="login-name"
-                    name="name"
-                    autoComplete="name"
-                    // First field in signup mode takes focus on mount.
-                    autoFocus
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    placeholder="Your name"
-                  />
-                </FormField>
-              )}
-              <FormField label="Email" htmlFor="login-email">
+              <FormField
+                label={useBackup ? "Backup code" : "Authenticator code"}
+                htmlFor="login-2fa"
+              >
                 <Input
-                  id="login-email"
-                  data-testid="login-email"
-                  type="email"
-                  name="email"
-                  // "webauthn" lets the browser offer saved passkeys inline (conditional UI),
-                  // primed by passkeySignIn(true) on mount — the seamless one-tap path.
-                  autoComplete={caps?.passkey && !signup ? "username webauthn" : "email"}
-                  required
-                  // First field in login mode takes focus on mount (signup leads with name).
-                  autoFocus={!signup}
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  placeholder="you@company.com"
+                  id="login-2fa"
+                  data-testid="login-2fa"
+                  name="one-time-code"
+                  inputMode={useBackup ? "text" : "numeric"}
+                  autoComplete="one-time-code"
+                  autoFocus
+                  value={code}
+                  onChange={(e) => setCode(e.target.value)}
+                  placeholder={useBackup ? "xxxxxxxxxx" : "123456"}
                 />
               </FormField>
-              <div className="flex flex-col gap-1.5">
-                <FormField label="Password" htmlFor="login-password">
-                  <Input
-                    id="login-password"
-                    data-testid="login-password"
-                    type="password"
-                    name="password"
-                    autoComplete={signup ? "new-password" : "current-password"}
-                    required
-                    minLength={8}
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    placeholder="At least 8 characters"
-                  />
-                </FormField>
-                {/* Self-serve recovery — only in sign-in mode, and only where a mail
-                    transport can actually deliver the link (capability-gated). */}
-                {!signup && caps?.passwordReset && (
-                  <Button
-                    asChild
-                    variant="link"
-                    data-testid="login-forgot"
-                    className="h-auto self-end p-0 text-xs font-normal text-muted-foreground"
-                  >
-                    <Link to="/reset-password">Forgot password?</Link>
-                  </Button>
-                )}
-              </div>
               <Button
-                data-testid="login-submit"
+                data-testid="login-2fa-submit"
                 variant="default"
                 size="lg"
                 type="submit"
-                // Busy uses the Button `loading` recipe (auto-disables + current-ink
-                // spinner) while we keep the verb label; the value guard stays the
-                // house convention (matches password-gate, workspace invite, etc.).
                 loading={busy}
-                disabled={!email || !password}
+                disabled={!code}
                 className="w-full"
               >
-                {busy
-                  ? signup
-                    ? "Creating account…"
-                    : "Signing in…"
-                  : signup
-                    ? "Create account"
-                    : "Sign in"}
+                {busy ? "Verifying…" : "Verify"}
               </Button>
-            </form>
-
-            <p className="text-center text-sm text-muted-foreground">
-              {signup ? "Have an account? " : "New here? "}
               <Button
-                data-testid="login-toggle"
+                data-testid="login-2fa-toggle"
                 variant="link"
                 type="button"
-                className="h-auto p-0 align-baseline"
-                onClick={() => setMode(signup ? "login" : "signup")}
+                className="h-auto p-0 text-sm font-normal text-muted-foreground"
+                onClick={() => {
+                  setUseBackup((b) => !b)
+                  setCode("")
+                  setErr("")
+                }}
               >
-                {signup ? "Sign in" : "Create an account"}
+                {useBackup ? "Use your authenticator app instead" : "Use a backup code instead"}
               </Button>
-            </p>
-          </div>
+            </form>
+          ) : (
+            <div className="flex flex-col gap-6">
+              {(caps?.google || caps?.github || oidc || (caps?.passkey && !signup)) && (
+                <div className="flex flex-col gap-3">
+                  <div className="flex flex-col gap-2">
+                    {/* Passkey is promoted by POSITION (top) + conditional-UI autofill on the
+                      email field — kept in the outline register so the email/password submit
+                      stays the page's one ink moment. Sign-in only (passkeys are added
+                      post-auth, never at sign-up). */}
+                    {caps?.passkey && !signup && (
+                      <Button
+                        data-testid="login-passkey"
+                        variant="outline"
+                        size="lg"
+                        type="button"
+                        className="w-full"
+                        loading={pkBusy}
+                        onClick={() => passkeySignIn(false)}
+                      >
+                        {pkBusy ? "Waiting for passkey…" : "Sign in with a passkey"}
+                      </Button>
+                    )}
+                    {caps?.google && (
+                      <Button
+                        data-testid="login-google"
+                        variant="outline"
+                        size="lg"
+                        type="button"
+                        className="w-full"
+                        onClick={() => social("google")}
+                      >
+                        Continue with Google
+                      </Button>
+                    )}
+                    {caps?.github && (
+                      <Button
+                        data-testid="login-github"
+                        variant="outline"
+                        size="lg"
+                        type="button"
+                        className="w-full"
+                        onClick={() => social("github")}
+                      >
+                        Continue with GitHub
+                      </Button>
+                    )}
+                    {oidc && (
+                      <Button
+                        data-testid="login-sso"
+                        variant="outline"
+                        size="lg"
+                        type="button"
+                        className="w-full"
+                        onClick={() => sso(oidc.providerId)}
+                      >
+                        Continue with {oidc.label}
+                      </Button>
+                    )}
+                  </div>
+                  <LabeledDivider>
+                    <Eyebrow>or</Eyebrow>
+                  </LabeledDivider>
+                </div>
+              )}
+
+              <form onSubmit={submit} className="flex flex-col gap-4">
+                {/* Landed here from a completed password reset — every other session was
+                  revoked, so sign in fresh with the new password. */}
+                {didReset && !err && (
+                  <StatusPanel
+                    tone="success"
+                    layout="inline"
+                    title="Password updated. Sign in with your new password."
+                  />
+                )}
+                {err && (
+                  <div data-testid="login-error">
+                    {/* StatusPanel (tone="danger") announces via role="alert" and bakes in
+                    the inline padding — no wrapper role, no p-* override. */}
+                    <StatusPanel tone="danger" layout="inline" title={err} />
+                  </div>
+                )}
+                {signup && (
+                  <FormField label="Name" htmlFor="login-name">
+                    <Input
+                      id="login-name"
+                      data-testid="login-name"
+                      name="name"
+                      autoComplete="name"
+                      // First field in signup mode takes focus on mount.
+                      autoFocus
+                      value={name}
+                      onChange={(e) => setName(e.target.value)}
+                      placeholder="Your name"
+                    />
+                  </FormField>
+                )}
+                <FormField label="Email" htmlFor="login-email">
+                  <Input
+                    id="login-email"
+                    data-testid="login-email"
+                    type="email"
+                    name="email"
+                    // "webauthn" lets the browser offer saved passkeys inline (conditional UI),
+                    // primed by passkeySignIn(true) on mount — the seamless one-tap path.
+                    autoComplete={caps?.passkey && !signup ? "username webauthn" : "email"}
+                    required
+                    // First field in login mode takes focus on mount (signup leads with name).
+                    autoFocus={!signup}
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    placeholder="you@company.com"
+                  />
+                </FormField>
+                <div className="flex flex-col gap-1.5">
+                  <FormField label="Password" htmlFor="login-password">
+                    <Input
+                      id="login-password"
+                      data-testid="login-password"
+                      type="password"
+                      name="password"
+                      autoComplete={signup ? "new-password" : "current-password"}
+                      required
+                      minLength={8}
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      placeholder="At least 8 characters"
+                    />
+                  </FormField>
+                  {/* Self-serve recovery — only in sign-in mode, and only where a mail
+                    transport can actually deliver the link (capability-gated). */}
+                  {!signup && caps?.passwordReset && (
+                    <Button
+                      asChild
+                      variant="link"
+                      data-testid="login-forgot"
+                      className="h-auto self-end p-0 text-xs font-normal text-muted-foreground"
+                    >
+                      <Link to="/reset-password">Forgot password?</Link>
+                    </Button>
+                  )}
+                </div>
+                <Button
+                  data-testid="login-submit"
+                  variant="default"
+                  size="lg"
+                  type="submit"
+                  // Busy uses the Button `loading` recipe (auto-disables + current-ink
+                  // spinner) while we keep the verb label; the value guard stays the
+                  // house convention (matches password-gate, workspace invite, etc.).
+                  loading={busy}
+                  disabled={!email || !password}
+                  className="w-full"
+                >
+                  {busy
+                    ? signup
+                      ? "Creating account…"
+                      : "Signing in…"
+                    : signup
+                      ? "Create account"
+                      : "Sign in"}
+                </Button>
+              </form>
+
+              <p className="text-center text-sm text-muted-foreground">
+                {signup ? "Have an account? " : "New here? "}
+                <Button
+                  data-testid="login-toggle"
+                  variant="link"
+                  type="button"
+                  className="h-auto p-0 align-baseline"
+                  onClick={() => setMode(signup ? "login" : "signup")}
+                >
+                  {signup ? "Sign in" : "Create an account"}
+                </Button>
+              </p>
+            </div>
+          )}
         </div>
       </main>
 

@@ -18,6 +18,8 @@ export interface Me {
   /** Has the account's email been verified? Soft-nudge only (never gates anything); drives
    *  the dismissible "verify your email" banner. */
   emailVerified: boolean
+  /** Is TOTP two-factor enabled? Drives the Security-hub enable/disable state. */
+  twoFactorEnabled: boolean
 }
 /** What sign-in methods + auth flows THIS instance actually has (capability-adaptive:
  *  a bare self-host reports fewer than a fully-wired hosted deploy). Drives the login
@@ -573,6 +575,7 @@ type SessionUser = {
   about?: string | null
   onboarded?: boolean
   emailVerified?: boolean
+  twoFactorEnabled?: boolean
 }
 const mapMe = (u: SessionUser): Me => ({
   id: u.id,
@@ -588,6 +591,7 @@ const mapMe = (u: SessionUser): Me => ({
   // Off by default: onboarded only when explicitly set (unset = not yet).
   onboarded: u.onboarded === true,
   emailVerified: u.emailVerified === true,
+  twoFactorEnabled: u.twoFactorEnabled === true,
 })
 
 export const api = {

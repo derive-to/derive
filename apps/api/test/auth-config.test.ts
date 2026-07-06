@@ -55,15 +55,15 @@ describe("auth-config: optional providers", () => {
     process.env.OIDC_PROVIDER_ID = "okta"
     const ids = pluginIds(makeAuth(db(), "http://derive.test", "test-secret-0123456789abcd"))
     expect(ids).toContain("oauth-provider")
-    // genericOAuth + passkey (same-origin ⇒ enabled) + jwt + oauth-provider
-    expect(ids).toHaveLength(4)
+    // genericOAuth + passkey (same-origin) + two-factor + jwt + oauth-provider
+    expect(ids).toHaveLength(5)
   })
 
   it("omits the SSO plugin when the OIDC_* trio is incomplete (the OAuth server stays)", () => {
     process.env.OIDC_ISSUER = "https://issuer.example.com/"
     // no client id/secret
     const ids = pluginIds(makeAuth(db(), "http://derive.test", "test-secret-0123456789abcd"))
-    expect([...ids].sort()).toEqual(["jwt", "oauth-provider", "passkey"])
+    expect([...ids].sort()).toEqual(["jwt", "oauth-provider", "passkey", "two-factor"])
   })
 
   it("applies SameSite=None;Secure cookies when DERIVE_CROSS_SITE=true", () => {

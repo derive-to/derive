@@ -52,8 +52,273 @@ export function SecuritySection() {
       </SettingsGroup>
 
       {caps?.passkey && <Passkeys />}
+      <TwoFactor />
       <Sessions />
     </SettingsSection>
+  )
+}
+
+// TOTP two-factor: enable (password → scan/enter the secret → confirm a code → save backup
+// codes) or disable (password). Zero external dependency — codes come from an authenticator
+// app. A passkey sign-in is already phishing-resistant, so this is opt-in on top.
+function TwoFactor() {
+  const { me, setMe } = useAuth()
+  const enabled = !!me?.twoFactorEnabled
+  const refresh = async () => setMe(await api.session())
+  return (
+    <SettingsGroup>
+      <SettingRow
+        label={
+          <span className="flex items-center gap-2">
+            Two-factor authentication
+            {enabled ? <Badge variant="secondary">On</Badge> : <Badge variant="outline">Off</Badge>}
+          </span>
+        }
+        description="A one-time code from your authenticator app, asked for at sign-in."
+      >
+        {enabled ? <DisableTwoFactor onDone={refresh} /> : <EnableTwoFactor onDone={refresh} />}
+      </SettingRow>
+    </SettingsGroup>
+  )
+}
+
+function EnableTwoFactor({ onDone }: { onDone: () => Promise<void> }) {
+  const [open, setOpen] = useState(false)
+  const [step, setStep] = useState<"password" | "confirm">("password")
+  const [password, setPassword] = useState("")
+  const [code, setCode] = useState("")
+  const [secret, setSecret] = useState("")
+  const [backup, setBackup] = useState<string[]>([])
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState("")
+
+  const reset = () => {
+    setStep("password")
+    setPassword("")
+    setCode("")
+    setSecret("")
+    setBackup([])
+    setErr("")
+  }
+
+  const start = async () => {
+    setErr("")
+    setBusy(true)
+    try {
+      const res = await authClient.twoFactor.enable({ password })
+      if (res?.error || !res?.data) throw new Error(res?.error?.message ?? "Could not start setup.")
+      // totpURI is otpauth://totp/Derive:email?secret=…&issuer=Derive — pull the manual key.
+      setSecret(new URL(res.data.totpURI).searchParams.get("secret") ?? "")
+      setBackup(res.data.backupCodes ?? [])
+      setStep("confirm")
+    } catch (e) {
+      setErr(e instanceof ApiError ? e.message : (e as Error).message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const confirm = async () => {
+    setErr("")
+    setBusy(true)
+    try {
+      const res = await authClient.twoFactor.verifyTotp({ code })
+      if (res?.error) throw new Error(res.error.message ?? "That code didn't work.")
+      await onDone()
+      toast.success("Two-factor authentication is on")
+      setOpen(false)
+      reset()
+    } catch (e) {
+      setErr((e as Error).message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(o) => {
+        setOpen(o)
+        if (!o) reset()
+      }}
+    >
+      <DialogTrigger asChild>
+        <Button variant="outline" size="sm" data-testid="2fa-enable">
+          Enable
+        </Button>
+      </DialogTrigger>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Enable two-factor authentication</DialogTitle>
+          <DialogDescription>
+            {step === "password"
+              ? "Confirm your password to begin."
+              : "Add the key to your authenticator app, save your backup codes, then confirm a code."}
+          </DialogDescription>
+        </DialogHeader>
+        {err && <StatusPanel tone="danger" layout="inline" title={err} />}
+        {step === "password" ? (
+          <form
+            className="flex flex-col gap-4"
+            onSubmit={(e) => {
+              e.preventDefault()
+              start()
+            }}
+          >
+            <FormField label="Password" htmlFor="tfa-password">
+              <Input
+                id="tfa-password"
+                data-testid="2fa-password"
+                type="password"
+                autoComplete="current-password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+              />
+            </FormField>
+            <DialogFooter>
+              <Button type="submit" loading={busy} disabled={!password} data-testid="2fa-start">
+                {busy ? "Starting…" : "Continue"}
+              </Button>
+            </DialogFooter>
+          </form>
+        ) : (
+          <form
+            className="flex flex-col gap-4"
+            onSubmit={(e) => {
+              e.preventDefault()
+              confirm()
+            }}
+          >
+            <div className="flex flex-col gap-1.5">
+              <div className="text-sm font-medium text-foreground">Setup key</div>
+              <code
+                data-testid="2fa-secret"
+                className="block break-all rounded-md bg-secondary px-2.5 py-1.5 font-mono text-2xs text-foreground"
+              >
+                {secret}
+              </code>
+            </div>
+            {backup.length > 0 && (
+              <div className="flex flex-col gap-1.5">
+                <div className="text-sm font-medium text-foreground">
+                  Backup codes — save these somewhere safe
+                </div>
+                <div
+                  data-testid="2fa-backup-codes"
+                  className="grid grid-cols-2 gap-1 rounded-md bg-secondary px-2.5 py-2 font-mono text-2xs text-foreground"
+                >
+                  {backup.map((c) => (
+                    <span key={c}>{c}</span>
+                  ))}
+                </div>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="self-start"
+                  data-testid="2fa-copy-backup"
+                  onClick={() => {
+                    navigator.clipboard?.writeText(backup.join("\n"))
+                    toast.success("Backup codes copied")
+                  }}
+                >
+                  Copy codes
+                </Button>
+              </div>
+            )}
+            <FormField label="Confirm a code from your app" htmlFor="tfa-code">
+              <Input
+                id="tfa-code"
+                data-testid="2fa-confirm-code"
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                value={code}
+                onChange={(e) => setCode(e.target.value)}
+                placeholder="123456"
+              />
+            </FormField>
+            <DialogFooter>
+              <Button type="submit" loading={busy} disabled={!code} data-testid="2fa-confirm">
+                {busy ? "Verifying…" : "Turn on"}
+              </Button>
+            </DialogFooter>
+          </form>
+        )}
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function DisableTwoFactor({ onDone }: { onDone: () => Promise<void> }) {
+  const [open, setOpen] = useState(false)
+  const [password, setPassword] = useState("")
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState("")
+
+  const submit = async () => {
+    setErr("")
+    setBusy(true)
+    try {
+      const res = await authClient.twoFactor.disable({ password })
+      if (res?.error) throw new Error(res.error.message ?? "Could not turn it off.")
+      await onDone()
+      toast.success("Two-factor authentication is off")
+      setOpen(false)
+      setPassword("")
+    } catch (e) {
+      setErr(e instanceof ApiError ? e.message : (e as Error).message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button variant="outline" size="sm" data-testid="2fa-disable">
+          Turn off
+        </Button>
+      </DialogTrigger>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Turn off two-factor authentication</DialogTitle>
+          <DialogDescription>
+            Confirm your password. Your account will be less protected.
+          </DialogDescription>
+        </DialogHeader>
+        <form
+          className="flex flex-col gap-4"
+          onSubmit={(e) => {
+            e.preventDefault()
+            submit()
+          }}
+        >
+          {err && <StatusPanel tone="danger" layout="inline" title={err} />}
+          <FormField label="Password" htmlFor="tfa-off-password">
+            <Input
+              id="tfa-off-password"
+              data-testid="2fa-off-password"
+              type="password"
+              autoComplete="current-password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+            />
+          </FormField>
+          <DialogFooter>
+            <Button
+              type="submit"
+              variant="destructive"
+              loading={busy}
+              disabled={!password}
+              data-testid="2fa-off-confirm"
+            >
+              {busy ? "Turning off…" : "Turn off"}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
   )
 }
 

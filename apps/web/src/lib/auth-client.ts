@@ -1,5 +1,6 @@
 import { passkeyClient } from "@better-auth/passkey/client"
 import { createAuthClient } from "better-auth/client"
+import { twoFactorClient } from "better-auth/client/plugins"
 
 // A SCOPED Better Auth browser client — used ONLY for the ceremonies that genuinely need
 // it: the WebAuthn passkey dance (navigator.credentials.*) and passkey management. Every
@@ -9,7 +10,7 @@ import { createAuthClient } from "better-auth/client"
 // baseURL is left to default (same-origin `/api/auth`); the dev proxy + the hosted split
 // both route `/api/auth/*` to the API, and credentials ride cookies like every other call.
 export const authClient = createAuthClient({
-  plugins: [passkeyClient()],
+  plugins: [passkeyClient(), twoFactorClient()],
 })
 
 /** A registered passkey, as returned by listUserPasskeys (the Security-hub list). */
