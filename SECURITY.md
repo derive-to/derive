@@ -38,14 +38,21 @@ Derive ships safe defaults, but a few choices matter for an internet-facing depl
   | Password, view/comment         | Unlock, then as above          | Unlock, then as above                  | Their role (no password needed)|
   | Workspace only (org)           | No access                      | No access                              | Their role (members only)      |
   | Private (invite-only) — default | No access                     | No access                              | Explicit share only — workspace role grants nothing |
+  | Unlisted, view/comment         | No access                      | No access (non-members)                | Members with the link: view/comment; explicit shares: their role |
 
-  Publishing defaults to **private** on every path (API, CLI, MCP, web): only the
-  publisher — for an agent, the user it acts on behalf of, who is written as the
-  owner-member at creation, plus the agent itself as editor — can see a fresh
-  artifact. Private artifacts never appear in workspace listings, profile work
-  lists, or the People-visible surfaces. Widening (workspace, link, public) is
-  always an explicit act. GitHub-mirror syncs publish workspace-visible — a
-  mirrored repo is a workspace resource, not a personal draft.
+  A signed-in human's publish defaults to **private**: only the publisher (written
+  as the owner-member at creation) can see a fresh artifact. AGENT-credentialed
+  publishes — the /mcp server, and any /v1 publish carrying a registered agent
+  token or OAuth bearer (the CLI and stdio-shim paths) — default to **unlisted**,
+  a workspace setting (`defaultAgentVisibility`): hidden from every listing, but a
+  workspace member with the link gets the workspace's default general role — the
+  agent-draft state between private and workspace. Reach is only ever workspace-
+  inward of private's explicit-share-only model plus the link requirement, and the
+  setting restores private-by-default in one click. Private and unlisted artifacts never appear in workspace listings,
+  profile work lists, or the People-visible surfaces (unlisted has one dedicated
+  owner-scoped library filter). Widening (workspace, link, public) is always an
+  explicit act. GitHub-mirror syncs publish workspace-visible — a mirrored repo
+  is a workspace resource, not a personal draft.
 
   `packages/core/src/permissions.ts` (`effectiveRole`) is the single source of truth for
   this table, enforced on every request by the one `can()` gate and surfaced in the UI so

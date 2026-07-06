@@ -15,7 +15,10 @@ export type ArtifactKind = "file" | "bundle"
 // the visitor enters the password (then a viewer; members/owners see it by role).
 // `private`: only per-artifact members (the publisher becomes the owner-member at
 // creation) — workspace membership grants nothing, unlike `org`.
-export type Visibility = "public" | "link" | "org" | "password" | "private"
+// `unlisted`: the agent-draft state — hidden from every listing, but a workspace
+// member WITH THE LINK gets the general role (view or comment, the workspace's
+// default). Between `private` (explicit shares only) and `org` (listed for all).
+export type Visibility = "public" | "link" | "org" | "password" | "private" | "unlisted"
 
 /** A platform subdomain (`name.derived.app`) or a customer's own domain. */
 export type DomainKind = "subdomain" | "custom"
@@ -95,6 +98,12 @@ export interface ListArtifactsOpts {
    *  members, so the query needs the viewer to check membership against. Omitted ⇒
    *  a trusted caller (the operator token / internal jobs) that sees everything. */
   viewerId?: string
+  /** How `unlisted` rows behave for a viewer-scoped listing. Default (omitted) =
+   *  exclude: unlisted is hidden from every ordinary listing, even the owner's —
+   *  they have the dedicated filter. "include" folds the viewer's own unlisted
+   *  drafts in (MCP list_artifacts, so an agent always finds its work); "only" is
+   *  the library's Unlisted filter. Ignored without `viewerId` except "only". */
+  unlisted?: "exclude" | "include" | "only"
   /** Profile work-list visibility gate: a row is included when it is `public` OR its
    *  `org_id` is in this set (the workspaces the viewer shares with the profile owner).
    *  An empty/omitted set with a profile query ⇒ public-only. Used by `listUserWorks`
@@ -227,6 +236,9 @@ export interface MetaStore {
   artifactIdsByAuthor(orgId: string, login: string): Promise<string[]>
   /** Total artifact count, scoped to a workspace when orgId is given. */
   countArtifacts(orgId?: string): Promise<number>
+  /** The viewer's own `unlisted` drafts in a workspace (explicit-member rows) —
+   *  the badge count for the library's Unlisted filter. */
+  countUnlistedFor(orgId: string, userId: string): Promise<number>
   /**
    * The storage-quota meter for one workspace: bytes counted once per distinct
    * blob (content is content-addressed, so republishes/restores of identical
@@ -1024,8 +1036,9 @@ export interface UserProfile {
 
 /** `mention`/`comment`/`share` are artifact-anchored. `follow` (someone followed you)
  *  and `publish` (someone you follow published) are the social kinds — `follow` carries
- *  no artifact (its artifact_* fields are ""), `publish` points at the new artifact. */
-export type NotificationKind = "mention" | "comment" | "share" | "follow" | "publish"
+ *  no artifact (its artifact_* fields are ""), `publish` points at the new artifact.
+ *  `review` is the /derive loop: your agent published and asked for your review. */
+export type NotificationKind = "mention" | "comment" | "share" | "follow" | "publish" | "review"
 export interface NotificationRecord {
   id: string
   user_id: string
@@ -1208,6 +1221,14 @@ export interface OrgSettings {
   githubPreviewLink: boolean
   /** Post Derive activity to the connected Slack workspace. */
   slackPost: boolean
+  /** What a workspace member reaching an `unlisted` artifact via its link may do:
+   *  view or also comment. Seeded onto the artifact's general_role when it turns
+   *  unlisted without an explicit choice; the share dialog can override per doc. */
+  defaultUnlistedRole: GeneralRole
+  /** The visibility a NEW agent (MCP) publish lands with when the agent doesn't
+   *  say. Unlisted by default: drafts stay out of the team library but stay one
+   *  link away for the human — sharing wider is the deliberate act. */
+  defaultAgentVisibility: Visibility
 }
 
 export const DEFAULT_ORG_SETTINGS: OrgSettings = {
@@ -1216,6 +1237,8 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
   githubMirrorComments: true,
   githubPreviewLink: true,
   slackPost: true,
+  defaultUnlistedRole: "viewer",
+  defaultAgentVisibility: "unlisted",
 }
 
 /** A connected Slack workspace (one per Derive workspace). `bot_token` is the OAuth bot

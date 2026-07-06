@@ -21,6 +21,10 @@ export function useArtifactFrame(p: {
   shortId: string
   version: number | undefined
   hoverThread: string | null
+  /** The selected/expanded thread — kept emphasized in the doc even without
+   *  the mouse over its card, so picking a comment (click, or Prev/Next) reads
+   *  as a persistent selection, not a hover trick you have to hold. */
+  activeThread: string | null
   onPointerMove: (x: number, y: number, slide?: number) => void
   onPointerLeave: () => void
   onTap: (x: number, y: number, slide?: number) => void
@@ -32,7 +36,16 @@ export function useArtifactFrame(p: {
   // hands the click here for an SPA transition (or a new tab on a modified click).
   onNavigate: (ref: string, newTab: boolean) => void
 }) {
-  const { comments, shortId, version, hoverThread, onPointerMove, onPointerLeave, onTap } = p
+  const {
+    comments,
+    shortId,
+    version,
+    hoverThread,
+    activeThread,
+    onPointerMove,
+    onPointerLeave,
+    onTap,
+  } = p
   const { setHoverThread, setActiveThread, setPanel, onNavigate } = p
   const frame = useRef<HTMLIFrameElement>(null)
   const presentWrap = useRef<HTMLDivElement>(null)
@@ -138,9 +151,12 @@ export function useArtifactFrame(p: {
 
   // Two-way hover: emphasize the matching highlight in the doc when a comment
   // card is hovered (the inbound anchor-hover sets the same state the other way).
+  // Hover wins while it's happening; otherwise the SELECTED thread stays
+  // emphasized, so picking a comment (click, Prev/Next) keeps its highlight lit
+  // in the doc instead of a hover-only flash you lose the moment the mouse moves.
   useEffect(() => {
-    post({ type: "emphasize", id: hoverThread })
-  }, [hoverThread, post])
+    post({ type: "emphasize", id: hoverThread ?? activeThread })
+  }, [hoverThread, activeThread, post])
 
   // Drive the deck from the host bar; fullscreen wraps the iframe + bar so the
   // controls stay reachable while presenting.

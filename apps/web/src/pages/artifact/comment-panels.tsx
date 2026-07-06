@@ -321,8 +321,32 @@ export function OpenPanel(props: {
     reviewCard,
   } = props
   const { canComment } = useCommentScope()
+  const { activeThread, onJump } = useCommentTree()
   const generalComposer = composer && !composer.anchor
   const empty = openCount === 0 && resolved.length === 0 && !composer
+
+  // Prev/Next walks the SAME top-to-bottom order the sidebar itself renders:
+  // pinned threads (sorted by their document position — desiredY has the
+  // current scrollY already subtracted from every item alike, so the relative
+  // order is stable no matter where the doc is scrolled to) then the general
+  // drawer, in the order it lists them. Resolved threads are settled, so
+  // Prev/Next skips them — it's a tool for working through what's still open.
+  const threadOrder = [...pinned]
+    .sort((a, b) => a.desiredY - b.desiredY)
+    .map((p) => p.thread[0]?.thread_id)
+    .concat(general.map((t) => t[0]?.thread_id))
+    .filter((id): id is string => !!id)
+  const activeIndex = activeThread ? threadOrder.indexOf(activeThread) : -1
+  const canGoPrev = activeIndex > 0
+  const canGoNext = threadOrder.length > 0 && activeIndex < threadOrder.length - 1
+  const goPrev = () => {
+    const id = threadOrder[Math.max(0, activeIndex - 1)]
+    if (id) onJump(id)
+  }
+  const goNext = () => {
+    const id = threadOrder[activeIndex < 0 ? 0 : Math.min(threadOrder.length - 1, activeIndex + 1)]
+    if (id) onJump(id)
+  }
 
   // The panel now docks under the full-width top bar, so this header sits above
   // the pinned zone. Cards are placed from the document's top, so feed the
@@ -347,6 +371,40 @@ export function OpenPanel(props: {
         className="flex items-center gap-1 border-b border-border-soft py-1.5 pl-2.5 pr-2"
       >
         <CommentsHeading count={openCount} />
+        {threadOrder.length > 1 && (
+          <>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  aria-label="Previous comment"
+                  data-testid="comment-nav-prev"
+                  disabled={!canGoPrev}
+                  onClick={goPrev}
+                >
+                  <Icon name="chevron-left" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Previous comment</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  aria-label="Next comment"
+                  data-testid="comment-nav-next"
+                  disabled={!canGoNext}
+                  onClick={goNext}
+                >
+                  <Icon name="chevron-right" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Next comment</TooltipContent>
+            </Tooltip>
+          </>
+        )}
         {canComment && (
           <Tooltip>
             <TooltipTrigger asChild>

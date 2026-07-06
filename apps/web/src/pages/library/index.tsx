@@ -26,6 +26,7 @@ import { STORAGE_KEYS } from "@/lib/storage-keys"
 import { useDelayedPending } from "@/lib/use-delayed-pending"
 import { useFollows } from "@/lib/use-follows"
 import { usePrefetchArtifact } from "@/lib/use-prefetch-artifact"
+import { cn } from "@/lib/utils"
 import { refFor } from "../artifact/parse-ref"
 import { ArtifactGrid } from "./artifact-grid"
 import { ArtifactRow, byRecency } from "./artifact-row"
@@ -78,6 +79,7 @@ function deriveFilter(
   if (view === "following") return { kind: "following" }
   if (view === "shared") return { kind: "shared" }
   if (view === "feedback") return { kind: "feedback" }
+  if (search.tab === "drafts") return { kind: "unlisted" }
   if (search.tag) return { kind: "tag", tag: search.tag }
   if (search.collection)
     return {
@@ -123,7 +125,7 @@ function LibraryBody({ view }: { view: LibraryView }) {
     collection: search.collection,
     favorite: view === "favorites" || undefined,
     author: search.author,
-    scope: scopeFor(view),
+    scope: filter.kind === "unlisted" ? ("unlisted" as const) : scopeFor(view),
   }
   const { query: feed, items, listQuery, toggleFavorite, deleteArtifact } = useLibraryFeed(params)
   const { isPending, isError, refetch, fetchNextPage, hasNextPage, isFetchingNextPage } = feed
@@ -273,9 +275,11 @@ function LibraryBody({ view }: { view: LibraryView }) {
             ? "Shared with you"
             : filter.kind === "feedback"
               ? "Needs your feedback"
-              : filter.kind === "tag"
-                ? `#${filter.tag}`
-                : collectionTitle
+              : filter.kind === "unlisted"
+                ? "Drafts"
+                : filter.kind === "tag"
+                  ? `#${filter.tag}`
+                  : collectionTitle
   // Only the counts the server can state authoritatively (preloaded summary / the
   // collection's own count) get a number; the follow/shared/feedback feeds show none
   // rather than a misleading "loaded-so-far" count that grows as you scroll.
@@ -285,11 +289,13 @@ function LibraryBody({ view }: { view: LibraryView }) {
       ? summary?.total
       : filter.kind === "favorites"
         ? summary?.favorites
-        : filter.kind === "tag"
-          ? summary?.tags.find((t) => t.tag === filter.tag)?.count
-          : filter.kind === "collection"
-            ? activeCollection?.count
-            : undefined
+        : filter.kind === "unlisted"
+          ? summary?.unlisted
+          : filter.kind === "tag"
+            ? summary?.tags.find((t) => t.tag === filter.tag)?.count
+            : filter.kind === "collection"
+              ? activeCollection?.count
+              : undefined
 
   const showPublish =
     !isSearching && (filter.kind === "all" || filter.kind === "tag" || filter.kind === "favorites")
@@ -409,6 +415,15 @@ function LibraryBody({ view }: { view: LibraryView }) {
           />
           <RepoPullRequests prs={repoPrs} repo={activeCollection?.repo} activeId={filter.id} />
         </>
+      ) : view === "all" && !isSearching ? (
+        // Always both tabs, even over the first-run guide — an agent's first
+        // draft can exist before any shared artifact does, and the empty Drafts
+        // tab is itself how the concept gets discovered (round-1 decision).
+        <LibraryTabs
+          active={filter.kind === "unlisted" ? "drafts" : "all"}
+          total={summary?.total}
+          drafts={summary?.unlisted}
+        />
       ) : (
         // Hide the heading on a brand-new empty home — the visual guide carries it.
         !emptyHome && (
@@ -614,6 +629,48 @@ function SyncedCollection({
   )
 }
 
+// The home library's two tabs: your shared work and your drafts. Always both —
+// the empty Drafts tab is how the concept gets discovered (see the sidebar-
+// cleanup plan's round-1 decisions). Route stays "/", the tab rides ?tab=drafts.
+function LibraryTabs({
+  active,
+  total,
+  drafts,
+}: {
+  active: "all" | "drafts"
+  total?: number
+  drafts?: number
+}) {
+  const nav = useNavigate()
+  const tab = (id: "all" | "drafts", label: string, count?: number) => (
+    <button
+      type="button"
+      data-testid={`library-tab-${id}`}
+      aria-current={active === id ? "page" : undefined}
+      onClick={() =>
+        nav({ to: "/", search: (s) => ({ ...s, tab: id === "drafts" ? "drafts" : undefined }) })
+      }
+      className={cn(
+        "flex items-center gap-1.5 border-b-2 pb-2 text-sm font-medium transition-colors",
+        active === id
+          ? "border-foreground text-foreground"
+          : "border-transparent text-muted-foreground hover:text-foreground",
+      )}
+    >
+      {label}
+      {count != null && (
+        <span className="font-mono text-2xs tabular-nums text-muted-foreground">{count}</span>
+      )}
+    </button>
+  )
+  return (
+    <div className="mb-3.5 flex items-center gap-5 border-b border-border-soft">
+      {tab("all", "All artifacts", total)}
+      {tab("drafts", "Drafts", drafts)}
+    </div>
+  )
+}
+
 // The empty state for each view/filter — three tones, never reused (research): searching
 // = corrective ("no match, try another"); a named feed = an explanatory nudge; the
 // inbox-zero /feedback = a positive "all caught up" with no CTA. The unfiltered empty
@@ -658,6 +715,23 @@ function emptyStateFor(
         icon: <Icon name="share" strokeWidth={1.75} />,
         title: "Nothing shared with you yet.",
         description: "When someone shares an artifact with you, it shows up here.",
+      }
+    case "unlisted":
+      return {
+        icon: <Icon name="sparkles" strokeWidth={1.75} />,
+        title: "No drafts yet.",
+        description:
+          "Your agent's drafts land here until you share them — everything it writes stays out of the team's way until you say so.",
+        action: (
+          <Button
+            variant="outline"
+            size="sm"
+            data-testid="library-empty-connect-agent"
+            onClick={() => nav({ to: "/settings/$section", params: { section: "agents" } })}
+          >
+            Connect an agent
+          </Button>
+        ),
       }
     case "feedback":
       // Inbox-zero: a positive tone, no action — you're done, not stuck.

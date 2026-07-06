@@ -36,6 +36,7 @@ export const Route = createFileRoute("/")({
     collection: typeof s.collection === "string" ? s.collection : undefined,
     query: typeof s.query === "string" ? s.query : undefined,
     author: typeof s.author === "string" ? s.author : undefined,
+    tab: s.tab === "drafts" ? "drafts" : undefined,
   }),
   component: () => <Library view="all" />,
 })

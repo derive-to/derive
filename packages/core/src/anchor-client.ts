@@ -62,6 +62,28 @@ interface ElReg {
   const scrollTop = () =>
     window.scrollY || document.documentElement.scrollTop || document.body.scrollTop || 0
 
+  // Jumping to a comment's anchor: a short, FIXED-duration scroll so it feels
+  // snappy at any distance — native `behavior: "smooth"` scales its duration
+  // with distance and reads as slow/draggy on a long document. Skips the
+  // animation for prefers-reduced-motion.
+  const fastScrollTo = (top: number, duration = 220) => {
+    const from = scrollTop()
+    const delta = top - from
+    if (Math.abs(delta) < 1) return
+    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
+      window.scrollTo(0, top)
+      return
+    }
+    const start = performance.now()
+    const easeOutQuad = (t: number) => 1 - (1 - t) * (1 - t)
+    const step = (now: number) => {
+      const t = Math.min(1, (now - start) / duration)
+      window.scrollTo(0, from + delta * easeOutQuad(t))
+      if (t < 1) requestAnimationFrame(step)
+    }
+    requestAnimationFrame(step)
+  }
+
   // Narrow an event target to an Element (postMessage/DOM events hand us EventTargets).
   const asEl = (t: EventTarget | null): Element | null => (t instanceof Element ? t : null)
 
@@ -1234,7 +1256,7 @@ interface ElReg {
         bias != null
           ? scrollTop() + rect.top - window.innerHeight * bias
           : scrollTop() + rect.top - Math.max(0, (window.innerHeight - rect.height) / 2)
-      window.scrollTo({ top, behavior: "smooth" })
+      fastScrollTo(top)
       /* text ranges flash via the flash highlight; element overlays via their class. */
       if (entry) flashRange(entry.range)
       if (ovEl) {
@@ -1242,7 +1264,7 @@ interface ElReg {
         void ovEl.offsetWidth
         ovEl.classList.add("derive-el-flash")
       }
-      setTimeout(reportScroll, 360)
+      setTimeout(reportScroll, 260) // just past fastScrollTo's 220ms
     }
   })
 })()

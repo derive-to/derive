@@ -15,6 +15,8 @@ import {
   Building2,
   Check,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   ChevronUp,
   Code,
   Ellipsis,
@@ -86,6 +88,8 @@ const REG = {
   report: Flag,
   caret: ChevronDown,
   "caret-up": ChevronUp,
+  "chevron-left": ChevronLeft,
+  "chevron-right": ChevronRight,
   edit: Code,
   review: GitPullRequest,
   // The agent-revision affordance (ask an agent to revise a selection).

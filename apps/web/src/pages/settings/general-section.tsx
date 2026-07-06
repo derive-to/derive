@@ -1,8 +1,10 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useEffect, useState } from "react"
-import { api } from "@/api"
+import { api, type OrgSettings } from "@/api"
 import { useShell } from "@/components/chrome/shell-context"
 import { FormField } from "@/components/shared/form-field"
+import { SettingRow } from "@/components/shared/setting-row"
+import { SettingsGroup } from "@/components/shared/settings-group"
 import { StatusPanel } from "@/components/shared/status-panel"
 import { Button } from "@/components/ui/button"
 import {
@@ -14,8 +16,14 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
+import {
+  SelectMenu,
+  SelectMenuContent,
+  SelectMenuItem,
+  SelectMenuTrigger,
+} from "@/components/ui/select-menu"
 import { toast } from "@/components/ui/sonner"
-import { workspaceQuery, workspacesQuery } from "@/lib/queries"
+import { workspaceQuery, workspaceSettingsQuery, workspacesQuery } from "@/lib/queries"
 import { SettingsSection } from "./settings-section"
 
 // Workspace identity + lifecycle: rename it, spin up a new one, or (admins only)
@@ -157,6 +165,8 @@ export function GeneralSection() {
         </div>
       </FormField>
 
+      {isAdmin && <SharingDefaults />}
+
       {isAdmin && ws && (
         <StatusPanel
           tone="danger"
@@ -203,4 +213,85 @@ export function GeneralSection() {
       )}
     </SettingsSection>
   )
+}
+
+// Sharing defaults — what a workspace member with an unlisted link may do, and
+// where an agent (MCP) publish lands when it doesn't say. Selects apply
+// instantly with an optimistic cache write (the toggle contract from
+// Integrations), reverting on error. Admin-gated by the server; the caller
+// renders this only for admins.
+function SharingDefaults() {
+  const qc = useQueryClient()
+  const { data: settings } = useQuery(workspaceSettingsQuery())
+
+  const set = <K extends keyof OrgSettings>(key: K, next: OrgSettings[K]) => {
+    const qk = workspaceSettingsQuery().queryKey
+    const prev = qc.getQueryData(qk)
+    if (!prev) return
+    qc.setQueryData(qk, { ...prev, [key]: next })
+    api
+      .updateWorkspaceSettings({ [key]: next })
+      .then((s) => qc.setQueryData(qk, s))
+      .catch((e) => {
+        qc.setQueryData(qk, prev)
+        toast.error(e instanceof Error ? e.message : "Could not save")
+      })
+  }
+
+  if (!settings) return null
+  return (
+    <SettingsGroup>
+      <SettingRow
+        label="Draft link permission"
+        description="What a workspace member opening a draft's link can do. Each doc can override this in its share dialog."
+      >
+        <SelectMenu
+          value={settings.defaultUnlistedRole}
+          onValueChange={(v) => set("defaultUnlistedRole", v as OrgSettings["defaultUnlistedRole"])}
+        >
+          <SelectMenuTrigger
+            aria-label="Unlisted link permission"
+            data-testid="default-unlisted-role"
+          >
+            {settings.defaultUnlistedRole === "commenter" ? "Can comment" : "Can view"}
+          </SelectMenuTrigger>
+          <SelectMenuContent>
+            <SelectMenuItem value="viewer">Can view</SelectMenuItem>
+            <SelectMenuItem value="commenter">Can comment</SelectMenuItem>
+          </SelectMenuContent>
+        </SelectMenu>
+      </SettingRow>
+      <SettingRow
+        label="Agent publishes as"
+        description="Where a new artifact published by a connected agent lands. Draft keeps its work out of the library until shared."
+      >
+        <SelectMenu
+          value={settings.defaultAgentVisibility}
+          onValueChange={(v) =>
+            set("defaultAgentVisibility", v as OrgSettings["defaultAgentVisibility"])
+          }
+        >
+          <SelectMenuTrigger
+            aria-label="Agent publish visibility"
+            data-testid="default-agent-visibility"
+          >
+            {AGENT_VIS_LABELS[settings.defaultAgentVisibility] ?? settings.defaultAgentVisibility}
+          </SelectMenuTrigger>
+          <SelectMenuContent>
+            <SelectMenuItem value="unlisted">Draft</SelectMenuItem>
+            <SelectMenuItem value="private">Private</SelectMenuItem>
+            <SelectMenuItem value="org">Workspace</SelectMenuItem>
+          </SelectMenuContent>
+        </SelectMenu>
+      </SettingRow>
+    </SettingsGroup>
+  )
+}
+
+const AGENT_VIS_LABELS: Record<string, string> = {
+  unlisted: "Draft",
+  private: "Private",
+  org: "Workspace",
+  link: "Anyone with the link",
+  public: "Public",
 }
