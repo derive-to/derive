@@ -232,6 +232,20 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
       for (const r of rows) out[r.artifact_id] = r.c
       return out
     },
+    previewReady: async (artifactIds): Promise<Record<string, boolean>> => {
+      if (artifactIds.length === 0) return {}
+      const ph = artifactIds.map(() => "?").join(",")
+      const rows = raw
+        .prepare(
+          `SELECT a.id artifact_id FROM artifact a
+           JOIN version v ON v.artifact_id = a.id AND v.n = a.current_version
+           WHERE v.preview_status = 'ready' AND a.id IN (${ph})`,
+        )
+        .all(...artifactIds) as { artifact_id: string }[]
+      const out: Record<string, boolean> = {}
+      for (const r of rows) out[r.artifact_id] = true
+      return out
+    },
 
     // ---- User directory (Better Auth's `user` table; raw, may be absent) -
     findUserByEmail: async (email): Promise<UserDir | null> => {
