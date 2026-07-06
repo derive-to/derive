@@ -83,6 +83,26 @@ export const OAUTH_SCOPES = [
 
 const env = (k: string) => process.env[k]
 
+/**
+ * The RFC 8707 resource indicators an MCP client may bind its token to — the accepted
+ * `aud` values. A superset of the plugin's default ([baseUrl]): the origin and the /mcp
+ * endpoint in both slash forms, because MCP clients send the SERVER as the resource
+ * (Claude Code sends the origin with a trailing slash; others send /mcp). Used on BOTH
+ * sides so they can't drift: the AS side (`validAudiences`, what tokens may be minted for)
+ * and the RS side (`oauthAgentFromJwt` audience validation, what tokens are accepted) —
+ * the MCP-spec MUST that a server only accept tokens issued for it.
+ */
+export function mcpAudiences(baseUrl: string): string[] {
+  const origin = (() => {
+    try {
+      return new URL(baseUrl).origin
+    } catch {
+      return baseUrl.replace(/\/+$/, "")
+    }
+  })()
+  return [...new Set([baseUrl, origin, `${origin}/`, `${origin}/mcp`, `${origin}/mcp/`])]
+}
+
 /** Whatever Better Auth accepts as its datastore: a better-sqlite3 / pg handle on
  *  Node, or a Kysely dialect config (`{ dialect, type }`) on the edge (D1). */
 export type AuthDb = BetterAuthOptions["database"]
@@ -128,26 +148,11 @@ export function makeAuth(db: AuthDb, baseUrl: string, secret: string, hooks: Aut
     : []
   const staticTrusted = [...new Set([baseUrl, ...webOrigins, ...devOrigins])]
 
-  // RFC 8707 resource indicators an MCP client binds its token to. The spec requires
-  // the client to send `resource` at authorize + token, and the oauth-provider 400s
-  // ("requested resource invalid") unless that value is an accepted audience — its
-  // default is only the auth server's own base URL. MCP clients send the SERVER
-  // (Claude Code sends the origin with a trailing slash; others may send the /mcp
-  // endpoint), so accept the origin and /mcp in both slash forms.
-  const origin = (() => {
-    try {
-      return new URL(baseUrl).origin
-    } catch {
-      return baseUrl.replace(/\/+$/, "")
-    }
-  })()
-  // A superset of the plugin's default ([baseUrl]) so no previously-valid audience
-  // is narrowed; resource validation only runs at all when a client sends `resource`
-  // (MCP clients do; derive login and the browser consent flow don't), so other flows
-  // are untouched.
-  const mcpAudiences = [
-    ...new Set([baseUrl, origin, `${origin}/`, `${origin}/mcp`, `${origin}/mcp/`]),
-  ]
+  // The accepted RFC 8707 resource indicators (see mcpAudiences). A superset of the
+  // plugin's default ([baseUrl]) so no previously-valid audience is narrowed; resource
+  // validation only runs when a client sends `resource` (MCP clients do; derive login +
+  // the browser consent flow don't), so other flows are untouched.
+  const audiences = mcpAudiences(baseUrl)
 
   // Also trust a request whose Origin equals the origin it was actually served on
   // (its own Host). A same-origin request is never CSRF, so this is safe: a
@@ -406,7 +411,7 @@ export function makeAuth(db: AuthDb, baseUrl: string, secret: string, hooks: Aut
         refreshTokenExpiresIn: 60 * 60 * 24 * 30, // 30d (idle)
         scopes: [...OAUTH_SCOPES],
         // Accept the resource indicators MCP clients send (else token exchange 400s).
-        validAudiences: mcpAudiences,
+        validAudiences: audiences,
         storeTokens: { hash: async (token) => sha256(token) },
       }),
     ],

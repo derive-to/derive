@@ -14,6 +14,10 @@ interface OauthAgentDeps {
   meta: MetaStore
   auth: Auth | undefined
   baseUrl: string
+  /** The accepted RFC 8707 audiences (see auth-config `mcpAudiences`). A JWT access token
+   *  is accepted only when its `aud` is one of these — the MCP-spec MUST that a resource
+   *  server rejects tokens not issued for it, mirroring the AS-side `validAudiences`. */
+  audiences: string[]
   /** Find (or provision) the granting user's personal workspace — the agent runs there. */
   provisionPersonal: (me: { id: string; email: string; name: string | null }) => Promise<string>
 }
@@ -24,7 +28,13 @@ interface OauthAgentDeps {
  * RFC 8707 JWTs that remote MCP clients present. `agentFor` (in context) dispatches to the
  * returned `oauthAgent` after ruling out a registered agent token.
  */
-export function makeOauthAgent({ meta, auth, baseUrl, provisionPersonal }: OauthAgentDeps) {
+export function makeOauthAgent({
+  meta,
+  auth,
+  baseUrl,
+  audiences,
+  provisionPersonal,
+}: OauthAgentDeps) {
   // The least-privilege role an OAuth-granted scope set maps to: publish/review earn
   // editor; propose/comment earn commenter; read alone is viewer.
   const roleFromScopes = (scopes: string[]): Role =>
@@ -92,7 +102,13 @@ export function makeOauthAgent({ meta, auth, baseUrl, provisionPersonal }: Oauth
     const verify = async (): Promise<JWTPayload | null> => {
       jwksCache ??= await loadJwks()
       if (!jwksCache) return null
-      return (await jwtVerify(token, jwksCache, { issuer: oauthIssuer })).payload
+      // Validate the audience (RFC 8707), not just the issuer + signature: a token this
+      // AS minted for a DIFFERENT resource must be rejected here (the MCP-spec MUST). jose
+      // passes when the token's `aud` matches any accepted audience. Legitimately-minted MCP
+      // tokens carry aud ∈ audiences (== the AS-side validAudiences), so this only rejects
+      // foreign-audience tokens.
+      return (await jwtVerify(token, jwksCache, { issuer: oauthIssuer, audience: audiences }))
+        .payload
     }
     let claims: JWTPayload | null
     try {

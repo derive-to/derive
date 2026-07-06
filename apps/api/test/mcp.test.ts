@@ -497,11 +497,15 @@ describe("remote MCP endpoint (/mcp)", () => {
       } as unknown as Parameters<typeof createApp>[0]["auth"],
     })
 
+    // A realistic MCP token carries an `aud` = the resource the client bound it to (RFC
+    // 8707). The provider only mints JWTs when a resource is sent, so a real one always has
+    // this claim; the RS validates it.
     const mint = (over: Record<string, unknown> = {}) =>
       new SignJWT({ scope: "openid derive:read derive:publish", azp: "cli", ...over })
         .setProtectedHeader({ alg: "EdDSA", kid })
         .setSubject("u_jwt")
         .setIssuer("http://derive.test/api/auth")
+        .setAudience("http://derive.test/mcp")
         .setExpirationTime("1h")
         .sign(privateKey)
 
@@ -518,9 +522,21 @@ describe("remote MCP endpoint (/mcp)", () => {
       .setProtectedHeader({ alg: "EdDSA", kid })
       .setSubject("u_jwt")
       .setIssuer("http://evil.test/api/auth")
+      .setAudience("http://derive.test/mcp")
       .setExpirationTime("1h")
       .sign(privateKey)
     expect((await rpc(app, wrongIss, initBody)).status).toBe(401)
+
+    // MCP-spec MUST: a token this AS signed but minted for a DIFFERENT resource (audience)
+    // is rejected — the server only accepts tokens issued for it (RFC 8707 audience binding).
+    const wrongAud = await new SignJWT({ scope: "openid derive:read", azp: "cli" })
+      .setProtectedHeader({ alg: "EdDSA", kid })
+      .setSubject("u_jwt")
+      .setIssuer("http://derive.test/api/auth")
+      .setAudience("https://someone-elses-server.example/mcp")
+      .setExpirationTime("1h")
+      .sign(privateKey)
+    expect((await rpc(app, wrongAud, initBody)).status).toBe(401)
   })
 
   it("publish creates a NEW artifact (first publish) and then a new version of it", async () => {

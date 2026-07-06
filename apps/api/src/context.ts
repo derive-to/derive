@@ -22,7 +22,7 @@ import {
 } from "@derive/core"
 import type { Context } from "hono"
 import { getCookie, setCookie } from "hono/cookie"
-import type { Auth } from "./auth-config"
+import { type Auth, mcpAudiences } from "./auth-config"
 import { type Backplane, createInProcessBackplane } from "./bus"
 import type { CustomDomainProvider } from "./lib/cloudflare-saas"
 import { safeEqual, sha256, unlockCookie, unlockToken } from "./lib/crypto"
@@ -462,6 +462,9 @@ export function buildContext(deps: AppDeps) {
     meta,
     auth: deps.auth,
     baseUrl: deps.baseUrl,
+    // The accepted token audiences (RFC 8707) — the RS-side check that a JWT was issued for
+    // THIS server, mirroring the AS-side validAudiences. Same helper, so they can't drift.
+    audiences: mcpAudiences(deps.baseUrl),
     provisionPersonal,
   })
 
