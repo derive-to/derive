@@ -191,7 +191,10 @@ export const artifactRoutes = (ctx: AppContext) => {
       // Private artifacts appear only for their explicit members; the operator
       // token sees everything (viewerId omitted).
       viewerId: isOperator ? undefined : (memberKey ?? undefined),
-      unlisted: unlistedScope ? "only" : undefined,
+      // Agents get their registrant's unlisted drafts folded back in (an agent
+      // must always find the work it published — the stdio shim's list rides
+      // this route); humans keep the clean listing and use the Unlisted feed.
+      unlisted: unlistedScope ? "only" : agent ? "include" : undefined,
     })
     const hasMore = rows.length > limit
     const page = hasMore ? rows.slice(0, limit) : rows
