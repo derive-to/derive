@@ -66,6 +66,13 @@ export const openButton = (url: string, text = "Open in Derive") => ({
   text: { type: "plain_text", text },
   url,
 })
+/** A thin rule between sections — gives multi-part cards visible structure. */
+export const divider = () => ({ type: "divider" })
+/** A bold banner (App Home + large cards). Emoji render; other markup does not. */
+export const header = (text: string) => ({
+  type: "header",
+  text: { type: "plain_text", text, emoji: true },
+})
 const actionButton = (text: string, value: ButtonValue, style?: "primary" | "danger") => ({
   type: "button",
   text: { type: "plain_text", text },
@@ -88,20 +95,17 @@ export const cardForEvent = (p: CardInput): SlackCard | null => {
   switch (p.event) {
     case "comment.resolved": {
       const reopened = d.state === "open"
-      const head = `:white_check_mark: A thread was ${reopened ? "reopened" : "resolved"} on ${link(a)}`
       return {
-        blocks: [context(head)],
+        blocks: [context(`Thread ${reopened ? "reopened" : "resolved"}  ·  *${link(a)}*`)],
         text: `Thread ${reopened ? "reopened" : "resolved"} on ${title(a)}`,
       }
     }
 
     case "version.published": {
       const v = str(d.version, "?")
-      const head = `:package: *v${v}* published on ${link(a)}`
-      const lines = [head]
-      if (d.message) lines.push(markdownToMrkdwn(str(d.message)))
-      const blocks: unknown[] = [section(lines.join("\n"))]
-      if (d.author) blocks.push(context(`by ${str(d.author)}`))
+      const blocks: unknown[] = [section(`*${link(a)}*`)]
+      if (d.message) blocks.push(section(`> ${markdownToMrkdwn(str(d.message))}`))
+      blocks.push(context(`New version  ·  v${v}${d.author ? `  ·  ${str(d.author)}` : ""}`))
       blocks.push(actions([openButton(a.url)]))
       return { blocks, text: `v${v} published on ${title(a)}` }
     }
@@ -109,9 +113,9 @@ export const cardForEvent = (p: CardInput): SlackCard | null => {
     case "proposal.created": {
       const author = str(d.author, "someone")
       const id = str(d.proposal_id)
-      const head = `:pencil2: *${author}* proposed a change to ${link(a)}`
-      const blocks: unknown[] = [section(head)]
+      const blocks: unknown[] = [section(`*${link(a)}*`)]
       if (d.message) blocks.push(section(`> ${markdownToMrkdwn(str(d.message))}`))
+      blocks.push(context(`Change proposed  ·  ${author}`))
       const val = (act: ButtonValue["act"]): ButtonValue => ({
         v: 1,
         act,
@@ -133,11 +137,7 @@ export const cardForEvent = (p: CardInput): SlackCard | null => {
       const who = str(d.approver, "someone")
       const v = str(d.version, "?")
       return {
-        blocks: [
-          context(
-            `:white_check_mark: *${who}* approved a proposal on ${link(a)} — v${v} published`,
-          ),
-        ],
+        blocks: [context(`Proposal approved  ·  *${link(a)}*  ·  v${v}  ·  ${who}`)],
         text: `Proposal approved on ${title(a)}`,
       }
     }
@@ -145,11 +145,7 @@ export const cardForEvent = (p: CardInput): SlackCard | null => {
     case "proposal.changes_requested": {
       const who = str(d.reviewer, "someone")
       return {
-        blocks: [
-          context(
-            `:leftwards_arrow_with_hook: *${who}* requested changes on a proposal on ${link(a)}`,
-          ),
-        ],
+        blocks: [context(`Changes requested  ·  *${link(a)}*  ·  ${who}`)],
         text: `Changes requested on ${title(a)}`,
       }
     }
@@ -159,7 +155,8 @@ export const cardForEvent = (p: CardInput): SlackCard | null => {
       const v = str(d.version, "?")
       return {
         blocks: [
-          section(`:eyes: *${who}* requested review of ${link(a)} (v${v})`),
+          section(`*${link(a)}*`),
+          context(`Review requested  ·  v${v}  ·  ${who}`),
           actions([openButton(a.url, "Open review")]),
         ],
         text: `Review requested on ${title(a)}`,
@@ -168,13 +165,13 @@ export const cardForEvent = (p: CardInput): SlackCard | null => {
 
     case "review.approved":
       return {
-        blocks: [context(`:white_check_mark: Review approved on ${link(a)}`)],
+        blocks: [context(`Review approved  ·  *${link(a)}*`)],
         text: `Review approved on ${title(a)}`,
       }
 
     case "review.sent_back":
       return {
-        blocks: [context(`:leftwards_arrow_with_hook: Review sent back on ${link(a)}`)],
+        blocks: [context(`Review sent back  ·  *${link(a)}*`)],
         text: `Review sent back on ${title(a)}`,
       }
 
@@ -211,30 +208,41 @@ const updatedLabel = (iso?: string): string | null => {
   return `updated <!date^${unix}^{date_short_pretty}|${iso.slice(0, 10)}>`
 }
 
-/** The dotted metadata line shared by the unfurl, share card and search rows. */
+/** The muted metadata line under a title: version, last update, open comments. */
 const metaLine = (a: ArtifactSummary): string =>
   [
-    a.kind,
     a.version ? `v${a.version}` : null,
     updatedLabel(a.updatedAt),
     a.openComments ? `${a.openComments} open comment${a.openComments === 1 ? "" : "s"}` : null,
   ]
     .filter(Boolean)
-    .join("  ·  ")
+    .join("   ·   ")
 
-/** The rich preview attached to a shared derive.to link (chat.unfurl blocks). */
-export const unfurlCard = (a: ArtifactSummary): { blocks: unknown[] } => {
+/** One artifact as a titled row: kind glyph + bold linked title, meta as a subtitle, an
+ *  optional accessory button. The single visual unit behind unfurls, share cards, search
+ *  results and the App Home list, so they all read the same. */
+const titleRow = (a: ArtifactSummary, accessory?: unknown) => {
   const meta = metaLine(a)
   return {
-    blocks: [section(`*<${a.url}|${a.title ?? a.short_id}>*`), ...(meta ? [context(meta)] : [])],
+    type: "section",
+    text: {
+      type: "mrkdwn",
+      text: `*<${a.url}|${a.title ?? a.short_id}>*${meta ? `\n${meta}` : ""}`,
+    },
+    ...(accessory ? { accessory } : {}),
   }
 }
+
+/** The rich preview attached to a shared derive.to link (chat.unfurl blocks). */
+export const unfurlCard = (a: ArtifactSummary): { blocks: unknown[] } => ({
+  blocks: [titleRow(a)],
+})
 
 /** A "Share to channel" button that carries the artifact short id for the interactivity
  *  handler to re-resolve and post. */
 const shareButton = (org: string, a: ArtifactSummary) => ({
   type: "button",
-  text: { type: "plain_text", text: "Share to channel" },
+  text: { type: "plain_text", text: "Share", emoji: true },
   action_id: "slack_act:share",
   value: JSON.stringify({
     v: 1,
@@ -246,17 +254,10 @@ const shareButton = (org: string, a: ArtifactSummary) => ({
 })
 
 /** The card `/derive share` (or the Share button) posts into a channel. */
-export const shareCard = (a: ArtifactSummary): SlackCard => {
-  const meta = metaLine(a)
-  return {
-    blocks: [
-      section(`:page_facing_up: *<${a.url}|${a.title ?? a.short_id}>*`),
-      ...(meta ? [context(meta)] : []),
-      actions([openButton(a.url)]),
-    ],
-    text: `${a.title ?? a.short_id} — ${a.url}`,
-  }
-}
+export const shareCard = (a: ArtifactSummary): SlackCard => ({
+  blocks: [titleRow(a), actions([openButton(a.url)])],
+  text: `${a.title ?? a.short_id} — ${a.url}`,
+})
 
 /** The ephemeral result list for `/derive find <query>`: each hit is a titled row with a
  *  Share-to-channel button. Empty query results render a friendly miss. */
@@ -266,18 +267,10 @@ export const searchResultBlocks = (
   org: string,
 ): unknown[] => {
   if (results.length === 0) return [section(`No artifacts match *${query || "your search"}*.`)]
-  const blocks: unknown[] = [context(`Top ${results.length} for *${query}*`)]
-  for (const a of results) {
-    const meta = metaLine(a)
-    blocks.push({
-      type: "section",
-      text: {
-        type: "mrkdwn",
-        text: `*<${a.url}|${a.title ?? a.short_id}>*${meta ? `\n${meta}` : ""}`,
-      },
-      accessory: shareButton(org, a),
-    })
-  }
+  const blocks: unknown[] = [
+    context(`*${results.length}* result${results.length === 1 ? "" : "s"} for *${query}*`),
+  ]
+  for (const a of results) blocks.push(titleRow(a, shareButton(org, a)))
   return blocks
 }
 
@@ -288,27 +281,22 @@ export const homeView = (p: {
   items: ArtifactSummary[]
   baseUrl: string
 }): { type: "home"; blocks: unknown[] } => {
-  const blocks: unknown[] = [{ type: "header", text: { type: "plain_text", text: "Derive" } }]
+  const blocks: unknown[] = [header("Derive")]
   if (p.linkedName) {
-    blocks.push(section(`Hi *${p.linkedName}* :wave:`))
+    blocks.push(context(`Signed in as *${p.linkedName}*`))
   } else {
     blocks.push(
-      section(
-        "Link your Slack account to Derive to approve proposals and get notified about what's waiting on you.",
-      ),
-      actions([openButton(`${p.baseUrl}/settings/integrations`, "Link account in Derive")]),
+      section("*Link your Slack account* to approve proposals and see what's waiting on you."),
+      actions([openButton(`${p.baseUrl}/settings/integrations`, "Link account")]),
     )
   }
-  blocks.push({ type: "divider" })
+  blocks.push(divider())
   if (p.items.length) {
-    blocks.push(context("Recent artifacts"))
-    for (const a of p.items) {
-      const meta = metaLine(a)
-      blocks.push(section(`*<${a.url}|${a.title ?? a.short_id}>*${meta ? `\n${meta}` : ""}`))
-    }
+    blocks.push(context("Recent"))
+    for (const a of p.items) blocks.push(titleRow(a, openButton(a.url, "Open")))
   } else {
-    blocks.push(context("No recent artifacts yet."))
+    blocks.push(context("No artifacts yet."))
   }
-  blocks.push({ type: "divider" }, actions([openButton(p.baseUrl, "Open Derive")]))
+  blocks.push(divider(), actions([openButton(p.baseUrl, "Open Derive")]))
   return { type: "home", blocks }
 }
