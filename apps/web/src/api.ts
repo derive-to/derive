@@ -41,6 +41,13 @@ export interface AuthCapabilities {
    *  button + enrollment. */
   passkey: boolean
 }
+/** An OAuth agent the user authorized to act on their behalf (the "Connected agents" list). */
+export interface ConnectedAgent {
+  clientId: string
+  clientName: string
+  scopes: string[]
+  grantedAt: string
+}
 /** A public profile, by handle. Email is private and never returned here. */
 export interface PublicProfile {
   username: string
@@ -650,6 +657,15 @@ export const api = {
   // Mark first-run onboarding finished/skipped — server-authoritative, so the /welcome
   // gate stays consistent across devices (the localStorage flag is only a fast-path cache).
   setOnboarded: (): Promise<{ onboarded: boolean }> => f("/v1/me/onboarded", opts({})).then(j),
+  // Connected agents: the OAuth clients (MCP agents like Claude) you've authorized to act on
+  // your behalf, and one-tap revocation — delegation made legible + reversible.
+  connectedAgents: (): Promise<{ agents: ConnectedAgent[] }> =>
+    f("/v1/me/connected-agents", opts()).then(j),
+  revokeConnectedAgent: (clientId: string): Promise<void> =>
+    f(`/v1/me/connected-agents/${encodeURIComponent(clientId)}`, {
+      method: "DELETE",
+      credentials: "include",
+    }).then(() => undefined),
   // Find opted-in people by @handle or name (signed-in; empty q → []).
   searchPeople: (q: string): Promise<{ users: PublicProfile[] }> =>
     f(`/v1/users/search?query=${encodeURIComponent(q)}`, opts()).then(j),

@@ -2,6 +2,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useNavigate } from "@tanstack/react-router"
 import { useEffect, useState } from "react"
 import { ApiError, type AuthCapabilities, api } from "@/api"
+import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { EmptyState } from "@/components/shared/empty-state"
 import { FormField } from "@/components/shared/form-field"
 import { SettingRow } from "@/components/shared/setting-row"
@@ -54,9 +55,113 @@ export function SecuritySection() {
 
       {caps?.passkey && <Passkeys />}
       <TwoFactor />
+      <ConnectedAgents />
       <Sessions />
       <DeleteAccount />
     </SettingsSection>
+  )
+}
+
+// The friendly bit of each derive:* scope, so the grant's blast radius reads at a glance
+// (mirrors the server consent screen). Non-derive scopes (openid/profile/…) are plumbing —
+// hidden here; we surface only what the agent can DO in Derive.
+const SCOPE_LABEL: Record<string, string> = {
+  "derive:read": "Read",
+  "derive:comment": "Comment",
+  "derive:propose": "Propose",
+  "derive:publish": "Publish",
+  "derive:review": "Review",
+}
+
+// Connected agents — the OAuth clients (MCP agents like Claude) the user authorized to act
+// on their behalf. Listing + revocation make delegation legible and reversible: you can
+// always see what may act as you, and cut it off. The moat's human-facing trust surface.
+function ConnectedAgents() {
+  const qc = useQueryClient()
+  const { data: agents, isPending } = useQuery({
+    queryKey: ["connected-agents"],
+    queryFn: () => api.connectedAgents().then((r) => r.agents),
+  })
+  const [confirming, setConfirming] = useState<string | null>(null)
+
+  const revoke = async (clientId: string) => {
+    try {
+      await api.revokeConnectedAgent(clientId)
+      qc.setQueryData(["connected-agents"], (list: { clientId: string }[] | undefined) =>
+        list?.filter((a) => a.clientId !== clientId),
+      )
+      toast.success("Access revoked — the agent must be re-authorized to act again")
+    } catch {
+      toast.error("Could not revoke that agent")
+      qc.invalidateQueries({ queryKey: ["connected-agents"] })
+    }
+  }
+
+  // No connected agents (and not loading) → keep the surface quiet; this is an advanced,
+  // opt-in area that only appears once you've actually authorized an agent.
+  if (!isPending && (!agents || agents.length === 0)) return null
+
+  return (
+    <div className="flex flex-col gap-3">
+      <div>
+        <div className="text-sm font-medium text-foreground">Connected agents</div>
+        <p className="text-sm text-muted-foreground">
+          Agents you've authorized to act on your behalf. Revoke any at any time.
+        </p>
+      </div>
+      {isPending ? (
+        <SettingsListSkeleton />
+      ) : (
+        <SettingsGroup>
+          {agents?.map((a) => {
+            const perms = a.scopes.map((s) => SCOPE_LABEL[s]).filter(Boolean)
+            return (
+              <div
+                key={a.clientId}
+                data-testid={`agent-conn-${a.clientId}`}
+                className="flex items-center gap-3 py-3"
+              >
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-sm font-medium text-foreground">{a.clientName}</div>
+                  <div className="mt-0.5 flex flex-wrap items-center gap-1">
+                    {perms.length > 0 ? (
+                      perms.map((p) => (
+                        <Badge key={p} variant="secondary">
+                          {p}
+                        </Badge>
+                      ))
+                    ) : (
+                      <span className="text-2xs text-muted-foreground">Read-only</span>
+                    )}
+                    <span className="text-2xs text-muted-foreground">
+                      · since {new Date(a.grantedAt).toLocaleDateString()}
+                    </span>
+                  </div>
+                </div>
+                <Button
+                  data-testid={`agent-conn-revoke-${a.clientId}`}
+                  variant="destructive-ghost"
+                  size="sm"
+                  onClick={() => setConfirming(a.clientId)}
+                >
+                  Revoke
+                </Button>
+              </div>
+            )
+          })}
+        </SettingsGroup>
+      )}
+      {confirming && (
+        <ConfirmDialog
+          open
+          onOpenChange={(o) => !o && setConfirming(null)}
+          title="Revoke this agent's access?"
+          description="It loses access immediately and must be re-authorized before it can act on your behalf again."
+          confirmLabel="Revoke"
+          onConfirm={() => revoke(confirming)}
+        />
+      )}
+    </div>
   )
 }
 

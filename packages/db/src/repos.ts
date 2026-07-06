@@ -45,6 +45,7 @@ import type {
   NewWebhook,
   NotificationRecord,
   OAuthGrant,
+  OAuthGrantSummary,
   OrgSettings,
   ProposalRecord,
   ProposalState,
@@ -1632,6 +1633,56 @@ export function makeRepos(db: SqliteDb) {
       return 0
     }
   }
+  // The agents a user has authorized (one row per consented client): join oauthConsent to
+  // oauthClient for the display name. `scopes` is stored as a JSON array string by Better
+  // Auth; parse defensively. Empty when the oauth-provider tables aren't present.
+  const listUserGrants = async (userId: string): Promise<OAuthGrantSummary[]> => {
+    try {
+      const rows = (await db.all(sql`
+        select k."clientId" as client_id, c."name" as client_name,
+               k."scopes" as scopes, k."updatedAt" as granted_at
+        from "oauthConsent" k
+        join "oauthClient" c on c."clientId" = k."clientId"
+        where k."userId" = ${userId}
+        order by k."updatedAt" desc
+      `)) as {
+        client_id: string
+        client_name: string | null
+        scopes: string | null
+        granted_at: string | number | null
+      }[]
+      return rows.map((r) => {
+        // updatedAt may be an ISO string or an epoch (s or ms), like getOAuthGrant's expiry.
+        const ms =
+          typeof r.granted_at === "number"
+            ? r.granted_at < 1e12
+              ? r.granted_at * 1000
+              : r.granted_at
+            : Date.parse(r.granted_at ?? "")
+        return {
+          clientId: r.client_id,
+          clientName: r.client_name || r.client_id,
+          scopes: parseOAuthScopes(r.scopes),
+          grantedAt: new Date(Number.isFinite(ms) ? ms : Date.now()).toISOString(),
+        }
+      })
+    } catch {
+      return []
+    }
+  }
+  // Revoke a user's grant to a client: drop the consent + every live token so access ends
+  // now and a fresh consent is required. Best-effort per table (a table may not exist).
+  const revokeUserGrant = async (userId: string, clientId: string): Promise<void> => {
+    for (const table of ["oauthAccessToken", "oauthRefreshToken", "oauthConsent"]) {
+      try {
+        await db.run(
+          sql`delete from ${sql.raw(`"${table}"`)} where "userId" = ${userId} and "clientId" = ${clientId}`,
+        )
+      } catch {
+        // Table absent or column mismatch on this dialect → skip; the others still run.
+      }
+    }
+  }
   const deleteAgent = async (id: string, orgId: string): Promise<void> => {
     await db
       .delete(agent)
@@ -1957,6 +2008,8 @@ export function makeRepos(db: SqliteDb) {
     getAgentByToken,
     getOAuthGrant,
     getOAuthClientName,
+    listUserGrants,
+    revokeUserGrant,
     pruneStaleOAuthClients,
     deleteAgent,
     createAgentMention,

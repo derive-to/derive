@@ -48,6 +48,7 @@ import type {
   NewWebhook,
   NotificationRecord,
   OAuthGrant,
+  OAuthGrantSummary,
   OrgSettings,
   ProposalRecord,
   ProposalState,
@@ -1736,6 +1737,49 @@ export class PgMetaStore implements MetaStore {
       return res.rowCount ?? 0
     } catch {
       return 0
+    }
+  }
+  async listUserGrants(userId: string): Promise<OAuthGrantSummary[]> {
+    try {
+      const { rows } = await this.pool.query(
+        `SELECT k."clientId" AS client_id, c."name" AS client_name,
+                k."scopes" AS scopes, k."updatedAt" AS granted_at
+           FROM "oauthConsent" k
+           JOIN "oauthClient" c ON c."clientId" = k."clientId"
+          WHERE k."userId" = $1
+          ORDER BY k."updatedAt" DESC`,
+        [userId],
+      )
+      return (
+        rows as {
+          client_id: string
+          client_name: string | null
+          scopes: string | string[] | null
+          granted_at: Date | string | null
+        }[]
+      ).map((r) => ({
+        clientId: r.client_id,
+        clientName: r.client_name || r.client_id,
+        scopes: parseOAuthScopes(r.scopes),
+        grantedAt: (r.granted_at instanceof Date
+          ? r.granted_at
+          : new Date(r.granted_at ?? Date.now())
+        ).toISOString(),
+      }))
+    } catch {
+      return []
+    }
+  }
+  async revokeUserGrant(userId: string, clientId: string): Promise<void> {
+    for (const table of ["oauthAccessToken", "oauthRefreshToken", "oauthConsent"]) {
+      try {
+        await this.pool.query(`DELETE FROM "${table}" WHERE "userId" = $1 AND "clientId" = $2`, [
+          userId,
+          clientId,
+        ])
+      } catch {
+        // Table absent on this deploy → skip; the others still run.
+      }
     }
   }
   async deleteAgent(id: string, orgId: string): Promise<void> {

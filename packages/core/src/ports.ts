@@ -571,6 +571,13 @@ export interface MetaStore {
   getOAuthGrant(tokenHash: string): Promise<OAuthGrant | null>
   /** The display name of a registered OAuth client (for the consent screen). */
   getOAuthClientName(clientId: string): Promise<string | null>
+  /** The agents a USER has authorized via the browser consent (one per client), so they can
+   *  review + revoke what may act on their behalf. Reads Better Auth's oauth-provider tables;
+   *  empty when they aren't present. */
+  listUserGrants(userId: string): Promise<OAuthGrantSummary[]>
+  /** Revoke a user's grant to one OAuth client: drop the consent + every live access/refresh
+   *  token, so the agent loses access immediately and must re-consent. */
+  revokeUserGrant(userId: string, clientId: string): Promise<void>
   deleteAgent(id: string, orgId: string): Promise<void>
 
   // ---- Workspace invitations (invite-by-email → accept) ------------------
@@ -711,6 +718,16 @@ export interface OAuthGrant {
   clientName: string
   scopes: string[]
   expiresAt: Date
+}
+
+/** One authorized agent from a user's point of view — what they see in "Connected agents"
+ *  to review + revoke. Keyed by client (a user grants a client once; tokens rotate under it). */
+export interface OAuthGrantSummary {
+  clientId: string
+  clientName: string
+  scopes: string[]
+  /** When the grant was last (re)authorized — ISO. */
+  grantedAt: string
 }
 
 export type AuditAction = "report" | "takedown" | "reinstate" | "dismiss"
