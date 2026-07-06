@@ -9,10 +9,14 @@ import {
   can,
   capRole,
   DEFAULT_VERSION_WINDOW_MS,
+  isAuthenticated,
   isBundleContentType,
   type MetaStore,
   maxRole,
   newId,
+  type Principal,
+  principalActor,
+  principalOwnerId,
   type Role,
   roleAllows,
 } from "@derive/core"
@@ -322,13 +326,42 @@ export function buildContext(deps: AppDeps) {
     return !!me && superAdminEmails.has(me.email.toLowerCase())
   }
 
+  // The one identity resolution for a request (memoized): a typed `Principal` that folds
+  // the signed-in user, the agent, and the agent's on-behalf human into a single value —
+  // delegation as DATA (the agent Principal carries `onBehalfOf`), not a heuristic split
+  // across resolvers + a loose cache. Precedence matches actorFor's authz path: the static
+  // token wins, then an agent bearer, then a session, else anonymous. currentUser/agentFor
+  // remain the memoized building blocks (and direct route accessors); this composes them.
+  const principalCache = new WeakMap<Context, Principal>()
+  const resolvePrincipal = async (c: Context): Promise<Principal> => {
+    const cached = principalCache.get(c)
+    if (cached) return cached
+    let p: Principal
+    if (isToken(c)) {
+      p = { kind: "token" }
+    } else {
+      const ag = await agentFor(c)
+      if (ag) p = { kind: "agent", agent: ag, onBehalfOf: onBehalfOfCache.get(c) ?? null }
+      else {
+        const me = await currentUser(c)
+        p = me
+          ? {
+              kind: "human",
+              user: { id: me.id, email: me.email, name: me.name, username: me.username },
+            }
+          : { kind: "anonymous" }
+      }
+    }
+    principalCache.set(c, p)
+    return p
+  }
+
   // A registered agent acting via its bearer token (memoized per request). An
   // agent is a workspace principal: same authorization path as a member, with
-  // its own identity and (default commenter) role.
+  // its own identity and (default commenter) role. `onBehalfOfCache` records the
+  // human the agent acts for, resolved in lockstep and surfaced on the agent Principal.
   const agentCache = new WeakMap<Context, AgentRecord | null>()
-  // The human an OAuth agent acts on behalf of (the user who consented). Null for a
-  // registered workspace agent (no granting user) — kept in lockstep with agentCache.
-  const onBehalfCache = new WeakMap<Context, string | null>()
+  const onBehalfOfCache = new WeakMap<Context, string | null>()
   const agentFor = async (c: Context): Promise<AgentRecord | null> => {
     if (agentCache.has(c)) return agentCache.get(c) ?? null
     const b = bearer(c)
@@ -361,31 +394,21 @@ export function buildContext(deps: AppDeps) {
       }
     }
     agentCache.set(c, a)
-    onBehalfCache.set(c, owner)
+    onBehalfOfCache.set(c, owner)
     if (a) c.set("actorId", a.id)
     return a
   }
 
-  // The human identity behind this request: a signed-in user is themselves; an
-  // agent (OAuth or registered) is the user it acts on behalf of, when known.
-  // Keys `personal` comments, and publish attribution + ownership.
-  const privateOwnerId = async (c: Context): Promise<string | null> => {
-    const ag = await agentFor(c)
-    if (ag) return onBehalfCache.get(c) ?? null
-    return (await currentUser(c))?.id ?? null
-  }
+  // The human identity behind this request (agent's on-behalf human, or the user
+  // themselves; null for anon/token). Keys `personal` comments + publish attribution.
+  // A thin read of the one Principal, so the delegation rule lives in exactly one place.
+  const privateOwnerId = async (c: Context): Promise<string | null> =>
+    principalOwnerId(await resolvePrincipal(c))
 
-  // The acting identity (agent or signed-in user) for authorship; null when
-  // anonymous. Agents author as their name, never spoofing a person.
-  const actingUser = async (c: Context): Promise<{ id: string; name: string } | null> => {
-    const ag = await agentFor(c)
-    if (ag) return { id: ag.id, name: ag.name }
-    const me = await currentUser(c)
-    // Display identity feeds the comment/version author byline shown to others, so
-    // fall back to the public handle, never the email (the email→handle migration).
-    // Every account has a username post-migration; email is only a last-ditch guard.
-    return me ? { id: me.id, name: me.name ?? me.username ?? me.email } : null
-  }
+  // The acting identity (agent or signed-in user) for authorship bylines; null when
+  // anonymous. Agents author as their name, never spoofing a person. Also a Principal read.
+  const actingUser = async (c: Context): Promise<{ id: string; name: string } | null> =>
+    principalActor(await resolvePrincipal(c))
 
   // A stable rate-limit key for the caller: the signed-in user / agent if known,
   // otherwise their IP so anonymous floods are still bounded.
@@ -509,9 +532,12 @@ export function buildContext(deps: AppDeps) {
       a.visibility === "password" &&
       !!a.password_hash &&
       safeEqual(getCookie(c, unlockCookie(a.short_id)) ?? "", unlockToken(a.id, a.password_hash))
-    if (isToken(c)) return { kind: "token" }
-    const ag = await agentFor(c)
-    if (ag) {
+    // Narrow the one Principal to this artifact's Actor (the can() input).
+    const p = await resolvePrincipal(c)
+    if (p.kind === "token") return { kind: "token" }
+    if (p.kind === "anonymous") return { kind: "anon", unlocked }
+    if (p.kind === "agent") {
+      const ag = p.agent
       // An agent acts AS ITS REGISTRANT, capped at its registered role and bound
       // to its home workspace. Its per-artifact standing DERIVES from the human's
       // member rows — agents hold no rows of their own (an agent in a share
@@ -522,7 +548,7 @@ export function buildContext(deps: AppDeps) {
       // they were explicit grants.
       const own = await meta.getArtifactMember(a.id, ag.id)
       let derived: Role | null = null
-      const ownerId = onBehalfCache.get(c) ?? null
+      const ownerId = p.onBehalfOf
       if (ownerId && ag.org_id === a.org_id) {
         const m = await meta.getArtifactMember(a.id, ownerId)
         const cRoles = await meta.collectionRolesForArtifact(a.id, ownerId)
@@ -536,11 +562,10 @@ export function buildContext(deps: AppDeps) {
         orgRole,
       }
     }
-    const me = await currentUser(c)
-    if (!me) return { kind: "anon", unlocked }
-    // Baseline role = membership in the ARTIFACT's workspace. Opening a shared
-    // link never auto-joins you into someone else's workspace; you only carry an
-    // org role where you're explicitly a member.
+    // A signed-in human. Baseline role = membership in the ARTIFACT's workspace. Opening a
+    // shared link never auto-joins you into someone else's workspace; you only carry an org
+    // role where you're explicitly a member.
+    const me = p.user
     const orgRole = (await meta.getMembership(a.org_id, me.id))?.role ?? null
     const am = await meta.getArtifactMember(a.id, me.id)
     // A collection share grants its role on every artifact in the collection,
@@ -574,10 +599,8 @@ export function buildContext(deps: AppDeps) {
    * source of truth for "not anonymous", used by the global anonymous-write
    * lockdown so a new mutating route can never accidentally be exposed to anon.
    */
-  const isPrincipal = async (c: Context): Promise<boolean> => {
-    if (isToken(c)) return true
-    return !!(await actingUser(c))
-  }
+  const isPrincipal = async (c: Context): Promise<boolean> =>
+    isAuthenticated(await resolvePrincipal(c))
 
   /** The caller's role in their active workspace (creating artifacts, settings). */
   const workspaceRole = async (c: Context): Promise<Role | null> => {
@@ -671,6 +694,7 @@ export function buildContext(deps: AppDeps) {
     background,
     currentUser,
     agentFor,
+    resolvePrincipal,
     actingUser,
     privateOwnerId,
     limited,
