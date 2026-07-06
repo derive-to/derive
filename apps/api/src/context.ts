@@ -185,8 +185,6 @@ export interface AppDeps {
   renderPreviews?: boolean
   /** Wake the preview worker after enqueuing (Workers: poke the PreviewRenderer DO). */
   pokePreviews?: () => void
-  /** HMAC secret for minting short-lived /raw preview-access tokens. */
-  previewSecret?: string
 }
 
 /**

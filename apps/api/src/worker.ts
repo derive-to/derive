@@ -220,7 +220,6 @@ const handle = (req: Request, env: Env, ctx: ExecutionContext): Response | Promi
         // renderPreviews is false so no jobs are enqueued.
         renderPreviews: !!env.BROWSER,
         pokePreviews: () => void edgeWaitUntil(pokePreviewRenderer(env)),
-        previewSecret: env.DERIVE_AUTH_SECRET,
         sandboxOrigin: env.DERIVE_SANDBOX_URL,
         // Read the SPA shell from static assets so /artifacts/:ref can carry unfurl meta.
         // Cached per isolate; null on any miss leaves the shell untouched.
