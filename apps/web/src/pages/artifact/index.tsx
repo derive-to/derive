@@ -192,6 +192,7 @@ export function Artifact() {
     shortId,
     version,
     hoverThread,
+    activeThread,
     onPointerMove: live.onPointerMove,
     onPointerLeave: live.onPointerLeave,
     onTap: live.onTap,
