@@ -135,6 +135,7 @@ export const PERF_INDEXES: string[] = [
   `CREATE INDEX IF NOT EXISTS artifact_org_created ON artifact (org_id, created_at, id)`,
   `CREATE INDEX IF NOT EXISTS view_artifact_time ON view (artifact_id, created_at)`,
   `CREATE INDEX IF NOT EXISTS delivery_due ON webhook_delivery (status, next_attempt_at)`,
+  `CREATE INDEX IF NOT EXISTS render_job_due ON render_job (status, next_attempt_at)`,
   `CREATE INDEX IF NOT EXISTS notification_user_time ON notification (user_id, created_at)`,
   `CREATE INDEX IF NOT EXISTS agent_mention_inbox ON agent_mention (agent_id, state, created_at)`,
   `CREATE INDEX IF NOT EXISTS favorite_user ON artifact_favorite (user_id)`,

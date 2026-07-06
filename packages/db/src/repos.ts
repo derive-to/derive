@@ -36,6 +36,7 @@ import type {
   NewMembership,
   NewNotification,
   NewProposal,
+  NewRenderJob,
   NewReport,
   NewRepoSource,
   NewReviewRound,
@@ -47,6 +48,8 @@ import type {
   PreviewStatus,
   ProposalRecord,
   ProposalState,
+  RenderJobRecord,
+  RenderJobStatus,
   ReportRecord,
   ReportState,
   RepoSourceRecord,
@@ -104,6 +107,7 @@ import {
   notification,
   orgSettings,
   proposal,
+  renderJob,
   report,
   repoSource,
   reviewRound,
@@ -160,6 +164,7 @@ export const schema = {
   comment,
   webhook,
   webhookDelivery,
+  renderJob,
   membership,
   workspace,
   artifactMember,
@@ -192,6 +197,7 @@ const _schemaShapes: Shapes<typeof schema> = {
   comment: true,
   webhook: true,
   webhookDelivery: true,
+  renderJob: true,
   membership: true,
   workspace: true,
   artifactMember: true,
@@ -712,6 +718,39 @@ export function makeRepos(db: SqliteDb) {
       .orderBy(desc(webhookDelivery.created_at))
       .limit(limit)
       .all()
+
+  // ---- Render-job queue --------------------------------------------------
+  const enqueueRenderJob = async (j: NewRenderJob): Promise<void> => {
+    await db.insert(renderJob).values(j).run()
+  }
+  const claimDueRenderJobs = async (
+    now: string,
+    limit: number,
+    leaseUntil: string,
+  ): Promise<RenderJobRecord[]> => {
+    const due = db
+      .select({ id: renderJob.id })
+      .from(renderJob)
+      .where(and(eq(renderJob.status, "pending"), lte(renderJob.next_attempt_at, now)))
+      .orderBy(asc(renderJob.next_attempt_at))
+      .limit(limit)
+    return (await db
+      .update(renderJob)
+      .set({ attempts: sql`${renderJob.attempts} + 1`, next_attempt_at: leaseUntil })
+      .where(inArray(renderJob.id, due))
+      .returning()) as RenderJobRecord[]
+  }
+  const updateRenderJob = async (
+    id: string,
+    fields: {
+      status: RenderJobStatus
+      attempts: number
+      last_error: string | null
+      next_attempt_at: string
+    },
+  ): Promise<void> => {
+    await db.update(renderJob).set(fields).where(eq(renderJob.id, id)).run()
+  }
 
   // ---- Workspace membership ----------------------------------------------
   const getMembership = async (orgId: string, userId: string): Promise<MembershipRecord | null> =>
@@ -1812,6 +1851,9 @@ export function makeRepos(db: SqliteDb) {
     claimDueDeliveries,
     updateDelivery,
     recentDeliveries,
+    enqueueRenderJob,
+    claimDueRenderJobs,
+    updateRenderJob,
     getMembership,
     listMemberships,
     countMemberships,

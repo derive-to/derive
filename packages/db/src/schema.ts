@@ -12,6 +12,7 @@ import type {
   NotificationKind,
   PreviewStatus,
   ProposalState,
+  RenderJobStatus,
   ReportState,
   ReviewRoundState,
   Role,
@@ -148,6 +149,17 @@ export const webhookDelivery = sqliteTable("webhook_delivery", {
   event_type: text("event_type").notNull(),
   payload: text("payload").notNull(),
   status: text("status").$type<DeliveryStatus>().notNull().default("pending"),
+  attempts: integer("attempts").notNull().default(0),
+  last_error: text("last_error"),
+  next_attempt_at: text("next_attempt_at").notNull().default(now),
+  created_at: text("created_at").notNull().default(now),
+})
+
+export const renderJob = sqliteTable("render_job", {
+  id: text("id").primaryKey(),
+  artifact_id: text("artifact_id").notNull(),
+  version_n: integer("version_n").notNull(),
+  status: text("status").$type<RenderJobStatus>().notNull().default("pending"),
   attempts: integer("attempts").notNull().default(0),
   last_error: text("last_error"),
   next_attempt_at: text("next_attempt_at").notNull().default(now),
@@ -525,6 +537,7 @@ const TABLES = [
   comment,
   webhook,
   webhookDelivery,
+  renderJob,
   membership,
   workspace,
   artifactMember,

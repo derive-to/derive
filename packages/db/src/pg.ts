@@ -38,6 +38,7 @@ import type {
   NewMembership,
   NewNotification,
   NewProposal,
+  NewRenderJob,
   NewReport,
   NewRepoSource,
   NewReviewRound,
@@ -50,6 +51,8 @@ import type {
   PreviewStatus,
   ProposalRecord,
   ProposalState,
+  RenderJobRecord,
+  RenderJobStatus,
   ReportRecord,
   ReportState,
   RepoSourceRecord,
@@ -107,6 +110,7 @@ import {
   orgSettings,
   PG_SCHEMA_STATEMENTS,
   proposal,
+  renderJob,
   report,
   repoSource,
   reviewRound,
@@ -133,6 +137,7 @@ export const schema = {
   comment,
   webhook,
   webhookDelivery,
+  renderJob,
   membership,
   workspace,
   artifactMember,
@@ -165,6 +170,7 @@ const _schemaShapes: Shapes<typeof schema> = {
   comment: true,
   webhook: true,
   webhookDelivery: true,
+  renderJob: true,
   membership: true,
   workspace: true,
   artifactMember: true,
@@ -688,6 +694,36 @@ export class PgMetaStore implements MetaStore {
       .where(eq(webhookDelivery.webhook_id, webhookId))
       .orderBy(desc(webhookDelivery.created_at))
       .limit(limit)
+  }
+
+  // ---- Render-job queue --------------------------------------------------
+  async enqueueRenderJob(j: NewRenderJob): Promise<void> {
+    await this.db.insert(renderJob).values(j)
+  }
+  claimDueRenderJobs(now: string, limit: number, leaseUntil: string): Promise<RenderJobRecord[]> {
+    const due = this.db
+      .select({ id: renderJob.id })
+      .from(renderJob)
+      .where(and(eq(renderJob.status, "pending"), lte(renderJob.next_attempt_at, now)))
+      .orderBy(asc(renderJob.next_attempt_at))
+      .limit(limit)
+      .for("update", { skipLocked: true })
+    return this.db
+      .update(renderJob)
+      .set({ attempts: sql`${renderJob.attempts} + 1`, next_attempt_at: leaseUntil })
+      .where(inArray(renderJob.id, due))
+      .returning()
+  }
+  async updateRenderJob(
+    id: string,
+    fields: {
+      status: RenderJobStatus
+      attempts: number
+      last_error: string | null
+      next_attempt_at: string
+    },
+  ): Promise<void> {
+    await this.db.update(renderJob).set(fields).where(eq(renderJob.id, id))
   }
 
   // ---- Permissions: membership + per-artifact shares ---------------------

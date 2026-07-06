@@ -29,6 +29,7 @@ import type {
   MembershipRecord,
   NotificationRecord,
   ProposalRecord,
+  RenderJobRecord,
   ReportRecord,
   RepoSourceRecord,
   ReviewRoundRecord,
@@ -47,6 +48,7 @@ export interface TypedTables {
   comment: CommentRecord
   webhook: WebhookRecord
   webhookDelivery: DeliveryRecord
+  renderJob: RenderJobRecord
   membership: MembershipRecord
   workspace: WorkspaceRecord
   artifactMember: ArtifactMemberRecord
