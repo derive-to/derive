@@ -14,6 +14,8 @@ import type {
   ReportState,
   ReviewRoundState,
   Role,
+  SessionMessageAuthor,
+  SessionState,
   Visibility,
   WebhookKind,
 } from "@derive/core"
@@ -506,6 +508,69 @@ export const reviewRound = sqliteTable(
   (t) => [index("review_round_artifact").on(t.artifact_id, t.requested_for)],
 )
 
+// A context: a named, askable agent setup — the registered agent that answers it
+// linked to the manifest artifact that defines it. Sharing the manifest IS sharing
+// the context (v1: viewer on the manifest = can ask), so the share machinery is
+// reused wholesale. `agent_id` is a plain column (an agent may be deleted out from
+// under a context); the manifest FK is hard — a context can't outlive its definition.
+export const context = sqliteTable(
+  "context",
+  {
+    id: text("id").primaryKey(),
+    org_id: text("org_id").notNull(),
+    name: text("name").notNull(),
+    agent_id: text("agent_id").notNull(),
+    manifest_artifact_id: text("manifest_artifact_id")
+      .notNull()
+      .references(() => artifact.id),
+    created_by: text("created_by").notNull(),
+    created_at: text("created_at").notNull().default(now),
+  },
+  (t) => [uniqueIndex("context_org_name").on(t.org_id, t.name)],
+)
+
+// One ask-conversation with a context. Named context_session because Better Auth
+// owns a `session` table in the same database. `state` doubles as the turn signal:
+// `open` = the runner owes a reply, which makes the queue read one indexed predicate
+// instead of a last-message join.
+export const contextSession = sqliteTable(
+  "context_session",
+  {
+    id: text("id").primaryKey(),
+    context_id: text("context_id")
+      .notNull()
+      .references(() => context.id),
+    org_id: text("org_id").notNull(),
+    asker_id: text("asker_id").notNull(),
+    context_version: integer("context_version").notNull(),
+    state: text("state").$type<SessionState>().notNull().default("open"),
+    created_at: text("created_at").notNull().default(now),
+    updated_at: text("updated_at"),
+  },
+  (t) => [
+    index("context_session_queue").on(t.context_id, t.state, t.created_at),
+    index("context_session_asker").on(t.asker_id, t.created_at),
+  ],
+)
+
+// A session's transcript, one row per turn. `meta` is the runner's structured
+// payload (query, confidence, caveats, artifact refs) as TEXT JSON, like comment.meta.
+export const sessionMessage = sqliteTable(
+  "session_message",
+  {
+    id: text("id").primaryKey(),
+    session_id: text("session_id")
+      .notNull()
+      .references(() => contextSession.id),
+    author_kind: text("author_kind").$type<SessionMessageAuthor>().notNull(),
+    author_id: text("author_id").notNull(),
+    body_md: text("body_md").notNull(),
+    meta: text("meta"),
+    created_at: text("created_at").notNull().default(now),
+  },
+  (t) => [index("session_message_session").on(t.session_id, t.created_at)],
+)
+
 // Abuse reports against public artifacts; anyone can file one.
 export const report = sqliteTable("report", {
   id: text("id").primaryKey(),
@@ -568,6 +633,9 @@ const TABLES = [
   domain,
   proposal,
   reviewRound,
+  context,
+  contextSession,
+  sessionMessage,
   report,
   auditLog,
 ]

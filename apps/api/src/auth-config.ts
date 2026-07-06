@@ -400,7 +400,12 @@ export function makeAuth(db: AuthDb, baseUrl: string, secret: string, hooks: Aut
         // endpoint is rate-limited (/api/auth/*) and a client is inert until a human
         // consents, so the only surface is spam client rows.
         allowUnauthenticatedClientRegistration: true,
-        accessTokenExpiresIn: 60 * 60, // 1h
+        // 24h, not the textbook 1h: these are opaque tokens resolved by DB hash on
+        // every request (see storeTokens below), so revocation is immediate no matter
+        // the TTL - the short-expiry rationale for bearer JWTs doesn't apply. A day
+        // saves agent CLIs (sessions typically hours apart) a refresh round-trip per
+        // session; the rotating refresh token below still bounds abandoned clients.
+        accessTokenExpiresIn: 60 * 60 * 24, // 24h
         // Refresh tokens rotate + reset their window on every use (see createUserTokens),
         // so this is an INACTIVITY timeout, not a hard cap: active clients (MCP, browser)
         // never re-auth; you only re-consent after 30 days of no use.

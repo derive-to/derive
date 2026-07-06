@@ -38,6 +38,7 @@ export function MobileComments({
   onNewGeneral,
   onSubmitNew,
   onCancelNew,
+  onHeightChange,
 }: {
   open: boolean
   openThreads: Comment[][]
@@ -48,6 +49,10 @@ export function MobileComments({
   onSubmitNew: (text: string, mentions?: Mention[]) => void
   onCancelNew: () => void
   reviewCard?: ReactNode
+  /** How much of the viewport bottom the sheet currently occupies, in px (0 when
+   *  closed). The page reserves exactly this under the document so no black band
+   *  is left below it. */
+  onHeightChange?: (px: number) => void
 }) {
   // Two states only: peek (a slim "Comments (N)" bar — the default) and full (the
   // list). Composing overrides both with a compact composer bar pinned above the
@@ -101,6 +106,35 @@ export function MobileComments({
   useEffect(() => {
     if (!composer) (document.activeElement as HTMLElement | null)?.blur?.()
   }, [composer])
+  // Report how much of the viewport bottom the sheet occupies so the page can
+  // reserve exactly that under the document — no more, no less. A static reserve
+  // (the old `pb-[50vh]`) left a tall black band below the document whenever the
+  // sheet rested at its slim peek height. Measuring the sheet's top to the layout-
+  // viewport bottom folds in every state: the open/close slide (a transform), the
+  // peek<->full height change, and the keyboard-pinned composer (its inset is
+  // included). A rAF loop while open tracks it frame-accurately (idle cost is one
+  // cheap fixed-element rect read per frame); closed reports 0 and stops.
+  useEffect(() => {
+    if (!open) {
+      onHeightChange?.(0)
+      return
+    }
+    let raf = 0
+    let last = -1
+    const tick = () => {
+      const el = sheetRef.current
+      if (el) {
+        const inset = Math.max(0, Math.round(window.innerHeight - el.getBoundingClientRect().top))
+        if (inset !== last) {
+          last = inset
+          onHeightChange?.(inset)
+        }
+      }
+      raf = requestAnimationFrame(tick)
+    }
+    raf = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(raf)
+  }, [open, onHeightChange])
   const empty = openThreads.length === 0 && resolved.length === 0 && !composer
   // The grip toggles peek <-> full.
   const grip = () => setSize((s) => (s === "peek" ? "full" : "peek"))

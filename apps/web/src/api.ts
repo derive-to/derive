@@ -409,6 +409,42 @@ export interface Agent {
   role: Role
   created_at: string
 }
+/** An askable agent setup: a registered agent wired to a manifest artifact. */
+export interface ContextInfo {
+  id: string
+  name: string
+  agent_id: string
+  manifest_short_id: string | null
+  created_by: string
+  created_at: string
+}
+export type SessionState = "open" | "answered" | "escalated" | "failed" | "closed"
+/** The runner's structured payload on an agent message (parsed server-side). */
+export interface SessionMeta {
+  query?: string | null
+  confidence?: number | null
+  caveats?: string[]
+  escalation_reason?: string | null
+  /** Artifacts the runner published for this answer (charts, report pages). */
+  artifacts?: { short_id: string; title: string }[]
+}
+export interface SessionMessage {
+  id: string
+  author_kind: "asker" | "agent"
+  author_id: string
+  body_md: string
+  meta: SessionMeta | null
+  created_at: string
+}
+export interface Session {
+  id: string
+  context_id: string
+  asker_id: string
+  context_version: number
+  state: SessionState
+  created_at: string
+  updated_at: string
+}
 /** A live viewer of an artifact (presence). Identified by a handle-style `name`
  *  (never email — presence is broadcast to anonymous co-viewers); `role` is their
  *  effective role here. */
@@ -922,6 +958,33 @@ export const api = {
     f("/v1/agents", opts({ name, role })).then(j),
   deleteAgent: (id: string): Promise<void> =>
     f(`/v1/agents/${id}`, { method: "DELETE", credentials: "include" }).then(() => undefined),
+
+  // Contexts + sessions (the ask loop; see routes/contexts.ts server-side).
+  listContexts: (): Promise<{ contexts: ContextInfo[] }> => f("/v1/contexts", opts()).then(j),
+  getContext: (id: string): Promise<ContextInfo> => f(`/v1/contexts/${id}`, opts()).then(j),
+  createContext: (input: {
+    name: string
+    agent_id: string
+    manifest_short_id: string
+  }): Promise<ContextInfo> => f("/v1/contexts", opts(input)).then(j),
+  askContext: (
+    id: string,
+    body_md: string,
+  ): Promise<{ session: Session; messages: SessionMessage[] }> =>
+    f(`/v1/contexts/${id}/sessions`, opts({ body_md })).then(j),
+  listContextSessions: (id: string): Promise<{ sessions: Session[] }> =>
+    f(`/v1/contexts/${id}/sessions`, opts()).then(j),
+  getSession: (
+    id: string,
+  ): Promise<{
+    session: Session
+    context: { id: string; name: string }
+    messages: SessionMessage[]
+  }> => f(`/v1/sessions/${id}`, opts()).then(j),
+  postSessionMessage: (id: string, body_md: string): Promise<{ message: SessionMessage }> =>
+    f(`/v1/sessions/${id}/messages`, opts({ body_md })).then(j),
+  closeSession: (id: string): Promise<{ session: Session }> =>
+    f(`/v1/sessions/${id}`, { ...opts({ state: "closed" }), method: "PATCH" }).then(j),
 
   // GitHub sync: mirror a repo's Markdown/HTML into a collection (one-way).
   // Status carries the connected sources, whether the instance GitHub App is set
