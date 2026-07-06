@@ -29,6 +29,7 @@ export const proposalRoutes = (ctx: AppContext) => {
     deps,
     bus,
     notify,
+    notifyRender,
     currentUser,
     actingUser,
     anonLocked,
@@ -209,6 +210,7 @@ export const proposalRoutes = (ctx: AppContext) => {
         version: version.n,
         approver,
       })
+      notifyRender(artifact, version.n)
       const fresh = (await meta.getProposal(proposal.id)) as ProposalRecord
       return c.json({ ...proposalJson(artifact, fresh), published: version.n })
     } catch (err) {
