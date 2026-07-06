@@ -99,7 +99,7 @@ the default role. Sign up at `/login`.
 | `DERIVE_CROSS_SITE` | `false` | `true` for `SameSite=None; Secure` cookies (split deploy only) |
 | `DERIVE_TOKEN` | (none) | Static bearer token for CI/agents. One of the two ways to write (the other is a sign-in session); anonymous callers are always read-only (public/link artifacts), never owners. |
 | `DERIVE_WEB_DIR` | (auto) | Override the bundled SPA path |
-| `DERIVE_PREVIEWS` | `false` | `true` to enable server-side Playwright screenshot generation for share cards (Docker image bundles Chromium; bare-Node hosts must run `playwright install chromium` once) |
+| `DERIVE_PREVIEWS` | `false` | `true` to enable server-side Playwright screenshot generation for share cards (Docker image bundles Chromium; bare-Node hosts must run `playwright install --with-deps chromium` once) |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | (none) | Google sign-in |
 | `OIDC_ISSUER` / `OIDC_CLIENT_ID` / `OIDC_CLIENT_SECRET` / `OIDC_PROVIDER_ID` | (none) | Enterprise SSO |
 
@@ -110,10 +110,13 @@ share cards (Open Graph images, link unfurls).
 
 - **Docker image**: Chromium is already bundled. Set the env var and you're done — no
   extra steps.
-- **Bare-Node host**: run once after install to download the browser binary:
+- **Bare-Node host**: run once after install to download the browser binary **and its
+  system libraries** (`--with-deps` installs the shared libs Chromium needs — libnss3,
+  libatk, etc. — on Debian/Ubuntu; without them the browser fails to launch at runtime):
   ```bash
-  corepack pnpm --filter @derive/api exec playwright install chromium
+  corepack pnpm --filter @derive/api exec playwright install --with-deps chromium
   ```
+  On a non-apt host, install the equivalent system libraries yourself.
 - **`BASE_URL` is required**: the renderer fetches the artifact's `/raw` URL over HTTP, so
   `BASE_URL` must be set to the public origin of the instance (or at least the internal
   origin the Node process can reach itself on). Without it the renderer cannot build the
