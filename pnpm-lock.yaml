@@ -167,6 +167,9 @@ importers:
       lucide-react:
         specifier: ^1.18.0
         version: 1.18.0(react@19.2.7)
+      marked:
+        specifier: ^18.0.5
+        version: 18.0.5
       next-themes:
         specifier: ^0.4.6
         version: 0.4.6(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
@@ -191,6 +194,9 @@ importers:
       web-vitals:
         specifier: ^5.3.0
         version: 5.3.0
+      xss:
+        specifier: ^1.0.15
+        version: 1.0.15
     devDependencies:
       '@babel/core':
         specifier: ^7.29.7

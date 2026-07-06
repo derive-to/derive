@@ -1,5 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link, useParams } from "@tanstack/react-router"
+import { Copy as CopyIcon } from "lucide-react"
 import { useEffect, useState } from "react"
 import { ApiError, api, type Session, type SessionMessage, type SessionMeta } from "@/api"
 import { Icon } from "@/components/icons"
@@ -16,6 +17,7 @@ import { contextQuery, contextSessionsQuery, sessionQuery } from "@/lib/queries"
 import { ago } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { mdToHtml } from "../artifact/lib/markdown"
+import { answerMdToHtml } from "./lib/answer-md"
 
 // The context console: ask, read the answer (with the query/confidence/caveats the
 // runner attaches), follow up. One conversation at a time — older sessions are a
@@ -336,10 +338,36 @@ function safeMeta(meta: SessionMeta | null) {
   }
 }
 
+// GFM chrome for rendered answers, kept local via arbitrary variants (tokens
+// only — the design-token check applies). Tables and fences are the two block
+// forms models actually produce that need styling beyond cmt-body's inline set.
+const ANSWER_PROSE = cn(
+  "text-sm [word-break:break-word] [&>*:first-child]:mt-0 [&>*:last-child]:mb-0",
+  "[&_p]:my-2 [&_ul]:my-2 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:my-2 [&_ol]:list-decimal [&_ol]:pl-5",
+  "[&_h1]:text-base [&_h1]:font-semibold [&_h2]:text-sm [&_h2]:font-semibold [&_h3]:text-sm [&_h3]:font-medium",
+  "[&_table]:my-2 [&_table]:w-full [&_table]:text-xs",
+  "[&_th]:border-b [&_th]:px-2 [&_th]:py-1.5 [&_th]:text-left [&_th]:font-medium",
+  "[&_td]:border-b [&_td]:border-border/50 [&_td]:px-2 [&_td]:py-1.5 [&_td]:tabular-nums",
+  "[&_pre]:my-2 [&_pre]:overflow-x-auto [&_pre]:rounded-lg [&_pre]:bg-secondary [&_pre]:p-2.5 [&_pre]:font-mono [&_pre]:text-xs",
+  "[&_code]:font-mono [&_code]:text-xs [&_blockquote]:border-l-2 [&_blockquote]:pl-3 [&_blockquote]:text-muted-foreground",
+)
+
 function MessageRow({ m, contextName }: { m: SessionMessage; contextName: string }) {
   const [showQuery, setShowQuery] = useState(false)
+  const [copied, setCopied] = useState(false)
   const fromAgent = m.author_kind === "agent"
   const meta = safeMeta(m.meta)
+  // Answers travel onward as markdown (into docs, Slack, a PR) — copy the
+  // SOURCE, not the rendered text.
+  const copyMd = async () => {
+    try {
+      await navigator.clipboard.writeText(m.body_md)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1500)
+    } catch {
+      toast.error("Couldn't copy")
+    }
+  }
   return (
     <div
       data-testid="console-message"
@@ -348,6 +376,18 @@ function MessageRow({ m, contextName }: { m: SessionMessage; contextName: string
       <div className="mb-1 flex items-center gap-2 text-xs text-muted-foreground">
         <span className="font-medium">{fromAgent ? contextName : "You"}</span>
         <span>{ago(m.created_at)}</span>
+        {fromAgent && (
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            data-testid="console-copy-md"
+            aria-label="Copy answer as markdown"
+            onClick={copyMd}
+            className="text-muted-foreground"
+          >
+            {copied ? <Icon name="check" className="text-success" /> : <CopyIcon />}
+          </Button>
+        )}
         {meta.escalation && (
           <Badge variant="outline" data-testid="console-escalated">
             Escalated — {meta.escalation}
@@ -359,11 +399,19 @@ function MessageRow({ m, contextName }: { m: SessionMessage; contextName: string
           </span>
         )}
       </div>
-      <div
-        className="cmt-body text-sm [word-break:break-word]"
-        // biome-ignore lint/security/noDangerouslySetInnerHtml: input is escaped first in mdToHtml.
-        dangerouslySetInnerHTML={{ __html: mdToHtml(m.body_md) }}
-      />
+      {fromAgent ? (
+        <div
+          className={ANSWER_PROSE}
+          // biome-ignore lint/security/noDangerouslySetInnerHtml: sanitized in answerMdToHtml (xss whitelist).
+          dangerouslySetInnerHTML={{ __html: answerMdToHtml(m.body_md) }}
+        />
+      ) : (
+        <div
+          className="cmt-body text-sm [word-break:break-word]"
+          // biome-ignore lint/security/noDangerouslySetInnerHtml: input is escaped first in mdToHtml.
+          dangerouslySetInnerHTML={{ __html: mdToHtml(m.body_md) }}
+        />
+      )}
       {meta.artifacts.length > 0 && (
         <div className="mt-2 flex flex-wrap gap-1.5">
           {meta.artifacts.map((a) => (
