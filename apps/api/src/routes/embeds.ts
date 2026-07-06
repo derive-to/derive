@@ -20,7 +20,7 @@ import {
 } from "@derive/core"
 import { type Context, Hono } from "hono"
 import type { AppContext } from "../context"
-import { fail } from "../lib/http"
+import { fail, toBody } from "../lib/http"
 
 /**
  * Unfurl + embed surface. Turns a `/artifacts/:ref` share link into a rich card and an
@@ -89,7 +89,7 @@ export const embedRoutes = (ctx: AppContext) => {
       if (v?.preview_status === "ready" && v.preview_key) {
         const png = await blobs.get(v.preview_key)
         if (png)
-          return c.body(png, 200, {
+          return c.body(toBody(png), 200, {
             "Content-Type": "image/png",
             "Cache-Control": "public, max-age=86400, stale-while-revalidate=604800",
             "X-Content-Type-Options": "nosniff",

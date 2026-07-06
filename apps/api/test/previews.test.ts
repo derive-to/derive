@@ -278,6 +278,7 @@ describe("previews: enqueueRender + runRenderTick", () => {
     expect(fakes.versions.get("a1:1")?.preview_error).toBeNull()
     // Job is done
     const job = [...fakes.jobs.values()][0]
+    if (!job) throw new Error("expected a render job")
     expect(job.status).toBe("done")
   })
 
@@ -306,6 +307,7 @@ describe("previews: enqueueRender + runRenderTick", () => {
     expect(fakes.versions.get("a2:1")?.preview_status).toBe("failed")
     expect(fakes.versions.get("a2:1")?.preview_error).toBeTruthy()
     const job = [...fakes.jobs.values()][0]
+    if (!job) throw new Error("expected a render job")
     expect(job.status).toBe("pending")
     // next_attempt_at should be in the future
     expect(new Date(job.next_attempt_at).getTime()).toBeGreaterThan(before)
@@ -326,9 +328,10 @@ describe("previews: enqueueRender + runRenderTick", () => {
     // Run MAX_ATTEMPTS times; each attempt increments the counter
     for (let i = 0; i < MAX_ATTEMPTS; i++) {
       // Reset next_attempt_at so it's always claimable
-      const job = [...fakes.jobs.values()][0]
-      job.next_attempt_at = new Date(0).toISOString()
-      job.status = "pending"
+      const loopJob = [...fakes.jobs.values()][0]
+      if (!loopJob) throw new Error("expected a render job in loop iteration")
+      loopJob.next_attempt_at = new Date(0).toISOString()
+      loopJob.status = "pending"
       await runRenderTick({
         meta: fakes.meta,
         blobs: makeBlobs(),
@@ -339,6 +342,7 @@ describe("previews: enqueueRender + runRenderTick", () => {
     }
 
     const job = [...fakes.jobs.values()][0]
+    if (!job) throw new Error("expected a render job after loop")
     expect(job.status).toBe("dead")
   })
 
@@ -395,6 +399,7 @@ describe("previews: enqueueRender + runRenderTick", () => {
     expect(rendererCalled).toHaveLength(0)
     // Job is done (skipped, not failed)
     const job = [...fakes.jobs.values()][0]
+    if (!job) throw new Error("expected a render job")
     expect(job.status).toBe("done")
     // No preview written on the stale version
     expect(fakes.versions.get("a4:1")?.preview_status).toBeNull()

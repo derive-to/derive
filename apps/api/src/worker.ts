@@ -1,3 +1,4 @@
+import type { BrowserWorker } from "@cloudflare/puppeteer"
 import type {
   D1Database,
   DurableObjectNamespace,
@@ -84,7 +85,7 @@ export interface Env {
   // Unbound (local / D1-only deploys) → renderPreviews is false, no jobs enqueue.
   PREVIEW_RENDERER?: DurableObjectNamespace
   // Cloudflare Browser Rendering binding. Unbound ⇒ preview rendering is disabled.
-  BROWSER?: Fetcher
+  BROWSER?: BrowserWorker
   // Native per-colo rate-limit bindings (limit + 60s window declared in wrangler.toml
   // [[ratelimits]]). The edge counts against these instead of an in-process Map so a cap
   // holds across isolates within a location. RL_STRICT is shared by the two tight 3/60

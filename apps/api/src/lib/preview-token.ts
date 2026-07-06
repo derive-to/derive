@@ -63,7 +63,8 @@ export const signPreviewToken = async (
   n: number,
   expEpochMs: number,
 ): Promise<string> => {
-  const payload = toBase64Url(new TextEncoder().encode(`${artifactId}.${n}.${expEpochMs}`))
+  const encoded = new TextEncoder().encode(`${artifactId}.${n}.${expEpochMs}`)
+  const payload = toBase64Url(encoded.buffer as ArrayBuffer)
   const key = await importKey(secret)
   const sig = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(payload))
   return `${payload}.${toBase64Url(sig)}`
@@ -99,7 +100,12 @@ export const verifyPreviewToken = async (
     return null
   }
 
-  const valid = await crypto.subtle.verify("HMAC", key, sigBytes, new TextEncoder().encode(payload))
+  const valid = await crypto.subtle.verify(
+    "HMAC",
+    key,
+    new Uint8Array(sigBytes),
+    new TextEncoder().encode(payload),
+  )
   if (!valid) return null
 
   const plainBytes = fromBase64Url(payload)

@@ -1,5 +1,4 @@
-import puppeteer from "@cloudflare/puppeteer"
-import type { Fetcher } from "@cloudflare/workers-types"
+import puppeteer, { type BrowserWorker } from "@cloudflare/puppeteer"
 import type { Renderer, ScreenshotOpts } from "./previews"
 
 /**
@@ -8,7 +7,7 @@ import type { Renderer, ScreenshotOpts } from "./previews"
  * the floor. Each tick launches a fresh browser (correctness-first; warm-reuse is
  * a follow-up optimisation once the deploy verifies).
  */
-export const cfBrowserRenderer = (binding: Fetcher): Renderer => ({
+export const cfBrowserRenderer = (binding: BrowserWorker): Renderer => ({
   screenshot: async (url: string, opts: ScreenshotOpts): Promise<Uint8Array> => {
     const browser = await puppeteer.launch(binding)
     try {

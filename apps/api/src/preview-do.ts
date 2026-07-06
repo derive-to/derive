@@ -1,7 +1,7 @@
+import type { BrowserWorker } from "@cloudflare/puppeteer"
 import type {
   D1Database,
   DurableObjectState,
-  Fetcher,
   Hyperdrive,
   R2Bucket,
 } from "@cloudflare/workers-types"
@@ -26,7 +26,7 @@ export interface PreviewRendererEnv {
   DB: D1Database
   HYPERDRIVE?: Hyperdrive
   BUCKET: R2Bucket
-  BROWSER: Fetcher
+  BROWSER: BrowserWorker
   BASE_URL?: string
   DERIVE_SANDBOX_URL?: string
   DERIVE_AUTH_SECRET?: string

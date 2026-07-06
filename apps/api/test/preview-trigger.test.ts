@@ -113,9 +113,11 @@ describe("preview-trigger: renderPreviews gating", () => {
 
     expect(enqueuedJobs).toHaveLength(1)
     // artifact_id is the internal UUID (not short_id); just verify it's a string
-    expect(typeof enqueuedJobs[0].artifact_id).toBe("string")
-    expect(enqueuedJobs[0].artifact_id).toMatch(/^a_/)
-    expect(enqueuedJobs[0].version_n).toBe(body.current_version)
+    const job0 = enqueuedJobs[0]
+    if (!job0) throw new Error("expected enqueuedJobs[0]")
+    expect(typeof job0.artifact_id).toBe("string")
+    expect(job0.artifact_id).toMatch(/^a_/)
+    expect(job0.version_n).toBe(body.current_version)
   })
 
   it("enqueues a job for a new version (republish) when renderPreviews is true", async () => {
@@ -135,7 +137,9 @@ describe("preview-trigger: renderPreviews gating", () => {
 
     // Two publish events → two render jobs
     expect(enqueuedJobs).toHaveLength(2)
-    expect(enqueuedJobs[1].version_n).toBe(b2.current_version)
+    const job1 = enqueuedJobs[1]
+    if (!job1) throw new Error("expected enqueuedJobs[1]")
+    expect(job1.version_n).toBe(b2.current_version)
   })
 
   it("does NOT enqueue any render jobs when renderPreviews is false/omitted", async () => {
@@ -174,6 +178,8 @@ describe("preview-trigger: artifact id passed correctly", () => {
 
     const artifact = await meta.getByShortId(body.short_id)
     expect(artifact).not.toBeNull()
-    expect(enqueuedJobs[0].artifact_id).toBe(artifact?.id)
+    const idCheckJob = enqueuedJobs[0]
+    if (!idCheckJob) throw new Error("expected enqueuedJobs[0]")
+    expect(idCheckJob.artifact_id).toBe(artifact?.id)
   })
 })
