@@ -1,5 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useNavigate } from "@tanstack/react-router"
+import { QRCodeSVG } from "qrcode.react"
 import { useEffect, useState } from "react"
 import { ApiError, type AuthCapabilities, api } from "@/api"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
@@ -286,7 +287,9 @@ function EnableTwoFactor({ onDone }: { onDone: () => Promise<void> }) {
   const [step, setStep] = useState<"password" | "confirm">("password")
   const [password, setPassword] = useState("")
   const [code, setCode] = useState("")
+  const [totpURI, setTotpURI] = useState("")
   const [secret, setSecret] = useState("")
+  const [showKey, setShowKey] = useState(false)
   const [backup, setBackup] = useState<string[]>([])
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState("")
@@ -295,7 +298,9 @@ function EnableTwoFactor({ onDone }: { onDone: () => Promise<void> }) {
     setStep("password")
     setPassword("")
     setCode("")
+    setTotpURI("")
     setSecret("")
+    setShowKey(false)
     setBackup([])
     setErr("")
   }
@@ -306,7 +311,9 @@ function EnableTwoFactor({ onDone }: { onDone: () => Promise<void> }) {
     try {
       const res = await authClient.twoFactor.enable({ password })
       if (res?.error || !res?.data) throw new Error(res?.error?.message ?? "Could not start setup.")
-      // totpURI is otpauth://totp/Derive:email?secret=…&issuer=Derive — pull the manual key.
+      // totpURI is otpauth://totp/Derive:email?secret=…&issuer=Derive — the QR encodes it
+      // directly; pull the secret out too for the manual "can't scan?" fallback.
+      setTotpURI(res.data.totpURI)
       setSecret(new URL(res.data.totpURI).searchParams.get("secret") ?? "")
       setBackup(res.data.backupCodes ?? [])
       setStep("confirm")
@@ -353,7 +360,7 @@ function EnableTwoFactor({ onDone }: { onDone: () => Promise<void> }) {
           <DialogDescription>
             {step === "password"
               ? "Confirm your password to begin."
-              : "Add the key to your authenticator app, save your backup codes, then confirm a code."}
+              : "Scan the QR code with your authenticator app, save your backup codes, then enter a code to confirm."}
           </DialogDescription>
         </DialogHeader>
         {err && <StatusPanel tone="danger" layout="inline" title={err} />}
@@ -389,14 +396,45 @@ function EnableTwoFactor({ onDone }: { onDone: () => Promise<void> }) {
               confirm()
             }}
           >
-            <div className="flex flex-col gap-1.5">
-              <div className="text-sm font-medium text-foreground">Setup key</div>
-              <code
-                data-testid="2fa-secret"
-                className="block break-all rounded-md bg-secondary px-2.5 py-1.5 font-mono text-2xs text-foreground"
-              >
-                {secret}
-              </code>
+            <div className="flex flex-col items-center gap-3">
+              {/* The QR is the primary path: authenticator apps scan the otpauth:// URI. It
+                  renders dark-on-white regardless of theme so it always scans — a dark-mode
+                  QR on the dark canvas is unreliable. */}
+              {totpURI && (
+                // White card + padding is the QR's quiet zone. It stays white in dark mode on
+                // purpose: QRCodeSVG defaults to black-on-white, and a dark-mode QR on the dark
+                // canvas is unreliable to scan. The p-3 padding is the required margin.
+                <div data-testid="2fa-qr" className="rounded-lg border border-border bg-white p-3">
+                  <QRCodeSVG
+                    value={totpURI}
+                    size={168}
+                    marginSize={0}
+                    title="Two-factor authentication setup QR code"
+                  />
+                </div>
+              )}
+              {!showKey ? (
+                <button
+                  type="button"
+                  data-testid="2fa-show-key"
+                  className="text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+                  onClick={() => setShowKey(true)}
+                >
+                  Can’t scan? Enter the key manually
+                </button>
+              ) : (
+                <div className="flex w-full flex-col gap-1.5">
+                  <div className="text-xs font-medium text-muted-foreground">
+                    Setup key — type this into your app instead
+                  </div>
+                  <code
+                    data-testid="2fa-secret"
+                    className="block break-all rounded-md bg-secondary px-2.5 py-1.5 font-mono text-2xs text-foreground"
+                  >
+                    {secret}
+                  </code>
+                </div>
+              )}
             </div>
             {backup.length > 0 && (
               <div className="flex flex-col gap-1.5">
