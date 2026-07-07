@@ -12,7 +12,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { cn } from "@/lib/utils"
-import { ReportDialog, StarButton } from "./header-actions"
+import { MoveToWorkspaceDialog, ReportDialog, StarButton } from "./header-actions"
 import { ShareButton } from "./share-dialog"
 
 /**
@@ -28,6 +28,9 @@ import { ShareButton } from "./share-dialog"
  */
 export function ArtifactTopBar(props: {
   shortId: string
+  /** The artifact's current workspace — threaded to the move dialog so it can
+   *  exclude the current workspace from the destination picker. */
+  orgId?: string
   myRole?: Role | null
   visibility: string
   generalRole?: GeneralRole
@@ -53,6 +56,8 @@ export function ArtifactTopBar(props: {
   canLock: boolean
   /** Whether the artifact is currently locked (changes go through approval). */
   locked: boolean
+  /** Owner-only: may move this artifact to a different workspace. */
+  canMove: boolean
   onFavorite: (fav: boolean) => void
   onTags: (tags: string[]) => void
   onCollections: (ids: string[]) => void
@@ -70,6 +75,7 @@ export function ArtifactTopBar(props: {
   const [reportOpen, setReportOpen] = useState(false)
   const [tagsOpen, setTagsOpen] = useState(false)
   const [collectionsOpen, setCollectionsOpen] = useState(false)
+  const [moveOpen, setMoveOpen] = useState(false)
   return (
     <>
       {/* Actions cluster — the filled Share leads (the one primary), then the favorited
@@ -171,6 +177,11 @@ export function ArtifactTopBar(props: {
                 {props.locked ? "Unlock changes" : "Lock changes"}
               </DropdownMenuItem>
             )}
+            {props.canMove && (
+              <DropdownMenuItem data-testid="artifact-move" onSelect={() => setMoveOpen(true)}>
+                <Icon name="move" size={16} /> Move to workspace…
+              </DropdownMenuItem>
+            )}
             <DropdownMenuSeparator />
             <DropdownMenuItem data-testid="artifact-report" onSelect={() => setReportOpen(true)}>
               <Icon name="report" size={16} /> Report artifact
@@ -217,6 +228,12 @@ export function ArtifactTopBar(props: {
         onOpenChange={setCollectionsOpen}
       />
       <ReportDialog shortId={shortId} open={reportOpen} onOpenChange={setReportOpen} />
+      <MoveToWorkspaceDialog
+        shortId={shortId}
+        currentOrgId={props.orgId}
+        open={moveOpen}
+        onOpenChange={setMoveOpen}
+      />
     </>
   )
 }

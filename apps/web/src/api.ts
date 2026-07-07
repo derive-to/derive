@@ -109,6 +109,8 @@ export interface Artifact {
   views?: number
   /** The current caller's effective role on this artifact (null = no access). */
   my_role?: Role | null
+  /** The artifact's current workspace (absent on a removed-tombstone response). */
+  org_id?: string
   /** Browse tags (workspace-wide). */
   tags?: string[]
   /** Whether the current user has starred this artifact. */
@@ -850,6 +852,9 @@ export const api = {
       ...opts({ locked }),
       method: "PATCH",
     }).then(j),
+  // Move to a different workspace you belong to. Owner-only server-side.
+  moveArtifact: (id: string, targetOrgId: string): Promise<{ org_id: string }> =>
+    f(`/v1/artifacts/${id}/move`, opts({ targetOrgId })).then(j),
   diff: (id: string, from: number, to: number): Promise<Diff> =>
     f(`/v1/artifacts/${id}/diff?from=${from}&to=${to}&format=json`, opts()).then(j),
   restore: (id: string, version: number): Promise<Artifact> =>

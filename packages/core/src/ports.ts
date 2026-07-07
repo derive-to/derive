@@ -670,6 +670,11 @@ export interface MetaStore {
    *  Ownership check is the caller's responsibility. For moderation takedowns
    *  use setArtifactRemoved() instead — that tombstones without deleting. */
   deleteArtifact(id: string, orgId: string): Promise<void>
+  /** Move an artifact to a different workspace: updates org_id, drops it from any
+   *  collections (org-scoped groupings), and detaches any org-scoped webhook that
+   *  targeted it specifically (falls back to org-wide). Ownership + destination
+   *  membership checks are the caller's responsibility. */
+  moveArtifactOrg(artifactId: string, targetOrgId: string): Promise<void>
   /** Set or clear an artifact's takedown tombstone (the record is never deleted). */
   setArtifactRemoved(id: string, removedAt: string | null): Promise<void>
   /** Take an artifact down atomically: tombstone the artifact, resolve every open
