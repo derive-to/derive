@@ -188,21 +188,15 @@ export function ShareButton({
   // ACCESS at every place the icon/label/blurb is needed.
   const currentAccess = ACCESS.find((a) => a.value === vis)
   const visibilityAccess = ACCESS.find((a) => a.value === visibility)
-  // A workspace of one makes the team rungs meaningless (both collapse to
-  // Private-with-extra-words), so a solo account gets a three-rung menu and a
-  // create-a-workspace hint where the team rungs would be — the concept's first
-  // appearance is the moment it answers "how do I show this to my team?".
-  // Default to NOT solo while the roster loads, so rungs never flash out.
+  // A solo account keeps the FULL ladder — the workspace tier is not meaningless
+  // for a workspace of one: org vs unlisted is what lists a doc in (or hides it
+  // from) your own library, and promoting an agent's link-only publish to
+  // Workspace is the core loop's blessing gesture. The first-need affordance is
+  // the hint below instead: the word "workspace" first appears as the answer to
+  // "how do I show this to my team?". Default NOT solo while the roster loads.
   const nav = useNavigate()
   const { data: workspace } = useQuery(workspaceQuery())
   const solo = workspace ? workspace.members.length <= 1 : false
-  // Keep a team rung visible when it's the artifact's CURRENT state (or the
-  // in-flight pick), so the select never renders a value it doesn't contain.
-  const accessGroups = solo
-    ? ACCESS_GROUPS.map((g) =>
-        g.filter((a) => !["org", "unlisted"].includes(a.value) || a.value === vis),
-      ).filter((g) => g.length > 0)
-    : ACCESS_GROUPS
   // Reach visibilities (anyone with the link / public / password) carry a general-access
   // permission; private/workspace do not, so the view/comment control hides for them.
   const reach = vis === "link" || vis === "public" || vis === "password"
@@ -454,7 +448,7 @@ export function ShareButton({
                       {currentAccess?.label ?? vis}
                     </SelectMenuTrigger>
                     <SelectMenuContent>
-                      {accessGroups.map((group, gi) => (
+                      {ACCESS_GROUPS.map((group, gi) => (
                         <Fragment key={group[0]?.value ?? gi}>
                           {gi > 0 && <SelectMenuSeparator />}
                           {group.map((a) => (

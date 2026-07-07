@@ -108,11 +108,14 @@ Checklist convention: `[x]` done on this branch · `[ ]` still to do.
 
 ## Workstream D — workspace at first need
 
-- [x] **D1. Solo ladder collapse.** In the share dialog, when the active
-  workspace has one member (from the existing `GET /v1/workspace` roster via
-  `workspaceQuery`), hide the `org` and `unlisted` rungs (unless one is the
-  artifact's *current* visibility) and render a quiet footer hint: "Working
-  with a team? Create a workspace to share with them" → Settings → General.
+- [x] **D1. Solo share-dialog hint** (REVISED — the collapse was wrong). First
+  build hid the `org`/`unlisted` rungs for single-member workspaces; the
+  mcp-loop e2e caught the flaw: for a workspace of one those rungs are NOT
+  meaningless — org vs unlisted is what lists a doc in (or hides it from) your
+  own library, and promoting an agent's link-only publish to Workspace is the
+  core loop's blessing gesture. Solo accounts keep the full grouped ladder;
+  the first-need affordance is the footer hint alone: "Working with a team?
+  Create a workspace to share with them" → Settings → General.
 - [x] **D2. One-flow create + invite.** The create-workspace dialog
   (`general-section.tsx`) gains an optional "Invite teammates" field
   (comma/space-separated emails). Flow: `POST /v1/workspaces` (switches the
