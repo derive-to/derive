@@ -145,13 +145,14 @@ export class DeriveClient {
   /** Publish a model-produced visual as a link-visible artifact. Link (not
    *  private): the artifact lands in the AGENT'S REGISTRANT'S library (the
    *  on-behalf model), so a private one would be unreadable to the very asker
-   *  it was made for. Link means the URL is the gate — it only travels as far
-   *  as session participants choose to send it. */
+   *  it was made for. Workspace-visible: askers are workspace members, and a
+   *  chart answering a question is workspace work — the library is where it
+   *  belongs. */
   async publishArtifact(title, html) {
     const form = new FormData()
     form.set("file", new Blob([html], { type: "text/html" }), "chart.html")
     form.set("title", title)
-    form.set("visibility", "link")
+    form.set("visibility", "org")
     const res = await fetch(`${this.server}/v1/artifacts`, {
       method: "POST",
       headers: { authorization: `Bearer ${this.token}` },

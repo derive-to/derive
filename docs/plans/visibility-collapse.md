@@ -93,16 +93,16 @@ No production users — this window is free.
 
 ## Checklist
 
-- [ ] A. Plan doc (this file) committed
-- [ ] B. Core: Visibility 3-value, Actor.locked, effectiveRole rewrite, tests
-- [ ] C. DB: listing machinery, migration boot task, store-contract
-- [ ] D. API: aliases, unlock/cacheControl on hash, org settings, summary
+- [x] A. Plan doc (this file) committed
+- [x] B. Core: Visibility 3-value, Actor.locked, effectiveRole rewrite, tests
+- [x] C. DB: listing machinery, migration boot task, store-contract
+- [x] D. API: aliases, unlock/cacheControl on hash, org settings, summary
       rename, mcp.ts enum, route + test updates
-- [ ] E. Web: 3-row dialog + password checkbox, settings rows, badge rename,
+- [x] E. Web: 3-row dialog + password checkbox, settings rows, badge rename,
       chip removal
-- [ ] F. Social cut: follows enforcement, profile, people, palette
-- [ ] G. Clients + docs: cli enum, packages/mcp, runner, README, SECURITY.md
-- [ ] H. Gates (typecheck, lint, unit, e2e subset) + PR
+- [x] F. Social cut: follows enforcement, profile, people, palette
+- [x] G. Clients + docs: cli enum, packages/mcp, runner, README, SECURITY.md
+- [x] H. Gates (typecheck, lint, unit, e2e subset) + PR
 
 ## Deferred (recorded, deliberate)
 

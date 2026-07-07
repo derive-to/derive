@@ -5,9 +5,9 @@ import { expect, test } from "../fixtures"
 
 // The strong MCP loop, browser side: an agent-credentialed publish auto-opens the
 // owner's tab (a created artifact navigates; a revision live-reloads with the review
-// card repainting), agent publishes land unlisted (hidden from the All artifacts
-// feed, one link away, but findable under Created by me) until the share dialog
-// promotes them, and the per-device toggle downgrades auto-open to a notification. The
+// card repainting), agent publishes land private (the owner's draft — invisible
+// to teammates until the share dialog promotes it) and the per-device toggle
+// downgrades auto-open to a notification. The
 // agent side is the real token + API — the same calls the MCP server and CLI
 // make — so the loop under test is the shipped one, not a mock.
 
@@ -43,7 +43,7 @@ async function agentPublish(
   return (await res.json()) as { short_id: string; visibility: string; opened_in_tab?: boolean }
 }
 
-test.describe("the MCP loop — auto-open, live rounds, unlisted publishes", () => {
+test.describe("the MCP loop — auto-open, live rounds, private drafts", () => {
   test("a created agent draft auto-opens the tab; a revision live-reloads and repaints the review card", async ({
     owner,
   }) => {
@@ -59,7 +59,7 @@ test.describe("the MCP loop — auto-open, live rounds, unlisted publishes", () 
       content: "<h1>Draft v1</h1><p>alpha</p>",
       requestReview: true,
     })
-    expect(created.visibility).toBe("unlisted")
+    expect(created.visibility).toBe("private")
     await expect(owner).toHaveURL(new RegExp(`/artifacts/.*${created.short_id}`), {
       timeout: 10_000,
     })
@@ -88,7 +88,7 @@ test.describe("the MCP loop — auto-open, live rounds, unlisted publishes", () 
     await expect(owner.getByTestId("review-card")).toBeVisible({ timeout: 10_000 })
   })
 
-  test("unlisted publishes hide from All artifacts until the share dialog promotes them; the toggle quiets auto-open", async ({
+  test("agent drafts stay the owner's until promoted to Workspace; the toggle quiets auto-open", async ({
     owner,
   }) => {
     const agent = await createAgent(owner.request, "Drafter")
@@ -103,15 +103,15 @@ test.describe("the MCP loop — auto-open, live rounds, unlisted publishes", () 
       title: "Hidden Draft",
       content: "<h1>hush</h1>",
     })
-    expect(created.visibility).toBe("unlisted")
+    expect(created.visibility).toBe("private")
     await owner.waitForTimeout(1000)
     await expect(owner).toHaveURL(/\/$/) // still home — the toggle held navigation
 
-    // Hidden from All artifacts, but Created by me (always present on home, even
-    // before the owner has authored anything) has it, with a live count — the
-    // agent published on the owner's behalf, so it counts as theirs.
-    await expect(owner.getByTestId("library-tab-mine")).toBeVisible()
-    await expect(owner.getByText("Hidden Draft")).toHaveCount(0)
+    // A private draft is the owner's: it shows in THEIR library (private rows
+    // list for their members), carries the Private chip, and narrows under
+    // Created by me — the agent published on the owner's behalf.
+    await owner.reload()
+    await expect(owner.getByText("Hidden Draft").first()).toBeVisible()
     await owner.getByTestId("library-tab-mine").click()
     await expect(owner).toHaveURL(/tab=mine/)
     await expect(owner.getByText("Hidden Draft").first()).toBeVisible()
