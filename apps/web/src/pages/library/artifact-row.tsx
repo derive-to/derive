@@ -91,6 +91,13 @@ export function ArtifactRow({
         )}
         <span className="flex flex-wrap items-center gap-x-2 gap-y-1 font-mono text-2xs tabular-nums text-muted-foreground">
           <Badge shape="pill">{artifactTypeLabel(a)}</Badge>
+          {/* Link-only work is invisible in the shared library — the chip says so
+              wherever the doc DOES surface (Created by me, Shared with you). */}
+          {a.visibility === "unlisted" && (
+            <Badge shape="pill" variant="outline" title="Workspace members with the link only">
+              <Icon name="link" size={12} /> Link only
+            </Badge>
+          )}
           {dir && (
             <span className="inline-flex items-center gap-1 truncate" title={a.source_path ?? ""}>
               {/* Neutral metadata — a folder path is not a brand moment. */}

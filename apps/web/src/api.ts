@@ -815,8 +815,10 @@ export const api = {
   browseSummary: (): Promise<{
     total: number
     favorites: number
-    /** The caller's own authored artifacts — badges the library's "Created by me" filter. */
+    /** The caller's owned artifacts — badges the library's "Created by me" filter. */
     mine: number
+    /** How many of those are still link-only (unlisted) — the pending signal. */
+    mine_link_only: number
     tags: { tag: string; count: number }[]
     workspace: string
   }> => f("/v1/tags", opts()).then(j),

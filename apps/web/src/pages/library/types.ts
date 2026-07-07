@@ -26,6 +26,8 @@ export type Summary = {
   total: number
   favorites: number
   mine: number
+  // Owned docs still at link-only visibility — the "waiting to be shared" signal.
+  mine_link_only: number
   tags: TagCount[]
   workspace: string
 }

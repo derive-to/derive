@@ -271,8 +271,15 @@ export const artifactRoutes = (ctx: AppContext) => {
     // empty summary with no workspace name, so it can't be used to enumerate a private
     // workspace's name + size.
     if (!(await isMember(c, org)))
-      return c.json({ total: 0, favorites: 0, mine: 0, tags: [], workspace: null })
-    const [total, tags, favIds, ws, mine] = await Promise.all([
+      return c.json({
+        total: 0,
+        favorites: 0,
+        mine: 0,
+        mine_link_only: 0,
+        tags: [],
+        workspace: null,
+      })
+    const [total, tags, favIds, ws, mine, mineLinkOnly] = await Promise.all([
       meta.countArtifacts(org),
       meta.tagCounts(org),
       // Scope the favorites count to THIS workspace's live artifacts — the favorites
@@ -282,12 +289,16 @@ export const artifactRoutes = (ctx: AppContext) => {
       meta.getWorkspace(org),
       // The caller's owned artifacts — the "Created by me" filter's badge.
       me ? meta.countOwnedBy(org, me.id) : Promise.resolve(0),
+      // …and how many of those are still link-only: the "waiting on you to
+      // surface it" signal (agent publishes land unlisted until promoted).
+      me ? meta.countOwnedBy(org, me.id, "unlisted") : Promise.resolve(0),
     ])
     tags.sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag))
     return c.json({
       total,
       favorites: favIds.length,
       mine,
+      mine_link_only: mineLinkOnly,
       tags,
       workspace: ws?.name ?? DEFAULT_WORKSPACE_NAME,
     })

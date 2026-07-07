@@ -432,6 +432,7 @@ function LibraryBody({ view }: { view: LibraryView }) {
           active={filter.kind === "mine" ? "mine" : "all"}
           total={summary?.total}
           mine={summary?.mine}
+          pending={summary?.mine_link_only}
         />
       ) : (
         // Hide the heading on a brand-new empty home — the visual guide carries it.
@@ -640,18 +641,23 @@ function SyncedCollection({
 
 // The home library's two tabs: everything, and just what you created. Always
 // both — a basic ownership filter is useful independent of whether it's ever
-// empty. Route stays "/", the tab rides ?tab=mine.
+// empty. Route stays "/", the tab rides ?tab=mine. `pending` is the count of
+// your still-link-only docs — the signal the old Drafts badge carried ("your
+// agent published; waiting on you to surface it"), rendered as an accent pill
+// beside the neutral total so it reads as actionable, not as more inventory.
 function LibraryTabs({
   active,
   total,
   mine,
+  pending,
 }: {
   active: "all" | "mine"
   total?: number
   mine?: number
+  pending?: number
 }) {
   const nav = useNavigate()
-  const tab = (id: "all" | "mine", label: string, count?: number) => (
+  const tab = (id: "all" | "mine", label: string, count?: number, accent?: number) => (
     <button
       type="button"
       data-testid={`library-tab-${id}`}
@@ -670,12 +676,20 @@ function LibraryTabs({
       {count != null && (
         <span className="font-mono text-2xs tabular-nums text-muted-foreground">{count}</span>
       )}
+      {accent != null && accent > 0 && (
+        <span
+          title={`${accent} link-only — visible to you and link-holders until shared wider`}
+          className="rounded-full bg-primary/10 px-1.5 font-mono text-2xs tabular-nums text-primary"
+        >
+          {accent}
+        </span>
+      )}
     </button>
   )
   return (
     <div className="mb-3.5 flex items-center gap-5 border-b border-border-soft">
       {tab("all", "All artifacts", total)}
-      {tab("mine", "Created by me", mine)}
+      {tab("mine", "Created by me", mine, pending)}
     </div>
   )
 }
