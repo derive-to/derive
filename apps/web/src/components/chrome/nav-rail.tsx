@@ -299,7 +299,6 @@ export function NavRail() {
   // collection filter narrows it. (A ?query= search doesn't change which feed you're in.)
   const isAll = onLibrary && !search.tag && !search.collection
   const isFav = loc.pathname === "/favorites"
-  const isFollowing = loc.pathname === "/following"
   const onShared = loc.pathname === "/shared"
   const onPeople = loc.pathname === "/people"
   const onContexts = loc.pathname.startsWith("/contexts")
@@ -462,13 +461,6 @@ export function NavRail() {
                 active={isFav}
                 testId="sidebar-favorites"
               />
-              <NavItem
-                icon="following"
-                label="Following"
-                to="/following"
-                active={isFollowing}
-                testId="nav-following"
-              />
               {/* Shared with you — a durable named feed (things others gave you access to),
                   a peer of the feeds above; not a home strip (that's the whole IA move). */}
               <NavItem
@@ -478,7 +470,9 @@ export function NavRail() {
                 active={onShared}
                 testId="nav-shared"
               />
-              {/* People directory — the other fixed-feed route, a peer of the two feeds. */}
+              {/* People — who you follow, plus a way to find the people you work with.
+                  Folds the old /following feed in as this tab's default (people you
+                  follow); the artifact activity feed lives on at /following, unlinked. */}
               <NavItem
                 icon="user"
                 label="People"

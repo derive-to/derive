@@ -13,19 +13,18 @@ import { StatusPanel } from "@/components/shared/status-panel"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
+import { useAuth } from "@/ctx"
 import { colorForName } from "@/lib/avatar-tints"
 import { getInitials } from "@/lib/initials"
-import { peopleQuery, workspacePeopleQuery } from "@/lib/queries"
+import { followsQuery, peopleQuery, workspacePeopleQuery } from "@/lib/queries"
 import { useDelayedPending } from "@/lib/use-delayed-pending"
 import { cn } from "@/lib/utils"
 
-// The People directory — the discovery surface the follow graph needs: a way to FIND
-// someone to follow, not just stumble on an author chip. Reconceived as a scannable
-// directory of full-width rows (a directory's job is "read a name, follow" — list work,
-// not a card wall), with a deliberate BROWSE-by-default state: an empty query isn't
-// "nothing", it's the people you work with + everyone discoverable, framed as such.
-// Typing searches (debounced); the current results stay put (dimmed) while the next set
-// loads — never a flash.
+// The People tab — who you follow, plus a way to find the people you work with. It folds
+// the old Following nav item in: the browse (no-query) view leads with the people you
+// follow, then your workspace teammates — the two people-sets worth seeing without typing.
+// Everyone else on Derive lives behind the search (debounced); results stay put (dimmed)
+// while the next set loads — never a flash.
 export function People() {
   const [q, setQ] = useState("")
   const [debounced, setDebounced] = useState("")
@@ -34,26 +33,54 @@ export function People() {
     return () => clearTimeout(t)
   }, [q])
 
-  const { data, isPending, isError, isFetching, isPlaceholderData, refetch } = useQuery(
-    peopleQuery(debounced),
-  )
-  // keepPreviousData holds the current results across searches, so isPending is only the
-  // true first load; gate the skeleton so a cache-warm open flashes nothing.
-  const showSkeleton = useDelayedPending(isPending)
-  const people = data ?? []
+  const { me } = useAuth()
   const searching = debounced.length > 0
-  const browsing = !searching
 
-  // The people you actually work with lead the browse view (Slack's mental model); the
-  // global discoverable directory follows, de-duplicated against your workspace. A search
-  // collapses to one flat result list — sectioning matches by workspace would just split
-  // them. Regardless of discoverability, so teammates are always reachable here.
-  const { data: mates = [] } = useQuery(workspacePeopleQuery())
-  const mateHandles = new Set(mates.map((m) => m.username))
-  const globalPeople = browsing ? people.filter((p) => !mateHandles.has(p.username)) : people
-  // Empty only when there's genuinely nothing for the current mode: a search shows its own
-  // "no match" regardless of teammates; browse is empty only if BOTH sources are.
-  const nothing = searching ? people.length === 0 : people.length === 0 && mates.length === 0
+  // A search spans everyone on Derive; browse shows only who you follow + your workspace
+  // teammates (a full directory isn't scrolled, it's searched), so the global people query
+  // only runs while searching.
+  const { data, isError, isFetching, isPlaceholderData, refetch } = useQuery({
+    ...peopleQuery(debounced),
+    enabled: searching,
+  })
+  const { data: mates = [], isPending: matesPending } = useQuery(workspacePeopleQuery())
+  const { data: follows = [], isPending: followsPending } = useQuery(followsQuery())
+
+  const people = data ?? []
+  const mateHandles = new Set(mates.map((m) => m.username.toLowerCase()))
+
+  // People you follow, as directory rows — follows carry the resolved handle/name/avatar
+  // for kind="user" (the API resolves the id server-side), so no extra fetch is needed.
+  const followed: PublicProfile[] = follows
+    .filter((f) => f.kind === "user")
+    .map((f) => ({
+      username: f.handle ?? f.target,
+      name: f.name ?? null,
+      image: f.image ?? null,
+      profession: null,
+    }))
+  const followedHandles = new Set(followed.map((p) => p.username.toLowerCase()))
+  // Don't list a teammate twice if you already follow them.
+  const mateOnly = mates.filter((m) => !followedHandles.has(m.username.toLowerCase()))
+
+  // Search results: everyone on Derive, but float the people you work with to the top
+  // ("anyone, but focus on your workspace") and drop yourself.
+  const results = people
+    .filter((p) => p.username.toLowerCase() !== me?.username?.toLowerCase())
+    .sort(
+      (a, b) =>
+        Number(mateHandles.has(b.username.toLowerCase())) -
+        Number(mateHandles.has(a.username.toLowerCase())),
+    )
+
+  // Loading is per-mode: a search waits on the people query's first page; browse waits on
+  // your follows + teammates. keepPreviousData holds prior results, so the skeleton is only
+  // the true first load — gated by useDelayedPending so a cache-warm open flashes nothing.
+  const loading = searching ? isFetching && people.length === 0 : followsPending || matesPending
+  const showSkeleton = useDelayedPending(loading)
+
+  // Empty only when there's genuinely nothing for the current mode.
+  const nothing = searching ? results.length === 0 : followed.length === 0 && mateOnly.length === 0
 
   return (
     <PageShell className="flex flex-col gap-5">
@@ -68,16 +95,16 @@ export function People() {
           aria-label="Search people by name or handle"
           testId="people-search"
           hotkey
-          loading={isFetching && !isPending}
+          loading={isFetching}
         />
       </div>
 
-      {isPending ? (
+      {loading ? (
         showSkeleton ? (
           <PeopleResultsSkeleton />
         ) : null
-      ) : isError ? (
-        // A failed fetch is status, not emptiness — the danger tone grammar.
+      ) : searching && isError ? (
+        // A failed search is status, not emptiness — the danger tone grammar.
         <StatusPanel
           tone="danger"
           title="Couldn’t load people"
@@ -97,36 +124,40 @@ export function People() {
         <div data-testid="people-empty">
           <EmptyState
             icon={<Icon name={searching ? "search" : "following"} strokeWidth={1.75} />}
-            // Two distinct tones: a search that found nothing is corrective ("try
-            // another"); the browse state finding nothing is explanatory, not an error.
-            title={searching ? `No people match “${debounced}”.` : "No discoverable people yet."}
+            // A search that found nothing is corrective ("try another"); an empty browse
+            // means you follow no one yet — point at the search, not discoverability.
+            title={
+              searching ? `No people match “${debounced}”.` : "You’re not following anyone yet."
+            }
             description={
               searching
                 ? "Try a different name or @handle."
-                : "People who turn on discoverability show up here."
+                : "Search above to find people to follow."
             }
           />
         </div>
       ) : (
         // Stale results stay visible but dim while the next search loads (placeholder
-        // data), so the directory never blanks mid-type.
+        // data), so the list never blanks mid-type.
         <div
           className={cn(
             "flex flex-col gap-6",
             isPlaceholderData && "opacity-60 transition-opacity",
           )}
         >
-          {/* Browse leads with the people you work with — teammates first, then the wider
-              directory. A search collapses to a single "Results" list. */}
-          {browsing && mates.length > 0 && (
-            <PeopleGroup label="Your workspaces" people={mates} testId="people-workspace" />
-          )}
-          {globalPeople.length > 0 && (
-            <PeopleGroup
-              label={searching ? "Results" : mates.length > 0 ? "Everyone on Derive" : "Everyone"}
-              people={globalPeople}
-              testId="people-results"
-            />
+          {searching ? (
+            <PeopleGroup label="Results" people={results} testId="people-results" />
+          ) : (
+            <>
+              {/* Browse leads with who you follow, then the people you work with — the two
+                  people-sets worth seeing without typing. Everyone else lives behind search. */}
+              {followed.length > 0 && (
+                <PeopleGroup label="Following" people={followed} testId="people-following" />
+              )}
+              {mateOnly.length > 0 && (
+                <PeopleGroup label="Your workspaces" people={mateOnly} testId="people-workspace" />
+              )}
+            </>
           )}
         </div>
       )}
