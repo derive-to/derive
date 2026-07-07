@@ -64,14 +64,18 @@ new_sqlite_classes = ["WebhookOutbox"]
 tag = "v3"
 new_sqlite_classes = ["RepoSyncRunner"]
 
-# Notification email (Cloudflare Email Service). Left commented because the binding only
-# resolves once the account has Email Service enabled and a sending domain verified — an
-# unprovisioned binding fails `wrangler deploy`. The code no-ops email when SEND_EMAIL is
-# unbound, so leaving this off is safe. To turn email on: enable Email Service, verify the
-# derive.to sending domain, uncomment this block, and set EMAIL_FROM under [vars] (e.g.
-# "Derive <notifications@derive.to>").
-# [[send_email]]
-# name = "SEND_EMAIL"
+# Transactional + notification email (Cloudflare Email Service — the arbitrary-recipient
+# product, NOT the older verified-destinations-only Email Routing binding). Enabled on the
+# DEDICATED sending subdomain send.derive.to, deliberately isolated from the apex derive.to
+# Google Workspace mail: send.derive.to has its own SPF/DKIM/DMARC (p=reject on
+# _dmarc.send.derive.to), so a strict policy there never touches corporate email. The domain
+# is onboarded and DNS-verified. `remote = true` routes the binding to the Email Service
+# (structured send API, see src/email-cf.ts). Arbitrary recipients require Workers Paid
+# (3,000/mo included, then $0.35/1k). Delivery goes live on the next `wrangler deploy`; until
+# then the app no-ops email (self-host/Node uses Resend via EMAIL_FROM instead).
+[[send_email]]
+name = "SEND_EMAIL"
+remote = true
 
 # Native rate limiting (per-colo). One binding per surface; the worker counts each
 # rate-limited request against the matching binding (apps/api/src/worker.ts). The window
@@ -158,3 +162,8 @@ custom_domain = true
 [vars]
 # DERIVE_SUPERADMIN_EMAILS (operator allow-list) is optional; BASE_URL optional;
 # DERIVE_AUTH_SECRET is a secret (`wrangler secret put`). Workspaces are always multi.
+# Sender for all transactional + notification mail (reset / verify / invites / comments).
+# Must be an address on the onboarded Email Sending domain (send.derive.to). The CF adapter
+# extracts the bare address; the display-name form is kept for parity with the Resend (Node)
+# transport, which reads the same EMAIL_FROM. Pairs with the [[send_email]] binding above.
+EMAIL_FROM = "Derive <notifications@send.derive.to>"

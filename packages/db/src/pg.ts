@@ -511,21 +511,38 @@ export class PgMetaStore implements MetaStore {
       )
     return rows.map((r) => r.id)
   }
+  // "Created by me" — every artifact this user holds an OWNER member row on in the
+  // workspace, any visibility. Roster-keyed, not author_id-keyed (mirrors the
+  // SQLite path — see repos.ts for why the denorm can't anchor "yours").
+  private ownerRowJoin(userId: string) {
+    return and(
+      eq(artifactMember.artifact_id, artifact.id),
+      eq(artifactMember.user_id, userId),
+      eq(artifactMember.role, "owner"),
+    )
+  }
+  async artifactIdsOwnedBy(orgId: string, userId: string): Promise<string[]> {
+    const rows = await this.db
+      .select({ id: artifact.id })
+      .from(artifact)
+      .innerJoin(artifactMember, this.ownerRowJoin(userId))
+      .where(eq(artifact.org_id, orgId))
+    return rows.map((r) => r.id)
+  }
   async countArtifacts(orgId?: string): Promise<number> {
     const q = this.db.select({ c: count() }).from(artifact)
     const rows = await (orgId ? q.where(eq(artifact.org_id, orgId)) : q)
     return Number(rows[0]?.c ?? 0)
   }
-  async countUnlistedFor(orgId: string, userId: string): Promise<number> {
+  async countOwnedBy(orgId: string, userId: string, visibility?: Visibility): Promise<number> {
     const rows = await this.db
       .select({ c: count() })
       .from(artifact)
+      .innerJoin(artifactMember, this.ownerRowJoin(userId))
       .where(
         and(
           eq(artifact.org_id, orgId),
-          eq(artifact.visibility, "unlisted"),
-          sql`EXISTS (SELECT 1 FROM artifact_member am
-            WHERE am.artifact_id = ${artifact.id} AND am.user_id = ${userId})`,
+          visibility ? eq(artifact.visibility, visibility) : undefined,
         ),
       )
     return Number(rows[0]?.c ?? 0)
@@ -1014,7 +1031,7 @@ export class PgMetaStore implements MetaStore {
     } else {
       conds.push(eq(artifact.author_id, userId))
     }
-    // Private and unlisted drafts never ride a profile, shared workspace or not
+    // Private and unlisted work never rides a profile, shared workspace or not
     // (see repos.ts).
     const orgs = opts.visibleOrgIds ?? []
     if (orgs.length > 0) {
@@ -2131,6 +2148,16 @@ export class PgMetaStore implements MetaStore {
       await tx.delete(notification).where(eq(notification.artifact_id, id))
       await tx.delete(agentMention).where(eq(agentMention.artifact_id, id))
       await tx.delete(artifact).where(eq(artifact.id, id))
+    })
+  }
+
+  // Atomic move: org_id flips, collection membership and any artifact-targeted
+  // webhook detach, all in one commit.
+  async moveArtifactOrg(artifactId: string, targetOrgId: string): Promise<void> {
+    await this.db.transaction(async (tx) => {
+      await tx.update(artifact).set({ org_id: targetOrgId }).where(eq(artifact.id, artifactId))
+      await tx.delete(collectionItem).where(eq(collectionItem.artifact_id, artifactId))
+      await tx.update(webhook).set({ artifact_id: null }).where(eq(webhook.artifact_id, artifactId))
     })
   }
 

@@ -4,7 +4,7 @@ import { join } from "node:path"
 import { type DeliveryRecord, newId } from "@derive/core"
 import { SqliteMetaStore } from "@derive/db/sqlite"
 import { afterAll, describe, expect, it } from "vitest"
-import { buildMime } from "../src/email-cf"
+import { cloudflareEmailSender } from "../src/email-cf"
 import { isCollaboratorAuthor } from "../src/lib/comments"
 import { type ChannelSendResult, enqueueChannelDelivery, runDeliveryTick } from "../src/webhooks"
 
@@ -84,25 +84,67 @@ describe("permanent-failure dead-lettering", () => {
   })
 })
 
+type SentMsg = {
+  from: string | { name: string; email: string }
+  to: string | { name: string; email: string }
+  subject: string
+}
+
 describe("email header-injection defense", () => {
-  it("strips CR/LF from header values so an author/title can't inject headers", () => {
-    const mime = buildMime(
-      "Derive <notifications@derive.to>",
+  it("flattens CR/LF in the subject before handing it to the Email Service binding", async () => {
+    const sent: SentMsg[] = []
+    const sender = cloudflareEmailSender(
       {
-        to: "victim@x.com\r\nBcc: attacker@evil.com",
-        subject: "hi\r\nBcc: attacker@evil.com",
-        html: "<p>body</p>",
-        text: "body",
+        send: async (m) => {
+          sent.push(m)
+          return { messageId: "x" }
+        },
       },
-      "2026-06-20T00:00:00.000Z",
-      "abc123",
+      "Derive <notifications@derive.to>",
     )
-    const headerLines = (mime.split("\r\n\r\n")[0] ?? "").split("\r\n")
-    // No injected header: the CRLF was flattened, so nothing is a standalone Bcc: line.
-    expect(headerLines.some((l) => /^bcc:/i.test(l))).toBe(false)
-    // Exactly the headers we wrote — no extra lines smuggled in via newlines.
-    expect(headerLines.filter((l) => /^to:/i.test(l))).toHaveLength(1)
-    expect(headerLines.filter((l) => /^subject:/i.test(l))).toHaveLength(1)
-    expect(mime).toContain("victim@x.com")
+    await sender.send({
+      to: "victim@x.com",
+      subject: "hi\r\nBcc: attacker@evil.com",
+      html: "<p>body</p>",
+      text: "body",
+    })
+    expect(sent).toHaveLength(1)
+    // The newline is flattened to a space, so nothing downstream can read a standalone
+    // Bcc: header out of the subject.
+    expect(sent[0]?.subject).toBe("hi Bcc: attacker@evil.com")
+    expect(sent[0]?.subject).not.toMatch(/[\r\n]/)
+    // The "Name <addr>" form is split into the structured { name, email } the builder wants,
+    // so the sender keeps its display name instead of showing a bare address.
+    expect(sent[0]?.from).toEqual({ name: "Derive", email: "notifications@derive.to" })
+  })
+
+  it("passes a bare from address through as a plain string", async () => {
+    const sent: SentMsg[] = []
+    const sender = cloudflareEmailSender(
+      {
+        send: async (m) => {
+          sent.push(m)
+          return { messageId: "x" }
+        },
+      },
+      "notifications@send.derive.to",
+    )
+    await sender.send({ to: "a@b.com", subject: "s", html: "<p>x</p>", text: "x" })
+    expect(sent[0]?.from).toBe("notifications@send.derive.to")
+  })
+
+  it("names the recipient when toName is set", async () => {
+    const sent: SentMsg[] = []
+    const sender = cloudflareEmailSender(
+      {
+        send: async (m) => {
+          sent.push(m)
+          return { messageId: "x" }
+        },
+      },
+      "Derive <notifications@send.derive.to>",
+    )
+    await sender.send({ to: "a@b.com", toName: "Ada", subject: "s", html: "<p>x</p>", text: "x" })
+    expect(sent[0]?.to).toEqual({ name: "Ada", email: "a@b.com" })
   })
 })

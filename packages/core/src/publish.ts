@@ -81,8 +81,10 @@ const MAX_BUNDLE_UNZIPPED_BYTES = 50 * 1024 * 1024 // 50 MB
  * Choose a bundle's entry page. An HTML site enters at its root `index.html`, else
  * its shallowest `.html`. A doc/skill bundle with no HTML (a Claude Code skill is a
  * folder of `SKILL.md` + scripts/refs, no HTML) falls back to `SKILL.md`, then
- * `README.md`, then the shallowest markdown file — markdown entries render through
- * the markdown path at serve time. Null when the bundle has neither HTML nor markdown.
+ * `MANIFEST.md` (a context source dir — the entry is the runner's system prompt, and
+ * a stray root README must not hijack it), then `README.md`, then the shallowest
+ * markdown file — markdown entries render through the markdown path at serve time.
+ * Null when the bundle has neither HTML nor markdown.
  */
 export const pickBundleEntry = (paths: string[]): string | null => {
   const shallowest = (pred: (p: string) => boolean): string | undefined =>
@@ -91,6 +93,7 @@ export const pickBundleEntry = (paths: string[]): string | null => {
   const html = shallowest((p) => p.endsWith(".html"))
   if (html) return html
   if (paths.includes("/SKILL.md")) return "/SKILL.md"
+  if (paths.includes("/MANIFEST.md")) return "/MANIFEST.md"
   if (paths.includes("/README.md")) return "/README.md"
   return shallowest((p) => /\.(md|markdown)$/i.test(p)) ?? null
 }

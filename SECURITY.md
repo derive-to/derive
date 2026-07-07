@@ -36,22 +36,24 @@ Derive ships safe defaults, but a few choices matter for an internet-facing depl
   | Anyone with link, **comment**  | View only (sign in to comment) | View + comment                         | Their role (at least comment)  |
   | Public (listed), view/comment  | same as link row               | same as link row                       | Their role                     |
   | Password, view/comment         | Unlock, then as above          | Unlock, then as above                  | Their role (no password needed)|
-  | Workspace only (org)           | No access                      | No access                              | Their role (members only)      |
+  | Workspace (org)                | No access                      | No access                              | Their role (members only)      |
   | Private (invite-only) — default | No access                     | No access                              | Explicit share only — workspace role grants nothing |
-  | Unlisted, view/comment         | No access                      | No access (non-members)                | Members with the link: view/comment; explicit shares: their role |
+  | Unlisted (workspace, link only), view/comment | No access       | No access (non-members)                | Members with the link: view/comment; explicit shares: their role |
 
   A signed-in human's publish defaults to **private**: only the publisher (written
   as the owner-member at creation) can see a fresh artifact. AGENT-credentialed
   publishes — the /mcp server, and any /v1 publish carrying a registered agent
   token or OAuth bearer (the CLI and stdio-shim paths) — default to **unlisted**,
   a workspace setting (`defaultAgentVisibility`): hidden from every listing, but a
-  workspace member with the link gets the workspace's default general role — the
-  agent-draft state between private and workspace. Reach is only ever workspace-
-  inward of private's explicit-share-only model plus the link requirement, and the
-  setting restores private-by-default in one click. Private and unlisted artifacts never appear in workspace listings,
-  profile work lists, or the People-visible surfaces (unlisted has one dedicated
-  owner-scoped library filter). Widening (workspace, link, public) is always an
-  explicit act. GitHub-mirror syncs publish workspace-visible — a mirrored repo
+  workspace member with the link gets the workspace's default general role. It's
+  the same who × listed-or-link-only pairing as public/link, one tier down: a
+  workspace audience that stays out of the shared library until surfaced. Reach is
+  only ever workspace-inward of private's explicit-share-only model plus the link
+  requirement, and the setting restores private-by-default in one click. Private
+  and unlisted artifacts never appear in workspace listings, profile work lists,
+  or the People-visible surfaces (the library's "Created by me" filter still finds
+  your own regardless of visibility). Widening (workspace, link, public) is always
+  an explicit act. GitHub-mirror syncs publish workspace-visible — a mirrored repo
   is a workspace resource, not a personal draft.
 
   `packages/core/src/permissions.ts` (`effectiveRole`) is the single source of truth for

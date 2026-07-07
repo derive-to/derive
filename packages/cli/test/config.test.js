@@ -28,6 +28,7 @@ import {
   setDefaultWorkspace,
   setWorkspaces,
   TEMPLATES,
+  writeContextConfig,
   writeId,
 } from "../src/config.js"
 
@@ -118,7 +119,7 @@ describe("scaffold", () => {
   })
 
   it("exposes the templates", () => {
-    expect(TEMPLATES).toEqual(["md", "html", "slides", "site", "skill"])
+    expect(TEMPLATES).toEqual(["md", "html", "slides", "site", "skill", "context"])
     expect(Object.keys(scaffoldFiles("T", "slides"))).toContain("slides.html")
   })
 
@@ -131,6 +132,38 @@ describe("scaffold", () => {
     const md = files["skill/SKILL.md"]
     expect(md).toMatch(/^---\nname: my-cool-skill\n/) // title slugified to a skill name
     expect(md).toContain("description:")
+  })
+
+  it("scaffolds a context: manifest + references + tools + env hygiene", () => {
+    const files = scaffoldFiles("Analytics", "context")
+    const names = Object.keys(files)
+    expect(names).toContain("context/MANIFEST.md")
+    expect(names).toContain("context/references/example.md")
+    expect(names).toContain("context/.mcp.json")
+    expect(names).toContain("context/.env.example")
+    // .env and the minted agent token must never reach git.
+    expect(files[".gitignore"]).toContain("context/.env")
+    expect(files[".gitignore"]).toContain(".derive/")
+    const cfg = JSON.parse(files[CONFIG_FILE])
+    expect(cfg.entry).toBe("context")
+    expect(cfg.context).toEqual({ id: null, agent_id: null, name: "Analytics" })
+  })
+})
+
+describe("writeContextConfig", () => {
+  it("merges wiring ids into the context block, preserving everything else", () => {
+    const d = tmp()
+    writeFileSync(
+      join(d, CONFIG_FILE),
+      JSON.stringify({ title: "T", entry: "context", id: "abc", context: { id: null, name: "T" } }),
+    )
+    writeContextConfig(d, { agent_id: "ag_1" })
+    const cfg = writeContextConfig(d, { id: "ctx_1" })
+    expect(cfg).toMatchObject({
+      title: "T",
+      id: "abc",
+      context: { id: "ctx_1", agent_id: "ag_1", name: "T" },
+    })
   })
 })
 

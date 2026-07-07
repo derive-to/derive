@@ -241,6 +241,13 @@ export function ArtifactCard({
             )}
           </span>
           <span className="ml-auto inline-flex shrink-0 items-center gap-2.5">
+            {/* Link-only work is invisible in the shared library — the chip says so
+                wherever the doc DOES surface (Created by me, Shared with you). */}
+            {a.visibility === "unlisted" && (
+              <Badge shape="pill" variant="outline" title="Workspace members with the link only">
+                <Icon name="link" size={12} /> Link only
+              </Badge>
+            )}
             <CommentSignal artifact={a} size={12} compact />
             {a.views !== undefined && a.views > 0 && (
               <span className="inline-flex items-center gap-1" title={`${a.views} viewers`}>

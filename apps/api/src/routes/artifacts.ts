@@ -23,7 +23,7 @@ import { z } from "zod"
 import type { AppContext } from "../context"
 import { publishSweepEvents } from "../lib/anchor-sweep"
 import { authorProfile, resolveHandles } from "../lib/author"
-import { hashPassword, unlockCookie, unlockToken, verifyPassword } from "../lib/crypto"
+import { hashPassword, signState, unlockCookie, unlockToken, verifyPassword } from "../lib/crypto"
 import {
   DEFAULT_WORKSPACE_NAME,
   fail,
@@ -125,9 +125,14 @@ export const artifactRoutes = (ctx: AppContext) => {
       if (!me) return c.json({ artifacts: [], next_cursor: null })
       narrow(await meta.artifactIdsNeedingFeedback(me.id, await activeWorkspace(c)))
     }
-    // scope=unlisted → the caller's own unlisted drafts in this workspace: the
-    // library's Unlisted filter. Ordinary listings hide unlisted entirely.
-    const unlistedScope = c.req.query("scope") === "unlisted"
+    // scope=mine → everything the caller owns in this workspace (their owner
+    // member row — written at creation for the human behind the publish, agents
+    // included), any visibility — the library's "Created by me" filter.
+    const mineScope = c.req.query("scope") === "mine"
+    if (mineScope) {
+      if (!me) return c.json({ artifacts: [], next_cursor: null })
+      narrow(await meta.artifactIdsOwnedBy(await activeWorkspace(c), me.id))
+    }
     if (tag) narrow(await meta.artifactIdsByTag(tag))
     if (favOnly) narrow(favIds)
 
@@ -171,10 +176,9 @@ export const artifactRoutes = (ctx: AppContext) => {
     // sees public artifacts only, so org/link titles never leak via the list or ?query=.
     // For a collection, collection access (member/creator/share) also unlocks it.
     const publicOnly = collectionId ? !collectionAccess : !(isOperator || baselineRole !== null)
-    // The Unlisted filter is a members-only view of their OWN drafts — a caller
-    // with no standing here (or no member rows to match) has none by definition.
-    if (unlistedScope && (publicOnly || !memberKey))
-      return c.json({ artifacts: [], next_cursor: null })
+    // "Created by me" is a members-only view of the caller's OWN authored work —
+    // a caller with no standing here (or no member rows to match) has none by definition.
+    if (mineScope && (publicOnly || !memberKey)) return c.json({ artifacts: [], next_cursor: null })
     const rows = await meta.listArtifacts({
       limit: limit + 1,
       cursor,
@@ -191,13 +195,12 @@ export const artifactRoutes = (ctx: AppContext) => {
       // Private artifacts appear only for their explicit members; the operator
       // token sees everything (viewerId omitted).
       viewerId: isOperator ? undefined : (memberKey ?? undefined),
-      // Agents get their registrant's unlisted drafts folded back in (an agent
-      // must always find the work it published — the stdio shim's list rides
-      // this route). Shared-with-you and needs-feedback are deliberate human
-      // signals (an explicit share, a thread you're in), so a member's unlisted
-      // docs surface there too. Ordinary listings stay clean — the Unlisted
-      // feed is the finder.
-      unlisted: unlistedScope ? "only" : agent || shared || needsFeedback ? "include" : undefined,
+      // Agents fold their registrant's unlisted work back in (an agent must always
+      // find what it published — the stdio shim's list rides this route). Shared,
+      // needs-feedback, and mine are equally deliberate signals — an explicit
+      // share, a thread you're in, your own authorship — so unlisted docs surface
+      // there too. Ordinary listings stay clean; that's what the filter is for.
+      unlisted: agent || shared || needsFeedback || mineScope ? "include" : undefined,
     })
     const hasMore = rows.length > limit
     const page = hasMore ? rows.slice(0, limit) : rows
@@ -268,8 +271,15 @@ export const artifactRoutes = (ctx: AppContext) => {
     // empty summary with no workspace name, so it can't be used to enumerate a private
     // workspace's name + size.
     if (!(await isMember(c, org)))
-      return c.json({ total: 0, favorites: 0, unlisted: 0, tags: [], workspace: null })
-    const [total, tags, favIds, ws, unlisted] = await Promise.all([
+      return c.json({
+        total: 0,
+        favorites: 0,
+        mine: 0,
+        mine_link_only: 0,
+        tags: [],
+        workspace: null,
+      })
+    const [total, tags, favIds, ws, mine, mineLinkOnly] = await Promise.all([
       meta.countArtifacts(org),
       meta.tagCounts(org),
       // Scope the favorites count to THIS workspace's live artifacts — the favorites
@@ -277,15 +287,18 @@ export const artifactRoutes = (ctx: AppContext) => {
       // must not inflate the count (otherwise "Favorites · 1" with an empty list).
       me ? meta.listUserFavoriteIds(me.id, org) : Promise.resolve([]),
       meta.getWorkspace(org),
-      // The caller's own unlisted drafts — the Unlisted filter's badge. Zero hides
-      // the filter, so it only exists when there's something in it.
-      me ? meta.countUnlistedFor(org, me.id) : Promise.resolve(0),
+      // The caller's owned artifacts — the "Created by me" filter's badge.
+      me ? meta.countOwnedBy(org, me.id) : Promise.resolve(0),
+      // …and how many of those are still link-only: the "waiting on you to
+      // surface it" signal (agent publishes land unlisted until promoted).
+      me ? meta.countOwnedBy(org, me.id, "unlisted") : Promise.resolve(0),
     ])
     tags.sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag))
     return c.json({
       total,
       favorites: favIds.length,
-      unlisted,
+      mine,
+      mine_link_only: mineLinkOnly,
       tags,
       workspace: ws?.name ?? DEFAULT_WORKSPACE_NAME,
     })
@@ -365,7 +378,7 @@ export const artifactRoutes = (ctx: AppContext) => {
       const onBehalf = await privateOwnerId(c)
       // An AGENT-credentialed create (registered token / OAuth bearer — the CLI
       // and stdio-shim paths) lands with the workspace's agent default when no
-      // visibility was asked for: usually `unlisted`, the draft state. A
+      // visibility was asked for: usually `unlisted`, workspace link-only. A
       // signed-in human's own publish keeps the private default.
       const agentPrincipal = await agentFor(c)
       const resolvedVisibility =
@@ -664,6 +677,9 @@ export const artifactRoutes = (ctx: AppContext) => {
       })),
       sessions: groupSessions(versions, versionWindowMs),
       my_role: effectiveRole(actor, artifact.visibility, artifact.general_role),
+      // The artifact's current workspace — the move dialog needs this to exclude
+      // it from the destination picker.
+      org_id: artifact.org_id,
       tags,
       favorite,
       collections,
@@ -678,6 +694,15 @@ export const artifactRoutes = (ctx: AppContext) => {
       // Mirrored from a GitHub sync source → read-only in Derive (the client hides
       // Edit/Propose; the publish/propose routes also refuse it server-side).
       managed: (await meta.managedArtifactIds(artifact.org_id)).includes(artifact.id),
+      // The content iframe is sandboxed with no `allow-same-origin` (opaque origin —
+      // it must not be able to touch derive.to cookies/storage), which means it also has
+      // no origin of its own to send OUR session cookie back on, and Chrome refuses to
+      // attach cookies to requests from an opaque origin at all (even same-site) — every
+      // sub-resource (image, css, ...) in a non-public bundle 404s there. `read` access
+      // was just proven above, so mint a short-lived capability the SPA embeds in the raw
+      // URL's path (raw.ts's `t/:token` route + RAW_TOKEN_MAX_AGE_MS) — path, not query,
+      // so relative asset references inherit it with zero HTML rewriting.
+      raw_token: signState({ rid: artifact.id }, deps.encryptionKey ?? ""),
     })
   })
 
@@ -741,6 +766,29 @@ export const artifactRoutes = (ctx: AppContext) => {
     if (!(await authorize(c, "manage", artifact))) return fail(c, 403, "forbidden")
     await meta.deleteArtifact(artifact.id, artifact.org_id)
     return c.body(null, 204)
+  })
+
+  // Move to a different workspace you belong to. Owner-only (the `manage` gate —
+  // same as delete). No role requirement on the destination: you can move into a
+  // workspace where you're just a viewer/editor. A future org-level "block
+  // cross-workspace moves" policy is a single guard here, not a new subsystem.
+  app.post("/v1/artifacts/:shortId/move", async (c) => {
+    const artifact = await meta.getByShortId(c.req.param("shortId"))
+    if (!artifact) return fail(c, 404, "not found")
+    if (!(await authorize(c, "manage", artifact))) return fail(c, 403, "forbidden")
+    const b = await readJson(c, z.object({ targetOrgId: z.string().min(1) }))
+    if (b instanceof Response) return b
+    if (b.targetOrgId === artifact.org_id) return fail(c, 400, "already in that workspace")
+    const me = await currentUser(c)
+    if (!me) return fail(c, 401, "unauthenticated")
+    if (!(await meta.getMembership(b.targetOrgId, me.id)))
+      return fail(c, 403, "you're not a member of that workspace")
+    // A bound custom domain routes by artifact_id; moving orgs out from under it
+    // would silently break live traffic, so refuse rather than cascade.
+    if ((await meta.getArtifactDomains(artifact.id)).length > 0)
+      return fail(c, 409, "remove the custom domain before moving this artifact")
+    await meta.moveArtifactOrg(artifact.id, b.targetOrgId)
+    return c.json({ org_id: b.targetOrgId })
   })
 
   // Unlock a `password` artifact: verify the password and drop a cookie whose

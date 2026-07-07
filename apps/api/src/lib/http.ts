@@ -7,9 +7,15 @@ import type { z } from "zod"
  * The one error-response shape. Routes return `fail(c, status, message)` rather
  * than a bare `c.json({ error }, status)`, so the error contract lives in one
  * place. Enforced by the no-ad-hoc-error guard (scripts/check-api.mjs).
+ * `extra` carries machine-readable context a client renders a flow around (e.g.
+ * the invite accept page's email_mismatch confirm) — never secrets, always additive.
  */
-export const fail = (c: Context, status: ContentfulStatusCode, message: string) =>
-  c.json({ error: message }, status)
+export const fail = (
+  c: Context,
+  status: ContentfulStatusCode,
+  message: string,
+  extra?: Record<string, unknown>,
+) => c.json({ error: message, ...extra }, status)
 
 /**
  * Parse + validate a JSON request body against a zod schema. Returns the typed,

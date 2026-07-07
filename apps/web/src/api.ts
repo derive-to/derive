@@ -109,6 +109,8 @@ export interface Artifact {
   views?: number
   /** The current caller's effective role on this artifact (null = no access). */
   my_role?: Role | null
+  /** The artifact's current workspace (absent on a removed-tombstone response). */
+  org_id?: string
   /** Browse tags (workspace-wide). */
   tags?: string[]
   /** Whether the current user has starred this artifact. */
@@ -129,6 +131,13 @@ export interface Artifact {
   removed?: boolean
   /** Mirrored from a GitHub sync source → read-only in Derive (Edit/Propose hidden). */
   managed?: boolean
+  /** Short-lived signed capability for the /raw content iframe (detail endpoint only).
+   *  The iframe is sandboxed with no `allow-same-origin`, so it has no origin to attach
+   *  cookies to — Chrome refuses to send them for its requests even same-site, breaking
+   *  every non-public bundle's sub-resources (images, css, ...) there (Safari is more
+   *  lenient). This token lets the SPA embed proof-of-access directly in the raw URL's
+   *  PATH, so relative asset references inherit it automatically with no HTML rewriting. */
+  raw_token?: string
   /** Present when this bundle's entry is markdown — a skill (entry SKILL.md) or a
    *  plain docs folder. Drives the file tree + (for skills) the identity chrome.
    *  Detail endpoint only; absent for HTML "site" bundles. */
@@ -317,6 +326,8 @@ export interface WorkspaceSummary {
   id: string
   name: string
   role: Role
+  /** The caller's auto-provisioned personal workspace — shown as "Personal", pinned first. */
+  personal: boolean
 }
 /** The caller's own identity (never email — surfaces identify by handle). */
 export interface AccountSummary {
@@ -324,6 +335,11 @@ export interface AccountSummary {
   handle: string | null
   name: string | null
 }
+/** The one display rule for workspace names: the personal workspace renders as
+ *  "Personal" everywhere — its stored name is provisioning plumbing, not a name
+ *  the user chose. */
+export const workspaceDisplayName = (w: { name: string; personal: boolean }): string =>
+  w.personal ? "Personal" : w.name
 /** The switcher payload: whether multi-workspace is on, the active id, the list.
  *  `account` is the CLI/MCP's discovery surface for a bearer-only caller, which
  *  has no session to ask `/v1/me` with — the web app doesn't need it. */
@@ -796,8 +812,10 @@ export const api = {
     /** "shared" → only artifacts explicitly shared with you (across workspaces).
      *  "following" → artifacts in the active workspace matching your follows
      *  (followed GitHub authors + repo path prefixes) — the activity feed.
-     *  "needs_feedback" → artifacts with an open thread you're tagged in or commented on. */
-    scope?: "shared" | "following" | "needs_feedback" | "unlisted"
+     *  "needs_feedback" → artifacts with an open thread you're tagged in or commented on.
+     *  "mine" → everything you published by hand in the active workspace, any
+     *  visibility included — the library's "Created by me" filter. */
+    scope?: "shared" | "following" | "needs_feedback" | "mine"
     cursor?: string
     limit?: number
   }): Promise<{
@@ -822,8 +840,10 @@ export const api = {
   browseSummary: (): Promise<{
     total: number
     favorites: number
-    /** The caller's own unlisted drafts — badges the library's Unlisted feed. */
-    unlisted: number
+    /** The caller's owned artifacts — badges the library's "Created by me" filter. */
+    mine: number
+    /** How many of those are still link-only (unlisted) — the pending signal. */
+    mine_link_only: number
     tags: { tag: string; count: number }[]
     workspace: string
   }> => f("/v1/tags", opts()).then(j),
@@ -859,6 +879,9 @@ export const api = {
       ...opts({ locked }),
       method: "PATCH",
     }).then(j),
+  // Move to a different workspace you belong to. Owner-only server-side.
+  moveArtifact: (id: string, targetOrgId: string): Promise<{ org_id: string }> =>
+    f(`/v1/artifacts/${id}/move`, opts({ targetOrgId })).then(j),
   diff: (id: string, from: number, to: number): Promise<Diff> =>
     f(`/v1/artifacts/${id}/diff?from=${from}&to=${to}&format=json`, opts()).then(j),
   restore: (id: string, version: number): Promise<Artifact> =>
@@ -1073,8 +1096,16 @@ export const api = {
   // The accept page: preview an invite by token, then join.
   previewInvite: (token: string): Promise<InvitePreview> =>
     f(`/v1/invites/${encodeURIComponent(token)}`, opts()).then(j),
-  acceptInvite: (token: string): Promise<{ org_id: string; role: Role }> =>
-    f(`/v1/invites/${encodeURIComponent(token)}/accept`, opts({})).then(j),
+  // confirmMismatch: the holder is signed in under a different email than the
+  // invite named — the server 409s until they explicitly accept anyway.
+  acceptInvite: (
+    token: string,
+    confirmMismatch?: boolean,
+  ): Promise<{ org_id: string; role: Role }> =>
+    f(
+      `/v1/invites/${encodeURIComponent(token)}/accept`,
+      opts(confirmMismatch ? { confirm_mismatch: true } : {}),
+    ).then(j),
   setWorkspaceMemberRole: (userId: string, role: Role): Promise<{ user_id: string; role: Role }> =>
     f(`/v1/workspace/members/${userId}`, { ...opts({ role }), method: "PATCH" }).then(j),
   removeWorkspaceMember: (userId: string): Promise<void> =>

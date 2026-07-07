@@ -1,5 +1,5 @@
 import { useNavigate } from "@tanstack/react-router"
-import { api, type Workspaces } from "@/api"
+import { api, type Workspaces, workspaceDisplayName } from "@/api"
 import { Icon } from "@/components/icons"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import {
@@ -27,7 +27,8 @@ import { ThemeSwitch } from "./theme-switch"
 // breaks (after identity, before sign out); the mono Workspace/Theme labels are the
 // dividers for their own sections. Selecting an item auto-closes the menu (Radix),
 // so no manual open state. Keeps the e2e ids: user-menu-trigger, menu-signout, and
-// theme-option-* (inside ThemeSwitch). Creating a NEW workspace lives in Settings.
+// theme-option-* (inside ThemeSwitch). "New workspace" deep-links to the Settings
+// create dialog — the pod is the entry point, Settings stays the venue.
 export function UserPod({
   workspaceLabel,
   workspaces,
@@ -42,12 +43,27 @@ export function UserPod({
   if (!me) return null
 
   const initials = getInitials(me.name ?? me.email)
-  const multi = !!workspaces?.multi
+  // The switcher earns its place only when there's something to switch between —
+  // a solo account never sees ambient workspace chrome (the concept arrives as
+  // the "Create a workspace" action instead). The server's `multi` flag is
+  // always-on plumbing; real membership count is the signal.
+  const multi = (workspaces?.workspaces.length ?? 0) > 1
+  // Personal pins first; the stable sort keeps the rest in listing order.
+  const sorted = [...(workspaces?.workspaces ?? [])].sort(
+    (a, b) => Number(b.personal) - Number(a.personal),
+  )
 
   const goProfile = () => {
     if (me.username) nav({ to: "/users/$handle", params: { handle: me.username } })
   }
   const goSettings = () => nav({ to: "/settings" })
+  // Deep-link into Settings → General with the create dialog open (one-shot param).
+  const goNewWorkspace = () =>
+    nav({
+      to: "/settings/$section",
+      params: { section: "general" },
+      search: { "new-workspace": "1" },
+    })
   const signOut = async () => {
     await api.logout().catch(() => {})
     setMe(null)
@@ -115,27 +131,37 @@ export function UserPod({
           </DropdownMenuItem>
         </DropdownMenuGroup>
 
-        {/* CONTEXT — the workspace switcher, only when you're in more than one (a
-            single-workspace account reaches it through Settings). The mono label is
-            the section divider; the check carries the active one (neutral, no CTA). */}
-        {multi && (
+        {/* CONTEXT — the workspace switcher, only when you're in more than one.
+            The mono label is the section divider; the check carries the active one
+            (neutral, no CTA); "Personal" pins first. A solo account gets just the
+            first-need affordance — the workspace concept arrives as an action. */}
+        {multi ? (
           <DropdownMenuGroup>
             <DropdownMenuLabel>Workspace</DropdownMenuLabel>
-            {workspaces?.workspaces.map((w) => (
+            {sorted.map((w) => (
               <DropdownMenuItem
                 key={w.id}
                 data-testid={`workspace-${w.id}`}
-                aria-current={w.id === workspaces.active ? "true" : undefined}
+                aria-current={w.id === workspaces?.active ? "true" : undefined}
                 onSelect={() => onSwitchWorkspace(w.id)}
               >
-                {w.id === workspaces.active ? (
+                {w.id === workspaces?.active ? (
                   <Icon name="check" size={16} />
                 ) : (
                   <span className="size-4 shrink-0" />
                 )}
-                <span className="truncate">{w.name}</span>
+                <span className="truncate">{workspaceDisplayName(w)}</span>
               </DropdownMenuItem>
             ))}
+            <DropdownMenuItem data-testid="menu-new-workspace" onSelect={goNewWorkspace}>
+              <Icon name="plus" size={16} /> New workspace
+            </DropdownMenuItem>
+          </DropdownMenuGroup>
+        ) : (
+          <DropdownMenuGroup>
+            <DropdownMenuItem data-testid="menu-new-workspace" onSelect={goNewWorkspace}>
+              <Icon name="plus" size={16} /> Create a workspace…
+            </DropdownMenuItem>
           </DropdownMenuGroup>
         )}
 

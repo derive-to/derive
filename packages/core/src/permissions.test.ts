@@ -125,7 +125,7 @@ describe("effectiveRole — the documented access table", () => {
   })
 
   it("unlisted opens for workspace members at the general role — nobody else", () => {
-    // The agent-draft state: a member WITH THE LINK gets the workspace's default
+    // Workspace link-only: a member WITH THE LINK gets the workspace's default
     // (view or comment). Their workspace role itself grants nothing (that would
     // be `org`), so an unlisted doc never rides membership into listings/standing.
     expect(effectiveRole(user({ orgRole: "viewer" }), "unlisted")).toBe("viewer")

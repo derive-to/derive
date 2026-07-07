@@ -70,9 +70,21 @@ describe("workspace invitations", () => {
     expect(preview.workspace).toBeTruthy()
     expect(preview.role).toBe("commenter")
 
-    // Accept as the outsider → they join.
-    const acc = await app.request(`/v1/invites/${token}/accept`, {
+    // The outsider holds the link but is signed in under a DIFFERENT email than
+    // the invite named — the mismatch is surfaced, not silently joined.
+    const refused = await app.request(`/v1/invites/${token}/accept`, {
       ...jsonAs(as(outsider.email), {}),
+      method: "POST",
+    })
+    expect(refused.status).toBe(409)
+    const mismatch = await refused.json()
+    expect(mismatch.error).toBe("email_mismatch")
+    expect(mismatch.invited_email).toBe("joiner@derive.test")
+
+    // An explicit confirm accepts anyway (token possession still authorizes —
+    // self-hosts without verified email keep working).
+    const acc = await app.request(`/v1/invites/${token}/accept`, {
+      ...jsonAs(as(outsider.email), { confirm_mismatch: true }),
       method: "POST",
     })
     expect(acc.status).toBe(200)
@@ -81,7 +93,7 @@ describe("workspace invitations", () => {
 
     // The invite is spent — a second accept 404s, and it's gone from the pending list.
     const again = await app.request(`/v1/invites/${token}/accept`, {
-      ...jsonAs(as(outsider.email), {}),
+      ...jsonAs(as(outsider.email), { confirm_mismatch: true }),
       method: "POST",
     })
     expect(again.status).toBe(404)

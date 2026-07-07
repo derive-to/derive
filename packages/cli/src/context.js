@@ -1,0 +1,78 @@
+// Server wiring for `derive context push`: mint the answering agent and create
+// the context on first push. Both are idempotent from derive.json's point of
+// view — once the ids are pinned there, pushes are pure artifact versions.
+import { mkdirSync, writeFileSync } from "node:fs"
+import { join } from "node:path"
+
+const post = async (server, token, path, body) => {
+  const res = await fetch(`${server}${path}`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+    body: JSON.stringify(body),
+  })
+  const json = await res.json().catch(() => ({}))
+  return { res, json }
+}
+
+/** Mint the context's answering agent (role editor — it publishes the charts
+ *  its answers link). The raw token comes back exactly once; the caller must
+ *  persist it immediately. */
+export async function createAgent(server, token, name) {
+  const { res, json } = await post(server, token, "/v1/agents", { name, role: "editor" })
+  // 401: agent/context management currently needs a signed-in user — the CLI's
+  // OAuth token resolves as an on-behalf agent, which these routes don't accept
+  // yet. The manifest still pushed; only the one-time wiring is manual.
+  if (res.status === 401 || res.status === 403)
+    throw new Error(
+      `this token can't manage agents (${res.status}) — wire it once in the console:\n` +
+        `  1. ${server} → Settings → Agents → New agent ("${name}", role editor); save its token to .derive/agent-token\n` +
+        `  2. ${server} → Contexts → New context → pick the agent + this manifest\n` +
+        `  3. put the agent id in derive.json (context.agent_id) and the context id in context.id\n` +
+        `after that, every push is just a manifest version — no wiring, no console`,
+    )
+  if (res.status === 409)
+    throw new Error(
+      `an agent named "${name}" already exists — set its id as context.agent_id in derive.json (its token was shown when it was created)`,
+    )
+  if (!res.ok) throw new Error(`agent creation failed (${res.status}): ${json.error ?? "unknown"}`)
+  return { id: json.id, token: json.token }
+}
+
+/** Create the context wiring agent → manifest. On a name collision, adopt the
+ *  existing context if it already points at this manifest (a lost derive.json
+ *  should re-pin, not dead-end). */
+export async function createContext(server, token, { name, agent_id, manifest_short_id }) {
+  const { res, json } = await post(server, token, "/v1/contexts", {
+    name,
+    agent_id,
+    manifest_short_id,
+  })
+  if (res.ok) return json
+  if (res.status === 401)
+    throw new Error(
+      `this token can't create contexts (401) — create it once in the console (${server} → Contexts → New, agent + manifest ${manifest_short_id}), then set context.id in derive.json`,
+    )
+  if (res.status === 409) {
+    const list = await fetch(`${server}/v1/contexts`, {
+      headers: { authorization: `Bearer ${token}` },
+    })
+    const existing = ((await list.json().catch(() => ({}))).contexts ?? []).find(
+      (x) => x.name === name && x.manifest_short_id === manifest_short_id,
+    )
+    if (existing) return existing
+    throw new Error(
+      `a context named "${name}" already exists with a different manifest — rename in derive.json (context.name) or delete the old context`,
+    )
+  }
+  throw new Error(`context creation failed (${res.status}): ${json.error ?? "unknown"}`)
+}
+
+/** Persist the agent token where the runner's --token-file expects it: outside
+ *  the pushed directory, owner-only, covered by the scaffold's .gitignore. */
+export function saveAgentToken(dir, token) {
+  const tokDir = join(dir, ".derive")
+  mkdirSync(tokDir, { recursive: true })
+  const path = join(tokDir, "agent-token")
+  writeFileSync(path, `${token}\n`, { mode: 0o600 })
+  return path
+}

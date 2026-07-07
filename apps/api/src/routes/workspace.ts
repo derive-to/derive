@@ -282,6 +282,18 @@ export const workspaceRoutes = (ctx: AppContext) => {
     const inv = await meta.getInvitationByToken(sha256(c.req.param("token")))
     if (!inv || inv.accepted_at || new Date(inv.expires_at).getTime() < Date.now())
       return fail(c, 404, "this invitation is invalid or has expired")
+    // Possession still authorizes (self-hosts without email verification must keep
+    // working), but a mismatched account is SURFACED, not silently joined: the
+    // holder must explicitly confirm they meant to accept under this identity.
+    // The web accept page pre-warns from the preview and sends the confirm with
+    // the click; the machine-readable 409 is for headless callers.
+    if (inv.email && inv.email.toLowerCase() !== me.email.toLowerCase()) {
+      const b = await readJson(c, z.object({ confirm_mismatch: z.boolean().optional() }))
+      // A malformed/absent body counts as "not confirmed", not a 400 — the 409
+      // carries the flow either way.
+      const confirmed = !(b instanceof Response) && b.confirm_mismatch === true
+      if (!confirmed) return fail(c, 409, "email_mismatch", { invited_email: inv.email })
+    }
     const existing = await meta.getMembership(inv.org_id, me.id)
     if (!existing)
       await meta.setMembership({
@@ -336,6 +348,15 @@ export const workspaceRoutes = (ctx: AppContext) => {
     if (role === null) return fail(c, 401, "unauthenticated")
     const active = await activeWorkspace(c)
     const me = await currentUser(c)
+    // `personal` marks the caller's auto-provisioned workspace (its id is
+    // deterministic — ws_p_<userId>, see provisionPersonal) so clients can label
+    // it "Personal" and pin it, instead of leaking "X's Workspace" plumbing.
+    const wsJson = (w: { id: string; name: string; role: Role }, ownerId: string) => ({
+      id: w.id,
+      name: w.name,
+      role: w.role,
+      personal: w.id === `ws_p_${ownerId}`,
+    })
     if (!me) {
       // An OAuth agent lists its granting user's workspaces — the discovery
       // surface for choosing an X-Derive-Workspace target. Registered workspace
@@ -350,19 +371,21 @@ export const workspaceRoutes = (ctx: AppContext) => {
         ? { id: owner, handle: ownerUser?.username ?? null, name: ownerUser?.name ?? null }
         : null
       const mine = owner ? await meta.listWorkspaces(owner) : []
-      if (mine.length)
+      if (owner && mine.length)
         return c.json({
           multi: true,
           active,
           account,
-          workspaces: mine.map((w) => ({ id: w.id, name: w.name, role: w.role })),
+          workspaces: mine.map((w) => wsJson(w, owner)),
         })
       const ws = await meta.getWorkspace(active)
       return c.json({
         multi: true,
         active,
         account,
-        workspaces: [{ id: active, name: ws?.name ?? DEFAULT_WORKSPACE_NAME, role }],
+        workspaces: [
+          { id: active, name: ws?.name ?? DEFAULT_WORKSPACE_NAME, role, personal: false },
+        ],
       })
     }
     const mine = await meta.listWorkspaces(me.id)
@@ -370,7 +393,7 @@ export const workspaceRoutes = (ctx: AppContext) => {
       multi: true,
       active,
       account: { id: me.id, handle: me.username ?? null, name: me.name ?? null },
-      workspaces: mine.map((w) => ({ id: w.id, name: w.name, role: w.role })),
+      workspaces: mine.map((w) => wsJson(w, me.id)),
     })
   })
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // derive — scaffold, publish, and run the review loop against a Derive server.
-//   derive init [dir] [--template md|html|slides|site] [--title t]
+//   derive init [dir] [--template md|html|slides|site|skill|context] [--title t]
 //   derive login [--local] [--server url] [--workspace w] [--pick] [--add] [--sync]
 //                                          OAuth sign-in; discovers every workspace
 //                                          you belong to. Already signed in? Shows
@@ -15,18 +15,21 @@
 //   derive logout [--account a] [--all]    sign out
 //   derive publish [file|dir] [--id --title --slug --spa --message --name --visibility --server --token --workspace --account]
 //   derive comments [--id]                 list the artifact's comment threads
+//   derive pull [short_id] [--v N] [--out f]  print an artifact's source (bundles: entry file)
 //   derive open [short_id] [--id]          open the artifact in a browser
 //   derive reply <thread_id> <message…>    reply in a thread
 //   derive resolve|reopen <comment_id>     set a thread's state
 //   derive status [--id] [--json]          the review round state + open threads
 //   derive send-back [--id] [--note m]     (human) return your answers to the agent
 //   derive approve [--id] [--note m]       (human) approve — the build go-signal
+//   derive runner serve|doctor|install     run a context's answer daemon (npx-able anywhere)
+//   derive context push|dev                ship a context dir as its manifest / tune it live
 import { spawn } from "node:child_process"
 import { createHash, randomBytes } from "node:crypto"
-import { readdirSync, readFileSync, statSync } from "node:fs"
-import { basename, join, relative } from "node:path"
+import { existsSync, writeFileSync } from "node:fs"
+import { join } from "node:path"
 import { createInterface } from "node:readline"
-import { zipSync } from "fflate"
+import { fileURLToPath } from "node:url"
 import {
   CONFIG_FILE,
   describeWorkspace,
@@ -50,8 +53,11 @@ import {
   setDefaultWorkspace,
   setWorkspaces,
   TEMPLATES,
+  writeContextConfig,
   writeId,
 } from "../src/config.js"
+import { createAgent, createContext, saveAgentToken } from "../src/context.js"
+import { readTarget, uploadArtifact } from "../src/publish.js"
 
 const args = process.argv.slice(2)
 const cmd = args.shift()
@@ -69,6 +75,10 @@ for (let i = 0; i < args.length; i++) {
   else if (a === "--sync") flags.sync = "true"
   else if (a === "--all") flags.all = "true"
   else if (a === "--clear") flags.clear = "true"
+  else if (a === "--mock") flags.mock = "true"
+  // Repeatable: `--env-file a --env-file b` stacks (equivalent to --env-file a,b).
+  else if (a === "--env-file")
+    flags["env-file"] = flags["env-file"] ? `${flags["env-file"]},${args[++i]}` : args[++i]
   else if (a.startsWith("--")) flags[a.slice(2)] = args[++i]
   else positional.push(a)
 }
@@ -130,10 +140,13 @@ if (cmd === "init") {
   const { created, skipped } = scaffold(dir, flags.title ?? "My artifact", template)
   for (const f of created) console.log(`  + ${f}`)
   for (const f of skipped) console.log(`  · ${f} (exists, kept)`)
-  const entry = created.find((f) => f !== CONFIG_FILE && f !== "AGENTS.md") ?? "the entry"
+  // The starter the user should open next — not the config/convention files.
+  const meta = [CONFIG_FILE, "derive.schema.json", "AGENTS.md", ".gitignore"]
+  const entry = created.find((f) => !meta.includes(f) && !f.startsWith(".")) ?? "the entry"
+  const next = template === "context" ? "derive context push" : "derive publish"
   console.log(
     created.length
-      ? `\nReady (${template}). Edit ${entry}, then run \`derive publish\`.`
+      ? `\nReady (${template}). Edit ${entry}, then run \`${next}\`.`
       : `\nNothing to do — ${CONFIG_FILE} already here.`,
   )
   process.exit(0)
@@ -639,8 +652,201 @@ if (cmd === "logout") {
   process.exit(0)
 }
 
+// ---- derive runner (serve / doctor / install) -------------------------------
+// The context runner as a CLI verb: `derive runner serve <ctx>` on any machine
+// with Node. Config: flags win over env (DERIVE_SERVER/TOKEN/CONTEXT, RUNNER_*);
+// --token-file keeps the secret out of service-unit command lines; --env-file
+// loads a context's own secrets (KEY=VALUE) before anything reads them.
+if (cmd === "runner") {
+  const sub = positional.shift()
+  if (!["serve", "doctor", "install"].includes(sub ?? "")) {
+    console.error(`usage:
+  derive runner serve  [ctx_id] [--server url] [--token t | --token-file f] [--env-file f]
+                       [--cwd dir] [--claude-bin path] [--model m] [--poll ms] [--timeout ms] [--mock]
+  derive runner doctor [same flags]        preflight: server, token+context, manifest, cwd, claude, gh, python3
+  derive runner install [same flags]       print a launchd/systemd unit for this config`)
+    process.exit(1)
+  }
+  const { doctor, loadRunnerConfig, renderServiceUnit, serve } = await import("../src/runner.js")
+  if (positional[0]) flags.context = positional[0]
+  let rcfg
+  try {
+    // doctor runs on half-configured machines by design — a missing token or
+    // context id is a finding it reports, not a reason it can't start.
+    rcfg = loadRunnerConfig(process.env, flags, { partial: sub === "doctor" })
+  } catch (e) {
+    console.error(`error: ${e.message}`)
+    process.exit(1)
+  }
+  if (sub === "doctor") process.exit((await doctor(rcfg)) === 0 ? 0 : 1)
+  if (sub === "install") {
+    const binPath = fileURLToPath(import.meta.url)
+    // A unit must reference the token, never embed it — and must point at a
+    // script that outlives the render. The npx cache does not (`npm cache
+    // clean` deletes it and launchd crash-loops on the dead path).
+    if (!rcfg.tokenFile) {
+      console.error(
+        "error: runner install requires --token-file (units reference the token file, they never embed the secret)",
+      )
+      process.exit(1)
+    }
+    if (binPath.includes("_npx")) {
+      console.error(
+        "error: running from the npx cache — install the CLI first (npm i -g @derive-to/cli) so the unit points at a stable path",
+      )
+      process.exit(1)
+    }
+    const u = renderServiceUnit(rcfg, binPath)
+    console.log(`# Save as ${u.path}, then:\n#   ${u.load}\n\n${u.unit}`)
+    process.exit(0)
+  }
+  try {
+    await serve(rcfg) // runs until killed
+  } catch (e) {
+    // Startup failures (bad token, missing manifest) get the house one-liner,
+    // not a stack trace; `runner doctor` is the diagnostic.
+    console.error(`error: ${e.message}`)
+    process.exit(1)
+  }
+}
+
+// ---- derive context (push / dev) --------------------------------------------
+// A context is a directory: MANIFEST.md (the runner's system prompt),
+// references/, .mcp.json (the context's tools), .env (stays local, always).
+// `push` ships that directory as the context's manifest bundle; the first push
+// also mints the answering agent and creates the context, so afterwards a push
+// is just a new manifest version — the context's pointer never moves. `dev`
+// answers real sessions with the WORKING TREE manifest: edit, save, next
+// answer uses it, push when it behaves.
+if (cmd === "context") {
+  const sub = positional.shift()
+  if (!["push", "dev"].includes(sub ?? "")) {
+    console.error(`usage:
+  derive context push [dir]    publish the context dir (minus .env*); first push wires agent + context
+  derive context dev  [dir]    run the answer loop on the working-tree manifest [--mock] [--context ctx_id]`)
+    process.exit(1)
+  }
+  const dir = positional[0] ?? "."
+  let cfg = null
+  try {
+    cfg = loadConfig(dir)
+  } catch (e) {
+    console.error(`error: ${e.message}`)
+    process.exit(1)
+  }
+  if (!cfg?.context) {
+    console.error(
+      `error: ${join(dir, CONFIG_FILE)} has no "context" block — scaffold one with \`derive init --template context\``,
+    )
+    process.exit(1)
+  }
+  const p = resolvePublish(flags, cfg)
+  p.token = flags.token ?? process.env.DERIVE_TOKEN ?? (await freshToken(p.server, p.accountId))
+  const target = join(dir, cfg.entry ?? "context")
+  const name = cfg.context.name ?? cfg.title ?? "My context"
+  const tokenFile = join(dir, ".derive", "agent-token")
+
+  if (sub === "push") {
+    if (!p.token) {
+      console.error("error: not signed in — run `derive login` first")
+      process.exit(1)
+    }
+    let up
+    try {
+      up = readTarget(target)
+    } catch (e) {
+      console.error(`error: ${e.message}`)
+      process.exit(1)
+    }
+    const { res, json } = await uploadArtifact(p, up.bytes, up.filename)
+    if (!res.ok) {
+      console.error(`error (${res.status}): ${json.error ?? res.statusText}`)
+      process.exit(1)
+    }
+    if (!p.id && json.short_id) writeId(dir, json.short_id)
+    const shortId = p.id ?? json.short_id
+    console.log(`✓ manifest ${shortId} v${json.current_version}`)
+    for (const s of up.skipped) console.log(`  · ${s} stayed local (secrets never ship)`)
+
+    try {
+      let agentId = cfg.context.agent_id
+      if (!agentId) {
+        const agent = await createAgent(p.server, p.token, name)
+        agentId = agent.id
+        const tokPath = saveAgentToken(dir, agent.token)
+        writeContextConfig(dir, { agent_id: agentId })
+        console.log(
+          `✓ agent "${name}" (${agentId}) — token saved to ${tokPath} (shown nowhere else)`,
+        )
+      }
+      let ctxId = cfg.context.id
+      if (!ctxId) {
+        const created = await createContext(p.server, p.token, {
+          name,
+          agent_id: agentId,
+          manifest_short_id: shortId,
+        })
+        ctxId = created.id
+        writeContextConfig(dir, { id: ctxId })
+        console.log(`✓ context "${name}" (${ctxId})`)
+      }
+      // The manifest's roster is the ask roster — an invite-only manifest means
+      // only its owner can open a session.
+      if (json.visibility === "private")
+        console.log(
+          `  invite-only — share the manifest (Share dialog, or --visibility org) so teammates can ask`,
+        )
+      console.log(
+        `\nRun it:\n  derive runner serve ${ctxId} --token-file ${tokenFile} --cwd ${target}\nTune it:\n  derive context dev`,
+      )
+    } catch (e) {
+      console.error(`error: ${e.message}`)
+      process.exit(1)
+    }
+    process.exit(0)
+  }
+
+  // dev: the runner, pointed at this working tree.
+  const ctxId = flags.context ?? cfg.context.id
+  if (!ctxId) {
+    console.error(
+      "error: no context id — `derive context push` once (it pins context.id), or pass --context",
+    )
+    process.exit(1)
+  }
+  const devFlags = {
+    ...flags,
+    context: ctxId,
+    server: p.server,
+    cwd: flags.cwd ?? target,
+    "manifest-file": flags["manifest-file"] ?? join(target, "MANIFEST.md"),
+  }
+  if (!flags.token && !flags["token-file"] && existsSync(tokenFile))
+    devFlags["token-file"] = tokenFile
+  const envFile = join(target, ".env")
+  if (!flags["env-file"] && existsSync(envFile)) devFlags["env-file"] = envFile
+  const { loadRunnerConfig, serve } = await import("../src/runner.js")
+  try {
+    const rcfg = loadRunnerConfig(process.env, devFlags)
+    await serve(rcfg) // runs until killed
+  } catch (e) {
+    console.error(`error: ${e.message}`)
+    process.exit(1)
+  }
+}
+
 // ---- Loop verbs (comments / open / reply / resolve / reopen) --------------
-const LOOP = ["comments", "open", "reply", "resolve", "reopen", "status", "send-back", "approve"]
+const LOOP = [
+  "comments",
+  "open",
+  "pull",
+  "reply",
+  "resolve",
+  "reopen",
+  "status",
+  "send-back",
+  "approve",
+]
 if (LOOP.includes(cmd)) {
   let cfg = null
   try {
@@ -656,7 +862,7 @@ if (LOOP.includes(cmd)) {
   // <short_id>`: a positional id overrides the repo pin — the fallback an agent
   // runs when a publish reports opened_in_tab:false. (reply/resolve keep their
   // positional for the thread/comment id.)
-  if (positional[0] && ["open", "status", "comments"].includes(cmd)) r.id = positional[0]
+  if (positional[0] && ["open", "status", "comments", "pull"].includes(cmd)) r.id = positional[0]
   if (!r.id) {
     console.error(`error: no artifact id. Set "id" in ${CONFIG_FILE} (publish once), or pass --id.`)
     process.exit(1)
@@ -683,6 +889,29 @@ if (LOOP.includes(cmd)) {
     const res = await fetch(`${base}/comments`, { headers: auth })
     if (!res.ok) await die(res)
     console.log(formatComments((await res.json()).comments))
+    process.exit(0)
+  }
+
+  // Source read-back. For single-file artifacts this is the exact published
+  // source; for directory/--spa bundles the server returns the ENTRY FILE only
+  // (that's all /content serves). Text goes to stdout (pipe-friendly); --out
+  // writes a file and keeps the confirmation on stderr.
+  if (cmd === "pull") {
+    const res = await fetch(`${base}/content${flags.v ? `?v=${flags.v}` : ""}`, { headers: auth })
+    if (!res.ok) await die(res)
+    const text = await res.text()
+    const v = res.headers.get("x-derive-version")
+    if (flags.out) {
+      try {
+        writeFileSync(flags.out, text)
+      } catch (e) {
+        console.error(`error: cannot write ${flags.out}: ${e.message}`)
+        process.exit(1)
+      }
+      console.error(`✓ ${flags.out} (${r.id}${v ? ` v${v}` : ""})`)
+    } else {
+      process.stdout.write(text)
+    }
     process.exit(0)
   }
 
@@ -759,7 +988,7 @@ if (LOOP.includes(cmd)) {
 
 if (cmd !== "publish") {
   console.error(`usage:
-  derive init [dir] [--template md|html|slides|site] [--title t]
+  derive init [dir] [--template md|html|slides|site|skill|context] [--title t]
   derive login [--local] [--server url] [--workspace w] [--pick] [--add] [--sync]
                                             OAuth sign-in (defaults to https://derive.to);
                                             discovers every workspace you belong to
@@ -772,12 +1001,15 @@ if (cmd !== "publish") {
   derive logout [--account a] [--all]      sign out
   derive publish [file|dir] [--id X] [--title t] [--slug s] [--spa] [--message m] [--name "x"] [--visibility v] [--password p] [--server url] [--token t] [--workspace w] [--account a] [--json]
   derive comments [--id X]                 list comment threads
+  derive pull [short_id] [--v N] [--out f] print an artifact's source (bundles: entry file only)
   derive open [--id X]                     open the artifact in a browser
   derive reply <thread_id> <message…>      reply in a thread
   derive resolve|reopen <comment_id>       set a thread's state
   derive status [--id X] [--json]          review-round state + open threads (the loop's poll target)
   derive send-back [--id X] [--note m]     (human) return your answers to the waiting agent
-  derive approve [--id X] [--note m]       (human) approve — the build go-signal`)
+  derive approve [--id X] [--note m]       (human) approve — the build go-signal
+  derive runner serve|doctor|install       run a context's answer daemon (\`derive runner\` for flags)
+  derive context push|dev                  ship a context dir as its manifest / tune it on the working tree`)
   process.exit(cmd ? 1 : 0)
 }
 
@@ -799,65 +1031,27 @@ if (!p.target) {
   process.exit(1)
 }
 
-const collect = (dir, base, out = {}) => {
-  for (const name of readdirSync(dir)) {
-    if (
-      name === ".DS_Store" ||
-      name === "node_modules" ||
-      name.startsWith(".git") ||
-      name === CONFIG_FILE
-    )
-      continue
-    const path = join(dir, name)
-    const st = statSync(path)
-    if (st.isDirectory()) collect(path, base, out)
-    else out[relative(base, path).split("\\").join("/")] = readFileSync(path)
-  }
-  return out
-}
-
-let bytes
-let filename
-const st = statSync(p.target)
-if (st.isDirectory()) {
-  const files = collect(p.target, p.target)
-  if (Object.keys(files).length === 0) {
-    console.error(`error: ${p.target} is empty`)
-    process.exit(1)
-  }
-  bytes = zipSync(files)
-  filename = `${basename(p.target)}.zip`
-} else {
-  bytes = readFileSync(p.target)
-  filename = basename(p.target)
-}
-
-const form = new FormData()
-form.append("file", new Blob([bytes]), filename)
-if (p.title) form.append("title", p.title)
-if (p.slug) form.append("slug", p.slug)
-if (p.spa) form.append("spa", "true")
-if (p.message) form.append("message", p.message)
-if (p.name) form.append("name", p.name)
-if (p.visibility) form.append("visibility", p.visibility)
-// --password is a per-publish secret for `--visibility password`; never put it in
-// derive.json (it isn't a config field), only pass it on the command line.
-if (p.password) form.append("password", p.password)
-if (flags.review) form.append("request_review", "true")
-
 p.token = flags.token ?? process.env.DERIVE_TOKEN ?? (await freshToken(p.server, p.accountId))
 requireSignedIn(p)
-const url = p.id ? `${p.server}/v1/artifacts/${p.id}/versions` : `${p.server}/v1/artifacts`
-const headers = {
-  ...(p.token ? { authorization: `Bearer ${p.token}` } : {}),
-  ...(p.workspaceId ? { "x-derive-workspace": p.workspaceId } : {}),
+let up
+try {
+  up = readTarget(p.target)
+} catch (e) {
+  console.error(`error: ${e.message}`)
+  process.exit(1)
 }
-const res = await fetch(url, { method: "POST", body: form, headers })
-const json = await res.json().catch(() => ({}))
+const { res, json } = await uploadArtifact(
+  p,
+  up.bytes,
+  up.filename,
+  flags.review ? { request_review: "true" } : {},
+)
 if (!res.ok) {
   console.error(`error (${res.status}): ${json.error ?? res.statusText}`)
   process.exit(1)
 }
+// stderr so `--json` stdout stays parseable.
+for (const s of up.skipped) console.error(`  · ${s} stayed local (.env files never ship)`)
 
 // First publish of a configured project: remember the id so the next publish
 // targets the same artifact with zero flags.

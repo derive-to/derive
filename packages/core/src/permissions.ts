@@ -89,9 +89,9 @@ export interface Actor {
  *   workspace only (org)         no access              no access             their role (members)
  *   unlisted · view|comment      no access              members only: v/c     their role (>= floor)
  *
- * `unlisted` is the agent-draft state: hidden from every listing, but a workspace
- * member WITH THE LINK gets the general role (view or comment) — the "shared to
- * workspace, on the go" reach. Non-members and anonymous visitors get nothing.
+ * `unlisted` is workspace link-only (the usual agent-publish default): hidden from
+ * every listing, but a workspace member WITH THE LINK gets the general role
+ * (view or comment). Non-members and anonymous visitors get nothing.
  *
  * Invariant: an anonymous caller is never more than `viewer`. Anything past view
  * (comment, propose, publish, share, manage) needs an authenticated identity — a
