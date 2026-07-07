@@ -18,7 +18,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { useAuth } from "@/ctx"
 import { colorForName } from "@/lib/avatar-tints"
 import { getInitials } from "@/lib/initials"
-import { followsQuery, peopleQuery, workspacePeopleQuery } from "@/lib/queries"
+import { followsQuery, peopleQuery, profilePeopleQuery, workspacePeopleQuery } from "@/lib/queries"
 import { useDelayedPending } from "@/lib/use-delayed-pending"
 import { cn } from "@/lib/utils"
 
@@ -47,20 +47,33 @@ export function People() {
   })
   const { data: mates = [], isPending: matesPending } = useQuery(workspacePeopleQuery())
   const { data: follows = [], isPending: followsPending } = useQuery(followsQuery())
+  // Follow rows carry each person's handle/name/avatar but not their profession; pull the
+  // full "following" profiles to fill in the role line. The follows query stays the source
+  // of truth for WHICH people show (so a follow/unfollow reflects instantly) — this enriches.
+  const { data: followingProfiles = [] } = useQuery({
+    ...profilePeopleQuery(me?.username ?? "", "following"),
+    enabled: !!me?.username,
+  })
+  const professionByHandle = new Map(
+    followingProfiles.map((p) => [p.username.toLowerCase(), p.profession ?? null]),
+  )
 
   const people = data ?? []
   const mateHandles = new Set(mates.map((m) => m.username.toLowerCase()))
 
-  // People you follow, as directory rows — follows carry the resolved handle/name/avatar
-  // for kind="user" (the API resolves the id server-side), so no extra fetch is needed.
+  // People you follow, as directory rows — the follow row resolves handle/name/avatar
+  // server-side; profession is layered in from the following profiles above.
   const followed: PublicProfile[] = follows
     .filter((f) => f.kind === "user")
-    .map((f) => ({
-      username: f.handle ?? f.target,
-      name: f.name ?? null,
-      image: f.image ?? null,
-      profession: null,
-    }))
+    .map((f) => {
+      const username = f.handle ?? f.target
+      return {
+        username,
+        name: f.name ?? null,
+        image: f.image ?? null,
+        profession: professionByHandle.get(username.toLowerCase()) ?? null,
+      }
+    })
   const followedHandles = new Set(followed.map((p) => p.username.toLowerCase()))
   // Don't list a teammate twice if you already follow them.
   const mateOnly = mates.filter((m) => !followedHandles.has(m.username.toLowerCase()))
