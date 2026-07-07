@@ -4,7 +4,7 @@
 //   derive login [--local] [--server url]   OAuth sign-in (default https://derive.to); saves a token
 //   derive publish [file|dir] [--id --title --slug --spa --message --name --visibility --server --token]
 //   derive comments [--id]                 list the artifact's comment threads
-//   derive pull [short_id] [--v N] [--out f]  print an artifact's source (or save it)
+//   derive pull [short_id] [--v N] [--out f]  print an artifact's source (bundles: entry file)
 //   derive open [short_id] [--id]          open the artifact in a browser
 //   derive reply <thread_id> <message…>    reply in a thread
 //   derive resolve|reopen <comment_id>     set a thread's state
@@ -213,16 +213,23 @@ if (LOOP.includes(cmd)) {
     process.exit(0)
   }
 
-  // Source read-back: the round-trip complement to publish. Text goes to stdout
-  // (pipe-friendly); --out writes a file and keeps the confirmation on stderr.
+  // Source read-back. For single-file artifacts this is the exact published
+  // source; for directory/--spa bundles the server returns the ENTRY FILE only
+  // (that's all /content serves). Text goes to stdout (pipe-friendly); --out
+  // writes a file and keeps the confirmation on stderr.
   if (cmd === "pull") {
     const res = await fetch(`${base}/content${flags.v ? `?v=${flags.v}` : ""}`, { headers: auth })
     if (!res.ok) await die(res)
     const text = await res.text()
     const v = res.headers.get("x-derive-version")
     if (flags.out) {
-      writeFileSync(flags.out, text)
-      console.error(`✓ ${flags.out} (${r.id} v${v})`)
+      try {
+        writeFileSync(flags.out, text)
+      } catch (e) {
+        console.error(`error: cannot write ${flags.out}: ${e.message}`)
+        process.exit(1)
+      }
+      console.error(`✓ ${flags.out} (${r.id}${v ? ` v${v}` : ""})`)
     } else {
       process.stdout.write(text)
     }
@@ -306,7 +313,7 @@ if (cmd !== "publish") {
   derive login [--local] [--server url]    OAuth sign-in (defaults to https://derive.to); saves a persistent token
   derive publish [file|dir] [--id X] [--title t] [--slug s] [--spa] [--message m] [--name "x"] [--visibility v] [--password p] [--server url] [--token t] [--json]
   derive comments [--id X]                 list comment threads
-  derive pull [short_id] [--v N] [--out f] print an artifact's source to stdout (or save it)
+  derive pull [short_id] [--v N] [--out f] print an artifact's source (bundles: entry file only)
   derive open [--id X]                     open the artifact in a browser
   derive reply <thread_id> <message…>      reply in a thread
   derive resolve|reopen <comment_id>       set a thread's state
