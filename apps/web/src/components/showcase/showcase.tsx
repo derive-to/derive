@@ -1008,8 +1008,8 @@ function ConfirmDemo() {
   )
 }
 
-/** The share dialog's general-access ladder — the visibility steps as the dialog
- *  renders them (glyph + label + consequence), grouped as who × listed-or-link-only.
+/** The share dialog's general access — WHO (private / workspace / public) crossed
+ *  with listed-or-link-only, listed first in each pair (glyph + label + consequence).
  *  Static data; the live control is ShareButton's Select in pages/artifact/share-dialog. */
 function GeneralAccessDemo() {
   const steps: { icon: IconName; label: string; blurb: string; current?: boolean }[] = [
@@ -1029,8 +1029,12 @@ function GeneralAccessDemo() {
       label: "Workspace — link only",
       blurb: "Workspace members with the link. Stays out of the shared library.",
     },
-    { icon: "link", label: "Anyone with the link", blurb: "Anyone with the link can view." },
     { icon: "globe", label: "Public", blurb: "In the public directory and indexable." },
+    {
+      icon: "link",
+      label: "Public — link only",
+      blurb: "Anyone with the link can view. Not listed anywhere.",
+    },
     { icon: "lock", label: "Password protected", blurb: "Anyone with the link and the password." },
   ]
   return (

@@ -292,6 +292,6 @@ const AGENT_VIS_LABELS: Record<string, string> = {
   unlisted: "Workspace — link only",
   private: "Private",
   org: "Workspace",
-  link: "Anyone with the link",
+  link: "Public — link only",
   public: "Public",
 }

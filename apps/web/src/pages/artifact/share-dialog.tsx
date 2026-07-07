@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
-import { useEffect, useRef, useState } from "react"
+import { Fragment, useEffect, useRef, useState } from "react"
 import {
   API_BASE,
   type ArtifactDomain,
@@ -27,6 +27,7 @@ import {
   SelectMenu,
   SelectMenuContent,
   SelectMenuItem,
+  SelectMenuSeparator,
   SelectMenuTrigger,
 } from "@/components/ui/select-menu"
 import { toast } from "@/components/ui/sonner"
@@ -35,48 +36,58 @@ import { getInitials } from "@/lib/initials"
 import { artifactQuery } from "@/lib/queries"
 import { cn } from "@/lib/utils"
 
-// General access (visibility) options, grouped as two dimensions rather than one
-// flat ladder: WHO (private / workspace / anyone) and, for workspace and anyone,
-// whether it's listed in the shared library or reachable by link only. Each pair
-// (workspace/workspace-link-only, anyone/anyone-link-only) sits adjacent below.
-const ACCESS: { value: string; label: string; blurb: string; icon: IconName }[] = [
-  {
-    value: "private",
-    label: "Private",
-    blurb: "Only people added above. Workspace membership grants nothing.",
-    icon: "lock",
-  },
-  {
-    value: "org",
-    label: "Workspace",
-    blurb: "Every workspace member can find it in the shared library.",
-    icon: "workspace",
-  },
-  {
-    value: "unlisted",
-    label: "Workspace — link only",
-    blurb: "Workspace members with the link. Stays out of the shared library.",
-    icon: "link",
-  },
-  {
-    value: "link",
-    label: "Anyone with the link",
-    blurb: "Anyone with the link can view.",
-    icon: "link",
-  },
-  {
-    value: "public",
-    label: "Public",
-    blurb: "In the public directory and indexable.",
-    icon: "globe",
-  },
-  {
-    value: "password",
-    label: "Password protected",
-    blurb: "Anyone with the link and the password.",
-    icon: "lock",
-  },
+// General access (visibility) options as two dimensions, not one flat ladder:
+// WHO (private / workspace / public) crossed with listed-or-link-only for the
+// workspace and public tiers. Each inner array renders as a menu group with a
+// separator between groups, so the pairs read as pairs: listed first, link-only
+// second, same order in both tiers. Password trails as a modifier-style rung.
+const ACCESS_GROUPS: { value: string; label: string; blurb: string; icon: IconName }[][] = [
+  [
+    {
+      value: "private",
+      label: "Private",
+      blurb: "Only people added above. Workspace membership grants nothing.",
+      icon: "lock",
+    },
+  ],
+  [
+    {
+      value: "org",
+      label: "Workspace",
+      blurb: "Every workspace member can find it in the shared library.",
+      icon: "workspace",
+    },
+    {
+      value: "unlisted",
+      label: "Workspace — link only",
+      blurb: "Workspace members with the link. Stays out of the shared library.",
+      icon: "link",
+    },
+  ],
+  [
+    {
+      value: "public",
+      label: "Public",
+      blurb: "In the public directory and indexable.",
+      icon: "globe",
+    },
+    {
+      value: "link",
+      label: "Public — link only",
+      blurb: "Anyone with the link can view. Not listed anywhere.",
+      icon: "link",
+    },
+  ],
+  [
+    {
+      value: "password",
+      label: "Password protected",
+      blurb: "Anyone with the link and the password.",
+      icon: "lock",
+    },
+  ],
 ]
+const ACCESS = ACCESS_GROUPS.flat()
 
 // The state glyph the Share trigger carries so exposure is legible without
 // opening the dialog: a globe when the URL alone reads (link/public), a lock
@@ -427,11 +438,16 @@ export function ShareButton({
                       {currentAccess?.label ?? vis}
                     </SelectMenuTrigger>
                     <SelectMenuContent>
-                      {ACCESS.map((a) => (
-                        <SelectMenuItem key={a.value} value={a.value}>
-                          <Icon name={a.icon} className="text-muted-foreground" />
-                          {a.label}
-                        </SelectMenuItem>
+                      {ACCESS_GROUPS.map((group, gi) => (
+                        <Fragment key={group[0]?.value ?? gi}>
+                          {gi > 0 && <SelectMenuSeparator />}
+                          {group.map((a) => (
+                            <SelectMenuItem key={a.value} value={a.value}>
+                              <Icon name={a.icon} className="text-muted-foreground" />
+                              {a.label}
+                            </SelectMenuItem>
+                          ))}
+                        </Fragment>
                       ))}
                     </SelectMenuContent>
                   </SelectMenu>
@@ -762,7 +778,7 @@ export function ShareButton({
               <p className="mt-1.5 text-sm text-muted-foreground">
                 {linkAccessible
                   ? "Paste into any page — live, with a link back to Derive."
-                  : "Set access to “Anyone with the link” or “Public” for the embed to load for others."}
+                  : "Set access to “Public” or “Public — link only” for the embed to load for others."}
               </p>
             </div>
 
