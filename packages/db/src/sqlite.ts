@@ -12,6 +12,7 @@ import { and, eq, inArray } from "drizzle-orm"
 import { drizzle } from "drizzle-orm/better-sqlite3"
 import { makeRepos, schema } from "./repos"
 import {
+  activity,
   agentMention,
   artifact,
   artifactFavorite,
@@ -154,6 +155,7 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
         db.delete(report).where(eq(report.artifact_id, id)).run()
         db.delete(notification).where(eq(notification.artifact_id, id)).run()
         db.delete(agentMention).where(eq(agentMention.artifact_id, id)).run()
+        db.delete(activity).where(eq(activity.artifact_id, id)).run()
         db.delete(artifact).where(eq(artifact.id, id)).run()
       })()
     },

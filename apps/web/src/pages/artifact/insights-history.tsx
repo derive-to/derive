@@ -9,7 +9,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { Skeleton } from "@/components/ui/skeleton"
 import { getInitials } from "@/lib/initials"
-import { ago } from "@/lib/time"
+import { ago, dayLabel } from "@/lib/time"
 import { cn } from "@/lib/utils"
 
 // Stat grid per the surfaces doctrine: siblings separated by hairline dividers,
@@ -216,16 +216,6 @@ export function Insights({
 // checkpoints pinned), not every raw revision. Controlled by "⋯ More".
 const clock = (iso: string) =>
   new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
-const dayLabel = (iso: string): string => {
-  const d = new Date(iso)
-  const today = new Date()
-  const y = new Date(today)
-  y.setDate(today.getDate() - 1)
-  const same = (a: Date, b: Date) => a.toDateString() === b.toDateString()
-  if (same(d, today)) return "Today"
-  if (same(d, y)) return "Yesterday"
-  return d.toLocaleDateString([], { month: "short", day: "numeric" })
-}
 
 export function HistoryDrawer({
   art,

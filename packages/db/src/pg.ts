@@ -1,4 +1,5 @@
 import type {
+  ActivityRecord,
   AgentMentionRecord,
   AgentRecord,
   ArtifactMemberRecord,
@@ -26,6 +27,7 @@ import type {
   ListArtifactsOpts,
   MembershipRecord,
   MetaStore,
+  NewActivity,
   NewAgent,
   NewAgentMention,
   NewArtifact,
@@ -76,7 +78,7 @@ import type {
   WebhookRecord,
   WorkspaceRecord,
 } from "@derive/core"
-import { DEFAULT_ORG_SETTINGS, GLOBAL_FOLLOW_ORG } from "@derive/core"
+import { DEFAULT_ORG_SETTINGS, FEED_VISIBLE_TIERS, GLOBAL_FOLLOW_ORG } from "@derive/core"
 import {
   and,
   asc,
@@ -87,6 +89,7 @@ import {
   inArray,
   isNotNull,
   isNull,
+  lt,
   lte,
   ne,
   or,
@@ -96,6 +99,7 @@ import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres"
 import { Pool } from "pg"
 import type { Exhaustive, Shapes } from "./parity"
 import {
+  activity,
   agent,
   agentMention,
   artifact,
@@ -142,6 +146,7 @@ const one = <T>(rows: T[]): T => {
 // Exported so the pg schema-conformance test can diff these defs against the
 // columns PG_SCHEMA_STATEMENTS actually creates in a real Postgres.
 export const schema = {
+  activity,
   artifact,
   version,
   comment,
@@ -179,6 +184,7 @@ export const schema = {
 // a pg column that drifts from its core Record → compile error here.
 const _schemaExhaustive: Exhaustive<typeof schema> = true
 const _schemaShapes: Shapes<typeof schema> = {
+  activity: true,
   artifact: true,
   version: true,
   comment: true,
@@ -1502,6 +1508,33 @@ export class PgMetaStore implements MetaStore {
     return rows[0] ?? null
   }
 
+  // ---- Activity feed -------------------------------------------------------
+  async recordActivity(a: NewActivity): Promise<void> {
+    await this.db.insert(activity).values(a)
+  }
+  listActivity(
+    orgId: string,
+    opts?: { limit?: number; cursor?: { created_at: string; id: string } },
+  ): Promise<ActivityRecord[]> {
+    const conds = [eq(activity.org_id, orgId), inArray(artifact.visibility, FEED_VISIBLE_TIERS)]
+    if (opts?.cursor) {
+      const cursor = or(
+        lt(activity.created_at, opts.cursor.created_at),
+        and(eq(activity.created_at, opts.cursor.created_at), lt(activity.id, opts.cursor.id)),
+      )
+      if (cursor) conds.push(cursor)
+    }
+    // INNER JOIN, filtered live against the artifact's CURRENT visibility — see
+    // repos.ts's listActivity for the full reasoning (mirrors it exactly).
+    const rows = this.db
+      .select(getTableColumns(activity))
+      .from(activity)
+      .innerJoin(artifact, eq(artifact.id, activity.artifact_id))
+      .where(and(...conds))
+      .orderBy(desc(activity.created_at), desc(activity.id))
+    return opts?.limit ? rows.limit(opts.limit) : rows
+  }
+
   // ---- Contexts + sessions -------------------------------------------------
   async createContext(x: NewContext): Promise<ContextRecord> {
     const rows = await this.db.insert(context).values(x).returning()
@@ -2130,6 +2163,7 @@ export class PgMetaStore implements MetaStore {
       await tx.delete(report).where(eq(report.artifact_id, id))
       await tx.delete(notification).where(eq(notification.artifact_id, id))
       await tx.delete(agentMention).where(eq(agentMention.artifact_id, id))
+      await tx.delete(activity).where(eq(activity.artifact_id, id))
       await tx.delete(artifact).where(eq(artifact.id, id))
     })
   }

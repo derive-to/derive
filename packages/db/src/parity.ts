@@ -13,6 +13,7 @@
 //      flags exactly which table broke.
 
 import type {
+  ActivityRecord,
   AgentMentionRecord,
   AgentRecord,
   ArtifactMemberRecord,
@@ -46,6 +47,7 @@ export type Exact<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : f
 
 /** Drizzle tables that mirror a core Record type — their shape is parity-checked. */
 export interface TypedTables {
+  activity: ActivityRecord
   artifact: ArtifactRecord
   version: VersionRecord
   comment: CommentRecord

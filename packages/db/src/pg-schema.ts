@@ -1,4 +1,5 @@
 import type {
+  ActivityKind,
   AgentMentionState,
   ArtifactKind,
   AuditAction,
@@ -502,6 +503,30 @@ export const sessionMessage = pgTable(
   (t) => [index("session_message_session").on(t.session_id, t.created_at)],
 )
 
+// The workspace Activity feed; mirror of the sqlite def — see schema.ts for the
+// denormalization + visibility-gate design notes.
+export const activity = pgTable(
+  "activity",
+  {
+    id: text("id").primaryKey(),
+    org_id: text("org_id").notNull(),
+    kind: text("kind").$type<ActivityKind>().notNull(),
+    artifact_id: text("artifact_id")
+      .notNull()
+      .references(() => artifact.id),
+    artifact_short_id: text("artifact_short_id").notNull(),
+    artifact_title: text("artifact_title"),
+    thread_id: text("thread_id"),
+    version_n: integer("version_n"),
+    actor: text("actor").notNull(),
+    actor_id: text("actor_id"),
+    actor_kind: text("actor_kind").$type<"user" | "agent">().notNull().default("user"),
+    preview: text("preview"),
+    created_at: text("created_at").notNull().$defaultFn(isoNow),
+  },
+  (t) => [index("activity_org_time").on(t.org_id, t.created_at, t.id)],
+)
+
 export const report = pgTable("report", {
   id: text("id").primaryKey(),
   org_id: text("org_id").notNull().default("default"),
@@ -570,6 +595,7 @@ const TABLES = [
   sessionMessage,
   report,
   auditLog,
+  activity,
 ]
 
 /** Build the Postgres boot DDL: generated table/index CREATEs + placeholder tables

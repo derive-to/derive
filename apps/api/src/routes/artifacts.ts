@@ -46,10 +46,12 @@ export const artifactRoutes = (ctx: AppContext) => {
     bus,
     notify,
     background,
+    recordActivity,
     isMember,
     isToken,
     currentUser,
     actingUser,
+    activityActor,
     privateOwnerId,
     activeWorkspace,
     actorFor,
@@ -433,6 +435,8 @@ export const artifactRoutes = (ctx: AppContext) => {
         message: version.message,
         author: version.author,
       })
+      const publishActor = await activityActor(c)
+      if (publishActor) recordActivity(artifact, "publish", publishActor, { version_n: version.n })
       // Fan out to the publisher's followers: "someone you follow published X". Gated
       // to a known HUMAN behind the publish (their followers are who care — an agent
       // publish fans out to the followers of the person it acts for), a publicly-
@@ -474,6 +478,8 @@ export const artifactRoutes = (ctx: AppContext) => {
           if (cm && cm.artifact_id === artifact.id) {
             await meta.setThreadState(artifact.id, cm.thread_id, "resolved")
             bus.publish(artifact.id, { type: "comment.resolved", thread_id: cm.thread_id })
+            if (publishActor)
+              recordActivity(artifact, "resolve", publishActor, { thread_id: cm.thread_id })
           }
         }
       }
@@ -801,6 +807,8 @@ export const artifactRoutes = (ctx: AppContext) => {
       author: version.author,
     })
     bus.publish(artifact.id, { type: "version.published", n: version.n, message: version.message })
+    const restoreActor = await activityActor(c)
+    if (restoreActor) recordActivity(artifact, "publish", restoreActor, { version_n: version.n })
     // Restoring an old blob is a content change too — re-anchor threads against it.
     await publishSweepEvents(meta, blobs, bus, artifact.id, version)
     const fresh = (await meta.getByShortId(artifact.short_id)) as ArtifactRecord

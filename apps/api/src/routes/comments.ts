@@ -33,7 +33,9 @@ export const commentRoutes = (ctx: AppContext) => {
     bus,
     notify,
     background,
+    recordActivity,
     actingUser,
+    activityActor,
     anonLocked,
     requireArtifact,
     authorize,
@@ -203,6 +205,12 @@ export const commentRoutes = (ctx: AppContext) => {
     // fan-out, so they run after the response instead of stacking sequential D1
     // round-trips onto the post (the "couple of seconds to send" people felt).
     bus.publish(artifact.id, { type: "comment.created" })
+    const commentActor = await activityActor(c)
+    if (commentActor)
+      recordActivity(artifact, "comment", commentActor, {
+        thread_id: created.thread_id,
+        preview: previewOf(created.body_md),
+      })
     await background(
       (async () => {
         await notify(artifact, "comment.created", {
@@ -274,6 +282,13 @@ export const commentRoutes = (ctx: AppContext) => {
     const updated = await meta.setThreadState(artifact.id, cm.thread_id, state)
     bus.publish(artifact.id, { type: "comment.resolved", thread_id: cm.thread_id, state })
     await notify(artifact, "comment.resolved", { state, thread_id: cm.thread_id })
+    // Only the positive resolution is feed-worthy — reopening a thread isn't a "win"
+    // moment the workspace needs surfaced.
+    if (state === "resolved") {
+      const resolveActor = await activityActor(c)
+      if (resolveActor)
+        recordActivity(artifact, "resolve", resolveActor, { thread_id: cm.thread_id })
+    }
     return c.json({ thread_id: cm.thread_id, state, updated })
   })
 

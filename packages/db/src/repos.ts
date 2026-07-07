@@ -1,4 +1,5 @@
 import type {
+  ActivityRecord,
   AgentMentionRecord,
   AgentRecord,
   ArtifactMemberRecord,
@@ -24,6 +25,7 @@ import type {
   InvitationRecord,
   ListArtifactsOpts,
   MembershipRecord,
+  NewActivity,
   NewAgent,
   NewAgentMention,
   NewArtifact,
@@ -71,7 +73,7 @@ import type {
   WebhookRecord,
   WorkspaceRecord,
 } from "@derive/core"
-import { DEFAULT_ORG_SETTINGS, GLOBAL_FOLLOW_ORG } from "@derive/core"
+import { DEFAULT_ORG_SETTINGS, FEED_VISIBLE_TIERS, GLOBAL_FOLLOW_ORG } from "@derive/core"
 import {
   and,
   asc,
@@ -94,6 +96,7 @@ import {
 import type { BaseSQLiteDatabase } from "drizzle-orm/sqlite-core"
 import type { Exhaustive, Shapes } from "./parity"
 import {
+  activity,
   agent,
   agentMention,
   artifact,
@@ -180,6 +183,7 @@ export function artifactListConditions(
 
 /** The drizzle schema object — shared by the better-sqlite3 and D1 drivers. */
 export const schema = {
+  activity,
   artifact,
   version,
   comment,
@@ -217,6 +221,7 @@ export const schema = {
 // table that isn't classified, or a column that drifts, fails to compile here.
 const _schemaExhaustive: Exhaustive<typeof schema> = true
 const _schemaShapes: Shapes<typeof schema> = {
+  activity: true,
   artifact: true,
   version: true,
   comment: true,
@@ -1573,6 +1578,37 @@ export function makeRepos(db: SqliteDb) {
       .returning()
       .get()) ?? null
 
+  // ---- Activity feed -------------------------------------------------------
+  const recordActivity = async (a: NewActivity): Promise<void> => {
+    await db.insert(activity).values(a).run()
+  }
+  const listActivity = async (
+    orgId: string,
+    opts?: { limit?: number; cursor?: { created_at: string; id: string } },
+  ): Promise<ActivityRecord[]> => {
+    const conds = [eq(activity.org_id, orgId), inArray(artifact.visibility, FEED_VISIBLE_TIERS)]
+    if (opts?.cursor) {
+      const cursor = or(
+        lt(activity.created_at, opts.cursor.created_at),
+        and(eq(activity.created_at, opts.cursor.created_at), lt(activity.id, opts.cursor.id)),
+      )
+      if (cursor) conds.push(cursor)
+    }
+    // INNER JOIN, filtered live against the artifact's CURRENT visibility — not just
+    // the visibility at write time. A doc later narrowed to private/unlisted/password
+    // stops serving its already-recorded rows too (recordActivity's write-time gate
+    // alone only stops NEW rows); a deleted artifact's orphaned rows (there
+    // shouldn't be any post-deleteArtifact, but this is cheap defense in depth) drop
+    // out the same way, since there's no matching artifact row to join.
+    const rows = db
+      .select(getTableColumns(activity))
+      .from(activity)
+      .innerJoin(artifact, eq(artifact.id, activity.artifact_id))
+      .where(and(...conds))
+      .orderBy(desc(activity.created_at), desc(activity.id))
+    return (opts?.limit ? rows.limit(opts.limit) : rows).all() as Promise<ActivityRecord[]>
+  }
+
   // ---- Contexts + sessions -------------------------------------------------
   const createContext = async (x: NewContext): Promise<ContextRecord> =>
     (await db.insert(context).values(x).returning().get()) as ContextRecord
@@ -2039,6 +2075,7 @@ export function makeRepos(db: SqliteDb) {
     await db.delete(report).where(eq(report.artifact_id, id)).run()
     await db.delete(notification).where(eq(notification.artifact_id, id)).run()
     await db.delete(agentMention).where(eq(agentMention.artifact_id, id)).run()
+    await db.delete(activity).where(eq(activity.artifact_id, id)).run()
     await db.delete(artifact).where(eq(artifact.id, id)).run()
   }
 
@@ -2202,6 +2239,8 @@ export function makeRepos(db: SqliteDb) {
     getPendingRound,
     listReviewRounds,
     resolveReviewRound,
+    recordActivity,
+    listActivity,
     createContext,
     getContext,
     listContexts,

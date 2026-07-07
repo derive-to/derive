@@ -20,6 +20,7 @@ import {
   artifactQuery,
   collectionsQuery,
   needsFeedbackArtifactsQuery,
+  recentActivityQuery,
   summaryQuery,
 } from "@/lib/queries"
 import { STORAGE_KEYS } from "@/lib/storage-keys"
@@ -27,7 +28,9 @@ import { useDelayedPending } from "@/lib/use-delayed-pending"
 import { useFollows } from "@/lib/use-follows"
 import { usePrefetchArtifact } from "@/lib/use-prefetch-artifact"
 import { cn } from "@/lib/utils"
+import { coalesceActivity } from "../activity/lib"
 import { refFor } from "../artifact/parse-ref"
+import { ActivityBar } from "./activity-bar"
 import { ArtifactGrid } from "./artifact-grid"
 import { ArtifactRow, byRecency } from "./artifact-row"
 import { CollectionBar } from "./collection-bar"
@@ -248,6 +251,10 @@ function LibraryBody({ view }: { view: LibraryView }) {
   const homeView = filter.kind === "all" && !isSearching
   const { data: feedbackData } = useQuery({ ...needsFeedbackArtifactsQuery(), enabled: homeView })
   const feedbackCount = feedbackData?.length ?? 0
+  // The Activity link's single most-recent story — a flat, capped fetch (never
+  // the infinite feed); coalesced the same way the full /activity page is.
+  const { data: recentActivity } = useQuery({ ...recentActivityQuery(), enabled: homeView })
+  const latestActivity = recentActivity ? coalesceActivity(recentActivity)[0] : undefined
 
   // The greeting NEVER branches on a pending query: the count is preloaded in the "/"
   // route loader, so `summary` is present on the first paint. The `totalKnown` guard is
@@ -406,10 +413,13 @@ function LibraryBody({ view }: { view: LibraryView }) {
 
       {showPublish && <PublishCard />}
 
-      {/* The quiet triage line — one entry point to the /feedback feed, home only. */}
-      {homeView && feedbackCount > 0 && (
-        <div className="mb-6">
-          <TriageBar count={feedbackCount} />
+      {/* The quiet triage line — one entry point to the /feedback feed — and the
+          Activity teaser — one entry point to /activity — home only. Triage
+          (needs you) sits above Activity (FYI): action before ambient context. */}
+      {homeView && (feedbackCount > 0 || latestActivity) && (
+        <div className="mb-6 flex flex-col gap-2">
+          {feedbackCount > 0 && <TriageBar count={feedbackCount} />}
+          {latestActivity && <ActivityBar latest={latestActivity} />}
         </div>
       )}
 
