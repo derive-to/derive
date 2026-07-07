@@ -1,70 +1,51 @@
-// Cloudflare Email Service adapter (edge-only). Wraps the `SEND_EMAIL` Worker binding
-// as an `EmailSender`. The binding takes a MIME message (the `EmailMessage` value from
-// the `cloudflare:email` virtual module); we build a minimal multipart/alternative MIME
-// (text + html) by hand to avoid a mimetext dependency. Cloudflare's Email Service
-// configures SPF/DKIM/DMARC for the sending domain and delivers to arbitrary recipients
-// (unlike the older Email Routing `send_email` binding, which only reached verified
-// destinations). Only constructed on the Workers tier (see webhook-do.ts); the Node
-// build never imports it.
+// Cloudflare Email Service adapter (edge-only). Wraps the Email Service `send_email`
+// binding — the STRUCTURED send API — as an `EmailSender`. Email Service delivers to
+// ARBITRARY recipients (Workers Paid: 3,000/mo included, then metered) with SPF/DKIM/DMARC
+// managed for the onboarded sending domain. This is distinct from the older Email Routing
+// `EmailMessage` (cloudflare:email) binding, which only reached verified destination
+// addresses and took a hand-built MIME blob. Only constructed on the Workers tier (see
+// webhook-do.ts); the Node/self-host build (Resend) never imports it.
 
-import type { EmailMessage } from "cloudflare:email"
-import type { EmailMsg, EmailSender } from "./lib/email"
+import type { EmailSender } from "./lib/email"
 
-// `cloudflare:email` is a Workers-runtime virtual module: it doesn't exist under Node
-// (vitest/self-host would fail to resolve a static import). Import the TYPE only above
-// (erased at build), and pull the EmailMessage VALUE via a dynamic import inside send()
-// — only ever reached on the edge, where the module is real. wrangler/esbuild marks
-// `cloudflare:*` external, so this resolves correctly in the Worker bundle.
-
-/** The shape of the `SEND_EMAIL` binding we rely on. */
+/** The Cloudflare Email Service `send_email` binding (declared with `remote = true`). It
+ *  takes a structured message and builds the MIME itself — no `cloudflare:email` module,
+ *  no manual multipart. `from` must be on the onboarded sending domain. Rejects (throws)
+ *  on a delivery failure, which the outbox relies on to retry. */
 export interface SendEmailBinding {
-  send(message: EmailMessage): Promise<void>
+  send(message: {
+    to: string
+    from: string
+    subject: string
+    html: string
+    text: string
+  }): Promise<unknown>
 }
 
-const crlf = (s: string): string => s.replace(/\r?\n/g, "\r\n")
+// Defense-in-depth: flatten CR/LF in the subject before it reaches the binding. The binding
+// owns MIME construction (so this isn't the primary guard), but a comment author's name or
+// an artifact title flows into the subject, and a newline there must never be able to smuggle
+// a header. Cheap, and keeps the invariant local to where the untrusted text is used.
+const oneLine = (s: string): string => s.replace(/[\r\n]+/g, " ").trim()
 
-// Strip CR/LF from a header VALUE so a comment author/title (which can be attacker-chosen,
-// e.g. an anonymous commenter's name) can't inject extra headers (Bcc:, etc.) via a newline.
-const hdr = (s: string): string => s.replace(/[\r\n]+/g, " ").trim()
+// The structured binding takes a BARE sender address. EMAIL_FROM is shared with the Node
+// (Resend) transport, which wants the RFC 5322 "Name <addr>" form — so extract the address
+// from inside the angle brackets when present, else use the value as-is. One EMAIL_FROM value
+// then works across both transports and the send never fails on a from-format the Email
+// Service rejects.
+const bareAddress = (from: string): string => from.match(/<([^>]+)>/)?.[1]?.trim() ?? from.trim()
 
-/** Build a minimal RFC 5322 multipart/alternative message (text + html). `from`/`to` are
- *  plain addresses; header values are CR/LF-stripped to prevent header injection. Exported
- *  for unit testing the header construction without the Workers runtime. */
-export const buildMime = (from: string, msg: EmailMsg, dateIso: string, msgId: string): string => {
-  const boundary = `derive-${msgId}`
-  const headers = [
-    `From: ${hdr(from)}`,
-    `To: ${hdr(msg.to)}`,
-    `Subject: ${hdr(msg.subject)}`,
-    `Message-ID: <${msgId}@derive.to>`,
-    `Date: ${new Date(dateIso).toUTCString()}`,
-    "MIME-Version: 1.0",
-    `Content-Type: multipart/alternative; boundary="${boundary}"`,
-  ].join("\r\n")
-  const body = [
-    `--${boundary}`,
-    "Content-Type: text/plain; charset=utf-8",
-    "Content-Transfer-Encoding: 8bit",
-    "",
-    msg.text,
-    `--${boundary}`,
-    "Content-Type: text/html; charset=utf-8",
-    "Content-Transfer-Encoding: 8bit",
-    "",
-    msg.html,
-    `--${boundary}--`,
-    "",
-  ].join("\r\n")
-  return crlf(`${headers}\r\n\r\n${body}`)
-}
-
-/** Adapt the Cloudflare `SEND_EMAIL` binding to an `EmailSender`. `from` must be on a
- *  domain configured for the Email Service. */
+/** Adapt the Cloudflare Email Service binding to an `EmailSender`. `from` must be on the
+ *  onboarded sending domain (e.g. "notifications@send.derive.to", or the display-name form
+ *  "Derive <notifications@send.derive.to>" — the address is extracted). */
 export const cloudflareEmailSender = (binding: SendEmailBinding, from: string): EmailSender => ({
   async send(msg) {
-    const { EmailMessage } = await import("cloudflare:email")
-    const id = crypto.randomUUID().slice(0, 12)
-    const raw = buildMime(from, msg, new Date().toISOString(), id)
-    await binding.send(new EmailMessage(from, msg.to, raw))
+    await binding.send({
+      to: msg.to,
+      from: bareAddress(from),
+      subject: oneLine(msg.subject),
+      html: msg.html,
+      text: msg.text,
+    })
   },
 })
