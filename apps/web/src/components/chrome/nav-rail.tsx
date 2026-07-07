@@ -300,7 +300,8 @@ export function NavRail() {
   const isAll = onLibrary && !search.tag && !search.collection
   const isFav = loc.pathname === "/favorites"
   const onShared = loc.pathname === "/shared"
-  const onPeople = loc.pathname === "/people"
+  // People + its Activity sub-view (the /following feed) are one tab; the row lights for both.
+  const onPeople = loc.pathname === "/people" || loc.pathname === "/following"
   const onContexts = loc.pathname.startsWith("/contexts")
   const onSettings = loc.pathname.startsWith("/settings")
   const tags = summary?.tags ?? []

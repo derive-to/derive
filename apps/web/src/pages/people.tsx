@@ -7,10 +7,12 @@ import { EmptyState } from "@/components/shared/empty-state"
 import { FollowButton } from "@/components/shared/follow-button"
 import { PageHeader } from "@/components/shared/page-header"
 import { PageShell } from "@/components/shared/page-shell"
+import { PeopleTabs } from "@/components/shared/people-tabs"
 import { SearchField } from "@/components/shared/search-field"
 import { SectionEyebrow } from "@/components/shared/section-eyebrow"
 import { StatusPanel } from "@/components/shared/status-panel"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useAuth } from "@/ctx"
@@ -88,6 +90,7 @@ export function People() {
           the larger step down to the results. */}
       <div className="flex flex-col gap-4">
         <PageHeader title="People" subtitle="Find people on Derive and follow their work." />
+        <PeopleTabs />
         <SearchField
           value={q}
           onValueChange={setQ}
@@ -146,13 +149,25 @@ export function People() {
           )}
         >
           {searching ? (
-            <PeopleGroup label="Results" people={results} testId="people-results" />
+            <PeopleGroup
+              label="Results"
+              people={results}
+              testId="people-results"
+              mateHandles={mateHandles}
+              markWorkspace
+            />
           ) : (
             <>
               {/* Browse leads with who you follow, then the people you work with — the two
                   people-sets worth seeing without typing. Everyone else lives behind search. */}
               {followed.length > 0 && (
-                <PeopleGroup label="Following" people={followed} testId="people-following" />
+                <PeopleGroup
+                  label="Following"
+                  people={followed}
+                  testId="people-following"
+                  mateHandles={mateHandles}
+                  markWorkspace
+                />
               )}
               {mateOnly.length > 0 && (
                 <PeopleGroup label="Your workspaces" people={mateOnly} testId="people-workspace" />
@@ -171,10 +186,17 @@ function PeopleGroup({
   label,
   people,
   testId,
+  mateHandles,
+  markWorkspace = false,
 }: {
   label: string
   people: PublicProfile[]
   testId: string
+  // Handles of your workspace members; rows in this set get an "In your workspace" tag.
+  mateHandles?: Set<string>
+  // Off for the "Your workspaces" group (the section label already says it) — on where
+  // a member is mixed in with others (Following, search Results).
+  markWorkspace?: boolean
 }) {
   return (
     <section>
@@ -183,7 +205,11 @@ function PeopleGroup({
       </SectionEyebrow>
       <ul role="list" data-testid={testId} className="flex flex-col gap-2">
         {people.map((p) => (
-          <PersonRow key={p.username} person={p} />
+          <PersonRow
+            key={p.username}
+            person={p}
+            inWorkspace={markWorkspace && !!mateHandles?.has(p.username.toLowerCase())}
+          />
         ))}
       </ul>
     </section>
@@ -191,9 +217,16 @@ function PeopleGroup({
 }
 
 // One directory row: identity links to the profile (stretched link over the whole row);
-// Follow sits beside it as a sibling — not nested in the link (no interactive-inside-
-// interactive). FollowButton self-hides for your own handle and signed-out viewers.
-function PersonRow({ person: p }: { person: PublicProfile }) {
+// the workspace tag + Follow sit beside it as siblings — not nested in the link (no
+// interactive-inside-interactive). FollowButton self-hides for your own handle and
+// signed-out viewers. `inWorkspace` tags a person you share a workspace with.
+function PersonRow({
+  person: p,
+  inWorkspace = false,
+}: {
+  person: PublicProfile
+  inWorkspace?: boolean
+}) {
   const initials = getInitials(p.name ?? p.username)
   return (
     <li className="relative flex items-center gap-3 rounded-lg border bg-card px-3.5 py-3 hover:border-foreground/25">
@@ -229,6 +262,11 @@ function PersonRow({ person: p }: { person: PublicProfile }) {
           )}
         </span>
       </Link>
+      {inWorkspace && (
+        <Badge variant="secondary" className="relative z-10 hidden shrink-0 sm:inline-flex">
+          In your workspace
+        </Badge>
+      )}
       <FollowButton username={p.username} size="sm" className="relative z-10 shrink-0" />
     </li>
   )

@@ -8,6 +8,7 @@ import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { EmptyState } from "@/components/shared/empty-state"
 import { PageHeader } from "@/components/shared/page-header"
 import { PageShell } from "@/components/shared/page-shell"
+import { PeopleTabs } from "@/components/shared/people-tabs"
 import { SearchField } from "@/components/shared/search-field"
 import { SectionEyebrow } from "@/components/shared/section-eyebrow"
 import { Spinner } from "@/components/shared/spinner"
@@ -308,6 +309,14 @@ function LibraryBody({ view }: { view: LibraryView }) {
 
   return (
     <PageShell scrollRef={scrollRef} width="wide">
+      {/* The Following feed is the Activity sub-view of the People tab: a shared "People"
+          title + tab toggle sit above the feed so switching to the roster is one click. */}
+      {view === "following" && (
+        <div className="mb-5 flex flex-col gap-4">
+          <PageHeader title="People" subtitle="Recent work from the people you follow." />
+          <PeopleTabs />
+        </div>
+      )}
       {homeView && (
         <PageHeader
           className="mb-4"
