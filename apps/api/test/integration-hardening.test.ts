@@ -84,11 +84,22 @@ describe("permanent-failure dead-lettering", () => {
   })
 })
 
+type SentMsg = {
+  from: string | { name: string; email: string }
+  to: string | { name: string; email: string }
+  subject: string
+}
+
 describe("email header-injection defense", () => {
   it("flattens CR/LF in the subject before handing it to the Email Service binding", async () => {
-    const sent: { to: string; from: string; subject: string }[] = []
+    const sent: SentMsg[] = []
     const sender = cloudflareEmailSender(
-      { send: async (m) => void sent.push(m) },
+      {
+        send: async (m) => {
+          sent.push(m)
+          return { messageId: "x" }
+        },
+      },
       "Derive <notifications@derive.to>",
     )
     await sender.send({
@@ -102,18 +113,38 @@ describe("email header-injection defense", () => {
     // Bcc: header out of the subject.
     expect(sent[0]?.subject).toBe("hi Bcc: attacker@evil.com")
     expect(sent[0]?.subject).not.toMatch(/[\r\n]/)
-    // The bare address is extracted from the "Name <addr>" form (the structured binding
-    // takes a bare sender), so the display name is dropped and only the address is sent.
-    expect(sent[0]?.from).toBe("notifications@derive.to")
+    // The "Name <addr>" form is split into the structured { name, email } the builder wants,
+    // so the sender keeps its display name instead of showing a bare address.
+    expect(sent[0]?.from).toEqual({ name: "Derive", email: "notifications@derive.to" })
   })
 
-  it("passes a bare from address through unchanged", async () => {
-    const sent: { from: string }[] = []
+  it("passes a bare from address through as a plain string", async () => {
+    const sent: SentMsg[] = []
     const sender = cloudflareEmailSender(
-      { send: async (m) => void sent.push(m) },
+      {
+        send: async (m) => {
+          sent.push(m)
+          return { messageId: "x" }
+        },
+      },
       "notifications@send.derive.to",
     )
     await sender.send({ to: "a@b.com", subject: "s", html: "<p>x</p>", text: "x" })
     expect(sent[0]?.from).toBe("notifications@send.derive.to")
+  })
+
+  it("names the recipient when toName is set", async () => {
+    const sent: SentMsg[] = []
+    const sender = cloudflareEmailSender(
+      {
+        send: async (m) => {
+          sent.push(m)
+          return { messageId: "x" }
+        },
+      },
+      "Derive <notifications@send.derive.to>",
+    )
+    await sender.send({ to: "a@b.com", toName: "Ada", subject: "s", html: "<p>x</p>", text: "x" })
+    expect(sent[0]?.to).toEqual({ name: "Ada", email: "a@b.com" })
   })
 })
