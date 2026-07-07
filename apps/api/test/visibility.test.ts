@@ -266,8 +266,8 @@ describe("profile privacy: discoverable off hides the profile", () => {
   })
 })
 
-describe("/v1/people?scope=workspace", () => {
-  it("lists workspace-mates regardless of discoverability; global browse still honors it", async () => {
+describe("/v1/people — workmates only", () => {
+  it("lists workspace-mates regardless of discoverability, never yourself", async () => {
     const opted: TestUser = {
       id: "u_vis_out",
       email: "out@vis.test",
@@ -276,15 +276,11 @@ describe("/v1/people?scope=workspace", () => {
       discoverable: false,
     }
     const { app } = makeAuthedApp("vis-people", [ana, opted], "editor")
-    const ws = await (
-      await app.request("/v1/people?scope=workspace", { headers: as(ana.email) })
-    ).json()
+    // Membership already implies you can see each other — the discoverable
+    // opt-out governs strangers (search/profiles), not teammates.
+    const ws = await (await app.request("/v1/people", { headers: as(ana.email) })).json()
     expect(ws.users.map((u: { username: string }) => u.username)).toContain("outv")
-    // Not yourself.
     expect(ws.users.map((u: { username: string }) => u.username)).not.toContain("anav")
-    // The global directory still hides the opt-out.
-    const all = await (await app.request("/v1/people", { headers: as(ana.email) })).json()
-    expect(all.users.map((u: { username: string }) => u.username)).not.toContain("outv")
   })
 })
 

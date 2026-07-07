@@ -59,8 +59,11 @@ export interface PublicProfile {
   about?: string | null
   /** GitHub login, when known (the full /users/:handle profile only); null otherwise. */
   github_login?: string | null
-  /** Work / follower / following counts (the full /users/:handle profile only). */
-  stats?: { works: number; followers: number; following: number }
+  /** The viewer shares a workspace with this person (or is them) — gates the work
+   *  grid and Follow. A stranger's profile is the identity card alone. */
+  teammate?: boolean
+  /** Work count, present for teammates only (/users/:handle). */
+  stats?: { works: number }
   /** Whether the signed-in viewer already follows this person (full profile only). */
   followed_by_me?: boolean
 }
@@ -692,10 +695,6 @@ export const api = {
     }).then(j)
   },
   // People who follow / are followed by this user (public profiles; no ids or email).
-  profileFollowers: (handle: string): Promise<{ users: PublicProfile[] }> =>
-    f(`/v1/users/${encodeURIComponent(handle)}/followers`, { credentials: "include" }).then(j),
-  profileFollowing: (handle: string): Promise<{ users: PublicProfile[] }> =>
-    f(`/v1/users/${encodeURIComponent(handle)}/following`, { credentials: "include" }).then(j),
   // Set your team role + "what you do" blurb (onboarding + Settings → Profile).
   // Omitted fields are left untouched; "" clears a field.
   setProfile: (fields: {

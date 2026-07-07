@@ -21,7 +21,6 @@ import {
   followingPreviewQuery,
   followsQuery,
   peopleQuery,
-  profilePeopleQuery,
   workspacePeopleQuery,
 } from "@/lib/queries"
 import { ago } from "@/lib/time"
@@ -29,11 +28,11 @@ import { useDelayedPending } from "@/lib/use-delayed-pending"
 import { cn } from "@/lib/utils"
 import { refFor } from "@/pages/artifact/parse-ref"
 
-// The People tab — who you follow, plus a way to find the people you work with. It folds
-// the old Following nav item in: the browse (no-query) view leads with the people you
-// follow, then your workspace teammates — the two people-sets worth seeing without typing.
-// Everyone else on Derive lives behind the search (debounced); results stay put (dimmed)
-// while the next set loads — never a flash.
+// The People tab — the people you work with. It folds the old Following nav item
+// in: browse leads with the people you follow, then the rest of your workspace
+// teammates. Search filters within those same people (the server scopes /v1/people
+// to your workspaces — there is deliberately no global directory at launch);
+// results stay put (dimmed) while the next set loads — never a flash.
 export function People() {
   const [q, setQ] = useState("")
   const [debounced, setDebounced] = useState("")
@@ -45,27 +44,21 @@ export function People() {
   const { me } = useAuth()
   const searching = debounced.length > 0
 
-  // A search spans everyone on Derive; browse shows only who you follow + your workspace
-  // teammates (a full directory isn't scrolled, it's searched), so the global people query
-  // only runs while searching.
+  // Search filters within your workmates server-side; browse shows who you follow
+  // + the rest of your teammates, so the query only runs while searching.
   const { data, isError, isFetching, isPlaceholderData, refetch } = useQuery({
     ...peopleQuery(debounced),
     enabled: searching,
   })
   const { data: mates = [], isPending: matesPending } = useQuery(workspacePeopleQuery())
   const { data: follows = [], isPending: followsPending } = useQuery(followsQuery())
-  // Follow rows carry each person's handle/name/avatar but not their profession; pull the
-  // full "following" profiles to fill in the role line. The follows query stays the source
-  // of truth for WHICH people show (so a follow/unfollow reflects instantly) — this enriches.
-  const { data: followingProfiles = [] } = useQuery({
-    ...profilePeopleQuery(me?.username ?? "", "following"),
-    enabled: !!me?.username,
-  })
   // Recent work from the people you follow — a small peek shown under the people grid,
   // so "who you follow" and "what they're making" live on one page. Full feed at /following.
   const { data: activity = [] } = useQuery(followingPreviewQuery())
+  // Follow rows carry handle/name/avatar but not profession; follows are
+  // workspace-scoped now, so the teammate roster fills in the role line.
   const professionByHandle = new Map(
-    followingProfiles.map((p) => [p.username.toLowerCase(), p.profession ?? null]),
+    mates.map((p) => [p.username.toLowerCase(), p.profession ?? null]),
   )
 
   const people = data ?? []
@@ -88,15 +81,8 @@ export function People() {
   // Don't list a teammate twice if you already follow them.
   const mateOnly = mates.filter((m) => !followedHandles.has(m.username.toLowerCase()))
 
-  // Search results: everyone on Derive, but float the people you work with to the top
-  // ("anyone, but focus on your workspace") and drop yourself.
-  const results = people
-    .filter((p) => p.username.toLowerCase() !== me?.username?.toLowerCase())
-    .sort(
-      (a, b) =>
-        Number(mateHandles.has(b.username.toLowerCase())) -
-        Number(mateHandles.has(a.username.toLowerCase())),
-    )
+  // Search results: your workmates (server-scoped), minus yourself.
+  const results = people.filter((p) => p.username.toLowerCase() !== me?.username?.toLowerCase())
 
   // Loading is per-mode: a search waits on the people query's first page; browse waits on
   // your follows + teammates. keepPreviousData holds prior results, so the skeleton is only
@@ -112,7 +98,7 @@ export function People() {
       {/* Title + description + search — one tight header block; the PageShell gap makes
           the larger step down to the results. */}
       <div className="flex flex-col gap-4">
-        <PageHeader title="People" subtitle="Find people on Derive and follow their work." />
+        <PageHeader title="People" subtitle="The people you work with, and what they’re making." />
         <SearchField
           value={q}
           onValueChange={setQ}
@@ -151,13 +137,11 @@ export function People() {
             icon={<Icon name={searching ? "search" : "following"} strokeWidth={1.75} />}
             // A search that found nothing is corrective ("try another"); an empty browse
             // means you follow no one yet — point at the search, not discoverability.
-            title={
-              searching ? `No people match “${debounced}”.` : "You’re not following anyone yet."
-            }
+            title={searching ? `No one matches “${debounced}”.` : "It’s just you so far."}
             description={
               searching
                 ? "Try a different name or @handle."
-                : "Search above to find people to follow."
+                : "Invite teammates to a workspace and they’ll show up here."
             }
           />
         </div>
@@ -171,13 +155,7 @@ export function People() {
           )}
         >
           {searching ? (
-            <PeopleGroup
-              label="Results"
-              people={results}
-              testId="people-results"
-              mateHandles={mateHandles}
-              markWorkspace
-            />
+            <PeopleGroup label="Results" people={results} testId="people-results" />
           ) : (
             <>
               {/* Browse leads with who you follow, then the people you work with — the two
@@ -422,7 +400,7 @@ export function PeoplePending() {
   return (
     <PageShell className="flex flex-col gap-5">
       <div className="flex flex-col gap-4">
-        <PageHeader title="People" subtitle="Find people on Derive and follow their work." />
+        <PageHeader title="People" subtitle="The people you work with, and what they’re making." />
         {/* The SearchField's InputGroup well is h-8, rounded-lg. */}
         <Skeleton className="h-8 w-full rounded-lg" />
       </div>

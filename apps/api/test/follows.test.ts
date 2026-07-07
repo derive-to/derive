@@ -189,9 +189,9 @@ describe("people follow", () => {
     expect(userFollow).toMatchObject({ kind: "user", target: "amy", handle: "amy", name: "Amy" })
     expect(JSON.stringify(bobFollows)).not.toContain(amy.id) // no raw user id on the wire
 
-    // The profile reflects it: amy has 1 follower; bob (the viewer) follows her.
+    // The profile reflects it: bob (the viewer) follows her. (No follower
+    // counts — the follow graph isn't a browsable surface at launch.)
     const amyProfile = await (await app.request("/v1/users/amy", { headers: as(bob.email) })).json()
-    expect(amyProfile.user.stats.followers).toBe(1)
     expect(amyProfile.user.followed_by_me).toBe(true)
 
     // amy sees a "follow" notification from bob (by his handle).
@@ -206,7 +206,6 @@ describe("people follow", () => {
     })
     expect(del.status).toBe(204)
     const after = await (await app.request("/v1/users/amy", { headers: as(bob.email) })).json()
-    expect(after.user.stats.followers).toBe(0)
     expect(after.user.followed_by_me).toBe(false)
   })
 })
