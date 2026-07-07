@@ -9,7 +9,7 @@ import { serve } from "@hono/node-server"
 import Database from "better-sqlite3"
 import { Pool } from "pg"
 import { createApp } from "./app"
-import { type AuthDb, makeAuth, migrateAuth } from "./auth-config"
+import { type AuthDb, makeAuth, migrateAuth, OAUTH_ANON_CLIENT_TTL_MS } from "./auth-config"
 import { loadConfig, resolveAuthSecret, resolveDefaultOrg } from "./config"
 import { workspacesBlockingDeletion } from "./lib/account"
 import { customDomainsFromEnv } from "./lib/cloudflare-saas"
@@ -271,7 +271,9 @@ if (cfg.serveWeb && shellHtml !== undefined)
 // prune keeps the append-only view table bounded. 0 disables pruning entirely.
 // Daily maintenance: prune the rolling view window (when retention is on) and reap
 // abandoned anonymous OAuth clients (open-DCR rows never consented, holding no
-// tokens, > 1 day old). The reaper runs regardless of view retention.
+// tokens, > OAUTH_ANON_CLIENT_TTL_MS old). The reaper runs regardless of view
+// retention; the authorize-time self-heal in app.ts covers a client that slips
+// through anyway.
 let pruneTimer: ReturnType<typeof setInterval> | undefined
 const maintain = async () => {
   if (cfg.retentionDays > 0)
@@ -279,7 +281,7 @@ const maintain = async () => {
       .pruneViews(new Date(Date.now() - cfg.retentionDays * 86400_000).toISOString())
       .catch(() => 0)
   await meta
-    .pruneStaleOAuthClients(new Date(Date.now() - 24 * 3600_000).toISOString())
+    .pruneStaleOAuthClients(new Date(Date.now() - OAUTH_ANON_CLIENT_TTL_MS).toISOString())
     .catch(() => 0)
 }
 void maintain()
