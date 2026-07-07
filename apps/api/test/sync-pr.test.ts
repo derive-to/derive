@@ -2,6 +2,7 @@ import { createHmac, generateKeyPairSync } from "node:crypto"
 import { mkdtempSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { DEFAULT_ORG_SETTINGS } from "@derive/core"
 import { FsBlobStore } from "@derive/storage/fs"
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest"
 import { encryptSecret } from "../src/lib/crypto"
@@ -346,6 +347,7 @@ describe("github pr preview: sticky comment on the PR", () => {
 
   it("respects the workspace toggle: no comment when githubPreviewLink is off", async () => {
     await meta.setOrgSettings(ORG, {
+      ...DEFAULT_ORG_SETTINGS,
       emailNotifications: true,
       githubPostComments: true,
       githubMirrorComments: true,
@@ -358,6 +360,7 @@ describe("github pr preview: sticky comment on the PR", () => {
     expect(ghComments["21"]).toBeUndefined() // but no PR comment posted
     // Restore for any later assertions.
     await meta.setOrgSettings(ORG, {
+      ...DEFAULT_ORG_SETTINGS,
       emailNotifications: true,
       githubPostComments: true,
       githubMirrorComments: true,

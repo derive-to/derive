@@ -7,6 +7,9 @@ export const STORAGE_KEYS = {
   cursorPref: "derive.cursor.pref",
   commentsPanel: "derive.comments.panel",
   navCollapsed: "derive.nav.collapsed",
+  // Agent pushes auto-open in this tab (absent = on). Per-device on purpose:
+  // yanking navigation is fine on your own laptop, hostile on a shared screen.
+  autoOpen: "derive.autoopen",
   // Legacy literals (the colon convention predates the dot switch) — kept as-is so a
   // saved onboarding flag / folder pref survives the rename.
   onboarded: "derive:onboarded",

@@ -40,7 +40,9 @@ describe("agents act as their registrant, capped at their registered role", () =
       })
     ).json()
 
-    // The agent publishes (no visibility ⇒ private).
+    // The agent publishes (no visibility ⇒ the workspace's AGENT default,
+    // unlisted: the draft state — hidden from listings, one link away for
+    // members). A signed-in human's own publish still defaults to private.
     const form = new FormData()
     form.append("file", new Blob([new TextEncoder().encode("# memo")]), "memo.md")
     const pub = await app.request("/v1/artifacts", {
@@ -50,9 +52,9 @@ describe("agents act as their registrant, capped at their registered role", () =
     })
     expect(pub.status).toBe(201)
     const a = await pub.json()
-    expect(a.visibility).toBe("private")
+    expect(a.visibility).toBe("unlisted")
 
-    // Ana can open and owns it; her teammate can't see it; the agent can republish.
+    // Ana can open and owns it; the agent can republish.
     const hers = await (
       await app.request(`/v1/artifacts/${a.short_id}`, { headers: as(ana.email) })
     ).json()
@@ -76,9 +78,15 @@ describe("agents act as their registrant, capped at their registered role", () =
         })
       ).status,
     ).toBe(403)
+    // Unlisted's contract for a teammate: the LINK opens it (view), but no
+    // listing ever surfaces it to him.
     expect(
       (await app.request(`/v1/artifacts/${a.short_id}`, { headers: as(ben.email) })).status,
-    ).toBe(404)
+    ).toBe(200)
+    const bensList = await (await app.request("/v1/artifacts", { headers: as(ben.email) })).json()
+    expect(bensList.artifacts.map((x: { short_id: string }) => x.short_id)).not.toContain(
+      a.short_id,
+    )
     const form2 = new FormData()
     form2.append("file", new Blob([new TextEncoder().encode("# memo v2")]), "memo.md")
     expect(
@@ -90,11 +98,17 @@ describe("agents act as their registrant, capped at their registered role", () =
         })
       ).status,
     ).toBe(201)
-    // And it lands in Ana's own library listing.
+    // Ana's ORDINARY listing hides the draft (unlisted is hidden even from its
+    // owner there — the dedicated feed is the finder), while scope=unlisted is
+    // exactly her drafts.
     const list = await (await app.request("/v1/artifacts", { headers: as(ana.email) })).json()
-    expect(list.artifacts.map((x: { short_id: string }) => x.short_id)).toContain(a.short_id)
+    expect(list.artifacts.map((x: { short_id: string }) => x.short_id)).not.toContain(a.short_id)
+    const drafts = await (
+      await app.request("/v1/artifacts?scope=unlisted", { headers: as(ana.email) })
+    ).json()
+    expect(drafts.artifacts.map((x: { short_id: string }) => x.short_id)).toContain(a.short_id)
 
-    // The agent lists too (MCP list_artifacts rides this) and sees the private
+    // The agent lists too (MCP list_artifacts rides this) and sees the unlisted
     // publish through its registrant's owner row, capped to its own rank.
     const agentList = await (
       await app.request("/v1/artifacts", {

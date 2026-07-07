@@ -565,7 +565,7 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(created.title).toBe("My First Doc")
     expect(created.short_id).toBeTruthy()
     expect(created.url).toContain(created.short_id)
-    expect(created.visibility).toBe("private") // invite-only by default, like every publish path
+    expect(created.visibility).toBe("unlisted") // the agent-draft default: hidden from listings, one link away
 
     // It's really there: list_artifacts + read see it live.
     const list = JSON.parse(toolText(await call(app, token, "list_artifacts")))

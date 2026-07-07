@@ -300,6 +300,10 @@ export interface OrgSettings {
   githubMirrorComments: boolean
   githubPreviewLink: boolean
   slackPost: boolean
+  /** What a member opening an unlisted link may do (per-doc override in Share). */
+  defaultUnlistedRole: "viewer" | "commenter"
+  /** Where a NEW agent (MCP) publish lands when the agent doesn't say. */
+  defaultAgentVisibility: "unlisted" | "private" | "org" | "link" | "public"
 }
 /** Slack connection status for the Settings UI. */
 export interface SlackStatus {
@@ -383,7 +387,7 @@ export interface Notification {
   user_id: string
   /** Who triggered it. For `follow`/`publish` this is the person's @handle. */
   actor: string
-  kind: "mention" | "comment" | "share" | "follow" | "publish"
+  kind: "mention" | "comment" | "share" | "follow" | "publish" | "review"
   artifact_id: string
   artifact_short_id: string
   artifact_title: string | null
@@ -784,7 +788,7 @@ export const api = {
      *  "following" → artifacts in the active workspace matching your follows
      *  (followed GitHub authors + repo path prefixes) — the activity feed.
      *  "needs_feedback" → artifacts with an open thread you're tagged in or commented on. */
-    scope?: "shared" | "following" | "needs_feedback"
+    scope?: "shared" | "following" | "needs_feedback" | "unlisted"
     cursor?: string
     limit?: number
   }): Promise<{
@@ -809,6 +813,8 @@ export const api = {
   browseSummary: (): Promise<{
     total: number
     favorites: number
+    /** The caller's own unlisted drafts — badges the library's Unlisted feed. */
+    unlisted: number
     tags: { tag: string; count: number }[]
     workspace: string
   }> => f("/v1/tags", opts()).then(j),

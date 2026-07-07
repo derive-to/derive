@@ -1,5 +1,6 @@
 import {
   type ArtifactRecord,
+  artifactUrl,
   type BundleDoc,
   type BundleManifest,
   bundleDoc,
@@ -124,6 +125,9 @@ export const artifactRoutes = (ctx: AppContext) => {
       if (!me) return c.json({ artifacts: [], next_cursor: null })
       narrow(await meta.artifactIdsNeedingFeedback(me.id, await activeWorkspace(c)))
     }
+    // scope=unlisted → the caller's own unlisted drafts in this workspace: the
+    // library's Unlisted filter. Ordinary listings hide unlisted entirely.
+    const unlistedScope = c.req.query("scope") === "unlisted"
     if (tag) narrow(await meta.artifactIdsByTag(tag))
     if (favOnly) narrow(favIds)
 
@@ -167,6 +171,10 @@ export const artifactRoutes = (ctx: AppContext) => {
     // sees public artifacts only, so org/link titles never leak via the list or ?query=.
     // For a collection, collection access (member/creator/share) also unlocks it.
     const publicOnly = collectionId ? !collectionAccess : !(isOperator || baselineRole !== null)
+    // The Unlisted filter is a members-only view of their OWN drafts — a caller
+    // with no standing here (or no member rows to match) has none by definition.
+    if (unlistedScope && (publicOnly || !memberKey))
+      return c.json({ artifacts: [], next_cursor: null })
     const rows = await meta.listArtifacts({
       limit: limit + 1,
       cursor,
@@ -183,6 +191,13 @@ export const artifactRoutes = (ctx: AppContext) => {
       // Private artifacts appear only for their explicit members; the operator
       // token sees everything (viewerId omitted).
       viewerId: isOperator ? undefined : (memberKey ?? undefined),
+      // Agents get their registrant's unlisted drafts folded back in (an agent
+      // must always find the work it published — the stdio shim's list rides
+      // this route). Shared-with-you and needs-feedback are deliberate human
+      // signals (an explicit share, a thread you're in), so a member's unlisted
+      // docs surface there too. Ordinary listings stay clean — the Unlisted
+      // feed is the finder.
+      unlisted: unlistedScope ? "only" : agent || shared || needsFeedback ? "include" : undefined,
     })
     const hasMore = rows.length > limit
     const page = hasMore ? rows.slice(0, limit) : rows
@@ -253,8 +268,8 @@ export const artifactRoutes = (ctx: AppContext) => {
     // empty summary with no workspace name, so it can't be used to enumerate a private
     // workspace's name + size.
     if (!(await isMember(c, org)))
-      return c.json({ total: 0, favorites: 0, tags: [], workspace: null })
-    const [total, tags, favIds, ws] = await Promise.all([
+      return c.json({ total: 0, favorites: 0, unlisted: 0, tags: [], workspace: null })
+    const [total, tags, favIds, ws, unlisted] = await Promise.all([
       meta.countArtifacts(org),
       meta.tagCounts(org),
       // Scope the favorites count to THIS workspace's live artifacts — the favorites
@@ -262,11 +277,15 @@ export const artifactRoutes = (ctx: AppContext) => {
       // must not inflate the count (otherwise "Favorites · 1" with an empty list).
       me ? meta.listUserFavoriteIds(me.id, org) : Promise.resolve([]),
       meta.getWorkspace(org),
+      // The caller's own unlisted drafts — the Unlisted filter's badge. Zero hides
+      // the filter, so it only exists when there's something in it.
+      me ? meta.countUnlistedFor(org, me.id) : Promise.resolve(0),
     ])
     tags.sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag))
     return c.json({
       total,
       favorites: favIds.length,
+      unlisted,
       tags,
       workspace: ws?.name ?? DEFAULT_WORKSPACE_NAME,
     })
@@ -326,7 +345,11 @@ export const artifactRoutes = (ctx: AppContext) => {
     // An explicitly-provided visibility that isn't a known value is rejected, not
     // silently coerced — a typo must not publish more openly than intended.
     if (str(body["visibility"]) && !visibility)
-      return fail(c, 400, "visibility must be one of: public, link, org, password, private")
+      return fail(
+        c,
+        400,
+        "visibility must be one of: public, link, org, password, private, unlisted",
+      )
     const password = str(body["password"])
     if (!shortId && visibility === "password" && !password)
       return fail(c, 400, "a password is required for password visibility")
@@ -340,6 +363,16 @@ export const artifactRoutes = (ctx: AppContext) => {
       // must be a real user id, never an agent principal.
       const actor = await actingUser(c)
       const onBehalf = await privateOwnerId(c)
+      // An AGENT-credentialed create (registered token / OAuth bearer — the CLI
+      // and stdio-shim paths) lands with the workspace's agent default when no
+      // visibility was asked for: usually `unlisted`, the draft state. A
+      // signed-in human's own publish keeps the private default.
+      const agentPrincipal = await agentFor(c)
+      const resolvedVisibility =
+        visibility ??
+        (agentPrincipal && !shortId
+          ? (await meta.getOrgSettings(org)).defaultAgentVisibility
+          : undefined)
       const { artifact, version } = await publish(
         meta,
         blobs,
@@ -360,7 +393,7 @@ export const artifactRoutes = (ctx: AppContext) => {
           authorId: onBehalf,
           name: str(body["name"]),
           orgId: org,
-          visibility,
+          visibility: resolvedVisibility,
           passwordHash,
         },
         shortId,
@@ -380,6 +413,16 @@ export const artifactRoutes = (ctx: AppContext) => {
           user_id: ownerId,
           role: "owner",
         })
+      // A NEW unlisted artifact takes the workspace's default link permission as
+      // its general_role (what a member with the link may do); the share dialog
+      // can still override per doc.
+      if (!shortId && artifact.visibility === "unlisted")
+        await meta.setVisibility(
+          artifact.id,
+          "unlisted",
+          null,
+          (await meta.getOrgSettings(org)).defaultUnlistedRole,
+        )
       bus.publish(artifact.id, {
         type: "version.published",
         n: version.n,
@@ -441,6 +484,7 @@ export const artifactRoutes = (ctx: AppContext) => {
       // reviewer is the human behind the publish (onBehalf covers both a session
       // user and an agent's registrant); falls back to the workspace's first owner
       // so a headless publish still has someone to ask. No human to ask → skip.
+      let roundCreated = false
       if (body["request_review"] === "true" || body["request_review"] === "1") {
         const reviewer =
           onBehalf ??
@@ -455,6 +499,7 @@ export const artifactRoutes = (ctx: AppContext) => {
             requested_for: reviewer,
             note: str(body["review_note"]) ?? null,
           })
+          roundCreated = true
           bus.publish(artifact.id, { type: "review.requested", round_id: round.id })
           await notify(artifact, "review.requested", {
             version: version.n,
@@ -462,8 +507,67 @@ export const artifactRoutes = (ctx: AppContext) => {
           })
         }
       }
+      // The MCP loop over HTTP: an AGENT-credentialed publish (a registered
+      // dk_agt_ token or an OAuth bearer — the CLI and stdio-shim paths) reaches
+      // its human exactly like the /mcp path does: one bell row per push (a
+      // review ask beats a plain publish), then artifact.pushed on their user
+      // channel so an open tab auto-opens. A signed-in human's own save gets
+      // none of this — they're already looking at it.
+      let openedInTab: boolean | null = null
+      if (agentPrincipal && onBehalf) {
+        if (roundCreated || !shortId) {
+          const row = {
+            id: newId("n"),
+            user_id: onBehalf,
+            actor: agentPrincipal.name,
+            kind: roundCreated ? ("review" as const) : ("publish" as const),
+            artifact_id: artifact.id,
+            artifact_short_id: artifact.short_id,
+            artifact_title: artifact.title,
+            thread_id: "",
+            comment_id: "",
+            preview: roundCreated
+              ? `requested your review of v${version.n}`
+              : (artifact.title ?? "published something new"),
+          }
+          await meta.createNotification(row)
+          bus.publish(`u:${onBehalf}`, {
+            type: "notification",
+            notification: { ...row, read: 0, created_at: new Date().toISOString() },
+          })
+        }
+        const pushed = {
+          type: "artifact.pushed" as const,
+          event_id: newId("ev"),
+          short_id: artifact.short_id,
+          artifact_id: artifact.id,
+          title: artifact.title,
+          version: version.n,
+          kind: shortId ? "revised" : "created",
+          url: artifactUrl(deps.baseUrl, artifact),
+          agent: agentPrincipal.name,
+          review_requested: roundCreated,
+        }
+        if (bus.publishWithReceipt) {
+          openedInTab = await Promise.race([
+            bus.publishWithReceipt(`u:${onBehalf}`, pushed).then((n) => n > 0),
+            new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 1500)),
+          ])
+        } else {
+          bus.publish(`u:${onBehalf}`, pushed)
+          openedInTab = false
+        }
+      }
       const versions = await meta.listVersions(artifact.id)
-      return c.json({ ...toJson(deps.baseUrl, artifact, versions), published: version.n }, 201)
+      return c.json(
+        {
+          ...toJson(deps.baseUrl, artifact, versions),
+          published: version.n,
+          ...(roundCreated ? { review_requested: true } : {}),
+          ...(openedInTab !== null ? { opened_in_tab: openedInTab } : {}),
+        },
+        201,
+      )
     } catch (err) {
       if (err instanceof PublishError) return fail(c, err.statusCode as 400, err.message)
       throw err
@@ -598,7 +702,13 @@ export const artifactRoutes = (ctx: AppContext) => {
     if (b instanceof Response) return b
     const visibility = visibilityOf(b.visibility)
     if (!visibility) return fail(c, 400, "invalid visibility")
-    const generalRole = b.generalRole ?? "viewer"
+    // Turning unlisted without an explicit choice seeds the workspace's default
+    // link permission (view or comment); the dialog's per-doc override still wins.
+    const generalRole =
+      b.generalRole ??
+      (visibility === "unlisted"
+        ? (await meta.getOrgSettings(artifact.org_id)).defaultUnlistedRole
+        : "viewer")
     let passwordHash: string | null = null
     if (visibility === "password") {
       if (b.password) passwordHash = hashPassword(b.password)

@@ -4,7 +4,7 @@
 //   derive login [--local] [--server url]   OAuth sign-in (default https://derive.to); saves a token
 //   derive publish [file|dir] [--id --title --slug --spa --message --name --visibility --server --token]
 //   derive comments [--id]                 list the artifact's comment threads
-//   derive open [--id]                     open the artifact in a browser
+//   derive open [short_id] [--id]          open the artifact in a browser
 //   derive reply <thread_id> <message…>    reply in a thread
 //   derive resolve|reopen <comment_id>     set a thread's state
 //   derive status [--id] [--json]          the review round state + open threads
@@ -167,6 +167,11 @@ if (LOOP.includes(cmd)) {
   }
   const r = resolvePublish(flags, cfg)
   r.token = flags.token ?? process.env.DERIVE_TOKEN ?? (await freshToken(r.server))
+  // `derive open <short_id>` / `derive status <short_id>` / `derive comments
+  // <short_id>`: a positional id overrides the repo pin — the fallback an agent
+  // runs when a publish reports opened_in_tab:false. (reply/resolve keep their
+  // positional for the thread/comment id.)
+  if (positional[0] && ["open", "status", "comments"].includes(cmd)) r.id = positional[0]
   if (!r.id) {
     console.error(`error: no artifact id. Set "id" in ${CONFIG_FILE} (publish once), or pass --id.`)
     process.exit(1)

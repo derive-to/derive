@@ -155,10 +155,15 @@ export function Artifact() {
     qc.invalidateQueries({ queryKey: commentsQuery(shortId).queryKey })
   }, [qc, shortId])
 
+  // Round churn (requested / sent back / approved) bumps a tick the review card
+  // refetches on — an agent's re-request appears live, never behind a reload.
+  const [reviewTick, setReviewTick] = useState(0)
+  const onReview = useCallback(() => setReviewTick((t) => t + 1), [])
+
   // Presence, live multiplayer cursors, the SSE stream, and view recording — see
   // use-artifact-live. The page feeds pointer moves in (from the iframe bridge
   // below) and reads `viewers` + the `cursorLayer` overlay ref back out.
-  const live = useArtifactLive({ shortId, onComment: refetchComments, onVersion: load })
+  const live = useArtifactLive({ shortId, onComment: refetchComments, onVersion: load, onReview })
 
   // The whole postMessage channel with the sandboxed iframe: text selection,
   // anchor geometry, scroll, deck position, and peer cursors in; highlight
@@ -187,6 +192,7 @@ export function Artifact() {
     shortId,
     version,
     hoverThread,
+    activeThread,
     onPointerMove: live.onPointerMove,
     onPointerLeave: live.onPointerLeave,
     onTap: live.onTap,
@@ -692,7 +698,7 @@ export function Artifact() {
               canComment={canComment}
               reviewCard={
                 // Top of the comments rail, not its own pane; members who can act only.
-                canComment ? <ReviewCard shortId={shortId} canApprove={canPublish} /> : undefined
+                canComment ? <ReviewCard shortId={shortId} refreshKey={reviewTick} /> : undefined
               }
               onSheetHeight={setSheetInset}
               docLive={docLive}

@@ -314,6 +314,9 @@ export const workspaceRoutes = (ctx: AppContext) => {
           githubMirrorComments: z.boolean(),
           githubPreviewLink: z.boolean(),
           slackPost: z.boolean(),
+          defaultUnlistedRole: z.enum(["viewer", "commenter"]),
+          // `password` is excluded: a default can't carry the password it needs.
+          defaultAgentVisibility: z.enum(["unlisted", "private", "org", "link", "public"]),
         })
         .partial(),
     )

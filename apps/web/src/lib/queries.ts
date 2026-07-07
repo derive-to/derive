@@ -55,7 +55,7 @@ export type LibraryParams = {
   // "following" → the activity feed (followed authors + repo path prefixes);
   // "shared" → artifacts explicitly shared with you (can span workspaces);
   // "needs_feedback" → artifacts with an open thread you're tagged in or commented on.
-  scope?: "following" | "shared" | "needs_feedback"
+  scope?: "following" | "shared" | "needs_feedback" | "unlisted"
 }
 export const libraryArtifactsQuery = (params: LibraryParams) =>
   infiniteQueryOptions({

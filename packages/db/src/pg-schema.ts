@@ -235,6 +235,21 @@ export const agentMention = pgTable("agent_mention", {
   created_at: text("created_at").notNull().$defaultFn(isoNow),
 })
 
+// Which workspace an OAuth client's grants act in for one user — chosen on the
+// consent screen; re-consent upserts the row. Resolution falls back to the user's
+// first workspace when absent (pre-picker grants) or when membership has lapsed.
+export const oauthClientWorkspace = pgTable(
+  "oauth_client_workspace",
+  {
+    id: text("id").primaryKey(),
+    user_id: text("user_id").notNull(),
+    client_id: text("client_id").notNull(),
+    org_id: text("org_id").notNull(),
+    created_at: text("created_at").notNull().$defaultFn(isoNow),
+  },
+  (t) => [uniqueIndex("oauth_client_workspace_user_client").on(t.user_id, t.client_id)],
+)
+
 export const artifactFavorite = pgTable(
   "artifact_favorite",
   {
@@ -534,6 +549,7 @@ const TABLES = [
   agent,
   agentMention,
   invitation,
+  oauthClientWorkspace,
   artifactFavorite,
   follow,
   artifactTag,

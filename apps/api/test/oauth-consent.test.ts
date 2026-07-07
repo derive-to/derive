@@ -20,7 +20,8 @@ describe("oauth consent screen", () => {
     expect(html).toContain("var CONNECTED =")
     expect(html).toContain("function goConnected(")
     // On approve we linger on our card; deny bounces straight back.
-    expect(html).toContain("if (accept) goConnected(to)")
+    expect(html).toContain("if (!accept){ window.location.href = to; return; }")
+    expect(html).toContain("goConnected(to, saved")
     // The success card is embedded JSON-encoded; decode it and assert its markup.
     const connected = JSON.parse(
       (html.match(/var CONNECTED = (".*?");/s)?.[1] as string) ?? '""',
@@ -35,6 +36,52 @@ describe("oauth consent screen", () => {
     const evil = consentHTML({ clientName: "<script>x</script>", scopes: ["openid"], query: "" })
     expect(evil).not.toContain("<script>x</script>")
     expect(evil).toContain("&lt;script&gt;")
+  })
+
+  it("renders the workspace picker with the bound/active workspace preselected", () => {
+    const multi = consentHTML({
+      clientName: "Claude Code",
+      scopes: ["openid"],
+      query: "",
+      clientId: "cli_1",
+      workspaces: [
+        { id: "w1", name: "Personal" },
+        { id: "w2", name: "Acme <evil>" },
+      ],
+      selected: "w2",
+    })
+    expect(multi).toContain('<select id="ws"')
+    expect(multi).toContain('value="w2" selected')
+    expect(multi).toContain("Acme &lt;evil&gt;") // workspace names are escaped
+    expect(multi).toContain('var CLIENT_ID = "cli_1"')
+    // The binding is saved only after the consent POST succeeds — an abandoned
+    // or denied consent must not re-point tokens from an earlier grant.
+    expect(multi).toContain("var saved = await saveWorkspace()")
+    expect(multi).toContain("goConnected(to, saved")
+  })
+
+  it("renders (and binds) a single workspace too — the choice pins the grant", () => {
+    const single = consentHTML({
+      clientName: "Claude Code",
+      scopes: ["openid"],
+      query: "",
+      clientId: "cli_1",
+      workspaces: [{ id: "w1", name: "Personal" }],
+      selected: "w1",
+    })
+    expect(single).toContain('<select id="ws"')
+    expect(single).toContain('value="w1" selected')
+  })
+
+  it("omits the picker when there is nothing to bind", () => {
+    const noClient = consentHTML({
+      clientName: "Claude Code",
+      scopes: ["openid"],
+      query: "",
+      workspaces: [{ id: "w1", name: "Personal" }], // no clientId
+    })
+    expect(noClient).not.toContain('<select id="ws"')
+    expect(html).not.toContain('<select id="ws"') // no workspaces prop at all
   })
 
   // Emit preview HTML for visual review (both states), when a target dir is given.

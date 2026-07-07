@@ -49,11 +49,11 @@ An agent token defaults to commenter. To publish directly, the agent needs edito
 
 ## Two MCP servers (same 5 tools)
 
-Both the stdio `@derive/mcp` server and the remote `/mcp` server expose the same 5
+Both the stdio `@derive-to/mcp` server and the remote `/mcp` server expose the same 5
 tools (`list_artifacts`, `read`, `catch_up`, `comment`, `publish`). The difference is
 auth and how writes land:
 
-| | STDIO MCP (`@derive/mcp`) | HTTP MCP (`/mcp`) |
+| | STDIO MCP (`@derive-to/mcp`) | HTTP MCP (`/mcp`) |
 |---|---|---|
 | **Auth** | Static `dk_agt_` token | OAuth 2.1 bearer |
 | **Connect via** | Claude Code `.claude/mcp.json` | claude.ai / Claude Desktop OAuth flow |

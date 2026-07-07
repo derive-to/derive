@@ -52,6 +52,8 @@ export function maxRole(...roles: (Role | null | undefined)[]): Role | null {
  *  never rises above the role it was registered with — a workspace owner's
  *  agent registered as editor acts as editor, so no agent can `manage`
  *  (delete, transfer) regardless of whose authority it borrows. */
+export function capRole(role: Role, cap: Role): Role
+export function capRole(role: Role | null, cap: Role): Role | null
 export function capRole(role: Role | null, cap: Role): Role | null {
   if (!role) return null
   return RANK[role] > RANK[cap] ? cap : role
@@ -85,6 +87,11 @@ export interface Actor {
  *   link / public · comment      view (sign in to cmt)  view + comment        their role (>= cmt)
  *   password · view|comment      unlock, then as above  unlock, then above    their role (no pw)
  *   workspace only (org)         no access              no access             their role (members)
+ *   unlisted · view|comment      no access              members only: v/c     their role (>= floor)
+ *
+ * `unlisted` is the agent-draft state: hidden from every listing, but a workspace
+ * member WITH THE LINK gets the general role (view or comment) — the "shared to
+ * workspace, on the go" reach. Non-members and anonymous visitors get nothing.
  *
  * Invariant: an anonymous caller is never more than `viewer`. Anything past view
  * (comment, propose, publish, share, manage) needs an authenticated identity — a
@@ -97,12 +104,13 @@ export function effectiveRole(
 ): Role | null {
   if (actor.kind === "token") return "owner"
   // A per-artifact share or workspace membership — authenticated callers only.
-  // `private` is the exception: workspace membership grants nothing there, so a
-  // team-workspace draft stays invisible to teammates until explicitly shared
-  // (per-artifact and collection shares both ride artifactRole).
+  // `private` and `unlisted` are the exceptions: workspace membership grants
+  // nothing there by itself, so a team-workspace draft stays out of teammates'
+  // standing until explicitly shared (per-artifact and collection shares both
+  // ride artifactRole). Unlisted members instead get the reach floor below.
   const explicit =
     actor.kind === "user"
-      ? visibility === "private"
+      ? visibility === "private" || visibility === "unlisted"
         ? actor.artifactRole
         : (actor.artifactRole ?? actor.orgRole)
       : null
@@ -113,6 +121,9 @@ export function effectiveRole(
   let floor: Role | null = null
   if (visibility === "public" || visibility === "link") floor = reach
   else if (visibility === "password") floor = actor.unlocked ? reach : null
+  // Unlisted: the link works, but only for the workspace's own members.
+  else if (visibility === "unlisted")
+    floor = actor.kind === "user" && actor.orgRole != null ? generalRole : null
   // org/private grant nothing by reach — only an explicit role opens them.
   return maxRole(explicit, floor)
 }

@@ -35,13 +35,34 @@ const esc = (s: string): string =>
   )
 
 /** The consent page HTML. `query` is the original authorize query string, echoed
- *  back to /oauth2/consent so the plugin can complete the authorization. */
+ *  back to /oauth2/consent so the plugin can complete the authorization. With
+ *  `workspaces` (the signed-in user's, when they have more than one), a picker
+ *  chooses which workspace the grant acts in; Approve persists the choice via
+ *  POST /oauth/consent/workspace before completing the consent. */
 export function consentHTML(props: {
   clientName: string
   scopes: string[]
   query: string
+  clientId?: string
+  workspaces?: { id: string; name: string }[]
+  selected?: string
 }): string {
   const name = esc(props.clientName || "An application")
+  const workspaces = props.workspaces ?? []
+  // Rendered (and bound on Approve) even for a single workspace: pinning the
+  // choice keeps the grant from migrating when the user later joins a workspace
+  // that sorts ahead of it in listWorkspaces. Without a clientId there is
+  // nothing to bind, so no picker — a choice we couldn't persist would be lies.
+  const picker =
+    workspaces.length > 0 && props.clientId
+      ? `<label class="ws-label" for="ws">Workspace this agent acts in</label>
+    <select id="ws" class="ws">${workspaces
+      .map(
+        (w) =>
+          `<option value="${esc(w.id)}"${w.id === props.selected ? " selected" : ""}>${esc(w.name)}</option>`,
+      )
+      .join("")}</select>`
+      : ""
   const items = props.scopes
     .map((s) => {
       const write = WRITE_SCOPES.has(s)
@@ -81,6 +102,11 @@ export function consentHTML(props: {
   h1{font-family:var(--display);font-weight:600;font-size:22px;line-height:1.25;letter-spacing:-.02em;margin:0 0 7px}
   h1 b{color:var(--accent-ink);font-weight:700}
   .sub{color:var(--ink-soft);font-size:13.5px;margin:0 0 18px}
+  .ws-label{display:block;font-family:var(--mono);font-size:10.5px;font-weight:600;letter-spacing:.05em;
+    text-transform:uppercase;color:var(--muted);margin:0 0 6px}
+  select.ws{width:100%;margin:0 0 16px;padding:10px 12px;border:1px solid var(--line);border-radius:11px;
+    background:var(--panel-2);color:var(--ink);font:500 14px var(--sans);cursor:pointer}
+  select.ws:focus{outline:2px solid var(--accent-soft);border-color:var(--accent)}
   ul.scopes{list-style:none;margin:0 0 22px;padding:8px 16px;border:1px solid var(--line);border-radius:14px;background:var(--panel-2)}
   ul.scopes li{display:flex;gap:11px;align-items:flex-start;padding:9px 0;font-size:13.5px;color:var(--ink-soft)}
   ul.scopes li+li{border-top:1px solid var(--line-2)}
@@ -121,6 +147,7 @@ export function consentHTML(props: {
     <div class="brand">${BRAND_PAGE_MARK}<span class="name">Derive</span><span class="badge">Authorize</span></div>
     <h1><b>${name}</b> wants to act in your workspace</h1>
     <p class="sub">Approving lets this agent do the following as you, with a token that expires. You stay in control.</p>
+    ${picker}
     <ul class="scopes">${items}</ul>
     <div class="row">
       <button id="deny" class="btn ghost" type="button">Deny</button>
@@ -131,16 +158,42 @@ export function consentHTML(props: {
   </main>
   <script>
     var query = ${JSON.stringify(props.query)};
+    var CLIENT_ID = ${JSON.stringify(props.clientId ?? "")};
     var CONNECTED = ${JSON.stringify(connectedInner)};
     var allow = document.getElementById("allow"), deny = document.getElementById("deny"), err = document.getElementById("err");
     // Show our branded "Connected" card, then hand the code back to the client.
     // The auth code is short-lived but a ~1.1s beat is well within its window.
-    function goConnected(to){
+    // With a warning there is no auto-redirect — it would sweep the message away
+    // before it could be read; the manual return link still works.
+    function goConnected(to, warning){
       var card = document.querySelector("main.card");
       if (card) card.innerHTML = CONNECTED;
       var back = document.getElementById("back");
       if (back) back.setAttribute("href", to);
+      if (warning){
+        var w = document.createElement("p");
+        w.className = "err";
+        w.textContent = warning;
+        var done = document.querySelector(".done");
+        if (done) done.appendChild(w);
+        return;
+      }
       setTimeout(function(){ window.location.href = to; }, 1100);
+    }
+    // Saved only AFTER the consent completes: an abandoned or denied consent must
+    // not re-point tokens the client already holds from an earlier grant. There is
+    // no race on the other side — the client can't mint a token until the browser
+    // delivers the code, which happens after this settles.
+    async function saveWorkspace(){
+      var ws = document.getElementById("ws");
+      if (!ws || !CLIENT_ID) return true;
+      try{
+        var b = await fetch("/oauth/consent/workspace", {
+          method:"POST", headers:{"content-type":"application/json"}, credentials:"include",
+          body: JSON.stringify({ client_id: CLIENT_ID, org_id: ws.value })
+        });
+        return b.ok;
+      }catch(e){ return false; }
     }
     async function decide(accept){
       allow.disabled = deny.disabled = true; err.textContent = "";
@@ -159,7 +212,12 @@ export function consentHTML(props: {
           to = data && (data.url || data.redirectURI || data.location);
         }
         // On approve, linger on our confirmation; on deny, bounce straight back.
-        if (to){ if (accept) goConnected(to); else window.location.href = to; return; }
+        if (to){
+          if (!accept){ window.location.href = to; return; }
+          var saved = await saveWorkspace();
+          goConnected(to, saved ? "" : "The workspace choice didn't save — this agent will act in your default workspace. Reconnect to change it.");
+          return;
+        }
         err.textContent = (data && (data.error_description || data.error)) || "Something went wrong.";
       }catch(e){ err.textContent = "Network error. Try again."; }
       allow.disabled = deny.disabled = false;

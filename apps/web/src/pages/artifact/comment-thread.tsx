@@ -109,6 +109,11 @@ export function PinnedZone({
   )
 
   const zoneRef = useRef<HTMLDivElement>(null)
+  // Set right before we forward a wheel tick to the document — distinguishes a
+  // scrollY change WE caused (spillover at the end of the local list) from one
+  // the user caused some other way (scrollbar, keyboard, a jump). Only the
+  // latter should discard the local scroll position; see the effect below.
+  const selfScrolled = useRef(false)
   // Wheel over the panel scrolls the document (so cards glide with their text),
   // but the panel consumes the gesture FIRST when it has its own overflow to show
   // — native scroll-chaining, except the document is a cross-origin iframe so the
@@ -123,6 +128,7 @@ export function PinnedZone({
         : el.scrollTop > 0
       if (canConsume) return // let the panel scroll natively to the buried cards
       e.preventDefault()
+      selfScrolled.current = true
       onScrollDoc(e.deltaY)
     }
     el.addEventListener("wheel", onWheel, { passive: false })
@@ -130,8 +136,17 @@ export function PinnedZone({
   }, [onScrollDoc])
   // A document scroll re-pins every card to a fresh viewport position, so the
   // panel's own overflow scroll is no longer meaningful — snap it back to the top.
+  // EXCEPT when that scroll was our own spillover forward (the wheel handler
+  // above, at the exact moment a dense cluster's local scroll bottoms out): that
+  // scrollY nudge is a side-effect of the user reading THIS panel, not a reason
+  // to throw their scroll position away — that was the "reach the last comment,
+  // get bounced to the top" bug.
   // biome-ignore lint/correctness/useExhaustiveDependencies: re-pin only tracks scrollY changes.
   useEffect(() => {
+    if (selfScrolled.current) {
+      selfScrolled.current = false
+      return
+    }
     if (zoneRef.current) zoneRef.current.scrollTop = 0
   }, [scrollY])
 
@@ -315,8 +330,23 @@ export function CommentCard({ thread }: { thread: Comment[] }) {
   const [reply, setReply] = useState("")
   const [replyMentions, setReplyMentions] = useState<Mention[]>([])
   const root = thread[0]
+  const active = !!root && activeThread === root.thread_id
+  const cardRef = useRef<HTMLDivElement>(null)
+  // Becoming active scrolls the card into view within whichever container it's
+  // in — the pinned zone's own overflow (a dense cluster the doc scroll alone
+  // can't reveal) or the general/resolved drawer (an unanchored thread has no
+  // doc position to scroll to at all). Selecting a comment should always land
+  // it in view, not just flip a state you have to go hunting for.
+  useEffect(() => {
+    // Instant, not smooth: the document's own jump-to-anchor scroll is already
+    // animating (fastScrollTo, anchor-client.ts) — a second, slower smooth
+    // scroll running here at the same time is exactly the "dragging" feel to
+    // avoid. This is just a same-instant catch-up for whichever container
+    // (pinned zone or the general/resolved drawer) doesn't already have the
+    // card in view.
+    if (active) cardRef.current?.scrollIntoView({ block: "nearest", behavior: "auto" })
+  }, [active])
   if (!root) return null
-  const active = activeThread === root.thread_id
   const hovered = hoverThread === root.thread_id
   const present = inDoc[root.thread_id]
   const sendReply = (resolved: Mention[]) => {
@@ -361,6 +391,7 @@ export function CommentCard({ thread }: { thread: Comment[] }) {
     // biome-ignore lint/a11y/noStaticElementInteractions: click-to-activate convenience; the card's own buttons are keyboard-accessible
     // biome-ignore lint/a11y/useKeyWithClickEvents: click-to-activate convenience; the card's own buttons are keyboard-accessible
     <div
+      ref={cardRef}
       data-testid="comment-card"
       onMouseEnter={() => onHover(root.thread_id)}
       onMouseLeave={() => onHover(null)}
@@ -368,9 +399,11 @@ export function CommentCard({ thread }: { thread: Comment[] }) {
       className={cn(
         "animate-in fade-in slide-in-from-bottom-1 duration-200 overflow-hidden rounded-lg border bg-card",
         // Active/hovered cards take neutral re-inked edges — never the accent
-        // (the ink accent marks actions and brand moments, not selection).
+        // (the ink accent marks actions and brand moments, not selection). Active
+        // reads unmistakably: full-strength edge + the popover-weight shadow, not
+        // a subtle tint you have to look for.
         active
-          ? "cursor-default border-foreground/25 shadow-[var(--shadow)]"
+          ? "cursor-default border-foreground/40 shadow-[var(--shadow-pop)]"
           : hovered
             ? " border-foreground/15 shadow-[var(--shadow-sm)]"
             : " border-border",

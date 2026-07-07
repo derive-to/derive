@@ -8,6 +8,7 @@ import {
   useRouterState,
 } from "@tanstack/react-router"
 import { type ReactNode, useEffect, useState } from "react"
+import { AgentPushListener } from "../components/chrome/agent-push"
 import { AppShell } from "../components/chrome/app-shell"
 import { AppBoot } from "../components/shared/app-boot"
 import { Toaster } from "../components/ui/sonner"
@@ -71,6 +72,10 @@ function RootComponent() {
             <CursorPrefProvider>
               <AppFrame />
             </CursorPrefProvider>
+            {/* Auto-open on agent push: one app-wide listener on the shared
+                per-user stream (renders nothing). Inside AuthProvider for `me`,
+                inside the router tree for navigation. */}
+            <AgentPushListener />
           </AuthProvider>
           {/* Inside ThemeProvider so sonner's useTheme() tracks the app's forced
               theme rather than falling back to the OS preference. */}

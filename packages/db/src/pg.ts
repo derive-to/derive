@@ -116,6 +116,7 @@ import {
   invitation,
   membership,
   notification,
+  oauthClientWorkspace,
   orgSettings,
   PG_SCHEMA_STATEMENTS,
   proposal,
@@ -158,6 +159,7 @@ export const schema = {
   agent,
   agentMention,
   invitation,
+  oauthClientWorkspace,
   context,
   contextSession,
   sessionMessage,
@@ -512,6 +514,20 @@ export class PgMetaStore implements MetaStore {
   async countArtifacts(orgId?: string): Promise<number> {
     const q = this.db.select({ c: count() }).from(artifact)
     const rows = await (orgId ? q.where(eq(artifact.org_id, orgId)) : q)
+    return Number(rows[0]?.c ?? 0)
+  }
+  async countUnlistedFor(orgId: string, userId: string): Promise<number> {
+    const rows = await this.db
+      .select({ c: count() })
+      .from(artifact)
+      .where(
+        and(
+          eq(artifact.org_id, orgId),
+          eq(artifact.visibility, "unlisted"),
+          sql`EXISTS (SELECT 1 FROM artifact_member am
+            WHERE am.artifact_id = ${artifact.id} AND am.user_id = ${userId})`,
+        ),
+      )
     return Number(rows[0]?.c ?? 0)
   }
   async storageBytes(orgId: string): Promise<number> {
@@ -998,12 +1014,17 @@ export class PgMetaStore implements MetaStore {
     } else {
       conds.push(eq(artifact.author_id, userId))
     }
-    // Private drafts never ride a profile, shared workspace or not (see repos.ts).
+    // Private and unlisted drafts never ride a profile, shared workspace or not
+    // (see repos.ts).
     const orgs = opts.visibleOrgIds ?? []
     if (orgs.length > 0) {
       const v = or(
         eq(artifact.visibility, "public"),
-        and(inArray(artifact.org_id, orgs), ne(artifact.visibility, "private")),
+        and(
+          inArray(artifact.org_id, orgs),
+          ne(artifact.visibility, "private"),
+          ne(artifact.visibility, "unlisted"),
+        ),
       )
       if (v) conds.push(v)
     } else {
@@ -1849,6 +1870,24 @@ export class PgMetaStore implements MetaStore {
       return null
     }
   }
+  async setOAuthClientWorkspace(userId: string, clientId: string, orgId: string): Promise<void> {
+    await this.db
+      .insert(oauthClientWorkspace)
+      .values({ id: crypto.randomUUID(), user_id: userId, client_id: clientId, org_id: orgId })
+      .onConflictDoUpdate({
+        target: [oauthClientWorkspace.user_id, oauthClientWorkspace.client_id],
+        set: { org_id: orgId },
+      })
+  }
+  async getOAuthClientWorkspace(userId: string, clientId: string): Promise<string | null> {
+    const rows = await this.db
+      .select({ org_id: oauthClientWorkspace.org_id })
+      .from(oauthClientWorkspace)
+      .where(
+        and(eq(oauthClientWorkspace.user_id, userId), eq(oauthClientWorkspace.client_id, clientId)),
+      )
+    return rows[0]?.org_id ?? null
+  }
   async pruneStaleOAuthClients(cutoffIso: string): Promise<number> {
     try {
       const res = await this.pool.query(
@@ -1856,6 +1895,12 @@ export class PgMetaStore implements MetaStore {
            AND "clientId" NOT IN (SELECT "clientId" FROM "oauthConsent")
            AND "clientId" NOT IN (SELECT "clientId" FROM "oauthAccessToken")`,
         [cutoffIso],
+      )
+      // Workspace bindings for clients that no longer exist (pruned above, or
+      // any earlier sweep) have nothing left to resolve against — sweep them too.
+      await this.pool.query(
+        `DELETE FROM oauth_client_workspace
+          WHERE client_id NOT IN (SELECT "clientId" FROM "oauthClient")`,
       )
       return res.rowCount ?? 0
     } catch {

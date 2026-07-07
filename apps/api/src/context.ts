@@ -386,10 +386,14 @@ export function buildContext(deps: AppDeps) {
           // membership, re-homes the agent record itself — so activeWorkspace AND
           // every authorize() comparison agree on the target. Fail-closed: an
           // unknown or foreign id keeps the grant's default workspace. Registered
-          // workspace agents (no granting user) never roam.
+          // workspace agents (no granting user) never roam. The role is re-capped
+          // from the uncapped scope role against the TARGET's membership — the
+          // owner may hold a different role there than in the default workspace.
           const want = c.req.header("x-derive-workspace")
-          if (want && want !== a.org_id && (await meta.getMembership(want, owner)))
-            a = { ...a, org_id: want }
+          if (want && want !== a.org_id) {
+            const m = await meta.getMembership(want, owner)
+            if (m) a = { ...a, org_id: want, role: capRole(o.scopeRole, m.role) }
+          }
         }
       }
     }

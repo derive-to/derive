@@ -154,6 +154,82 @@ export function runStoreContract(
     })
   })
 
+  describe(`${label}: unlisted listings (the agent-draft state)`, () => {
+    it("hides unlisted from ordinary listings, folds the owner's back in on demand", async () => {
+      const owner = `u_ul_owner_${uuid()}`
+      const other = `u_ul_other_${uuid()}`
+      const org = `${ORG}_ul_${uuid()}`
+      const draft = await store.createArtifact(
+        newArtifact({ org_id: org, visibility: "unlisted", title: "Agent Draft Alpha" }),
+      )
+      await store.setArtifactMember({
+        id: uuid(),
+        artifact_id: draft.id,
+        user_id: owner,
+        role: "owner",
+      })
+      const listed = await store.createArtifact(
+        newArtifact({ org_id: org, visibility: "org", title: "Team Doc" }),
+      )
+
+      // Ordinary viewer-scoped listing: unlisted hidden from EVERYONE — the owner
+      // included (they have the dedicated filter) — and from title search.
+      for (const viewer of [owner, other]) {
+        const ids = (await store.listArtifacts({ orgId: org, viewerId: viewer })).map((x) => x.id)
+        expect(ids, `default listing for ${viewer}`).not.toContain(draft.id)
+        expect(ids).toContain(listed.id)
+      }
+      expect(
+        (await store.listArtifacts({ orgId: org, viewerId: other, q: "agent draft" })).map(
+          (x) => x.id,
+        ),
+      ).toEqual([])
+
+      // "include": the owner's own drafts ride along (MCP list_artifacts); a
+      // non-member viewer still can't see them.
+      const inc = (
+        await store.listArtifacts({ orgId: org, viewerId: owner, unlisted: "include" })
+      ).map((x) => x.id)
+      expect(inc).toContain(draft.id)
+      expect(inc).toContain(listed.id)
+      expect(
+        (await store.listArtifacts({ orgId: org, viewerId: other, unlisted: "include" })).map(
+          (x) => x.id,
+        ),
+      ).not.toContain(draft.id)
+
+      // "only": exactly the viewer's own unlisted drafts — the library filter.
+      expect(
+        (await store.listArtifacts({ orgId: org, viewerId: owner, unlisted: "only" })).map(
+          (x) => x.id,
+        ),
+      ).toEqual([draft.id])
+      expect(await store.listArtifacts({ orgId: org, viewerId: other, unlisted: "only" })).toEqual(
+        [],
+      )
+
+      // The badge count matches the filter.
+      expect(await store.countUnlistedFor(org, owner)).toBe(1)
+      expect(await store.countUnlistedFor(org, other)).toBe(0)
+
+      // A trusted caller (no viewerId — operator/internal) still sees everything.
+      expect((await store.listArtifacts({ orgId: org })).map((x) => x.id)).toContain(draft.id)
+      // publicOnly (anonymous listings) never shows it.
+      expect(
+        (await store.listArtifacts({ orgId: org, publicOnly: true })).map((x) => x.id),
+      ).not.toContain(draft.id)
+    })
+
+    it("keeps unlisted work off profiles, even across a shared workspace", async () => {
+      const author = `u_ul_author_${uuid()}`
+      const org = `${ORG}_ul_pp_${uuid()}`
+      const draft = await store.createArtifact(newArtifact({ org_id: org, visibility: "unlisted" }))
+      await store.addVersion(draft.id, newVersion({ author: "Author", author_id: author }))
+      const works = await store.listUserWorks(author, [], { visibleOrgIds: [org] })
+      expect(works.map((a) => a.id)).not.toContain(draft.id)
+    })
+  })
+
   describe(`${label}: author attribution (GitHub-synced)`, () => {
     it("denormalizes the version author onto the artifact, clearing GitHub fields on a non-GitHub edit", async () => {
       const a = await store.createArtifact(newArtifact())

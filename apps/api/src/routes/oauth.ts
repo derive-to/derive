@@ -1,13 +1,16 @@
 import { type Context, Hono } from "hono"
+import { z } from "zod"
 import { OAUTH_SCOPES, resolvePasskey } from "../auth-config"
 import type { AppContext } from "../context"
+import { fail, readJson } from "../lib/http"
 import { cliCallbackHTML } from "../oauth-cli-callback"
 import { consentHTML } from "../oauth-consent"
 
 /** OAuth/OIDC discovery at the well-known root, the branded consent + CLI-callback
- *  screens, and the public list of configured social sign-in providers. All read-only. */
+ *  screens, and the public list of configured social sign-in providers. Read-only,
+ *  except the consent screen's workspace binding (POST /oauth/consent/workspace). */
 export const oauthRoutes = (ctx: AppContext) => {
-  const { meta } = ctx
+  const { meta, currentUser, activeWorkspace } = ctx
   const app = new Hono()
 
   // OAuth 2.0 discovery at the well-known root (RFC 8414 + RFC 9728), mirroring
@@ -60,7 +63,52 @@ export const oauthRoutes = (ctx: AppContext) => {
     const clientId = c.req.query("client_id") ?? ""
     const scopes = (c.req.query("scope") ?? "").split(/\s+/).filter(Boolean)
     const clientName = (await meta.getOAuthClientName(clientId)) || clientId || "An application"
-    return c.html(consentHTML({ clientName, scopes, query: new URL(c.req.url).search }))
+    const me = await currentUser(c)
+    const mine = me ? await meta.listWorkspaces(me.id) : []
+    // An existing (user, client) binding wins the preselection — re-consent must
+    // not re-point a deliberate earlier choice to whatever workspace the browser
+    // happens to be viewing. Only then the active workspace, then the first.
+    const bound = me && clientId ? await meta.getOAuthClientWorkspace(me.id, clientId) : null
+    const selected =
+      bound && mine.some((w) => w.id === bound)
+        ? bound
+        : mine.length > 1
+          ? await activeWorkspace(c)
+          : mine[0]?.id
+    return c.html(
+      consentHTML({
+        clientName,
+        scopes,
+        query: new URL(c.req.url).search,
+        clientId,
+        workspaces: mine.map((w) => ({ id: w.id, name: w.name })),
+        selected,
+      }),
+    )
+  })
+
+  // Persist the consent screen's workspace choice: this user's grants to this
+  // client act in org_id. The binding is keyed by the session user, so it can
+  // only ever affect the caller's own grants; org_id is membership-checked.
+  app.post("/oauth/consent/workspace", async (c) => {
+    // Strict same-origin. The consent page is served from this origin, so its
+    // fetch always carries a matching Origin header; a cross-site page never can
+    // — and in DERIVE_CROSS_SITE deployments the session cookie is SameSite=None,
+    // so without this check a text/plain form could smuggle a JSON body here
+    // with the victim's cookie attached.
+    const origin = c.req.header("origin")
+    if (!origin || origin !== new URL(c.req.url).origin)
+      return fail(c, 403, "cross-origin request refused")
+    const me = await currentUser(c)
+    if (!me) return fail(c, 401, "sign in to continue")
+    const b = await readJson(
+      c,
+      z.object({ client_id: z.string().min(1), org_id: z.string().min(1) }),
+    )
+    if (b instanceof Response) return b
+    if (!(await meta.getMembership(b.org_id, me.id))) return fail(c, 403, "forbidden")
+    await meta.setOAuthClientWorkspace(me.id, b.client_id, b.org_id)
+    return c.json({ ok: true })
   })
 
   // Hosted callback for the CLI/native OAuth flow (`derive login`). A command-line

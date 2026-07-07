@@ -114,6 +114,7 @@ import {
   invitation,
   membership,
   notification,
+  oauthClientWorkspace,
   orgSettings,
   proposal,
   report,
@@ -146,13 +147,24 @@ export function artifactListConditions(
   // `private` artifacts are invisible even to workspace members unless they're an
   // explicit artifact member. The subquery names the table literally — sqlite, D1,
   // and pg all call it artifact_member, and this function serves all three.
-  else if (opts?.viewerId)
-    conds.push(
-      sql`(${art.visibility} != 'private' OR EXISTS (
+  else if (opts?.viewerId) {
+    const isMember = sql`EXISTS (
         SELECT 1 FROM artifact_member am
         WHERE am.artifact_id = ${art.id} AND am.user_id = ${opts.viewerId}
-      ))`,
-    )
+      )`
+    conds.push(sql`(${art.visibility} != 'private' OR ${isMember})`)
+    // `unlisted` hides from every ordinary listing — even the owner's (they have
+    // the dedicated filter). "include" folds the viewer's own drafts back in (MCP
+    // list_artifacts, so an agent always finds its work); "only" IS the filter.
+    // Ownership = an explicit artifact_member row, the same contract `private` uses.
+    if (opts.unlisted === "only") conds.push(sql`(${art.visibility} = 'unlisted' AND ${isMember})`)
+    else if (opts.unlisted === "include")
+      conds.push(sql`(${art.visibility} != 'unlisted' OR ${isMember})`)
+    else conds.push(sql`${art.visibility} != 'unlisted'`)
+  }
+  // A trusted caller (operator token / internal jobs, no viewerId) sees everything;
+  // "only" still narrows so the scoped filter works for that path too.
+  else if (opts?.unlisted === "only") conds.push(eq(art.visibility, "unlisted"))
   if (opts?.q) conds.push(like(sql`lower(${art.title})`, `%${opts.q.toLowerCase()}%`))
   if (opts?.cursor) {
     const cursor = or(
@@ -185,6 +197,7 @@ export const schema = {
   agent,
   agentMention,
   invitation,
+  oauthClientWorkspace,
   context,
   contextSession,
   sessionMessage,
@@ -463,6 +476,22 @@ export function makeRepos(db: SqliteDb) {
     const q = db.select({ c: count() }).from(artifact)
     return (await (orgId ? q.where(eq(artifact.org_id, orgId)) : q).get())?.c ?? 0
   }
+
+  const countUnlistedFor = async (orgId: string, userId: string): Promise<number> =>
+    (
+      await db
+        .select({ c: count() })
+        .from(artifact)
+        .where(
+          and(
+            eq(artifact.org_id, orgId),
+            eq(artifact.visibility, "unlisted"),
+            sql`EXISTS (SELECT 1 FROM artifact_member am
+              WHERE am.artifact_id = ${artifact.id} AND am.user_id = ${userId})`,
+          ),
+        )
+        .get()
+    )?.c ?? 0
 
   const storageBytes = async (orgId: string): Promise<number> => {
     // One row per distinct blob in the org (max size_bytes guards a stale 0 on a
@@ -1048,13 +1077,17 @@ export function makeRepos(db: SqliteDb) {
       conds.push(eq(artifact.author_id, userId))
     }
     // Visible to the viewer: public OR in a workspace they share with the profile
-    // owner. Private drafts never ride a profile, shared workspace or not — the
-    // owner finds them in their library, not on their public face.
+    // owner. Private and unlisted drafts never ride a profile, shared workspace or
+    // not — the owner finds them in their library, not on their public face.
     const orgs = opts.visibleOrgIds ?? []
     if (orgs.length > 0) {
       const v = or(
         eq(artifact.visibility, "public"),
-        and(inArray(artifact.org_id, orgs), ne(artifact.visibility, "private")),
+        and(
+          inArray(artifact.org_id, orgs),
+          ne(artifact.visibility, "private"),
+          ne(artifact.visibility, "unlisted"),
+        ),
       )
       if (v) conds.push(v)
     } else {
@@ -1736,6 +1769,32 @@ export function makeRepos(db: SqliteDb) {
       return null
     }
   }
+  const setOAuthClientWorkspace = async (
+    userId: string,
+    clientId: string,
+    orgId: string,
+  ): Promise<void> => {
+    await db
+      .insert(oauthClientWorkspace)
+      .values({ id: crypto.randomUUID(), user_id: userId, client_id: clientId, org_id: orgId })
+      .onConflictDoUpdate({
+        target: [oauthClientWorkspace.user_id, oauthClientWorkspace.client_id],
+        set: { org_id: orgId },
+      })
+      .run()
+  }
+  const getOAuthClientWorkspace = async (
+    userId: string,
+    clientId: string,
+  ): Promise<string | null> => {
+    const rows = await db
+      .select({ org_id: oauthClientWorkspace.org_id })
+      .from(oauthClientWorkspace)
+      .where(
+        and(eq(oauthClientWorkspace.user_id, userId), eq(oauthClientWorkspace.client_id, clientId)),
+      )
+    return rows[0]?.org_id ?? null
+  }
   const pruneStaleOAuthClients = async (cutoffIso: string): Promise<number> => {
     try {
       const r = (await db.run(sql`
@@ -1745,6 +1804,12 @@ export function makeRepos(db: SqliteDb) {
           and "clientId" not in (select "clientId" from "oauthConsent")
           and "clientId" not in (select "clientId" from "oauthAccessToken")
       `)) as RunResult
+      // Workspace bindings for clients that no longer exist (pruned above, or
+      // any earlier sweep) have nothing left to resolve against — sweep them too.
+      await db.run(sql`
+        delete from oauth_client_workspace
+        where client_id not in (select "clientId" from "oauthClient")
+      `)
       return r.changes ?? r.meta?.changes ?? 0
     } catch {
       // OAuth tables absent → nothing to reap.
@@ -2031,6 +2096,7 @@ export function makeRepos(db: SqliteDb) {
     artifactIdsByTag,
     artifactIdsByAuthor,
     countArtifacts,
+    countUnlistedFor,
     storageBytes,
     tagCounts,
     deleteArtifact,
@@ -2161,6 +2227,8 @@ export function makeRepos(db: SqliteDb) {
     getOAuthClientName,
     listUserGrants,
     revokeUserGrant,
+    setOAuthClientWorkspace,
+    getOAuthClientWorkspace,
     pruneStaleOAuthClients,
     deleteAgent,
     createAgentMention,

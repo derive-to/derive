@@ -209,7 +209,7 @@ export function scaffoldFiles(title = "My artifact", template = "md") {
 
 /** Project-scoped MCP config (Claude Code et al. read `.mcp.json`). Reads the
  *  server + token from the environment so no secret is written to disk; falls
- *  back to a local server. `npx -y @derive/mcp` needs no install. */
+ *  back to a local server. `npx -y @derive-to/mcp` needs no install. */
 // Shell-style env expansion the agent harness resolves when it reads .mcp.json:
 // `${VAR:-default}`. Assembled from parts so the source carries no literal
 // template placeholder (which a plain JS string shouldn't).
@@ -219,7 +219,7 @@ const MCP_CONFIG = {
   mcpServers: {
     derive: {
       command: "npx",
-      args: ["-y", "@derive/mcp"],
+      args: ["-y", "@derive-to/mcp"],
       env: {
         DERIVE_SERVER: envRef("DERIVE_SERVER", "http://localhost:8080"),
         DERIVE_TOKEN: envRef("DERIVE_TOKEN"),

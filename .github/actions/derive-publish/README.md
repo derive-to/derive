@@ -48,7 +48,7 @@ In your own repo with a `derive.json` checked in, `path` and `id` default to its
 | `visibility`  | no       |             | `public` \| `link` \| `org` \| `password`.                            |
 | `name`        | no       |             | Version checkpoint name (e.g. a sha or release tag).                   |
 | `comment-pr`  | no       | `true`      | Comment the URL on the PR (when the run is a `pull_request`).          |
-| `cli-version` | no       | `latest`    | `@derive/cli` version/dist-tag run via `npx`.                            |
+| `cli-version` | no       | `latest`    | `@derive-to/cli` version/dist-tag run via `npx`.                            |
 
 ## Outputs
 

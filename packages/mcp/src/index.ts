@@ -5,7 +5,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod"
 import { createClient } from "./client"
 
-// Stdio MCP server for self-hosters: `npx @derive/mcp` talks to a Derive instance over
+// Stdio MCP server for self-hosters: `npx @derive-to/mcp` talks to a Derive instance over
 // the /v1 HTTP API (DERIVE_SERVER) with a bearer (DERIVE_TOKEN). It exposes the SAME five
 // tools as the remote /mcp server — list_artifacts, read, catch_up, comment, publish —
 // so the vocabulary is identical whether an agent connects over OAuth or a static
@@ -69,9 +69,10 @@ server.registerTool(
   "catch_up",
   {
     description:
-      "START HERE on an artifact. Its state in one call: a summary, the versions since `since_version`, the open (and outdated) comment threads, and the full version history. " +
+      "START HERE on an artifact. Its state in one call: a summary, the review round, the versions since `since_version`, the open (and outdated) comment threads, and the full version history. " +
       "Pass `comments` (open / addressed / resolved / outdated) to instead get that filtered thread list — your feedback queue. " +
-      "Pass `response_format='detailed'` (optionally with `since_version`/`to_version`) to fold in the exact line diff between two versions.",
+      "Pass `response_format='detailed'` (optionally with `since_version`/`to_version`) to fold in the exact line diff between two versions. " +
+      "WAITING ON A REVIEW? Pass `wait` (seconds, max 50) to block until the human sends back or approves — chain these instead of sleeping between polls.",
     inputSchema: {
       short_id: z.string(),
       since_version: z
@@ -94,9 +95,18 @@ server.registerTool(
         .enum(["summary", "detailed"])
         .optional()
         .describe("'summary' (default) omits the line diff; 'detailed' includes it."),
+      wait: z
+        .number()
+        .int()
+        .min(1)
+        .max(50)
+        .optional()
+        .describe(
+          "Long-poll: block up to this many seconds for the human's next review action before returning. Returns immediately when something is already actionable.",
+        ),
     },
   },
-  async ({ short_id, since_version, to_version, comments, response_format }) => {
+  async ({ short_id, since_version, to_version, comments, response_format, wait }) => {
     const summarizeComment = (c: {
       thread_id: string
       author: string
@@ -121,17 +131,71 @@ server.registerTool(
       })
     }
 
+    // Long-poll (self-host shim flavor): the /v1 API has no blocking endpoint,
+    // so poll every 2.5s until the human acts or the wait runs out — the same
+    // contract as the remote server's wait on a coarser clock. "Acts" = the
+    // round changes OR the open-comment count moves (so waiting works with no
+    // round open, exactly like the server's comment.created wake). Transient
+    // errors retry; they never end the wait early. A settled round that still
+    // applies to the current head is already actionable and returns at once.
+    if (wait) {
+      const deadline = Date.now() + wait * 1000
+      const snap = () =>
+        Promise.all([
+          client.get(short_id),
+          client.getReview(short_id),
+          client.listComments(short_id, "open"),
+        ]).then(([art, rev, open]) => {
+          const round = rev.pending ?? rev.rounds[0] ?? null
+          return {
+            key: `${round?.id ?? "none"}:${round?.state ?? "none"}:${open.length}`,
+            actionable:
+              !!round && round.state !== "pending" && round.version >= art.current_version,
+          }
+        })
+      let baseline: string | null = null
+      for (;;) {
+        const cur = await snap().catch(() => null)
+        if (cur) {
+          if (baseline === null) {
+            baseline = cur.key
+            if (cur.actionable) break
+          } else if (cur.key !== baseline) break
+        }
+        if (Date.now() >= deadline) break
+        await new Promise((r) => setTimeout(r, 2500))
+      }
+    }
+
     const a = await client.get(short_id)
     const head = a.current_version
     const to = Math.min(head, Math.max(1, to_version ?? head))
     const since = Math.min(to, Math.max(1, since_version ?? to - 1))
     const history = a.versions.slice().sort((x, y) => y.n - x.n)
     const newVersions = history.filter((v) => v.n > since && v.n <= to)
-    const [open, outdated, addressed] = await Promise.all([
+    const [open, outdated, addressed, reviewState] = await Promise.all([
       client.listComments(short_id, "open"),
       client.listComments(short_id, "outdated"),
       client.listComments(short_id, "addressed"),
+      client.getReview(short_id).catch(() => ({ rounds: [], pending: null })),
     ])
+    const round = reviewState.pending ?? reviewState.rounds[0] ?? null
+    const review = round
+      ? {
+          state: round.state,
+          version: round.version,
+          requested_at: round.created_at,
+          resolved_at: round.resolved_at,
+          note: round.note,
+        }
+      : null
+    const reviewBit = review
+      ? review.state === "pending"
+        ? ` Review requested on v${review.version} — waiting for the human.`
+        : review.state === "sent_back"
+          ? ` The human sent back their review of v${review.version} — read the open threads, revise, and re-request.`
+          : ` The human approved v${review.version} — you're clear to proceed.`
+      : ""
     let entryDiff: string | undefined
     if (response_format === "detailed" && since < to) {
       const d = await client.diff(short_id, since, to)
@@ -143,10 +207,11 @@ server.registerTool(
     const addressedBit = addressed.length ? ` ${addressed.length} addressed (pending review).` : ""
     const summary =
       since >= to
-        ? `You're up to date on "${a.title}" (v${head}); ${open.length} open comment(s).${addressedBit}${outdatedBit}`
-        : `"${a.title}": ${newVersions.length} new version(s) since v${since} (now v${to}). ${open.length} open comment(s).${addressedBit}${outdatedBit}`
+        ? `You're up to date on "${a.title}" (v${head}); ${open.length} open comment(s).${addressedBit}${outdatedBit}${reviewBit}`
+        : `"${a.title}": ${newVersions.length} new version(s) since v${since} (now v${to}). ${open.length} open comment(s).${addressedBit}${outdatedBit}${reviewBit}`
     return json({
       summary,
+      review,
       short_id,
       since,
       to,
@@ -170,7 +235,7 @@ server.registerTool(
   "comment",
   {
     description:
-      "Leave feedback, reply in a thread, and/or resolve or reopen a thread. Anchor a NEW comment to a quoted span with `quote`. Reply by passing the thread id as `reply_to`. Resolve/reopen by passing `set_state` with a `comment_id` from the thread (or the comment you just left).",
+      "Leave feedback, reply in a thread, react, and/or resolve or reopen a thread. Anchor a NEW comment to a quoted span with `quote`. Reply by passing the thread id as `reply_to`. Pass `react` with a `comment_id` (or `reply_to` to hit the thread's latest comment) to acknowledge feedback without the noise of a reply — the loop's minimum ack. Resolve/reopen by passing `set_state` with a `comment_id` from the thread (or the comment you just left).",
     inputSchema: {
       short_id: z.string(),
       body: z
@@ -182,16 +247,22 @@ server.registerTool(
         .optional()
         .describe("A thread id to reply in; omit to start a new thread."),
       quote: z.string().optional().describe("Exact text to anchor a NEW comment to."),
+      react: z
+        .enum(["👍", "❤️", "🎉", "😄", "👀", "🙏", "🚀", "👎"])
+        .optional()
+        .describe("React to a comment (with `comment_id` or `reply_to`) — 👍 is the loop's ack."),
       set_state: z.enum(["resolved", "open"]).optional().describe("Resolve or reopen a thread."),
       comment_id: z
         .string()
         .optional()
-        .describe("A comment in the thread to set_state on (when not posting)."),
+        .describe("A comment in the thread to react to / set_state on (when not posting)."),
     },
   },
-  async ({ short_id, body, reply_to, quote, set_state, comment_id }) => {
-    if (!body && !set_state)
-      return text("Provide `body` (to comment) or `set_state` (to resolve/reopen).")
+  async ({ short_id, body, reply_to, quote, react, set_state, comment_id }) => {
+    if (!body && !set_state && !react)
+      return text(
+        "Provide `body` (to comment), `react` (to acknowledge), or `set_state` (to resolve/reopen).",
+      )
     let posted: Awaited<ReturnType<typeof client.createComment>> | undefined
     if (body) {
       const anchor = quote ? { type: "TextQuoteSelector", exact: quote } : undefined
@@ -201,6 +272,32 @@ server.registerTool(
         anchor,
         author: "agent",
       })
+    }
+    let reactNote = ""
+    if (react) {
+      // The ack target: an explicit comment, else the newest comment in the
+      // thread by someone ELSE — never the agent's own just-posted reply. One
+      // unfiltered fetch covers every thread state (the human may have replied
+      // on a resolved thread).
+      const all = await client.listComments(short_id)
+      let target = comment_id
+      if (!target && reply_to) {
+        const thread = all
+          .filter((cm) => cm.thread_id === reply_to)
+          .sort((x, y) => x.created_at.localeCompare(y.created_at))
+        const other = [...thread].reverse().find((cm) => cm.author !== "agent")
+        target = (other ?? thread[thread.length - 1])?.id
+      }
+      if (!target)
+        return text("`react` needs a `comment_id` or a `reply_to` thread to acknowledge.")
+      // The /react route TOGGLES; skipping an already-present emoji keeps a
+      // retried ack from silently removing it.
+      if (all.find((cm) => cm.id === target)?.reactions?.[react]?.length) {
+        reactNote = ` · already acknowledged with ${react}`
+      } else {
+        await client.react(short_id, target, react)
+        reactNote = ` · acknowledged with ${react}`
+      }
     }
     let stateNote = ""
     if (set_state) {
@@ -216,9 +313,12 @@ server.registerTool(
       const where = reply_to
         ? `replied in thread ${posted.thread_id}`
         : `new thread ${posted.thread_id}`
-      return text(`${where} (comment ${posted.id})${quote ? ` on “${quote}”` : ""}${stateNote}.`)
+      return text(
+        `${where} (comment ${posted.id})${quote ? ` on “${quote}”` : ""}${reactNote}${stateNote}.`,
+      )
     }
-    return text(`Thread ${set_state === "resolved" ? "resolved" : "reopened"}.`)
+    if (!set_state) return text(`Acknowledged${reactNote.replace(" · acknowledged", "")}.`)
+    return text(`Thread ${set_state === "resolved" ? "resolved" : "reopened"}${reactNote}.`)
   },
 )
 
@@ -240,9 +340,9 @@ server.registerTool(
         .describe("Omit to create a new artifact; pass it to add a version."),
       title: z.string().optional(),
       // `password` stays CLI/web-only (it needs a password argument this tool
-      // doesn't take). Omitted ⇒ the server default, `private` (the publish is
-      // owned by the user the agent acts on behalf of).
-      visibility: z.enum(["public", "link", "org", "private"]).optional(),
+      // doesn't take). Omitted ⇒ the workspace's agent default (usually
+      // `unlisted` — a DRAFT: hidden from the library, one link away for members).
+      visibility: z.enum(["unlisted", "public", "link", "org", "private"]).optional(),
       message: z.string().optional().describe("What changed in this version."),
       for_review: z
         .boolean()
@@ -252,9 +352,25 @@ server.registerTool(
         .array(z.string())
         .optional()
         .describe("Thread ids this revision resolves (live publish) or addresses (proposal)."),
+      request_review: z
+        .boolean()
+        .optional()
+        .describe(
+          "Open a review round asking your human to review this version — the /derive loop. Poll catch_up's `review` (or pass `wait`) for the state.",
+        ),
     },
   },
-  async ({ content, filename, short_id, title, visibility, message, for_review, addresses }) => {
+  async ({
+    content,
+    filename,
+    short_id,
+    title,
+    visibility,
+    message,
+    for_review,
+    addresses,
+    request_review,
+  }) => {
     if (for_review) {
       if (!short_id) return text("A proposal revises an EXISTING artifact — pass its short_id.")
       const p = await client.propose(short_id, {
@@ -279,15 +395,25 @@ server.registerTool(
       visibility,
       message,
       resolves: addresses,
+      requestReview: request_review,
     })
     const note = addresses?.length ? ` · resolved ${addresses.length} thread(s)` : ""
+    const openNote =
+      a.opened_in_tab === false
+        ? " No open Derive tab caught this push — open the url for the user if they should see it now."
+        : ""
     return json({
       published: true,
       short_id: a.short_id,
+      ...(a.review_requested ? { review_requested: true } : {}),
       version: a.current_version,
       url: a.url,
       title: a.title,
-      note: short_id ? `Live — new version${note}.` : `Live — created "${a.title}"${note}.`,
+      visibility: a.visibility,
+      ...(a.opened_in_tab !== undefined ? { opened_in_tab: a.opened_in_tab } : {}),
+      note:
+        (short_id ? `Live — new version${note}.` : `Live — created "${a.title}"${note}.`) +
+        openNote,
     })
   },
 )
