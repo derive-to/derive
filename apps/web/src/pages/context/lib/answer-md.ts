@@ -20,6 +20,10 @@ const sanitizer = new FilterXSS({
     del: [],
     sup: [],
     sub: [],
+    // GFM task lists render as <input type="checkbox" checked disabled> — same
+    // entry core/md.ts carries. Found by the Review Companion context reviewing
+    // the PR that introduced this file.
+    input: ["type", "checked", "disabled"],
   },
 })
 
