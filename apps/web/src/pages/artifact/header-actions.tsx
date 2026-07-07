@@ -1,3 +1,4 @@
+import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useState } from "react"
 import { api } from "@/api"
 import { Icon } from "@/components/icons"
@@ -6,11 +7,20 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { toast } from "@/components/ui/sonner"
 import { Textarea } from "@/components/ui/textarea"
+import { artifactQuery, workspacesQuery } from "@/lib/queries"
 
 // Favorite is the one property kept VISIBLE in the header — the filled star is a
 // glanceable state (you see at a glance that this artifact is starred), and a
@@ -134,6 +144,95 @@ export function ReportDialog({
               </Button>
             </div>
           </>
+        )}
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+// Move-to-workspace dialog: owner-only (the ⋯ menu hides the trigger otherwise).
+// Destination is any workspace you belong to, any role — not just ones you own.
+// Opened from the ⋯ menu (controlled).
+export function MoveToWorkspaceDialog({
+  shortId,
+  currentOrgId,
+  open,
+  onOpenChange,
+}: {
+  shortId: string
+  currentOrgId: string | undefined
+  open: boolean
+  onOpenChange: (o: boolean) => void
+}) {
+  const qc = useQueryClient()
+  const { data: workspaces } = useQuery({ ...workspacesQuery(), enabled: open })
+  const [target, setTarget] = useState<string>("")
+  const [busy, setBusy] = useState(false)
+  const options = (workspaces?.workspaces ?? []).filter((w) => w.id !== currentOrgId)
+  const move = async () => {
+    if (!target || busy) return
+    setBusy(true)
+    try {
+      await api.moveArtifact(shortId, target)
+      await qc.invalidateQueries({ queryKey: artifactQuery(shortId).queryKey })
+      const name = options.find((w) => w.id === target)?.name ?? "the workspace"
+      toast.success(`Moved to ${name}`)
+      onOpenChange(false)
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Couldn't move this artifact")
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Move to workspace</DialogTitle>
+          <DialogDescription>
+            Moves this artifact into another workspace you belong to. Comments, versions, and
+            history come with it; it leaves any collections here.
+          </DialogDescription>
+        </DialogHeader>
+        {options.length === 0 ? (
+          <div className="text-sm text-muted-foreground">
+            You're not a member of any other workspace yet.
+          </div>
+        ) : (
+          <Select value={target} onValueChange={setTarget}>
+            <SelectTrigger className="w-full" data-testid="move-workspace-select">
+              <SelectValue placeholder="Select a workspace" />
+            </SelectTrigger>
+            <SelectContent>
+              {options.map((w) => (
+                <SelectItem key={w.id} value={w.id}>
+                  {w.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
+        {options.length > 0 && (
+          <DialogFooter>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => onOpenChange(false)}
+              data-testid="move-workspace-cancel"
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="default"
+              size="sm"
+              onClick={move}
+              loading={busy}
+              disabled={!target}
+              data-testid="move-workspace-submit"
+            >
+              {busy ? "Moving…" : "Move"}
+            </Button>
+          </DialogFooter>
         )}
       </DialogContent>
     </Dialog>

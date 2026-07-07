@@ -357,6 +357,7 @@ export function Artifact() {
   // Lock: any editor can toggle it (advanced menu). While locked, even an editor
   // must propose — `effectiveCanPublish` flips the edit flow to the propose path.
   const canLock = canPublish
+  const canMove = art.my_role === "owner"
   const isLocked = !!art.locked
   const effectiveCanPublish = canPublish && !isLocked
   // A logged-out visitor on a public/link artifact: strictly view-only. They get
@@ -574,6 +575,7 @@ export function Artifact() {
           {!isAnon && (
             <ArtifactTopBar
               shortId={shortId}
+              orgId={art.org_id}
               myRole={art.my_role}
               visibility={art.visibility}
               generalRole={art.general_role}
@@ -600,6 +602,7 @@ export function Artifact() {
               reader={reader}
               onReaderToggle={() => setReader((r) => !r)}
               canLock={canLock}
+              canMove={canMove}
               locked={isLocked}
               onPresent={toggleFullscreen}
               onLockToggle={async () => {

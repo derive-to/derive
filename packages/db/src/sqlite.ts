@@ -33,6 +33,7 @@ import {
   SCHEMA_STATEMENTS,
   sessionMessage,
   version,
+  webhook,
 } from "./schema"
 
 const VIEW_WINDOW_MS = 30 * 86400_000
@@ -155,6 +156,19 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
         db.delete(notification).where(eq(notification.artifact_id, id)).run()
         db.delete(agentMention).where(eq(agentMention.artifact_id, id)).run()
         db.delete(artifact).where(eq(artifact.id, id)).run()
+      })()
+    },
+
+    // Atomic move: org_id flips, collection membership and any artifact-targeted
+    // webhook detach, all in one commit.
+    moveArtifactOrg: async (artifactId: string, targetOrgId: string): Promise<void> => {
+      raw.transaction(() => {
+        db.update(artifact).set({ org_id: targetOrgId }).where(eq(artifact.id, artifactId)).run()
+        db.delete(collectionItem).where(eq(collectionItem.artifact_id, artifactId)).run()
+        db.update(webhook)
+          .set({ artifact_id: null })
+          .where(eq(webhook.artifact_id, artifactId))
+          .run()
       })()
     },
 

@@ -677,6 +677,9 @@ export const artifactRoutes = (ctx: AppContext) => {
       })),
       sessions: groupSessions(versions, versionWindowMs),
       my_role: effectiveRole(actor, artifact.visibility, artifact.general_role),
+      // The artifact's current workspace — the move dialog needs this to exclude
+      // it from the destination picker.
+      org_id: artifact.org_id,
       tags,
       favorite,
       collections,
@@ -763,6 +766,29 @@ export const artifactRoutes = (ctx: AppContext) => {
     if (!(await authorize(c, "manage", artifact))) return fail(c, 403, "forbidden")
     await meta.deleteArtifact(artifact.id, artifact.org_id)
     return c.body(null, 204)
+  })
+
+  // Move to a different workspace you belong to. Owner-only (the `manage` gate —
+  // same as delete). No role requirement on the destination: you can move into a
+  // workspace where you're just a viewer/editor. A future org-level "block
+  // cross-workspace moves" policy is a single guard here, not a new subsystem.
+  app.post("/v1/artifacts/:shortId/move", async (c) => {
+    const artifact = await meta.getByShortId(c.req.param("shortId"))
+    if (!artifact) return fail(c, 404, "not found")
+    if (!(await authorize(c, "manage", artifact))) return fail(c, 403, "forbidden")
+    const b = await readJson(c, z.object({ targetOrgId: z.string().min(1) }))
+    if (b instanceof Response) return b
+    if (b.targetOrgId === artifact.org_id) return fail(c, 400, "already in that workspace")
+    const me = await currentUser(c)
+    if (!me) return fail(c, 401, "unauthenticated")
+    if (!(await meta.getMembership(b.targetOrgId, me.id)))
+      return fail(c, 403, "you're not a member of that workspace")
+    // A bound custom domain routes by artifact_id; moving orgs out from under it
+    // would silently break live traffic, so refuse rather than cascade.
+    if ((await meta.getArtifactDomains(artifact.id)).length > 0)
+      return fail(c, 409, "remove the custom domain before moving this artifact")
+    await meta.moveArtifactOrg(artifact.id, b.targetOrgId)
+    return c.json({ org_id: b.targetOrgId })
   })
 
   // Unlock a `password` artifact: verify the password and drop a cookie whose

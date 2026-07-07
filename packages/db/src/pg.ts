@@ -2151,6 +2151,16 @@ export class PgMetaStore implements MetaStore {
     })
   }
 
+  // Atomic move: org_id flips, collection membership and any artifact-targeted
+  // webhook detach, all in one commit.
+  async moveArtifactOrg(artifactId: string, targetOrgId: string): Promise<void> {
+    await this.db.transaction(async (tx) => {
+      await tx.update(artifact).set({ org_id: targetOrgId }).where(eq(artifact.id, artifactId))
+      await tx.delete(collectionItem).where(eq(collectionItem.artifact_id, artifactId))
+      await tx.update(webhook).set({ artifact_id: null }).where(eq(webhook.artifact_id, artifactId))
+    })
+  }
+
   // Atomic takedown: tombstone + bulk open-report resolution + audit entry in one
   // transaction, so a failure mid-way rolls back instead of leaving a half-applied
   // takedown. The single bulk UPDATE replaces the route's per-report loop (N+1).
