@@ -10,11 +10,13 @@
 //   derive status [--id] [--json]          the review round state + open threads
 //   derive send-back [--id] [--note m]     (human) return your answers to the agent
 //   derive approve [--id] [--note m]       (human) approve — the build go-signal
+//   derive runner serve|doctor|install     run a context's answer daemon (npx-able anywhere)
 import { spawn } from "node:child_process"
 import { createHash, randomBytes } from "node:crypto"
 import { readdirSync, readFileSync, statSync } from "node:fs"
 import { basename, join, relative } from "node:path"
 import { createInterface } from "node:readline"
+import { fileURLToPath } from "node:url"
 import { zipSync } from "fflate"
 import {
   CONFIG_FILE,
@@ -153,6 +155,42 @@ if (cmd === "login") {
   console.log(`\n✓ Signed in to ${server}`)
   console.log(`  Token saved to ${path} — \`derive publish\` will use it automatically.`)
   process.exit(0)
+}
+
+// ---- derive runner (serve / doctor / install) -------------------------------
+// The context runner as a CLI verb: `derive runner serve <ctx>` on any machine
+// with Node. Config: flags win over env (DERIVE_SERVER/TOKEN/CONTEXT, RUNNER_*);
+// --token-file keeps the secret out of service-unit command lines; --env-file
+// loads a context's own secrets (KEY=VALUE) before anything reads them.
+if (cmd === "runner") {
+  const sub = positional.shift()
+  if (!["serve", "doctor", "install"].includes(sub ?? "")) {
+    console.error(`usage:
+  derive runner serve  [ctx_id] [--server url] [--token t | --token-file f] [--env-file f,f]
+                       [--cwd dir] [--claude-bin path] [--model m] [--poll ms] [--timeout ms] [--mock true]
+  derive runner doctor [same flags]        preflight: server, token+context, manifest, claude, gh, python3
+  derive runner install [same flags]       print a launchd/systemd unit for this config`)
+    process.exit(1)
+  }
+  const { doctor, loadRunnerConfig, renderServiceUnit, serve } = await import("../src/runner.js")
+  if (positional[0]) flags.context = positional[0]
+  let rcfg
+  try {
+    rcfg = loadRunnerConfig(process.env, flags)
+  } catch (e) {
+    console.error(`error: ${e.message}`)
+    process.exit(1)
+  }
+  if (sub === "doctor") process.exit((await doctor(rcfg)) === 0 ? 0 : 1)
+  if (sub === "install") {
+    const u = renderServiceUnit(
+      { ...rcfg, tokenFile: flags["token-file"] },
+      fileURLToPath(import.meta.url),
+    )
+    console.log(`# Save as ${u.path}, then:\n#   ${u.load}\n\n${u.unit}`)
+    process.exit(0)
+  }
+  await serve(rcfg) // runs until killed
 }
 
 // ---- Loop verbs (comments / open / reply / resolve / reopen) --------------
