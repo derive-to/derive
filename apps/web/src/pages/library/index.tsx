@@ -431,7 +431,7 @@ function LibraryBody({ view }: { view: LibraryView }) {
           active={filter.kind === "mine" ? "mine" : "all"}
           total={summary?.total}
           mine={summary?.mine}
-          pending={summary?.mine_link_only}
+          pending={summary?.mine_private}
         />
       ) : (
         // Hide the heading on a brand-new empty home — the visual guide carries it.

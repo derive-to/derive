@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useNavigate } from "@tanstack/react-router"
-import { Fragment, useEffect, useRef, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import {
   API_BASE,
   type ArtifactDomain,
@@ -16,6 +16,7 @@ import { Eyebrow, SectionEyebrow } from "@/components/shared/section-eyebrow"
 import { Spinner } from "@/components/shared/spinner"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
 import {
   Dialog,
   DialogContent,
@@ -28,7 +29,6 @@ import {
   SelectMenu,
   SelectMenuContent,
   SelectMenuItem,
-  SelectMenuSeparator,
   SelectMenuTrigger,
 } from "@/components/ui/select-menu"
 import { toast } from "@/components/ui/sonner"
@@ -37,68 +37,35 @@ import { getInitials } from "@/lib/initials"
 import { artifactQuery, workspaceQuery } from "@/lib/queries"
 import { cn } from "@/lib/utils"
 
-// General access (visibility) options as two dimensions, not one flat ladder:
-// WHO (private / workspace / public) crossed with listed-or-link-only for the
-// workspace and public tiers. Each inner array renders as a menu group with a
-// separator between groups, so the pairs read as pairs: listed first, link-only
-// second, same order in both tiers. Password trails as a modifier-style rung.
-const ACCESS_GROUPS: { value: string; label: string; blurb: string; icon: IconName }[][] = [
-  [
-    {
-      value: "private",
-      label: "Private",
-      blurb: "Only people added above. Workspace membership grants nothing.",
-      icon: "lock",
-    },
-  ],
-  [
-    {
-      value: "org",
-      label: "Workspace",
-      blurb: "Every workspace member can find it in the shared library.",
-      icon: "workspace",
-    },
-    {
-      value: "unlisted",
-      label: "Workspace — link only",
-      blurb: "Workspace members with the link. Stays out of the shared library.",
-      icon: "link",
-    },
-  ],
-  [
-    {
-      value: "public",
-      label: "Public",
-      blurb: "In the public directory and indexable.",
-      icon: "globe",
-    },
-    {
-      value: "link",
-      label: "Public — link only",
-      blurb: "Anyone with the link can view. Not listed anywhere.",
-      icon: "link",
-    },
-  ],
-  [
-    {
-      value: "password",
-      label: "Password protected",
-      blurb: "Anyone with the link and the password.",
-      icon: "lock",
-    },
-  ],
+// General access: three audiences, each answering one question — who can open
+// the link. A password is a LOCK on the public option (the checkbox below the
+// select), not a fourth audience.
+const ACCESS: { value: string; label: string; blurb: string; icon: IconName }[] = [
+  {
+    value: "private",
+    label: "Private",
+    blurb: "Only people added above. Workspace membership grants nothing.",
+    icon: "lock",
+  },
+  {
+    value: "org",
+    label: "Workspace",
+    blurb: "Every workspace member can find it in the shared library.",
+    icon: "workspace",
+  },
+  {
+    value: "public",
+    label: "Public",
+    blurb: "The link works for anyone.",
+    icon: "globe",
+  },
 ]
-const ACCESS = ACCESS_GROUPS.flat()
 
 // The state glyph the Share trigger carries so exposure is legible without
-// opening the dialog: a globe when the URL alone reads (link/public), a lock
-// for invite-only, the plain share glyph for workspace/password.
+// opening the dialog: a globe when the URL alone reads, a lock for invite-only,
+// the plain share glyph for workspace.
 const visibilityIcon = (visibility: string): IconName =>
-  visibility === "public" || visibility === "link"
-    ? "globe"
-    : visibility === "private"
-      ? "lock"
-      : "share"
+  visibility === "public" ? "globe" : visibility === "private" ? "lock" : "share"
 
 /**
  * Per-artifact sharing, opened from the artifact header. Follows the Google Docs
@@ -112,11 +79,14 @@ export function ShareButton({
   myRole,
   visibility,
   generalRole,
+  passwordProtected = false,
 }: {
   shortId: string
   myRole?: Role | null
   visibility: string
   generalRole?: GeneralRole
+  /** The public link carries a password (the lock). */
+  passwordProtected?: boolean
 }) {
   const qc = useQueryClient()
   const { me } = useAuth()
@@ -132,19 +102,24 @@ export function ShareButton({
   const [active, setActive] = useState(-1)
   // The value we just picked, so the follow-up search for it doesn't reopen the menu.
   const picked = useRef("")
-  // General access draft: visibility + the link's permission (view vs comment), plus a
-  // password when enabling/changing password.
+  // General access draft: visibility + the link's permission (view vs comment), plus
+  // the lock (password) state for a public link.
   const [vis, setVis] = useState(visibility)
   const [genRole, setGenRole] = useState<GeneralRole>(generalRole ?? "viewer")
   const [pw, setPw] = useState("")
   const [savingVis, setSavingVis] = useState(false)
+  // The lock as the server knows it, kept locally current as we set/clear it.
+  const [hasLock, setHasLock] = useState(passwordProtected)
+  // The checkbox is checked before a password exists (the input is showing) —
+  // nothing applies until Set password.
+  const [lockDraft, setLockDraft] = useState(false)
 
   const [copied, setCopied] = useState(false)
   const [copiedLink, setCopiedLink] = useState(false)
   // Embed + domains live behind one quiet disclosure — access is the dialog's
   // job; distribution mechanics shouldn't compete with it.
   const [more, setMore] = useState(false)
-  // Changing the password on an already-password artifact is rare: hidden
+  // Changing the password on an already-locked artifact is rare: hidden
   // behind a ghost reveal instead of a permanently visible input.
   const [pwOpen, setPwOpen] = useState(false)
 
@@ -171,7 +146,7 @@ export function ShareButton({
   // for others when the artifact is link- or world-readable.
   const origin = API_BASE || (typeof window === "undefined" ? "" : window.location.origin)
   const embedSnippet = `<iframe src="${origin}/v1/embed/${shortId}" width="100%" height="480" style="border:0;border-radius:12px" loading="lazy" title="Derive artifact" allowfullscreen></iframe>`
-  const linkAccessible = visibility === "public" || visibility === "link"
+  const linkAccessible = visibility === "public"
   const copyEmbed = async () => {
     try {
       await navigator.clipboard.writeText(embedSnippet)
@@ -190,29 +165,26 @@ export function ShareButton({
   const visibilityAccess = ACCESS.find((a) => a.value === visibility)
   const nav = useNavigate()
   // Solo drives only the create-a-workspace hint, never the ladder itself — the
-  // workspace rungs stay meaningful for a workspace of one (org vs unlisted is
-  // what lists a doc in your own library, and promoting an agent's link-only
-  // publish to Workspace is the loop's blessing gesture). Managers only, and
-  // not-solo while the roster loads, so nothing flashes.
+  // Workspace row stays meaningful for a workspace of one (it's what lists a doc
+  // in your own library, and promoting an agent's private draft to Workspace is
+  // the loop's blessing gesture). Managers only, and not-solo while the roster
+  // loads, so nothing flashes.
   const { data: workspace } = useQuery({ ...workspaceQuery(), enabled: canManage })
   const solo = workspace ? workspace.members.length <= 1 : false
-  // Reach visibilities (link / public / password — anyone can arrive) carry a
-  // general-access permission; private/workspace do not, so the view/comment
-  // control hides for them.
-  const reach = vis === "link" || vis === "public" || vis === "password"
-  // Unlisted carries the same view/comment choice, but the reachers are workspace
-  // members only (the default comes from workspace settings; this is the per-doc override).
-  const showRole = reach || vis === "unlisted"
-  // Switching TO password can't apply until a password exists; everything else
-  // applies the moment it's picked — a Save button between a select and its
-  // effect is friction with no safety benefit here (the change is one more
-  // select away from undone).
-  const pendingPw = vis === "password" && visibility !== "password"
+  // Only public reach carries a general-access permission (what the link grants);
+  // private/workspace resolve by explicit standing, so the control hides there.
+  const showRole = vis === "public"
+  // Everything applies the moment it's picked — a Save button between a select
+  // and its effect is friction with no safety benefit (the change is one more
+  // select away from undone). The lock is the one exception: checking the box
+  // reveals the input, and nothing applies until Set password.
   const applyVisibility = async (nextVis: string, nextRole: GeneralRole, password?: string) => {
     setSavingVis(true)
     setErr(null)
     try {
-      await api.setVisibility(shortId, nextVis, nextRole, password)
+      const r = await api.setVisibility(shortId, nextVis, nextRole, password)
+      setHasLock(!!r.locked)
+      setLockDraft(false)
       setPw("")
       setPwOpen(false)
       // Refresh the artifact (drives the toolbar glyph) and the library.
@@ -229,12 +201,22 @@ export function ShareButton({
   }
   const pickVisibility = (v: string) => {
     setVis(v)
-    if (v === "password" && visibility !== "password") return // applies on Set password
+    setLockDraft(false)
+    // Leaving public clears the lock server-side; mirror that locally so
+    // returning to public starts unlocked.
+    if (v !== "public") setHasLock(false)
     void applyVisibility(v, genRole)
   }
   const pickGenRole = (r: GeneralRole) => {
     setGenRole(r)
-    if (!pendingPw) void applyVisibility(vis, r)
+    void applyVisibility(vis, r)
+  }
+  // The lock checkbox: checking reveals the password input (applies on Set);
+  // unchecking clears the lock immediately (an explicit empty password).
+  const toggleLock = (on: boolean) => {
+    if (on) setLockDraft(true)
+    else if (hasLock) void applyVisibility("public", genRole, "")
+    else setLockDraft(false)
   }
   const copyLink = async () => {
     try {
@@ -448,16 +430,11 @@ export function ShareButton({
                       {currentAccess?.label ?? vis}
                     </SelectMenuTrigger>
                     <SelectMenuContent>
-                      {ACCESS_GROUPS.map((group, gi) => (
-                        <Fragment key={group[0]?.value}>
-                          {gi > 0 && <SelectMenuSeparator />}
-                          {group.map((a) => (
-                            <SelectMenuItem key={a.value} value={a.value}>
-                              <Icon name={a.icon} className="text-muted-foreground" />
-                              {a.label}
-                            </SelectMenuItem>
-                          ))}
-                        </Fragment>
+                      {ACCESS.map((a) => (
+                        <SelectMenuItem key={a.value} value={a.value}>
+                          <Icon name={a.icon} className="text-muted-foreground" />
+                          {a.label}
+                        </SelectMenuItem>
                       ))}
                     </SelectMenuContent>
                   </SelectMenu>
@@ -481,17 +458,31 @@ export function ShareButton({
                     </SelectMenu>
                   )}
                 </div>
-                {pendingPw ? (
+                {/* The lock — a modifier on the public link, not an audience.
+                    Members and people added above never need the password. */}
+                {vis === "public" && (
+                  <label className="flex items-center gap-2 text-sm text-foreground">
+                    <Checkbox
+                      checked={hasLock || lockDraft}
+                      disabled={savingVis}
+                      aria-label="Require a password"
+                      data-testid="share-lock-toggle"
+                      onCheckedChange={(v) => toggleLock(v === true)}
+                    />
+                    Require a password
+                  </label>
+                )}
+                {vis === "public" && (lockDraft || (hasLock && pwOpen)) && (
                   <div className="flex gap-1.5">
                     <Input
                       type="password"
                       data-testid="share-visibility-password"
-                      placeholder="Set a password"
+                      placeholder={hasLock ? "New password" : "Set a password"}
                       aria-label="Password"
                       value={pw}
                       onChange={(e) => setPw(e.target.value)}
                       onKeyDown={(e) => {
-                        if (e.key === "Enter" && pw) void applyVisibility("password", genRole, pw)
+                        if (e.key === "Enter" && pw) void applyVisibility("public", genRole, pw)
                       }}
                       className="flex-1"
                     />
@@ -501,44 +492,21 @@ export function ShareButton({
                       size="sm"
                       disabled={!pw}
                       loading={savingVis}
-                      onClick={() => void applyVisibility("password", genRole, pw)}
+                      onClick={() => void applyVisibility("public", genRole, pw)}
                     >
                       {savingVis ? "Setting…" : "Set password"}
                     </Button>
                   </div>
-                ) : vis === "password" && pwOpen ? (
-                  <div className="flex gap-1.5">
-                    <Input
-                      type="password"
-                      data-testid="share-visibility-password"
-                      placeholder="New password"
-                      aria-label="New password"
-                      value={pw}
-                      onChange={(e) => setPw(e.target.value)}
-                      className="flex-1"
-                    />
-                    <Button
-                      data-testid="share-visibility-save"
-                      variant="secondary"
-                      size="sm"
-                      disabled={!pw}
-                      loading={savingVis}
-                      onClick={() => void applyVisibility("password", genRole, pw)}
-                    >
-                      {savingVis ? "Setting…" : "Set"}
-                    </Button>
-                  </div>
-                ) : null}
+                )}
                 <p className="text-sm text-muted-foreground">
-                  {pendingPw ? "Applies once a password is set." : (currentAccess?.blurb ?? "")}
-                  {!pendingPw &&
-                    reach &&
+                  {lockDraft && !hasLock
+                    ? "The lock applies once a password is set."
+                    : (currentAccess?.blurb ?? "")}
+                  {!lockDraft &&
+                    vis === "public" &&
                     genRole === "commenter" &&
                     " Signed-in visitors can comment."}
-                  {!pendingPw &&
-                    vis === "unlisted" &&
-                    (genRole === "commenter" ? " Members can comment." : " Members can view.")}
-                  {!pendingPw && vis === "password" && (
+                  {!lockDraft && vis === "public" && hasLock && !pwOpen && (
                     <Button
                       variant="link"
                       size="xs"

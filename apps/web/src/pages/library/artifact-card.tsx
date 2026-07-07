@@ -241,11 +241,11 @@ export function ArtifactCard({
             )}
           </span>
           <span className="ml-auto inline-flex shrink-0 items-center gap-2.5">
-            {/* Link-only work is invisible in the shared library — the chip says so
-                wherever the doc DOES surface (Created by me, Shared with you). */}
-            {a.visibility === "unlisted" && (
-              <Badge shape="pill" variant="outline" title="Workspace members with the link only">
-                <Icon name="link" size={12} /> Link only
+            {/* Private work is invisible to everyone but its members — the chip
+                says so wherever the doc DOES surface (your library, Created by me). */}
+            {a.visibility === "private" && (
+              <Badge shape="pill" variant="outline" title="Only you and people you add">
+                <Icon name="lock" size={12} /> Private
               </Badge>
             )}
             <CommentSignal artifact={a} size={12} compact />

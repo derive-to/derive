@@ -31,6 +31,7 @@ export function ArtifactTopBar(props: {
   myRole?: Role | null
   visibility: string
   generalRole?: GeneralRole
+  passwordProtected?: boolean
   favorite: boolean
   tags: string[]
   collections: string[]
@@ -81,6 +82,7 @@ export function ArtifactTopBar(props: {
           myRole={props.myRole}
           visibility={props.visibility}
           generalRole={props.generalRole}
+          passwordProtected={props.passwordProtected}
         />
         <StarButton shortId={shortId} favorite={props.favorite} onChange={props.onFavorite} />
         <DropdownMenu>

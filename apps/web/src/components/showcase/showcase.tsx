@@ -549,7 +549,7 @@ function FormControlsDemo() {
         {(
           [
             ["team", "Your team"],
-            ["link", "Anyone with the link"],
+            ["public", "Anyone with the link"],
           ] as const
         ).map(([v, txt]) => (
           <Label key={v} className="flex items-center gap-2.5 font-normal text-foreground">
@@ -1008,9 +1008,9 @@ function ConfirmDemo() {
   )
 }
 
-/** The share dialog's general access — WHO (private / workspace / public) crossed
- *  with listed-or-link-only, listed first in each pair (glyph + label + consequence).
- *  Static data; the live control is ShareButton's Select in pages/artifact/share-dialog. */
+/** The share dialog's general access — three audiences (glyph + label +
+ *  consequence); a password is a lock on Public, not a fourth row. Static data;
+ *  the live control is ShareButton's Select in pages/artifact/share-dialog. */
 function GeneralAccessDemo() {
   const steps: { icon: IconName; label: string; blurb: string; current?: boolean }[] = [
     {
@@ -1025,17 +1025,10 @@ function GeneralAccessDemo() {
       blurb: "Every workspace member can find it in the shared library.",
     },
     {
-      icon: "link",
-      label: "Workspace — link only",
-      blurb: "Workspace members with the link. Stays out of the shared library.",
+      icon: "globe",
+      label: "Public",
+      blurb: "The link works for anyone. Optionally behind a password.",
     },
-    { icon: "globe", label: "Public", blurb: "In the public directory and indexable." },
-    {
-      icon: "link",
-      label: "Public — link only",
-      blurb: "Anyone with the link can view. Not listed anywhere.",
-    },
-    { icon: "lock", label: "Password protected", blurb: "Anyone with the link and the password." },
   ]
   return (
     <div className="max-w-md rounded-xl border border-border bg-card p-1.5">
