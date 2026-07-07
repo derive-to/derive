@@ -16,8 +16,7 @@ describe("workspace integration settings", () => {
       githubMirrorComments: true,
       githubPreviewLink: true,
       slackPost: true,
-      defaultUnlistedRole: "viewer",
-      defaultAgentVisibility: "unlisted",
+      defaultAgentVisibility: "private",
     })
   })
 

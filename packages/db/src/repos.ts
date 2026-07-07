@@ -270,6 +270,23 @@ export const parseOAuthScopes = (s: string | string[] | null): string[] => {
   return s.split(/\s+/).filter(Boolean)
 }
 
+/** Parse a stored org-settings JSON blob over the defaults, normalizing values
+ *  written before the visibility collapse: a legacy agent default of `unlisted`
+ *  is today's `private`, `link`/`public` clamp to `org` (an agent default must
+ *  never world-publish), and the retired defaultUnlistedRole key is dropped.
+ *  Shared by both drivers so old blobs read identically everywhere. */
+export const parseOrgSettings = (raw: string | null): OrgSettings => {
+  let parsed: Partial<OrgSettings> & { defaultUnlistedRole?: unknown } = {}
+  try {
+    if (raw) parsed = JSON.parse(raw) as Partial<OrgSettings>
+  } catch {}
+  const { defaultUnlistedRole: _retired, ...rest } = parsed
+  const v = rest.defaultAgentVisibility as string | undefined
+  const defaultAgentVisibility: OrgSettings["defaultAgentVisibility"] =
+    v === "org" ? "org" : v === "link" || v === "public" ? "org" : "private"
+  return { ...DEFAULT_ORG_SETTINGS, ...rest, defaultAgentVisibility }
+}
+
 export const collectManagedIds = (rows: { files: string }[]): string[] => {
   const ids = new Set<string>()
   for (const r of rows) {
@@ -1381,11 +1398,7 @@ export function makeRepos(db: SqliteDb) {
   // ---- Workspace integration settings -------------------------------------
   const getOrgSettings = async (orgId: string): Promise<OrgSettings> => {
     const row = await db.select().from(orgSettings).where(eq(orgSettings.org_id, orgId)).get()
-    let parsed: Partial<OrgSettings> = {}
-    try {
-      if (row?.settings) parsed = JSON.parse(row.settings) as Partial<OrgSettings>
-    } catch {}
-    return { ...DEFAULT_ORG_SETTINGS, ...parsed }
+    return parseOrgSettings(row?.settings ?? null)
   }
   const setOrgSettings = async (orgId: string, settings: OrgSettings): Promise<void> => {
     await db

@@ -14,7 +14,7 @@ describe("moderation: report → takedown (410) → reinstate + audit (C4a)", ()
     // (the 410 must outrank the read gate on a reachable artifact).
     shortId = (
       await (
-        await publishAs(app, "<h1>spammy</h1>", { visibility: "link" }, as(owner.email))
+        await publishAs(app, "<h1>spammy</h1>", { visibility: "public" }, as(owner.email))
       ).json()
     ).short_id
     // Anonymous (no session) can't report at all — refused at the door.

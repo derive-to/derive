@@ -533,16 +533,17 @@ export function buildContext(deps: AppDeps) {
   }
 
   const actorFor = async (c: Context, a: ArtifactRecord): Promise<Actor> => {
-    // For a `password` artifact, has this visitor entered the password? The unlock
-    // cookie's value is derived from the server-only hash, so it can't be forged.
+    // A password on the artifact is a lock on its public link. Has this visitor
+    // entered it? The unlock cookie's value is derived from the server-only
+    // hash, so it can't be forged.
+    const hash = a.password_hash
+    const locked = !!hash
     const unlocked =
-      a.visibility === "password" &&
-      !!a.password_hash &&
-      safeEqual(getCookie(c, unlockCookie(a.short_id)) ?? "", unlockToken(a.id, a.password_hash))
+      !!hash && safeEqual(getCookie(c, unlockCookie(a.short_id)) ?? "", unlockToken(a.id, hash))
     // Narrow the one Principal to this artifact's Actor (the can() input).
     const p = await resolvePrincipal(c)
     if (p.kind === "token") return { kind: "token" }
-    if (p.kind === "anonymous") return { kind: "anon", unlocked }
+    if (p.kind === "anonymous") return { kind: "anon", locked, unlocked }
     if (p.kind === "agent") {
       const ag = p.agent
       // An agent acts AS ITS REGISTRANT, capped at its registered role and bound
@@ -567,6 +568,7 @@ export function buildContext(deps: AppDeps) {
         userId: ag.id,
         artifactRole: maxRole(own?.role ?? null, derived),
         orgRole,
+        locked,
       }
     }
     // A signed-in human. Baseline role = membership in the ARTIFACT's workspace. Opening a
@@ -579,7 +581,7 @@ export function buildContext(deps: AppDeps) {
     // folded in alongside any per-artifact share (the higher wins).
     const cRoles = await meta.collectionRolesForArtifact(a.id, me.id)
     const artifactRole = maxRole(am?.role ?? null, ...cRoles)
-    return { kind: "user", userId: me.id, artifactRole, orgRole, unlocked }
+    return { kind: "user", userId: me.id, artifactRole, orgRole, locked, unlocked }
   }
 
   /** Authorize an action against a specific artifact. The artifact's general-access role

@@ -170,13 +170,12 @@ function buildServer(
   // Resolve a short id within the caller's workspace (never another org's
   // artifact). `private` AND `unlisted` narrow further: the agent touches them
   // only through its human's standing (or a legacy row of its own) — a
-  // teammate's unlisted doc is as untouchable over MCP as its listings are invisible.
-  // (Members reach a teammate's unlisted doc through the web link at the
-  // view/comment floor; agent tools are write-capable, so they stay stricter.)
+  // teammate's private draft is as untouchable over MCP as its listings are
+  // invisible.
   const own = async (shortId: string): Promise<ArtifactRecord | null> => {
     const a = await ctx.meta.getByShortId(shortId)
     if (!a || a.org_id !== org) return null
-    if (a.visibility !== "private" && a.visibility !== "unlisted") return a
+    if (a.visibility !== "private") return a
     if (actingFor && (await ctx.meta.getArtifactMember(a.id, actingFor.id))) return a
     if (await ctx.meta.getArtifactMember(a.id, agent.id)) return a
     return null
@@ -597,10 +596,10 @@ function buildServer(
           .optional()
           .describe("Omit to create a new artifact; pass it to revise one you own."),
         visibility: z
-          .enum(["unlisted", "private", "workspace", "link", "public"])
+          .enum(["private", "workspace", "public"])
           .optional()
           .describe(
-            "Who can see a NEW artifact: unlisted (workspace members with the link — hidden from the shared library until a human surfaces it; the usual default for agent publishes), private (you and people you invite), workspace (your team, listed), link (anyone with the link), or public (discoverable). Omit to use the workspace's agent default. Ignored on republish — the human promotes via the share dialog.",
+            "Who can open a NEW artifact: private (the human you act for + people they add — the usual default for agent publishes; they promote it when ready), workspace (their team), or public (the link works for anyone). Omit to use the workspace's agent default. Ignored on republish — the human promotes via the share dialog.",
           ),
         spa: z
           .boolean()
@@ -774,17 +773,13 @@ function buildServer(
             // than asked (the workspace's agent default when unspecified).
             orgId: agent.org_id,
             visibility:
-              visibility === "link"
-                ? "link"
-                : visibility === "public"
-                  ? "public"
-                  : visibility === "workspace"
-                    ? "org"
-                    : visibility === "private"
-                      ? "private"
-                      : visibility === "unlisted"
-                        ? "unlisted"
-                        : (settings?.defaultAgentVisibility ?? "private"),
+              visibility === "public"
+                ? "public"
+                : visibility === "workspace"
+                  ? "org"
+                  : visibility === "private"
+                    ? "private"
+                    : (settings?.defaultAgentVisibility ?? "private"),
           },
           short_id,
         )
@@ -797,10 +792,6 @@ function buildServer(
             user_id: actingFor?.id ?? agent.id,
             role: "owner",
           })
-        // A NEW unlisted artifact takes the workspace's default link permission
-        // as its general_role (what a member with the link may do).
-        if (!short_id && artifact.visibility === "unlisted" && settings)
-          await ctx.meta.setVisibility(artifact.id, "unlisted", null, settings.defaultUnlistedRole)
         // Event parity with the HTTP publish route: the artifact channel makes a
         // tab viewing this doc live-reload; the webhook outbox fans out to
         // integrations. Without these an MCP publish is invisible to open tabs.

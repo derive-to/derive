@@ -180,7 +180,7 @@ export function createApp(deps: AppDeps): Hono {
         a.title,
         prefix,
         rawPath,
-        cacheControlFor(a.visibility),
+        cacheControlFor(a.visibility, !!a.password_hash),
       )
     }
     app.use("*", async (c, next) => {

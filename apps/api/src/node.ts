@@ -177,6 +177,29 @@ if (defaultOrg !== "local") {
   }
 }
 
+// One-time collapse of the pre-3-value visibility vocabulary (see
+// docs/plans/visibility-collapse.md). unlisted → private (the draft intent —
+// owner rows preserve access, nothing widens); link → public (reach was already
+// anyone-with-URL); password → public with the hash KEPT (the password is now a
+// lock on the public link, gating exactly as before). Idempotent: no rows keep
+// a legacy value afterward, so re-runs match nothing.
+{
+  const remap: [string, string][] = [
+    ["unlisted", "private"],
+    ["link", "public"],
+    ["password", "public"],
+  ]
+  if (cfg.databaseUrl) {
+    const pool = authDb as Pool
+    for (const [from, to] of remap)
+      await pool.query(`UPDATE artifact SET visibility = $1 WHERE visibility = $2`, [to, from])
+  } else {
+    const db = authDb as Database.Database
+    for (const [from, to] of remap)
+      db.prepare(`UPDATE artifact SET visibility = ? WHERE visibility = ?`).run(to, from)
+  }
+}
+
 // Blobs: S3/R2 when OBJECT_STORE_URL is set, else local disk (zero-config).
 const blobs: BlobStore = cfg.objectStoreUrl
   ? s3FromUrl(cfg.objectStoreUrl)

@@ -136,7 +136,7 @@ describe("slack events endpoint", () => {
       org_id: "default",
       slug: null,
       title: "Doc",
-      visibility: "link",
+      visibility: "public",
       kind: "file",
       spa: 0,
     })
@@ -206,7 +206,7 @@ describe("slack events endpoint", () => {
       org_id: "default",
       slug: null,
       title: "Doc",
-      visibility: "link",
+      visibility: "public",
       kind: "file",
       spa: 0,
     })

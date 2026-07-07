@@ -113,7 +113,18 @@ export const anonName = (seed: string): string => {
   return `${adj}-${animal}-${(h >>> 16) % 100}`
 }
 
-export const VISIBILITIES = ["public", "link", "org", "password", "private", "unlisted"] as const
+export const VISIBILITIES = ["public", "org", "private"] as const
+
+/** Pre-collapse visibility vocabulary, mapped so old clients (a pinned CLI, a
+ *  self-hosted stdio MCP, saved derive.json files) keep publishing without an
+ *  upgrade. `password` maps to public — its hash, when supplied, is the lock.
+ *  `workspace` is the MCP tools' human-friendly spelling of `org`. */
+const LEGACY_VISIBILITY: Record<string, Visibility> = {
+  link: "public",
+  password: "public",
+  unlisted: "private",
+  workspace: "org",
+}
 
 export const MAX_UPLOAD_BYTES = 100 * 1024 * 1024
 
@@ -138,14 +149,14 @@ export const RAW_HEADERS: Record<string, string> = {
 }
 
 /**
- * Cache-Control for an artifact's bytes by access model. Only fully `public`
- * artifacts are safe to sit in a shared/CDN cache: `link`, `org`, and `password`
- * are gated (per-identity authorization, or a secret the cache key doesn't carry),
- * so a shared cache must never store one response and replay it to a viewer who
- * never passed the gate. Non-public ⇒ `private, no-store`.
+ * Cache-Control for an artifact's bytes by access model. Only an UNLOCKED
+ * `public` artifact is safe to sit in a shared/CDN cache: `org` and `private`
+ * are per-identity, and a password lock is a per-visitor gate the cache key
+ * doesn't carry — a shared cache must never store one response and replay it
+ * to a viewer who never passed the gate. Everything else ⇒ `private, no-store`.
  */
-export const cacheControlFor = (visibility: Visibility): string =>
-  visibility === "public" ? IMMUTABLE_CACHE : "private, no-store"
+export const cacheControlFor = (visibility: Visibility, locked = false): string =>
+  visibility === "public" && !locked ? IMMUTABLE_CACHE : "private, no-store"
 
 /** A taken-down artifact: content is gone (410), the record is preserved. */
 export const TOMBSTONE = "This artifact was removed."
@@ -177,8 +188,10 @@ export const str = (v: unknown): string | undefined =>
   typeof v === "string" && v !== "" ? v : undefined
 
 export const visibilityOf = (v: unknown): Visibility | undefined =>
-  typeof v === "string" && (VISIBILITIES as readonly string[]).includes(v)
-    ? (v as Visibility)
+  typeof v === "string"
+    ? (VISIBILITIES as readonly string[]).includes(v)
+      ? (v as Visibility)
+      : LEGACY_VISIBILITY[v]
     : undefined
 
 /**

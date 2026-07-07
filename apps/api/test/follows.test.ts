@@ -24,7 +24,7 @@ const publish = async (
     org_id: "default",
     slug: null,
     title,
-    visibility: "link",
+    visibility: "public",
     kind: "file",
     spa: 0,
   })
@@ -132,7 +132,7 @@ describe("people follow", () => {
   const publishByUser = async (
     title: string,
     userId: string,
-    visibility: "public" | "link" = "public",
+    visibility: "public" | "private" = "public",
     org = "amy_ws",
   ): Promise<string> => {
     const a = await meta.createArtifact({
@@ -165,7 +165,7 @@ describe("people follow", () => {
   it("follows a person; their public work flows into the feed across workspaces, private stays hidden", async () => {
     // Amy publishes in HER OWN workspace ("amy_ws") — NOT bob's active "default".
     const amyPublic = await publishByUser("Amy's plan", amy.id, "public")
-    const amyPrivate = await publishByUser("Amy's secret", amy.id, "link")
+    const amyPrivate = await publishByUser("Amy's secret", amy.id, "private")
 
     // bob follows amy (by username; stored as her id, globally).
     const r = await post(as(bob.email), { kind: "user", target: "Amy" })

@@ -157,7 +157,7 @@ describe("GitHub author tracking — model + list filter", () => {
       org_id: "default",
       slug: null,
       title: "by-bob",
-      visibility: "link",
+      visibility: "public",
       kind: "file",
       spa: 0,
     })

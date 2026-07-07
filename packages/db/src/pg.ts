@@ -131,7 +131,12 @@ import {
   webhookDelivery,
   workspace,
 } from "./pg-schema"
-import { artifactListConditions, collectManagedIds, parseOAuthScopes } from "./repos"
+import {
+  artifactListConditions,
+  collectManagedIds,
+  parseOAuthScopes,
+  parseOrgSettings,
+} from "./repos"
 
 const one = <T>(rows: T[]): T => {
   const r = rows[0]
@@ -1303,11 +1308,7 @@ export class PgMetaStore implements MetaStore {
   }
   async getOrgSettings(orgId: string): Promise<OrgSettings> {
     const rows = await this.db.select().from(orgSettings).where(eq(orgSettings.org_id, orgId))
-    let parsed: Partial<OrgSettings> = {}
-    try {
-      if (rows[0]?.settings) parsed = JSON.parse(rows[0].settings) as Partial<OrgSettings>
-    } catch {}
-    return { ...DEFAULT_ORG_SETTINGS, ...parsed }
+    return parseOrgSettings(rows[0]?.settings ?? null)
   }
   async setOrgSettings(orgId: string, settings: OrgSettings): Promise<void> {
     await this.db

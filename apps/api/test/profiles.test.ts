@@ -220,7 +220,7 @@ describe("profile work-list (visibility-scoped)", () => {
   const { app, meta } = makeAuthedApp("profile-works", [amy, carl])
 
   // A hand-published artifact authored by `userId` (stamps author_id), at a visibility.
-  const work = async (title: string, userId: string, visibility: "public" | "link") => {
+  const work = async (title: string, userId: string, visibility: "public" | "org") => {
     const a = await meta.createArtifact({
       id: newId("a"),
       short_id: newId("s"),
@@ -245,7 +245,7 @@ describe("profile work-list (visibility-scoped)", () => {
 
   it("shows public work to anyone; non-public only to a shared-workspace viewer", async () => {
     const pub = await work("Amy public", amy.id, "public")
-    const priv = await work("Amy link-only", amy.id, "link")
+    const priv = await work("Amy workspace-only", amy.id, "org")
 
     // Anonymous viewer: public work only (the link-only title never leaks).
     const anon = await (await app.request("/v1/users/amyw/artifacts")).json()
@@ -253,7 +253,7 @@ describe("profile work-list (visibility-scoped)", () => {
     expect(anonIds).toContain(pub)
     expect(anonIds).not.toContain(priv)
 
-    // Carl shares the workspace with amy → he also sees the link-only work.
+    // Carl shares the workspace with amy → he also sees the workspace-only work.
     const shared = await (
       await app.request("/v1/users/amyw/artifacts", { headers: as(carl.email) })
     ).json()
