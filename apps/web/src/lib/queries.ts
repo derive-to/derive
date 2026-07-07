@@ -84,6 +84,15 @@ export const needsFeedbackArtifactsQuery = () =>
       api.listArtifacts({ scope: "needs_feedback", limit: 12 }).then((r) => r.artifacts),
   })
 
+// A small, flat slice of the Following feed — recent work from the people you follow —
+// for the "Recent activity" preview on the People tab. The full feed lives at /following
+// (the infinite libraryArtifactsQuery({ scope: "following" })); this is the peek.
+export const followingPreviewQuery = () =>
+  queryOptions({
+    queryKey: ["artifacts", "following-preview"] as const,
+    queryFn: () => api.listArtifacts({ scope: "following", limit: 6 }).then((r) => r.artifacts),
+  })
+
 // The caller's follows (GitHub authors + repo path prefixes) for the active
 // workspace. Drives the Following-feed empty state, the manage strip, and the
 // isFollowing* sets that toggle the Follow buttons. One source of truth: every

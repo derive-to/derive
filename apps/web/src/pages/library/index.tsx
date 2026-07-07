@@ -308,6 +308,15 @@ function LibraryBody({ view }: { view: LibraryView }) {
 
   return (
     <PageShell scrollRef={scrollRef} width="wide">
+      {/* The full "Activity" feed, reached from the People tab's Recent-activity peek
+          ("View all"). The People page itself shows who you follow + a preview of this. */}
+      {view === "following" && (
+        <PageHeader
+          className="mb-5"
+          title="Activity"
+          subtitle="Recent work from the people you follow."
+        />
+      )}
       {homeView && (
         <PageHeader
           className="mb-4"

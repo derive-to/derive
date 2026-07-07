@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query"
 import { Link } from "@tanstack/react-router"
 import { useEffect, useState } from "react"
-import type { PublicProfile } from "@/api"
+import type { Artifact, PublicProfile } from "@/api"
 import { Icon } from "@/components/icons"
 import { EmptyState } from "@/components/shared/empty-state"
 import { FollowButton } from "@/components/shared/follow-button"
@@ -11,21 +11,29 @@ import { SearchField } from "@/components/shared/search-field"
 import { SectionEyebrow } from "@/components/shared/section-eyebrow"
 import { StatusPanel } from "@/components/shared/status-panel"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
+import { useAuth } from "@/ctx"
 import { colorForName } from "@/lib/avatar-tints"
 import { getInitials } from "@/lib/initials"
-import { peopleQuery, workspacePeopleQuery } from "@/lib/queries"
+import {
+  followingPreviewQuery,
+  followsQuery,
+  peopleQuery,
+  profilePeopleQuery,
+  workspacePeopleQuery,
+} from "@/lib/queries"
+import { ago } from "@/lib/time"
 import { useDelayedPending } from "@/lib/use-delayed-pending"
 import { cn } from "@/lib/utils"
+import { refFor } from "@/pages/artifact/parse-ref"
 
-// The People directory — the discovery surface the follow graph needs: a way to FIND
-// someone to follow, not just stumble on an author chip. Reconceived as a scannable
-// directory of full-width rows (a directory's job is "read a name, follow" — list work,
-// not a card wall), with a deliberate BROWSE-by-default state: an empty query isn't
-// "nothing", it's the people you work with + everyone discoverable, framed as such.
-// Typing searches (debounced); the current results stay put (dimmed) while the next set
-// loads — never a flash.
+// The People tab — who you follow, plus a way to find the people you work with. It folds
+// the old Following nav item in: the browse (no-query) view leads with the people you
+// follow, then your workspace teammates — the two people-sets worth seeing without typing.
+// Everyone else on Derive lives behind the search (debounced); results stay put (dimmed)
+// while the next set loads — never a flash.
 export function People() {
   const [q, setQ] = useState("")
   const [debounced, setDebounced] = useState("")
@@ -34,26 +42,70 @@ export function People() {
     return () => clearTimeout(t)
   }, [q])
 
-  const { data, isPending, isError, isFetching, isPlaceholderData, refetch } = useQuery(
-    peopleQuery(debounced),
-  )
-  // keepPreviousData holds the current results across searches, so isPending is only the
-  // true first load; gate the skeleton so a cache-warm open flashes nothing.
-  const showSkeleton = useDelayedPending(isPending)
-  const people = data ?? []
+  const { me } = useAuth()
   const searching = debounced.length > 0
-  const browsing = !searching
 
-  // The people you actually work with lead the browse view (Slack's mental model); the
-  // global discoverable directory follows, de-duplicated against your workspace. A search
-  // collapses to one flat result list — sectioning matches by workspace would just split
-  // them. Regardless of discoverability, so teammates are always reachable here.
-  const { data: mates = [] } = useQuery(workspacePeopleQuery())
-  const mateHandles = new Set(mates.map((m) => m.username))
-  const globalPeople = browsing ? people.filter((p) => !mateHandles.has(p.username)) : people
-  // Empty only when there's genuinely nothing for the current mode: a search shows its own
-  // "no match" regardless of teammates; browse is empty only if BOTH sources are.
-  const nothing = searching ? people.length === 0 : people.length === 0 && mates.length === 0
+  // A search spans everyone on Derive; browse shows only who you follow + your workspace
+  // teammates (a full directory isn't scrolled, it's searched), so the global people query
+  // only runs while searching.
+  const { data, isError, isFetching, isPlaceholderData, refetch } = useQuery({
+    ...peopleQuery(debounced),
+    enabled: searching,
+  })
+  const { data: mates = [], isPending: matesPending } = useQuery(workspacePeopleQuery())
+  const { data: follows = [], isPending: followsPending } = useQuery(followsQuery())
+  // Follow rows carry each person's handle/name/avatar but not their profession; pull the
+  // full "following" profiles to fill in the role line. The follows query stays the source
+  // of truth for WHICH people show (so a follow/unfollow reflects instantly) — this enriches.
+  const { data: followingProfiles = [] } = useQuery({
+    ...profilePeopleQuery(me?.username ?? "", "following"),
+    enabled: !!me?.username,
+  })
+  // Recent work from the people you follow — a small peek shown under the people grid,
+  // so "who you follow" and "what they're making" live on one page. Full feed at /following.
+  const { data: activity = [] } = useQuery(followingPreviewQuery())
+  const professionByHandle = new Map(
+    followingProfiles.map((p) => [p.username.toLowerCase(), p.profession ?? null]),
+  )
+
+  const people = data ?? []
+  const mateHandles = new Set(mates.map((m) => m.username.toLowerCase()))
+
+  // People you follow, as directory rows — the follow row resolves handle/name/avatar
+  // server-side; profession is layered in from the following profiles above.
+  const followed: PublicProfile[] = follows
+    .filter((f) => f.kind === "user")
+    .map((f) => {
+      const username = f.handle ?? f.target
+      return {
+        username,
+        name: f.name ?? null,
+        image: f.image ?? null,
+        profession: professionByHandle.get(username.toLowerCase()) ?? null,
+      }
+    })
+  const followedHandles = new Set(followed.map((p) => p.username.toLowerCase()))
+  // Don't list a teammate twice if you already follow them.
+  const mateOnly = mates.filter((m) => !followedHandles.has(m.username.toLowerCase()))
+
+  // Search results: everyone on Derive, but float the people you work with to the top
+  // ("anyone, but focus on your workspace") and drop yourself.
+  const results = people
+    .filter((p) => p.username.toLowerCase() !== me?.username?.toLowerCase())
+    .sort(
+      (a, b) =>
+        Number(mateHandles.has(b.username.toLowerCase())) -
+        Number(mateHandles.has(a.username.toLowerCase())),
+    )
+
+  // Loading is per-mode: a search waits on the people query's first page; browse waits on
+  // your follows + teammates. keepPreviousData holds prior results, so the skeleton is only
+  // the true first load — gated by useDelayedPending so a cache-warm open flashes nothing.
+  const loading = searching ? isFetching && people.length === 0 : followsPending || matesPending
+  const showSkeleton = useDelayedPending(loading)
+
+  // Empty only when there's genuinely nothing for the current mode.
+  const nothing = searching ? results.length === 0 : followed.length === 0 && mateOnly.length === 0
 
   return (
     <PageShell className="flex flex-col gap-5">
@@ -68,16 +120,16 @@ export function People() {
           aria-label="Search people by name or handle"
           testId="people-search"
           hotkey
-          loading={isFetching && !isPending}
+          loading={isFetching}
         />
       </div>
 
-      {isPending ? (
+      {loading ? (
         showSkeleton ? (
           <PeopleResultsSkeleton />
         ) : null
-      ) : isError ? (
-        // A failed fetch is status, not emptiness — the danger tone grammar.
+      ) : searching && isError ? (
+        // A failed search is status, not emptiness — the danger tone grammar.
         <StatusPanel
           tone="danger"
           title="Couldn’t load people"
@@ -97,36 +149,53 @@ export function People() {
         <div data-testid="people-empty">
           <EmptyState
             icon={<Icon name={searching ? "search" : "following"} strokeWidth={1.75} />}
-            // Two distinct tones: a search that found nothing is corrective ("try
-            // another"); the browse state finding nothing is explanatory, not an error.
-            title={searching ? `No people match “${debounced}”.` : "No discoverable people yet."}
+            // A search that found nothing is corrective ("try another"); an empty browse
+            // means you follow no one yet — point at the search, not discoverability.
+            title={
+              searching ? `No people match “${debounced}”.` : "You’re not following anyone yet."
+            }
             description={
               searching
                 ? "Try a different name or @handle."
-                : "People who turn on discoverability show up here."
+                : "Search above to find people to follow."
             }
           />
         </div>
       ) : (
         // Stale results stay visible but dim while the next search loads (placeholder
-        // data), so the directory never blanks mid-type.
+        // data), so the list never blanks mid-type.
         <div
           className={cn(
             "flex flex-col gap-6",
             isPlaceholderData && "opacity-60 transition-opacity",
           )}
         >
-          {/* Browse leads with the people you work with — teammates first, then the wider
-              directory. A search collapses to a single "Results" list. */}
-          {browsing && mates.length > 0 && (
-            <PeopleGroup label="Your workspaces" people={mates} testId="people-workspace" />
-          )}
-          {globalPeople.length > 0 && (
+          {searching ? (
             <PeopleGroup
-              label={searching ? "Results" : mates.length > 0 ? "Everyone on Derive" : "Everyone"}
-              people={globalPeople}
+              label="Results"
+              people={results}
               testId="people-results"
+              mateHandles={mateHandles}
+              markWorkspace
             />
+          ) : (
+            <>
+              {/* Browse leads with who you follow, then the people you work with — the two
+                  people-sets worth seeing without typing. Everyone else lives behind search. */}
+              {followed.length > 0 && (
+                <PeopleGroup
+                  label="Following"
+                  people={followed}
+                  testId="people-following"
+                  mateHandles={mateHandles}
+                  markWorkspace
+                />
+              )}
+              {mateOnly.length > 0 && (
+                <PeopleGroup label="Your workspaces" people={mateOnly} testId="people-workspace" />
+              )}
+              {activity.length > 0 && <ActivityPreview items={activity} />}
+            </>
           )}
         </div>
       )}
@@ -134,43 +203,65 @@ export function People() {
   )
 }
 
-// One labelled directory section: a mono eyebrow + count over a list of person rows.
+// One labelled directory section: a mono eyebrow + count over a grid of person cards.
 // The count frames the state (browsing everyone vs a result set) as intentional.
 function PeopleGroup({
   label,
   people,
   testId,
+  mateHandles,
+  markWorkspace = false,
 }: {
   label: string
   people: PublicProfile[]
   testId: string
+  // Handles of your workspace members; cards in this set get an "In your workspace" tag.
+  mateHandles?: Set<string>
+  // Off for the "Your workspaces" group (the section label already says it) — on where
+  // a member is mixed in with others (Following, search Results).
+  markWorkspace?: boolean
 }) {
   return (
     <section>
       <SectionEyebrow className="mb-3" count={people.length}>
         {label}
       </SectionEyebrow>
-      <ul role="list" data-testid={testId} className="flex flex-col gap-2">
+      <ul
+        role="list"
+        data-testid={testId}
+        className="grid grid-cols-[repeat(auto-fill,minmax(260px,1fr))] gap-3"
+      >
         {people.map((p) => (
-          <PersonRow key={p.username} person={p} />
+          <PersonCard
+            key={p.username}
+            person={p}
+            inWorkspace={markWorkspace && !!mateHandles?.has(p.username.toLowerCase())}
+          />
         ))}
       </ul>
     </section>
   )
 }
 
-// One directory row: identity links to the profile (stretched link over the whole row);
-// Follow sits beside it as a sibling — not nested in the link (no interactive-inside-
-// interactive). FollowButton self-hides for your own handle and signed-out viewers.
-function PersonRow({ person: p }: { person: PublicProfile }) {
+// One person card in the grid: the identity (avatar + name/@handle/role) is a stretched
+// link to the profile; a footer row carries the workspace tag + the Follow toggle as
+// siblings (no interactive-inside-interactive). FollowButton self-hides for your own
+// handle and signed-out viewers. `inWorkspace` tags a person you share a workspace with.
+function PersonCard({
+  person: p,
+  inWorkspace = false,
+}: {
+  person: PublicProfile
+  inWorkspace?: boolean
+}) {
   const initials = getInitials(p.name ?? p.username)
   return (
-    <li className="relative flex items-center gap-3 rounded-lg border bg-card px-3.5 py-3 hover:border-foreground/25">
+    <li className="relative flex flex-col gap-3 rounded-xl border bg-card p-3.5 hover:border-foreground/25">
       <Link
         to="/users/$handle"
         params={{ handle: p.username }}
         data-testid={`people-card-${p.username}`}
-        className="flex min-w-0 flex-1 items-center gap-3 rounded-md outline-none after:absolute after:inset-0 after:rounded-lg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+        className="flex min-w-0 items-center gap-3 rounded-md outline-none after:absolute after:inset-0 after:rounded-xl focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
       >
         <Avatar className="size-10 shrink-0">
           {p.image && <AvatarImage src={p.image} alt={p.name ?? p.username} />}
@@ -183,8 +274,7 @@ function PersonRow({ person: p }: { person: PublicProfile }) {
         </Avatar>
         <span className="flex min-w-0 flex-col">
           {/* Name + @handle share a line (name is the read, handle is the identity);
-              profession sits below as the muted one-liner — the "read one line" a
-              directory scan needs. */}
+              profession sits below as the muted one-liner. */}
           <span className="flex min-w-0 items-baseline gap-2">
             {p.name && (
               <span className="truncate text-sm font-medium text-foreground">{p.name}</span>
@@ -198,40 +288,126 @@ function PersonRow({ person: p }: { person: PublicProfile }) {
           )}
         </span>
       </Link>
-      <FollowButton username={p.username} size="sm" className="relative z-10 shrink-0" />
+      {/* Footer sits above the stretched link (z-10) so the tag + Follow stay clickable. */}
+      <div className="relative z-10 flex items-center gap-2">
+        {inWorkspace && <Badge variant="secondary">In your workspace</Badge>}
+        <FollowButton username={p.username} size="sm" className="ml-auto shrink-0" />
+      </div>
+    </li>
+  )
+}
+
+// The "Recent activity" peek under the people grid: a few of the latest artifacts from
+// the people you follow, with a link to the full feed. Keeps "who you follow" and "what
+// they make" on one page without pulling in the library's heavy card + infinite grid.
+function ActivityPreview({ items }: { items: Artifact[] }) {
+  return (
+    <section>
+      <SectionEyebrow
+        className="mb-3"
+        count={items.length}
+        action={
+          <Link
+            to="/following"
+            data-testid="activity-view-all"
+            className="font-mono text-2xs text-muted-foreground outline-none hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+          >
+            View all
+          </Link>
+        }
+      >
+        Recent activity
+      </SectionEyebrow>
+      <ul
+        role="list"
+        data-testid="people-activity"
+        className="grid grid-cols-[repeat(auto-fill,minmax(240px,1fr))] gap-3"
+      >
+        {items.map((a) => (
+          <ActivityItem key={a.short_id} artifact={a} />
+        ))}
+      </ul>
+    </section>
+  )
+}
+
+// One activity card: the artifact title over a who·when meta line, linking to the artifact.
+function ActivityItem({ artifact: a }: { artifact: Artifact }) {
+  const updated = a.updated_at ?? a.created_at ?? a.versions?.[0]?.created_at
+  const authorName = a.author?.name ?? a.author_name ?? a.author?.handle ?? a.author_login ?? null
+  const authorImage = a.author?.avatar ?? a.author_avatar ?? null
+  const initial = (authorName ?? a.title ?? "?").trim().charAt(0).toUpperCase()
+  return (
+    <li>
+      <Link
+        to="/artifacts/$ref"
+        params={{ ref: refFor(a) }}
+        data-testid={`activity-item-${a.short_id}`}
+        className="flex h-full flex-col gap-2 rounded-xl border bg-card p-3.5 outline-none hover:border-foreground/25 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+      >
+        <span className="truncate text-sm font-medium text-foreground">
+          {a.title ?? "Untitled"}
+        </span>
+        <span className="mt-auto flex min-w-0 items-center gap-1.5 font-mono text-2xs text-muted-foreground">
+          {authorName && (
+            <>
+              <Avatar className="size-4 shrink-0">
+                {authorImage && <AvatarImage src={authorImage} alt={authorName} />}
+                <AvatarFallback
+                  className="text-2xs text-scrim-foreground"
+                  style={{ backgroundColor: colorForName(authorName) }}
+                >
+                  {initial}
+                </AvatarFallback>
+              </Avatar>
+              <span className="truncate">{authorName}</span>
+            </>
+          )}
+          {updated && (
+            <>
+              {authorName && <span aria-hidden>·</span>}
+              <time dateTime={new Date(updated).toISOString()} className="shrink-0">
+                {ago(updated)}
+              </time>
+            </>
+          )}
+        </span>
+      </Link>
     </li>
   )
 }
 
 const PERSON_CELLS = ["a", "b", "c", "d", "e", "f"]
 
-// One person-row placeholder: PersonRow's box model — the px-3.5 py-3 row inset, a round
-// size-10 avatar, a name/handle line over a profession line, and a Follow-button-sized
-// block (sm → h-8) — minus the border/background (those arrive with the person → zero CLS).
-function PersonSkeletonRow() {
+// One person-card placeholder: PersonCard's box model — a size-10 avatar + name/handle
+// line over a profession line, then a footer with a Follow-button-sized block — minus the
+// border/background (those arrive with the person → zero CLS).
+function PersonSkeletonCard() {
   return (
-    <li className="flex items-center gap-3 px-3.5 py-3">
-      <Skeleton className="size-10 shrink-0 rounded-full" />
-      <div className="flex min-w-0 flex-1 flex-col gap-1.5">
-        <Skeleton className="h-4 w-40" />
-        <Skeleton className="h-3.5 w-24" />
+    <li className="flex flex-col gap-3 p-3.5">
+      <div className="flex items-center gap-3">
+        <Skeleton className="size-10 shrink-0 rounded-full" />
+        <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+          <Skeleton className="h-4 w-32" />
+          <Skeleton className="h-3.5 w-20" />
+        </div>
       </div>
-      <Skeleton className="h-8 w-20 shrink-0 rounded-lg" />
+      <Skeleton className="ml-auto h-8 w-24 shrink-0 rounded-lg" />
     </li>
   )
 }
 
-// The results-region first-load placeholder — the SAME row stack the live results use,
-// filled with person-row silhouettes. The blocks are AT-hidden (baked into Skeleton);
-// the region announces via role="status" + sr-only. Shared by the in-component first
-// load and the route-level PeoplePending.
+// The results-region first-load placeholder — the SAME grid the live results use, filled
+// with person-card silhouettes. The blocks are AT-hidden (baked into Skeleton); the region
+// announces via role="status" + sr-only. Shared by the in-component first load and the
+// route-level PeoplePending.
 export function PeopleResultsSkeleton() {
   return (
     <div role="status">
       <span className="sr-only">Loading people…</span>
-      <ul className="flex flex-col gap-2">
+      <ul className="grid grid-cols-[repeat(auto-fill,minmax(260px,1fr))] gap-3">
         {PERSON_CELLS.map((k) => (
-          <PersonSkeletonRow key={k} />
+          <PersonSkeletonCard key={k} />
         ))}
       </ul>
     </div>
