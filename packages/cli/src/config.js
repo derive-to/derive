@@ -115,7 +115,7 @@ export const defaultConfig = (title = "My artifact", entry = "index.md") => ({
   id: null,
 })
 
-export const TEMPLATES = ["md", "html", "slides", "site", "skill"]
+export const TEMPLATES = ["md", "html", "slides", "site", "skill", "context"]
 
 /** Read derive.json from `dir`, or null if absent. Throws on malformed JSON. */
 export function loadConfig(dir = ".") {
@@ -160,6 +160,16 @@ export function writeId(dir, id) {
   return config
 }
 
+/** Merge server-assigned context wiring (id, agent_id) into derive.json's
+ *  context block, preserving everything else — the context-side twin of writeId. */
+export function writeContextConfig(dir, patch) {
+  const path = join(dir, CONFIG_FILE)
+  const config = loadConfig(dir) ?? defaultConfig()
+  config.context = { ...config.context, ...patch }
+  writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`)
+  return config
+}
+
 // Each template's entry (what `derive publish` targets) + the starter file(s) it
 // writes. `site` is a multi-file bundle (entry is a directory). derive.json,
 // derive.schema.json, and AGENTS.md are added to every template.
@@ -186,6 +196,23 @@ const STARTERS = {
       "skill/references/example.md": STARTER_SKILL_REFERENCE,
     }),
   },
+  // A Derive context: one directory that is the runner's whole world — MANIFEST.md
+  // (the system prompt), references/ (docs the model reads from disk), .mcp.json
+  // (the context's data-source tools), and .env (secrets — stays local, always).
+  // `derive context push` ships everything in it except .env*.
+  context: {
+    entry: "context",
+    files: (t) => ({
+      "context/MANIFEST.md": starterManifest(t),
+      "context/references/example.md": STARTER_CONTEXT_REFERENCE,
+      "context/.mcp.json": `${JSON.stringify({ mcpServers: {} }, null, 2)}\n`,
+      "context/.env.example": STARTER_CONTEXT_ENV,
+      ".gitignore": CONTEXT_GITIGNORE,
+    }),
+    // The context block pins the server-side wiring (context id, agent id) the
+    // way `id` pins the artifact — filled in by the first `derive context push`.
+    extend: (config, title) => ({ ...config, context: { id: null, agent_id: null, name: title } }),
+  },
 }
 
 /**
@@ -197,8 +224,11 @@ const STARTERS = {
  */
 export function scaffoldFiles(title = "My artifact", template = "md") {
   const t = STARTERS[template] ?? STARTERS.md
+  const config = t.extend
+    ? t.extend(defaultConfig(title, t.entry), title)
+    : defaultConfig(title, t.entry)
   return {
-    [CONFIG_FILE]: `${JSON.stringify(defaultConfig(title, t.entry), null, 2)}\n`,
+    [CONFIG_FILE]: `${JSON.stringify(config, null, 2)}\n`,
     "derive.schema.json": `${JSON.stringify(DERIVE_SCHEMA, null, 2)}\n`,
     ...t.files(title),
     "AGENTS.md": AGENTS_MD,
@@ -247,6 +277,15 @@ export const DERIVE_SCHEMA = {
       description: "Artifact short id; set automatically on first publish.",
     },
     server: { type: "string", description: "Derive server URL (overrides DERIVE_SERVER)." },
+    context: {
+      type: "object",
+      description: "Context wiring (context projects only); ids are set by the first push.",
+      properties: {
+        id: { type: ["string", "null"], description: "Context id (ctx_…)." },
+        agent_id: { type: ["string", "null"], description: "The answering agent's id (ag_…)." },
+        name: { type: "string", description: "Context name shown to askers." },
+      },
+    },
   },
 }
 
@@ -339,6 +378,65 @@ const STARTER_SKILL_REFERENCE = `# Reference
 
 Extra detail the skill loads on demand — keep SKILL.md lean and push the long tail
 (edge cases, tables, examples) into reference files like this one.
+`
+
+const starterManifest = (title) => `# ${title} — context manifest
+
+This file is the runner's system prompt. Editing it (and pushing) reconfigures
+the agent's judgment with no redeploy — the next answer uses the new version.
+
+## Who you are
+
+Describe the agent in a sentence: what it knows, who asks it questions, and on
+whose behalf it answers.
+
+## Data sources
+
+Name each source the runner's tools reach (see \`.mcp.json\` in this directory)
+and what it's authoritative for. Say what is READ-ONLY — the tools should
+enforce it, but the manifest is where the intent lives.
+
+## Judgment
+
+The decision rules a good analyst would apply: which source wins when two
+disagree, what "active" or "churned" mean here, units and timezones, the
+denominators that make a percentage honest.
+
+## References
+
+Files in \`references/\` sit next to this manifest in the runner's working
+directory — point at them by relative path ("read references/schema.md before
+writing SQL") and the model reads them on demand. Keep this file lean; push the
+long tail there.
+
+## Escalation
+
+When to answer with \`escalate: true\` instead of guessing: thresholds, topics
+that need a human (pricing, legal, anything contractual), and who the human is.
+
+## Answer style
+
+Concise summary first, then supporting detail. State caveats explicitly. Include
+the query used when a number came from one.
+`
+
+const STARTER_CONTEXT_REFERENCE = `# Reference
+
+Files here travel with \`derive context push\` (versioned alongside the manifest)
+and sit in the runner's working directory — the manifest should point at them by
+relative path. Schema notes, metric definitions, worked examples: the long tail
+that would bloat MANIFEST.md lives here.
+`
+
+const STARTER_CONTEXT_ENV = `# Secrets the context's MCP servers need (see .mcp.json). Copy to .env and fill
+# in — .env stays on this machine: push excludes it and .gitignore covers it.
+# EXAMPLE_API_KEY=
+`
+
+const CONTEXT_GITIGNORE = `# Secrets never leave the machine: .env holds the context's credentials, .derive/
+# holds the agent token minted by the first push.
+context/.env
+.derive/
 `
 
 const starterMd = (title) => `# ${title}
