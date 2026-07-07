@@ -4,6 +4,7 @@
 //   derive login [--local] [--server url]   OAuth sign-in (default https://derive.to); saves a token
 //   derive publish [file|dir] [--id --title --slug --spa --message --name --visibility --server --token]
 //   derive comments [--id]                 list the artifact's comment threads
+//   derive pull [short_id] [--v N] [--out f]  print an artifact's source (bundles: entry file)
 //   derive open [short_id] [--id]          open the artifact in a browser
 //   derive reply <thread_id> <message…>    reply in a thread
 //   derive resolve|reopen <comment_id>     set a thread's state
@@ -12,7 +13,7 @@
 //   derive approve [--id] [--note m]       (human) approve — the build go-signal
 import { spawn } from "node:child_process"
 import { createHash, randomBytes } from "node:crypto"
-import { readdirSync, readFileSync, statSync } from "node:fs"
+import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs"
 import { basename, join, relative } from "node:path"
 import { createInterface } from "node:readline"
 import { zipSync } from "fflate"
@@ -156,7 +157,17 @@ if (cmd === "login") {
 }
 
 // ---- Loop verbs (comments / open / reply / resolve / reopen) --------------
-const LOOP = ["comments", "open", "reply", "resolve", "reopen", "status", "send-back", "approve"]
+const LOOP = [
+  "comments",
+  "open",
+  "pull",
+  "reply",
+  "resolve",
+  "reopen",
+  "status",
+  "send-back",
+  "approve",
+]
 if (LOOP.includes(cmd)) {
   let cfg = null
   try {
@@ -171,7 +182,7 @@ if (LOOP.includes(cmd)) {
   // <short_id>`: a positional id overrides the repo pin — the fallback an agent
   // runs when a publish reports opened_in_tab:false. (reply/resolve keep their
   // positional for the thread/comment id.)
-  if (positional[0] && ["open", "status", "comments"].includes(cmd)) r.id = positional[0]
+  if (positional[0] && ["open", "status", "comments", "pull"].includes(cmd)) r.id = positional[0]
   if (!r.id) {
     console.error(`error: no artifact id. Set "id" in ${CONFIG_FILE} (publish once), or pass --id.`)
     process.exit(1)
@@ -199,6 +210,29 @@ if (LOOP.includes(cmd)) {
     const res = await fetch(`${base}/comments`, { headers: auth })
     if (!res.ok) await die(res)
     console.log(formatComments((await res.json()).comments))
+    process.exit(0)
+  }
+
+  // Source read-back. For single-file artifacts this is the exact published
+  // source; for directory/--spa bundles the server returns the ENTRY FILE only
+  // (that's all /content serves). Text goes to stdout (pipe-friendly); --out
+  // writes a file and keeps the confirmation on stderr.
+  if (cmd === "pull") {
+    const res = await fetch(`${base}/content${flags.v ? `?v=${flags.v}` : ""}`, { headers: auth })
+    if (!res.ok) await die(res)
+    const text = await res.text()
+    const v = res.headers.get("x-derive-version")
+    if (flags.out) {
+      try {
+        writeFileSync(flags.out, text)
+      } catch (e) {
+        console.error(`error: cannot write ${flags.out}: ${e.message}`)
+        process.exit(1)
+      }
+      console.error(`✓ ${flags.out} (${r.id}${v ? ` v${v}` : ""})`)
+    } else {
+      process.stdout.write(text)
+    }
     process.exit(0)
   }
 
@@ -279,6 +313,7 @@ if (cmd !== "publish") {
   derive login [--local] [--server url]    OAuth sign-in (defaults to https://derive.to); saves a persistent token
   derive publish [file|dir] [--id X] [--title t] [--slug s] [--spa] [--message m] [--name "x"] [--visibility v] [--password p] [--server url] [--token t] [--json]
   derive comments [--id X]                 list comment threads
+  derive pull [short_id] [--v N] [--out f] print an artifact's source (bundles: entry file only)
   derive open [--id X]                     open the artifact in a browser
   derive reply <thread_id> <message…>      reply in a thread
   derive resolve|reopen <comment_id>       set a thread's state
