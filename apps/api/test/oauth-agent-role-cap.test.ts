@@ -33,6 +33,7 @@ describe("oauth agent role capping + consent binding", () => {
       meta,
       auth: undefined,
       baseUrl: "http://derive.test",
+      audiences: ["http://derive.test"],
       provisionPersonal: async () => "ws_personal",
     }).oauthAgent("tok")
 

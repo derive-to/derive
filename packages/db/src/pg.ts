@@ -22,6 +22,7 @@ import type {
   GitHubInstallationRecord,
   GithubAuthor,
   GithubUserMapping,
+  InvitationRecord,
   ListArtifactsOpts,
   MembershipRecord,
   MetaStore,
@@ -37,6 +38,7 @@ import type {
   NewDelivery,
   NewDomain,
   NewFollow,
+  NewInvitation,
   NewMembership,
   NewNotification,
   NewProposal,
@@ -50,6 +52,7 @@ import type {
   NewWebhook,
   NotificationRecord,
   OAuthGrant,
+  OAuthGrantSummary,
   OrgSettings,
   ProposalRecord,
   ProposalState,
@@ -110,6 +113,7 @@ import {
   follow,
   githubApp,
   githubInstallation,
+  invitation,
   membership,
   notification,
   oauthClientWorkspace,
@@ -154,6 +158,7 @@ export const schema = {
   reviewRound,
   agent,
   agentMention,
+  invitation,
   oauthClientWorkspace,
   context,
   contextSession,
@@ -188,6 +193,7 @@ const _schemaShapes: Shapes<typeof schema> = {
   reviewRound: true,
   agent: true,
   agentMention: true,
+  invitation: true,
   context: true,
   contextSession: true,
   sessionMessage: true,
@@ -1695,6 +1701,9 @@ export class PgMetaStore implements MetaStore {
       userId,
     ])
   }
+  async setUserOnboarded(userId: string, onboarded: boolean): Promise<void> {
+    await this.pool.query(`UPDATE "user" SET onboarded = $1 WHERE id = $2`, [onboarded, userId])
+  }
   async setUserProfile(
     userId: string,
     fields: { profession?: string | null; about?: string | null },
@@ -1898,11 +1907,109 @@ export class PgMetaStore implements MetaStore {
       return 0
     }
   }
+  async listUserGrants(userId: string): Promise<OAuthGrantSummary[]> {
+    try {
+      const { rows } = await this.pool.query(
+        `SELECT k."clientId" AS client_id, c."name" AS client_name,
+                k."scopes" AS scopes, k."updatedAt" AS granted_at
+           FROM "oauthConsent" k
+           JOIN "oauthClient" c ON c."clientId" = k."clientId"
+          WHERE k."userId" = $1
+          ORDER BY k."updatedAt" DESC`,
+        [userId],
+      )
+      return (
+        rows as {
+          client_id: string
+          client_name: string | null
+          scopes: string | string[] | null
+          granted_at: Date | string | null
+        }[]
+      ).map((r) => ({
+        clientId: r.client_id,
+        clientName: r.client_name || r.client_id,
+        scopes: parseOAuthScopes(r.scopes),
+        grantedAt: (r.granted_at instanceof Date
+          ? r.granted_at
+          : new Date(r.granted_at ?? Date.now())
+        ).toISOString(),
+      }))
+    } catch {
+      return []
+    }
+  }
+  async revokeUserGrant(userId: string, clientId: string): Promise<void> {
+    for (const table of ["oauthAccessToken", "oauthRefreshToken", "oauthConsent"]) {
+      try {
+        await this.pool.query(`DELETE FROM "${table}" WHERE "userId" = $1 AND "clientId" = $2`, [
+          userId,
+          clientId,
+        ])
+      } catch {
+        // Table absent on this deploy → skip; the others still run.
+      }
+    }
+  }
   async deleteAgent(id: string, orgId: string): Promise<void> {
     await this.db.delete(agent).where(and(eq(agent.id, id), eq(agent.org_id, orgId)))
   }
   async createAgentMention(m: NewAgentMention): Promise<void> {
     await this.db.insert(agentMention).values(m)
+  }
+  // ---- Workspace invitations ---------------------------------------------
+  async createInvitation(i: NewInvitation): Promise<InvitationRecord> {
+    const rows = await this.db.insert(invitation).values(i).returning()
+    return one(rows) as InvitationRecord
+  }
+  async getInvitationByToken(tokenHash: string): Promise<InvitationRecord | null> {
+    const rows = await this.db.select().from(invitation).where(eq(invitation.token, tokenHash))
+    return (rows[0] as InvitationRecord | undefined) ?? null
+  }
+  listPendingInvitations(orgId: string): Promise<InvitationRecord[]> {
+    return this.db
+      .select()
+      .from(invitation)
+      .where(and(eq(invitation.org_id, orgId), isNull(invitation.accepted_at)))
+      .orderBy(desc(invitation.created_at)) as Promise<InvitationRecord[]>
+  }
+  async deletePendingInvitationsFor(orgId: string, email: string): Promise<void> {
+    await this.db
+      .delete(invitation)
+      .where(
+        and(
+          eq(invitation.org_id, orgId),
+          eq(invitation.email, email),
+          isNull(invitation.accepted_at),
+        ),
+      )
+  }
+  async deleteInvitation(id: string, orgId: string): Promise<void> {
+    await this.db.delete(invitation).where(and(eq(invitation.id, id), eq(invitation.org_id, orgId)))
+  }
+  async markInvitationAccepted(id: string): Promise<void> {
+    await this.db
+      .update(invitation)
+      .set({ accepted_at: new Date().toISOString() })
+      .where(eq(invitation.id, id))
+  }
+  // ---- Account deletion cascade (see MetaStore.deleteUserData) ------------
+  async deleteUserData(userId: string): Promise<void> {
+    await this.db.delete(membership).where(eq(membership.user_id, userId))
+    await this.db.delete(artifactMember).where(eq(artifactMember.user_id, userId))
+    await this.db.delete(collectionMember).where(eq(collectionMember.user_id, userId))
+    await this.db.delete(follow).where(eq(follow.user_id, userId))
+    await this.db.delete(artifactFavorite).where(eq(artifactFavorite.user_id, userId))
+    await this.db.delete(notification).where(eq(notification.user_id, userId))
+    await this.db.update(artifact).set({ author_id: null }).where(eq(artifact.author_id, userId))
+    await this.db.update(version).set({ author_id: null }).where(eq(version.author_id, userId))
+    await this.db.update(comment).set({ author_id: null }).where(eq(comment.author_id, userId))
+    await this.db.update(proposal).set({ author_id: null }).where(eq(proposal.author_id, userId))
+    await this.db.update(agent).set({ created_by: null }).where(eq(agent.created_by, userId))
+    await this.db
+      .update(invitation)
+      .set({ invited_by: null })
+      .where(eq(invitation.invited_by, userId))
+    await this.db.delete(workspace).where(eq(workspace.id, `ws_p_${userId}`))
   }
   listPendingAgentMentions(agentId: string, limit: number): Promise<AgentMentionRecord[]> {
     return this.db

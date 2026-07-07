@@ -24,7 +24,7 @@ function appWithGrant(name: string, scopes: string) {
   const meta = new SqliteMetaStore(path)
   const db = new Database(path)
   db.exec(`
-    CREATE TABLE IF NOT EXISTS "user" (id TEXT PRIMARY KEY, email TEXT, name TEXT, image TEXT);
+    CREATE TABLE IF NOT EXISTS "user" (id TEXT PRIMARY KEY, email TEXT, name TEXT, image TEXT, username TEXT, discoverable INTEGER, profession TEXT, about TEXT);
     CREATE TABLE IF NOT EXISTS "oauthClient" (clientId TEXT PRIMARY KEY, name TEXT);
     CREATE TABLE IF NOT EXISTS "oauthAccessToken" (token TEXT PRIMARY KEY, clientId TEXT, userId TEXT, scopes TEXT, expiresAt TEXT);
   `)
@@ -338,6 +338,15 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(p.proposal_id).toBeTruthy()
     expect(p.base_version).toBe(1)
 
+    // Delegation provenance: the agent proposed on behalf of the human who authorized the
+    // grant (Owner / u_o), so the review surface can show "Claude on behalf of Owner."
+    const list = await (
+      await app.request(`/v1/artifacts/${shortId}/proposals`, {
+        headers: { authorization: `Bearer ${token}` },
+      })
+    ).json()
+    expect(list.proposals[0].on_behalf_of).toMatchObject({ name: "Owner" })
+
     // The live version is untouched — a proposal is not a publish.
     const read = JSON.parse(toolText(await call(app, token, "read", { short_id: shortId })))
     expect(read.version).toBe(1)
@@ -497,11 +506,15 @@ describe("remote MCP endpoint (/mcp)", () => {
       } as unknown as Parameters<typeof createApp>[0]["auth"],
     })
 
+    // A realistic MCP token carries an `aud` = the resource the client bound it to (RFC
+    // 8707). The provider only mints JWTs when a resource is sent, so a real one always has
+    // this claim; the RS validates it.
     const mint = (over: Record<string, unknown> = {}) =>
       new SignJWT({ scope: "openid derive:read derive:publish", azp: "cli", ...over })
         .setProtectedHeader({ alg: "EdDSA", kid })
         .setSubject("u_jwt")
         .setIssuer("http://derive.test/api/auth")
+        .setAudience("http://derive.test/mcp")
         .setExpirationTime("1h")
         .sign(privateKey)
 
@@ -518,9 +531,21 @@ describe("remote MCP endpoint (/mcp)", () => {
       .setProtectedHeader({ alg: "EdDSA", kid })
       .setSubject("u_jwt")
       .setIssuer("http://evil.test/api/auth")
+      .setAudience("http://derive.test/mcp")
       .setExpirationTime("1h")
       .sign(privateKey)
     expect((await rpc(app, wrongIss, initBody)).status).toBe(401)
+
+    // MCP-spec MUST: a token this AS signed but minted for a DIFFERENT resource (audience)
+    // is rejected — the server only accepts tokens issued for it (RFC 8707 audience binding).
+    const wrongAud = await new SignJWT({ scope: "openid derive:read", azp: "cli" })
+      .setProtectedHeader({ alg: "EdDSA", kid })
+      .setSubject("u_jwt")
+      .setIssuer("http://derive.test/api/auth")
+      .setAudience("https://someone-elses-server.example/mcp")
+      .setExpirationTime("1h")
+      .sign(privateKey)
+    expect((await rpc(app, wrongAud, initBody)).status).toBe(401)
   })
 
   it("publish creates a NEW artifact (first publish) and then a new version of it", async () => {

@@ -1,6 +1,6 @@
 import { type Context, Hono } from "hono"
 import { z } from "zod"
-import { OAUTH_SCOPES } from "../auth-config"
+import { OAUTH_SCOPES, resolvePasskey } from "../auth-config"
 import type { AppContext } from "../context"
 import { fail, readJson } from "../lib/http"
 import { cliCallbackHTML } from "../oauth-cli-callback"
@@ -121,14 +121,46 @@ export const oauthRoutes = (ctx: AppContext) => {
     return c.html(cliCallbackHTML({ code, error }))
   })
 
-  // Which social sign-in providers are configured (env-gated in auth-config), so
-  // the login page only renders buttons that actually work. Public + read-only.
-  app.get("/v1/auth/providers", (c) =>
-    c.json({
+  // The auth capabilities this instance actually has — the single contract that lets
+  // the SPA render only the sign-in methods + flows that really work here (the
+  // capability-adaptive design: one binary, self-host and hosted differ only by what's
+  // configured). Everything is env/feature-detected, so a bare self-host reports a
+  // smaller set than a fully-wired hosted deploy with NO code change. Public +
+  // read-only. Later phases extend this (emailVerification, passwordReset, passkey,
+  // twoFactor) as those flows land — a field appears only once its endpoints exist.
+  app.get("/v1/auth/capabilities", (c) => {
+    const oidcOn = !!(
+      process.env.OIDC_ISSUER &&
+      process.env.OIDC_CLIENT_ID &&
+      process.env.OIDC_CLIENT_SECRET
+    )
+    return c.json({
+      // Email+password is enabled unconditionally in auth-config, so it's always here.
+      password: true,
+      // Social / enterprise SSO — env-gated in auth-config; the login page renders a
+      // button only when the capability is present. OIDC carries the provider id the
+      // client needs to start the generic-OAuth sign-in, plus a display label.
       google: !!(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET),
       github: !!(process.env.GITHUB_LOGIN_CLIENT_ID && process.env.GITHUB_LOGIN_CLIENT_SECRET),
-    }),
-  )
+      oidc: oidcOn
+        ? {
+            providerId: process.env.OIDC_PROVIDER_ID ?? "sso",
+            label: process.env.OIDC_PROVIDER_LABEL ?? "SSO",
+          }
+        : null,
+      // Mail-dependent flows: live only when a real transport is configured (else the
+      // SPA hides "Forgot password?" + the verify banner — recovery is the logged link +
+      // operator script, and verification is moot without delivery).
+      emailVerification: !!ctx.deps.emailEnabled,
+      passwordReset: !!ctx.deps.emailEnabled,
+      // Passkeys: on wherever the rpID/origin resolves — same pure resolver the auth
+      // plugin uses, so this can never disagree with whether the endpoints exist.
+      passkey: resolvePasskey({
+        baseUrl: ctx.deps.baseUrl,
+        webOrigins: [...ctx.allowOrigins],
+      }).enabled,
+    })
+  })
 
   return app
 }

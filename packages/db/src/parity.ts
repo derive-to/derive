@@ -27,6 +27,7 @@ import type {
   FollowRecord,
   GitHubAppRecord,
   GitHubInstallationRecord,
+  InvitationRecord,
   MembershipRecord,
   NotificationRecord,
   ProposalRecord,
@@ -59,6 +60,7 @@ export interface TypedTables {
   reviewRound: ReviewRoundRecord
   agent: AgentRecord
   agentMention: AgentMentionRecord
+  invitation: InvitationRecord
   context: ContextRecord
   contextSession: SessionRecord
   sessionMessage: SessionMessageRecord

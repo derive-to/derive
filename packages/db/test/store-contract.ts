@@ -1462,5 +1462,51 @@ export function runStoreContract(
       expect(await store.getSlackThreadLinkByThread(`missing_${uuid()}`)).toBeNull()
       expect(await store.getSlackThreadLinkByTs("C9", "nope")).toBeNull()
     })
+
+    it("deleteUserData: removes the user's rows, anonymizes authorship, keeps others' content", async () => {
+      const org = `org_del_${uuid()}`
+      const leaver = `leaver_${uuid()}`
+      const other = `other_${uuid()}`
+      // A shared workspace + the leaver's personal one.
+      await store.setWorkspace(org, "Shared")
+      await store.setWorkspace(`ws_p_${leaver}`, "Leaver's Workspace")
+      await store.setMembership({ id: uuid(), org_id: org, user_id: leaver, role: "owner" })
+      await store.setMembership({ id: uuid(), org_id: org, user_id: other, role: "owner" })
+      await store.setMembership({
+        id: uuid(),
+        org_id: `ws_p_${leaver}`,
+        user_id: leaver,
+        role: "owner",
+      })
+      // Two artifacts: one authored by the leaver, one by someone else.
+      const mine = await store.createArtifact(newArtifact({ org_id: org, author_id: leaver }))
+      const theirs = await store.createArtifact(newArtifact({ org_id: org, author_id: other }))
+      // The leaver's associations: a favorite and a follow.
+      await store.setFavorite(theirs.id, leaver)
+      await store.addFollow({
+        id: uuid(),
+        user_id: leaver,
+        org_id: org,
+        kind: "user",
+        target: other,
+      })
+
+      await store.deleteUserData(leaver)
+
+      // Their memberships are gone (both shared + personal); the other member stays.
+      expect(await store.getMembership(org, leaver)).toBeNull()
+      expect(await store.getMembership(`ws_p_${leaver}`, leaver)).toBeNull()
+      expect(await store.getMembership(org, other)).not.toBeNull()
+      // Their personal workspace row is dropped; the shared one survives.
+      expect(await store.getWorkspace(`ws_p_${leaver}`)).toBeNull()
+      expect(await store.getWorkspace(org)).not.toBeNull()
+      // Associations cleared.
+      expect(await store.listUserFavoriteIds(leaver)).toEqual([])
+      expect(await store.listFollows(leaver, org)).toEqual([])
+      // Authorship anonymized on their artifact; the other's is untouched — and BOTH
+      // artifacts still exist (content is never hard-deleted).
+      expect((await store.getArtifactById(mine.id))?.author_id ?? null).toBeNull()
+      expect((await store.getArtifactById(theirs.id))?.author_id).toBe(other)
+    })
   })
 }

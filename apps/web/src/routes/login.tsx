@@ -20,6 +20,9 @@ export const Route = createFileRoute("/login")({
   validateSearch: (s: Record<string, unknown>): Record<string, string | boolean> => {
     const out: Record<string, string | boolean> = {}
     if (s.signup) out.signup = true
+    // Set by the reset-password flow after a successful change, to show a "sign in with
+    // your new password" confirmation.
+    if (s.reset) out.reset = true
     // Where to land after sign-in (e.g. the shared artifact whose "sign in to comment"
     // CTA sent us here). Same-origin relative paths only — never `//host` or an absolute
     // URL — so it can't be weaponized into an open redirect.

@@ -31,6 +31,7 @@ export const proposalRoutes = (ctx: AppContext) => {
     notify,
     currentUser,
     actingUser,
+    privateOwnerId,
     anonLocked,
     requireArtifact,
     authorize,
@@ -41,10 +42,23 @@ export const proposalRoutes = (ctx: AppContext) => {
   } = ctx
   const app = new Hono()
 
-  const proposalJson = (a: ArtifactRecord, p: ProposalRecord) => ({
+  // Resolve an on-behalf-of human id to a compact public identity for the review byline
+  // ("on behalf of Alice"). Null for a direct human proposal. Async because it reads the
+  // user directory; proposals-per-artifact are few, so a per-proposal lookup is fine.
+  const onBehalfOf = async (
+    id: string | null,
+  ): Promise<{ handle: string | null; name: string | null } | null> => {
+    if (!id) return null
+    const u = (await meta.getUsers([id]))[0]
+    return u ? { handle: u.username, name: u.name } : null
+  }
+
+  const proposalJson = async (a: ArtifactRecord, p: ProposalRecord) => ({
     id: p.id,
     state: p.state,
     author: p.author,
+    // Delegation provenance: when an agent proposed, who it acted on behalf of (else null).
+    on_behalf_of: await onBehalfOf(p.on_behalf_of),
     message: p.message,
     base_version: p.base_version,
     kind: p.kind,
@@ -102,6 +116,11 @@ export const proposalRoutes = (ctx: AppContext) => {
 
     const acting = await actingUser(c)
     const author = acting ? acting.name : str(body.author) || "anonymous"
+    // Delegation provenance: when an AGENT proposes, record the human it acts on behalf of
+    // (the granting/registering user). For a direct human proposal the acting id equals the
+    // owner, so there's no delegation to record (stays null).
+    const owner = await privateOwnerId(c)
+    const onBehalfOfId = acting && owner && owner !== acting.id ? owner : null
     try {
       const { proposal } = await propose(meta, blobs, artifact.short_id, {
         bytes,
@@ -111,6 +130,7 @@ export const proposalRoutes = (ctx: AppContext) => {
         message: str(body.message),
         author,
         author_id: acting?.id ?? null,
+        on_behalf_of: onBehalfOfId,
       })
       bus.publish(artifact.id, { type: "proposal.created", proposal_id: proposal.id })
       // Threads this revision claims to fix flip to `addressed` (pending review),
@@ -133,7 +153,7 @@ export const proposalRoutes = (ctx: AppContext) => {
         message: proposal.message,
         base_version: proposal.base_version,
       })
-      return c.json({ ...proposalJson(artifact, proposal), addressed }, 201)
+      return c.json({ ...(await proposalJson(artifact, proposal)), addressed }, 201)
     } catch (err) {
       if (err instanceof PublishError) return fail(c, err.statusCode as 400, err.message)
       throw err
@@ -154,7 +174,9 @@ export const proposalRoutes = (ctx: AppContext) => {
         ? stateQ
         : undefined
     const proposals = await meta.listProposals(artifact.id, state ? { state } : undefined)
-    return c.json({ proposals: proposals.map((p) => proposalJson(artifact, p)) })
+    return c.json({
+      proposals: await Promise.all(proposals.map((p) => proposalJson(artifact, p))),
+    })
   })
 
   // One proposal, with a line diff of its content against its base version.
@@ -166,7 +188,7 @@ export const proposalRoutes = (ctx: AppContext) => {
     const [a, b] = [base ? await sourceText(base) : "", await sourceText(proposal)]
     const ops = a !== null && b !== null ? diffLines(a, b) : []
     return c.json({
-      ...proposalJson(artifact, proposal),
+      ...(await proposalJson(artifact, proposal)),
       diff: { base_version: proposal.base_version, ops },
     })
   })
@@ -210,7 +232,7 @@ export const proposalRoutes = (ctx: AppContext) => {
         approver,
       })
       const fresh = (await meta.getProposal(proposal.id)) as ProposalRecord
-      return c.json({ ...proposalJson(artifact, fresh), published: version.n })
+      return c.json({ ...(await proposalJson(artifact, fresh)), published: version.n })
     } catch (err) {
       if (err instanceof PublishError) return fail(c, err.statusCode as 400, err.message)
       throw err
@@ -240,7 +262,7 @@ export const proposalRoutes = (ctx: AppContext) => {
       bus.publish(artifact.id, { type: "comment.addressed", thread_id: threadId, state: "open" })
     await notify(artifact, "proposal.changes_requested", { proposal_id: proposal.id, reviewer })
     const fresh = (await meta.getProposal(proposal.id)) as ProposalRecord
-    return c.json(proposalJson(artifact, fresh))
+    return c.json(await proposalJson(artifact, fresh))
   })
 
   // Withdraw: the proposer (or a manager) retracts an open proposal.
@@ -265,7 +287,7 @@ export const proposalRoutes = (ctx: AppContext) => {
     for (const threadId of await releaseAddressed(meta, artifact.id, proposal.id, "open"))
       bus.publish(artifact.id, { type: "comment.addressed", thread_id: threadId, state: "open" })
     const fresh = (await meta.getProposal(proposal.id)) as ProposalRecord
-    return c.json(proposalJson(artifact, fresh))
+    return c.json(await proposalJson(artifact, fresh))
   })
 
   return app

@@ -202,6 +202,26 @@ export const agent = pgTable(
   ],
 )
 
+// A pending workspace invitation (see schema.ts) — invite-by-email → accept.
+export const invitation = pgTable(
+  "invitation",
+  {
+    id: text("id").primaryKey(),
+    org_id: text("org_id").notNull(),
+    email: text("email").notNull(),
+    role: text("role").$type<Role>().notNull().default("editor"),
+    token: text("token").notNull(),
+    invited_by: text("invited_by"),
+    created_at: text("created_at").notNull().$defaultFn(isoNow),
+    expires_at: text("expires_at").notNull(),
+    accepted_at: text("accepted_at"),
+  },
+  (t) => [
+    uniqueIndex("invitation_token").on(t.token),
+    index("invitation_org_email").on(t.org_id, t.email),
+  ],
+)
+
 export const agentMention = pgTable("agent_mention", {
   id: text("id").primaryKey(),
   agent_id: text("agent_id").notNull(),
@@ -395,6 +415,8 @@ export const proposal = pgTable("proposal", {
   // Stable identity of the proposer (user or agent id). Withdraw authorization
   // keys on this, never the mutable display `author` name. Nullable for legacy.
   author_id: text("author_id"),
+  // When an agent proposed this, the human it acted on behalf of (delegation provenance).
+  on_behalf_of: text("on_behalf_of"),
   base_version: integer("base_version").notNull(),
   state: text("state").$type<ProposalState>().notNull().default("open"),
   decided_by: text("decided_by"),
@@ -526,6 +548,7 @@ const TABLES = [
   notification,
   agent,
   agentMention,
+  invitation,
   oauthClientWorkspace,
   artifactFavorite,
   follow,

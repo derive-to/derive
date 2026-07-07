@@ -1,8 +1,9 @@
-import { describe, expect, it } from "vitest"
+import { afterEach, describe, expect, it, vi } from "vitest"
 import {
   decryptSecret,
   encryptSecret,
   hashPassword,
+  isBreachedPassword,
   safeEqual,
   sha256,
   signState,
@@ -132,5 +133,41 @@ describe("unlock tokens", () => {
 
   it("names the unlock cookie per artifact", () => {
     expect(unlockCookie("ab12cd34")).toBe("dku_ab12cd34")
+  })
+})
+
+describe("isBreachedPassword (HIBP k-anonymity, fail-open)", () => {
+  afterEach(() => vi.restoreAllMocks())
+
+  // SHA-1("password") = 5BAA61E4C9B93F3F0682250B6CF8331B7EE68FD8 → prefix 5BAA6, suffix …68FD8.
+  const suffixOf = "1E4C9B93F3F0682250B6CF8331B7EE68FD8"
+
+  it("rejects a password whose suffix is in the range response (count > 0)", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(`00000000000000000000000000000000000:5\r\n${suffixOf}:42`, { status: 200 }),
+    )
+    expect(await isBreachedPassword("password")).toBe(true)
+  })
+
+  it("allows a password absent from the range response", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("00000000000000000000000000000000000:5", { status: 200 }),
+    )
+    expect(await isBreachedPassword("a-unique-passphrase-xyz")).toBe(false)
+  })
+
+  it("ignores padded (count 0) entries so synthetic padding never falsely rejects", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(`${suffixOf}:0`, { status: 200 }))
+    expect(await isBreachedPassword("password")).toBe(false)
+  })
+
+  it("FAILS OPEN on a network error (air-gapped self-host is never blocked)", async () => {
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("ENETUNREACH"))
+    expect(await isBreachedPassword("password")).toBe(false)
+  })
+
+  it("fails open on a non-200 response", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("nope", { status: 503 }))
+    expect(await isBreachedPassword("password")).toBe(false)
   })
 })

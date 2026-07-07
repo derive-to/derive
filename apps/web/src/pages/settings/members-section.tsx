@@ -16,7 +16,7 @@ import {
 } from "@/components/ui/select"
 import { toast } from "@/components/ui/sonner"
 import { getInitials } from "@/lib/initials"
-import { workspaceQuery } from "@/lib/queries"
+import { workspaceInvitesQuery, workspaceQuery } from "@/lib/queries"
 import { cn } from "@/lib/utils"
 import { roleLabel, roleValue, WS_ROLES } from "./roles"
 import { SettingsListSkeleton } from "./settings-list-skeleton"
@@ -105,11 +105,19 @@ export function MembersSection({ meId }: { meId: string }) {
     if (!em) return
     setAdding(true)
     try {
-      await api.addWorkspaceMember(em, addRole)
+      const r = await api.inviteToWorkspace(em, addRole)
       setEmail("")
       setSuggest([])
-      toast.success("Member added")
-      qc.invalidateQueries({ queryKey: workspaceQuery().queryKey })
+      if (r.kind === "member") {
+        toast.success("Member added")
+        qc.invalidateQueries({ queryKey: workspaceQuery().queryKey })
+      } else {
+        // A pending invite — copy the accept link to the clipboard so it works even
+        // where mail isn't configured, and refresh the pending list.
+        await navigator.clipboard?.writeText(r.accept_url).catch(() => {})
+        toast.success(`Invite sent to ${r.invite.email} — link copied`)
+        qc.invalidateQueries({ queryKey: workspaceInvitesQuery().queryKey })
+      }
     } catch (e) {
       toast.error((e as Error).message)
     } finally {
@@ -157,8 +165,8 @@ export function MembersSection({ meId }: { meId: string }) {
               autoCapitalize="none"
               autoCorrect="off"
               autoComplete="off"
-              aria-label="Username or email of a Derive user"
-              placeholder="@username or email"
+              aria-label="Username of a Derive user, or an email to invite"
+              placeholder="@username or email to invite"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               onKeyDown={onAddKeyDown}
@@ -296,6 +304,8 @@ export function MembersSection({ meId }: { meId: string }) {
         </SettingsGroup>
       )}
 
+      {isAdmin && <PendingInvites />}
+
       {removing && (
         <ConfirmDialog
           open
@@ -308,5 +318,54 @@ export function MembersSection({ meId }: { meId: string }) {
         />
       )}
     </SettingsSection>
+  )
+}
+
+// Outstanding invitations that haven't been accepted yet — shown only to Admins, only
+// when there are any. Each row can copy the accept link again or revoke the invite.
+function PendingInvites() {
+  const qc = useQueryClient()
+  const { data: invites } = useQuery(workspaceInvitesQuery())
+  if (!invites || invites.length === 0) return null
+
+  const revoke = async (id: string) => {
+    try {
+      await api.revokeWorkspaceInvite(id)
+      qc.setQueryData(workspaceInvitesQuery().queryKey, (list) =>
+        list ? list.filter((i) => i.id !== id) : list,
+      )
+      toast.success("Invitation revoked")
+    } catch (e) {
+      toast.error((e as Error).message)
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="text-sm font-medium text-muted-foreground">Pending invitations</div>
+      <SettingsGroup>
+        {invites.map((inv) => (
+          <div
+            key={inv.id}
+            data-testid={`invite-row-${inv.id}`}
+            className="flex items-center gap-3 py-3"
+          >
+            <div className="min-w-0 flex-1">
+              <div className="truncate text-sm font-medium text-foreground">{inv.email}</div>
+              <div className="text-2xs text-muted-foreground">Invited as {roleLabel(inv.role)}</div>
+            </div>
+            <Badge variant="outline">Pending</Badge>
+            <Button
+              data-testid={`invite-revoke-${inv.id}`}
+              variant="destructive-ghost"
+              size="sm"
+              onClick={() => revoke(inv.id)}
+            >
+              Revoke
+            </Button>
+          </div>
+        ))}
+      </SettingsGroup>
+    </div>
   )
 }

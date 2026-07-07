@@ -8,7 +8,7 @@ import { fail, readJson } from "../lib/http"
 
 /** Agent registry (Admin-managed) + the agent's pull inbox of @mentions. */
 export const agentRoutes = (ctx: AppContext) => {
-  const { meta, activeWorkspace, agentFor, currentUser, workspaceCan } = ctx
+  const { meta, activeWorkspace, agentFor, currentUser, requireUser, workspaceCan } = ctx
   const app = new Hono()
 
   const agentJson = (a: AgentRecord) => ({
@@ -66,6 +66,25 @@ export const agentRoutes = (ctx: AppContext) => {
     // Scope the delete to the caller's workspace: deleteAgent is keyed by
     // (id, org) so an Admin can't delete another workspace's agent by id.
     await meta.deleteAgent(c.req.param("id"), await activeWorkspace(c))
+    return c.body(null, 204)
+  })
+
+  // ---- Connected agents (delegation provenance + revocation) --------------
+  // The OAuth agents the SIGNED-IN USER has authorized to act on their behalf (MCP clients
+  // like Claude that went through the browser consent) — distinct from workspace-registered
+  // agents above. Listing + one-tap revocation make delegation legible and reversible: the
+  // human can always see what may act as them and cut it off. Scoped to the caller's own
+  // grants, never another user's.
+  app.get("/v1/me/connected-agents", async (c) => {
+    const me = await requireUser(c)
+    if (me instanceof Response) return me
+    return c.json({ agents: await meta.listUserGrants(me.id) })
+  })
+
+  app.delete("/v1/me/connected-agents/:clientId", async (c) => {
+    const me = await requireUser(c)
+    if (me instanceof Response) return me
+    await meta.revokeUserGrant(me.id, c.req.param("clientId"))
     return c.body(null, 204)
   })
 

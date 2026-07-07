@@ -65,6 +65,80 @@ export const emailDeliverySender =
     return { ok: true, status: "sent" }
   }
 
+/** Render a transactional auth email (password reset, email verification, or email-change
+ *  confirmation) — one clear primary action to the given URL. Same plain, readable house
+ *  style as the comment email. Enqueued onto the same outbox (kind="email"). */
+export const buildAuthEmail = (
+  kind: "reset" | "verify" | "change_email",
+  input: { to: string; name?: string | null; url: string },
+): EmailMsg => {
+  const copy = {
+    reset: {
+      subject: "Reset your Derive password",
+      lead: "Reset your password",
+      body: "We got a request to reset the password for your Derive account. Click below to choose a new one — the link expires in an hour.",
+      cta: "Reset password",
+      note: "If you didn’t request this, you can safely ignore this email; your password stays the same.",
+    },
+    verify: {
+      subject: "Verify your email for Derive",
+      lead: "Confirm your email",
+      body: "Confirm this is your email address so we can keep your Derive account secure.",
+      cta: "Verify email",
+      note: "If you didn’t create a Derive account, you can ignore this email.",
+    },
+    change_email: {
+      subject: "Confirm your new email for Derive",
+      lead: "Confirm your new email",
+      body: "Confirm you want to use this address for your Derive account. Your address won’t change until you do.",
+      cta: "Confirm email",
+      note: "If you didn’t request this change, ignore this email and nothing happens.",
+    },
+  }[kind]
+  const href = escapeHtml(input.url)
+  const html = `<!doctype html><html><body style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;color:#1a1a1a;line-height:1.5">
+  <p style="font-size:16px;font-weight:600;margin:0 0 8px">${escapeHtml(copy.lead)}</p>
+  <p>${escapeHtml(copy.body)}</p>
+  <p><a href="${href}" style="display:inline-block;background:#111;color:#fff;padding:10px 18px;border-radius:6px;text-decoration:none">${escapeHtml(copy.cta)}</a></p>
+  <p style="color:#666;font-size:13px">Or paste this link into your browser:<br/><a href="${href}" style="color:#666">${href}</a></p>
+  <hr style="border:none;border-top:1px solid #eee;margin:24px 0"/>
+  <p style="color:#999;font-size:12px">${escapeHtml(copy.note)}</p>
+  </body></html>`
+  const text = [`${copy.lead}`, ``, copy.body, ``, `${copy.cta}: ${input.url}`, ``, copy.note].join(
+    "\n",
+  )
+  return { to: input.to, toName: input.name ?? undefined, subject: copy.subject, html, text }
+}
+
+/** Render a workspace-invitation email: who invited you, to which workspace, and a link
+ *  to accept. Same plain house style; the link lands on the accept page (signed-in gate). */
+export const buildInviteEmail = (input: {
+  to: string
+  workspace: string
+  inviter?: string | null
+  url: string
+}): EmailMsg => {
+  const by = input.inviter ? `${input.inviter} invited you` : "You've been invited"
+  const href = escapeHtml(input.url)
+  const ws = escapeHtml(input.workspace)
+  const html = `<!doctype html><html><body style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;color:#1a1a1a;line-height:1.5">
+  <p style="font-size:16px;font-weight:600;margin:0 0 8px">${escapeHtml(by)} to join ${ws} on Derive</p>
+  <p>Derive is where teams publish living docs and review them together — with humans and agents in the same loop.</p>
+  <p><a href="${href}" style="display:inline-block;background:#111;color:#fff;padding:10px 18px;border-radius:6px;text-decoration:none">Accept invitation</a></p>
+  <p style="color:#666;font-size:13px">Or paste this link into your browser:<br/><a href="${href}" style="color:#666">${href}</a></p>
+  <hr style="border:none;border-top:1px solid #eee;margin:24px 0"/>
+  <p style="color:#999;font-size:12px">If you weren't expecting this, you can ignore this email.</p>
+  </body></html>`
+  const text = [
+    `${by} to join ${input.workspace} on Derive.`,
+    ``,
+    `Accept your invitation: ${input.url}`,
+    ``,
+    `If you weren't expecting this, ignore this email.`,
+  ].join("\n")
+  return { to: input.to, subject: `Join ${input.workspace} on Derive`, html, text }
+}
+
 export interface CommentEmailInput {
   author: string
   body: string

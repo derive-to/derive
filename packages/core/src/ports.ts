@@ -566,6 +566,23 @@ export interface MetaStore {
   setUserImage(userId: string, image: string): Promise<void>
   /** Opt a user in/out of people search (discoverable column). */
   setUserDiscoverable(userId: string, discoverable: boolean): Promise<void>
+  /** Mark first-run onboarding finished/skipped (onboarded column). Server-authoritative,
+   *  so the /welcome gate syncs across devices instead of trusting per-browser storage. */
+  setUserOnboarded(userId: string, onboarded: boolean): Promise<void>
+  /** Purge a user's Derive-domain data on account deletion: remove their association rows
+   *  (memberships, artifact/collection members, follows, favorites, notifications), ANONYMIZE
+   *  their authorship (author_id → null on artifacts/versions/comments/proposals, so others'
+   *  threads survive), null the nullable back-references keyed to them (agent.created_by,
+   *  invitation.invited_by), and drop their personal workspace row. Better Auth removes the
+   *  account itself + its sessions/passkeys/2FA.
+   *
+   *  NOT hard-deleted: artifact/collection content is anonymized + orphaned (a GC concern),
+   *  and NON-nullable historical metadata that merely records a past action (a proposal's
+   *  decided_by, a review round's requester, an audit-log actor, a repo/collection creator)
+   *  keeps the raw id. That id is safe: once Better Auth removes the user row it resolves to
+   *  nothing (getUsers → []), so it's an unresolvable tombstone, not recoverable identity —
+   *  the same shape as an orphaned git author. */
+  deleteUserData(userId: string): Promise<void>
   /** Set a user's team role + "what you do" blurb (profession/about columns). An
    *  undefined field is left untouched; null clears it. */
   setUserProfile(
@@ -600,12 +617,35 @@ export interface MetaStore {
   getOAuthGrant(tokenHash: string): Promise<OAuthGrant | null>
   /** The display name of a registered OAuth client (for the consent screen). */
   getOAuthClientName(clientId: string): Promise<string | null>
+  /** The agents a USER has authorized via the browser consent (one per client), so they can
+   *  review + revoke what may act on their behalf. Reads Better Auth's oauth-provider tables;
+   *  empty when they aren't present. */
+  listUserGrants(userId: string): Promise<OAuthGrantSummary[]>
+  /** Revoke a user's grant to one OAuth client: drop the consent + every live access/refresh
+   *  token, so the agent loses access immediately and must re-consent. */
+  revokeUserGrant(userId: string, clientId: string): Promise<void>
   /** Bind the workspace this user's grants to an OAuth client act in (the consent
    *  screen's workspace picker). Upserts on (user, client): re-consent re-points. */
   setOAuthClientWorkspace(userId: string, clientId: string, orgId: string): Promise<void>
   /** The workspace a user bound an OAuth client to, or null (pre-picker grants). */
   getOAuthClientWorkspace(userId: string, clientId: string): Promise<string | null>
   deleteAgent(id: string, orgId: string): Promise<void>
+
+  // ---- Workspace invitations (invite-by-email → accept) ------------------
+  /** Create a pending invitation. Any existing pending invite for the same
+   *  (org, email) should be replaced by the caller first (a fresh token supersedes). */
+  createInvitation(i: NewInvitation): Promise<InvitationRecord>
+  /** Resolve an invite by its hashed token (for the accept flow); null if unknown. */
+  getInvitationByToken(tokenHash: string): Promise<InvitationRecord | null>
+  /** Pending (unaccepted) invitations for a workspace — the Admin's pending list. */
+  listPendingInvitations(orgId: string): Promise<InvitationRecord[]>
+  /** Drop any pending invite for this (org, email) — used to supersede on re-invite
+   *  and to clear it once the person becomes a member. */
+  deletePendingInvitationsFor(orgId: string, email: string): Promise<void>
+  /** Revoke a specific pending invitation (Admin), scoped to its workspace. */
+  deleteInvitation(id: string, orgId: string): Promise<void>
+  /** Stamp accepted_at so the invite can't be redeemed twice. */
+  markInvitationAccepted(id: string): Promise<void>
   /** Queue a mention into an agent's pull inbox. */
   createAgentMention(m: NewAgentMention): Promise<void>
   /** Pending (unhandled) mentions for an agent, oldest first. */
@@ -731,6 +771,16 @@ export interface OAuthGrant {
   expiresAt: Date
 }
 
+/** One authorized agent from a user's point of view — what they see in "Connected agents"
+ *  to review + revoke. Keyed by client (a user grants a client once; tokens rotate under it). */
+export interface OAuthGrantSummary {
+  clientId: string
+  clientName: string
+  scopes: string[]
+  /** When the grant was last (re)authorized — ISO. */
+  grantedAt: string
+}
+
 export type AuditAction = "report" | "takedown" | "reinstate" | "dismiss"
 /** An immutable moderation-action record. */
 export interface AuditLogRecord {
@@ -815,6 +865,37 @@ export interface NewAgentMention {
 }
 
 /**
+ * A pending workspace invitation: an email invited to join a workspace at a role,
+ * redeemable via an emailed link before it expires. Distinct from a membership (which
+ * requires an existing account) — this is how you bring in someone who hasn't signed up
+ * yet. The token is stored hashed (like agent tokens); accepting it creates the membership.
+ */
+export interface InvitationRecord {
+  id: string
+  org_id: string
+  /** Normalized (lowercased) invitee email. */
+  email: string
+  role: Role
+  /** SHA-256 of the redeem token (the raw token only ever rides the emailed link). */
+  token: string
+  /** The Admin who sent it; null if their account was later removed. */
+  invited_by: string | null
+  created_at: string
+  expires_at: string
+  /** Set once redeemed; a non-null value means the invite is spent. */
+  accepted_at: string | null
+}
+export interface NewInvitation {
+  id: string
+  org_id: string
+  email: string
+  role: Role
+  token: string
+  invited_by?: string | null
+  expires_at: string
+}
+
+/**
  * A candidate version awaiting review. It holds content exactly like a version
  * (blob_key + content_type, file or bundle manifest) but is NOT current until a
  * reviewer approves it, at which point it is appended as the new live version.
@@ -836,6 +917,10 @@ export interface ProposalRecord {
   /** Stable id of the proposer (user/agent); withdraw authorization keys on this,
    *  not `author`. Null for legacy rows and anonymous proposals. */
   author_id: string | null
+  /** When an AGENT proposed this, the human it acted on behalf of (the granting/registering
+   *  user) — so a reviewer sees "proposed by Agent X on behalf of Alice." Null for a direct
+   *  human proposal or an agent with no known principal. The delegation made legible. */
+  on_behalf_of: string | null
   /** The current_version this candidate was proposed against (for the diff). */
   base_version: number
   state: ProposalState
@@ -859,6 +944,7 @@ export interface NewProposal {
   message?: string | null
   author: string
   author_id?: string | null
+  on_behalf_of?: string | null
   base_version: number
 }
 

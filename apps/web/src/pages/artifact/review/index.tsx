@@ -174,7 +174,13 @@ export function ReviewOverlay({
             {active && !narrow && <StateBadge state={active.state} />}
           </div>
           <div className="truncate font-mono text-2xs text-muted-foreground">
-            {active ? `${active.author} · proposed ${ago(active.created_at)}` : "Loading…"}
+            {active
+              ? `${active.author}${
+                  active.on_behalf_of
+                    ? ` on behalf of ${active.on_behalf_of.name ?? (active.on_behalf_of.handle ? `@${active.on_behalf_of.handle}` : "a teammate")}`
+                    : ""
+                } · proposed ${ago(active.created_at)}`
+              : "Loading…"}
           </div>
         </div>
         {narrow && proposals.length > 1 && (

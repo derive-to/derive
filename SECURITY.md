@@ -68,3 +68,17 @@ Derive ships safe defaults, but a few choices matter for an internet-facing depl
 - **Rate limits + storage quotas** are available (`DERIVE_RATE_LIMIT`,
   `DERIVE_MAX_BYTES`, `DERIVE_MAX_ARTIFACTS`, `DERIVE_PUBLISH_RATE`, `DERIVE_COMMENT_RATE`) —
   enable them on shared instances.
+- **Breached-password check** rejects passwords found in the Have I Been Pwned corpus at
+  sign-up / reset / change, using k-anonymity (only a SHA-1 prefix is sent, never the
+  password). It **fails open** — if the HIBP API is unreachable (e.g. an air-gapped host)
+  account creation is never blocked. Disable with `DERIVE_BREACH_CHECK=false`.
+- **Account deletion is a hard delete with anonymization.** When a user deletes their
+  account, Better Auth removes the account and its sessions, passkeys, and 2FA, then the
+  Derive cascade (`MetaStore.deleteUserData`) drops their memberships, follows, favorites,
+  and notifications and **anonymizes** their authorship — `author_id` on artifacts,
+  versions, comments, and proposals is nulled so co-authored threads survive intact rather
+  than being destroyed with the account. Their personal workspace is dropped; artifact
+  bytes are not hard-deleted (orphaned + anonymized, a GC concern). Deletion is **blocked**
+  while the user is the sole owner of a workspace that still has other members, so a shared
+  workspace can never be stranded without an admin — they must transfer ownership or remove
+  the others first.

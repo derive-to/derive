@@ -102,3 +102,36 @@ export const verifyPassword = (password: string, stored: string | null | undefin
 export const unlockCookie = (shortId: string): string => `dku_${shortId}`
 export const unlockToken = (artifactId: string, passwordHash: string): string =>
   sha256(`${artifactId}:${passwordHash}`)
+
+// --- breached-password check (Have I Been Pwned, k-anonymity) ----------------
+// Reject account passwords that appear in known breach corpora, WITHOUT ever sending
+// the password (or its full hash) anywhere: HIBP's range API takes the first 5 hex chars
+// of the SHA-1 and returns every suffix in that bucket, so we match locally. This is the
+// SOTA hardening the stock `haveIBeenPwned()` plugin also does — but that plugin FAILS
+// CLOSED (a network error throws INTERNAL_SERVER_ERROR, bricking sign-up on an air-gapped
+// self-host). A best-effort hardening must never be an availability dependency, so this
+// FAILS OPEN: any fetch/parse failure logs and allows. Returns true = compromised (reject).
+export const isBreachedPassword = async (password: string): Promise<boolean> => {
+  const sha1 = createHash("sha1").update(password).digest("hex").toUpperCase()
+  const prefix = sha1.slice(0, 5)
+  const suffix = sha1.slice(5)
+  try {
+    const res = await fetch(`https://api.pwnedpasswords.com/range/${prefix}`, {
+      // Add-Padding hides the true bucket size from a network observer (HIBP feature);
+      // AbortSignal keeps a hung endpoint from stalling sign-up.
+      headers: { "Add-Padding": "true", "User-Agent": "Derive-Password-Check" },
+      signal: AbortSignal.timeout(3000),
+    })
+    if (!res.ok) return false // fail open on a non-200
+    const body = await res.text()
+    // Each line is "SUFFIX:count"; a padded (synthetic) entry has count 0 — ignore those.
+    // A real hit has count > 0; `Number(count) > 0` also rejects a malformed/missing count
+    // (NaN > 0 is false), so a garbled line can never be read as a breach.
+    return body.split("\n").some((line) => {
+      const [suf, count] = line.trim().split(":")
+      return suf?.toUpperCase() === suffix && Number(count) > 0
+    })
+  } catch {
+    return false // network error / timeout / air-gap — allow (fail open)
+  }
+}

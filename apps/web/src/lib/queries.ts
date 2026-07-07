@@ -214,6 +214,14 @@ export const workspaceQuery = () =>
     staleTime: Number.POSITIVE_INFINITY,
   })
 
+// Pending workspace invitations (Admin-only view under Members). Refetched on
+// invite/revoke; not preloaded, so it's a plain lazy query gated on being an Admin.
+export const workspaceInvitesQuery = () =>
+  queryOptions({
+    queryKey: ["workspace", "invites"] as const,
+    queryFn: () => api.listWorkspaceInvites().then((r) => r.invites),
+  })
+
 // Per-workspace integration switches (email + GitHub mirroring + Slack posting)
 // behind the Integrations section. The toggles flip this cache entry optimistically
 // and roll it back on error.

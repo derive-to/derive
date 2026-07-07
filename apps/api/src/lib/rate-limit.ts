@@ -46,6 +46,10 @@ export function nativeLimiter(binding: RateLimit, period: number, prefix = ""): 
  *  (Node / self-host / tests) or native bindings (the edge). */
 export interface RateLimiters {
   auth: Limiter
+  /** Tight cap on the auth endpoints that SEND email (password reset, verification,
+   *  change-email): each request emails a (possibly unwilling) address, so this bounds
+   *  inbox-bombing far below the general `auth` cap. */
+  authEmail: Limiter
   oauthRegister: Limiter
   write: Limiter
   publish: Limiter
@@ -64,6 +68,9 @@ export function inMemoryRateLimiters(
 ): RateLimiters {
   return {
     auth: inMemoryLimiter(60_000, 20),
+    // 5 mail-triggering requests per 15 min per IP — room for a legitimate retry, but no
+    // inbox-bombing. Same shape as `unlock` (a tight, long-window credential surface).
+    authEmail: inMemoryLimiter(15 * 60_000, 5),
     oauthRegister: inMemoryLimiter(3_600_000, 10),
     write: inMemoryLimiter(60_000, 120),
     publish: inMemoryLimiter(60_000, opts.publishRate ?? 30),

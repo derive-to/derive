@@ -21,6 +21,7 @@ import type {
   GitHubAppRecord,
   GitHubInstallationRecord,
   GithubAuthor,
+  InvitationRecord,
   ListArtifactsOpts,
   MembershipRecord,
   NewAgent,
@@ -35,6 +36,7 @@ import type {
   NewDelivery,
   NewDomain,
   NewFollow,
+  NewInvitation,
   NewMembership,
   NewNotification,
   NewProposal,
@@ -47,6 +49,7 @@ import type {
   NewWebhook,
   NotificationRecord,
   OAuthGrant,
+  OAuthGrantSummary,
   OrgSettings,
   ProposalRecord,
   ProposalState,
@@ -108,6 +111,7 @@ import {
   follow,
   githubApp,
   githubInstallation,
+  invitation,
   membership,
   notification,
   oauthClientWorkspace,
@@ -192,6 +196,7 @@ export const schema = {
   reviewRound,
   agent,
   agentMention,
+  invitation,
   oauthClientWorkspace,
   context,
   contextSession,
@@ -226,6 +231,7 @@ const _schemaShapes: Shapes<typeof schema> = {
   reviewRound: true,
   agent: true,
   agentMention: true,
+  invitation: true,
   context: true,
   contextSession: true,
   sessionMessage: true,
@@ -1810,6 +1816,56 @@ export function makeRepos(db: SqliteDb) {
       return 0
     }
   }
+  // The agents a user has authorized (one row per consented client): join oauthConsent to
+  // oauthClient for the display name. `scopes` is stored as a JSON array string by Better
+  // Auth; parse defensively. Empty when the oauth-provider tables aren't present.
+  const listUserGrants = async (userId: string): Promise<OAuthGrantSummary[]> => {
+    try {
+      const rows = (await db.all(sql`
+        select k."clientId" as client_id, c."name" as client_name,
+               k."scopes" as scopes, k."updatedAt" as granted_at
+        from "oauthConsent" k
+        join "oauthClient" c on c."clientId" = k."clientId"
+        where k."userId" = ${userId}
+        order by k."updatedAt" desc
+      `)) as {
+        client_id: string
+        client_name: string | null
+        scopes: string | null
+        granted_at: string | number | null
+      }[]
+      return rows.map((r) => {
+        // updatedAt may be an ISO string or an epoch (s or ms), like getOAuthGrant's expiry.
+        const ms =
+          typeof r.granted_at === "number"
+            ? r.granted_at < 1e12
+              ? r.granted_at * 1000
+              : r.granted_at
+            : Date.parse(r.granted_at ?? "")
+        return {
+          clientId: r.client_id,
+          clientName: r.client_name || r.client_id,
+          scopes: parseOAuthScopes(r.scopes),
+          grantedAt: new Date(Number.isFinite(ms) ? ms : Date.now()).toISOString(),
+        }
+      })
+    } catch {
+      return []
+    }
+  }
+  // Revoke a user's grant to a client: drop the consent + every live token so access ends
+  // now and a fresh consent is required. Best-effort per table (a table may not exist).
+  const revokeUserGrant = async (userId: string, clientId: string): Promise<void> => {
+    for (const table of ["oauthAccessToken", "oauthRefreshToken", "oauthConsent"]) {
+      try {
+        await db.run(
+          sql`delete from ${sql.raw(`"${table}"`)} where "userId" = ${userId} and "clientId" = ${clientId}`,
+        )
+      } catch {
+        // Table absent or column mismatch on this dialect → skip; the others still run.
+      }
+    }
+  }
   const deleteAgent = async (id: string, orgId: string): Promise<void> => {
     await db
       .delete(agent)
@@ -1818,6 +1874,71 @@ export function makeRepos(db: SqliteDb) {
   }
   const createAgentMention = async (m: NewAgentMention): Promise<void> => {
     await db.insert(agentMention).values(m).run()
+  }
+
+  // ---- Workspace invitations ---------------------------------------------
+  const createInvitation = async (i: NewInvitation): Promise<InvitationRecord> =>
+    (await db.insert(invitation).values(i).returning().get()) as InvitationRecord
+  const getInvitationByToken = async (tokenHash: string): Promise<InvitationRecord | null> =>
+    (await db.select().from(invitation).where(eq(invitation.token, tokenHash)).get()) ?? null
+  const listPendingInvitations = async (orgId: string): Promise<InvitationRecord[]> =>
+    db
+      .select()
+      .from(invitation)
+      .where(and(eq(invitation.org_id, orgId), isNull(invitation.accepted_at)))
+      .orderBy(desc(invitation.created_at))
+      .all()
+  const deletePendingInvitationsFor = async (orgId: string, email: string): Promise<void> => {
+    await db
+      .delete(invitation)
+      .where(
+        and(
+          eq(invitation.org_id, orgId),
+          eq(invitation.email, email),
+          isNull(invitation.accepted_at),
+        ),
+      )
+      .run()
+  }
+  const deleteInvitation = async (id: string, orgId: string): Promise<void> => {
+    await db
+      .delete(invitation)
+      .where(and(eq(invitation.id, id), eq(invitation.org_id, orgId)))
+      .run()
+  }
+  const markInvitationAccepted = async (id: string): Promise<void> => {
+    await db
+      .update(invitation)
+      .set({ accepted_at: new Date().toISOString() })
+      .where(eq(invitation.id, id))
+      .run()
+  }
+
+  // ---- Account deletion cascade (see MetaStore.deleteUserData) ------------
+  const deleteUserData = async (userId: string): Promise<void> => {
+    // The user's own association rows go entirely.
+    await db.delete(membership).where(eq(membership.user_id, userId)).run()
+    await db.delete(artifactMember).where(eq(artifactMember.user_id, userId)).run()
+    await db.delete(collectionMember).where(eq(collectionMember.user_id, userId)).run()
+    await db.delete(follow).where(eq(follow.user_id, userId)).run()
+    await db.delete(artifactFavorite).where(eq(artifactFavorite.user_id, userId)).run()
+    await db.delete(notification).where(eq(notification.user_id, userId)).run()
+    // Authorship is anonymized (nullable), so others' artifacts/threads survive intact.
+    await db.update(artifact).set({ author_id: null }).where(eq(artifact.author_id, userId)).run()
+    await db.update(version).set({ author_id: null }).where(eq(version.author_id, userId)).run()
+    await db.update(comment).set({ author_id: null }).where(eq(comment.author_id, userId)).run()
+    await db.update(proposal).set({ author_id: null }).where(eq(proposal.author_id, userId)).run()
+    await db.update(agent).set({ created_by: null }).where(eq(agent.created_by, userId)).run()
+    await db
+      .update(invitation)
+      .set({ invited_by: null })
+      .where(eq(invitation.invited_by, userId))
+      .run()
+    // Drop the personal workspace row (removes the "<name>'s Workspace" label).
+    await db
+      .delete(workspace)
+      .where(eq(workspace.id, `ws_p_${userId}`))
+      .run()
   }
   const listPendingAgentMentions = async (
     agentId: string,
@@ -2104,6 +2225,8 @@ export function makeRepos(db: SqliteDb) {
     getAgentByToken,
     getOAuthGrant,
     getOAuthClientName,
+    listUserGrants,
+    revokeUserGrant,
     setOAuthClientWorkspace,
     getOAuthClientWorkspace,
     pruneStaleOAuthClients,
@@ -2111,6 +2234,13 @@ export function makeRepos(db: SqliteDb) {
     createAgentMention,
     listPendingAgentMentions,
     ackAgentMention,
+    createInvitation,
+    getInvitationByToken,
+    listPendingInvitations,
+    deletePendingInvitationsFor,
+    deleteInvitation,
+    markInvitationAccepted,
+    deleteUserData,
     createReport,
     getReport,
     listReports,

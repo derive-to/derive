@@ -699,6 +699,9 @@ function buildServer(
             message: message ?? "Proposed revision",
             author: agent.name,
             author_id: agent.id,
+            // Delegation provenance: the agent proposes on behalf of the human that
+            // authorized it, so reviewers see "Agent X on behalf of Alice."
+            on_behalf_of: actingFor?.id ?? null,
           })
           const addressed = addresses?.length
             ? await markAddressed(ctx.meta, existing.id, proposal.id, addresses)
