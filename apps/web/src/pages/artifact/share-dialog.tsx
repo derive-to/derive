@@ -1,5 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
-import { useEffect, useRef, useState } from "react"
+import { useNavigate } from "@tanstack/react-router"
+import { Fragment, useEffect, useRef, useState } from "react"
 import {
   API_BASE,
   type ArtifactDomain,
@@ -27,55 +28,67 @@ import {
   SelectMenu,
   SelectMenuContent,
   SelectMenuItem,
+  SelectMenuSeparator,
   SelectMenuTrigger,
 } from "@/components/ui/select-menu"
 import { toast } from "@/components/ui/sonner"
 import { useAuth } from "@/ctx"
 import { getInitials } from "@/lib/initials"
-import { artifactQuery } from "@/lib/queries"
+import { artifactQuery, workspaceQuery } from "@/lib/queries"
 import { cn } from "@/lib/utils"
 
-// General access (visibility) options, in order of increasing reach — the ladder
-// reads top-to-bottom from most private to most open, each with the glyph the
-// Share trigger echoes.
-const ACCESS: { value: string; label: string; blurb: string; icon: IconName }[] = [
-  {
-    value: "private",
-    label: "Private",
-    blurb: "Only people added above. Workspace membership grants nothing.",
-    icon: "lock",
-  },
-  {
-    value: "unlisted",
-    label: "Draft — workspace with link",
-    blurb: "Workspace members with the link. Stays out of the library until shared.",
-    icon: "link",
-  },
-  {
-    value: "org",
-    label: "Workspace only",
-    blurb: "Only members of this workspace.",
-    icon: "workspace",
-  },
-  {
-    value: "link",
-    label: "Anyone with the link",
-    blurb: "Anyone with the link can view.",
-    icon: "link",
-  },
-  {
-    value: "public",
-    label: "Public — listed",
-    blurb: "In the public directory and indexable.",
-    icon: "globe",
-  },
-  {
-    value: "password",
-    label: "Password protected",
-    blurb: "Anyone with the link and the password.",
-    icon: "lock",
-  },
+// General access (visibility) options as two dimensions, not one flat ladder:
+// WHO (private / workspace / public) crossed with listed-or-link-only for the
+// workspace and public tiers. Each inner array renders as a menu group with a
+// separator between groups, so the pairs read as pairs: listed first, link-only
+// second, same order in both tiers. Password trails as a modifier-style rung.
+const ACCESS_GROUPS: { value: string; label: string; blurb: string; icon: IconName }[][] = [
+  [
+    {
+      value: "private",
+      label: "Private",
+      blurb: "Only people added above. Workspace membership grants nothing.",
+      icon: "lock",
+    },
+  ],
+  [
+    {
+      value: "org",
+      label: "Workspace",
+      blurb: "Every workspace member can find it in the shared library.",
+      icon: "workspace",
+    },
+    {
+      value: "unlisted",
+      label: "Workspace — link only",
+      blurb: "Workspace members with the link. Stays out of the shared library.",
+      icon: "link",
+    },
+  ],
+  [
+    {
+      value: "public",
+      label: "Public",
+      blurb: "In the public directory and indexable.",
+      icon: "globe",
+    },
+    {
+      value: "link",
+      label: "Public — link only",
+      blurb: "Anyone with the link can view. Not listed anywhere.",
+      icon: "link",
+    },
+  ],
+  [
+    {
+      value: "password",
+      label: "Password protected",
+      blurb: "Anyone with the link and the password.",
+      icon: "lock",
+    },
+  ],
 ]
+const ACCESS = ACCESS_GROUPS.flat()
 
 // The state glyph the Share trigger carries so exposure is legible without
 // opening the dialog: a globe when the URL alone reads (link/public), a lock
@@ -175,8 +188,17 @@ export function ShareButton({
   // ACCESS at every place the icon/label/blurb is needed.
   const currentAccess = ACCESS.find((a) => a.value === vis)
   const visibilityAccess = ACCESS.find((a) => a.value === visibility)
-  // Reach visibilities (anyone with the link / public / password) carry a general-access
-  // permission; private/workspace do not, so the view/comment control hides for them.
+  const nav = useNavigate()
+  // Solo drives only the create-a-workspace hint, never the ladder itself — the
+  // workspace rungs stay meaningful for a workspace of one (org vs unlisted is
+  // what lists a doc in your own library, and promoting an agent's link-only
+  // publish to Workspace is the loop's blessing gesture). Managers only, and
+  // not-solo while the roster loads, so nothing flashes.
+  const { data: workspace } = useQuery({ ...workspaceQuery(), enabled: canManage })
+  const solo = workspace ? workspace.members.length <= 1 : false
+  // Reach visibilities (link / public / password — anyone can arrive) carry a
+  // general-access permission; private/workspace do not, so the view/comment
+  // control hides for them.
   const reach = vis === "link" || vis === "public" || vis === "password"
   // Unlisted carries the same view/comment choice, but the reachers are workspace
   // members only (the default comes from workspace settings; this is the per-doc override).
@@ -426,11 +448,16 @@ export function ShareButton({
                       {currentAccess?.label ?? vis}
                     </SelectMenuTrigger>
                     <SelectMenuContent>
-                      {ACCESS.map((a) => (
-                        <SelectMenuItem key={a.value} value={a.value}>
-                          <Icon name={a.icon} className="text-muted-foreground" />
-                          {a.label}
-                        </SelectMenuItem>
+                      {ACCESS_GROUPS.map((group, gi) => (
+                        <Fragment key={group[0]?.value}>
+                          {gi > 0 && <SelectMenuSeparator />}
+                          {group.map((a) => (
+                            <SelectMenuItem key={a.value} value={a.value}>
+                              <Icon name={a.icon} className="text-muted-foreground" />
+                              {a.label}
+                            </SelectMenuItem>
+                          ))}
+                        </Fragment>
                       ))}
                     </SelectMenuContent>
                   </SelectMenu>
@@ -523,6 +550,29 @@ export function ShareButton({
                     </Button>
                   )}
                 </p>
+                {/* First-need on-ramp: the word "workspace" earns its first
+                    appearance by answering "how do I show this to my team?". */}
+                {solo && (
+                  <p className="text-sm text-muted-foreground">
+                    Working with a team?{" "}
+                    <Button
+                      variant="link"
+                      size="xs"
+                      data-testid="share-create-workspace"
+                      className="px-0"
+                      onClick={() =>
+                        nav({
+                          to: "/settings/$section",
+                          params: { section: "general" },
+                          search: { "new-workspace": "1" },
+                        })
+                      }
+                    >
+                      Create a workspace
+                    </Button>{" "}
+                    to share with them.
+                  </p>
+                )}
               </div>
             ) : (
               <p className="mt-2 flex items-center gap-1.5 text-sm text-muted-foreground">
@@ -536,7 +586,7 @@ export function ShareButton({
             <SectionEyebrow count={members.length || undefined}>People with access</SectionEyebrow>
             {members.length === 0 ? (
               <p data-testid="share-empty" className="px-2 py-2.5 text-sm text-muted-foreground">
-                {canManage ? "No one shared yet." : "Just you and the workspace."}
+                {canManage ? "No one shared yet." : "No one else has been added."}
               </p>
             ) : (
               <div className="-mx-2 mt-1 flex flex-col">
@@ -761,7 +811,7 @@ export function ShareButton({
               <p className="mt-1.5 text-sm text-muted-foreground">
                 {linkAccessible
                   ? "Paste into any page — live, with a link back to Derive."
-                  : "Set access to “Anyone with the link” or “Public” for the embed to load for others."}
+                  : "Set access to “Public” or “Public — link only” for the embed to load for others."}
               </p>
             </div>
 

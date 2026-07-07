@@ -125,13 +125,23 @@ export function AppShell({ children }: { children: ReactNode }) {
       /* surfaced elsewhere */
     }
   }
-  const createWorkspace = async (name: string) => {
-    try {
-      await api.createWorkspace(name)
-      window.location.reload()
-    } catch {
-      /* surfaced elsewhere */
+  const createWorkspace = async (name: string, invites: string[] = []) => {
+    // createWorkspace switches the active-workspace cookie server-side, so the
+    // invites that follow land in the NEW workspace. Per-email failures don't
+    // abort the flow (a bad address shouldn't strand the workspace) — Members
+    // shows the roster + pending list, so we land there when invites were sent.
+    await api.createWorkspace(name)
+    let invited = false
+    for (const email of invites) {
+      try {
+        await api.inviteToWorkspace(email, "editor")
+        invited = true
+      } catch {
+        /* re-addable from Members */
+      }
     }
+    if (invited) window.location.assign("/settings/members")
+    else window.location.reload()
   }
   // Deleting may swap the active workspace (the server switches the cookie when you
   // delete the one you're in), so reload to pick up the new active context.

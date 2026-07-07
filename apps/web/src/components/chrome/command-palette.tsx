@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query"
 import { useNavigate } from "@tanstack/react-router"
 import { useEffect, useState } from "react"
-import { type Artifact, api, type PublicProfile } from "@/api"
+import { type Artifact, api, type PublicProfile, workspaceDisplayName } from "@/api"
 import { Icon } from "@/components/icons"
 import { FollowButton } from "@/components/shared/follow-button"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
@@ -93,11 +93,10 @@ export function CommandPalette() {
 
   const q = query.trim().toLowerCase()
   const matchedCollections = collections.filter((c) => c.title.toLowerCase().includes(q))
-  const otherWorkspaces = workspaces?.multi
-    ? workspaces.workspaces.filter(
-        (w) => w.id !== workspaces.active && w.name.toLowerCase().includes(q),
-      )
-    : []
+  // Personal shows (and searches) under its display name, same as the user pod.
+  const otherWorkspaces = (workspaces?.workspaces ?? [])
+    .map((w) => ({ ...w, display: workspaceDisplayName(w) }))
+    .filter((w) => w.id !== workspaces?.active && w.display.toLowerCase().includes(q))
   const showAll = "all artifacts".includes(q) || "library".includes(q)
   const showFav = "favorites".includes(q)
   const showFollowing = "following".includes(q)
@@ -227,7 +226,7 @@ export function CommandPalette() {
                   onSelect={() => go(() => switchWorkspace(w.id))}
                 >
                   <Icon name="workspace" size={16} />
-                  <span className="flex-1 truncate">{w.name}</span>
+                  <span className="flex-1 truncate">{w.display}</span>
                 </CommandItem>
               ))}
             </CommandGroup>

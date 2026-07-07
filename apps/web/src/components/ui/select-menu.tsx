@@ -6,6 +6,7 @@ import {
   DropdownMenuContent,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { cn } from "@/lib/utils"
@@ -92,4 +93,7 @@ function SelectMenuItem({
   return <DropdownMenuRadioItem className={cn("py-1.5 pr-8 pl-2", className)} {...props} />
 }
 
-export { SelectMenu, SelectMenuContent, SelectMenuItem, SelectMenuTrigger }
+// A visual break between option groups (radio semantics are unaffected).
+const SelectMenuSeparator = DropdownMenuSeparator
+
+export { SelectMenu, SelectMenuContent, SelectMenuItem, SelectMenuSeparator, SelectMenuTrigger }

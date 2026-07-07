@@ -450,6 +450,8 @@ CREATE INDEX IF NOT EXISTS agent_mention_inbox ON agent_mention (agent_id, state
 
 CREATE INDEX IF NOT EXISTS favorite_user ON artifact_favorite (user_id);
 
+CREATE INDEX IF NOT EXISTS artifact_member_by_user ON artifact_member (user_id);
+
 CREATE INDEX IF NOT EXISTS tag_name ON artifact_tag (tag);
 
 CREATE INDEX IF NOT EXISTS collection_item_artifact ON collection_item (artifact_id);

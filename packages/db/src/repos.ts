@@ -153,18 +153,15 @@ export function artifactListConditions(
         WHERE am.artifact_id = ${art.id} AND am.user_id = ${opts.viewerId}
       )`
     conds.push(sql`(${art.visibility} != 'private' OR ${isMember})`)
-    // `unlisted` hides from every ordinary listing — even the owner's (they have
-    // the dedicated filter). "include" folds the viewer's own drafts back in (MCP
-    // list_artifacts, so an agent always finds its work); "only" IS the filter.
+    // `unlisted` hides from every ordinary listing — even the owner's ("Created
+    // by me" is the finder). "include" folds the viewer's own back in (MCP
+    // list_artifacts + the deliberate shared/feedback/mine signals).
     // Ownership = an explicit artifact_member row, the same contract `private` uses.
-    if (opts.unlisted === "only") conds.push(sql`(${art.visibility} = 'unlisted' AND ${isMember})`)
-    else if (opts.unlisted === "include")
+    if (opts.unlisted === "include")
       conds.push(sql`(${art.visibility} != 'unlisted' OR ${isMember})`)
     else conds.push(sql`${art.visibility} != 'unlisted'`)
   }
-  // A trusted caller (operator token / internal jobs, no viewerId) sees everything;
-  // "only" still narrows so the scoped filter works for that path too.
-  else if (opts?.unlisted === "only") conds.push(eq(art.visibility, "unlisted"))
+  // A trusted caller (operator token / internal jobs, no viewerId) sees everything.
   if (opts?.q) conds.push(like(sql`lower(${art.title})`, `%${opts.q.toLowerCase()}%`))
   if (opts?.cursor) {
     const cursor = or(
@@ -472,22 +469,49 @@ export function makeRepos(db: SqliteDb) {
         .all()
     ).map((r) => r.id)
 
+  // "Created by me" for the list — every artifact this user holds an OWNER member
+  // row on in the workspace, any visibility. The roster row is written once at
+  // creation for the human behind the publish (agents included), so the filter
+  // survives republishes; the author_id denorm doesn't (addVersion rewrites it to
+  // the newest version's author — null for a token publish). The author-login
+  // filter above stays byline-based deliberately: it's GitHub-commit attribution.
+  const ownedBy = (userId: string) =>
+    and(eq(artifactMember.user_id, userId), eq(artifactMember.role, "owner"))
+  const artifactIdsOwnedBy = async (orgId: string, userId: string): Promise<string[]> =>
+    (
+      await db
+        .select({ id: artifact.id })
+        .from(artifact)
+        .innerJoin(
+          artifactMember,
+          and(eq(artifactMember.artifact_id, artifact.id), ownedBy(userId)),
+        )
+        .where(eq(artifact.org_id, orgId))
+        .all()
+    ).map((r) => r.id)
+
   const countArtifacts = async (orgId?: string): Promise<number> => {
     const q = db.select({ c: count() }).from(artifact)
     return (await (orgId ? q.where(eq(artifact.org_id, orgId)) : q).get())?.c ?? 0
   }
 
-  const countUnlistedFor = async (orgId: string, userId: string): Promise<number> =>
+  const countOwnedBy = async (
+    orgId: string,
+    userId: string,
+    visibility?: Visibility,
+  ): Promise<number> =>
     (
       await db
         .select({ c: count() })
         .from(artifact)
+        .innerJoin(
+          artifactMember,
+          and(eq(artifactMember.artifact_id, artifact.id), ownedBy(userId)),
+        )
         .where(
           and(
             eq(artifact.org_id, orgId),
-            eq(artifact.visibility, "unlisted"),
-            sql`EXISTS (SELECT 1 FROM artifact_member am
-              WHERE am.artifact_id = ${artifact.id} AND am.user_id = ${userId})`,
+            visibility ? eq(artifact.visibility, visibility) : undefined,
           ),
         )
         .get()
@@ -1077,7 +1101,7 @@ export function makeRepos(db: SqliteDb) {
       conds.push(eq(artifact.author_id, userId))
     }
     // Visible to the viewer: public OR in a workspace they share with the profile
-    // owner. Private and unlisted drafts never ride a profile, shared workspace or
+    // owner. Private and unlisted work never rides a profile, shared workspace or
     // not — the owner finds them in their library, not on their public face.
     const orgs = opts.visibleOrgIds ?? []
     if (orgs.length > 0) {
@@ -2095,8 +2119,9 @@ export function makeRepos(db: SqliteDb) {
     listArtifacts,
     artifactIdsByTag,
     artifactIdsByAuthor,
+    artifactIdsOwnedBy,
     countArtifacts,
-    countUnlistedFor,
+    countOwnedBy,
     storageBytes,
     tagCounts,
     deleteArtifact,

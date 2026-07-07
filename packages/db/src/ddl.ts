@@ -138,6 +138,8 @@ export const PERF_INDEXES: string[] = [
   `CREATE INDEX IF NOT EXISTS notification_user_time ON notification (user_id, created_at)`,
   `CREATE INDEX IF NOT EXISTS agent_mention_inbox ON agent_mention (agent_id, state, created_at)`,
   `CREATE INDEX IF NOT EXISTS favorite_user ON artifact_favorite (user_id)`,
+  // The "Created by me" filter/badge walks a user's owner rows on every summary fetch.
+  `CREATE INDEX IF NOT EXISTS artifact_member_by_user ON artifact_member (user_id)`,
   `CREATE INDEX IF NOT EXISTS tag_name ON artifact_tag (tag)`,
   `CREATE INDEX IF NOT EXISTS collection_item_artifact ON collection_item (artifact_id)`,
   `CREATE INDEX IF NOT EXISTS collection_member_user ON collection_member (user_id)`,

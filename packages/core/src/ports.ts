@@ -15,7 +15,8 @@ export type ArtifactKind = "file" | "bundle"
 // the visitor enters the password (then a viewer; members/owners see it by role).
 // `private`: only per-artifact members (the publisher becomes the owner-member at
 // creation) — workspace membership grants nothing, unlike `org`.
-// `unlisted`: the agent-draft state — hidden from every listing, but a workspace
+// `unlisted`: workspace link-only (the usual agent-publish default) — hidden
+// from every listing, but a workspace
 // member WITH THE LINK gets the general role (view or comment, the workspace's
 // default). Between `private` (explicit shares only) and `org` (listed for all).
 export type Visibility = "public" | "link" | "org" | "password" | "private" | "unlisted"
@@ -100,10 +101,10 @@ export interface ListArtifactsOpts {
   viewerId?: string
   /** How `unlisted` rows behave for a viewer-scoped listing. Default (omitted) =
    *  exclude: unlisted is hidden from every ordinary listing, even the owner's —
-   *  they have the dedicated filter. "include" folds the viewer's own unlisted
-   *  drafts in (MCP list_artifacts, so an agent always finds its work); "only" is
-   *  the library's Unlisted filter. Ignored without `viewerId` except "only". */
-  unlisted?: "exclude" | "include" | "only"
+   *  "Created by me" is the finder. "include" folds the viewer's own unlisted
+   *  work in (MCP list_artifacts + the deliberate shared/feedback/mine signals,
+   *  so you always find what's yours). Ignored without `viewerId`. */
+  unlisted?: "exclude" | "include"
   /** Profile work-list visibility gate: a row is included when it is `public` OR its
    *  `org_id` is in this set (the workspaces the viewer shares with the profile owner).
    *  An empty/omitted set with a profile query ⇒ public-only. Used by `listUserWorks`
@@ -234,11 +235,17 @@ export interface MetaStore {
   /** Artifact ids in a workspace whose current author_login matches `login`
    *  (case-insensitive) — the author list-filter. Empty when nothing matches. */
   artifactIdsByAuthor(orgId: string, login: string): Promise<string[]>
+  /** Artifact ids in a workspace this user holds an OWNER member row on — the
+   *  library's "Created by me" filter, any visibility. Keyed on the roster (one
+   *  row, written at creation for the human behind the publish), NOT the
+   *  `author_id` denorm: every republish rewrites that to the newest version's
+   *  author — null for a token publish — so it can't anchor "yours". */
+  artifactIdsOwnedBy(orgId: string, userId: string): Promise<string[]>
   /** Total artifact count, scoped to a workspace when orgId is given. */
   countArtifacts(orgId?: string): Promise<number>
-  /** The viewer's own `unlisted` drafts in a workspace (explicit-member rows) —
-   *  the badge count for the library's Unlisted filter. */
-  countUnlistedFor(orgId: string, userId: string): Promise<number>
+  /** Count of the artifacts `artifactIdsOwnedBy` would return — the "Created by
+   *  me" badge. `visibility` narrows to one rung (the link-only pending count). */
+  countOwnedBy(orgId: string, userId: string, visibility?: Visibility): Promise<number>
   /**
    * The storage-quota meter for one workspace: bytes counted once per distinct
    * blob (content is content-addressed, so republishes/restores of identical

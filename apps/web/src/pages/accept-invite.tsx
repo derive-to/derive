@@ -48,6 +48,16 @@ export function AcceptInvite() {
     retry: false,
   })
 
+  // The invite named an email; the signed-in account has a different one. The
+  // token still authorizes (self-hosts run without verified email), but the
+  // mismatch is surfaced and acceptance must be explicit — the server 409s
+  // without the confirm flag.
+  const mismatch = !!(
+    me &&
+    preview?.email &&
+    preview.email.toLowerCase() !== me.email.toLowerCase()
+  )
+
   const accept = async () => {
     // Not signed in → send them to sign in, returning here to finish.
     if (!me) {
@@ -57,7 +67,7 @@ export function AcceptInvite() {
     setAccepting(true)
     setErr("")
     try {
-      await api.acceptInvite(token)
+      await api.acceptInvite(token, mismatch)
       // The roster/active-workspace may change — refresh, then land in the app.
       qc.invalidateQueries({ queryKey: workspaceQuery().queryKey })
       nav({ to: "/" })
@@ -94,6 +104,7 @@ export function AcceptInvite() {
       signedIn={!!me}
       accepting={accepting}
       err={err}
+      mismatchEmail={mismatch ? (me?.email ?? null) : null}
       onAccept={accept}
     />
   )
@@ -104,12 +115,15 @@ function Invitation({
   signedIn,
   accepting,
   err,
+  mismatchEmail,
   onAccept,
 }: {
   preview: InvitePreview
   signedIn: boolean
   accepting: boolean
   err: string
+  /** Set when the signed-in email differs from the invited one — renders the warning. */
+  mismatchEmail: string | null
   onAccept: () => void
 }) {
   return (
@@ -123,6 +137,16 @@ function Invitation({
           <Badge variant="secondary">{roleLabel(preview.role)}</Badge>
         </p>
       </div>
+      {mismatchEmail && (
+        <div data-testid="invite-mismatch" className="w-full">
+          <StatusPanel
+            tone="warning"
+            layout="inline"
+            title={`This invite was sent to ${preview.email}`}
+            description={`You're signed in as ${mismatchEmail}. You can accept anyway, or sign in with the invited address first.`}
+          />
+        </div>
+      )}
       {err && (
         <div data-testid="invite-error" className="w-full">
           <StatusPanel tone="danger" layout="inline" title={err} />
@@ -135,7 +159,13 @@ function Invitation({
         loading={accepting}
         onClick={onAccept}
       >
-        {signedIn ? (accepting ? "Joining…" : "Accept invitation") : "Sign in to accept"}
+        {signedIn
+          ? accepting
+            ? "Joining…"
+            : mismatchEmail
+              ? "Accept anyway"
+              : "Accept invitation"
+          : "Sign in to accept"}
       </Button>
     </Shell>
   )

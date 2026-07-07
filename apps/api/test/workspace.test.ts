@@ -203,6 +203,8 @@ describe("multi-workspace: isolation, switch, create, provision", () => {
     expect(a.multi).toBe(true)
     expect(a.workspaces).toHaveLength(1)
     expect(a.workspaces[0].role).toBe("owner")
+    // Flagged personal so clients render "Personal" instead of the plumbing name.
+    expect(a.workspaces[0].personal).toBe(true)
     const b = await (await app.request("/v1/workspaces", { headers: as(bo.email) })).json()
     // Bo gets his OWN workspace, distinct from Ada's.
     expect(b.workspaces[0].id).not.toBe(a.workspaces[0].id)
@@ -235,6 +237,9 @@ describe("multi-workspace: isolation, switch, create, provision", () => {
     ).json()
     expect(spaces.active).toBe(acmeId)
     expect(spaces.workspaces).toHaveLength(2)
+    // A created (team) workspace is never flagged personal.
+    const acme = spaces.workspaces.find((w: { id: string }) => w.id === acmeId)
+    expect(acme?.personal).toBe(false)
   })
 
   it("switches back to a workspace you belong to; rejects one you don't", async () => {

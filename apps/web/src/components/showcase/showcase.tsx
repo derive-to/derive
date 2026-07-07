@@ -463,7 +463,7 @@ function ViewToggleDemo() {
 function BadgesDemo() {
   return (
     <div className="flex flex-wrap items-center gap-2.5">
-      <Badge variant="default">Draft</Badge>
+      <Badge variant="default">New</Badge>
       <Badge variant="brand">Shared</Badge>
       <Badge variant="success">Published</Badge>
       <Badge variant="warning">Sync stale</Badge>
@@ -1008,9 +1008,9 @@ function ConfirmDemo() {
   )
 }
 
-/** The share dialog's general-access ladder — the five visibility steps as the
- *  dialog renders them (glyph + label + consequence), most private first. Static
- *  data; the live control is ShareButton's Select in pages/artifact/share-dialog. */
+/** The share dialog's general access — WHO (private / workspace / public) crossed
+ *  with listed-or-link-only, listed first in each pair (glyph + label + consequence).
+ *  Static data; the live control is ShareButton's Select in pages/artifact/share-dialog. */
 function GeneralAccessDemo() {
   const steps: { icon: IconName; label: string; blurb: string; current?: boolean }[] = [
     {
@@ -1021,11 +1021,20 @@ function GeneralAccessDemo() {
     },
     {
       icon: "workspace",
-      label: "Workspace only",
-      blurb: "Only members of this workspace.",
+      label: "Workspace",
+      blurb: "Every workspace member can find it in the shared library.",
     },
-    { icon: "link", label: "Anyone with the link", blurb: "Anyone with the link can view." },
-    { icon: "globe", label: "Public — listed", blurb: "In the public directory and indexable." },
+    {
+      icon: "link",
+      label: "Workspace — link only",
+      blurb: "Workspace members with the link. Stays out of the shared library.",
+    },
+    { icon: "globe", label: "Public", blurb: "In the public directory and indexable." },
+    {
+      icon: "link",
+      label: "Public — link only",
+      blurb: "Anyone with the link can view. Not listed anywhere.",
+    },
     { icon: "lock", label: "Password protected", blurb: "Anyone with the link and the password." },
   ]
   return (

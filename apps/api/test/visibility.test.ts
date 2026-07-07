@@ -98,15 +98,20 @@ describe("agents act as their registrant, capped at their registered role", () =
         })
       ).status,
     ).toBe(201)
-    // Ana's ORDINARY listing hides the draft (unlisted is hidden even from its
-    // owner there — the dedicated feed is the finder), while scope=unlisted is
-    // exactly her drafts.
+    // Ana's ORDINARY listing hides the unlisted publish (hidden even from its
+    // owner there — "Created by me" is the finder, any visibility included).
     const list = await (await app.request("/v1/artifacts", { headers: as(ana.email) })).json()
     expect(list.artifacts.map((x: { short_id: string }) => x.short_id)).not.toContain(a.short_id)
-    const drafts = await (
-      await app.request("/v1/artifacts?scope=unlisted", { headers: as(ana.email) })
+    const mine = await (
+      await app.request("/v1/artifacts?scope=mine", { headers: as(ana.email) })
     ).json()
-    expect(drafts.artifacts.map((x: { short_id: string }) => x.short_id)).toContain(a.short_id)
+    expect(mine.artifacts.map((x: { short_id: string }) => x.short_id)).toContain(a.short_id)
+    // The summary counts it as hers — and as still link-only (the pending badge).
+    // Note the agent republish above: ownership keys on her owner row, so a
+    // revision by someone else never evicts it from "Created by me".
+    const summary = await (await app.request("/v1/tags", { headers: as(ana.email) })).json()
+    expect(summary.mine).toBeGreaterThanOrEqual(1)
+    expect(summary.mine_link_only).toBeGreaterThanOrEqual(1)
 
     // The agent lists too (MCP list_artifacts rides this) and sees the unlisted
     // publish through its registrant's owner row, capped to its own rank.

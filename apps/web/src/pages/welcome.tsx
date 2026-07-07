@@ -343,6 +343,12 @@ function Onboarding({ me }: { me: Account }) {
             {saving ? "Finishing…" : "Continue to Derive"}
           </Button>
         </div>
+
+        {/* Deliberately a line, not a step: teams are created at first need
+            (Settings, or the share dialog's hint), never chosen at signup. */}
+        <p className="text-center text-sm text-muted-foreground">
+          Working with a team? Create a workspace and invite them anytime from Settings.
+        </p>
       </div>
     </div>
   )
