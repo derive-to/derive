@@ -11,11 +11,13 @@
 //   derive status [--id] [--json]          the review round state + open threads
 //   derive send-back [--id] [--note m]     (human) return your answers to the agent
 //   derive approve [--id] [--note m]       (human) approve — the build go-signal
+//   derive runner serve|doctor|install     run a context's answer daemon (npx-able anywhere)
 import { spawn } from "node:child_process"
 import { createHash, randomBytes } from "node:crypto"
 import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs"
 import { basename, join, relative } from "node:path"
 import { createInterface } from "node:readline"
+import { fileURLToPath } from "node:url"
 import { zipSync } from "fflate"
 import {
   CONFIG_FILE,
@@ -41,6 +43,10 @@ for (let i = 0; i < args.length; i++) {
   else if (a === "--review") flags.review = "true"
   else if (a === "--local") flags.local = "true"
   else if (a === "--json") flags.json = "true"
+  else if (a === "--mock") flags.mock = "true"
+  // Repeatable: `--env-file a --env-file b` stacks (equivalent to --env-file a,b).
+  else if (a === "--env-file")
+    flags["env-file"] = flags["env-file"] ? `${flags["env-file"]},${args[++i]}` : args[++i]
   else if (a.startsWith("--")) flags[a.slice(2)] = args[++i]
   else positional.push(a)
 }
@@ -154,6 +160,64 @@ if (cmd === "login") {
   console.log(`\n✓ Signed in to ${server}`)
   console.log(`  Token saved to ${path} — \`derive publish\` will use it automatically.`)
   process.exit(0)
+}
+
+// ---- derive runner (serve / doctor / install) -------------------------------
+// The context runner as a CLI verb: `derive runner serve <ctx>` on any machine
+// with Node. Config: flags win over env (DERIVE_SERVER/TOKEN/CONTEXT, RUNNER_*);
+// --token-file keeps the secret out of service-unit command lines; --env-file
+// loads a context's own secrets (KEY=VALUE) before anything reads them.
+if (cmd === "runner") {
+  const sub = positional.shift()
+  if (!["serve", "doctor", "install"].includes(sub ?? "")) {
+    console.error(`usage:
+  derive runner serve  [ctx_id] [--server url] [--token t | --token-file f] [--env-file f]
+                       [--cwd dir] [--claude-bin path] [--model m] [--poll ms] [--timeout ms] [--mock]
+  derive runner doctor [same flags]        preflight: server, token+context, manifest, cwd, claude, gh, python3
+  derive runner install [same flags]       print a launchd/systemd unit for this config`)
+    process.exit(1)
+  }
+  const { doctor, loadRunnerConfig, renderServiceUnit, serve } = await import("../src/runner.js")
+  if (positional[0]) flags.context = positional[0]
+  let rcfg
+  try {
+    // doctor runs on half-configured machines by design — a missing token or
+    // context id is a finding it reports, not a reason it can't start.
+    rcfg = loadRunnerConfig(process.env, flags, { partial: sub === "doctor" })
+  } catch (e) {
+    console.error(`error: ${e.message}`)
+    process.exit(1)
+  }
+  if (sub === "doctor") process.exit((await doctor(rcfg)) === 0 ? 0 : 1)
+  if (sub === "install") {
+    const binPath = fileURLToPath(import.meta.url)
+    // A unit must reference the token, never embed it — and must point at a
+    // script that outlives the render. The npx cache does not (`npm cache
+    // clean` deletes it and launchd crash-loops on the dead path).
+    if (!rcfg.tokenFile) {
+      console.error(
+        "error: runner install requires --token-file (units reference the token file, they never embed the secret)",
+      )
+      process.exit(1)
+    }
+    if (binPath.includes("_npx")) {
+      console.error(
+        "error: running from the npx cache — install the CLI first (npm i -g @derive-to/cli) so the unit points at a stable path",
+      )
+      process.exit(1)
+    }
+    const u = renderServiceUnit(rcfg, binPath)
+    console.log(`# Save as ${u.path}, then:\n#   ${u.load}\n\n${u.unit}`)
+    process.exit(0)
+  }
+  try {
+    await serve(rcfg) // runs until killed
+  } catch (e) {
+    // Startup failures (bad token, missing manifest) get the house one-liner,
+    // not a stack trace; `runner doctor` is the diagnostic.
+    console.error(`error: ${e.message}`)
+    process.exit(1)
+  }
 }
 
 // ---- Loop verbs (comments / open / reply / resolve / reopen) --------------
@@ -319,7 +383,8 @@ if (cmd !== "publish") {
   derive resolve|reopen <comment_id>       set a thread's state
   derive status [--id X] [--json]          review-round state + open threads (the loop's poll target)
   derive send-back [--id X] [--note m]     (human) return your answers to the waiting agent
-  derive approve [--id X] [--note m]       (human) approve — the build go-signal`)
+  derive approve [--id X] [--note m]       (human) approve — the build go-signal
+  derive runner serve|doctor|install       run a context's answer daemon (\`derive runner\` for flags)`)
   process.exit(cmd ? 1 : 0)
 }
 
