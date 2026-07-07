@@ -511,23 +511,25 @@ export class PgMetaStore implements MetaStore {
       )
     return rows.map((r) => r.id)
   }
+  // "Created by me" filter — every artifact this Derive user published by hand in
+  // the workspace, regardless of visibility (mirrors the SQLite path).
+  async artifactIdsByAuthorId(orgId: string, userId: string): Promise<string[]> {
+    const rows = await this.db
+      .select({ id: artifact.id })
+      .from(artifact)
+      .where(and(eq(artifact.org_id, orgId), eq(artifact.author_id, userId)))
+    return rows.map((r) => r.id)
+  }
   async countArtifacts(orgId?: string): Promise<number> {
     const q = this.db.select({ c: count() }).from(artifact)
     const rows = await (orgId ? q.where(eq(artifact.org_id, orgId)) : q)
     return Number(rows[0]?.c ?? 0)
   }
-  async countUnlistedFor(orgId: string, userId: string): Promise<number> {
+  async countAuthoredBy(orgId: string, userId: string): Promise<number> {
     const rows = await this.db
       .select({ c: count() })
       .from(artifact)
-      .where(
-        and(
-          eq(artifact.org_id, orgId),
-          eq(artifact.visibility, "unlisted"),
-          sql`EXISTS (SELECT 1 FROM artifact_member am
-            WHERE am.artifact_id = ${artifact.id} AND am.user_id = ${userId})`,
-        ),
-      )
+      .where(and(eq(artifact.org_id, orgId), eq(artifact.author_id, userId)))
     return Number(rows[0]?.c ?? 0)
   }
   async storageBytes(orgId: string): Promise<number> {

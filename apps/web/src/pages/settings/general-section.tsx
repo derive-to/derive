@@ -263,7 +263,7 @@ function SharingDefaults() {
       </SettingRow>
       <SettingRow
         label="Agent publishes as"
-        description="Where a new artifact published by a connected agent lands. Draft keeps its work out of the library until shared."
+        description="Where a new artifact published by a connected agent lands. Workspace — link only keeps it out of the shared library until you decide to surface it."
       >
         <SelectMenu
           value={settings.defaultAgentVisibility}
@@ -278,7 +278,7 @@ function SharingDefaults() {
             {AGENT_VIS_LABELS[settings.defaultAgentVisibility] ?? settings.defaultAgentVisibility}
           </SelectMenuTrigger>
           <SelectMenuContent>
-            <SelectMenuItem value="unlisted">Draft</SelectMenuItem>
+            <SelectMenuItem value="unlisted">Workspace — link only</SelectMenuItem>
             <SelectMenuItem value="private">Private</SelectMenuItem>
             <SelectMenuItem value="org">Workspace</SelectMenuItem>
           </SelectMenuContent>
@@ -289,7 +289,7 @@ function SharingDefaults() {
 }
 
 const AGENT_VIS_LABELS: Record<string, string> = {
-  unlisted: "Draft",
+  unlisted: "Workspace — link only",
   private: "Private",
   org: "Workspace",
   link: "Anyone with the link",

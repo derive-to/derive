@@ -35,9 +35,10 @@ import { getInitials } from "@/lib/initials"
 import { artifactQuery } from "@/lib/queries"
 import { cn } from "@/lib/utils"
 
-// General access (visibility) options, in order of increasing reach — the ladder
-// reads top-to-bottom from most private to most open, each with the glyph the
-// Share trigger echoes.
+// General access (visibility) options, grouped as two dimensions rather than one
+// flat ladder: WHO (private / workspace / anyone) and, for workspace and anyone,
+// whether it's listed in the shared library or reachable by link only. Each pair
+// (workspace/workspace-link-only, anyone/anyone-link-only) sits adjacent below.
 const ACCESS: { value: string; label: string; blurb: string; icon: IconName }[] = [
   {
     value: "private",
@@ -46,16 +47,16 @@ const ACCESS: { value: string; label: string; blurb: string; icon: IconName }[] 
     icon: "lock",
   },
   {
-    value: "unlisted",
-    label: "Draft — workspace with link",
-    blurb: "Workspace members with the link. Stays out of the library until shared.",
-    icon: "link",
+    value: "org",
+    label: "Workspace",
+    blurb: "Every workspace member can find it in the shared library.",
+    icon: "workspace",
   },
   {
-    value: "org",
-    label: "Workspace only",
-    blurb: "Only members of this workspace.",
-    icon: "workspace",
+    value: "unlisted",
+    label: "Workspace — link only",
+    blurb: "Workspace members with the link. Stays out of the shared library.",
+    icon: "link",
   },
   {
     value: "link",
@@ -65,7 +66,7 @@ const ACCESS: { value: string; label: string; blurb: string; icon: IconName }[] 
   },
   {
     value: "public",
-    label: "Public — listed",
+    label: "Public",
     blurb: "In the public directory and indexable.",
     icon: "globe",
   },

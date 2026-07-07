@@ -787,8 +787,10 @@ export const api = {
     /** "shared" → only artifacts explicitly shared with you (across workspaces).
      *  "following" → artifacts in the active workspace matching your follows
      *  (followed GitHub authors + repo path prefixes) — the activity feed.
-     *  "needs_feedback" → artifacts with an open thread you're tagged in or commented on. */
-    scope?: "shared" | "following" | "needs_feedback" | "unlisted"
+     *  "needs_feedback" → artifacts with an open thread you're tagged in or commented on.
+     *  "mine" → everything you published by hand in the active workspace, any
+     *  visibility included — the library's "Created by me" filter. */
+    scope?: "shared" | "following" | "needs_feedback" | "mine"
     cursor?: string
     limit?: number
   }): Promise<{
@@ -813,8 +815,8 @@ export const api = {
   browseSummary: (): Promise<{
     total: number
     favorites: number
-    /** The caller's own unlisted drafts — badges the library's Unlisted feed. */
-    unlisted: number
+    /** The caller's own authored artifacts — badges the library's "Created by me" filter. */
+    mine: number
     tags: { tag: string; count: number }[]
     workspace: string
   }> => f("/v1/tags", opts()).then(j),

@@ -234,11 +234,14 @@ export interface MetaStore {
   /** Artifact ids in a workspace whose current author_login matches `login`
    *  (case-insensitive) — the author list-filter. Empty when nothing matches. */
   artifactIdsByAuthor(orgId: string, login: string): Promise<string[]>
+  /** Artifact ids in a workspace published by this Derive user (author_id) —
+   *  the library's "Created by me" filter, regardless of visibility. */
+  artifactIdsByAuthorId(orgId: string, userId: string): Promise<string[]>
   /** Total artifact count, scoped to a workspace when orgId is given. */
   countArtifacts(orgId?: string): Promise<number>
-  /** The viewer's own `unlisted` drafts in a workspace (explicit-member rows) —
-   *  the badge count for the library's Unlisted filter. */
-  countUnlistedFor(orgId: string, userId: string): Promise<number>
+  /** Count of artifacts in a workspace published by this Derive user (author_id) —
+   *  the badge count for the library's "Created by me" filter. */
+  countAuthoredBy(orgId: string, userId: string): Promise<number>
   /**
    * The storage-quota meter for one workspace: bytes counted once per distinct
    * blob (content is content-addressed, so republishes/restores of identical

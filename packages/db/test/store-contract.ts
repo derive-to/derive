@@ -154,7 +154,7 @@ export function runStoreContract(
     })
   })
 
-  describe(`${label}: unlisted listings (the agent-draft state)`, () => {
+  describe(`${label}: unlisted listings (workspace, link only)`, () => {
     it("hides unlisted from ordinary listings, folds the owner's back in on demand", async () => {
       const owner = `u_ul_owner_${uuid()}`
       const other = `u_ul_other_${uuid()}`
@@ -207,10 +207,6 @@ export function runStoreContract(
       expect(await store.listArtifacts({ orgId: org, viewerId: other, unlisted: "only" })).toEqual(
         [],
       )
-
-      // The badge count matches the filter.
-      expect(await store.countUnlistedFor(org, owner)).toBe(1)
-      expect(await store.countUnlistedFor(org, other)).toBe(0)
 
       // A trusted caller (no viewerId — operator/internal) still sees everything.
       expect((await store.listArtifacts({ orgId: org })).map((x) => x.id)).toContain(draft.id)
@@ -278,6 +274,24 @@ export function runStoreContract(
       expect(await store.artifactIdsByAuthor(ORG, "ADA")).toContain(mine.id) // case-insensitive
       expect(await store.artifactIdsByAuthor(ORG, "grace")).not.toContain(mine.id) // other login
       expect(await store.artifactIdsByAuthor(`${ORG}_other`, "ada")).not.toContain(mine.id) // other org
+    })
+
+    it("filters + counts artifacts by author_id (the library's Created-by-me filter)", async () => {
+      const me = `u_authored_${uuid()}`
+      const someoneElse = `u_authored_other_${uuid()}`
+      const org = `${ORG}_authored_${uuid()}`
+      const mine = await store.createArtifact(
+        newArtifact({ org_id: org, visibility: "private", author_id: me }),
+      )
+      await store.createArtifact(
+        newArtifact({ org_id: org, visibility: "org", author_id: someoneElse }),
+      )
+      expect(await store.artifactIdsByAuthorId(org, me)).toEqual([mine.id])
+      expect(await store.artifactIdsByAuthorId(org, someoneElse)).not.toContain(mine.id)
+      expect(await store.countAuthoredBy(org, me)).toBe(1)
+      expect(await store.countAuthoredBy(org, someoneElse)).toBe(1)
+      // Scoped to the workspace — a same-author artifact elsewhere doesn't leak in.
+      expect(await store.countAuthoredBy(`${org}_other`, me)).toBe(0)
     })
 
     it("sets and clears the current author directly (the backfill path)", async () => {

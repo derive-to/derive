@@ -472,24 +472,30 @@ export function makeRepos(db: SqliteDb) {
         .all()
     ).map((r) => r.id)
 
+  // "Created by me" filter for the list — every artifact this Derive user published
+  // by hand in the workspace, regardless of visibility (unlike the author-login
+  // filter above, which is GitHub-commit-attribution and workspace-agnostic of who
+  // owns the artifact in Derive).
+  const artifactIdsByAuthorId = async (orgId: string, userId: string): Promise<string[]> =>
+    (
+      await db
+        .select({ id: artifact.id })
+        .from(artifact)
+        .where(and(eq(artifact.org_id, orgId), eq(artifact.author_id, userId)))
+        .all()
+    ).map((r) => r.id)
+
   const countArtifacts = async (orgId?: string): Promise<number> => {
     const q = db.select({ c: count() }).from(artifact)
     return (await (orgId ? q.where(eq(artifact.org_id, orgId)) : q).get())?.c ?? 0
   }
 
-  const countUnlistedFor = async (orgId: string, userId: string): Promise<number> =>
+  const countAuthoredBy = async (orgId: string, userId: string): Promise<number> =>
     (
       await db
         .select({ c: count() })
         .from(artifact)
-        .where(
-          and(
-            eq(artifact.org_id, orgId),
-            eq(artifact.visibility, "unlisted"),
-            sql`EXISTS (SELECT 1 FROM artifact_member am
-              WHERE am.artifact_id = ${artifact.id} AND am.user_id = ${userId})`,
-          ),
-        )
+        .where(and(eq(artifact.org_id, orgId), eq(artifact.author_id, userId)))
         .get()
     )?.c ?? 0
 
@@ -2095,8 +2101,9 @@ export function makeRepos(db: SqliteDb) {
     listArtifacts,
     artifactIdsByTag,
     artifactIdsByAuthor,
+    artifactIdsByAuthorId,
     countArtifacts,
-    countUnlistedFor,
+    countAuthoredBy,
     storageBytes,
     tagCounts,
     deleteArtifact,

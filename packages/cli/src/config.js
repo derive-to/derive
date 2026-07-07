@@ -236,7 +236,10 @@ export const DERIVE_SCHEMA = {
   properties: {
     title: { type: "string", description: "Artifact title." },
     entry: { type: "string", description: "File or directory `derive publish` targets." },
-    visibility: { enum: ["public", "link", "org", "password", "private"], default: "private" },
+    visibility: {
+      enum: ["public", "link", "org", "password", "private", "unlisted"],
+      default: "private",
+    },
     spa: {
       type: "boolean",
       description: "Serve a single-page-app fallback for unknown paths.",

@@ -125,9 +125,13 @@ export const artifactRoutes = (ctx: AppContext) => {
       if (!me) return c.json({ artifacts: [], next_cursor: null })
       narrow(await meta.artifactIdsNeedingFeedback(me.id, await activeWorkspace(c)))
     }
-    // scope=unlisted → the caller's own unlisted drafts in this workspace: the
-    // library's Unlisted filter. Ordinary listings hide unlisted entirely.
-    const unlistedScope = c.req.query("scope") === "unlisted"
+    // scope=mine → everything the caller published by hand in this workspace,
+    // any visibility included — the library's "Created by me" filter.
+    const mineScope = c.req.query("scope") === "mine"
+    if (mineScope) {
+      if (!me) return c.json({ artifacts: [], next_cursor: null })
+      narrow(await meta.artifactIdsByAuthorId(await activeWorkspace(c), me.id))
+    }
     if (tag) narrow(await meta.artifactIdsByTag(tag))
     if (favOnly) narrow(favIds)
 
@@ -171,10 +175,9 @@ export const artifactRoutes = (ctx: AppContext) => {
     // sees public artifacts only, so org/link titles never leak via the list or ?query=.
     // For a collection, collection access (member/creator/share) also unlocks it.
     const publicOnly = collectionId ? !collectionAccess : !(isOperator || baselineRole !== null)
-    // The Unlisted filter is a members-only view of their OWN drafts — a caller
-    // with no standing here (or no member rows to match) has none by definition.
-    if (unlistedScope && (publicOnly || !memberKey))
-      return c.json({ artifacts: [], next_cursor: null })
+    // "Created by me" is a members-only view of the caller's OWN authored work —
+    // a caller with no standing here (or no member rows to match) has none by definition.
+    if (mineScope && (publicOnly || !memberKey)) return c.json({ artifacts: [], next_cursor: null })
     const rows = await meta.listArtifacts({
       limit: limit + 1,
       cursor,
@@ -191,13 +194,12 @@ export const artifactRoutes = (ctx: AppContext) => {
       // Private artifacts appear only for their explicit members; the operator
       // token sees everything (viewerId omitted).
       viewerId: isOperator ? undefined : (memberKey ?? undefined),
-      // Agents get their registrant's unlisted drafts folded back in (an agent
-      // must always find the work it published — the stdio shim's list rides
-      // this route). Shared-with-you and needs-feedback are deliberate human
-      // signals (an explicit share, a thread you're in), so a member's unlisted
-      // docs surface there too. Ordinary listings stay clean — the Unlisted
-      // feed is the finder.
-      unlisted: unlistedScope ? "only" : agent || shared || needsFeedback ? "include" : undefined,
+      // Agents fold their registrant's unlisted work back in (an agent must always
+      // find what it published — the stdio shim's list rides this route). Shared,
+      // needs-feedback, and mine are equally deliberate signals — an explicit
+      // share, a thread you're in, your own authorship — so unlisted docs surface
+      // there too. Ordinary listings stay clean; that's what the filter is for.
+      unlisted: agent || shared || needsFeedback || mineScope ? "include" : undefined,
     })
     const hasMore = rows.length > limit
     const page = hasMore ? rows.slice(0, limit) : rows
@@ -268,8 +270,8 @@ export const artifactRoutes = (ctx: AppContext) => {
     // empty summary with no workspace name, so it can't be used to enumerate a private
     // workspace's name + size.
     if (!(await isMember(c, org)))
-      return c.json({ total: 0, favorites: 0, unlisted: 0, tags: [], workspace: null })
-    const [total, tags, favIds, ws, unlisted] = await Promise.all([
+      return c.json({ total: 0, favorites: 0, mine: 0, tags: [], workspace: null })
+    const [total, tags, favIds, ws, mine] = await Promise.all([
       meta.countArtifacts(org),
       meta.tagCounts(org),
       // Scope the favorites count to THIS workspace's live artifacts — the favorites
@@ -277,15 +279,14 @@ export const artifactRoutes = (ctx: AppContext) => {
       // must not inflate the count (otherwise "Favorites · 1" with an empty list).
       me ? meta.listUserFavoriteIds(me.id, org) : Promise.resolve([]),
       meta.getWorkspace(org),
-      // The caller's own unlisted drafts — the Unlisted filter's badge. Zero hides
-      // the filter, so it only exists when there's something in it.
-      me ? meta.countUnlistedFor(org, me.id) : Promise.resolve(0),
+      // The caller's own authored artifacts — the "Created by me" filter's badge.
+      me ? meta.countAuthoredBy(org, me.id) : Promise.resolve(0),
     ])
     tags.sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag))
     return c.json({
       total,
       favorites: favIds.length,
-      unlisted,
+      mine,
       tags,
       workspace: ws?.name ?? DEFAULT_WORKSPACE_NAME,
     })
