@@ -764,7 +764,7 @@ function SectionLabelDemo() {
         count={128}
         action={<span className="font-mono text-2xs text-muted-foreground">Browse all →</span>}
       >
-        Everything
+        All artifacts
       </SectionEyebrow>
     </div>
   )

@@ -126,7 +126,7 @@ export function CommandPalette() {
                   value="jump-all"
                   onSelect={() => go(() => nav({ to: "/", search: {} }))}
                 >
-                  <Icon name="all" size={16} /> Everything
+                  <Icon name="all" size={16} /> All artifacts
                 </CommandItem>
               )}
               {showFav && (

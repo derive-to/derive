@@ -266,7 +266,7 @@ function LibraryBody({ view }: { view: LibraryView }) {
 
   const heading =
     filter.kind === "all"
-      ? "Everything"
+      ? "All artifacts"
       : filter.kind === "favorites"
         ? "Favorites"
         : filter.kind === "following"
@@ -674,7 +674,7 @@ function LibraryTabs({
   )
   return (
     <div className="mb-3.5 flex items-center gap-5 border-b border-border-soft">
-      {tab("all", "Everything", total)}
+      {tab("all", "All artifacts", total)}
       {tab("mine", "Created by me", mine)}
     </div>
   )

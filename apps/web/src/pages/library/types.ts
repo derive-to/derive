@@ -12,9 +12,10 @@ export type Filter =
   // "Needs your feedback": artifacts with an open thread you're tagged in or have
   // commented on — the triage feed.
   | { kind: "feedback" }
-  // Everything you've published by hand in the active workspace, any visibility
-  // included (a workspace-link-only doc surfaces here even though it's hidden
-  // from the plain "all" feed).
+  // "Created by me": every artifact you own in the active workspace (your owner
+  // member row — written at creation, agents' on-behalf publishes included), any
+  // visibility. A link-only doc surfaces here even though the plain "all" feed
+  // hides it.
   | { kind: "mine" }
   | { kind: "tag"; tag: string }
   | { kind: "collection"; id: string; title: string }

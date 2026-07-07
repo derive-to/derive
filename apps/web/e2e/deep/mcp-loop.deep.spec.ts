@@ -4,10 +4,10 @@ import { STORAGE_KEYS } from "../../src/lib/storage-keys"
 import { expect, test } from "../fixtures"
 
 // The strong MCP loop, browser side: an agent-credentialed publish auto-opens the
-// owner's tab (a created draft navigates; a revision live-reloads with the review
-// card repainting), agent publishes land unlisted (hidden from Everything, one
-// link away, but findable under Created by me) until the share dialog promotes
-// them, and the per-device toggle downgrades auto-open to a notification. The
+// owner's tab (a created artifact navigates; a revision live-reloads with the review
+// card repainting), agent publishes land unlisted (hidden from the All artifacts
+// feed, one link away, but findable under Created by me) until the share dialog
+// promotes them, and the per-device toggle downgrades auto-open to a notification. The
 // agent side is the real token + API — the same calls the MCP server and CLI
 // make — so the loop under test is the shipped one, not a mock.
 
@@ -88,7 +88,7 @@ test.describe("the MCP loop — auto-open, live rounds, unlisted publishes", () 
     await expect(owner.getByTestId("review-card")).toBeVisible({ timeout: 10_000 })
   })
 
-  test("unlisted publishes hide from Everything until the share dialog promotes them; the toggle quiets auto-open", async ({
+  test("unlisted publishes hide from All artifacts until the share dialog promotes them; the toggle quiets auto-open", async ({
     owner,
   }) => {
     const agent = await createAgent(owner.request, "Drafter")
@@ -107,7 +107,7 @@ test.describe("the MCP loop — auto-open, live rounds, unlisted publishes", () 
     await owner.waitForTimeout(1000)
     await expect(owner).toHaveURL(/\/$/) // still home — the toggle held navigation
 
-    // Hidden from Everything, but Created by me (always present on home, even
+    // Hidden from All artifacts, but Created by me (always present on home, even
     // before the owner has authored anything) has it, with a live count — the
     // agent published on the owner's behalf, so it counts as theirs.
     await expect(owner.getByTestId("library-tab-mine")).toBeVisible()
@@ -116,7 +116,7 @@ test.describe("the MCP loop — auto-open, live rounds, unlisted publishes", () 
     await expect(owner).toHaveURL(/tab=mine/)
     await expect(owner.getByText("Hidden Draft").first()).toBeVisible()
 
-    // Promote: share dialog → Workspace. One gesture, now it lists in Everything too.
+    // Promote: share dialog → Workspace. One gesture, now it lists in All artifacts too.
     await owner.goto(`/artifacts/${created.short_id}`)
     await owner.getByTestId("share-trigger").click()
     await owner.getByTestId("share-visibility").click()

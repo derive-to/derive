@@ -448,7 +448,7 @@ export function NavRail() {
             <SidebarMenu>
               <FilterItem
                 icon="all"
-                label="Everything"
+                label="All artifacts"
                 count={summary?.total}
                 search={{}}
                 active={isAll}

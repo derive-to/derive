@@ -367,7 +367,7 @@ export const artifactRoutes = (ctx: AppContext) => {
       const onBehalf = await privateOwnerId(c)
       // An AGENT-credentialed create (registered token / OAuth bearer — the CLI
       // and stdio-shim paths) lands with the workspace's agent default when no
-      // visibility was asked for: usually `unlisted`, the draft state. A
+      // visibility was asked for: usually `unlisted`, workspace link-only. A
       // signed-in human's own publish keeps the private default.
       const agentPrincipal = await agentFor(c)
       const resolvedVisibility =

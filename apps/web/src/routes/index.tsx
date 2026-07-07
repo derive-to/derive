@@ -36,7 +36,9 @@ export const Route = createFileRoute("/")({
     collection: typeof s.collection === "string" ? s.collection : undefined,
     query: typeof s.query === "string" ? s.query : undefined,
     author: typeof s.author === "string" ? s.author : undefined,
-    tab: s.tab === "mine" ? "mine" : undefined,
+    // "drafts" is the tab's retired name — old bookmarks and agent-emitted
+    // links keep landing on the same view.
+    tab: s.tab === "mine" || s.tab === "drafts" ? "mine" : undefined,
   }),
   component: () => <Library view="all" />,
 })

@@ -242,8 +242,8 @@ function SharingDefaults() {
   return (
     <SettingsGroup>
       <SettingRow
-        label="Draft link permission"
-        description="What a workspace member opening a draft's link can do. Each doc can override this in its share dialog."
+        label="Workspace link permission"
+        description="What a workspace member opening a link-only doc can do. Each doc can override this in its share dialog."
       >
         <SelectMenu
           value={settings.defaultUnlistedRole}

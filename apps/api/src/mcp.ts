@@ -170,7 +170,7 @@ function buildServer(
   // Resolve a short id within the caller's workspace (never another org's
   // artifact). `private` AND `unlisted` narrow further: the agent touches them
   // only through its human's standing (or a legacy row of its own) — a
-  // teammate's draft is as untouchable over MCP as its listings are invisible.
+  // teammate's unlisted doc is as untouchable over MCP as its listings are invisible.
   // (Members reach a teammate's unlisted doc through the web link at the
   // view/comment floor; agent tools are write-capable, so they stay stricter.)
   const own = async (shortId: string): Promise<ArtifactRecord | null> => {
@@ -189,13 +189,13 @@ function buildServer(
     "list_artifacts",
     {
       description:
-        "List the artifacts (docs, plans, sites) in your workspace — short id, title, kind, current version, visibility. Includes your own unlisted drafts (hidden from humans' listings, but you always find your work). Start here to find what to work on, then catch_up or read it.",
+        "List the artifacts (docs, plans, sites) in your workspace — short id, title, kind, current version, visibility. Includes your own unlisted (link-only) publishes — hidden from the shared library, but you always find your work. Start here to find what to work on, then catch_up or read it.",
       inputSchema: { query: z.string().optional().describe("Optional title search filter.") },
     },
     async ({ query }) => {
       // viewerId keeps private rows scoped to the agent's human (mirrors `own`);
-      // "include" folds in that human's own unlisted drafts, so the agent can
-      // always find the work it published even though listings hide it.
+      // "include" folds in that human's own unlisted work, so the agent can
+      // always find what it published even though listings hide it.
       const arts = await ctx.meta.listArtifacts({
         orgId: org,
         q: query,
@@ -601,7 +601,7 @@ function buildServer(
           .enum(["unlisted", "private", "workspace", "link", "public"])
           .optional()
           .describe(
-            "Who can see a NEW artifact: unlisted (a DRAFT: hidden from the library, one link away for workspace members — the usual default for agent publishes), private (you and people you invite), workspace (your team, listed), link (anyone with the link), or public (discoverable). Omit to use the workspace's agent default. Ignored on republish — the human promotes via the share dialog.",
+            "Who can see a NEW artifact: unlisted (workspace members with the link — hidden from the shared library until a human surfaces it; the usual default for agent publishes), private (you and people you invite), workspace (your team, listed), link (anyone with the link), or public (discoverable). Omit to use the workspace's agent default. Ignored on republish — the human promotes via the share dialog.",
           ),
         spa: z
           .boolean()
