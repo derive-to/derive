@@ -405,7 +405,12 @@ function EnableTwoFactor({ onDone }: { onDone: () => Promise<void> }) {
                 // purpose: QRCodeSVG defaults to black-on-white, and a dark-mode QR on the dark
                 // canvas is unreliable to scan. The p-3 padding is the required margin.
                 <div data-testid="2fa-qr" className="rounded-lg border border-border bg-white p-3">
-                  <QRCodeSVG value={totpURI} size={168} marginSize={0} />
+                  <QRCodeSVG
+                    value={totpURI}
+                    size={168}
+                    marginSize={0}
+                    title="Two-factor authentication setup QR code"
+                  />
                 </div>
               )}
               {!showKey ? (
