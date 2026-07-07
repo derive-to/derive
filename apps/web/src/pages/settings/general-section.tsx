@@ -256,11 +256,10 @@ export function GeneralSection() {
   )
 }
 
-// Sharing defaults — what a workspace member with an unlisted link may do, and
-// where an agent (MCP) publish lands when it doesn't say. Selects apply
-// instantly with an optimistic cache write (the toggle contract from
-// Integrations), reverting on error. Admin-gated by the server; the caller
-// renders this only for admins.
+// Sharing defaults — where an agent (MCP) publish lands when it doesn't say.
+// The select applies instantly with an optimistic cache write (the toggle
+// contract from Integrations), reverting on error. Admin-gated by the server;
+// the caller renders this only for admins.
 function SharingDefaults() {
   const qc = useQueryClient()
   const { data: settings } = useQuery(workspaceSettingsQuery())

@@ -168,10 +168,9 @@ function buildServer(
   const org = agent.org_id
 
   // Resolve a short id within the caller's workspace (never another org's
-  // artifact). `private` AND `unlisted` narrow further: the agent touches them
-  // only through its human's standing (or a legacy row of its own) — a
-  // teammate's private draft is as untouchable over MCP as its listings are
-  // invisible.
+  // artifact). `private` narrows further: the agent touches it only through its
+  // human's standing (or a legacy row of its own) — a teammate's private draft
+  // is as untouchable over MCP as its listings are invisible.
   const own = async (shortId: string): Promise<ArtifactRecord | null> => {
     const a = await ctx.meta.getByShortId(shortId)
     if (!a || a.org_id !== org) return null

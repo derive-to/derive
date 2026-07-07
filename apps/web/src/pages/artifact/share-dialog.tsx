@@ -380,6 +380,10 @@ export function ShareButton({
           setGenRole(generalRole ?? "viewer")
           setPw("")
           setPwOpen(false)
+          // Re-seed the lock from the server's state and drop any half-typed
+          // draft — an abandoned checkbox must not survive a close/reopen.
+          setHasLock(passwordProtected)
+          setLockDraft(false)
           setMore(false)
           load()
           loadDomains()

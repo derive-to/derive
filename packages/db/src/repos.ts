@@ -283,7 +283,7 @@ export const parseOrgSettings = (raw: string | null): OrgSettings => {
   const { defaultUnlistedRole: _retired, ...rest } = parsed
   const v = rest.defaultAgentVisibility as string | undefined
   const defaultAgentVisibility: OrgSettings["defaultAgentVisibility"] =
-    v === "org" ? "org" : v === "link" || v === "public" ? "org" : "private"
+    v === "org" || v === "link" || v === "public" ? "org" : "private"
   return { ...DEFAULT_ORG_SETTINGS, ...rest, defaultAgentVisibility }
 }
 

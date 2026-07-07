@@ -305,8 +305,6 @@ export interface OrgSettings {
   githubMirrorComments: boolean
   githubPreviewLink: boolean
   slackPost: boolean
-  /** What a member opening an unlisted link may do (per-doc override in Share). */
-  defaultUnlistedRole: "viewer" | "commenter"
   /** Where a NEW agent (MCP) publish lands when the agent doesn't say. */
   defaultAgentVisibility: "private" | "org"
 }

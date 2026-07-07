@@ -165,8 +165,9 @@ export interface NewVersion {
 
 export interface MetaStore {
   createArtifact(a: NewArtifact): Promise<ArtifactRecord>
-  /** Change an artifact's general access: visibility, the unlock password hash (null for
-   *  any non-`password` visibility), and the general-access role (view vs comment). */
+  /** Change an artifact's general access: visibility, the password hash locking a
+   *  public link (null clears; meaningless off `public`), and the general-access
+   *  role (view vs comment). */
   setVisibility(
     artifactId: string,
     visibility: Visibility,
