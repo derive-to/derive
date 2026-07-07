@@ -69,6 +69,9 @@ export function GeneralSection() {
   const createSubmit = async () => {
     const t = newName.trim()
     if (!t || creating) return
+    // Loose parse: split on commas/whitespace, keep anything @-shaped. The server
+    // validates properly; a stray non-email token is dropped rather than blocking
+    // the create (invites are re-sendable from Members).
     const invites = newInvites
       .split(/[\s,;]+/)
       .map((s) => s.trim())

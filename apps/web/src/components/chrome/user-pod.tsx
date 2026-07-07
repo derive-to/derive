@@ -1,5 +1,5 @@
 import { useNavigate } from "@tanstack/react-router"
-import { api, type Workspaces } from "@/api"
+import { api, type Workspaces, workspaceDisplayName } from "@/api"
 import { Icon } from "@/components/icons"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import {
@@ -48,9 +48,7 @@ export function UserPod({
   // the "Create a workspace" action instead). The server's `multi` flag is
   // always-on plumbing; real membership count is the signal.
   const multi = (workspaces?.workspaces.length ?? 0) > 1
-  // The personal workspace shows as "Personal", pinned first — it's provisioned
-  // plumbing, not a name the user chose (stable sort keeps the rest in order).
-  const wsName = (w: { name: string; personal: boolean }) => (w.personal ? "Personal" : w.name)
+  // Personal pins first; the stable sort keeps the rest in listing order.
   const sorted = [...(workspaces?.workspaces ?? [])].sort(
     (a, b) => Number(b.personal) - Number(a.personal),
   )
@@ -152,7 +150,7 @@ export function UserPod({
                 ) : (
                   <span className="size-4 shrink-0" />
                 )}
-                <span className="truncate">{wsName(w)}</span>
+                <span className="truncate">{workspaceDisplayName(w)}</span>
               </DropdownMenuItem>
             ))}
             <DropdownMenuItem data-testid="menu-new-workspace" onSelect={goNewWorkspace}>

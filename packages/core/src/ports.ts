@@ -15,7 +15,8 @@ export type ArtifactKind = "file" | "bundle"
 // the visitor enters the password (then a viewer; members/owners see it by role).
 // `private`: only per-artifact members (the publisher becomes the owner-member at
 // creation) — workspace membership grants nothing, unlike `org`.
-// `unlisted`: the agent-draft state — hidden from every listing, but a workspace
+// `unlisted`: workspace link-only (the usual agent-publish default) — hidden
+// from every listing, but a workspace
 // member WITH THE LINK gets the general role (view or comment, the workspace's
 // default). Between `private` (explicit shares only) and `org` (listed for all).
 export type Visibility = "public" | "link" | "org" | "password" | "private" | "unlisted"

@@ -188,17 +188,17 @@ export function ShareButton({
   // ACCESS at every place the icon/label/blurb is needed.
   const currentAccess = ACCESS.find((a) => a.value === vis)
   const visibilityAccess = ACCESS.find((a) => a.value === visibility)
-  // A solo account keeps the FULL ladder — the workspace tier is not meaningless
-  // for a workspace of one: org vs unlisted is what lists a doc in (or hides it
-  // from) your own library, and promoting an agent's link-only publish to
-  // Workspace is the core loop's blessing gesture. The first-need affordance is
-  // the hint below instead: the word "workspace" first appears as the answer to
-  // "how do I show this to my team?". Default NOT solo while the roster loads.
   const nav = useNavigate()
-  const { data: workspace } = useQuery(workspaceQuery())
+  // Solo drives only the create-a-workspace hint, never the ladder itself — the
+  // workspace rungs stay meaningful for a workspace of one (org vs unlisted is
+  // what lists a doc in your own library, and promoting an agent's link-only
+  // publish to Workspace is the loop's blessing gesture). Managers only, and
+  // not-solo while the roster loads, so nothing flashes.
+  const { data: workspace } = useQuery({ ...workspaceQuery(), enabled: canManage })
   const solo = workspace ? workspace.members.length <= 1 : false
-  // Reach visibilities (anyone with the link / public / password) carry a general-access
-  // permission; private/workspace do not, so the view/comment control hides for them.
+  // Reach visibilities (link / public / password — anyone can arrive) carry a
+  // general-access permission; private/workspace do not, so the view/comment
+  // control hides for them.
   const reach = vis === "link" || vis === "public" || vis === "password"
   // Unlisted carries the same view/comment choice, but the reachers are workspace
   // members only (the default comes from workspace settings; this is the per-doc override).
@@ -449,7 +449,7 @@ export function ShareButton({
                     </SelectMenuTrigger>
                     <SelectMenuContent>
                       {ACCESS_GROUPS.map((group, gi) => (
-                        <Fragment key={group[0]?.value ?? gi}>
+                        <Fragment key={group[0]?.value}>
                           {gi > 0 && <SelectMenuSeparator />}
                           {group.map((a) => (
                             <SelectMenuItem key={a.value} value={a.value}>
@@ -550,8 +550,8 @@ export function ShareButton({
                     </Button>
                   )}
                 </p>
-                {/* First-need on-ramp: the hidden team rungs, explained at the
-                    exact moment they'd have been useful. */}
+                {/* First-need on-ramp: the word "workspace" earns its first
+                    appearance by answering "how do I show this to my team?". */}
                 {solo && (
                   <p className="text-sm text-muted-foreground">
                     Working with a team?{" "}

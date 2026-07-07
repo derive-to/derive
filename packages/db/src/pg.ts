@@ -514,18 +514,18 @@ export class PgMetaStore implements MetaStore {
   // "Created by me" — every artifact this user holds an OWNER member row on in the
   // workspace, any visibility. Roster-keyed, not author_id-keyed (mirrors the
   // SQLite path — see repos.ts for why the denorm can't anchor "yours").
+  private ownerRowJoin(userId: string) {
+    return and(
+      eq(artifactMember.artifact_id, artifact.id),
+      eq(artifactMember.user_id, userId),
+      eq(artifactMember.role, "owner"),
+    )
+  }
   async artifactIdsOwnedBy(orgId: string, userId: string): Promise<string[]> {
     const rows = await this.db
       .select({ id: artifact.id })
       .from(artifact)
-      .innerJoin(
-        artifactMember,
-        and(
-          eq(artifactMember.artifact_id, artifact.id),
-          eq(artifactMember.user_id, userId),
-          eq(artifactMember.role, "owner"),
-        ),
-      )
+      .innerJoin(artifactMember, this.ownerRowJoin(userId))
       .where(eq(artifact.org_id, orgId))
     return rows.map((r) => r.id)
   }
@@ -538,14 +538,7 @@ export class PgMetaStore implements MetaStore {
     const rows = await this.db
       .select({ c: count() })
       .from(artifact)
-      .innerJoin(
-        artifactMember,
-        and(
-          eq(artifactMember.artifact_id, artifact.id),
-          eq(artifactMember.user_id, userId),
-          eq(artifactMember.role, "owner"),
-        ),
-      )
+      .innerJoin(artifactMember, this.ownerRowJoin(userId))
       .where(
         and(
           eq(artifact.org_id, orgId),
@@ -1038,7 +1031,7 @@ export class PgMetaStore implements MetaStore {
     } else {
       conds.push(eq(artifact.author_id, userId))
     }
-    // Private and unlisted drafts never ride a profile, shared workspace or not
+    // Private and unlisted work never rides a profile, shared workspace or not
     // (see repos.ts).
     const orgs = opts.visibleOrgIds ?? []
     if (orgs.length > 0) {

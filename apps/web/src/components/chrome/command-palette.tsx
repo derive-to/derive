@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query"
 import { useNavigate } from "@tanstack/react-router"
 import { useEffect, useState } from "react"
-import { type Artifact, api, type PublicProfile } from "@/api"
+import { type Artifact, api, type PublicProfile, workspaceDisplayName } from "@/api"
 import { Icon } from "@/components/icons"
 import { FollowButton } from "@/components/shared/follow-button"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
@@ -95,7 +95,7 @@ export function CommandPalette() {
   const matchedCollections = collections.filter((c) => c.title.toLowerCase().includes(q))
   // Personal shows (and searches) under its display name, same as the user pod.
   const otherWorkspaces = (workspaces?.workspaces ?? [])
-    .map((w) => ({ ...w, display: w.personal ? "Personal" : w.name }))
+    .map((w) => ({ ...w, display: workspaceDisplayName(w) }))
     .filter((w) => w.id !== workspaces?.active && w.display.toLowerCase().includes(q))
   const showAll = "all artifacts".includes(q) || "library".includes(q)
   const showFav = "favorites".includes(q)

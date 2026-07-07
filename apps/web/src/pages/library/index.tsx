@@ -425,9 +425,8 @@ function LibraryBody({ view }: { view: LibraryView }) {
           <RepoPullRequests prs={repoPrs} repo={activeCollection?.repo} activeId={filter.id} />
         </>
       ) : view === "all" && !isSearching ? (
-        // Always both tabs, even over the first-run guide — a generic filter
-        // beats a special-cased one, and an empty "Created by you" tab is a
-        // fine place to land before you've published anything.
+        // Always both tabs, even over the first-run guide — an empty "Created
+        // by me" tab is a fine place to land before you've published anything.
         <LibraryTabs
           active={filter.kind === "mine" ? "mine" : "all"}
           total={summary?.total}
@@ -639,12 +638,10 @@ function SyncedCollection({
   )
 }
 
-// The home library's two tabs: everything, and just what you created. Always
-// both — a basic ownership filter is useful independent of whether it's ever
-// empty. Route stays "/", the tab rides ?tab=mine. `pending` is the count of
-// your still-link-only docs — the signal the old Drafts badge carried ("your
-// agent published; waiting on you to surface it"), rendered as an accent pill
-// beside the neutral total so it reads as actionable, not as more inventory.
+// The home library's two tabs: everything, and just what you created. Route
+// stays "/", the tab rides ?tab=mine. `pending` counts your still-link-only
+// docs — the "waiting on you to surface it" signal the old Drafts badge
+// carried — shown as an accent pill beside the neutral total.
 function LibraryTabs({
   active,
   total,
@@ -678,7 +675,7 @@ function LibraryTabs({
       )}
       {accent != null && accent > 0 && (
         <span
-          title={`${accent} link-only — visible to you and link-holders until shared wider`}
+          title={`${accent} link-only — hidden from the shared library until shared wider`}
           className="rounded-full bg-primary/10 px-1.5 font-mono text-2xs tabular-nums text-primary"
         >
           {accent}

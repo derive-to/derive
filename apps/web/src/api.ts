@@ -320,6 +320,11 @@ export interface WorkspaceSummary {
   /** The caller's auto-provisioned personal workspace — shown as "Personal", pinned first. */
   personal: boolean
 }
+/** The one display rule for workspace names: the personal workspace renders as
+ *  "Personal" everywhere — its stored name is provisioning plumbing, not a name
+ *  the user chose. */
+export const workspaceDisplayName = (w: { name: string; personal: boolean }): string =>
+  w.personal ? "Personal" : w.name
 /** The switcher payload: whether multi-workspace is on, the active id, the list. */
 export interface Workspaces {
   multi: boolean

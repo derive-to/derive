@@ -285,7 +285,8 @@ export const workspaceRoutes = (ctx: AppContext) => {
     // Possession still authorizes (self-hosts without email verification must keep
     // working), but a mismatched account is SURFACED, not silently joined: the
     // holder must explicitly confirm they meant to accept under this identity.
-    // The machine-readable shape lets the accept page render the warning inline.
+    // The web accept page pre-warns from the preview and sends the confirm with
+    // the click; the machine-readable 409 is for headless callers.
     if (inv.email && inv.email.toLowerCase() !== me.email.toLowerCase()) {
       const b = await readJson(c, z.object({ confirm_mismatch: z.boolean().optional() }))
       // A malformed/absent body counts as "not confirmed", not a 400 — the 409
@@ -362,7 +363,7 @@ export const workspaceRoutes = (ctx: AppContext) => {
       // agents (no granting user) still see only their own workspace.
       const owner = await privateOwnerId(c)
       const mine = owner ? await meta.listWorkspaces(owner) : []
-      if (mine.length && owner)
+      if (owner && mine.length)
         return c.json({
           multi: true,
           active,

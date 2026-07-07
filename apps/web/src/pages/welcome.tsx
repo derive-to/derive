@@ -344,9 +344,8 @@ function Onboarding({ me }: { me: Account }) {
           </Button>
         </div>
 
-        {/* One non-branching line for the team evaluator — no fork, no step, no
-            state. Teams are created at first need (Settings, or the share
-            dialog's hint), not chosen at signup. */}
+        {/* Deliberately a line, not a step: teams are created at first need
+            (Settings, or the share dialog's hint), never chosen at signup. */}
         <p className="text-center text-sm text-muted-foreground">
           Working with a team? Create a workspace and invite them anytime from Settings.
         </p>

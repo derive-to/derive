@@ -290,6 +290,10 @@ export function NavRail() {
     enabled: !!me,
   })
   const { data: workspaces } = useQuery({ ...workspacesQuery(), enabled: !!me })
+  // The pod subtitle: "Personal" for the auto-provisioned workspace (its stored
+  // name is provisioning plumbing), else the summary's workspace name.
+  const activeWs = workspaces?.workspaces.find((w) => w.id === workspaces.active)
+  const workspaceLabel = activeWs?.personal ? "Personal" : (summary?.workspace ?? "")
   const { setOpenMobile } = useSidebar()
   const nav = useNavigate()
   const loc = useLocation()
@@ -711,13 +715,7 @@ export function NavRail() {
         <SidebarMenu>
           <SidebarMenuItem>
             <UserPod
-              // The personal workspace's stored name is provisioning plumbing
-              // ("X's Workspace") — the subtitle says "Personal" instead.
-              workspaceLabel={
-                workspaces?.workspaces.find((w) => w.id === workspaces.active)?.personal
-                  ? "Personal"
-                  : (summary?.workspace ?? "")
-              }
+              workspaceLabel={workspaceLabel}
               workspaces={workspaces ?? null}
               onSwitchWorkspace={switchWorkspace}
             />

@@ -1101,7 +1101,7 @@ export function makeRepos(db: SqliteDb) {
       conds.push(eq(artifact.author_id, userId))
     }
     // Visible to the viewer: public OR in a workspace they share with the profile
-    // owner. Private and unlisted drafts never ride a profile, shared workspace or
+    // owner. Private and unlisted work never rides a profile, shared workspace or
     // not — the owner finds them in their library, not on their public face.
     const orgs = opts.visibleOrgIds ?? []
     if (orgs.length > 0) {
