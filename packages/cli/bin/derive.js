@@ -9,6 +9,8 @@
 //   derive workspaces [--account a]        the resolved account's workspaces
 //   derive workspace use <ref> [--account a]      set the default workspace
 //   derive workspace forget <ref> [--account a]   drop a workspace locally
+//   derive workspace describe <ref> ["text"] [--account a] [--clear]
+//                                           set/show/clear what a workspace is FOR
 //   derive account use <ref>               set the default account
 //   derive logout [--account a] [--all]    sign out
 //   derive publish [file|dir] [--id --title --slug --spa --message --name --visibility --server --token --workspace --account]
@@ -27,6 +29,8 @@ import { createInterface } from "node:readline"
 import { zipSync } from "fflate"
 import {
   CONFIG_FILE,
+  describeWorkspace,
+  findAccountWorkspace,
   forgetWorkspace,
   formatComments,
   freshToken,
@@ -64,6 +68,7 @@ for (let i = 0; i < args.length; i++) {
   else if (a === "--add") flags.add = "true"
   else if (a === "--sync") flags.sync = "true"
   else if (a === "--all") flags.all = "true"
+  else if (a === "--clear") flags.clear = "true"
   else if (a.startsWith("--")) flags[a.slice(2)] = args[++i]
   else positional.push(a)
 }
@@ -170,10 +175,10 @@ async function fetchWorkspaces(server, token) {
   return { account, workspaces }
 }
 
-function printAccountBlock(server, accountId, indent = "  ") {
+function printAccountBlock(server, accountId, indent = "  ", showHandle = true) {
   const a = getAccount(server, accountId)
   if (!a) return
-  console.log(`${indent}${a.handle ? `@${a.handle}` : accountId}`)
+  if (showHandle) console.log(`${indent}${a.handle ? `@${a.handle}` : accountId}`)
   const entries = Object.entries(a.workspaces ?? {})
   if (!entries.length) {
     console.log(`${indent}    (no workspaces saved — run derive login --sync)`)
@@ -183,6 +188,7 @@ function printAccountBlock(server, accountId, indent = "  ") {
     const mark = id === a.defaultWorkspace ? "●" : " "
     const tag = id === a.defaultWorkspace ? "  (default)" : ""
     console.log(`${indent}  ${mark} ${w.name}   ${w.role}${tag}`)
+    if (w.description) console.log(`${indent}      ${w.description}`)
   }
 }
 
@@ -367,7 +373,7 @@ async function doOAuthLogin(server, loginFlags) {
     console.log(
       `  Added ${all ? `all ${entries.length}` : entries.length} workspace${entries.length === 1 ? "" : "s"}:`,
     )
-    printAccountBlock(server, accountId, "  ")
+    printAccountBlock(server, accountId, "  ", false)
     const def = account.workspaces[account.defaultWorkspace]
     if (def) {
       console.log(`\n  Publishes here target ${def.name}.`)
@@ -526,6 +532,7 @@ if (cmd === "workspaces") {
     console.log(
       `  ${mark} ${w.name}   ${w.role}${id === account.defaultWorkspace ? "  (default)" : ""}`,
     )
+    if (w.description) console.log(`      ${w.description}`)
   }
   process.exit(0)
 }
@@ -533,8 +540,11 @@ if (cmd === "workspaces") {
 if (cmd === "workspace") {
   const sub = positional[0]
   const ref = positional[1]
-  if (!["use", "forget"].includes(sub) || !ref) {
-    console.error("usage: derive workspace use|forget <name|id> [--account a]")
+  if (!["use", "forget", "describe"].includes(sub) || !ref) {
+    console.error(
+      "usage: derive workspace use|forget <name|id> [--account a]\n" +
+        '       derive workspace describe <name|id> ["what it\'s for"] [--account a] [--clear]',
+    )
     process.exit(1)
   }
   const server = resolveServer(flags)
@@ -549,13 +559,29 @@ if (cmd === "workspace") {
     if (sub === "use") {
       const w = setDefaultWorkspace(server, accountId, ref)
       console.log(`✓ Default workspace on ${server} is now ${w.name}.`)
-    } else {
+    } else if (sub === "forget") {
       const w = forgetWorkspace(server, accountId, ref)
       if (!w) {
         console.error(`error: no workspace "${ref}" for this account`)
         process.exit(1)
       }
       console.log(`✓ Removed ${w.name} from this machine.  Re-add: derive login --sync`)
+    } else {
+      const text = positional.slice(2).join(" ")
+      if (!text && !flags.clear) {
+        const found = findAccountWorkspace(server, accountId, ref)
+        if (!found) {
+          console.error(`error: no workspace "${ref}" for this account`)
+          process.exit(1)
+        }
+        const description = getAccount(server, accountId).workspaces[found.id]?.description
+        console.log(description ?? "(no description set — pass text to set one)")
+      } else {
+        const w = describeWorkspace(server, accountId, ref, flags.clear ? null : text)
+        console.log(
+          flags.clear ? `✓ Cleared the description for ${w.name}.` : `✓ ${w.name} → "${text}"`,
+        )
+      }
     }
   } catch (e) {
     console.error(`error: ${e.message}`)
@@ -740,6 +766,8 @@ if (cmd !== "publish") {
   derive accounts [--json]                 every signed-in account + its workspaces
   derive workspaces [--account a] [--json] the resolved account's workspaces
   derive workspace use|forget <ref> [--account a]   set/drop the default workspace
+  derive workspace describe <ref> ["text"] [--account a] [--clear]
+                                            set/show/clear what a workspace is FOR
   derive account use <ref>                 set the default account
   derive logout [--account a] [--all]      sign out
   derive publish [file|dir] [--id X] [--title t] [--slug s] [--spa] [--message m] [--name "x"] [--visibility v] [--password p] [--server url] [--token t] [--workspace w] [--account a] [--json]

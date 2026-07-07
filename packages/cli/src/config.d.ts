@@ -36,6 +36,7 @@ export interface AuthGrant {
 export interface WorkspaceInfo {
   name: string
   role: string
+  description?: string
 }
 
 export interface AccountRecord {
@@ -127,6 +128,12 @@ export declare function forgetWorkspace(
   accountId: string,
   ref: string,
 ): WorkspaceRef | null
+export declare function describeWorkspace(
+  server: string,
+  accountId: string,
+  ref: string,
+  description: string | null,
+): WorkspaceRef
 export declare function removeAccount(server: string, accountId: string): boolean
 
 export interface WorkspaceRefResolved {

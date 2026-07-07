@@ -5,6 +5,7 @@ import {
   freshToken,
   getAccount,
   getDefault,
+  listAccounts,
   resolveAccountRef,
   resolveWorkspaceRef,
 } from "@derive-to/cli/config"
@@ -34,7 +35,11 @@ const server_ = process.env.DERIVE_SERVER ?? "http://localhost:8080"
  *  in at all (no env override, nothing saved) degrades gracefully to anonymous,
  *  same as today's unset DERIVE_TOKEN — only an env var naming something that
  *  doesn't exist is an error. */
-async function resolveAuth(): Promise<{ token?: string; workspace?: string }> {
+async function resolveAuth(): Promise<{
+  token?: string
+  workspace?: string
+  accountId?: string
+}> {
   if (process.env.DERIVE_TOKEN) return { token: process.env.DERIVE_TOKEN }
 
   const accountEnv = process.env.DERIVE_ACCOUNT
@@ -78,10 +83,10 @@ async function resolveAuth(): Promise<{ token?: string; workspace?: string }> {
 
   if (!accountId) return {}
   const token = (await freshToken(server_, accountId)) ?? undefined
-  return { token, workspace }
+  return { token, workspace, accountId }
 }
 
-const { token, workspace } = await resolveAuth()
+const { token, workspace, accountId } = await resolveAuth()
 const client = createClient({ baseUrl: server_, token, workspace })
 
 // The agent guide, served as an MCP resource (single source: SKILL.md).
@@ -495,6 +500,57 @@ server.registerResource(
     mimeType: "text/markdown",
   },
   async (uri) => ({ contents: [{ uri: uri.href, mimeType: "text/markdown", text: GUIDE }] }),
+)
+
+// Every account/workspace signed in on THIS machine, with the local `description`
+// each was given via `derive workspace describe` — the context a bare name can't
+// carry. This tool's OWN live calls only ever act as `active` below (fixed at
+// startup by DERIVE_ACCOUNT/DERIVE_WORKSPACE or the stored default); the rest of
+// the roster is visibility only, for deciding whether that pin is still the right
+// one — e.g. before proposing a change to a project's .mcp.json. Read fresh (not
+// cached at startup) since `derive workspace describe` can run in a sibling
+// terminal mid-session.
+server.registerResource(
+  "derive-workspaces",
+  "derive://workspaces",
+  {
+    title: "Signed-in accounts & workspaces",
+    description:
+      "Every account and workspace signed in on this machine, each with its local `description` " +
+      "(what it's FOR, set via `derive workspace describe`) if one has been set. `active` is the " +
+      "one this session's tools actually publish to — read this before assuming a bare workspace " +
+      "name is enough context, or before touching a project's DERIVE_ACCOUNT/DERIVE_WORKSPACE pin.",
+    mimeType: "application/json",
+  },
+  async (uri) => {
+    const accounts = listAccounts(server_).map((a) => {
+      const account = getAccount(server_, a.id)
+      return {
+        account_id: a.id,
+        handle: a.handle,
+        is_default_account: a.isDefault,
+        workspaces: Object.entries(account?.workspaces ?? {}).map(([id, w]) => ({
+          workspace_id: id,
+          name: w.name,
+          role: w.role,
+          description: w.description ?? null,
+          is_default_workspace: id === account?.defaultWorkspace,
+        })),
+      }
+    })
+    const active = accountId
+      ? { server: server_, account_id: accountId, workspace_id: workspace ?? null }
+      : { server: server_, note: "No signed-in account resolved for this session." }
+    return {
+      contents: [
+        {
+          uri: uri.href,
+          mimeType: "application/json",
+          text: JSON.stringify({ active, accounts }, null, 2),
+        },
+      ],
+    }
+  },
 )
 
 await server.connect(new StdioServerTransport())

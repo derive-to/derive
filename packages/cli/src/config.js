@@ -41,11 +41,16 @@ export function resolveServer(opts = {}, config = null) {
 //       [accountId]: {
 //         handle: string|null,        // public handle, display only
 //         auth: { token, refresh_token, client_id, expires_at, saved_at },
-//         workspaces: { [workspaceId]: { name, role } },
+//         workspaces: { [workspaceId]: { name, role, description? } },
 //         defaultWorkspace: string|null,
 //       }
 //     }
 //   }
+//
+// `description` is local-only — never sent to or read from the server, set via
+// `derive workspace describe`. It exists so a bare workspace name ("Client
+// Demos") carries the WHY, not just the WHAT, when a human or an agent is
+// deciding where to publish. Preserved across `setWorkspaces` re-syncs.
 
 const configDir = () => process.env.DERIVE_CONFIG_DIR ?? join(homedir(), ".config", "derive")
 const credsPath = () => join(configDir(), "credentials.json")
@@ -198,7 +203,9 @@ const pickDefaultWorkspace = (workspacesMap) => {
  *  carries `from`) — for `derive login --sync` to report. If the account's
  *  default workspace no longer resolves in the new roster (first sync, or it
  *  was removed on the server), picks a new one so publishing is never left
- *  untargeted. */
+ *  untargeted. A workspace's local `description` (set via `derive workspace
+ *  describe`) carries forward for any id still present — the server has no
+ *  concept of it, so a re-sync must not silently wipe it. */
 export function setWorkspaces(server, accountId, workspacesMap) {
   const entry = entryFor(server)
   const account = entry.accounts[accountId]
@@ -207,15 +214,17 @@ export function setWorkspaces(server, accountId, workspacesMap) {
   const added = []
   const renamed = []
   const removed = []
+  const merged = {}
   for (const [id, w] of Object.entries(workspacesMap)) {
     const prev = before[id]
     if (!prev) added.push({ id, name: w.name })
     else if (prev.name !== w.name) renamed.push({ id, from: prev.name, to: w.name })
+    merged[id] = prev?.description ? { ...w, description: prev.description } : w
   }
   for (const [id, w] of Object.entries(before)) {
     if (!workspacesMap[id]) removed.push({ id, name: w.name })
   }
-  account.workspaces = workspacesMap
+  account.workspaces = merged
   if (!account.defaultWorkspace || !workspacesMap[account.defaultWorkspace]) {
     account.defaultWorkspace = pickDefaultWorkspace(workspacesMap)
   }
@@ -309,6 +318,25 @@ export function forgetWorkspace(server, accountId, ref) {
   if (account.defaultWorkspace === found.id) {
     account.defaultWorkspace = pickDefaultWorkspace(account.workspaces)
   }
+  persistEntry(server, entry)
+  return found
+}
+
+/** Set (`description` a non-empty string) or clear (`description` null/empty) a
+ *  local note on `ref` describing what the workspace is FOR — never sent to or
+ *  read from the server. This is the context a bare name can't carry: "Client
+ *  Demos" doesn't say who shouldn't see it, "Sift AI" doesn't say it's the only
+ *  one wired to send outbound. Preserved across `derive login --sync` (see
+ *  `setWorkspaces`). Throws if the account or workspace isn't known (same
+ *  contract as `setDefaultWorkspace`). Returns the matched `{id, name}`. */
+export function describeWorkspace(server, accountId, ref, description) {
+  const entry = entryFor(server)
+  const account = entry.accounts[accountId]
+  if (!account) throw new Error(`no such account: ${accountId}`)
+  const found = findWorkspace(account.workspaces ?? {}, ref)
+  if (!found) throw new Error(`no workspace "${ref}" for this account`)
+  if (description) account.workspaces[found.id].description = description
+  else delete account.workspaces[found.id].description
   persistEntry(server, entry)
   return found
 }

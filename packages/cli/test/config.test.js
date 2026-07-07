@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import {
   CONFIG_FILE,
   defaultConfig,
+  describeWorkspace,
   entryFor,
   findAccountWorkspace,
   forgetWorkspace,
@@ -419,6 +420,63 @@ describe("credentials (derive login)", () => {
     })
     it("removeAccount returns false for an account that was never there", () => {
       expect(removeAccount(SERVER, "ghost")).toBe(false)
+    })
+  })
+
+  describe("describeWorkspace", () => {
+    beforeEach(() => {
+      saveAccount(SERVER, "u1", { handle: "ava", grant: { token: "tok1" } })
+      setWorkspaces(SERVER, "u1", {
+        ws_a: { name: "Personal", role: "owner" },
+        ws_b: { name: "Acme Co", role: "editor" },
+      })
+    })
+
+    it("sets a local description, resolvable by name or id", () => {
+      const w = describeWorkspace(SERVER, "u1", "Acme Co", "Client work — never internal drafts.")
+      expect(w).toEqual({ id: "ws_b", name: "Acme Co" })
+      expect(getAccount(SERVER, "u1").workspaces.ws_b.description).toBe(
+        "Client work — never internal drafts.",
+      )
+      // untouched workspace has no description key at all
+      expect(getAccount(SERVER, "u1").workspaces.ws_a.description).toBeUndefined()
+    })
+
+    it("clearing with null removes the description key", () => {
+      describeWorkspace(SERVER, "u1", "ws_a", "Scratch space")
+      describeWorkspace(SERVER, "u1", "ws_a", null)
+      expect(getAccount(SERVER, "u1").workspaces.ws_a.description).toBeUndefined()
+    })
+
+    it("throws for an unknown workspace, without partially applying", () => {
+      expect(() => describeWorkspace(SERVER, "u1", "Nope", "x")).toThrow(/no workspace/)
+    })
+    it("throws for an unknown account", () => {
+      expect(() => describeWorkspace(SERVER, "ghost", "ws_a", "x")).toThrow(/no such account/)
+    })
+
+    it("survives a re-sync for a workspace that's still a member", () => {
+      describeWorkspace(SERVER, "u1", "Acme Co", "Client work.")
+      setWorkspaces(SERVER, "u1", {
+        ws_a: { name: "Personal", role: "owner" },
+        ws_b: { name: "Acme Co", role: "owner" }, // role changed server-side, still present
+      })
+      expect(getAccount(SERVER, "u1").workspaces.ws_b).toEqual({
+        name: "Acme Co",
+        role: "owner",
+        description: "Client work.",
+      })
+    })
+
+    it("is dropped when the workspace is no longer in the synced roster", () => {
+      describeWorkspace(SERVER, "u1", "Acme Co", "Client work.")
+      setWorkspaces(SERVER, "u1", { ws_a: { name: "Personal", role: "owner" } }) // ws_b gone
+      const diff = setWorkspaces(SERVER, "u1", {
+        ws_a: { name: "Personal", role: "owner" },
+        ws_b: { name: "Acme Co", role: "owner" }, // rejoins later, as a NEW membership
+      })
+      expect(diff.added).toEqual([{ id: "ws_b", name: "Acme Co" }])
+      expect(getAccount(SERVER, "u1").workspaces.ws_b.description).toBeUndefined()
     })
   })
 
