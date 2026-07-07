@@ -73,7 +73,7 @@ import type {
   WebhookRecord,
   WorkspaceRecord,
 } from "@derive/core"
-import { DEFAULT_ORG_SETTINGS, GLOBAL_FOLLOW_ORG } from "@derive/core"
+import { DEFAULT_ORG_SETTINGS, FEED_VISIBLE_TIERS, GLOBAL_FOLLOW_ORG } from "@derive/core"
 import {
   and,
   asc,
@@ -1586,7 +1586,7 @@ export function makeRepos(db: SqliteDb) {
     orgId: string,
     opts?: { limit?: number; cursor?: { created_at: string; id: string } },
   ): Promise<ActivityRecord[]> => {
-    const conds = [eq(activity.org_id, orgId)]
+    const conds = [eq(activity.org_id, orgId), inArray(artifact.visibility, FEED_VISIBLE_TIERS)]
     if (opts?.cursor) {
       const cursor = or(
         lt(activity.created_at, opts.cursor.created_at),
@@ -1594,9 +1594,16 @@ export function makeRepos(db: SqliteDb) {
       )
       if (cursor) conds.push(cursor)
     }
+    // INNER JOIN, filtered live against the artifact's CURRENT visibility — not just
+    // the visibility at write time. A doc later narrowed to private/unlisted/password
+    // stops serving its already-recorded rows too (recordActivity's write-time gate
+    // alone only stops NEW rows); a deleted artifact's orphaned rows (there
+    // shouldn't be any post-deleteArtifact, but this is cheap defense in depth) drop
+    // out the same way, since there's no matching artifact row to join.
     const rows = db
-      .select()
+      .select(getTableColumns(activity))
       .from(activity)
+      .innerJoin(artifact, eq(artifact.id, activity.artifact_id))
       .where(and(...conds))
       .orderBy(desc(activity.created_at), desc(activity.id))
     return (opts?.limit ? rows.limit(opts.limit) : rows).all() as Promise<ActivityRecord[]>
@@ -2068,6 +2075,7 @@ export function makeRepos(db: SqliteDb) {
     await db.delete(report).where(eq(report.artifact_id, id)).run()
     await db.delete(notification).where(eq(notification.artifact_id, id)).run()
     await db.delete(agentMention).where(eq(agentMention.artifact_id, id)).run()
+    await db.delete(activity).where(eq(activity.artifact_id, id)).run()
     await db.delete(artifact).where(eq(artifact.id, id)).run()
   }
 

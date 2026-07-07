@@ -1487,6 +1487,13 @@ export interface NewView {
  *  feed row); every other kind mirrors an existing domain event. */
 export type ActivityKind = "publish" | "comment" | "resolve" | "share" | "proposal" | "view"
 
+/** Visibility tiers the whole workspace can read — the Activity feed's one gate,
+ *  shared by the write path (never record for anything narrower) and the read path
+ *  (never SERVE a row whose artifact has since been narrowed below this, e.g. a
+ *  post-hoc downgrade to private). A single exported source so it can't drift into
+ *  a second hand-copied Set at either call site. */
+export const FEED_VISIBLE_TIERS: readonly Visibility[] = ["public", "link", "org"]
+
 export interface ActivityRecord {
   id: string
   org_id: string

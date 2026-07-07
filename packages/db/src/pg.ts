@@ -78,7 +78,7 @@ import type {
   WebhookRecord,
   WorkspaceRecord,
 } from "@derive/core"
-import { DEFAULT_ORG_SETTINGS, GLOBAL_FOLLOW_ORG } from "@derive/core"
+import { DEFAULT_ORG_SETTINGS, FEED_VISIBLE_TIERS, GLOBAL_FOLLOW_ORG } from "@derive/core"
 import {
   and,
   asc,
@@ -1516,7 +1516,7 @@ export class PgMetaStore implements MetaStore {
     orgId: string,
     opts?: { limit?: number; cursor?: { created_at: string; id: string } },
   ): Promise<ActivityRecord[]> {
-    const conds = [eq(activity.org_id, orgId)]
+    const conds = [eq(activity.org_id, orgId), inArray(artifact.visibility, FEED_VISIBLE_TIERS)]
     if (opts?.cursor) {
       const cursor = or(
         lt(activity.created_at, opts.cursor.created_at),
@@ -1524,9 +1524,12 @@ export class PgMetaStore implements MetaStore {
       )
       if (cursor) conds.push(cursor)
     }
+    // INNER JOIN, filtered live against the artifact's CURRENT visibility — see
+    // repos.ts's listActivity for the full reasoning (mirrors it exactly).
     const rows = this.db
-      .select()
+      .select(getTableColumns(activity))
       .from(activity)
+      .innerJoin(artifact, eq(artifact.id, activity.artifact_id))
       .where(and(...conds))
       .orderBy(desc(activity.created_at), desc(activity.id))
     return opts?.limit ? rows.limit(opts.limit) : rows
@@ -2160,6 +2163,7 @@ export class PgMetaStore implements MetaStore {
       await tx.delete(report).where(eq(report.artifact_id, id))
       await tx.delete(notification).where(eq(notification.artifact_id, id))
       await tx.delete(agentMention).where(eq(agentMention.artifact_id, id))
+      await tx.delete(activity).where(eq(activity.artifact_id, id))
       await tx.delete(artifact).where(eq(artifact.id, id))
     })
   }

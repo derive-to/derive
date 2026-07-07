@@ -10,6 +10,7 @@ import {
   can,
   capRole,
   DEFAULT_VERSION_WINDOW_MS,
+  FEED_VISIBLE_TIERS,
   isAuthenticated,
   isBundleContentType,
   type MetaStore,
@@ -271,8 +272,11 @@ export function buildContext(deps: AppDeps) {
 
   // Visibility tiers the whole workspace can see. An unlisted draft or a private/
   // password-gated doc must never leak its existence into the shared Activity feed —
-  // this is the one gate every recordActivity call site shares.
-  const FEED_VISIBLE: ReadonlySet<Visibility> = new Set(["public", "link", "org"])
+  // this is the one gate every recordActivity call site shares. Sourced from
+  // FEED_VISIBLE_TIERS (core), the SAME constant the read path (listActivity's join
+  // in repos.ts/pg.ts) filters by — a downgrade to a narrower tier stops serving
+  // already-recorded rows too, not just new ones.
+  const FEED_VISIBLE: ReadonlySet<Visibility> = new Set(FEED_VISIBLE_TIERS)
 
   // Append one row to the workspace Activity feed — best-effort like notify(), never
   // blocks or fails the request it's called from.

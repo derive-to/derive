@@ -478,6 +478,8 @@ export const artifactRoutes = (ctx: AppContext) => {
           if (cm && cm.artifact_id === artifact.id) {
             await meta.setThreadState(artifact.id, cm.thread_id, "resolved")
             bus.publish(artifact.id, { type: "comment.resolved", thread_id: cm.thread_id })
+            if (publishActor)
+              recordActivity(artifact, "resolve", publishActor, { thread_id: cm.thread_id })
           }
         }
       }
