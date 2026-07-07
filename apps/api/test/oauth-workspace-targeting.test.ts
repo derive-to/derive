@@ -14,18 +14,30 @@ import { dir, pub, quotaApp } from "./helpers"
 describe.skipIf(process.env.DERIVE_TEST_DB === "pg")("OAuth agent workspace targeting", () => {
   // One OAuth grant (tok_ws → u_owner) and TWO workspaces the owner belongs to:
   // ws_one (older, the grant's default) and ws_two (the intended target).
-  function twoWorkspaceApp(name: string) {
+  function twoWorkspaceApp(name: string, opts: { withUsername?: boolean } = {}) {
     const path = join(dir, `${name}.db`)
     const meta = new SqliteMetaStore(path)
     const db = new Database(path)
+    // getUsers SELECTs id/email/name/image/username/profession/about as one
+    // statement — sqlite fails the whole query (not just the missing column) if
+    // the table lacks any of them, and getUsers swallows that to []. Most tests
+    // here don't care about the owner's profile, so the table stays minimal
+    // (id/email/name/image) and `account.handle` degrades to null; opts.withUsername
+    // adds the rest so the one test that checks a real handle can populate it.
     db.exec(`
-      CREATE TABLE IF NOT EXISTS "user" (id TEXT PRIMARY KEY, email TEXT, name TEXT, image TEXT);
+      CREATE TABLE IF NOT EXISTS "user" (id TEXT PRIMARY KEY, email TEXT, name TEXT, image TEXT${opts.withUsername ? ", username TEXT, profession TEXT, about TEXT" : ""});
       CREATE TABLE IF NOT EXISTS "oauthClient" (clientId TEXT PRIMARY KEY, name TEXT);
       CREATE TABLE IF NOT EXISTS "oauthAccessToken" (token TEXT PRIMARY KEY, clientId TEXT, userId TEXT, scopes TEXT, expiresAt TEXT);
     `)
-    db.prepare(
-      `INSERT OR IGNORE INTO "user"(id,email,name) VALUES('u_owner','owner@x.test','Owner')`,
-    ).run()
+    if (opts.withUsername) {
+      db.prepare(
+        `INSERT OR IGNORE INTO "user"(id,email,name,username) VALUES('u_owner','owner@x.test','Owner','owner')`,
+      ).run()
+    } else {
+      db.prepare(
+        `INSERT OR IGNORE INTO "user"(id,email,name) VALUES('u_owner','owner@x.test','Owner')`,
+      ).run()
+    }
     db.prepare(`INSERT OR IGNORE INTO "oauthClient"(clientId,name) VALUES('cli','Claude')`).run()
     db.prepare(
       `INSERT INTO "oauthAccessToken"(token,clientId,userId,scopes,expiresAt) VALUES(?,?,?,?,?)`,
@@ -108,8 +120,25 @@ describe.skipIf(process.env.DERIVE_TEST_DB === "pg")("OAuth agent workspace targ
     const { app } = twoWorkspaceApp("ws-target-list")
     const res = await app.request("/v1/workspaces", { headers: bearer })
     expect(res.status).toBe(200)
-    const body = (await res.json()) as { workspaces: { id: string; name: string }[] }
+    const body = (await res.json()) as {
+      workspaces: { id: string; name: string }[]
+      account: { id: string; handle: string | null } | null
+    }
     expect(body.workspaces.map((w) => w.id)).toEqual(["ws_one", "ws_two"])
+    // `account` is the discovery surface a bearer-only client (the CLI, a local
+    // MCP server) keys its per-account credential store by — it has no session
+    // to ask `/v1/me` with. Present even against this harness's minimal `user`
+    // table (missing `username`): getUsers' SELECT fails as a whole on a schema
+    // mismatch and degrades to [], so the id still comes through with handle/name
+    // both null rather than an error.
+    expect(body.account).toEqual({ id: "u_owner", handle: null, name: null })
+  })
+
+  it("GET /v1/workspaces' account carries the owner's handle when one exists", async () => {
+    const { app } = twoWorkspaceApp("ws-target-handle", { withUsername: true })
+    const res = await app.request("/v1/workspaces", { headers: bearer })
+    const body = (await res.json()) as { account: { id: string; handle: string | null } }
+    expect(body.account).toEqual({ id: "u_owner", handle: "owner", name: "Owner" })
   })
 
   // ---- Consent-time workspace binding (the consent screen's picker) ----------

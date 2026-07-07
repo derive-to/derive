@@ -1,21 +1,88 @@
 import { readFileSync } from "node:fs"
 import { fileURLToPath } from "node:url"
+import {
+  findAccountWorkspace,
+  freshToken,
+  getAccount,
+  getDefault,
+  resolveAccountRef,
+  resolveWorkspaceRef,
+} from "@derive-to/cli/config"
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod"
 import { createClient } from "./client"
 
 // Stdio MCP server for self-hosters: `npx @derive-to/mcp` talks to a Derive instance over
-// the /v1 HTTP API (DERIVE_SERVER) with a bearer (DERIVE_TOKEN). It exposes the SAME five
-// tools as the remote /mcp server — list_artifacts, read, catch_up, comment, publish —
-// so the vocabulary is identical whether an agent connects over OAuth or a static
-// token. (A static token already has publish rights, so publish here goes live unless
-// you pass for_review; bundle publishing is remote-only.)
+// the /v1 HTTP API (DERIVE_SERVER). It exposes the SAME five tools as the remote /mcp
+// server — list_artifacts, read, catch_up, comment, publish — so the vocabulary is
+// identical whether an agent connects over OAuth or a static token.
+//
+// No token to paste: by default this reads the SAME local store `derive login`
+// writes (~/.config/derive/credentials.json), refreshing silently — sign in once
+// on the machine and every project's MCP server just works. DERIVE_ACCOUNT /
+// DERIVE_WORKSPACE pin which signed-in account/workspace THIS project acts as (id
+// or name); unset, it falls back to your stored default. DERIVE_TOKEN remains an
+// escape hatch for a static bearer (CI, no local login) — DERIVE_WORKSPACE has no
+// effect there, since a static token already acts as every workspace's owner.
+const server_ = process.env.DERIVE_SERVER ?? "http://localhost:8080"
 
-const client = createClient({
-  baseUrl: process.env.DERIVE_SERVER ?? "http://localhost:8080",
-  token: process.env.DERIVE_TOKEN,
-})
+/** {token, workspace} for the client below — see the module doc comment for the
+ *  precedence. Kept out of `createClient` itself so a resolution failure fails
+ *  loudly at startup (a clear thrown message) instead of quietly targeting the
+ *  wrong workspace, or surfacing as an unexplained 401 mid-session. Not signed
+ *  in at all (no env override, nothing saved) degrades gracefully to anonymous,
+ *  same as today's unset DERIVE_TOKEN — only an env var naming something that
+ *  doesn't exist is an error. */
+async function resolveAuth(): Promise<{ token?: string; workspace?: string }> {
+  if (process.env.DERIVE_TOKEN) return { token: process.env.DERIVE_TOKEN }
+
+  const accountEnv = process.env.DERIVE_ACCOUNT
+  const workspaceEnv = process.env.DERIVE_WORKSPACE
+  let accountId: string | null
+  let workspace: string | undefined
+
+  if (accountEnv) {
+    accountId = resolveAccountRef(server_, accountEnv)
+    if (!accountId)
+      throw new Error(
+        `DERIVE_ACCOUNT "${accountEnv}" isn't signed in on this machine — run \`derive login\`.`,
+      )
+    if (workspaceEnv) {
+      const found = findAccountWorkspace(server_, accountId, workspaceEnv)
+      if (!found)
+        throw new Error(
+          `DERIVE_WORKSPACE "${workspaceEnv}" isn't one of that account's workspaces — run \`derive workspaces --account ${accountEnv}\`.`,
+        )
+      workspace = found.id
+    } else {
+      workspace = getAccount(server_, accountId)?.defaultWorkspace ?? undefined
+    }
+  } else if (workspaceEnv) {
+    const resolved = resolveWorkspaceRef(server_, workspaceEnv)
+    if (!resolved)
+      throw new Error(
+        `DERIVE_WORKSPACE "${workspaceEnv}" isn't a workspace on any signed-in account.`,
+      )
+    if ("ambiguous" in resolved)
+      throw new Error(
+        `DERIVE_WORKSPACE "${workspaceEnv}" matches workspaces under more than one account — set DERIVE_ACCOUNT too.`,
+      )
+    accountId = resolved.accountId
+    workspace = resolved.workspaceId
+  } else {
+    const def = getDefault(server_)
+    accountId = def?.account ?? null
+    workspace = def?.workspace ?? undefined
+  }
+
+  if (!accountId) return {}
+  const token = (await freshToken(server_, accountId)) ?? undefined
+  return { token, workspace }
+}
+
+const { token, workspace } = await resolveAuth()
+const client = createClient({ baseUrl: server_, token, workspace })
 
 // The agent guide, served as an MCP resource (single source: SKILL.md).
 const GUIDE = (() => {

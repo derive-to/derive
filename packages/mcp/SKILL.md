@@ -70,3 +70,8 @@ wrong place.
   over the remote `/mcp` server via `publish` with a `files` map. Over the stdio
   `@derive-to/mcp` server, bundles are publish-via-remote/web only, and `comment` set_state
   takes a `comment_id`. Both servers expose the same 5 tools.
+- The stdio server shares the machine's `derive login` — no token to paste. It acts as
+  your stored default account/workspace unless `DERIVE_ACCOUNT`/`DERIVE_WORKSPACE`
+  pin the project to a specific one (id or name; set in `.mcp.json`'s `env`). Still no
+  `whoami` tool, but a wrong pin fails loudly at startup rather than silently
+  targeting the wrong workspace.

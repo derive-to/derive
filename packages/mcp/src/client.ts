@@ -152,6 +152,11 @@ export interface DeriveClient {
 export interface ClientOptions {
   baseUrl: string
   token?: string
+  /** Which workspace `token` acts in for this request — the token itself already
+   *  reaches every workspace its owner belongs to; this just tells the server
+   *  which one. Omit to fall back to the grant's own default (unchanged
+   *  behavior for a plain static DERIVE_TOKEN). */
+  workspace?: string
   /** Override fetch (used in tests to target an in-process server). */
   fetchImpl?: typeof fetch
 }
@@ -159,9 +164,10 @@ export interface ClientOptions {
 export function createClient(opts: ClientOptions): DeriveClient {
   const base = opts.baseUrl.replace(/\/$/, "")
   const f = opts.fetchImpl ?? fetch
-  const authHeaders: Record<string, string> = opts.token
-    ? { Authorization: `Bearer ${opts.token}` }
-    : {}
+  const authHeaders: Record<string, string> = {
+    ...(opts.token ? { Authorization: `Bearer ${opts.token}` } : {}),
+    ...(opts.workspace ? { "X-Derive-Workspace": opts.workspace } : {}),
+  }
 
   async function ok(res: Response): Promise<unknown> {
     if (res.ok) return res.json()

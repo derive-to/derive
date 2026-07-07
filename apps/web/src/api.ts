@@ -318,10 +318,19 @@ export interface WorkspaceSummary {
   name: string
   role: Role
 }
-/** The switcher payload: whether multi-workspace is on, the active id, the list. */
+/** The caller's own identity (never email — surfaces identify by handle). */
+export interface AccountSummary {
+  id: string
+  handle: string | null
+  name: string | null
+}
+/** The switcher payload: whether multi-workspace is on, the active id, the list.
+ *  `account` is the CLI/MCP's discovery surface for a bearer-only caller, which
+ *  has no session to ask `/v1/me` with — the web app doesn't need it. */
 export interface Workspaces {
   multi: boolean
   active: string
+  account?: AccountSummary | null
   workspaces: WorkspaceSummary[]
 }
 export interface Analytics {

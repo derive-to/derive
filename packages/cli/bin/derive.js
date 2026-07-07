@@ -1,8 +1,17 @@
 #!/usr/bin/env node
 // derive — scaffold, publish, and run the review loop against a Derive server.
 //   derive init [dir] [--template md|html|slides|site] [--title t]
-//   derive login [--local] [--server url]   OAuth sign-in (default https://derive.to); saves a token
-//   derive publish [file|dir] [--id --title --slug --spa --message --name --visibility --server --token]
+//   derive login [--local] [--server url] [--workspace w] [--pick] [--add] [--sync]
+//                                          OAuth sign-in; discovers every workspace
+//                                          you belong to. Already signed in? Shows
+//                                          a manage menu (or acts on --add/--sync).
+//   derive accounts [--json]              every signed-in account + its workspaces
+//   derive workspaces [--account a]        the resolved account's workspaces
+//   derive workspace use <ref> [--account a]      set the default workspace
+//   derive workspace forget <ref> [--account a]   drop a workspace locally
+//   derive account use <ref>               set the default account
+//   derive logout [--account a] [--all]    sign out
+//   derive publish [file|dir] [--id --title --slug --spa --message --name --visibility --server --token --workspace --account]
 //   derive comments [--id]                 list the artifact's comment threads
 //   derive open [short_id] [--id]          open the artifact in a browser
 //   derive reply <thread_id> <message…>    reply in a thread
@@ -18,13 +27,24 @@ import { createInterface } from "node:readline"
 import { zipSync } from "fflate"
 import {
   CONFIG_FILE,
+  forgetWorkspace,
   formatComments,
   freshToken,
+  getAccount,
+  getClientId,
+  getDefault,
+  listAccounts,
   loadConfig,
+  removeAccount,
+  resolveAccountRef,
   resolvePublish,
   resolveServer,
-  saveToken,
+  saveAccount,
+  saveClientId,
   scaffold,
+  setDefaultAccount,
+  setDefaultWorkspace,
+  setWorkspaces,
   TEMPLATES,
   writeId,
 } from "../src/config.js"
@@ -40,8 +60,59 @@ for (let i = 0; i < args.length; i++) {
   else if (a === "--review") flags.review = "true"
   else if (a === "--local") flags.local = "true"
   else if (a === "--json") flags.json = "true"
+  else if (a === "--pick") flags.pick = "true"
+  else if (a === "--add") flags.add = "true"
+  else if (a === "--sync") flags.sync = "true"
+  else if (a === "--all") flags.all = "true"
   else if (a.startsWith("--")) flags[a.slice(2)] = args[++i]
   else positional.push(a)
+}
+
+// A plain numbered prompt (no arrow-key TUI — matches this CLI's existing
+// readline-only style). Returns the chosen option, or null on empty input.
+async function promptChoice(question, options) {
+  const rl = createInterface({ input: process.stdin, output: process.stdout })
+  options.forEach((o, i) => {
+    console.log(`  ${i + 1}) ${o}`)
+  })
+  const answer = await new Promise((resolve) => rl.question(`${question} `, resolve))
+  rl.close()
+  const n = Number.parseInt((answer ?? "").trim(), 10)
+  return n >= 1 && n <= options.length ? n - 1 : null
+}
+
+const opener = () =>
+  process.platform === "darwin" ? "open" : process.platform === "win32" ? "start" : "xdg-open"
+const openBrowser = (url) =>
+  spawn(opener(), [url], { stdio: "ignore", detached: true })
+    .on("error", () => {})
+    .unref()
+
+/** Print the `error: not signed in…` hint shared by every command that needs a
+ *  token but found none — a flag/DERIVE_TOKEN always short-circuits this. */
+function requireSignedIn(r) {
+  if (r.token) return
+  console.error(`You are not signed in to ${r.server}.`)
+  console.error("  Run  derive login   to connect (opens your browser).")
+  process.exit(1)
+}
+
+/** Print a resolved `r.workspaceError` (from resolvePublish) and exit — called
+ *  before any network request, so a bad --workspace/--account never silently
+ *  falls through to the wrong target. */
+function requireNoTargetError(r) {
+  if (!r.workspaceError) return
+  const e = r.workspaceError
+  if (e.type === "no_account") console.error(`error: no signed-in account matches "${e.ref}"`)
+  else if (e.type === "not_found") console.error(`error: no workspace "${e.ref}" found`)
+  else if (e.type === "ambiguous") {
+    const who = e.accounts.map((a) => a.handle ?? a.accountId).join(", ")
+    console.error(`error: "${e.ref}" exists under more than one account: ${who}`)
+    console.error(
+      `  Pick one:  --workspace "${e.ref}" --account ${e.accounts[0].handle ?? e.accounts[0].accountId}`,
+    )
+  }
+  process.exit(1)
 }
 
 if (cmd === "init") {
@@ -69,49 +140,140 @@ if (cmd === "init") {
 // /oauth/cli-callback page, and have them paste the one-time code back here. The
 // PKCE verifier never leaves this process, so the exchange (and the resulting
 // token) stay bound to this machine.
-if (cmd === "login") {
+//
+// The token this earns is scoped to the SIGNED-IN USER, not one workspace — it
+// already reaches every workspace they belong to. So a successful exchange is
+// followed by one GET /v1/workspaces to discover the full roster (and the
+// account's own id/handle), which is what makes "sign into everything at once"
+// true: one browser round trip, every workspace usable immediately after.
+
+const findWorkspaceInMap = (map, ref) => {
+  if (map[ref]) return { id: ref, ...map[ref] }
+  const wanted = ref.toLowerCase()
+  const hit = Object.entries(map).find(([, w]) => w.name.toLowerCase() === wanted)
+  return hit ? { id: hit[0], ...hit[1] } : null
+}
+
+/** GET /v1/workspaces with a fresh bearer: the caller's own identity (falling
+ *  back to a synthetic "default" account for a server too old to report one —
+ *  self-hosted instances predating this feature) plus every workspace it
+ *  belongs to, as a `{[id]: {name, role}}` map ready for `setWorkspaces`. */
+async function fetchWorkspaces(server, token) {
+  const res = await fetch(`${server}/v1/workspaces`, {
+    headers: { authorization: `Bearer ${token}` },
+  })
+  const j = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(j.error ?? res.statusText)
+  const account = j.account ?? { id: "default", handle: null }
+  const workspaces = {}
+  for (const w of j.workspaces ?? []) workspaces[w.id] = { name: w.name, role: w.role }
+  return { account, workspaces }
+}
+
+function printAccountBlock(server, accountId, indent = "  ") {
+  const a = getAccount(server, accountId)
+  if (!a) return
+  console.log(`${indent}${a.handle ? `@${a.handle}` : accountId}`)
+  const entries = Object.entries(a.workspaces ?? {})
+  if (!entries.length) {
+    console.log(`${indent}    (no workspaces saved — run derive login --sync)`)
+    return
+  }
+  for (const [id, w] of entries) {
+    const mark = id === a.defaultWorkspace ? "●" : " "
+    const tag = id === a.defaultWorkspace ? "  (default)" : ""
+    console.log(`${indent}  ${mark} ${w.name}   ${w.role}${tag}`)
+  }
+}
+
+/** Refresh `accountId`'s token if needed, re-fetch its workspace roster, and
+ *  report what changed (join/rename/removal) since the last sync. Shared by
+ *  `derive login --sync` and the manage hub's "re-sync" menu item. */
+async function syncWorkspaces(server, accountId) {
+  if (!accountId) {
+    console.error("error: not signed in — run `derive login` first")
+    process.exit(1)
+  }
+  const token = await freshToken(server, accountId)
+  if (!token) {
+    console.error("error: that account's session is gone — run `derive login --add`")
+    process.exit(1)
+  }
+  let discovered
+  try {
+    discovered = await fetchWorkspaces(server, token)
+  } catch (e) {
+    console.error(`error: couldn't sync: ${e.message}`)
+    process.exit(1)
+  }
+  const diff = setWorkspaces(server, accountId, discovered.workspaces)
+  const account = getAccount(server, accountId)
+  console.log(`✓ Synced ${account.handle ? `@${account.handle}` : accountId} on ${server}`)
+  for (const w of diff.added) console.log(`    + ${w.name}          (joined)`)
+  for (const w of diff.renamed) console.log(`    ~ ${w.from} → ${w.to}   (renamed)`)
+  for (const w of diff.removed)
+    console.log(`    - ${w.name}          (no longer a member, removed locally)`)
+  if (!diff.added.length && !diff.renamed.length && !diff.removed.length)
+    console.log("    (no changes)")
+}
+
+/** The full OAuth round trip: register (or reuse) a client, open the browser,
+ *  take the pasted code, exchange it, then discover and save the account's
+ *  workspace roster. `flags.workspace`/`flags.pick` narrow which workspaces are
+ *  kept locally; the default is all of them. */
+async function doOAuthLogin(server, loginFlags) {
   const b64url = (b) =>
     b.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "")
-  const server = resolveServer(flags)
   const redirect = `${server}/oauth/cli-callback`
   const scope =
-    flags.scope ??
+    loginFlags.scope ??
     "openid offline_access derive:read derive:comment derive:propose derive:publish derive:review"
   const verifier = b64url(randomBytes(64))
   const challenge = b64url(createHash("sha256").update(verifier).digest())
   const state = b64url(randomBytes(16))
 
-  const reg = await fetch(`${server}/api/auth/oauth2/register`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      client_name: flags.name ?? "Derive CLI",
-      redirect_uris: [redirect],
-      token_endpoint_auth_method: "none",
-      grant_types: ["authorization_code", "refresh_token"],
-      response_types: ["code"],
-    }),
-  }).catch((e) => ({ ok: false, status: 0, json: async () => ({ error: e.message }) }))
-  const client = await reg.json().catch(() => ({}))
-  if (!reg.ok || !client.client_id) {
-    console.error(`error: client registration failed (${reg.status}): ${client.error ?? "unknown"}`)
-    process.exit(1)
+  // Reuse this machine's client for this server across logins (including a
+  // second --add account), so a workspace picked on the consent screen — bound
+  // server-side to (user, client) — actually persists instead of resetting on
+  // every fresh registration.
+  let clientId = getClientId(server)
+  if (!clientId) {
+    const reg = await fetch(`${server}/api/auth/oauth2/register`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        client_name: loginFlags.name ?? "Derive CLI",
+        redirect_uris: [redirect],
+        token_endpoint_auth_method: "none",
+        grant_types: ["authorization_code", "refresh_token"],
+        response_types: ["code"],
+      }),
+    }).catch((e) => ({ ok: false, status: 0, json: async () => ({ error: e.message }) }))
+    const client = await reg.json().catch(() => ({}))
+    if (!reg.ok || !client.client_id) {
+      console.error(
+        `error: client registration failed (${reg.status}): ${client.error ?? "unknown"}`,
+      )
+      process.exit(1)
+    }
+    clientId = client.client_id
+    saveClientId(server, clientId)
   }
 
   const authUrl =
     `${server}/api/auth/oauth2/authorize?response_type=code` +
-    `&client_id=${encodeURIComponent(client.client_id)}` +
+    `&client_id=${encodeURIComponent(clientId)}` +
     `&redirect_uri=${encodeURIComponent(redirect)}` +
     `&scope=${encodeURIComponent(scope)}` +
     `&code_challenge=${challenge}&code_challenge_method=S256&state=${state}`
 
-  console.log(`\nOpening Derive to authorize (scopes: ${scope}).`)
+  console.log(
+    loginFlags.add
+      ? `\nOpening ${server} (sign in as the account to add)...`
+      : `\nOpening ${server} to authorize (scopes: ${scope}).`,
+  )
   console.log(`If your browser doesn't open, visit:\n\n  ${authUrl}\n`)
-  const opener =
-    process.platform === "darwin" ? "open" : process.platform === "win32" ? "start" : "xdg-open"
-  spawn(opener, [authUrl], { stdio: "ignore", detached: true })
-    .on("error", () => {})
-    .unref()
+  openBrowser(authUrl)
 
   const code = await new Promise((resolve) => {
     const rl = createInterface({ input: process.stdin, output: process.stdout })
@@ -132,7 +294,7 @@ if (cmd === "login") {
       grant_type: "authorization_code",
       code,
       redirect_uri: redirect,
-      client_id: client.client_id,
+      client_id: clientId,
       code_verifier: verifier,
     }),
   }).catch((e) => ({ ok: false, status: 0, json: async () => ({ error: e.message }) }))
@@ -144,14 +306,310 @@ if (cmd === "login") {
     process.exit(1)
   }
 
-  const path = saveToken(server, {
-    token: tj.access_token,
-    refresh_token: tj.refresh_token,
-    client_id: client.client_id,
-    expires_in: tj.expires_in,
+  let discovered
+  try {
+    discovered = await fetchWorkspaces(server, tj.access_token)
+  } catch (e) {
+    console.error(`error: signed in, but couldn't list workspaces: ${e.message}`)
+    process.exit(1)
+  }
+  const accountId = discovered.account.id
+  const wasSignedIn = !!getDefault(server)
+  saveAccount(server, accountId, {
+    handle: discovered.account.handle ?? null,
+    grant: {
+      token: tj.access_token,
+      refresh_token: tj.refresh_token,
+      client_id: clientId,
+      expires_in: tj.expires_in,
+    },
   })
-  console.log(`\n✓ Signed in to ${server}`)
-  console.log(`  Token saved to ${path} — \`derive publish\` will use it automatically.`)
+
+  // Which workspaces to keep locally: one (--workspace), a checklist (--pick),
+  // or — the default — every workspace this account belongs to, so a single
+  // sign-in is immediately usable everywhere.
+  let chosen = discovered.workspaces
+  if (loginFlags.workspace) {
+    const found = findWorkspaceInMap(discovered.workspaces, loginFlags.workspace)
+    if (!found) {
+      console.error(`error: no workspace "${loginFlags.workspace}" for this account`)
+      process.exit(1)
+    }
+    chosen = { [found.id]: { name: found.name, role: found.role } }
+  } else if (loginFlags.pick) {
+    const entries = Object.entries(discovered.workspaces)
+    console.log("\nSelect workspaces (comma-separated numbers, or 'a' for all):")
+    entries.forEach(([, w], i) => {
+      console.log(`  ${i + 1}) ${w.name}  (${w.role})`)
+    })
+    const rl = createInterface({ input: process.stdin, output: process.stdout })
+    const answer = await new Promise((resolve) => rl.question("> ", resolve))
+    rl.close()
+    const picked =
+      answer.trim().toLowerCase() === "a"
+        ? entries
+        : answer
+            .split(",")
+            .map((s) => Number.parseInt(s.trim(), 10) - 1)
+            .filter((i) => i >= 0 && i < entries.length)
+            .map((i) => entries[i])
+    chosen = Object.fromEntries(picked)
+  }
+  setWorkspaces(server, accountId, chosen)
+
+  const handleLabel = discovered.account.handle ? `@${discovered.account.handle}` : accountId
+  console.log()
+  if (!wasSignedIn) {
+    console.log(`✓ Signed in to ${server} as ${handleLabel}`)
+    const account = getAccount(server, accountId)
+    const entries = Object.entries(account.workspaces)
+    const all = Object.keys(discovered.workspaces).length === entries.length
+    console.log(
+      `  Added ${all ? `all ${entries.length}` : entries.length} workspace${entries.length === 1 ? "" : "s"}:`,
+    )
+    printAccountBlock(server, accountId, "  ")
+    const def = account.workspaces[account.defaultWorkspace]
+    if (def) {
+      console.log(`\n  Publishes here target ${def.name}.`)
+      console.log(`  Change with:  derive workspace use "<name>"`)
+    }
+  } else {
+    console.log(`✓ Added ${handleLabel} to ${server}`)
+    console.log(`  Accounts on ${server}:`)
+    for (const a of listAccounts(server)) printAccountBlock(server, a.id, "    ")
+    const defaultHandle = listAccounts(server).find((a) => a.isDefault)
+    console.log(
+      `\n  Default account stays ${defaultHandle?.handle ? `@${defaultHandle.handle}` : "unchanged"}.`,
+    )
+    console.log(`  Switch with:  derive account use ${handleLabel}`)
+  }
+}
+
+async function interactiveLogout(server) {
+  const accounts = listAccounts(server)
+  if (!accounts.length) {
+    console.log("Not signed in.")
+    return
+  }
+  const labels = [
+    ...accounts.map((a) => `${a.handle ? `@${a.handle}` : a.id}${a.isDefault ? " (default)" : ""}`),
+    "All accounts",
+    "Cancel",
+  ]
+  const i = await promptChoice("Sign out which account?", labels)
+  if (i === null || i === labels.length - 1) return
+  if (i === labels.length - 2) {
+    for (const a of accounts) removeAccount(server, a.id)
+    console.log(
+      `✓ Signed out of ${server}. Cleared ${accounts.length} account${accounts.length === 1 ? "" : "s"} and their workspace maps.`,
+    )
+    return
+  }
+  const a = accounts[i]
+  removeAccount(server, a.id)
+  const remaining = listAccounts(server).find((r) => r.isDefault)
+  const stays = remaining
+    ? ` ${remaining.handle ? `@${remaining.handle}` : remaining.id} stays; default falls back to it.`
+    : ""
+  console.log(`✓ Signed out ${a.handle ? `@${a.handle}` : a.id}.${stays}`)
+}
+
+/** What `derive login` shows when already signed in: current state, then a
+ *  menu (re-sync / switch default workspace / add an account / sign out) — a
+ *  second login should never blindly re-authenticate or duplicate an account. */
+async function manageHub(server, hubFlags) {
+  const def = getDefault(server)
+  console.log(`\nSigned in to ${server}`)
+  for (const a of listAccounts(server)) printAccountBlock(server, a.id)
+
+  const choice = await promptChoice("\nWhat next?", [
+    "Re-sync workspaces from server",
+    "Switch default workspace",
+    "Add another account",
+    "Sign out",
+    "Cancel",
+  ])
+  if (choice === null || choice === 4) return
+  if (choice === 0) {
+    await syncWorkspaces(
+      server,
+      hubFlags.account ? resolveAccountRef(server, hubFlags.account) : def.account,
+    )
+  } else if (choice === 1) {
+    const account = getAccount(server, def.account)
+    const entries = Object.entries(account.workspaces ?? {})
+    if (!entries.length) {
+      console.log("No workspaces saved for this account — run `derive login --sync` first.")
+      return
+    }
+    const i = await promptChoice(
+      "Default workspace:",
+      entries.map(([, w]) => w.name),
+    )
+    if (i !== null) {
+      const [id, w] = entries[i]
+      setDefaultWorkspace(server, def.account, id)
+      console.log(`✓ Default workspace on ${server} is now ${w.name}.`)
+    }
+  } else if (choice === 2) {
+    await doOAuthLogin(server, { ...hubFlags, add: "true" })
+  } else if (choice === 3) {
+    await interactiveLogout(server)
+  }
+}
+
+if (cmd === "login") {
+  const server = resolveServer(flags)
+
+  if (flags.sync) {
+    const accountId = flags.account
+      ? resolveAccountRef(server, flags.account)
+      : getDefault(server)?.account
+    await syncWorkspaces(server, accountId)
+    process.exit(0)
+  }
+
+  const existingDefault = getDefault(server)
+  if (existingDefault && !flags.add && !flags.workspace && !flags.pick) {
+    await manageHub(server, flags)
+    process.exit(0)
+  }
+
+  await doOAuthLogin(server, flags)
+  process.exit(0)
+}
+
+// ---- derive accounts / workspaces / workspace / account / logout -----------
+if (cmd === "accounts") {
+  const server = resolveServer(flags)
+  const accounts = listAccounts(server)
+  if (flags.json) {
+    console.log(
+      JSON.stringify(
+        accounts.map((a) => ({ ...a, workspaces: getAccount(server, a.id)?.workspaces ?? {} })),
+      ),
+    )
+    process.exit(0)
+  }
+  if (!accounts.length) {
+    console.log(`Not signed in to ${server}. Run \`derive login\`.`)
+    process.exit(0)
+  }
+  console.log(server)
+  for (const a of accounts) printAccountBlock(server, a.id)
+  const def = getDefault(server)
+  const account = def && getAccount(server, def.account)
+  const ws = account?.workspaces?.[def?.workspace]
+  console.log(
+    `\nPublishing here targets:  ${account?.handle ? `@${account.handle}` : def?.account} / ${ws?.name ?? "(no workspace)"}`,
+  )
+  process.exit(0)
+}
+
+if (cmd === "workspaces") {
+  const server = resolveServer(flags)
+  const accountId = flags.account
+    ? resolveAccountRef(server, flags.account)
+    : getDefault(server)?.account
+  if (!accountId) {
+    console.error(`error: not signed in to ${server}`)
+    process.exit(1)
+  }
+  const account = getAccount(server, accountId)
+  if (flags.json) {
+    console.log(JSON.stringify(account.workspaces))
+    process.exit(0)
+  }
+  console.log(`${server} · ${account.handle ? `@${account.handle}` : accountId}`)
+  for (const [id, w] of Object.entries(account.workspaces ?? {})) {
+    const mark = id === account.defaultWorkspace ? "●" : " "
+    console.log(
+      `  ${mark} ${w.name}   ${w.role}${id === account.defaultWorkspace ? "  (default)" : ""}`,
+    )
+  }
+  process.exit(0)
+}
+
+if (cmd === "workspace") {
+  const sub = positional[0]
+  const ref = positional[1]
+  if (!["use", "forget"].includes(sub) || !ref) {
+    console.error("usage: derive workspace use|forget <name|id> [--account a]")
+    process.exit(1)
+  }
+  const server = resolveServer(flags)
+  const accountId = flags.account
+    ? resolveAccountRef(server, flags.account)
+    : getDefault(server)?.account
+  if (!accountId) {
+    console.error(`error: not signed in to ${server}`)
+    process.exit(1)
+  }
+  try {
+    if (sub === "use") {
+      const w = setDefaultWorkspace(server, accountId, ref)
+      console.log(`✓ Default workspace on ${server} is now ${w.name}.`)
+    } else {
+      const w = forgetWorkspace(server, accountId, ref)
+      if (!w) {
+        console.error(`error: no workspace "${ref}" for this account`)
+        process.exit(1)
+      }
+      console.log(`✓ Removed ${w.name} from this machine.  Re-add: derive login --sync`)
+    }
+  } catch (e) {
+    console.error(`error: ${e.message}`)
+    process.exit(1)
+  }
+  process.exit(0)
+}
+
+if (cmd === "account") {
+  const sub = positional[0]
+  const ref = positional[1]
+  if (sub !== "use" || !ref) {
+    console.error("usage: derive account use <@handle|id>")
+    process.exit(1)
+  }
+  const server = resolveServer(flags)
+  const accountId = resolveAccountRef(server, ref)
+  if (!accountId) {
+    console.error(`error: no signed-in account matches "${ref}"`)
+    process.exit(1)
+  }
+  setDefaultAccount(server, accountId)
+  const account = getAccount(server, accountId)
+  const ws = account.workspaces[account.defaultWorkspace]
+  console.log(
+    `✓ Default account is now ${account.handle ? `@${account.handle}` : accountId}.  Default workspace: ${ws?.name ?? "(none saved)"}.`,
+  )
+  process.exit(0)
+}
+
+if (cmd === "logout") {
+  const server = resolveServer(flags)
+  if (flags.all) {
+    const accounts = listAccounts(server)
+    for (const a of accounts) removeAccount(server, a.id)
+    console.log(`✓ Signed out of ${server}.`)
+    process.exit(0)
+  }
+  if (flags.account) {
+    const accountId = resolveAccountRef(server, flags.account)
+    if (!accountId) {
+      console.error(`error: no signed-in account matches "${flags.account}"`)
+      process.exit(1)
+    }
+    const account = getAccount(server, accountId)
+    removeAccount(server, accountId)
+    const remaining = listAccounts(server).find((r) => r.isDefault)
+    const stays = remaining
+      ? ` ${remaining.handle ? `@${remaining.handle}` : remaining.id} stays; default falls back to it.`
+      : ""
+    console.log(`✓ Signed out ${account?.handle ? `@${account.handle}` : accountId}.${stays}`)
+    process.exit(0)
+  }
+  await interactiveLogout(server)
   process.exit(0)
 }
 
@@ -166,7 +624,8 @@ if (LOOP.includes(cmd)) {
     process.exit(1)
   }
   const r = resolvePublish(flags, cfg)
-  r.token = flags.token ?? process.env.DERIVE_TOKEN ?? (await freshToken(r.server))
+  requireNoTargetError(r)
+  r.token = flags.token ?? process.env.DERIVE_TOKEN ?? (await freshToken(r.server, r.accountId))
   // `derive open <short_id>` / `derive status <short_id>` / `derive comments
   // <short_id>`: a positional id overrides the repo pin — the fallback an agent
   // runs when a publish reports opened_in_tab:false. (reply/resolve keep their
@@ -176,7 +635,10 @@ if (LOOP.includes(cmd)) {
     console.error(`error: no artifact id. Set "id" in ${CONFIG_FILE} (publish once), or pass --id.`)
     process.exit(1)
   }
-  const auth = r.token ? { authorization: `Bearer ${r.token}` } : {}
+  const auth = {
+    ...(r.token ? { authorization: `Bearer ${r.token}` } : {}),
+    ...(r.workspaceId ? { "x-derive-workspace": r.workspaceId } : {}),
+  }
   const base = `${r.server}/v1/artifacts/${r.id}`
   const die = async (res) => {
     const j = await res.json().catch(() => ({}))
@@ -187,11 +649,7 @@ if (LOOP.includes(cmd)) {
   if (cmd === "open") {
     const url = `${r.server}/a/${r.id}`
     console.log(url)
-    const opener =
-      process.platform === "darwin" ? "open" : process.platform === "win32" ? "start" : "xdg-open"
-    spawn(opener, [url], { stdio: "ignore", detached: true })
-      .on("error", () => {})
-      .unref()
+    openBrowser(url)
     process.exit(0)
   }
 
@@ -276,8 +734,15 @@ if (LOOP.includes(cmd)) {
 if (cmd !== "publish") {
   console.error(`usage:
   derive init [dir] [--template md|html|slides|site] [--title t]
-  derive login [--local] [--server url]    OAuth sign-in (defaults to https://derive.to); saves a persistent token
-  derive publish [file|dir] [--id X] [--title t] [--slug s] [--spa] [--message m] [--name "x"] [--visibility v] [--password p] [--server url] [--token t] [--json]
+  derive login [--local] [--server url] [--workspace w] [--pick] [--add] [--sync]
+                                            OAuth sign-in (defaults to https://derive.to);
+                                            discovers every workspace you belong to
+  derive accounts [--json]                 every signed-in account + its workspaces
+  derive workspaces [--account a] [--json] the resolved account's workspaces
+  derive workspace use|forget <ref> [--account a]   set/drop the default workspace
+  derive account use <ref>                 set the default account
+  derive logout [--account a] [--all]      sign out
+  derive publish [file|dir] [--id X] [--title t] [--slug s] [--spa] [--message m] [--name "x"] [--visibility v] [--password p] [--server url] [--token t] [--workspace w] [--account a] [--json]
   derive comments [--id X]                 list comment threads
   derive open [--id X]                     open the artifact in a browser
   derive reply <thread_id> <message…>      reply in a thread
@@ -297,6 +762,7 @@ try {
   process.exit(1)
 }
 const p = resolvePublish({ ...flags, target: positional[0] }, config)
+requireNoTargetError(p)
 
 if (!p.target) {
   console.error(
@@ -351,9 +817,13 @@ if (p.visibility) form.append("visibility", p.visibility)
 if (p.password) form.append("password", p.password)
 if (flags.review) form.append("request_review", "true")
 
-p.token = flags.token ?? process.env.DERIVE_TOKEN ?? (await freshToken(p.server))
+p.token = flags.token ?? process.env.DERIVE_TOKEN ?? (await freshToken(p.server, p.accountId))
+requireSignedIn(p)
 const url = p.id ? `${p.server}/v1/artifacts/${p.id}/versions` : `${p.server}/v1/artifacts`
-const headers = p.token ? { authorization: `Bearer ${p.token}` } : {}
+const headers = {
+  ...(p.token ? { authorization: `Bearer ${p.token}` } : {}),
+  ...(p.workspaceId ? { "x-derive-workspace": p.workspaceId } : {}),
+}
 const res = await fetch(url, { method: "POST", body: form, headers })
 const json = await res.json().catch(() => ({}))
 if (!res.ok) {
@@ -387,4 +857,8 @@ if (flags.json) {
   if (flags.review)
     console.log(`  ↩ review requested — the human reviews in the app, then Send back`)
   if (savedId) console.log(`  saved id to ${CONFIG_FILE} — future publishes target this artifact`)
+  if (p.workspaceName) {
+    const who = p.accountHandle ? `@${p.accountHandle}` : p.accountId
+    console.log(`  → ${p.server} / ${who} / ${p.workspaceName}`)
+  }
 }

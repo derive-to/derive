@@ -25,6 +25,12 @@
   "bin": {
     "derive": "./bin/derive.js"
   },
+  "exports": {
+    "./config": {
+      "types": "./src/config.d.ts",
+      "default": "./src/config.js"
+    }
+  },
   "files": [
     "bin",
     "src"

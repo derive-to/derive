@@ -176,3 +176,39 @@ describe("derive client (the MCP server's backend) over real HTTP", () => {
     await expect(client.get("nope0000")).rejects.toThrow(/derive 404/)
   })
 })
+
+describe("createClient — workspace targeting", () => {
+  // The workspace header only matters for an OAuth agent token (see
+  // apps/api/src/context.ts's re-home logic) — a static DERIVE_TOKEN ignores it
+  // server-side, so that path is covered by the API's own oauth-workspace tests.
+  // What belongs here, at the client boundary, is simpler: does the option turn
+  // into the header at all, on every call. `fetchImpl` intercepts before any
+  // network I/O.
+  const capture = () => {
+    const calls: [string, RequestInit | undefined][] = []
+    const fetchImpl = (async (url: string | URL, init?: RequestInit) => {
+      calls.push([String(url), init])
+      return new Response(JSON.stringify({ artifacts: [] }), { status: 200 })
+    }) as typeof fetch
+    return { calls, fetchImpl }
+  }
+
+  it("sends X-Derive-Workspace when a workspace is set", async () => {
+    const { calls, fetchImpl } = capture()
+    const c = createClient({ baseUrl: "http://x", token: "t", workspace: "ws_acme", fetchImpl })
+    await c.list()
+    expect(calls).toHaveLength(1)
+    const headers = calls[0]?.[1]?.headers as Record<string, string>
+    expect(headers["X-Derive-Workspace"]).toBe("ws_acme")
+    expect(headers.Authorization).toBe("Bearer t")
+  })
+
+  it("omits the header entirely when no workspace is given", async () => {
+    const { calls, fetchImpl } = capture()
+    const c = createClient({ baseUrl: "http://x", token: "t", fetchImpl })
+    await c.list()
+    expect(calls).toHaveLength(1)
+    const headers = calls[0]?.[1]?.headers as Record<string, string>
+    expect(headers["X-Derive-Workspace"]).toBeUndefined()
+  })
+})
