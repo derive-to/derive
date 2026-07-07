@@ -38,6 +38,8 @@ export function GeneralSection() {
   const [savingName, setSavingName] = useState(false)
   const [createOpen, setCreateOpen] = useState(false)
   const [newName, setNewName] = useState("")
+  const [newInvites, setNewInvites] = useState("")
+  const [creating, setCreating] = useState(false)
   const [delName, setDelName] = useState("")
   const [deleting, setDeleting] = useState(false)
 
@@ -47,16 +49,37 @@ export function GeneralSection() {
     if (ws) setName(ws.name)
   }, [ws])
 
+  // ?new-workspace=1 auto-opens the create dialog — the deep link the user pod and
+  // the share dialog's first-need hint navigate to. One-shot: consumed + stripped
+  // (same pattern as the GitHub section's gh_install handshake params).
+  useEffect(() => {
+    const url = new URL(window.location.href)
+    if (url.searchParams.get("new-workspace")) {
+      setCreateOpen(true)
+      url.searchParams.delete("new-workspace")
+      window.history.replaceState(null, "", url)
+    }
+  }, [])
+
   const isAdmin = ws?.role === "owner"
 
   // Create a brand-new workspace — a deliberate, infrequent action that lives
-  // here rather than in the rail's switcher. createWorkspace reloads into it.
-  const createSubmit = () => {
+  // here rather than in the rail's switcher. One flow: name it and (optionally)
+  // invite the team in the same gesture; createWorkspace switches + reloads.
+  const createSubmit = async () => {
     const t = newName.trim()
-    if (!t) return
-    createWorkspace(t)
-    setNewName("")
-    setCreateOpen(false)
+    if (!t || creating) return
+    const invites = newInvites
+      .split(/[\s,;]+/)
+      .map((s) => s.trim())
+      .filter((s) => s.includes("@"))
+    setCreating(true)
+    try {
+      await createWorkspace(t, invites)
+    } catch (e) {
+      toast.error((e as Error).message)
+      setCreating(false)
+    }
   }
 
   const saveName = async () => {
@@ -104,7 +127,9 @@ export function GeneralSection() {
           <DialogContent>
             <DialogHeader>
               <DialogTitle>Create a workspace</DialogTitle>
-              <DialogDescription>Starts empty. You'll be the owner.</DialogDescription>
+              <DialogDescription>
+                A shared library for a team. You'll be the owner.
+              </DialogDescription>
             </DialogHeader>
             <Input
               autoFocus
@@ -115,6 +140,18 @@ export function GeneralSection() {
               onChange={(e) => setNewName(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && createSubmit()}
               maxLength={80}
+            />
+            {/* Naming a workspace and bringing the team are one gesture — the
+                invites are optional, but asking here means nobody has to discover
+                Members as a separate second step. */}
+            <Input
+              value={newInvites}
+              placeholder="Invite teammates — emails, comma-separated (optional)"
+              aria-label="Invite teammates by email"
+              data-testid="workspace-new-invites"
+              onChange={(e) => setNewInvites(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && createSubmit()}
+              className="mt-2"
             />
             <div className="mt-3 flex justify-end gap-2">
               <Button
@@ -127,10 +164,11 @@ export function GeneralSection() {
               <Button
                 variant="default"
                 onClick={createSubmit}
-                disabled={!newName.trim()}
+                disabled={!newName.trim() || creating}
+                loading={creating}
                 data-testid="workspace-create-submit"
               >
-                Create
+                {creating ? "Creating…" : "Create"}
               </Button>
             </div>
           </DialogContent>

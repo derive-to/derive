@@ -711,7 +711,13 @@ export function NavRail() {
         <SidebarMenu>
           <SidebarMenuItem>
             <UserPod
-              workspaceLabel={summary?.workspace ?? ""}
+              // The personal workspace's stored name is provisioning plumbing
+              // ("X's Workspace") — the subtitle says "Personal" instead.
+              workspaceLabel={
+                workspaces?.workspaces.find((w) => w.id === workspaces.active)?.personal
+                  ? "Personal"
+                  : (summary?.workspace ?? "")
+              }
               workspaces={workspaces ?? null}
               onSwitchWorkspace={switchWorkspace}
             />

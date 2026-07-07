@@ -11,7 +11,9 @@ export interface ShellValue {
   paletteOpen: boolean
   setPaletteOpen: (open: boolean) => void
   switchWorkspace: (id: string) => void
-  createWorkspace: (name: string) => void
+  /** Create + switch; optional invite emails go out before the reload (one flow —
+   *  naming a workspace and bringing the team are the same gesture). */
+  createWorkspace: (name: string, invites?: string[]) => Promise<void>
   deleteWorkspace: (id: string) => void
 }
 

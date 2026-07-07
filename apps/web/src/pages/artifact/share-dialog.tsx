@@ -1,4 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
+import { useNavigate } from "@tanstack/react-router"
 import { Fragment, useEffect, useRef, useState } from "react"
 import {
   API_BASE,
@@ -33,7 +34,7 @@ import {
 import { toast } from "@/components/ui/sonner"
 import { useAuth } from "@/ctx"
 import { getInitials } from "@/lib/initials"
-import { artifactQuery } from "@/lib/queries"
+import { artifactQuery, workspaceQuery } from "@/lib/queries"
 import { cn } from "@/lib/utils"
 
 // General access (visibility) options as two dimensions, not one flat ladder:
@@ -187,6 +188,21 @@ export function ShareButton({
   // ACCESS at every place the icon/label/blurb is needed.
   const currentAccess = ACCESS.find((a) => a.value === vis)
   const visibilityAccess = ACCESS.find((a) => a.value === visibility)
+  // A workspace of one makes the team rungs meaningless (both collapse to
+  // Private-with-extra-words), so a solo account gets a three-rung menu and a
+  // create-a-workspace hint where the team rungs would be — the concept's first
+  // appearance is the moment it answers "how do I show this to my team?".
+  // Default to NOT solo while the roster loads, so rungs never flash out.
+  const nav = useNavigate()
+  const { data: workspace } = useQuery(workspaceQuery())
+  const solo = workspace ? workspace.members.length <= 1 : false
+  // Keep a team rung visible when it's the artifact's CURRENT state (or the
+  // in-flight pick), so the select never renders a value it doesn't contain.
+  const accessGroups = solo
+    ? ACCESS_GROUPS.map((g) =>
+        g.filter((a) => !["org", "unlisted"].includes(a.value) || a.value === vis),
+      ).filter((g) => g.length > 0)
+    : ACCESS_GROUPS
   // Reach visibilities (anyone with the link / public / password) carry a general-access
   // permission; private/workspace do not, so the view/comment control hides for them.
   const reach = vis === "link" || vis === "public" || vis === "password"
@@ -438,7 +454,7 @@ export function ShareButton({
                       {currentAccess?.label ?? vis}
                     </SelectMenuTrigger>
                     <SelectMenuContent>
-                      {ACCESS_GROUPS.map((group, gi) => (
+                      {accessGroups.map((group, gi) => (
                         <Fragment key={group[0]?.value ?? gi}>
                           {gi > 0 && <SelectMenuSeparator />}
                           {group.map((a) => (
@@ -540,6 +556,29 @@ export function ShareButton({
                     </Button>
                   )}
                 </p>
+                {/* First-need on-ramp: the hidden team rungs, explained at the
+                    exact moment they'd have been useful. */}
+                {solo && (
+                  <p className="text-sm text-muted-foreground">
+                    Working with a team?{" "}
+                    <Button
+                      variant="link"
+                      size="xs"
+                      data-testid="share-create-workspace"
+                      className="px-0"
+                      onClick={() =>
+                        nav({
+                          to: "/settings/$section",
+                          params: { section: "general" },
+                          search: { "new-workspace": "1" },
+                        })
+                      }
+                    >
+                      Create a workspace
+                    </Button>{" "}
+                    to share with them.
+                  </p>
+                )}
               </div>
             ) : (
               <p className="mt-2 flex items-center gap-1.5 text-sm text-muted-foreground">
@@ -553,7 +592,7 @@ export function ShareButton({
             <SectionEyebrow count={members.length || undefined}>People with access</SectionEyebrow>
             {members.length === 0 ? (
               <p data-testid="share-empty" className="px-2 py-2.5 text-sm text-muted-foreground">
-                {canManage ? "No one shared yet." : "Just you and the workspace."}
+                {canManage ? "No one shared yet." : "No one else has been added."}
               </p>
             ) : (
               <div className="-mx-2 mt-1 flex flex-col">

@@ -317,6 +317,8 @@ export interface WorkspaceSummary {
   id: string
   name: string
   role: Role
+  /** The caller's auto-provisioned personal workspace — shown as "Personal", pinned first. */
+  personal: boolean
 }
 /** The switcher payload: whether multi-workspace is on, the active id, the list. */
 export interface Workspaces {
@@ -1068,8 +1070,16 @@ export const api = {
   // The accept page: preview an invite by token, then join.
   previewInvite: (token: string): Promise<InvitePreview> =>
     f(`/v1/invites/${encodeURIComponent(token)}`, opts()).then(j),
-  acceptInvite: (token: string): Promise<{ org_id: string; role: Role }> =>
-    f(`/v1/invites/${encodeURIComponent(token)}/accept`, opts({})).then(j),
+  // confirmMismatch: the holder is signed in under a different email than the
+  // invite named — the server 409s until they explicitly accept anyway.
+  acceptInvite: (
+    token: string,
+    confirmMismatch?: boolean,
+  ): Promise<{ org_id: string; role: Role }> =>
+    f(
+      `/v1/invites/${encodeURIComponent(token)}/accept`,
+      opts(confirmMismatch ? { confirm_mismatch: true } : {}),
+    ).then(j),
   setWorkspaceMemberRole: (userId: string, role: Role): Promise<{ user_id: string; role: Role }> =>
     f(`/v1/workspace/members/${userId}`, { ...opts({ role }), method: "PATCH" }).then(j),
   removeWorkspaceMember: (userId: string): Promise<void> =>
