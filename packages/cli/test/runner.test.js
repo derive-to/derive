@@ -133,6 +133,14 @@ describe("loadRunnerConfig", () => {
     expect(cfg.token).toBe("")
     expect(cfg.contextId).toBe("")
   })
+
+  it("carries --manifest-file (dev mode) into the config", () => {
+    const cfg = loadRunnerConfig(
+      { DERIVE_TOKEN: "t" },
+      { context: "ctx_x", "manifest-file": "/work/context/MANIFEST.md" },
+    )
+    expect(cfg.manifestFile).toBe("/work/context/MANIFEST.md")
+  })
 })
 
 describe("output contract + service units", () => {
@@ -148,11 +156,13 @@ describe("output contract + service units", () => {
     )
     cfg.tokenFile = "/secrets/tok"
     cfg.envFiles = ["/work/.env", "/work/extra.env"]
+    cfg.manifestFile = "/work/context/MANIFEST.md"
     const mac = renderServiceUnit(cfg, "/opt/cli/bin/derive.js", "darwin")
     expect(mac.unit).toContain("<string>ctx_abc</string>")
     expect(mac.unit).toContain("<string>--token-file</string>")
     expect(mac.unit).toContain("<string>/work/.env,/work/extra.env</string>")
     expect(mac.unit).toContain("<string>2400000</string>") // timeout survives into the unit
+    expect(mac.unit).toContain("<string>--manifest-file</string>")
     expect(mac.path).toContain("to.derive.runner.abc")
     const linux = renderServiceUnit(cfg, "/opt/cli/bin/derive.js", "linux")
     expect(linux.unit).toContain("ExecStart=")

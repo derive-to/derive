@@ -80,6 +80,10 @@ export function loadRunnerConfig(env = process.env, flags = {}, { partial = fals
     timeoutMs: positiveMs(flags.timeout ?? env.RUNNER_TIMEOUT_MS, 600_000, 10_000),
     pollMs: positiveMs(flags.poll ?? env.RUNNER_POLL_MS, 5_000, 500),
     mock: flags.mock === "true" || env.RUNNER_MOCK === "1",
+    // Dev mode (`derive context dev`): the system prompt comes from this local
+    // file instead of the pushed manifest — edit, save, and the next answer
+    // uses it, no push. Sessions and answers still go through the server.
+    manifestFile: flags["manifest-file"] ?? null,
     // Carried so `runner install` can reproduce this exact config in a unit —
     // a rendered service that silently dropped the env files would boot a
     // runner whose MCP servers have no credentials.
@@ -427,10 +431,12 @@ async function serveSession(client, session, manifest, cfg) {
 export async function serve(cfg) {
   const client = new DeriveClient(cfg.server, cfg.token)
   const info = await client.getContext(cfg.contextId)
-  if (!info.manifest_md) throw new Error("context has no readable manifest")
+  if (!info.manifest_md && !cfg.manifestFile) throw new Error("context has no readable manifest")
+  if (cfg.manifestFile) readFileSync(cfg.manifestFile, "utf8") // fail at startup, not first answer
   console.log(
     `[runner] serving "${info.name}" (${cfg.contextId}) on ${cfg.server} — ` +
-      `manifest v${info.manifest_version}, ${cfg.mock ? "MOCK" : `${cfg.claudeBin} (${cfg.model})`}, poll ${cfg.pollMs}ms`,
+      `${cfg.manifestFile ? `manifest LOCAL ${cfg.manifestFile}` : `manifest v${info.manifest_version}`}, ` +
+      `${cfg.mock ? "MOCK" : `${cfg.claudeBin} (${cfg.model})`}, poll ${cfg.pollMs}ms`,
   )
 
   for (;;) {
@@ -447,9 +453,11 @@ export async function serve(cfg) {
       })
       if (sessions.length > 0) {
         // Re-read the manifest only when the queue has work — an edit applies
-        // from the next answer, and idle polls stay one call.
-        const fresh = await client.getContext(cfg.contextId)
-        const manifest = fresh.manifest_md ?? info.manifest_md
+        // from the next answer, and idle polls stay one call. In dev mode the
+        // working-tree file wins, same freshness contract.
+        const manifest = cfg.manifestFile
+          ? readFileSync(cfg.manifestFile, "utf8")
+          : ((await client.getContext(cfg.contextId)).manifest_md ?? info.manifest_md)
         // Sequential on purpose: one runner, one model, no fan-out — fairness
         // comes from the queue's oldest-first order. One session's failure must
         // not starve the rest of the batch.
@@ -580,6 +588,7 @@ export function renderServiceUnit(cfg, binPath, platform = process.platform) {
   ]
   if (cfg.tokenFile) argv.push("--token-file", cfg.tokenFile)
   if (cfg.envFiles?.length) argv.push("--env-file", cfg.envFiles.join(","))
+  if (cfg.manifestFile) argv.push("--manifest-file", cfg.manifestFile)
   if (platform === "darwin") {
     // Paths with &, <, > (think "/Users/x/R&D") would render a plist launchctl
     // rejects outright.
