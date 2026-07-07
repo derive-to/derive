@@ -1031,17 +1031,12 @@ export class PgMetaStore implements MetaStore {
     } else {
       conds.push(eq(artifact.author_id, userId))
     }
-    // Private and unlisted work never rides a profile, shared workspace or not
-    // (see repos.ts).
+    // Private work never rides a profile, shared workspace or not (see repos.ts).
     const orgs = opts.visibleOrgIds ?? []
     if (orgs.length > 0) {
       const v = or(
         eq(artifact.visibility, "public"),
-        and(
-          inArray(artifact.org_id, orgs),
-          ne(artifact.visibility, "private"),
-          ne(artifact.visibility, "unlisted"),
-        ),
+        and(inArray(artifact.org_id, orgs), ne(artifact.visibility, "private")),
       )
       if (v) conds.push(v)
     } else {

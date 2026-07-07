@@ -30,7 +30,7 @@ export function runStoreContract(
     org_id: ORG,
     slug: "doc",
     title: "Doc",
-    visibility: "link",
+    visibility: "public",
     kind: "file",
     spa: 0,
     ...over,
@@ -128,19 +128,24 @@ export function runStoreContract(
       expect(await store.listArtifacts({ ids: [] })).toEqual([])
     })
 
-    it("changes visibility + general-access role (sets/clears the password hash)", async () => {
+    it("changes visibility + general-access role (sets/clears the password lock)", async () => {
       const a = await store.createArtifact(newArtifact())
       expect(a.general_role).toBe("viewer") // defaults to view-only
-      await store.setVisibility(a.id, "password", "hash123", "viewer")
-      expect(await store.getByShortId(a.short_id)).toMatchObject({ visibility: "password" })
-      // Flip to a comment link: visibility + general_role both round-trip.
-      await store.setVisibility(a.id, "link", null, "commenter")
+      // A locked public doc: visibility public + a password hash.
+      await store.setVisibility(a.id, "public", "hash123", "viewer")
       expect(await store.getByShortId(a.short_id)).toMatchObject({
-        visibility: "link",
+        visibility: "public",
+        password_hash: "hash123",
+      })
+      // Unlock it and grant comment: hash cleared, general_role round-trips.
+      await store.setVisibility(a.id, "public", null, "commenter")
+      expect(await store.getByShortId(a.short_id)).toMatchObject({
+        visibility: "public",
+        password_hash: null,
         general_role: "commenter",
       })
       // And back to view-only.
-      await store.setVisibility(a.id, "link", null, "viewer")
+      await store.setVisibility(a.id, "public", null, "viewer")
       expect((await store.getByShortId(a.short_id))?.general_role).toBe("viewer")
     })
 
@@ -154,13 +159,13 @@ export function runStoreContract(
     })
   })
 
-  describe(`${label}: unlisted listings (workspace, link only)`, () => {
-    it("hides unlisted from ordinary listings, folds the owner's back in on demand", async () => {
-      const owner = `u_ul_owner_${uuid()}`
-      const other = `u_ul_other_${uuid()}`
-      const org = `${ORG}_ul_${uuid()}`
+  describe(`${label}: private listings (the draft state)`, () => {
+    it("shows private rows to their members only — the owner's drafts stay theirs", async () => {
+      const owner = `u_pv_owner_${uuid()}`
+      const other = `u_pv_other_${uuid()}`
+      const org = `${ORG}_pv_${uuid()}`
       const draft = await store.createArtifact(
-        newArtifact({ org_id: org, visibility: "unlisted", title: "Agent Draft Alpha" }),
+        newArtifact({ org_id: org, visibility: "private", title: "Agent Draft Alpha" }),
       )
       await store.setArtifactMember({
         id: uuid(),
@@ -172,31 +177,23 @@ export function runStoreContract(
         newArtifact({ org_id: org, visibility: "org", title: "Team Doc" }),
       )
 
-      // Ordinary viewer-scoped listing: unlisted hidden from EVERYONE — the owner
-      // included (they have the dedicated filter) — and from title search.
-      for (const viewer of [owner, other]) {
-        const ids = (await store.listArtifacts({ orgId: org, viewerId: viewer })).map((x) => x.id)
-        expect(ids, `default listing for ${viewer}`).not.toContain(draft.id)
-        expect(ids).toContain(listed.id)
-      }
+      // The owner sees their draft in an ordinary listing; a teammate never does —
+      // not in the list, not via title search.
+      const ownersView = (await store.listArtifacts({ orgId: org, viewerId: owner })).map(
+        (x) => x.id,
+      )
+      expect(ownersView).toContain(draft.id)
+      expect(ownersView).toContain(listed.id)
+      const othersView = (await store.listArtifacts({ orgId: org, viewerId: other })).map(
+        (x) => x.id,
+      )
+      expect(othersView).not.toContain(draft.id)
+      expect(othersView).toContain(listed.id)
       expect(
         (await store.listArtifacts({ orgId: org, viewerId: other, q: "agent draft" })).map(
           (x) => x.id,
         ),
       ).toEqual([])
-
-      // "include": the owner's own drafts ride along (MCP list_artifacts); a
-      // non-member viewer still can't see them.
-      const inc = (
-        await store.listArtifacts({ orgId: org, viewerId: owner, unlisted: "include" })
-      ).map((x) => x.id)
-      expect(inc).toContain(draft.id)
-      expect(inc).toContain(listed.id)
-      expect(
-        (await store.listArtifacts({ orgId: org, viewerId: other, unlisted: "include" })).map(
-          (x) => x.id,
-        ),
-      ).not.toContain(draft.id)
 
       // A trusted caller (no viewerId — operator/internal) still sees everything.
       expect((await store.listArtifacts({ orgId: org })).map((x) => x.id)).toContain(draft.id)
@@ -206,10 +203,10 @@ export function runStoreContract(
       ).not.toContain(draft.id)
     })
 
-    it("keeps unlisted work off profiles, even across a shared workspace", async () => {
-      const author = `u_ul_author_${uuid()}`
-      const org = `${ORG}_ul_pp_${uuid()}`
-      const draft = await store.createArtifact(newArtifact({ org_id: org, visibility: "unlisted" }))
+    it("keeps private work off profiles, even across a shared workspace", async () => {
+      const author = `u_pv_author_${uuid()}`
+      const org = `${ORG}_pv_pp_${uuid()}`
+      const draft = await store.createArtifact(newArtifact({ org_id: org, visibility: "private" }))
       await store.addVersion(draft.id, newVersion({ author: "Author", author_id: author }))
       const works = await store.listUserWorks(author, [], { visibleOrgIds: [org] })
       expect(works.map((a) => a.id)).not.toContain(draft.id)
@@ -301,7 +298,7 @@ export function runStoreContract(
       expect(await store.countOwnedBy(org, someoneElse)).toBe(1)
       // The visibility narrow (the link-only pending badge).
       expect(await store.countOwnedBy(org, me, "private")).toBe(1)
-      expect(await store.countOwnedBy(org, me, "unlisted")).toBe(0)
+      expect(await store.countOwnedBy(org, me, "org")).toBe(0)
       // Scoped to the workspace — an owner row elsewhere doesn't leak in.
       expect(await store.countOwnedBy(`${org}_other`, me)).toBe(0)
     })
@@ -314,7 +311,7 @@ export function runStoreContract(
       const me = `u_owned_stable_${uuid()}`
       const org = `${ORG}_owned_stable_${uuid()}`
       const a = await store.createArtifact(
-        newArtifact({ org_id: org, visibility: "unlisted", author_id: me }),
+        newArtifact({ org_id: org, visibility: "private", author_id: me }),
       )
       await store.setArtifactMember({ id: uuid(), artifact_id: a.id, user_id: me, role: "owner" })
 
@@ -327,7 +324,7 @@ export function runStoreContract(
       await store.addVersion(a.id, newVersion({ author: "ci", author_id: null }))
       expect((await store.getArtifactById(a.id))?.author_id).toBeNull() // the denorm moved…
       expect(await store.artifactIdsOwnedBy(org, me)).toEqual([a.id]) // …the filter didn't
-      expect(await store.countOwnedBy(org, me, "unlisted")).toBe(1)
+      expect(await store.countOwnedBy(org, me, "private")).toBe(1)
     })
 
     it("sets and clears the current author directly (the backfill path)", async () => {
@@ -634,8 +631,10 @@ export function runStoreContract(
       // Maya's PUBLIC work, in her own workspace (author_id stamped on hand-publish).
       const pub = await store.createArtifact(newArtifact({ org_id: mayaOrg, visibility: "public" }))
       await store.addVersion(pub.id, newVersion({ author: "Maya", author_id: maya }))
-      // Maya's PRIVATE (link) work — must NOT leak into a follower's feed.
-      const priv = await store.createArtifact(newArtifact({ org_id: mayaOrg, visibility: "link" }))
+      // Maya's PRIVATE work — must NOT leak into a follower's feed.
+      const priv = await store.createArtifact(
+        newArtifact({ org_id: mayaOrg, visibility: "private" }),
+      )
       await store.addVersion(priv.id, newVersion({ author: "Maya", author_id: maya }))
       // Someone else's public work in another workspace — not followed, must not appear.
       const other = await store.createArtifact(

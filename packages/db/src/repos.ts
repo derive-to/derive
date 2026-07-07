@@ -142,24 +142,18 @@ export function artifactListConditions(
 ): SQL[] {
   const conds: SQL[] = []
   // Anonymous / non-member callers only ever see public artifacts in a listing — an
-  // org/link/password title must not leak to someone who can't open it.
+  // org title must not leak to someone who can't open it.
   if (opts?.publicOnly) conds.push(eq(art.visibility, "public"))
   // `private` artifacts are invisible even to workspace members unless they're an
-  // explicit artifact member. The subquery names the table literally — sqlite, D1,
-  // and pg all call it artifact_member, and this function serves all three.
+  // explicit artifact member (the publisher's owner row, a share, a collection).
+  // The subquery names the table literally — sqlite, D1, and pg all call it
+  // artifact_member, and this function serves all three.
   else if (opts?.viewerId) {
     const isMember = sql`EXISTS (
         SELECT 1 FROM artifact_member am
         WHERE am.artifact_id = ${art.id} AND am.user_id = ${opts.viewerId}
       )`
     conds.push(sql`(${art.visibility} != 'private' OR ${isMember})`)
-    // `unlisted` hides from every ordinary listing — even the owner's ("Created
-    // by me" is the finder). "include" folds the viewer's own back in (MCP
-    // list_artifacts + the deliberate shared/feedback/mine signals).
-    // Ownership = an explicit artifact_member row, the same contract `private` uses.
-    if (opts.unlisted === "include")
-      conds.push(sql`(${art.visibility} != 'unlisted' OR ${isMember})`)
-    else conds.push(sql`${art.visibility} != 'unlisted'`)
   }
   // A trusted caller (operator token / internal jobs, no viewerId) sees everything.
   if (opts?.q) conds.push(like(sql`lower(${art.title})`, `%${opts.q.toLowerCase()}%`))
@@ -1101,17 +1095,13 @@ export function makeRepos(db: SqliteDb) {
       conds.push(eq(artifact.author_id, userId))
     }
     // Visible to the viewer: public OR in a workspace they share with the profile
-    // owner. Private and unlisted work never rides a profile, shared workspace or
-    // not — the owner finds them in their library, not on their public face.
+    // owner. Private work never rides a profile, shared workspace or not — the
+    // owner finds it in their library, not on their public face.
     const orgs = opts.visibleOrgIds ?? []
     if (orgs.length > 0) {
       const v = or(
         eq(artifact.visibility, "public"),
-        and(
-          inArray(artifact.org_id, orgs),
-          ne(artifact.visibility, "private"),
-          ne(artifact.visibility, "unlisted"),
-        ),
+        and(inArray(artifact.org_id, orgs), ne(artifact.visibility, "private")),
       )
       if (v) conds.push(v)
     } else {

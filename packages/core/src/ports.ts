@@ -102,12 +102,6 @@ export interface ListArtifactsOpts {
    *  members, so the query needs the viewer to check membership against. Omitted ⇒
    *  a trusted caller (the operator token / internal jobs) that sees everything. */
   viewerId?: string
-  /** How `unlisted` rows behave for a viewer-scoped listing. Default (omitted) =
-   *  exclude: unlisted is hidden from every ordinary listing, even the owner's —
-   *  "Created by me" is the finder. "include" folds the viewer's own unlisted
-   *  work in (MCP list_artifacts + the deliberate shared/feedback/mine signals,
-   *  so you always find what's yours). Ignored without `viewerId`. */
-  unlisted?: "exclude" | "include"
   /** Profile work-list visibility gate: a row is included when it is `public` OR its
    *  `org_id` is in this set (the workspaces the viewer shares with the profile owner).
    *  An empty/omitted set with a profile query ⇒ public-only. Used by `listUserWorks`

@@ -192,15 +192,10 @@ export const artifactRoutes = (ctx: AppContext) => {
       // feed back to the active workspace and strip a followed person's public work.
       orgId: shared || following ? undefined : listOrg,
       publicOnly: shared || following ? false : publicOnly,
-      // Private artifacts appear only for their explicit members; the operator
-      // token sees everything (viewerId omitted).
+      // Private artifacts appear only for their explicit members (the publisher's
+      // owner row included, so agents and owners always find their own drafts);
+      // the operator token sees everything (viewerId omitted).
       viewerId: isOperator ? undefined : (memberKey ?? undefined),
-      // Agents fold their registrant's unlisted work back in (an agent must always
-      // find what it published — the stdio shim's list rides this route). Shared,
-      // needs-feedback, and mine are equally deliberate signals — an explicit
-      // share, a thread you're in, your own authorship — so unlisted docs surface
-      // there too. Ordinary listings stay clean; that's what the filter is for.
-      unlisted: agent || shared || needsFeedback || mineScope ? "include" : undefined,
     })
     const hasMore = rows.length > limit
     const page = hasMore ? rows.slice(0, limit) : rows

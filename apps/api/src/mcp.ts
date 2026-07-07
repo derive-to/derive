@@ -193,14 +193,13 @@ function buildServer(
       inputSchema: { query: z.string().optional().describe("Optional title search filter.") },
     },
     async ({ query }) => {
-      // viewerId keeps private rows scoped to the agent's human (mirrors `own`);
-      // "include" folds in that human's own unlisted work, so the agent can
-      // always find what it published even though listings hide it.
+      // viewerId keeps private rows scoped to the agent's human (mirrors `own`) —
+      // the owner row written at publish is what lets the agent always find its
+      // own drafts while a teammate's private work stays invisible.
       const arts = await ctx.meta.listArtifacts({
         orgId: org,
         q: query,
         viewerId: actingFor?.id ?? agent.id,
-        unlisted: "include",
       })
       return json({ count: arts.length, artifacts: arts.map(summarizeArtifact) })
     },
