@@ -23,7 +23,7 @@ import { z } from "zod"
 import type { AppContext } from "../context"
 import { publishSweepEvents } from "../lib/anchor-sweep"
 import { authorProfile, resolveHandles } from "../lib/author"
-import { hashPassword, unlockCookie, unlockToken, verifyPassword } from "../lib/crypto"
+import { hashPassword, signState, unlockCookie, unlockToken, verifyPassword } from "../lib/crypto"
 import {
   DEFAULT_WORKSPACE_NAME,
   fail,
@@ -678,6 +678,15 @@ export const artifactRoutes = (ctx: AppContext) => {
       // Mirrored from a GitHub sync source → read-only in Derive (the client hides
       // Edit/Propose; the publish/propose routes also refuse it server-side).
       managed: (await meta.managedArtifactIds(artifact.org_id)).includes(artifact.id),
+      // The content iframe is sandboxed with no `allow-same-origin` (opaque origin —
+      // it must not be able to touch derive.to cookies/storage), which means it also has
+      // no origin of its own to send OUR session cookie back on, and Chrome refuses to
+      // attach cookies to requests from an opaque origin at all (even same-site) — every
+      // sub-resource (image, css, ...) in a non-public bundle 404s there. `read` access
+      // was just proven above, so mint a short-lived capability the SPA embeds in the raw
+      // URL's path (raw.ts's `t/:token` route + RAW_TOKEN_MAX_AGE_MS) — path, not query,
+      // so relative asset references inherit it with zero HTML rewriting.
+      raw_token: signState({ rid: artifact.id }, deps.encryptionKey ?? ""),
     })
   })
 

@@ -129,6 +129,13 @@ export interface Artifact {
   removed?: boolean
   /** Mirrored from a GitHub sync source → read-only in Derive (Edit/Propose hidden). */
   managed?: boolean
+  /** Short-lived signed capability for the /raw content iframe (detail endpoint only).
+   *  The iframe is sandboxed with no `allow-same-origin`, so it has no origin to attach
+   *  cookies to — Chrome refuses to send them for its requests even same-site, breaking
+   *  every non-public bundle's sub-resources (images, css, ...) there (Safari is more
+   *  lenient). This token lets the SPA embed proof-of-access directly in the raw URL's
+   *  PATH, so relative asset references inherit it automatically with no HTML rewriting. */
+  raw_token?: string
   /** Present when this bundle's entry is markdown — a skill (entry SKILL.md) or a
    *  plain docs folder. Drives the file tree + (for skills) the identity chrome.
    *  Detail endpoint only; absent for HTML "site" bundles. */

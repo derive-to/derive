@@ -131,6 +131,9 @@ export function Artifact() {
   const [restoring, setRestoring] = useState(false)
   const [reader, setReader] = useState(false)
   const [src, setSrc] = useState("")
+  // See the `rawSrc` construction below: pins the raw-content token per (shortId,
+  // version) so a metadata refetch doesn't force the preview iframe to reload.
+  const pinnedRawToken = useRef<{ shortId: string; version: number; token: string } | null>(null)
   // Phones: px the comment sheet occupies at the bottom, reported by MobileComments.
   // The document column reserves exactly this so nothing black is left beneath it.
   const [sheetInset, setSheetInset] = useState(0)
@@ -313,7 +316,36 @@ export function Artifact() {
   const editable = art.kind === "file" && shown === art.current_version
   // Reader view re-renders a non-responsive HTML artifact clean + mobile-friendly
   // (server applies it on `?reader=1`). Off by default; the top-bar toggle flips it.
-  const rawSrc = `${API_BASE}/raw/${shortId}/v/${shown}/index.html${reader ? "?reader=1" : ""}`
+  //
+  // The `t/:raw_token` segment is the sandboxed iframe's own proof of access: it has no
+  // `allow-same-origin` (by design — the content must never touch our cookies/storage),
+  // so it has no origin to send our session cookie back on, and Chrome refuses to attach
+  // cookies to opaque-origin requests at all, even same-site (Safari is more lenient) —
+  // every sub-resource in a non-public bundle silently 404s there without this. Falls
+  // back to the plain cookie-authorized URL if a token isn't available yet (e.g. the
+  // detail fetch hasn't resolved) or on a legacy cached response missing the field.
+  //
+  // The token is freshly signed on EVERY artifact-detail fetch (a favorite toggle, a
+  // tag edit, a background refetch — none of which change the rendered content), but
+  // `rawSrc` feeds the iframe's `src`: a new value forces a full reload. Pin the first
+  // token seen for this (shortId, version) in a ref and keep using it — even after the
+  // query refetches and `art.raw_token` changes underneath — so the mounted preview
+  // only ever reloads for a reason (a real version change), not a coincidental refetch.
+  if (
+    art.raw_token &&
+    (!pinnedRawToken.current ||
+      pinnedRawToken.current.shortId !== shortId ||
+      pinnedRawToken.current.version !== shown)
+  )
+    pinnedRawToken.current = { shortId, version: shown, token: art.raw_token }
+  const rawToken =
+    pinnedRawToken.current?.shortId === shortId && pinnedRawToken.current.version === shown
+      ? pinnedRawToken.current.token
+      : undefined
+  const rawBase = rawToken
+    ? `${API_BASE}/raw/${shortId}/v/${shown}/t/${rawToken}`
+    : `${API_BASE}/raw/${shortId}/v/${shown}`
+  const rawSrc = `${rawBase}/index.html${reader ? "?reader=1" : ""}`
   // Editors publish directly; commenters propose a candidate for review.
   const canPublish = art.my_role === "editor" || art.my_role === "owner"
   // md vs html drives syntax highlighting + how the live preview renders.
