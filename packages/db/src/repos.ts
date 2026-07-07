@@ -153,18 +153,15 @@ export function artifactListConditions(
         WHERE am.artifact_id = ${art.id} AND am.user_id = ${opts.viewerId}
       )`
     conds.push(sql`(${art.visibility} != 'private' OR ${isMember})`)
-    // `unlisted` hides from every ordinary listing — even the owner's (they have
-    // the dedicated filter). "include" folds the viewer's own drafts back in (MCP
-    // list_artifacts, so an agent always finds its work); "only" IS the filter.
+    // `unlisted` hides from every ordinary listing — even the owner's ("Created
+    // by me" is the finder). "include" folds the viewer's own back in (MCP
+    // list_artifacts + the deliberate shared/feedback/mine signals).
     // Ownership = an explicit artifact_member row, the same contract `private` uses.
-    if (opts.unlisted === "only") conds.push(sql`(${art.visibility} = 'unlisted' AND ${isMember})`)
-    else if (opts.unlisted === "include")
+    if (opts.unlisted === "include")
       conds.push(sql`(${art.visibility} != 'unlisted' OR ${isMember})`)
     else conds.push(sql`${art.visibility} != 'unlisted'`)
   }
-  // A trusted caller (operator token / internal jobs, no viewerId) sees everything;
-  // "only" still narrows so the scoped filter works for that path too.
-  else if (opts?.unlisted === "only") conds.push(eq(art.visibility, "unlisted"))
+  // A trusted caller (operator token / internal jobs, no viewerId) sees everything.
   if (opts?.q) conds.push(like(sql`lower(${art.title})`, `%${opts.q.toLowerCase()}%`))
   if (opts?.cursor) {
     const cursor = or(
@@ -472,16 +469,24 @@ export function makeRepos(db: SqliteDb) {
         .all()
     ).map((r) => r.id)
 
-  // "Created by me" filter for the list — every artifact this Derive user published
-  // by hand in the workspace, regardless of visibility (unlike the author-login
-  // filter above, which is GitHub-commit-attribution and workspace-agnostic of who
-  // owns the artifact in Derive).
-  const artifactIdsByAuthorId = async (orgId: string, userId: string): Promise<string[]> =>
+  // "Created by me" for the list — every artifact this user holds an OWNER member
+  // row on in the workspace, any visibility. The roster row is written once at
+  // creation for the human behind the publish (agents included), so the filter
+  // survives republishes; the author_id denorm doesn't (addVersion rewrites it to
+  // the newest version's author — null for a token publish). The author-login
+  // filter above stays byline-based deliberately: it's GitHub-commit attribution.
+  const ownedBy = (userId: string) =>
+    and(eq(artifactMember.user_id, userId), eq(artifactMember.role, "owner"))
+  const artifactIdsOwnedBy = async (orgId: string, userId: string): Promise<string[]> =>
     (
       await db
         .select({ id: artifact.id })
         .from(artifact)
-        .where(and(eq(artifact.org_id, orgId), eq(artifact.author_id, userId)))
+        .innerJoin(
+          artifactMember,
+          and(eq(artifactMember.artifact_id, artifact.id), ownedBy(userId)),
+        )
+        .where(eq(artifact.org_id, orgId))
         .all()
     ).map((r) => r.id)
 
@@ -490,12 +495,25 @@ export function makeRepos(db: SqliteDb) {
     return (await (orgId ? q.where(eq(artifact.org_id, orgId)) : q).get())?.c ?? 0
   }
 
-  const countAuthoredBy = async (orgId: string, userId: string): Promise<number> =>
+  const countOwnedBy = async (
+    orgId: string,
+    userId: string,
+    visibility?: Visibility,
+  ): Promise<number> =>
     (
       await db
         .select({ c: count() })
         .from(artifact)
-        .where(and(eq(artifact.org_id, orgId), eq(artifact.author_id, userId)))
+        .innerJoin(
+          artifactMember,
+          and(eq(artifactMember.artifact_id, artifact.id), ownedBy(userId)),
+        )
+        .where(
+          and(
+            eq(artifact.org_id, orgId),
+            visibility ? eq(artifact.visibility, visibility) : undefined,
+          ),
+        )
         .get()
     )?.c ?? 0
 
@@ -2101,9 +2119,9 @@ export function makeRepos(db: SqliteDb) {
     listArtifacts,
     artifactIdsByTag,
     artifactIdsByAuthor,
-    artifactIdsByAuthorId,
+    artifactIdsOwnedBy,
     countArtifacts,
-    countAuthoredBy,
+    countOwnedBy,
     storageBytes,
     tagCounts,
     deleteArtifact,

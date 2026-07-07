@@ -125,12 +125,13 @@ export const artifactRoutes = (ctx: AppContext) => {
       if (!me) return c.json({ artifacts: [], next_cursor: null })
       narrow(await meta.artifactIdsNeedingFeedback(me.id, await activeWorkspace(c)))
     }
-    // scope=mine → everything the caller published by hand in this workspace,
-    // any visibility included — the library's "Created by me" filter.
+    // scope=mine → everything the caller owns in this workspace (their owner
+    // member row — written at creation for the human behind the publish, agents
+    // included), any visibility — the library's "Created by me" filter.
     const mineScope = c.req.query("scope") === "mine"
     if (mineScope) {
       if (!me) return c.json({ artifacts: [], next_cursor: null })
-      narrow(await meta.artifactIdsByAuthorId(await activeWorkspace(c), me.id))
+      narrow(await meta.artifactIdsOwnedBy(await activeWorkspace(c), me.id))
     }
     if (tag) narrow(await meta.artifactIdsByTag(tag))
     if (favOnly) narrow(favIds)
@@ -279,8 +280,8 @@ export const artifactRoutes = (ctx: AppContext) => {
       // must not inflate the count (otherwise "Favorites · 1" with an empty list).
       me ? meta.listUserFavoriteIds(me.id, org) : Promise.resolve([]),
       meta.getWorkspace(org),
-      // The caller's own authored artifacts — the "Created by me" filter's badge.
-      me ? meta.countAuthoredBy(org, me.id) : Promise.resolve(0),
+      // The caller's owned artifacts — the "Created by me" filter's badge.
+      me ? meta.countOwnedBy(org, me.id) : Promise.resolve(0),
     ])
     tags.sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag))
     return c.json({

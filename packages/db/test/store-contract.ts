@@ -198,16 +198,6 @@ export function runStoreContract(
         ),
       ).not.toContain(draft.id)
 
-      // "only": exactly the viewer's own unlisted drafts — the library filter.
-      expect(
-        (await store.listArtifacts({ orgId: org, viewerId: owner, unlisted: "only" })).map(
-          (x) => x.id,
-        ),
-      ).toEqual([draft.id])
-      expect(await store.listArtifacts({ orgId: org, viewerId: other, unlisted: "only" })).toEqual(
-        [],
-      )
-
       // A trusted caller (no viewerId — operator/internal) still sees everything.
       expect((await store.listArtifacts({ orgId: org })).map((x) => x.id)).toContain(draft.id)
       // publicOnly (anonymous listings) never shows it.
@@ -276,22 +266,68 @@ export function runStoreContract(
       expect(await store.artifactIdsByAuthor(`${ORG}_other`, "ada")).not.toContain(mine.id) // other org
     })
 
-    it("filters + counts artifacts by author_id (the library's Created-by-me filter)", async () => {
-      const me = `u_authored_${uuid()}`
-      const someoneElse = `u_authored_other_${uuid()}`
-      const org = `${ORG}_authored_${uuid()}`
+    it("filters + counts artifacts by owner row (the library's Created-by-me filter)", async () => {
+      const me = `u_owned_${uuid()}`
+      const someoneElse = `u_owned_other_${uuid()}`
+      const org = `${ORG}_owned_${uuid()}`
       const mine = await store.createArtifact(
         newArtifact({ org_id: org, visibility: "private", author_id: me }),
       )
-      await store.createArtifact(
+      await store.setArtifactMember({
+        id: uuid(),
+        artifact_id: mine.id,
+        user_id: me,
+        role: "owner",
+      })
+      const theirs = await store.createArtifact(
         newArtifact({ org_id: org, visibility: "org", author_id: someoneElse }),
       )
-      expect(await store.artifactIdsByAuthorId(org, me)).toEqual([mine.id])
-      expect(await store.artifactIdsByAuthorId(org, someoneElse)).not.toContain(mine.id)
-      expect(await store.countAuthoredBy(org, me)).toBe(1)
-      expect(await store.countAuthoredBy(org, someoneElse)).toBe(1)
-      // Scoped to the workspace — a same-author artifact elsewhere doesn't leak in.
-      expect(await store.countAuthoredBy(`${org}_other`, me)).toBe(0)
+      await store.setArtifactMember({
+        id: uuid(),
+        artifact_id: theirs.id,
+        user_id: someoneElse,
+        role: "owner",
+      })
+      // A non-owner share row must NOT put someone else's doc under "Created by me".
+      await store.setArtifactMember({
+        id: uuid(),
+        artifact_id: theirs.id,
+        user_id: me,
+        role: "editor",
+      })
+      expect(await store.artifactIdsOwnedBy(org, me)).toEqual([mine.id])
+      expect(await store.artifactIdsOwnedBy(org, someoneElse)).toEqual([theirs.id])
+      expect(await store.countOwnedBy(org, me)).toBe(1)
+      expect(await store.countOwnedBy(org, someoneElse)).toBe(1)
+      // The visibility narrow (the link-only pending badge).
+      expect(await store.countOwnedBy(org, me, "private")).toBe(1)
+      expect(await store.countOwnedBy(org, me, "unlisted")).toBe(0)
+      // Scoped to the workspace — an owner row elsewhere doesn't leak in.
+      expect(await store.countOwnedBy(`${org}_other`, me)).toBe(0)
+    })
+
+    it("keeps Created-by-me stable across republishes by others (owner row, not author_id)", async () => {
+      // The exact flows that broke the author_id-keyed filter: a teammate
+      // republishes your doc, then CI republishes with no author at all. The
+      // artifact's denormalized author_id moves (to them, then to null) — the
+      // owner row doesn't, and the filter keys on the row.
+      const me = `u_owned_stable_${uuid()}`
+      const org = `${ORG}_owned_stable_${uuid()}`
+      const a = await store.createArtifact(
+        newArtifact({ org_id: org, visibility: "unlisted", author_id: me }),
+      )
+      await store.setArtifactMember({ id: uuid(), artifact_id: a.id, user_id: me, role: "owner" })
+
+      await store.addVersion(
+        a.id,
+        newVersion({ author: "Teammate", author_id: `u_other_${uuid()}` }),
+      )
+      expect(await store.artifactIdsOwnedBy(org, me)).toEqual([a.id])
+
+      await store.addVersion(a.id, newVersion({ author: "ci", author_id: null }))
+      expect((await store.getArtifactById(a.id))?.author_id).toBeNull() // the denorm moved…
+      expect(await store.artifactIdsOwnedBy(org, me)).toEqual([a.id]) // …the filter didn't
+      expect(await store.countOwnedBy(org, me, "unlisted")).toBe(1)
     })
 
     it("sets and clears the current author directly (the backfill path)", async () => {

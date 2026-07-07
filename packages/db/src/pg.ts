@@ -511,13 +511,22 @@ export class PgMetaStore implements MetaStore {
       )
     return rows.map((r) => r.id)
   }
-  // "Created by me" filter — every artifact this Derive user published by hand in
-  // the workspace, regardless of visibility (mirrors the SQLite path).
-  async artifactIdsByAuthorId(orgId: string, userId: string): Promise<string[]> {
+  // "Created by me" — every artifact this user holds an OWNER member row on in the
+  // workspace, any visibility. Roster-keyed, not author_id-keyed (mirrors the
+  // SQLite path — see repos.ts for why the denorm can't anchor "yours").
+  async artifactIdsOwnedBy(orgId: string, userId: string): Promise<string[]> {
     const rows = await this.db
       .select({ id: artifact.id })
       .from(artifact)
-      .where(and(eq(artifact.org_id, orgId), eq(artifact.author_id, userId)))
+      .innerJoin(
+        artifactMember,
+        and(
+          eq(artifactMember.artifact_id, artifact.id),
+          eq(artifactMember.user_id, userId),
+          eq(artifactMember.role, "owner"),
+        ),
+      )
+      .where(eq(artifact.org_id, orgId))
     return rows.map((r) => r.id)
   }
   async countArtifacts(orgId?: string): Promise<number> {
@@ -525,11 +534,24 @@ export class PgMetaStore implements MetaStore {
     const rows = await (orgId ? q.where(eq(artifact.org_id, orgId)) : q)
     return Number(rows[0]?.c ?? 0)
   }
-  async countAuthoredBy(orgId: string, userId: string): Promise<number> {
+  async countOwnedBy(orgId: string, userId: string, visibility?: Visibility): Promise<number> {
     const rows = await this.db
       .select({ c: count() })
       .from(artifact)
-      .where(and(eq(artifact.org_id, orgId), eq(artifact.author_id, userId)))
+      .innerJoin(
+        artifactMember,
+        and(
+          eq(artifactMember.artifact_id, artifact.id),
+          eq(artifactMember.user_id, userId),
+          eq(artifactMember.role, "owner"),
+        ),
+      )
+      .where(
+        and(
+          eq(artifact.org_id, orgId),
+          visibility ? eq(artifact.visibility, visibility) : undefined,
+        ),
+      )
     return Number(rows[0]?.c ?? 0)
   }
   async storageBytes(orgId: string): Promise<number> {
