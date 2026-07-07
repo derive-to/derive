@@ -110,6 +110,29 @@ describe("loadRunnerConfig", () => {
     expect(cfg.pollMs).toBe(5_000)
     expect(cfg.timeoutMs).toBe(600_000)
   })
+
+  it("--env-file values override ambient env (source semantics), applied to the given env only", () => {
+    const dir = mkdtempSync(join(tmpdir(), "runner-test-"))
+    const f = join(dir, ".env")
+    writeFileSync(f, `# comment\nexport DERIVE_TOKEN="fresh"\nSNOWFLAKE_KEY='s3cr3t'\n`)
+    const env = { DERIVE_TOKEN: "stale-exported" }
+    const cfg = loadRunnerConfig(env, { "env-file": f, context: "ctx_x" })
+    expect(cfg.token).toBe("fresh")
+    expect(env.SNOWFLAKE_KEY).toBe("s3cr3t")
+    expect(process.env.SNOWFLAKE_KEY).toBeUndefined()
+  })
+
+  it("a missing env file names the flag, not just the errno", () => {
+    expect(() =>
+      loadRunnerConfig({ DERIVE_TOKEN: "t" }, { "env-file": "/nope/.env", context: "ctx_x" }),
+    ).toThrow(/--env-file \/nope\/\.env/)
+  })
+
+  it("partial mode (doctor) tolerates missing token/context", () => {
+    const cfg = loadRunnerConfig({}, {}, { partial: true })
+    expect(cfg.token).toBe("")
+    expect(cfg.contextId).toBe("")
+  })
 })
 
 describe("output contract + service units", () => {
@@ -118,22 +141,34 @@ describe("output contract + service units", () => {
     expect(OUTPUT_CONTRACT).toContain("body_md")
   })
 
-  it("renders a launchd plist on darwin and a systemd unit on linux", () => {
-    const cfg = {
-      server: "https://derive.to",
-      contextId: "ctx_abc",
-      cwd: "/work",
-      claudeBin: "/usr/local/bin/claude",
-      model: "sonnet",
-      tokenFile: "/secrets/tok",
-    }
+  it("renders units that reproduce the FULL running config (nothing silently dropped)", () => {
+    const cfg = loadRunnerConfig(
+      { RUNNER_TIMEOUT_MS: "2400000" },
+      { context: "ctx_abc", token: "t", cwd: "/work", "claude-bin": "/usr/local/bin/claude" },
+    )
+    cfg.tokenFile = "/secrets/tok"
+    cfg.envFiles = ["/work/.env", "/work/extra.env"]
     const mac = renderServiceUnit(cfg, "/opt/cli/bin/derive.js", "darwin")
     expect(mac.unit).toContain("<string>ctx_abc</string>")
     expect(mac.unit).toContain("<string>--token-file</string>")
+    expect(mac.unit).toContain("<string>/work/.env,/work/extra.env</string>")
+    expect(mac.unit).toContain("<string>2400000</string>") // timeout survives into the unit
     expect(mac.path).toContain("to.derive.runner.abc")
     const linux = renderServiceUnit(cfg, "/opt/cli/bin/derive.js", "linux")
     expect(linux.unit).toContain("ExecStart=")
     expect(linux.unit).toContain("runner serve ctx_abc")
+    expect(linux.unit).toContain("--env-file /work/.env,/work/extra.env")
     expect(linux.unit).toContain("Restart=on-failure")
+  })
+
+  it("escapes hostile paths: XML entities in plists, %/space/quote for systemd", () => {
+    const cfg = loadRunnerConfig(
+      {},
+      { context: "ctx_abc", token: "t", cwd: "/Users/rob/R&D <100%> dir" },
+    )
+    const mac = renderServiceUnit(cfg, "/opt/cli/bin/derive.js", "darwin")
+    expect(mac.unit).toContain("<string>/Users/rob/R&amp;D &lt;100%&gt; dir</string>")
+    const linux = renderServiceUnit(cfg, "/opt/cli/bin/derive.js", "linux")
+    expect(linux.unit).toContain('"/Users/rob/R&D <100%%> dir"')
   })
 })

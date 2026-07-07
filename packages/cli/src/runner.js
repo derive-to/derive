@@ -9,7 +9,7 @@
 // Ported from packages/runner (TS) into the published CLI so `derive runner
 // serve` works from a bare npx on any machine — one package, no build step.
 import { spawn } from "node:child_process"
-import { readFileSync } from "node:fs"
+import { readFileSync, statSync } from "node:fs"
 
 // ---- config -----------------------------------------------------------------
 
@@ -21,12 +21,41 @@ const positiveMs = (raw, fallback, floor) => {
   return Number.isFinite(n) && n >= floor ? n : fallback
 }
 
+/** Apply a KEY=VALUE env file into `env`. File values OVERRIDE ambient env —
+ *  the same semantics as `source`ing the file, which is what --env-file
+ *  replaces. (process.loadEnvFile has it backwards for our purpose: ambient
+ *  wins, so a stale DERIVE_TOKEN exported in a shell would silently beat the
+ *  fresh one in the file.) */
+function applyEnvFile(path, env) {
+  let text
+  try {
+    text = readFileSync(path, "utf8")
+  } catch (e) {
+    throw new Error(`--env-file ${path}: ${e.message}`)
+  }
+  for (const line of text.split("\n")) {
+    const m = line.match(/^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/)
+    if (!m) continue
+    let v = m[2].trim()
+    if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'")))
+      v = v.slice(1, -1)
+    env[m[1]] = v
+  }
+}
+
 /** Resolve runner config: flags win over env; token can come from a file so
- *  service units never embed the secret in their command line. */
-export function loadRunnerConfig(env = process.env, flags = {}) {
-  // --env-file loads KEY=VALUE files (the context's own secrets, e.g. eda/.env)
-  // before anything reads env — replaces the shell-wrapper sourcing dance.
-  for (const f of (flags["env-file"] ?? "").split(",").filter(Boolean)) process.loadEnvFile(f)
+ *  service units never embed the secret in their command line. `partial` lets
+ *  doctor run its checks on a half-configured machine — missing token/context
+ *  becomes a doctor finding instead of an error before the first check. */
+export function loadRunnerConfig(env = process.env, flags = {}, { partial = false } = {}) {
+  // --env-file loads a context's own secrets (e.g. eda/.env with the MCP
+  // credentials) before anything reads env. Applied to `env`, not the global:
+  // in the CLI they're the same object, so spawned claude inherits the values,
+  // but a caller passing its own env (tests) stays isolated.
+  const envFiles = (flags["env-file"] ?? "").split(",").filter(Boolean)
+  for (const f of envFiles) applyEnvFile(f, env)
+  // Cloud default, like every other CLI verb. serve() prints the server in its
+  // first log line, so a self-hoster who forgot --server sees it immediately.
   const server = (flags.server ?? env.DERIVE_SERVER ?? "https://derive.to").replace(/\/+$/, "")
   const token =
     flags.token ??
@@ -35,7 +64,7 @@ export function loadRunnerConfig(env = process.env, flags = {}) {
       : env.DERIVE_TOKEN) ??
     ""
   const contextId = flags.context ?? env.DERIVE_CONTEXT ?? ""
-  if (!token || !contextId)
+  if ((!token || !contextId) && !partial)
     throw new Error(
       "a context id and an agent token are required (positional/--context + --token|--token-file, or DERIVE_CONTEXT + DERIVE_TOKEN)",
     )
@@ -51,6 +80,11 @@ export function loadRunnerConfig(env = process.env, flags = {}) {
     timeoutMs: positiveMs(flags.timeout ?? env.RUNNER_TIMEOUT_MS, 600_000, 10_000),
     pollMs: positiveMs(flags.poll ?? env.RUNNER_POLL_MS, 5_000, 500),
     mock: flags.mock === "true" || env.RUNNER_MOCK === "1",
+    // Carried so `runner install` can reproduce this exact config in a unit —
+    // a rendered service that silently dropped the env files would boot a
+    // runner whose MCP servers have no credentials.
+    envFiles,
+    tokenFile: flags["token-file"] ?? null,
   }
 }
 
@@ -63,7 +97,10 @@ export class DeriveClient {
   }
 
   async call(path, init) {
+    // Timeboxed: undici's defaults let a blackholed host sit for minutes, which
+    // would stall the poll loop (or doctor) with zero output.
     const res = await fetch(`${this.server}${path}`, {
+      signal: AbortSignal.timeout(30_000),
       ...init,
       headers: {
         authorization: `Bearer ${this.token}`,
@@ -115,6 +152,8 @@ export class DeriveClient {
       method: "POST",
       headers: { authorization: `Bearer ${this.token}` },
       body: form,
+      // Longer than call()'s bound: this can be a 2MB upload on a slow uplink.
+      signal: AbortSignal.timeout(120_000),
     })
     if (!res.ok) throw new Error(`publish → ${res.status}: ${await res.text()}`)
     return res.json()
@@ -390,8 +429,8 @@ export async function serve(cfg) {
   const info = await client.getContext(cfg.contextId)
   if (!info.manifest_md) throw new Error("context has no readable manifest")
   console.log(
-    `[runner] serving "${info.name}" (${cfg.contextId}) — manifest v${info.manifest_version}, ` +
-      `${cfg.mock ? "MOCK" : `${cfg.claudeBin} (${cfg.model})`}, poll ${cfg.pollMs}ms`,
+    `[runner] serving "${info.name}" (${cfg.contextId}) on ${cfg.server} — ` +
+      `manifest v${info.manifest_version}, ${cfg.mock ? "MOCK" : `${cfg.claudeBin} (${cfg.model})`}, poll ${cfg.pollMs}ms`,
   )
 
   for (;;) {
@@ -432,8 +471,11 @@ export async function serve(cfg) {
 // ---- doctor ---------------------------------------------------------------------
 
 /** Preflight the runner's environment; returns the number of hard failures.
- *  Everything that ever broke a runner in the field is checked here so it
- *  breaks at install time instead of at question time. */
+ *  Each check maps to a way a runner has actually broken: a wrong/rotated
+ *  token, a deleted manifest, launchd's bare PATH (`spawn claude ENOENT`), a
+ *  cwd that doesn't exist (same ENOENT, misattributed to the binary). Every
+ *  probe is timeboxed — a wedged binary or blackholed host fails its check
+ *  instead of hanging the doctor. */
 export async function doctor(cfg) {
   let failures = 0
   const ok = (label, detail = "") => console.log(`  ✓ ${label}${detail ? ` — ${detail}` : ""}`)
@@ -442,45 +484,61 @@ export async function doctor(cfg) {
     failures++
   }
   const warn = (label, detail) => console.warn(`  ⚠ ${label} — ${detail}`)
+  const spawnable = (bin, timeout = 10_000) =>
+    new Promise((resolve) => {
+      const p = spawn(bin, ["--version"], { stdio: ["ignore", "pipe", "ignore"], timeout })
+      let out = ""
+      p.stdout.on("data", (b) => {
+        out += b
+      })
+      p.on("close", (code) => resolve(code === 0 ? out.trim() : null))
+      p.on("error", () => resolve(null))
+    })
 
   try {
-    const res = await fetch(`${cfg.server}/healthz`)
+    const res = await fetch(`${cfg.server}/healthz`, { signal: AbortSignal.timeout(10_000) })
     res.ok ? ok("server reachable", cfg.server) : bad("server", `${cfg.server} → ${res.status}`)
   } catch (e) {
     bad("server", `${cfg.server} unreachable (${e.message})`)
   }
 
+  if (!cfg.token || !cfg.contextId) {
+    // Partial config: still worth running the local checks below.
+    bad(
+      "token/context",
+      "missing — pass <ctx_id> and --token|--token-file (or DERIVE_CONTEXT + DERIVE_TOKEN)",
+    )
+  } else {
+    try {
+      const info = await new DeriveClient(cfg.server, cfg.token).getContext(cfg.contextId)
+      info.manifest_md
+        ? ok("context + manifest", `"${info.name}" manifest v${info.manifest_version}`)
+        : bad("manifest", "context resolves but its manifest is unreadable")
+    } catch (e) {
+      bad("token/context", `cannot resolve ${cfg.contextId} (${e.message.slice(0, 120)})`)
+    }
+  }
+
+  // A missing cwd makes spawn fail with the same ENOENT as a missing binary —
+  // check it separately so the error points at the actual problem.
   try {
-    const info = await new DeriveClient(cfg.server, cfg.token).getContext(cfg.contextId)
-    info.manifest_md
-      ? ok("context + manifest", `"${info.name}" manifest v${info.manifest_version}`)
-      : bad("manifest", "context resolves but its manifest is unreadable")
-  } catch (e) {
-    bad("token/context", `cannot resolve ${cfg.contextId} (${e.message.slice(0, 120)})`)
+    if (!statSync(cfg.cwd).isDirectory()) throw new Error("not a directory")
+    ok("cwd", cfg.cwd)
+  } catch {
+    bad("cwd", `${cfg.cwd} is not a directory — check --cwd / RUNNER_CWD`)
   }
 
   // launchd/systemd PATHs don't include shell profile additions — the exact
   // failure mode that produced `spawn claude ENOENT` in the field.
-  const version = await new Promise((resolve) => {
-    const p = spawn(cfg.claudeBin, ["--version"], { stdio: ["ignore", "pipe", "ignore"] })
-    let out = ""
-    p.stdout.on("data", (b) => {
-      out += b
-    })
-    p.on("close", (code) => resolve(code === 0 ? out.trim() : null))
-    p.on("error", () => resolve(null))
-  })
+  const version = await spawnable(cfg.claudeBin, 15_000)
   version
     ? ok("claude", `${cfg.claudeBin} (${version.slice(0, 40)})`)
     : bad("claude", `${cfg.claudeBin} not spawnable — pass --claude-bin with an absolute path`)
 
   for (const tool of ["gh", "python3"]) {
-    const present = await new Promise((resolve) => {
-      const p = spawn(tool, ["--version"], { stdio: "ignore" })
-      p.on("close", (code) => resolve(code === 0))
-      p.on("error", () => resolve(false))
-    })
-    present ? ok(tool) : warn(tool, "not on PATH — fine unless this context's manifest needs it")
+    ;(await spawnable(tool)) !== null
+      ? ok(tool)
+      : warn(tool, "not on PATH — fine unless this context's manifest needs it")
   }
 
   console.log(failures === 0 ? "\ndoctor: all checks passed" : `\ndoctor: ${failures} failure(s)`)
@@ -488,6 +546,13 @@ export async function doctor(cfg) {
 }
 
 // ---- install ---------------------------------------------------------------------
+
+// systemd unquoted arguments end at whitespace, `%` starts a specifier, and `"`
+// needs backslash-escaping inside quotes.
+const execArg = (a) => {
+  const s = String(a).replace(/%/g, "%%")
+  return /[\s"']/.test(s) ? `"${s.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"` : s
+}
 
 /** Render a service unit (launchd plist on darwin, systemd on linux) that runs
  *  `derive runner serve` with this config. Printed for the operator to install —
@@ -508,10 +573,19 @@ export function renderServiceUnit(cfg, binPath, platform = process.platform) {
     cfg.claudeBin,
     "--model",
     cfg.model,
+    "--timeout",
+    String(cfg.timeoutMs),
+    "--poll",
+    String(cfg.pollMs),
   ]
   if (cfg.tokenFile) argv.push("--token-file", cfg.tokenFile)
+  if (cfg.envFiles?.length) argv.push("--env-file", cfg.envFiles.join(","))
   if (platform === "darwin") {
-    const xml = argv.map((a) => `    <string>${a}</string>`).join("\n")
+    // Paths with &, <, > (think "/Users/x/R&D") would render a plist launchctl
+    // rejects outright.
+    const escXml = (s) =>
+      String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    const xml = argv.map((a) => `    <string>${escXml(a)}</string>`).join("\n")
     return {
       path: `~/Library/LaunchAgents/${label}.plist`,
       load: `launchctl load ~/Library/LaunchAgents/${label}.plist`,
@@ -540,7 +614,7 @@ Description=Derive context runner (${cfg.contextId})
 After=network-online.target
 
 [Service]
-ExecStart=${argv.map((a) => (a.includes(" ") ? `"${a}"` : a)).join(" ")}
+ExecStart=${argv.map(execArg).join(" ")}
 Restart=on-failure
 RestartSec=5
 
