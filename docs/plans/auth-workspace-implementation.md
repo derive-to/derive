@@ -40,7 +40,7 @@ Checklist convention: `[x]` done on this branch · `[ ]` still to do.
 
 ## Workstream A — fixes to the round-1 relabel (review findings)
 
-- [ ] **A1. Owner-row semantics.** Replace `artifactIdsByAuthorId` /
+- [x] **A1. Owner-row semantics.** Replace `artifactIdsByAuthorId` /
   `countAuthoredBy` with `artifactIdsOwnedBy(orgId, userId)` /
   `countOwnedBy(orgId, userId, visibility?)` keyed on
   `artifact_member(user_id, role='owner')` joined to `artifact.org_id`.
@@ -48,32 +48,32 @@ Checklist convention: `[x]` done on this branch · `[ ]` still to do.
   (sqlite+d1), `packages/db/src/pg.ts`, `apps/api/src/routes/artifacts.ts`
   (`scope=mine` narrow + `/v1/tags` summary). The optional `visibility` arg
   also powers workstream C's pending count.
-- [ ] **A2. Republish-stability contract tests.** In
+- [x] **A2. Republish-stability contract tests.** In
   `packages/db/test/store-contract.ts`: an artifact whose owner row is user A
   stays in A's ids/count after (i) `addVersion` authored by user B and (ii)
   `addVersion` with `author_id: null` (the token/CI republish). These are the
   cases that broke the `author_id` approach.
-- [ ] **A3. Index.** `index("artifact_member_by_user").on(t.user_id)` in
+- [x] **A3. Index.** `index("artifact_member_by_user").on(t.user_id)` in
   `schema.ts` + `pg-schema.ts` (boot DDL generates CREATE INDEX from the table
   defs, so no separate migration). `countOwnedBy` runs on every `/v1/tags`.
-- [ ] **A4. Remote MCP copy.** `apps/api/src/mcp.ts` — the publish tool's
+- [x] **A4. Remote MCP copy.** `apps/api/src/mcp.ts` — the publish tool's
   visibility description still says "a DRAFT: hidden from the library" and
   `list_artifacts` says "your own unlisted drafts". Reword to the
   link-only framing (the stdio shim in `packages/mcp` was already done).
-- [ ] **A5. "Draft link permission" label.** `general-section.tsx` — the
+- [x] **A5. "Draft link permission" label.** `general-section.tsx` — the
   `defaultUnlistedRole` row still says Draft; rename to the link-only
   vocabulary (label + aria-label).
-- [ ] **A6. `?tab=drafts` alias.** `routes/index.tsx` validateSearch maps the
+- [x] **A6. `?tab=drafts` alias.** `routes/index.tsx` validateSearch maps the
   legacy `tab=drafts` → `mine` instead of dropping it (old bookmarks,
   agent-emitted links).
-- [ ] **A7. Revert "Everything" → "All artifacts"** (nav-rail, command-palette,
+- [x] **A7. Revert "Everything" → "All artifacts"** (nav-rail, command-palette,
   library heading + tabs, showcase eyebrow demo, e2e copy).
-- [ ] **A8. Stray comment sweep** — `routes/artifacts.ts` "the draft state"
+- [x] **A8. Stray comment sweep** — `routes/artifacts.ts` "the draft state"
   comment and any remaining user-facing "draft" in the renamed surfaces.
 
 ## Workstream B — the two-axis dialog
 
-- [ ] **B1. Grouped dropdown.** `share-dialog.tsx` `ACCESS` becomes grouped
+- [x] **B1. Grouped dropdown.** `share-dialog.tsx` `ACCESS` becomes grouped
   sections rendered with separators (extend `ui/select-menu.tsx` with a
   `SelectMenuSeparator` wrapper over the existing dropdown primitive):
 
@@ -93,53 +93,53 @@ Checklist convention: `[x]` done on this branch · `[ ]` still to do.
   (workspace/globe), link-only rungs carry the link glyph. Password stays a
   trailing modifier-style rung (folding it into a checkbox on the link rungs
   is a later, larger change).
-- [ ] **B2. Showcase `GeneralAccessDemo`** mirrors the same grouping/labels.
+- [x] **B2. Showcase `GeneralAccessDemo`** mirrors the same grouping/labels.
 
 ## Workstream C — pending-work signal in Created by me
 
-- [ ] **C1. Summary count.** `/v1/tags` adds `mine_link_only` =
+- [x] **C1. Summary count.** `/v1/tags` adds `mine_link_only` =
   `countOwnedBy(org, me, "unlisted")`. Types in `api.ts` + `library/types.ts`.
-- [ ] **C2. Tab badge.** The Created by me tab keeps its total count; when
+- [x] **C2. Tab badge.** The Created by me tab keeps its total count; when
   `mine_link_only > 0` it also shows a small accent count — the "waiting on
   you to surface it" signal the old Drafts badge carried.
-- [ ] **C3. Row chip.** In the Created by me feed, `unlisted` rows show a
+- [x] **C3. Row chip.** In the Created by me feed, `unlisted` rows show a
   quiet "Link only" chip so pending work is scannable in place. (Check the
   card component for an existing chip/badge slot; reuse it.)
 
 ## Workstream D — workspace at first need
 
-- [ ] **D1. Solo ladder collapse.** In the share dialog, when the active
+- [x] **D1. Solo ladder collapse.** In the share dialog, when the active
   workspace has one member (from the existing `GET /v1/workspace` roster via
   `workspaceQuery`), hide the `org` and `unlisted` rungs (unless one is the
   artifact's *current* visibility) and render a quiet footer hint: "Working
   with a team? Create a workspace to share with them" → Settings → General.
-- [ ] **D2. One-flow create + invite.** The create-workspace dialog
+- [x] **D2. One-flow create + invite.** The create-workspace dialog
   (`general-section.tsx`) gains an optional "Invite teammates" field
   (comma/space-separated emails). Flow: `POST /v1/workspaces` (switches the
   cookie server-side) → `POST /v1/workspace/invites` per email (now scoped to
   the new workspace) → reload. Skippable — empty field behaves exactly as
   today.
-- [ ] **D3. User-pod entry point.** "New workspace" item in the pod menu
+- [x] **D3. User-pod entry point.** "New workspace" item in the pod menu
   (below the switcher section; also present for solo accounts) → navigates to
   Settings → General with a search param that auto-opens the create dialog.
-- [ ] **D4. Personal pinned.** `GET /v1/workspaces` marks the caller's
+- [x] **D4. Personal pinned.** `GET /v1/workspaces` marks the caller's
   personal workspace (`id === ws_p_<userId>`) with `personal: true` (both the
   human branch and the OAuth-agent owner branch). Web: `WorkspaceSummary`
   gains the flag; switcher + command palette display it as **"Personal"**,
   sorted first; the nav-rail subtitle shows "Personal" when it's active.
-- [ ] **D5. `/welcome` pointer.** One muted, non-branching line near the
+- [x] **D5. `/welcome` pointer.** One muted, non-branching line near the
   connect-agent step: "Working with a team? Create a workspace and invite
   them anytime from Settings."
 
 ## Workstream E — invite-accept email mismatch (old Phase 0, unchanged spec)
 
-- [ ] **E1. API.** `POST /v1/invites/:token/accept`: when `inv.email` is set
+- [x] **E1. API.** `POST /v1/invites/:token/accept`: when `inv.email` is set
   and doesn't case-insensitively match `me.email`, return
   `409 { error: "email_mismatch", invited_email }` unless the body carries
   `{ confirm_mismatch: true }`. Matching/absent email: unchanged.
-- [ ] **E2. Web.** `accept-invite.tsx`: on preview-email ≠ session-email, show
+- [x] **E2. Web.** `accept-invite.tsx`: on preview-email ≠ session-email, show
   the inline warning + "Continue anyway" that resends with the flag.
-- [ ] **E3. Test.** `apps/api/test/workspace.test.ts`: 409 without flag, 200
+- [x] **E3. Test.** `apps/api/test/workspace.test.ts`: 409 without flag, 200
   with it.
 
 ## Deferred (explicitly NOT this PR)
