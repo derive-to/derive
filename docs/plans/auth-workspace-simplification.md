@@ -177,7 +177,39 @@ This should get fixed on its own before launch, not bundled into the redesign.
 2. **Before launch:** hide "workspace" language for single-member workspaces;
    add the explicit "Personal / Create a company account" fork at signup.
 3. **Already in flight:** CLI/MCP `whoami` and multi-workspace credential
-   handling — see Anir's PR.
+   handling — see PR #308.
+
+## Decisions (2026-07-07, Rob — supersedes the open questions below)
+
+Reviewed with the round-1 implementation (PR #314) in hand. Outcomes:
+
+- **Identity model confirmed**: single account, many memberships. Not
+  revisiting. Multi-email per account is a post-launch follow-up.
+- **Two-axis presentation confirmed as the destination**, and the dropdown
+  gets real grouping now (separator-chunked pairs), not just relabeled rows.
+  The `link` rung is renamed **"Public — link only"** so the two pairs read
+  as the same axis (Workspace / Workspace — link only · Public / Public —
+  link only). Password stays a sixth rung for now; folding it into a
+  checkbox on the link rungs is a later change.
+- **The signup fork is cut.** No "Personal / company account" question at
+  signup or in `/welcome` — the question is asked before the user can answer
+  it, and its failure mode (a team-of-one workspace next to the invisible
+  personal one, switcher on day zero) recreates the ghost-workspace problem.
+  Instead, **workspace-at-first-need**: solo users get a collapsed share
+  ladder with a "create a workspace" hint where the team rungs would be;
+  create-workspace becomes one flow (name + optional invites); "New
+  workspace" is reachable from the user pod; the personal workspace is
+  labeled **"Personal"** and pinned once a switcher exists. `/welcome` gets
+  one non-branching pointer line. The eventual growth mechanism is domain
+  discovery ("3 people from churnkey.co are already on Derive"), not
+  self-report.
+- **"Created by me" keys on the owner member row**, not the `author_id`
+  denorm (which republish clobbers — including to NULL on token publishes).
+  Google Drive's "Owned by me" semantics.
+- **"Everything" reverts to "All artifacts"** — don't name the one feed that
+  hides link-only work "Everything."
+- The invite email-mismatch fix ships in the same PR (#314) as a
+  surface-the-mismatch flow, per the phase-0 spec in the implementation doc.
 
 ## Open questions for the team
 

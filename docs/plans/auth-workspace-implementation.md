@@ -1,172 +1,158 @@
-# Auth/workspace/sharing simplification — implementation plan
+# Auth/workspace/sharing simplification — round 2 working doc
 
 Companion to [auth-workspace-simplification.md](./auth-workspace-simplification.md)
-— read that first for the *why*. This doc is the concrete *what to touch*, in three
-independently-shippable phases. (CLI/MCP `whoami` + multi-workspace credentials is
-its own track — see Anir's PR — and isn't in this plan.)
+— read that first for the *why*. This doc is the living plan for PR #314, which
+now carries the whole first tranche: the review fixes to the original relabel
+work, the two-axis share dialog, the pending-work signal, and workspace-at-first-
+need. (CLI/MCP `whoami` + multi-workspace credentials stays its own track —
+**PR #308**, which lands `derive.json` workspace targeting, multi-account
+credentials, and `X-Derive-Workspace` plumbing client-side.)
 
-## Phase 0: invite-accept email mismatch
+**Overlap with #308** (whoever merges second rebases; all trivial):
+`GET /v1/workspaces` (#308 adds `account`, we add `personal` per entry),
+`packages/cli/src/config.js` (our enum fix vs. their store rewrite),
+`packages/mcp/src/index.ts` (our copy fix vs. their auth rewiring).
 
-`POST /v1/invites/:token/accept` (`apps/api/src/routes/workspace.ts:279-295`) joins
-the signed-in caller to the workspace at the invited role without ever comparing
-`inv.email` to the caller's own email. The design comment right above it
-(`workspace.ts:260-262`, *"the token IS the secret ... mirroring the
-password-artifact model"*) makes clear this was a deliberate choice, not an
-oversight — so the fix is to **surface the mismatch, not silently block on it**,
-keeping the no-email-verification-required self-host case working.
+Checklist convention: `[x]` done on this branch · `[ ]` still to do.
 
-- **API** (`apps/api/src/routes/workspace.ts`):
-  - `GET /v1/invites/:token` (`:263-275`) already returns `inv.email` in the
-    preview payload — no change needed there.
-  - `POST /v1/invites/:token/accept` (`:279-295`): if `inv.email` is set and
-    doesn't case-insensitively match the caller's `me.email`, require an explicit
-    `{ confirm_mismatch: true }` in the body; otherwise return `409` with a
-    machine-readable `{ error: "email_mismatch", invited_email: inv.email }` instead
-    of joining. Matching or absent `inv.email` behaves exactly as today.
-- **Web** (`apps/web/src/pages/accept-invite.tsx:51-56` and the accept action):
-  when the preview's `email` differs from the signed-in `me.email`, show an
-  inline warning ("This invite was sent to `x@y.com` — you're signed in as
-  `a@b.com`.") with an explicit "Continue anyway" before calling accept with
-  `confirm_mismatch: true`.
-- **Tests** (`apps/api/test/workspace.test.ts`): add a mismatched-email case
-  (expect `409` without the flag, `200` with it) alongside the existing
-  matching-email accept test.
+## Decisions locked (2026-07-07, Rob)
 
-Ships alone, no dependency on phases 1/2.
+1. **Identity model stays**: one account, many workspaces. No per-company
+   accounts, no multi-email (post-launch, GitHub-style verified emails).
+2. **All six visibility values stay** — presented as two axes: WHO (private /
+   workspace / anyone) × LISTED-OR-LINK-ONLY (for the workspace and anyone
+   tiers). "Draft" as a word is retired everywhere.
+3. **The signup fork is CUT** (the old Phase 2a). No workspace question at
+   signup or in `/welcome`. The workspace concept materializes *at first need*:
+   the share dialog's team rungs (solo users see a create-a-workspace hint
+   instead), one create-workspace flow with invites included, and the switcher
+   only once ≥2 workspaces exist. `/welcome` gets one non-branching pointer
+   line. Post-launch growth lever: domain discovery ("3 people from churnkey.co
+   are already here"), not self-reported intent.
+4. **"Created by me" keys on the owner member row**, not the `author_id`
+   denorm (which `addVersion` overwrites with the latest publisher — including
+   NULL on token republishes). Google Drive's "Owned by me" precedent: stable
+   under republish, agent-aware (the owner row is written for the on-behalf
+   human at creation), transfer-aware. Co-owners added via the share roster
+   see the doc under their own "Created by me" too — accepted.
+5. **"Everything" reverts to "All artifacts"** — the one feed that deliberately
+   hides link-only work must not be named Everything.
 
-## Phase 1: relabel the visibility ladder, retire the Drafts tab
+## Workstream A — fixes to the round-1 relabel (review findings)
 
-No schema change — `private`/`org`/`unlisted`/`link`/`public`/`password`
-(`packages/core/src/ports.ts:21`) stay exactly as they are underneath. This is
-copy + UI grouping + one cross-surface consistency bug.
+- [ ] **A1. Owner-row semantics.** Replace `artifactIdsByAuthorId` /
+  `countAuthoredBy` with `artifactIdsOwnedBy(orgId, userId)` /
+  `countOwnedBy(orgId, userId, visibility?)` keyed on
+  `artifact_member(user_id, role='owner')` joined to `artifact.org_id`.
+  Sites: `packages/core/src/ports.ts` (interface), `packages/db/src/repos.ts`
+  (sqlite+d1), `packages/db/src/pg.ts`, `apps/api/src/routes/artifacts.ts`
+  (`scope=mine` narrow + `/v1/tags` summary). The optional `visibility` arg
+  also powers workstream C's pending count.
+- [ ] **A2. Republish-stability contract tests.** In
+  `packages/db/test/store-contract.ts`: an artifact whose owner row is user A
+  stays in A's ids/count after (i) `addVersion` authored by user B and (ii)
+  `addVersion` with `author_id: null` (the token/CI republish). These are the
+  cases that broke the `author_id` approach.
+- [ ] **A3. Index.** `index("artifact_member_by_user").on(t.user_id)` in
+  `schema.ts` + `pg-schema.ts` (boot DDL generates CREATE INDEX from the table
+  defs, so no separate migration). `countOwnedBy` runs on every `/v1/tags`.
+- [ ] **A4. Remote MCP copy.** `apps/api/src/mcp.ts` — the publish tool's
+  visibility description still says "a DRAFT: hidden from the library" and
+  `list_artifacts` says "your own unlisted drafts". Reword to the
+  link-only framing (the stdio shim in `packages/mcp` was already done).
+- [ ] **A5. "Draft link permission" label.** `general-section.tsx` — the
+  `defaultUnlistedRole` row still says Draft; rename to the link-only
+  vocabulary (label + aria-label).
+- [ ] **A6. `?tab=drafts` alias.** `routes/index.tsx` validateSearch maps the
+  legacy `tab=drafts` → `mine` instead of dropping it (old bookmarks,
+  agent-emitted links).
+- [ ] **A7. Revert "Everything" → "All artifacts"** (nav-rail, command-palette,
+  library heading + tabs, showcase eyebrow demo, e2e copy).
+- [ ] **A8. Stray comment sweep** — `routes/artifacts.ts` "the draft state"
+  comment and any remaining user-facing "draft" in the renamed surfaces.
 
-### 1a. Share dialog copy + grouping
+## Workstream B — the two-axis dialog
 
-`apps/web/src/pages/artifact/share-dialog.tsx:41-78` — the `ACCESS` array:
+- [ ] **B1. Grouped dropdown.** `share-dialog.tsx` `ACCESS` becomes grouped
+  sections rendered with separators (extend `ui/select-menu.tsx` with a
+  `SelectMenuSeparator` wrapper over the existing dropdown primitive):
 
-| value | old label | new label |
-|---|---|---|
-| `private` | Private | Private *(unchanged)* |
-| `org` | Workspace only | Workspace |
-| `unlisted` | Draft — workspace with link | Workspace — link only |
-| `link` | Anyone with the link | Anyone with the link *(unchanged)* |
-| `public` | Public — listed | Public |
-| `password` | Password protected | Password protected *(unchanged)* |
+  | | label | value |
+  |---|---|---|
+  | · | Private | `private` |
+  | ─ | Workspace | `org` |
+  | | Workspace — link only | `unlisted` |
+  | ─ | Public | `public` |
+  | | Public — link only | `link` |
+  | ─ | Password protected | `password` |
 
-Reorder the array so `org`/`unlisted` sit as an adjacent pair and `link`/`public`
-sit as an adjacent pair (they already do, modulo the label swap) — optionally add
-a small group divider/subheading ("Workspace" over the first pair, "Anyone" over
-the second) so the who × listed-or-link-only structure is visible, not just
-implied by list order. Treat the divider as polish, not a blocker.
+  The 2×2 reads: listed first, link-only second, in each audience pair.
+  `link` is renamed **"Public — link only"** (exact YouTube semantics; the
+  blurb keeps "Anyone with the link can view" so the familiar phrase
+  survives). Icons: listed rungs carry the audience glyph
+  (workspace/globe), link-only rungs carry the link glyph. Password stays a
+  trailing modifier-style rung (folding it into a checkbox on the link rungs
+  is a later, larger change).
+- [ ] **B2. Showcase `GeneralAccessDemo`** mirrors the same grouping/labels.
 
-`apps/web/src/pages/settings/general-section.tsx:281,292` — `AGENT_VIS_LABELS`:
-update the `unlisted → "Draft"` entry to `"Workspace — link only"` so the
-"agent publishes as" setting uses the same vocabulary as the share dialog.
+## Workstream C — pending-work signal in Created by me
 
-### 1b. Library: drop the Drafts tab, add "Created by me"
+- [ ] **C1. Summary count.** `/v1/tags` adds `mine_link_only` =
+  `countOwnedBy(org, me, "unlisted")`. Types in `api.ts` + `library/types.ts`.
+- [ ] **C2. Tab badge.** The Created by me tab keeps its total count; when
+  `mine_link_only > 0` it also shows a small accent count — the "waiting on
+  you to surface it" signal the old Drafts badge carried.
+- [ ] **C3. Row chip.** In the Created by me feed, `unlisted` rows show a
+  quiet "Link only" chip so pending work is scannable in place. (Check the
+  card component for an existing chip/badge slot; reuse it.)
 
-`apps/web/src/pages/library/index.tsx`:
+## Workstream D — workspace at first need
 
-- `deriveFilter` (`:73-91`): drop the `search.tab === "drafts"` branch (`:82`)
-  and the `unlisted` scope shortcut in `params` (`:128`).
-- `LibraryTabs` (`:644-681`): currently a 2-tab row, "All artifacts" / "Drafts"
-  (`:677-678`). Replace with "Everything" / "Created by me". Wire "Created by
-  me" through the **existing** author-filter plumbing — `pickAuthor`
-  (`:223`, already used when you click an author chip) sets `search.author`,
-  which already flows into `params.author` (`:127`) and the server query. "Created
-  by me" is just `pickAuthor(me.username)` with its own tab affordance instead of
-  a chip click.
-  - "Shared with me" does **not** need new work — it already exists as the
-    `/shared` route (`nav-rail.tsx:470-472`, heading "Shared with you" at
-    `index.tsx:275`). Decide whether it also gets a shortcut inside this tab row
-    or stays a separate rail item; either is fine, note the decision in the PR.
-- `heading`/`headingCount` (`:267-298`) and `emptyStateFor` (`:699+`, the
-  `unlisted` case around `:728`): drop the `unlisted` branches, add an
-  "author === me" branch if the new tab needs its own heading/empty copy.
-- Update the stale comment at `:641-643` ("the empty Drafts tab is how the
-  concept gets discovered") — that rationale is gone.
-- `apps/web/src/pages/library/types.ts:47-50`: update the comment describing
-  `unlisted` as "drafts, renamed for humans" to match the new framing.
+- [ ] **D1. Solo ladder collapse.** In the share dialog, when the active
+  workspace has one member (from the existing `GET /v1/workspace` roster via
+  `workspaceQuery`), hide the `org` and `unlisted` rungs (unless one is the
+  artifact's *current* visibility) and render a quiet footer hint: "Working
+  with a team? Create a workspace to share with them" → Settings → General.
+- [ ] **D2. One-flow create + invite.** The create-workspace dialog
+  (`general-section.tsx`) gains an optional "Invite teammates" field
+  (comma/space-separated emails). Flow: `POST /v1/workspaces` (switches the
+  cookie server-side) → `POST /v1/workspace/invites` per email (now scoped to
+  the new workspace) → reload. Skippable — empty field behaves exactly as
+  today.
+- [ ] **D3. User-pod entry point.** "New workspace" item in the pod menu
+  (below the switcher section; also present for solo accounts) → navigates to
+  Settings → General with a search param that auto-opens the create dialog.
+- [ ] **D4. Personal pinned.** `GET /v1/workspaces` marks the caller's
+  personal workspace (`id === ws_p_<userId>`) with `personal: true` (both the
+  human branch and the OAuth-agent owner branch). Web: `WorkspaceSummary`
+  gains the flag; switcher + command palette display it as **"Personal"**,
+  sorted first; the nav-rail subtitle shows "Personal" when it's active.
+- [ ] **D5. `/welcome` pointer.** One muted, non-branching line near the
+  connect-agent step: "Working with a team? Create a workspace and invite
+  them anytime from Settings."
 
-### 1c. Cross-surface consistency + stale copy
+## Workstream E — invite-accept email mismatch (old Phase 0, unchanged spec)
 
-- `packages/cli/src/config.js:239` — the `derive.json` visibility enum is
-  missing `unlisted`: `["public", "link", "org", "password", "private"]` →
-  add `"unlisted"`. Independent bug, fix regardless of the naming change.
-- `packages/mcp/src/index.ts:344-345` — update the comment ("a DRAFT: hidden
-  from the library...") to the new framing (hidden from the workspace library,
-  reachable by link for members).
-- `apps/web/src/components/showcase/showcase.tsx:466-470` — the design-system
-  demo shows a "Draft" badge next to "Published" as if they're lifecycle
-  opposites. Remove or relabel so the showcase stops teaching the wrong mental
-  model.
-- `SECURITY.md:32-59` — update the `unlisted` row's wording (currently "the
-  agent-draft state between private and workspace") to match.
+- [ ] **E1. API.** `POST /v1/invites/:token/accept`: when `inv.email` is set
+  and doesn't case-insensitively match `me.email`, return
+  `409 { error: "email_mismatch", invited_email }` unless the body carries
+  `{ confirm_mismatch: true }`. Matching/absent email: unchanged.
+- [ ] **E2. Web.** `accept-invite.tsx`: on preview-email ≠ session-email, show
+  the inline warning + "Continue anyway" that resends with the flag.
+- [ ] **E3. Test.** `apps/api/test/workspace.test.ts`: 409 without flag, 200
+  with it.
 
-### Tests
+## Deferred (explicitly NOT this PR)
 
-`apps/web/e2e/deep/library.deep.spec.ts`, `smoke/library.smoke.spec.ts`,
-`deep/visibility.deep.spec.ts`, `deep/share.deep.spec.ts` — rename/update any
-assertions keyed on `data-testid="library-tab-drafts"` or the old "Draft" copy;
-add coverage for the new `library-tab-created-by-me` (or equivalent) test-id.
+- Hide-workspace-language polish for solo accounts beyond the ladder (the old
+  Phase 2b: "Account" vs "Workspace" settings labels, switcher chrome rules).
+- Defaults-by-location (human publish in a team workspace defaults to `org`).
+- Roles collapse (Admin / Member / Viewer; retire the vestigial `viewer`).
+- Password as a checkbox on the link rungs instead of a sixth rung.
+- Domain discovery at signup.
+- CLI/MCP workspace targeting (`derive.json` workspace field) — PR #308.
 
-## Phase 2: signup fork + hide "workspace" language for solo accounts
-
-This phase is more product-judgment than mechanics — flagging open decisions
-inline rather than pretending they're already resolved.
-
-### 2a. Signup fork
-
-`apps/web/src/pages/welcome.tsx` is already the post-signup onboarding step
-(profile, avatar, profession — no workspace question today). Add a first screen:
-**"Personal account" / "Create a company account."**
-
-- Personal → no change, proceed to the existing profile fields; the silently
-  auto-provisioned `ws_p_<userId>` workspace (`apps/api/src/context.ts:451-461`)
-  stays as-is and is never labeled "workspace" in the UI (see 2b).
-- Company → prompt for a workspace name (and optionally teammate emails right
-  there, reusing `POST /v1/workspace/invites`), then call the existing
-  `POST /v1/workspaces` (`apps/api/src/routes/workspace.ts:367-381`), which
-  switches the active-workspace cookie to the new one.
-
-**Decision needed:** the auto-provisioned personal workspace still gets created
-first (it's the fallback every workspace-scoped call relies on, including
-paths that never touch `/welcome` — CLI, MCP, agents). For a "company" signup
-this leaves two workspace rows: the invisible personal one and the new named
-one. Recommendation: leave the personal one in place rather than trying to
-suppress/merge it — it's harmless once it's not labeled "workspace" anywhere
-(2b), and avoiding a race with whatever pre-`/welcome` API calls already fire
-`activeWorkspace()` is not worth the complexity. Confirm this is acceptable
-before building 2a.
-
-### 2b. Hide "workspace" language for single-member workspaces
-
-Needs a cheap way to know "is the active workspace solo" on the client —
-check whether `GET /v1/workspaces` (`workspace.ts:331-364`) already exposes a
-member count; if not, add one. Then:
-
-- `apps/web/src/components/chrome/app-shell.tsx` (switcher, `:59-140`): only
-  render the switcher when the caller belongs to more than one workspace.
-  Note: earlier research found a vestigial `multi` flag that's hard-coded
-  `true` everywhere (`workspace.ts:72,347,353,360`) with a comment calling the
-  switcher "dormant in single mode" (`apps/web/src/api.ts:1076`) — that dead
-  single/multi toggle should either be wired to real membership count here or
-  removed; don't leave a third half-implemented flag alongside the new check.
-- `apps/web/src/pages/settings/general-section.tsx:34-57`: relabel the
-  "Workspace" section "Account" when solo; only surface workspace-name editing
-  and the switcher once there's a second member or the account was created via
-  the "company" fork.
-
-### Tests
-
-`apps/web/e2e/deep/chrome.deep.spec.ts` (switcher visibility),
-`smoke/auth.smoke.spec.ts` / `deep/auth.deep.spec.ts` (signup fork),
-`deep/settings.deep.spec.ts` (Account vs Workspace labeling) — extend for both
-the solo and multi-member cases; a fresh signup in the e2e harness is
-single-member by default, so the "hide workspace language" assertions are the
-default path and multi-member needs an explicit second invite in the test.
-
-## Dev loop (each phase)
+## Dev loop
 
 ```bash
 cd apps/api && PORT=8200 DATA_DIR="$PWD/.data-mine" \
@@ -174,24 +160,20 @@ cd apps/api && PORT=8200 DATA_DIR="$PWD/.data-mine" \
 cd apps/web && DERIVE_API=http://localhost:8200 pnpm exec vite --port 3200 --strictPort
 ```
 
-Sign up fresh (first user on a fresh DB = workspace owner); invite a second
-account to exercise the multi-member paths.
+## Verify (gate for "done")
 
-## Verify (gate for "done," each phase)
-
-- `pnpm typecheck` — clean.
-- `pnpm lint` (biome) — clean; `pnpm lint:testids` if new test-ids were added.
-- `pnpm -r test` — API unit tests (`apps/api/test/*`) green, including the new
-  Phase 0 mismatch cases.
-- Relevant Playwright specs green:
-  `cd apps/web && pnpm exec playwright test e2e/deep/library.deep.spec.ts e2e/deep/share.deep.spec.ts e2e/deep/visibility.deep.spec.ts e2e/deep/chrome.deep.spec.ts e2e/deep/auth.deep.spec.ts e2e/deep/settings.deep.spec.ts`
-  (parallel worktrees: set distinct `PW_WEB_PORT`/`PW_API_PORT`).
-- Screenshot the share dialog and library home in all 4 themes.
+- `pnpm typecheck`, `pnpm lint`, `pnpm lint:testids` — clean.
+- `pnpm -r test` — including the new A2 contract cases (sqlite; `pnpm test:pg`
+  for the Postgres adapter when Docker is available) and E3.
+- Playwright: `library.deep`, `share.deep`, `visibility.deep`, `chrome.deep`,
+  `settings.deep`, `mcp-loop.deep` (+ smoke for library/auth).
+- Screenshot the grouped share dialog (solo + team) and the library tabs.
 
 ## Ship
 
-- One PR per phase — they're independently useful and independently risky
-  (Phase 0 is a security fix, Phase 1 is pure UI, Phase 2 touches onboarding).
-- Own branch off `main`: `fix/invite-email-mismatch`,
-  `refactor/visibility-relabel`, `feat/signup-fork`.
-- No external references in commits/PRs (product-only).
+One PR (#314), commits grouped by workstream so each is reviewable alone:
+`fix: created-by-me keys on the owner row`, `fix: finish the draft→link-only
+rename`, `feat: two-axis share dialog`, `feat: pending-work signal`,
+`feat: workspace at first need`, `fix: invite email mismatch surfaced`,
+`docs: round-2 plan`. PR description rewritten at the end to match reality.
+No Claude attribution anywhere.
