@@ -1,5 +1,6 @@
 import {
   type Action,
+  type ActivityKind,
   type Actor,
   type AgentRecord,
   type ArtifactRecord,
@@ -19,6 +20,7 @@ import {
   principalOwnerId,
   type Role,
   roleAllows,
+  type Visibility,
 } from "@derive/core"
 import type { Context } from "hono"
 import { getCookie, setCookie } from "hono/cookie"
@@ -267,6 +269,36 @@ export function buildContext(deps: AppDeps) {
     else await guarded
   }
 
+  // Visibility tiers the whole workspace can see. An unlisted draft or a private/
+  // password-gated doc must never leak its existence into the shared Activity feed —
+  // this is the one gate every recordActivity call site shares.
+  const FEED_VISIBLE: ReadonlySet<Visibility> = new Set(["public", "link", "org"])
+
+  // Append one row to the workspace Activity feed — best-effort like notify(), never
+  // blocks or fails the request it's called from.
+  const recordActivity = (
+    a: ArtifactRecord,
+    kind: ActivityKind,
+    actor: { id: string | null; name: string; kind: "user" | "agent" },
+    fields?: { thread_id?: string | null; version_n?: number | null; preview?: string | null },
+  ): Promise<void> => {
+    if (!FEED_VISIBLE.has(a.visibility)) return Promise.resolve()
+    return background(
+      meta.recordActivity({
+        id: newId("ac"),
+        org_id: a.org_id,
+        kind,
+        artifact_id: a.id,
+        artifact_short_id: a.short_id,
+        artifact_title: a.title,
+        actor: actor.name,
+        actor_id: actor.id,
+        actor_kind: actor.kind,
+        ...fields,
+      }),
+    )
+  }
+
   const bearer = (c: Context): string => {
     const h = c.req.header("authorization") ?? ""
     return h.startsWith("Bearer ") ? h.slice(7) : ""
@@ -413,6 +445,19 @@ export function buildContext(deps: AppDeps) {
   // anonymous. Agents author as their name, never spoofing a person. Also a Principal read.
   const actingUser = async (c: Context): Promise<{ id: string; name: string } | null> =>
     principalActor(await resolvePrincipal(c))
+
+  // Like actingUser, but tagged with whether it's a registered agent or a real person —
+  // recordActivity's call sites need this to render the feed's AGENT chip.
+  const activityActor = async (
+    c: Context,
+  ): Promise<{ id: string; name: string; kind: "user" | "agent" } | null> => {
+    const p = await resolvePrincipal(c)
+    return p.kind === "agent"
+      ? { id: p.agent.id, name: p.agent.name, kind: "agent" }
+      : p.kind === "human"
+        ? { id: p.user.id, name: p.user.name ?? p.user.username ?? p.user.email, kind: "user" }
+        : null
+  }
 
   // A stable rate-limit key for the caller: the signed-in user / agent if known,
   // otherwise their IP so anonymous floods are still bounded.
@@ -699,10 +744,12 @@ export function buildContext(deps: AppDeps) {
     unlockLimiter,
     notify,
     background,
+    recordActivity,
     currentUser,
     agentFor,
     resolvePrincipal,
     actingUser,
+    activityActor,
     privateOwnerId,
     limited,
     overStorage,

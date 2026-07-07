@@ -8,7 +8,8 @@ import { resolveUserRef } from "../lib/resolve-user"
 /** Per-artifact role overrides (a share). Managing shares requires `share`
  *  (editor+, GDocs model); the share's role beats the caller's workspace baseline. */
 export const sharingRoutes = (ctx: AppContext) => {
-  const { meta, defaultRole, authorize, actorFor, actingUser, bus } = ctx
+  const { meta, defaultRole, authorize, actorFor, actingUser, activityActor, recordActivity, bus } =
+    ctx
   const app = new Hono()
 
   // A sharer can never grant — or remove — a role above their own. An editor (who
@@ -107,6 +108,9 @@ export const sharingRoutes = (ctx: AppContext) => {
         notification: { ...row, read: 0, created_at: new Date().toISOString() },
       })
     }
+    const shareActor = await activityActor(c)
+    if (shareActor)
+      recordActivity(artifact, "share", shareActor, { preview: `Shared as ${b.role}` })
     // Echo the public handle, never the email — otherwise sharing by @handle would
     // be a handle→email oracle (resolve anyone's email by sharing an artifact with them).
     return c.json({ user_id: user.id, handle: user.username, name: user.name, role: b.role }, 201)

@@ -504,6 +504,15 @@ export interface MetaStore {
     fields: { state: Extract<ReviewRoundState, "sent_back" | "approved">; note?: string | null },
   ): Promise<ReviewRoundRecord | null>
 
+  // ---- Activity feed (the workspace's "what happened") -------------------
+  recordActivity(a: NewActivity): Promise<void>
+  /** Newest-first, keyset-paginated (like listArtifacts) — everything recorded for
+   *  this workspace, regardless of which artifact. */
+  listActivity(
+    orgId: string,
+    opts?: { limit?: number; cursor?: { created_at: string; id: string } },
+  ): Promise<ActivityRecord[]>
+
   // ---- Contexts + sessions (ask a context; its runner answers) -----------
   createContext(x: NewContext): Promise<ContextRecord>
   getContext(id: string): Promise<ContextRecord | null>
@@ -1471,6 +1480,47 @@ export interface NewView {
   version: number
   viewer: string
   viewer_kind: "user" | "anon"
+}
+
+/** What the workspace Activity feed shows. `view` rows are written only for a NAMED
+ *  viewer's first read of a version (anonymous reads stay aggregate counts, never a
+ *  feed row); every other kind mirrors an existing domain event. */
+export type ActivityKind = "publish" | "comment" | "resolve" | "share" | "proposal" | "view"
+
+export interface ActivityRecord {
+  id: string
+  org_id: string
+  kind: ActivityKind
+  artifact_id: string
+  /** Denormalized at write time (the notification-row pattern) so the feed never joins
+   *  artifact on read; a later rename doesn't rewrite history. */
+  artifact_short_id: string
+  artifact_title: string | null
+  thread_id: string | null
+  version_n: number | null
+  /** Display name of who/what did it. */
+  actor: string
+  /** Stable user/agent id, when known (null for a legacy/anonymous row). */
+  actor_id: string | null
+  actor_kind: "user" | "agent"
+  /** A short one-line detail (a quoted comment snippet, "approved", a share role). */
+  preview: string | null
+  created_at: string
+}
+
+export interface NewActivity {
+  id: string
+  org_id: string
+  kind: ActivityKind
+  artifact_id: string
+  artifact_short_id: string
+  artifact_title: string | null
+  thread_id?: string | null
+  version_n?: number | null
+  actor: string
+  actor_id?: string | null
+  actor_kind?: "user" | "agent"
+  preview?: string | null
 }
 
 export interface ViewStats {

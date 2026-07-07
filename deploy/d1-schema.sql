@@ -414,6 +414,25 @@ CREATE TABLE IF NOT EXISTS audit_log (
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 
+CREATE TABLE IF NOT EXISTS activity (
+  id TEXT PRIMARY KEY,
+  org_id TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  artifact_id TEXT NOT NULL,
+  artifact_short_id TEXT NOT NULL,
+  artifact_title TEXT,
+  thread_id TEXT,
+  version_n INTEGER,
+  actor TEXT NOT NULL,
+  actor_id TEXT,
+  actor_kind TEXT NOT NULL DEFAULT 'user',
+  preview TEXT,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  FOREIGN KEY (artifact_id) REFERENCES artifact(id)
+);
+
+CREATE INDEX IF NOT EXISTS activity_org_time ON activity (org_id, created_at, id);
+
 CREATE TABLE IF NOT EXISTS principal (
     id TEXT PRIMARY KEY,
     org_id TEXT NOT NULL,

@@ -93,6 +93,25 @@ export const followingPreviewQuery = () =>
     queryFn: () => api.listArtifacts({ scope: "following", limit: 6 }).then((r) => r.artifacts),
   })
 
+// The full workspace Activity feed (/activity) — infinite, keyset-paginated, like
+// libraryArtifactsQuery.
+export const activityFeedQuery = () =>
+  infiniteQueryOptions({
+    queryKey: ["activity"] as const,
+    queryFn: ({ pageParam }) => api.listActivity({ cursor: pageParam || undefined, limit: 30 }),
+    initialPageParam: "",
+    getNextPageParam: (last) => last.next_cursor ?? undefined,
+  })
+
+// A small, flat, capped slice of the Activity feed for the home's quiet one-line link
+// (the TriageBar counterpart — "N recent" plus the single latest story). The full feed
+// is the infinite activityFeedQuery above.
+export const recentActivityQuery = () =>
+  queryOptions({
+    queryKey: ["activity", "recent"] as const,
+    queryFn: () => api.listActivity({ limit: 8 }).then((r) => r.items),
+  })
+
 // The caller's follows (GitHub authors + repo path prefixes) for the active
 // workspace. Drives the Following-feed empty state, the manage strip, and the
 // isFollowing* sets that toggle the Follow buttons. One source of truth: every

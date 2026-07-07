@@ -6,6 +6,7 @@
 // muted, unfavourited star); pass weight="fill" for a filled state (favorited
 // star, pinned pin) — it fills the glyph with the current ink.
 import {
+  Activity,
   AtSign,
   Ban,
   BarChart3,
@@ -60,6 +61,8 @@ const REG = {
   // nav
   all: Layers,
   favorites: Star,
+  // The workspace Activity feed — everything that happened, across every artifact.
+  activity: Activity,
   // The activity feed of followed authors + repo paths.
   following: Users,
   collections: Folders,

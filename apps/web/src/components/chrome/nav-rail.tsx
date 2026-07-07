@@ -111,7 +111,7 @@ function NavItem({
   icon: IconName
   label: string
   count?: number
-  to: "/favorites" | "/following" | "/shared" | "/people" | "/contexts"
+  to: "/favorites" | "/following" | "/shared" | "/people" | "/contexts" | "/activity"
   active: boolean
   testId?: string
 }) {
@@ -302,6 +302,7 @@ export function NavRail() {
   const onShared = loc.pathname === "/shared"
   // People + its Activity sub-view (the /following feed) are one tab; the row lights for both.
   const onPeople = loc.pathname === "/people" || loc.pathname === "/following"
+  const onActivity = loc.pathname === "/activity"
   const onContexts = loc.pathname.startsWith("/contexts")
   const onSettings = loc.pathname.startsWith("/settings")
   const tags = summary?.tags ?? []
@@ -480,6 +481,15 @@ export function NavRail() {
                 to="/people"
                 active={onPeople}
                 testId="nav-people"
+              />
+              {/* The workspace's "what happened" — every recorded publish, comment,
+                  resolved thread, share, and proposal decision, across every artifact. */}
+              <NavItem
+                icon="activity"
+                label="Activity"
+                to="/activity"
+                active={onActivity}
+                testId="nav-activity"
               />
               <NavItem
                 icon="context"

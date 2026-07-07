@@ -397,6 +397,22 @@ export interface Notification {
   read: 0 | 1
   created_at: string
 }
+/** One row in the workspace Activity feed. */
+export interface ActivityItem {
+  id: string
+  org_id: string
+  kind: "publish" | "comment" | "resolve" | "share" | "proposal" | "view"
+  artifact_id: string
+  artifact_short_id: string
+  artifact_title: string | null
+  thread_id: string | null
+  version_n: number | null
+  actor: string
+  actor_id: string | null
+  actor_kind: "user" | "agent"
+  preview: string | null
+  created_at: string
+}
 export interface Webhook {
   id: string
   artifact_id: string | null
@@ -809,6 +825,17 @@ export const api = {
     if (params?.limit) qs.set("limit", String(params.limit))
     const s = qs.toString()
     return f(`/v1/artifacts${s ? `?${s}` : ""}`, opts()).then(j)
+  },
+  // The workspace Activity feed — newest first, keyset-paginated like listArtifacts.
+  listActivity: (params?: {
+    cursor?: string
+    limit?: number
+  }): Promise<{ items: ActivityItem[]; next_cursor: string | null }> => {
+    const qs = new URLSearchParams()
+    if (params?.cursor) qs.set("cursor", params.cursor)
+    if (params?.limit) qs.set("limit", String(params.limit))
+    const s = qs.toString()
+    return f(`/v1/activity${s ? `?${s}` : ""}`, opts()).then(j)
   },
   browseSummary: (): Promise<{
     total: number

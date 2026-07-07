@@ -1,4 +1,5 @@
 import type {
+  ActivityRecord,
   AgentMentionRecord,
   AgentRecord,
   ArtifactMemberRecord,
@@ -26,6 +27,7 @@ import type {
   ListArtifactsOpts,
   MembershipRecord,
   MetaStore,
+  NewActivity,
   NewAgent,
   NewAgentMention,
   NewArtifact,
@@ -87,6 +89,7 @@ import {
   inArray,
   isNotNull,
   isNull,
+  lt,
   lte,
   ne,
   or,
@@ -96,6 +99,7 @@ import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres"
 import { Pool } from "pg"
 import type { Exhaustive, Shapes } from "./parity"
 import {
+  activity,
   agent,
   agentMention,
   artifact,
@@ -142,6 +146,7 @@ const one = <T>(rows: T[]): T => {
 // Exported so the pg schema-conformance test can diff these defs against the
 // columns PG_SCHEMA_STATEMENTS actually creates in a real Postgres.
 export const schema = {
+  activity,
   artifact,
   version,
   comment,
@@ -179,6 +184,7 @@ export const schema = {
 // a pg column that drifts from its core Record → compile error here.
 const _schemaExhaustive: Exhaustive<typeof schema> = true
 const _schemaShapes: Shapes<typeof schema> = {
+  activity: true,
   artifact: true,
   version: true,
   comment: true,
@@ -1500,6 +1506,30 @@ export class PgMetaStore implements MetaStore {
       .where(eq(reviewRound.id, id))
       .returning()
     return rows[0] ?? null
+  }
+
+  // ---- Activity feed -------------------------------------------------------
+  async recordActivity(a: NewActivity): Promise<void> {
+    await this.db.insert(activity).values(a)
+  }
+  listActivity(
+    orgId: string,
+    opts?: { limit?: number; cursor?: { created_at: string; id: string } },
+  ): Promise<ActivityRecord[]> {
+    const conds = [eq(activity.org_id, orgId)]
+    if (opts?.cursor) {
+      const cursor = or(
+        lt(activity.created_at, opts.cursor.created_at),
+        and(eq(activity.created_at, opts.cursor.created_at), lt(activity.id, opts.cursor.id)),
+      )
+      if (cursor) conds.push(cursor)
+    }
+    const rows = this.db
+      .select()
+      .from(activity)
+      .where(and(...conds))
+      .orderBy(desc(activity.created_at), desc(activity.id))
+    return opts?.limit ? rows.limit(opts.limit) : rows
   }
 
   // ---- Contexts + sessions -------------------------------------------------

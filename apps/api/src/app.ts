@@ -8,6 +8,7 @@ import { inMemoryRateLimiters, ipRateLimit } from "./lib/rate-limit"
 import { serveContent } from "./lib/serve-content"
 import { log } from "./log"
 import { mountMcp } from "./mcp"
+import { activityRoutes } from "./routes/activity"
 import { agentRoutes } from "./routes/agents"
 import { analyticsRoutes } from "./routes/analytics"
 import { artifactRoutes } from "./routes/artifacts"
@@ -299,6 +300,7 @@ export function createApp(deps: AppDeps): Hono {
     workspaceRoutes,
     agentRoutes,
     artifactRoutes,
+    activityRoutes,
     assetRoutes,
     sharingRoutes,
     favoriteRoutes,

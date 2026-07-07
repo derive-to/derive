@@ -6,8 +6,21 @@ import type { AppContext } from "../context"
 import { fail, readJson, VIEW_DEDUP_MS } from "../lib/http"
 
 /** View recording (de-duped, owner self-views excluded) + per-artifact stats. */
+// The dawn of time, for a viewedSince check that really means "ever" (first-view
+// detection for the Activity feed) rather than the short refresh-dedup window.
+const EPOCH = new Date(0).toISOString()
+
 export const analyticsRoutes = (ctx: AppContext) => {
-  const { meta, deps, analyticsOn, currentUser, actorFor, requireArtifact, authorize } = ctx
+  const {
+    meta,
+    deps,
+    analyticsOn,
+    currentUser,
+    actorFor,
+    recordActivity,
+    requireArtifact,
+    authorize,
+  } = ctx
   const app = new Hono()
 
   // Record a view. The viewer is the logged-in user, or a stable anonymous id
@@ -54,6 +67,11 @@ export const analyticsRoutes = (ctx: AppContext) => {
     // De-dup: skip if this viewer already saw this version recently (a refresh).
     const since = new Date(Date.now() - VIEW_DEDUP_MS).toISOString()
     if (await meta.viewedSince(artifact.id, viewer, version, since)) return c.body(null, 204)
+    // A read is feed-worthy only the FIRST time a NAMED person sees this version —
+    // anonymous reads stay an aggregate count (never a feed row with an identity),
+    // and every later open by the same person is a refresh, not new activity.
+    const isFirstNamedView =
+      kind === "user" && !(await meta.viewedSince(artifact.id, viewer, version, EPOCH))
     await meta.recordView({
       id: newId("v"),
       artifact_id: artifact.id,
@@ -61,6 +79,13 @@ export const analyticsRoutes = (ctx: AppContext) => {
       viewer,
       viewer_kind: kind,
     })
+    if (isFirstNamedView && me)
+      recordActivity(
+        artifact,
+        "view",
+        { id: me.id, name: me.name ?? me.username ?? me.email, kind: "user" },
+        { version_n: version },
+      )
     return c.body(null, 204)
   })
 

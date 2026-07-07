@@ -29,8 +29,10 @@ export const proposalRoutes = (ctx: AppContext) => {
     deps,
     bus,
     notify,
+    recordActivity,
     currentUser,
     actingUser,
+    activityActor,
     privateOwnerId,
     anonLocked,
     requireArtifact,
@@ -231,6 +233,12 @@ export const proposalRoutes = (ctx: AppContext) => {
         version: version.n,
         approver,
       })
+      const approveActor = await activityActor(c)
+      if (approveActor)
+        recordActivity(artifact, "proposal", approveActor, {
+          version_n: version.n,
+          preview: "approved",
+        })
       const fresh = (await meta.getProposal(proposal.id)) as ProposalRecord
       return c.json({ ...(await proposalJson(artifact, fresh)), published: version.n })
     } catch (err) {
@@ -261,6 +269,9 @@ export const proposalRoutes = (ctx: AppContext) => {
     for (const threadId of await releaseAddressed(meta, artifact.id, proposal.id, "open"))
       bus.publish(artifact.id, { type: "comment.addressed", thread_id: threadId, state: "open" })
     await notify(artifact, "proposal.changes_requested", { proposal_id: proposal.id, reviewer })
+    const changesActor = await activityActor(c)
+    if (changesActor)
+      recordActivity(artifact, "proposal", changesActor, { preview: "requested changes" })
     const fresh = (await meta.getProposal(proposal.id)) as ProposalRecord
     return c.json(await proposalJson(artifact, fresh))
   })
