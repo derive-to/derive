@@ -385,7 +385,17 @@ Extra detail the skill loads on demand — keep SKILL.md lean and push the long 
 (edge cases, tables, examples) into reference files like this one.
 `
 
-const starterManifest = (title) => `# ${title} — context manifest
+const starterManifest = (title) => `---
+# Repo pointers: the runner clones these into repos/ at boot and tells the
+# model what's there (and at which SHA). Uncomment to declare them — they
+# travel with every push, so a fresh box needs nothing pre-installed.
+# repos:
+#   - url: https://github.com/you/data-notebooks
+#     ref: main
+#     description: what's in it, one line the model will read
+---
+
+# ${title} — context manifest
 
 This file is the runner's system prompt. Editing it (and pushing) reconfigures
 the agent's judgment with no redeploy — the next answer uses the new version.
@@ -439,8 +449,10 @@ const STARTER_CONTEXT_ENV = `# Secrets the context's MCP servers need (see .mcp.
 `
 
 const CONTEXT_GITIGNORE = `# Secrets never leave the machine: .env holds the context's credentials, .derive/
-# holds the agent token minted by the first push.
+# holds the agent token minted by the first push. repos/ is the runner's clone
+# workspace — pointer state, never source.
 context/.env
+context/repos/
 .derive/
 `
 

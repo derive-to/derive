@@ -32,6 +32,20 @@ describe("collectDir", () => {
     ])
     expect(skipped.sort()).toEqual([".env", ".env.production", "references/.env"])
   })
+
+  it("skipTopDirs drops the runner's clone workspace at the top level only", () => {
+    const d = tmp()
+    mkdirSync(join(d, "repos", "acme-eda"), { recursive: true })
+    mkdirSync(join(d, "references", "repos"), { recursive: true })
+    writeFileSync(join(d, "MANIFEST.md"), "# m")
+    writeFileSync(join(d, "repos", "acme-eda", "big.md"), "clone contents")
+    writeFileSync(
+      join(d, "references", "repos", "note.md"),
+      "a doc that happens to be named repos/",
+    )
+    const { files } = collectDir(d, d, undefined, ["repos"])
+    expect(Object.keys(files).sort()).toEqual(["MANIFEST.md", "references/repos/note.md"])
+  })
 })
 
 describe("readTarget", () => {

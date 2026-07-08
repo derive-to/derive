@@ -1,4 +1,5 @@
-import { mkdtempSync, writeFileSync } from "node:fs"
+import { execSync } from "node:child_process"
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { describe, expect, it } from "vitest"
@@ -7,7 +8,11 @@ import {
   loadRunnerConfig,
   OUTPUT_CONTRACT,
   parseAnswer,
+  parseManifest,
   renderServiceUnit,
+  repoCatalogBlock,
+  repoSlug,
+  syncRepos,
 } from "../src/runner.js"
 
 describe("parseAnswer", () => {
@@ -141,6 +146,89 @@ describe("loadRunnerConfig", () => {
     )
     expect(cfg.manifestFile).toBe("/work/context/MANIFEST.md")
   })
+})
+
+describe("repo pointers", () => {
+  it("parses repos out of frontmatter and strips it from the prompt body", () => {
+    const md = `---
+repos:
+  - url: https://github.com/churnkey/churnkey-labs
+    ref: main
+    description: "the eda corpus"
+  - url: git@github.com:acme/private-notes.git
+other_key: ignored
+---
+
+# The manifest body`
+    const { body, repos } = parseManifest(md)
+    expect(body).toBe("\n# The manifest body")
+    expect(repos).toEqual([
+      {
+        url: "https://github.com/churnkey/churnkey-labs",
+        ref: "main",
+        description: "the eda corpus",
+      },
+      { url: "git@github.com:acme/private-notes.git", ref: null, description: "" },
+    ])
+  })
+
+  it("passes a manifest without frontmatter through untouched", () => {
+    expect(parseManifest("# Plain")).toEqual({ body: "# Plain", repos: [] })
+  })
+
+  it("the scaffolded example stays inert (commented) and junk urls are dropped", () => {
+    const commented = "---\n# repos:\n#   - url: https://github.com/you/x\n---\nbody"
+    expect(parseManifest(commented).repos).toEqual([])
+    const junk = "---\nrepos:\n  - url: not-a-url\n---\nbody"
+    expect(parseManifest(junk).repos).toEqual([])
+  })
+
+  it("slugs are owner-repo so same-named repos from different owners don't collide", () => {
+    expect(repoSlug("https://github.com/churnkey/eda")).toBe("churnkey-eda")
+    expect(repoSlug("https://github.com/acme/eda.git")).toBe("acme-eda")
+    expect(repoSlug("git@github.com:acme/eda.git")).toBe("acme-eda")
+  })
+
+  it("the catalog block names what's on disk and states what isn't", () => {
+    expect(repoCatalogBlock([])).toBe("")
+    const block = repoCatalogBlock([
+      { url: "https://github.com/a/ok", ref: "main", description: "docs", sha: "ab12cd34ef56" },
+      { url: "https://github.com/a/gone", ref: null, description: "", sha: null },
+    ])
+    expect(block).toContain("repos/a-ok — docs (main @ ab12cd34ef56)")
+    expect(block).toContain("repos/a-gone")
+    expect(block).toContain("UNAVAILABLE")
+  })
+
+  it("syncRepos clones at boot and follows the tip on the next boot", async () => {
+    const src = mkdtempSync(join(tmpdir(), "runner-repo-src-"))
+    const cwd = mkdtempSync(join(tmpdir(), "runner-repo-cwd-"))
+    const sh = (cmd) => execSync(cmd, { cwd: src, stdio: "pipe" })
+    sh("git init -q -b main && git config user.email t@t && git config user.name t")
+    writeFileSync(join(src, "notes.md"), "v1")
+    sh("git add . && git commit -qm one")
+    const repos = [{ url: `file://${src}`, ref: "main", description: "notes" }]
+
+    const first = await syncRepos(repos, cwd)
+    expect(first[0].sha).toMatch(/^[0-9a-f]{12}$/)
+    expect(readFileSync(join(cwd, "repos", repoSlug(repos[0].url), "notes.md"), "utf8")).toBe("v1")
+
+    writeFileSync(join(src, "notes.md"), "v2")
+    sh("git add . && git commit -qm two")
+    const second = await syncRepos(repos, cwd)
+    expect(second[0].sha).not.toBe(first[0].sha)
+    expect(readFileSync(join(cwd, "repos", repoSlug(repos[0].url), "notes.md"), "utf8")).toBe("v2")
+  }, 30_000)
+
+  it("a dead pointer is loud but non-fatal: catalog entry with sha null", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "runner-repo-cwd-"))
+    const out = await syncRepos(
+      [{ url: "file:///nonexistent/repo", ref: null, description: "" }],
+      cwd,
+    )
+    expect(out).toHaveLength(1)
+    expect(out[0].sha).toBeNull()
+  }, 30_000)
 })
 
 describe("output contract + service units", () => {

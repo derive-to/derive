@@ -9,7 +9,8 @@
 // Ported from packages/runner (TS) into the published CLI so `derive runner
 // serve` works from a bare npx on any machine — one package, no build step.
 import { spawn } from "node:child_process"
-import { readFileSync, statSync } from "node:fs"
+import { existsSync, mkdirSync, readFileSync, statSync } from "node:fs"
+import { dirname, join } from "node:path"
 
 // ---- config -----------------------------------------------------------------
 
@@ -142,12 +143,11 @@ export class DeriveClient {
     })
   }
 
-  /** Publish a model-produced visual as a link-visible artifact. Link (not
+  /** Publish a model-produced visual as a workspace-visible artifact. Org (not
    *  private): the artifact lands in the AGENT'S REGISTRANT'S library (the
    *  on-behalf model), so a private one would be unreadable to the very asker
-   *  it was made for. Workspace-visible: askers are workspace members, and a
-   *  chart answering a question is workspace work — the library is where it
-   *  belongs. */
+   *  it was made for — and askers are workspace members, so a chart answering
+   *  their question is workspace work. */
   async publishArtifact(title, html) {
     const form = new FormData()
     form.set("file", new Blob([html], { type: "text/html" }), "chart.html")
@@ -163,6 +163,124 @@ export class DeriveClient {
     if (!res.ok) throw new Error(`publish → ${res.status}: ${await res.text()}`)
     return res.json()
   }
+}
+
+// ---- repo pointers --------------------------------------------------------------
+
+/** Split a manifest into its body (the system prompt) and the repo pointers in
+ *  its frontmatter. Pointers live INSIDE the manifest on purpose: they version
+ *  with the judgment they support, and a bare `runner serve <ctx>` on a fresh
+ *  box learns them from the server — nothing has to exist on disk first.
+ *  Deliberately narrow: only the `repos:` list is read (url required; ref and
+ *  description optional); everything else in the frontmatter is ignored, and a
+ *  manifest without frontmatter passes through untouched. */
+export function parseManifest(md) {
+  const m = md.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?/)
+  if (!m) return { body: md, repos: [] }
+  const unquote = (v) => {
+    const t = v.trim()
+    const q = t[0]
+    return t.length >= 2 && (q === '"' || q === "'") && t.at(-1) === q ? t.slice(1, -1) : t
+  }
+  const repos = []
+  let inRepos = false
+  let cur = null
+  for (const line of (m[1] ?? "").split(/\r?\n/)) {
+    if (/^repos:\s*$/.test(line)) {
+      inRepos = true
+      continue
+    }
+    if (inRepos && /^\S/.test(line)) inRepos = false // next top-level key
+    if (!inRepos) continue
+    const item = line.match(/^\s*-\s+(\w+):\s*(.+)$/)
+    const kv = line.match(/^\s+(\w+):\s*(.+)$/)
+    if (item) {
+      cur = { [item[1]]: unquote(item[2]) }
+      repos.push(cur)
+    } else if (kv && cur) cur[kv[1]] = unquote(kv[2])
+  }
+  return {
+    body: md.slice(m[0].length),
+    repos: repos
+      .filter(
+        (r) => typeof r.url === "string" && /^(https:\/\/|ssh:\/\/|git@|file:\/\/)/.test(r.url),
+      )
+      .map((r) => ({ url: r.url, ref: r.ref ?? null, description: r.description ?? "" })),
+  }
+}
+
+/** Directory name for a cloned pointer: the last two URL segments (owner-repo),
+ *  so same-named repos from different owners don't collide. */
+export const repoSlug = (url) => {
+  const segs = url
+    .replace(/\.git$/, "")
+    .replace(/\/+$/, "")
+    .split(/[/:]/)
+    .filter(Boolean)
+  return segs
+    .slice(-2)
+    .join("-")
+    .replace(/[^A-Za-z0-9._-]/g, "-")
+}
+
+const git = (args, timeout = 300_000) =>
+  new Promise((resolve) => {
+    const p = spawn("git", args, { stdio: ["ignore", "pipe", "pipe"], timeout })
+    let out = ""
+    let err = ""
+    p.stdout.on("data", (b) => {
+      out += b
+    })
+    p.stderr.on("data", (b) => {
+      err += b
+    })
+    p.on("close", (code) => resolve({ code, out: out.trim(), err: err.trim() }))
+    p.on("error", (e) => resolve({ code: -1, out: "", err: String(e) }))
+  })
+
+/** Clone or update each pointer into `<cwd>/repos/<slug>` (shallow, detached at
+ *  the ref's tip) and return the catalog with resolved SHAs. Boot-time only —
+ *  a manifest edit that adds a repo applies on the next start, like every other
+ *  piece of host state. A failed pointer is loud but NON-fatal: the runner
+ *  still answers, the catalog marks the repo unavailable so the model can say
+ *  so, and private-repo auth rides whatever git already has on this host
+ *  (gh auth, ssh keys, GH_TOKEN credential helper). */
+export async function syncRepos(repos, cwd) {
+  const catalog = []
+  for (const r of repos) {
+    const dir = join(cwd, "repos", repoSlug(r.url))
+    let res
+    if (existsSync(join(dir, ".git"))) {
+      res = await git(["-C", dir, "fetch", "--depth", "1", "origin", ...(r.ref ? [r.ref] : [])])
+      if (res.code === 0) res = await git(["-C", dir, "checkout", "-q", "--detach", "FETCH_HEAD"])
+    } else {
+      mkdirSync(dirname(dir), { recursive: true })
+      res = await git(["clone", "--depth", "1", ...(r.ref ? ["--branch", r.ref] : []), r.url, dir])
+    }
+    if (res.code !== 0) {
+      console.error(`[runner] repo ${r.url}: ${res.err.slice(0, 200) || "git failed"}`)
+      catalog.push({ ...r, dir, sha: null })
+      continue
+    }
+    const sha = await git(["-C", dir, "rev-parse", "--short=12", "HEAD"])
+    catalog.push({ ...r, dir, sha: sha.code === 0 ? sha.out : null })
+    console.log(`[runner] repo ${repoSlug(r.url)} @ ${sha.out} (${r.ref ?? "default branch"})`)
+  }
+  return catalog
+}
+
+/** The prompt block that tells the model what's on disk and at which SHA. An
+ *  unavailable repo is stated outright — a silent gap would read as "the
+ *  corpus has nothing on this", which is a wrong answer, not a missing one. */
+export function repoCatalogBlock(catalog) {
+  if (catalog.length === 0) return ""
+  const lines = catalog.map((r) => {
+    const rel = `repos/${repoSlug(r.url)}`
+    return r.sha
+      ? `- ${rel} — ${r.description || r.url} (${r.ref ?? "default"} @ ${r.sha})`
+      : `- ${rel} — ${r.description || r.url} — UNAVAILABLE this run (clone failed); say so when an answer would need it`
+  })
+  return `\n\n## Repositories (cloned into your working directory)\n\n${lines.join("\n")}`
 }
 
 // ---- Claude subprocess ---------------------------------------------------------
@@ -359,7 +477,7 @@ const MOCK_ANSWER = {
   artifact: null,
 }
 
-async function serveSession(client, session, manifest, cfg) {
+async function serveSession(client, session, manifest, cfg, repoMeta = []) {
   const asked = session.messages.at(-1)?.body_md?.slice(0, 80) ?? "?"
   console.log(`[runner] session ${session.id}: "${asked}"`)
   const result = cfg.mock
@@ -382,6 +500,9 @@ async function serveSession(client, session, manifest, cfg) {
     query: a.query,
     confidence: a.confidence,
     caveats: a.caveats,
+    // Provenance: which corpus tips this answer was computed against — the
+    // difference between "the data says X" and "the data as of ab12cd3 says X".
+    ...(repoMeta.length ? { repos: repoMeta } : {}),
     ...(a.escalate ? { escalation_reason: a.escalation_reason ?? "escalated" } : {}),
   }
   // Publish the answer's visual, if it produced one. A publish failure demotes
@@ -433,12 +554,20 @@ export async function serve(cfg) {
   const client = new DeriveClient(cfg.server, cfg.token)
   const info = await client.getContext(cfg.contextId)
   if (!info.manifest_md && !cfg.manifestFile) throw new Error("context has no readable manifest")
-  if (cfg.manifestFile) readFileSync(cfg.manifestFile, "utf8") // fail at startup, not first answer
+  const readManifest = () =>
+    cfg.manifestFile ? readFileSync(cfg.manifestFile, "utf8") : (info.manifest_md ?? "")
+  const boot = parseManifest(readManifest()) // throws on a bad manifestFile — at startup, not first answer
   console.log(
     `[runner] serving "${info.name}" (${cfg.contextId}) on ${cfg.server} — ` +
       `${cfg.manifestFile ? `manifest LOCAL ${cfg.manifestFile}` : `manifest v${info.manifest_version}`}, ` +
       `${cfg.mock ? "MOCK" : `${cfg.claudeBin} (${cfg.model})`}, poll ${cfg.pollMs}ms`,
   )
+  // Pointers sync at boot, like every other piece of host state — a manifest
+  // edit that adds one applies on the next start (the catalog in the prompt is
+  // per-boot truth, and mid-run re-clones would change corpus SHAs between
+  // answers in the same session).
+  const catalog = await syncRepos(boot.repos, cfg.cwd)
+  const repoMeta = catalog.filter((r) => r.sha).map((r) => ({ url: r.url, sha: r.sha }))
 
   for (;;) {
     try {
@@ -455,16 +584,19 @@ export async function serve(cfg) {
       if (sessions.length > 0) {
         // Re-read the manifest only when the queue has work — an edit applies
         // from the next answer, and idle polls stay one call. In dev mode the
-        // working-tree file wins, same freshness contract.
-        const manifest = cfg.manifestFile
+        // working-tree file wins, same freshness contract. The repo catalog is
+        // appended from the BOOT sync — the frontmatter may promise new repos,
+        // but the prompt only ever claims what's actually on disk.
+        const md = cfg.manifestFile
           ? readFileSync(cfg.manifestFile, "utf8")
-          : ((await client.getContext(cfg.contextId)).manifest_md ?? info.manifest_md)
+          : ((await client.getContext(cfg.contextId)).manifest_md ?? info.manifest_md ?? "")
+        const manifest = parseManifest(md).body + repoCatalogBlock(catalog)
         // Sequential on purpose: one runner, one model, no fan-out — fairness
         // comes from the queue's oldest-first order. One session's failure must
         // not starve the rest of the batch.
         for (const s of sessions) {
           try {
-            await serveSession(client, s, manifest, cfg)
+            await serveSession(client, s, manifest, cfg, repoMeta)
           } catch (err) {
             console.error(`[runner] session ${s.id}: ${err.message}`)
           }
@@ -511,6 +643,7 @@ export async function doctor(cfg) {
     bad("server", `${cfg.server} unreachable (${e.message})`)
   }
 
+  let repos = []
   if (!cfg.token || !cfg.contextId) {
     // Partial config: still worth running the local checks below.
     bad(
@@ -523,9 +656,22 @@ export async function doctor(cfg) {
       info.manifest_md
         ? ok("context + manifest", `"${info.name}" manifest v${info.manifest_version}`)
         : bad("manifest", "context resolves but its manifest is unreadable")
+      repos = parseManifest(info.manifest_md ?? "").repos
     } catch (e) {
       bad("token/context", `cannot resolve ${cfg.contextId} (${e.message.slice(0, 120)})`)
     }
+  }
+
+  // Each pointer is probed without cloning — a typo'd URL or missing repo auth
+  // should fail here, not at the first boot on a fresh box.
+  for (const r of repos) {
+    const probe = await git(
+      ["ls-remote", "--heads", "--tags", r.url, ...(r.ref ? [r.ref] : [])],
+      30_000,
+    )
+    if (probe.code !== 0) bad(`repo ${repoSlug(r.url)}`, probe.err.slice(0, 120) || "unreachable")
+    else if (r.ref && !probe.out) bad(`repo ${repoSlug(r.url)}`, `ref "${r.ref}" not found`)
+    else ok(`repo ${repoSlug(r.url)}`, r.ref ?? "default branch")
   }
 
   // A missing cwd makes spawn fail with the same ENOENT as a missing binary —
