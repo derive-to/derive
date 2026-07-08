@@ -323,6 +323,47 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/users/{handle}/artifacts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** A user's authored artifacts (keyset-paginated). */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    handle: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description A page of the user's artifacts + next cursor. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            artifacts: components["schemas"]["Artifact"][];
+                            next_cursor: string | null;
+                        };
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/users/{handle}/followers": {
         parameters: {
             query?: never;
@@ -1509,6 +1550,42 @@ export interface paths {
                         "application/json": {
                             html: string;
                         };
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/assets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Stage a binary image asset (raw or multipart) and get its asset:<hash> handle. */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The stored asset's content-addressed handle. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AssetRef"];
                     };
                 };
             };
@@ -4457,6 +4534,78 @@ export interface components {
             };
             followed_by_me?: boolean;
         };
+        Artifact: {
+            short_id: string;
+            url: string;
+            title: string | null;
+            /** @enum {string} */
+            kind: "file" | "bundle";
+            current_content_type?: string | null;
+            locked?: boolean;
+            /** @enum {string} */
+            visibility: "public" | "link" | "org" | "password" | "private" | "unlisted";
+            spa?: boolean;
+            /** @enum {string} */
+            general_role?: "viewer" | "commenter";
+            current_version: number;
+            versions: {
+                n: number;
+                content_type?: string;
+                author: string;
+                author_login?: string | null;
+                author_avatar?: string | null;
+                author_gh_id?: string | null;
+                handle?: string | null;
+                message: string | null;
+                name: string | null;
+                created_at: string;
+            }[];
+            sessions?: components["schemas"]["VersionSession"][];
+            views?: number;
+            /** @enum {string|null} */
+            my_role?: "viewer" | "commenter" | "editor" | "owner" | null;
+            tags?: string[];
+            favorite?: boolean;
+            open_proposals?: number;
+            proposals_total?: number;
+            open_threads?: number;
+            mentions_me?: boolean;
+            i_participated?: boolean;
+            collections?: string[];
+            removed?: boolean;
+            managed?: boolean;
+            bundle?: {
+                isSkill: boolean;
+                name: string | null;
+                description: string | null;
+                entry: string;
+                files: {
+                    path: string;
+                    type: string;
+                }[];
+            };
+            source_path?: string | null;
+            created_at?: string;
+            updated_at?: string | null;
+            author_name?: string | null;
+            author_login?: string | null;
+            author_avatar?: string | null;
+            author_gh_id?: string | null;
+            author?: {
+                name: string | null;
+                login: string | null;
+                avatar: string | null;
+                handle: string | null;
+            } | null;
+        };
+        VersionSession: {
+            n: number;
+            from_n: number;
+            count: number;
+            author: string;
+            name: string | null;
+            created_at: string;
+        };
         DirUser: {
             id: string;
             name: string | null;
@@ -4540,77 +4689,12 @@ export interface components {
             scopes: string[];
             grantedAt: string;
         };
-        Artifact: {
-            short_id: string;
-            url: string;
-            title: string | null;
+        AssetRef: {
+            key: string;
+            ref: string;
             /** @enum {string} */
-            kind: "file" | "bundle";
-            current_content_type?: string | null;
-            locked?: boolean;
-            /** @enum {string} */
-            visibility: "public" | "link" | "org" | "password" | "private" | "unlisted";
-            spa?: boolean;
-            /** @enum {string} */
-            general_role?: "viewer" | "commenter";
-            current_version: number;
-            versions: {
-                n: number;
-                content_type?: string;
-                author: string;
-                author_login?: string | null;
-                author_avatar?: string | null;
-                author_gh_id?: string | null;
-                handle?: string | null;
-                message: string | null;
-                name: string | null;
-                created_at: string;
-            }[];
-            sessions?: components["schemas"]["VersionSession"][];
-            views?: number;
-            /** @enum {string|null} */
-            my_role?: "viewer" | "commenter" | "editor" | "owner" | null;
-            tags?: string[];
-            favorite?: boolean;
-            open_proposals?: number;
-            proposals_total?: number;
-            open_threads?: number;
-            mentions_me?: boolean;
-            i_participated?: boolean;
-            collections?: string[];
-            removed?: boolean;
-            managed?: boolean;
-            bundle?: {
-                isSkill: boolean;
-                name: string | null;
-                description: string | null;
-                entry: string;
-                files: {
-                    path: string;
-                    type: string;
-                }[];
-            };
-            source_path?: string | null;
-            created_at?: string;
-            updated_at?: string | null;
-            author_name?: string | null;
-            author_login?: string | null;
-            author_avatar?: string | null;
-            author_gh_id?: string | null;
-            author?: {
-                name: string | null;
-                login: string | null;
-                avatar: string | null;
-                handle: string | null;
-            } | null;
-        };
-        VersionSession: {
-            n: number;
-            from_n: number;
-            count: number;
-            author: string;
-            name: string | null;
-            created_at: string;
+            type: "image/png" | "image/jpeg" | "image/gif" | "image/webp";
+            size: number;
         };
         Follow: {
             id: string;

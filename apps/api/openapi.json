@@ -61,6 +61,306 @@
           "image"
         ]
       },
+      "Artifact": {
+        "type": "object",
+        "properties": {
+          "short_id": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string",
+            "nullable": true
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "file",
+              "bundle"
+            ]
+          },
+          "current_content_type": {
+            "type": "string",
+            "nullable": true
+          },
+          "locked": {
+            "type": "boolean"
+          },
+          "visibility": {
+            "type": "string",
+            "enum": [
+              "public",
+              "link",
+              "org",
+              "password",
+              "private",
+              "unlisted"
+            ]
+          },
+          "spa": {
+            "type": "boolean"
+          },
+          "general_role": {
+            "type": "string",
+            "enum": [
+              "viewer",
+              "commenter"
+            ]
+          },
+          "current_version": {
+            "type": "number"
+          },
+          "versions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "n": {
+                  "type": "number"
+                },
+                "content_type": {
+                  "type": "string"
+                },
+                "author": {
+                  "type": "string"
+                },
+                "author_login": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "author_avatar": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "author_gh_id": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "handle": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "message": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "name": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "created_at": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "n",
+                "author",
+                "message",
+                "name",
+                "created_at"
+              ]
+            }
+          },
+          "sessions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/VersionSession"
+            }
+          },
+          "views": {
+            "type": "number"
+          },
+          "my_role": {
+            "type": "string",
+            "nullable": true,
+            "enum": [
+              "viewer",
+              "commenter",
+              "editor",
+              "owner",
+              null
+            ]
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "favorite": {
+            "type": "boolean"
+          },
+          "open_proposals": {
+            "type": "number"
+          },
+          "proposals_total": {
+            "type": "number"
+          },
+          "open_threads": {
+            "type": "number"
+          },
+          "mentions_me": {
+            "type": "boolean"
+          },
+          "i_participated": {
+            "type": "boolean"
+          },
+          "collections": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "removed": {
+            "type": "boolean"
+          },
+          "managed": {
+            "type": "boolean"
+          },
+          "bundle": {
+            "type": "object",
+            "properties": {
+              "isSkill": {
+                "type": "boolean"
+              },
+              "name": {
+                "type": "string",
+                "nullable": true
+              },
+              "description": {
+                "type": "string",
+                "nullable": true
+              },
+              "entry": {
+                "type": "string"
+              },
+              "files": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "path": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "path",
+                    "type"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "isSkill",
+              "name",
+              "description",
+              "entry",
+              "files"
+            ]
+          },
+          "source_path": {
+            "type": "string",
+            "nullable": true
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "string",
+            "nullable": true
+          },
+          "author_name": {
+            "type": "string",
+            "nullable": true
+          },
+          "author_login": {
+            "type": "string",
+            "nullable": true
+          },
+          "author_avatar": {
+            "type": "string",
+            "nullable": true
+          },
+          "author_gh_id": {
+            "type": "string",
+            "nullable": true
+          },
+          "author": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "name": {
+                "type": "string",
+                "nullable": true
+              },
+              "login": {
+                "type": "string",
+                "nullable": true
+              },
+              "avatar": {
+                "type": "string",
+                "nullable": true
+              },
+              "handle": {
+                "type": "string",
+                "nullable": true
+              }
+            },
+            "required": [
+              "name",
+              "login",
+              "avatar",
+              "handle"
+            ]
+          }
+        },
+        "required": [
+          "short_id",
+          "url",
+          "title",
+          "kind",
+          "visibility",
+          "current_version",
+          "versions"
+        ]
+      },
+      "VersionSession": {
+        "type": "object",
+        "properties": {
+          "n": {
+            "type": "number"
+          },
+          "from_n": {
+            "type": "number"
+          },
+          "count": {
+            "type": "number"
+          },
+          "author": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string",
+            "nullable": true
+          },
+          "created_at": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "n",
+          "from_n",
+          "count",
+          "author",
+          "name",
+          "created_at"
+        ]
+      },
       "DirUser": {
         "type": "object",
         "properties": {
@@ -415,304 +715,33 @@
           "grantedAt"
         ]
       },
-      "Artifact": {
+      "AssetRef": {
         "type": "object",
         "properties": {
-          "short_id": {
+          "key": {
             "type": "string"
           },
-          "url": {
+          "ref": {
             "type": "string"
           },
-          "title": {
-            "type": "string",
-            "nullable": true
-          },
-          "kind": {
+          "type": {
             "type": "string",
             "enum": [
-              "file",
-              "bundle"
+              "image/png",
+              "image/jpeg",
+              "image/gif",
+              "image/webp"
             ]
           },
-          "current_content_type": {
-            "type": "string",
-            "nullable": true
-          },
-          "locked": {
-            "type": "boolean"
-          },
-          "visibility": {
-            "type": "string",
-            "enum": [
-              "public",
-              "link",
-              "org",
-              "password",
-              "private",
-              "unlisted"
-            ]
-          },
-          "spa": {
-            "type": "boolean"
-          },
-          "general_role": {
-            "type": "string",
-            "enum": [
-              "viewer",
-              "commenter"
-            ]
-          },
-          "current_version": {
+          "size": {
             "type": "number"
-          },
-          "versions": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "n": {
-                  "type": "number"
-                },
-                "content_type": {
-                  "type": "string"
-                },
-                "author": {
-                  "type": "string"
-                },
-                "author_login": {
-                  "type": "string",
-                  "nullable": true
-                },
-                "author_avatar": {
-                  "type": "string",
-                  "nullable": true
-                },
-                "author_gh_id": {
-                  "type": "string",
-                  "nullable": true
-                },
-                "handle": {
-                  "type": "string",
-                  "nullable": true
-                },
-                "message": {
-                  "type": "string",
-                  "nullable": true
-                },
-                "name": {
-                  "type": "string",
-                  "nullable": true
-                },
-                "created_at": {
-                  "type": "string"
-                }
-              },
-              "required": [
-                "n",
-                "author",
-                "message",
-                "name",
-                "created_at"
-              ]
-            }
-          },
-          "sessions": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/VersionSession"
-            }
-          },
-          "views": {
-            "type": "number"
-          },
-          "my_role": {
-            "type": "string",
-            "nullable": true,
-            "enum": [
-              "viewer",
-              "commenter",
-              "editor",
-              "owner",
-              null
-            ]
-          },
-          "tags": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "favorite": {
-            "type": "boolean"
-          },
-          "open_proposals": {
-            "type": "number"
-          },
-          "proposals_total": {
-            "type": "number"
-          },
-          "open_threads": {
-            "type": "number"
-          },
-          "mentions_me": {
-            "type": "boolean"
-          },
-          "i_participated": {
-            "type": "boolean"
-          },
-          "collections": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "removed": {
-            "type": "boolean"
-          },
-          "managed": {
-            "type": "boolean"
-          },
-          "bundle": {
-            "type": "object",
-            "properties": {
-              "isSkill": {
-                "type": "boolean"
-              },
-              "name": {
-                "type": "string",
-                "nullable": true
-              },
-              "description": {
-                "type": "string",
-                "nullable": true
-              },
-              "entry": {
-                "type": "string"
-              },
-              "files": {
-                "type": "array",
-                "items": {
-                  "type": "object",
-                  "properties": {
-                    "path": {
-                      "type": "string"
-                    },
-                    "type": {
-                      "type": "string"
-                    }
-                  },
-                  "required": [
-                    "path",
-                    "type"
-                  ]
-                }
-              }
-            },
-            "required": [
-              "isSkill",
-              "name",
-              "description",
-              "entry",
-              "files"
-            ]
-          },
-          "source_path": {
-            "type": "string",
-            "nullable": true
-          },
-          "created_at": {
-            "type": "string"
-          },
-          "updated_at": {
-            "type": "string",
-            "nullable": true
-          },
-          "author_name": {
-            "type": "string",
-            "nullable": true
-          },
-          "author_login": {
-            "type": "string",
-            "nullable": true
-          },
-          "author_avatar": {
-            "type": "string",
-            "nullable": true
-          },
-          "author_gh_id": {
-            "type": "string",
-            "nullable": true
-          },
-          "author": {
-            "type": "object",
-            "nullable": true,
-            "properties": {
-              "name": {
-                "type": "string",
-                "nullable": true
-              },
-              "login": {
-                "type": "string",
-                "nullable": true
-              },
-              "avatar": {
-                "type": "string",
-                "nullable": true
-              },
-              "handle": {
-                "type": "string",
-                "nullable": true
-              }
-            },
-            "required": [
-              "name",
-              "login",
-              "avatar",
-              "handle"
-            ]
           }
         },
         "required": [
-          "short_id",
-          "url",
-          "title",
-          "kind",
-          "visibility",
-          "current_version",
-          "versions"
-        ]
-      },
-      "VersionSession": {
-        "type": "object",
-        "properties": {
-          "n": {
-            "type": "number"
-          },
-          "from_n": {
-            "type": "number"
-          },
-          "count": {
-            "type": "number"
-          },
-          "author": {
-            "type": "string"
-          },
-          "name": {
-            "type": "string",
-            "nullable": true
-          },
-          "created_at": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "n",
-          "from_n",
-          "count",
-          "author",
-          "name",
-          "created_at"
+          "key",
+          "ref",
+          "type",
+          "size"
         ]
       },
       "Follow": {
@@ -2341,6 +2370,52 @@
         }
       }
     },
+    "/v1/users/{handle}/artifacts": {
+      "get": {
+        "tags": [
+          "Session"
+        ],
+        "summary": "A user's authored artifacts (keyset-paginated).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "handle",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A page of the user's artifacts + next cursor.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "artifacts": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Artifact"
+                      }
+                    },
+                    "next_cursor": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  },
+                  "required": [
+                    "artifacts",
+                    "next_cursor"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/users/{handle}/followers": {
       "get": {
         "tags": [
@@ -3428,6 +3503,26 @@
                   "required": [
                     "html"
                   ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/assets": {
+      "post": {
+        "tags": [
+          "Assets"
+        ],
+        "summary": "Stage a binary image asset (raw or multipart) and get its asset:<hash> handle.",
+        "responses": {
+          "200": {
+            "description": "The stored asset's content-addressed handle.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssetRef"
                 }
               }
             }

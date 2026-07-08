@@ -6,6 +6,7 @@ import type { AppContext } from "../context"
 import { authorProfile, resolveHandles } from "../lib/author"
 import { bail, fail, IMMUTABLE_CACHE, readJson, toBody } from "../lib/http"
 import { MAX_AVATAR_BYTES, sniffImageType } from "../lib/image"
+import { Artifact } from "../schemas"
 
 /** Session identity + the workspace member/agent directory for the @mention picker.
  *  PublicProfile + DirUser are generated for the web; `Me` stays a web-side mapped type
@@ -343,47 +344,70 @@ export const sessionRoutes = (ctx: AppContext) => {
     },
   )
 
-  // A person's work — the artifacts they've authored. Returns the Artifact view-model,
-  // so it stays a plain route until the artifacts pass defines that shared schema.
-  app.get("/v1/users/:handle/artifacts", async (c) => {
-    const p = await meta.getUserByUsername(normalizeUsername(c.req.param("handle")))
-    if (!p) return fail(c, 404, "no profile with that username")
-    if (!(await profileVisibleTo(c, p))) return fail(c, 404, "no profile with that username")
-    const me = await currentUser(c)
-    const ghIds = await meta.githubIdsForUser(p.id)
-    const sharedOrgs = me ? await meta.sharedOrgIds(me.id, p.id) : []
-    const limit = Math.min(50, Math.max(1, Number(c.req.query("limit")) || 24))
-    const rawCursor = c.req.query("cursor")
-    const sep = rawCursor?.indexOf("|") ?? -1
-    const cursor =
-      rawCursor && sep > 0
-        ? { created_at: rawCursor.slice(0, sep), id: rawCursor.slice(sep + 1) }
-        : undefined
-    const rows = await meta.listUserWorks(p.id, ghIds, {
-      limit: limit + 1,
-      cursor,
-      visibleOrgIds: sharedOrgs,
-    })
-    const hasMore = rows.length > limit
-    const page = hasMore ? rows.slice(0, limit) : rows
-    const last = page[page.length - 1]
-    const next_cursor = hasMore && last ? `${last.created_at}|${last.id}` : null
-    const pageIds = page.map((a) => a.id)
-    const counts = analyticsOn ? await meta.viewCounts(pageIds) : {}
-    const tags = await meta.tagsForArtifacts(pageIds)
-    const handleByGhId = await resolveHandles(meta, [
-      ...new Set(page.map((a) => a.author_gh_id).filter((x): x is string => !!x)),
-    ])
-    return c.json({
-      artifacts: page.map((a) => ({
-        ...toJson(deps.baseUrl, a, []),
-        views: counts[a.id] ?? 0,
-        tags: tags[a.id] ?? [],
-        author: authorProfile(a, handleByGhId),
-      })),
-      next_cursor,
-    })
-  })
+  // A person's work — the artifacts they've authored, as the shared Artifact view-model
+  // (the same schema the artifacts router emits; drives their public profile grid).
+  app.openapi(
+    createRoute({
+      method: "get",
+      path: "/v1/users/{handle}/artifacts",
+      tags: ["Session"],
+      summary: "A user's authored artifacts (keyset-paginated).",
+      request: { params: z.object({ handle: z.string() }) },
+      responses: {
+        200: {
+          description: "A page of the user's artifacts + next cursor.",
+          content: {
+            "application/json": {
+              schema: z.object({
+                artifacts: z.array(Artifact),
+                next_cursor: z.string().nullable(),
+              }),
+            },
+          },
+        },
+      },
+    }),
+    async (c) => {
+      const p = await meta.getUserByUsername(normalizeUsername(c.req.param("handle")))
+      if (!p) return bail(fail(c, 404, "no profile with that username"))
+      if (!(await profileVisibleTo(c, p)))
+        return bail(fail(c, 404, "no profile with that username"))
+      const me = await currentUser(c)
+      const ghIds = await meta.githubIdsForUser(p.id)
+      const sharedOrgs = me ? await meta.sharedOrgIds(me.id, p.id) : []
+      const limit = Math.min(50, Math.max(1, Number(c.req.query("limit")) || 24))
+      const rawCursor = c.req.query("cursor")
+      const sep = rawCursor?.indexOf("|") ?? -1
+      const cursor =
+        rawCursor && sep > 0
+          ? { created_at: rawCursor.slice(0, sep), id: rawCursor.slice(sep + 1) }
+          : undefined
+      const rows = await meta.listUserWorks(p.id, ghIds, {
+        limit: limit + 1,
+        cursor,
+        visibleOrgIds: sharedOrgs,
+      })
+      const hasMore = rows.length > limit
+      const page = hasMore ? rows.slice(0, limit) : rows
+      const last = page[page.length - 1]
+      const next_cursor = hasMore && last ? `${last.created_at}|${last.id}` : null
+      const pageIds = page.map((a) => a.id)
+      const counts = analyticsOn ? await meta.viewCounts(pageIds) : {}
+      const tags = await meta.tagsForArtifacts(pageIds)
+      const handleByGhId = await resolveHandles(meta, [
+        ...new Set(page.map((a) => a.author_gh_id).filter((x): x is string => !!x)),
+      ])
+      return c.json({
+        artifacts: page.map((a) => ({
+          ...toJson(deps.baseUrl, a, []),
+          views: counts[a.id] ?? 0,
+          tags: tags[a.id] ?? [],
+          author: authorProfile(a, handleByGhId),
+        })),
+        next_cursor,
+      })
+    },
+  )
 
   // The people who follow / are followed by this user, as public profiles.
   const publicCard = (u: {
