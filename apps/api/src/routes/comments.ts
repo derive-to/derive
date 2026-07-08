@@ -220,6 +220,35 @@ export const commentRoutes = (ctx: AppContext) => {
             quote: quoteOf(created.anchor),
             thread_id: created.thread_id,
           })
+        // A reply reaches the thread's earlier authors as a bell row (email is
+        // mention-only — see notify-email.ts). Mentioned people already got the
+        // stronger mention row above; the author never hears about themselves.
+        const mentionIds = new Set(mentions.map((m) => m.id))
+        const participants = new Set(
+          (await meta.listComments(artifact.id))
+            .filter((cm) => cm.thread_id === created.thread_id && cm.author_id)
+            .map((cm) => cm.author_id as string),
+        )
+        for (const uid of participants) {
+          if (uid === (acting?.id ?? null) || mentionIds.has(uid)) continue
+          const row = {
+            id: newId("n"),
+            user_id: uid,
+            actor: created.author,
+            kind: "comment" as const,
+            artifact_id: artifact.id,
+            artifact_short_id: artifact.short_id,
+            artifact_title: artifact.title,
+            thread_id: created.thread_id,
+            comment_id: created.id,
+            preview: previewOf(created.body_md),
+          }
+          await meta.createNotification(row)
+          bus.publish(`u:${uid}`, {
+            type: "notification",
+            notification: { ...row, read: 0, created_at: new Date().toISOString() },
+          })
+        }
         // Channel fan-out is gated per workspace (Settings -> integrations toggles).
         const settings = await meta.getOrgSettings(artifact.org_id)
         if (settings.emailNotifications)

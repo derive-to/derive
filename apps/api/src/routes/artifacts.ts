@@ -24,6 +24,7 @@ import type { AppContext } from "../context"
 import { publishSweepEvents } from "../lib/anchor-sweep"
 import { authorProfile, resolveHandles } from "../lib/author"
 import { hashPassword, signState, unlockCookie, unlockToken, verifyPassword } from "../lib/crypto"
+import { buildReviewEmail } from "../lib/email"
 import {
   DEFAULT_WORKSPACE_NAME,
   fail,
@@ -33,6 +34,7 @@ import {
   TOMBSTONE,
   visibilityOf,
 } from "../lib/http"
+import { enqueueChannelDelivery } from "../webhooks"
 
 /** The artifact lifecycle: browse + summary, publish/republish, detail, restore,
  *  source read-back, and version diffs. */
@@ -503,6 +505,22 @@ export const artifactRoutes = (ctx: AppContext) => {
             version: version.n,
             requested_by: actor?.name ?? "An agent",
           })
+          // The review request is the one event that earns an email: the loop is
+          // blocked on the reviewer, who may have no tab open. Never for your own
+          // request on yourself (a human publishing with request_review).
+          if (reviewer !== actor?.id && (await meta.getOrgSettings(org)).emailNotifications) {
+            const [r] = await meta.getUsers([reviewer])
+            if (r?.email)
+              await enqueueChannelDelivery(meta, "email", "review.requested", {
+                to: r.email,
+                toName: r.name ?? undefined,
+                ...buildReviewEmail(deps.baseUrl, artifact, {
+                  requestedBy: actor?.name ?? "An agent",
+                  version: version.n,
+                  note: str(body["review_note"]) ?? null,
+                }),
+              })
+          }
         }
       }
       // The MCP loop over HTTP: an AGENT-credentialed publish (a registered

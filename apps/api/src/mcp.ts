@@ -47,6 +47,8 @@ import {
   zipBundleFiles,
 } from "./lib/bundle"
 import { parseMeta, quoteOf, REACTIONS } from "./lib/comments"
+import { buildReviewEmail } from "./lib/email"
+import { enqueueChannelDelivery } from "./webhooks"
 
 const text = (s: string) => ({ content: [{ type: "text" as const, text: s }] })
 // Bound a best-effort promise (the tab-delivery receipt) so it can never stall a
@@ -836,6 +838,22 @@ function buildServer(
             version: version.n,
             requested_by: agent.name,
           })
+          // The review request is the one event that earns an email: the loop is
+          // blocked on the human, who may have no tab open (same policy as the
+          // HTTP publish path). `settings` is only pre-loaded on a create, so a
+          // republish (where most review rounds happen) fetches the gate here.
+          if ((settings ?? (await ctx.meta.getOrgSettings(org))).emailNotifications) {
+            const [r] = await ctx.meta.getUsers([actingFor.id])
+            if (r?.email)
+              await enqueueChannelDelivery(ctx.meta, "email", "review.requested", {
+                to: r.email,
+                toName: r.name ?? undefined,
+                ...buildReviewEmail(ctx.deps.baseUrl, artifact, {
+                  requestedBy: agent.name,
+                  version: version.n,
+                }),
+              })
+          }
         }
         const url = artifactUrl(ctx.deps.baseUrl, artifact)
         // Bell entry for the human behind the grant, so a push reaches them even
