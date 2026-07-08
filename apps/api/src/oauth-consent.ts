@@ -35,10 +35,11 @@ const esc = (s: string): string =>
   )
 
 /** The consent page HTML. `query` is the original authorize query string, echoed
- *  back to /oauth2/consent so the plugin can complete the authorization. With
- *  `workspaces` (the signed-in user's, when they have more than one), a picker
- *  chooses which workspace the grant acts in; Approve persists the choice via
- *  POST /oauth/consent/workspace before completing the consent. */
+ *  back to /oauth2/consent so the plugin can complete the authorization. Every
+ *  grant covers all of the signed-in user's workspaces for now — the
+ *  `workspaces`/`selected` picker UI is deferred (see the comment on `picker`
+ *  below), though its params and the POST /oauth/consent/workspace plumbing
+ *  stay wired for when it comes back. */
 export function consentHTML(props: {
   clientName: string
   scopes: string[]
@@ -48,30 +49,17 @@ export function consentHTML(props: {
   selected?: string
 }): string {
   const name = esc(props.clientName || "An application")
-  const workspaces = props.workspaces ?? []
-  // Rendered (and bound on Approve) even for a single workspace: pinning the
-  // choice keeps the grant from migrating when the user later joins a workspace
-  // that sorts ahead of it in listWorkspaces. Without a clientId there is
-  // nothing to bind, so no picker — a choice we couldn't persist would be lies.
-  //
-  // Labeled "Default workspace", not "Workspace this agent acts in": the bound
-  // choice is a FALLBACK a request resolves to absent an X-Derive-Workspace
-  // header, not a hard scope. Most callers (a plain OAuth app like a claude.ai
-  // connector) never send that header, so in practice they only ever act here —
-  // but a header-aware caller (the Derive CLI, `derive login`) can act in ANY
-  // workspace this account belongs to with the very same token. "Acts in"
-  // would overclaim a restriction that doesn't actually exist at the token
-  // level for every caller.
-  const picker =
-    workspaces.length > 0 && props.clientId
-      ? `<label class="ws-label" for="ws">Default workspace</label>
-    <select id="ws" class="ws">${workspaces
-      .map(
-        (w) =>
-          `<option value="${esc(w.id)}"${w.id === props.selected ? " selected" : ""}>${esc(w.name)}</option>`,
-      )
-      .join("")}</select>`
-      : ""
+  // DEFERRED, not removed: a grant already covers every workspace the user
+  // belongs to at the token level (X-Derive-Workspace picks per-request; a
+  // bound default was never an access restriction — see git history on this
+  // comment for the full reasoning). Asking the human to narrow to one
+  // workspace at consent time bought nothing real, so for now every grant
+  // just reads as All Workspaces and the picker doesn't render. The plumbing
+  // it used to drive — `workspaces`/`selected` here, POST
+  // /oauth/consent/workspace, oauth-agent.ts's bound-org lookup — is left in
+  // place so real per-workspace (single or multi) selection can come back
+  // without re-threading any of it.
+  const picker = ""
   const items = props.scopes
     .map((s) => {
       const write = WRITE_SCOPES.has(s)

@@ -214,7 +214,12 @@ describe.skipIf(process.env.DERIVE_TEST_DB === "pg")("OAuth agent workspace targ
     expect(await meta.getOAuthClientWorkspace("u_amy", "cli")).toBe("default")
   })
 
-  it("the consent screen preselects an existing binding over the active workspace", async () => {
+  it("resolving an existing binding doesn't error the consent screen — the picker itself is deferred", async () => {
+    // The bind/preselect resolution (meta.getOAuthClientWorkspace → `selected`)
+    // still runs on every /oauth/consent request — it's kept wired for when a
+    // picker UI comes back — but consentHTML() no longer renders it (every
+    // grant reads as covering all workspaces for now). This just confirms a
+    // stale binding doesn't break the route.
     const amy = { id: "u_amy", email: "amy@x.test", name: "Amy" }
     const { app, meta } = quotaApp(
       "ws-bind-preselect",
@@ -228,6 +233,6 @@ describe.skipIf(process.env.DERIVE_TEST_DB === "pg")("OAuth agent workspace targ
     })
     expect(res.status).toBe(200)
     const page = await res.text()
-    expect(page).toContain('value="default" selected')
+    expect(page).not.toContain('<select id="ws"')
   })
 })
