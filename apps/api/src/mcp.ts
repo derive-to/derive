@@ -22,9 +22,11 @@
 import {
   type AgentRecord,
   type ArtifactRecord,
+  applyEdits,
   artifactUrl,
   type BundleManifest,
   diffLines,
+  EditError,
   formatDiff,
   newId,
   type OutlineSection,
@@ -818,7 +820,7 @@ function buildServer(
     "publish",
     {
       description:
-        "Save a revision of an artifact. It goes LIVE immediately if your role can publish (Creator/Admin); otherwise — or whenever you pass for_review:true — it is filed as a PROPOSAL a human approves before it goes live. Provide `content` for a SINGLE-FILE artifact, or `files` (a map of page path → content) for a MULTI-PAGE BUNDLE (a whole site, images and any binary asset). OMIT short_id to create a NEW artifact (`title` required); PASS short_id to add a version to one you own, matching its kind. A bundle republish REPLACES the whole bundle, so include EVERY page and asset (or use `merge`). Pass `addresses` with the thread ids (from catch_up) this revision resolves. Provide the FULL content, not a patch. (Proposals are single-file only; bundles must be published directly.)",
+        "Save a revision of an artifact. It goes LIVE immediately if your role can publish (Creator/Admin); otherwise — or whenever you pass for_review:true — it is filed as a PROPOSAL a human approves before it goes live. To CHANGE PART of a single-file artifact, prefer `edits` (exact-match search/replace against the stored source — read format:'html' first) over resending everything. Otherwise provide the full `content` for a SINGLE-FILE artifact, or `files` (a map of page path → content) for a MULTI-PAGE BUNDLE (a whole site, images and any binary asset). OMIT short_id to create a NEW artifact (`title` required); PASS short_id to add a version to one you own, matching its kind. A bundle republish REPLACES the whole bundle, so include EVERY page and asset (or use `merge`). Pass `addresses` with the thread ids (from catch_up) this revision resolves. (Proposals are single-file only; bundles must be published directly.)",
       inputSchema: {
         content: z
           .string()
@@ -885,10 +887,31 @@ function buildServer(
           .describe(
             "After a LIVE publish, open a review round asking your human to review this version — the /derive loop. They answer inline and hit Send back (or Approve); poll catch_up's `review` for the state. No effect on a proposal (that already IS a review).",
           ),
+        edits: z
+          .array(
+            z.object({
+              old_str: z
+                .string()
+                .describe(
+                  "Exact text from the STORED SOURCE (read format:'html' first on an HTML artifact — the markdown view will not match). Must occur exactly once.",
+                ),
+              new_str: z.string().describe("Replacement text. Empty string deletes."),
+            }),
+          )
+          .optional()
+          .describe(
+            "Surgical revision of a SINGLE-FILE artifact without resending it: exact-match search/replace against the current stored source, applied in order (each edit sees the previous one's result). Errors — applying nothing — if any old_str matches zero or multiple times; add surrounding context to disambiguate. Requires `short_id`; use INSTEAD of `content`. Composes with for_review, addresses, message, request_review.",
+          ),
+        base_version: z
+          .number()
+          .optional()
+          .describe(
+            "Safety check for `edits`: pass the version you read; the publish errors instead of applying when the artifact has moved past it.",
+          ),
       },
     },
     async ({
-      content,
+      content: contentIn,
       files,
       title,
       short_id,
@@ -900,15 +923,51 @@ function buildServer(
       for_review,
       addresses,
       request_review,
+      edits,
+      base_version,
     }) => {
+      let content = contentIn
       const existing = short_id ? await own(short_id) : null
       if (short_id && !existing) return text(`No artifact "${short_id}" in this workspace.`)
+
+      // `edits` — materialize the full new content up front, then fall through to the
+      // untouched publish/proposal pipeline (sweep, addresses, receipts all inherit).
+      let editsApplied = 0
+      if (edits !== undefined) {
+        if (content !== undefined || files)
+          return err("Provide `edits` OR `content`/`files`, not both.")
+        if (!existing) return err("`edits` revises an EXISTING artifact — pass its `short_id`.")
+        if (existing.kind !== "file")
+          return err(
+            `"${short_id}" is a multi-page bundle — \`edits\` applies to single-file artifacts; republish the changed page via \`files\` + \`merge\`.`,
+          )
+        if (base_version !== undefined && base_version !== existing.current_version)
+          return err(
+            `"${short_id}" moved to v${existing.current_version} while you were editing (you read v${base_version}) — catch_up, re-read, then retry.`,
+          )
+        const cur = await ctx.meta.getVersion(existing.id, existing.current_version)
+        const src = cur ? await ctx.sourceText(cur) : null
+        if (cur === null || src === null)
+          return err(`Couldn't load the current source of "${short_id}".`)
+        try {
+          content = applyEdits(src, edits)
+        } catch (e) {
+          if (e instanceof EditError) return err(e.message)
+          throw e
+        }
+        editsApplied = edits.length
+        // Keep the artifact's content type: the sniffer types by filename, and the
+        // default index.html would silently re-type an edited markdown doc as HTML.
+        if (!filename)
+          filename = baseType(cur.content_type) === "text/markdown" ? "index.md" : "index.html"
+      }
+
       // Exactly one of content / files. `files` (a page map) means a bundle.
       const isBundle = !!files && Object.keys(files).length > 0
       if (isBundle && content !== undefined)
         return text("Provide `content` (single file) OR `files` (a bundle), not both.")
       if (!isBundle && (content === undefined || content === ""))
-        return text("Provide `content` (single file) or `files` (a multi-page bundle).")
+        return text("Provide `content` (single file), `files` (a multi-page bundle), or `edits`.")
       if (existing) {
         // Kind can't change on republish; steer to the right field instead of the 409.
         if (existing.kind === "bundle" && !isBundle)
@@ -963,6 +1022,7 @@ function buildServer(
             proposal_id: proposal.id,
             base_version: proposal.base_version,
             addressed,
+            ...(editsApplied ? { edits_applied: editsApplied } : {}),
             note: "Submitted for review — a human approves it or requests changes. It is NOT live yet.",
           })
         } catch (e) {
@@ -1160,6 +1220,7 @@ function buildServer(
           url,
           title: artifact.title,
           visibility: artifact.visibility,
+          ...(editsApplied ? { edits_applied: editsApplied } : {}),
           ...(resolved.length ? { resolved } : {}),
           ...(actingFor ? { opened_in_tab: openedInTab } : {}),
           note:

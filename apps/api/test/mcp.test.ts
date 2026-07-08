@@ -731,6 +731,112 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(v2.version).toBe(2)
   })
 
+  it("publish edits: exact-match search/replace instead of resending content", async () => {
+    const { app, token } = appWithGrant("pubedits", "openid derive:read derive:publish")
+    const created = JSON.parse(
+      toolText(
+        await call(app, token, "publish", {
+          title: "Edit Me",
+          content: "<h1>Title</h1><p>alpha beta gamma</p>",
+        }),
+      ),
+    )
+    const shortId = created.short_id
+
+    // Happy path: applies in order, second edit sees the first edit's result.
+    const edited = JSON.parse(
+      toolText(
+        await call(app, token, "publish", {
+          short_id: shortId,
+          edits: [
+            { old_str: "beta", new_str: "BETA" },
+            { old_str: "alpha BETA", new_str: "x y" },
+          ],
+        }),
+      ),
+    )
+    expect(edited.published).toBe(true)
+    expect(edited.version).toBe(2)
+    expect(edited.edits_applied).toBe(2)
+    const read = toolText(await call(app, token, "read", { short_id: shortId, format: "html" }))
+    expect(read).toContain("x y gamma")
+
+    // 0-match and multi-match are both rejected, naming the failing edit; nothing applies.
+    const zero = await call(app, token, "publish", {
+      short_id: shortId,
+      edits: [{ old_str: "nope-nowhere", new_str: "y" }],
+    })
+    expect(toolText(zero)).toMatch(/Edit 1 of 1 failed.*not found/)
+    const multi = await call(app, token, "publish", {
+      short_id: shortId,
+      edits: [
+        { old_str: "y gamma", new_str: "z" },
+        { old_str: "Title", new_str: "T" },
+        { old_str: "y gamma", new_str: "again" },
+      ],
+    })
+    expect(toolText(multi)).toMatch(/Edit \d of 3 failed/)
+    const afterFailed = toolText(
+      await call(app, token, "read", { short_id: shortId, format: "html" }),
+    )
+    expect(afterFailed).toContain("x y gamma") // unchanged — a failed batch applies nothing
+
+    // base_version conflict: the artifact is at v2, but the agent read v1.
+    const stale = await call(app, token, "publish", {
+      short_id: shortId,
+      base_version: 1,
+      edits: [{ old_str: "Title", new_str: "T2" }],
+    })
+    expect(toolText(stale)).toMatch(/moved to v2/)
+
+    // edits + content is rejected; edits with no short_id is rejected.
+    expect(
+      toolText(
+        await call(app, token, "publish", {
+          short_id: shortId,
+          edits: [{ old_str: "x", new_str: "y" }],
+          content: "<h1>nope</h1>",
+        }),
+      ),
+    ).toContain("not both")
+    expect(
+      toolText(await call(app, token, "publish", { edits: [{ old_str: "x", new_str: "y" }] })),
+    ).toContain("EXISTING artifact")
+
+    // edits on a bundle is rejected.
+    const bundle = JSON.parse(
+      toolText(
+        await call(app, token, "publish", { title: "B", files: { "index.html": "<h1>b</h1>" } }),
+      ),
+    )
+    expect(
+      toolText(
+        await call(app, token, "publish", {
+          short_id: bundle.short_id,
+          edits: [{ old_str: "b", new_str: "c" }],
+        }),
+      ),
+    ).toContain("multi-page bundle")
+
+    // edits + for_review files a proposal with the materialized text, not live.
+    const proposal = JSON.parse(
+      toolText(
+        await call(app, token, "publish", {
+          short_id: shortId,
+          for_review: true,
+          edits: [{ old_str: "gamma", new_str: "GAMMA" }],
+        }),
+      ),
+    )
+    expect(proposal.published).toBe(false)
+    expect(proposal.proposed).toBe(true)
+    expect(proposal.edits_applied).toBe(1)
+    const stillLive = toolText(
+      await call(app, token, "read", { short_id: shortId, format: "html" }),
+    )
+    expect(stillLive).not.toContain("GAMMA") // the proposal never touched the live version
+  })
+
   it("publish needs a title to create, and routes a non-publisher to review", async () => {
     // A new-artifact publish with no title is refused.
     const { app, token } = appWithGrant("pub2", "openid derive:read derive:publish")
