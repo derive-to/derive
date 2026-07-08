@@ -162,15 +162,6 @@ export type GithubSyncStatus = components["schemas"]["GithubSyncStatus"]
 export type InstallationRepo = components["schemas"]["InstallationRepo"]
 /** A repo+scope preview: how many docs would mirror, split by type. Generated from the spec. */
 export type SyncPreview = components["schemas"]["SyncPreview"]
-export interface SyncResult {
-  added: number
-  updated: number
-  removed: number
-  renamed: number
-  skipped: number
-  /** Matching docs still pending after this batch (>0 → call run again). */
-  remaining: number
-}
 /** One line of a unified diff. Generated from the OpenAPI spec. */
 export type DiffOp = components["schemas"]["DiffOp"]
 export interface Diff {
@@ -213,8 +204,8 @@ const authJson = async (r: Response) => {
   return data
 }
 
-// Map Better Auth's session user onto our Me (discoverable defaults on). Shared
-// by session() and me() so the shape is defined once.
+// Map Better Auth's session user onto our Me (discoverable defaults on). Used by
+// session() so the mapping lives in one place.
 type SessionUser = {
   id: string
   email: string
