@@ -60,6 +60,10 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it reache
   `CODE_OF_CONDUCT.md`, issue + PR templates, `.editorconfig`.
 
 ### Fixed
+- `derive init` no longer hardcodes `visibility: private` into the scaffolded
+  `derive.json` — it now inherits the workspace's team-draft default (workspace
+  access at seat role, not listed), so a scaffolded project's first publish is
+  reachable by teammates and on-behalf agents instead of invite-only.
 - Root `dev`/`start` scripts now target the actual API package (`@derive/api`).
 
 ## [0.x]

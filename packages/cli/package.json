@@ -1,6 +1,6 @@
 {
   "name": "@derive-to/cli",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "type": "module",
   "description": "CLI for Derive — init a project, publish versioned artifacts, and run the publish → review → revise loop from the terminal.",
   "keywords": [
