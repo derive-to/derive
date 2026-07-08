@@ -124,6 +124,26 @@ const formatLabel = (contentType: string, format: ReadFormat): string => {
   return format === "html" ? "html (source)" : "text (visible text)"
 }
 
+// Images a read can inline as a real MCP image block (vision models see the mockup
+// screenshot instead of PNG bytes decoded as garbage text). Larger ones return
+// metadata + the served URL — open it in a browser instead.
+const IMAGE_INLINE_MAX = 1_000_000
+const B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+// Dependency-free base64 (no Buffer — this file runs on the Workers tier).
+const toBase64 = (bytes: Uint8Array): string => {
+  let out = ""
+  for (let i = 0; i < bytes.length; i += 3) {
+    const a = bytes[i] as number
+    const b = bytes[i + 1]
+    const c = bytes[i + 2]
+    out += B64[a >> 2]
+    out += B64[((a & 3) << 4) | ((b ?? 0) >> 4)]
+    out += b === undefined ? "=" : B64[((b & 15) << 2) | ((c ?? 0) >> 6)]
+    out += c === undefined ? "=" : B64[c & 63]
+  }
+  return out
+}
+
 const summarizeArtifact = (a: ArtifactRecord) => ({
   short_id: a.short_id,
   title: a.title,
@@ -407,6 +427,32 @@ function buildServer(
       const file = manifest.files[pagePath] ?? manifest.files[`/${cleanPath(pagePath)}`]
       if (!file) return err(`No page "${pagePath}" in "${short_id}". Pages: ${pages.join(", ")}.`)
       const bytes = await ctx.blobs.get(file.key)
+
+      // An image page is an IMAGE, not text: inline it as a real image block (small
+      // ones), or point at the served URL. Never decode PNG bytes as a string.
+      if (baseType(file.type).startsWith("image/")) {
+        const pageUrl = `${ctx.deps.baseUrl}/raw/${short_id}/v/${n}/${cleanPath(pagePath)}`
+        const size = bytes?.length ?? 0
+        if (!bytes || size > IMAGE_INLINE_MAX)
+          return json({
+            short_id,
+            section: cleanPath(pagePath),
+            type: file.type,
+            bytes: size,
+            url: pageUrl,
+            note: "Too large to inline over MCP — open the url to view it.",
+          })
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `${cleanPath(pagePath)} (${file.type}, ${size} bytes) — served at ${pageUrl}`,
+            },
+            { type: "image" as const, data: toBase64(bytes), mimeType: baseType(file.type) },
+          ],
+        }
+      }
+
       const raw = bytes ? new TextDecoder().decode(bytes) : ""
       const isText = isTextType(file.type)
       const meta = {

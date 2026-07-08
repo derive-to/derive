@@ -352,6 +352,35 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(one).toContain("section: sect-7 (9 of 41)")
   })
 
+  it("read: an image page returns a real MCP image block, not bytes-as-text", async () => {
+    const { app, token } = appWithGrant("readimg", "openid derive:read derive:publish")
+    const png =
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
+    const created = JSON.parse(
+      toolText(
+        await call(app, token, "publish", {
+          title: "Mockups",
+          files: {
+            "index.html": '<h1>Screens</h1><img src="shot.png">',
+            "shot.png": `data:image/png;base64,${png}`,
+          },
+        }),
+      ),
+    )
+    const r = await call(app, token, "read", { short_id: created.short_id, section: "shot.png" })
+    const content = (
+      r.parsed?.result as {
+        content: { type: string; text?: string; data?: string; mimeType?: string }[]
+      }
+    ).content
+    expect(content[0]?.type).toBe("text")
+    expect(content[0]?.text).toContain("shot.png")
+    expect(content[0]?.text).toContain(`/raw/${created.short_id}/v/1/shot.png`)
+    expect(content[1]?.type).toBe("image")
+    expect(content[1]?.mimeType).toBe("image/png")
+    expect(content[1]?.data).toBe(png)
+  })
+
   it("read: a markdown artifact returns its source untouched under the default format", async () => {
     const { app, token } = appWithGrant("readmd", "openid derive:read derive:publish")
     const md = "# Notes\n\nSome *markdown* here.\n\n## Sub\n\ntail\n"
