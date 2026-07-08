@@ -18,7 +18,7 @@ async function publishTall(page: Page): Promise<string> {
     const res = await page.request.post("/v1/artifacts", {
       multipart: {
         file: { name: "tall.md", mimeType: "text/markdown", buffer: Buffer.from(tall) },
-        visibility: "public",
+        link_role: "viewer",
       },
     })
     expect(res.ok(), `publish failed: ${res.status()}`).toBeTruthy()

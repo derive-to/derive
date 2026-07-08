@@ -36,11 +36,15 @@ export type PublicProfile = components["schemas"]["PublicProfile"]
 /** Time-grouped view of an artifact's versions. Generated from the OpenAPI spec. */
 export type VersionSession = components["schemas"]["VersionSession"]
 export type Role = "viewer" | "commenter" | "editor" | "owner"
-/** What general access (the link) grants a reacher: view-only or comment. */
-export type GeneralRole = "viewer" | "commenter"
+/** The v2 access model's three single-purpose fields (see access-model.md), as
+ *  standalone aliases for the share controls — they match the generated Artifact's
+ *  inline enums. */
+export type LinkRole = "none" | "viewer" | "commenter" | "editor"
+export type WorkspaceAccess = "none" | "member"
+export type Listed = "none" | "workspace" | "public"
 /** The artifact view-model — the largest, most-composed shape in the client. Generated
- *  from the OpenAPI spec (apps/api/openapi.json). `my_role` is `Role | null`, `general_role`
- *  is `GeneralRole`; both are inline enums identical to those aliases. */
+ *  from the OpenAPI spec (apps/api/openapi.json). `my_role` is `Role | null`;
+ *  workspace_access/link_role/listed are the v2 access enums (see access-model.md). */
 export type Artifact = components["schemas"]["Artifact"]
 /** An abuse report against an artifact. Generated from the OpenAPI spec. */
 export type Report = components["schemas"]["Report"]
@@ -429,18 +433,26 @@ export const api = {
   // cookie and subsequent reads of this artifact succeed.
   unlock: (id: string, password: string): Promise<{ ok: true }> =>
     f(`/v1/artifacts/${id}/unlock`, opts({ password })).then(j),
-  // Change general access from the Share dialog: visibility + the general-access role
-  // (view vs comment). A password is required when enabling `password` visibility for
-  // the first time. Anonymous reachers stay view-only regardless of generalRole.
-  setVisibility: (
+  // Change access from the Share dialog: the three fields (workspace access, the
+  // world link role, and where it's listed). Omitted fields keep the artifact's
+  // current values. Anonymous reachers stay view-only regardless. A password string
+  // (re)sets the lock on the world link; "" clears it; undefined keeps it.
+  setAccess: (
     id: string,
-    visibility: string,
-    generalRole?: GeneralRole,
-    // A string (re)sets the lock on a public link; "" clears it; undefined keeps it.
-    password?: string,
-  ): Promise<{ visibility: string; general_role: GeneralRole; locked: boolean }> =>
-    f(`/v1/artifacts/${id}/visibility`, {
-      ...opts({ visibility, generalRole, password }),
+    access: {
+      workspaceAccess?: WorkspaceAccess
+      linkRole?: LinkRole
+      listed?: Listed
+      password?: string
+    },
+  ): Promise<{
+    workspace_access: WorkspaceAccess
+    link_role: LinkRole
+    listed: Listed
+    locked: boolean
+  }> =>
+    f(`/v1/artifacts/${id}/access`, {
+      ...opts(access),
       method: "PATCH",
     }).then(j),
   setLocked: (id: string, locked: boolean): Promise<{ locked: boolean }> =>

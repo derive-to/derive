@@ -1,4 +1,4 @@
-import type { Role, Visibility } from "@derive/core"
+import type { LinkRole, Listed, Role, Visibility, WorkspaceAccess } from "@derive/core"
 import type { Context } from "hono"
 import type { ContentfulStatusCode } from "hono/utils/http-status"
 import type { z } from "zod"
@@ -163,13 +163,14 @@ export const RAW_HEADERS: Record<string, string> = {
 
 /**
  * Cache-Control for an artifact's bytes by access model. Only an UNLOCKED
- * `public` artifact is safe to sit in a shared/CDN cache: `org` and `private`
- * are per-identity, and a password lock is a per-visitor gate the cache key
- * doesn't carry — a shared cache must never store one response and replay it
- * to a viewer who never passed the gate. Everything else ⇒ `private, no-store`.
+ * artifact whose world link grants access (`link_role != none`) is safe to sit
+ * in a shared/CDN cache: everyone hitting the URL reads the same bytes. Workspace-
+ * and share-only access is per-identity, and a password lock is a per-visitor gate
+ * the cache key doesn't carry — a shared cache must never store one response and
+ * replay it to a viewer who never passed the gate. Everything else ⇒ `private, no-store`.
  */
-export const cacheControlFor = (visibility: Visibility, locked = false): string =>
-  visibility === "public" && !locked ? IMMUTABLE_CACHE : "private, no-store"
+export const cacheControlFor = (linkRole: LinkRole, locked = false): string =>
+  linkRole !== "none" && !locked ? IMMUTABLE_CACHE : "private, no-store"
 
 /** A taken-down artifact: content is gone (410), the record is preserved. */
 export const TOMBSTONE = "This artifact was removed."
@@ -200,12 +201,48 @@ export const isWorkspaceRole = (v: unknown): v is Role =>
 export const str = (v: unknown): string | undefined =>
   typeof v === "string" && v !== "" ? v : undefined
 
-export const visibilityOf = (v: unknown): Visibility | undefined =>
-  typeof v === "string"
-    ? (VISIBILITIES as readonly string[]).includes(v)
-      ? (v as Visibility)
-      : LEGACY_VISIBILITY[v]
+/** The v2 access model's three single-purpose fields (see access-model.md):
+ *  who the workspace's members reach the doc as, what the world link confers,
+ *  and where the doc surfaces for discovery. */
+export const WORKSPACE_ACCESSES = ["none", "member"] as const
+export const LINK_ROLES = ["none", "viewer", "commenter", "editor"] as const
+export const LISTEDS = ["none", "workspace", "public"] as const
+
+export const workspaceAccessOf = (v: unknown): WorkspaceAccess | undefined =>
+  typeof v === "string" && (WORKSPACE_ACCESSES as readonly string[]).includes(v)
+    ? (v as WorkspaceAccess)
     : undefined
+
+/** `general_role` is a legacy wire alias for the world link role: pre-v2 clients
+ *  only ever sent `viewer`/`commenter`, both valid LinkRole literals, so this just
+ *  accepts either field name. */
+export const linkRoleOf = (v: unknown): LinkRole | undefined =>
+  typeof v === "string" && (LINK_ROLES as readonly string[]).includes(v)
+    ? (v as LinkRole)
+    : undefined
+
+export const listedOf = (v: unknown): Listed | undefined =>
+  typeof v === "string" && (LISTEDS as readonly string[]).includes(v) ? (v as Listed) : undefined
+
+/** Access triple a legacy `visibility` maps onto, so a pinned CLI, a self-hosted
+ *  stdio MCP, or a saved derive.json keeps publishing without an upgrade. Same
+ *  mapping the one-time boot backfill applies to stored rows (see backfillAccess):
+ *    private → nobody but shares; org → the workspace, listed in its library;
+ *    public → the workspace + a world link (its role from `general_role`, default
+ *    viewer), listed in the public directory. Returns undefined for an unknown
+ *    value so the caller can 400 rather than silently publish more openly. */
+export const legacyAccessOf = (
+  v: string,
+  generalRole?: LinkRole,
+): { workspace_access: WorkspaceAccess; link_role: LinkRole; listed: Listed } | undefined => {
+  const canon = (VISIBILITIES as readonly string[]).includes(v)
+    ? (v as Visibility)
+    : LEGACY_VISIBILITY[v]
+  if (!canon) return undefined
+  if (canon === "private") return { workspace_access: "none", link_role: "none", listed: "none" }
+  if (canon === "org") return { workspace_access: "member", link_role: "none", listed: "workspace" }
+  return { workspace_access: "member", link_role: generalRole ?? "viewer", listed: "public" }
+}
 
 /**
  * Echo-origin CORS middleware so the cross-origin SPA can send cookies. Headers

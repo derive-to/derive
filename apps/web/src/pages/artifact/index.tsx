@@ -371,7 +371,7 @@ export function Artifact() {
   // anonymous visitor never qualifies — on a comment-enabled link they get a "sign in
   // to comment" prompt instead (auth is the gate; see the access matrix).
   const canComment = canCommentWithRole(art.my_role)
-  const promptSignInToComment = shouldPromptSignInToComment(isAnon, art.general_role, !!art.removed)
+  const promptSignInToComment = shouldPromptSignInToComment(isAnon, art.link_role, !!art.removed)
 
   // Sort threads into pinned (anchored & present in this live doc), general
   // (unanchored / orphaned / off-slide), and resolved — pure, from the frame's
@@ -577,8 +577,9 @@ export function Artifact() {
               shortId={shortId}
               orgId={art.org_id}
               myRole={art.my_role}
-              visibility={art.visibility}
-              generalRole={art.general_role}
+              workspaceAccess={art.workspace_access}
+              linkRole={art.link_role}
+              listed={art.listed}
               passwordProtected={!!art.password_protected}
               favorite={!!art.favorite}
               tags={art.tags ?? []}

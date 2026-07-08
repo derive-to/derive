@@ -146,12 +146,12 @@ describe("B-019: @mention notifies only collaborators", () => {
   })
 })
 
-// B-018: an explicitly-provided visibility that isn't a known value is rejected, not
-// silently coerced. Absent visibility defaults to `private`.
+// B-018: an explicitly-provided legacy visibility that isn't a known value is
+// rejected, not silently coerced. Absent access fields default to the team draft.
 describe("B-018: publish rejects an unknown visibility", () => {
   const owner: TestUser = { id: "u_b18_owner", email: "o18@derive.test", name: "Owner18" }
 
-  it("400s on an unknown visibility; valid values store; absent defaults to private", async () => {
+  it("400s on an unknown visibility; valid values map; absent defaults to unlisted", async () => {
     const { app } = makeAuthedApp("harden-b18", [owner])
     const bad = await publishAs(
       app,
@@ -163,14 +163,14 @@ describe("B-018: publish rejects an unknown visibility", () => {
     const pub = await (
       await publishAs(app, "<h1>x</h1>", { title: "v2", visibility: "public" }, as(owner.email))
     ).json()
-    expect(pub.visibility).toBe("public")
+    expect(pub.listed).toBe("public")
     // Legacy client vocabulary maps instead of 400ing (link → public).
     const legacy = await (
       await publishAs(app, "<h1>x</h1>", { title: "v4", visibility: "link" }, as(owner.email))
     ).json()
-    expect(legacy.visibility).toBe("public")
+    expect(legacy.listed).toBe("public")
     const def = await (await publishAs(app, "<h1>x</h1>", { title: "v3" }, as(owner.email))).json()
-    expect(def.visibility).toBe("private")
+    expect(def.listed).toBe("none")
   })
 })
 

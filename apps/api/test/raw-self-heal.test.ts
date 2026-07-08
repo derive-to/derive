@@ -31,7 +31,9 @@ const seedMislabeled = async (shortId: string) => {
     org_id: "default",
     slug: null,
     title: "Frozen Bench",
-    visibility: "public",
+    workspace_access: "member",
+    link_role: "viewer",
+    listed: "public",
     kind: "file",
     spa: 0,
   })
@@ -77,7 +79,9 @@ describe("raw render never white-screens + self-heals a mislabeled blob", () => 
       org_id: "default",
       slug: null,
       title: "Notes",
-      visibility: "public",
+      workspace_access: "member",
+      link_role: "viewer",
+      listed: "public",
       kind: "file",
       spa: 0,
     })

@@ -9,6 +9,8 @@ import type {
   DomainStatus,
   FollowKind,
   GeneralRole,
+  LinkRole,
+  Listed,
   NotificationKind,
   PreviewStatus,
   ProposalState,
@@ -20,6 +22,7 @@ import type {
   SessionState,
   Visibility,
   WebhookKind,
+  WorkspaceAccess,
 } from "@derive/core"
 import { sql } from "drizzle-orm"
 import {
@@ -42,11 +45,24 @@ export const artifact = sqliteTable("artifact", {
   org_id: text("org_id").notNull().default("local"),
   slug: text("slug"),
   title: text("title"),
-  visibility: text("visibility").$type<Visibility>().notNull().default("private"),
+  // The access model (docs/plans/access-model.md), three independent fields.
+  // workspace_access: does the artifact's workspace get access at each member's
+  // SEAT role (`member`) or not (`none`). link_role: the WORLD link — what anyone
+  // holding the URL gets (`none` inert / viewer / commenter / editor; anon clamped
+  // to viewer). listed: discovery only (`none` / `workspace` library / `public`
+  // directory), NO access. All fail-closed to `none` so an un-stamped row grants
+  // nothing; publish() resolves real values. See effectiveRole.
+  workspace_access: text("workspace_access").$type<WorkspaceAccess>().notNull().default("none"),
+  link_role: text("link_role").$type<LinkRole>().notNull().default("none"),
+  listed: text("listed").$type<Listed>().notNull().default("none"),
+  // Locks the world link on a public-directory doc until unlocked; members and
+  // explicit shares never need it.
   password_hash: text("password_hash"),
-  // The role general access (the link) grants a reacher with no higher explicit
-  // grant. viewer = view-only (default); commenter = authed reachers may comment
-  // (anonymous reachers are always clamped to viewer — see effectiveRole).
+  // ── Orphaned columns (expand/contract — CONTRIBUTING.md). Backfilled ONCE at
+  // boot into the access fields above (backfillAccess consumes `visibility`, so
+  // it re-runs to a no-op), then read by nothing. Kept so existing rows + the DDL
+  // stay consistent and ArtifactRecord's shape matches this table (see ./parity).
+  visibility: text("visibility").$type<Visibility>().notNull().default("private"),
   general_role: text("general_role").$type<GeneralRole>().notNull().default("viewer"),
   kind: text("kind").$type<ArtifactKind>().notNull(),
   spa: integer("spa").$type<0 | 1>().notNull().default(0),

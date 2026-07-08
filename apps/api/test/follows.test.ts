@@ -24,7 +24,9 @@ const publish = async (
     org_id: "default",
     slug: null,
     title,
-    visibility: "public",
+    workspace_access: "member",
+    link_role: "viewer",
+    listed: "public",
     kind: "file",
     spa: 0,
   })
@@ -141,7 +143,9 @@ describe("people follow", () => {
       org_id: org,
       slug: null,
       title,
-      visibility,
+      workspace_access: visibility === "public" ? "member" : "none",
+      link_role: visibility === "public" ? "viewer" : "none",
+      listed: visibility === "public" ? "public" : "none",
       kind: "file",
       spa: 0,
     })

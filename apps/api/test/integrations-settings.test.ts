@@ -16,7 +16,10 @@ describe("workspace integration settings", () => {
       githubMirrorComments: true,
       githubPreviewLink: true,
       slackPost: true,
-      defaultAgentVisibility: "private",
+      // The access NEW publishes land with — the team draft (see access-model.md).
+      defaultWorkspaceAccess: "member",
+      defaultLinkRole: "none",
+      defaultListed: "none",
     })
   })
 

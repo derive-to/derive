@@ -106,8 +106,18 @@ describe("sessions: the ask → answer → follow-up loop", () => {
       await app.request("/v1/agents", jsonAs(as(owner.email), { name: "Analyst", role: "editor" }))
     ).json()
     agentToken = ag.token
+    // link_role none = true invite-only: the round-4 workspace-default link would
+    // otherwise admit Daniel (a member) before the explicit share — this test is
+    // about the manifest GATE, so the link stays inert.
     manifestShortId = (
-      await (await publishAs(app, "# Manifest", { visibility: "private" }, as(owner.email))).json()
+      await (
+        await publishAs(
+          app,
+          "# Manifest",
+          { visibility: "private", link_role: "none" },
+          as(owner.email),
+        )
+      ).json()
     ).short_id
     const x = await (
       await app.request(

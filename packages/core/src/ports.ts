@@ -2,7 +2,12 @@
  * Core owns the ports; packages/db and packages/storage provide the adapters.
  * Everything here must run on Node AND Cloudflare Workers — no Node APIs.
  */
-import type { GeneralRole, Role } from "./roles"
+import type { GeneralRole, LinkRole, Listed, Role, WorkspaceAccess } from "./roles"
+
+/** @deprecated orphaned column vocabulary — the access model is `workspace_access`
+ *  × `link_role` × `listed` (see access-model.md). Kept only to type the `visibility`
+ *  DB column (backfilled once, read by nothing). */
+export type Visibility = "public" | "org" | "private"
 
 export interface BlobStore {
   /** Content-addressed put; returns the sha256 hex key. Idempotent. */
@@ -11,18 +16,6 @@ export interface BlobStore {
 }
 
 export type ArtifactKind = "file" | "bundle"
-// Three audiences, each answering one question: who can open the link.
-// `private`: only per-artifact members (the publisher becomes the owner-member at
-// creation) — workspace membership grants nothing. The agent-draft default.
-// `org`: the team — any workspace member, at their membership role, listed in
-// the workspace library.
-// `public`: anyone with the URL. A `password_hash` on a public artifact is a
-// LOCK, not a visibility: the reach floor stays gated until unlocked, while
-// members and explicit shares pass by role. There is no listing axis —
-// broadcast is not a per-artifact state.
-// (Pre-collapse rows migrate at boot: unlisted→private, link→public,
-// password→public with the hash kept. See docs/plans/visibility-collapse.md.)
-export type Visibility = "public" | "org" | "private"
 
 /** A platform subdomain (`name.derived.app`) or a customer's own domain. */
 export type DomainKind = "subdomain" | "custom"
@@ -37,12 +30,23 @@ export interface ArtifactRecord {
   org_id: string
   slug: string | null
   title: string | null
-  visibility: Visibility
-  /** Salted hash of the unlock password for `password` visibility; null otherwise. */
+  /** Does the artifact's workspace get access at each member's SEAT role.
+   *  `member` = every signed-in member opens at their own workspace role;
+   *  `none` = only explicit shares and the world link apply. See access-model.md. */
+  workspace_access: WorkspaceAccess
+  /** The WORLD link: what anyone merely holding the URL gets (non-member, public,
+   *  anon — anon always clamped to `viewer`). `none` = inert. A teammate with the
+   *  link is NOT this (that's `workspace_access`). */
+  link_role: LinkRole
+  /** Discovery only — where it surfaces: `none` / `workspace` (library) / `public`
+   *  (directory). Carries NO access. */
+  listed: Listed
+  /** Salted hash of the unlock password locking the world link; null otherwise. */
   password_hash: string | null
-  /** The role general access (the link) grants a reacher with no higher explicit grant.
-   *  `viewer` (default) = view-only; `commenter` = authenticated reachers may comment.
-   *  Anonymous reachers are always clamped to `viewer` regardless (see effectiveRole). */
+  /** @deprecated orphaned column, backfilled once into `workspace_access`+`listed`.
+   *  Kept only so this Record matches the drizzle table (parity.ts). Read by nothing. */
+  visibility: Visibility
+  /** @deprecated orphaned column, backfilled once into `link_role`. Read by nothing. */
   general_role: GeneralRole
   kind: ArtifactKind
   spa: 0 | 1
@@ -163,11 +167,18 @@ export interface NewArtifact {
   org_id: string
   slug: string | null
   title: string | null
-  visibility: Visibility
-  /** Salted unlock-password hash; set only for `password` visibility. */
+  /** The access triple. Omitted values are fail-closed at the store — `none`
+   *  workspace access, `none` link, `none` listing — a caller that wants reach
+   *  must say so. `publish()` always resolves and stamps them (explicit request >
+   *  the org's defaults > the factory default: workspace_access `member`, link
+   *  `none`, listed `none`) before `createArtifact`, so the optionality is a
+   *  store-level safety net, not the product default. The orphaned `visibility` /
+   *  `general_role` columns take their DB defaults and are never set here. */
+  workspace_access?: WorkspaceAccess
+  link_role?: LinkRole
+  listed?: Listed
+  /** Salted unlock-password hash locking the world link; null/omitted otherwise. */
   password_hash?: string | null
-  /** General-access role; defaults to `viewer` (view-only) when omitted. */
-  general_role?: GeneralRole
   kind: ArtifactKind
   spa: 0 | 1
 }
@@ -190,14 +201,15 @@ export interface NewVersion {
 
 export interface ArtifactStore {
   createArtifact(a: NewArtifact): Promise<ArtifactRecord>
-  /** Change an artifact's general access: visibility, the password hash locking a
-   *  public link (null clears; meaningless off `public`), and the general-access
-   *  role (view vs comment). */
-  setVisibility(
+  /** Change an artifact's access: workspace access (member seats vs none), the
+   *  world link role, the listing, and the password hash locking the world link
+   *  (null clears). See access-model.md. */
+  setAccess(
     artifactId: string,
-    visibility: Visibility,
+    workspaceAccess: WorkspaceAccess,
+    listed: Listed,
+    linkRole: LinkRole,
     passwordHash: string | null,
-    generalRole: GeneralRole,
   ): Promise<void>
   /** Toggle the change-lock: when locked, direct publishes are rejected. */
   setLocked(artifactId: string, locked: 0 | 1): Promise<void>
@@ -300,8 +312,9 @@ export interface ArtifactQueryStore {
   /** Total artifact count, scoped to a workspace when orgId is given. */
   countArtifacts(orgId?: string): Promise<number>
   /** Count of the artifacts `artifactIdsOwnedBy` would return — the "Created by
-   *  me" badge. `visibility` narrows to one rung (the link-only pending count). */
-  countOwnedBy(orgId: string, userId: string, visibility?: Visibility): Promise<number>
+   *  me" badge. `listed` narrows to one discovery state (e.g. `none` = the
+   *  not-in-any-feed pending count). */
+  countOwnedBy(orgId: string, userId: string, listed?: Listed): Promise<number>
   /**
    * The storage-quota meter for one workspace: bytes counted once per distinct
    * blob (content is content-addressed, so republishes/restores of identical
@@ -794,6 +807,11 @@ export interface ModerationStore {
    *  tables are absent). Pre-feature hand-published work without a GitHub identity has no
    *  recoverable author and is left null. */
   backfillAuthorIds(): Promise<number>
+  /** One-time boot backfill of the access model from the pre-v2 shape (`visibility`
+   *  + `general_role`) into `workspace_access` / `link_role` / `listed`. Idempotent:
+   *  it consumes `visibility` (resets it to the orphaned default), so a second run —
+   *  and every row created after — is a no-op. See docs/plans/access-model.md. */
+  backfillAccess(): Promise<void>
   createAuditLog(a: NewAuditLog): Promise<void>
   /** Moderation history, newest first. One workspace's, or — super-admin, orgId
    *  undefined — the whole instance's. Optionally narrowed to one artifact. */
@@ -1424,10 +1442,15 @@ export interface OrgSettings {
   githubPreviewLink: boolean
   /** Post Derive activity to the connected Slack workspace. */
   slackPost: boolean
-  /** The visibility a NEW agent (MCP) publish lands with when the agent doesn't
-   *  say. Private by default: an agent's draft is the human's until they promote
-   *  it — sharing wider is the deliberate act (the blessing gesture). */
-  defaultAgentVisibility: Visibility
+  /** The access a NEW publish lands with when the publisher doesn't say (see
+   *  access-model.md). Factory default is the "team draft": `workspace_access =
+   *  member` (a pasted link opens for a teammate or an on-behalf agent at their
+   *  seat role), `link_role = none` (the world is out), `listed = none` (nothing
+   *  in a feed until promoted). Changing these never retroactively touches
+   *  existing artifacts. */
+  defaultWorkspaceAccess: WorkspaceAccess
+  defaultLinkRole: LinkRole
+  defaultListed: Listed
 }
 
 export const DEFAULT_ORG_SETTINGS: OrgSettings = {
@@ -1436,7 +1459,9 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
   githubMirrorComments: true,
   githubPreviewLink: true,
   slackPost: true,
-  defaultAgentVisibility: "private",
+  defaultWorkspaceAccess: "member",
+  defaultLinkRole: "none",
+  defaultListed: "none",
 }
 
 /** A connected Slack workspace (one per Derive workspace). `bot_token` is the OAuth bot

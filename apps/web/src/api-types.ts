@@ -1280,7 +1280,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/artifacts/{shortId}/visibility": {
+    "/v1/artifacts/{shortId}/access": {
         parameters: {
             query?: never;
             header?: never;
@@ -1293,7 +1293,7 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
-        /** Change an artifact's general access (visibility + general-access role). */
+        /** Change an artifact's access (workspace access, world link, listing). */
         patch: {
             parameters: {
                 query?: never;
@@ -1305,7 +1305,7 @@ export interface paths {
             };
             requestBody?: never;
             responses: {
-                /** @description The new visibility, general-access role, and lock state. */
+                /** @description The new access triple and lock state. */
                 200: {
                     headers: {
                         [name: string]: unknown;
@@ -1313,9 +1313,11 @@ export interface paths {
                     content: {
                         "application/json": {
                             /** @enum {string} */
-                            visibility: "public" | "org" | "private";
+                            workspace_access: "none" | "member";
                             /** @enum {string} */
-                            general_role: "viewer" | "commenter";
+                            link_role: "none" | "viewer" | "commenter" | "editor";
+                            /** @enum {string} */
+                            listed: "none" | "workspace" | "public";
                             locked: boolean;
                         };
                     };
@@ -4504,13 +4506,15 @@ export interface components {
             current_content_type?: string | null;
             locked?: boolean;
             /** @enum {string} */
-            visibility: "public" | "org" | "private";
+            workspace_access?: "none" | "member";
+            /** @enum {string} */
+            link_role?: "none" | "viewer" | "commenter" | "editor";
+            /** @enum {string} */
+            listed?: "none" | "workspace" | "public";
             password_protected?: boolean;
             org_id?: string;
             raw_token?: string;
             spa?: boolean;
-            /** @enum {string} */
-            general_role?: "viewer" | "commenter";
             current_version: number;
             versions: {
                 n: number;
@@ -4626,7 +4630,11 @@ export interface components {
             githubPreviewLink: boolean;
             slackPost: boolean;
             /** @enum {string} */
-            defaultAgentVisibility: "public" | "org" | "private";
+            defaultWorkspaceAccess: "none" | "member";
+            /** @enum {string} */
+            defaultLinkRole: "none" | "viewer" | "commenter" | "editor";
+            /** @enum {string} */
+            defaultListed: "none" | "workspace" | "public";
         };
         Workspaces: {
             multi: boolean;

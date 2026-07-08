@@ -172,7 +172,9 @@ describe("profile unfurl (/users/:handle)", () => {
       org_id: "default",
       slug: null,
       title: "Nia's doc",
-      visibility: "public",
+      workspace_access: "member",
+      link_role: "viewer",
+      listed: "public",
       kind: "file",
       spa: 0,
     })

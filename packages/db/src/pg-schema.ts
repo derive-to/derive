@@ -9,6 +9,8 @@ import type {
   DomainStatus,
   FollowKind,
   GeneralRole,
+  LinkRole,
+  Listed,
   NotificationKind,
   PreviewStatus,
   ProposalState,
@@ -20,6 +22,7 @@ import type {
   SessionState,
   Visibility,
   WebhookKind,
+  WorkspaceAccess,
 } from "@derive/core"
 import { getTableConfig, index, integer, pgTable, text, uniqueIndex } from "drizzle-orm/pg-core"
 import { generateDdl, PERF_INDEXES, placeholderTables } from "./ddl"
@@ -36,8 +39,14 @@ export const artifact = pgTable("artifact", {
   org_id: text("org_id").notNull().default("local"),
   slug: text("slug"),
   title: text("title"),
-  visibility: text("visibility").$type<Visibility>().notNull().default("private"),
+  // The access model (mirrors schema.ts — see the comment there). Three fields:
+  // workspace_access (seat access), link_role (the world link), listed (discovery).
+  workspace_access: text("workspace_access").$type<WorkspaceAccess>().notNull().default("none"),
+  link_role: text("link_role").$type<LinkRole>().notNull().default("none"),
+  listed: text("listed").$type<Listed>().notNull().default("none"),
   password_hash: text("password_hash"),
+  // Orphaned, backfilled once into the fields above; read by nothing (mirrors schema.ts).
+  visibility: text("visibility").$type<Visibility>().notNull().default("private"),
   general_role: text("general_role").$type<GeneralRole>().notNull().default("viewer"),
   kind: text("kind").$type<ArtifactKind>().notNull(),
   spa: integer("spa").$type<0 | 1>().notNull().default(0),
