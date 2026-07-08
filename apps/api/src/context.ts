@@ -706,7 +706,16 @@ export function buildContext(deps: AppDeps) {
     const me = await currentUser(c)
     if (!me) return null
     if (col.created_by === me.id) return "owner"
-    return (await meta.getCollectionMember(col.id, me.id))?.role ?? null
+    // A collection lives in a workspace, so its members reach it at their SEAT role —
+    // the team collaborates on the workspace's collections, not just their creator's
+    // (mirrors an artifact's workspace_access=member). An explicit collection share
+    // (which can cross workspaces) folds in alongside, higher wins. This governs who
+    // can view/manage the COLLECTION only; artifact access still propagates purely
+    // from explicit collection membership (collectionRolesForArtifact), so a seat here
+    // never hands out access to the artifacts inside.
+    const explicit = (await meta.getCollectionMember(col.id, me.id))?.role ?? null
+    const seat = (await meta.getMembership(col.org_id, me.id))?.role ?? null
+    return maxRole(explicit, seat)
   }
 
   // ---- Route guard helpers: the return-or-Response idiom (mirrors `limited`), so a

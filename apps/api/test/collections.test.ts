@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { app, meta, postJson, upload } from "./helpers"
+import { app, as, makeAuthedApp, meta, postJson, publishAs, type TestUser, upload } from "./helpers"
 
 describe("collections", () => {
   const put = (path: string) =>
@@ -61,6 +61,60 @@ describe("collections", () => {
     expect(await meta.getCollection(col.id)).toBeNull()
     // the artifact itself is untouched
     expect(await meta.getByShortId(short_id)).not.toBeNull()
+  })
+
+  it("a workspace member can add their artifact to a teammate's collection; an outsider can't", async () => {
+    // A collection lives in the workspace, so any member manages it at their seat role —
+    // not just its creator. (Regression: collectionRole ignored workspace membership, so
+    // a teammate who didn't create the collection got 403 adding to it.)
+    const ana: TestUser = { id: "u_col_ana", email: "ana@col.test", name: "Ana", username: "anac" }
+    const ben: TestUser = { id: "u_col_ben", email: "ben@col.test", name: "Ben", username: "benc" }
+    const { app: teamApp } = makeAuthedApp("col-member", [ana, ben], "editor")
+    // Ana creates the collection; Ben (workspace editor, not the creator) owns an artifact.
+    const col = await (
+      await teamApp.request("/v1/collections", {
+        method: "POST",
+        headers: { "content-type": "application/json", ...as(ana.email) },
+        body: JSON.stringify({ title: "Team" }),
+      })
+    ).json()
+    const bens = await (await publishAs(teamApp, "<h1>b</h1>", {}, as(ben.email))).json()
+    // Ben adds HIS artifact to Ana's collection — his workspace seat grants it.
+    expect(
+      (
+        await teamApp.request(`/v1/collections/${col.id}/items/${bens.short_id}`, {
+          method: "PUT",
+          headers: { "content-type": "application/json", ...as(ben.email) },
+        })
+      ).status,
+    ).toBe(200)
+
+    // An outsider (own workspace, no membership here) still can't manage the collection.
+    const outsider: TestUser = {
+      id: "u_col_out",
+      email: "out@col.test",
+      name: "Out",
+      username: "outc",
+    }
+    const { app: outApp } = makeAuthedApp("col-outsider", [ana, outsider], undefined, {
+      isolated: true,
+    })
+    const otherCol = await (
+      await outApp.request("/v1/collections", {
+        method: "POST",
+        headers: { "content-type": "application/json", ...as(ana.email) },
+        body: JSON.stringify({ title: "Private-ish" }),
+      })
+    ).json()
+    const mine = await (await publishAs(outApp, "<h1>o</h1>", {}, as(outsider.email))).json()
+    expect(
+      (
+        await outApp.request(`/v1/collections/${otherCol.id}/items/${mine.short_id}`, {
+          method: "PUT",
+          headers: { "content-type": "application/json", ...as(outsider.email) },
+        })
+      ).status,
+    ).toBe(403) // no seat in that workspace → no standing to manage the collection
   })
 
   it("tags repo / PR / manual collections so the client can nest PR previews", async () => {
