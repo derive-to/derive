@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
-import { useState } from "react"
+import { useRef, useState } from "react"
 import { type ArtifactMember, api, type Role } from "@/api"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { PersonSearchInput } from "@/components/shared/person-search-input"
@@ -30,14 +30,22 @@ export function MembersSection({ meId }: { meId: string }) {
   const [email, setEmail] = useState("")
   const [addRole, setAddRole] = useState<Role>("commenter")
   const [adding, setAdding] = useState(false)
+  // A ref, not just the `adding` state: state updates are batched/async, so a
+  // burst of synchronous native submit events (Enter held down, or auto-
+  // repeating — see PersonSearchInput's documented submit-fallthrough) can all
+  // read the SAME stale `false` closure before the first call's setAdding(true)
+  // re-renders. The ref flips synchronously, so only the first gets through.
+  const addingRef = useRef(false)
   const [removing, setRemoving] = useState<ArtifactMember | null>(null)
 
   const isAdmin = ws?.role === "owner"
 
   const addMember = async (e: React.FormEvent) => {
     e.preventDefault()
+    if (addingRef.current) return
     const em = email.trim()
     if (!em) return
+    addingRef.current = true
     setAdding(true)
     try {
       const r = await api.inviteToWorkspace(em, addRole)
@@ -55,6 +63,7 @@ export function MembersSection({ meId }: { meId: string }) {
     } catch (e) {
       toast.error((e as Error).message)
     } finally {
+      addingRef.current = false
       setAdding(false)
     }
   }

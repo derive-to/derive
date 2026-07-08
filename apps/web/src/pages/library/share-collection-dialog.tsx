@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { type ArtifactMember, api, type Collection, type Role, type WorkspaceAccess } from "@/api"
 import { Icon, type IconName } from "@/components/icons"
 import { AccessSegmentToggle } from "@/components/shared/access-segment-toggle"
@@ -41,6 +41,12 @@ export function ShareCollectionDialog({
   const [email, setEmail] = useState("")
   const [role, setRole] = useState<Role>("editor")
   const [busy, setBusy] = useState(false)
+  // A ref, not just the `busy` state: state updates are batched/async, so a burst
+  // of synchronous native submit events (Enter held down, or auto-repeating —
+  // see PersonSearchInput's documented submit-fallthrough) can all read the SAME
+  // stale `busy=false` closure before the first call's setBusy(true) re-renders.
+  // The ref flips synchronously, so only the first of a burst gets through.
+  const adding = useRef(false)
   const [wsAccess, setWsAccess] = useState<WorkspaceAccess>(collection.workspace_access ?? "member")
   const [savingAccess, setSavingAccess] = useState(false)
 
@@ -81,8 +87,10 @@ export function ShareCollectionDialog({
 
   const add = async (e: React.FormEvent) => {
     e.preventDefault()
+    if (adding.current) return
     const addr = email.trim()
     if (!addr) return
+    adding.current = true
     setBusy(true)
     try {
       await api.setCollectionMember(collection.id, addr, role)
@@ -91,6 +99,7 @@ export function ShareCollectionDialog({
     } catch (x) {
       toast.error(x instanceof Error ? x.message : "Couldn't share")
     } finally {
+      adding.current = false
       setBusy(false)
     }
   }

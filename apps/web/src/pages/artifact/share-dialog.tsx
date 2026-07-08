@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useNavigate } from "@tanstack/react-router"
-import { useState } from "react"
+import { useRef, useState } from "react"
 import {
   API_BASE,
   type ArtifactDomain,
@@ -103,6 +103,12 @@ export function ShareButton({
   const [email, setEmail] = useState("")
   const [role, setRole] = useState<Role>("editor")
   const [busy, setBusy] = useState(false)
+  // A ref, not just the `busy` state: state updates are batched/async, so a burst
+  // of synchronous native submit events (Enter held down, or auto-repeating —
+  // see PersonSearchInput's documented submit-fallthrough) can all read the SAME
+  // stale `busy=false` closure before the first call's setBusy(true) re-renders.
+  // The ref flips synchronously, so only the first of a burst gets through.
+  const adding = useRef(false)
   const [err, setErr] = useState<string | null>(null)
   // Access draft: the three fields, plus the lock (password) state for the world link.
   const [wsAccess, setWsAccess] = useState<WorkspaceAccess>(workspaceAccess ?? "member")
@@ -299,8 +305,10 @@ export function ShareButton({
 
   const add = async (e: React.FormEvent) => {
     e.preventDefault()
+    if (adding.current) return
     const addr = email.trim()
     if (!addr) return
+    adding.current = true
     setBusy(true)
     setErr(null)
     try {
@@ -310,6 +318,7 @@ export function ShareButton({
     } catch (x) {
       setErr(x instanceof Error ? x.message : "Could not share")
     } finally {
+      adding.current = false
       setBusy(false)
     }
   }
