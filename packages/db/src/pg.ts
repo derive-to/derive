@@ -17,13 +17,14 @@ import type {
   DomainStatus,
   FollowKind,
   FollowRecord,
-  GeneralRole,
   GitHubAppRecord,
   GitHubInstallationRecord,
   GithubAuthor,
   GithubUserMapping,
   InvitationRecord,
+  LinkRole,
   ListArtifactsOpts,
+  Listed,
   MembershipRecord,
   MetaStore,
   NewAgent,
@@ -42,6 +43,7 @@ import type {
   NewMembership,
   NewNotification,
   NewProposal,
+  NewRenderJob,
   NewReport,
   NewRepoSource,
   NewReviewRound,
@@ -54,8 +56,11 @@ import type {
   OAuthGrant,
   OAuthGrantSummary,
   OrgSettings,
+  PreviewStatus,
   ProposalRecord,
   ProposalState,
+  RenderJobRecord,
+  RenderJobStatus,
   ReportRecord,
   ReportState,
   RepoSourceRecord,
@@ -72,8 +77,8 @@ import type {
   UserProfile,
   VersionRecord,
   ViewStats,
-  Visibility,
   WebhookRecord,
+  WorkspaceAccess,
   WorkspaceRecord,
 } from "@derive/core"
 import { GLOBAL_FOLLOW_ORG } from "@derive/core"
@@ -120,6 +125,7 @@ import {
   orgSettings,
   PG_SCHEMA_STATEMENTS,
   proposal,
+  renderJob,
   report,
   repoSource,
   reviewRound,
@@ -152,6 +158,7 @@ export const schema = {
   comment,
   webhook,
   webhookDelivery,
+  renderJob,
   membership,
   workspace,
   artifactMember,
@@ -189,6 +196,7 @@ const _schemaShapes: Shapes<typeof schema> = {
   comment: true,
   webhook: true,
   webhookDelivery: true,
+  renderJob: true,
   membership: true,
   workspace: true,
   artifactMember: true,
@@ -261,15 +269,21 @@ export class PgMetaStore implements MetaStore {
     return (await this.getByShortId(a.short_id)) as ArtifactRecord
   }
 
-  async setVisibility(
+  async setAccess(
     artifactId: string,
-    visibility: Visibility,
+    workspaceAccess: WorkspaceAccess,
+    listed: Listed,
+    linkRole: LinkRole,
     passwordHash: string | null,
-    generalRole: GeneralRole,
   ): Promise<void> {
     await this.db
       .update(artifact)
-      .set({ visibility, password_hash: passwordHash, general_role: generalRole })
+      .set({
+        workspace_access: workspaceAccess,
+        listed,
+        link_role: linkRole,
+        password_hash: passwordHash,
+      })
       .where(eq(artifact.id, artifactId))
   }
 
@@ -366,6 +380,21 @@ export class PgMetaStore implements MetaStore {
       .update(artifact)
       .set({ current_content_type: contentType })
       .where(and(eq(artifact.id, artifactId), eq(artifact.current_version, n)))
+  }
+
+  async setVersionPreview(
+    artifactId: string,
+    n: number,
+    fields: {
+      preview_key?: string | null
+      preview_status?: PreviewStatus | null
+      preview_error?: string | null
+    },
+  ): Promise<void> {
+    await this.db
+      .update(version)
+      .set(fields)
+      .where(and(eq(version.artifact_id, artifactId), eq(version.n, n)))
   }
 
   async createComment(c: NewComment): Promise<CommentRecord> {
@@ -539,17 +568,12 @@ export class PgMetaStore implements MetaStore {
     const rows = await (orgId ? q.where(eq(artifact.org_id, orgId)) : q)
     return Number(rows[0]?.c ?? 0)
   }
-  async countOwnedBy(orgId: string, userId: string, visibility?: Visibility): Promise<number> {
+  async countOwnedBy(orgId: string, userId: string, listed?: Listed): Promise<number> {
     const rows = await this.db
       .select({ c: count() })
       .from(artifact)
       .innerJoin(artifactMember, this.ownerRowJoin(userId))
-      .where(
-        and(
-          eq(artifact.org_id, orgId),
-          visibility ? eq(artifact.visibility, visibility) : undefined,
-        ),
-      )
+      .where(and(eq(artifact.org_id, orgId), listed ? eq(artifact.listed, listed) : undefined))
     return Number(rows[0]?.c ?? 0)
   }
   async storageBytes(orgId: string): Promise<number> {
@@ -732,6 +756,36 @@ export class PgMetaStore implements MetaStore {
       .where(eq(webhookDelivery.webhook_id, webhookId))
       .orderBy(desc(webhookDelivery.created_at))
       .limit(limit)
+  }
+
+  // ---- Render-job queue --------------------------------------------------
+  async enqueueRenderJob(j: NewRenderJob): Promise<void> {
+    await this.db.insert(renderJob).values(j)
+  }
+  claimDueRenderJobs(now: string, limit: number, leaseUntil: string): Promise<RenderJobRecord[]> {
+    const due = this.db
+      .select({ id: renderJob.id })
+      .from(renderJob)
+      .where(and(eq(renderJob.status, "pending"), lte(renderJob.next_attempt_at, now)))
+      .orderBy(asc(renderJob.next_attempt_at))
+      .limit(limit)
+      .for("update", { skipLocked: true })
+    return this.db
+      .update(renderJob)
+      .set({ attempts: sql`${renderJob.attempts} + 1`, next_attempt_at: leaseUntil })
+      .where(inArray(renderJob.id, due))
+      .returning()
+  }
+  async updateRenderJob(
+    id: string,
+    fields: {
+      status: RenderJobStatus
+      attempts: number
+      last_error: string | null
+      next_attempt_at: string
+    },
+  ): Promise<void> {
+    await this.db.update(renderJob).set(fields).where(eq(renderJob.id, id))
   }
 
   // ---- Permissions: membership + per-artifact shares ---------------------
@@ -981,7 +1035,7 @@ export class PgMetaStore implements MetaStore {
       const ghIds = (await this.githubIdsForUsers(people)).map((g) => g.toLowerCase())
       if (ghIds.length > 0) authorConds.push(inArray(sql`lower(${artifact.author_gh_id})`, ghIds))
       const authored = authorConds.length === 1 ? authorConds[0] : or(...authorConds)
-      if (authored) branches.push(and(eq(artifact.visibility, "public"), authored))
+      if (authored) branches.push(and(eq(artifact.listed, "public"), authored))
     }
     if (branches.length === 0) return []
     const match = branches.length === 1 ? branches[0] : or(...branches)
@@ -1040,12 +1094,12 @@ export class PgMetaStore implements MetaStore {
     const orgs = opts.visibleOrgIds ?? []
     if (orgs.length > 0) {
       const v = or(
-        eq(artifact.visibility, "public"),
-        and(inArray(artifact.org_id, orgs), ne(artifact.visibility, "private")),
+        eq(artifact.listed, "public"),
+        and(inArray(artifact.org_id, orgs), ne(artifact.listed, "none")),
       )
       if (v) conds.push(v)
     } else {
-      conds.push(eq(artifact.visibility, "public"))
+      conds.push(eq(artifact.listed, "public"))
     }
     return conds
   }
@@ -1124,6 +1178,19 @@ export class PgMetaStore implements MetaStore {
       out[r.artifact_id]?.push(r.tag)
     }
     for (const k in out) out[k]?.sort()
+    return out
+  }
+  async previewReady(artifactIds: string[]): Promise<Record<string, boolean>> {
+    if (artifactIds.length === 0) return {}
+    const ph = artifactIds.map((_, i) => `$${i + 1}`).join(",")
+    const { rows } = await this.pool.query(
+      `SELECT a.id artifact_id FROM artifact a
+       JOIN version v ON v.artifact_id = a.id AND v.n = a.current_version
+       WHERE v.preview_status = 'ready' AND a.id IN (${ph})`,
+      artifactIds,
+    )
+    const out: Record<string, boolean> = {}
+    for (const r of rows) out[r.artifact_id] = true
     return out
   }
   async setArtifactTags(artifactId: string, tags: string[]): Promise<void> {
@@ -1663,6 +1730,24 @@ export class PgMetaStore implements MetaStore {
     } catch {
       return []
     }
+  }
+  // One-time access backfill from the pre-v2 shape (see repos.ts backfillAccess for
+  // the idempotency argument — it consumes `visibility`, so it re-runs to a no-op).
+  // Self-sufficient: folds in the pre-collapse vocabulary (`link`/`password` → public,
+  // `unlisted` → private) so the hosted deploy path (apply-pg-schema.ts) maps correctly
+  // without node.ts's separate collapse. Errors propagate — the DDL runs first (the
+  // columns always exist), so a failure here is real and must fail the deploy loudly,
+  // not silently ship the Worker against un-backfilled data.
+  async backfillAccess(): Promise<void> {
+    await this.pool.query(
+      `UPDATE "artifact" SET
+         workspace_access = CASE WHEN visibility IN ('org','public','link','password') THEN 'member' ELSE 'none' END,
+         listed = CASE WHEN visibility IN ('public','link','password') THEN 'public' WHEN visibility = 'org' THEN 'workspace' ELSE 'none' END,
+         link_role = CASE WHEN visibility IN ('public','link','password') THEN general_role ELSE 'none' END,
+         visibility = 'private',
+         general_role = 'viewer'
+       WHERE visibility != 'private'`,
+    )
   }
   // Idempotent backfill (see sqlite.ts) — stamp author_id from a known author_gh_id→user mapping.
   async backfillAuthorIds(): Promise<number> {

@@ -30,97 +30,119 @@ describe("roleAllows", () => {
 describe("effectiveRole resolution", () => {
   const user = (over: Partial<Actor>): Actor => ({ kind: "user", userId: "u1", ...over })
 
-  it("per-artifact share overrides the workspace role", () => {
-    expect(effectiveRole(user({ orgRole: "viewer", artifactRole: "editor" }), "org")).toBe("editor")
-    expect(effectiveRole(user({ orgRole: "editor", artifactRole: "viewer" }), "org")).toBe("viewer")
+  it("a member opens at their seat role when workspace_access=member", () => {
+    expect(effectiveRole(user({ orgRole: "commenter" }), "member")).toBe("commenter")
+    expect(effectiveRole(user({ orgRole: "editor" }), "member")).toBe("editor")
   })
-  it("falls back to the workspace role when there's no share", () => {
-    expect(effectiveRole(user({ orgRole: "commenter" }), "org")).toBe("commenter")
+  it("a share widens the seat but never narrows it (v2 is additive)", () => {
+    expect(effectiveRole(user({ orgRole: "viewer", artifactRole: "editor" }), "member")).toBe(
+      "editor",
+    )
+    // A viewer share does NOT drop an editor member — the seat wins.
+    expect(effectiveRole(user({ orgRole: "editor", artifactRole: "viewer" }), "member")).toBe(
+      "editor",
+    )
   })
-  it("a non-member gets viewer on public, nothing on org, nothing behind a lock", () => {
-    expect(effectiveRole(user({}), "public")).toBe("viewer")
-    expect(effectiveRole(user({}), "org")).toBe(null)
-    expect(effectiveRole(user({ locked: true }), "public")).toBe(null)
+  it("a non-member gets nothing without a world link, and nothing on a lock", () => {
+    expect(effectiveRole(user({}), "none")).toBe(null)
+    expect(effectiveRole(user({}), "none", "viewer")).toBe("viewer")
+    expect(effectiveRole(user({}), "member")).toBe(null) // no seat
+    expect(effectiveRole(user({ locked: true }), "none", "viewer")).toBe(null)
   })
-  it("a static token is owner; an anonymous caller is always read-only", () => {
-    expect(effectiveRole({ kind: "token" }, "org")).toBe("owner")
-    // No "open"/trusted-anonymous path exists: anon never gets a writing role.
-    expect(effectiveRole({ kind: "anon" }, "org")).toBe(null)
-    expect(effectiveRole({ kind: "anon" }, "public")).toBe("viewer")
+  it("a static token is owner; an anonymous caller is always read-only, never above viewer", () => {
+    expect(effectiveRole({ kind: "token" }, "member")).toBe("owner")
+    // No "open"/trusted-anonymous path exists: anon never gets a writing role, even
+    // on an editor-grant world link, and never gets a workspace seat.
+    expect(effectiveRole({ kind: "anon" }, "member")).toBe(null)
+    expect(effectiveRole({ kind: "anon" }, "none", "viewer")).toBe("viewer")
+    expect(effectiveRole({ kind: "anon" }, "none", "editor")).toBe("viewer")
   })
 })
 
 describe("can", () => {
   it("an editor publishes, a commenter cannot", () => {
-    expect(can({ kind: "user", artifactRole: "editor" }, "publish", "org")).toBe(true)
-    expect(can({ kind: "user", artifactRole: "commenter" }, "publish", "org")).toBe(false)
-    expect(can({ kind: "user", artifactRole: "commenter" }, "comment", "org")).toBe(true)
+    expect(can({ kind: "user", artifactRole: "editor" }, "publish", "member")).toBe(true)
+    expect(can({ kind: "user", artifactRole: "commenter" }, "publish", "member")).toBe(false)
+    expect(can({ kind: "user", artifactRole: "commenter" }, "comment", "member")).toBe(true)
   })
-  it("a public-link viewer reads but cannot comment", () => {
-    expect(can({ kind: "anon" }, "read", "public")).toBe(true)
-    expect(can({ kind: "anon" }, "comment", "public")).toBe(false)
+  it("a world viewer link reads but cannot comment", () => {
+    expect(can({ kind: "anon" }, "read", "none", "viewer")).toBe(true)
+    expect(can({ kind: "anon" }, "comment", "none", "viewer")).toBe(false)
   })
 })
 
-// The general-access (the link) comment grant, every cell of the access matrix. The
-// invariant under test: an anonymous reacher is NEVER more than viewer; the comment grant
-// only lifts a signed-in reacher to commenter. Mirrors the table in SECURITY.md.
-describe("general access comment grant (access matrix)", () => {
+// The world link (docs/plans/access-model.md), every cell of the matrix. The
+// invariants: an anonymous holder is NEVER more than viewer; the link grants any
+// signed-in holder (member or not) its role; a non-member gets NOTHING by
+// workspace access. Mirrors SECURITY.md.
+describe("the world link (access matrix)", () => {
   const anon: Actor = { kind: "anon" }
-  // A signed-in caller reaching purely via the link, with no explicit share/membership.
-  const reacher: Actor = { kind: "user", userId: "u9" }
+  // A signed-in caller with no share/seat — reaching purely via the world link.
+  const outsider: Actor = { kind: "user", userId: "u9" }
+  // A signed-in member of the artifact's workspace.
+  const member: Actor = { kind: "user", userId: "u10", orgRole: "commenter" }
 
-  it("view link: everyone reaching is viewer, nobody can comment", () => {
-    expect(effectiveRole(anon, "public", "viewer")).toBe("viewer")
-    expect(effectiveRole(reacher, "public", "viewer")).toBe("viewer")
-    expect(can(anon, "comment", "public", "viewer")).toBe(false)
-    expect(can(reacher, "comment", "public", "viewer")).toBe(false)
+  it("world view link: everyone reaching is viewer, nobody can comment", () => {
+    expect(effectiveRole(anon, "none", "viewer")).toBe("viewer")
+    expect(effectiveRole(outsider, "none", "viewer")).toBe("viewer")
+    expect(can(anon, "comment", "none", "viewer")).toBe(false)
+    expect(can(outsider, "comment", "none", "viewer")).toBe(false)
   })
 
-  it("comment link: anon stays viewer (forced auth), a signed-in reacher becomes commenter", () => {
-    expect(effectiveRole(anon, "public", "commenter")).toBe("viewer")
-    expect(can(anon, "comment", "public", "commenter")).toBe(false) // anon never elevated
-    expect(can(anon, "read", "public", "commenter")).toBe(true)
-    expect(effectiveRole(reacher, "public", "commenter")).toBe("commenter")
-    expect(can(reacher, "comment", "public", "commenter")).toBe(true)
+  it("world comment link: anon stays viewer (forced auth), a signed-in holder becomes commenter", () => {
+    expect(effectiveRole(anon, "none", "commenter")).toBe("viewer")
+    expect(can(anon, "comment", "none", "commenter")).toBe(false) // anon never elevated
+    expect(can(anon, "read", "none", "commenter")).toBe(true)
+    expect(effectiveRole(outsider, "none", "commenter")).toBe("commenter")
+    expect(can(outsider, "comment", "none", "commenter")).toBe(true)
   })
 
-  it("the comment floor is a max with the explicit role, never a demotion", () => {
-    // A viewer-member is lifted to commenter by a comment link...
-    expect(effectiveRole({ kind: "user", orgRole: "viewer" }, "public", "commenter")).toBe(
+  it("workspace access: members in at their seat, outsiders and anon out", () => {
+    // The default team draft (member + no link): the member gets their seat...
+    expect(effectiveRole(member, "member", "none")).toBe("commenter")
+    // ...an outsider and anon get nothing.
+    expect(effectiveRole(outsider, "member", "none")).toBeNull()
+    expect(effectiveRole(anon, "member", "none")).toBeNull()
+    // The world link is a max with the seat: a lower link is a no-op, a higher one lifts.
+    expect(effectiveRole(member, "member", "viewer")).toBe("commenter")
+    expect(effectiveRole(member, "member", "editor")).toBe("editor") // lift
+  })
+
+  it("the world link is a max with the seat/share, never a demotion", () => {
+    expect(effectiveRole({ kind: "user", orgRole: "viewer" }, "member", "commenter")).toBe(
       "commenter",
     )
-    // ...but a higher explicit role is untouched.
-    expect(effectiveRole({ kind: "user", orgRole: "editor" }, "public", "commenter")).toBe("editor")
-    expect(effectiveRole({ kind: "user", artifactRole: "owner" }, "public", "commenter")).toBe(
+    expect(effectiveRole({ kind: "user", orgRole: "editor" }, "member", "commenter")).toBe("editor")
+    expect(effectiveRole({ kind: "user", artifactRole: "owner" }, "none", "commenter")).toBe(
       "owner",
     )
   })
 
-  it("a lock: the comment grant follows unlock, and never elevates anon", () => {
-    expect(effectiveRole({ ...anon, locked: true }, "public", "commenter")).toBe(null) // locked
+  it("a lock: the world grant follows unlock, and never elevates anon", () => {
+    expect(effectiveRole({ ...anon, locked: true }, "none", "commenter")).toBe(null)
+    expect(effectiveRole({ kind: "anon", locked: true, unlocked: true }, "none", "commenter")).toBe(
+      "viewer",
+    )
     expect(
-      effectiveRole({ kind: "anon", locked: true, unlocked: true }, "public", "commenter"),
-    ).toBe("viewer")
-    expect(
-      can({ kind: "anon", locked: true, unlocked: true }, "comment", "public", "commenter"),
+      can({ kind: "anon", locked: true, unlocked: true }, "comment", "none", "commenter"),
     ).toBe(false)
     expect(
       effectiveRole(
         { kind: "user", userId: "u", locked: true, unlocked: true },
-        "public",
+        "none",
         "commenter",
       ),
     ).toBe("commenter")
   })
 
-  it("workspace-only (org) grants nothing by reach, regardless of the comment grant", () => {
-    expect(effectiveRole(anon, "org", "commenter")).toBe(null)
-    expect(effectiveRole(reacher, "org", "commenter")).toBe(null)
+  it("the seat is independent of the world link — a member never needs the link", () => {
+    expect(effectiveRole(member, "member", "none")).toBe("commenter")
+    expect(effectiveRole({ kind: "user", orgRole: "editor" }, "member", "none")).toBe("editor")
   })
 
-  it("defaults to view-only when no general role is given (back-compat)", () => {
-    expect(effectiveRole(reacher, "public")).toBe("viewer")
-    expect(can(reacher, "comment", "public")).toBe(false)
+  it("`none` / omitted defaults grant nothing — fail closed", () => {
+    expect(effectiveRole(outsider, "none")).toBe(null)
+    expect(can(outsider, "comment", "none")).toBe(false)
+    expect(effectiveRole(outsider, "none", "none")).toBe(null)
   })
 })

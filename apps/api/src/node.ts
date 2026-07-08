@@ -11,6 +11,7 @@ import { Pool } from "pg"
 import { createApp } from "./app"
 import { type AuthDb, makeAuth, migrateAuth, OAUTH_ANON_CLIENT_TTL_MS } from "./auth-config"
 import { loadConfig, resolveAuthSecret, resolveDefaultOrg } from "./config"
+import { configWarnings } from "./config-manifest"
 import { workspacesBlockingDeletion } from "./lib/account"
 import { customDomainsFromEnv } from "./lib/cloudflare-saas"
 import { buildAuthEmail, emailDeliverySender, logEmailSender, resendEmailSender } from "./lib/email"
@@ -20,6 +21,8 @@ import { makeSlackSender } from "./lib/slack-comments"
 import { makeShutdown } from "./lifecycle"
 import { log } from "./log"
 import { createNodeSyncRunner } from "./node-sync"
+import { playwrightRenderer } from "./preview-node"
+import { startPreviewWorker } from "./previews"
 import { type ChannelSenders, enqueueChannelDelivery, startWebhookWorker } from "./webhooks"
 import { nodeDnsGuard } from "./webhooks-node"
 
@@ -177,28 +180,16 @@ if (defaultOrg !== "local") {
   }
 }
 
-// One-time collapse of the pre-3-value visibility vocabulary (see
-// docs/plans/visibility-collapse.md). unlisted → private (the draft intent —
-// owner rows preserve access, nothing widens); link → public (reach was already
-// anyone-with-URL); password → public with the hash KEPT (the password is now a
-// lock on the public link, gating exactly as before). Idempotent: no rows keep
-// a legacy value afterward, so re-runs match nothing.
-{
-  const remap: [string, string][] = [
-    ["unlisted", "private"],
-    ["link", "public"],
-    ["password", "public"],
-  ]
-  if (cfg.databaseUrl) {
-    const pool = authDb as Pool
-    for (const [from, to] of remap)
-      await pool.query(`UPDATE artifact SET visibility = $1 WHERE visibility = $2`, [to, from])
-  } else {
-    const db = authDb as Database.Database
-    for (const [from, to] of remap)
-      db.prepare(`UPDATE artifact SET visibility = ? WHERE visibility = ?`).run(to, from)
-  }
-}
+// One-time backfill of the v2 access model (see docs/plans/access-model.md): maps
+// the pre-v2 `visibility` onto the three single-purpose fields — org/public gain
+// workspace_access=member + their listing, a public row's live link is restored at
+// its legacy general_role. Self-contained: it folds the pre-3-value vocabulary
+// (link/password → public, unlisted → private) into its own CASE, so there's no
+// separate collapse pass to sequence. It CONSUMES visibility (resets it to 'private')
+// so the `WHERE visibility != 'private'` guard makes re-runs a no-op and setAccess
+// (which never writes visibility) is never re-clobbered. The hosted deploy applies
+// the same call after DDL (apply-pg-schema.ts) — migrations run wherever schema does.
+await meta.backfillAccess()
 
 // Blobs: S3/R2 when OBJECT_STORE_URL is set, else local disk (zero-config).
 const blobs: BlobStore = cfg.objectStoreUrl
@@ -231,6 +222,20 @@ const channelSenders: ChannelSenders = {
   slack_app: makeSlackSender(meta, authSecret),
 }
 const webhookWorker = startWebhookWorker(meta, nodeDnsGuard, channelSenders)
+
+// Preview render worker: an in-process interval + poke that renders screenshot jobs via
+// Playwright Chromium. Only started when DERIVE_PREVIEWS=true; when off the render queue
+// is never enqueued (renderPreviews stays false below) and no worker runs.
+const previewWorker = cfg.previews
+  ? startPreviewWorker({
+      meta,
+      blobs,
+      renderer: playwrightRenderer(),
+      baseUrl: cfg.baseUrl,
+      sandboxOrigin: cfg.sandboxOrigin,
+      secret: authSecret,
+    })
+  : undefined
 
 // GitHub-sync runner: drives a triggered sync to completion in-process (detached from
 // the request) so it survives the user navigating away — the self-host counterpart to
@@ -276,6 +281,9 @@ const app = createApp({
   commentRate: cfg.commentRate,
   // Deliver freshly enqueued events immediately instead of on the next interval.
   pokeWebhooks: webhookWorker.poke,
+  // Enqueue a render job on publish and drain on demand when previews are enabled.
+  renderPreviews: cfg.previews,
+  pokePreviews: previewWorker?.poke,
   // Run a triggered GitHub sync in the background so it survives a closed tab.
   startSync: syncRunner.start,
 })
@@ -349,6 +357,11 @@ if (!cfg.sandboxOrigin && (cfg.crossSite || cfg.webOrigins.length)) {
   )
 }
 
+// Half-configured optional features (an OAuth id without its secret, an email key without
+// a from-address) leave the feature silently OFF. Warn loudly — but never crash: an
+// operator shouldn't lose a running instance to a stray env var on upgrade.
+for (const w of configWarnings(process.env)) log.warn(w)
+
 const server = serve({ fetch: app.fetch, port: cfg.port }, () => {
   log.info("derive api listening", {
     port: cfg.port,
@@ -370,7 +383,10 @@ const shutdown = makeShutdown({
     closeIdleConnections:
       "closeIdleConnections" in server ? () => server.closeIdleConnections() : undefined,
   },
-  stopWorker: webhookWorker.stop,
+  stopWorker: () => {
+    webhookWorker.stop()
+    previewWorker?.stop()
+  },
   clearTimers: () => {
     if (pruneTimer) clearInterval(pruneTimer)
     clearInterval(syncResumeTimer)

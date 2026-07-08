@@ -154,7 +154,9 @@ const summarizeArtifact = (a: ArtifactRecord) => ({
   title: a.title,
   kind: a.kind,
   version: a.current_version,
-  visibility: a.visibility,
+  workspace_access: a.workspace_access,
+  link_role: a.link_role,
+  listed: a.listed,
   removed: !!a.removed_at,
 })
 
@@ -252,13 +254,13 @@ function buildServer(
   const org = agent.org_id
 
   // Resolve a short id within the caller's workspace (never another org's
-  // artifact). `private` narrows further: the agent touches it only through its
-  // human's standing (or a legacy row of its own) — a teammate's private draft
-  // is as untouchable over MCP as its listings are invisible.
+  // artifact). No workspace access narrows further: the agent touches such a doc
+  // only through its human's standing (or a legacy row of its own) — a teammate's
+  // invite-only draft is as untouchable over MCP as its listings are invisible.
   const own = async (shortId: string): Promise<ArtifactRecord | null> => {
     const a = await ctx.meta.getByShortId(shortId)
     if (!a || a.org_id !== org) return null
-    if (a.visibility !== "private") return a
+    if (a.workspace_access === "member") return a
     if (actingFor && (await ctx.meta.getArtifactMember(a.id, actingFor.id))) return a
     if (await ctx.meta.getArtifactMember(a.id, agent.id)) return a
     return null
@@ -271,7 +273,7 @@ function buildServer(
     "list_artifacts",
     {
       description:
-        "List the artifacts (docs, plans, sites) in your workspace — short id, title, kind, current version, visibility. Includes your own unlisted (link-only) publishes — hidden from the shared library, but you always find your work. Start here to find what to work on, then catch_up or read it.",
+        "List the artifacts (docs, plans, sites) in your workspace — short id, title, kind, current version, access (workspace_access/link_role/listed). Includes your own unlisted publishes — out of the shared library, but you always find your work. Start here to find what to work on, then catch_up or read it.",
       inputSchema: { query: z.string().optional().describe("Optional title search filter.") },
     },
     async ({ query }) => {
@@ -902,11 +904,23 @@ function buildServer(
           .string()
           .optional()
           .describe("Omit to create a new artifact; pass it to revise one you own."),
-        visibility: z
-          .enum(["private", "workspace", "public"])
+        workspace_access: z
+          .enum(["none", "member"])
           .optional()
           .describe(
-            "Who can open a NEW artifact: private (the human you act for + people they add — the usual default for agent publishes; they promote it when ready), workspace (their team), or public (the link works for anyone). Omit to use the workspace's agent default. Ignored on republish — the human promotes via the share dialog.",
+            "Do THIS workspace's members reach a NEW artifact (each at their seat role — admin/editor/commenter)? member (the usual default — a pasted link opens for a teammate) or none (invite-only, even for the workspace). Omit to use the workspace's default. Ignored on republish.",
+          ),
+        link_role: z
+          .enum(["none", "viewer", "commenter", "editor"])
+          .optional()
+          .describe(
+            "What merely holding a NEW artifact's URL confers on ANYONE (incl. people outside the workspace): none (no world link — the usual default), viewer, commenter, or editor. Anonymous holders are always clamped to viewer. Omit to use the workspace's default. Ignored on republish.",
+          ),
+        listed: z
+          .enum(["none", "workspace", "public"])
+          .optional()
+          .describe(
+            "Where a NEW artifact SURFACES for discovery (no access of its own): none (no feeds/libraries — the usual default; a human promotes it when ready), workspace (the team library — needs workspace_access=member), or public (the public directory — needs a link_role). Omit to use the workspace's default. Ignored on republish — the human promotes via the share dialog.",
           ),
         spa: z
           .boolean()
@@ -973,7 +987,9 @@ function buildServer(
       files,
       title,
       short_id,
-      visibility,
+      workspace_access,
+      link_role,
+      listed,
       spa,
       merge,
       message,
@@ -1115,10 +1131,22 @@ function buildServer(
         } else {
           bytes = await zipBundleFiles(files as Record<string, string>, ctx.blobs)
         }
-        // The workspace decides where an agent's NEW artifact lands when the
-        // agent doesn't say — unlisted by default: out of the team library, one
-        // link away for the human. Sharing wider stays a deliberate human act.
+        // Access is set-on-create (a republish never re-stamps): each field resolves
+        // explicit arg > the workspace default. The factory default is the "team
+        // draft" — workspace_access=member, link_role=none, listed=none: a teammate
+        // can open the link, the world can't, and it stays out of feeds until a human
+        // promotes it. Sharing wider stays a deliberate act.
         const settings = short_id ? null : await ctx.meta.getOrgSettings(org)
+        const resolvedWorkspaceAccess = short_id
+          ? undefined
+          : (workspace_access ?? settings?.defaultWorkspaceAccess)
+        const resolvedLinkRole = short_id ? undefined : (link_role ?? settings?.defaultLinkRole)
+        const resolvedListed = short_id ? undefined : (listed ?? settings?.defaultListed)
+        // The only cross-field invariants: a doc can't be listed where it grants no access.
+        if (!short_id && resolvedListed === "workspace" && resolvedWorkspaceAccess !== "member")
+          return text("A workspace-listed artifact must grant workspace access.")
+        if (!short_id && resolvedListed === "public" && resolvedLinkRole === "none")
+          return text("A publicly-listed artifact must grant at least a viewer link.")
         const { artifact, version } = await publishVersion(
           ctx.meta,
           ctx.blobs,
@@ -1136,14 +1164,9 @@ function buildServer(
             // New artifacts land in the granting user's workspace, never wider
             // than asked (the workspace's agent default when unspecified).
             orgId: agent.org_id,
-            visibility:
-              visibility === "public"
-                ? "public"
-                : visibility === "workspace"
-                  ? "org"
-                  : visibility === "private"
-                    ? "private"
-                    : (settings?.defaultAgentVisibility ?? "private"),
+            workspaceAccess: resolvedWorkspaceAccess,
+            linkRole: resolvedLinkRole,
+            listed: resolvedListed,
           },
           short_id,
         )
@@ -1276,7 +1299,9 @@ function buildServer(
           version: version.n,
           url,
           title: artifact.title,
-          visibility: artifact.visibility,
+          workspace_access: artifact.workspace_access,
+          link_role: artifact.link_role,
+          listed: artifact.listed,
           ...(editsApplied ? { edits_applied: editsApplied } : {}),
           ...(resolved.length ? { resolved } : {}),
           ...(actingFor ? { opened_in_tab: openedInTab } : {}),

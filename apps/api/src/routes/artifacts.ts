@@ -23,9 +23,10 @@ import {
   toJson,
   toMarkdown,
 } from "@derive/core"
-import { type Context, Hono } from "hono"
+import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
+import type { Context } from "hono"
 import { setCookie } from "hono/cookie"
-import { z } from "zod"
+import type { BlankEnv } from "hono/types"
 import type { AppContext } from "../context"
 import { publishSweepEvents } from "../lib/anchor-sweep"
 import { authorProfile, resolveHandles, resolveUserBylines } from "../lib/author"
@@ -39,15 +40,20 @@ import {
 } from "../lib/edits"
 import { buildReviewEmail } from "../lib/email"
 import {
+  bail,
   DEFAULT_WORKSPACE_NAME,
   fail,
+  legacyAccessOf,
+  linkRoleOf,
+  listedOf,
   MAX_UPLOAD_BYTES,
   readJson,
   str,
   TOMBSTONE,
   toBody,
-  visibilityOf,
+  workspaceAccessOf,
 } from "../lib/http"
+import { Artifact } from "../schemas"
 import { enqueueChannelDelivery } from "../webhooks"
 
 // Bundle asset types the /content route serves with their real Content-Type. Not
@@ -83,6 +89,7 @@ export const artifactRoutes = (ctx: AppContext) => {
     versionWindowMs,
     bus,
     notify,
+    notifyRender,
     background,
     isMember,
     isToken,
@@ -94,6 +101,7 @@ export const artifactRoutes = (ctx: AppContext) => {
     actorFor,
     agentFor,
     authorize,
+    authorizeStanding,
     workspaceCan,
     collectionRole,
     limited,
@@ -102,247 +110,300 @@ export const artifactRoutes = (ctx: AppContext) => {
     unlockLimiter,
     sourceText,
   } = ctx
-  const app = new Hono()
+  const app = new OpenAPIHono<BlankEnv>()
 
   // Newest-first, keyset-paginated (?cursor=<created_at>&limit=N), with optional
   // server-side ?query= (title search), ?tag=, and ?favorite=true. Returns
   // { artifacts, next_cursor }. tag/favorite resolve to an id set first.
-  app.get("/v1/artifacts", async (c) => {
-    const me = await currentUser(c)
-    // Registered/OAuth agents list too — their library is how MCP list_artifacts
-    // finds work. Anonymous stays 401: nothing in the product lists tokenless.
-    const agent = me ? null : await agentFor(c)
-    if (!me && !agent && !isToken(c)) return fail(c, 401, "unauthenticated")
-    // Whose member rows count. Listing must mirror can(read): an agent derives
-    // its standing from its registrant's rows (capped at its registered role —
-    // see actorFor), so a linked agent's key is the REGISTRANT; an agent with
-    // no registrant on record falls back to its own legacy rows.
-    const memberKey = me?.id ?? agent?.created_by ?? agent?.id ?? null
-    const limit = Math.min(100, Math.max(1, Number(c.req.query("limit")) || 30))
-    // Opaque compound cursor "<created_at>|<id>" — the id tiebreak keeps paging
-    // correct when many artifacts share a created_at.
-    const rawCursor = c.req.query("cursor")
-    const sep = rawCursor?.indexOf("|") ?? -1
-    const cursor =
-      rawCursor && sep > 0
-        ? { created_at: rawCursor.slice(0, sep), id: rawCursor.slice(sep + 1) }
-        : undefined
-    // Cap the search term: it goes into a SQL LIKE, and an oversized value tripped
-    // an unhandled DB error (a long-q 500). No real title search needs > 200 chars.
-    const q = c.req.query("query")?.trim().slice(0, 200) || undefined
-    const tag = c.req.query("tag")?.trim() || undefined
-    const collectionId = c.req.query("collection")?.trim() || undefined
-    const favOnly = c.req.query("favorite") === "true"
-    // ?author=<github login> narrows to artifacts whose current author is that login.
-    const author = c.req.query("author")?.trim().slice(0, 100) || undefined
+  app.openapi(
+    createRoute({
+      method: "get",
+      path: "/v1/artifacts",
+      tags: ["Artifacts"],
+      summary:
+        "List artifacts (keyset-paginated; ?query=/tag=/collection=/scope=/author=/favorite=).",
+      responses: {
+        200: {
+          description: "A page of artifacts + next cursor (+ the collection when scoped to one).",
+          content: {
+            "application/json": {
+              schema: z.object({
+                artifacts: z.array(Artifact),
+                next_cursor: z.string().nullable(),
+                collection: z.object({ id: z.string(), title: z.string() }).optional(),
+              }),
+            },
+          },
+        },
+      },
+    }),
+    async (c) => {
+      const me = await currentUser(c)
+      // Registered/OAuth agents list too — their library is how MCP list_artifacts
+      // finds work. Anonymous stays 401: nothing in the product lists tokenless.
+      const agent = me ? null : await agentFor(c)
+      if (!me && !agent && !isToken(c)) return bail(fail(c, 401, "unauthenticated"))
+      // Whose member rows count. Listing must mirror can(read): an agent derives
+      // its standing from its registrant's rows (capped at its registered role —
+      // see actorFor), so a linked agent's key is the REGISTRANT; an agent with
+      // no registrant on record falls back to its own legacy rows.
+      const memberKey = me?.id ?? agent?.created_by ?? agent?.id ?? null
+      const limit = Math.min(100, Math.max(1, Number(c.req.query("limit")) || 30))
+      // Opaque compound cursor "<created_at>|<id>" — the id tiebreak keeps paging
+      // correct when many artifacts share a created_at.
+      const rawCursor = c.req.query("cursor")
+      const sep = rawCursor?.indexOf("|") ?? -1
+      const cursor =
+        rawCursor && sep > 0
+          ? { created_at: rawCursor.slice(0, sep), id: rawCursor.slice(sep + 1) }
+          : undefined
+      // Cap the search term: it goes into a SQL LIKE, and an oversized value tripped
+      // an unhandled DB error (a long-q 500). No real title search needs > 200 chars.
+      const q = c.req.query("query")?.trim().slice(0, 200) || undefined
+      const tag = c.req.query("tag")?.trim() || undefined
+      const collectionId = c.req.query("collection")?.trim() || undefined
+      const favOnly = c.req.query("favorite") === "true"
+      // ?author=<github login> narrows to artifacts whose current author is that login.
+      const author = c.req.query("author")?.trim().slice(0, 100) || undefined
 
-    const favIds = me ? await meta.listUserFavoriteIds(me.id) : []
-    const favorites = new Set(favIds)
-    // tag / collection / favorite each narrow to an id set; intersect when combined.
-    let ids: string[] | undefined
-    const narrow = (next: string[]) => {
-      ids = ids ? ids.filter((id) => next.includes(id)) : next
-    }
-    // scope=shared → artifacts explicitly shared with me (a per-artifact membership),
-    // which can live in other workspaces. Drives the home's "Shared with you" section.
-    const shared = c.req.query("scope") === "shared"
-    if (shared) {
-      if (!me) return c.json({ artifacts: [], next_cursor: null })
-      narrow(await meta.artifactIdsSharedWith(me.id))
-    }
-    // scope=following → artifacts in the active workspace whose current author or repo
-    // path matches one of my follows (authors + path prefixes). The activity feed.
-    const following = c.req.query("scope") === "following"
-    if (following) {
-      if (!me) return c.json({ artifacts: [], next_cursor: null })
-      narrow(await meta.followedArtifactIds(me.id, await activeWorkspace(c)))
-    }
-    // scope=needs_feedback → artifacts in the active workspace with an open thread you're
-    // tagged in or have commented on. Drives the home's "Needs your feedback" section.
-    const needsFeedback = c.req.query("scope") === "needs_feedback"
-    if (needsFeedback) {
-      if (!me) return c.json({ artifacts: [], next_cursor: null })
-      narrow(await meta.artifactIdsNeedingFeedback(me.id, await activeWorkspace(c)))
-    }
-    // scope=mine → everything the caller owns in this workspace (their owner
-    // member row — written at creation for the human behind the publish, agents
-    // included), any visibility — the library's "Created by me" filter.
-    const mineScope = c.req.query("scope") === "mine"
-    if (mineScope) {
-      if (!me) return c.json({ artifacts: [], next_cursor: null })
-      narrow(await meta.artifactIdsOwnedBy(await activeWorkspace(c), me.id))
-    }
-    if (tag) narrow(await meta.artifactIdsByTag(tag))
-    if (favOnly) narrow(favIds)
+      const favIds = me ? await meta.listUserFavoriteIds(me.id) : []
+      const favorites = new Set(favIds)
+      // tag / collection / favorite each narrow to an id set; intersect when combined.
+      let ids: string[] | undefined
+      const narrow = (next: string[]) => {
+        ids = ids ? ids.filter((id) => next.includes(id)) : next
+      }
+      // scope=shared → artifacts explicitly shared with me (a per-artifact membership),
+      // which can live in other workspaces. Drives the home's "Shared with you" section.
+      const shared = c.req.query("scope") === "shared"
+      if (shared) {
+        if (!me) return c.json({ artifacts: [], next_cursor: null })
+        narrow(await meta.artifactIdsSharedWith(me.id))
+      }
+      // scope=following → artifacts in the active workspace whose current author or repo
+      // path matches one of my follows (authors + path prefixes). The activity feed.
+      const following = c.req.query("scope") === "following"
+      if (following) {
+        if (!me) return c.json({ artifacts: [], next_cursor: null })
+        narrow(await meta.followedArtifactIds(me.id, await activeWorkspace(c)))
+      }
+      // scope=needs_feedback → artifacts in the active workspace with an open thread you're
+      // tagged in or have commented on. Drives the home's "Needs your feedback" section.
+      const needsFeedback = c.req.query("scope") === "needs_feedback"
+      if (needsFeedback) {
+        if (!me) return c.json({ artifacts: [], next_cursor: null })
+        narrow(await meta.artifactIdsNeedingFeedback(me.id, await activeWorkspace(c)))
+      }
+      // scope=mine → everything the caller owns in this workspace (their owner
+      // member row — written at creation for the human behind the publish, agents
+      // included), any visibility — the library's "Created by me" filter.
+      const mineScope = c.req.query("scope") === "mine"
+      if (mineScope) {
+        if (!me) return c.json({ artifacts: [], next_cursor: null })
+        narrow(await meta.artifactIdsOwnedBy(await activeWorkspace(c), me.id))
+      }
+      if (tag) narrow(await meta.artifactIdsByTag(tag))
+      if (favOnly) narrow(favIds)
 
-    // A collection's artifacts live in the COLLECTION's workspace, not necessarily
-    // your active one — so scope the listing to the collection's org (gated by
-    // access), or a direct/cold link to a collection in another workspace reads as
-    // empty. Unknown collection ⇒ nothing.
-    let listOrg = await activeWorkspace(c)
-    let collectionAccess = false
-    // Carry the collection's title so the client can label the view even when the
-    // collection lives in another workspace (it's absent from the local sidebar list).
-    let collectionInfo: { id: string; title: string } | undefined
-    if (collectionId) {
-      const col = await meta.getCollection(collectionId)
-      if (!col) return c.json({ artifacts: [], next_cursor: null })
-      // Scope to the collection via a JOIN in listArtifacts (below), NOT by expanding
-      // its members into an id IN(): a large collection (hundreds of items) would blow
-      // D1's 100-bound-parameter cap and 500 the whole listing.
-      listOrg = col.org_id
-      collectionInfo = { id: col.id, title: col.title }
-      collectionAccess = (await isMember(c, col.org_id)) || (await collectionRole(c, col)) !== null
-    }
-    // Author filter narrows to artifacts last changed by a GitHub login, scoped to the
-    // listing's workspace (after collection scope has settled listOrg). Mirrors ?tag=.
-    if (author) narrow(await meta.artifactIdsByAuthor(listOrg, author))
-    if (ids && ids.length === 0) return c.json({ artifacts: [], next_cursor: null })
+      // A collection's artifacts live in the COLLECTION's workspace, not necessarily
+      // your active one — so scope the listing to the collection's org (gated by
+      // access), or a direct/cold link to a collection in another workspace reads as
+      // empty. Unknown collection ⇒ nothing.
+      let listOrg = await activeWorkspace(c)
+      let collectionAccess = false
+      // Carry the collection's title so the client can label the view even when the
+      // collection lives in another workspace (it's absent from the local sidebar list).
+      let collectionInfo: { id: string; title: string } | undefined
+      if (collectionId) {
+        const col = await meta.getCollection(collectionId)
+        if (!col) return c.json({ artifacts: [], next_cursor: null })
+        // Scope to the collection via a JOIN in listArtifacts (below), NOT by expanding
+        // its members into an id IN(): a large collection (hundreds of items) would blow
+        // D1's 100-bound-parameter cap and 500 the whole listing.
+        listOrg = col.org_id
+        collectionInfo = { id: col.id, title: col.title }
+        collectionAccess =
+          (await isMember(c, col.org_id)) || (await collectionRole(c, col)) !== null
+      }
+      // Author filter narrows to artifacts last changed by a GitHub login, scoped to the
+      // listing's workspace (after collection scope has settled listOrg). Mirrors ?tag=.
+      if (author) narrow(await meta.artifactIdsByAuthor(listOrg, author))
+      if (ids && ids.length === 0) return c.json({ artifacts: [], next_cursor: null })
 
-    // The caller's baseline standing in the listing's workspace — reused for the
-    // public-only clamp below and the per-row `my_role` (which needs the ROLE, so
-    // the boolean isMember helper doesn't fit). A user's standing is their
-    // membership row; an agent's is its registered role, valid only in its home
-    // workspace (the same scoping actorFor applies).
-    const isOperator = isToken(c)
-    const baselineRole = me
-      ? ((await meta.getMembership(listOrg, me.id))?.role ?? null)
-      : agent && agent.org_id === listOrg
-        ? agent.role
-        : null
-    // A listing only shows non-public artifacts to a MEMBER of that workspace (or the
-    // operator token). Anyone else — a non-member user, a foreign-workspace agent —
-    // sees public artifacts only, so org/link titles never leak via the list or ?query=.
-    // For a collection, collection access (member/creator/share) also unlocks it.
-    const publicOnly = collectionId ? !collectionAccess : !(isOperator || baselineRole !== null)
-    // "Created by me" is a members-only view of the caller's OWN authored work —
-    // a caller with no standing here (or no member rows to match) has none by definition.
-    if (mineScope && (publicOnly || !memberKey)) return c.json({ artifacts: [], next_cursor: null })
-    const rows = await meta.listArtifacts({
-      limit: limit + 1,
-      cursor,
-      q,
-      ids,
-      collectionId,
-      // `shared` and `following` both resolve to an id set that ALREADY encodes the
-      // correct cross-workspace + visibility scope (an explicit share; or a followed
-      // author/path in this workspace + a followed person's public work anywhere). So
-      // drop the workspace + public-only restrictions, which would otherwise re-clip the
-      // feed back to the active workspace and strip a followed person's public work.
-      orgId: shared || following ? undefined : listOrg,
-      publicOnly: shared || following ? false : publicOnly,
-      // Private artifacts appear only for their explicit members (the publisher's
-      // owner row included, so agents and owners always find their own drafts);
-      // the operator token sees everything (viewerId omitted).
-      viewerId: isOperator ? undefined : (memberKey ?? undefined),
-    })
-    const hasMore = rows.length > limit
-    const page = hasMore ? rows.slice(0, limit) : rows
-    const last = page[page.length - 1]
-    const next_cursor = hasMore && last ? `${last.created_at}|${last.id}` : null
+      // The caller's baseline standing in the listing's workspace — reused for the
+      // public-only clamp below and the per-row `my_role` (which needs the ROLE, so
+      // the boolean isMember helper doesn't fit). A user's standing is their
+      // membership row; an agent's is its registered role, valid only in its home
+      // workspace (the same scoping actorFor applies).
+      const isOperator = isToken(c)
+      const baselineRole = me
+        ? ((await meta.getMembership(listOrg, me.id))?.role ?? null)
+        : agent && agent.org_id === listOrg
+          ? agent.role
+          : null
+      // A listing only shows non-public artifacts to a MEMBER of that workspace (or the
+      // operator token). Anyone else — a non-member user, a foreign-workspace agent —
+      // sees public artifacts only, so org/link titles never leak via the list or ?query=.
+      // For a collection, collection access (member/creator/share) also unlocks it.
+      const publicOnly = collectionId ? !collectionAccess : !(isOperator || baselineRole !== null)
+      // "Created by me" is a members-only view of the caller's OWN authored work —
+      // a caller with no standing here (or no member rows to match) has none by definition.
+      if (mineScope && (publicOnly || !memberKey))
+        return c.json({ artifacts: [], next_cursor: null })
+      const rows = await meta.listArtifacts({
+        limit: limit + 1,
+        cursor,
+        q,
+        ids,
+        collectionId,
+        // `shared` and `following` both resolve to an id set that ALREADY encodes the
+        // correct cross-workspace + visibility scope (an explicit share; or a followed
+        // author/path in this workspace + a followed person's public work anywhere). So
+        // drop the workspace + public-only restrictions, which would otherwise re-clip the
+        // feed back to the active workspace and strip a followed person's public work.
+        orgId: shared || following ? undefined : listOrg,
+        publicOnly: shared || following ? false : publicOnly,
+        // Private artifacts appear only for their explicit members (the publisher's
+        // owner row included, so agents and owners always find their own drafts);
+        // the operator token sees everything (viewerId omitted).
+        viewerId: isOperator ? undefined : (memberKey ?? undefined),
+      })
+      const hasMore = rows.length > limit
+      const page = hasMore ? rows.slice(0, limit) : rows
+      const last = page[page.length - 1]
+      const next_cursor = hasMore && last ? `${last.created_at}|${last.id}` : null
 
-    const pageIds = page.map((a) => a.id)
-    const counts = analyticsOn ? await meta.viewCounts(pageIds) : {}
-    const tags = await meta.tagsForArtifacts(pageIds)
-    // Resolve the page's distinct author gh_ids to Derive handles in ONE batched query (no
-    // N+1) so each row can show "who last changed this" with a link to the Derive profile.
-    const handleByGhId = await resolveHandles(meta, [
-      ...new Set(page.map((a) => a.author_gh_id).filter((x): x is string => !!x)),
-    ])
-    // Same self-heal for the list: each row's current author (author_id) resolves to its
-    // live byline, so a card never shows a stale agent-client name. One batched query.
-    const bylineByUserId = await resolveUserBylines(
-      meta,
-      page.map((a) => a.author_id).filter((x): x is string => !!x),
-    )
-    // Per-artifact comment signals for the viewer (open-thread count + tagged/authored
-    // flags) — drives the inline comment badge and the "needs your feedback" featuring.
-    const feedback = me ? await meta.commentSignals(pageIds, me.id) : {}
-    // The viewer's per-artifact shares across the page, one query — folded into
-    // my_role below so shared and private rows gate their quick actions correctly.
-    // For a linked agent these are the registrant's rows, so the cap applies.
-    const shareRoles = memberKey ? await meta.artifactRolesFor(memberKey, pageIds) : {}
-    return c.json({
-      artifacts: page.map((a) => ({
-        ...toJson(deps.baseUrl, a, []),
-        views: counts[a.id] ?? 0,
-        tags: tags[a.id] ?? [],
-        favorite: favorites.has(a.id),
-        // Which actions the client may surface on the row (the card's quick-actions
-        // menu gates delete/tags on it). Workspace membership + per-artifact shares
-        // + the general-access floor; collection-share roles aren't folded in at
-        // list granularity, so the detail response's my_role stays authoritative.
-        my_role: isOperator
-          ? "owner"
-          : effectiveRole(
-              memberKey
-                ? {
-                    kind: "user",
-                    userId: memberKey,
-                    artifactRole:
-                      agent?.created_by != null
-                        ? capRole(shareRoles[a.id] ?? null, agent.role)
-                        : (shareRoles[a.id] ?? null),
-                    orgRole: a.org_id === listOrg ? baselineRole : null,
-                  }
-                : { kind: "anon" },
-              a.visibility,
-              a.general_role,
-            ),
-        // The current author as a resolved profile (name/login/avatar + Derive handle), so
-        // the list can render the last editor + filter by them.
-        author: authorProfile(a, handleByGhId, bylineByUserId),
-        // open_threads + mentions_me + i_participated (defaults for anon / no signals).
-        ...(feedback[a.id] ?? { open_threads: 0, mentions_me: false, i_participated: false }),
-      })),
-      next_cursor,
-      ...(collectionInfo ? { collection: collectionInfo } : {}),
-    })
-  })
+      const pageIds = page.map((a) => a.id)
+      const counts = analyticsOn ? await meta.viewCounts(pageIds) : {}
+      const tags = await meta.tagsForArtifacts(pageIds)
+      const previews = await meta.previewReady(pageIds)
+      // Resolve the page's distinct author gh_ids to Derive handles in ONE batched query (no
+      // N+1) so each row can show "who last changed this" with a link to the Derive profile.
+      const handleByGhId = await resolveHandles(meta, [
+        ...new Set(page.map((a) => a.author_gh_id).filter((x): x is string => !!x)),
+      ])
+      // Same self-heal for the list: each row's current author (author_id) resolves to its
+      // live byline, so a card never shows a stale agent-client name. One batched query.
+      const bylineByUserId = await resolveUserBylines(
+        meta,
+        page.map((a) => a.author_id).filter((x): x is string => !!x),
+      )
+      // Per-artifact comment signals for the viewer (open-thread count + tagged/authored
+      // flags) — drives the inline comment badge and the "needs your feedback" featuring.
+      const feedback = me ? await meta.commentSignals(pageIds, me.id) : {}
+      // The viewer's per-artifact shares across the page, one query — folded into
+      // my_role below so shared and private rows gate their quick actions correctly.
+      // For a linked agent these are the registrant's rows, so the cap applies.
+      const shareRoles = memberKey ? await meta.artifactRolesFor(memberKey, pageIds) : {}
+      return c.json({
+        artifacts: page.map((a) => ({
+          ...toJson(deps.baseUrl, a, []),
+          views: counts[a.id] ?? 0,
+          tags: tags[a.id] ?? [],
+          favorite: favorites.has(a.id),
+          has_preview: previews[a.id] === true,
+          // Which actions the client may surface on the row (the card's quick-actions
+          // menu gates delete/tags on it). Workspace seat + per-artifact shares + the
+          // world-link floor; collection-share roles aren't folded in at list
+          // granularity, so the detail response's my_role stays authoritative.
+          my_role: isOperator
+            ? "owner"
+            : effectiveRole(
+                memberKey
+                  ? {
+                      kind: "user",
+                      userId: memberKey,
+                      artifactRole:
+                        agent?.created_by != null
+                          ? capRole(shareRoles[a.id] ?? null, agent.role)
+                          : (shareRoles[a.id] ?? null),
+                      orgRole: a.org_id === listOrg ? baselineRole : null,
+                    }
+                  : { kind: "anon" },
+                a.workspace_access,
+                a.link_role,
+              ),
+          // The current author as a resolved profile (name/login/avatar + Derive handle), so
+          // the list can render the last editor + filter by them.
+          author: authorProfile(a, handleByGhId, bylineByUserId),
+          // open_threads + mentions_me + i_participated (defaults for anon / no signals).
+          ...(feedback[a.id] ?? { open_threads: 0, mentions_me: false, i_participated: false }),
+        })),
+        next_cursor,
+        ...(collectionInfo ? { collection: collectionInfo } : {}),
+      })
+    },
+  )
 
   // Browse summary for the sidebar: total artifacts, this user's favorite count,
   // and tag → count (so counts stay accurate independent of the current page).
-  app.get("/v1/tags", async (c) => {
-    const me = await currentUser(c)
-    if (!me && !isToken(c)) return fail(c, 401, "unauthenticated")
-    const org = await activeWorkspace(c)
-    // The sidebar summary (workspace name, total artifact count, tag breakdown) is a
-    // member view. A non-member — including an anonymous caller in open mode — gets an
-    // empty summary with no workspace name, so it can't be used to enumerate a private
-    // workspace's name + size.
-    if (!(await isMember(c, org)))
+  app.openapi(
+    createRoute({
+      method: "get",
+      path: "/v1/tags",
+      tags: ["Artifacts"],
+      summary: "Browse summary for the sidebar (totals + tag counts).",
+      responses: {
+        200: {
+          description:
+            "Total artifacts, the caller's favorite/owned counts, tag→count, and workspace name.",
+          content: {
+            "application/json": {
+              schema: z.object({
+                total: z.number(),
+                favorites: z.number(),
+                mine: z.number(),
+                mine_private: z.number(),
+                tags: z.array(z.object({ tag: z.string(), count: z.number() })),
+                workspace: z.string().nullable(),
+              }),
+            },
+          },
+        },
+      },
+    }),
+    async (c) => {
+      const me = await currentUser(c)
+      if (!me && !isToken(c)) return bail(fail(c, 401, "unauthenticated"))
+      const org = await activeWorkspace(c)
+      // The sidebar summary (workspace name, total artifact count, tag breakdown) is a
+      // member view. A non-member — including an anonymous caller in open mode — gets an
+      // empty summary with no workspace name, so it can't be used to enumerate a private
+      // workspace's name + size.
+      if (!(await isMember(c, org)))
+        return c.json({
+          total: 0,
+          favorites: 0,
+          mine: 0,
+          mine_private: 0,
+          tags: [],
+          workspace: null,
+        })
+      const [total, tags, favIds, ws, mine, minePrivate] = await Promise.all([
+        meta.countArtifacts(org),
+        meta.tagCounts(org),
+        // Scope the favorites count to THIS workspace's live artifacts — the favorites
+        // view is workspace-scoped, so a favorite of an artifact in another workspace
+        // must not inflate the count (otherwise "Favorites · 1" with an empty list).
+        me ? meta.listUserFavoriteIds(me.id, org) : Promise.resolve([]),
+        meta.getWorkspace(org),
+        // The caller's owned artifacts — the "Created by me" filter's badge.
+        me ? meta.countOwnedBy(org, me.id) : Promise.resolve(0),
+        // …and how many of those aren't surfaced anywhere yet: the "waiting on you
+        // to share it" signal (a fresh publish is listed=none until promoted).
+        me ? meta.countOwnedBy(org, me.id, "none") : Promise.resolve(0),
+      ])
+      tags.sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag))
       return c.json({
-        total: 0,
-        favorites: 0,
-        mine: 0,
-        mine_private: 0,
-        tags: [],
-        workspace: null,
+        total,
+        favorites: favIds.length,
+        mine,
+        mine_private: minePrivate,
+        tags,
+        workspace: ws?.name ?? DEFAULT_WORKSPACE_NAME,
       })
-    const [total, tags, favIds, ws, mine, minePrivate] = await Promise.all([
-      meta.countArtifacts(org),
-      meta.tagCounts(org),
-      // Scope the favorites count to THIS workspace's live artifacts — the favorites
-      // view is workspace-scoped, so a favorite of an artifact in another workspace
-      // must not inflate the count (otherwise "Favorites · 1" with an empty list).
-      me ? meta.listUserFavoriteIds(me.id, org) : Promise.resolve([]),
-      meta.getWorkspace(org),
-      // The caller's owned artifacts — the "Created by me" filter's badge.
-      me ? meta.countOwnedBy(org, me.id) : Promise.resolve(0),
-      // …and how many of those are still private: the "waiting on you to
-      // share it" signal (agent publishes land private until promoted).
-      me ? meta.countOwnedBy(org, me.id, "private") : Promise.resolve(0),
-    ])
-    tags.sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag))
-    return c.json({
-      total,
-      favorites: favIds.length,
-      mine,
-      mine_private: minePrivate,
-      tags,
-      workspace: ws?.name ?? DEFAULT_WORKSPACE_NAME,
-    })
-  })
+    },
+  )
 
   // ---- Publish ----------------------------------------------------------
 
@@ -433,22 +494,40 @@ export const artifactRoutes = (ctx: AppContext) => {
         (bytes[0] === 0x50 && bytes[1] === 0x4b && (bytes[2] === 3 || bytes[2] === 5))
     }
 
-    // A password is a lock on a public link — hashed at create; a republish keeps
-    // whatever the artifact already has (publish() never re-creates the artifact,
-    // only adds a version, so visibility/password are set-on-create). Legacy
-    // vocabularies (link/unlisted/password/workspace) map in visibilityOf; an old
-    // client sending visibility=password without a password gets the same 400 it
-    // always did — never a silently open publish.
+    // Access is three single-purpose fields (see access-model.md). Each is validated
+    // here; an explicitly-provided value that isn't a known literal is rejected, not
+    // coerced — a typo must never publish more openly than intended. A legacy
+    // `visibility` (link/unlisted/password/workspace map in legacyAccessOf) seeds all
+    // three for a pinned client; explicit v2 fields win over it during resolution.
     const rawVisibility = str(body["visibility"])
-    const visibility = visibilityOf(rawVisibility)
-    // An explicitly-provided visibility that isn't a known value is rejected, not
-    // silently coerced — a typo must not publish more openly than intended.
-    if (rawVisibility && !visibility)
+    const rawGeneralRole = str(body["general_role"])
+    const legacy = rawVisibility
+      ? legacyAccessOf(rawVisibility, linkRoleOf(rawGeneralRole))
+      : undefined
+    if (rawVisibility && !legacy)
       return fail(c, 400, "visibility must be one of: public, org, private")
+
+    const rawWorkspaceAccess = str(body["workspace_access"])
+    const workspaceAccess = workspaceAccessOf(rawWorkspaceAccess)
+    if (rawWorkspaceAccess && !workspaceAccess)
+      return fail(c, 400, "workspace_access must be one of: none, member")
+
+    // `general_role` is a legacy alias for the world link role (pre-v2 clients only
+    // ever sent viewer/commenter — see linkRoleOf).
+    const rawLinkRole = str(body["link_role"]) ?? rawGeneralRole
+    const linkRole = linkRoleOf(rawLinkRole)
+    if (rawLinkRole && !linkRole)
+      return fail(c, 400, "link_role must be one of: none, viewer, commenter, editor")
+
+    const rawListed = str(body["listed"])
+    const listed = listedOf(rawListed)
+    if (rawListed && !listed) return fail(c, 400, "listed must be one of: none, workspace, public")
+
+    // A password locks the world link. Legacy `visibility=password` must carry one on
+    // create (or it would publish silently open) — the same 400 old clients always got.
     const password = str(body["password"])
     if (!shortId && rawVisibility === "password" && !password)
       return fail(c, 400, "a password is required for password visibility")
-    const passwordHash = visibility === "public" && password ? hashPassword(password) : undefined
 
     try {
       // The authenticated principal behind this publish (signed-in user or agent). The
@@ -462,16 +541,37 @@ export const artifactRoutes = (ctx: AppContext) => {
       const actor = await actingUser(c)
       const human = await actingHuman(c)
       const onBehalf = await privateOwnerId(c)
-      // An AGENT-credentialed create (registered token / OAuth bearer — the CLI
-      // and stdio-shim paths) lands with the workspace's agent default when no
-      // visibility was asked for: usually `private` — the human promotes. A
-      // signed-in human's own publish keeps the same private default.
+      // The agent behind an agent-credentialed publish (registered token / OAuth
+      // bearer) — its name is the actor on the human's notification fan-out below.
       const agentPrincipal = await agentFor(c)
-      const resolvedVisibility =
-        visibility ??
-        (agentPrincipal && !shortId
-          ? (await meta.getOrgSettings(org)).defaultAgentVisibility
-          : undefined)
+      // Access is set-on-create: a republish never re-stamps it (publish() only adds a
+      // version). On a NEW artifact each field resolves independently — explicit request
+      // field > legacy `visibility` mapping > the workspace default (factory default is
+      // the "team draft": workspace_access=member, link_role=none, listed=none). One
+      // org-settings read covers all three defaults.
+      const settings = !shortId ? await meta.getOrgSettings(org) : null
+      const resolvedWorkspaceAccess = !shortId
+        ? (workspaceAccess ?? legacy?.workspace_access ?? settings?.defaultWorkspaceAccess)
+        : undefined
+      const resolvedLinkRole = !shortId
+        ? (linkRole ?? legacy?.link_role ?? settings?.defaultLinkRole)
+        : undefined
+      const resolvedListed = !shortId
+        ? (listed ?? legacy?.listed ?? settings?.defaultListed)
+        : undefined
+      // The only cross-field invariants are the two listing preconditions: a doc can't
+      // be listed somewhere it grants no access to. Explicit contradictions are rejected,
+      // not coerced.
+      if (!shortId && resolvedListed === "workspace" && resolvedWorkspaceAccess !== "member")
+        return fail(c, 400, "a workspace-listed artifact must grant workspace access")
+      if (!shortId && resolvedListed === "public" && resolvedLinkRole === "none")
+        return fail(c, 400, "a publicly-listed artifact must grant at least a viewer link")
+      // A password locks the world link; a lock with no link is meaningless, so it only
+      // takes when link_role != none.
+      const passwordHash =
+        resolvedLinkRole && resolvedLinkRole !== "none" && password
+          ? hashPassword(password)
+          : undefined
       const { artifact, version } = await publish(
         meta,
         blobs,
@@ -494,8 +594,10 @@ export const artifactRoutes = (ctx: AppContext) => {
           authorId: onBehalf,
           name: str(body["name"]),
           orgId: org,
-          visibility: resolvedVisibility,
+          workspaceAccess: resolvedWorkspaceAccess,
           passwordHash,
+          linkRole: resolvedLinkRole,
+          listed: resolvedListed,
         },
         shortId,
       )
@@ -524,6 +626,7 @@ export const artifactRoutes = (ctx: AppContext) => {
         message: version.message,
         author: version.author,
       })
+      notifyRender(artifact, version.n)
       // Fan out to the publisher's followers: "someone you follow published X". Gated
       // to a known HUMAN behind the publish (their followers are who care — an agent
       // publish fans out to the followers of the person it acts for), a publicly-
@@ -531,7 +634,7 @@ export const artifactRoutes = (ctx: AppContext) => {
       // only — `shortId` means a republish/new version, which would otherwise spam
       // followers on every edit. Done in the background so a popular author's fan-out
       // never adds to publish latency (like the comment-mention fan-out).
-      if (!shortId && onBehalf && artifact.visibility === "public") {
+      if (!shortId && onBehalf && artifact.listed === "public") {
         background(
           (async () => {
             const [author] = await meta.getUsers([onBehalf])
@@ -684,294 +787,429 @@ export const artifactRoutes = (ctx: AppContext) => {
   app.post("/v1/artifacts", (c) => handlePublish(c))
   app.post("/v1/artifacts/:shortId/versions", (c) => handlePublish(c, c.req.param("shortId")))
 
-  app.get("/v1/artifacts/:shortId", async (c) => {
-    const artifact = await meta.getByShortId(c.req.param("shortId"))
-    // For a missing artifact, fall back to the most restrictive visibility so
-    // an anonymous probe can't learn anything (a non-member gets no access).
-    const actor = await actorFor(c, artifact ?? ({ id: "", visibility: "org" } as ArtifactRecord))
-    if (!artifact) return fail(c, 404, "not found")
-    if (!can(actor, "read", artifact.visibility, artifact.general_role))
-      // A locked public artifact isn't hidden, it's lockable: tell the client to
-      // prompt for the password (401) rather than claim it doesn't exist (404).
-      return artifact.visibility === "public" && artifact.password_hash
-        ? fail(c, 401, "password required")
-        : fail(c, 404, "not found")
-    // Taken down: serve a minimal tombstone, not the full record. A takedown is a
-    // moderation action and the title is often the very thing being removed
-    // (harassment/doxxing), so drop title, author, the slug in the URL, and the
-    // version history — keep only enough for the SPA to render its "removed" state.
-    // (Content already 410s at /raw; the /a unfurl injects no meta for removed.)
-    if (artifact.removed_at)
-      return c.json({
-        short_id: artifact.short_id,
-        url: `${deps.baseUrl.replace(/\/$/, "")}/artifacts/${artifact.short_id}`,
-        title: null,
-        kind: artifact.kind,
-        visibility: artifact.visibility,
-        spa: !!artifact.spa,
-        current_version: artifact.current_version,
-        created_at: artifact.created_at,
-        versions: [],
-        sessions: [],
-        my_role: effectiveRole(actor, artifact.visibility),
-        tags: [],
-        favorite: false,
-        collections: [],
-        open_proposals: 0,
-        proposals_total: 0,
-        removed: true,
-        managed: false,
-      })
-    const versions = await meta.listVersions(artifact.id)
-    const me = actor.kind === "user" ? actor.userId : null
-    const tags = (await meta.tagsForArtifacts([artifact.id]))[artifact.id] ?? []
-    const favorite = me ? (await meta.listUserFavoriteIds(me)).includes(artifact.id) : false
-    const collections = await meta.collectionIdsForArtifact(artifact.id)
-    const proposals = await meta.listProposals(artifact.id)
-    // A markdown bundle (a skill — entry SKILL.md — or a docs folder) gets a `bundle`
-    // block: the entry + file tree (so the client can render the doc and navigate
-    // siblings) plus skill identity when it is one. One manifest read, on the detail
-    // page only — the list view stays blob-free (no N+1). HTML "site" bundles navigate
-    // via their own links, so they get no block.
-    let bundle: BundleDoc | undefined
-    const cur =
-      artifact.kind === "bundle"
-        ? versions.find((v) => v.n === artifact.current_version)
-        : undefined
-    if (cur) {
-      const manifestBytes = await blobs.get(cur.blob_key)
-      if (manifestBytes) {
-        const manifest = JSON.parse(new TextDecoder().decode(manifestBytes)) as BundleManifest
-        if (isMarkdownBundle(manifest)) bundle = bundleDoc(manifest, await sourceText(cur))
-      }
-    }
-    // Resolve the GitHub author(s) to Derive profiles: collect every distinct gh_id on the
-    // artifact + its versions, map them in ONE query, and attach a `handle` (the Derive
-    // username) when the committer signed in with GitHub. Additive — the raw author_*
-    // fields stay on the response regardless.
-    const ghIds = new Set<string>()
-    if (artifact.author_gh_id) ghIds.add(artifact.author_gh_id)
-    for (const v of versions) if (v.author_gh_id) ghIds.add(v.author_gh_id)
-    const handleByGhId = await resolveHandles(meta, [...ghIds])
-    // Resolve the Derive user(s) behind a publish-by-hand (author_id on the artifact + each
-    // version) to their live name/handle, so a byline frozen with an agent-client name self-
-    // heals on read. One batched query alongside the gh_id resolve above — no N+1.
-    const authorIds = new Set<string>()
-    if (artifact.author_id) authorIds.add(artifact.author_id)
-    for (const v of versions) if (v.author_id) authorIds.add(v.author_id)
-    const bylineByUserId = await resolveUserBylines(meta, [...authorIds])
-    const base = toJson(deps.baseUrl, artifact, versions)
-    // `versions` stays at revision granularity (machines/agents); `sessions` is
-    // the time-grouped view the UI shows by default. `my_role` tells the client
-    // which actions to surface; `open_proposals` badges the review queue while
-    // `proposals_total` (everything but withdrawn) gates the Proposals entry so a
-    // proposer can return to read feedback after their candidate leaves the queue.
-    return c.json({
-      ...base,
-      // Resolved author profile for the current author (null when there's none, or the
-      // committer never signed in with GitHub — then `handle` is null but name/login/avatar
-      // still describe the GitHub identity). The frontend prefers this over the raw fields.
-      author: authorProfile(artifact, handleByGhId, bylineByUserId),
-      versions: base.versions.map((v, i) => {
-        const authorId = versions[i]?.author_id
-        const byUser = authorId ? bylineByUserId[authorId] : undefined
-        return {
-          ...v,
-          // The version's frozen byline heals to its author's live name (an old CLI/MCP
-          // publish stops reading as "Derive CLI"/"Claude"); sync versions keep the gh handle.
-          author: byUser?.name ?? v.author,
-          handle:
-            byUser?.handle ?? (v.author_gh_id ? (handleByGhId[v.author_gh_id] ?? null) : null),
+  app.openapi(
+    createRoute({
+      method: "get",
+      path: "/v1/artifacts/{shortId}",
+      tags: ["Artifacts"],
+      summary: "One artifact with its versions, sessions, roles, and counts.",
+      request: { params: z.object({ shortId: z.string() }) },
+      responses: {
+        200: {
+          description: "The artifact detail (or a minimal tombstone when taken down).",
+          content: { "application/json": { schema: Artifact } },
+        },
+      },
+    }),
+    async (c) => {
+      const artifact = await meta.getByShortId(c.req.param("shortId"))
+      // For a missing artifact, fall back to a no-access placeholder so an anonymous
+      // probe can't learn anything (only id/password_hash/org_id are read by actorFor,
+      // and we 404 immediately after).
+      const actor = await actorFor(c, artifact ?? ({ id: "" } as ArtifactRecord))
+      if (!artifact) return bail(fail(c, 404, "not found"))
+      if (!can(actor, "read", artifact.workspace_access, artifact.link_role))
+        // A locked artifact isn't hidden, it's lockable: tell the client to prompt for
+        // the password (401) rather than claim it doesn't exist (404). A lock only ever
+        // sits on a world link, so a stored hash means the world-link path is gated.
+        return bail(
+          artifact.password_hash ? fail(c, 401, "password required") : fail(c, 404, "not found"),
+        )
+      // Taken down: serve a minimal tombstone, not the full record. A takedown is a
+      // moderation action and the title is often the very thing being removed
+      // (harassment/doxxing), so drop title, author, the slug in the URL, and the
+      // version history — keep only enough for the SPA to render its "removed" state.
+      // (Content already 410s at /raw; the /a unfurl injects no meta for removed.)
+      if (artifact.removed_at)
+        return c.json({
+          short_id: artifact.short_id,
+          url: `${deps.baseUrl.replace(/\/$/, "")}/artifacts/${artifact.short_id}`,
+          title: null,
+          kind: artifact.kind,
+          workspace_access: artifact.workspace_access,
+          link_role: artifact.link_role,
+          listed: artifact.listed,
+          spa: !!artifact.spa,
+          current_version: artifact.current_version,
+          created_at: artifact.created_at,
+          versions: [],
+          sessions: [],
+          my_role: effectiveRole(actor, artifact.workspace_access, artifact.link_role),
+          tags: [],
+          favorite: false,
+          collections: [],
+          open_proposals: 0,
+          proposals_total: 0,
+          removed: true,
+          managed: false,
+        })
+      const versions = await meta.listVersions(artifact.id)
+      const me = actor.kind === "user" ? actor.userId : null
+      const tags = (await meta.tagsForArtifacts([artifact.id]))[artifact.id] ?? []
+      const favorite = me ? (await meta.listUserFavoriteIds(me)).includes(artifact.id) : false
+      const collections = await meta.collectionIdsForArtifact(artifact.id)
+      const proposals = await meta.listProposals(artifact.id)
+      // A markdown bundle (a skill — entry SKILL.md — or a docs folder) gets a `bundle`
+      // block: the entry + file tree (so the client can render the doc and navigate
+      // siblings) plus skill identity when it is one. One manifest read, on the detail
+      // page only — the list view stays blob-free (no N+1). HTML "site" bundles navigate
+      // via their own links, so they get no block.
+      let bundle: BundleDoc | undefined
+      const cur =
+        artifact.kind === "bundle"
+          ? versions.find((v) => v.n === artifact.current_version)
+          : undefined
+      if (cur) {
+        const manifestBytes = await blobs.get(cur.blob_key)
+        if (manifestBytes) {
+          const manifest = JSON.parse(new TextDecoder().decode(manifestBytes)) as BundleManifest
+          if (isMarkdownBundle(manifest)) bundle = bundleDoc(manifest, await sourceText(cur))
         }
-      }),
-      sessions: groupSessions(versions, versionWindowMs),
-      my_role: effectiveRole(actor, artifact.visibility, artifact.general_role),
-      // The artifact's current workspace — the move dialog needs this to exclude
-      // it from the destination picker.
-      org_id: artifact.org_id,
-      tags,
-      favorite,
-      collections,
-      open_proposals: proposals.filter((p) => p.state === "open").length,
-      proposals_total: proposals.filter((p) => p.state !== "withdrawn").length,
-      // Present for a markdown bundle (skill or docs folder): { isSkill, name,
-      // description, entry, files } — the client renders the file tree + skill chrome.
-      ...(bundle ? { bundle } : {}),
-      // A taken-down artifact keeps its record but serves no content (410); the
-      // UI shows a tombstone instead of the iframe.
-      removed: !!artifact.removed_at,
-      // Mirrored from a GitHub sync source → read-only in Derive (the client hides
-      // Edit/Propose; the publish/propose routes also refuse it server-side).
-      managed: (await meta.managedArtifactIds(artifact.org_id)).includes(artifact.id),
-      // The content iframe is sandboxed with no `allow-same-origin` (opaque origin —
-      // it must not be able to touch derive.to cookies/storage), which means it also has
-      // no origin of its own to send OUR session cookie back on, and Chrome refuses to
-      // attach cookies to requests from an opaque origin at all (even same-site) — every
-      // sub-resource (image, css, ...) in a non-public bundle 404s there. `read` access
-      // was just proven above, so mint a short-lived capability the SPA embeds in the raw
-      // URL's path (raw.ts's `t/:token` route + RAW_TOKEN_MAX_AGE_MS) — path, not query,
-      // so relative asset references inherit it with zero HTML rewriting.
-      raw_token: signState({ rid: artifact.id }, deps.encryptionKey ?? ""),
-    })
-  })
+      }
+      // Resolve the GitHub author(s) to Derive profiles: collect every distinct gh_id on the
+      // artifact + its versions, map them in ONE query, and attach a `handle` (the Derive
+      // username) when the committer signed in with GitHub. Additive — the raw author_*
+      // fields stay on the response regardless.
+      const ghIds = new Set<string>()
+      if (artifact.author_gh_id) ghIds.add(artifact.author_gh_id)
+      for (const v of versions) if (v.author_gh_id) ghIds.add(v.author_gh_id)
+      const handleByGhId = await resolveHandles(meta, [...ghIds])
+      // Resolve the Derive user(s) behind a publish-by-hand (author_id on the artifact + each
+      // version) to their live name/handle, so a byline frozen with an agent-client name self-
+      // heals on read. One batched query alongside the gh_id resolve above — no N+1.
+      const authorIds = new Set<string>()
+      if (artifact.author_id) authorIds.add(artifact.author_id)
+      for (const v of versions) if (v.author_id) authorIds.add(v.author_id)
+      const bylineByUserId = await resolveUserBylines(meta, [...authorIds])
+      const base = toJson(deps.baseUrl, artifact, versions)
+      // `versions` stays at revision granularity (machines/agents); `sessions` is
+      // the time-grouped view the UI shows by default. `my_role` tells the client
+      // which actions to surface; `open_proposals` badges the review queue while
+      // `proposals_total` (everything but withdrawn) gates the Proposals entry so a
+      // proposer can return to read feedback after their candidate leaves the queue.
+      return c.json({
+        ...base,
+        // Resolved author profile for the current author (null when there's none, or the
+        // committer never signed in with GitHub — then `handle` is null but name/login/avatar
+        // still describe the GitHub identity). The frontend prefers this over the raw fields.
+        author: authorProfile(artifact, handleByGhId, bylineByUserId),
+        versions: base.versions.map((v, i) => {
+          const authorId = versions[i]?.author_id
+          const byUser = authorId ? bylineByUserId[authorId] : undefined
+          return {
+            ...v,
+            // The version's frozen byline heals to its author's live name (an old CLI/MCP
+            // publish stops reading as "Derive CLI"/"Claude"); sync versions keep the gh handle.
+            author: byUser?.name ?? v.author,
+            handle:
+              byUser?.handle ?? (v.author_gh_id ? (handleByGhId[v.author_gh_id] ?? null) : null),
+          }
+        }),
+        sessions: groupSessions(versions, versionWindowMs),
+        my_role: effectiveRole(actor, artifact.workspace_access, artifact.link_role),
+        // The artifact's current workspace — the move dialog needs this to exclude
+        // it from the destination picker.
+        org_id: artifact.org_id,
+        tags,
+        favorite,
+        collections,
+        open_proposals: proposals.filter((p) => p.state === "open").length,
+        proposals_total: proposals.filter((p) => p.state !== "withdrawn").length,
+        // Present for a markdown bundle (skill or docs folder): { isSkill, name,
+        // description, entry, files } — the client renders the file tree + skill chrome.
+        ...(bundle ? { bundle } : {}),
+        // A taken-down artifact keeps its record but serves no content (410); the
+        // UI shows a tombstone instead of the iframe.
+        removed: !!artifact.removed_at,
+        // Mirrored from a GitHub sync source → read-only in Derive (the client hides
+        // Edit/Propose; the publish/propose routes also refuse it server-side).
+        managed: (await meta.managedArtifactIds(artifact.org_id)).includes(artifact.id),
+        // The content iframe is sandboxed with no `allow-same-origin` (opaque origin —
+        // it must not be able to touch derive.to cookies/storage), which means it also has
+        // no origin of its own to send OUR session cookie back on, and Chrome refuses to
+        // attach cookies to requests from an opaque origin at all (even same-site) — every
+        // sub-resource (image, css, ...) in a non-public bundle 404s there. `read` access
+        // was just proven above, so mint a short-lived capability the SPA embeds in the raw
+        // URL's path (raw.ts's `t/:token` route + RAW_TOKEN_MAX_AGE_MS) — path, not query,
+        // so relative asset references inherit it with zero HTML rewriting.
+        raw_token: signState({ rid: artifact.id }, deps.encryptionKey ?? ""),
+      })
+    },
+  )
 
-  // Change general access (visibility + the general-access role) after publish — the
-  // Share dialog's "general access" control. Editors+ (share), per the GDocs model.
-  // `generalRole` is the floor the link grants a reacher (viewer = view-only, commenter =
-  // authenticated reachers may comment; anonymous stays view-only regardless). Enabling
-  // `password` needs a password (or keeps the existing one); any other visibility clears
-  // the stored hash.
-  app.patch("/v1/artifacts/:shortId/visibility", async (c) => {
-    const artifact = await meta.getByShortId(c.req.param("shortId"))
-    if (!artifact) return fail(c, 404, "not found")
-    if (!(await authorize(c, "share", artifact))) return fail(c, 403, "forbidden")
-    const b = await readJson(
-      c,
-      z.object({
-        visibility: z.string(),
-        password: z.string().optional(),
-        generalRole: z.enum(["viewer", "commenter"]).optional(),
-      }),
-    )
-    if (b instanceof Response) return b
-    const visibility = visibilityOf(b.visibility)
-    if (!visibility) return fail(c, 400, "invalid visibility")
-    const generalRole = b.generalRole ?? "viewer"
-    // The password is a lock on the public link. On `public`: a supplied
-    // password (re)sets the hash; omitting it keeps the existing lock (so
-    // flipping view↔comment doesn't drop it); an explicit empty string clears
-    // it. Leaving `public` always clears — a lock on org/private is meaningless
-    // (both are already explicit-standing-only) and a stale hash must not
-    // resurrect if the doc later goes public again.
-    let passwordHash: string | null = null
-    if (visibility === "public") {
-      if (b.password) passwordHash = hashPassword(b.password)
-      else if (b.password === undefined) passwordHash = artifact.password_hash ?? null
-    }
-    // Legacy clients say visibility=password meaning "public + lock" — they must
-    // carry a password (or already have one) or the lock would silently vanish.
-    if (b.visibility === "password" && !passwordHash)
-      return fail(c, 400, "a password is required for password visibility")
-    await meta.setVisibility(artifact.id, visibility, passwordHash, generalRole)
-    return c.json({ visibility, general_role: generalRole, locked: !!passwordHash })
-  })
+  // Change access after publish — the Share dialog's controls. Three independent
+  // fields (see access-model.md): workspace_access (do the workspace's members reach
+  // it at their seat role), link_role (what merely holding the URL confers — anon
+  // stays view-only), and listed (where it surfaces for discovery). Editors+ (share),
+  // per the GDocs model. Omitting a field PRESERVES the current value (this is an
+  // update, not a create). A legacy `visibility` (from a pinned client) seeds all
+  // three; explicit v2 fields win. Password locks the world link.
+  app.openapi(
+    createRoute({
+      method: "patch",
+      path: "/v1/artifacts/{shortId}/access",
+      tags: ["Artifacts"],
+      summary: "Change an artifact's access (workspace access, world link, listing).",
+      request: { params: z.object({ shortId: z.string() }) },
+      responses: {
+        200: {
+          description: "The new access triple and lock state.",
+          content: {
+            "application/json": {
+              schema: z.object({
+                workspace_access: z.enum(["none", "member"]),
+                link_role: z.enum(["none", "viewer", "commenter", "editor"]),
+                listed: z.enum(["none", "workspace", "public"]),
+                locked: z.boolean(),
+              }),
+            },
+          },
+        },
+      },
+    }),
+    async (c) => {
+      const artifact = await meta.getByShortId(c.req.param("shortId"))
+      if (!artifact) return bail(fail(c, 404, "not found"))
+      if (!(await authorizeStanding(c, "share", artifact))) return bail(fail(c, 403, "forbidden"))
+      const b = await readJson(
+        c,
+        z.object({
+          workspaceAccess: z.enum(["none", "member"]).optional(),
+          linkRole: z.enum(["none", "viewer", "commenter", "editor"]).optional(),
+          listed: z.enum(["none", "workspace", "public"]).optional(),
+          password: z.string().optional(),
+          // Legacy wire (pre-v2 clients): `visibility` maps onto the triple, `generalRole`
+          // is the old spelling of the world link role.
+          visibility: z.string().optional(),
+          generalRole: z.enum(["viewer", "commenter"]).optional(),
+        }),
+      )
+      if (b instanceof Response) return bail(b)
+      const legacy =
+        b.visibility !== undefined ? legacyAccessOf(b.visibility, b.generalRole) : undefined
+      if (b.visibility !== undefined && !legacy) return bail(fail(c, 400, "invalid visibility"))
+      const workspaceAccess =
+        b.workspaceAccess ?? legacy?.workspace_access ?? artifact.workspace_access
+      const linkRole = b.linkRole ?? b.generalRole ?? legacy?.link_role ?? artifact.link_role
+      const listed = b.listed ?? legacy?.listed ?? artifact.listed
+      // The only cross-field invariants: a doc can't be listed where it grants no access.
+      if (listed === "workspace" && workspaceAccess !== "member")
+        return bail(fail(c, 400, "a workspace-listed artifact must grant workspace access"))
+      if (listed === "public" && linkRole === "none")
+        return bail(fail(c, 400, "a publicly-listed artifact must grant at least a viewer link"))
+      // The lock gates the world link — it only takes while a link exists. Supplying a
+      // password (re)sets it, an empty string clears it, omitting keeps the current lock;
+      // dropping the link (link_role=none) always clears it.
+      let passwordHash: string | null = null
+      if (linkRole !== "none") {
+        if (b.password) passwordHash = hashPassword(b.password)
+        else if (b.password === undefined) passwordHash = artifact.password_hash ?? null
+      }
+      // Legacy `visibility=password` means "link + lock": it must carry a password.
+      if (b.visibility === "password" && !passwordHash)
+        return bail(fail(c, 400, "a password is required for password visibility"))
+      await meta.setAccess(artifact.id, workspaceAccess, listed, linkRole, passwordHash)
+      return c.json({
+        workspace_access: workspaceAccess,
+        link_role: linkRole,
+        listed,
+        locked: !!passwordHash,
+      })
+    },
+  )
 
   // Lock / unlock an artifact. Any editor (publish rights) can flip it. While
   // locked, direct publishes are rejected (handlePublish) so changes must go through
   // the proposal → approval flow; the web UI routes editors to "propose".
-  app.patch("/v1/artifacts/:shortId/locked", async (c) => {
-    const artifact = await meta.getByShortId(c.req.param("shortId"))
-    if (!artifact) return fail(c, 404, "not found")
-    if (!(await authorize(c, "publish", artifact))) return fail(c, 403, "forbidden")
-    const b = await readJson(c, z.object({ locked: z.boolean() }))
-    if (b instanceof Response) return b
-    await meta.setLocked(artifact.id, b.locked ? 1 : 0)
-    return c.json({ locked: b.locked })
-  })
+  app.openapi(
+    createRoute({
+      method: "patch",
+      path: "/v1/artifacts/{shortId}/locked",
+      tags: ["Artifacts"],
+      summary: "Lock or unlock an artifact (locked ⇒ changes go through review).",
+      request: { params: z.object({ shortId: z.string() }) },
+      responses: {
+        200: {
+          description: "The new locked state.",
+          content: { "application/json": { schema: z.object({ locked: z.boolean() }) } },
+        },
+      },
+    }),
+    async (c) => {
+      const artifact = await meta.getByShortId(c.req.param("shortId"))
+      if (!artifact) return bail(fail(c, 404, "not found"))
+      if (!(await authorizeStanding(c, "publish", artifact))) return bail(fail(c, 403, "forbidden"))
+      const b = await readJson(c, z.object({ locked: z.boolean() }))
+      if (b instanceof Response) return bail(b)
+      await meta.setLocked(artifact.id, b.locked ? 1 : 0)
+      return c.json({ locked: b.locked })
+    },
+  )
 
   // Permanently delete an artifact and all its dependents (versions, comments,
   // proposals, memberships, etc.). Owner-only: gated by the `manage` action.
-  app.delete("/v1/artifacts/:shortId", async (c) => {
-    const artifact = await meta.getByShortId(c.req.param("shortId"))
-    if (!artifact) return fail(c, 404, "not found")
-    if (!(await authorize(c, "manage", artifact))) return fail(c, 403, "forbidden")
-    await meta.deleteArtifact(artifact.id, artifact.org_id)
-    return c.body(null, 204)
-  })
+  app.openapi(
+    createRoute({
+      method: "delete",
+      path: "/v1/artifacts/{shortId}",
+      tags: ["Artifacts"],
+      summary: "Permanently delete an artifact and all its dependents (owner only).",
+      request: { params: z.object({ shortId: z.string() }) },
+      responses: { 204: { description: "The artifact was deleted." } },
+    }),
+    async (c) => {
+      const artifact = await meta.getByShortId(c.req.param("shortId"))
+      if (!artifact) return bail(fail(c, 404, "not found"))
+      if (!(await authorize(c, "manage", artifact))) return bail(fail(c, 403, "forbidden"))
+      await meta.deleteArtifact(artifact.id, artifact.org_id)
+      return c.body(null, 204)
+    },
+  )
 
   // Move to a different workspace you belong to. Owner-only (the `manage` gate —
   // same as delete). No role requirement on the destination: you can move into a
   // workspace where you're just a viewer/editor. A future org-level "block
   // cross-workspace moves" policy is a single guard here, not a new subsystem.
-  app.post("/v1/artifacts/:shortId/move", async (c) => {
-    const artifact = await meta.getByShortId(c.req.param("shortId"))
-    if (!artifact) return fail(c, 404, "not found")
-    if (!(await authorize(c, "manage", artifact))) return fail(c, 403, "forbidden")
-    const b = await readJson(c, z.object({ targetOrgId: z.string().min(1) }))
-    if (b instanceof Response) return b
-    if (b.targetOrgId === artifact.org_id) return fail(c, 400, "already in that workspace")
-    const me = await currentUser(c)
-    if (!me) return fail(c, 401, "unauthenticated")
-    if (!(await meta.getMembership(b.targetOrgId, me.id)))
-      return fail(c, 403, "you're not a member of that workspace")
-    // A bound custom domain routes by artifact_id; moving orgs out from under it
-    // would silently break live traffic, so refuse rather than cascade.
-    if ((await meta.getArtifactDomains(artifact.id)).length > 0)
-      return fail(c, 409, "remove the custom domain before moving this artifact")
-    await meta.moveArtifactOrg(artifact.id, b.targetOrgId)
-    return c.json({ org_id: b.targetOrgId })
-  })
+  app.openapi(
+    createRoute({
+      method: "post",
+      path: "/v1/artifacts/{shortId}/move",
+      tags: ["Artifacts"],
+      summary: "Move an artifact to another workspace you belong to (owner only).",
+      request: { params: z.object({ shortId: z.string() }) },
+      responses: {
+        200: {
+          description: "The artifact's new workspace id.",
+          content: { "application/json": { schema: z.object({ org_id: z.string() }) } },
+        },
+      },
+    }),
+    async (c) => {
+      const artifact = await meta.getByShortId(c.req.param("shortId"))
+      if (!artifact) return bail(fail(c, 404, "not found"))
+      if (!(await authorize(c, "manage", artifact))) return bail(fail(c, 403, "forbidden"))
+      const b = await readJson(c, z.object({ targetOrgId: z.string().min(1) }))
+      if (b instanceof Response) return bail(b)
+      if (b.targetOrgId === artifact.org_id) return bail(fail(c, 400, "already in that workspace"))
+      const me = await currentUser(c)
+      if (!me) return bail(fail(c, 401, "unauthenticated"))
+      if (!(await meta.getMembership(b.targetOrgId, me.id)))
+        return bail(fail(c, 403, "you're not a member of that workspace"))
+      // A bound custom domain routes by artifact_id; moving orgs out from under it
+      // would silently break live traffic, so refuse rather than cascade.
+      if ((await meta.getArtifactDomains(artifact.id)).length > 0)
+        return bail(fail(c, 409, "remove the custom domain before moving this artifact"))
+      await meta.moveArtifactOrg(artifact.id, b.targetOrgId)
+      return c.json({ org_id: b.targetOrgId })
+    },
+  )
 
   // Unlock a password-locked artifact: verify the password and drop a cookie whose
   // value is derived from the server-only hash (so it can't be forged and dies if
   // the password changes). Brute force is bounded by a dedicated tight limiter
   // (10 attempts/min per caller), well below the lenient global /v1 write cap.
   // authz-exempt: the password itself is the gate; any visitor may attempt unlock.
-  app.post("/v1/artifacts/:shortId/unlock", async (c) => {
-    const over = await limited(c, unlockLimiter)
-    if (over) return over
-    const artifact = await meta.getByShortId(c.req.param("shortId"))
-    if (!artifact?.password_hash) return fail(c, 404, "not found")
-    const b = await readJson(c, z.object({ password: z.string().min(1) }))
-    if (b instanceof Response) return b
-    if (!verifyPassword(b.password, artifact.password_hash)) return fail(c, 401, "wrong password")
-    setCookie(
-      c,
-      unlockCookie(artifact.short_id),
-      unlockToken(artifact.id, artifact.password_hash),
-      {
-        path: "/",
-        maxAge: 60 * 60 * 24 * 30,
-        httpOnly: true,
-        sameSite: deps.crossSite ? "None" : "Lax",
-        secure: deps.crossSite || new URL(deps.baseUrl).protocol === "https:",
+  app.openapi(
+    createRoute({
+      method: "post",
+      path: "/v1/artifacts/{shortId}/unlock",
+      tags: ["Artifacts"],
+      summary: "Unlock a password-protected artifact (drops an unlock cookie).",
+      request: { params: z.object({ shortId: z.string() }) },
+      responses: {
+        200: {
+          description: "Unlocked.",
+          content: { "application/json": { schema: z.object({ ok: z.boolean() }) } },
+        },
       },
-    )
-    return c.json({ ok: true })
-  })
+    }),
+    async (c) => {
+      const over = await limited(c, unlockLimiter)
+      if (over) return bail(over)
+      const artifact = await meta.getByShortId(c.req.param("shortId"))
+      if (!artifact?.password_hash) return bail(fail(c, 404, "not found"))
+      const b = await readJson(c, z.object({ password: z.string().min(1) }))
+      if (b instanceof Response) return bail(b)
+      if (!verifyPassword(b.password, artifact.password_hash))
+        return bail(fail(c, 401, "wrong password"))
+      setCookie(
+        c,
+        unlockCookie(artifact.short_id),
+        unlockToken(artifact.id, artifact.password_hash),
+        {
+          path: "/",
+          maxAge: 60 * 60 * 24 * 30,
+          httpOnly: true,
+          sameSite: deps.crossSite ? "None" : "Lax",
+          secure: deps.crossSite || new URL(deps.baseUrl).protocol === "https:",
+        },
+      )
+      return c.json({ ok: true })
+    },
+  )
 
   // Restore a past version: re-point a new revision at its stored blob (no
   // re-upload, works for files and bundles). History is never rewritten.
-  app.post("/v1/artifacts/:shortId/restore", async (c) => {
-    const artifact = await meta.getByShortId(c.req.param("shortId"))
-    if (!artifact) return fail(c, 404, "not found")
-    if (!(await authorize(c, "publish", artifact))) return fail(c, 403, "forbidden")
-    const body = await readJson(c, z.object({ version: z.number().int("version required") }))
-    if (body instanceof Response) return body
-    const src = await meta.getVersion(artifact.id, body.version)
-    if (!src) return fail(c, 404, `no version ${body.version}`)
-    const me = await currentUser(c)
-    const version = await meta.addVersion(artifact.id, {
-      id: newId("v"),
-      blob_key: src.blob_key,
-      content_type: src.content_type,
-      // Same blob as the restored version — carry its size so the storage meter
-      // stays consistent (and dedup'd, since it reuses the same blob_key).
-      size_bytes: src.size_bytes,
-      author: me ? (me.name ?? me.username ?? me.email) : "anonymous",
-      author_id: me?.id ?? null,
-      message: `Restored v${src.n}`,
-      name: null,
-    })
-    await notify(artifact, "version.published", {
-      version: version.n,
-      message: version.message,
-      author: version.author,
-    })
-    bus.publish(artifact.id, { type: "version.published", n: version.n, message: version.message })
-    // Restoring an old blob is a content change too — re-anchor threads against it.
-    await publishSweepEvents(meta, blobs, bus, artifact.id, version)
-    const fresh = (await meta.getByShortId(artifact.short_id)) as ArtifactRecord
-    const versions = await meta.listVersions(artifact.id)
-    return c.json(
-      {
-        ...toJson(deps.baseUrl, fresh, versions),
-        sessions: groupSessions(versions, versionWindowMs),
-        published: version.n,
+  app.openapi(
+    createRoute({
+      method: "post",
+      path: "/v1/artifacts/{shortId}/restore",
+      tags: ["Artifacts"],
+      summary: "Restore a past version as a new revision (history is never rewritten).",
+      request: { params: z.object({ shortId: z.string() }) },
+      responses: {
+        201: {
+          description: "The artifact after restore, plus the new version number.",
+          content: { "application/json": { schema: Artifact.extend({ published: z.number() }) } },
+        },
       },
-      201,
-    )
-  })
+    }),
+    async (c) => {
+      const artifact = await meta.getByShortId(c.req.param("shortId"))
+      if (!artifact) return bail(fail(c, 404, "not found"))
+      if (!(await authorize(c, "publish", artifact))) return bail(fail(c, 403, "forbidden"))
+      const body = await readJson(c, z.object({ version: z.number().int("version required") }))
+      if (body instanceof Response) return bail(body)
+      const src = await meta.getVersion(artifact.id, body.version)
+      if (!src) return bail(fail(c, 404, `no version ${body.version}`))
+      const me = await currentUser(c)
+      const version = await meta.addVersion(artifact.id, {
+        id: newId("v"),
+        blob_key: src.blob_key,
+        content_type: src.content_type,
+        // Same blob as the restored version — carry its size so the storage meter
+        // stays consistent (and dedup'd, since it reuses the same blob_key).
+        size_bytes: src.size_bytes,
+        author: me ? (me.name ?? me.username ?? me.email) : "anonymous",
+        author_id: me?.id ?? null,
+        message: `Restored v${src.n}`,
+        name: null,
+      })
+      await notify(artifact, "version.published", {
+        version: version.n,
+        message: version.message,
+        author: version.author,
+      })
+      notifyRender(artifact, version.n)
+      bus.publish(artifact.id, {
+        type: "version.published",
+        n: version.n,
+        message: version.message,
+      })
+      // Restoring an old blob is a content change too — re-anchor threads against it.
+      await publishSweepEvents(meta, blobs, bus, artifact.id, version)
+      const fresh = (await meta.getByShortId(artifact.short_id)) as ArtifactRecord
+      const versions = await meta.listVersions(artifact.id)
+      return c.json(
+        {
+          ...toJson(deps.baseUrl, fresh, versions),
+          sessions: groupSessions(versions, versionWindowMs),
+          published: version.n,
+        },
+        201,
+      )
+    },
+  )
 
   // Source read-back for machines: returns an artifact's text content for any
   // version, as plain text (?v=N selects a version; defaults to current).
@@ -1090,15 +1328,29 @@ export const artifactRoutes = (ctx: AppContext) => {
   // Stateless (renders the caller's text, stores nothing) and signed-in only, so
   // it can't be used as an anonymous render farm. HTML drafts preview in the
   // browser, so this is markdown-only.
-  app.post("/v1/preview", async (c) => {
-    if (!(await actingUser(c))) return fail(c, 401, "unauthenticated")
-    const body = await readJson(
-      c,
-      z.object({ source: z.string().max(500_000), title: z.string().max(300).nullish() }),
-    )
-    if (body instanceof Response) return body
-    return c.json({ html: await renderMarkdown(body.source, body.title ?? null) })
-  })
+  app.openapi(
+    createRoute({
+      method: "post",
+      path: "/v1/preview",
+      tags: ["Artifacts"],
+      summary: "Render a markdown draft to the exact published HTML (stateless; signed-in only).",
+      responses: {
+        200: {
+          description: "The rendered HTML.",
+          content: { "application/json": { schema: z.object({ html: z.string() }) } },
+        },
+      },
+    }),
+    async (c) => {
+      if (!(await actingUser(c))) return bail(fail(c, 401, "unauthenticated"))
+      const body = await readJson(
+        c,
+        z.object({ source: z.string().max(500_000), title: z.string().max(300).nullish() }),
+      )
+      if (body instanceof Response) return bail(body)
+      return c.json({ html: await renderMarkdown(body.source, body.title ?? null) })
+    },
+  )
 
   // Line diff between two versions. Defaults to (current-1 → current).
   // ?format=json returns the structured ops; otherwise unified-style text.

@@ -20,7 +20,7 @@ import {
 } from "@derive/core"
 import { type Context, Hono } from "hono"
 import type { AppContext } from "../context"
-import { fail } from "../lib/http"
+import { fail, toBody } from "../lib/http"
 
 /**
  * Unfurl + embed surface. Turns a `/artifacts/:ref` share link into a rich card and an
@@ -38,7 +38,7 @@ import { fail } from "../lib/http"
  * org/password artifacts never leak a title — they get a generic locked card.
  */
 export const embedRoutes = (ctx: AppContext) => {
-  const { meta, authorize } = ctx
+  const { meta, authorize, blobs } = ctx
   const baseUrl = ctx.deps.baseUrl
   const rawBase = ctx.deps.sandboxOrigin ?? baseUrl
   const app = new Hono()
@@ -82,6 +82,28 @@ export const embedRoutes = (ctx: AppContext) => {
   // version/comment counts on the card are allowed to lag for an unfurl preview.
   app.get("/v1/og/:ref", async (c) => {
     const artifact = await readable(c, c.req.param("ref"))
+    // readable() enforces visibility: a gated artifact for an anonymous crawler returns null
+    // and never reaches the PNG branch, so a private artifact can never leak its screenshot.
+    if (artifact) {
+      const v = await meta.getVersion(artifact.id, artifact.current_version)
+      if (v?.preview_status === "ready" && v.preview_key) {
+        const png = await blobs.get(v.preview_key)
+        // Unlike the SVG fallback (title-less when gated, so always shareable), this
+        // branch only runs for a reader who passed readable() — which for an artifact
+        // with no world link (or a locked one) means an authorized member. Their
+        // screenshot must never land in a shared cache; keep it browser-only there
+        // (max-age so the library card <img> stays cached across renders).
+        const gated = artifact.link_role === "none" || !!artifact.password_hash
+        if (png)
+          return c.body(toBody(png), 200, {
+            "Content-Type": "image/png",
+            "Cache-Control": gated
+              ? "private, max-age=3600"
+              : "public, max-age=86400, stale-while-revalidate=604800",
+            "X-Content-Type-Options": "nosniff",
+          })
+      }
+    }
     const svg = artifact
       ? ogCardSvg({ ...(await infoFor(artifact)), reveal: true })
       : ogCardSvg({

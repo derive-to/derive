@@ -32,7 +32,9 @@ const seedHtml = async (opts: {
     org_id: "default",
     slug: opts.slug,
     title: opts.shortId,
-    visibility: "public",
+    workspace_access: "member",
+    link_role: "viewer",
+    listed: "public",
     kind: "file",
     spa: 0,
   })
@@ -97,7 +99,9 @@ describe("cross-document links between synced sibling artifacts", () => {
       org_id: "other-org",
       slug: "other-walk",
       title: "other",
-      visibility: "public",
+      workspace_access: "member",
+      link_role: "viewer",
+      listed: "public",
       kind: "file",
       spa: 0,
     })

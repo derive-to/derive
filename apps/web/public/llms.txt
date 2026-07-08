@@ -58,7 +58,7 @@ Resource: derive://guide (agent workflow and tool reference)
 
 - Lite: docker compose -f deploy/compose.yml up -d (SQLite + local blobs)
 - Node Basic: add DATABASE_URL (Postgres) + OBJECT_STORE_URL (S3/R2)
-- Node Scale: add REDIS_URL for multi-instance realtime and caching
+- Node Scale: multiple containers for throughput (realtime is per-instance on Node; use Cloudflare for cross-instance realtime)
 - Cloudflare Basic: Workers + D1 + R2 + Durable Objects (wrangler deploy)
 - Cloudflare Scale: Workers + Postgres + R2 + Durable Objects
 

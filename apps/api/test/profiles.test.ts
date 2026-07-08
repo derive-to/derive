@@ -233,7 +233,9 @@ describe("profile work-list (visibility-scoped)", () => {
       org_id: "default",
       slug: null,
       title,
-      visibility,
+      workspace_access: "member",
+      link_role: visibility === "public" ? "viewer" : "none",
+      listed: visibility === "public" ? "public" : "workspace",
       kind: "file",
       spa: 0,
     })
@@ -310,7 +312,9 @@ describe("profile work-list pagination (keyset)", () => {
         org_id: "default",
         slug: null,
         title: `Doc ${i}`,
-        visibility: "public",
+        workspace_access: "member",
+        link_role: "viewer",
+        listed: "public",
         kind: "file",
         spa: 0,
       })

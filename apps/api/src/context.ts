@@ -36,6 +36,7 @@ import {
   rateLimited,
 } from "./lib/rate-limit"
 import { log } from "./log"
+import { enqueueRender } from "./previews"
 import { edgeCtx } from "./realtime-do"
 import { enqueueForEvent, type WebhookEvent } from "./webhooks"
 
@@ -194,6 +195,10 @@ export interface AppDeps {
    * the sync inline to completion, so a "Sync now" still finishes within the request.
    */
   startSync?: (sourceId: string) => void
+  /** Enqueue + drain preview renders (true when a renderer is configured). */
+  renderPreviews?: boolean
+  /** Wake the preview worker after enqueuing (Workers: poke the PreviewRenderer DO). */
+  pokePreviews?: () => void
 }
 
 /**
@@ -250,6 +255,22 @@ export function buildContext(deps: AppDeps) {
           error: err instanceof Error ? err.message : String(err),
         }),
       )
+
+  // Enqueue a screenshot render for a newly-published version. Fire-and-forget,
+  // mirroring `notify` above: non-fatal (logged on error), never awaited in the
+  // request path. Gated by deps.renderPreviews so self-hosted deployments without
+  // a renderer configured never attempt to enqueue.
+  const notifyRender = (a: ArtifactRecord, n: number): void => {
+    if (!deps.renderPreviews) return
+    enqueueRender(meta, a.id, n)
+      .then(() => deps.pokePreviews?.())
+      .catch((err) =>
+        log.error("preview enqueue failed", {
+          artifact: a.short_id,
+          error: err instanceof Error ? err.message : String(err),
+        }),
+      )
+  }
 
   // Run after-the-response work without blocking the reply. On Workers the request
   // executionCtx keeps the isolate alive past the sent response via waitUntil; on
@@ -624,11 +645,20 @@ export function buildContext(deps: AppDeps) {
     return { kind: "user", userId: me.id, artifactRole, orgRole, locked, unlocked }
   }
 
-  /** Authorize an action against a specific artifact. The artifact's general-access role
-   *  is threaded in so an authenticated link-reacher can earn `comment` while an anonymous
-   *  one stays clamped to view (see effectiveRole). */
+  /** Authorize an action against a specific artifact. Access is the max of three
+   *  grants: an explicit share, the workspace seat (when workspace_access=member),
+   *  and the world link (link_role, clamped to view for anonymous holders and gated
+   *  by unlock when the link is password-locked). See effectiveRole. */
   const authorize = (c: Context, action: Action, a: ArtifactRecord): Promise<boolean> =>
-    actorFor(c, a).then((actor) => can(actor, action, a.visibility, a.general_role))
+    actorFor(c, a).then((actor) => can(actor, action, a.workspace_access, a.link_role))
+
+  /** Authorize using STANDING only — an explicit share or the workspace seat, NOT
+   *  the world link (link_role forced to `none`). The reach controls (change access,
+   *  toggle the lock) gate on this so the link's own grant can't bootstrap widening
+   *  the link/listing or clearing the password: a random signed-in URL holder with an
+   *  editor link edits content, but only a member or an explicit sharee re-shares. */
+  const authorizeStanding = (c: Context, action: Action, a: ArtifactRecord): Promise<boolean> =>
+    actorFor(c, a).then((actor) => can(actor, action, a.workspace_access, "none"))
 
   /**
    * True when the caller is an anonymous visitor — they may view public content
@@ -695,7 +725,16 @@ export function buildContext(deps: AppDeps) {
     const me = await currentUser(c)
     if (!me) return null
     if (col.created_by === me.id) return "owner"
-    return (await meta.getCollectionMember(col.id, me.id))?.role ?? null
+    // A collection lives in a workspace, so its members reach it at their SEAT role —
+    // the team collaborates on the workspace's collections, not just their creator's
+    // (mirrors an artifact's workspace_access=member). An explicit collection share
+    // (which can cross workspaces) folds in alongside, higher wins. This governs who
+    // can view/manage the COLLECTION only; artifact access still propagates purely
+    // from explicit collection membership (collectionRolesForArtifact), so a seat here
+    // never hands out access to the artifacts inside.
+    const explicit = (await meta.getCollectionMember(col.id, me.id))?.role ?? null
+    const seat = (await meta.getMembership(col.org_id, me.id))?.role ?? null
+    return maxRole(explicit, seat)
   }
 
   // ---- Route guard helpers: the return-or-Response idiom (mirrors `limited`), so a
@@ -740,6 +779,7 @@ export function buildContext(deps: AppDeps) {
     commentLimiter,
     unlockLimiter,
     notify,
+    notifyRender,
     background,
     currentUser,
     agentFor,
@@ -756,6 +796,7 @@ export function buildContext(deps: AppDeps) {
     anonViewerId,
     actorFor,
     authorize,
+    authorizeStanding,
     anonLocked,
     isPrincipal,
     isSuperAdmin,

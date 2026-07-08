@@ -2,7 +2,12 @@
  * Core owns the ports; packages/db and packages/storage provide the adapters.
  * Everything here must run on Node AND Cloudflare Workers — no Node APIs.
  */
-import type { GeneralRole, Role } from "./permissions"
+import type { GeneralRole, LinkRole, Listed, Role, WorkspaceAccess } from "./roles"
+
+/** @deprecated orphaned column vocabulary — the access model is `workspace_access`
+ *  × `link_role` × `listed` (see access-model.md). Kept only to type the `visibility`
+ *  DB column (backfilled once, read by nothing). */
+export type Visibility = "public" | "org" | "private"
 
 export interface BlobStore {
   /** Content-addressed put; returns the sha256 hex key. Idempotent. */
@@ -11,18 +16,6 @@ export interface BlobStore {
 }
 
 export type ArtifactKind = "file" | "bundle"
-// Three audiences, each answering one question: who can open the link.
-// `private`: only per-artifact members (the publisher becomes the owner-member at
-// creation) — workspace membership grants nothing. The agent-draft default.
-// `org`: the team — any workspace member, at their membership role, listed in
-// the workspace library.
-// `public`: anyone with the URL. A `password_hash` on a public artifact is a
-// LOCK, not a visibility: the reach floor stays gated until unlocked, while
-// members and explicit shares pass by role. There is no listing axis —
-// broadcast is not a per-artifact state.
-// (Pre-collapse rows migrate at boot: unlisted→private, link→public,
-// password→public with the hash kept. See docs/plans/visibility-collapse.md.)
-export type Visibility = "public" | "org" | "private"
 
 /** A platform subdomain (`name.derived.app`) or a customer's own domain. */
 export type DomainKind = "subdomain" | "custom"
@@ -37,12 +30,23 @@ export interface ArtifactRecord {
   org_id: string
   slug: string | null
   title: string | null
-  visibility: Visibility
-  /** Salted hash of the unlock password for `password` visibility; null otherwise. */
+  /** Does the artifact's workspace get access at each member's SEAT role.
+   *  `member` = every signed-in member opens at their own workspace role;
+   *  `none` = only explicit shares and the world link apply. See access-model.md. */
+  workspace_access: WorkspaceAccess
+  /** The WORLD link: what anyone merely holding the URL gets (non-member, public,
+   *  anon — anon always clamped to `viewer`). `none` = inert. A teammate with the
+   *  link is NOT this (that's `workspace_access`). */
+  link_role: LinkRole
+  /** Discovery only — where it surfaces: `none` / `workspace` (library) / `public`
+   *  (directory). Carries NO access. */
+  listed: Listed
+  /** Salted hash of the unlock password locking the world link; null otherwise. */
   password_hash: string | null
-  /** The role general access (the link) grants a reacher with no higher explicit grant.
-   *  `viewer` (default) = view-only; `commenter` = authenticated reachers may comment.
-   *  Anonymous reachers are always clamped to `viewer` regardless (see effectiveRole). */
+  /** @deprecated orphaned column, backfilled once into `workspace_access`+`listed`.
+   *  Kept only so this Record matches the drizzle table (parity.ts). Read by nothing. */
+  visibility: Visibility
+  /** @deprecated orphaned column, backfilled once into `link_role`. Read by nothing. */
   general_role: GeneralRole
   kind: ArtifactKind
   spa: 0 | 1
@@ -109,6 +113,25 @@ export interface ListArtifactsOpts {
   visibleOrgIds?: string[]
 }
 
+export type PreviewStatus = "pending" | "ready" | "failed"
+
+export type RenderJobStatus = "pending" | "done" | "dead"
+export interface RenderJobRecord {
+  id: string
+  artifact_id: string
+  version_n: number
+  status: RenderJobStatus
+  attempts: number
+  last_error: string | null
+  next_attempt_at: string
+  created_at: string
+}
+export interface NewRenderJob {
+  id: string
+  artifact_id: string
+  version_n: number
+}
+
 export interface VersionRecord {
   id: string
   artifact_id: string
@@ -129,6 +152,12 @@ export interface VersionRecord {
   message: string | null
   /** A named checkpoint (Docs-style). Null = an ordinary auto-saved revision. */
   name: string | null
+  /** Blob key of the rendered PNG preview of this version; null until generated. */
+  preview_key: string | null
+  /** Lifecycle of the preview render; null = never queued. */
+  preview_status: PreviewStatus | null
+  /** Short failure reason when preview_status === "failed". */
+  preview_error: string | null
   created_at: string
 }
 
@@ -138,11 +167,18 @@ export interface NewArtifact {
   org_id: string
   slug: string | null
   title: string | null
-  visibility: Visibility
-  /** Salted unlock-password hash; set only for `password` visibility. */
+  /** The access triple. Omitted values are fail-closed at the store — `none`
+   *  workspace access, `none` link, `none` listing — a caller that wants reach
+   *  must say so. `publish()` always resolves and stamps them (explicit request >
+   *  the org's defaults > the factory default: workspace_access `member`, link
+   *  `none`, listed `none`) before `createArtifact`, so the optionality is a
+   *  store-level safety net, not the product default. The orphaned `visibility` /
+   *  `general_role` columns take their DB defaults and are never set here. */
+  workspace_access?: WorkspaceAccess
+  link_role?: LinkRole
+  listed?: Listed
+  /** Salted unlock-password hash locking the world link; null/omitted otherwise. */
   password_hash?: string | null
-  /** General-access role; defaults to `viewer` (view-only) when omitted. */
-  general_role?: GeneralRole
   kind: ArtifactKind
   spa: 0 | 1
 }
@@ -163,16 +199,17 @@ export interface NewVersion {
   name?: string | null
 }
 
-export interface MetaStore {
+export interface ArtifactStore {
   createArtifact(a: NewArtifact): Promise<ArtifactRecord>
-  /** Change an artifact's general access: visibility, the password hash locking a
-   *  public link (null clears; meaningless off `public`), and the general-access
-   *  role (view vs comment). */
-  setVisibility(
+  /** Change an artifact's access: workspace access (member seats vs none), the
+   *  world link role, the listing, and the password hash locking the world link
+   *  (null clears). See access-model.md. */
+  setAccess(
     artifactId: string,
-    visibility: Visibility,
+    workspaceAccess: WorkspaceAccess,
+    listed: Listed,
+    linkRole: LinkRole,
     passwordHash: string | null,
-    generalRole: GeneralRole,
   ): Promise<void>
   /** Toggle the change-lock: when locked, direct publishes are rejected. */
   setLocked(artifactId: string, locked: 0 | 1): Promise<void>
@@ -195,7 +232,38 @@ export interface MetaStore {
    *  updates the artifact's current_content_type when n is the current version.
    *  Used to repair mis-classified content (e.g. HTML that was tagged markdown). */
   reclassifyVersion(artifactId: string, n: number, contentType: string): Promise<void>
+  /** Set a version's preview render result (blob key + status + error). Partial;
+   *  only given fields are written. */
+  setVersionPreview(
+    artifactId: string,
+    n: number,
+    fields: {
+      preview_key?: string | null
+      preview_status?: PreviewStatus | null
+      preview_error?: string | null
+    },
+  ): Promise<void>
+  // ---- Render-job queue (screenshot rendering outbox) --------------------
+  /** Enqueue a new render job (status defaults to "pending", attempts to 0). */
+  enqueueRenderJob(j: NewRenderJob): Promise<void>
+  /**
+   * Atomically claim up to `limit` pending render jobs whose next_attempt_at has
+   * passed: increments their attempt count and leases them (sets next_attempt_at
+   * to `leaseUntil`), then returns the claimed rows.
+   */
+  claimDueRenderJobs(now: string, limit: number, leaseUntil: string): Promise<RenderJobRecord[]>
+  updateRenderJob(
+    id: string,
+    fields: {
+      status: RenderJobStatus
+      attempts: number
+      last_error: string | null
+      next_attempt_at: string
+    },
+  ): Promise<void>
+}
 
+export interface CommentStore {
   createComment(c: NewComment): Promise<CommentRecord>
   /** Comments on an artifact, oldest-first; optionally filtered by thread state. */
   listComments(artifactId: string, opts?: CommentListOpts): Promise<CommentRecord[]>
@@ -220,7 +288,9 @@ export interface MetaStore {
   /** Artifact ids in `orgId` with an open thread the user is tagged in or authored —
    *  the "needs your feedback" set the home section is built from. */
   artifactIdsNeedingFeedback(userId: string, orgId: string): Promise<string[]>
+}
 
+export interface ArtifactQueryStore {
   /**
    * Newest-first artifact page. `cursor` is keyset pagination on created_at
    * (rows strictly older than it); `q` is a case-insensitive title search;
@@ -242,8 +312,9 @@ export interface MetaStore {
   /** Total artifact count, scoped to a workspace when orgId is given. */
   countArtifacts(orgId?: string): Promise<number>
   /** Count of the artifacts `artifactIdsOwnedBy` would return — the "Created by
-   *  me" badge. `visibility` narrows to one rung (the link-only pending count). */
-  countOwnedBy(orgId: string, userId: string, visibility?: Visibility): Promise<number>
+   *  me" badge. `listed` narrows to one discovery state (e.g. `none` = the
+   *  not-in-any-feed pending count). */
+  countOwnedBy(orgId: string, userId: string, listed?: Listed): Promise<number>
   /**
    * The storage-quota meter for one workspace: bytes counted once per distinct
    * blob (content is content-addressed, so republishes/restores of identical
@@ -273,7 +344,12 @@ export interface MetaStore {
   viewStats(artifactId: string): Promise<ViewStats>
   /** Total view counts for many artifacts at once (no N+1). */
   viewCounts(artifactIds: string[]): Promise<Record<string, number>>
+  /** For each artifact id, true iff its CURRENT version has a ready preview render.
+   *  Batched (one query); missing ids may be omitted. */
+  previewReady(artifactIds: string[]): Promise<Record<string, boolean>>
+}
 
+export interface WebhookStore {
   // ---- Webhooks + outbox -------------------------------------------------
   createWebhook(w: NewWebhook): Promise<WebhookRecord>
   listWebhooks(orgId: string): Promise<WebhookRecord[]>
@@ -306,7 +382,9 @@ export interface MetaStore {
   ): Promise<void>
   /** Recent deliveries for a webhook (for the settings log). */
   recentDeliveries(webhookId: string, limit: number): Promise<DeliveryRecord[]>
+}
 
+export interface WorkspaceStore {
   // ---- Permissions: workspace membership + per-artifact shares -----------
   /** The workspace's display name + metadata (one row per org_id). */
   getWorkspace(orgId: string): Promise<WorkspaceRecord | null>
@@ -333,7 +411,9 @@ export interface MetaStore {
   /** Insert or update a per-artifact role override (a share). */
   setArtifactMember(m: NewArtifactMember): Promise<ArtifactMemberRecord>
   removeArtifactMember(artifactId: string, userId: string): Promise<void>
+}
 
+export interface SocialStore {
   // ---- Favorites (per-user stars) + tags (browse metadata) ---------------
   /** Artifact ids this user has starred. With `orgId`, scoped to that workspace's
    *  live (non-removed) artifacts — for the workspace-scoped favorites count. */
@@ -371,7 +451,9 @@ export interface MetaStore {
   artifactRolesFor(userId: string, artifactIds: string[]): Promise<Record<string, Role>>
   /** Replace an artifact's full tag set (deduped, trimmed, lowercased upstream). */
   setArtifactTags(artifactId: string, tags: string[]): Promise<void>
+}
 
+export interface CollectionStore {
   // ---- Collections (shareable groups; a member's role propagates to items) -
   createCollection(c: NewCollection): Promise<CollectionRecord>
   getCollection(id: string): Promise<CollectionRecord | null>
@@ -393,7 +475,9 @@ export interface MetaStore {
   /** This user's collection-member roles over collections containing the
    *  artifact — folded into their effective artifact role (collection sharing). */
   collectionRolesForArtifact(artifactId: string, userId: string): Promise<Role[]>
+}
 
+export interface IntegrationStore {
   // ---- GitHub sync sources (a repo mirrored into a collection, one-way) ---
   createRepoSource(s: NewRepoSource): Promise<RepoSourceRecord>
   /** One source by id, scoped to a workspace when orgId is given. */
@@ -475,7 +559,9 @@ export interface MetaStore {
   ): Promise<DomainRecord | null>
   /** Release a hostname, scoped to its owning workspace. */
   deleteDomain(host: string, orgId: string): Promise<void>
+}
 
+export interface ReviewStore {
   // ---- Reviews: proposed versions awaiting approval ----------------------
   createProposal(p: NewProposal): Promise<ProposalRecord>
   getProposal(id: string): Promise<ProposalRecord | null>
@@ -508,7 +594,9 @@ export interface MetaStore {
     id: string,
     fields: { state: Extract<ReviewRoundState, "sent_back" | "approved">; note?: string | null },
   ): Promise<ReviewRoundRecord | null>
+}
 
+export interface ContextStore {
   // ---- Contexts + sessions (ask a context; its runner answers) -----------
   createContext(x: NewContext): Promise<ContextRecord>
   getContext(id: string): Promise<ContextRecord | null>
@@ -535,7 +623,9 @@ export interface MetaStore {
   addSessionMessage(m: NewSessionMessage, state: SessionState): Promise<SessionMessageRecord>
   /** A session's transcript, oldest first. */
   listSessionMessages(sessionId: string): Promise<SessionMessageRecord[]>
+}
 
+export interface DirectoryStore {
   // ---- User directory (reads Better Auth's `user` table) ----------------
   findUserByEmail(email: string): Promise<UserDir | null>
   getUsers(ids: string[]): Promise<UserDir[]>
@@ -612,7 +702,9 @@ export interface MetaStore {
   unreadNotificationCount(userId: string): Promise<number>
   /** Mark the given ids read, or all of the user's notifications when "all". */
   markNotificationsRead(userId: string, ids: string[] | "all"): Promise<void>
+}
 
+export interface AgentStore {
   // ---- Agents (mentionable principals that act via a scoped token) -------
   createAgent(a: NewAgent): Promise<AgentRecord>
   listAgents(orgId: string): Promise<AgentRecord[]>
@@ -661,7 +753,9 @@ export interface MetaStore {
   listPendingAgentMentions(agentId: string, limit: number): Promise<AgentMentionRecord[]>
   /** Mark a mention handled; false if it isn't this agent's or doesn't exist. */
   ackAgentMention(agentId: string, id: string): Promise<boolean>
+}
 
+export interface ModerationStore {
   // ---- Moderation: abuse reports, takedown, audit log --------------------
   createReport(r: NewReport): Promise<ReportRecord>
   /** One report by id, scoped to a workspace (or any, super-admin orgId undefined). */
@@ -712,6 +806,11 @@ export interface MetaStore {
    *  tables are absent). Pre-feature hand-published work without a GitHub identity has no
    *  recoverable author and is left null. */
   backfillAuthorIds(): Promise<number>
+  /** One-time boot backfill of the access model from the pre-v2 shape (`visibility`
+   *  + `general_role`) into `workspace_access` / `link_role` / `listed`. Idempotent:
+   *  it consumes `visibility` (resets it to the orphaned default), so a second run —
+   *  and every row created after — is a no-op. See docs/plans/access-model.md. */
+  backfillAccess(): Promise<void>
   createAuditLog(a: NewAuditLog): Promise<void>
   /** Moderation history, newest first. One workspace's, or — super-admin, orgId
    *  undefined — the whole instance's. Optionally narrowed to one artifact. */
@@ -720,6 +819,27 @@ export interface MetaStore {
     opts?: { artifactId?: string; limit?: number },
   ): Promise<AuditLogRecord[]>
 }
+
+/**
+ * The full metadata store: the composition of every feature sub-store above. Every
+ * adapter (packages/db) implements this whole surface; a consumer that needs only one
+ * area can depend on the narrower sub-store instead. Splitting the definition keeps a
+ * change to one feature from visually touching the others.
+ */
+export interface MetaStore
+  extends ArtifactStore,
+    CommentStore,
+    ArtifactQueryStore,
+    WebhookStore,
+    WorkspaceStore,
+    SocialStore,
+    CollectionStore,
+    IntegrationStore,
+    ReviewStore,
+    ContextStore,
+    DirectoryStore,
+    AgentStore,
+    ModerationStore {}
 
 /** What a user follows: a GitHub author (`target` = the login), a repo path prefix
  *  (`target` = a path prefix, e.g. "docs/plans"), or a Derive person (`target` = their
@@ -1321,10 +1441,15 @@ export interface OrgSettings {
   githubPreviewLink: boolean
   /** Post Derive activity to the connected Slack workspace. */
   slackPost: boolean
-  /** The visibility a NEW agent (MCP) publish lands with when the agent doesn't
-   *  say. Private by default: an agent's draft is the human's until they promote
-   *  it — sharing wider is the deliberate act (the blessing gesture). */
-  defaultAgentVisibility: Visibility
+  /** The access a NEW publish lands with when the publisher doesn't say (see
+   *  access-model.md). Factory default is the "team draft": `workspace_access =
+   *  member` (a pasted link opens for a teammate or an on-behalf agent at their
+   *  seat role), `link_role = none` (the world is out), `listed = none` (nothing
+   *  in a feed until promoted). Changing these never retroactively touches
+   *  existing artifacts. */
+  defaultWorkspaceAccess: WorkspaceAccess
+  defaultLinkRole: LinkRole
+  defaultListed: Listed
 }
 
 export const DEFAULT_ORG_SETTINGS: OrgSettings = {
@@ -1333,7 +1458,9 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
   githubMirrorComments: true,
   githubPreviewLink: true,
   slackPost: true,
-  defaultAgentVisibility: "private",
+  defaultWorkspaceAccess: "member",
+  defaultLinkRole: "none",
+  defaultListed: "none",
 }
 
 /** A connected Slack workspace (one per Derive workspace). `bot_token` is the OAuth bot
