@@ -269,7 +269,8 @@ if (cmd === "context") {
     }
     let up
     try {
-      up = readTarget(target)
+      // repos/ is the runner's clone workspace — pointer state, never source.
+      up = readTarget(target, ["repos"])
     } catch (e) {
       console.error(`error: ${e.message}`)
       process.exit(1)
@@ -579,7 +580,7 @@ if (flags.json) {
   // for the recipient.
   if (json.visibility === "org" || json.visibility === "private")
     console.log(
-      `  ${json.visibility === "org" ? "workspace-only" : "invite-only"} — pass --visibility link (or use the Share dialog) to make the URL readable by others`,
+      `  ${json.visibility === "org" ? "workspace-only" : "invite-only"} — pass --visibility public (or use the Share dialog) to widen the audience`,
     )
   if (flags.review)
     console.log(`  ↩ review requested — the human reviews in the app, then Send back`)
