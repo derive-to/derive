@@ -55,6 +55,11 @@ const INVISIBLE_TAGS = /<(script|style|noscript)\b[^>]*>[\s\S]*?<\/\1>/gi
 const HTML_COMMENT = /<!--[\s\S]*?-->/g
 const ANY_TAG = /<[^>]+>/g
 const ENTITY = /&(#x?[0-9a-fA-F]+|[a-zA-Z]+);/g
+// The five XML entities plus the common named entities real prose/documentation
+// actually uses (typographic punctuation, arrows, symbols) — found missing when
+// deep-testing the converter against real Sift/Derive docs, which use middot,
+// ndash, rarr, and curly quotes throughout. Unknown named entities still pass
+// through untouched; this just widens what "known" covers.
 const NAMED: Record<string, string> = {
   amp: "&",
   lt: "<",
@@ -62,6 +67,30 @@ const NAMED: Record<string, string> = {
   quot: '"',
   apos: "'",
   nbsp: " ",
+  mdash: "—",
+  ndash: "–",
+  hellip: "…",
+  middot: "·",
+  bull: "•",
+  rsquo: "’",
+  lsquo: "‘",
+  rdquo: "”",
+  ldquo: "“",
+  copy: "©",
+  reg: "®",
+  trade: "™",
+  deg: "°",
+  times: "×",
+  divide: "÷",
+  plusmn: "±",
+  rarr: "→",
+  larr: "←",
+  uarr: "↑",
+  darr: "↓",
+  shy: "­",
+  ensp: " ",
+  emsp: " ",
+  thinsp: " ",
 }
 
 /** Decode numeric character references and the common named entities the browser

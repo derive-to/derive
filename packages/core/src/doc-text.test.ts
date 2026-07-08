@@ -88,6 +88,42 @@ describe("htmlToMarkdown", () => {
     expect(md).toBe("| Name | N |\n| --- | ---: |\n| a\\|b | 1 |")
   })
 
+  it("wraps inline <code> found inside table cells (regression: found via real Sift docs)", () => {
+    const md = htmlToMarkdown(
+      doc(
+        "<table><tr><th>ID</th><th>Loc</th></tr>" +
+          '<tr><td>A-1</td><td>passes <code>orgId:""</code> into <code>filter-sql-builders.ts:64</code></td></tr>' +
+          "</table>",
+      ),
+    )
+    expect(md).toBe(
+      '| ID | Loc |\n| --- | --- |\n| A-1 | passes `orgId:""` into `filter-sql-builders.ts:64` |',
+    )
+    // No stray backtick fragments leaked after the table (the bug also corrupted
+    // trailing output, not just the missing backticks).
+    expect(md.trim().endsWith("|")).toBe(true)
+  })
+
+  it("keeps table structure intact when a cell contains block tags (regression: <p>/heading in a <td> used to corrupt the table)", () => {
+    const md = htmlToMarkdown(
+      doc(
+        "<h1>Doc</h1><table><tr><th>A</th><th>B</th></tr>" +
+          "<tr><td><p>one</p><p>two</p></td><td><h2>heading</h2>text</td></tr>" +
+          "<tr><td>x</td><td><hr>y</td></tr></table><h2>After</h2><p>tail</p>",
+      ),
+    )
+    const lines = md.split("\n\n")
+    expect(lines[0]).toBe("# Doc")
+    // The table renders as exactly one block: header + separator + 2 data rows,
+    // all on contiguous lines — no stray out-of-band pushes split it apart.
+    const tableBlock = lines.find((l) => l.startsWith("| A | B |"))
+    expect(tableBlock?.split("\n")).toHaveLength(4)
+    expect(tableBlock).toContain("| heading")
+    expect(tableBlock).toContain("| y |")
+    expect(lines.at(-2)).toBe("## After")
+    expect(lines.at(-1)).toBe("tail")
+  })
+
   it("renders nested blockquotes, hr, and br hard breaks", () => {
     expect(
       htmlToMarkdown(
@@ -101,6 +137,13 @@ describe("htmlToMarkdown", () => {
   it("decodes named, decimal, and hex entities; unknown ones pass through", () => {
     const md = htmlToMarkdown(doc("<p>&amp; &#65; &#x42; &nosuch; &nbsp;done</p>"))
     expect(md).toBe("& A B &nosuch; done")
+  })
+
+  it("decodes common typographic entities (regression: real Sift/Derive docs use these throughout)", () => {
+    const md = htmlToMarkdown(
+      doc("<p>v2 &mdash; final &middot; wave 1&ndash;3 &hellip; see &rarr; &ldquo;done&rdquo;</p>"),
+    )
+    expect(md).toBe("v2 — final · wave 1–3 … see → “done”")
   })
 
   it("collapses whitespace outside pre", () => {

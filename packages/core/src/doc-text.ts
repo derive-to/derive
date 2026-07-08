@@ -148,7 +148,32 @@ export function htmlToMarkdown(html: string): string {
     return quote + indent + lead
   }
 
+  // A table cell is a flat inline run (pipe-table syntax can't hold block content),
+  // so every "current buffer" operation — appending text, wrapping <code> — must
+  // target the active cell instead of the top-level `inline` string whenever one is
+  // open. Without this, a <code> (or any inline tag) inside a <td> silently loses
+  // its wrapping (the open/close pair reads/writes the wrong buffer, leaking stale
+  // fragments after the table), and a stray block tag (<p>, <div>, a heading) inside
+  // a cell — real HTML the sanitizer permits — would flush the WRONG buffer straight
+  // into the document's top-level `out` array, corrupting the table structure.
+  const activeCell = (): string[] | null => (table?.cell && table.row?.length ? table.row : null)
+  const inCell = () => activeCell() !== null
+
+  const bufGet = (): string => {
+    const cell = activeCell()
+    return cell ? (cell[cell.length - 1] as string) : inline
+  }
+  const bufSet = (s: string) => {
+    const cell = activeCell()
+    if (cell) cell[cell.length - 1] = s
+    else inline = s
+  }
+
   const flush = () => {
+    // Block structure (paragraphs, headings, lists, quotes) has no meaning inside a
+    // pipe-table cell — skip the out-array push/reset; the cell's accumulated text
+    // stays put and inline runs (its own tags) keep going through `append`.
+    if (inCell()) return
     const text = inline.replace(/[ \t]+/g, " ").trim()
     inline = ""
     codeStarts.length = 0
@@ -165,11 +190,9 @@ export function htmlToMarkdown(html: string): string {
   }
 
   const append = (s: string) => {
-    if (table?.cell && table.row?.length) {
-      table.row[table.row.length - 1] += s
-    } else {
-      inline += s
-    }
+    const cell = activeCell()
+    if (cell) cell[cell.length - 1] += s
+    else inline += s
   }
 
   const dropStack: string[] = []
@@ -234,6 +257,10 @@ export function htmlToMarkdown(html: string): string {
       case "h4":
       case "h5":
       case "h6": {
+        // A heading has no meaning inside a table cell (pipe-table syntax can't hold
+        // one) — ignore the tag; its text still flows into the cell as plain text via
+        // the normal emitText/append path.
+        if (inCell()) break
         if (!tag.closing) {
           flush()
           headingLevel = Number(tag.name[1])
@@ -266,6 +293,7 @@ export function htmlToMarkdown(html: string): string {
         append("\n")
         break
       case "hr":
+        if (inCell()) break // no block content inside a pipe-table cell
         flush()
         out.push(`${blockPrefix()}---`)
         itemPrefix = ""
@@ -296,12 +324,13 @@ export function htmlToMarkdown(html: string): string {
         break
       case "code": {
         if (!tag.closing) {
-          codeStarts.push(inline.length)
+          codeStarts.push(bufGet().length)
         } else {
           const start = codeStarts.pop()
           if (start !== undefined) {
-            const body = inline.slice(start)
-            inline = inline.slice(0, start) + codeSpan(body.trim())
+            const buf = bufGet()
+            const body = buf.slice(start)
+            bufSet(buf.slice(0, start) + codeSpan(body.trim()))
           }
         }
         break
