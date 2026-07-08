@@ -63,6 +63,9 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it reache
   `CODE_OF_CONDUCT.md`, issue + PR templates, `.editorconfig`.
 
 ### Fixed
+- `@derive-to/mcp` 0.4.1 — republish with the `@derive-to/cli` dependency resolved to
+  a real version. 0.4.0 shipped it as the raw `workspace:*` protocol (published with
+  `npm` instead of `pnpm`), which is uninstallable; 0.4.0 is deprecated.
 - `derive init` no longer hardcodes `visibility: private` into the scaffolded
   `derive.json` — it now inherits the workspace's team-draft default (workspace
   access at seat role, not listed), so a scaffolded project's first publish is
