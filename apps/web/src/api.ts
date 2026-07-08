@@ -43,13 +43,9 @@ export interface AuthCapabilities {
    *  button + enrollment. */
   passkey: boolean
 }
-/** An OAuth agent the user authorized to act on their behalf (the "Connected agents" list). */
-export interface ConnectedAgent {
-  clientId: string
-  clientName: string
-  scopes: string[]
-  grantedAt: string
-}
+/** An OAuth agent the user authorized to act on their behalf (the "Connected agents"
+ *  list). Generated from the OpenAPI spec. */
+export type ConnectedAgent = components["schemas"]["ConnectedAgent"]
 /** A public profile, by handle. Email is private and never returned here. */
 export interface PublicProfile {
   username: string
@@ -364,12 +360,8 @@ export interface DirUser {
 export type Notification = components["schemas"]["Notification"]
 /** An outbound webhook, without its signing secret. Generated from the OpenAPI spec. */
 export type Webhook = components["schemas"]["Webhook"]
-export interface Agent {
-  id: string
-  name: string
-  role: Role
-  created_at: string
-}
+/** A workspace-registered agent. Generated from the OpenAPI spec. */
+export type Agent = components["schemas"]["Agent"]
 /** An askable agent setup: a registered agent wired to a manifest artifact. */
 export interface ContextInfo {
   id: string
