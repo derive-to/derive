@@ -633,6 +633,14 @@ export function buildContext(deps: AppDeps) {
   const authorize = (c: Context, action: Action, a: ArtifactRecord): Promise<boolean> =>
     actorFor(c, a).then((actor) => can(actor, action, a.workspace_access, a.link_role))
 
+  /** Authorize using STANDING only — an explicit share or the workspace seat, NOT
+   *  the world link (link_role forced to `none`). The reach controls (change access,
+   *  toggle the lock) gate on this so the link's own grant can't bootstrap widening
+   *  the link/listing or clearing the password: a random signed-in URL holder with an
+   *  editor link edits content, but only a member or an explicit sharee re-shares. */
+  const authorizeStanding = (c: Context, action: Action, a: ArtifactRecord): Promise<boolean> =>
+    actorFor(c, a).then((actor) => can(actor, action, a.workspace_access, "none"))
+
   /**
    * True when the caller is an anonymous visitor — they may view public content
    * but nothing collaborative (comments, member list, proposals, analytics).
@@ -759,6 +767,7 @@ export function buildContext(deps: AppDeps) {
     anonViewerId,
     actorFor,
     authorize,
+    authorizeStanding,
     anonLocked,
     isPrincipal,
     isSuperAdmin,

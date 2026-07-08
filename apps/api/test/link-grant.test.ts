@@ -170,4 +170,52 @@ describe("access resolution: defaults, preconditions, updates", () => {
       listed: "none",
     })
   })
+
+  it("a world-link editor may revise content but cannot change access or the lock", async () => {
+    // Ben reaches Ana's artifact PURELY via an editor world-link — his own workspace,
+    // no membership here, no explicit share. The link grants edit (content), but the
+    // reach controls (/access, /locked) gate on STANDING, so the link can't bootstrap
+    // widening itself, re-listing publicly, or clearing the lock. See access-model.md.
+    const ben: TestUser = { id: "u_lg_ben", email: "ben@lg.test", name: "Ben", username: "benl" }
+    const { app } = makeAuthedApp("lg-standing", [ana, ben], undefined, { isolated: true })
+    await app.request("/v1/me", { headers: as(ana.email) }) // provision Ana's workspace
+    const a = await (
+      await publishAs(app, "<h1>d</h1>", { link_role: "editor" }, as(ana.email))
+    ).json()
+    expect(a.link_role).toBe("editor")
+
+    // Content: the editor link lets Ben publish a new version.
+    const form = new FormData()
+    form.append("file", new Blob([new TextEncoder().encode("<h1>v2</h1>")]), "d.html")
+    expect(
+      (
+        await app.request(`/v1/artifacts/${a.short_id}/versions`, {
+          method: "POST",
+          body: form,
+          headers: as(ben.email),
+        })
+      ).status,
+    ).toBe(201)
+
+    // Reach: Ben cannot re-list it publicly or toggle the change-lock — no standing.
+    const patch = (path: string, body: object) =>
+      app.request(`/v1/artifacts/${a.short_id}/${path}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json", ...as(ben.email) },
+        body: JSON.stringify(body),
+      })
+    expect((await patch("access", { listed: "public" })).status).toBe(403)
+    expect((await patch("locked", { locked: true })).status).toBe(403)
+
+    // The owner (real standing) still can.
+    expect(
+      (
+        await app.request(`/v1/artifacts/${a.short_id}/access`, {
+          method: "PATCH",
+          headers: { "content-type": "application/json", ...as(ana.email) },
+          body: JSON.stringify({ listed: "public" }),
+        })
+      ).status,
+    ).toBe(200)
+  })
 })

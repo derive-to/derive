@@ -100,6 +100,7 @@ export const artifactRoutes = (ctx: AppContext) => {
     actorFor,
     agentFor,
     authorize,
+    authorizeStanding,
     workspaceCan,
     collectionRole,
     limited,
@@ -941,7 +942,7 @@ export const artifactRoutes = (ctx: AppContext) => {
     async (c) => {
       const artifact = await meta.getByShortId(c.req.param("shortId"))
       if (!artifact) return bail(fail(c, 404, "not found"))
-      if (!(await authorize(c, "share", artifact))) return bail(fail(c, 403, "forbidden"))
+      if (!(await authorizeStanding(c, "share", artifact))) return bail(fail(c, 403, "forbidden"))
       const b = await readJson(
         c,
         z.object({
@@ -1009,7 +1010,7 @@ export const artifactRoutes = (ctx: AppContext) => {
     async (c) => {
       const artifact = await meta.getByShortId(c.req.param("shortId"))
       if (!artifact) return bail(fail(c, 404, "not found"))
-      if (!(await authorize(c, "publish", artifact))) return bail(fail(c, 403, "forbidden"))
+      if (!(await authorizeStanding(c, "publish", artifact))) return bail(fail(c, 403, "forbidden"))
       const b = await readJson(c, z.object({ locked: z.boolean() }))
       if (b instanceof Response) return bail(b)
       await meta.setLocked(artifact.id, b.locked ? 1 : 0)
