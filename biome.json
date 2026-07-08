@@ -11,6 +11,8 @@
       "**",
       "!**/routeTree.gen.ts",
       "!**/*.gen.ts",
+      "!**/openapi.json",
+      "!**/api-types.ts",
       "!**/dist",
       "!**/.output",
       "!**/.vinxi",

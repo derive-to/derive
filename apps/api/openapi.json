@@ -1,0 +1,6424 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Derive API",
+    "version": "1.0.0"
+  },
+  "components": {
+    "schemas": {
+      "PublicProfile": {
+        "type": "object",
+        "properties": {
+          "username": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string",
+            "nullable": true
+          },
+          "image": {
+            "type": "string",
+            "nullable": true
+          },
+          "profession": {
+            "type": "string",
+            "nullable": true
+          },
+          "about": {
+            "type": "string",
+            "nullable": true
+          },
+          "github_login": {
+            "type": "string",
+            "nullable": true
+          },
+          "teammate": {
+            "type": "boolean"
+          },
+          "stats": {
+            "type": "object",
+            "properties": {
+              "works": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "works"
+            ]
+          },
+          "followed_by_me": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "username",
+          "name",
+          "image"
+        ]
+      },
+      "Artifact": {
+        "type": "object",
+        "properties": {
+          "short_id": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string",
+            "nullable": true
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "file",
+              "bundle"
+            ]
+          },
+          "current_content_type": {
+            "type": "string",
+            "nullable": true
+          },
+          "locked": {
+            "type": "boolean"
+          },
+          "visibility": {
+            "type": "string",
+            "enum": [
+              "public",
+              "org",
+              "private"
+            ]
+          },
+          "password_protected": {
+            "type": "boolean"
+          },
+          "org_id": {
+            "type": "string"
+          },
+          "raw_token": {
+            "type": "string"
+          },
+          "spa": {
+            "type": "boolean"
+          },
+          "general_role": {
+            "type": "string",
+            "enum": [
+              "viewer",
+              "commenter"
+            ]
+          },
+          "current_version": {
+            "type": "number"
+          },
+          "versions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "n": {
+                  "type": "number"
+                },
+                "content_type": {
+                  "type": "string"
+                },
+                "author": {
+                  "type": "string"
+                },
+                "author_login": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "author_avatar": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "author_gh_id": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "handle": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "message": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "name": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "created_at": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "n",
+                "author",
+                "message",
+                "name",
+                "created_at"
+              ]
+            }
+          },
+          "sessions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/VersionSession"
+            }
+          },
+          "views": {
+            "type": "number"
+          },
+          "my_role": {
+            "type": "string",
+            "nullable": true,
+            "enum": [
+              "viewer",
+              "commenter",
+              "editor",
+              "owner",
+              null
+            ]
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "favorite": {
+            "type": "boolean"
+          },
+          "has_preview": {
+            "type": "boolean"
+          },
+          "open_proposals": {
+            "type": "number"
+          },
+          "proposals_total": {
+            "type": "number"
+          },
+          "open_threads": {
+            "type": "number"
+          },
+          "mentions_me": {
+            "type": "boolean"
+          },
+          "i_participated": {
+            "type": "boolean"
+          },
+          "collections": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "removed": {
+            "type": "boolean"
+          },
+          "managed": {
+            "type": "boolean"
+          },
+          "bundle": {
+            "type": "object",
+            "properties": {
+              "isSkill": {
+                "type": "boolean"
+              },
+              "name": {
+                "type": "string",
+                "nullable": true
+              },
+              "description": {
+                "type": "string",
+                "nullable": true
+              },
+              "entry": {
+                "type": "string"
+              },
+              "files": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "path": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "path",
+                    "type"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "isSkill",
+              "name",
+              "description",
+              "entry",
+              "files"
+            ]
+          },
+          "source_path": {
+            "type": "string",
+            "nullable": true
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "string",
+            "nullable": true
+          },
+          "author_name": {
+            "type": "string",
+            "nullable": true
+          },
+          "author_login": {
+            "type": "string",
+            "nullable": true
+          },
+          "author_avatar": {
+            "type": "string",
+            "nullable": true
+          },
+          "author_gh_id": {
+            "type": "string",
+            "nullable": true
+          },
+          "author": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "name": {
+                "type": "string",
+                "nullable": true
+              },
+              "login": {
+                "type": "string",
+                "nullable": true
+              },
+              "avatar": {
+                "type": "string",
+                "nullable": true
+              },
+              "handle": {
+                "type": "string",
+                "nullable": true
+              }
+            },
+            "required": [
+              "name",
+              "login",
+              "avatar",
+              "handle"
+            ]
+          }
+        },
+        "required": [
+          "short_id",
+          "url",
+          "title",
+          "kind",
+          "visibility",
+          "current_version",
+          "versions"
+        ]
+      },
+      "VersionSession": {
+        "type": "object",
+        "properties": {
+          "n": {
+            "type": "number"
+          },
+          "from_n": {
+            "type": "number"
+          },
+          "count": {
+            "type": "number"
+          },
+          "author": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string",
+            "nullable": true
+          },
+          "created_at": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "n",
+          "from_n",
+          "count",
+          "author",
+          "name",
+          "created_at"
+        ]
+      },
+      "DirUser": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string",
+            "nullable": true
+          },
+          "handle": {
+            "type": "string",
+            "nullable": true
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "user",
+              "agent"
+            ]
+          },
+          "profession": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "handle"
+        ]
+      },
+      "ArtifactMember": {
+        "type": "object",
+        "properties": {
+          "user_id": {
+            "type": "string"
+          },
+          "handle": {
+            "type": "string",
+            "nullable": true
+          },
+          "name": {
+            "type": "string",
+            "nullable": true
+          },
+          "profession": {
+            "type": "string",
+            "nullable": true
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "viewer",
+              "commenter",
+              "editor",
+              "owner"
+            ]
+          }
+        },
+        "required": [
+          "user_id",
+          "handle",
+          "name",
+          "role"
+        ]
+      },
+      "Workspace": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "viewer",
+              "commenter",
+              "editor",
+              "owner"
+            ]
+          },
+          "members": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ArtifactMember"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "role",
+          "members"
+        ]
+      },
+      "InviteResult": {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "member"
+                ]
+              },
+              "member": {
+                "$ref": "#/components/schemas/ArtifactMember"
+              }
+            },
+            "required": [
+              "kind",
+              "member"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "invite"
+                ]
+              },
+              "invite": {
+                "$ref": "#/components/schemas/Invite"
+              },
+              "accept_url": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "invite",
+              "accept_url"
+            ]
+          }
+        ]
+      },
+      "Invite": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "viewer",
+              "commenter",
+              "editor",
+              "owner"
+            ]
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "expires_at": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "email",
+          "role",
+          "created_at",
+          "expires_at"
+        ]
+      },
+      "InvitePreview": {
+        "type": "object",
+        "properties": {
+          "workspace": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "viewer",
+              "commenter",
+              "editor",
+              "owner"
+            ]
+          },
+          "email": {
+            "type": "string"
+          },
+          "inviter": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "workspace",
+          "role",
+          "email",
+          "inviter"
+        ]
+      },
+      "OrgSettings": {
+        "type": "object",
+        "properties": {
+          "emailNotifications": {
+            "type": "boolean"
+          },
+          "githubPostComments": {
+            "type": "boolean"
+          },
+          "githubMirrorComments": {
+            "type": "boolean"
+          },
+          "githubPreviewLink": {
+            "type": "boolean"
+          },
+          "slackPost": {
+            "type": "boolean"
+          },
+          "defaultAgentVisibility": {
+            "type": "string",
+            "enum": [
+              "public",
+              "org",
+              "private"
+            ]
+          }
+        },
+        "required": [
+          "emailNotifications",
+          "githubPostComments",
+          "githubMirrorComments",
+          "githubPreviewLink",
+          "slackPost",
+          "defaultAgentVisibility"
+        ]
+      },
+      "Workspaces": {
+        "type": "object",
+        "properties": {
+          "multi": {
+            "type": "boolean"
+          },
+          "active": {
+            "type": "string"
+          },
+          "account": {
+            "$ref": "#/components/schemas/AccountSummary"
+          },
+          "workspaces": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WorkspaceSummary"
+            }
+          }
+        },
+        "required": [
+          "multi",
+          "active",
+          "account",
+          "workspaces"
+        ]
+      },
+      "AccountSummary": {
+        "type": "object",
+        "nullable": true,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "handle": {
+            "type": "string",
+            "nullable": true
+          },
+          "name": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "handle",
+          "name"
+        ]
+      },
+      "WorkspaceSummary": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "viewer",
+              "commenter",
+              "editor",
+              "owner"
+            ]
+          },
+          "personal": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "role",
+          "personal"
+        ]
+      },
+      "Agent": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "viewer",
+              "commenter",
+              "editor",
+              "owner"
+            ]
+          },
+          "created_at": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "role",
+          "created_at"
+        ]
+      },
+      "ConnectedAgent": {
+        "type": "object",
+        "properties": {
+          "clientId": {
+            "type": "string"
+          },
+          "clientName": {
+            "type": "string"
+          },
+          "scopes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "grantedAt": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "clientId",
+          "clientName",
+          "scopes",
+          "grantedAt"
+        ]
+      },
+      "AssetRef": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "ref": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "image/png",
+              "image/jpeg",
+              "image/gif",
+              "image/webp"
+            ]
+          },
+          "size": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "key",
+          "ref",
+          "type",
+          "size"
+        ]
+      },
+      "Follow": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "org_id": {
+            "type": "string"
+          },
+          "user_id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "author",
+              "path",
+              "user"
+            ]
+          },
+          "target": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "handle": {
+            "type": "string",
+            "nullable": true
+          },
+          "name": {
+            "type": "string",
+            "nullable": true
+          },
+          "image": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "org_id",
+          "user_id",
+          "kind",
+          "target",
+          "created_at"
+        ]
+      },
+      "Collection": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "created_by": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "count": {
+            "type": "number"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "manual",
+              "repo",
+              "pr"
+            ]
+          },
+          "parentId": {
+            "type": "string"
+          },
+          "prNumber": {
+            "type": "number"
+          },
+          "repo": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "created_by",
+          "created_at",
+          "count"
+        ]
+      },
+      "GithubSyncStatus": {
+        "type": "object",
+        "properties": {
+          "sources": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RepoSource"
+            }
+          },
+          "prs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PrPreview"
+            }
+          },
+          "app": {
+            "type": "object",
+            "properties": {
+              "configured": {
+                "type": "boolean"
+              },
+              "slug": {
+                "type": "string"
+              },
+              "upToDate": {
+                "type": "boolean"
+              },
+              "missing": {
+                "type": "object",
+                "properties": {
+                  "permissions": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "string"
+                    }
+                  },
+                  "events": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": [
+                  "permissions",
+                  "events"
+                ]
+              },
+              "permissionsUrl": {
+                "type": "string"
+              },
+              "approveUrl": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "configured"
+            ]
+          },
+          "installations": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GithubInstallation"
+            }
+          }
+        },
+        "required": [
+          "sources",
+          "prs",
+          "app",
+          "installations"
+        ]
+      },
+      "RepoSource": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "collection_id": {
+            "type": "string"
+          },
+          "repo": {
+            "type": "string"
+          },
+          "ref": {
+            "type": "string"
+          },
+          "includes": {
+            "type": "string"
+          },
+          "token": {
+            "type": "string",
+            "nullable": true
+          },
+          "installation_id": {
+            "type": "string",
+            "nullable": true
+          },
+          "last_synced_at": {
+            "type": "string",
+            "nullable": true
+          },
+          "last_status": {
+            "type": "string",
+            "nullable": true
+          },
+          "created_by": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "file_count": {
+            "type": "number"
+          },
+          "progress": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "collection_id",
+          "repo",
+          "ref",
+          "includes",
+          "token",
+          "installation_id",
+          "last_synced_at",
+          "last_status",
+          "created_by",
+          "created_at",
+          "file_count",
+          "progress"
+        ]
+      },
+      "PrPreview": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "collection_id": {
+            "type": "string"
+          },
+          "repo": {
+            "type": "string"
+          },
+          "pr_number": {
+            "type": "number"
+          },
+          "title": {
+            "type": "string"
+          },
+          "last_status": {
+            "type": "string",
+            "nullable": true
+          },
+          "last_synced_at": {
+            "type": "string",
+            "nullable": true
+          },
+          "file_count": {
+            "type": "number"
+          },
+          "progress": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "collection_id",
+          "repo",
+          "pr_number",
+          "title",
+          "last_status",
+          "last_synced_at",
+          "file_count",
+          "progress"
+        ]
+      },
+      "GithubInstallation": {
+        "type": "object",
+        "properties": {
+          "installation_id": {
+            "type": "string"
+          },
+          "account_login": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "installation_id",
+          "account_login"
+        ]
+      },
+      "InstallationRepo": {
+        "type": "object",
+        "properties": {
+          "full_name": {
+            "type": "string"
+          },
+          "private": {
+            "type": "boolean"
+          },
+          "default_branch": {
+            "type": "string"
+          },
+          "pushed_at": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "full_name",
+          "private",
+          "default_branch",
+          "pushed_at"
+        ]
+      },
+      "SyncPreview": {
+        "type": "object",
+        "properties": {
+          "total": {
+            "type": "number"
+          },
+          "md": {
+            "type": "number"
+          },
+          "html": {
+            "type": "number"
+          },
+          "other": {
+            "type": "number"
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "total",
+          "md",
+          "html",
+          "other",
+          "truncated"
+        ]
+      },
+      "SyncStatus": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "repo": {
+            "type": "string"
+          },
+          "progress": {
+            "type": "string",
+            "nullable": true
+          },
+          "last_status": {
+            "type": "string",
+            "nullable": true
+          },
+          "last_synced_at": {
+            "type": "string",
+            "nullable": true
+          },
+          "file_count": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "id",
+          "repo",
+          "progress",
+          "last_status",
+          "last_synced_at",
+          "file_count"
+        ]
+      },
+      "SlackStatus": {
+        "type": "object",
+        "properties": {
+          "available": {
+            "type": "boolean"
+          },
+          "connected": {
+            "type": "boolean"
+          },
+          "team_name": {
+            "type": "string",
+            "nullable": true
+          },
+          "default_channel": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "available",
+          "connected",
+          "team_name",
+          "default_channel"
+        ]
+      },
+      "Report": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "artifact_id": {
+            "type": "string"
+          },
+          "artifact_short_id": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "detail": {
+            "type": "string",
+            "nullable": true
+          },
+          "reporter": {
+            "type": "string",
+            "nullable": true
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "open",
+              "actioned",
+              "dismissed"
+            ]
+          },
+          "created_at": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "artifact_id",
+          "artifact_short_id",
+          "reason",
+          "detail",
+          "reporter",
+          "state",
+          "created_at"
+        ]
+      },
+      "AuditEntry": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "org_id": {
+            "type": "string"
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "report",
+              "takedown",
+              "reinstate",
+              "dismiss"
+            ]
+          },
+          "artifact_id": {
+            "type": "string",
+            "nullable": true
+          },
+          "actor": {
+            "type": "string"
+          },
+          "detail": {
+            "type": "string",
+            "nullable": true
+          },
+          "created_at": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "org_id",
+          "action",
+          "artifact_id",
+          "actor",
+          "detail",
+          "created_at"
+        ]
+      },
+      "DiffOp": {
+        "type": "object",
+        "properties": {
+          "t": {
+            "type": "string",
+            "enum": [
+              "ctx",
+              "add",
+              "del"
+            ]
+          },
+          "line": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "t",
+          "line"
+        ]
+      },
+      "Proposal": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "open",
+              "approved",
+              "changes_requested",
+              "withdrawn"
+            ]
+          },
+          "author": {
+            "type": "string"
+          },
+          "on_behalf_of": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "handle": {
+                "type": "string",
+                "nullable": true
+              },
+              "name": {
+                "type": "string",
+                "nullable": true
+              }
+            },
+            "required": [
+              "handle",
+              "name"
+            ]
+          },
+          "message": {
+            "type": "string",
+            "nullable": true
+          },
+          "base_version": {
+            "type": "number"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "file",
+              "bundle"
+            ]
+          },
+          "decided_by": {
+            "type": "string",
+            "nullable": true
+          },
+          "decided_version": {
+            "type": "number",
+            "nullable": true
+          },
+          "decision_note": {
+            "type": "string",
+            "nullable": true
+          },
+          "decided_at": {
+            "type": "string",
+            "nullable": true
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "preview_url": {
+            "type": "string"
+          },
+          "diff": {
+            "type": "object",
+            "properties": {
+              "base_version": {
+                "type": "number"
+              },
+              "ops": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/DiffOp"
+                }
+              }
+            },
+            "required": [
+              "base_version",
+              "ops"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "state",
+          "author",
+          "message",
+          "base_version",
+          "kind",
+          "decided_by",
+          "decided_version",
+          "decision_note",
+          "decided_at",
+          "created_at",
+          "preview_url"
+        ]
+      },
+      "ReviewRound": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "artifact_id": {
+            "type": "string"
+          },
+          "version": {
+            "type": "number"
+          },
+          "requested_by": {
+            "type": "string"
+          },
+          "requested_for": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "sent_back",
+              "approved"
+            ]
+          },
+          "note": {
+            "type": "string",
+            "nullable": true
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "resolved_at": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "artifact_id",
+          "version",
+          "requested_by",
+          "requested_for",
+          "state",
+          "note",
+          "created_at",
+          "resolved_at"
+        ]
+      },
+      "Comment": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "thread_id": {
+            "type": "string"
+          },
+          "base_version": {
+            "type": "number"
+          },
+          "path": {
+            "type": "string",
+            "nullable": true
+          },
+          "anchor": {
+            "type": "string",
+            "nullable": true
+          },
+          "body_md": {
+            "type": "string"
+          },
+          "author": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "open",
+              "addressed",
+              "resolved",
+              "outdated"
+            ]
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "anchored": {
+            "type": "boolean"
+          },
+          "reactions": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "edited": {
+            "type": "boolean"
+          },
+          "edited_at": {
+            "type": "string",
+            "nullable": true
+          },
+          "deleted": {
+            "type": "boolean"
+          },
+          "mentions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Mention"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "thread_id",
+          "base_version",
+          "path",
+          "anchor",
+          "body_md",
+          "author",
+          "state",
+          "created_at"
+        ]
+      },
+      "Mention": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name"
+        ]
+      },
+      "ContextInfo": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "agent_id": {
+            "type": "string"
+          },
+          "manifest_short_id": {
+            "type": "string",
+            "nullable": true
+          },
+          "created_by": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "agent_id",
+          "manifest_short_id",
+          "created_by",
+          "created_at"
+        ]
+      },
+      "Session": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "context_id": {
+            "type": "string"
+          },
+          "asker_id": {
+            "type": "string"
+          },
+          "context_version": {
+            "type": "number"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "open",
+              "answered",
+              "escalated",
+              "failed",
+              "closed"
+            ]
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "context_id",
+          "asker_id",
+          "context_version",
+          "state",
+          "created_at",
+          "updated_at"
+        ]
+      },
+      "SessionMessage": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "author_kind": {
+            "type": "string",
+            "enum": [
+              "asker",
+              "agent"
+            ]
+          },
+          "author_id": {
+            "type": "string"
+          },
+          "body_md": {
+            "type": "string"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/SessionMeta"
+          },
+          "created_at": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "author_kind",
+          "author_id",
+          "body_md",
+          "meta",
+          "created_at"
+        ]
+      },
+      "SessionMeta": {
+        "type": "object",
+        "nullable": true,
+        "properties": {
+          "query": {
+            "type": "string",
+            "nullable": true
+          },
+          "confidence": {
+            "type": "number",
+            "nullable": true
+          },
+          "caveats": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "escalation_reason": {
+            "type": "string",
+            "nullable": true
+          },
+          "artifacts": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "short_id": {
+                  "type": "string"
+                },
+                "title": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "short_id",
+                "title"
+              ]
+            }
+          }
+        }
+      },
+      "Viewer": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "role"
+        ]
+      },
+      "Analytics": {
+        "type": "object",
+        "properties": {
+          "total": {
+            "type": "number"
+          },
+          "unique": {
+            "type": "number"
+          },
+          "anonViewers": {
+            "type": "number"
+          },
+          "perVersion": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "version": {
+                  "type": "number"
+                },
+                "count": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "version",
+                "count"
+              ]
+            }
+          },
+          "daily": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "day": {
+                  "type": "string"
+                },
+                "count": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "day",
+                "count"
+              ]
+            }
+          },
+          "recent": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "viewer": {
+                  "type": "string"
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "user",
+                    "anon"
+                  ]
+                },
+                "at": {
+                  "type": "string"
+                },
+                "avatar": {
+                  "type": "string",
+                  "nullable": true
+                }
+              },
+              "required": [
+                "viewer",
+                "kind",
+                "at"
+              ]
+            }
+          }
+        },
+        "required": [
+          "total",
+          "unique",
+          "anonViewers",
+          "perVersion",
+          "daily",
+          "recent"
+        ]
+      },
+      "Notification": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "user_id": {
+            "type": "string"
+          },
+          "actor": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "mention",
+              "comment",
+              "share",
+              "follow",
+              "publish",
+              "review"
+            ]
+          },
+          "artifact_id": {
+            "type": "string"
+          },
+          "artifact_short_id": {
+            "type": "string"
+          },
+          "artifact_title": {
+            "type": "string",
+            "nullable": true
+          },
+          "thread_id": {
+            "type": "string"
+          },
+          "comment_id": {
+            "type": "string"
+          },
+          "preview": {
+            "type": "string"
+          },
+          "read": {
+            "anyOf": [
+              {
+                "type": "number",
+                "enum": [
+                  0
+                ]
+              },
+              {
+                "type": "number",
+                "enum": [
+                  1
+                ]
+              }
+            ]
+          },
+          "created_at": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "user_id",
+          "actor",
+          "kind",
+          "artifact_id",
+          "artifact_short_id",
+          "artifact_title",
+          "thread_id",
+          "comment_id",
+          "preview",
+          "read",
+          "created_at"
+        ]
+      },
+      "Webhook": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "artifact_id": {
+            "type": "string",
+            "nullable": true
+          },
+          "url": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "generic",
+              "slack"
+            ]
+          },
+          "events": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string",
+            "nullable": true
+          },
+          "active": {
+            "anyOf": [
+              {
+                "type": "number",
+                "enum": [
+                  0
+                ]
+              },
+              {
+                "type": "number",
+                "enum": [
+                  1
+                ]
+              }
+            ]
+          },
+          "created_at": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "artifact_id",
+          "url",
+          "kind",
+          "events",
+          "label",
+          "active",
+          "created_at"
+        ]
+      },
+      "Delivery": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "event_type": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "delivered",
+              "dead"
+            ]
+          },
+          "attempts": {
+            "type": "number"
+          },
+          "last_error": {
+            "type": "string",
+            "nullable": true
+          },
+          "created_at": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "event_type",
+          "status",
+          "attempts",
+          "last_error",
+          "created_at"
+        ]
+      },
+      "ArtifactDomain": {
+        "type": "object",
+        "properties": {
+          "host": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "subdomain",
+              "custom"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "pending",
+              "error"
+            ]
+          },
+          "created_at": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "host",
+          "url",
+          "kind",
+          "status",
+          "created_at"
+        ]
+      },
+      "WorkspaceDomain": {
+        "type": "object",
+        "properties": {
+          "host": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "pending",
+              "error"
+            ]
+          },
+          "records": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DomainDnsRecord"
+            }
+          },
+          "created_at": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "host",
+          "status",
+          "created_at"
+        ]
+      },
+      "DomainDnsRecord": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "value": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "name",
+          "value"
+        ]
+      },
+      "AuthCapabilities": {
+        "type": "object",
+        "properties": {
+          "password": {
+            "type": "boolean"
+          },
+          "google": {
+            "type": "boolean"
+          },
+          "github": {
+            "type": "boolean"
+          },
+          "oidc": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "providerId": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "providerId",
+              "label"
+            ]
+          },
+          "emailVerification": {
+            "type": "boolean"
+          },
+          "passwordReset": {
+            "type": "boolean"
+          },
+          "passkey": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "password",
+          "google",
+          "github",
+          "oidc",
+          "emailVerification",
+          "passwordReset",
+          "passkey"
+        ]
+      }
+    },
+    "parameters": {}
+  },
+  "paths": {
+    "/v1/me": {
+      "get": {
+        "tags": [
+          "Session"
+        ],
+        "summary": "The signed-in user + their active-workspace role.",
+        "responses": {
+          "200": {
+            "description": "The current user (SessionUser + role) and whether multi-workspace is on.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "user": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "email": {
+                          "type": "string"
+                        },
+                        "name": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "username": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "discoverable": {
+                          "type": "boolean"
+                        },
+                        "profession": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "about": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "onboarded": {
+                          "type": "boolean"
+                        },
+                        "emailVerified": {
+                          "type": "boolean"
+                        },
+                        "role": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "email",
+                        "name",
+                        "username",
+                        "discoverable",
+                        "profession",
+                        "about",
+                        "onboarded",
+                        "emailVerified",
+                        "role"
+                      ]
+                    },
+                    "multi": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "user",
+                    "multi"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/me/username": {
+      "post": {
+        "tags": [
+          "Session"
+        ],
+        "summary": "Claim or change your @handle.",
+        "responses": {
+          "200": {
+            "description": "The new handle.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "username": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "username"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/me/profile": {
+      "post": {
+        "tags": [
+          "Session"
+        ],
+        "summary": "Set your team role + one-line bio.",
+        "responses": {
+          "200": {
+            "description": "The saved profession + about (null clears a field).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "profession": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "about": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  },
+                  "required": [
+                    "profession",
+                    "about"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/me/discoverable": {
+      "post": {
+        "tags": [
+          "Session"
+        ],
+        "summary": "Opt in/out of being findable in people search.",
+        "responses": {
+          "200": {
+            "description": "The new discoverability.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "discoverable": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "discoverable"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/me/onboarded": {
+      "post": {
+        "tags": [
+          "Session"
+        ],
+        "summary": "Mark first-run onboarding finished (server-authoritative).",
+        "responses": {
+          "200": {
+            "description": "Onboarded.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "onboarded": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "onboarded"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/users/search": {
+      "get": {
+        "tags": [
+          "Session"
+        ],
+        "summary": "Search opted-in accounts by handle or name.",
+        "responses": {
+          "200": {
+            "description": "Matching public profiles (public fields only).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "users": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/PublicProfile"
+                      }
+                    }
+                  },
+                  "required": [
+                    "users"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/people": {
+      "get": {
+        "tags": [
+          "Session"
+        ],
+        "summary": "Browse the people you work with (optionally filtered by ?query=).",
+        "responses": {
+          "200": {
+            "description": "Public profiles (public fields only).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "users": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/PublicProfile"
+                      }
+                    }
+                  },
+                  "required": [
+                    "users"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/users/{handle}": {
+      "get": {
+        "tags": [
+          "Session"
+        ],
+        "summary": "A public profile by @handle (email never returned).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "handle",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The public profile with stats + follow state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "user": {
+                      "$ref": "#/components/schemas/PublicProfile"
+                    }
+                  },
+                  "required": [
+                    "user"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/users/{handle}/artifacts": {
+      "get": {
+        "tags": [
+          "Session"
+        ],
+        "summary": "A user's authored artifacts (keyset-paginated).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "handle",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A page of the user's artifacts + next cursor.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "artifacts": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Artifact"
+                      }
+                    },
+                    "next_cursor": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  },
+                  "required": [
+                    "artifacts",
+                    "next_cursor"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/me/avatar": {
+      "post": {
+        "tags": [
+          "Session"
+        ],
+        "summary": "Upload your profile picture (multipart; raster images only).",
+        "responses": {
+          "200": {
+            "description": "The served avatar URL.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "image": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "image"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/users": {
+      "get": {
+        "tags": [
+          "Session"
+        ],
+        "summary": "The @mention directory: workspace people + agents (auth only).",
+        "responses": {
+          "200": {
+            "description": "Mentionable people + agents (by @handle, never email).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "users": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/DirUser"
+                      }
+                    }
+                  },
+                  "required": [
+                    "users"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/workspace": {
+      "get": {
+        "tags": [
+          "Workspace"
+        ],
+        "summary": "The active workspace: name, the caller's role, and the member directory.",
+        "responses": {
+          "200": {
+            "description": "The workspace + its members.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/Workspace"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "multi": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "multi"
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "Workspace"
+        ],
+        "summary": "Rename the workspace (Admin only).",
+        "responses": {
+          "200": {
+            "description": "The new name.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "name"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/workspace/members": {
+      "put": {
+        "tags": [
+          "Workspace"
+        ],
+        "summary": "Add a member (by @handle or email) or change their role (Admin only).",
+        "responses": {
+          "201": {
+            "description": "The added/updated member.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArtifactMember"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/workspace/members/{userId}": {
+      "patch": {
+        "tags": [
+          "Workspace"
+        ],
+        "summary": "Change a member's role (Admin only; keeps at least one admin).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "userId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The member's new role.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "user_id": {
+                      "type": "string"
+                    },
+                    "role": {
+                      "type": "string",
+                      "enum": [
+                        "viewer",
+                        "commenter",
+                        "editor",
+                        "owner"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "user_id",
+                    "role"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Workspace"
+        ],
+        "summary": "Remove a member (Admin only; keeps at least one admin).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "userId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "The member was removed (idempotent)."
+          }
+        }
+      }
+    },
+    "/v1/workspace/invites": {
+      "post": {
+        "tags": [
+          "Workspace"
+        ],
+        "summary": "Invite by email — adds an existing account directly, else a pending invite.",
+        "responses": {
+          "201": {
+            "description": "Either the member added directly, or the pending invite + accept link.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InviteResult"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "Workspace"
+        ],
+        "summary": "Pending invitations for the workspace (Admin only).",
+        "responses": {
+          "200": {
+            "description": "The pending invites (no tokens).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "invites": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Invite"
+                      }
+                    }
+                  },
+                  "required": [
+                    "invites"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/workspace/invites/{id}": {
+      "delete": {
+        "tags": [
+          "Workspace"
+        ],
+        "summary": "Revoke a pending invitation (Admin only).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "The invitation was revoked."
+          }
+        }
+      }
+    },
+    "/v1/invites/{token}": {
+      "get": {
+        "tags": [
+          "Workspace"
+        ],
+        "summary": "Preview an invitation (the accept page reads this).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "token",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The workspace + role the token grants.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvitePreview"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/invites/{token}/accept": {
+      "post": {
+        "tags": [
+          "Workspace"
+        ],
+        "summary": "Accept an invitation (the signed-in token holder joins).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "token",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The workspace joined + the caller's effective role.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "org_id": {
+                      "type": "string"
+                    },
+                    "role": {
+                      "type": "string",
+                      "enum": [
+                        "viewer",
+                        "commenter",
+                        "editor",
+                        "owner"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "org_id",
+                    "role"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/workspace/settings": {
+      "get": {
+        "tags": [
+          "Workspace"
+        ],
+        "summary": "The workspace's integration toggles (any member).",
+        "responses": {
+          "200": {
+            "description": "The workspace settings.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrgSettings"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "Workspace"
+        ],
+        "summary": "Update the workspace's integration toggles (Admin only).",
+        "responses": {
+          "200": {
+            "description": "The merged settings.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrgSettings"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/workspaces": {
+      "get": {
+        "tags": [
+          "Workspace"
+        ],
+        "summary": "The caller's workspaces + which one this request resolved to.",
+        "responses": {
+          "200": {
+            "description": "The caller's workspaces and the active id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Workspaces"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Workspace"
+        ],
+        "summary": "Create a workspace (the creator becomes its Admin and is switched in).",
+        "responses": {
+          "201": {
+            "description": "The created workspace.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceSummary"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/workspace/switch": {
+      "post": {
+        "tags": [
+          "Workspace"
+        ],
+        "summary": "Switch the active workspace (must be a member).",
+        "responses": {
+          "200": {
+            "description": "The new active workspace id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "active": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "active"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/workspaces/{id}": {
+      "delete": {
+        "tags": [
+          "Workspace"
+        ],
+        "summary": "Delete an empty workspace you own (switches away if it was active).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The deleted id + the new active workspace (or null).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "deleted": {
+                      "type": "string"
+                    },
+                    "active": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  },
+                  "required": [
+                    "deleted",
+                    "active"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/agents": {
+      "get": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "List the workspace's registered agents (Admin only).",
+        "responses": {
+          "200": {
+            "description": "The workspace's agents.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "agents": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Agent"
+                      }
+                    }
+                  },
+                  "required": [
+                    "agents"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Register an agent and mint its token (returned once).",
+        "responses": {
+          "201": {
+            "description": "The created agent, plus its bearer token (shown only here).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/Agent"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "token": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "token"
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/agents/{id}": {
+      "delete": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Delete an agent (Admin only).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "The agent was deleted."
+          }
+        }
+      }
+    },
+    "/v1/me/connected-agents": {
+      "get": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "List the OAuth agents the signed-in user authorized to act on their behalf.",
+        "responses": {
+          "200": {
+            "description": "The caller's connected agents.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "agents": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/ConnectedAgent"
+                      }
+                    }
+                  },
+                  "required": [
+                    "agents"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/me/connected-agents/{clientId}": {
+      "delete": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Revoke a connected agent's authorization.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "clientId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "The grant was revoked (idempotent)."
+          }
+        }
+      }
+    },
+    "/v1/artifacts": {
+      "get": {
+        "tags": [
+          "Artifacts"
+        ],
+        "summary": "List artifacts (keyset-paginated; ?query=/tag=/collection=/scope=/author=/favorite=).",
+        "responses": {
+          "200": {
+            "description": "A page of artifacts + next cursor (+ the collection when scoped to one).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "artifacts": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Artifact"
+                      }
+                    },
+                    "next_cursor": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "collection": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "title": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "title"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "artifacts",
+                    "next_cursor"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/tags": {
+      "get": {
+        "tags": [
+          "Artifacts"
+        ],
+        "summary": "Browse summary for the sidebar (totals + tag counts).",
+        "responses": {
+          "200": {
+            "description": "Total artifacts, the caller's favorite/owned counts, tag→count, and workspace name.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "total": {
+                      "type": "number"
+                    },
+                    "favorites": {
+                      "type": "number"
+                    },
+                    "mine": {
+                      "type": "number"
+                    },
+                    "mine_private": {
+                      "type": "number"
+                    },
+                    "tags": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "tag": {
+                            "type": "string"
+                          },
+                          "count": {
+                            "type": "number"
+                          }
+                        },
+                        "required": [
+                          "tag",
+                          "count"
+                        ]
+                      }
+                    },
+                    "workspace": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  },
+                  "required": [
+                    "total",
+                    "favorites",
+                    "mine",
+                    "mine_private",
+                    "tags",
+                    "workspace"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/artifacts/{shortId}": {
+      "get": {
+        "tags": [
+          "Artifacts"
+        ],
+        "summary": "One artifact with its versions, sessions, roles, and counts.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "shortId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The artifact detail (or a minimal tombstone when taken down).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Artifact"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Artifacts"
+        ],
+        "summary": "Permanently delete an artifact and all its dependents (owner only).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "shortId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "The artifact was deleted."
+          }
+        }
+      }
+    },
+    "/v1/artifacts/{shortId}/visibility": {
+      "patch": {
+        "tags": [
+          "Artifacts"
+        ],
+        "summary": "Change an artifact's general access (visibility + general-access role).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "shortId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The new visibility, general-access role, and lock state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "visibility": {
+                      "type": "string",
+                      "enum": [
+                        "public",
+                        "org",
+                        "private"
+                      ]
+                    },
+                    "general_role": {
+                      "type": "string",
+                      "enum": [
+                        "viewer",
+                        "commenter"
+                      ]
+                    },
+                    "locked": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "visibility",
+                    "general_role",
+                    "locked"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/artifacts/{shortId}/locked": {
+      "patch": {
+        "tags": [
+          "Artifacts"
+        ],
+        "summary": "Lock or unlock an artifact (locked ⇒ changes go through review).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "shortId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The new locked state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "locked": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "locked"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/artifacts/{shortId}/move": {
+      "post": {
+        "tags": [
+          "Artifacts"
+        ],
+        "summary": "Move an artifact to another workspace you belong to (owner only).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "shortId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The artifact's new workspace id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "org_id": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "org_id"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/artifacts/{shortId}/unlock": {
+      "post": {
+        "tags": [
+          "Artifacts"
+        ],
+        "summary": "Unlock a password-protected artifact (drops an unlock cookie).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "shortId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Unlocked.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "ok"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/artifacts/{shortId}/restore": {
+      "post": {
+        "tags": [
+          "Artifacts"
+        ],
+        "summary": "Restore a past version as a new revision (history is never rewritten).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "shortId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "The artifact after restore, plus the new version number.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/Artifact"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "published": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "published"
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/preview": {
+      "post": {
+        "tags": [
+          "Artifacts"
+        ],
+        "summary": "Render a markdown draft to the exact published HTML (stateless; signed-in only).",
+        "responses": {
+          "200": {
+            "description": "The rendered HTML.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "html": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "html"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/assets": {
+      "post": {
+        "tags": [
+          "Assets"
+        ],
+        "summary": "Stage a binary image asset (raw or multipart) and get its asset:<hash> handle.",
+        "responses": {
+          "200": {
+            "description": "The stored asset's content-addressed handle.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssetRef"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/artifacts/{shortId}/members": {
+      "get": {
+        "tags": [
+          "Sharing"
+        ],
+        "summary": "List an artifact's collaborators (collaborators only).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "shortId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The workspace default role and the artifact's members.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "default_role": {
+                      "type": "string",
+                      "enum": [
+                        "viewer",
+                        "commenter",
+                        "editor",
+                        "owner"
+                      ]
+                    },
+                    "members": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/ArtifactMember"
+                      }
+                    }
+                  },
+                  "required": [
+                    "default_role",
+                    "members"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Sharing"
+        ],
+        "summary": "Share an artifact with a person at a role.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "shortId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "The added member.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArtifactMember"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/artifacts/{shortId}/members/{userId}": {
+      "delete": {
+        "tags": [
+          "Sharing"
+        ],
+        "summary": "Remove a collaborator from an artifact.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "shortId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "userId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "The collaborator was removed."
+          }
+        }
+      }
+    },
+    "/v1/artifacts/{shortId}/favorite": {
+      "put": {
+        "tags": [
+          "Favorites"
+        ],
+        "summary": "Star an artifact.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "shortId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Starred.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "favorite": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "favorite"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Favorites"
+        ],
+        "summary": "Unstar an artifact.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "shortId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Unstarred.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "favorite": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "favorite"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/artifacts/{shortId}/tags": {
+      "put": {
+        "tags": [
+          "Favorites"
+        ],
+        "summary": "Set an artifact's browse tags (editors).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "shortId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The normalized tags.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "tags": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "required": [
+                    "tags"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/follows": {
+      "get": {
+        "tags": [
+          "Follows"
+        ],
+        "summary": "List the signed-in user's follows in their active workspace.",
+        "responses": {
+          "200": {
+            "description": "The caller's follows. People-follows carry the followed person's public handle/name/avatar.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "follows": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Follow"
+                      }
+                    }
+                  },
+                  "required": [
+                    "follows"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Follows"
+        ],
+        "summary": "Follow a GitHub author, a repo path prefix, or a person.",
+        "responses": {
+          "201": {
+            "description": "The created follow.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "follow": {
+                      "$ref": "#/components/schemas/Follow"
+                    }
+                  },
+                  "required": [
+                    "follow"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Follows"
+        ],
+        "summary": "Remove a follow (idempotent).",
+        "responses": {
+          "204": {
+            "description": "The follow was removed."
+          }
+        }
+      }
+    },
+    "/v1/collections": {
+      "get": {
+        "tags": [
+          "Collections"
+        ],
+        "summary": "List the active workspace's collections (members only).",
+        "responses": {
+          "200": {
+            "description": "The workspace's collections, each with its item count and origin.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "collections": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Collection"
+                      }
+                    }
+                  },
+                  "required": [
+                    "collections"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Collections"
+        ],
+        "summary": "Create a collection.",
+        "responses": {
+          "201": {
+            "description": "The created collection (empty, manual).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Collection"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/collections/{id}": {
+      "patch": {
+        "tags": [
+          "Collections"
+        ],
+        "summary": "Rename a collection.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The updated collection.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Collection"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Collections"
+        ],
+        "summary": "Delete a collection.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "The collection was deleted."
+          }
+        }
+      }
+    },
+    "/v1/collections/{id}/items/{shortId}": {
+      "put": {
+        "tags": [
+          "Collections"
+        ],
+        "summary": "Add an artifact to a collection.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "shortId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The artifact was added.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "ok"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Collections"
+        ],
+        "summary": "Remove an artifact from a collection.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "shortId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "The artifact was removed."
+          }
+        }
+      }
+    },
+    "/v1/collections/{id}/members": {
+      "get": {
+        "tags": [
+          "Collections"
+        ],
+        "summary": "List a collection's members.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The collection's creator and its members.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "created_by": {
+                      "type": "string"
+                    },
+                    "members": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/ArtifactMember"
+                      }
+                    }
+                  },
+                  "required": [
+                    "created_by",
+                    "members"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Collections"
+        ],
+        "summary": "Add or update a collection member.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "The added member.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArtifactMember"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/collections/{id}/members/{userId}": {
+      "delete": {
+        "tags": [
+          "Collections"
+        ],
+        "summary": "Remove a collection member.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "userId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "The member was removed."
+          }
+        }
+      }
+    },
+    "/v1/sync/github/resync-installations": {
+      "post": {
+        "tags": [
+          "Sync"
+        ],
+        "summary": "Re-import this App's installations from GitHub (Admin only).",
+        "responses": {
+          "200": {
+            "description": "How many installations were re-imported.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "synced": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "synced"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/sync/github": {
+      "get": {
+        "tags": [
+          "Sync"
+        ],
+        "summary": "The workspace's synced repos, PR previews, App status, and installations.",
+        "responses": {
+          "200": {
+            "description": "Branch sources, PR previews, the App's setup/permissions, installations.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GithubSyncStatus"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Sync"
+        ],
+        "summary": "Connect a repo for mirroring (App installation or a PAT).",
+        "responses": {
+          "200": {
+            "description": "The existing source (this repo was already connected).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RepoSource"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "The newly connected source (first sync kicked off).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RepoSource"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/sync/github/install": {
+      "post": {
+        "tags": [
+          "Sync"
+        ],
+        "summary": "Get the GitHub App install URL for this workspace (Admin only).",
+        "responses": {
+          "200": {
+            "description": "The GitHub install URL to navigate the browser to.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "url": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "url"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/sync/github/installations/{id}/repos": {
+      "get": {
+        "tags": [
+          "Sync"
+        ],
+        "summary": "The repos an installation can mirror (Admin only).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The installation's repos, most-recent-push first.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "repos": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/InstallationRepo"
+                      }
+                    }
+                  },
+                  "required": [
+                    "repos"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/sync/github/installations/{id}/preview": {
+      "get": {
+        "tags": [
+          "Sync"
+        ],
+        "summary": "How many docs a repo + scope would mirror (Admin only).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Matching file counts by type + whether the tree was truncated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SyncPreview"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/sync/github/{id}/run": {
+      "post": {
+        "tags": [
+          "Sync"
+        ],
+        "summary": "Trigger a server-side sync (Admin only).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The finished source (ran inline; no runner wired).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RepoSource"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "The source, queued (sync runs on the server; poll /status).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RepoSource"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/sync/github/{id}/status": {
+      "get": {
+        "tags": [
+          "Sync"
+        ],
+        "summary": "Cheap status poll for a source's live progress bar.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The source's persisted progress + last status + file count.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SyncStatus"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/sync/github/active": {
+      "get": {
+        "tags": [
+          "Sync"
+        ],
+        "summary": "Sources mid-sync in this workspace (drives the global syncing chip).",
+        "responses": {
+          "200": {
+            "description": "The sources currently syncing.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "active": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/RepoSource"
+                      }
+                    }
+                  },
+                  "required": [
+                    "active"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/sync/github/{id}": {
+      "delete": {
+        "tags": [
+          "Sync"
+        ],
+        "summary": "Disconnect a source (?wipe=true also deletes its artifacts).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "The source was disconnected."
+          }
+        }
+      }
+    },
+    "/v1/slack": {
+      "get": {
+        "tags": [
+          "Slack"
+        ],
+        "summary": "Slack connection status for the signed-in user's workspace.",
+        "responses": {
+          "200": {
+            "description": "Whether Slack is available + connected, and the team + default channel.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SlackStatus"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "Slack"
+        ],
+        "summary": "Set the channel Derive posts to (Admin only).",
+        "responses": {
+          "200": {
+            "description": "The new default channel (or null to clear it).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "default_channel": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  },
+                  "required": [
+                    "default_channel"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Slack"
+        ],
+        "summary": "Disconnect Slack from the workspace (Admin only).",
+        "responses": {
+          "204": {
+            "description": "Slack was disconnected."
+          }
+        }
+      }
+    },
+    "/v1/vitals": {
+      "post": {
+        "tags": [
+          "Vitals"
+        ],
+        "summary": "Report a Core Web Vitals field metric (anonymous telemetry).",
+        "responses": {
+          "204": {
+            "description": "Accepted (sendBeacon can't read the response)."
+          }
+        }
+      }
+    },
+    "/v1/artifacts/{shortId}/report": {
+      "post": {
+        "tags": [
+          "Moderation"
+        ],
+        "summary": "Report an artifact for abuse (public).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "shortId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "The report was filed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "ok"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/reports": {
+      "get": {
+        "tags": [
+          "Moderation"
+        ],
+        "summary": "The open moderation queue (Admin only).",
+        "responses": {
+          "200": {
+            "description": "Open reports and their count.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "reports": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Report"
+                      }
+                    },
+                    "open": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "reports",
+                    "open"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/audit": {
+      "get": {
+        "tags": [
+          "Moderation"
+        ],
+        "summary": "The moderation audit log (Admin only).",
+        "responses": {
+          "200": {
+            "description": "Recent audit-log entries.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "audit": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/AuditEntry"
+                      }
+                    }
+                  },
+                  "required": [
+                    "audit"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/artifacts/{shortId}/takedown": {
+      "post": {
+        "tags": [
+          "Moderation"
+        ],
+        "summary": "Take an artifact down (Admin only); its content 410s everywhere.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "shortId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The artifact was taken down.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "removed": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "ok",
+                    "removed"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/artifacts/{shortId}/reinstate": {
+      "post": {
+        "tags": [
+          "Moderation"
+        ],
+        "summary": "Reverse an artifact takedown (Admin only).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "shortId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The artifact was reinstated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "removed": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "ok",
+                    "removed"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/reports/{id}/dismiss": {
+      "post": {
+        "tags": [
+          "Moderation"
+        ],
+        "summary": "Dismiss a report without taking the artifact down (Admin only).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The report was dismissed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "ok"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/artifacts/{shortId}/proposals": {
+      "post": {
+        "tags": [
+          "Proposals"
+        ],
+        "summary": "Propose a candidate version (multipart, like publish).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "shortId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "The created proposal, plus the thread ids it marked addressed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/Proposal"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "addressed": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        }
+                      },
+                      "required": [
+                        "addressed"
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "Proposals"
+        ],
+        "summary": "List an artifact's proposals (optionally filtered by state).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "shortId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "open",
+                "approved",
+                "changes_requested",
+                "withdrawn"
+              ]
+            },
+            "required": false,
+            "name": "state",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The artifact's proposals.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "proposals": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Proposal"
+                      }
+                    }
+                  },
+                  "required": [
+                    "proposals"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/artifacts/{shortId}/proposals/{proposalId}": {
+      "get": {
+        "tags": [
+          "Proposals"
+        ],
+        "summary": "One proposal, with a line diff against its base version.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "shortId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "proposalId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The proposal, with its diff.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Proposal"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/artifacts/{shortId}/proposals/{proposalId}/approve": {
+      "post": {
+        "tags": [
+          "Proposals"
+        ],
+        "summary": "Approve a proposal (its content goes live as a new version).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "shortId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "proposalId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The approved proposal + the version number it became.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/Proposal"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "published": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "published"
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/artifacts/{shortId}/proposals/{proposalId}/request-changes": {
+      "post": {
+        "tags": [
+          "Proposals"
+        ],
+        "summary": "Request changes on a proposal (it stays open for revision).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "shortId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "proposalId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The proposal, now changes_requested.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Proposal"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/artifacts/{shortId}/proposals/{proposalId}/withdraw": {
+      "post": {
+        "tags": [
+          "Proposals"
+        ],
+        "summary": "Withdraw an open proposal (proposer or a manager).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "shortId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "proposalId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The proposal, now withdrawn.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Proposal"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/artifacts/{shortId}/review/send-back": {
+      "post": {
+        "tags": [
+          "Review"
+        ],
+        "summary": "Send back a review with the human's answers.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "shortId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The round, now sent_back.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "round": {
+                      "$ref": "#/components/schemas/ReviewRound"
+                    }
+                  },
+                  "required": [
+                    "round"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/artifacts/{shortId}/review/approve": {
+      "post": {
+        "tags": [
+          "Review"
+        ],
+        "summary": "Approve a review (the go-signal).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "shortId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The round, now approved.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "round": {
+                      "$ref": "#/components/schemas/ReviewRound"
+                    }
+                  },
+                  "required": [
+                    "round"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/artifacts/{shortId}/review": {
+      "get": {
+        "tags": [
+          "Review"
+        ],
+        "summary": "List an artifact's review rounds and the pending one, if any.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "shortId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "All rounds (newest first) and the current pending round or null.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "rounds": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/ReviewRound"
+                      }
+                    },
+                    "pending": {
+                      "allOf": [
+                        {
+                          "$ref": "#/components/schemas/ReviewRound"
+                        },
+                        {
+                          "nullable": true
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "rounds",
+                    "pending"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/artifacts/{shortId}/comments": {
+      "post": {
+        "tags": [
+          "Comments"
+        ],
+        "summary": "Post a comment (new thread) or a reply (with thread_id).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "shortId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "The created comment.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Comment"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "Comments"
+        ],
+        "summary": "List an artifact's comments (authenticated readers only).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "shortId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "open",
+                "resolved",
+                "outdated",
+                "addressed"
+              ]
+            },
+            "required": false,
+            "name": "state",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The artifact's comments, each flagged whether its anchor still resolves.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "comments": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Comment"
+                      }
+                    }
+                  },
+                  "required": [
+                    "comments"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/artifacts/{shortId}/comments/{commentId}/resolve": {
+      "post": {
+        "tags": [
+          "Comments"
+        ],
+        "summary": "Resolve or reopen the thread a comment belongs to.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "shortId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "commentId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The thread's new state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "thread_id": {
+                      "type": "string"
+                    },
+                    "state": {
+                      "type": "string",
+                      "enum": [
+                        "open",
+                        "resolved"
+                      ]
+                    },
+                    "updated": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "thread_id",
+                    "state",
+                    "updated"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/artifacts/{shortId}/comments/{commentId}/react": {
+      "post": {
+        "tags": [
+          "Comments"
+        ],
+        "summary": "Toggle a reaction on a comment.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "shortId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "commentId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The updated comment.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Comment"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/artifacts/{shortId}/comments/{commentId}": {
+      "patch": {
+        "tags": [
+          "Comments"
+        ],
+        "summary": "Edit a comment's body (author only).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "shortId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "commentId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The edited comment.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Comment"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Comments"
+        ],
+        "summary": "Soft-delete a comment (author only); the row stays, body tombstoned.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "shortId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "commentId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The tombstoned comment.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Comment"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/contexts": {
+      "post": {
+        "tags": [
+          "Contexts"
+        ],
+        "summary": "Create a context (wire an agent to a manifest artifact).",
+        "responses": {
+          "201": {
+            "description": "The created context.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContextInfo"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "Contexts"
+        ],
+        "summary": "List the workspace's contexts.",
+        "responses": {
+          "200": {
+            "description": "The workspace's contexts.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "contexts": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/ContextInfo"
+                      }
+                    }
+                  },
+                  "required": [
+                    "contexts"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/contexts/{id}": {
+      "get": {
+        "tags": [
+          "Contexts"
+        ],
+        "summary": "One context; the context's agent also gets the manifest source to run.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The context (with manifest source for the agent).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ContextInfo"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "manifest_version": {
+                          "type": "number"
+                        },
+                        "manifest_md": {
+                          "type": "string",
+                          "nullable": true
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Contexts"
+        ],
+        "summary": "Delete a context (its creator or a workspace manager).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "The context was deleted."
+          }
+        }
+      }
+    },
+    "/v1/contexts/{id}/sessions": {
+      "post": {
+        "tags": [
+          "Contexts"
+        ],
+        "summary": "Ask: open a session with the first question.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "The new session and its first message.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "session": {
+                      "$ref": "#/components/schemas/Session"
+                    },
+                    "messages": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/SessionMessage"
+                      }
+                    }
+                  },
+                  "required": [
+                    "session",
+                    "messages"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "Contexts"
+        ],
+        "summary": "A context's sessions (owner sees all; others only their own).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The sessions.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "sessions": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Session"
+                      }
+                    }
+                  },
+                  "required": [
+                    "sessions"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/sessions/{id}": {
+      "get": {
+        "tags": [
+          "Contexts"
+        ],
+        "summary": "One session with its transcript (asker or context owner).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The session, its context, and the full transcript.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "session": {
+                      "$ref": "#/components/schemas/Session"
+                    },
+                    "context": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "name": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "name"
+                      ]
+                    },
+                    "messages": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/SessionMessage"
+                      }
+                    }
+                  },
+                  "required": [
+                    "session",
+                    "context",
+                    "messages"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "Contexts"
+        ],
+        "summary": "Close a session (asker/owner) or fail it (the context's agent).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The updated session.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "session": {
+                      "$ref": "#/components/schemas/Session"
+                    }
+                  },
+                  "required": [
+                    "session"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/sessions/{id}/messages": {
+      "post": {
+        "tags": [
+          "Contexts"
+        ],
+        "summary": "Append a message to a session (asker follow-up or the agent's answer).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "The appended message.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "$ref": "#/components/schemas/SessionMessage"
+                    }
+                  },
+                  "required": [
+                    "message"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/contexts/{id}/queue": {
+      "get": {
+        "tags": [
+          "Contexts"
+        ],
+        "summary": "The runner's queue: open sessions with transcripts (agent bearer).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Open sessions, oldest first, each with its transcript.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "sessions": {
+                      "type": "array",
+                      "items": {
+                        "allOf": [
+                          {
+                            "$ref": "#/components/schemas/Session"
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "messages": {
+                                "type": "array",
+                                "items": {
+                                  "$ref": "#/components/schemas/SessionMessage"
+                                }
+                              }
+                            },
+                            "required": [
+                              "messages"
+                            ]
+                          }
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "sessions"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/artifacts/{shortId}/presence": {
+      "post": {
+        "tags": [
+          "Realtime"
+        ],
+        "summary": "Presence heartbeat — keep this viewer on the artifact's roster.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "shortId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The current viewers on this artifact.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "viewers": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Viewer"
+                      }
+                    }
+                  },
+                  "required": [
+                    "viewers"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/artifacts/{shortId}/cursor": {
+      "post": {
+        "tags": [
+          "Realtime"
+        ],
+        "summary": "Broadcast a live cursor frame to the artifact's other viewers.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "shortId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Fanned out (ephemeral; nothing stored)."
+          }
+        }
+      }
+    },
+    "/v1/artifacts/{shortId}/view": {
+      "post": {
+        "tags": [
+          "Analytics"
+        ],
+        "summary": "Record a view of an artifact (de-duped; owner self-views excluded).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "shortId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Recorded (or skipped as a dup / self-view / disabled)."
+          }
+        }
+      }
+    },
+    "/v1/artifacts/{shortId}/analytics": {
+      "get": {
+        "tags": [
+          "Analytics"
+        ],
+        "summary": "View stats for an artifact (collaborators only).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "shortId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Totals, per-version + daily counts, and recent distinct viewers.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Analytics"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/notifications": {
+      "get": {
+        "tags": [
+          "Notifications"
+        ],
+        "summary": "List the signed-in user's recent notifications and unread count.",
+        "responses": {
+          "200": {
+            "description": "The 50 most recent notifications and the current unread count.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "notifications": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Notification"
+                      }
+                    },
+                    "unread": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "notifications",
+                    "unread"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/notifications/read": {
+      "post": {
+        "tags": [
+          "Notifications"
+        ],
+        "summary": "Mark notifications read (all, or a set of ids); returns the new unread count.",
+        "responses": {
+          "200": {
+            "description": "The unread count after marking.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "unread": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "unread"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/webhooks": {
+      "get": {
+        "tags": [
+          "Webhooks"
+        ],
+        "summary": "List the workspace's webhooks (Admin only).",
+        "responses": {
+          "200": {
+            "description": "The workspace's webhooks, without their signing secrets.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "webhooks": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Webhook"
+                      }
+                    }
+                  },
+                  "required": [
+                    "webhooks"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Webhooks"
+        ],
+        "summary": "Create a webhook (Admin only).",
+        "responses": {
+          "201": {
+            "description": "The created webhook, without its signing secret.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Webhook"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/webhooks/{id}": {
+      "delete": {
+        "tags": [
+          "Webhooks"
+        ],
+        "summary": "Delete a webhook (Admin only).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "The webhook was deleted."
+          }
+        }
+      }
+    },
+    "/v1/webhooks/{id}/deliveries": {
+      "get": {
+        "tags": [
+          "Webhooks"
+        ],
+        "summary": "Recent delivery attempts for a webhook (Admin only).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The 20 most recent delivery attempts.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "deliveries": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Delivery"
+                      }
+                    }
+                  },
+                  "required": [
+                    "deliveries"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/webhooks/{id}/test": {
+      "post": {
+        "tags": [
+          "Webhooks"
+        ],
+        "summary": "Send a sample event to a webhook so you can confirm it lands (Admin only).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The sample delivery was queued.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "queued": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "queued"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/artifacts/{shortId}/domains": {
+      "get": {
+        "tags": [
+          "Domains"
+        ],
+        "summary": "List an artifact's subdomains + the workspace domains it's reachable at.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "shortId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The subdomain base, the artifact's subdomains, and workspace domains.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "base": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "domains": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/ArtifactDomain"
+                      }
+                    },
+                    "workspace_domains": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "host": {
+                            "type": "string"
+                          },
+                          "url": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "host",
+                          "url"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "base",
+                    "domains",
+                    "workspace_domains"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Domains"
+        ],
+        "summary": "Claim a vanity subdomain for the artifact.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "shortId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The subdomain (already claimed by this artifact).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArtifactDomain"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "The newly claimed subdomain.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArtifactDomain"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/artifacts/{shortId}/domains/{host}": {
+      "delete": {
+        "tags": [
+          "Domains"
+        ],
+        "summary": "Release one of the artifact's subdomains.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "shortId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "host",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The subdomain was released.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "ok"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/workspace/domains": {
+      "get": {
+        "tags": [
+          "Domains"
+        ],
+        "summary": "List the workspace's custom domains and whether they're supported here.",
+        "responses": {
+          "200": {
+            "description": "Whether custom domains are enabled, the CNAME target, and the domains.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean"
+                    },
+                    "cname_target": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "domains": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/WorkspaceDomain"
+                      }
+                    }
+                  },
+                  "required": [
+                    "enabled",
+                    "cname_target",
+                    "domains"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Domains"
+        ],
+        "summary": "Attach a custom domain to the workspace.",
+        "responses": {
+          "200": {
+            "description": "The domain (already attached to this workspace).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/WorkspaceDomain"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "cname_target": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "cname_target"
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "The newly attached domain, pending DNS validation.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/WorkspaceDomain"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "cname_target": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "cname_target"
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/workspace/domains/{host}/refresh": {
+      "post": {
+        "tags": [
+          "Domains"
+        ],
+        "summary": "Re-check a custom domain's validation status.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "host",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The domain's current status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceDomain"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/workspace/domains/{host}": {
+      "delete": {
+        "tags": [
+          "Domains"
+        ],
+        "summary": "Detach a custom domain from the workspace.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "host",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The domain was detached.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "ok"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/oauth/consent/workspace": {
+      "post": {
+        "tags": [
+          "OAuth"
+        ],
+        "summary": "Bind an OAuth client's grants to a workspace (consent screen).",
+        "responses": {
+          "200": {
+            "description": "The binding was saved.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "ok"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/auth/capabilities": {
+      "get": {
+        "tags": [
+          "OAuth"
+        ],
+        "summary": "The sign-in methods + flows this instance actually has (capability-adaptive).",
+        "responses": {
+          "200": {
+            "description": "What the login page + Security hub may render here.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthCapabilities"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

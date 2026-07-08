@@ -23,7 +23,9 @@
     "deploy:smoke": "gh workflow run e2e-smoke.yml --ref main || echo 'post-deploy smoke not triggered (gh CLI unavailable) — run: gh workflow run e2e-smoke.yml'",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.worker.json",
     "test": "vitest run",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage",
+    "gen:env": "vitest run test/config-manifest.test.ts -u",
+    "gen:openapi": "vitest run test/openapi.test.ts -u"
   },
   "dependencies": {
     "@better-auth/oauth-provider": "1.6.19",
@@ -34,6 +36,7 @@
     "@derive/storage": "workspace:*",
     "@hono/mcp": "^0.3.0",
     "@hono/node-server": "^2.0.5",
+    "@hono/zod-openapi": "1.0.2",
     "@modelcontextprotocol/sdk": "^1.25.1",
     "better-auth": "^1.6.19",
     "better-sqlite3": "^12.11.1",

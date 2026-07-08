@@ -2,7 +2,7 @@
  * Core owns the ports; packages/db and packages/storage provide the adapters.
  * Everything here must run on Node AND Cloudflare Workers — no Node APIs.
  */
-import type { GeneralRole, Role } from "./permissions"
+import type { GeneralRole, Role } from "./roles"
 
 export interface BlobStore {
   /** Content-addressed put; returns the sha256 hex key. Idempotent. */
@@ -188,7 +188,7 @@ export interface NewVersion {
   name?: string | null
 }
 
-export interface MetaStore {
+export interface ArtifactStore {
   createArtifact(a: NewArtifact): Promise<ArtifactRecord>
   /** Change an artifact's general access: visibility, the password hash locking a
    *  public link (null clears; meaningless off `public`), and the general-access
@@ -231,7 +231,27 @@ export interface MetaStore {
       preview_error?: string | null
     },
   ): Promise<void>
+  // ---- Render-job queue (screenshot rendering outbox) --------------------
+  /** Enqueue a new render job (status defaults to "pending", attempts to 0). */
+  enqueueRenderJob(j: NewRenderJob): Promise<void>
+  /**
+   * Atomically claim up to `limit` pending render jobs whose next_attempt_at has
+   * passed: increments their attempt count and leases them (sets next_attempt_at
+   * to `leaseUntil`), then returns the claimed rows.
+   */
+  claimDueRenderJobs(now: string, limit: number, leaseUntil: string): Promise<RenderJobRecord[]>
+  updateRenderJob(
+    id: string,
+    fields: {
+      status: RenderJobStatus
+      attempts: number
+      last_error: string | null
+      next_attempt_at: string
+    },
+  ): Promise<void>
+}
 
+export interface CommentStore {
   createComment(c: NewComment): Promise<CommentRecord>
   /** Comments on an artifact, oldest-first; optionally filtered by thread state. */
   listComments(artifactId: string, opts?: CommentListOpts): Promise<CommentRecord[]>
@@ -256,7 +276,9 @@ export interface MetaStore {
   /** Artifact ids in `orgId` with an open thread the user is tagged in or authored —
    *  the "needs your feedback" set the home section is built from. */
   artifactIdsNeedingFeedback(userId: string, orgId: string): Promise<string[]>
+}
 
+export interface ArtifactQueryStore {
   /**
    * Newest-first artifact page. `cursor` is keyset pagination on created_at
    * (rows strictly older than it); `q` is a case-insensitive title search;
@@ -312,7 +334,9 @@ export interface MetaStore {
   /** For each artifact id, true iff its CURRENT version has a ready preview render.
    *  Batched (one query); missing ids may be omitted. */
   previewReady(artifactIds: string[]): Promise<Record<string, boolean>>
+}
 
+export interface WebhookStore {
   // ---- Webhooks + outbox -------------------------------------------------
   createWebhook(w: NewWebhook): Promise<WebhookRecord>
   listWebhooks(orgId: string): Promise<WebhookRecord[]>
@@ -345,26 +369,9 @@ export interface MetaStore {
   ): Promise<void>
   /** Recent deliveries for a webhook (for the settings log). */
   recentDeliveries(webhookId: string, limit: number): Promise<DeliveryRecord[]>
+}
 
-  // ---- Render-job queue (screenshot rendering outbox) --------------------
-  /** Enqueue a new render job (status defaults to "pending", attempts to 0). */
-  enqueueRenderJob(j: NewRenderJob): Promise<void>
-  /**
-   * Atomically claim up to `limit` pending render jobs whose next_attempt_at has
-   * passed: increments their attempt count and leases them (sets next_attempt_at
-   * to `leaseUntil`), then returns the claimed rows.
-   */
-  claimDueRenderJobs(now: string, limit: number, leaseUntil: string): Promise<RenderJobRecord[]>
-  updateRenderJob(
-    id: string,
-    fields: {
-      status: RenderJobStatus
-      attempts: number
-      last_error: string | null
-      next_attempt_at: string
-    },
-  ): Promise<void>
-
+export interface WorkspaceStore {
   // ---- Permissions: workspace membership + per-artifact shares -----------
   /** The workspace's display name + metadata (one row per org_id). */
   getWorkspace(orgId: string): Promise<WorkspaceRecord | null>
@@ -391,7 +398,9 @@ export interface MetaStore {
   /** Insert or update a per-artifact role override (a share). */
   setArtifactMember(m: NewArtifactMember): Promise<ArtifactMemberRecord>
   removeArtifactMember(artifactId: string, userId: string): Promise<void>
+}
 
+export interface SocialStore {
   // ---- Favorites (per-user stars) + tags (browse metadata) ---------------
   /** Artifact ids this user has starred. With `orgId`, scoped to that workspace's
    *  live (non-removed) artifacts — for the workspace-scoped favorites count. */
@@ -429,7 +438,9 @@ export interface MetaStore {
   artifactRolesFor(userId: string, artifactIds: string[]): Promise<Record<string, Role>>
   /** Replace an artifact's full tag set (deduped, trimmed, lowercased upstream). */
   setArtifactTags(artifactId: string, tags: string[]): Promise<void>
+}
 
+export interface CollectionStore {
   // ---- Collections (shareable groups; a member's role propagates to items) -
   createCollection(c: NewCollection): Promise<CollectionRecord>
   getCollection(id: string): Promise<CollectionRecord | null>
@@ -451,7 +462,9 @@ export interface MetaStore {
   /** This user's collection-member roles over collections containing the
    *  artifact — folded into their effective artifact role (collection sharing). */
   collectionRolesForArtifact(artifactId: string, userId: string): Promise<Role[]>
+}
 
+export interface IntegrationStore {
   // ---- GitHub sync sources (a repo mirrored into a collection, one-way) ---
   createRepoSource(s: NewRepoSource): Promise<RepoSourceRecord>
   /** One source by id, scoped to a workspace when orgId is given. */
@@ -533,7 +546,9 @@ export interface MetaStore {
   ): Promise<DomainRecord | null>
   /** Release a hostname, scoped to its owning workspace. */
   deleteDomain(host: string, orgId: string): Promise<void>
+}
 
+export interface ReviewStore {
   // ---- Reviews: proposed versions awaiting approval ----------------------
   createProposal(p: NewProposal): Promise<ProposalRecord>
   getProposal(id: string): Promise<ProposalRecord | null>
@@ -566,7 +581,9 @@ export interface MetaStore {
     id: string,
     fields: { state: Extract<ReviewRoundState, "sent_back" | "approved">; note?: string | null },
   ): Promise<ReviewRoundRecord | null>
+}
 
+export interface ContextStore {
   // ---- Contexts + sessions (ask a context; its runner answers) -----------
   createContext(x: NewContext): Promise<ContextRecord>
   getContext(id: string): Promise<ContextRecord | null>
@@ -593,7 +610,9 @@ export interface MetaStore {
   addSessionMessage(m: NewSessionMessage, state: SessionState): Promise<SessionMessageRecord>
   /** A session's transcript, oldest first. */
   listSessionMessages(sessionId: string): Promise<SessionMessageRecord[]>
+}
 
+export interface DirectoryStore {
   // ---- User directory (reads Better Auth's `user` table) ----------------
   findUserByEmail(email: string): Promise<UserDir | null>
   getUsers(ids: string[]): Promise<UserDir[]>
@@ -670,7 +689,9 @@ export interface MetaStore {
   unreadNotificationCount(userId: string): Promise<number>
   /** Mark the given ids read, or all of the user's notifications when "all". */
   markNotificationsRead(userId: string, ids: string[] | "all"): Promise<void>
+}
 
+export interface AgentStore {
   // ---- Agents (mentionable principals that act via a scoped token) -------
   createAgent(a: NewAgent): Promise<AgentRecord>
   listAgents(orgId: string): Promise<AgentRecord[]>
@@ -719,7 +740,9 @@ export interface MetaStore {
   listPendingAgentMentions(agentId: string, limit: number): Promise<AgentMentionRecord[]>
   /** Mark a mention handled; false if it isn't this agent's or doesn't exist. */
   ackAgentMention(agentId: string, id: string): Promise<boolean>
+}
 
+export interface ModerationStore {
   // ---- Moderation: abuse reports, takedown, audit log --------------------
   createReport(r: NewReport): Promise<ReportRecord>
   /** One report by id, scoped to a workspace (or any, super-admin orgId undefined). */
@@ -778,6 +801,27 @@ export interface MetaStore {
     opts?: { artifactId?: string; limit?: number },
   ): Promise<AuditLogRecord[]>
 }
+
+/**
+ * The full metadata store: the composition of every feature sub-store above. Every
+ * adapter (packages/db) implements this whole surface; a consumer that needs only one
+ * area can depend on the narrower sub-store instead. Splitting the definition keeps a
+ * change to one feature from visually touching the others.
+ */
+export interface MetaStore
+  extends ArtifactStore,
+    CommentStore,
+    ArtifactQueryStore,
+    WebhookStore,
+    WorkspaceStore,
+    SocialStore,
+    CollectionStore,
+    IntegrationStore,
+    ReviewStore,
+    ContextStore,
+    DirectoryStore,
+    AgentStore,
+    ModerationStore {}
 
 /** What a user follows: a GitHub author (`target` = the login), a repo path prefix
  *  (`target` = a path prefix, e.g. "docs/plans"), or a Derive person (`target` = their

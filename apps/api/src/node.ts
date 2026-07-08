@@ -11,6 +11,7 @@ import { Pool } from "pg"
 import { createApp } from "./app"
 import { type AuthDb, makeAuth, migrateAuth, OAUTH_ANON_CLIENT_TTL_MS } from "./auth-config"
 import { loadConfig, resolveAuthSecret, resolveDefaultOrg } from "./config"
+import { configWarnings } from "./config-manifest"
 import { workspacesBlockingDeletion } from "./lib/account"
 import { customDomainsFromEnv } from "./lib/cloudflare-saas"
 import { buildAuthEmail, emailDeliverySender, logEmailSender, resendEmailSender } from "./lib/email"
@@ -367,6 +368,11 @@ if (!cfg.sandboxOrigin && (cfg.crossSite || cfg.webOrigins.length)) {
     "DERIVE_SANDBOX_URL is unset on a cross-site deployment. Artifact HTML will be served from the app origin; set DERIVE_SANDBOX_URL to a separate domain to isolate untrusted content from session cookies.",
   )
 }
+
+// Half-configured optional features (an OAuth id without its secret, an email key without
+// a from-address) leave the feature silently OFF. Warn loudly — but never crash: an
+// operator shouldn't lose a running instance to a stray env var on upgrade.
+for (const w of configWarnings(process.env)) log.warn(w)
 
 const server = serve({ fetch: app.fetch, port: cfg.port }, () => {
   log.info("derive api listening", {
