@@ -3,10 +3,11 @@ name: e2e smoke
 # The fast critical-path suite: one happy path per surface (sign up, publish →
 # comment → resolve, library, share, settings, theme, review).
 #
-# NOT a PR gate yet — the suite still flakes under CI CPU contention (multi-context
-# owner+member specs starving on a small runner), so it must not block merges. It runs
-# POST-DEPLOY instead: `pnpm run deploy` triggers it on a successful deploy, and it can
-# be run on demand (workflow_dispatch). Re-add `pull_request:` once it's reliably green.
+# DISABLED on CI for now (no automatic trigger — manual only via
+# workflow_dispatch; `pnpm run deploy` no longer chains it post-deploy either).
+# The suite still flakes under CI CPU contention (multi-context owner+member
+# specs starving on a small runner). Re-add `pull_request:` once it's reliably
+# green, and re-chain `deploy:smoke` into apps/api's `deploy` script.
 on:
   workflow_dispatch:
 
