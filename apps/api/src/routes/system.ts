@@ -1,5 +1,5 @@
 import { Hono } from "hono"
-import { capabilityReport } from "../capabilities"
+import { capabilityReport } from "../config-manifest"
 import type { AppContext } from "../context"
 import { fail } from "../lib/http"
 import { log } from "../log"

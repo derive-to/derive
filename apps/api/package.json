@@ -23,7 +23,8 @@
     "deploy:smoke": "gh workflow run e2e-smoke.yml --ref main || echo 'post-deploy smoke not triggered (gh CLI unavailable) — run: gh workflow run e2e-smoke.yml'",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.worker.json",
     "test": "vitest run",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage",
+    "gen:env": "vitest run test/config-manifest.test.ts -u"
   },
   "dependencies": {
     "@better-auth/oauth-provider": "1.6.19",

@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest"
-import { CAPABILITIES, capabilityReport, configWarnings, statusOf } from "../src/capabilities"
+import {
+  CAPABILITIES,
+  capabilityReport,
+  configWarnings,
+  genEnvExample,
+  statusOf,
+} from "../src/config-manifest"
 
 const email = CAPABILITIES.find((c) => c.id === "email")
 if (!email) throw new Error("email capability missing")
@@ -37,5 +43,13 @@ describe("capabilityReport", () => {
     const oidc = capabilityReport({ OIDC_ISSUER: "https://x" }).find((r) => r.id === "oidc")
     expect(oidc?.status).toBe("partial")
     expect(oidc?.missing).toEqual(["OIDC_CLIENT_ID", "OIDC_CLIENT_SECRET"])
+  })
+})
+
+describe("genEnvExample", () => {
+  // The manifest is the single source; .env.example is generated. Regenerate with
+  // `pnpm --filter @derive/api gen:env` after changing CONFIG_VARS.
+  it("is the source of the committed .env.example", async () => {
+    await expect(genEnvExample()).toMatchFileSnapshot("../../../.env.example")
   })
 })
