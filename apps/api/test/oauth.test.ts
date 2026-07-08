@@ -29,7 +29,7 @@ function appWithGrant(
   // reads). The token is stored hashed and scopes as a JSON array, mirroring the
   // real plugin; the bridge looks up by sha256 of the presented bearer.
   db.exec(`
-    CREATE TABLE IF NOT EXISTS "user" (id TEXT PRIMARY KEY, email TEXT, name TEXT, image TEXT);
+    CREATE TABLE IF NOT EXISTS "user" (id TEXT PRIMARY KEY, email TEXT, name TEXT, image TEXT, username TEXT, profession TEXT, about TEXT);
     CREATE TABLE IF NOT EXISTS "oauthClient" (clientId TEXT PRIMARY KEY, name TEXT);
     CREATE TABLE IF NOT EXISTS "oauthAccessToken" (token TEXT PRIMARY KEY, clientId TEXT, userId TEXT, scopes TEXT, expiresAt TEXT);
   `)
@@ -71,7 +71,10 @@ const publish = (app: ReturnType<typeof createApp>, token: string) => {
 describe("OAuth access token acts as a scoped agent", () => {
   const future = () => new Date(Date.now() + 3_600_000)
 
-  it("a derive:publish grant publishes, authored by the client (not a person)", async () => {
+  it("a derive:publish grant publishes, authored by the granting human (not the client name)", async () => {
+    // An OAuth agent (the `derive login` CLI, a remote MCP client) acts on behalf of the
+    // user who consented, so its published work is attributed to that person — publishing
+    // through the CLI reads the same as publishing in the browser, not as "Claude".
     const app = appWithGrant("pub", {
       token: "tok_pub",
       scopes: "openid derive:publish",
@@ -81,7 +84,7 @@ describe("OAuth access token acts as a scoped agent", () => {
     const res = await publish(app, "tok_pub")
     expect(res.status).toBe(201)
     const j = await res.json()
-    expect(j.versions[0].author).toBe("Claude")
+    expect(j.versions[0].author).toBe("OAuth Owner")
   })
 
   it("a propose-only grant cannot publish (least privilege)", async () => {

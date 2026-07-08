@@ -88,6 +88,7 @@ export const artifactRoutes = (ctx: AppContext) => {
     isToken,
     currentUser,
     actingUser,
+    actingHuman,
     privateOwnerId,
     activeWorkspace,
     actorFor,
@@ -444,12 +445,16 @@ export const artifactRoutes = (ctx: AppContext) => {
     const passwordHash = visibility === "public" && password ? hashPassword(password) : undefined
 
     try {
-      // The authenticated principal behind this publish (signed-in user or agent) — its
-      // `name` is the display author. The Derive-USER behind it is what we attribute
-      // work to: for an agent, the user it acts on behalf of (created_by / the OAuth
-      // grantor). `author_id` keys a person's profile + their followers' feed, so it
-      // must be a real user id, never an agent principal.
+      // The authenticated principal behind this publish (signed-in user or agent). The
+      // Derive-USER behind it is what we attribute work to: for an agent, the user it acts
+      // on behalf of (created_by / the OAuth grantor). `author_id` keys a person's profile +
+      // their followers' feed, so it must be a real user id, never an agent principal.
+      // `human` is that user as a byline too, but only when the delegation is a human's
+      // (a signed-in user, or an OAuth grant from the CLI / a remote MCP client) — so those
+      // publishes read as the person, not the client's "Derive CLI"/"Claude" name. A
+      // registered dk_agt_ agent has no `human` and keeps authoring as itself.
       const actor = await actingUser(c)
+      const human = await actingHuman(c)
       const onBehalf = await privateOwnerId(c)
       // An AGENT-credentialed create (registered token / OAuth bearer — the CLI
       // and stdio-shim paths) lands with the workspace's agent default when no
@@ -472,12 +477,14 @@ export const artifactRoutes = (ctx: AppContext) => {
           slug: str(body["slug"]),
           spa: body["spa"] === "true" || body["spa"] === "1",
           message: str(body["message"]),
-          // Author is the authenticated identity (signed-in user or agent), never a
-          // client-supplied field — a logged-in publish must be attributed to that
-          // person. Anonymous callers can't reach this route at all, so a publish is
-          // always attributed to a real principal (the token's optional `author`
-          // label is the one headless exception).
-          author: actor?.name ?? str(body["author"]),
+          // Author is the authenticated identity, never a client-supplied field — a
+          // logged-in publish must be attributed to that person. The human behind the
+          // request wins (a signed-in user, or the CLI / MCP grantor), so a delegated
+          // publish reads as the person; a registered agent falls back to its own name.
+          // Anonymous callers can't reach this route at all, so a publish is always
+          // attributed to a real principal (the token's optional `author` label is the
+          // one headless exception).
+          author: human?.name ?? actor?.name ?? str(body["author"]),
           authorId: onBehalf,
           name: str(body["name"]),
           orgId: org,
