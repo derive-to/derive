@@ -376,16 +376,8 @@ export interface DirUser {
 /** An in-app notification (the header bell). Generated from the API's OpenAPI spec
  *  (apps/api/openapi.json) — a backend shape change surfaces here at `tsc`. */
 export type Notification = components["schemas"]["Notification"]
-export interface Webhook {
-  id: string
-  artifact_id: string | null
-  url: string
-  kind: "generic" | "slack"
-  events: string
-  label: string | null
-  active: 0 | 1
-  created_at: string
-}
+/** An outbound webhook, without its signing secret. Generated from the OpenAPI spec. */
+export type Webhook = components["schemas"]["Webhook"]
 export interface Agent {
   id: string
   name: string
@@ -436,14 +428,8 @@ export interface Viewer {
   name: string
   role: string | null
 }
-export interface Delivery {
-  id: string
-  event_type: string
-  status: "pending" | "delivered" | "dead"
-  attempts: number
-  last_error: string | null
-  created_at: string
-}
+/** A webhook delivery attempt. Generated from the OpenAPI spec. */
+export type Delivery = components["schemas"]["Delivery"]
 /** A GitHub repo mirrored into a collection (token redacted, file map collapsed
  *  to a count by the API). */
 export interface RepoSource {
