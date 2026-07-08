@@ -224,13 +224,8 @@ export interface DomainDnsRecord {
   value: string
 }
 /** A vanity subdomain bound to one artifact (the per-artifact share section). */
-export interface ArtifactDomain {
-  host: string
-  url: string
-  kind: string
-  status: string
-  created_at: string
-}
+/** A vanity subdomain claimed for an artifact. Generated from the OpenAPI spec. */
+export type ArtifactDomain = components["schemas"]["ArtifactDomain"]
 /** A workspace custom domain (managed in settings; Cloudflare for SaaS). */
 export interface WorkspaceDomain {
   host: string

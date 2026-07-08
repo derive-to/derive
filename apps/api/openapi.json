@@ -412,6 +412,33 @@
           "last_error",
           "created_at"
         ]
+      },
+      "ArtifactDomain": {
+        "type": "object",
+        "properties": {
+          "host": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "host",
+          "url",
+          "kind",
+          "status",
+          "created_at"
+        ]
       }
     },
     "parameters": {}
@@ -1060,6 +1087,155 @@
                   },
                   "required": [
                     "queued"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/artifacts/{shortId}/domains": {
+      "get": {
+        "tags": [
+          "Domains"
+        ],
+        "summary": "List an artifact's subdomains + the workspace domains it's reachable at.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "shortId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The subdomain base, the artifact's subdomains, and workspace domains.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "base": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "domains": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/ArtifactDomain"
+                      }
+                    },
+                    "workspace_domains": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "host": {
+                            "type": "string"
+                          },
+                          "url": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "host",
+                          "url"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "base",
+                    "domains",
+                    "workspace_domains"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Domains"
+        ],
+        "summary": "Claim a vanity subdomain for the artifact.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "shortId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The subdomain (already claimed by this artifact).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArtifactDomain"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "The newly claimed subdomain.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArtifactDomain"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/artifacts/{shortId}/domains/{host}": {
+      "delete": {
+        "tags": [
+          "Domains"
+        ],
+        "summary": "Release one of the artifact's subdomains.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "shortId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "host",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The subdomain was released.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "ok"
                   ]
                 }
               }

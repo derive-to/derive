@@ -755,6 +755,123 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/artifacts/{shortId}/domains": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List an artifact's subdomains + the workspace domains it's reachable at. */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    shortId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The subdomain base, the artifact's subdomains, and workspace domains. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            base: string | null;
+                            domains: components["schemas"]["ArtifactDomain"][];
+                            workspace_domains: {
+                                host: string;
+                                url: string;
+                            }[];
+                        };
+                    };
+                };
+            };
+        };
+        /** Claim a vanity subdomain for the artifact. */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    shortId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The subdomain (already claimed by this artifact). */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ArtifactDomain"];
+                    };
+                };
+                /** @description The newly claimed subdomain. */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ArtifactDomain"];
+                    };
+                };
+            };
+        };
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/artifacts/{shortId}/domains/{host}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Release one of the artifact's subdomains. */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    shortId: string;
+                    host: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The subdomain was released. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            ok: boolean;
+                        };
+                    };
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -849,6 +966,13 @@ export interface components {
             status: "pending" | "delivered" | "dead";
             attempts: number;
             last_error: string | null;
+            created_at: string;
+        };
+        ArtifactDomain: {
+            host: string;
+            url: string;
+            kind: string;
+            status: string;
             created_at: string;
         };
     };
