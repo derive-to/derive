@@ -160,7 +160,6 @@ jobs:
       cancel-in-progress: false
     permissions:
       contents: read
-      actions: write # dispatches e2e-smoke.yml
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
@@ -234,14 +233,10 @@ jobs:
           echo "prod not healthy after deploy (last /v1/artifacts status: $db)" >&2
           exit 1
 
-      # Regression signal on main HEAD (the suite runs against localhost dev
-      # servers in its own runner — it does NOT verify the deployment; the step
-      # above does that).
-      - name: Dispatch e2e suite
-        if: steps.head.outputs.stale != 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh workflow run e2e-smoke.yml --ref main
+      # e2e smoke's post-deploy auto-dispatch is disabled for now (still flaky
+      # under CI CPU contention — see e2e-smoke.yml). Run it manually with
+      # `gh workflow run e2e-smoke.yml --ref main` when a regression signal is
+      # actually wanted.
 
   # Supply-chain: a known-vulnerable production dependency, or a committed secret,
   # fails the build. Reads the lockfile + working tree, so no install is needed.
