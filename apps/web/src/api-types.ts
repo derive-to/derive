@@ -707,6 +707,127 @@ export interface paths {
         };
         trace?: never;
     };
+    "/v1/artifacts/{shortId}/review/send-back": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Send back a review with the human's answers. */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    shortId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The round, now sent_back. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            round: components["schemas"]["ReviewRound"];
+                        };
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/artifacts/{shortId}/review/approve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Approve a review (the go-signal). */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    shortId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The round, now approved. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            round: components["schemas"]["ReviewRound"];
+                        };
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/artifacts/{shortId}/review": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List an artifact's review rounds and the pending one, if any. */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    shortId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description All rounds (newest first) and the current pending round or null. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            rounds: components["schemas"]["ReviewRound"][];
+                            pending: components["schemas"]["ReviewRound"] & unknown;
+                        };
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/artifacts/{shortId}/view": {
         parameters: {
             query?: never;
@@ -1354,6 +1475,18 @@ export interface components {
             connected: boolean;
             team_name: string | null;
             default_channel: string | null;
+        };
+        ReviewRound: {
+            id: string;
+            artifact_id: string;
+            version: number;
+            requested_by: string;
+            requested_for: string;
+            /** @enum {string} */
+            state: "pending" | "sent_back" | "approved";
+            note: string | null;
+            created_at: string;
+            resolved_at: string | null;
         };
         Analytics: {
             total: number;

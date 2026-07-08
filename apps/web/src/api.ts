@@ -281,17 +281,8 @@ export interface Mention {
 }
 /** A review round: the agent asked this person to review a version, and polls for
  *  the answer. `pending` = waiting; `sent_back` = they returned answers; `approved`. */
-export interface ReviewRound {
-  id: string
-  artifact_id: string
-  version: number
-  requested_by: string
-  requested_for: string
-  state: "pending" | "sent_back" | "approved"
-  note: string | null
-  created_at: string
-  resolved_at: string | null
-}
+/** A review round on an artifact (the /derive loop). Generated from the OpenAPI spec. */
+export type ReviewRound = components["schemas"]["ReviewRound"]
 
 export interface Comment {
   id: string

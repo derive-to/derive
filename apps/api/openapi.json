@@ -213,6 +213,56 @@
           "default_channel"
         ]
       },
+      "ReviewRound": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "artifact_id": {
+            "type": "string"
+          },
+          "version": {
+            "type": "number"
+          },
+          "requested_by": {
+            "type": "string"
+          },
+          "requested_for": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "sent_back",
+              "approved"
+            ]
+          },
+          "note": {
+            "type": "string",
+            "nullable": true
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "resolved_at": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "artifact_id",
+          "version",
+          "requested_by",
+          "requested_for",
+          "state",
+          "note",
+          "created_at",
+          "resolved_at"
+        ]
+      },
       "Analytics": {
         "type": "object",
         "properties": {
@@ -1200,6 +1250,134 @@
         "responses": {
           "204": {
             "description": "Slack was disconnected."
+          }
+        }
+      }
+    },
+    "/v1/artifacts/{shortId}/review/send-back": {
+      "post": {
+        "tags": [
+          "Review"
+        ],
+        "summary": "Send back a review with the human's answers.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "shortId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The round, now sent_back.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "round": {
+                      "$ref": "#/components/schemas/ReviewRound"
+                    }
+                  },
+                  "required": [
+                    "round"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/artifacts/{shortId}/review/approve": {
+      "post": {
+        "tags": [
+          "Review"
+        ],
+        "summary": "Approve a review (the go-signal).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "shortId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The round, now approved.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "round": {
+                      "$ref": "#/components/schemas/ReviewRound"
+                    }
+                  },
+                  "required": [
+                    "round"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/artifacts/{shortId}/review": {
+      "get": {
+        "tags": [
+          "Review"
+        ],
+        "summary": "List an artifact's review rounds and the pending one, if any.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "shortId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "All rounds (newest first) and the current pending round or null.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "rounds": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/ReviewRound"
+                      }
+                    },
+                    "pending": {
+                      "allOf": [
+                        {
+                          "$ref": "#/components/schemas/ReviewRound"
+                        },
+                        {
+                          "nullable": true
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "rounds",
+                    "pending"
+                  ]
+                }
+              }
+            }
           }
         }
       }
