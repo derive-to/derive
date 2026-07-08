@@ -52,7 +52,7 @@ describe("comment channel fan-out", () => {
     expect(kinds).not.toContain("email")
   })
 
-  it("a reply reaches earlier thread authors as a bell row, and only them", async () => {
+  it("a reply bells earlier thread authors; the replier never hears themselves", async () => {
     const { app, meta } = makeAuthedApp("fanout-bell", [owner, editor], "editor")
     const shortId = await newArtifact(app)
     // Owner opens the thread; editor replies into it.
@@ -62,13 +62,22 @@ describe("comment channel fan-out", () => {
       jsonAs(as(editor.email), { body_md: "replying", thread_id: first.thread_id }),
     )
     const rows = await meta.listNotifications(owner.id, 10)
-    const reply = rows.find((n) => n.kind === "comment")
+    const reply = rows.find((n) => n.kind === "comment" && n.thread_id === first.thread_id)
     expect(reply).toBeTruthy()
-    expect(reply?.thread_id).toBe(first.thread_id)
     // The replier never hears about their own comment.
     expect((await meta.listNotifications(editor.id, 10)).map((n) => n.kind)).not.toContain(
       "comment",
     )
+  })
+
+  it("a fresh comment on your artifact bells you — it's your content", async () => {
+    const { app, meta } = makeAuthedApp("fanout-owner-bell", [owner, editor], "editor")
+    const shortId = await newArtifact(app)
+    // Editor opens a NEW thread (owner has no comment in it, no mention).
+    const res = await comment(app, shortId, editor.email)
+    expect(res.status).toBe(201)
+    const rows = await meta.listNotifications(owner.id, 10)
+    expect(rows.some((n) => n.kind === "comment")).toBe(true)
   })
 
   it("a mention emails the mentioned person (and no one else)", async () => {
