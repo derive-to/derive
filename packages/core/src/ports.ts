@@ -2,7 +2,7 @@
  * Core owns the ports; packages/db and packages/storage provide the adapters.
  * Everything here must run on Node AND Cloudflare Workers — no Node APIs.
  */
-import type { GeneralRole, Role } from "./permissions"
+import type { GeneralRole, Role } from "./roles"
 
 export interface BlobStore {
   /** Content-addressed put; returns the sha256 hex key. Idempotent. */
