@@ -48,20 +48,37 @@ export function consentHTML(props: {
   query: string
   clientId?: string
   workspaces?: { id: string; name: string }[]
-  selected?: string
+  /** The workspaces a prior grant is scoped to (re-consent preselect). Empty/omitted
+   *  = "All workspaces" (the default mode); non-empty = "Only selected", pre-ticked. */
+  selected?: string[]
 }): string {
   const name = esc(props.clientName || "An application")
-  // DEFERRED, not removed: a grant already covers every workspace the user
-  // belongs to at the token level (X-Derive-Workspace picks per-request; a
-  // bound default was never an access restriction — see git history on this
-  // comment for the full reasoning). Asking the human to narrow to one
-  // workspace at consent time bought nothing real, so for now every grant
-  // just reads as All Workspaces and the picker doesn't render. The plumbing
-  // it used to drive — `workspaces`/`selected` here, POST
-  // /oauth/consent/workspace, oauth-agent.ts's bound-org lookup — is left in
-  // place so real per-workspace (single or multi) selection can come back
-  // without re-threading any of it.
-  const picker = ""
+  // The workspace access control: "All workspaces" (the dynamic default — every
+  // workspace now and any added later, stored as an empty grant set) or "Only
+  // selected" (a fixed set of ≥1 ticked workspaces). Mode defaults to "some" only
+  // when re-consenting a grant that was already scoped to a subset. The selection
+  // is persisted (POST /oauth/consent/workspace → setOAuthClientWorkspaces) and
+  // enforced everywhere the grant resolves a workspace (oauth-agent + context +
+  // the MCP surface). Zero selected in "some" mode is blocked client-side.
+  const workspaces = props.workspaces ?? []
+  const preselected = new Set(props.selected ?? [])
+  const someMode = preselected.size > 0
+  const picker =
+    workspaces.length <= 1
+      ? "" // nothing to choose among — a single-workspace grant is simply that one
+      : `<div class="ws-access">
+      <span class="ws-label">Workspace access</span>
+      <label class="ws-opt"><input type="radio" name="wsmode" value="all"${someMode ? "" : " checked"}/><span class="ws-opt-t">All workspaces<small>Every workspace you have, and any you add later.</small></span></label>
+      <label class="ws-opt"><input type="radio" name="wsmode" value="some"${someMode ? " checked" : ""}/><span class="ws-opt-t">Only selected workspaces<small>Limit this connection to specific workspaces.</small></span></label>
+      <div class="ws-list" id="wslist"${someMode ? "" : " hidden"}>${workspaces
+        .map(
+          (w) =>
+            `<label class="ws-check"><input type="checkbox" name="ws" value="${esc(w.id)}"${
+              preselected.has(w.id) ? " checked" : ""
+            }/><span>${esc(w.name)}</span></label>`,
+        )
+        .join("")}</div>
+    </div>`
   const items = props.scopes
     .map((s) => {
       const write = WRITE_SCOPES.has(s)
@@ -76,7 +93,7 @@ export function consentHTML(props: {
     <div class="done">
       <div class="check" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg></div>
       <h1>You're connected</h1>
-      <p class="sub"><b>${name}</b> can now act in your workspace. Taking you back…</p>
+      <p class="sub"><b>${name}</b> can now act in your workspaces. Taking you back…</p>
       <a class="back" id="back" href="#">Return to ${name} now</a>
     </div>`
   return `<!doctype html>
@@ -106,6 +123,16 @@ export function consentHTML(props: {
   select.ws{width:100%;margin:0 0 16px;padding:10px 12px;border:1px solid var(--line);border-radius:11px;
     background:var(--panel-2);color:var(--ink);font:500 14px var(--sans);cursor:pointer}
   select.ws:focus{outline:2px solid var(--accent-soft);border-color:var(--accent)}
+  .ws-access{margin:0 0 18px;padding:10px 14px;border:1px solid var(--line);border-radius:14px;background:var(--panel-2)}
+  .ws-access .ws-label{margin:2px 0 4px}
+  .ws-opt{display:flex;gap:10px;align-items:flex-start;padding:7px 0;cursor:pointer}
+  .ws-opt input{margin-top:2px;accent-color:var(--accent);flex:none;width:15px;height:15px}
+  .ws-opt-t{display:flex;flex-direction:column;font-size:13.5px;font-weight:600;color:var(--ink)}
+  .ws-opt-t small{font-weight:400;font-size:12px;color:var(--muted);margin-top:1px}
+  .ws-list{margin:2px 0 4px 25px;padding-left:12px;border-left:1px solid var(--line);display:flex;flex-direction:column}
+  .ws-list[hidden]{display:none}
+  .ws-check{display:flex;gap:9px;align-items:center;padding:6px 0;font-size:13.5px;color:var(--ink-soft);cursor:pointer}
+  .ws-check input{accent-color:var(--accent);flex:none;width:15px;height:15px}
   ul.scopes{list-style:none;margin:0 0 22px;padding:8px 16px;border:1px solid var(--line);border-radius:14px;background:var(--panel-2)}
   ul.scopes li{display:flex;gap:11px;align-items:flex-start;padding:9px 0;font-size:13.5px;color:var(--ink-soft)}
   ul.scopes li+li{border-top:1px solid var(--line-2)}
@@ -144,8 +171,8 @@ export function consentHTML(props: {
 <body>
   <main class="card">
     <div class="brand">${BRAND_PAGE_MARK}<span class="name">Derive</span><span class="badge">Authorize</span></div>
-    <h1><b>${name}</b> wants to act in your workspace</h1>
-    <p class="sub">Approving lets this agent do the following as you, with a token that expires. You stay in control.</p>
+    <h1><b>${name}</b> wants to act in your workspaces</h1>
+    <p class="sub">Approving lets this agent do the following as you, with a token that expires. You choose which workspaces it can reach, and stay in control.</p>
     ${picker}
     <ul class="scopes">${items}</ul>
     <div class="row">
@@ -183,13 +210,27 @@ export function consentHTML(props: {
     // not re-point tokens the client already holds from an earlier grant. There is
     // no race on the other side — the client can't mint a token until the browser
     // delivers the code, which happens after this settles.
+    // Workspace access mode + selection. "all" → an empty set (dynamic all);
+    // "some" → the ticked ids (at least one, enforced by wsValid before Approve).
+    function wsMode(){ var el = document.querySelector('input[name="wsmode"]:checked'); return el ? el.value : "all"; }
+    function checkedWs(){ return Array.prototype.map.call(document.querySelectorAll('input[name="ws"]:checked'), function(c){ return c.value; }); }
+    function wsValid(){ return wsMode() !== "some" || checkedWs().length > 0; }
+    // Reveal the checkbox list only in "some" mode; clear any stale error on change.
+    var wslist = document.getElementById("wslist");
+    Array.prototype.forEach.call(document.querySelectorAll('input[name="wsmode"]'), function(r){
+      r.addEventListener("change", function(){ if (wslist) wslist.hidden = wsMode() !== "some"; err.textContent = ""; });
+    });
+    Array.prototype.forEach.call(document.querySelectorAll('input[name="ws"]'), function(cb){
+      cb.addEventListener("change", function(){ err.textContent = ""; });
+    });
     async function saveWorkspace(){
-      var ws = document.getElementById("ws");
-      if (!ws || !CLIENT_ID) return true;
+      // No picker on the page (single-workspace user, or none) → nothing to scope.
+      if (!CLIENT_ID || !document.querySelector('input[name="wsmode"]')) return true;
+      var org_ids = wsMode() === "all" ? [] : checkedWs();
       try{
         var b = await fetch("/oauth/consent/workspace", {
           method:"POST", headers:{"content-type":"application/json"}, credentials:"include",
-          body: JSON.stringify({ client_id: CLIENT_ID, org_id: ws.value })
+          body: JSON.stringify({ client_id: CLIENT_ID, org_ids: org_ids })
         });
         return b.ok;
       }catch(e){ return false; }
@@ -221,7 +262,12 @@ export function consentHTML(props: {
       }catch(e){ err.textContent = "Network error. Try again."; }
       allow.disabled = deny.disabled = false;
     }
-    allow.onclick = function(){ decide(true); };
+    allow.onclick = function(){
+      // Block the grant until the human picks a workspace: "Only selected" with
+      // none ticked is the 0-workspace error condition.
+      if (!wsValid()){ err.textContent = "Select at least one workspace, or choose “All workspaces”."; return; }
+      decide(true);
+    };
     deny.onclick = function(){ decide(false); };
   </script>
 </body>

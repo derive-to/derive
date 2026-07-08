@@ -351,6 +351,8 @@ export function makeRepos(db: SqliteDb) {
     (await db.select().from(artifact).where(eq(artifact.short_id, shortId)).get()) ?? null
   const getArtifactById = async (id: string): Promise<ArtifactRecord | null> =>
     (await db.select().from(artifact).where(eq(artifact.id, id)).get()) ?? null
+  const getArtifactsByIds = async (ids: string[]): Promise<ArtifactRecord[]> =>
+    ids.length === 0 ? [] : db.select().from(artifact).where(inArray(artifact.id, ids)).all()
 
   const siblingsBySourcePaths = async (
     orgId: string,
@@ -625,6 +627,10 @@ export function makeRepos(db: SqliteDb) {
   const setArtifactRemoved = async (id: string, removedAt: string | null): Promise<void> => {
     await db.update(artifact).set({ removed_at: removedAt }).where(eq(artifact.id, id)).run()
   }
+  const setArtifactsRemoved = async (ids: string[], removedAt: string | null): Promise<void> => {
+    if (ids.length === 0) return
+    await db.update(artifact).set({ removed_at: removedAt }).where(inArray(artifact.id, ids)).run()
+  }
   const setArtifactTitle = async (id: string, title: string): Promise<void> => {
     await db.update(artifact).set({ title }).where(eq(artifact.id, id)).run()
   }
@@ -808,6 +814,10 @@ export function makeRepos(db: SqliteDb) {
   const enqueueDelivery = async (d: NewDelivery): Promise<void> => {
     await db.insert(webhookDelivery).values(d).run()
   }
+  const enqueueDeliveries = async (rows: NewDelivery[]): Promise<void> => {
+    if (rows.length === 0) return
+    await db.insert(webhookDelivery).values(rows).run()
+  }
   const claimDueDeliveries = async (
     now: string,
     limit: number,
@@ -890,6 +900,10 @@ export function makeRepos(db: SqliteDb) {
       .get()) ?? null
   const listMemberships = async (orgId: string): Promise<MembershipRecord[]> =>
     db.select().from(membership).where(eq(membership.org_id, orgId)).all()
+  const listMembershipsForOrgs = async (orgIds: string[]): Promise<MembershipRecord[]> =>
+    orgIds.length === 0
+      ? []
+      : db.select().from(membership).where(inArray(membership.org_id, orgIds)).all()
   const countMemberships = async (orgId: string): Promise<number> =>
     (await db.select({ n: count() }).from(membership).where(eq(membership.org_id, orgId)).get())
       ?.n ?? 0
@@ -1340,6 +1354,8 @@ export function makeRepos(db: SqliteDb) {
     (await db.insert(collection).values(c).returning().get()) as CollectionRecord
   const getCollection = async (id: string): Promise<CollectionRecord | null> =>
     (await db.select().from(collection).where(eq(collection.id, id)).get()) ?? null
+  const getCollections = async (ids: string[]): Promise<CollectionRecord[]> =>
+    ids.length === 0 ? [] : db.select().from(collection).where(inArray(collection.id, ids)).all()
   const updateCollection = async (
     id: string,
     fields: { title?: string },
@@ -1817,10 +1833,23 @@ export function makeRepos(db: SqliteDb) {
       .where(eq(sessionMessage.session_id, sessionId))
       .orderBy(asc(sessionMessage.created_at))
       .all()
+  const listSessionMessagesFor = async (sessionIds: string[]): Promise<SessionMessageRecord[]> =>
+    sessionIds.length === 0
+      ? []
+      : db
+          .select()
+          .from(sessionMessage)
+          .where(inArray(sessionMessage.session_id, sessionIds))
+          .orderBy(asc(sessionMessage.created_at))
+          .all()
 
   // ---- Notifications -----------------------------------------------------
   const createNotification = async (n: NewNotification): Promise<void> => {
     await db.insert(notification).values(n).run()
+  }
+  const createNotifications = async (rows: NewNotification[]): Promise<void> => {
+    if (rows.length === 0) return
+    await db.insert(notification).values(rows).run()
   }
   const listNotifications = async (userId: string, limit: number): Promise<NotificationRecord[]> =>
     db
@@ -1922,31 +1951,37 @@ export function makeRepos(db: SqliteDb) {
       return false
     }
   }
-  const setOAuthClientWorkspace = async (
+  // Replace the whole granted-workspace SET for (user, client): clear, then insert
+  // one row per ticked workspace. An EMPTY array clears it → the grant reverts to
+  // "all workspaces". This is what the consent screen's multi-select persists.
+  const setOAuthClientWorkspaces = async (
     userId: string,
     clientId: string,
-    orgId: string,
+    orgIds: string[],
   ): Promise<void> => {
     await db
-      .insert(oauthClientWorkspace)
-      .values({ id: crypto.randomUUID(), user_id: userId, client_id: clientId, org_id: orgId })
-      .onConflictDoUpdate({
-        target: [oauthClientWorkspace.user_id, oauthClientWorkspace.client_id],
-        set: { org_id: orgId },
-      })
+      .delete(oauthClientWorkspace)
+      .where(
+        and(eq(oauthClientWorkspace.user_id, userId), eq(oauthClientWorkspace.client_id, clientId)),
+      )
       .run()
+    for (const orgId of orgIds) {
+      await db
+        .insert(oauthClientWorkspace)
+        .values({ id: crypto.randomUUID(), user_id: userId, client_id: clientId, org_id: orgId })
+        .onConflictDoNothing()
+        .run()
+    }
   }
-  const getOAuthClientWorkspace = async (
-    userId: string,
-    clientId: string,
-  ): Promise<string | null> => {
+  // The grant's scoped workspaces. Empty array = "all workspaces" (unscoped).
+  const getOAuthClientWorkspaces = async (userId: string, clientId: string): Promise<string[]> => {
     const rows = await db
       .select({ org_id: oauthClientWorkspace.org_id })
       .from(oauthClientWorkspace)
       .where(
         and(eq(oauthClientWorkspace.user_id, userId), eq(oauthClientWorkspace.client_id, clientId)),
       )
-    return rows[0]?.org_id ?? null
+    return rows.map((r) => r.org_id)
   }
   const pruneStaleOAuthClients = async (cutoffIso: string): Promise<number> => {
     try {
@@ -2255,6 +2290,7 @@ export function makeRepos(db: SqliteDb) {
     setLocked,
     getByShortId,
     getArtifactById,
+    getArtifactsByIds,
     siblingsBySourcePaths,
     addVersion,
     listVersions,
@@ -2272,6 +2308,7 @@ export function makeRepos(db: SqliteDb) {
     deleteArtifact,
     moveArtifactOrg,
     setArtifactRemoved,
+    setArtifactsRemoved,
     setArtifactTitle,
     setArtifactSourcePath,
     setArtifactUpdatedAt,
@@ -2289,6 +2326,7 @@ export function makeRepos(db: SqliteDb) {
     deleteWebhook,
     activeWebhooks,
     enqueueDelivery,
+    enqueueDeliveries,
     claimDueDeliveries,
     updateDelivery,
     recentDeliveries,
@@ -2297,6 +2335,7 @@ export function makeRepos(db: SqliteDb) {
     updateRenderJob,
     getMembership,
     listMemberships,
+    listMembershipsForOrgs,
     countMemberships,
     setMembership,
     removeMembership,
@@ -2331,6 +2370,7 @@ export function makeRepos(db: SqliteDb) {
     setArtifactTags,
     createCollection,
     getCollection,
+    getCollections,
     updateCollection,
     deleteCollection,
     listCollections,
@@ -2388,10 +2428,12 @@ export function makeRepos(db: SqliteDb) {
     setSessionState,
     addSessionMessage,
     listSessionMessages,
+    listSessionMessagesFor,
     getProposal,
     listProposals,
     decideProposal,
     createNotification,
+    createNotifications,
     listNotifications,
     unreadNotificationCount,
     markNotificationsRead,
@@ -2403,8 +2445,8 @@ export function makeRepos(db: SqliteDb) {
     oauthClientExists,
     listUserGrants,
     revokeUserGrant,
-    setOAuthClientWorkspace,
-    getOAuthClientWorkspace,
+    setOAuthClientWorkspaces,
+    getOAuthClientWorkspaces,
     pruneStaleOAuthClients,
     deleteAgent,
     createAgentMention,

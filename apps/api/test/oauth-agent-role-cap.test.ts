@@ -24,7 +24,7 @@ describe("oauth agent role capping + consent binding", () => {
         { id: "ws_one", name: "One", role: "owner" },
         { id: "ws_two", name: "Two", role: "viewer" },
       ],
-      getOAuthClientWorkspace: async () => null,
+      getOAuthClientWorkspaces: async () => [],
       ...over,
     }) as unknown as MetaStore
 
@@ -44,8 +44,8 @@ describe("oauth agent role capping + consent binding", () => {
     expect(o?.scopeRole).toBe("editor")
   })
 
-  it("caps the scope role by the membership in the bound workspace", async () => {
-    const o = await resolve(stub({ getOAuthClientWorkspace: async () => "ws_two" }))
+  it("caps the scope role by the membership in the scoped workspace", async () => {
+    const o = await resolve(stub({ getOAuthClientWorkspaces: async () => ["ws_two"] }))
     expect(o?.rec.org_id).toBe("ws_two")
     expect(o?.rec.role).toBe("viewer") // publish scope, viewer membership → viewer
     expect(o?.scopeRole).toBe("editor") // uncapped, for header re-homes to re-cap
@@ -57,13 +57,13 @@ describe("oauth agent role capping + consent binding", () => {
     expect(asOwner?.scopeRole).toBe("owner")
     expect(asOwner?.rec.role).toBe("owner") // owner membership → the scope holds
     const asViewer = await resolve(
-      stub({ getOAuthGrant: async () => manage, getOAuthClientWorkspace: async () => "ws_two" }),
+      stub({ getOAuthGrant: async () => manage, getOAuthClientWorkspaces: async () => ["ws_two"] }),
     )
     expect(asViewer?.rec.role).toBe("viewer") // manage scope can't outrank the human
   })
 
-  it("ignores a binding to a workspace the user is no longer in", async () => {
-    const o = await resolve(stub({ getOAuthClientWorkspace: async () => "ws_gone" }))
+  it("ignores a scope naming a workspace the user is no longer in", async () => {
+    const o = await resolve(stub({ getOAuthClientWorkspaces: async () => ["ws_gone"] }))
     expect(o?.rec.org_id).toBe("ws_one")
     expect(o?.rec.role).toBe("editor")
   })

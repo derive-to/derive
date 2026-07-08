@@ -247,18 +247,17 @@ export async function enqueueForEvent(
   const subscribed = hooks.filter((h) => h.events === "*" || h.events.split(",").includes(event))
   if (subscribed.length === 0) return 0
   const payload = JSON.stringify(buildPayload(baseUrl, artifact, event, data))
-  await Promise.all(
-    subscribed.map((h) =>
-      meta.enqueueDelivery({
-        id: `wd_${randomUUID().slice(0, 12)}`,
-        webhook_id: h.id,
-        url: h.url,
-        secret: h.secret,
-        kind: h.kind,
-        event_type: event,
-        payload,
-      }),
-    ),
+  // One insert for the whole subscriber fan-out, not an enqueueDelivery per hook.
+  await meta.enqueueDeliveries(
+    subscribed.map((h) => ({
+      id: `wd_${randomUUID().slice(0, 12)}`,
+      webhook_id: h.id,
+      url: h.url,
+      secret: h.secret,
+      kind: h.kind,
+      event_type: event,
+      payload,
+    })),
   )
   return subscribed.length
 }

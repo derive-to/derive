@@ -42,23 +42,23 @@ export const notifyCommentBells = async (
   if (opts.actorId) recipients.delete(opts.actorId)
   for (const id of opts.mentionIds) recipients.delete(id)
 
-  for (const uid of recipients) {
-    const row = {
-      id: newId("n"),
-      user_id: uid,
-      actor: comment.author,
-      kind: "comment" as const,
-      artifact_id: artifact.id,
-      artifact_short_id: artifact.short_id,
-      artifact_title: artifact.title,
-      thread_id: comment.thread_id,
-      comment_id: comment.id,
-      preview: previewOf(comment.body_md),
-    }
-    await meta.createNotification(row)
-    bus.publish(`u:${uid}`, {
+  const rows = [...recipients].map((uid) => ({
+    id: newId("n"),
+    user_id: uid,
+    actor: comment.author,
+    kind: "comment" as const,
+    artifact_id: artifact.id,
+    artifact_short_id: artifact.short_id,
+    artifact_title: artifact.title,
+    thread_id: comment.thread_id,
+    comment_id: comment.id,
+    preview: previewOf(comment.body_md),
+  }))
+  // One bulk insert for the whole fan-out; the realtime bell stays one event per user.
+  await meta.createNotifications(rows)
+  for (const row of rows)
+    bus.publish(`u:${row.user_id}`, {
       type: "notification",
       notification: { ...row, read: 0, created_at: new Date().toISOString() },
     })
-  }
 }
