@@ -485,9 +485,14 @@ export const workspaceRoutes = (ctx: AppContext) => {
     },
   )
 
-  // getOrgSettings types the two enum fields as their full core unions (Visibility incl.
-  // "password", the general Role); a stored SETTING is never those extra values (excluded
-  // when set), so narrow to the client contract.
+  // getOrgSettings types defaultAgentVisibility as the full core `Visibility` (incl.
+  // "password"), but a stored setting is only ever one of the client's five: the PATCH
+  // validates to them and the default is "unlisted". Narrow with a runtime type-guard —
+  // no unsound `as`, and a stray value (e.g. a hand-edited row) falls back to the default
+  // rather than lying. (defaultUnlistedRole is already GeneralRole = the client enum.)
+  type AgentVisibility = z.infer<typeof OrgSettings>["defaultAgentVisibility"]
+  const isAgentVisibility = (v: string): v is AgentVisibility =>
+    v === "unlisted" || v === "private" || v === "org" || v === "link" || v === "public"
   const settingsJson = (
     s: Awaited<ReturnType<typeof meta.getOrgSettings>>,
   ): z.infer<typeof OrgSettings> => ({
@@ -496,12 +501,10 @@ export const workspaceRoutes = (ctx: AppContext) => {
     githubMirrorComments: s.githubMirrorComments,
     githubPreviewLink: s.githubPreviewLink,
     slackPost: s.slackPost,
-    defaultUnlistedRole: s.defaultUnlistedRole as z.infer<
-      typeof OrgSettings
-    >["defaultUnlistedRole"],
-    defaultAgentVisibility: s.defaultAgentVisibility as z.infer<
-      typeof OrgSettings
-    >["defaultAgentVisibility"],
+    defaultUnlistedRole: s.defaultUnlistedRole,
+    defaultAgentVisibility: isAgentVisibility(s.defaultAgentVisibility)
+      ? s.defaultAgentVisibility
+      : "unlisted",
   })
 
   // ---- Integration settings (enable/disable each channel) -----------------
