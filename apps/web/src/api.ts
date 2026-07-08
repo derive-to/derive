@@ -38,96 +38,10 @@ export type VersionSession = components["schemas"]["VersionSession"]
 export type Role = "viewer" | "commenter" | "editor" | "owner"
 /** What general access (the link) grants a reacher: view-only or comment. */
 export type GeneralRole = "viewer" | "commenter"
-export interface Artifact {
-  short_id: string
-  url: string
-  title: string | null
-  kind: "file" | "bundle"
-  current_content_type?: string | null
-  /** Locked: direct publishes are rejected; even editors must propose changes. */
-  locked?: boolean
-  visibility: string
-  /** The role the general-access link grants (view vs comment). Anonymous reachers are
-   *  always clamped to view regardless; commenting requires signing in. */
-  general_role?: GeneralRole
-  current_version: number
-  versions: {
-    n: number
-    content_type?: string
-    author: string
-    /** The GitHub identity behind this version (sync only): login, avatar URL, numeric
-     *  user id (text). Null for manual/anonymous/unmappable publishes. */
-    author_login?: string | null
-    author_avatar?: string | null
-    author_gh_id?: string | null
-    /** The Derive handle of this version's GitHub author, when they signed in with GitHub
-     *  (single-artifact detail only); null otherwise. */
-    handle?: string | null
-    message: string | null
-    name: string | null
-    created_at: string
-  }[]
-  /** Time-grouped view of versions for display; newest-first. */
-  sessions?: VersionSession[]
-  views?: number
-  /** The current caller's effective role on this artifact (null = no access). */
-  my_role?: Role | null
-  /** Browse tags (workspace-wide). */
-  tags?: string[]
-  /** Whether the current user has starred this artifact. */
-  favorite?: boolean
-  /** Count of proposals awaiting review. */
-  open_proposals?: number
-  /** Count of non-withdrawn proposals (open + decided) — gates the Proposals entry. */
-  proposals_total?: number
-  /** Open comment threads on this artifact (drives the inline comment indicator). */
-  open_threads?: number
-  /** An open thread on this artifact @mentions the current user — "needs your feedback". */
-  mentions_me?: boolean
-  /** The current user authored a comment in an open thread on this artifact. */
-  i_participated?: boolean
-  /** Collection ids this artifact belongs to (detail endpoint). */
-  collections?: string[]
-  /** Taken down by a moderator: the content is gone (410), the record stays. */
-  removed?: boolean
-  /** Mirrored from a GitHub sync source → read-only in Derive (Edit/Propose hidden). */
-  managed?: boolean
-  /** Present when this bundle's entry is markdown — a skill (entry SKILL.md) or a
-   *  plain docs folder. Drives the file tree + (for skills) the identity chrome.
-   *  Detail endpoint only; absent for HTML "site" bundles. */
-  bundle?: {
-    /** True when it's a Claude Code skill (entry SKILL.md) — gates the "Skill" badge. */
-    isSkill: boolean
-    /** Skill frontmatter name/description; null for a plain docs bundle. */
-    name: string | null
-    description: string | null
-    /** Entry document path, sans leading slash (e.g. "SKILL.md", "README.md"). */
-    entry: string
-    files: { path: string; type: string }[]
-  }
-  /** Repo path for a synced artifact (e.g. "docs/plans/foo.md") — drives the folder view. */
-  source_path?: string | null
-  /** First-published time. */
-  created_at?: string
-  /** Last-updated time (set on each new version; null until versioned). Read as
-   *  `updated_at ?? created_at`. Drives the recency sort + the "updated X" label. */
-  updated_at?: string | null
-  /** The CURRENT (last) author, denormalized — for a GitHub-synced artifact these mirror
-   *  the last commit's author. Drives "who last changed this" + the ?author= filter. */
-  author_name?: string | null
-  author_login?: string | null
-  author_avatar?: string | null
-  author_gh_id?: string | null
-  /** The current author resolved to a profile: the raw GitHub identity plus the Derive
-   *  `handle` (username) when the committer signed in with GitHub. Null when there's no
-   *  recorded author. Prefer this over the raw fields for rendering. */
-  author?: {
-    name: string | null
-    login: string | null
-    avatar: string | null
-    handle: string | null
-  } | null
-}
+/** The artifact view-model — the largest, most-composed shape in the client. Generated
+ *  from the OpenAPI spec (apps/api/openapi.json). `my_role` is `Role | null`, `general_role`
+ *  is `GeneralRole`; both are inline enums identical to those aliases. */
+export type Artifact = components["schemas"]["Artifact"]
 /** An abuse report against an artifact. Generated from the OpenAPI spec. */
 export type Report = components["schemas"]["Report"]
 /** A collection: a shareable group of artifacts, tagged with its item count and origin

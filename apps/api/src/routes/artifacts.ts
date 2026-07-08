@@ -17,14 +17,16 @@ import {
   renderMarkdown,
   toJson,
 } from "@derive/core"
-import { type Context, Hono } from "hono"
+import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
+import type { Context } from "hono"
 import { setCookie } from "hono/cookie"
-import { z } from "zod"
+import type { BlankEnv } from "hono/types"
 import type { AppContext } from "../context"
 import { publishSweepEvents } from "../lib/anchor-sweep"
 import { authorProfile, resolveHandles } from "../lib/author"
 import { hashPassword, unlockCookie, unlockToken, verifyPassword } from "../lib/crypto"
 import {
+  bail,
   DEFAULT_WORKSPACE_NAME,
   fail,
   MAX_UPLOAD_BYTES,
@@ -33,6 +35,7 @@ import {
   TOMBSTONE,
   visibilityOf,
 } from "../lib/http"
+import { Artifact } from "../schemas"
 
 /** The artifact lifecycle: browse + summary, publish/republish, detail, restore,
  *  source read-back, and version diffs. */
@@ -63,7 +66,10 @@ export const artifactRoutes = (ctx: AppContext) => {
     unlockLimiter,
     sourceText,
   } = ctx
-  const app = new Hono()
+  // OpenAPIHono: the detail endpoint is contract-first (generates the Artifact +
+  // VersionSession web types); the rest stay plain routes (the list's many branches,
+  // the multipart publish, and the mixed-content source/diff reads) and compose as before.
+  const app = new OpenAPIHono<BlankEnv>()
 
   // Newest-first, keyset-paginated (?cursor=<created_at>&limit=N), with optional
   // server-side ?query= (title search), ?tag=, and ?favorite=true. Returns
@@ -577,109 +583,126 @@ export const artifactRoutes = (ctx: AppContext) => {
   app.post("/v1/artifacts", (c) => handlePublish(c))
   app.post("/v1/artifacts/:shortId/versions", (c) => handlePublish(c, c.req.param("shortId")))
 
-  app.get("/v1/artifacts/:shortId", async (c) => {
-    const artifact = await meta.getByShortId(c.req.param("shortId"))
-    // For a missing artifact, fall back to the most restrictive visibility so
-    // an anonymous probe can't learn anything (a non-member gets no access).
-    const actor = await actorFor(c, artifact ?? ({ id: "", visibility: "org" } as ArtifactRecord))
-    if (!artifact) return fail(c, 404, "not found")
-    if (!can(actor, "read", artifact.visibility, artifact.general_role))
-      // A password artifact isn't hidden, it's lockable: tell the client to prompt
-      // for the password (401) rather than claim it doesn't exist (404).
-      return artifact.visibility === "password"
-        ? fail(c, 401, "password required")
-        : fail(c, 404, "not found")
-    // Taken down: serve a minimal tombstone, not the full record. A takedown is a
-    // moderation action and the title is often the very thing being removed
-    // (harassment/doxxing), so drop title, author, the slug in the URL, and the
-    // version history — keep only enough for the SPA to render its "removed" state.
-    // (Content already 410s at /raw; the /a unfurl injects no meta for removed.)
-    if (artifact.removed_at)
-      return c.json({
-        short_id: artifact.short_id,
-        url: `${deps.baseUrl.replace(/\/$/, "")}/artifacts/${artifact.short_id}`,
-        title: null,
-        kind: artifact.kind,
-        visibility: artifact.visibility,
-        spa: !!artifact.spa,
-        current_version: artifact.current_version,
-        created_at: artifact.created_at,
-        versions: [],
-        sessions: [],
-        my_role: effectiveRole(actor, artifact.visibility),
-        tags: [],
-        favorite: false,
-        collections: [],
-        open_proposals: 0,
-        proposals_total: 0,
-        removed: true,
-        managed: false,
-      })
-    const versions = await meta.listVersions(artifact.id)
-    const me = actor.kind === "user" ? actor.userId : null
-    const tags = (await meta.tagsForArtifacts([artifact.id]))[artifact.id] ?? []
-    const favorite = me ? (await meta.listUserFavoriteIds(me)).includes(artifact.id) : false
-    const collections = await meta.collectionIdsForArtifact(artifact.id)
-    const proposals = await meta.listProposals(artifact.id)
-    // A markdown bundle (a skill — entry SKILL.md — or a docs folder) gets a `bundle`
-    // block: the entry + file tree (so the client can render the doc and navigate
-    // siblings) plus skill identity when it is one. One manifest read, on the detail
-    // page only — the list view stays blob-free (no N+1). HTML "site" bundles navigate
-    // via their own links, so they get no block.
-    let bundle: BundleDoc | undefined
-    const cur =
-      artifact.kind === "bundle"
-        ? versions.find((v) => v.n === artifact.current_version)
-        : undefined
-    if (cur) {
-      const manifestBytes = await blobs.get(cur.blob_key)
-      if (manifestBytes) {
-        const manifest = JSON.parse(new TextDecoder().decode(manifestBytes)) as BundleManifest
-        if (isMarkdownBundle(manifest)) bundle = bundleDoc(manifest, await sourceText(cur))
+  app.openapi(
+    createRoute({
+      method: "get",
+      path: "/v1/artifacts/{shortId}",
+      tags: ["Artifacts"],
+      summary: "One artifact with its versions, sessions, roles, and counts.",
+      request: { params: z.object({ shortId: z.string() }) },
+      responses: {
+        200: {
+          description: "The artifact detail (or a minimal tombstone when taken down).",
+          content: { "application/json": { schema: Artifact } },
+        },
+      },
+    }),
+    async (c) => {
+      const artifact = await meta.getByShortId(c.req.param("shortId"))
+      // For a missing artifact, fall back to the most restrictive visibility so
+      // an anonymous probe can't learn anything (a non-member gets no access).
+      const actor = await actorFor(c, artifact ?? ({ id: "", visibility: "org" } as ArtifactRecord))
+      if (!artifact) return bail(fail(c, 404, "not found"))
+      if (!can(actor, "read", artifact.visibility, artifact.general_role))
+        // A password artifact isn't hidden, it's lockable: tell the client to prompt
+        // for the password (401) rather than claim it doesn't exist (404).
+        return bail(
+          artifact.visibility === "password"
+            ? fail(c, 401, "password required")
+            : fail(c, 404, "not found"),
+        )
+      // Taken down: serve a minimal tombstone, not the full record. A takedown is a
+      // moderation action and the title is often the very thing being removed
+      // (harassment/doxxing), so drop title, author, the slug in the URL, and the
+      // version history — keep only enough for the SPA to render its "removed" state.
+      // (Content already 410s at /raw; the /a unfurl injects no meta for removed.)
+      if (artifact.removed_at)
+        return c.json({
+          short_id: artifact.short_id,
+          url: `${deps.baseUrl.replace(/\/$/, "")}/artifacts/${artifact.short_id}`,
+          title: null,
+          kind: artifact.kind,
+          visibility: artifact.visibility,
+          spa: !!artifact.spa,
+          current_version: artifact.current_version,
+          created_at: artifact.created_at,
+          versions: [],
+          sessions: [],
+          my_role: effectiveRole(actor, artifact.visibility),
+          tags: [],
+          favorite: false,
+          collections: [],
+          open_proposals: 0,
+          proposals_total: 0,
+          removed: true,
+          managed: false,
+        })
+      const versions = await meta.listVersions(artifact.id)
+      const me = actor.kind === "user" ? actor.userId : null
+      const tags = (await meta.tagsForArtifacts([artifact.id]))[artifact.id] ?? []
+      const favorite = me ? (await meta.listUserFavoriteIds(me)).includes(artifact.id) : false
+      const collections = await meta.collectionIdsForArtifact(artifact.id)
+      const proposals = await meta.listProposals(artifact.id)
+      // A markdown bundle (a skill — entry SKILL.md — or a docs folder) gets a `bundle`
+      // block: the entry + file tree (so the client can render the doc and navigate
+      // siblings) plus skill identity when it is one. One manifest read, on the detail
+      // page only — the list view stays blob-free (no N+1). HTML "site" bundles navigate
+      // via their own links, so they get no block.
+      let bundle: BundleDoc | undefined
+      const cur =
+        artifact.kind === "bundle"
+          ? versions.find((v) => v.n === artifact.current_version)
+          : undefined
+      if (cur) {
+        const manifestBytes = await blobs.get(cur.blob_key)
+        if (manifestBytes) {
+          const manifest = JSON.parse(new TextDecoder().decode(manifestBytes)) as BundleManifest
+          if (isMarkdownBundle(manifest)) bundle = bundleDoc(manifest, await sourceText(cur))
+        }
       }
-    }
-    // Resolve the GitHub author(s) to Derive profiles: collect every distinct gh_id on the
-    // artifact + its versions, map them in ONE query, and attach a `handle` (the Derive
-    // username) when the committer signed in with GitHub. Additive — the raw author_*
-    // fields stay on the response regardless.
-    const ghIds = new Set<string>()
-    if (artifact.author_gh_id) ghIds.add(artifact.author_gh_id)
-    for (const v of versions) if (v.author_gh_id) ghIds.add(v.author_gh_id)
-    const handleByGhId = await resolveHandles(meta, [...ghIds])
-    const base = toJson(deps.baseUrl, artifact, versions)
-    // `versions` stays at revision granularity (machines/agents); `sessions` is
-    // the time-grouped view the UI shows by default. `my_role` tells the client
-    // which actions to surface; `open_proposals` badges the review queue while
-    // `proposals_total` (everything but withdrawn) gates the Proposals entry so a
-    // proposer can return to read feedback after their candidate leaves the queue.
-    return c.json({
-      ...base,
-      // Resolved author profile for the current author (null when there's none, or the
-      // committer never signed in with GitHub — then `handle` is null but name/login/avatar
-      // still describe the GitHub identity). The frontend prefers this over the raw fields.
-      author: authorProfile(artifact, handleByGhId),
-      versions: base.versions.map((v) => ({
-        ...v,
-        handle: v.author_gh_id ? (handleByGhId[v.author_gh_id] ?? null) : null,
-      })),
-      sessions: groupSessions(versions, versionWindowMs),
-      my_role: effectiveRole(actor, artifact.visibility, artifact.general_role),
-      tags,
-      favorite,
-      collections,
-      open_proposals: proposals.filter((p) => p.state === "open").length,
-      proposals_total: proposals.filter((p) => p.state !== "withdrawn").length,
-      // Present for a markdown bundle (skill or docs folder): { isSkill, name,
-      // description, entry, files } — the client renders the file tree + skill chrome.
-      ...(bundle ? { bundle } : {}),
-      // A taken-down artifact keeps its record but serves no content (410); the
-      // UI shows a tombstone instead of the iframe.
-      removed: !!artifact.removed_at,
-      // Mirrored from a GitHub sync source → read-only in Derive (the client hides
-      // Edit/Propose; the publish/propose routes also refuse it server-side).
-      managed: (await meta.managedArtifactIds(artifact.org_id)).includes(artifact.id),
-    })
-  })
+      // Resolve the GitHub author(s) to Derive profiles: collect every distinct gh_id on the
+      // artifact + its versions, map them in ONE query, and attach a `handle` (the Derive
+      // username) when the committer signed in with GitHub. Additive — the raw author_*
+      // fields stay on the response regardless.
+      const ghIds = new Set<string>()
+      if (artifact.author_gh_id) ghIds.add(artifact.author_gh_id)
+      for (const v of versions) if (v.author_gh_id) ghIds.add(v.author_gh_id)
+      const handleByGhId = await resolveHandles(meta, [...ghIds])
+      const base = toJson(deps.baseUrl, artifact, versions)
+      // `versions` stays at revision granularity (machines/agents); `sessions` is
+      // the time-grouped view the UI shows by default. `my_role` tells the client
+      // which actions to surface; `open_proposals` badges the review queue while
+      // `proposals_total` (everything but withdrawn) gates the Proposals entry so a
+      // proposer can return to read feedback after their candidate leaves the queue.
+      return c.json({
+        ...base,
+        // Resolved author profile for the current author (null when there's none, or the
+        // committer never signed in with GitHub — then `handle` is null but name/login/avatar
+        // still describe the GitHub identity). The frontend prefers this over the raw fields.
+        author: authorProfile(artifact, handleByGhId),
+        versions: base.versions.map((v) => ({
+          ...v,
+          handle: v.author_gh_id ? (handleByGhId[v.author_gh_id] ?? null) : null,
+        })),
+        sessions: groupSessions(versions, versionWindowMs),
+        my_role: effectiveRole(actor, artifact.visibility, artifact.general_role),
+        tags,
+        favorite,
+        collections,
+        open_proposals: proposals.filter((p) => p.state === "open").length,
+        proposals_total: proposals.filter((p) => p.state !== "withdrawn").length,
+        // Present for a markdown bundle (skill or docs folder): { isSkill, name,
+        // description, entry, files } — the client renders the file tree + skill chrome.
+        ...(bundle ? { bundle } : {}),
+        // A taken-down artifact keeps its record but serves no content (410); the
+        // UI shows a tombstone instead of the iframe.
+        removed: !!artifact.removed_at,
+        // Mirrored from a GitHub sync source → read-only in Derive (the client hides
+        // Edit/Propose; the publish/propose routes also refuse it server-side).
+        managed: (await meta.managedArtifactIds(artifact.org_id)).includes(artifact.id),
+      })
+    },
+  )
 
   // Change general access (visibility + the general-access role) after publish — the
   // Share dialog's "general access" control. Editors+ (share), per the GDocs model.
