@@ -12,7 +12,7 @@ async function publishPublic(page: Page): Promise<string> {
     const res = await page.request.post("/v1/artifacts", {
       multipart: {
         file: { name: "hide.md", mimeType: "text/markdown", buffer: Buffer.from("# Hide\n\nbody") },
-        visibility: "public",
+        link_role: "viewer",
       },
     })
     expect(res.ok(), `publish failed: ${res.status()}`).toBeTruthy()

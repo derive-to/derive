@@ -326,14 +326,12 @@ export const workspaceRoutes = (ctx: AppContext) => {
           githubMirrorComments: z.boolean(),
           githubPreviewLink: z.boolean(),
           slackPost: z.boolean(),
-          // `public` is deliberately not offered: an agent default should never
-          // make work world-readable without a human's per-doc decision.
-          defaultAgentVisibility: z.enum(["private", "org"]),
-          // The link grant pair NEW publishes land with (round 4): who the URL
-          // works for x what it confers. Factory: org . commenter ("Workspace .
-          // can comment"). Changing these never touches existing artifacts.
+          // The access a NEW publish lands with (see access-model.md): the three
+          // single-purpose fields. Factory default is the "team draft" — member /
+          // none / none. Changing these never touches existing artifacts.
+          defaultWorkspaceAccess: z.enum(["none", "member"]),
           defaultLinkRole: z.enum(["none", "viewer", "commenter", "editor"]),
-          defaultLinkAudience: z.enum(["org", "public"]),
+          defaultListed: z.enum(["none", "workspace", "public"]),
         })
         .partial(),
     )

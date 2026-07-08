@@ -7,8 +7,12 @@ export interface PublishArgs {
   slug?: string
   spa?: boolean
   message?: string
-  visibility?: "public" | "org" | "private"
-  /** A lock on a public link (optional). */
+  /** The v2 access triple for a NEW artifact (see access-model.md); ignored on a
+   *  republish. */
+  workspaceAccess?: "none" | "member"
+  linkRole?: "none" | "viewer" | "commenter" | "editor"
+  listed?: "none" | "workspace" | "public"
+  /** A lock on the world link (optional). */
   password?: string
   /** When set, publishes a new version of this artifact instead of a new one. */
   id?: string
@@ -39,7 +43,9 @@ export interface ArtifactSummaryJson {
   title: string | null
   kind: "file" | "bundle"
   current_version: number
-  visibility: string
+  workspace_access?: string
+  link_role?: string
+  listed?: string
 }
 
 /** A revision submitted for human review instead of published live. */
@@ -85,7 +91,11 @@ export interface ArtifactJson {
   url: string
   title: string | null
   kind: "file" | "bundle"
-  visibility: string
+  /** The v2 access triple (see access-model.md); optional so an older server that
+   *  still returns `visibility` doesn't fail the type. */
+  workspace_access?: string
+  link_role?: string
+  listed?: string
   current_version: number
   versions: VersionJson[]
   /** Time-grouped version view (newest-first); present on the detail endpoint. */
@@ -192,7 +202,9 @@ export function createClient(opts: ClientOptions): DeriveClient {
       if (args.title) form.append("title", args.title)
       if (args.slug) form.append("slug", args.slug)
       if (args.message) form.append("message", args.message)
-      if (args.visibility) form.append("visibility", args.visibility)
+      if (args.workspaceAccess) form.append("workspace_access", args.workspaceAccess)
+      if (args.linkRole) form.append("link_role", args.linkRole)
+      if (args.listed) form.append("listed", args.listed)
       if (args.password) form.append("password", args.password)
       if (args.spa) form.append("spa", "true")
       if (args.resolves?.length) form.append("resolves", args.resolves.join(","))

@@ -33,9 +33,8 @@ export const realtimeRoutes = (ctx: AppContext) => {
     const me = await currentUser(c)
     const role = effectiveRole(
       await actorFor(c, artifact),
-      artifact.visibility,
+      artifact.workspace_access,
       artifact.link_role,
-      artifact.link_audience,
     )
     return me
       ? { id: me.id, name: me.username ?? "someone", role }

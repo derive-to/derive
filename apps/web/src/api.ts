@@ -76,12 +76,11 @@ export interface VersionSession {
   created_at: string
 }
 export type Role = "viewer" | "commenter" | "editor" | "owner"
-/** The link grant pair (round 4): what merely holding the URL grants a reacher the
- *  audience admits (`none` = the link is inert, invite-only), and who the URL works
- *  for (`org` = signed-in members of the artifact's workspace, `public` = anyone).
- *  Anonymous holders are always clamped to view. */
+/** The world link role: what merely holding the URL confers on anyone (`none` = no
+ *  world link). Anonymous holders are always clamped to view. See access-model.md. */
 export type LinkRole = "none" | "viewer" | "commenter" | "editor"
-export type LinkAudience = "org" | "public"
+export type WorkspaceAccess = "none" | "member"
+export type Listed = "none" | "workspace" | "public"
 export interface Artifact {
   short_id: string
   url: string
@@ -90,11 +89,13 @@ export interface Artifact {
   current_content_type?: string | null
   /** Locked: direct publishes are rejected; even editors must propose changes. */
   locked?: boolean
-  visibility: string
-  /** The link grant pair: what the URL confers x who it works for. */
+  /** The v2 access model — three single-purpose fields (see access-model.md).
+   *  Do the workspace's members reach it at their seat role, what the world link
+   *  confers, and where it surfaces for discovery. */
+  workspace_access?: WorkspaceAccess
   link_role?: LinkRole
-  link_audience?: LinkAudience
-  /** The public link carries a password (the lock). Never the password itself. */
+  listed?: Listed
+  /** The world link carries a password (the lock). Never the password itself. */
   password_protected?: boolean
   current_version: number
   versions: {
@@ -318,11 +319,11 @@ export interface OrgSettings {
   githubMirrorComments: boolean
   githubPreviewLink: boolean
   slackPost: boolean
-  /** Where a NEW agent (MCP) publish lands when the agent doesn't say. */
-  defaultAgentVisibility: "private" | "org"
-  /** The link grant pair NEW publishes land with (round 4). Factory: org . commenter. */
+  /** The access a NEW publish lands with (see access-model.md). Factory default is
+   *  the team draft: member / none / none. */
+  defaultWorkspaceAccess: WorkspaceAccess
   defaultLinkRole: LinkRole
-  defaultLinkAudience: LinkAudience
+  defaultListed: Listed
 }
 /** Slack connection status for the Settings UI. */
 export interface SlackStatus {
@@ -867,24 +868,26 @@ export const api = {
   // cookie and subsequent reads of this artifact succeed.
   unlock: (id: string, password: string): Promise<{ ok: true }> =>
     f(`/v1/artifacts/${id}/unlock`, opts({ password })).then(j),
-  // Change access from the Share dialog: where it's listed (visibility) and the link
-  // grant pair (who the URL works for x what it confers). Omitted link fields keep
-  // the artifact's current values. Anonymous reachers stay view-only regardless.
-  setVisibility: (
+  // Change access from the Share dialog: the three fields (workspace access, the
+  // world link role, and where it's listed). Omitted fields keep the artifact's
+  // current values. Anonymous reachers stay view-only regardless. A password string
+  // (re)sets the lock on the world link; "" clears it; undefined keeps it.
+  setAccess: (
     id: string,
-    visibility: string,
-    linkRole?: LinkRole,
-    linkAudience?: LinkAudience,
-    // A string (re)sets the lock on a public link; "" clears it; undefined keeps it.
-    password?: string,
+    access: {
+      workspaceAccess?: WorkspaceAccess
+      linkRole?: LinkRole
+      listed?: Listed
+      password?: string
+    },
   ): Promise<{
-    visibility: string
+    workspace_access: WorkspaceAccess
     link_role: LinkRole
-    link_audience: LinkAudience
+    listed: Listed
     locked: boolean
   }> =>
-    f(`/v1/artifacts/${id}/visibility`, {
-      ...opts({ visibility, linkRole, linkAudience, password }),
+    f(`/v1/artifacts/${id}/access`, {
+      ...opts(access),
       method: "PATCH",
     }).then(j),
   setLocked: (id: string, locked: boolean): Promise<{ locked: boolean }> =>

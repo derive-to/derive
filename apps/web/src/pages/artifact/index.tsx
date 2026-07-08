@@ -577,9 +577,9 @@ export function Artifact() {
               shortId={shortId}
               orgId={art.org_id}
               myRole={art.my_role}
-              visibility={art.visibility}
+              workspaceAccess={art.workspace_access}
               linkRole={art.link_role}
-              linkAudience={art.link_audience}
+              listed={art.listed}
               passwordProtected={!!art.password_protected}
               favorite={!!art.favorite}
               tags={art.tags ?? []}

@@ -13,11 +13,11 @@ describe("comment access via the general-access link", () => {
   const bob: TestUser = { id: "u_ca_bob", email: "bob@ca.test", name: "Bob" }
   const { app } = makeAuthedApp("comment-access", [alice, bob], undefined, { isolated: true })
 
-  const setAccess = (shortId: string, generalRole: "viewer" | "commenter") =>
-    app.request(`/v1/artifacts/${shortId}/visibility`, {
+  const setAccess = (shortId: string, linkRole: "viewer" | "commenter") =>
+    app.request(`/v1/artifacts/${shortId}/access`, {
       method: "PATCH",
       headers: { "content-type": "application/json", ...as(alice.email) },
-      body: JSON.stringify({ visibility: "public", generalRole }),
+      body: JSON.stringify({ linkRole }),
     })
   const comment = (shortId: string, headers: Record<string, string>) =>
     app.request(`/v1/artifacts/${shortId}/comments`, jsonAs(headers, { body_md: "hi" }))
@@ -53,13 +53,10 @@ describe("comment access via the general-access link", () => {
       (await app.request(`/v1/artifacts/${shortId}/comments`, json({ body_md: "no" }))).status,
     ).toBe(403)
 
-    // my_role reflects the grant per caller; the GET returns the persisted link
-    // pair (the legacy generalRole PATCH above landed on link_role, audience
-    // forced public by the coherence rule).
+    // my_role reflects the grant per caller; the GET returns the persisted link role.
     const bobView = await (await view(shortId, as(bob.email))).json()
     expect(bobView.my_role).toBe("commenter")
     expect(bobView.link_role).toBe("commenter")
-    expect(bobView.link_audience).toBe("public")
     const anonView = await (await view(shortId)).json()
     expect(anonView.my_role).toBe("viewer")
   })
@@ -76,10 +73,10 @@ describe("comment access via the general-access link", () => {
   })
 })
 
-// The workspace-audience link (round 4, scenario 1): a private artifact's URL
-// admits workspace members at the link's grant — the review loop works on a
-// pasted link — while outsiders and anonymous stay out entirely.
-describe("comment access via the workspace link", () => {
+// Workspace seat access (the team-draft default): a member reaches the doc at
+// their SEAT role — the review loop works on a pasted link — while outsiders and
+// anonymous stay out entirely.
+describe("comment access via workspace seat", () => {
   const dana: TestUser = {
     id: "u_ca_dana",
     email: "dana@ca.test",
@@ -100,7 +97,7 @@ describe("comment access via the workspace link", () => {
     isolated: true,
   })
 
-  it("a member comments on a private doc via the default link; an outsider gets 404", async () => {
+  it("a member comments on a team-draft doc via their seat; an outsider gets 404", async () => {
     await app.request("/v1/me", { headers: as(dana.email) }) // provision Dana's workspace
     await app.request("/v1/me", { headers: as(otto.email) }) // Otto provisions his own
     // Dana seats Memo in her workspace; Otto stays outside.
@@ -113,13 +110,13 @@ describe("comment access via the workspace link", () => {
       ).ok,
     ).toBe(true)
 
-    // The factory default pair (org · commenter) — no fields sent.
+    // The factory default (the team draft) — no fields sent.
     const a = await (await publishAs(app, "<h1>draft</h1>", {}, as(dana.email))).json()
-    expect(a.visibility).toBe("private")
-    expect(a.link_role).toBe("commenter")
-    expect(a.link_audience).toBe("org")
+    expect(a.workspace_access).toBe("member")
+    expect(a.link_role).toBe("none")
+    expect(a.listed).toBe("none")
 
-    // Memo (workspace member, no share) comments through the link.
+    // Memo (workspace member, no share) reaches it at his seat (commenter) and comments.
     expect(
       (
         await app.request(

@@ -21,9 +21,9 @@ import type {
   GitHubInstallationRecord,
   GithubAuthor,
   InvitationRecord,
-  LinkAudience,
   LinkRole,
   ListArtifactsOpts,
+  Listed,
   MembershipRecord,
   NewAgent,
   NewAgentMention,
@@ -68,8 +68,8 @@ import type {
   TakedownInput,
   UserProfile,
   VersionRecord,
-  Visibility,
   WebhookRecord,
+  WorkspaceAccess,
   WorkspaceRecord,
 } from "@derive/core"
 import { DEFAULT_ORG_SETTINGS, GLOBAL_FOLLOW_ORG } from "@derive/core"
@@ -138,23 +138,24 @@ import {
  * once, not in two places (the listArtifacts the review flagged as duplicated).
  */
 export function artifactListConditions(
-  art: { title: Column; created_at: Column; id: Column; org_id: Column; visibility: Column },
+  art: { title: Column; created_at: Column; id: Column; org_id: Column; listed: Column },
   opts?: ListArtifactsOpts,
 ): SQL[] {
   const conds: SQL[] = []
-  // Anonymous / non-member callers only ever see public artifacts in a listing — an
-  // org title must not leak to someone who can't open it.
-  if (opts?.publicOnly) conds.push(eq(art.visibility, "public"))
-  // `private` artifacts are invisible even to workspace members unless they're an
-  // explicit artifact member (the publisher's owner row, a share, a collection).
-  // The subquery names the table literally — sqlite, D1, and pg all call it
+  // Anonymous / non-member callers only ever see the public directory — a
+  // workspace-listed title must not leak to someone outside the workspace.
+  if (opts?.publicOnly) conds.push(eq(art.listed, "public"))
+  // A listing surfaces feed-listed rows (`workspace`/`public`) to members, plus any
+  // row the viewer is an explicit member of (their own drafts, shares, collections)
+  // — an UNlisted row (listed='none') never appears in a feed by access alone. The
+  // subquery names the table literally — sqlite, D1, and pg all call it
   // artifact_member, and this function serves all three.
   else if (opts?.viewerId) {
     const isMember = sql`EXISTS (
         SELECT 1 FROM artifact_member am
         WHERE am.artifact_id = ${art.id} AND am.user_id = ${opts.viewerId}
       )`
-    conds.push(sql`(${art.visibility} != 'private' OR ${isMember})`)
+    conds.push(sql`(${art.listed} != 'none' OR ${isMember})`)
   }
   // A trusted caller (operator token / internal jobs, no viewerId) sees everything.
   if (opts?.q) conds.push(like(sql`lower(${art.title})`, `%${opts.q.toLowerCase()}%`))
@@ -284,24 +285,33 @@ export const parseOrgSettings = (raw: string | null): OrgSettings => {
   try {
     if (raw) parsed = JSON.parse(raw) as Partial<OrgSettings>
   } catch {}
-  const { defaultUnlistedRole: _retired, ...rest } = parsed
-  const v = rest.defaultAgentVisibility as string | undefined
-  const defaultAgentVisibility: OrgSettings["defaultAgentVisibility"] =
-    v === "org" || v === "link" || v === "public" ? "org" : "private"
+  const {
+    defaultUnlistedRole: _retiredA,
+    defaultAgentVisibility: _retiredB,
+    defaultLinkAudience: _retiredC,
+    ...rest
+  } = parsed as Partial<OrgSettings> & {
+    defaultUnlistedRole?: unknown
+    defaultAgentVisibility?: unknown
+    defaultLinkAudience?: unknown
+  }
+  const wa = rest.defaultWorkspaceAccess as string | undefined
+  const defaultWorkspaceAccess: OrgSettings["defaultWorkspaceAccess"] =
+    wa === "none" || wa === "member" ? wa : DEFAULT_ORG_SETTINGS.defaultWorkspaceAccess
   const lr = rest.defaultLinkRole as string | undefined
   const defaultLinkRole: OrgSettings["defaultLinkRole"] =
     lr === "none" || lr === "viewer" || lr === "commenter" || lr === "editor"
       ? lr
       : DEFAULT_ORG_SETTINGS.defaultLinkRole
-  const la = rest.defaultLinkAudience as string | undefined
-  const defaultLinkAudience: OrgSettings["defaultLinkAudience"] =
-    la === "org" || la === "public" ? la : DEFAULT_ORG_SETTINGS.defaultLinkAudience
+  const li = rest.defaultListed as string | undefined
+  const defaultListed: OrgSettings["defaultListed"] =
+    li === "none" || li === "workspace" || li === "public" ? li : DEFAULT_ORG_SETTINGS.defaultListed
   return {
     ...DEFAULT_ORG_SETTINGS,
     ...rest,
-    defaultAgentVisibility,
+    defaultWorkspaceAccess,
     defaultLinkRole,
-    defaultLinkAudience,
+    defaultListed,
   }
 }
 
@@ -364,23 +374,39 @@ export function makeRepos(db: SqliteDb) {
     return (await getByShortId(a.short_id)) as ArtifactRecord
   }
 
-  const setVisibility = async (
+  const setAccess = async (
     artifactId: string,
-    visibility: Visibility,
-    passwordHash: string | null,
+    workspaceAccess: WorkspaceAccess,
+    listed: Listed,
     linkRole: LinkRole,
-    linkAudience: LinkAudience,
+    passwordHash: string | null,
   ): Promise<void> => {
     await db
       .update(artifact)
       .set({
-        visibility,
-        password_hash: passwordHash,
+        workspace_access: workspaceAccess,
+        listed,
         link_role: linkRole,
-        link_audience: linkAudience,
+        password_hash: passwordHash,
       })
       .where(eq(artifact.id, artifactId))
       .run()
+  }
+
+  // One-time boot backfill from the pre-v2 shape (visibility + general_role) into
+  // the access fields. Idempotent: it CONSUMES `visibility` (resets it to the
+  // orphaned default 'private'), and only touches rows where it's still non-default
+  // — so a second boot, and every row created after (born visibility='private'),
+  // is a no-op. setAccess never writes visibility, so a later access change is
+  // never re-clobbered. See docs/plans/access-model.md.
+  const backfillAccess = async (): Promise<void> => {
+    await db.run(sql`UPDATE artifact SET
+      workspace_access = CASE WHEN visibility IN ('org','public') THEN 'member' ELSE 'none' END,
+      listed = CASE visibility WHEN 'public' THEN 'public' WHEN 'org' THEN 'workspace' ELSE 'none' END,
+      link_role = CASE WHEN visibility = 'public' THEN general_role ELSE 'none' END,
+      visibility = 'private',
+      general_role = 'viewer'
+      WHERE visibility != 'private'`)
   }
 
   const setLocked = async (artifactId: string, locked: 0 | 1): Promise<void> => {
@@ -530,11 +556,7 @@ export function makeRepos(db: SqliteDb) {
     return (await (orgId ? q.where(eq(artifact.org_id, orgId)) : q).get())?.c ?? 0
   }
 
-  const countOwnedBy = async (
-    orgId: string,
-    userId: string,
-    visibility?: Visibility,
-  ): Promise<number> =>
+  const countOwnedBy = async (orgId: string, userId: string, listed?: Listed): Promise<number> =>
     (
       await db
         .select({ c: count() })
@@ -543,12 +565,7 @@ export function makeRepos(db: SqliteDb) {
           artifactMember,
           and(eq(artifactMember.artifact_id, artifact.id), ownedBy(userId)),
         )
-        .where(
-          and(
-            eq(artifact.org_id, orgId),
-            visibility ? eq(artifact.visibility, visibility) : undefined,
-          ),
-        )
+        .where(and(eq(artifact.org_id, orgId), listed ? eq(artifact.listed, listed) : undefined))
         .get()
     )?.c ?? 0
 
@@ -1070,7 +1087,7 @@ export function makeRepos(db: SqliteDb) {
       const ghIds = (await githubIdsForUsers(people)).map((g) => g.toLowerCase())
       if (ghIds.length > 0) authorConds.push(inArray(sql`lower(${artifact.author_gh_id})`, ghIds))
       const authored = authorConds.length === 1 ? authorConds[0] : or(...authorConds)
-      if (authored) branches.push(and(eq(artifact.visibility, "public"), authored) as SQL)
+      if (authored) branches.push(and(eq(artifact.listed, "public"), authored) as SQL)
     }
     if (branches.length === 0) return []
     const match = branches.length === 1 ? branches[0] : or(...branches)
@@ -1135,18 +1152,19 @@ export function makeRepos(db: SqliteDb) {
     } else {
       conds.push(eq(artifact.author_id, userId))
     }
-    // Visible to the viewer: public OR in a workspace they share with the profile
-    // owner. Private work never rides a profile, shared workspace or not — the
-    // owner finds it in their library, not on their public face.
+    // Visible to the viewer on a profile: publicly listed, OR listed in a workspace
+    // they share with the profile owner. UNlisted work (listed='none') never rides
+    // a profile, shared workspace or not — the owner finds it in their library, not
+    // on their public face.
     const orgs = opts.visibleOrgIds ?? []
     if (orgs.length > 0) {
       const v = or(
-        eq(artifact.visibility, "public"),
-        and(inArray(artifact.org_id, orgs), ne(artifact.visibility, "private")),
+        eq(artifact.listed, "public"),
+        and(inArray(artifact.org_id, orgs), ne(artifact.listed, "none")),
       )
       if (v) conds.push(v)
     } else {
-      conds.push(eq(artifact.visibility, "public"))
+      conds.push(eq(artifact.listed, "public"))
     }
     return conds
   }
@@ -2158,7 +2176,8 @@ export function makeRepos(db: SqliteDb) {
 
   return {
     createArtifact,
-    setVisibility,
+    setAccess,
+    backfillAccess,
     setLocked,
     getByShortId,
     getArtifactById,

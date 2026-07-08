@@ -23,7 +23,7 @@ export const analyticsRoutes = (ctx: AppContext) => {
     const actor = await actorFor(c, artifact)
     if (
       actor.kind !== "anon" &&
-      can(actor, "manage", artifact.visibility, artifact.link_role, artifact.link_audience)
+      can(actor, "manage", artifact.workspace_access, artifact.link_role)
     )
       return c.body(null, 204)
     const me = await currentUser(c)

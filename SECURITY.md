@@ -28,49 +28,50 @@ Derive ships safe defaults, but a few choices matter for an internet-facing depl
   (Better Auth is always available, even zero-config) or presents a static `DERIVE_TOKEN`
   (set it for headless CI/agent automation).
 
-  Access is two independent axes (round 4, docs/plans/link-grant.md). **Where it's
-  listed** (`visibility`: private / org / public) governs discoverability — feeds,
-  libraries, and whether workspace membership alone grants standing (it does at
-  org/public, never at private). **What the link grants** (`link_audience` ×
-  `link_role`) governs reach: who the bare URL works for (`org` = signed-in members
-  of the artifact's workspace, `public` = anyone) and what it confers (`none` =
-  inert, invite-only; viewer / commenter / editor). Writing grants only lift a
-  *signed-in* holder the audience admits — never an anonymous one. The effective
-  capability by who's asking, for any visibility:
+  Access is three independent, single-purpose fields (docs/plans/access-model.md).
+  **`workspace_access`** (`none` / `member`): do the artifact's workspace members
+  reach it, each at their own SEAT role (owner→manage, editor→edit, commenter→comment)?
+  **`link_role`** (`none` / viewer / commenter / editor): what merely holding the
+  URL confers on anyone, including people outside the workspace (`none` = no world
+  link). **`listed`** (`none` / workspace / public): pure discoverability — the
+  workspace library or the public directory — with no access meaning of its own.
+  The effective role is `max(explicit share, workspace seat if a member, world
+  link)`; an anonymous holder of a live link is always clamped to view. The
+  effective capability by who's asking:
 
-  | Link grant                | Anonymous (no account) | Signed in outside the workspace | Workspace member       | Explicit share          |
-  |---------------------------|------------------------|---------------------------------|------------------------|-------------------------|
-  | Inert (`none`) — sealed   | No access              | No access                       | Their standing¹        | Their share role        |
-  | Workspace · view/comment/edit | No access          | No access                       | max(standing¹, grant)  | max(share, grant²)      |
-  | Anyone · view             | View                   | View                            | max(standing¹, view)   | max(share, view)        |
-  | Anyone · comment          | View (sign in to comment) | View + comment               | max(standing¹, comment)| max(share, comment)     |
-  | Anyone · edit             | View (sign in to edit) | Editor                          | max(standing¹, edit)   | max(share, edit)        |
+  | Field state                    | Anonymous (no account) | Signed in outside the workspace | Workspace member          | Explicit share          |
+  |--------------------------------|------------------------|---------------------------------|---------------------------|-------------------------|
+  | workspace_access none, link none | No access            | No access                       | Their share role only¹    | Their share role        |
+  | workspace_access member          | No access            | No access                       | max(seat, share)          | max(seat², share)       |
+  | link_role viewer                 | View                 | View                            | max(seat/share, view)     | max(share, view)        |
+  | link_role commenter              | View (sign in to comment) | View + comment             | max(seat/share, comment)  | max(share, comment)     |
+  | link_role editor                 | View (sign in to edit) | Editor                        | max(seat/share, edit)     | max(share, edit)        |
 
-  ¹ Standing = membership role at org/public visibility; NOTHING at private (a
-  workspace owner still cannot open a teammate's sealed private draft by role
-  alone). ² A shared-with outsider is not in a workspace audience; their share
-  role alone applies.
+  ¹ workspace_access=none withholds the seat grant, so a workspace owner cannot
+  open a teammate's invite-only draft by role alone — only an explicit share does.
+  ² A shared-with outsider isn't a workspace member, so their seat grant is nil;
+  their share role alone applies.
 
-  One coherence rule: a **public listing requires a public link at viewer or
-  above** — "public means the link works, full stop"; listed-but-unopenable
-  states are unrepresentable. One modifier: a password on a public listing gates
-  the link floor until unlocked (members and explicit shares never need it), and
-  a locked artifact's bytes are never shared-cacheable.
+  Two invariants (the only cross-field rules): **`listed=workspace` requires
+  `workspace_access=member`** and **`listed=public` requires a `link_role`** — a
+  doc can't be listed somewhere it grants no access to. One modifier: a password
+  gates the world link until unlocked (members and explicit shares never need it),
+  and a locked artifact's bytes are never shared-cacheable.
 
-  Every publish defaults to a **private listing with a Workspace · can-comment
-  link**: nothing is listed anywhere, teammates handed the URL can open and
-  comment, and no one outside the workspace can reach it. That includes AGENT
-  publishes — the /mcp server, and any /v1 publish carrying a registered agent
-  token or OAuth bearer (the CLI and stdio-shim paths) — where the listing is
-  governed by `defaultAgentVisibility` and the link pair by the same workspace
-  defaults (`defaultLinkAudience` · `defaultLinkRole`; a bare public publish gets
-  the classic public · viewer pair, never the workspace role). Existing artifacts
-  are never retroactively widened by changing a default. Private artifacts never
-  appear in another viewer's listings, profiles, or People surfaces (your own
-  library and the "Created by me" filter always find your own). Widening —
-  listing wider, or opening the link to Anyone — is always an explicit act.
-  GitHub-mirror syncs publish workspace-visible — a mirrored repo is a workspace
-  resource, not a personal draft.
+  Every publish defaults to the **team draft**: `workspace_access=member`,
+  `link_role=none`, `listed=none` — nothing is listed anywhere, teammates reach it
+  at their seat role (so a pasted link opens for the team), and no one outside the
+  workspace can reach it. That includes AGENT publishes — the /mcp server, and any
+  /v1 publish carrying a registered agent token or OAuth bearer (the CLI and
+  stdio-shim paths) — resolved from the same workspace defaults
+  (`defaultWorkspaceAccess` · `defaultLinkRole` · `defaultListed`). Existing
+  artifacts are never retroactively widened by changing a default. Invite-only
+  artifacts (workspace_access=none, no link) never appear in another viewer's
+  listings, profiles, or People surfaces (your own library and the "Created by me"
+  filter always find your own). Widening — granting the workspace, listing wider,
+  or opening the link to Anyone — is always an explicit act. GitHub-mirror syncs
+  publish workspace-listed — a mirrored repo is a workspace resource, not a
+  personal draft.
 
   `packages/core/src/permissions.ts` (`effectiveRole`) is the single source of truth for
   this table, enforced on every request by the one `can()` gate and surfaced in the UI so

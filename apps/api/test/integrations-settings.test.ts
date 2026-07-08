@@ -16,10 +16,10 @@ describe("workspace integration settings", () => {
       githubMirrorComments: true,
       githubPreviewLink: true,
       slackPost: true,
-      defaultAgentVisibility: "private",
-      // Round 4: the link grant NEW publishes land with — Workspace · can comment.
-      defaultLinkRole: "commenter",
-      defaultLinkAudience: "org",
+      // The access NEW publishes land with — the team draft (see access-model.md).
+      defaultWorkspaceAccess: "member",
+      defaultLinkRole: "none",
+      defaultListed: "none",
     })
   })
 

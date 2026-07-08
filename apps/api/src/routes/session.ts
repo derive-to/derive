@@ -325,13 +325,7 @@ export const sessionRoutes = (ctx: AppContext) => {
     if (
       artifact &&
       (isToken(c) ||
-        can(
-          await actorFor(c, artifact),
-          "comment",
-          artifact.visibility,
-          artifact.link_role,
-          artifact.link_audience,
-        ))
+        can(await actorFor(c, artifact), "comment", artifact.workspace_access, artifact.link_role))
     ) {
       for (const m of await meta.listArtifactMembers(artifact.id)) ids.add(m.user_id)
       for (const cm of await meta.listComments(artifact.id)) if (cm.author_id) ids.add(cm.author_id)

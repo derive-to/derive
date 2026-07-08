@@ -50,10 +50,10 @@ export async function publishArtifact(
     const res = await page.request.post("/v1/artifacts", {
       multipart: {
         file: { name, mimeType: "text/markdown", buffer: Buffer.from(body) },
-        // Link-visible explicitly: most specs hand the artifact to a second user
-        // or an anonymous page, which the private default would lock out. Specs
-        // about the default itself publish without the helper.
-        visibility: "link",
+        // A world view-link explicitly: most specs hand the artifact to a second
+        // user or an anonymous page, which the team-draft default would lock out.
+        // Specs about the default itself publish without the helper.
+        link_role: "viewer",
       },
     })
     expect(res.ok(), `publish failed: ${res.status()}`).toBeTruthy()

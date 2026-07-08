@@ -22,9 +22,9 @@ import type {
   GithubAuthor,
   GithubUserMapping,
   InvitationRecord,
-  LinkAudience,
   LinkRole,
   ListArtifactsOpts,
+  Listed,
   MembershipRecord,
   MetaStore,
   NewAgent,
@@ -73,8 +73,8 @@ import type {
   UserProfile,
   VersionRecord,
   ViewStats,
-  Visibility,
   WebhookRecord,
+  WorkspaceAccess,
   WorkspaceRecord,
 } from "@derive/core"
 import { GLOBAL_FOLLOW_ORG } from "@derive/core"
@@ -262,20 +262,20 @@ export class PgMetaStore implements MetaStore {
     return (await this.getByShortId(a.short_id)) as ArtifactRecord
   }
 
-  async setVisibility(
+  async setAccess(
     artifactId: string,
-    visibility: Visibility,
-    passwordHash: string | null,
+    workspaceAccess: WorkspaceAccess,
+    listed: Listed,
     linkRole: LinkRole,
-    linkAudience: LinkAudience,
+    passwordHash: string | null,
   ): Promise<void> {
     await this.db
       .update(artifact)
       .set({
-        visibility,
-        password_hash: passwordHash,
+        workspace_access: workspaceAccess,
+        listed,
         link_role: linkRole,
-        link_audience: linkAudience,
+        password_hash: passwordHash,
       })
       .where(eq(artifact.id, artifactId))
   }
@@ -546,17 +546,12 @@ export class PgMetaStore implements MetaStore {
     const rows = await (orgId ? q.where(eq(artifact.org_id, orgId)) : q)
     return Number(rows[0]?.c ?? 0)
   }
-  async countOwnedBy(orgId: string, userId: string, visibility?: Visibility): Promise<number> {
+  async countOwnedBy(orgId: string, userId: string, listed?: Listed): Promise<number> {
     const rows = await this.db
       .select({ c: count() })
       .from(artifact)
       .innerJoin(artifactMember, this.ownerRowJoin(userId))
-      .where(
-        and(
-          eq(artifact.org_id, orgId),
-          visibility ? eq(artifact.visibility, visibility) : undefined,
-        ),
-      )
+      .where(and(eq(artifact.org_id, orgId), listed ? eq(artifact.listed, listed) : undefined))
     return Number(rows[0]?.c ?? 0)
   }
   async storageBytes(orgId: string): Promise<number> {
@@ -988,7 +983,7 @@ export class PgMetaStore implements MetaStore {
       const ghIds = (await this.githubIdsForUsers(people)).map((g) => g.toLowerCase())
       if (ghIds.length > 0) authorConds.push(inArray(sql`lower(${artifact.author_gh_id})`, ghIds))
       const authored = authorConds.length === 1 ? authorConds[0] : or(...authorConds)
-      if (authored) branches.push(and(eq(artifact.visibility, "public"), authored))
+      if (authored) branches.push(and(eq(artifact.listed, "public"), authored))
     }
     if (branches.length === 0) return []
     const match = branches.length === 1 ? branches[0] : or(...branches)
@@ -1047,12 +1042,12 @@ export class PgMetaStore implements MetaStore {
     const orgs = opts.visibleOrgIds ?? []
     if (orgs.length > 0) {
       const v = or(
-        eq(artifact.visibility, "public"),
-        and(inArray(artifact.org_id, orgs), ne(artifact.visibility, "private")),
+        eq(artifact.listed, "public"),
+        and(inArray(artifact.org_id, orgs), ne(artifact.listed, "none")),
       )
       if (v) conds.push(v)
     } else {
-      conds.push(eq(artifact.visibility, "public"))
+      conds.push(eq(artifact.listed, "public"))
     }
     return conds
   }
@@ -1669,6 +1664,23 @@ export class PgMetaStore implements MetaStore {
       return rows as GithubUserMapping[]
     } catch {
       return []
+    }
+  }
+  // One-time access backfill from the pre-v2 shape (see repos.ts backfillAccess for
+  // the idempotency argument — it consumes `visibility`, so it re-runs to a no-op).
+  async backfillAccess(): Promise<void> {
+    try {
+      await this.pool.query(
+        `UPDATE "artifact" SET
+           workspace_access = CASE WHEN visibility IN ('org','public') THEN 'member' ELSE 'none' END,
+           listed = CASE visibility WHEN 'public' THEN 'public' WHEN 'org' THEN 'workspace' ELSE 'none' END,
+           link_role = CASE WHEN visibility = 'public' THEN general_role ELSE 'none' END,
+           visibility = 'private',
+           general_role = 'viewer'
+         WHERE visibility != 'private'`,
+      )
+    } catch {
+      /* columns absent on a fresh DB; the CREATE path already has the defaults */
     }
   }
   // Idempotent backfill (see sqlite.ts) — stamp author_id from a known author_gh_id→user mapping.

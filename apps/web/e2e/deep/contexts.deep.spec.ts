@@ -48,7 +48,7 @@ test("ask → stub-runner answer with meta → follow-up → close", async ({ ow
     multipart: {
       file: { name: "chart.html", mimeType: "text/html", buffer: Buffer.from("<h1>chart</h1>") },
       title: "Churn by month",
-      visibility: "link",
+      link_role: "viewer",
     },
   })
   expect(chartRes.ok()).toBeTruthy()

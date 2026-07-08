@@ -605,12 +605,12 @@ export function buildContext(deps: AppDeps) {
     return { kind: "user", userId: me.id, artifactRole, orgRole, locked, unlocked }
   }
 
-  /** Authorize an action against a specific artifact. The artifact's link grant pair
-   *  (round 4: link_audience = who the URL works for, link_role = what it confers,
-   *  at any visibility) is threaded in so a holder the audience admits can earn up
-   *  to that role while an anonymous one stays clamped to view (see effectiveRole). */
+  /** Authorize an action against a specific artifact. Access is the max of three
+   *  grants: an explicit share, the workspace seat (when workspace_access=member),
+   *  and the world link (link_role, clamped to view for anonymous holders and gated
+   *  by unlock when the link is password-locked). See effectiveRole. */
   const authorize = (c: Context, action: Action, a: ArtifactRecord): Promise<boolean> =>
-    actorFor(c, a).then((actor) => can(actor, action, a.visibility, a.link_role, a.link_audience))
+    actorFor(c, a).then((actor) => can(actor, action, a.workspace_access, a.link_role))
 
   /**
    * True when the caller is an anonymous visitor — they may view public content

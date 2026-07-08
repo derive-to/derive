@@ -231,60 +231,61 @@ describe("HTTP publish parity (the CLI / stdio-shim path)", () => {
     const out = (await res.json()) as Record<string, unknown>
     expect(out.review_requested).toBe(true)
     expect(out.opened_in_tab).toBe(true) // the recorder holds the user channel
-    expect(out.visibility).toBe("private") // agent creates take the workspace default here too
+    expect(out.listed).toBe("none") // agent creates take the workspace default (team draft) here too
     expect(userEvents.some((e) => e.type === "artifact.pushed" && e.kind === "created")).toBe(true)
     const rows = await meta.listNotifications("u_o", 10)
     expect(rows.some((r) => r.kind === "review")).toBe(true)
   })
 })
 
-describe("private — the agent-draft default", () => {
-  it("new MCP publishes land private, still findable by the agent", async () => {
+describe("the team-draft default", () => {
+  it("new MCP publishes land unlisted, still findable by the agent", async () => {
     const { app, meta, token } = loopApp("unlisted")
     const created = await call(app, token, "publish", {
       content: "<h1>Draft</h1>",
       title: "Quiet Draft",
     })
-    expect(created.visibility).toBe("private")
+    expect(created.listed).toBe("none")
     const a = await meta.getByShortId(created.short_id as string)
-    expect(a?.general_role).toBe("viewer")
+    expect(a?.workspace_access).toBe("member")
+    expect(a?.link_role).toBe("none")
 
     // The agent's list_artifacts finds it through the acting user's owner row —
-    // it can always find its own work; a teammate's private draft stays invisible.
+    // it can always find its own work; a teammate's invite-only draft stays invisible.
     const list = await call(app, token, "list_artifacts", {})
     const shortIds = (list.artifacts as { short_id: string }[]).map((x) => x.short_id)
     expect(shortIds).toContain(created.short_id)
 
-    // Explicit visibility still wins over the workspace default.
+    // An explicit listing still wins over the workspace default.
     const open = await call(app, token, "publish", {
       content: "<h1>Open</h1>",
       title: "Open Doc",
-      visibility: "workspace",
+      listed: "workspace",
     })
-    expect(open.visibility).toBe("org")
+    expect(open.listed).toBe("workspace")
   })
 
-  it("honors the workspace's defaultAgentVisibility setting", async () => {
+  it("honors the workspace's default listing setting", async () => {
     const { app, meta, token } = loopApp("wsdefaults")
     // The OAuth agent runs in the granting user's personal workspace.
     const org = "ws_p_u_o"
     const { DEFAULT_ORG_SETTINGS } = await import("@derive/core")
-    await meta.setOrgSettings(org, { ...DEFAULT_ORG_SETTINGS, defaultAgentVisibility: "org" })
+    await meta.setOrgSettings(org, { ...DEFAULT_ORG_SETTINGS, defaultListed: "workspace" })
     const created = await call(app, token, "publish", {
       content: "<h1>C</h1>",
       title: "Team Draft",
     })
-    expect(created.visibility).toBe("org")
+    expect(created.listed).toBe("workspace")
 
     await meta.setOrgSettings(org, {
       ...DEFAULT_ORG_SETTINGS,
-      defaultAgentVisibility: "private",
+      defaultListed: "none",
     })
     const priv = await call(app, token, "publish", {
       content: "<h1>P</h1>",
       title: "Private Draft",
     })
-    expect(priv.visibility).toBe("private")
+    expect(priv.listed).toBe("none")
   })
 })
 

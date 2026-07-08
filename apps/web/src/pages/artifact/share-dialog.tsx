@@ -6,10 +6,11 @@ import {
   type ArtifactDomain,
   type ArtifactMember,
   api,
-  type LinkAudience,
   type LinkRole,
+  type Listed,
   type PublicProfile,
   type Role,
+  type WorkspaceAccess,
 } from "@/api"
 import { Icon, type IconName } from "@/components/icons"
 import { ROLE_LABELS, RoleSelect } from "@/components/shared/role-select"
@@ -33,59 +34,44 @@ import {
   SelectMenuTrigger,
 } from "@/components/ui/select-menu"
 import { toast } from "@/components/ui/sonner"
+import { Switch } from "@/components/ui/switch"
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { useAuth } from "@/ctx"
 import { getInitials } from "@/lib/initials"
 import { artifactQuery, workspaceQuery } from "@/lib/queries"
 import { cn } from "@/lib/utils"
 
-// General access: three audiences, each answering one question — who can open
-// the link. A password is a LOCK on the public option (the checkbox below the
-// select), not a fourth audience.
-const ACCESS: { value: string; label: string; blurb: string; icon: IconName }[] = [
-  {
-    value: "private",
-    label: "Private",
-    blurb: "Only people added above. Workspace membership grants nothing.",
-    icon: "lock",
-  },
-  {
-    value: "org",
-    label: "Workspace",
-    blurb: "Every workspace member can find it in the shared library.",
-    icon: "workspace",
-  },
-  {
-    value: "public",
-    label: "Public",
-    blurb: "The link works for anyone.",
-    icon: "globe",
-  },
+// Access is ONE primary question — who can open this — projected from the v2
+// triple (workspace_access, link_role, listed; see access-model.md). Each segment
+// is the WIDEST reach currently granted: a world link is "anyone"; workspace-seat
+// access is "workspace"; neither is "invite". The world link's role and each
+// segment's listing (does it show in a feed) are secondary switches beneath it.
+type Segment = "invite" | "workspace" | "anyone"
+const SEGMENTS: { value: Segment; label: string; icon: IconName }[] = [
+  { value: "invite", label: "Invited", icon: "lock" },
+  { value: "workspace", label: "Workspace", icon: "workspace" },
+  { value: "anyone", label: "Anyone", icon: "globe" },
 ]
 
-// The state glyph the Share trigger carries so exposure is legible without
-// opening the dialog: a globe when the URL alone reads, a lock for invite-only,
-// the plain share glyph for workspace.
-const visibilityIcon = (visibility: string): IconName =>
-  visibility === "public" ? "globe" : visibility === "private" ? "lock" : "share"
+// The state glyph the Share trigger carries so exposure is legible without opening
+// the dialog: a globe when the URL alone reads, the share glyph for the workspace,
+// a lock for invite-only.
+const accessIcon = (linkRole: LinkRole, workspaceAccess: WorkspaceAccess): IconName =>
+  linkRole !== "none" ? "globe" : workspaceAccess === "member" ? "share" : "lock"
 
-// Link access: who the link works for (independent of General access above —
-// it can open this even when General access is Private), and what it grants
-// them. "No one" turns the link off entirely.
-const LINK_AUDIENCE: { value: string; label: string; icon: IconName }[] = [
-  { value: "none", label: "No one", icon: "lock" },
-  { value: "org", label: "Workspace", icon: "workspace" },
-  { value: "public", label: "Public", icon: "globe" },
-]
 const LINK_ROLE_LABEL: Record<Exclude<LinkRole, "none">, string> = {
   viewer: "Can view",
   commenter: "Can comment",
   editor: "Can edit",
 }
-const linkAccessSummary = (audience: string, role: LinkRole): string | null => {
-  if (audience === "none" || role === "none") return null
-  const who = audience === "org" ? "Anyone in the workspace" : "Anyone"
-  const what = role === "viewer" ? "view" : role === "editor" ? "edit" : "comment"
-  return `${who} can ${what}.`
+// The read-only one-liner for someone who can't manage access.
+const accessSummary = (linkRole: LinkRole, workspaceAccess: WorkspaceAccess): string => {
+  if (linkRole !== "none") {
+    const what = linkRole === "viewer" ? "view" : linkRole === "editor" ? "edit" : "comment"
+    return `Anyone with the link can ${what}.`
+  }
+  if (workspaceAccess === "member") return "Everyone in the workspace can open this."
+  return "Only invited people can open this."
 }
 
 /**
@@ -98,18 +84,18 @@ const linkAccessSummary = (audience: string, role: LinkRole): string | null => {
 export function ShareButton({
   shortId,
   myRole,
-  visibility,
+  workspaceAccess,
   linkRole,
-  linkAudience,
+  listed,
   passwordProtected = false,
 }: {
   shortId: string
   myRole?: Role | null
-  visibility: string
-  /** Link access: what the link grants, and who it works for. */
+  /** The v2 access triple (see access-model.md). */
+  workspaceAccess?: WorkspaceAccess
   linkRole?: LinkRole
-  linkAudience?: LinkAudience
-  /** The public link carries a password (the lock). */
+  listed?: Listed
+  /** The world link carries a password (the lock). */
   passwordProtected?: boolean
 }) {
   const qc = useQueryClient()
@@ -126,12 +112,10 @@ export function ShareButton({
   const [active, setActive] = useState(-1)
   // The value we just picked, so the follow-up search for it doesn't reopen the menu.
   const picked = useRef("")
-  // General access draft: visibility + the link's permission (view vs comment), plus
-  // the lock (password) state for a public link.
-  const [vis, setVis] = useState(visibility)
-  const [lRole, setLRole] = useState<LinkRole>(linkRole ?? "viewer")
-  // Link access draft: who the link works for, independent of General access.
-  const [lAudience, setLAudience] = useState<LinkAudience>(linkAudience ?? "org")
+  // Access draft: the three fields, plus the lock (password) state for the world link.
+  const [wsAccess, setWsAccess] = useState<WorkspaceAccess>(workspaceAccess ?? "member")
+  const [lRole, setLRole] = useState<LinkRole>(linkRole ?? "none")
+  const [lst, setLst] = useState<Listed>(listed ?? "none")
   const [pw, setPw] = useState("")
   const [savingVis, setSavingVis] = useState(false)
   // The lock as the server knows it, kept locally current as we set/clear it.
@@ -172,7 +156,7 @@ export function ShareButton({
   // for others when the artifact is link- or world-readable.
   const origin = API_BASE || (typeof window === "undefined" ? "" : window.location.origin)
   const embedSnippet = `<iframe src="${origin}/v1/embed/${shortId}" width="100%" height="480" style="border:0;border-radius:12px" loading="lazy" title="Derive artifact" allowfullscreen></iframe>`
-  const linkAccessible = visibility === "public"
+  const linkAccessible = (linkRole ?? "none") !== "none"
   const copyEmbed = async () => {
     try {
       await navigator.clipboard.writeText(embedSnippet)
@@ -184,46 +168,51 @@ export function ShareButton({
     }
   }
 
-  // The ladder entry for the draft pick (editable) and the server's own value
-  // (view-only render) — looked up once and reused, rather than re-scanning
-  // ACCESS at every place the icon/label/blurb is needed.
-  const currentAccess = ACCESS.find((a) => a.value === vis)
-  const visibilityAccess = ACCESS.find((a) => a.value === visibility)
   const nav = useNavigate()
-  // Solo drives only the create-a-workspace hint, never the ladder itself — the
-  // Workspace row stays meaningful for a workspace of one (it's what lists a doc
-  // in your own library, and promoting an agent's private draft to Workspace is
-  // the loop's blessing gesture). Managers only, and not-solo while the roster
+  // Solo drives only the create-a-workspace hint, never the segment itself — the
+  // Workspace segment stays meaningful for a workspace of one (it's what lists a
+  // doc in your own library, and promoting an agent's private draft to Workspace
+  // is the loop's blessing gesture). Managers only, and not-solo while the roster
   // loads, so nothing flashes.
   const { data: workspace } = useQuery({ ...workspaceQuery(), enabled: canManage })
   const solo = workspace ? workspace.members.length <= 1 : false
-  // Only public reach carries a general-access permission (what the link grants);
-  // private/workspace resolve by explicit standing, so the control hides there.
-  const showRole = vis === "public"
-  // Link access derivations: "none" is its audience select's spelling of the
-  // link being off. A public General access forces a public link underneath
-  // (the coherence rule) — the audience select mirrors and locks to that.
-  const linkAudienceValue = lRole === "none" ? "none" : lAudience
-  const publicListed = vis === "public"
-  // Everything applies the moment it's picked — a Save button between a select
-  // and its effect is friction with no safety benefit (the change is one more
-  // select away from undone). The lock is the one exception: checking the box
-  // reveals the input, and nothing applies until Set password.
-  const applyVisibility = async (
-    nextVis: string,
-    nextRole: LinkRole,
-    nextAudience: LinkAudience,
-    password?: string,
-  ) => {
+
+  // ── The one access question, projected from the (workspace_access, link_role,
+  // listed) draft ──────────────────────────────────────────────────────────────
+  // The segment is the WIDEST reach: a live world link is "anyone"; workspace-seat
+  // access is "workspace"; neither is "invite".
+  const segment: Segment =
+    lRole !== "none" ? "anyone" : wsAccess === "member" ? "workspace" : "invite"
+  // The listing switch per segment — public directory for "anyone", the workspace
+  // library for "workspace". Invited lists nowhere.
+  const isListed =
+    segment === "anyone" ? lst === "public" : segment === "workspace" && lst === "workspace"
+  // The world-link role shown on the "anyone" row (defaults to view before a link).
+  const roleValue: Exclude<LinkRole, "none"> = lRole === "none" ? "viewer" : lRole
+  // Everything applies the moment it's picked — a Save button between a select and
+  // its effect is friction with no safety benefit. The lock is the one exception:
+  // checking the box reveals the input, and nothing applies until Set password.
+  const applyAccess = async (next: {
+    workspaceAccess: WorkspaceAccess
+    linkRole: LinkRole
+    listed: Listed
+    password?: string
+  }) => {
     setSavingVis(true)
     setErr(null)
+    // Optimistically mirror the intent so the controls don't flash the old state.
+    setWsAccess(next.workspaceAccess)
+    setLRole(next.linkRole)
+    setLst(next.listed)
+    if (next.linkRole === "none") {
+      setHasLock(false)
+      setLockDraft(false)
+    }
     try {
-      const r = await api.setVisibility(shortId, nextVis, nextRole, nextAudience, password)
-      // A public General access forces the link to Public underneath (the
-      // server's coherence rule) — mirror its answer so Link access below
-      // never shows a stale audience/role after that coercion.
+      const r = await api.setAccess(shortId, next)
+      setWsAccess(r.workspace_access)
       setLRole(r.link_role)
-      setLAudience(r.link_audience)
+      setLst(r.listed)
       setHasLock(!!r.locked)
       setLockDraft(false)
       setPw("")
@@ -233,43 +222,64 @@ export function ShareButton({
       qc.invalidateQueries({ queryKey: ["artifacts"] })
     } catch (x) {
       setErr(x instanceof Error ? x.message : "Couldn't update access")
-      // The selects reflect the server again, not the failed intent.
-      setVis(visibility)
-      setLRole(linkRole ?? "viewer")
-      setLAudience(linkAudience ?? "org")
+      // The controls reflect the server again, not the failed intent.
+      setWsAccess(workspaceAccess ?? "member")
+      setLRole(linkRole ?? "none")
+      setLst(listed ?? "none")
     } finally {
       setSavingVis(false)
     }
   }
-  const pickVisibility = (v: string) => {
-    setVis(v)
-    setLockDraft(false)
-    // Leaving public clears the lock server-side; mirror that locally so
-    // returning to public starts unlocked.
-    if (v !== "public") setHasLock(false)
-    void applyVisibility(v, lRole, lAudience)
+  // Picking a segment sets its fields at the safe default: a fresh segment starts
+  // UNLISTED (the switch is how you opt into a feed), the world link at view.
+  const pickSegment = (seg: Segment) => {
+    if (seg === "invite")
+      return void applyAccess({ workspaceAccess: "none", linkRole: "none", listed: "none" })
+    if (seg === "workspace")
+      return void applyAccess({
+        workspaceAccess: "member",
+        linkRole: "none",
+        listed: lst === "workspace" ? "workspace" : "none",
+      })
+    // anyone: keep the current link role (or default to view), keep a public listing.
+    return void applyAccess({
+      workspaceAccess: "member",
+      linkRole: lRole === "none" ? "viewer" : lRole,
+      listed: lst === "public" ? "public" : "none",
+    })
   }
-  const pickGenRole = (r: LinkRole) => {
-    setLRole(r)
-    void applyVisibility(vis, r, lAudience)
-  }
-  // Link access: who the link works for. "No one" turns the link off (role
-  // none); picking a real audience with the link currently off turns it back
-  // on at Can comment, same as a fresh publish's default.
-  const pickLinkAudience = (a: string) => {
-    const nextAudience: LinkAudience = a === "public" ? "public" : "org"
-    const nextRole: LinkRole = a === "none" ? "none" : lRole === "none" ? "commenter" : lRole
-    setLAudience(nextAudience)
-    setLRole(nextRole)
-    void applyVisibility(vis, nextRole, nextAudience)
+  // The world-link role select (Anyone only).
+  const pickRole = (r: Exclude<LinkRole, "none">) =>
+    void applyAccess({
+      workspaceAccess: "member",
+      linkRole: r,
+      listed: isListed ? "public" : "none",
+    })
+  // The listing switch, per segment.
+  const toggleListed = (on: boolean) => {
+    if (segment === "workspace")
+      void applyAccess({
+        workspaceAccess: "member",
+        linkRole: "none",
+        listed: on ? "workspace" : "none",
+      })
+    else if (segment === "anyone")
+      void applyAccess({
+        workspaceAccess: "member",
+        linkRole: roleValue,
+        listed: on ? "public" : "none",
+      })
   }
   // The lock checkbox: checking reveals the password input (applies on Set);
   // unchecking clears the lock immediately (an explicit empty password).
   const toggleLock = (on: boolean) => {
     if (on) setLockDraft(true)
-    else if (hasLock) void applyVisibility("public", lRole, lAudience, "")
+    else if (hasLock)
+      void applyAccess({ workspaceAccess: wsAccess, linkRole: lRole, listed: lst, password: "" })
     else setLockDraft(false)
   }
+  const setPassword = (password: string) =>
+    void applyAccess({ workspaceAccess: wsAccess, linkRole: lRole, listed: lst, password })
   const copyLink = async () => {
     try {
       await navigator.clipboard.writeText(shareUrl)
@@ -428,9 +438,9 @@ export function ShareButton({
       onOpenChange={(o) => {
         if (o) {
           setErr(null)
-          setVis(visibility)
-          setLRole(linkRole ?? "viewer")
-          setLAudience(linkAudience ?? "org")
+          setWsAccess(workspaceAccess ?? "member")
+          setLRole(linkRole ?? "none")
+          setLst(listed ?? "none")
           setPw("")
           setPwOpen(false)
           // Re-seed the lock from the server's state and drop any half-typed
@@ -449,7 +459,7 @@ export function ShareButton({
             eye lands). Everything else in the bar is ghost. The glyph carries the
             exposure state: globe = the URL alone reads, lock = invite-only. */}
         <Button data-testid="share-trigger" variant="default" size="sm">
-          <Icon name={visibilityIcon(visibility)} />
+          <Icon name={accessIcon(linkRole ?? "none", workspaceAccess ?? "member")} />
           Share
         </Button>
       </DialogTrigger>
@@ -468,115 +478,169 @@ export function ShareButton({
         <div className="flex flex-col gap-6">
           <div>
             <SectionEyebrow action={savingVis && <Spinner className="size-3" />}>
-              General access
+              Who can open this
             </SectionEyebrow>
             {canManage ? (
-              <div className="mt-2 flex flex-col gap-2 rounded-lg bg-secondary p-3">
-                <div className="flex gap-1.5">
-                  <SelectMenu value={vis} onValueChange={pickVisibility}>
-                    <SelectMenuTrigger
-                      aria-label="General access"
-                      data-testid="share-visibility"
+              <div className="mt-2 flex flex-col">
+                {/* One primary choice — the widest reach. Each segment sets the
+                    (workspace_access, link_role, listed) triple — see pickSegment. */}
+                <ToggleGroup
+                  type="single"
+                  value={segment}
+                  onValueChange={(v) => v && pickSegment(v as Segment)}
+                  data-testid="share-access"
+                  className="w-full gap-[3px] rounded-lg bg-secondary p-[3px]"
+                >
+                  {SEGMENTS.map((s) => (
+                    <ToggleGroupItem
+                      key={s.value}
+                      value={s.value}
                       disabled={savingVis}
-                      className="flex-1 bg-card"
+                      data-testid={`share-access-${s.value}`}
+                      className="h-8 flex-1 gap-1.5 rounded-md text-muted-foreground hover:bg-transparent hover:text-foreground data-[state=on]:bg-card data-[state=on]:text-foreground data-[state=on]:shadow-(--shadow-sm)"
                     >
-                      <Icon
-                        name={currentAccess?.icon ?? "share"}
-                        className="text-muted-foreground"
-                      />
-                      {currentAccess?.label ?? vis}
-                    </SelectMenuTrigger>
-                    <SelectMenuContent>
-                      {ACCESS.map((a) => (
-                        <SelectMenuItem key={a.value} value={a.value}>
-                          <Icon name={a.icon} className="text-muted-foreground" />
-                          {a.label}
-                        </SelectMenuItem>
-                      ))}
-                    </SelectMenuContent>
-                  </SelectMenu>
-                  {showRole && (
-                    <SelectMenu value={lRole} onValueChange={(v) => pickGenRole(v as LinkRole)}>
-                      <SelectMenuTrigger
-                        aria-label="Link permission"
-                        data-testid="share-general-role"
+                      <Icon name={s.icon} />
+                      {s.label}
+                    </ToggleGroupItem>
+                  ))}
+                </ToggleGroup>
+
+                {segment === "invite" && (
+                  <p className="mt-3 text-sm text-muted-foreground">
+                    Only the people you add below can open this.
+                  </p>
+                )}
+
+                {/* Workspace: seats decide the role — no dropdown. Admins manage,
+                    editors edit, commenters comment. Just the library switch. */}
+                {segment === "workspace" && (
+                  <>
+                    <p className="mt-3 text-sm text-muted-foreground">
+                      Everyone in the workspace opens this at their role — admins manage, editors
+                      edit, commenters comment.
+                    </p>
+                    <div className="mt-3 flex items-center justify-between gap-3 border-t border-border-soft pt-3">
+                      <div className="min-w-0">
+                        <div className="text-sm text-foreground">Show in the workspace library</div>
+                        <div className="text-xs text-muted-foreground">
+                          Otherwise it's link-only — out of the team's feed.
+                        </div>
+                      </div>
+                      <Switch
+                        checked={isListed}
                         disabled={savingVis}
-                        className="bg-card"
+                        aria-label="Show in the workspace library"
+                        data-testid="share-listed"
+                        onCheckedChange={toggleListed}
+                      />
+                    </div>
+                  </>
+                )}
+
+                {/* Anyone: a world link — its role, its public listing, and the lock. */}
+                {segment === "anyone" && (
+                  <>
+                    <div className="mt-3 flex items-center justify-between gap-3">
+                      <span className="text-sm text-muted-foreground">Anyone with the link</span>
+                      <SelectMenu
+                        value={roleValue}
+                        onValueChange={(v) => pickRole(v as Exclude<LinkRole, "none">)}
                       >
-                        {lRole === "commenter" ? "Can comment" : "Can view"}
-                      </SelectMenuTrigger>
-                      <SelectMenuContent>
-                        <SelectMenuItem value="viewer">Can view</SelectMenuItem>
-                        <SelectMenuItem value="commenter">Can comment</SelectMenuItem>
-                      </SelectMenuContent>
-                    </SelectMenu>
-                  )}
-                </div>
-                {/* The lock — a modifier on the public link, not an audience.
-                    Members and people added above never need the password. */}
-                {vis === "public" && (
-                  <label className="flex items-center gap-2 text-sm text-foreground">
-                    <Checkbox
-                      checked={hasLock || lockDraft}
-                      disabled={savingVis}
-                      aria-label="Require a password"
-                      data-testid="share-lock-toggle"
-                      onCheckedChange={(v) => toggleLock(v === true)}
-                    />
-                    Require a password
-                  </label>
+                        <SelectMenuTrigger
+                          aria-label="What the link grants"
+                          data-testid="share-link-role"
+                          disabled={savingVis}
+                          className="bg-card"
+                        >
+                          {LINK_ROLE_LABEL[roleValue]}
+                        </SelectMenuTrigger>
+                        <SelectMenuContent>
+                          <SelectMenuItem value="viewer">Can view</SelectMenuItem>
+                          <SelectMenuItem value="commenter">Can comment</SelectMenuItem>
+                          <SelectMenuItem value="editor">Can edit</SelectMenuItem>
+                        </SelectMenuContent>
+                      </SelectMenu>
+                    </div>
+
+                    {roleValue === "editor" && (
+                      <p className="mt-2 rounded-lg bg-warning/10 px-2.5 py-2 text-2xs text-warning">
+                        Anyone with the link can edit, publish, and share this.
+                      </p>
+                    )}
+
+                    {/* Listing is a SEPARATE question — its own row, below a rule. */}
+                    <div className="mt-3 flex items-center justify-between gap-3 border-t border-border-soft pt-3">
+                      <div className="min-w-0">
+                        <div className="text-sm text-foreground">List in the public directory</div>
+                        <div className="text-xs text-muted-foreground">
+                          Otherwise the link works, but it stays undiscoverable.
+                        </div>
+                      </div>
+                      <Switch
+                        checked={isListed}
+                        disabled={savingVis}
+                        aria-label="List in the public directory"
+                        data-testid="share-listed"
+                        onCheckedChange={toggleListed}
+                      />
+                    </div>
+
+                    {/* The lock — a modifier on the world link. Members and people
+                        added below never need the password. */}
+                    <label className="mt-3 flex items-center gap-2 text-sm text-foreground">
+                      <Checkbox
+                        checked={hasLock || lockDraft}
+                        disabled={savingVis}
+                        aria-label="Require a password"
+                        data-testid="share-lock-toggle"
+                        onCheckedChange={(v) => toggleLock(v === true)}
+                      />
+                      Require a password
+                    </label>
+                    {(lockDraft || (hasLock && pwOpen)) && (
+                      <div className="mt-2 flex gap-1.5">
+                        <Input
+                          type="password"
+                          data-testid="share-visibility-password"
+                          placeholder={hasLock ? "New password" : "Set a password"}
+                          aria-label="Password"
+                          value={pw}
+                          onChange={(e) => setPw(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" && pw) setPassword(pw)
+                          }}
+                          className="flex-1"
+                        />
+                        <Button
+                          data-testid="share-visibility-save"
+                          variant="secondary"
+                          size="sm"
+                          disabled={!pw}
+                          loading={savingVis}
+                          onClick={() => setPassword(pw)}
+                        >
+                          {savingVis ? "Setting…" : "Set password"}
+                        </Button>
+                      </div>
+                    )}
+                    {!lockDraft && hasLock && !pwOpen && (
+                      <Button
+                        variant="link"
+                        size="xs"
+                        data-testid="share-password-change"
+                        className="mt-1 self-start px-0"
+                        onClick={() => setPwOpen(true)}
+                      >
+                        Change password
+                      </Button>
+                    )}
+                  </>
                 )}
-                {vis === "public" && (lockDraft || (hasLock && pwOpen)) && (
-                  <div className="flex gap-1.5">
-                    <Input
-                      type="password"
-                      data-testid="share-visibility-password"
-                      placeholder={hasLock ? "New password" : "Set a password"}
-                      aria-label="Password"
-                      value={pw}
-                      onChange={(e) => setPw(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" && pw)
-                          void applyVisibility("public", lRole, lAudience, pw)
-                      }}
-                      className="flex-1"
-                    />
-                    <Button
-                      data-testid="share-visibility-save"
-                      variant="secondary"
-                      size="sm"
-                      disabled={!pw}
-                      loading={savingVis}
-                      onClick={() => void applyVisibility("public", lRole, lAudience, pw)}
-                    >
-                      {savingVis ? "Setting…" : "Set password"}
-                    </Button>
-                  </div>
-                )}
-                <p className="text-sm text-muted-foreground">
-                  {lockDraft && !hasLock
-                    ? "The lock applies once a password is set."
-                    : (currentAccess?.blurb ?? "")}
-                  {!lockDraft &&
-                    vis === "public" &&
-                    lRole === "commenter" &&
-                    " Signed-in visitors can comment."}
-                  {!lockDraft && vis === "public" && hasLock && !pwOpen && (
-                    <Button
-                      variant="link"
-                      size="xs"
-                      data-testid="share-password-change"
-                      className="ml-1 px-0"
-                      onClick={() => setPwOpen(true)}
-                    >
-                      Change password
-                    </Button>
-                  )}
-                </p>
+
                 {/* First-need on-ramp: the word "workspace" earns its first
                     appearance by answering "how do I show this to my team?". */}
                 {solo && (
-                  <p className="text-sm text-muted-foreground">
+                  <p className="mt-3 text-sm text-muted-foreground">
                     Working with a team?{" "}
                     <Button
                       variant="link"
@@ -599,91 +663,8 @@ export function ShareButton({
               </div>
             ) : (
               <p className="mt-2 flex items-center gap-1.5 text-sm text-muted-foreground">
-                <Icon name={visibilityAccess?.icon ?? "share"} />
-                {visibilityAccess?.label ?? visibility}
-              </p>
-            )}
-          </div>
-
-          <div>
-            <SectionEyebrow action={savingVis && <Spinner className="size-3" />}>
-              Link access
-            </SectionEyebrow>
-            {canManage ? (
-              <div className="mt-2 flex flex-col gap-2 rounded-lg bg-secondary p-3">
-                {linkAccessSummary(linkAudienceValue, lRole) && (
-                  <p className="text-sm font-medium text-foreground">
-                    {linkAccessSummary(linkAudienceValue, lRole)}
-                  </p>
-                )}
-                <div className="flex gap-1.5">
-                  <SelectMenu
-                    value={publicListed ? "public" : linkAudienceValue}
-                    onValueChange={pickLinkAudience}
-                  >
-                    <SelectMenuTrigger
-                      aria-label="Who the link works for"
-                      data-testid="share-link-audience"
-                      disabled={savingVis || publicListed}
-                      className="flex-1 bg-card"
-                    >
-                      <Icon
-                        name={
-                          LINK_AUDIENCE.find(
-                            (a) => a.value === (publicListed ? "public" : linkAudienceValue),
-                          )?.icon ?? "share"
-                        }
-                        className="text-muted-foreground"
-                      />
-                      {LINK_AUDIENCE.find(
-                        (a) => a.value === (publicListed ? "public" : linkAudienceValue),
-                      )?.label ?? linkAudienceValue}
-                    </SelectMenuTrigger>
-                    <SelectMenuContent>
-                      {LINK_AUDIENCE.map((a) => (
-                        <SelectMenuItem key={a.value} value={a.value}>
-                          <Icon name={a.icon} className="text-muted-foreground" />
-                          {a.label}
-                        </SelectMenuItem>
-                      ))}
-                    </SelectMenuContent>
-                  </SelectMenu>
-                  {linkAudienceValue !== "none" && (
-                    <SelectMenu value={lRole} onValueChange={(v) => pickGenRole(v as LinkRole)}>
-                      <SelectMenuTrigger
-                        aria-label="What the link grants"
-                        data-testid="share-link-role"
-                        disabled={savingVis}
-                        className="bg-card"
-                      >
-                        {lRole === "none" ? "Can view" : LINK_ROLE_LABEL[lRole]}
-                      </SelectMenuTrigger>
-                      <SelectMenuContent>
-                        <SelectMenuItem value="viewer">Can view</SelectMenuItem>
-                        <SelectMenuItem value="commenter">Can comment</SelectMenuItem>
-                        <SelectMenuItem value="editor">Can edit</SelectMenuItem>
-                      </SelectMenuContent>
-                    </SelectMenu>
-                  )}
-                </div>
-                <p className="text-sm text-muted-foreground">
-                  People with the link can open this, even when General access above is Private.
-                </p>
-              </div>
-            ) : (
-              <p className="mt-2 flex items-center gap-1.5 text-sm text-muted-foreground">
-                <Icon
-                  name={
-                    LINK_AUDIENCE.find(
-                      (a) =>
-                        a.value === (visibility === "public" ? "public" : (linkAudience ?? "org")),
-                    )?.icon ?? "share"
-                  }
-                />
-                {linkAccessSummary(
-                  visibility === "public" ? "public" : (linkAudience ?? "org"),
-                  linkRole ?? "viewer",
-                ) ?? "No one — only people added below can open it."}
+                <Icon name={accessIcon(linkRole ?? "none", workspaceAccess ?? "member")} />
+                {accessSummary(linkRole ?? "none", workspaceAccess ?? "member")}
               </p>
             )}
           </div>
@@ -917,7 +898,7 @@ export function ShareButton({
               <p className="mt-1.5 text-sm text-muted-foreground">
                 {linkAccessible
                   ? "Paste into any page — live, with a link back to Derive."
-                  : "Set access to “Public” or “Public — link only” for the embed to load for others."}
+                  : "Give it a link (set access to “Anyone”) for the embed to load for others."}
               </p>
             </div>
 

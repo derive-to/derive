@@ -462,9 +462,12 @@ export async function runSync(
         message: `sync ${source.ref}@${sha.slice(0, 7)}`,
         orgId: source.org_id,
         // A mirrored repo is a workspace resource, not someone's draft: explicitly
-        // workspace-visible (the publish default is private, which would hide the
-        // whole mirror — sync writes no member rows).
-        visibility: "org" as const,
+        // listed in the workspace library (the publish default is unlisted, which
+        // would keep the whole mirror out of the team's feed — sync writes no member
+        // rows). workspace_access=member is the default, but set it too for clarity —
+        // listed=workspace requires it.
+        workspaceAccess: "member" as const,
+        listed: "workspace" as const,
       }
       const reuse = before && (before.kind ?? "file") === kind
       let artifact: ArtifactRecord

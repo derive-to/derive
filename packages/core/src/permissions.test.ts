@@ -5,20 +5,18 @@ import {
   can,
   effectiveRole,
   isRole,
-  type LinkAudience,
   type LinkRole,
   maxRole,
   ROLES,
   type Role,
   roleAllows,
+  type WorkspaceAccess,
 } from "./permissions"
-import type { Visibility } from "./ports"
 
 const ACTIONS: Action[] = ["read", "comment", "propose", "publish", "approve", "share", "manage"]
-const VISIBILITIES: Visibility[] = ["public", "org", "private"]
 const WRITE_ACTIONS: Action[] = ["comment", "propose", "publish", "approve", "share", "manage"]
 const LINK_ROLES: LinkRole[] = ["none", "viewer", "commenter", "editor"]
-const LINK_AUDIENCES: LinkAudience[] = ["org", "public"]
+const WORKSPACE_ACCESS: WorkspaceAccess[] = ["none", "member"]
 
 // The authoritative access matrix: the minimum role each action requires. This is
 // the security contract — duplicated from NEEDS in permissions.ts on purpose so a
@@ -91,199 +89,166 @@ const anon: Actor = { kind: "anon" }
 const token: Actor = { kind: "token" }
 const user = (over: Partial<Actor> = {}): Actor => ({ kind: "user", userId: "u1", ...over })
 
-describe("effectiveRole — the documented access table", () => {
-  it("a DERIVE_TOKEN actor is always owner, on every visibility", () => {
-    for (const v of VISIBILITIES) expect(effectiveRole(token, v)).toBe("owner")
+describe("effectiveRole — the three grants (max of explicit, seat, world)", () => {
+  it("a DERIVE_TOKEN actor is always owner", () => {
+    for (const wa of WORKSPACE_ACCESS)
+      for (const lr of LINK_ROLES) expect(effectiveRole(token, wa, lr)).toBe("owner")
   })
 
-  it("omitted link params default to none + org — a caller fails closed, not open", () => {
-    // Round 4: the DB columns default to `none`/`org`, and so do these parameters —
-    // a code path that forgets to pass the artifact's link pair gets NO floor,
-    // never the old `viewer` default. See docs/plans/link-grant.md.
-    expect(effectiveRole(user(), "public")).toBeNull()
-    expect(effectiveRole(anon, "public")).toBeNull()
+  it("omitted params fail closed — no workspace access, no link, no access", () => {
+    // A member with no workspace_access on the artifact still gets nothing by seat.
+    expect(effectiveRole(user({ orgRole: "editor" }))).toBeNull()
+    expect(effectiveRole(user())).toBeNull()
+    expect(effectiveRole(anon)).toBeNull()
   })
 
-  // ACCEPTANCE — the two scenarios this round exists for (Anir, verbatim):
-  // 1. "I publish an item — it is not discoverable — it is accessible by link
-  //     only in my workspace."
-  // 2. "I publish an item — it is not discoverable — it is accessible by link
-  //     publicly."
-  it("SCENARIO 1: private + org-audience link — workspace members with the URL, no one else", () => {
-    // A member of the artifact's workspace holding the URL gets the link's grant.
-    expect(effectiveRole(user({ orgRole: "commenter" }), "private", "viewer", "org")).toBe("viewer")
-    expect(effectiveRole(user({ orgRole: "editor" }), "private", "commenter", "org")).toBe(
-      "commenter",
+  // SEAT — workspace_access=member opens each member at their OWN workspace role.
+  it("workspace_access=member opens each member at their seat role", () => {
+    expect(effectiveRole(user({ orgRole: "editor" }), "member")).toBe("editor")
+    expect(effectiveRole(user({ orgRole: "commenter" }), "member")).toBe("commenter")
+    expect(effectiveRole(user({ orgRole: "owner" }), "member")).toBe("owner")
+    // A signed-in NON-member (no seat) gets nothing from workspace access.
+    expect(effectiveRole(user(), "member")).toBeNull()
+    // Anonymous is never a member.
+    expect(effectiveRole(anon, "member")).toBeNull()
+  })
+
+  it("workspace_access=none grants members nothing (invite-/external-only)", () => {
+    expect(effectiveRole(user({ orgRole: "owner" }), "none")).toBeNull()
+    expect(effectiveRole(user({ orgRole: "owner" }), "none", "none")).toBeNull()
+  })
+
+  // THE FIX — a workspace editor edits an unlisted draft, never floored to a link.
+  it("a workspace editor edits the default team draft (member + no link)", () => {
+    expect(effectiveRole(user({ orgRole: "editor" }), "member", "none")).toBe("editor")
+    // Even beside a lower world link, the seat wins (max, never a floor-down).
+    expect(effectiveRole(user({ orgRole: "editor" }), "member", "commenter")).toBe("editor")
+  })
+
+  // WORLD LINK — anyone with the URL, incl. non-members; anon clamps to viewer.
+  it("the world link grants any signed-in holder its role; a non-member too", () => {
+    expect(effectiveRole(user(), "none", "viewer")).toBe("viewer")
+    expect(effectiveRole(user(), "none", "commenter")).toBe("commenter")
+    // A signed-in outsider (no seat) still gets the world grant — "anyone with the link".
+    expect(effectiveRole(user({ orgRole: null }), "none", "commenter")).toBe("commenter")
+  })
+
+  it("an anonymous holder is clamped to viewer, whatever the world role", () => {
+    expect(effectiveRole(anon, "none", "viewer")).toBe("viewer")
+    expect(effectiveRole(anon, "none", "commenter")).toBe("viewer")
+    expect(effectiveRole(anon, "none", "editor")).toBe("viewer")
+    expect(can(anon, "comment", "none", "commenter")).toBe(false)
+  })
+
+  it("link_role=none is an inert link — no world grant", () => {
+    expect(effectiveRole(user(), "none", "none")).toBeNull()
+    expect(effectiveRole(anon, "none", "none")).toBeNull()
+    expect(effectiveRole(user({ orgRole: "editor" }), "none", "none")).toBeNull()
+  })
+
+  it("editor is a real world grant — publish/approve/share ride the ladder, not manage", () => {
+    expect(effectiveRole(user(), "none", "editor")).toBe("editor")
+    expect(can(user(), "publish", "none", "editor")).toBe(true)
+    expect(can(user(), "share", "none", "editor")).toBe(true)
+    expect(can(user(), "manage", "none", "editor")).toBe(false) // editor, not owner
+  })
+
+  // MAX — the three grants compose by max; nothing narrows below another.
+  it("access is the max of explicit share, seat, and world link", () => {
+    // The world link lifts a member below it…
+    expect(effectiveRole(user({ orgRole: "viewer" }), "member", "commenter")).toBe("commenter")
+    // …but never lowers one above it (seat wins).
+    expect(effectiveRole(user({ orgRole: "editor" }), "member", "viewer")).toBe("editor")
+    // A share alone (no workspace access, no link) grants its role.
+    expect(effectiveRole(user({ artifactRole: "commenter" }))).toBe("commenter")
+    // A share lifts a lower seat…
+    expect(effectiveRole(user({ artifactRole: "owner", orgRole: "commenter" }), "member")).toBe(
+      "owner",
     )
-    // The default grant (workspace · can comment) lets any member comment.
-    expect(can(user({ orgRole: "commenter" }), "comment", "private", "commenter", "org")).toBe(true)
-    // A signed-in OUTSIDER holding the same URL gets nothing.
-    expect(effectiveRole(user(), "private", "commenter", "org")).toBeNull()
-    // Anonymous gets nothing — never in an org audience.
-    expect(effectiveRole(anon, "private", "commenter", "org")).toBeNull()
-  })
-
-  it("SCENARIO 2: private + public-audience link — any holder, anon clamped to view", () => {
-    expect(effectiveRole(anon, "private", "viewer", "public")).toBe("viewer")
-    expect(effectiveRole(user(), "private", "viewer", "public")).toBe("viewer")
-    expect(effectiveRole(user(), "private", "commenter", "public")).toBe("commenter")
-    expect(effectiveRole(anon, "private", "commenter", "public")).toBe("viewer")
-    expect(can(anon, "comment", "private", "commenter", "public")).toBe(false)
-  })
-
-  it("membership is the audience KEY, not the grant — an org link hands members linkRole only", () => {
-    // A workspace OWNER holding a private doc's org·viewer link gets VIEWER: the
-    // round-3 privacy invariant (membership grants nothing at private) stands;
-    // the link grants what the link says, to those the audience admits.
-    expect(effectiveRole(user({ orgRole: "owner" }), "private", "viewer", "org")).toBe("viewer")
-    expect(effectiveRole(user({ orgRole: "owner" }), "private", "none", "org")).toBeNull()
-  })
-
-  it("`none` grants nothing by the link, at any visibility and audience", () => {
-    for (const v of VISIBILITIES)
-      for (const a of LINK_AUDIENCES) {
-        expect(effectiveRole(user(), v, "none", a), `user ${v}/${a}`).toBeNull()
-        expect(effectiveRole(anon, v, "none", a), `anon ${v}/${a}`).toBeNull()
-      }
-  })
-
-  it("`editor` is a real link grant — publish/approve/share ride the pure role ladder", () => {
-    expect(effectiveRole(user(), "private", "editor", "public")).toBe("editor")
-    expect(can(user(), "publish", "private", "editor", "public")).toBe(true)
-    expect(can(user(), "share", "private", "editor", "public")).toBe(true)
-    expect(can(user(), "manage", "private", "editor", "public")).toBe(false) // editor, not owner
-    // Org-audience editor link: members edit (state 4/11), outsiders never.
-    expect(effectiveRole(user({ orgRole: "commenter" }), "org", "editor", "org")).toBe("editor")
-    expect(effectiveRole(user(), "org", "editor", "org")).toBeNull()
-  })
-
-  it("a password (the lock) gates the link floor behind unlock", () => {
-    expect(effectiveRole(user({ locked: true }), "public", "commenter", "public")).toBeNull()
-    expect(
-      effectiveRole(user({ locked: true, unlocked: true }), "public", "commenter", "public"),
-    ).toBe("commenter")
-    // The lock gates the FLOOR only — members and explicit shares pass by role.
-    expect(effectiveRole(user({ locked: true, orgRole: "editor" }), "public")).toBe("editor")
-    expect(effectiveRole(user({ locked: true, artifactRole: "commenter" }), "public")).toBe(
-      "commenter",
-    )
-    // A lock with no explicit standing is a hard `null`, not a demotion to viewer.
-    expect(
-      effectiveRole(user({ locked: true, unlocked: false }), "private", "editor", "public"),
-    ).toBeNull()
-  })
-
-  it("org/private grant nothing by MEMBERSHIP alone — only an explicit role opens it", () => {
-    expect(effectiveRole(user(), "org")).toBeNull()
-    expect(effectiveRole(user({ orgRole: "editor" }), "org")).toBe("editor")
-  })
-
-  it("an explicit per-artifact share is authoritative over the workspace role", () => {
-    // A share beats membership — both to widen it...
-    expect(effectiveRole(user({ artifactRole: "editor", orgRole: "viewer" }), "org")).toBe("editor")
-    // ...and to narrow it (the artifact share replaces the org role, not maxes with it).
-    expect(effectiveRole(user({ artifactRole: "viewer", orgRole: "editor" }), "org")).toBe("viewer")
-  })
-
-  it("the link floor can lift an explicit role but never lower it", () => {
-    // On a comment link, an org viewer is lifted to commenter by the floor...
-    expect(effectiveRole(user({ orgRole: "viewer" }), "public", "commenter", "public")).toBe(
-      "commenter",
-    )
-    // ...but an editor stays editor (max of explicit and floor).
-    expect(effectiveRole(user({ orgRole: "editor" }), "public", "commenter", "public")).toBe(
+    // …and does NOT narrow a higher seat (v2 is additive — a share can only widen).
+    expect(effectiveRole(user({ artifactRole: "viewer", orgRole: "editor" }), "member")).toBe(
       "editor",
     )
-    // An invited share is lifted by the floor too, never lowered.
-    expect(effectiveRole(user({ artifactRole: "viewer" }), "private", "commenter", "org")).toBe(
-      "viewer", // outsider share: not in the org audience, keeps their share role
-    )
-    expect(
-      effectiveRole(
-        user({ artifactRole: "viewer", orgRole: "commenter" }),
-        "private",
-        "commenter",
-        "org",
-      ),
-    ).toBe("commenter") // member share: floor lifts viewer share to commenter
   })
 
-  it("private admits only shares by standing — and the link floor works independently", () => {
-    expect(effectiveRole(user({ orgRole: "owner" }), "private")).toBeNull()
-    expect(effectiveRole(user({ artifactRole: "owner" }), "private")).toBe("owner")
-    expect(effectiveRole(user({ artifactRole: "commenter", orgRole: "editor" }), "private")).toBe(
+  // PASSWORD — the lock gates the WORLD link only; seat and shares never need it.
+  it("a password gates the world link behind unlock", () => {
+    expect(effectiveRole(user({ locked: true }), "none", "commenter")).toBeNull()
+    expect(effectiveRole(user({ locked: true, unlocked: true }), "none", "commenter")).toBe(
       "commenter",
     )
-    expect(effectiveRole(anon, "private")).toBeNull()
-    // The operator token stays owner everywhere.
-    expect(effectiveRole(token, "private")).toBe("owner")
+    // The lock gates the world floor only — a member's seat and a share pass by role.
+    expect(effectiveRole(user({ locked: true, orgRole: "editor" }), "member", "viewer")).toBe(
+      "editor",
+    )
+    expect(effectiveRole(user({ locked: true, artifactRole: "commenter" }), "none", "viewer")).toBe(
+      "commenter",
+    )
+    // A lock with no other standing is a hard null, not a demotion to viewer.
+    expect(effectiveRole(user({ locked: true }), "none", "editor")).toBeNull()
   })
 })
 
 describe("effectiveRole — the anonymous invariant", () => {
-  it("never elevates anon above viewer, for ANY visibility, audience, role, or lock", () => {
-    for (const v of VISIBILITIES)
-      for (const g of LINK_ROLES)
-        for (const a of LINK_AUDIENCES)
-          for (const locked of [false, true])
-            for (const unlocked of [false, true]) {
-              const role = effectiveRole({ kind: "anon", locked, unlocked }, v, g, a)
-              expect(
-                role === null || role === "viewer",
-                `anon ${v}/${g}/${a}/locked=${locked}/unlocked=${unlocked}`,
-              ).toBe(true)
-            }
+  it("never elevates anon above viewer, for ANY workspace access, world role, or lock", () => {
+    for (const wa of WORKSPACE_ACCESS)
+      for (const lr of LINK_ROLES)
+        for (const locked of [false, true])
+          for (const unlocked of [false, true]) {
+            const role = effectiveRole({ kind: "anon", locked, unlocked }, wa, lr)
+            expect(
+              role === null || role === "viewer",
+              `anon ${wa}/${lr}/locked=${locked}/unlocked=${unlocked}`,
+            ).toBe(true)
+          }
   })
 
-  it("anon reaches view ONLY through a public audience — an org audience is a locked door", () => {
-    expect(effectiveRole(anon, "private", "viewer", "public")).toBe("viewer")
-    expect(effectiveRole(anon, "private", "editor", "public")).toBe("viewer") // clamp, not editor
-    expect(effectiveRole(anon, "org", "commenter", "org")).toBeNull()
-    expect(effectiveRole(anon, "public", "none", "public")).toBeNull()
-    expect(
-      effectiveRole({ kind: "anon", locked: true }, "public", "commenter", "public"),
-    ).toBeNull()
-    expect(
-      effectiveRole({ kind: "anon", locked: true, unlocked: true }, "public", "viewer", "public"),
-    ).toBe("viewer")
+  it("anon reaches view ONLY through the world link — never through workspace access", () => {
+    expect(effectiveRole(anon, "none", "viewer")).toBe("viewer")
+    expect(effectiveRole(anon, "none", "editor")).toBe("viewer") // clamp, not editor
+    expect(effectiveRole(anon, "member", "none")).toBeNull() // never a member
+    expect(effectiveRole(anon, "none", "none")).toBeNull()
+    expect(effectiveRole({ kind: "anon", locked: true }, "none", "commenter")).toBeNull()
+    expect(effectiveRole({ kind: "anon", locked: true, unlocked: true }, "none", "viewer")).toBe(
+      "viewer",
+    )
   })
 })
 
 describe("can — the one authorization gate", () => {
-  it("denies every write action to an anonymous caller, on every visibility, grant, and audience", () => {
-    // Not even an editor-grant public link lets an account-less caller write.
-    for (const v of VISIBILITIES)
-      for (const g of LINK_ROLES)
-        for (const a of LINK_AUDIENCES)
-          for (const action of WRITE_ACTIONS)
-            expect(can(anon, action, v, g, a), `anon ${action} on ${v}/${g}/${a}`).toBe(false)
+  it("denies every write action to an anonymous caller, on every workspace access and world role", () => {
+    // Not even an editor-grant world link lets an account-less caller write.
+    for (const wa of WORKSPACE_ACCESS)
+      for (const lr of LINK_ROLES)
+        for (const action of WRITE_ACTIONS)
+          expect(can(anon, action, wa, lr), `anon ${action} on ${wa}/${lr}`).toBe(false)
   })
 
-  it("lets an anon caller read via a public-audience viewer link, never via an org one", () => {
-    expect(can(anon, "read", "public", "viewer", "public")).toBe(true)
-    expect(can(anon, "read", "public", "viewer", "org")).toBe(false)
-    expect(can(anon, "read", "org")).toBe(false)
+  it("lets an anon caller read via a world viewer link, never via workspace access", () => {
+    expect(can(anon, "read", "none", "viewer")).toBe(true)
+    expect(can(anon, "read", "member", "none")).toBe(false)
+    expect(can(anon, "read", "none", "none")).toBe(false)
   })
 
-  it("omitted link params deny read too — `can` fails closed the same as effectiveRole", () => {
-    expect(can(anon, "read", "public")).toBe(false)
-    expect(can(user(), "read", "public")).toBe(false)
+  it("omitted params deny read too — `can` fails closed the same as effectiveRole", () => {
+    expect(can(anon, "read")).toBe(false)
+    expect(can(user(), "read")).toBe(false)
   })
 
   it("routes a commenter through propose, never publish", () => {
     const commenter = user({ orgRole: "commenter" })
-    expect(can(commenter, "comment", "org")).toBe(true)
-    expect(can(commenter, "propose", "org")).toBe(true)
-    expect(can(commenter, "publish", "org")).toBe(false)
-    expect(can(commenter, "approve", "org")).toBe(false)
+    expect(can(commenter, "comment", "member")).toBe(true)
+    expect(can(commenter, "propose", "member")).toBe(true)
+    expect(can(commenter, "publish", "member")).toBe(false)
+    expect(can(commenter, "approve", "member")).toBe(false)
   })
 
   it("lets a token (CI/agent) do everything", () => {
-    for (const action of ACTIONS) expect(can(token, action, "org")).toBe(true)
+    for (const action of ACTIONS) expect(can(token, action, "member")).toBe(true)
   })
 
   it("a bare viewer can read but not comment", () => {
-    expect(can(user({ orgRole: "viewer" }), "read", "org")).toBe(true)
-    expect(can(user({ orgRole: "viewer" }), "comment", "org")).toBe(false)
+    expect(can(user({ orgRole: "viewer" }), "read", "member")).toBe(true)
+    expect(can(user({ orgRole: "viewer" }), "comment", "member")).toBe(false)
   })
 })

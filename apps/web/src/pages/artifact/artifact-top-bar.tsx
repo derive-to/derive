@@ -1,6 +1,6 @@
 import { Maximize2 } from "lucide-react"
 import { useState } from "react"
-import type { LinkAudience, LinkRole, Role } from "@/api"
+import type { LinkRole, Listed, Role, WorkspaceAccess } from "@/api"
 import { Icon } from "@/components/icons"
 import { CollectionsDialog, TagsDialog } from "@/components/shared/organize-dialogs"
 import { Button } from "@/components/ui/button"
@@ -32,10 +32,10 @@ export function ArtifactTopBar(props: {
    *  exclude the current workspace from the destination picker. */
   orgId?: string
   myRole?: Role | null
-  visibility: string
-  /** The link grant pair (round 4): what the URL confers x who it works for. */
+  /** The v2 access triple (see access-model.md). */
+  workspaceAccess?: WorkspaceAccess
   linkRole?: LinkRole
-  linkAudience?: LinkAudience
+  listed?: Listed
   passwordProtected?: boolean
   favorite: boolean
   tags: string[]
@@ -88,9 +88,9 @@ export function ArtifactTopBar(props: {
         <ShareButton
           shortId={shortId}
           myRole={props.myRole}
-          visibility={props.visibility}
+          workspaceAccess={props.workspaceAccess}
           linkRole={props.linkRole}
-          linkAudience={props.linkAudience}
+          listed={props.listed}
           passwordProtected={props.passwordProtected}
         />
         <StarButton shortId={shortId} favorite={props.favorite} onChange={props.onFavorite} />
