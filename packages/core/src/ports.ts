@@ -633,11 +633,12 @@ export interface MetaStore {
   /** Revoke a user's grant to one OAuth client: drop the consent + every live access/refresh
    *  token, so the agent loses access immediately and must re-consent. */
   revokeUserGrant(userId: string, clientId: string): Promise<void>
-  /** Bind the workspace this user's grants to an OAuth client act in (the consent
-   *  screen's workspace picker). Upserts on (user, client): re-consent re-points. */
-  setOAuthClientWorkspace(userId: string, clientId: string, orgId: string): Promise<void>
-  /** The workspace a user bound an OAuth client to, or null (pre-picker grants). */
-  getOAuthClientWorkspace(userId: string, clientId: string): Promise<string | null>
+  /** Replace the SET of workspaces this user scopes an OAuth client's grants to (the
+   *  consent screen's workspace multi-select). Empty array clears it → "all workspaces". */
+  setOAuthClientWorkspaces(userId: string, clientId: string, orgIds: string[]): Promise<void>
+  /** The workspaces a user scoped an OAuth client to. Empty array = "all workspaces"
+   *  (unscoped) — the grant reaches every workspace the user belongs to. */
+  getOAuthClientWorkspaces(userId: string, clientId: string): Promise<string[]>
   deleteAgent(id: string, orgId: string): Promise<void>
 
   // ---- Workspace invitations (invite-by-email → accept) ------------------

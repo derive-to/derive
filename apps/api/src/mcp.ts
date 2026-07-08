@@ -155,6 +155,11 @@ function buildServer(
   // re-capped against each roamed workspace's membership — exactly like the
   // X-Derive-Workspace header re-home in agentFor.
   scopeForCap: Role,
+  // The workspaces this grant is scoped to (the consent multi-select). EMPTY =
+  // "all workspaces" — every workspace the owner belongs to. A non-empty set
+  // clamps list_workspaces + the `workspace` arg + cross-workspace read to
+  // exactly those: workspaces outside the grant are invisible and unreachable.
+  boundWorkspaces: string[],
 ): McpServer {
   // Steer the write guidance by what this grant can actually do: a publish-capable
   // grant gets the direct-publish path; a lower grant is told its writes go to review.
@@ -185,6 +190,17 @@ function buildServer(
   const defaultOrg = agent.org_id
   const defaultRole = agent.role
 
+  // The owner's workspaces this grant can actually reach: all of them when the
+  // grant is unscoped (empty set), else only the ticked subset. The single source
+  // of truth for what list_workspaces shows and what the `workspace` arg accepts.
+  const grantedWorkspaces = async (): Promise<{ id: string; name: string; role: Role }[]> => {
+    if (!ownerId) return []
+    const all = await ctx.meta.listWorkspaces(ownerId)
+    return boundWorkspaces.length ? all.filter((w) => boundWorkspaces.includes(w.id)) : all
+  }
+  // Is an org within this grant's scope? (An unscoped grant reaches all.)
+  const inGrant = (org: string) => boundWorkspaces.length === 0 || boundWorkspaces.includes(org)
+
   // Resolve a workspace REFERENCE (id or name) to an org + the role the grant
   // holds there. No ref → the connection's default workspace. Roaming needs a
   // known granting user (ownerId); the role is re-capped from the grant's scope
@@ -199,13 +215,15 @@ function buildServer(
         error:
           "This connection is pinned to a single workspace and can't switch. Reconnect it with an OAuth login to reach your other workspaces.",
       }
-    const mine = await ctx.meta.listWorkspaces(ownerId)
+    // Only workspaces WITHIN THE GRANT are resolvable — one outside the ticked set
+    // is as good as non-existent to this connection, even if the owner belongs to it.
+    const mine = await grantedWorkspaces()
     const w =
       mine.find((x) => x.id === ref) ??
       mine.find((x) => x.name.toLowerCase() === ref.trim().toLowerCase())
     if (!w)
       return {
-        error: `No workspace "${ref}" you can reach. Call list_workspaces to see your workspaces (match by id or name).`,
+        error: `No workspace "${ref}" in this grant. Call list_workspaces to see the workspaces this connection can act in (match by id or name).`,
       }
     return { org: w.id, role: capRole(scopeForCap, w.role) }
   }
@@ -232,7 +250,9 @@ function buildServer(
       org = t.org
       role = t.role
     } else if (a.org_id !== defaultOrg) {
-      if (!ownerId) return null
+      // Auto-roam to the doc's workspace only if it's within this grant and the
+      // owner is a member. A doc in a workspace outside the grant reads as not found.
+      if (!ownerId || !inGrant(a.org_id)) return null
       const m = await ctx.meta.getMembership(a.org_id, ownerId)
       if (!m) return null
       org = a.org_id
@@ -264,11 +284,11 @@ function buildServer(
     "list_workspaces",
     {
       description:
-        "List every workspace this one login can act in — id, name, your role there, and which is your default. Your token already reaches them all; pass a workspace's id or name as the `workspace` argument to list_artifacts / read / catch_up / comment / publish to act there. No reconnect, no re-consent — read/catch_up/comment even find a short_id across your workspaces automatically.",
+        "List every workspace THIS grant can act in — id, name, your role there, and which is your default. This is the set you chose when you connected (all your workspaces, or a subset). Pass a workspace's id or name as the `workspace` argument to list_artifacts / read / catch_up / comment / publish to act there. No reconnect — read/catch_up/comment even find a short_id across these workspaces automatically.",
       inputSchema: {},
     },
     async () => {
-      const mine = ownerId ? await ctx.meta.listWorkspaces(ownerId) : []
+      const mine = await grantedWorkspaces()
       const rows = mine.length
         ? mine.map((w) => ({ id: w.id, name: w.name, role: w.role, default: w.id === defaultOrg }))
         : [{ id: defaultOrg, name: null as string | null, role: agent.role, default: true }]
@@ -1093,10 +1113,12 @@ export function mountMcp(app: Hono, ctx: AppContext): void {
     const actingFor = ownerId ? ((await ctx.meta.getUsers([ownerId]))[0] ?? null) : null
     // The grant's uncapped scope role (OAuth) — or the agent's own role for a
     // registered dk_agt_ token — is what a roamed workspace's role is re-capped
-    // from, mirroring agentFor's X-Derive-Workspace re-home.
+    // from, mirroring agentFor's X-Derive-Workspace re-home. boundWorkspaces is the
+    // consent multi-select (empty = all): the MCP surface clamps to it.
     const grant = await ctx.oauthGrant(c)
     const scopeForCap = grant?.scopeRole ?? agent.role
-    const server = buildServer(ctx, agent, actingFor, ownerId, scopeForCap)
+    const boundWorkspaces = grant?.boundWorkspaces ?? []
+    const server = buildServer(ctx, agent, actingFor, ownerId, scopeForCap, boundWorkspaces)
     const transport = new StreamableHTTPTransport()
     await server.connect(transport)
     return transport.handleRequest(c)

@@ -12,6 +12,13 @@ export interface OauthAgentResolution {
   rec: AgentRecord
   ownerId: string
   scopeRole: Role
+  /** The OAuth client this grant belongs to (keys the granted-workspace set). */
+  clientId: string
+  /** The workspaces this grant is scoped to (the consent multi-select). EMPTY =
+   *  "all workspaces" — the grant reaches every workspace the owner belongs to.
+   *  A non-empty set restricts every resolution: default org, X-Derive-Workspace
+   *  re-home, and the MCP list_workspaces/switch surface all clamp to it. */
+  boundWorkspaces: string[]
 }
 
 interface OauthAgentDeps {
@@ -53,27 +60,30 @@ export function makeOauthAgent({
           ? "commenter"
           : "viewer"
 
-  // The workspace the agent runs in, and the owner's membership role there (the
-  // cap on the scope-derived role). Precedence: the workspace the user picked on
-  // the consent screen — keyed (user, client), honored only while they're still a
-  // member — then the first workspace (pre-picker grants), then a personal
-  // workspace provisioned on first touch exactly as the user's own first request
-  // would (multi mode, lazy; the user owns it).
+  // The DEFAULT workspace the agent runs in (headerless resolution), the owner's
+  // membership role there (the cap on the scope-derived role), and the grant's
+  // reachable SET. Precedence: the workspaces the user ticked on the consent
+  // screen — keyed (user, client), each honored only while they're still a member
+  // — narrowing to the first of that set; else all their workspaces, first one;
+  // else a personal workspace provisioned on first touch (the user owns it). An
+  // EMPTY set is "all workspaces": the default is simply their first.
   const oauthWorkspace = async (
     userId: string,
     clientId: string,
     email: string | null,
     name: string | null,
-  ): Promise<{ org: string; memberRole: Role }> => {
+  ): Promise<{ org: string; memberRole: Role; bound: string[] }> => {
     const [mine, bound] = await Promise.all([
       meta.listWorkspaces(userId),
-      clientId ? meta.getOAuthClientWorkspace(userId, clientId) : null,
+      clientId ? meta.getOAuthClientWorkspaces(userId, clientId) : Promise.resolve([]),
     ])
-    const target = bound ? mine.find((w) => w.id === bound) : undefined
-    if (target) return { org: target.id, memberRole: target.role }
-    if (mine[0]) return { org: mine[0].id, memberRole: mine[0].role }
+    // The grant's reachable workspaces the user is STILL a member of. A non-empty
+    // `bound` restricts; an empty one means every workspace they belong to.
+    const scoped = bound.length ? mine.filter((w) => bound.includes(w.id)) : mine
+    const target = scoped[0] ?? mine[0]
+    if (target) return { org: target.id, memberRole: target.role, bound }
     const org = await provisionPersonal({ id: userId, email: email ?? "", name })
-    return { org, memberRole: "owner" }
+    return { org, memberRole: "owner", bound }
   }
 
   // Our own JWKS (served by the jwt plugin at /api/auth/jwks), read straight from
@@ -102,6 +112,8 @@ export function makeOauthAgent({
       return {
         ownerId: grant.userId,
         scopeRole,
+        clientId: grant.clientId,
+        boundWorkspaces: ws.bound,
         rec: {
           id: `oauth:${grant.clientId}`,
           org_id: ws.org,
@@ -162,6 +174,8 @@ export function makeOauthAgent({
     return {
       ownerId: userId,
       scopeRole,
+      clientId,
+      boundWorkspaces: ws.bound,
       rec: {
         id: `oauth:${clientId}`,
         org_id: ws.org,

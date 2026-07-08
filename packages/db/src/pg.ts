@@ -1894,23 +1894,34 @@ export class PgMetaStore implements MetaStore {
       return false
     }
   }
-  async setOAuthClientWorkspace(userId: string, clientId: string, orgId: string): Promise<void> {
+  // Replace the whole granted-workspace SET for (user, client). Empty array clears
+  // it → the grant reverts to "all workspaces". See schema.ts for the model.
+  async setOAuthClientWorkspaces(
+    userId: string,
+    clientId: string,
+    orgIds: string[],
+  ): Promise<void> {
     await this.db
-      .insert(oauthClientWorkspace)
-      .values({ id: crypto.randomUUID(), user_id: userId, client_id: clientId, org_id: orgId })
-      .onConflictDoUpdate({
-        target: [oauthClientWorkspace.user_id, oauthClientWorkspace.client_id],
-        set: { org_id: orgId },
-      })
+      .delete(oauthClientWorkspace)
+      .where(
+        and(eq(oauthClientWorkspace.user_id, userId), eq(oauthClientWorkspace.client_id, clientId)),
+      )
+    for (const orgId of orgIds) {
+      await this.db
+        .insert(oauthClientWorkspace)
+        .values({ id: crypto.randomUUID(), user_id: userId, client_id: clientId, org_id: orgId })
+        .onConflictDoNothing()
+    }
   }
-  async getOAuthClientWorkspace(userId: string, clientId: string): Promise<string | null> {
+  // The grant's scoped workspaces. Empty array = "all workspaces" (unscoped).
+  async getOAuthClientWorkspaces(userId: string, clientId: string): Promise<string[]> {
     const rows = await this.db
       .select({ org_id: oauthClientWorkspace.org_id })
       .from(oauthClientWorkspace)
       .where(
         and(eq(oauthClientWorkspace.user_id, userId), eq(oauthClientWorkspace.client_id, clientId)),
       )
-    return rows[0]?.org_id ?? null
+    return rows.map((r) => r.org_id)
   }
   async pruneStaleOAuthClients(cutoffIso: string): Promise<number> {
     try {

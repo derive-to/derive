@@ -366,7 +366,10 @@ export function buildContext(deps: AppDeps) {
   // dk_agt_ tokens leave this unset. Managemently-scoped routes read it to tell
   // the two apart: a grant carries the consenting user's scopes; a registered
   // token carries only a runtime role.
-  const oauthGrantCache = new WeakMap<Context, { ownerId: string; scopeRole: Role }>()
+  const oauthGrantCache = new WeakMap<
+    Context,
+    { ownerId: string; scopeRole: Role; clientId: string; boundWorkspaces: string[] }
+  >()
   const agentFor = async (c: Context): Promise<AgentRecord | null> => {
     if (agentCache.has(c)) return agentCache.get(c) ?? null
     const b = bearer(c)
@@ -386,17 +389,25 @@ export function buildContext(deps: AppDeps) {
         if (o) {
           a = o.rec
           owner = o.ownerId
-          oauthGrantCache.set(c, { ownerId: o.ownerId, scopeRole: o.scopeRole })
-          // An OAuth agent may act in any workspace its granting user belongs to:
-          // an explicit X-Derive-Workspace header, validated against the OWNER's
-          // membership, re-homes the agent record itself — so activeWorkspace AND
-          // every authorize() comparison agree on the target. Fail-closed: an
-          // unknown or foreign id keeps the grant's default workspace. Registered
-          // workspace agents (no granting user) never roam. The role is re-capped
-          // from the uncapped scope role against the TARGET's membership — the
-          // owner may hold a different role there than in the default workspace.
+          oauthGrantCache.set(c, {
+            ownerId: o.ownerId,
+            scopeRole: o.scopeRole,
+            clientId: o.clientId,
+            boundWorkspaces: o.boundWorkspaces,
+          })
+          // An OAuth agent may act in any workspace WITHIN ITS GRANT: an explicit
+          // X-Derive-Workspace header, validated against the OWNER's membership,
+          // re-homes the agent record itself — so activeWorkspace AND every
+          // authorize() comparison agree on the target. Clamped to the grant's
+          // scoped set (the consent multi-select): an empty set means all the
+          // owner's workspaces, a non-empty one restricts to exactly those. Fail-
+          // closed: an unknown, foreign, or out-of-grant id keeps the default
+          // workspace. Registered workspace agents (no granting user) never roam.
+          // The role is re-capped from the uncapped scope role against the
+          // TARGET's membership.
           const want = c.req.header("x-derive-workspace")
-          if (want && want !== a.org_id) {
+          const inGrant = o.boundWorkspaces.length === 0 || o.boundWorkspaces.includes(want ?? "")
+          if (want && want !== a.org_id && inGrant) {
             const m = await meta.getMembership(want, owner)
             if (m) a = { ...a, org_id: want, role: capRole(o.scopeRole, m.role) }
           }
@@ -434,8 +445,17 @@ export function buildContext(deps: AppDeps) {
   // scope role — or null for a registered dk_agt_ token. The MCP layer uses the
   // scope role to re-cap a roamed workspace's role (mirrors agentFor's header
   // re-home), so a single connection can act across every workspace the grantor
-  // belongs to. Resolves the bearer first so the grant cache is filled.
-  const oauthGrant = async (c: Context): Promise<{ ownerId: string; scopeRole: Role } | null> => {
+  // belongs to. Also carries the grant's scoped workspace SET (the consent
+  // multi-select; empty = all) so the MCP layer clamps list_workspaces + switching
+  // to it. Resolves the bearer first so the grant cache is filled.
+  const oauthGrant = async (
+    c: Context,
+  ): Promise<{
+    ownerId: string
+    scopeRole: Role
+    clientId: string
+    boundWorkspaces: string[]
+  } | null> => {
     await agentFor(c)
     return oauthGrantCache.get(c) ?? null
   }

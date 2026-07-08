@@ -235,9 +235,11 @@ export const agentMention = pgTable("agent_mention", {
   created_at: text("created_at").notNull().$defaultFn(isoNow),
 })
 
-// Which workspace an OAuth client's grants act in for one user — chosen on the
-// consent screen; re-consent upserts the row. Resolution falls back to the user's
-// first workspace when absent (pre-picker grants) or when membership has lapsed.
+// The SET of workspaces an OAuth client's grants are scoped to for one user — the
+// workspaces ticked on the consent screen. ONE ROW PER GRANTED WORKSPACE
+// (composite-unique on user+client+org). An EMPTY set (no rows) means "all
+// workspaces"; a non-empty set restricts the grant to exactly those. Re-consent
+// replaces the set. See the sqlite mirror in schema.ts for the full rationale.
 export const oauthClientWorkspace = pgTable(
   "oauth_client_workspace",
   {
@@ -247,7 +249,9 @@ export const oauthClientWorkspace = pgTable(
     org_id: text("org_id").notNull(),
     created_at: text("created_at").notNull().$defaultFn(isoNow),
   },
-  (t) => [uniqueIndex("oauth_client_workspace_user_client").on(t.user_id, t.client_id)],
+  (t) => [
+    uniqueIndex("oauth_client_workspace_user_client_org").on(t.user_id, t.client_id, t.org_id),
+  ],
 )
 
 export const artifactFavorite = pgTable(

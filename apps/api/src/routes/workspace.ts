@@ -27,7 +27,7 @@ export const workspaceRoutes = (ctx: AppContext) => {
     workspaceRole,
     workspaceCan,
   } = ctx
-  const { privateOwnerId } = ctx
+  const { privateOwnerId, oauthGrant } = ctx
   const app = new Hono()
 
   // A pending invite, minus the secret token (never leaves the server).
@@ -370,7 +370,14 @@ export const workspaceRoutes = (ctx: AppContext) => {
       const account = owner
         ? { id: owner, handle: ownerUser?.username ?? null, name: ownerUser?.name ?? null }
         : null
-      const mine = owner ? await meta.listWorkspaces(owner) : []
+      const all = owner ? await meta.listWorkspaces(owner) : []
+      // Restrict to the workspaces THIS grant is scoped to (the consent multi-
+      // select); an empty scope = all. So a bearer client (the CLI, an MCP
+      // connection) only ever discovers — and stores — the workspaces its own
+      // grant actually covers, mirroring what it can act in.
+      const grant = await oauthGrant(c)
+      const bound = grant?.boundWorkspaces ?? []
+      const mine = bound.length ? all.filter((w) => bound.includes(w.id)) : all
       if (owner && mine.length)
         return c.json({
           multi: true,

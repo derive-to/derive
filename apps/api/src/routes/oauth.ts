@@ -10,7 +10,7 @@ import { consentHTML } from "../oauth-consent"
  *  screens, and the public list of configured social sign-in providers. Read-only,
  *  except the consent screen's workspace binding (POST /oauth/consent/workspace). */
 export const oauthRoutes = (ctx: AppContext) => {
-  const { meta, currentUser, activeWorkspace } = ctx
+  const { meta, currentUser } = ctx
   const app = new Hono()
 
   // OAuth 2.0 discovery at the well-known root (RFC 8414 + RFC 9728), mirroring
@@ -65,16 +65,10 @@ export const oauthRoutes = (ctx: AppContext) => {
     const clientName = (await meta.getOAuthClientName(clientId)) || clientId || "An application"
     const me = await currentUser(c)
     const mine = me ? await meta.listWorkspaces(me.id) : []
-    // An existing (user, client) binding wins the preselection — re-consent must
-    // not re-point a deliberate earlier choice to whatever workspace the browser
-    // happens to be viewing. Only then the active workspace, then the first.
-    const bound = me && clientId ? await meta.getOAuthClientWorkspace(me.id, clientId) : null
-    const selected =
-      bound && mine.some((w) => w.id === bound)
-        ? bound
-        : mine.length > 1
-          ? await activeWorkspace(c)
-          : mine[0]?.id
+    // Re-consent preselect: the workspaces a prior grant was scoped to, kept only
+    // where the user is still a member. Empty → the "All workspaces" default.
+    const bound = me && clientId ? await meta.getOAuthClientWorkspaces(me.id, clientId) : []
+    const selected = bound.filter((id) => mine.some((w) => w.id === id))
     return c.html(
       consentHTML({
         clientName,
@@ -103,11 +97,18 @@ export const oauthRoutes = (ctx: AppContext) => {
     if (!me) return fail(c, 401, "sign in to continue")
     const b = await readJson(
       c,
-      z.object({ client_id: z.string().min(1), org_id: z.string().min(1) }),
+      z.object({ client_id: z.string().min(1), org_ids: z.array(z.string()) }),
     )
     if (b instanceof Response) return b
-    if (!(await meta.getMembership(b.org_id, me.id))) return fail(c, 403, "forbidden")
-    await meta.setOAuthClientWorkspace(me.id, b.client_id, b.org_id)
+    // Every ticked workspace must be one the caller is a member of; an empty array
+    // clears the scope → "All workspaces". Membership is re-checked server-side so
+    // a stale or forged id can never widen the grant past the human's own reach.
+    const valid: string[] = []
+    for (const orgId of b.org_ids) {
+      if (await meta.getMembership(orgId, me.id)) valid.push(orgId)
+    }
+    if (valid.length !== b.org_ids.length) return fail(c, 403, "forbidden")
+    await meta.setOAuthClientWorkspaces(me.id, b.client_id, valid)
     return c.json({ ok: true })
   })
 
