@@ -153,6 +153,31 @@
           "count"
         ]
       },
+      "SlackStatus": {
+        "type": "object",
+        "properties": {
+          "available": {
+            "type": "boolean"
+          },
+          "connected": {
+            "type": "boolean"
+          },
+          "team_name": {
+            "type": "string",
+            "nullable": true
+          },
+          "default_channel": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "available",
+          "connected",
+          "team_name",
+          "default_channel"
+        ]
+      },
       "Analytics": {
         "type": "object",
         "properties": {
@@ -868,6 +893,64 @@
         "responses": {
           "204": {
             "description": "The artifact was removed."
+          }
+        }
+      }
+    },
+    "/v1/slack": {
+      "get": {
+        "tags": [
+          "Slack"
+        ],
+        "summary": "Slack connection status for the signed-in user's workspace.",
+        "responses": {
+          "200": {
+            "description": "Whether Slack is available + connected, and the team + default channel.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SlackStatus"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "Slack"
+        ],
+        "summary": "Set the channel Derive posts to (Admin only).",
+        "responses": {
+          "200": {
+            "description": "The new default channel (or null to clear it).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "default_channel": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  },
+                  "required": [
+                    "default_channel"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Slack"
+        ],
+        "summary": "Disconnect Slack from the workspace (Admin only).",
+        "responses": {
+          "204": {
+            "description": "Slack was disconnected."
           }
         }
       }

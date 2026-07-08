@@ -430,6 +430,82 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/slack": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Slack connection status for the signed-in user's workspace. */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Whether Slack is available + connected, and the team + default channel. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["SlackStatus"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        /** Disconnect Slack from the workspace (Admin only). */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Slack was disconnected. */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        /** Set the channel Derive posts to (Admin only). */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The new default channel (or null to clear it). */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            default_channel: string | null;
+                        };
+                    };
+                };
+            };
+        };
+        trace?: never;
+    };
     "/v1/artifacts/{shortId}/view": {
         parameters: {
             query?: never;
@@ -1063,6 +1139,12 @@ export interface components {
             parentId?: string;
             prNumber?: number;
             repo?: string;
+        };
+        SlackStatus: {
+            available: boolean;
+            connected: boolean;
+            team_name: string | null;
+            default_channel: string | null;
         };
         Analytics: {
             total: number;

@@ -266,12 +266,8 @@ export interface OrgSettings {
   defaultAgentVisibility: "unlisted" | "private" | "org" | "link" | "public"
 }
 /** Slack connection status for the Settings UI. */
-export interface SlackStatus {
-  available: boolean
-  connected: boolean
-  team_name: string | null
-  default_channel: string | null
-}
+/** Slack connection status for a workspace. Generated from the OpenAPI spec. */
+export type SlackStatus = components["schemas"]["SlackStatus"]
 /** One entry in the workspace switcher. */
 export interface WorkspaceSummary {
   id: string
