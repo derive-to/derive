@@ -177,24 +177,10 @@ export interface Report {
   state: "open" | "actioned" | "dismissed"
   created_at: string
 }
-export interface Collection {
-  id: string
-  title: string
-  created_by: string
-  created_at: string
-  count: number
-  /** Where the collection came from: "repo" = a GitHub repo mirror, "pr" = a
-   *  read-only PR preview nested under its repo, "manual" = user-created. Absent on
-   *  older responses → treat as "manual". */
-  kind?: "manual" | "repo" | "pr"
-  /** For a PR preview: the repo collection it nests under (when that repo is still
-   *  connected). Drives the sidebar hierarchy. */
-  parentId?: string
-  /** For a PR preview: the pull-request number. */
-  prNumber?: number
-  /** For repo/PR collections: "owner/name". */
-  repo?: string
-}
+/** A collection: a shareable group of artifacts, tagged with its item count and origin
+ *  (kind = manual / repo / pr). Generated from the OpenAPI spec (apps/api/openapi.json)
+ *  — a backend shape change surfaces here at `tsc`. */
+export type Collection = components["schemas"]["Collection"]
 /** A per-user follow: a GitHub author (kind="author", target=login), a repo path
  *  prefix (kind="path", target=path prefix), or a person (kind="user", target=username
  *  on the wire). Drives the `scope=following` feed. Generated from the API's OpenAPI

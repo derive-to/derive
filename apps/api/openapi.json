@@ -54,6 +54,50 @@
           "created_at"
         ]
       },
+      "Collection": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "created_by": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "count": {
+            "type": "number"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "manual",
+              "repo",
+              "pr"
+            ]
+          },
+          "parentId": {
+            "type": "string"
+          },
+          "prNumber": {
+            "type": "number"
+          },
+          "repo": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "created_by",
+          "created_at",
+          "count"
+        ]
+      },
       "Notification": {
         "type": "object",
         "properties": {
@@ -294,6 +338,181 @@
         "responses": {
           "204": {
             "description": "The follow was removed."
+          }
+        }
+      }
+    },
+    "/v1/collections": {
+      "get": {
+        "tags": [
+          "Collections"
+        ],
+        "summary": "List the active workspace's collections (members only).",
+        "responses": {
+          "200": {
+            "description": "The workspace's collections, each with its item count and origin.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "collections": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Collection"
+                      }
+                    }
+                  },
+                  "required": [
+                    "collections"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Collections"
+        ],
+        "summary": "Create a collection.",
+        "responses": {
+          "201": {
+            "description": "The created collection (empty, manual).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Collection"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/collections/{id}": {
+      "patch": {
+        "tags": [
+          "Collections"
+        ],
+        "summary": "Rename a collection.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The updated collection.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Collection"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Collections"
+        ],
+        "summary": "Delete a collection.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "The collection was deleted."
+          }
+        }
+      }
+    },
+    "/v1/collections/{id}/items/{shortId}": {
+      "put": {
+        "tags": [
+          "Collections"
+        ],
+        "summary": "Add an artifact to a collection.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "shortId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The artifact was added.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "ok"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Collections"
+        ],
+        "summary": "Remove an artifact from a collection.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "shortId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "The artifact was removed."
           }
         }
       }
