@@ -1135,6 +1135,7 @@ export const api = {
     id: string,
   ): Promise<{
     created_by: string
+    can_manage: boolean
     members: ArtifactMember[]
     workspace: { id: string; name: string }
     workspace_share: { role: Role } | null

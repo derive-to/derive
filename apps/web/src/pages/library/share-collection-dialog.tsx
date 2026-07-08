@@ -2,7 +2,8 @@ import { useEffect, useState } from "react"
 import { type ArtifactMember, api, type Collection, type Role } from "@/api"
 import { Icon } from "@/components/icons"
 import { EmptyState } from "@/components/shared/empty-state"
-import { RoleSelect } from "@/components/shared/role-select"
+import { PersonSearchInput } from "@/components/shared/person-search-input"
+import { ROLE_LABELS, RoleSelect } from "@/components/shared/role-select"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -11,7 +12,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import { Input } from "@/components/ui/input"
 import { toast } from "@/components/ui/sonner"
 import { Switch } from "@/components/ui/switch"
 
@@ -27,6 +27,7 @@ export function ShareCollectionDialog({
   onClose: () => void
 }) {
   const [members, setMembers] = useState<ArtifactMember[]>([])
+  const [canManage, setCanManage] = useState(false)
   const [email, setEmail] = useState("")
   const [role, setRole] = useState<Role>("editor")
   const [busy, setBusy] = useState(false)
@@ -39,6 +40,7 @@ export function ShareCollectionDialog({
       .listCollectionMembers(collection.id)
       .then((r) => {
         setMembers(r.members)
+        setCanManage(r.can_manage)
         setWorkspace(r.workspace)
         setWorkspaceRole(r.workspace_share?.role ?? null)
       })
@@ -90,6 +92,17 @@ export function ShareCollectionDialog({
     }
     load()
   }
+  // Re-role an existing member in place — setCollectionMember upserts server-side,
+  // so this is the same call the Add form makes, just keyed by their handle.
+  const change = async (m: ArtifactMember, next: Role) => {
+    if (next === m.role || !m.handle) return
+    try {
+      await api.setCollectionMember(collection.id, m.handle, next)
+    } catch (x) {
+      toast.error(x instanceof Error ? x.message : "Couldn't update their role")
+    }
+    load()
+  }
 
   return (
     <Dialog
@@ -107,30 +120,35 @@ export function ShareCollectionDialog({
           </DialogDescription>
         </DialogHeader>
 
-        {/* DialogContent's grid gap spaces the sections — no child margins. */}
-        <form onSubmit={add} className="flex gap-1.5">
-          <Input
-            type="text"
-            autoCapitalize="none"
-            autoCorrect="off"
-            data-testid="collection-share-email"
-            placeholder="@username or email"
-            aria-label="Username or email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            className="min-w-0 flex-1"
-          />
-          <RoleSelect
-            value={role}
-            onChange={setRole}
-            data-testid="collection-share-role"
-            className="w-26 shrink-0"
-          />
-          {/* Add is this dialog's one filled primary. */}
-          <Button variant="default" type="submit" data-testid="collection-share-add" loading={busy}>
-            {busy ? "Adding…" : "Add"}
-          </Button>
-        </form>
+        {/* DialogContent's grid gap spaces the sections — no child margins. A
+            plain viewer (canManage false) gets the read-only roster below with
+            no add form — no controls that would just 403 on click. */}
+        {canManage && (
+          <form onSubmit={add} className="flex gap-1.5">
+            <PersonSearchInput
+              value={email}
+              onChange={setEmail}
+              placeholder="@username or email"
+              testId="collection-share-email"
+              className="min-w-0"
+            />
+            <RoleSelect
+              value={role}
+              onChange={setRole}
+              data-testid="collection-share-role"
+              className="w-26 shrink-0"
+            />
+            {/* Add is this dialog's one filled primary. */}
+            <Button
+              variant="default"
+              type="submit"
+              data-testid="collection-share-add"
+              loading={busy}
+            >
+              {busy ? "Adding…" : "Add"}
+            </Button>
+          </form>
+        )}
 
         {members.length === 0 ? (
           <EmptyState className="p-6">No one shared yet.</EmptyState>
@@ -148,46 +166,74 @@ export function ShareCollectionDialog({
                     </div>
                   )}
                 </div>
-                <span className="font-mono text-2xs text-muted-foreground">{m.role}</span>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  data-testid={`collection-share-remove-${m.user_id}`}
-                  onClick={() => remove(m)}
-                  aria-label={`Remove ${m.name ?? (m.handle ? `@${m.handle}` : "member")}`}
-                >
-                  <Icon name="close" />
-                </Button>
+                {canManage ? (
+                  <>
+                    <RoleSelect
+                      value={m.role}
+                      onChange={(next) => change(m, next)}
+                      data-testid={`collection-share-member-role-${m.user_id}`}
+                      aria-label={`Role for ${m.name ?? (m.handle ? `@${m.handle}` : "member")}`}
+                      className="w-26 shrink-0"
+                    />
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      data-testid={`collection-share-remove-${m.user_id}`}
+                      onClick={() => remove(m)}
+                      aria-label={`Remove ${m.name ?? (m.handle ? `@${m.handle}` : "member")}`}
+                    >
+                      <Icon name="close" />
+                    </Button>
+                  </>
+                ) : (
+                  <span className="shrink-0 text-sm text-muted-foreground">
+                    {ROLE_LABELS[m.role]}
+                  </span>
+                )}
               </div>
             ))}
           </div>
         )}
 
-        <div className="flex items-center gap-2 border-t border-border pt-3">
-          <Switch
-            id="collection-share-workspace"
-            data-testid="collection-share-workspace-toggle"
-            checked={workspaceRole !== null}
-            disabled={wsBusy || !workspace}
-            onCheckedChange={(on) => setWorkspaceShare(on ? (workspaceRole ?? "viewer") : null)}
-          />
-          <label htmlFor="collection-share-workspace" className="min-w-0 flex-1">
-            <div className="truncate text-sm font-medium text-foreground">
-              Share with everyone in {workspace?.name ?? "this workspace"}
-            </div>
-            <div className="truncate text-2xs text-muted-foreground">
-              Auto-includes new teammates too.
-            </div>
-          </label>
-          {workspaceRole !== null && (
-            <RoleSelect
-              value={workspaceRole}
-              onChange={setWorkspaceShare}
-              data-testid="collection-share-workspace-role"
-              className="w-26 shrink-0"
+        {canManage ? (
+          <div className="flex items-center gap-2 border-t border-border pt-3">
+            <Switch
+              id="collection-share-workspace"
+              data-testid="collection-share-workspace-toggle"
+              checked={workspaceRole !== null}
+              disabled={wsBusy || !workspace}
+              onCheckedChange={(on) => setWorkspaceShare(on ? (workspaceRole ?? "viewer") : null)}
             />
-          )}
-        </div>
+            <label htmlFor="collection-share-workspace" className="min-w-0 flex-1">
+              <div className="truncate text-sm font-medium text-foreground">
+                Share with everyone in {workspace?.name ?? "this workspace"}
+              </div>
+              <div className="truncate text-2xs text-muted-foreground">
+                Auto-includes new teammates too.
+              </div>
+            </label>
+            {workspaceRole !== null && (
+              <RoleSelect
+                value={workspaceRole}
+                onChange={setWorkspaceShare}
+                data-testid="collection-share-workspace-role"
+                className="w-26 shrink-0"
+              />
+            )}
+          </div>
+        ) : (
+          // A viewer can't change the share, but seeing that one exists explains
+          // why they (or others) have access without an explicit invite.
+          workspaceRole !== null && (
+            <div
+              data-testid="collection-share-workspace-readonly"
+              className="border-t border-border pt-3 text-sm text-muted-foreground"
+            >
+              Shared with everyone in {workspace?.name ?? "this workspace"} (
+              {ROLE_LABELS[workspaceRole]})
+            </div>
+          )
+        )}
       </DialogContent>
     </Dialog>
   )

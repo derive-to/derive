@@ -148,7 +148,13 @@ export const collectionRoutes = (ctx: AppContext) => {
   })
   app.get("/v1/collections/:id/members", async (c) => {
     const col = await meta.getCollection(c.req.param("id"))
-    if (!col || (await collectionRole(c, col)) === null) return fail(c, 404, "not found")
+    if (!col) return fail(c, 404, "not found")
+    const role = await collectionRole(c, col)
+    // Viewing the roster is as open as the collection itself (GET /v1/collections
+    // already lists it to every org member, no explicit collectionRole required —
+    // hiding who has access, while showing the collection exists, is a worse gap
+    // than a plain member seeing a read-only list). Managing it stays strict.
+    if (role === null && !(await isMember(c, col.org_id))) return fail(c, 404, "not found")
     const [rows, workspaceShare, ws] = await Promise.all([
       meta.listCollectionMembers(col.id),
       meta.getCollectionWorkspaceShare(col.id),
@@ -158,6 +164,10 @@ export const collectionRoutes = (ctx: AppContext) => {
     const byId = new Map(users.map((u) => [u.id, u]))
     return c.json({
       created_by: col.created_by,
+      // Lets the client show live editing (add/re-role/remove, the workspace
+      // toggle) only to someone who can actually use it, instead of rendering
+      // controls that 403 on every click for a plain viewer.
+      can_manage: roleAllows(role ?? "viewer", "manage"),
       members: rows.map((r) => ({
         user_id: r.user_id,
         handle: byId.get(r.user_id)?.username ?? null,

@@ -89,6 +89,29 @@ describe("share a collection with a workspace", () => {
     expect(await meta.getCollectionWorkspaceShare(col.id)).toBeNull()
   })
 
+  it("any org member can view the roster (read-only); only a manager can edit it", async () => {
+    const col = await (
+      await app.request("/v1/collections", jsonAs(as(ana.email), { title: "Roster visibility" }))
+    ).json()
+    // Cara: a plain org member, no explicit collectionMember row — same gap the
+    // manual browser pass caught (GET 404'd for anyone without an explicit share,
+    // even though the collection itself is already listed to every org member).
+    const seenByCara = await app.request(`/v1/collections/${col.id}/members`, {
+      headers: as(cara.email),
+    })
+    expect(seenByCara.status).toBe(200)
+    const body = await seenByCara.json()
+    expect(body.can_manage).toBe(false)
+    expect(body.members.map((m: { user_id: string }) => m.user_id)).toEqual([ana.id])
+
+    // Dee: not a member of "default" at all — still can't see it.
+    await meta.removeMembership("default", dee.id)
+    const seenByDee = await app.request(`/v1/collections/${col.id}/members`, {
+      headers: as(dee.email),
+    })
+    expect(seenByDee.status).toBe(404)
+  })
+
   it("a workspace share only benefits members of that workspace", async () => {
     const col = await (
       await app.request("/v1/collections", jsonAs(as(ana.email), { title: "Members only" }))
