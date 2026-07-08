@@ -216,6 +216,9 @@ export interface ArtifactStore {
   getByShortId(shortId: string): Promise<ArtifactRecord | null>
   /** Load an artifact by its internal id (used by domain mode's host lookup). */
   getArtifactById(id: string): Promise<ArtifactRecord | null>
+  /** Batch-load artifacts by internal id in ONE query (id ∈ ids). Order is unspecified;
+   *  callers key by `id`. Empty ids ⇒ []. Use this over a per-row getArtifactById loop. */
+  getArtifactsByIds(ids: string[]): Promise<ArtifactRecord[]>
   /** GitHub-synced artifacts in `orgId` whose `source_path` is one of `paths` —
    *  resolves relative cross-document links (a sibling `.html`/`.md`) to the
    *  artifact each points at. Returns only what the link rewrite needs. Empty
@@ -360,6 +363,9 @@ export interface WebhookStore {
   activeWebhooks(artifactId: string, orgId: string): Promise<WebhookRecord[]>
   /** Enqueue a delivery into the outbox (target is denormalized for durability). */
   enqueueDelivery(d: NewDelivery): Promise<void>
+  /** Enqueue the whole subscriber fan-out for one event in ONE insert. Empty ⇒ no-op.
+   *  Use over a per-subscriber enqueueDelivery loop. */
+  enqueueDeliveries(rows: NewDelivery[]): Promise<void>
   /**
    * Atomically claim up to `limit` pending deliveries whose next_attempt_at has
    * passed: increments their attempt count and leases them (sets next_attempt_at
@@ -397,6 +403,9 @@ export interface WorkspaceStore {
   listWorkspaces(userId: string): Promise<(WorkspaceRecord & { role: Role })[]>
   getMembership(orgId: string, userId: string): Promise<MembershipRecord | null>
   listMemberships(orgId: string): Promise<MembershipRecord[]>
+  /** Every membership across a set of orgs in ONE query (org_id ∈ orgIds); callers group
+   *  by `org_id`. Empty orgIds ⇒ []. Use this over a per-org listMemberships loop. */
+  listMembershipsForOrgs(orgIds: string[]): Promise<MembershipRecord[]>
   countMemberships(orgId: string): Promise<number>
   /** Insert or update a member's workspace role. */
   setMembership(m: NewMembership): Promise<MembershipRecord>
@@ -457,6 +466,9 @@ export interface CollectionStore {
   // ---- Collections (shareable groups; a member's role propagates to items) -
   createCollection(c: NewCollection): Promise<CollectionRecord>
   getCollection(id: string): Promise<CollectionRecord | null>
+  /** Batch-load collections by id in ONE query (id ∈ ids); callers key by `id`. Empty
+   *  ids ⇒ []. Use this over a per-id getCollection loop. */
+  getCollections(ids: string[]): Promise<CollectionRecord[]>
   updateCollection(id: string, fields: { title?: string }): Promise<CollectionRecord | null>
   /** Remove a collection and its items + member rows. */
   deleteCollection(id: string): Promise<void>
@@ -623,6 +635,9 @@ export interface ContextStore {
   addSessionMessage(m: NewSessionMessage, state: SessionState): Promise<SessionMessageRecord>
   /** A session's transcript, oldest first. */
   listSessionMessages(sessionId: string): Promise<SessionMessageRecord[]>
+  /** Transcripts for a set of sessions in ONE query (session_id ∈ sessionIds), oldest
+   *  first; callers group by `session_id`. Empty ⇒ []. Use over a per-session loop. */
+  listSessionMessagesFor(sessionIds: string[]): Promise<SessionMessageRecord[]>
 }
 
 export interface DirectoryStore {
@@ -698,6 +713,10 @@ export interface DirectoryStore {
 
   // ---- Notifications (in-app, one row per recipient) --------------------
   createNotification(n: NewNotification): Promise<void>
+  /** Insert many notification rows in ONE statement — the recipient fan-out for a publish
+   *  (followers), a comment (thread participants + owners), or a mention. Empty ⇒ no-op.
+   *  Use over a per-recipient createNotification loop. */
+  createNotifications(rows: NewNotification[]): Promise<void>
   listNotifications(userId: string, limit: number): Promise<NotificationRecord[]>
   unreadNotificationCount(userId: string): Promise<number>
   /** Mark the given ids read, or all of the user's notifications when "all". */
@@ -780,6 +799,9 @@ export interface ModerationStore {
   moveArtifactOrg(artifactId: string, targetOrgId: string): Promise<void>
   /** Set or clear an artifact's takedown tombstone (the record is never deleted). */
   setArtifactRemoved(id: string, removedAt: string | null): Promise<void>
+  /** Tombstone many artifacts at once (id ∈ ids) in ONE update — the PR-preview
+   *  teardown. Empty ids ⇒ no-op. Use over a per-id setArtifactRemoved loop. */
+  setArtifactsRemoved(ids: string[], removedAt: string | null): Promise<void>
   /** Take an artifact down atomically: tombstone the artifact, resolve every open
    *  report against it (→ actioned), and write the audit entry — all in one
    *  transaction so a crash mid-way can't leave a half-applied takedown (removed

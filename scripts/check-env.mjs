@@ -77,7 +77,7 @@ for (const v of phantom)
   )
 
 if (problems.length) {
-  console.error("check-env: .env.example is out of sync with the code:\n" + problems.join("\n"))
+  console.error(`check-env: .env.example is out of sync with the code:\n${problems.join("\n")}`)
   process.exit(1)
 }
 console.log(

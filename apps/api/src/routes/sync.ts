@@ -342,15 +342,19 @@ export const syncRoutes = (ctx: AppContext) => {
       const previews = sources.filter(
         (s): s is RepoSourceRecord & { pr_number: number } => s.pr_number != null,
       )
-      const previewCols = await Promise.all(
-        previews.map((s) => meta.getCollection(s.collection_id)),
+      // One query for every preview's collection, keyed by id — not a getCollection per row.
+      const colById = new Map(
+        (await meta.getCollections(previews.map((s) => s.collection_id))).map((col) => [
+          col.id,
+          col,
+        ]),
       )
       return c.json({
         sources: branchSources.map(toJson),
-        prs: previews.map((s, i) => ({
+        prs: previews.map((s) => ({
           ...toJson(s),
           pr_number: s.pr_number,
-          title: previewCols[i]?.title ?? `PR #${s.pr_number}`,
+          title: colById.get(s.collection_id)?.title ?? `PR #${s.pr_number}`,
         })),
         // What the UI needs to pick its entry point: is a live App set up (→ Connect
         // button + slug for the install link), which permissions still need granting
