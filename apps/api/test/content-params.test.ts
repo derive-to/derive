@@ -71,6 +71,42 @@ describe("/v1/artifacts/:shortId/content — format, section, outline params", (
     expect(slug).not.toContain("Part Two")
   })
 
+  it("splits page#slug on the LAST '#', matching the MCP read tool (regression: REST used to split on the first)", async () => {
+    const zip = zipSync({
+      "index.html": new TextEncoder().encode("<h1>Home</h1>"),
+      // A page path that itself contains a '#' (pathological but must parse the
+      // same way on every surface, since the same section string reads it).
+      "a#b.html": new TextEncoder().encode("<h1>X</h1><h2>Target</h2><p>found it</p>"),
+    })
+    const { short_id } = await (await upload("hashsite.zip", zip)).json()
+    const res = await app.request(
+      `/v1/artifacts/${short_id}/content?section=${encodeURIComponent("a#b.html#target")}&format=markdown`,
+    )
+    expect(res.headers.get("x-derive-section")).toBe("a#b.html#target")
+    expect(await res.text()).toContain("found it")
+  })
+
+  it("serves a non-safe bundle asset (e.g. SVG) as application/octet-stream, not its native type (regression: this route has no CSP sandbox, unlike /raw/, so a native image/svg+xml Content-Type let a direct navigation render it as a scriptable document)", async () => {
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>'
+    const zip = zipSync({
+      "index.html": new TextEncoder().encode("<h1>Home</h1>"),
+      "shot.svg": new TextEncoder().encode(svg),
+    })
+    const { short_id } = await (await upload("svgsite.zip", zip)).json()
+    const res = await app.request(`/v1/artifacts/${short_id}/content?section=shot.svg`)
+    expect(res.headers.get("content-type")).toBe("application/octet-stream")
+    expect(await res.text()).toBe(svg)
+
+    // A genuinely safe image type still serves with its real Content-Type.
+    const zip2 = zipSync({
+      "index.html": new TextEncoder().encode("<h1>Home</h1>"),
+      "shot.png": new Uint8Array([137, 80, 78, 71]), // PNG magic bytes, contents don't matter here
+    })
+    const { short_id: id2 } = await (await upload("pngsite.zip", zip2)).json()
+    const pngRes = await app.request(`/v1/artifacts/${id2}/content?section=shot.png`)
+    expect(pngRes.headers.get("content-type")).toBe("image/png")
+  })
+
   it("diff: default is raw source lines; ?content=markdown diffs the readable form", async () => {
     const v1 =
       "<html><head><style>x{color:red}</style></head><body><p>alpha bravo</p></body></html>"
@@ -140,5 +176,19 @@ describe("/v1 publish + proposals — edits form field", () => {
     const live = await (await app.request(`/v1/artifacts/${short_id}/content`)).text()
     expect(live).toContain("keep this")
     expect(live).not.toContain("changed this")
+  })
+
+  it("versions: a malformed base_version fails clearly (400) instead of silently coercing to NaN and always rejecting (regression)", async () => {
+    const { short_id } = await (await upload("badbase.html", "<h1>x</h1><p>y</p>")).json()
+    const res = await app.request(`/v1/artifacts/${short_id}/versions`, {
+      method: "POST",
+      headers: bearer,
+      body: new URLSearchParams({
+        edits: JSON.stringify([{ old_str: "y", new_str: "z" }]),
+        base_version: "not-a-number",
+      }),
+    })
+    expect(res.status).toBe(400)
+    expect(await res.text()).toContain("not a valid version number")
   })
 })

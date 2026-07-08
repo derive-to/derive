@@ -22,12 +22,12 @@
 import {
   type AgentRecord,
   type ArtifactRecord,
-  applyEdits,
   artifactUrl,
   type BundleManifest,
   diffLines,
   EditError,
   formatDiff,
+  isHtmlLike,
   newId,
   type OutlineSection,
   outlineOf,
@@ -54,7 +54,9 @@ import {
   zipBundleFiles,
 } from "./lib/bundle"
 import { parseMeta, quoteOf, REACTIONS } from "./lib/comments"
+import { type MaterializedEdits, materializeEdits } from "./lib/edits"
 import { buildReviewEmail } from "./lib/email"
+import { MAX_UPLOAD_BYTES } from "./lib/http"
 import { notifyCommentBells } from "./lib/notify-comment"
 import { enqueueChannelDelivery } from "./webhooks"
 
@@ -116,13 +118,14 @@ const baseType = (t: string) => t.split(";")[0]?.trim() ?? t
 const isTextType = (t: string) => baseType(t) === "text/html" || baseType(t) === "text/markdown"
 const present = (source: string, contentType: string, format: ReadFormat): string => {
   if (format === "html") return source
-  if (format === "text") return baseType(contentType) === "text/html" ? pageText(source) : source
+  if (format === "text") return isHtmlLike(contentType) ? pageText(source) : source
   return toMarkdown(source, contentType)
 }
 const formatLabel = (contentType: string, format: ReadFormat): string => {
-  const ct = contentType.split(";")[0]?.trim() ?? contentType
   if (format === "markdown")
-    return ct === "text/html" ? "markdown (converted from text/html)" : "markdown (source)"
+    return isHtmlLike(contentType)
+      ? `markdown (converted from ${baseType(contentType)})`
+      : "markdown (source)"
   return format === "html" ? "html (source)" : "text (visible text)"
 }
 
@@ -296,7 +299,7 @@ function buildServer(
           .string()
           .optional()
           .describe(
-            'What to read. Single-file doc: a heading slug from the outline (e.g. rollout-plan). Bundle: a page path (agentic-loop.html), optionally with a slug (agentic-loop.html#risks). Pass "*" to force the full (clipped) document. Omit it: small docs return whole, large docs return their outline.',
+            'What to read. Single-file doc: a heading slug from the outline (e.g. rollout-plan). Bundle: a page path (agentic-loop.html), optionally with a slug (agentic-loop.html#risks). Pass "*" (or "page.html#*" for a bundle page) to force the full (clipped) document/page. Omit it: small docs/pages return whole, large ones return their outline.',
           ),
         format: z
           .enum(["markdown", "html", "text"])
@@ -341,6 +344,9 @@ function buildServer(
                 : `"${short_id}" has no headings to section by — read it whole (omit \`section\`).`,
             )
           }
+          // Also feeds clipDoc's steer below — a single section can itself be huge
+          // (e.g. the last one, which runs to </body>), so it needs the same
+          // MAX_CHARS ceiling the whole-doc path gets, not an unbounded return.
           const outline = outlineOf(src, ct)
           const i = outline.findIndex((s) => s.slug === section)
           const body = present(slice, ct, fmt)
@@ -350,7 +356,7 @@ function buildServer(
               section: `${section} (${i + 1} of ${outline.length})`,
               chars: body.length,
             },
-            body,
+            clipDoc(body, outline),
           )
         }
         const body = present(src, ct, fmt)
@@ -369,10 +375,14 @@ function buildServer(
               sections: outline,
               next: 'Large document — call read again with a `section` slug for just that part, or section:"*" for the full clipped text. To revise it, publish with `edits` instead of resending content.',
             })
+          // No headings to summarize by — fall through to a plain (clipped) return,
+          // reusing the already-computed (empty) outline instead of asking again.
+          return doc({ ...meta, chars: body.length }, clipDoc(body, outline))
         }
-        const outline = outlineOf(src, ct)
-        const clipped = clipDoc(body, outline)
-        return doc({ ...meta, chars: body.length }, clipped)
+        // Under FULL_DOC_MAX: clipDoc's MAX_CHARS ceiling is far above this body's
+        // size, so it can never truncate — skip computing an outline it won't use.
+        const outline = body.length > MAX_CHARS ? outlineOf(src, ct) : []
+        return doc({ ...meta, chars: body.length }, clipDoc(body, outline))
       }
 
       // Bundle.
@@ -385,18 +395,27 @@ function buildServer(
           .sort((x, y) => x.split("/").length - y.split("/").length || x.localeCompare(y))
         const entry = cleanPath(manifest.entry)
         const inspect = [entry, ...textPages.filter((p) => p !== entry)].slice(0, 25)
-        const detail = new Map<string, { chars: number; headings: OutlineSection[] }>()
-        for (const p of inspect) {
-          const file = manifest.files[p] ?? manifest.files[`/${p}`]
-          if (!file) continue
-          const bytes = await ctx.blobs.get(file.key)
-          if (!bytes) continue
-          const text_ = new TextDecoder().decode(bytes)
-          detail.set(p, {
-            chars: toMarkdown(text_, file.type).length,
-            headings: outlineOf(text_, file.type),
-          })
-        }
+        // The blob reads are independent — fetch them all at once instead of one
+        // round trip at a time (up to 25 pages, otherwise serialized latency).
+        const detailEntries = await Promise.all(
+          inspect.map(
+            async (p): Promise<[string, { chars: number; headings: OutlineSection[] }] | null> => {
+              const file = manifest.files[p] ?? manifest.files[`/${p}`]
+              if (!file) return null
+              const bytes = await ctx.blobs.get(file.key)
+              if (!bytes) return null
+              const text_ = new TextDecoder().decode(bytes)
+              return [
+                p,
+                {
+                  chars: toMarkdown(text_, file.type).length,
+                  headings: outlineOf(text_, file.type),
+                },
+              ]
+            },
+          ),
+        )
+        const detail = new Map(detailEntries.filter((e) => e !== null))
         return json({
           short_id,
           title: a.title,
@@ -426,10 +445,13 @@ function buildServer(
         })
       }
 
-      // A page (optionally page#slug — split on the LAST '#').
+      // A page (optionally page#slug — split on the LAST '#'). "#*" forces the
+      // page's full (clipped) content, the same bypass single-file section:"*" is.
       const hash = section.lastIndexOf("#")
       const pagePath = hash > 0 ? section.slice(0, hash) : section
-      const slug = hash > 0 ? section.slice(hash + 1) : null
+      const rawSlug = hash > 0 ? section.slice(hash + 1) : null
+      const slug = rawSlug === "*" ? null : rawSlug
+      const forceFull = rawSlug === "*"
       const file = manifest.files[pagePath] ?? manifest.files[`/${cleanPath(pagePath)}`]
       if (!file) return err(`No page "${pagePath}" in "${short_id}". Pages: ${pages.join(", ")}.`)
       const bytes = await ctx.blobs.get(file.key)
@@ -481,6 +503,7 @@ function buildServer(
               : `"${pagePath}" has no headings to section by — read the whole page.`,
           )
         }
+        const outline = outlineOf(raw, file.type)
         const body = present(slice, file.type, fmt)
         return doc(
           {
@@ -489,12 +512,36 @@ function buildServer(
             format: formatLabel(file.type, fmt),
             chars: body.length,
           },
-          body,
+          clipDoc(body, outline),
         )
       }
       // css/js/json/etc always return source — conversion only applies to text pages.
       const body = isText ? present(raw, file.type, fmt) : raw
-      const outline = isText ? outlineOf(raw, file.type) : []
+      // Same outline-first threshold the single-file path applies: a bundle page can
+      // be just as large as a standalone doc, so it gets the same treatment instead
+      // of only ever cutting at the much higher MAX_CHARS ceiling below.
+      if (isText && !slug && !forceFull && body.length > FULL_DOC_MAX) {
+        const outline = outlineOf(raw, file.type)
+        if (outline.length)
+          return json({
+            short_id,
+            title: a.title,
+            kind: "bundle",
+            version: n,
+            section: cleanPath(pagePath),
+            source: file.type,
+            format: fmt,
+            doc_chars: body.length,
+            url,
+            sections: outline,
+            next: `Large page — call read again with \`section\` set to "${cleanPath(pagePath)}#slug" for just that part, or "${cleanPath(pagePath)}#*" for the full clipped text.`,
+          })
+        return doc(
+          { ...meta, section: cleanPath(pagePath), chars: body.length },
+          clipDoc(body, outline),
+        )
+      }
+      const outline = isText && body.length > MAX_CHARS ? outlineOf(raw, file.type) : []
       return doc(
         {
           ...meta,
@@ -948,29 +995,28 @@ function buildServer(
         if (content !== undefined || files)
           return err("Provide `edits` OR `content`/`files`, not both.")
         if (!existing) return err("`edits` revises an EXISTING artifact — pass its `short_id`.")
-        if (existing.kind !== "file")
-          return err(
-            `"${short_id}" is a multi-page bundle — \`edits\` applies to single-file artifacts; republish the changed page via \`files\` + \`merge\`.`,
-          )
-        if (base_version !== undefined && base_version !== existing.current_version)
-          return err(
-            `"${short_id}" moved to v${existing.current_version} while you were editing (you read v${base_version}) — catch_up, re-read, then retry.`,
-          )
-        const cur = await ctx.meta.getVersion(existing.id, existing.current_version)
-        const src = cur ? await ctx.sourceText(cur) : null
-        if (cur === null || src === null)
-          return err(`Couldn't load the current source of "${short_id}".`)
+        let materialized: MaterializedEdits
         try {
-          content = applyEdits(src, edits)
+          materialized = await materializeEdits(
+            { getVersion: ctx.meta.getVersion.bind(ctx.meta), sourceText: ctx.sourceText },
+            existing,
+            edits,
+            base_version,
+          )
         } catch (e) {
           if (e instanceof EditError) return err(e.message)
           throw e
         }
+        // Same size/storage ceiling the REST /versions and /proposals routes apply
+        // after materializing edits — without this the MCP tool could write an
+        // over-quota version the HTTP surfaces would have rejected.
+        const editedBytes = new TextEncoder().encode(materialized.content).length
+        if (editedBytes > MAX_UPLOAD_BYTES) return err("Edited content is too large.")
+        if (await ctx.overStorage(org, editedBytes))
+          return err(`"${short_id}"'s workspace storage quota is exceeded.`)
+        content = materialized.content
         editsApplied = edits.length
-        // Keep the artifact's content type: the sniffer types by filename, and the
-        // default index.html would silently re-type an edited markdown doc as HTML.
-        if (!filename)
-          filename = baseType(cur.content_type) === "text/markdown" ? "index.md" : "index.html"
+        if (!filename) filename = materialized.filename
       }
 
       // Exactly one of content / files. `files` (a page map) means a bundle.

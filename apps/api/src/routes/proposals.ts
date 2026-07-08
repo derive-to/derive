@@ -1,6 +1,5 @@
 import {
   type ArtifactRecord,
-  applyEdits,
   approveProposal,
   diffLines,
   EditError,
@@ -13,6 +12,12 @@ import { z } from "zod"
 import type { AppContext } from "../context"
 import { markAddressed, releaseAddressed } from "../lib/addressed"
 import { publishSweepEvents } from "../lib/anchor-sweep"
+import {
+  EditConflictError,
+  type MaterializedEdits,
+  materializeEdits,
+  parseBaseVersion,
+} from "../lib/edits"
 import { fail, MAX_UPLOAD_BYTES, readJson, str } from "../lib/http"
 
 /** Parse a comma-separated id list (the `addresses` multipart field). */
@@ -112,39 +117,34 @@ export const proposalRoutes = (ctx: AppContext) => {
     let filename: string
     let isBundle: boolean
     if (typeof editsField === "string") {
-      if (artifact.kind !== "file")
-        return fail(c, 409, "edits applies to single-file artifacts only")
-      const baseVersionField = str(body.base_version)
-      const baseVersion = baseVersionField ? Number(baseVersionField) : undefined
-      if (baseVersion !== undefined && baseVersion !== artifact.current_version)
-        return fail(
-          c,
-          409,
-          `"${artifact.short_id}" moved to v${artifact.current_version} (you read v${baseVersion}) — re-read and retry`,
-        )
       let edits: { old_str: string; new_str: string }[]
       try {
         edits = JSON.parse(editsField)
       } catch {
         return fail(c, 400, "edits must be a JSON array of {old_str,new_str}")
       }
-      const cur = await meta.getVersion(artifact.id, artifact.current_version)
-      const src = cur ? await sourceText(cur) : null
-      if (!cur || src === null) return fail(c, 500, "blob missing")
-      let materialized: string
+      let materialized: MaterializedEdits
       try {
-        materialized = applyEdits(src, edits)
+        const baseVersion = parseBaseVersion(str(body.base_version))
+        materialized = await materializeEdits(
+          { getVersion: meta.getVersion.bind(meta), sourceText },
+          artifact,
+          edits,
+          baseVersion,
+        )
       } catch (e) {
-        return fail(c, 400, e instanceof EditError ? e.message : "edit failed")
+        if (e instanceof EditConflictError) return fail(c, 409, e.message)
+        return fail(
+          c,
+          e instanceof EditError ? 400 : 500,
+          e instanceof Error ? e.message : "edit failed",
+        )
       }
-      bytes = new TextEncoder().encode(materialized)
+      bytes = new TextEncoder().encode(materialized.content)
       if (bytes.length > MAX_UPLOAD_BYTES) return fail(c, 413, "upload too large")
       if (await overStorage(artifact.org_id, bytes.length))
         return fail(c, 413, "storage quota exceeded")
-      filename =
-        (cur.content_type.split(";")[0]?.trim() ?? cur.content_type) === "text/markdown"
-          ? "index.md"
-          : "index.html"
+      filename = materialized.filename
       isBundle = false
     } else {
       const file = body.file

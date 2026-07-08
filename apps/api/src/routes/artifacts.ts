@@ -1,6 +1,5 @@
 import {
   type ArtifactRecord,
-  applyEdits,
   artifactUrl,
   type BundleDoc,
   type BundleManifest,
@@ -12,6 +11,7 @@ import {
   effectiveRole,
   formatDiff,
   groupSessions,
+  isHtmlLike,
   isMarkdownBundle,
   newId,
   outlineOf,
@@ -31,6 +31,12 @@ import { publishSweepEvents } from "../lib/anchor-sweep"
 import { authorProfile, resolveHandles } from "../lib/author"
 import { cleanPath, manifestOf } from "../lib/bundle"
 import { hashPassword, signState, unlockCookie, unlockToken, verifyPassword } from "../lib/crypto"
+import {
+  EditConflictError,
+  type MaterializedEdits,
+  materializeEdits,
+  parseBaseVersion,
+} from "../lib/edits"
 import { buildReviewEmail } from "../lib/email"
 import {
   DEFAULT_WORKSPACE_NAME,
@@ -43,6 +49,28 @@ import {
   visibilityOf,
 } from "../lib/http"
 import { enqueueChannelDelivery } from "../webhooks"
+
+// Bundle asset types the /content route serves with their real Content-Type. Not
+// image/svg+xml: an SVG is a scriptable document when a browser navigates to it
+// directly, and this route (unlike /raw/, which sandboxes every asset behind a CSP)
+// has no such isolation — anything off this list serves as application/octet-stream.
+const SAFE_BINARY_CONTENT_TYPES = new Set([
+  "image/png",
+  "image/jpeg",
+  "image/gif",
+  "image/webp",
+  "image/avif",
+  "image/x-icon",
+  "image/vnd.microsoft.icon",
+  "font/woff",
+  "font/woff2",
+  "font/ttf",
+  "font/otf",
+  "text/css",
+  "application/javascript",
+  "text/javascript",
+  "application/json",
+])
 
 /** The artifact lifecycle: browse + summary, publish/republish, detail, restore,
  *  source read-back, and version diffs. */
@@ -355,38 +383,33 @@ export const artifactRoutes = (ctx: AppContext) => {
     if (typeof editsField === "string") {
       if (!shortId || !existing)
         return fail(c, 400, "edits revises an EXISTING artifact — POST to its /versions endpoint")
-      if (existing.kind !== "file")
-        return fail(c, 409, "edits applies to single-file artifacts only")
-      const baseVersionField = str(body["base_version"])
-      const baseVersion = baseVersionField ? Number(baseVersionField) : undefined
-      if (baseVersion !== undefined && baseVersion !== existing.current_version)
-        return fail(
-          c,
-          409,
-          `"${shortId}" moved to v${existing.current_version} (you read v${baseVersion}) — re-read and retry`,
-        )
       let edits: { old_str: string; new_str: string }[]
       try {
         edits = JSON.parse(editsField)
       } catch {
         return fail(c, 400, "edits must be a JSON array of {old_str,new_str}")
       }
-      const cur = await meta.getVersion(existing.id, existing.current_version)
-      const src = cur ? await sourceText(cur) : null
-      if (!cur || src === null) return fail(c, 500, "blob missing")
-      let materialized: string
+      let materialized: MaterializedEdits
       try {
-        materialized = applyEdits(src, edits)
+        const baseVersion = parseBaseVersion(str(body["base_version"]))
+        materialized = await materializeEdits(
+          { getVersion: meta.getVersion.bind(meta), sourceText },
+          existing,
+          edits,
+          baseVersion,
+        )
       } catch (e) {
-        return fail(c, 400, e instanceof EditError ? e.message : "edit failed")
+        if (e instanceof EditConflictError) return fail(c, 409, e.message)
+        return fail(
+          c,
+          e instanceof EditError ? 400 : 500,
+          e instanceof Error ? e.message : "edit failed",
+        )
       }
-      bytes = new TextEncoder().encode(materialized)
+      bytes = new TextEncoder().encode(materialized.content)
       if (bytes.length > MAX_UPLOAD_BYTES) return fail(c, 413, "upload too large")
       if (await overStorage(org, bytes.length)) return fail(c, 413, "storage quota exceeded")
-      filename =
-        (cur.content_type.split(";")[0]?.trim() ?? cur.content_type) === "text/markdown"
-          ? "index.md"
-          : "index.html"
+      filename = materialized.filename
       isBundle = false
     } else {
       const file = body["file"]
@@ -949,10 +972,7 @@ export const artifactRoutes = (ctx: AppContext) => {
     const outline = c.req.query("outline") === "1"
     const present = (source: string, contentType: string): string => {
       if (!format) return source
-      if (format === "text")
-        return (contentType.split(";")[0]?.trim() ?? contentType) === "text/html"
-          ? pageText(source)
-          : source
+      if (format === "text") return isHtmlLike(contentType) ? pageText(source) : source
       return toMarkdown(source, contentType)
     }
 
@@ -997,8 +1017,12 @@ export const artifactRoutes = (ctx: AppContext) => {
         })),
       })
     }
-    const pagePath = section ? (section.split("#")[0] as string) : cleanPath(manifest.entry)
-    const slug = section?.includes("#") ? section.slice(section.indexOf("#") + 1) : null
+    // Split on the LAST '#' — matches the MCP `read` tool's page#slug parsing, so a
+    // page path/slug resolves to the same (pagePath, slug) pair on both surfaces.
+    const hash = section ? section.lastIndexOf("#") : -1
+    const pagePath =
+      hash > 0 ? (section as string).slice(0, hash) : (section ?? cleanPath(manifest.entry))
+    const slug = hash > 0 ? (section as string).slice(hash + 1) : null
     const file = manifest.files[pagePath] ?? manifest.files[`/${cleanPath(pagePath)}`]
     if (!file) return fail(c, 404, `no page "${pagePath}"`)
     const bytes = await blobs.get(file.key)
@@ -1006,7 +1030,15 @@ export const artifactRoutes = (ctx: AppContext) => {
     const fileBaseType = file.type.split(";")[0]?.trim() ?? file.type
     const isText = fileBaseType === "text/html" || fileBaseType === "text/markdown"
     if (!isText) {
-      c.header("Content-Type", file.type)
+      // This route is a machine content API, not a rendering surface (unlike /raw/,
+      // which applies a CSP sandbox to every bundle asset it serves). Native
+      // Content-Type is safe for the SAFE set below; anything else — most notably
+      // image/svg+xml, which a direct navigation renders as a scriptable document —
+      // is served inert instead of trusting the stored type verbatim.
+      c.header(
+        "Content-Type",
+        SAFE_BINARY_CONTENT_TYPES.has(fileBaseType) ? file.type : "application/octet-stream",
+      )
       c.header("X-Derive-Format", "raw")
       return c.body(toBody(bytes))
     }

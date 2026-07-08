@@ -90,6 +90,42 @@ const attrOf = (attrs: string, name: string): string | null => {
 const DROP = new Set(["head", "style", "script", "noscript", "svg", "template", "iframe"])
 // Void tags that never close (outside the ones we render specially).
 const IGNORE_VOID = new Set(["meta", "link", "base", "input", "source", "track", "wbr", "col"])
+// Block-level tags: meaningless inside a pipe-table cell (that syntax can't hold block
+// content). A SINGLE dispatch-point check against this set — rather than a per-case
+// guard sprinkled through the switch below — means a future block tag added to the
+// switch can't reintroduce the table-corruption bug class this set exists to prevent:
+// flushing the wrong buffer, or (worse) a mode-switching tag like `pre` capturing
+// subsequent cell tokens into a fenced block pushed straight into the document's
+// top-level output, splitting the table mid-render.
+const BLOCK_ONLY = new Set([
+  "h1",
+  "h2",
+  "h3",
+  "h4",
+  "h5",
+  "h6",
+  "p",
+  "div",
+  "section",
+  "article",
+  "header",
+  "footer",
+  "main",
+  "figure",
+  "figcaption",
+  "aside",
+  "details",
+  "summary",
+  "dl",
+  "dt",
+  "dd",
+  "hr",
+  "blockquote",
+  "ul",
+  "ol",
+  "li",
+  "pre",
+])
 
 // ---------------------------------------------------------------------------------
 // HTML → Markdown
@@ -250,6 +286,12 @@ export function htmlToMarkdown(html: string): string {
       continue
     }
 
+    // A block-level tag has no meaning inside a table cell (pipe-table syntax can't
+    // hold one): ignore its structural effect entirely — its own text still reaches
+    // the cell as plain text via the normal emitText/append path. One check up front
+    // instead of a guard duplicated per switch case (see BLOCK_ONLY's comment).
+    if (inCell() && BLOCK_ONLY.has(tag.name)) continue
+
     switch (tag.name) {
       case "h1":
       case "h2":
@@ -257,10 +299,6 @@ export function htmlToMarkdown(html: string): string {
       case "h4":
       case "h5":
       case "h6": {
-        // A heading has no meaning inside a table cell (pipe-table syntax can't hold
-        // one) — ignore the tag; its text still flows into the cell as plain text via
-        // the normal emitText/append path.
-        if (inCell()) break
         if (!tag.closing) {
           flush()
           headingLevel = Number(tag.name[1])
@@ -293,7 +331,6 @@ export function htmlToMarkdown(html: string): string {
         append("\n")
         break
       case "hr":
-        if (inCell()) break // no block content inside a pipe-table cell
         flush()
         out.push(`${blockPrefix()}---`)
         itemPrefix = ""
@@ -443,14 +480,27 @@ interface HeadingSpan {
 }
 
 const HEADING = /<h([1-3])\b[^>]*>([\s\S]*?)<\/h\1>/gi
+// A DROP subtree with its full content — same tag set htmlToMarkdown drops whole.
+// Used to mask out `<script>`/`<template>`/… content before scanning for headings,
+// since the regex scan below has no tokenizer state and would otherwise happily
+// match an `<h2>` sitting inside a script string or an unrendered template.
+const DROP_SUBTREE = new RegExp(`<(${[...DROP].join("|")})\\b[^>]*>[\\s\\S]*?<\\/\\1>`, "gi")
 
 const headingSpans = (html: string): HeadingSpan[] => {
   const slug = slugger()
   const spans: HeadingSpan[] = []
-  // Headings inside dropped subtrees (a <template> …) would be false spine entries;
-  // artifact docs don't nest headings there, and a stray one only adds a dead slug.
+  // Ranges to exclude: a heading whose match starts inside one of these never became
+  // part of the rendered document, so it must not become an outline entry (whose
+  // sectionSlice would then start mid-subtree — see the DROP_SUBTREE comment above).
+  const dropRanges: [number, number][] = []
+  DROP_SUBTREE.lastIndex = 0
+  for (let dm = DROP_SUBTREE.exec(html); dm; dm = DROP_SUBTREE.exec(html))
+    dropRanges.push([dm.index, dm.index + dm[0].length])
+  const inDropRange = (pos: number) => dropRanges.some(([s, e]) => pos >= s && pos < e)
+
   HEADING.lastIndex = 0
   for (let m = HEADING.exec(html); m; m = HEADING.exec(html)) {
+    if (inDropRange(m.index)) continue
     const text = collapse(decodeEntities((m[2] as string).replace(/<[^>]+>/g, " "))).trim()
     if (!text) continue
     spans.push({ level: Number(m[1]), text, slug: slug(text), start: m.index })
@@ -534,7 +584,12 @@ const mdSectionEnd = (src: string, hs: MdHeading[], i: number): number => {
 // ---------------------------------------------------------------------------------
 // Content-type facade — what the servers call
 
-const isHtmlLike = (contentType: string): boolean => {
+/** Content types this module treats as HTML-in, Markdown-out (converted by
+ *  htmlToMarkdown/docOutline/sectionSlice) rather than passed through as-is.
+ *  Exported so callers deciding how to present a `format` (e.g. whether "text"
+ *  needs pageText-style stripping) stay in sync with what actually gets converted —
+ *  a local `=== "text/html"` check would silently drift on decks. */
+export const isHtmlLike = (contentType: string): boolean => {
   const ct = contentType.split(";")[0]?.trim()
   return ct === "text/html" || ct === "text/x-derive-deck"
 }
@@ -570,9 +625,13 @@ export const sectionOf = (source: string, contentType: string, slug: string): st
 
 export class EditError extends Error {}
 
+// Non-overlapping occurrence count — advances past the whole match, not by one char,
+// so a self-overlapping needle ("aa" in "aaa") counts as the single non-overlapping
+// match a real replace would make, not a spuriously "ambiguous" 2.
 const countOccurrences = (haystack: string, needle: string): number => {
   let count = 0
-  for (let i = haystack.indexOf(needle); i !== -1; i = haystack.indexOf(needle, i + 1)) count++
+  for (let i = haystack.indexOf(needle); i !== -1; i = haystack.indexOf(needle, i + needle.length))
+    count++
   return count
 }
 

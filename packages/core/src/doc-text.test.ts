@@ -124,6 +124,24 @@ describe("htmlToMarkdown", () => {
     expect(lines.at(-1)).toBe("tail")
   })
 
+  it("degrades a <pre><code> block inside a table cell to inline backticks (regression: it used to switch tokenizer modes and inject a fenced block into the top-level output, corrupting the table)", () => {
+    const md = htmlToMarkdown(
+      doc(
+        "<table><tr><th>A</th><th>B</th></tr><tr><td>cmd</td><td><pre><code>run x</code></pre></td></tr></table>",
+      ),
+    )
+    expect(md).toBe("| A | B |\n| --- | --- |\n| cmd | `run x` |")
+  })
+
+  it("an unclosed <blockquote> inside a table cell doesn't leak quote-depth state into content after the table (regression)", () => {
+    const md = htmlToMarkdown(
+      doc(
+        "<h1>Doc</h1><table><tr><td><blockquote>note</td><td>b</td></tr></table><h2>After</h2><p>tail</p>",
+      ),
+    )
+    expect(md).toBe("# Doc\n\n| note | b |\n| --- | --- |\n\n## After\n\ntail")
+  })
+
   it("renders nested blockquotes, hr, and br hard breaks", () => {
     expect(
       htmlToMarkdown(
@@ -220,6 +238,16 @@ describe("docOutline + sectionSlice", () => {
     )
     expect(docOutline(doc(parts))).toHaveLength(36)
   })
+
+  it("ignores headings that live inside dropped subtrees — a <script> template string or a <template> tag must not become a phantom outline entry (regression)", () => {
+    const withScript = doc(
+      '<script>const s = "<h2>Fake</h2>"</script><template><h2>Also fake</h2></template><h1>Real</h1><p>x</p>',
+    )
+    const outline = docOutline(withScript)
+    expect(outline.map((s) => s.text)).toEqual(["Real"])
+    // And the section it DOES find slices and converts cleanly, with no leaked markup.
+    expect(sectionSlice(withScript, "real")).toContain("<h1>Real</h1>")
+  })
 })
 
 describe("markdown twins (outlineOf / sectionOf / toMarkdown)", () => {
@@ -270,6 +298,13 @@ describe("applyEdits", () => {
 
   it("treats new_str with replacement patterns literally", () => {
     expect(applyEdits("cost", [{ old_str: "cost", new_str: "$& and $1" }])).toBe("$& and $1")
+  })
+
+  it("counts a self-overlapping needle as its single non-overlapping match, not ambiguous (regression)", () => {
+    // "aa" appears at offsets 0 and 1 in "aaa" — those overlap. A real replace only
+    // ever makes the one match String.replace itself would find; the old counter
+    // (advancing by 1 char) double-counted the overlap and rejected this as multi-match.
+    expect(applyEdits("aaa", [{ old_str: "aa", new_str: "b" }])).toBe("ba")
   })
 })
 

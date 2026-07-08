@@ -19,7 +19,11 @@ import { sha256 } from "../src/lib/crypto"
 const dir = mkdtempSync(join(tmpdir(), "derive-mcp-"))
 afterAll(() => rmSync(dir, { recursive: true, force: true }))
 
-function appWithGrant(name: string, scopes: string) {
+function appWithGrant(
+  name: string,
+  scopes: string,
+  extra: Partial<Parameters<typeof createApp>[0]> = {},
+) {
   const path = join(dir, `${name}.db`)
   const meta = new SqliteMetaStore(path)
   const db = new Database(path)
@@ -47,6 +51,7 @@ function appWithGrant(name: string, scopes: string) {
     blobs: new FsBlobStore(join(dir, `${name}-blobs`)),
     baseUrl: "http://derive.test",
     token: "tok",
+    ...extra,
   })
   return { app, token: `tok_${name}` }
 }
@@ -393,6 +398,83 @@ describe("remote MCP endpoint (/mcp)", () => {
     const one = toolText(await call(app, token, "read", { short_id: bigId, section: "sect-7" }))
     expect(one).toContain("## Sect 7")
     expect(one).toContain("section: sect-7 (9 of 41)")
+  })
+
+  it("read: a single section that's itself huge is clipped, not returned unbounded (regression)", async () => {
+    const { app, token } = appWithGrant("readhugesection", "openid derive:read derive:publish")
+    // One heading whose own content exceeds the 80k MAX_CHARS ceiling on its own —
+    // sectionOf runs it to </body>, so a naive return would ship it all unbounded.
+    const hugeSection = `<h1>Top</h1><h2>Huge</h2><p>${"lorem ipsum dolor sit amet ".repeat(4000)}</p>`
+    const form = new FormData()
+    form.append(
+      "file",
+      new Blob([new TextEncoder().encode(`<html><body>${hugeSection}</body></html>`)]),
+      "index.html",
+    )
+    form.append("title", "Huge Section Doc")
+    const shortId = (
+      await (
+        await app.request("/v1/artifacts", {
+          method: "POST",
+          body: form,
+          headers: { authorization: `Bearer ${token}` },
+        })
+      ).json()
+    ).short_id
+    const section = toolText(await call(app, token, "read", { short_id: shortId, section: "huge" }))
+    expect(section).toContain("…[truncated")
+  })
+
+  it("read: format:text on a deck artifact returns flat visible text, not raw markup (regression)", async () => {
+    const { app, token } = appWithGrant("readdeck", "openid derive:read derive:publish")
+    // Must NOT start with <html>/<!doctype html> (that sniffs as plain text/html) —
+    // real deck content declares the protocol name, which is enough to type-sniff it.
+    const deck = "derive-deck\n<h1>Slide</h1><p>hello there</p>"
+    const form = new FormData()
+    form.append("file", new Blob([new TextEncoder().encode(deck)]), "deck.html")
+    form.append("title", "Deck")
+    const shortId = (
+      await (
+        await app.request("/v1/artifacts", {
+          method: "POST",
+          body: form,
+          headers: { authorization: `Bearer ${token}` },
+        })
+      ).json()
+    ).short_id
+    const md = toolText(await call(app, token, "read", { short_id: shortId, section: "*" }))
+    expect(md).toContain("format: markdown (converted from text/x-derive-deck)")
+    expect(md).toContain("# Slide")
+    const flat = toolText(
+      await call(app, token, "read", { short_id: shortId, format: "text", section: "*" }),
+    )
+    expect(flat).not.toContain("<h1>")
+    expect(flat).toContain("hello there")
+  })
+
+  it("read: a bundle page over the outline threshold goes outline-first too, with a #* bypass", async () => {
+    const { app, token } = appWithGrant("readbundlebig", "openid derive:read derive:publish")
+    const bigPage = Array.from(
+      { length: 40 },
+      (_, i) => `<h2>Screen ${i}</h2><p>${"lorem ipsum ".repeat(120)}</p>`,
+    ).join("")
+    const created = JSON.parse(
+      toolText(
+        await call(app, token, "publish", {
+          title: "Big Bundle",
+          files: { "index.html": "<h1>Home</h1>", "big.html": `<h1>Big</h1>${bigPage}` },
+        }),
+      ),
+    )
+    const outline = JSON.parse(
+      toolText(await call(app, token, "read", { short_id: created.short_id, section: "big.html" })),
+    )
+    expect(Array.isArray(outline.sections)).toBe(true)
+    expect(outline.sections.length).toBeGreaterThan(30)
+    const forced = toolText(
+      await call(app, token, "read", { short_id: created.short_id, section: "big.html#*" }),
+    )
+    expect(forced).toContain("# Big")
   })
 
   it("read: an image page returns a real MCP image block, not bytes-as-text", async () => {
@@ -878,6 +960,26 @@ describe("remote MCP endpoint (/mcp)", () => {
       await call(app, token, "read", { short_id: shortId, format: "html" }),
     )
     expect(stillLive).not.toContain("GAMMA") // the proposal never touched the live version
+  })
+
+  it("publish edits: over the workspace storage quota is rejected, same as content/files (regression: the MCP edits path used to skip this check)", async () => {
+    const { app, token } = appWithGrant("editsquota", "openid derive:read derive:publish", {
+      maxBytes: 200,
+    })
+    const created = JSON.parse(
+      toolText(
+        await call(app, token, "publish", { title: "Small", content: "<h1>x</h1><p>y</p>" }),
+      ),
+    )
+    const rejected = await call(app, token, "publish", {
+      short_id: created.short_id,
+      edits: [{ old_str: "y", new_str: "y".repeat(500) }],
+    })
+    expect(toolText(rejected)).toMatch(/storage quota/i)
+    const stillOriginal = toolText(
+      await call(app, token, "read", { short_id: created.short_id, format: "html" }),
+    )
+    expect(stillOriginal).not.toContain("y".repeat(500))
   })
 
   it("publish needs a title to create, and routes a non-publisher to review", async () => {
