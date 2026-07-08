@@ -163,16 +163,8 @@ export interface Artifact {
     handle: string | null
   } | null
 }
-export interface Report {
-  id: string
-  artifact_id: string
-  artifact_short_id: string
-  reason: string
-  detail: string | null
-  reporter: string | null
-  state: "open" | "actioned" | "dismissed"
-  created_at: string
-}
+/** An abuse report against an artifact. Generated from the OpenAPI spec. */
+export type Report = components["schemas"]["Report"]
 /** A collection: a shareable group of artifacts, tagged with its item count and origin
  *  (kind = manual / repo / pr). Generated from the OpenAPI spec (apps/api/openapi.json)
  *  — a backend shape change surfaces here at `tsc`. */
