@@ -21,6 +21,36 @@ export function resolveServer(opts = {}, config = null) {
 // ---- User-level credentials (`derive login`) --------------------------------
 // Tokens are secrets, so they live in a user-level store (one entry per Derive
 // origin), never in the project's derive.json. DERIVE_CONFIG_DIR overrides the dir.
+//
+// A Derive access token is scoped to a USER, not a workspace: it already reaches
+// every workspace that user belongs to (the server picks one per request via the
+// X-Derive-Workspace header). So this store holds one grant per signed-in ACCOUNT,
+// each with the roster of workspaces it can target, and a default (account,
+// workspace) pair. Multiple accounts (e.g. a personal + a work login) coexist
+// side by side; switching between their workspaces never re-authenticates.
+//
+// On-disk shape, keyed by server origin:
+//   {
+//     client_id: string|null,        // this machine's registered OAuth client for
+//                                     // this origin, reused across logins so a
+//                                     // workspace picked at consent time can stick
+//     defaultAccount: string|null,   // which account's token/workspace is used
+//                                     // when a command names neither --account nor
+//                                     // --workspace
+//     accounts: {
+//       [accountId]: {
+//         handle: string|null,        // public handle, display only
+//         auth: { token, refresh_token, client_id, expires_at, saved_at },
+//         workspaces: { [workspaceId]: { name, role, description? } },
+//         defaultWorkspace: string|null,
+//       }
+//     }
+//   }
+//
+// `description` is local-only — never sent to or read from the server, set via
+// `derive workspace describe`. It exists so a bare workspace name ("Client
+// Demos") carries the WHY, not just the WHAT, when a human or an agent is
+// deciding where to publish. Preserved across `setWorkspaces` re-syncs.
 
 const configDir = () => process.env.DERIVE_CONFIG_DIR ?? join(homedir(), ".config", "derive")
 const credsPath = () => join(configDir(), "credentials.json")
@@ -34,7 +64,8 @@ const originOf = (server) => {
   }
 }
 
-/** All saved credentials, keyed by server origin. {} if none / unreadable. */
+/** All saved credentials, keyed by server origin, in whatever shape is on disk
+ *  (see `entryFor` for the normalized, migrated read). {} if none / unreadable. */
 export function loadCredentials() {
   try {
     return JSON.parse(readFileSync(credsPath(), "utf8"))
@@ -43,63 +74,373 @@ export function loadCredentials() {
   }
 }
 
-/** Persist a grant for `server` (0600, owner-only). Stores the access token plus
- *  the refresh token + client id + expiry, so `freshToken` can renew silently and
- *  a one-time `derive login` never expires — the zero-click-after-connect default.
- *  Returns the store path. Back-compat: a bare string is treated as {token}. */
-export function saveToken(server, grant) {
-  const g = typeof grant === "string" ? { token: grant } : grant
+const emptyEntry = () => ({ client_id: null, defaultAccount: null, accounts: {} })
+
+/** Normalize whatever is stored for an origin into the current multi-account
+ *  shape. A pre-multi-workspace grant (the flat `{token, refresh_token,
+ *  client_id, expires_at, saved_at}` this store used before accounts existed) is
+ *  read as one synthetic "legacy" account with an empty workspace map — so a
+ *  `derive login` from before this change keeps publishing with zero action;
+ *  `derive login --sync` fills in its real handle and workspace roster the first
+ *  time it runs after upgrading. Idempotent: an already-migrated entry passes
+ *  through unchanged. Pure — the migration isn't written back until the next
+ *  save (saveAccount/setWorkspaces/etc all persist the normalized shape). */
+function migrateEntry(raw) {
+  if (!raw) return emptyEntry()
+  if (raw.accounts)
+    return {
+      client_id: raw.client_id ?? null,
+      defaultAccount: raw.defaultAccount ?? null,
+      accounts: raw.accounts,
+    }
+  if (!raw.token) return emptyEntry()
+  return {
+    client_id: null,
+    defaultAccount: "legacy",
+    accounts: {
+      legacy: {
+        handle: null,
+        auth: {
+          token: raw.token,
+          refresh_token: raw.refresh_token ?? null,
+          client_id: raw.client_id ?? null,
+          expires_at: raw.expires_at ?? null,
+          saved_at: raw.saved_at ?? null,
+        },
+        workspaces: {},
+        defaultWorkspace: null,
+      },
+    },
+  }
+}
+
+/** The normalized, migrated entry for `server`'s origin. */
+export function entryFor(server) {
+  return migrateEntry(loadCredentials()[originOf(server)])
+}
+
+/** Persist `entry` as `server`'s origin entry (0600, owner-only). Returns the
+ *  store path. Internal — callers go through the functions below, which each
+ *  read-modify-write one normalized entry so a concurrent read never sees a
+ *  half-migrated or half-updated shape. */
+function persistEntry(server, entry) {
   const dir = configDir()
   mkdirSync(dir, { recursive: true })
   const all = loadCredentials()
-  all[originOf(server)] = {
-    token: g.token,
-    refresh_token: g.refresh_token ?? null,
-    client_id: g.client_id ?? null,
-    // Refresh a minute early so an in-flight publish never races the expiry.
-    expires_at: g.expires_in
-      ? new Date(Date.now() + (g.expires_in - 60) * 1000).toISOString()
-      : null,
-    saved_at: new Date().toISOString(),
-  }
+  all[originOf(server)] = entry
   writeFileSync(credsPath(), `${JSON.stringify(all, null, 2)}\n`, { mode: 0o600 })
   return credsPath()
 }
 
-/** The saved access token for `server`, or null (no refresh). */
-export function tokenFor(server) {
-  return loadCredentials()[originOf(server)]?.token ?? null
+/** The OAuth client this machine has already registered for `server`, or null.
+ *  Reused across logins (new accounts included) so a workspace choice made on
+ *  the consent screen — bound server-side to (user, client) — actually sticks,
+ *  instead of a fresh client id starting that binding over every time. */
+export function getClientId(server) {
+  return entryFor(server).client_id
 }
 
-/** A live access token for `server`: the saved one if still valid, else refreshed
- *  silently via the stored refresh token (rotating it). null if nothing is saved.
- *  This is what makes `derive publish` zero-click after a one-time `derive login`. */
-export async function freshToken(server) {
-  const entry = loadCredentials()[originOf(server)]
-  if (!entry) return null
-  const valid = !entry.expires_at || new Date(entry.expires_at).getTime() > Date.now()
-  if (valid || !entry.refresh_token || !entry.client_id) return entry.token ?? null
+/** Persist the client id this machine just registered for `server`. */
+export function saveClientId(server, clientId) {
+  const entry = entryFor(server)
+  entry.client_id = clientId
+  return persistEntry(server, entry)
+}
+
+/** Merge `handle` and/or an auth `grant` into `accountId` on `server`, creating
+ *  the account if it's new. Grant shape matches the OAuth token endpoint's
+ *  response: `{token, refresh_token, client_id, expires_in}` (expires_in is
+ *  seconds from now, converted to an absolute expiry a minute early so an
+ *  in-flight publish never races it). The first account ever saved on a server
+ *  becomes its default automatically; its default workspace is set separately
+ *  by `setWorkspaces` once the roster is known. Returns the store path. */
+export function saveAccount(server, accountId, { handle, grant } = {}) {
+  const entry = entryFor(server)
+  const existing = entry.accounts[accountId] ?? {
+    handle: null,
+    auth: null,
+    workspaces: {},
+    defaultWorkspace: null,
+  }
+  if (handle !== undefined) existing.handle = handle
+  if (grant) {
+    existing.auth = {
+      token: grant.token,
+      refresh_token: grant.refresh_token ?? existing.auth?.refresh_token ?? null,
+      client_id: grant.client_id ?? existing.auth?.client_id ?? null,
+      expires_at: grant.expires_in
+        ? new Date(Date.now() + (grant.expires_in - 60) * 1000).toISOString()
+        : (existing.auth?.expires_at ?? null),
+      saved_at: new Date().toISOString(),
+    }
+  }
+  entry.accounts[accountId] = existing
+  if (!entry.defaultAccount) entry.defaultAccount = accountId
+  return persistEntry(server, entry)
+}
+
+/** Find `ref` (a workspace id, or its name — matched case-insensitively) in a
+ *  `{[id]: {name, role}}` map. Ids are checked first since they never collide;
+ *  names can. */
+function findWorkspace(workspacesMap, ref) {
+  if (workspacesMap[ref]) return { id: ref, name: workspacesMap[ref].name }
+  const wanted = ref.toLowerCase()
+  const hit = Object.entries(workspacesMap).find(([, w]) => w.name.toLowerCase() === wanted)
+  return hit ? { id: hit[0], name: hit[1].name } : null
+}
+
+/** Pick a sensible default from a workspace map: the first "owner" role, else
+ *  the first entry, else null (an empty roster). Used whenever a roster changes
+ *  underneath a default that no longer resolves. */
+const pickDefaultWorkspace = (workspacesMap) => {
+  const ids = Object.keys(workspacesMap)
+  return ids.find((id) => workspacesMap[id].role === "owner") ?? ids[0] ?? null
+}
+
+/** What `derive login` should hand `setWorkspaces()` after a sign-in discovers
+ *  `chosen` workspaces (the full roster, or a `--workspace`/`--pick` subset).
+ *  `setWorkspaces` replaces the roster outright — correct for a fresh account
+ *  or a full discovery, but a NARROWED `chosen` against an account that
+ *  already has other workspaces synced would read as "the rest were removed"
+ *  and delete them locally. `narrowing` (true for `--workspace`/`--pick`) MERGES
+ *  `chosen` into `existing` instead in that case; otherwise `chosen` is used
+ *  as-is (there's nothing narrower-than-nothing to protect on a fresh account,
+ *  and a full discovery is meant to replace/diff the whole roster). */
+export function mergeChosenWorkspaces(existing, chosen, narrowing) {
+  return narrowing && Object.keys(existing).length ? { ...existing, ...chosen } : chosen
+}
+
+/** Replace `accountId`'s workspace roster with `workspacesMap`, as returned by a
+ *  fresh `GET /v1/workspaces`. Returns what changed since the last sync —
+ *  `{added, renamed, removed}`, each a list of `{id, name}` (`renamed` also
+ *  carries `from`) — for `derive login --sync` to report. If the account's
+ *  default workspace no longer resolves in the new roster (first sync, or it
+ *  was removed on the server), picks a new one so publishing is never left
+ *  untargeted. A workspace's local `description` (set via `derive workspace
+ *  describe`) carries forward for any id still present — the server has no
+ *  concept of it, so a re-sync must not silently wipe it. */
+export function setWorkspaces(server, accountId, workspacesMap) {
+  const entry = entryFor(server)
+  const account = entry.accounts[accountId]
+  if (!account) throw new Error(`no such account: ${accountId}`)
+  const before = account.workspaces ?? {}
+  const added = []
+  const renamed = []
+  const removed = []
+  const merged = {}
+  for (const [id, w] of Object.entries(workspacesMap)) {
+    const prev = before[id]
+    if (!prev) added.push({ id, name: w.name })
+    else if (prev.name !== w.name) renamed.push({ id, from: prev.name, to: w.name })
+    merged[id] = prev?.description ? { ...w, description: prev.description } : w
+  }
+  for (const [id, w] of Object.entries(before)) {
+    if (!workspacesMap[id]) removed.push({ id, name: w.name })
+  }
+  account.workspaces = merged
+  if (!account.defaultWorkspace || !workspacesMap[account.defaultWorkspace]) {
+    account.defaultWorkspace = pickDefaultWorkspace(workspacesMap)
+  }
+  persistEntry(server, entry)
+  return { added, renamed, removed }
+}
+
+/** The accounts saved on `server`: `{id, handle, workspaceCount, isDefault}`. */
+export function listAccounts(server) {
+  const entry = entryFor(server)
+  return Object.entries(entry.accounts).map(([id, a]) => ({
+    id,
+    handle: a.handle,
+    workspaceCount: Object.keys(a.workspaces ?? {}).length,
+    isDefault: entry.defaultAccount === id,
+  }))
+}
+
+/** The full stored record for `accountId` on `server` (handle/auth/workspaces/
+ *  defaultWorkspace), or null. */
+export function getAccount(server, accountId) {
+  return entryFor(server).accounts[accountId] ?? null
+}
+
+/** Resolve an `--account` ref — an account id, or its handle (with or without a
+ *  leading `@`, case-insensitive) — to a known account id on `server`, or null. */
+export function resolveAccountRef(server, ref) {
+  const entry = entryFor(server)
+  if (entry.accounts[ref]) return ref
+  const wanted = ref.replace(/^@/, "").toLowerCase()
+  const hit = Object.entries(entry.accounts).find(
+    ([, a]) => a.handle && a.handle.toLowerCase() === wanted,
+  )
+  return hit?.[0] ?? null
+}
+
+/** Find `ref` (a workspace id, or name — case-insensitive) among `accountId`'s
+ *  known workspaces on `server`, without changing anything. `{id, name}`, or
+ *  null if the account or the workspace doesn't exist. */
+export function findAccountWorkspace(server, accountId, ref) {
+  const account = entryFor(server).accounts[accountId]
+  if (!account) return null
+  return findWorkspace(account.workspaces ?? {}, ref)
+}
+
+/** The `{account, workspace}` ids of the default publish target on `server`, or
+ *  null if signed out entirely. `workspace` may be null (an account synced from
+ *  a legacy grant, or one with an empty roster). */
+export function getDefault(server) {
+  const entry = entryFor(server)
+  if (!entry.defaultAccount) return null
+  const account = entry.accounts[entry.defaultAccount]
+  if (!account) return null
+  return { account: entry.defaultAccount, workspace: account.defaultWorkspace ?? null }
+}
+
+/** Make `accountId` the default for `server`. Throws if it isn't a known account. */
+export function setDefaultAccount(server, accountId) {
+  const entry = entryFor(server)
+  if (!entry.accounts[accountId]) throw new Error(`no such account: ${accountId}`)
+  entry.defaultAccount = accountId
+  persistEntry(server, entry)
+}
+
+/** Resolve `ref` among `accountId`'s known workspaces and make it that account's
+ *  default. Throws a clear error (never partially applies) if it isn't found —
+ *  callers show that message and exit rather than silently keeping the old
+ *  default. Returns the matched `{id, name}`. */
+export function setDefaultWorkspace(server, accountId, ref) {
+  const entry = entryFor(server)
+  const account = entry.accounts[accountId]
+  if (!account) throw new Error(`no such account: ${accountId}`)
+  const found = findWorkspace(account.workspaces ?? {}, ref)
+  if (!found) throw new Error(`no workspace "${ref}" for this account`)
+  account.defaultWorkspace = found.id
+  persistEntry(server, entry)
+  return found
+}
+
+/** Drop `ref` from `accountId`'s local workspace roster (does not touch server
+ *  membership — `derive login --sync` re-adds it if you're still a member).
+ *  Re-picks the default workspace if the forgotten one was it. Returns the
+ *  removed `{id, name}`, or null if `ref` didn't match anything. */
+export function forgetWorkspace(server, accountId, ref) {
+  const entry = entryFor(server)
+  const account = entry.accounts[accountId]
+  if (!account) throw new Error(`no such account: ${accountId}`)
+  const found = findWorkspace(account.workspaces ?? {}, ref)
+  if (!found) return null
+  delete account.workspaces[found.id]
+  if (account.defaultWorkspace === found.id) {
+    account.defaultWorkspace = pickDefaultWorkspace(account.workspaces)
+  }
+  persistEntry(server, entry)
+  return found
+}
+
+/** Set (`description` a non-empty string) or clear (`description` null/empty) a
+ *  local note on `ref` describing what the workspace is FOR — never sent to or
+ *  read from the server. This is the context a bare name can't carry: "Client
+ *  Demos" doesn't say who shouldn't see it, "Sift AI" doesn't say it's the only
+ *  one wired to send outbound. Preserved across `derive login --sync` (see
+ *  `setWorkspaces`). Throws if the account or workspace isn't known (same
+ *  contract as `setDefaultWorkspace`). Returns the matched `{id, name}`. */
+export function describeWorkspace(server, accountId, ref, description) {
+  const entry = entryFor(server)
+  const account = entry.accounts[accountId]
+  if (!account) throw new Error(`no such account: ${accountId}`)
+  const found = findWorkspace(account.workspaces ?? {}, ref)
+  if (!found) throw new Error(`no workspace "${ref}" for this account`)
+  if (description) account.workspaces[found.id].description = description
+  else delete account.workspaces[found.id].description
+  persistEntry(server, entry)
+  return found
+}
+
+/** Remove `accountId` entirely from `server` (its grant and workspace map). If
+ *  it was the default, the next remaining account (if any) becomes default.
+ *  Returns whether it existed. */
+export function removeAccount(server, accountId) {
+  const entry = entryFor(server)
+  if (!entry.accounts[accountId]) return false
+  delete entry.accounts[accountId]
+  if (entry.defaultAccount === accountId) {
+    entry.defaultAccount = Object.keys(entry.accounts)[0] ?? null
+  }
+  persistEntry(server, entry)
+  return true
+}
+
+/** Find `ref` (a workspace id, or name — case-insensitive) across every account
+ *  saved on `server`, for a `--workspace` flag given with no `--account`. An id
+ *  match resolves immediately: workspace ids are server-assigned and globally
+ *  unique, so if it shows up under more than one of your accounts, that's
+ *  shared membership in the same workspace, not a collision — prefer the
+ *  default account among the matches, else the first. A NAME match is
+ *  ambiguous when it resolves to more than one DISTINCT workspace id (two
+ *  different workspaces that happen to share a name across your accounts): that
+ *  case returns `{ambiguous: [{accountId, handle}, ...]}` for the caller to ask
+ *  for `--account`. Returns null if nothing matches. */
+export function resolveWorkspaceRef(server, ref) {
+  const entry = entryFor(server)
+  const idHits = Object.entries(entry.accounts).filter(([, a]) => a.workspaces?.[ref])
+  if (idHits.length) {
+    const [accountId, account] = idHits.find(([id]) => id === entry.defaultAccount) ?? idHits[0]
+    return { accountId, workspaceId: ref, workspaceName: account.workspaces[ref].name }
+  }
+  const wanted = ref.toLowerCase()
+  const nameHits = []
+  for (const [accountId, a] of Object.entries(entry.accounts)) {
+    for (const [workspaceId, w] of Object.entries(a.workspaces ?? {})) {
+      if (w.name.toLowerCase() === wanted)
+        nameHits.push({ accountId, workspaceId, workspaceName: w.name })
+    }
+  }
+  const distinctIds = [...new Set(nameHits.map((h) => h.workspaceId))]
+  if (distinctIds.length > 1) {
+    return {
+      ambiguous: distinctIds.map((workspaceId) => {
+        const hit = nameHits.find((h) => h.workspaceId === workspaceId)
+        return { accountId: hit.accountId, handle: entry.accounts[hit.accountId].handle }
+      }),
+    }
+  }
+  if (nameHits.length)
+    return nameHits.find((h) => h.accountId === entry.defaultAccount) ?? nameHits[0]
+  return null
+}
+
+/** A live access token for `accountId` on `server`: the saved one if still
+ *  valid, else refreshed silently via the stored refresh token (rotating it).
+ *  null if the account (or its grant) doesn't exist. This is what makes
+ *  publishing zero-click after a one-time `derive login`, indefinitely. */
+export async function freshToken(server, accountId) {
+  if (!accountId) return null
+  const account = entryFor(server).accounts[accountId]
+  if (!account?.auth) return null
+  const { auth } = account
+  const valid = !auth.expires_at || new Date(auth.expires_at).getTime() > Date.now()
+  if (valid || !auth.refresh_token || !auth.client_id) return auth.token ?? null
   try {
     const res = await fetch(`${originOf(server)}/api/auth/oauth2/token`, {
       method: "POST",
       headers: { "content-type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({
         grant_type: "refresh_token",
-        refresh_token: entry.refresh_token,
-        client_id: entry.client_id,
+        refresh_token: auth.refresh_token,
+        client_id: auth.client_id,
       }),
     })
     const j = await res.json().catch(() => ({}))
-    if (!res.ok || !j.access_token) return entry.token ?? null
-    saveToken(server, {
-      token: j.access_token,
-      refresh_token: j.refresh_token ?? entry.refresh_token,
-      client_id: entry.client_id,
-      expires_in: j.expires_in,
+    if (!res.ok || !j.access_token) return auth.token ?? null
+    saveAccount(server, accountId, {
+      grant: {
+        token: j.access_token,
+        refresh_token: j.refresh_token ?? auth.refresh_token,
+        client_id: auth.client_id,
+        expires_in: j.expires_in,
+      },
     })
     return j.access_token
   } catch {
-    return entry.token ?? null
+    return auth.token ?? null
   }
 }
 
@@ -131,11 +472,68 @@ export function loadConfig(dir = ".") {
 /**
  * Effective publish settings: CLI flags win over derive.json, which wins over
  * built-in defaults. Returns the values the publish command actually uses.
+ *
+ * Also resolves WHERE it publishes: `--workspace`/`--account` flags win over
+ * `derive.json`'s `workspace`/`account` fields, which win over the stored
+ * default. A `--workspace` alone is looked up across every saved account
+ * (`resolveWorkspaceRef`); pass `--account` too when a name collides. Any
+ * failure to resolve (unknown ref, or a name ambiguous across accounts) is
+ * returned as `workspaceError` rather than thrown, so this stays a pure,
+ * synchronous function — the caller prints it and exits before touching the
+ * network. `token` is the resolved account's saved token, pre-refresh; the
+ * caller awaits `freshToken(server, accountId)` afterward, same as today.
  */
 export function resolvePublish(opts = {}, config = null) {
   const c = config ?? {}
   const spa = opts.spa != null ? opts.spa === "true" || opts.spa === true : !!c.spa
   const server = resolveServer(opts, c)
+
+  let accountId = null
+  let workspaceId = null
+  let workspaceName = null
+  let workspaceError = null
+  const accountRef = opts.account ?? c.account ?? null
+  const workspaceRef = opts.workspace ?? c.workspace ?? null
+
+  if (workspaceRef && accountRef) {
+    const aid = resolveAccountRef(server, accountRef)
+    if (!aid) {
+      workspaceError = { type: "no_account", ref: accountRef }
+    } else {
+      const found = findWorkspace(getAccount(server, aid).workspaces ?? {}, workspaceRef)
+      if (!found) workspaceError = { type: "not_found", ref: workspaceRef }
+      else {
+        accountId = aid
+        workspaceId = found.id
+        workspaceName = found.name
+      }
+    }
+  } else if (workspaceRef) {
+    const resolved = resolveWorkspaceRef(server, workspaceRef)
+    if (!resolved) workspaceError = { type: "not_found", ref: workspaceRef }
+    else if (resolved.ambiguous)
+      workspaceError = { type: "ambiguous", ref: workspaceRef, accounts: resolved.ambiguous }
+    else ({ accountId, workspaceId, workspaceName } = resolved)
+  } else if (accountRef) {
+    const aid = resolveAccountRef(server, accountRef)
+    if (!aid) {
+      workspaceError = { type: "no_account", ref: accountRef }
+    } else {
+      accountId = aid
+      const a = getAccount(server, aid)
+      workspaceId = a.defaultWorkspace ?? null
+      workspaceName = workspaceId ? (a.workspaces[workspaceId]?.name ?? null) : null
+    }
+  } else {
+    const def = getDefault(server)
+    accountId = def?.account ?? null
+    workspaceId = def?.workspace ?? null
+    if (accountId && workspaceId) {
+      workspaceName = getAccount(server, accountId)?.workspaces?.[workspaceId]?.name ?? null
+    }
+  }
+  const account = accountId ? getAccount(server, accountId) : null
+
   return {
     id: opts.id ?? c.id ?? null,
     target: opts.target ?? c.entry ?? null,
@@ -146,8 +544,14 @@ export function resolvePublish(opts = {}, config = null) {
     message: opts.message,
     name: opts.name,
     server,
-    // Explicit flag / env win; otherwise fall back to the `derive login` token.
-    token: opts.token ?? process.env.DERIVE_TOKEN ?? tokenFor(server),
+    accountId,
+    accountHandle: account?.handle ?? null,
+    workspaceId,
+    workspaceName,
+    workspaceError,
+    // Explicit flag / env win; otherwise the resolved account's saved token
+    // (pre-refresh — see the docstring above).
+    token: opts.token ?? process.env.DERIVE_TOKEN ?? account?.auth?.token ?? null,
   }
 }
 
@@ -238,8 +642,11 @@ export function scaffoldFiles(title = "My artifact", template = "md") {
 }
 
 /** Project-scoped MCP config (Claude Code et al. read `.mcp.json`). Reads the
- *  server + token from the environment so no secret is written to disk; falls
- *  back to a local server. `npx -y @derive-to/mcp` needs no install. */
+ *  server (and which signed-in account/workspace to act as) from the
+ *  environment so no secret is written to disk — the token itself comes from
+ *  the same `derive login` store this file's credential functions read, shared
+ *  with the CLI, with DERIVE_TOKEN as an escape hatch for a static bearer.
+ *  `npx -y @derive-to/mcp` needs no install. */
 // Shell-style env expansion the agent harness resolves when it reads .mcp.json:
 // `${VAR:-default}`. Assembled from parts so the source carries no literal
 // template placeholder (which a plain JS string shouldn't).
@@ -252,6 +659,8 @@ const MCP_CONFIG = {
       args: ["-y", "@derive-to/mcp"],
       env: {
         DERIVE_SERVER: envRef("DERIVE_SERVER", "http://localhost:8080"),
+        DERIVE_ACCOUNT: envRef("DERIVE_ACCOUNT"),
+        DERIVE_WORKSPACE: envRef("DERIVE_WORKSPACE"),
         DERIVE_TOKEN: envRef("DERIVE_TOKEN"),
       },
     },
@@ -282,6 +691,16 @@ export const DERIVE_SCHEMA = {
       description: "Artifact short id; set automatically on first publish.",
     },
     server: { type: "string", description: "Derive server URL (overrides DERIVE_SERVER)." },
+    workspace: {
+      type: "string",
+      description:
+        "Workspace this project publishes to (id or name). Overrides the CLI's default — see `derive workspace use`.",
+    },
+    account: {
+      type: "string",
+      description:
+        "Account (id or @handle) this project publishes as, when more than one is signed in.",
+    },
     context: {
       type: "object",
       description: "Context wiring (context projects only); ids are set by the first push.",
@@ -664,8 +1083,10 @@ headings and distinctive phrases stable. Full guidance: STANDARD.md.
 
 A Claude Code skill ships in \`.claude/skills/derive\`, and \`.mcp.json\` wires the
 Derive MCP server (five tools: \`list_artifacts\`, \`read\`, \`catch_up\`, \`comment\`,
-\`publish\`). Set \`DERIVE_SERVER\` and \`DERIVE_TOKEN\` in your environment;
-both the CLI and the MCP server read them.
+\`publish\`). Both the CLI and the MCP server share the same \`derive login\` — no
+token to set. If you're signed into more than one account or workspace, pin this
+project with \`DERIVE_ACCOUNT\`/\`DERIVE_WORKSPACE\` (or \`workspace\`/\`account\` in
+derive.json); \`DERIVE_TOKEN\` remains for a static bearer (CI, no login).
 `
 
 // A Claude Code / agent skill: discoverable, trigger-tagged instructions for the

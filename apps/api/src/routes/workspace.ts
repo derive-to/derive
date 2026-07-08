@@ -360,19 +360,29 @@ export const workspaceRoutes = (ctx: AppContext) => {
     if (!me) {
       // An OAuth agent lists its granting user's workspaces — the discovery
       // surface for choosing an X-Derive-Workspace target. Registered workspace
-      // agents (no granting user) still see only their own workspace.
+      // agents (no granting user) still see only their own workspace. `account`
+      // is the owner's own identity (id + handle, never email — surfaces
+      // identify people by handle) — what a bearer-only client (the CLI, a
+      // local MCP server) keys its per-account credential store by, since it
+      // has no session to ask `/v1/me` with.
       const owner = await privateOwnerId(c)
+      const [ownerUser] = owner ? await meta.getUsers([owner]) : []
+      const account = owner
+        ? { id: owner, handle: ownerUser?.username ?? null, name: ownerUser?.name ?? null }
+        : null
       const mine = owner ? await meta.listWorkspaces(owner) : []
       if (owner && mine.length)
         return c.json({
           multi: true,
           active,
+          account,
           workspaces: mine.map((w) => wsJson(w, owner)),
         })
       const ws = await meta.getWorkspace(active)
       return c.json({
         multi: true,
         active,
+        account,
         workspaces: [
           { id: active, name: ws?.name ?? DEFAULT_WORKSPACE_NAME, role, personal: false },
         ],
@@ -382,6 +392,7 @@ export const workspaceRoutes = (ctx: AppContext) => {
     return c.json({
       multi: true,
       active,
+      account: { id: me.id, handle: me.username ?? null, name: me.name ?? null },
       workspaces: mine.map((w) => wsJson(w, me.id)),
     })
   })

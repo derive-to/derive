@@ -68,7 +68,10 @@ export async function uploadArtifact(p, bytes, filename, extra = {}) {
   if (p.password) form.append("password", p.password)
   for (const [k, v] of Object.entries(extra)) form.append(k, v)
   const url = p.id ? `${p.server}/v1/artifacts/${p.id}/versions` : `${p.server}/v1/artifacts`
-  const headers = p.token ? { authorization: `Bearer ${p.token}` } : {}
+  const headers = {
+    ...(p.token ? { authorization: `Bearer ${p.token}` } : {}),
+    ...(p.workspaceId ? { "x-derive-workspace": p.workspaceId } : {}),
+  }
   const res = await fetch(url, { method: "POST", body: form, headers })
   const json = await res.json().catch(() => ({}))
   return { res, json }

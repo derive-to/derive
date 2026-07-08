@@ -140,7 +140,7 @@ Or drive it from the CLI:
 
 ```bash
 npm i -g @derive-to/cli
-derive login       # OAuth sign-in
+derive login       # OAuth sign-in — discovers every workspace you belong to
 derive publish     # share a versioned URL
 derive comments    # read the review threads, then revise and publish again
 ```
@@ -152,8 +152,27 @@ otherwise (or with `for_review:true`) it files a proposal a human approves. Full
 [packages/mcp/SKILL.md](packages/mcp/SKILL.md).
 
 > Both are on npm: `npm i -g @derive-to/cli` gives you the `derive` command, and
-> `npx -y @derive-to/mcp` connects a local agent over stdio (set `DERIVE_SERVER`,
-> and `DERIVE_TOKEN` for a static bearer).
+> `npx -y @derive-to/mcp` connects a local agent over stdio — no token to paste, it
+> shares the same `derive login` as the CLI. `DERIVE_TOKEN` remains for a static
+> bearer (CI, no local login).
+
+### Multiple workspaces, multiple accounts
+
+A Derive access token is scoped to you, not to one workspace — it already reaches
+everywhere you're a member. `derive login` discovers the full roster in one browser
+round trip; running it again shows what's signed in and offers to re-sync, switch
+the default, add another account, or sign out — never a silent second login:
+
+```bash
+derive login --add                       # a second identity (e.g. a work account)
+derive accounts                          # every signed-in account + its workspaces
+derive workspace use "Acme Co"           # switch the default workspace
+derive publish --workspace "Client Org" --account @work   # one-off override
+```
+
+Pin a project to a workspace by committing `workspace`/`account` in `derive.json`, or
+an MCP server to one via `DERIVE_ACCOUNT`/`DERIVE_WORKSPACE` in `.mcp.json` — both
+default to your stored default when unset.
 
 ## Embeds and unfurls
 
