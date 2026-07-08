@@ -114,6 +114,8 @@ export interface Artifact {
   views?: number
   /** The current caller's effective role on this artifact (null = no access). */
   my_role?: Role | null
+  /** The artifact's current workspace (absent on a removed-tombstone response). */
+  org_id?: string
   /** Browse tags (workspace-wide). */
   tags?: string[]
   /** Whether the current user has starred this artifact. */
@@ -134,6 +136,13 @@ export interface Artifact {
   removed?: boolean
   /** Mirrored from a GitHub sync source → read-only in Derive (Edit/Propose hidden). */
   managed?: boolean
+  /** Short-lived signed capability for the /raw content iframe (detail endpoint only).
+   *  The iframe is sandboxed with no `allow-same-origin`, so it has no origin to attach
+   *  cookies to — Chrome refuses to send them for its requests even same-site, breaking
+   *  every non-public bundle's sub-resources (images, css, ...) there (Safari is more
+   *  lenient). This token lets the SPA embed proof-of-access directly in the raw URL's
+   *  PATH, so relative asset references inherit it automatically with no HTML rewriting. */
+  raw_token?: string
   /** Present when this bundle's entry is markdown — a skill (entry SKILL.md) or a
    *  plain docs folder. Drives the file tree + (for skills) the identity chrome.
    *  Detail endpoint only; absent for HTML "site" bundles. */
@@ -861,6 +870,9 @@ export const api = {
       ...opts({ locked }),
       method: "PATCH",
     }).then(j),
+  // Move to a different workspace you belong to. Owner-only server-side.
+  moveArtifact: (id: string, targetOrgId: string): Promise<{ org_id: string }> =>
+    f(`/v1/artifacts/${id}/move`, opts({ targetOrgId })).then(j),
   diff: (id: string, from: number, to: number): Promise<Diff> =>
     f(`/v1/artifacts/${id}/diff?from=${from}&to=${to}&format=json`, opts()).then(j),
   restore: (id: string, version: number): Promise<Artifact> =>

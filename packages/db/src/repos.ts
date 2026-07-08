@@ -2069,6 +2069,20 @@ export function makeRepos(db: SqliteDb) {
     await db.delete(artifact).where(eq(artifact.id, id)).run()
   }
 
+  // Sequential move (used by D1). better-sqlite3 + pg override with a transaction.
+  const moveArtifactOrg = async (artifactId: string, targetOrgId: string): Promise<void> => {
+    await db.update(artifact).set({ org_id: targetOrgId }).where(eq(artifact.id, artifactId)).run()
+    // Collections are org-scoped groupings; the artifact leaves all of them.
+    await db.delete(collectionItem).where(eq(collectionItem.artifact_id, artifactId)).run()
+    // An org-scoped webhook that targeted this one artifact falls back to org-wide
+    // rather than keep firing across a workspace boundary.
+    await db
+      .update(webhook)
+      .set({ artifact_id: null })
+      .where(eq(webhook.artifact_id, artifactId))
+      .run()
+  }
+
   // Sequential takedown (used by D1, which has no multi-statement transaction in
   // this driver). better-sqlite3 + pg override this with a real transaction; the
   // single bulk report UPDATE (vs the old per-report loop) is the same here.
@@ -2128,6 +2142,7 @@ export function makeRepos(db: SqliteDb) {
     storageBytes,
     tagCounts,
     deleteArtifact,
+    moveArtifactOrg,
     setArtifactRemoved,
     setArtifactTitle,
     setArtifactSourcePath,

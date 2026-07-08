@@ -6,6 +6,7 @@
 // muted, unfavourited star); pass weight="fill" for a filled state (favorited
 // star, pinned pin) — it fills the glyph with the current ink.
 import {
+  ArrowRightLeft,
   AtSign,
   Ban,
   BarChart3,
@@ -101,6 +102,7 @@ const REG = {
   present: Maximize,
   lock: Lock,
   unlock: LockOpen,
+  move: ArrowRightLeft,
   globe: Globe,
   // comment toolbar / menu
   react: Smile,
