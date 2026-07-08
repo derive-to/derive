@@ -363,6 +363,15 @@ export const collection = sqliteTable("collection", {
   title: text("title").notNull(),
   created_by: text("created_by").notNull(),
   created_at: text("created_at").notNull().default(now),
+  // Same share experience as an artifact's workspace_access, minus link_role/listed —
+  // a collection is a grouping of other artifacts, each with its own access, not
+  // individually link-servable content (see access-model.md). `member` = every
+  // workspace member reaches it at their seat role; `none` = invite-only
+  // (collectionMember rows only). Defaults to `member` (not artifact's fail-closed
+  // `none`) because that's collections' existing behavior today — collectionRole
+  // already folds in the caller's seat unconditionally, so an ADD COLUMN migration
+  // defaulting every existing row to `member` changes nothing for anyone.
+  workspace_access: text("workspace_access").$type<WorkspaceAccess>().notNull().default("member"),
 })
 
 export const collectionItem = sqliteTable(

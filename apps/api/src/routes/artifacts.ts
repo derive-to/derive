@@ -212,6 +212,8 @@ export const artifactRoutes = (ctx: AppContext) => {
       let collectionAccess = false
       // Carry the collection's title so the client can label the view even when the
       // collection lives in another workspace (it's absent from the local sidebar list).
+      // Only for a caller who actually has access — otherwise the title (and the fact
+      // this id resolves at all) leaks to anyone who can guess/pass a collectionId.
       let collectionInfo: { id: string; title: string } | undefined
       if (collectionId) {
         const col = await meta.getCollection(collectionId)
@@ -220,9 +222,12 @@ export const artifactRoutes = (ctx: AppContext) => {
         // its members into an id IN(): a large collection (hundreds of items) would blow
         // D1's 100-bound-parameter cap and 500 the whole listing.
         listOrg = col.org_id
-        collectionInfo = { id: col.id, title: col.title }
-        collectionAccess =
-          (await isMember(c, col.org_id)) || (await collectionRole(c, col)) !== null
+        // collectionRole is the single source of truth (it already folds in the workspace
+        // seat, conditionally on the collection's OWN workspace_access — see context.ts):
+        // plain isMember(org) would grant access to an Invited-only collection to every
+        // workspace member, defeating the toggle entirely.
+        collectionAccess = (await collectionRole(c, col)) !== null
+        if (collectionAccess) collectionInfo = { id: col.id, title: col.title }
       }
       // Author filter narrows to artifacts last changed by a GitHub login, scoped to the
       // listing's workspace (after collection scope has settled listOrg). Mirrors ?tag=.

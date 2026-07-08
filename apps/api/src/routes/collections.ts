@@ -45,6 +45,15 @@ export const collectionRoutes = (ctx: AppContext) => {
       created_by: z.string(),
       created_at: z.string(),
       count: z.number(),
+      /** The collection's own share experience — same vocabulary and dialog
+       *  pattern as an artifact's workspace_access, no link_role/listed (see
+       *  CollectionRecord.workspace_access). */
+      workspace_access: z.enum(["none", "member"]).optional(),
+      /** The caller's role on the collection itself (creator/explicit share/seat,
+       *  whichever's highest) — drives the Share dialog's manage-vs-read-only
+       *  split. Null if they can't see it at all (never returned in that case,
+       *  since the list already filters those out). */
+      my_role: z.enum(["viewer", "commenter", "editor", "owner"]).nullable().optional(),
       /** Where it came from: "repo" = a GitHub repo mirror, "pr" = a read-only PR preview
        *  nested under its repo, "manual" = user-created. */
       kind: z.enum(["manual", "repo", "pr"]).optional(),
@@ -73,7 +82,7 @@ export const collectionRoutes = (ctx: AppContext) => {
     return { srcByCollection, branchByRepo }
   }
   const enrich = (
-    col: CollectionRecord & { count: number },
+    col: CollectionRecord & { count: number; my_role: Role | null },
     srcByCollection: Map<string, Src>,
     branchByRepo: Map<string, string>,
   ) => {
@@ -119,7 +128,16 @@ export const collectionRoutes = (ctx: AppContext) => {
         meta.listRepoSources(org),
       ])
       const { srcByCollection, branchByRepo } = sourceMaps(sources)
-      return c.json({ collections: cols.map((col) => enrich(col, srcByCollection, branchByRepo)) })
+      // Same share experience as an artifact: an invite-only collection
+      // (workspace_access=none) only lists for its creator or an explicit
+      // collectionMember — collectionRole is the single source of truth for that,
+      // shared with the members endpoint's own visibility gate.
+      const roles = await Promise.all(cols.map((col) => collectionRole(c, col)))
+      const collections = cols
+        .map((col, i) => ({ col, role: roles[i] ?? null }))
+        .filter(({ role }) => role !== null)
+        .map(({ col, role }) => enrich({ ...col, my_role: role }, srcByCollection, branchByRepo))
+      return c.json({ collections })
     },
   )
 
@@ -151,6 +169,10 @@ export const collectionRoutes = (ctx: AppContext) => {
         org_id: await activeWorkspace(c),
         title,
         created_by: createdBy,
+        // Same factory default as an artifact: workspace-open. (Unlike an
+        // artifact, there's no per-org default to consult yet — collections are
+        // simpler, always workspace_access=member on create.)
+        workspace_access: "member",
       })
       // The creator joins as owner: they manage it, and (like any member) their
       // role propagates to the collection's artifacts.
@@ -162,7 +184,7 @@ export const collectionRoutes = (ctx: AppContext) => {
       })
       // A brand-new collection is empty (count 0) and user-created (manual) — return the
       // full shape so the client can drop it straight into its list without a refetch.
-      return c.json({ ...col, count: 0, kind: "manual" as const }, 201)
+      return c.json({ ...col, count: 0, my_role: "owner" as const, kind: "manual" as const }, 201)
     },
   )
 
@@ -192,12 +214,49 @@ export const collectionRoutes = (ctx: AppContext) => {
       if (!updated) return bail(fail(c, 404, "not found"))
       // Return the SAME enriched shape as the list, so every collection response is one
       // type. Count + origin are unchanged by a rename; re-derive them (rare op).
-      const [ids, sources] = await Promise.all([
+      const [ids, sources, role] = await Promise.all([
         meta.collectionArtifactIds(updated.id),
         meta.listRepoSources(updated.org_id),
+        collectionRole(c, updated),
       ])
       const { srcByCollection, branchByRepo } = sourceMaps(sources)
-      return c.json(enrich({ ...updated, count: ids.length }, srcByCollection, branchByRepo))
+      return c.json(
+        enrich({ ...updated, count: ids.length, my_role: role }, srcByCollection, branchByRepo),
+      )
+    },
+  )
+
+  // Change a collection's share experience — the Share dialog's Invited/Workspace
+  // toggle. Same one-question shape as an artifact's /access, minus link_role/
+  // listed (a collection isn't individually link-servable content, so its share
+  // dialog skips the Anyone segment — see access-model.md and the collection
+  // table's workspace_access comment). Applies immediately, no Save button.
+  app.openapi(
+    createRoute({
+      method: "patch",
+      path: "/v1/collections/{id}/access",
+      tags: ["Collections"],
+      summary: "Change a collection's workspace access.",
+      request: { params: z.object({ id: z.string() }) },
+      responses: {
+        200: {
+          description: "The new access.",
+          content: {
+            "application/json": {
+              schema: z.object({ workspace_access: z.enum(["none", "member"]) }),
+            },
+          },
+        },
+      },
+    }),
+    async (c) => {
+      const col = await meta.getCollection(c.req.param("id"))
+      if (!col) return bail(fail(c, 404, "not found"))
+      if (!(await canManageCollection(c, col, "manage"))) return bail(fail(c, 403, "forbidden"))
+      const b = await readJson(c, z.object({ workspaceAccess: z.enum(["none", "member"]) }))
+      if (b instanceof Response) return bail(b)
+      await meta.setCollectionAccess(col.id, b.workspaceAccess)
+      return c.json({ workspace_access: b.workspaceAccess })
     },
   )
 

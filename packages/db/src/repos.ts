@@ -1370,6 +1370,16 @@ export function makeRepos(db: SqliteDb) {
         .get()) ?? null
     )
   }
+  const setCollectionAccess = async (
+    id: string,
+    workspaceAccess: WorkspaceAccess,
+  ): Promise<void> => {
+    await db
+      .update(collection)
+      .set({ workspace_access: workspaceAccess })
+      .where(eq(collection.id, id))
+      .run()
+  }
   // Sequential cascade (used by D1). better-sqlite3 overrides with a transaction.
   const deleteCollection = async (id: string): Promise<void> => {
     await db.delete(collectionItem).where(eq(collectionItem.collection_id, id)).run()
@@ -2372,6 +2382,7 @@ export function makeRepos(db: SqliteDb) {
     getCollection,
     getCollections,
     updateCollection,
+    setCollectionAccess,
     deleteCollection,
     listCollections,
     collectionArtifactIds,

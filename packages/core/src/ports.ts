@@ -470,6 +470,8 @@ export interface CollectionStore {
    *  ids ⇒ []. Use this over a per-id getCollection loop. */
   getCollections(ids: string[]): Promise<CollectionRecord[]>
   updateCollection(id: string, fields: { title?: string }): Promise<CollectionRecord | null>
+  /** Change a collection's share experience (see CollectionRecord.workspace_access). */
+  setCollectionAccess(id: string, workspaceAccess: WorkspaceAccess): Promise<void>
   /** Remove a collection and its items + member rows. */
   deleteCollection(id: string): Promise<void>
   /** Collections with their item counts, newest first; scoped to a workspace when orgId is given. */
@@ -1336,12 +1338,20 @@ export interface CollectionRecord {
   title: string
   created_by: string
   created_at: string
+  /** The collection's own share experience — same vocabulary as an artifact's
+   *  workspace_access, no link_role/listed (a collection isn't individually
+   *  link-servable content). `member` = every workspace member reaches it at
+   *  their seat role; `none` = invite-only (collectionMember rows only). */
+  workspace_access: WorkspaceAccess
 }
 export interface NewCollection {
   id: string
   org_id: string
   title: string
   created_by: string
+  /** Omitted falls to the store's column default (`member`, unlike an artifact's
+   *  fail-closed `none` — see CollectionRecord.workspace_access). */
+  workspace_access?: WorkspaceAccess
 }
 export interface DomainRecord {
   host: string
