@@ -701,6 +701,10 @@ export class PgMetaStore implements MetaStore {
   async enqueueDelivery(d: NewDelivery): Promise<void> {
     await this.db.insert(webhookDelivery).values(d)
   }
+  async enqueueDeliveries(rows: NewDelivery[]): Promise<void> {
+    if (rows.length === 0) return
+    await this.db.insert(webhookDelivery).values(rows)
+  }
   claimDueDeliveries(now: string, limit: number, leaseUntil: string): Promise<DeliveryRecord[]> {
     // FOR UPDATE SKIP LOCKED so concurrent instances each grab a disjoint set;
     // the UPDATE then leases the rows (next_attempt_at -> future) + counts an
@@ -2119,6 +2123,10 @@ export class PgMetaStore implements MetaStore {
   }
   async setArtifactRemoved(id: string, removedAt: string | null): Promise<void> {
     await this.db.update(artifact).set({ removed_at: removedAt }).where(eq(artifact.id, id))
+  }
+  async setArtifactsRemoved(ids: string[], removedAt: string | null): Promise<void> {
+    if (ids.length === 0) return
+    await this.db.update(artifact).set({ removed_at: removedAt }).where(inArray(artifact.id, ids))
   }
   async setArtifactTitle(id: string, title: string): Promise<void> {
     await this.db.update(artifact).set({ title }).where(eq(artifact.id, id))

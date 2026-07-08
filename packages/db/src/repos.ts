@@ -561,6 +561,10 @@ export function makeRepos(db: SqliteDb) {
   const setArtifactRemoved = async (id: string, removedAt: string | null): Promise<void> => {
     await db.update(artifact).set({ removed_at: removedAt }).where(eq(artifact.id, id)).run()
   }
+  const setArtifactsRemoved = async (ids: string[], removedAt: string | null): Promise<void> => {
+    if (ids.length === 0) return
+    await db.update(artifact).set({ removed_at: removedAt }).where(inArray(artifact.id, ids)).run()
+  }
   const setArtifactTitle = async (id: string, title: string): Promise<void> => {
     await db.update(artifact).set({ title }).where(eq(artifact.id, id)).run()
   }
@@ -743,6 +747,10 @@ export function makeRepos(db: SqliteDb) {
       .all()
   const enqueueDelivery = async (d: NewDelivery): Promise<void> => {
     await db.insert(webhookDelivery).values(d).run()
+  }
+  const enqueueDeliveries = async (rows: NewDelivery[]): Promise<void> => {
+    if (rows.length === 0) return
+    await db.insert(webhookDelivery).values(rows).run()
   }
   const claimDueDeliveries = async (
     now: string,
@@ -2176,6 +2184,7 @@ export function makeRepos(db: SqliteDb) {
     deleteArtifact,
     moveArtifactOrg,
     setArtifactRemoved,
+    setArtifactsRemoved,
     setArtifactTitle,
     setArtifactSourcePath,
     setArtifactUpdatedAt,
@@ -2193,6 +2202,7 @@ export function makeRepos(db: SqliteDb) {
     deleteWebhook,
     activeWebhooks,
     enqueueDelivery,
+    enqueueDeliveries,
     claimDueDeliveries,
     updateDelivery,
     recentDeliveries,

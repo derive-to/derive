@@ -287,6 +287,9 @@ export interface MetaStore {
   activeWebhooks(artifactId: string, orgId: string): Promise<WebhookRecord[]>
   /** Enqueue a delivery into the outbox (target is denormalized for durability). */
   enqueueDelivery(d: NewDelivery): Promise<void>
+  /** Enqueue the whole subscriber fan-out for one event in ONE insert. Empty ⇒ no-op.
+   *  Use over a per-subscriber enqueueDelivery loop. */
+  enqueueDeliveries(rows: NewDelivery[]): Promise<void>
   /**
    * Atomically claim up to `limit` pending deliveries whose next_attempt_at has
    * passed: increments their attempt count and leases them (sets next_attempt_at
@@ -702,6 +705,9 @@ export interface MetaStore {
   moveArtifactOrg(artifactId: string, targetOrgId: string): Promise<void>
   /** Set or clear an artifact's takedown tombstone (the record is never deleted). */
   setArtifactRemoved(id: string, removedAt: string | null): Promise<void>
+  /** Tombstone many artifacts at once (id ∈ ids) in ONE update — the PR-preview
+   *  teardown. Empty ids ⇒ no-op. Use over a per-id setArtifactRemoved loop. */
+  setArtifactsRemoved(ids: string[], removedAt: string | null): Promise<void>
   /** Take an artifact down atomically: tombstone the artifact, resolve every open
    *  report against it (→ actioned), and write the audit entry — all in one
    *  transaction so a crash mid-way can't leave a half-applied takedown (removed

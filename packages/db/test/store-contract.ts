@@ -1180,6 +1180,46 @@ export function runStoreContract(
       expect(rows.filter((m) => m.org_id === orgA)).toHaveLength(1)
       expect(rows.filter((m) => m.org_id === orgB)).toHaveLength(2)
     })
+
+    it("setArtifactsRemoved tombstones many artifacts in one update (empty ⇒ no-op)", async () => {
+      const a1 = await store.createArtifact(newArtifact())
+      const a2 = await store.createArtifact(newArtifact())
+      await store.setArtifactsRemoved([]) // no-op
+      expect((await store.getArtifactById(a1.id))?.removed_at ?? null).toBeNull()
+      await store.setArtifactsRemoved([a1.id, a2.id], "2026-01-01T00:00:00.000Z")
+      expect((await store.getArtifactById(a1.id))?.removed_at).toBe("2026-01-01T00:00:00.000Z")
+      expect((await store.getArtifactById(a2.id))?.removed_at).toBe("2026-01-01T00:00:00.000Z")
+    })
+
+    it("enqueueDeliveries inserts a whole subscriber fan-out in one call (empty ⇒ no-op)", async () => {
+      const a = await store.createArtifact(newArtifact())
+      const hook = await store.createWebhook({
+        id: uuid(),
+        artifact_id: a.id,
+        org_id: ORG,
+        url: "https://example.test/hook",
+        secret: "s",
+        events: "*",
+        kind: "generic",
+      })
+      const row = (id: string) => ({
+        id,
+        webhook_id: hook.id,
+        url: hook.url,
+        secret: hook.secret,
+        kind: hook.kind,
+        event_type: "version.published",
+        payload: "{}",
+      })
+      await store.enqueueDeliveries([]) // no-op
+      await store.enqueueDeliveries([row(uuid()), row(uuid())])
+      const due = await store.claimDueDeliveries(
+        new Date(Date.now() + 60_000).toISOString(),
+        10,
+        new Date(Date.now() + 120_000).toISOString(),
+      )
+      expect(due.filter((d) => d.webhook_id === hook.id)).toHaveLength(2)
+    })
   })
 
   describe(`${label}: agents`, () => {
