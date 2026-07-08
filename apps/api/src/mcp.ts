@@ -48,6 +48,7 @@ import {
 } from "./lib/bundle"
 import { parseMeta, quoteOf, REACTIONS } from "./lib/comments"
 import { buildReviewEmail } from "./lib/email"
+import { notifyCommentBells } from "./lib/notify-comment"
 import { enqueueChannelDelivery } from "./webhooks"
 
 const text = (s: string) => ({ content: [{ type: "text" as const, text: s }] })
@@ -519,6 +520,15 @@ function buildServer(
           author_id: agent.id,
         })
         ctx.bus.publish(a.id, { type: "comment.created" })
+        // Same bell fan-out as the HTTP route: thread participants + the
+        // artifact's owners hear the agent's reply even with no tab open.
+        // (Previously this path belled no one.) The MCP tool has no mentions.
+        const created = await ctx.meta.getComment(commentId)
+        if (created)
+          await notifyCommentBells({ meta: ctx.meta, bus: ctx.bus }, a, created, {
+            mentionIds: new Set(),
+            actorId: agent.id,
+          })
       }
       // The ack: land the emoji on the thread's newest comment by someone ELSE
       // (the human being acknowledged), falling back to its newest comment.

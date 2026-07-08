@@ -348,3 +348,21 @@ describe("catch_up `wait` long-poll", () => {
     expect((out.review as { state: string }).state).toBe("pending")
   })
 })
+
+describe("comment bells (the MCP path)", () => {
+  it("an agent's comment on the human's artifact bells them — parity with HTTP", async () => {
+    const { app, meta, token } = loopApp("comment-bell")
+    const created = await call(app, token, "publish", {
+      content: "<h1>Doc</h1>",
+      title: "Doc",
+    })
+    // The publish itself belled u_o (kind publish/review); an agent COMMENT on
+    // the doc must too — before the shared fan-out, this path belled no one.
+    await call(app, token, "comment", {
+      short_id: created.short_id,
+      body: "I have a question about the intro.",
+    })
+    const rows = await meta.listNotifications("u_o", 10)
+    expect(rows.some((n) => n.kind === "comment")).toBe(true)
+  })
+})
