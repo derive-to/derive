@@ -1,0 +1,27 @@
+# One runner service per context. Copy, rename per context, and fill in:
+#
+#   docker compose -f runner.compose.example.yml run --rm analytics doctor
+#   docker compose -f runner.compose.example.yml up -d analytics
+#
+# The env file carries the secrets (never in this file, never in the image):
+#   DERIVE_TOKEN=dk_agt_…          the context's agent token
+#   ANTHROPIC_API_KEY=sk-ant-…     the model
+#   GH_TOKEN=ghp_…                 private repo pointers + gh (optional)
+#   …plus whatever the context's .mcp.json expects
+services:
+  analytics:
+    build:
+      context: ..
+      dockerfile: deploy/runner.Dockerfile
+    restart: unless-stopped
+    environment:
+      DERIVE_CONTEXT: ctx_change_me
+      # RUNNER_MODEL: sonnet
+      # RUNNER_TIMEOUT_MS: "600000"
+    env_file:
+      - ./analytics.env
+    volumes:
+      # The cloned context project's context/ dir: .mcp.json, references/, and
+      # the repos/ clone cache (persists across restarts). Optional — without
+      # it the manifest + repo pointers still arrive from the server.
+      - /srv/contexts/analytics/context:/work

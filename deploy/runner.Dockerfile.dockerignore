@@ -1,0 +1,6 @@
+# Scoped to runner.Dockerfile (BuildKit per-Dockerfile ignore): the image only
+# needs the CLI package + the entrypoint, so don't ship the monorepo to the daemon.
+*
+!packages/cli
+!deploy/runner-entrypoint.sh
+packages/cli/node_modules
