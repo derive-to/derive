@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useNavigate } from "@tanstack/react-router"
-import { useEffect, useRef, useState } from "react"
+import { useState } from "react"
 import {
   API_BASE,
   type ArtifactDomain,
@@ -8,15 +8,16 @@ import {
   api,
   type LinkRole,
   type Listed,
-  type PublicProfile,
   type Role,
   type WorkspaceAccess,
 } from "@/api"
 import { Icon, type IconName } from "@/components/icons"
+import { AccessSegmentToggle } from "@/components/shared/access-segment-toggle"
+import { PersonSearchInput } from "@/components/shared/person-search-input"
 import { ROLE_LABELS, RoleSelect } from "@/components/shared/role-select"
 import { Eyebrow, SectionEyebrow } from "@/components/shared/section-eyebrow"
 import { Spinner } from "@/components/shared/spinner"
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
+import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import {
@@ -35,11 +36,9 @@ import {
 } from "@/components/ui/select-menu"
 import { toast } from "@/components/ui/sonner"
 import { Switch } from "@/components/ui/switch"
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { useAuth } from "@/ctx"
 import { getInitials } from "@/lib/initials"
 import { artifactQuery, workspaceQuery } from "@/lib/queries"
-import { cn } from "@/lib/utils"
 
 // Access is ONE primary question — who can open this — projected from the v2
 // triple (workspace_access, link_role, listed; see access-model.md). Each segment
@@ -105,13 +104,6 @@ export function ShareButton({
   const [role, setRole] = useState<Role>("editor")
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
-  // GitHub-style handle typeahead for the add-person field. Suggestions come from
-  // the discoverable-people search (handle/name, never email); a non-discoverable
-  // user is still addable by typing their exact @handle/email and clicking Add.
-  const [suggest, setSuggest] = useState<PublicProfile[]>([])
-  const [active, setActive] = useState(-1)
-  // The value we just picked, so the follow-up search for it doesn't reopen the menu.
-  const picked = useRef("")
   // Access draft: the three fields, plus the lock (password) state for the world link.
   const [wsAccess, setWsAccess] = useState<WorkspaceAccess>(workspaceAccess ?? "member")
   const [lRole, setLRole] = useState<LinkRole>(linkRole ?? "none")
@@ -305,58 +297,6 @@ export function ShareButton({
     qc.invalidateQueries({ queryKey: ["artifacts"] })
   }
 
-  // Debounced people-search for the add field. Skip when empty or when the term is
-  // exactly what we just picked (so a pick doesn't immediately reopen the menu).
-  useEffect(() => {
-    const term = email.trim()
-    if (!term || term === picked.current) {
-      setSuggest([])
-      return
-    }
-    let alive = true
-    const t = setTimeout(() => {
-      api
-        .searchPeople(term)
-        .then((r) => {
-          if (alive) {
-            setSuggest(r.users)
-            setActive(-1)
-          }
-        })
-        .catch(() => alive && setSuggest([]))
-    }, 180)
-    return () => {
-      alive = false
-      clearTimeout(t)
-    }
-  }, [email])
-
-  const pick = (u: PublicProfile) => {
-    picked.current = `@${u.username}`
-    setEmail(`@${u.username}`)
-    setSuggest([])
-    setActive(-1)
-  }
-  // ↑/↓ to move, Enter to pick the highlighted suggestion, Esc to close the menu.
-  // With no highlight, Enter falls through to the form submit (free-text add).
-  const onAddKeyDown = (e: React.KeyboardEvent) => {
-    if (suggest.length === 0) return
-    if (e.key === "ArrowDown") {
-      e.preventDefault()
-      setActive((i) => Math.min(i + 1, suggest.length - 1))
-    } else if (e.key === "ArrowUp") {
-      e.preventDefault()
-      setActive((i) => Math.max(i - 1, -1))
-    } else if (e.key === "Enter" && active >= 0 && suggest[active]) {
-      e.preventDefault()
-      pick(suggest[active])
-    } else if (e.key === "Escape") {
-      e.preventDefault()
-      e.stopPropagation()
-      setSuggest([])
-    }
-  }
-
   const add = async (e: React.FormEvent) => {
     e.preventDefault()
     const addr = email.trim()
@@ -366,8 +306,6 @@ export function ShareButton({
     try {
       await api.setMember(shortId, addr, role)
       setEmail("")
-      picked.current = ""
-      setSuggest([])
       await synced()
     } catch (x) {
       setErr(x instanceof Error ? x.message : "Could not share")
@@ -484,26 +422,13 @@ export function ShareButton({
               <div className="mt-2 flex flex-col">
                 {/* One primary choice — the widest reach. Each segment sets the
                     (workspace_access, link_role, listed) triple — see pickSegment. */}
-                <ToggleGroup
-                  type="single"
+                <AccessSegmentToggle
+                  segments={SEGMENTS}
                   value={segment}
-                  onValueChange={(v) => v && pickSegment(v as Segment)}
-                  data-testid="share-access"
-                  className="w-full gap-[3px] rounded-lg bg-secondary p-[3px]"
-                >
-                  {SEGMENTS.map((s) => (
-                    <ToggleGroupItem
-                      key={s.value}
-                      value={s.value}
-                      disabled={savingVis}
-                      data-testid={`share-access-${s.value}`}
-                      className="h-8 flex-1 gap-1.5 rounded-md text-muted-foreground hover:bg-transparent hover:text-foreground data-[state=on]:bg-card data-[state=on]:text-foreground data-[state=on]:shadow-(--shadow-sm)"
-                    >
-                      <Icon name={s.icon} />
-                      {s.label}
-                    </ToggleGroupItem>
-                  ))}
-                </ToggleGroup>
+                  onChange={pickSegment}
+                  disabled={savingVis}
+                  testId="share-access"
+                />
 
                 {segment === "invite" && (
                   <p className="mt-3 text-sm text-muted-foreground">
@@ -748,73 +673,12 @@ export function ShareButton({
             <div className="mt-3 flex flex-col gap-2">
               {canManage ? (
                 <form onSubmit={add} className="flex items-center gap-1.5">
-                  <div className="relative flex-1">
-                    {/* WAI-APG combobox wiring: the input announces the popup and the
-                    arrow-key highlight (aria-activedescendant). */}
-                    <Input
-                      data-testid="share-email"
-                      type="text"
-                      autoCapitalize="none"
-                      autoCorrect="off"
-                      autoComplete="off"
-                      placeholder="Add people by @username or email…"
-                      aria-label="Username or email"
-                      role="combobox"
-                      aria-expanded={suggest.length > 0}
-                      aria-autocomplete="list"
-                      aria-controls="share-suggest-list"
-                      aria-activedescendant={
-                        active >= 0 && suggest[active] ? `share-suggest-opt-${active}` : undefined
-                      }
-                      value={email}
-                      onChange={(e) => setEmail(e.target.value)}
-                      onKeyDown={onAddKeyDown}
-                      className="w-full"
-                    />
-                    {suggest.length > 0 && (
-                      <div
-                        data-testid="share-suggest"
-                        id="share-suggest-list"
-                        role="listbox"
-                        aria-label="People suggestions"
-                        className="absolute inset-x-0 top-[calc(100%+4px)] z-40 max-h-56 overflow-y-auto rounded-xl bg-popover p-1 shadow-[var(--shadow-pop)] ring-1 ring-foreground/10"
-                      >
-                        {suggest.map((u, i) => (
-                          <button
-                            key={u.username}
-                            type="button"
-                            data-testid="share-suggest-item"
-                            id={`share-suggest-opt-${i}`}
-                            role="option"
-                            aria-selected={i === active}
-                            // Keep the input focused so the click registers without blurring first.
-                            onMouseDown={(e) => e.preventDefault()}
-                            onClick={() => pick(u)}
-                            onMouseEnter={() => setActive(i)}
-                            className={cn(
-                              "flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left outline-none focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring",
-                              i === active ? "bg-accent" : "hover:bg-accent",
-                            )}
-                          >
-                            <Avatar className="size-6">
-                              {u.image && <AvatarImage src={u.image} alt={u.name ?? u.username} />}
-                              <AvatarFallback>{getInitials(u.name ?? u.username)}</AvatarFallback>
-                            </Avatar>
-                            <span className="min-w-0 flex-1">
-                              {u.name && (
-                                <span className="block truncate text-sm font-medium text-foreground">
-                                  {u.name}
-                                </span>
-                              )}
-                              <span className="block truncate font-mono text-2xs text-muted-foreground">
-                                @{u.username}
-                              </span>
-                            </span>
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </div>
+                  <PersonSearchInput
+                    value={email}
+                    onChange={setEmail}
+                    placeholder="Add people by @username or email…"
+                    testId="share-email"
+                  />
                   <div data-testid="share-role" className="w-28 shrink-0">
                     <RoleSelect
                       value={role}

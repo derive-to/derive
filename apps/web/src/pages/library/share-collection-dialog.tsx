@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react"
 import { type ArtifactMember, api, type Collection, type Role, type WorkspaceAccess } from "@/api"
 import { Icon, type IconName } from "@/components/icons"
+import { AccessSegmentToggle } from "@/components/shared/access-segment-toggle"
 import { EmptyState } from "@/components/shared/empty-state"
 import { PersonSearchInput } from "@/components/shared/person-search-input"
 import { ROLE_LABELS, RoleSelect } from "@/components/shared/role-select"
@@ -15,7 +16,6 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { toast } from "@/components/ui/sonner"
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 
 // Same share experience as an artifact (docs/plans/access-model.md), minus the
 // Anyone segment — a collection isn't individually link-servable content, it's a
@@ -137,26 +137,13 @@ export function ShareCollectionDialog({
             </SectionEyebrow>
             {canManage ? (
               <div className="mt-2 flex flex-col">
-                <ToggleGroup
-                  type="single"
+                <AccessSegmentToggle
+                  segments={SEGMENTS}
                   value={wsAccess === "member" ? "workspace" : "invite"}
-                  onValueChange={(v) => v && applyAccess(v === "workspace" ? "member" : "none")}
-                  data-testid="collection-share-access"
-                  className="w-full gap-[3px] rounded-lg bg-secondary p-[3px]"
-                >
-                  {SEGMENTS.map((s) => (
-                    <ToggleGroupItem
-                      key={s.value}
-                      value={s.value}
-                      disabled={savingAccess}
-                      data-testid={`collection-share-access-${s.value}`}
-                      className="h-8 flex-1 gap-1.5 rounded-md text-muted-foreground hover:bg-transparent hover:text-foreground data-[state=on]:bg-card data-[state=on]:text-foreground data-[state=on]:shadow-(--shadow-sm)"
-                    >
-                      <Icon name={s.icon} />
-                      {s.label}
-                    </ToggleGroupItem>
-                  ))}
-                </ToggleGroup>
+                  onChange={(v) => applyAccess(v === "workspace" ? "member" : "none")}
+                  disabled={savingAccess}
+                  testId="collection-share-access"
+                />
                 {wsAccess === "none" ? (
                   <p className="mt-3 text-sm text-muted-foreground">
                     Only the people you add below can open this.
