@@ -61,6 +61,41 @@
           "grantedAt"
         ]
       },
+      "ArtifactMember": {
+        "type": "object",
+        "properties": {
+          "user_id": {
+            "type": "string"
+          },
+          "handle": {
+            "type": "string",
+            "nullable": true
+          },
+          "name": {
+            "type": "string",
+            "nullable": true
+          },
+          "profession": {
+            "type": "string",
+            "nullable": true
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "viewer",
+              "commenter",
+              "editor",
+              "owner"
+            ]
+          }
+        },
+        "required": [
+          "user_id",
+          "handle",
+          "name",
+          "role"
+        ]
+      },
       "Follow": {
         "type": "object",
         "properties": {
@@ -654,6 +689,116 @@
         }
       }
     },
+    "/v1/artifacts/{shortId}/members": {
+      "get": {
+        "tags": [
+          "Sharing"
+        ],
+        "summary": "List an artifact's collaborators (collaborators only).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "shortId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The workspace default role and the artifact's members.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "default_role": {
+                      "type": "string",
+                      "enum": [
+                        "viewer",
+                        "commenter",
+                        "editor",
+                        "owner"
+                      ]
+                    },
+                    "members": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/ArtifactMember"
+                      }
+                    }
+                  },
+                  "required": [
+                    "default_role",
+                    "members"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Sharing"
+        ],
+        "summary": "Share an artifact with a person at a role.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "shortId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "The added member.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArtifactMember"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/artifacts/{shortId}/members/{userId}": {
+      "delete": {
+        "tags": [
+          "Sharing"
+        ],
+        "summary": "Remove a collaborator from an artifact.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "shortId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "userId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "The collaborator was removed."
+          }
+        }
+      }
+    },
     "/v1/follows": {
       "get": {
         "tags": [
@@ -893,6 +1038,110 @@
         "responses": {
           "204": {
             "description": "The artifact was removed."
+          }
+        }
+      }
+    },
+    "/v1/collections/{id}/members": {
+      "get": {
+        "tags": [
+          "Collections"
+        ],
+        "summary": "List a collection's members.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The collection's creator and its members.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "created_by": {
+                      "type": "string"
+                    },
+                    "members": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/ArtifactMember"
+                      }
+                    }
+                  },
+                  "required": [
+                    "created_by",
+                    "members"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Collections"
+        ],
+        "summary": "Add or update a collection member.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "The added member.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArtifactMember"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/collections/{id}/members/{userId}": {
+      "delete": {
+        "tags": [
+          "Collections"
+        ],
+        "summary": "Remove a collection member.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "userId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "The member was removed."
           }
         }
       }

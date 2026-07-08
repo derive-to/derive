@@ -206,17 +206,9 @@ export interface Proposal {
   /** Present on the single-proposal fetch: line diff vs the base version. */
   diff?: { base_version: number; ops: DiffOp[] }
 }
-export interface ArtifactMember {
-  user_id: string
-  /** Public handle; null only for a legacy account not yet backfilled. No email —
-   *  the member list identifies collaborators by handle, never by address. */
-  handle: string | null
-  name: string | null
-  /** Coarse team role (Product / Engineering / …); null if unset. Shown in member
-   *  lists; absent on artifact/collection member payloads that don't join it. */
-  profession?: string | null
-  role: Role
-}
+/** A collaborator on an artifact or collection — by public @handle, never email.
+ *  Generated from the OpenAPI spec (one shared schema across sharing + collections). */
+export type ArtifactMember = components["schemas"]["ArtifactMember"]
 /** A DNS record the customer adds to validate a custom domain. */
 /** A DNS record to add when validating a custom domain. Generated from the OpenAPI spec. */
 export type DomainDnsRecord = components["schemas"]["DomainDnsRecord"]

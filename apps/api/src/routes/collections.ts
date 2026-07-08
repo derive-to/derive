@@ -12,12 +12,13 @@ import type { BlankEnv } from "hono/types"
 import type { AppContext } from "../context"
 import { bail, fail, readJson } from "../lib/http"
 import { resolveUserRef } from "../lib/resolve-user"
+import { ArtifactMember } from "../schemas"
 
 /** Collections: shareable groups of artifacts. A member's role on a collection
  *  propagates to every artifact inside it (see collectionRolesForArtifact). The
  *  Collection response schema is the single source for the web client's type
- *  (generated from the OpenAPI spec). The member endpoints stay plain routes for now:
- *  they return the shared ArtifactMember shape, migrated with artifacts/sharing. */
+ *  (generated from the OpenAPI spec). Member endpoints return the shared ArtifactMember
+ *  shape (see ../schemas). */
 export const collectionRoutes = (ctx: AppContext) => {
   const {
     meta,
@@ -270,57 +271,103 @@ export const collectionRoutes = (ctx: AppContext) => {
     },
   )
 
-  // --- Member endpoints: plain routes (not in the spec yet). They return the shared
-  // ArtifactMember shape, which is migrated holistically with artifacts/sharing.
-  app.get("/v1/collections/:id/members", async (c) => {
-    const col = await meta.getCollection(c.req.param("id"))
-    if (!col || (await collectionRole(c, col)) === null) return fail(c, 404, "not found")
-    const rows = await meta.listCollectionMembers(col.id)
-    const users = await meta.getUsers(rows.map((r) => r.user_id))
-    const byId = new Map(users.map((u) => [u.id, u]))
-    return c.json({
-      created_by: col.created_by,
-      members: rows.map((r) => ({
-        user_id: r.user_id,
-        handle: byId.get(r.user_id)?.username ?? null,
-        name: byId.get(r.user_id)?.name ?? null,
-        role: r.role,
-      })),
-    })
-  })
-  app.put("/v1/collections/:id/members", async (c) => {
-    const col = await meta.getCollection(c.req.param("id"))
-    if (!col) return fail(c, 404, "not found")
-    if (!(await canManageCollection(c, col, "manage"))) return fail(c, 403, "forbidden")
-    const b = await readJson(
-      c,
-      z
-        .object({
-          user: z.string().min(1).optional(),
-          email: z.string().min(1).optional(),
-          role: z.custom<Role>(isRole, "a valid role is required"),
-        })
-        .refine((v) => v.user || v.email, "a username or email is required"),
-    )
-    if (b instanceof Response) return b
-    const id = await resolveUserRef(meta, (b.user ?? b.email) as string)
-    const [user] = id ? await meta.getUsers([id]) : []
-    if (!user) return fail(c, 404, "no Derive user with that username or email")
-    await meta.setCollectionMember({
-      id: newId("cm"),
-      collection_id: col.id,
-      user_id: user.id,
-      role: b.role,
-    })
-    return c.json({ user_id: user.id, handle: user.username, name: user.name, role: b.role }, 201)
-  })
-  app.delete("/v1/collections/:id/members/:userId", async (c) => {
-    const col = await meta.getCollection(c.req.param("id"))
-    if (!col) return fail(c, 404, "not found")
-    if (!(await canManageCollection(c, col, "manage"))) return fail(c, 403, "forbidden")
-    await meta.removeCollectionMember(col.id, c.req.param("userId"))
-    return c.body(null, 204)
-  })
+  // Member endpoints — the collaborators whose role propagates to the collection's
+  // artifacts. They return the shared ArtifactMember shape (see ../schemas).
+  app.openapi(
+    createRoute({
+      method: "get",
+      path: "/v1/collections/{id}/members",
+      tags: ["Collections"],
+      summary: "List a collection's members.",
+      request: { params: z.object({ id: z.string() }) },
+      responses: {
+        200: {
+          description: "The collection's creator and its members.",
+          content: {
+            "application/json": {
+              schema: z.object({ created_by: z.string(), members: z.array(ArtifactMember) }),
+            },
+          },
+        },
+      },
+    }),
+    async (c) => {
+      const col = await meta.getCollection(c.req.param("id"))
+      if (!col || (await collectionRole(c, col)) === null) return bail(fail(c, 404, "not found"))
+      const rows = await meta.listCollectionMembers(col.id)
+      const users = await meta.getUsers(rows.map((r) => r.user_id))
+      const byId = new Map(users.map((u) => [u.id, u]))
+      return c.json({
+        created_by: col.created_by,
+        members: rows.map((r) => ({
+          user_id: r.user_id,
+          handle: byId.get(r.user_id)?.username ?? null,
+          name: byId.get(r.user_id)?.name ?? null,
+          role: r.role,
+        })),
+      })
+    },
+  )
+
+  app.openapi(
+    createRoute({
+      method: "put",
+      path: "/v1/collections/{id}/members",
+      tags: ["Collections"],
+      summary: "Add or update a collection member.",
+      request: { params: z.object({ id: z.string() }) },
+      responses: {
+        201: {
+          description: "The added member.",
+          content: { "application/json": { schema: ArtifactMember } },
+        },
+      },
+    }),
+    async (c) => {
+      const col = await meta.getCollection(c.req.param("id"))
+      if (!col) return bail(fail(c, 404, "not found"))
+      if (!(await canManageCollection(c, col, "manage"))) return bail(fail(c, 403, "forbidden"))
+      const b = await readJson(
+        c,
+        z
+          .object({
+            user: z.string().min(1).optional(),
+            email: z.string().min(1).optional(),
+            role: z.custom<Role>(isRole, "a valid role is required"),
+          })
+          .refine((v) => v.user || v.email, "a username or email is required"),
+      )
+      if (b instanceof Response) return bail(b)
+      const id = await resolveUserRef(meta, (b.user ?? b.email) as string)
+      const [user] = id ? await meta.getUsers([id]) : []
+      if (!user) return bail(fail(c, 404, "no Derive user with that username or email"))
+      await meta.setCollectionMember({
+        id: newId("cm"),
+        collection_id: col.id,
+        user_id: user.id,
+        role: b.role,
+      })
+      return c.json({ user_id: user.id, handle: user.username, name: user.name, role: b.role }, 201)
+    },
+  )
+
+  app.openapi(
+    createRoute({
+      method: "delete",
+      path: "/v1/collections/{id}/members/{userId}",
+      tags: ["Collections"],
+      summary: "Remove a collection member.",
+      request: { params: z.object({ id: z.string(), userId: z.string() }) },
+      responses: { 204: { description: "The member was removed." } },
+    }),
+    async (c) => {
+      const col = await meta.getCollection(c.req.param("id"))
+      if (!col) return bail(fail(c, 404, "not found"))
+      if (!(await canManageCollection(c, col, "manage"))) return bail(fail(c, 403, "forbidden"))
+      await meta.removeCollectionMember(col.id, c.req.param("userId"))
+      return c.body(null, 204)
+    },
+  )
 
   return app
 }
