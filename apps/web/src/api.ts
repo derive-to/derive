@@ -218,22 +218,14 @@ export interface ArtifactMember {
   role: Role
 }
 /** A DNS record the customer adds to validate a custom domain. */
-export interface DomainDnsRecord {
-  type: string
-  name: string
-  value: string
-}
+/** A DNS record to add when validating a custom domain. Generated from the OpenAPI spec. */
+export type DomainDnsRecord = components["schemas"]["DomainDnsRecord"]
 /** A vanity subdomain bound to one artifact (the per-artifact share section). */
 /** A vanity subdomain claimed for an artifact. Generated from the OpenAPI spec. */
 export type ArtifactDomain = components["schemas"]["ArtifactDomain"]
 /** A workspace custom domain (managed in settings; Cloudflare for SaaS). */
-export interface WorkspaceDomain {
-  host: string
-  status: string
-  /** DNS records to add while pending (undefined once active). */
-  records?: DomainDnsRecord[]
-  created_at: string
-}
+/** A workspace custom domain (Cloudflare for SaaS). Generated from the OpenAPI spec. */
+export type WorkspaceDomain = components["schemas"]["WorkspaceDomain"]
 /** The workspace: its name, the caller's role, and the member directory. */
 export interface Workspace {
   id: string

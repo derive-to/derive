@@ -439,6 +439,50 @@
           "status",
           "created_at"
         ]
+      },
+      "WorkspaceDomain": {
+        "type": "object",
+        "properties": {
+          "host": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "records": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DomainDnsRecord"
+            }
+          },
+          "created_at": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "host",
+          "status",
+          "created_at"
+        ]
+      },
+      "DomainDnsRecord": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "value": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "name",
+          "value"
+        ]
       }
     },
     "parameters": {}
@@ -1225,6 +1269,172 @@
         "responses": {
           "200": {
             "description": "The subdomain was released.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "ok"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/workspace/domains": {
+      "get": {
+        "tags": [
+          "Domains"
+        ],
+        "summary": "List the workspace's custom domains and whether they're supported here.",
+        "responses": {
+          "200": {
+            "description": "Whether custom domains are enabled, the CNAME target, and the domains.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean"
+                    },
+                    "cname_target": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "domains": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/WorkspaceDomain"
+                      }
+                    }
+                  },
+                  "required": [
+                    "enabled",
+                    "cname_target",
+                    "domains"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Domains"
+        ],
+        "summary": "Attach a custom domain to the workspace.",
+        "responses": {
+          "200": {
+            "description": "The domain (already attached to this workspace).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/WorkspaceDomain"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "cname_target": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "cname_target"
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "The newly attached domain, pending DNS validation.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/WorkspaceDomain"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "cname_target": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "cname_target"
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/workspace/domains/{host}/refresh": {
+      "post": {
+        "tags": [
+          "Domains"
+        ],
+        "summary": "Re-check a custom domain's validation status.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "host",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The domain's current status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceDomain"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/workspace/domains/{host}": {
+      "delete": {
+        "tags": [
+          "Domains"
+        ],
+        "summary": "Detach a custom domain from the workspace.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "host",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The domain was detached.",
             "content": {
               "application/json": {
                 "schema": {
