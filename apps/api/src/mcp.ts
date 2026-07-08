@@ -510,7 +510,7 @@ function buildServer(
       description:
         "START HERE on an artifact. The state of it in one call: a one-line summary, the versions that landed since `since_version`, which pages changed, the open (and outdated) comment threads, and the full version history. " +
         "Pass `comments` (open / addressed / resolved / outdated) to instead get that filtered thread list — your feedback to-do queue. " +
-        "Pass `response_format='detailed'` (optionally with `since_version`/`to_version`) to include the exact line-by-line diff between two versions. " +
+        "Pass `response_format='detailed'` (optionally with `since_version`/`to_version`) to include a line-by-line diff between two versions — of their READABLE Markdown form, not raw HTML, so it shows what changed rather than tag noise. " +
         "WAITING ON A REVIEW? Pass `wait` (seconds, max 50): the call blocks until the human sends back / approves / comments (or the time runs out), then returns the fresh state. Chain wait calls instead of sleeping between polls — feedback reaches you in seconds.",
       inputSchema: {
         short_id: z.string(),
@@ -618,7 +618,14 @@ function buildServer(
         if (ms && mh) pagesChanged = bundleFileChanges(ms, mh)
         if (response_format === "detailed") {
           const [as_, ah] = [await ctx.sourceText(vs), await ctx.sourceText(vh)]
-          if (as_ !== null && ah !== null) entryDiff = clip(formatDiff(diffLines(as_, ah)))
+          if (as_ !== null && ah !== null) {
+            // Diff the READABLE form, not raw source: HTML tag noise drowns a
+            // real change, and minified one-line HTML produces one useless
+            // del/add pair. Markdown conversion re-introduces line structure so
+            // the diff answers what an agent actually asks — what changed.
+            const md = diffLines(toMarkdown(as_, vs.content_type), toMarkdown(ah, vh.content_type))
+            entryDiff = `diff of markdown conversion (semantic view):\n\n${clip(formatDiff(md))}`
+          }
         }
       }
       const open = await ctx.meta.listComments(a.id, { state: "open" })

@@ -207,6 +207,49 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(cd.entry_diff).toContain("V2 Title")
   })
 
+  it("catch_up detailed diffs the markdown conversion, not raw HTML tag noise", async () => {
+    const { app, token } = appWithGrant("catchupmd", "openid derive:read derive:publish")
+    const v1 =
+      "<html><head><style>body{color:red}</style></head><body>" +
+      "<h1>Doc</h1><p>alpha bravo charlie</p></body></html>"
+    const v2 =
+      "<html><head><style>body{color:blue}</style></head><body>" +
+      "<h1>Doc</h1><p>alpha BRAVO charlie</p></body></html>"
+    const form1 = new FormData()
+    form1.append("file", new Blob([new TextEncoder().encode(v1)]), "index.html")
+    form1.append("title", "Semantic")
+    const shortId = (
+      await (
+        await app.request("/v1/artifacts", {
+          method: "POST",
+          body: form1,
+          headers: { authorization: `Bearer ${token}` },
+        })
+      ).json()
+    ).short_id
+    const form2 = new FormData()
+    form2.append("file", new Blob([new TextEncoder().encode(v2)]), "index.html")
+    await app.request(`/v1/artifacts/${shortId}/versions`, {
+      method: "POST",
+      body: form2,
+      headers: { authorization: `Bearer ${token}` },
+    })
+    const cd = JSON.parse(
+      toolText(
+        await call(app, token, "catch_up", {
+          short_id: shortId,
+          since_version: 1,
+          to_version: 2,
+          response_format: "detailed",
+        }),
+      ),
+    )
+    expect(cd.entry_diff).toContain("diff of markdown conversion")
+    expect(cd.entry_diff).toContain("BRAVO")
+    expect(cd.entry_diff).not.toContain("<p")
+    expect(cd.entry_diff).not.toContain("color:")
+  })
+
   it("read + catch_up handle multi-page bundles", async () => {
     const { app, token } = appWithGrant("bundle", "openid derive:read derive:publish")
     const enc = (s: string) => new TextEncoder().encode(s)
