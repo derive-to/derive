@@ -4,13 +4,17 @@
 # and the env you hand it. Derive-the-company still holds no keys.
 #
 # Config is purely environment (12-factor): DERIVE_SERVER / DERIVE_CONTEXT /
-# DERIVE_TOKEN, RUNNER_MODEL / RUNNER_TIMEOUT_MS / RUNNER_POLL_MS,
-# ANTHROPIC_API_KEY (the model), GH_TOKEN (private repo pointers + gh), plus
+# DERIVE_TOKEN, RUNNER_MODEL / RUNNER_TIMEOUT_MS / RUNNER_POLL_MS, the model
+# credential — exactly one of ANTHROPIC_API_KEY (API billing) or
+# CLAUDE_CODE_OAUTH_TOKEN (`claude setup-token`, bills the subscription; the
+# API key wins if both are set) — GH_TOKEN (private repo pointers + gh), plus
 # whatever the context's .mcp.json expects. See runner.compose.example.yml.
 FROM node:24-slim
 
 # git: repo pointers clone at boot. python3 + gh: what context manifests most
-# commonly shell out to (doctor checks both, warn-only).
+# commonly shell out to (doctor checks both, warn-only). uv: the launcher
+# python MCP servers ship with (`uvx <server>` in .mcp.json) — the Analytics
+# dress rehearsal found the Snowflake MCP dead in the water without it.
 RUN apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates curl git python3 \
     && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
@@ -18,7 +22,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
        > /etc/apt/sources.list.d/github-cli.list \
     && apt-get update && apt-get install -y --no-install-recommends gh \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin sh
 
 # Claude Code from npm (pin via build arg when reproducibility matters more
 # than freshness); the Derive CLI from THIS checkout, so the image always runs
@@ -35,6 +40,14 @@ RUN cd /opt/derive-cli && npm install --omit=dev && npm install -g /opt/derive-c
 RUN useradd -m runner && mkdir -p /work && chown runner:runner /work
 COPY --chmod=755 deploy/runner-entrypoint.sh /usr/local/bin/runner-entrypoint.sh
 USER runner
+
+# Trust the mounted context's .mcp.json. Interactively, Claude Code asks before
+# using a project's MCP servers and remembers the answer in $HOME — a fresh
+# container HOME means headless runs silently skip every server (the model sees
+# no tools and escalates everything). Mounting a context dir at /work IS the
+# approval decision here; the container is the trust boundary.
+RUN mkdir -p /home/runner/.claude \
+    && printf '{"enableAllProjectMcpServers": true}\n' > /home/runner/.claude/settings.json
 
 # /work is the context directory. Mount the cloned context project's context/
 # dir here (compose example) so .mcp.json, references/, and the repos/ clone

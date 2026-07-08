@@ -5,7 +5,8 @@
 #
 # The env file carries the secrets (never in this file, never in the image):
 #   DERIVE_TOKEN=dk_agt_…          the context's agent token
-#   ANTHROPIC_API_KEY=sk-ant-…     the model
+#   ANTHROPIC_API_KEY=sk-ant-…     the model (API billing) — or instead:
+#   CLAUDE_CODE_OAUTH_TOKEN=…      `claude setup-token` (bills the subscription)
 #   GH_TOKEN=ghp_…                 private repo pointers + gh (optional)
 #   …plus whatever the context's .mcp.json expects
 services:
