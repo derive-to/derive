@@ -1052,6 +1052,215 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/artifacts/{shortId}/comments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List an artifact's comments (authenticated readers only). */
+        get: {
+            parameters: {
+                query?: {
+                    state?: "open" | "resolved" | "outdated" | "addressed";
+                };
+                header?: never;
+                path: {
+                    shortId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The artifact's comments, each flagged whether its anchor still resolves. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            comments: components["schemas"]["Comment"][];
+                        };
+                    };
+                };
+            };
+        };
+        put?: never;
+        /** Post a comment (new thread) or a reply (with thread_id). */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    shortId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The created comment. */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Comment"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/artifacts/{shortId}/comments/{commentId}/resolve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Resolve or reopen the thread a comment belongs to. */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    shortId: string;
+                    commentId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The thread's new state. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            thread_id: string;
+                            /** @enum {string} */
+                            state: "open" | "resolved";
+                            updated: number;
+                        };
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/artifacts/{shortId}/comments/{commentId}/react": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Toggle a reaction on a comment. */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    shortId: string;
+                    commentId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The updated comment. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Comment"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/artifacts/{shortId}/comments/{commentId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Soft-delete a comment (author only); the row stays, body tombstoned. */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    shortId: string;
+                    commentId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The tombstoned comment. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Comment"];
+                    };
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        /** Edit a comment's body (author only). */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    shortId: string;
+                    commentId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The edited comment. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Comment"];
+                    };
+                };
+            };
+        };
+        trace?: never;
+    };
     "/v1/artifacts/{shortId}/view": {
         parameters: {
             query?: never;
@@ -1740,6 +1949,30 @@ export interface components {
             note: string | null;
             created_at: string;
             resolved_at: string | null;
+        };
+        Comment: {
+            id: string;
+            thread_id: string;
+            base_version: number;
+            path: string | null;
+            anchor: string | null;
+            body_md: string;
+            author: string;
+            /** @enum {string} */
+            state: "open" | "addressed" | "resolved" | "outdated";
+            created_at: string;
+            anchored?: boolean;
+            reactions?: {
+                [key: string]: string[];
+            };
+            edited?: boolean;
+            edited_at?: string | null;
+            deleted?: boolean;
+            mentions?: components["schemas"]["Mention"][];
+        };
+        Mention: {
+            id: string;
+            name: string;
         };
         Analytics: {
             total: number;

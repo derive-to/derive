@@ -24,3 +24,7 @@ export const ArtifactMember = z
 export const DiffOp = z
   .object({ t: z.enum(["ctx", "add", "del"]), line: z.string() })
   .openapi("DiffOp")
+
+/** A person or agent @mentioned in a comment — id + display name (the picker supplies
+ *  ids, so there's no server-side name parsing). Nested in Comment.mentions. */
+export const Mention = z.object({ id: z.string(), name: z.string() }).openapi("Mention")

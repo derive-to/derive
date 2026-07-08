@@ -389,6 +389,100 @@
           "resolved_at"
         ]
       },
+      "Comment": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "thread_id": {
+            "type": "string"
+          },
+          "base_version": {
+            "type": "number"
+          },
+          "path": {
+            "type": "string",
+            "nullable": true
+          },
+          "anchor": {
+            "type": "string",
+            "nullable": true
+          },
+          "body_md": {
+            "type": "string"
+          },
+          "author": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "open",
+              "addressed",
+              "resolved",
+              "outdated"
+            ]
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "anchored": {
+            "type": "boolean"
+          },
+          "reactions": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "edited": {
+            "type": "boolean"
+          },
+          "edited_at": {
+            "type": "string",
+            "nullable": true
+          },
+          "deleted": {
+            "type": "boolean"
+          },
+          "mentions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Mention"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "thread_id",
+          "base_version",
+          "path",
+          "anchor",
+          "body_md",
+          "author",
+          "state",
+          "created_at"
+        ]
+      },
+      "Mention": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name"
+        ]
+      },
       "Analytics": {
         "type": "object",
         "properties": {
@@ -1769,6 +1863,259 @@
                     "rounds",
                     "pending"
                   ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/artifacts/{shortId}/comments": {
+      "post": {
+        "tags": [
+          "Comments"
+        ],
+        "summary": "Post a comment (new thread) or a reply (with thread_id).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "shortId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "The created comment.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Comment"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "Comments"
+        ],
+        "summary": "List an artifact's comments (authenticated readers only).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "shortId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "open",
+                "resolved",
+                "outdated",
+                "addressed"
+              ]
+            },
+            "required": false,
+            "name": "state",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The artifact's comments, each flagged whether its anchor still resolves.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "comments": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Comment"
+                      }
+                    }
+                  },
+                  "required": [
+                    "comments"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/artifacts/{shortId}/comments/{commentId}/resolve": {
+      "post": {
+        "tags": [
+          "Comments"
+        ],
+        "summary": "Resolve or reopen the thread a comment belongs to.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "shortId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "commentId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The thread's new state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "thread_id": {
+                      "type": "string"
+                    },
+                    "state": {
+                      "type": "string",
+                      "enum": [
+                        "open",
+                        "resolved"
+                      ]
+                    },
+                    "updated": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "thread_id",
+                    "state",
+                    "updated"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/artifacts/{shortId}/comments/{commentId}/react": {
+      "post": {
+        "tags": [
+          "Comments"
+        ],
+        "summary": "Toggle a reaction on a comment.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "shortId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "commentId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The updated comment.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Comment"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/artifacts/{shortId}/comments/{commentId}": {
+      "patch": {
+        "tags": [
+          "Comments"
+        ],
+        "summary": "Edit a comment's body (author only).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "shortId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "commentId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The edited comment.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Comment"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Comments"
+        ],
+        "summary": "Soft-delete a comment (author only); the row stays, body tombstoned.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "shortId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "commentId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The tombstoned comment.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Comment"
                 }
               }
             }

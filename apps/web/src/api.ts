@@ -256,35 +256,16 @@ export interface Workspaces {
 /** Per-artifact view stats. Generated from the OpenAPI spec. */
 export type Analytics = components["schemas"]["Analytics"]
 /** A resolved @mention: the picked user's id + the display name shown inline. */
-export interface Mention {
-  id: string
-  name: string
-}
+/** A person/agent @mentioned in a comment. Generated from the OpenAPI spec. */
+export type Mention = components["schemas"]["Mention"]
 /** A review round: the agent asked this person to review a version, and polls for
  *  the answer. `pending` = waiting; `sent_back` = they returned answers; `approved`. */
 /** A review round on an artifact (the /derive loop). Generated from the OpenAPI spec. */
 export type ReviewRound = components["schemas"]["ReviewRound"]
 
-export interface Comment {
-  id: string
-  thread_id: string
-  base_version: number
-  path: string | null
-  anchor: string | null
-  body_md: string
-  author: string
-  // `addressed` = a proposed revision citing this thread is pending review.
-  // `outdated` = the quoted text this thread anchored to changed in a later
-  // version (set by the server's re-anchor sweep); the feedback may no longer apply.
-  state: "open" | "addressed" | "resolved" | "outdated"
-  created_at: string
-  anchored?: boolean
-  reactions?: Record<string, string[]>
-  edited?: boolean
-  edited_at?: string | null
-  deleted?: boolean
-  mentions?: Mention[]
-}
+/** A comment: threaded, anchored to a text quote, with reactions/edits/soft-delete.
+ *  Generated from the OpenAPI spec. */
+export type Comment = components["schemas"]["Comment"]
 /** A person/agent offered by the @mention picker — identified by @handle, never email. */
 export interface DirUser {
   id: string
