@@ -31,7 +31,12 @@ export const realtimeRoutes = (ctx: AppContext) => {
     artifact: Parameters<typeof actorFor>[1],
   ): Promise<Viewer> => {
     const me = await currentUser(c)
-    const role = effectiveRole(await actorFor(c, artifact), artifact.visibility)
+    const role = effectiveRole(
+      await actorFor(c, artifact),
+      artifact.visibility,
+      artifact.link_role,
+      artifact.link_audience,
+    )
     return me
       ? { id: me.id, name: me.username ?? "someone", role }
       : { id: anonViewerId(c), name: anonName(anonViewerId(c)), role }

@@ -303,8 +303,53 @@ function SharingDefaults() {
           </SelectMenuContent>
         </SelectMenu>
       </SettingRow>
+      <SettingRow
+        label="New artifact links"
+        description="What a freshly published artifact's URL grants, and to whom. Changing this never touches existing artifacts."
+      >
+        <div className="flex gap-1.5">
+          <SelectMenu
+            value={settings.defaultLinkAudience}
+            onValueChange={(v) =>
+              set("defaultLinkAudience", v as OrgSettings["defaultLinkAudience"])
+            }
+          >
+            <SelectMenuTrigger
+              aria-label="Default link audience"
+              data-testid="default-link-audience"
+            >
+              {settings.defaultLinkAudience === "public" ? "Anyone" : "Workspace"}
+            </SelectMenuTrigger>
+            <SelectMenuContent>
+              <SelectMenuItem value="org">Workspace</SelectMenuItem>
+              <SelectMenuItem value="public">Anyone</SelectMenuItem>
+            </SelectMenuContent>
+          </SelectMenu>
+          <SelectMenu
+            value={settings.defaultLinkRole}
+            onValueChange={(v) => set("defaultLinkRole", v as OrgSettings["defaultLinkRole"])}
+          >
+            <SelectMenuTrigger aria-label="Default link grant" data-testid="default-link-role">
+              {LINK_ROLE_LABELS[settings.defaultLinkRole] ?? settings.defaultLinkRole}
+            </SelectMenuTrigger>
+            <SelectMenuContent>
+              <SelectMenuItem value="none">Inert (invite-only)</SelectMenuItem>
+              <SelectMenuItem value="viewer">Can view</SelectMenuItem>
+              <SelectMenuItem value="commenter">Can comment</SelectMenuItem>
+              <SelectMenuItem value="editor">Can edit</SelectMenuItem>
+            </SelectMenuContent>
+          </SelectMenu>
+        </div>
+      </SettingRow>
     </SettingsGroup>
   )
+}
+
+const LINK_ROLE_LABELS: Record<string, string> = {
+  none: "Inert (invite-only)",
+  viewer: "Can view",
+  commenter: "Can comment",
+  editor: "Can edit",
 }
 
 const AGENT_VIS_LABELS: Record<string, string> = {

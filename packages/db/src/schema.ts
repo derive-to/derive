@@ -9,6 +9,8 @@ import type {
   DomainStatus,
   FollowKind,
   GeneralRole,
+  LinkAudience,
+  LinkRole,
   NotificationKind,
   ProposalState,
   ReportState,
@@ -42,10 +44,20 @@ export const artifact = sqliteTable("artifact", {
   title: text("title"),
   visibility: text("visibility").$type<Visibility>().notNull().default("private"),
   password_hash: text("password_hash"),
-  // The role general access (the link) grants a reacher with no higher explicit
-  // grant. viewer = view-only (default); commenter = authed reachers may comment
-  // (anonymous reachers are always clamped to viewer — see effectiveRole).
+  // RETIRED by round 4's link_role below. Orphaned, not dropped (expand/contract —
+  // see CONTRIBUTING.md): no code reads or writes this anymore. Kept so existing
+  // rows and the DDL stay consistent, and so ArtifactRecord's shape (which still
+  // carries it, deprecated) matches this table exactly (see ./parity).
   general_role: text("general_role").$type<GeneralRole>().notNull().default("viewer"),
+  // The link grant pair (round 4): what merely holding this artifact's URL confers
+  // (link_role) × who the URL works for (link_audience: `org` = signed-in members
+  // of this workspace, `public` = anyone), at ANY visibility. Defaults are
+  // fail-closed — `none` (inert) + `org` (narrowest) — so a row that's never
+  // explicitly stamped grants nothing; publish() always resolves and stamps real
+  // values. Anonymous holders are clamped to viewer and never enter an org
+  // audience — see effectiveRole.
+  link_role: text("link_role").$type<LinkRole>().notNull().default("none"),
+  link_audience: text("link_audience").$type<LinkAudience>().notNull().default("org"),
   kind: text("kind").$type<ArtifactKind>().notNull(),
   spa: integer("spa").$type<0 | 1>().notNull().default(0),
   // When locked, direct publishes are rejected — changes must go through the

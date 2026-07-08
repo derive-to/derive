@@ -53,10 +53,13 @@ describe("comment access via the general-access link", () => {
       (await app.request(`/v1/artifacts/${shortId}/comments`, json({ body_md: "no" }))).status,
     ).toBe(403)
 
-    // my_role reflects the grant per caller; the GET returns the persisted general_role.
+    // my_role reflects the grant per caller; the GET returns the persisted link
+    // pair (the legacy generalRole PATCH above landed on link_role, audience
+    // forced public by the coherence rule).
     const bobView = await (await view(shortId, as(bob.email))).json()
     expect(bobView.my_role).toBe("commenter")
-    expect(bobView.general_role).toBe("commenter")
+    expect(bobView.link_role).toBe("commenter")
+    expect(bobView.link_audience).toBe("public")
     const anonView = await (await view(shortId)).json()
     expect(anonView.my_role).toBe("viewer")
   })
@@ -70,5 +73,67 @@ describe("comment access via the general-access link", () => {
     // Flip back to view-only: the same reacher can no longer comment.
     expect((await setAccess(shortId, "viewer")).ok).toBe(true)
     expect((await comment(shortId, as(bob.email))).status).toBe(403)
+  })
+})
+
+// The workspace-audience link (round 4, scenario 1): a private artifact's URL
+// admits workspace members at the link's grant — the review loop works on a
+// pasted link — while outsiders and anonymous stay out entirely.
+describe("comment access via the workspace link", () => {
+  const dana: TestUser = {
+    id: "u_ca_dana",
+    email: "dana@ca.test",
+    name: "Dana",
+    username: "danac",
+  }
+  const memo: TestUser = {
+    id: "u_ca_memo",
+    email: "memo@ca.test",
+    name: "Memo",
+    username: "memoc",
+  }
+  // Otto signs in to the SAME app but never joins Dana's workspace (isolated:
+  // everyone provisions their own; Dana then invites only Memo) — the
+  // signed-in-outsider column of the state table.
+  const otto: TestUser = { id: "u_ca_otto", email: "otto@ca.test", name: "Otto" }
+  const { app } = makeAuthedApp("comment-access-org", [dana, memo, otto], undefined, {
+    isolated: true,
+  })
+
+  it("a member comments on a private doc via the default link; an outsider gets 404", async () => {
+    await app.request("/v1/me", { headers: as(dana.email) }) // provision Dana's workspace
+    await app.request("/v1/me", { headers: as(otto.email) }) // Otto provisions his own
+    // Dana seats Memo in her workspace; Otto stays outside.
+    expect(
+      (
+        await app.request("/v1/workspace/members", {
+          ...jsonAs(as(dana.email), { user: "memoc", role: "commenter" }),
+          method: "PUT",
+        })
+      ).ok,
+    ).toBe(true)
+
+    // The factory default pair (org · commenter) — no fields sent.
+    const a = await (await publishAs(app, "<h1>draft</h1>", {}, as(dana.email))).json()
+    expect(a.visibility).toBe("private")
+    expect(a.link_role).toBe("commenter")
+    expect(a.link_audience).toBe("org")
+
+    // Memo (workspace member, no share) comments through the link.
+    expect(
+      (
+        await app.request(
+          `/v1/artifacts/${a.short_id}/comments`,
+          jsonAs(as(memo.email), { body_md: "left a note via the pasted link" }),
+        )
+      ).ok,
+    ).toBe(true)
+
+    // Otto is signed in but outside the workspace: the same URL is inert (404,
+    // indistinguishable from not existing). Anonymous likewise.
+    expect(
+      (await app.request(`/v1/artifacts/${a.short_id}`, { headers: as(otto.email) })).status,
+    ).toBe(404)
+    expect((await app.request(`/v1/artifacts/${a.short_id}`)).status).toBe(404)
   })
 })

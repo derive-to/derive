@@ -26,33 +26,51 @@ Derive ships safe defaults, but a few choices matter for an internet-facing depl
   view (comment, propose, publish, share, manage) requires an authenticated identity, so
   there is no "open" mode that elevates an anonymous caller. To write, a caller signs in
   (Better Auth is always available, even zero-config) or presents a static `DERIVE_TOKEN`
-  (set it for headless CI/agent automation). General access (the shared link) can grant a
-  reacher view or comment; the comment grant only lifts a *signed-in* reacher to commenter,
-  never an anonymous one. The effective capability by who's asking:
+  (set it for headless CI/agent automation).
 
-  | Visibility                     | Anonymous (no account)         | Signed in via link (no explicit grant) | Member / explicit share        |
-  |--------------------------------|--------------------------------|----------------------------------------|--------------------------------|
-  | Public, **view**               | View                           | View                                   | Their role (at least view)     |
-  | Public, **comment**            | View only (sign in to comment) | View + comment                         | Their role (at least comment)  |
-  | Public + password (the lock)   | Unlock, then as above          | Unlock, then as above                  | Their role (no password needed)|
-  | Workspace (org)                | No access                      | No access                              | Their role (members only)      |
-  | Private — default              | No access                      | No access                              | Explicit share only — workspace role grants nothing |
+  Access is two independent axes (round 4, docs/plans/link-grant.md). **Where it's
+  listed** (`visibility`: private / org / public) governs discoverability — feeds,
+  libraries, and whether workspace membership alone grants standing (it does at
+  org/public, never at private). **What the link grants** (`link_audience` ×
+  `link_role`) governs reach: who the bare URL works for (`org` = signed-in members
+  of the artifact's workspace, `public` = anyone) and what it confers (`none` =
+  inert, invite-only; viewer / commenter / editor). Writing grants only lift a
+  *signed-in* holder the audience admits — never an anonymous one. The effective
+  capability by who's asking, for any visibility:
 
-  Three visibilities, one modifier: a password on a public artifact gates its
-  reach until unlocked (members and explicit shares never need it), and a locked
-  artifact's bytes are never shared-cacheable. There is no listing axis —
-  "public" means the link works, full stop.
+  | Link grant                | Anonymous (no account) | Signed in outside the workspace | Workspace member       | Explicit share          |
+  |---------------------------|------------------------|---------------------------------|------------------------|-------------------------|
+  | Inert (`none`) — sealed   | No access              | No access                       | Their standing¹        | Their share role        |
+  | Workspace · view/comment/edit | No access          | No access                       | max(standing¹, grant)  | max(share, grant²)      |
+  | Anyone · view             | View                   | View                            | max(standing¹, view)   | max(share, view)        |
+  | Anyone · comment          | View (sign in to comment) | View + comment               | max(standing¹, comment)| max(share, comment)     |
+  | Anyone · edit             | View (sign in to edit) | Editor                          | max(standing¹, edit)   | max(share, edit)        |
 
-  Every publish defaults to **private**: only the publisher (written as the
-  owner-member at creation) can see a fresh artifact. That includes AGENT
+  ¹ Standing = membership role at org/public visibility; NOTHING at private (a
+  workspace owner still cannot open a teammate's sealed private draft by role
+  alone). ² A shared-with outsider is not in a workspace audience; their share
+  role alone applies.
+
+  One coherence rule: a **public listing requires a public link at viewer or
+  above** — "public means the link works, full stop"; listed-but-unopenable
+  states are unrepresentable. One modifier: a password on a public listing gates
+  the link floor until unlocked (members and explicit shares never need it), and
+  a locked artifact's bytes are never shared-cacheable.
+
+  Every publish defaults to a **private listing with a Workspace · can-comment
+  link**: nothing is listed anywhere, teammates handed the URL can open and
+  comment, and no one outside the workspace can reach it. That includes AGENT
   publishes — the /mcp server, and any /v1 publish carrying a registered agent
-  token or OAuth bearer (the CLI and stdio-shim paths) — governed by the
-  workspace's `defaultAgentVisibility` (private, or workspace for teams that
-  want agent work landing shared). Private artifacts never appear in another
-  viewer's listings, profiles, or People surfaces (your own library and the
-  "Created by me" filter always find your own). Widening (workspace, public) is
-  always an explicit act. GitHub-mirror syncs publish workspace-visible — a
-  mirrored repo is a workspace resource, not a personal draft.
+  token or OAuth bearer (the CLI and stdio-shim paths) — where the listing is
+  governed by `defaultAgentVisibility` and the link pair by the same workspace
+  defaults (`defaultLinkAudience` · `defaultLinkRole`; a bare public publish gets
+  the classic public · viewer pair, never the workspace role). Existing artifacts
+  are never retroactively widened by changing a default. Private artifacts never
+  appear in another viewer's listings, profiles, or People surfaces (your own
+  library and the "Created by me" filter always find your own). Widening —
+  listing wider, or opening the link to Anyone — is always an explicit act.
+  GitHub-mirror syncs publish workspace-visible — a mirrored repo is a workspace
+  resource, not a personal draft.
 
   `packages/core/src/permissions.ts` (`effectiveRole`) is the single source of truth for
   this table, enforced on every request by the one `can()` gate and surfaced in the UI so

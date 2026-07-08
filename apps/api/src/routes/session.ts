@@ -324,7 +324,14 @@ export const sessionRoutes = (ctx: AppContext) => {
     // access. A pure read-only viewer gets just themselves.
     if (
       artifact &&
-      (isToken(c) || can(await actorFor(c, artifact), "comment", artifact.visibility))
+      (isToken(c) ||
+        can(
+          await actorFor(c, artifact),
+          "comment",
+          artifact.visibility,
+          artifact.link_role,
+          artifact.link_audience,
+        ))
     ) {
       for (const m of await meta.listArtifactMembers(artifact.id)) ids.add(m.user_id)
       for (const cm of await meta.listComments(artifact.id)) if (cm.author_id) ids.add(cm.author_id)

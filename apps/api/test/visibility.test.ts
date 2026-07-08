@@ -8,23 +8,61 @@ import { as, makeAuthedApp, publishAs, type TestUser } from "./helpers"
 const ana: TestUser = { id: "u_vis_ana", email: "ana@vis.test", name: "Ana", username: "anav" }
 const ben: TestUser = { id: "u_vis_ben", email: "ben@vis.test", name: "Ben", username: "benv" }
 
-describe("publish defaults to private", () => {
-  it("no visibility field ⇒ private; unreadable to anonymous AND workspace members", async () => {
+describe("publish defaults to private + a workspace comment link (round 4)", () => {
+  it("no fields ⇒ private listing, link works for workspace members at commenter", async () => {
     const { app } = makeAuthedApp("vis-default", [ana, ben], "editor")
     const a = await (await publishAs(app, "<h1>draft</h1>", {}, as(ana.email))).json()
     expect(a.visibility).toBe("private")
-    // Anonymous: the detail 404s and the bytes don't serve.
+    // The round-4 factory default: the URL works inside the workspace, at comment.
+    expect(a.link_role).toBe("commenter")
+    expect(a.link_audience).toBe("org")
+    // Anonymous: the detail 404s and the bytes don't serve — anon is never in an
+    // org audience.
     expect((await app.request(`/v1/artifacts/${a.short_id}`)).status).toBe(404)
     expect((await app.request(`/raw/${a.short_id}/v/1/index.html`)).status).toBe(404)
-    // Even a workspace EDITOR can't see it — private means invited people only.
-    expect(
-      (await app.request(`/v1/artifacts/${a.short_id}`, { headers: as(ben.email) })).status,
-    ).toBe(404)
+    // A workspace member HOLDING THE URL just opens it, at the link's grant —
+    // Anir's scenario 1: unlisted, but a pasted link never dead-ends a teammate.
+    const bens = await app.request(`/v1/artifacts/${a.short_id}`, { headers: as(ben.email) })
+    expect(bens.status).toBe(200)
+    expect((await bens.json()).my_role).toBe("commenter")
+    // Unlisted stays unlisted: Ben's library never shows it (the link is the only way in).
+    const bensList = await (await app.request("/v1/artifacts", { headers: as(ben.email) })).json()
+    expect(bensList.artifacts.map((x: { short_id: string }) => x.short_id)).not.toContain(
+      a.short_id,
+    )
     // The publisher owns it (the owner-member row written at publish).
     const mine = await (
       await app.request(`/v1/artifacts/${a.short_id}`, { headers: as(ana.email) })
     ).json()
     expect(mine.my_role).toBe("owner")
+  })
+
+  it("link_role none ⇒ true invite-only: the URL is inert even inside the workspace", async () => {
+    const { app } = makeAuthedApp("vis-none", [ana, ben], "editor")
+    const a = await (
+      await publishAs(app, "<h1>draft</h1>", { link_role: "none" }, as(ana.email))
+    ).json()
+    expect(a.link_role).toBe("none")
+    expect(
+      (await app.request(`/v1/artifacts/${a.short_id}`, { headers: as(ben.email) })).status,
+    ).toBe(404)
+  })
+
+  it("a public-audience link on a private artifact reaches anyone — scenario 2", async () => {
+    const { app } = makeAuthedApp("vis-world-link", [ana], "editor")
+    const a = await (
+      await publishAs(
+        app,
+        "<h1>unlisted</h1>",
+        { link_role: "viewer", link_audience: "public" },
+        as(ana.email),
+      )
+    ).json()
+    expect(a.visibility).toBe("private")
+    // Anonymous holder reads (clamped to view); it is still listed nowhere.
+    const anonView = await app.request(`/v1/artifacts/${a.short_id}`)
+    expect(anonView.status).toBe(200)
+    expect((await anonView.json()).my_role).toBe("viewer")
   })
 })
 
@@ -77,11 +115,11 @@ describe("agents act as their registrant, capped at their registered role", () =
         })
       ).status,
     ).toBe(403)
-    // Private's contract for a teammate: neither the link nor any listing —
-    // the draft is Ana's until she shares or promotes it.
-    expect(
-      (await app.request(`/v1/artifacts/${a.short_id}`, { headers: as(ben.email) })).status,
-    ).toBe(404)
+    // Private's contract for a teammate (round 4): never LISTED — but the URL
+    // works at the workspace default grant (commenter), so a pasted link opens.
+    const bensView = await app.request(`/v1/artifacts/${a.short_id}`, { headers: as(ben.email) })
+    expect(bensView.status).toBe(200)
+    expect((await bensView.json()).my_role).toBe("commenter")
     const bensList = await (await app.request("/v1/artifacts", { headers: as(ben.email) })).json()
     expect(bensList.artifacts.map((x: { short_id: string }) => x.short_id)).not.toContain(
       a.short_id,
@@ -153,14 +191,42 @@ describe("agents act as their registrant, capped at their registered role", () =
       ).status,
     ).toBe(201)
 
-    // Ben's private draft stays invisible to Ana's agent — derived standing is
-    // Ana's, and Ana has none here.
+    // Ben's private draft: Ana's agent is a workspace principal, so the default
+    // workspace link admits it at COMMENTER (round 4) — reading via the URL works,
+    // exactly like any teammate holding the link...
     const bens = await (
       await publishAs(app, "<h1>secret</h1>", { visibility: "private" }, as(ben.email))
     ).json()
+    const read = await app.request(`/v1/artifacts/${bens.short_id}`, {
+      headers: { authorization: `Bearer ${reg.token}` },
+    })
+    expect(read.status).toBe(200)
+    expect((await read.json()).my_role).toBe("commenter")
+    // ...but WORKING on it still needs editor standing, which the link never
+    // grants here — derived standing is Ana's, and Ana has none on Ben's draft.
+    const form3 = new FormData()
+    form3.append("file", new Blob([new TextEncoder().encode("<h1>hijack</h1>")]), "draft.html")
     expect(
       (
-        await app.request(`/v1/artifacts/${bens.short_id}`, {
+        await app.request(`/v1/artifacts/${bens.short_id}/versions`, {
+          method: "POST",
+          body: form3,
+          headers: { authorization: `Bearer ${reg.token}` },
+        })
+      ).status,
+    ).toBe(403)
+    // An inert link (`none`) keeps even the read closed — true invite-only.
+    const sealed = await (
+      await publishAs(
+        app,
+        "<h1>sealed</h1>",
+        { visibility: "private", link_role: "none" },
+        as(ben.email),
+      )
+    ).json()
+    expect(
+      (
+        await app.request(`/v1/artifacts/${sealed.short_id}`, {
           headers: { authorization: `Bearer ${reg.token}` },
         })
       ).status,
@@ -168,11 +234,18 @@ describe("agents act as their registrant, capped at their registered role", () =
   })
 })
 
-describe("private: only invited people", () => {
-  it("hides a private artifact from workspace members until shared", async () => {
+describe("private: invite-only when the link is inert", () => {
+  it("hides an inert-link private artifact from workspace members until shared", async () => {
     const { app } = makeAuthedApp("vis-private", [ana, ben], "editor")
+    // link_role none = round 1 of the state table: true invite-only, the pre-round-4
+    // `private` contract. (The DEFAULT link is org·commenter — covered above.)
     const a = await (
-      await publishAs(app, "<h1>secret</h1>", { visibility: "private" }, as(ana.email))
+      await publishAs(
+        app,
+        "<h1>secret</h1>",
+        { visibility: "private", link_role: "none" },
+        as(ana.email),
+      )
     ).json()
 
     // The creator owns it (the owner-member row written at publish).
@@ -182,7 +255,8 @@ describe("private: only invited people", () => {
     expect(mine.my_role).toBe("owner")
 
     // Ben is a workspace EDITOR and still can't see it — org role grants nothing
-    // on private. Detail, bytes, and the library listing all stay dark.
+    // on private, and the inert link admits no one. Detail, bytes, and the
+    // library listing all stay dark.
     expect(
       (await app.request(`/v1/artifacts/${a.short_id}`, { headers: as(ben.email) })).status,
     ).toBe(404)

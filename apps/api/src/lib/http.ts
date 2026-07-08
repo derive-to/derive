@@ -1,4 +1,4 @@
-import type { Role, Visibility } from "@derive/core"
+import type { LinkAudience, LinkRole, Role, Visibility } from "@derive/core"
 import type { Context } from "hono"
 import type { ContentfulStatusCode } from "hono/utils/http-status"
 import type { z } from "zod"
@@ -192,6 +192,32 @@ export const visibilityOf = (v: unknown): Visibility | undefined =>
     ? (VISIBILITIES as readonly string[]).includes(v)
       ? (v as Visibility)
       : LEGACY_VISIBILITY[v]
+    : undefined
+
+/** The link grant (round 4): what merely holding an artifact's URL confers
+ *  (link_role) × who the URL works for (link_audience), independent of
+ *  visibility. See docs/plans/link-grant.md. */
+export const LINK_ROLES = ["none", "viewer", "commenter", "editor"] as const
+export const LINK_AUDIENCES = ["org", "public"] as const
+
+/** Legacy wire alias: pre-round-4 clients sent `general_role`, which only ever
+ *  carried `viewer`/`commenter` (the public-only reach select). Both values are
+ *  already valid LinkRole literals, so no remapping — this alias just accepts
+ *  the old field name at the same values, never `none`/`editor` (those never
+ *  existed on the old field). */
+export const linkRoleOf = (v: unknown): LinkRole | undefined =>
+  typeof v === "string" && (LINK_ROLES as readonly string[]).includes(v)
+    ? (v as LinkRole)
+    : undefined
+
+/** Friendly audience spellings map onto the canonical pair: the MCP tools say
+ *  `workspace`, humans might say `everyone`. */
+const AUDIENCE_ALIASES: Record<string, LinkAudience> = { workspace: "org", everyone: "public" }
+export const linkAudienceOf = (v: unknown): LinkAudience | undefined =>
+  typeof v === "string"
+    ? (LINK_AUDIENCES as readonly string[]).includes(v)
+      ? (v as LinkAudience)
+      : AUDIENCE_ALIASES[v]
     : undefined
 
 /**

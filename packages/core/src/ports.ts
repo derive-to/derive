@@ -2,7 +2,7 @@
  * Core owns the ports; packages/db and packages/storage provide the adapters.
  * Everything here must run on Node AND Cloudflare Workers — no Node APIs.
  */
-import type { GeneralRole, Role } from "./permissions"
+import type { GeneralRole, LinkAudience, LinkRole, Role } from "./permissions"
 
 export interface BlobStore {
   /** Content-addressed put; returns the sha256 hex key. Idempotent. */
@@ -11,17 +11,20 @@ export interface BlobStore {
 }
 
 export type ArtifactKind = "file" | "bundle"
-// Three audiences, each answering one question: who can open the link.
-// `private`: only per-artifact members (the publisher becomes the owner-member at
-// creation) — workspace membership grants nothing. The agent-draft default.
-// `org`: the team — any workspace member, at their membership role, listed in
-// the workspace library.
-// `public`: anyone with the URL. A `password_hash` on a public artifact is a
-// LOCK, not a visibility: the reach floor stays gated until unlocked, while
-// members and explicit shares pass by role. There is no listing axis —
-// broadcast is not a per-artifact state.
+// Three listing states, each answering one question: where does this show up.
+// `private`: no feeds, no libraries — only per-artifact members (the publisher
+// becomes the owner-member at creation) see it; workspace membership grants
+// nothing. The agent-draft default.
+// `org`: the workspace library — any workspace member, at their membership role.
+// `public`: the workspace-agnostic directory (when one exists).
+// Visibility is orthogonal to reach: see `link_role` (round 4, LinkRole) below
+// for what merely holding the artifact's URL grants, independent of where it's
+// listed. A `password_hash` on a public artifact is a LOCK on the link floor
+// (round 3 + round 4), not a visibility: gated until unlocked, while members
+// and explicit shares pass by role.
 // (Pre-collapse rows migrate at boot: unlisted→private, link→public,
-// password→public with the hash kept. See docs/plans/visibility-collapse.md.)
+// password→public with the hash kept. See docs/plans/visibility-collapse.md
+// and docs/plans/link-grant.md.)
 export type Visibility = "public" | "org" | "private"
 
 /** A platform subdomain (`name.derived.app`) or a customer's own domain. */
@@ -38,12 +41,25 @@ export interface ArtifactRecord {
   slug: string | null
   title: string | null
   visibility: Visibility
-  /** Salted hash of the unlock password for `password` visibility; null otherwise. */
+  /** Salted hash of the unlock password locking a `public` artifact's link; null otherwise. */
   password_hash: string | null
-  /** The role general access (the link) grants a reacher with no higher explicit grant.
-   *  `viewer` (default) = view-only; `commenter` = authenticated reachers may comment.
-   *  Anonymous reachers are always clamped to `viewer` regardless (see effectiveRole). */
+  /** @deprecated retired by round 4's `link_role`. Orphaned, not dropped
+   *  (expand/contract, CONTRIBUTING.md): the column stays so existing rows and the
+   *  DDL stay consistent across dialects, but no code reads or writes it anymore —
+   *  it exists purely to keep this Record's shape matching the drizzle table
+   *  (packages/db/src/parity.ts's exact-shape check). */
   general_role: GeneralRole
+  /** The link grant, half 1 of 2 (round 4): what merely holding this artifact's URL
+   *  grants a reacher the audience admits, at ANY visibility. `none` (default) = the
+   *  link is inert, invite-only; `viewer`/`commenter`/`editor` grant that role.
+   *  Anonymous holders are always clamped to `viewer` (see effectiveRole). */
+  link_role: LinkRole
+  /** The link grant, half 2 of 2: WHO the URL works for. `org` (default) = signed-in
+   *  members of this artifact's workspace only — the "unlisted, but my team can open
+   *  my link" state; `public` = any holder. Irrelevant while link_role is `none`.
+   *  Coherence: `public` visibility requires a `public` audience at viewer or above
+   *  (enforced at the write paths, not here). */
+  link_audience: LinkAudience
   kind: ArtifactKind
   spa: 0 | 1
   /** Locked: direct publishes are rejected; changes must go through a proposal. */
@@ -139,10 +155,16 @@ export interface NewArtifact {
   slug: string | null
   title: string | null
   visibility: Visibility
-  /** Salted unlock-password hash; set only for `password` visibility. */
+  /** Salted unlock-password hash locking a `public` link; null/omitted otherwise. */
   password_hash?: string | null
-  /** General-access role; defaults to `viewer` (view-only) when omitted. */
-  general_role?: GeneralRole
+  /** The link grant pair (round 4). Omitted defaults are fail-closed at the store
+   *  layer — `none` (inert link) + `org` (narrowest audience) — a caller that wants
+   *  reach must say so explicitly. `publish()` always resolves and stamps values
+   *  (explicit request fields > the org's defaults > the factory default
+   *  `org · commenter`) before calling `createArtifact`, so this optionality is a
+   *  store-level safety net, not the product default. */
+  link_role?: LinkRole
+  link_audience?: LinkAudience
   kind: ArtifactKind
   spa: 0 | 1
 }
@@ -165,14 +187,15 @@ export interface NewVersion {
 
 export interface MetaStore {
   createArtifact(a: NewArtifact): Promise<ArtifactRecord>
-  /** Change an artifact's general access: visibility, the password hash locking a
-   *  public link (null clears; meaningless off `public`), and the general-access
-   *  role (view vs comment). */
+  /** Change an artifact's listing (visibility), the password hash locking a public
+   *  link (null clears; meaningless off `public`), and the link grant pair (round 4:
+   *  who the URL works for × what it confers). */
   setVisibility(
     artifactId: string,
     visibility: Visibility,
     passwordHash: string | null,
-    generalRole: GeneralRole,
+    linkRole: LinkRole,
+    linkAudience: LinkAudience,
   ): Promise<void>
   /** Toggle the change-lock: when locked, direct publishes are rejected. */
   setLocked(artifactId: string, locked: 0 | 1): Promise<void>
@@ -1325,6 +1348,14 @@ export interface OrgSettings {
    *  say. Private by default: an agent's draft is the human's until they promote
    *  it — sharing wider is the deliberate act (the blessing gesture). */
   defaultAgentVisibility: Visibility
+  /** The link grant a NEW publish lands with when the publisher doesn't say
+   *  (round 4, "the link grant" — see docs/plans/link-grant.md). Factory default
+   *  `org · commenter` ("Workspace · can comment"): a pasted link never dead-ends
+   *  a teammate, and Derive is a review loop, so the link hands over the whole
+   *  conversation, not just the read — while staying inert outside the workspace.
+   *  Existing artifacts are never retroactively widened by changing these. */
+  defaultLinkRole: LinkRole
+  defaultLinkAudience: LinkAudience
 }
 
 export const DEFAULT_ORG_SETTINGS: OrgSettings = {
@@ -1334,6 +1365,8 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
   githubPreviewLink: true,
   slackPost: true,
   defaultAgentVisibility: "private",
+  defaultLinkRole: "commenter",
+  defaultLinkAudience: "org",
 }
 
 /** A connected Slack workspace (one per Derive workspace). `bot_token` is the OAuth bot

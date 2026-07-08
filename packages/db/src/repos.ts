@@ -17,11 +17,12 @@ import type {
   DomainStatus,
   FollowKind,
   FollowRecord,
-  GeneralRole,
   GitHubAppRecord,
   GitHubInstallationRecord,
   GithubAuthor,
   InvitationRecord,
+  LinkAudience,
+  LinkRole,
   ListArtifactsOpts,
   MembershipRecord,
   NewAgent,
@@ -274,7 +275,10 @@ export const parseOAuthScopes = (s: string | string[] | null): string[] => {
  *  written before the visibility collapse: a legacy agent default of `unlisted`
  *  is today's `private`, `link`/`public` clamp to `org` (an agent default must
  *  never world-publish), and the retired defaultUnlistedRole key is dropped.
- *  Shared by both drivers so old blobs read identically everywhere. */
+ *  The round-4 link-grant defaults normalize the same way: an unknown or missing
+ *  value reads as the factory default (`commenter` / `org`), so a stale blob can
+ *  never widen a workspace's default link. Shared by both drivers so old blobs
+ *  read identically everywhere. */
 export const parseOrgSettings = (raw: string | null): OrgSettings => {
   let parsed: Partial<OrgSettings> & { defaultUnlistedRole?: unknown } = {}
   try {
@@ -284,7 +288,21 @@ export const parseOrgSettings = (raw: string | null): OrgSettings => {
   const v = rest.defaultAgentVisibility as string | undefined
   const defaultAgentVisibility: OrgSettings["defaultAgentVisibility"] =
     v === "org" || v === "link" || v === "public" ? "org" : "private"
-  return { ...DEFAULT_ORG_SETTINGS, ...rest, defaultAgentVisibility }
+  const lr = rest.defaultLinkRole as string | undefined
+  const defaultLinkRole: OrgSettings["defaultLinkRole"] =
+    lr === "none" || lr === "viewer" || lr === "commenter" || lr === "editor"
+      ? lr
+      : DEFAULT_ORG_SETTINGS.defaultLinkRole
+  const la = rest.defaultLinkAudience as string | undefined
+  const defaultLinkAudience: OrgSettings["defaultLinkAudience"] =
+    la === "org" || la === "public" ? la : DEFAULT_ORG_SETTINGS.defaultLinkAudience
+  return {
+    ...DEFAULT_ORG_SETTINGS,
+    ...rest,
+    defaultAgentVisibility,
+    defaultLinkRole,
+    defaultLinkAudience,
+  }
 }
 
 export const collectManagedIds = (rows: { files: string }[]): string[] => {
@@ -350,11 +368,17 @@ export function makeRepos(db: SqliteDb) {
     artifactId: string,
     visibility: Visibility,
     passwordHash: string | null,
-    generalRole: GeneralRole,
+    linkRole: LinkRole,
+    linkAudience: LinkAudience,
   ): Promise<void> => {
     await db
       .update(artifact)
-      .set({ visibility, password_hash: passwordHash, general_role: generalRole })
+      .set({
+        visibility,
+        password_hash: passwordHash,
+        link_role: linkRole,
+        link_audience: linkAudience,
+      })
       .where(eq(artifact.id, artifactId))
       .run()
   }

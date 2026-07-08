@@ -28,6 +28,8 @@ import { buildReviewEmail } from "../lib/email"
 import {
   DEFAULT_WORKSPACE_NAME,
   fail,
+  linkAudienceOf,
+  linkRoleOf,
   MAX_UPLOAD_BYTES,
   readJson,
   str,
@@ -227,8 +229,8 @@ export const artifactRoutes = (ctx: AppContext) => {
         favorite: favorites.has(a.id),
         // Which actions the client may surface on the row (the card's quick-actions
         // menu gates delete/tags on it). Workspace membership + per-artifact shares
-        // + the general-access floor; collection-share roles aren't folded in at
-        // list granularity, so the detail response's my_role stays authoritative.
+        // + the link floor; collection-share roles aren't folded in at list
+        // granularity, so the detail response's my_role stays authoritative.
         my_role: isOperator
           ? "owner"
           : effectiveRole(
@@ -244,7 +246,8 @@ export const artifactRoutes = (ctx: AppContext) => {
                   }
                 : { kind: "anon" },
               a.visibility,
-              a.general_role,
+              a.link_role,
+              a.link_audience,
             ),
         // The current author as a resolved profile (name/login/avatar + Derive handle), so
         // the list can render the last editor + filter by them.
@@ -364,6 +367,18 @@ export const artifactRoutes = (ctx: AppContext) => {
     if (!shortId && rawVisibility === "password" && !password)
       return fail(c, 400, "a password is required for password visibility")
     const passwordHash = visibility === "public" && password ? hashPassword(password) : undefined
+    // The link grant pair (round 4): who the URL works for × what it confers.
+    // `link_role`/`link_audience` are the current fields; `general_role` is accepted
+    // as a legacy alias for the role (pre-round-4 clients only ever sent
+    // viewer/commenter, both valid LinkRole literals — see linkRoleOf).
+    const rawLinkRole = str(body["link_role"]) ?? str(body["general_role"])
+    const linkRole = linkRoleOf(rawLinkRole)
+    if (rawLinkRole && !linkRole)
+      return fail(c, 400, "link_role must be one of: none, viewer, commenter, editor")
+    const rawLinkAudience = str(body["link_audience"])
+    const linkAudience = linkAudienceOf(rawLinkAudience)
+    if (rawLinkAudience && !linkAudience)
+      return fail(c, 400, "link_audience must be one of: org, public")
 
     try {
       // The authenticated principal behind this publish (signed-in user or agent) — its
@@ -376,13 +391,38 @@ export const artifactRoutes = (ctx: AppContext) => {
       // An AGENT-credentialed create (registered token / OAuth bearer — the CLI
       // and stdio-shim paths) lands with the workspace's agent default when no
       // visibility was asked for: usually `private` — the human promotes. A
-      // signed-in human's own publish keeps the same private default.
+      // signed-in human's own publish keeps the same private default. One org-settings
+      // read on a NEW artifact covers all the defaults (agent visibility + the link pair).
       const agentPrincipal = await agentFor(c)
+      const settings = !shortId ? await meta.getOrgSettings(org) : null
       const resolvedVisibility =
-        visibility ??
-        (agentPrincipal && !shortId
-          ? (await meta.getOrgSettings(org)).defaultAgentVisibility
-          : undefined)
+        visibility ?? (agentPrincipal && !shortId ? settings?.defaultAgentVisibility : undefined)
+      // Set-on-create like visibility: a republish never re-stamps the link pair.
+      // Each half resolves: explicit request field > the workspace's default > the
+      // factory default (org · commenter, resolved inside getOrgSettings).
+      let resolvedLinkRole = !shortId ? (linkRole ?? settings?.defaultLinkRole) : undefined
+      let resolvedLinkAudience = !shortId
+        ? (linkAudience ?? settings?.defaultLinkAudience)
+        : undefined
+      // Coherence: public visibility means the link works for the world, full stop
+      // (states 15/16 of the table in docs/plans/link-grant.md are unrepresentable).
+      // An EXPLICIT contradiction is rejected, not coerced. A bare
+      // `visibility=public` publish gets the classic public pair (public · viewer,
+      // exactly the pre-round-4 contract) — the WORKSPACE default role is chosen
+      // for the workspace audience and must not silently ride onto a world link;
+      // widening a public link past view stays an explicit act.
+      if (!shortId && resolvedVisibility === "public") {
+        if (linkAudience === "org")
+          return fail(
+            c,
+            400,
+            "a public artifact's link works for everyone — link_audience must be public",
+          )
+        if (linkRole === "none")
+          return fail(c, 400, "a public artifact's link must grant at least viewer")
+        resolvedLinkAudience = "public"
+        resolvedLinkRole = linkRole ?? "viewer"
+      }
       const { artifact, version } = await publish(
         meta,
         blobs,
@@ -405,6 +445,8 @@ export const artifactRoutes = (ctx: AppContext) => {
           orgId: org,
           visibility: resolvedVisibility,
           passwordHash,
+          linkRole: resolvedLinkRole,
+          linkAudience: resolvedLinkAudience,
         },
         shortId,
       )
@@ -599,7 +641,7 @@ export const artifactRoutes = (ctx: AppContext) => {
     // an anonymous probe can't learn anything (a non-member gets no access).
     const actor = await actorFor(c, artifact ?? ({ id: "", visibility: "org" } as ArtifactRecord))
     if (!artifact) return fail(c, 404, "not found")
-    if (!can(actor, "read", artifact.visibility, artifact.general_role))
+    if (!can(actor, "read", artifact.visibility, artifact.link_role, artifact.link_audience))
       // A locked public artifact isn't hidden, it's lockable: tell the client to
       // prompt for the password (401) rather than claim it doesn't exist (404).
       return artifact.visibility === "public" && artifact.password_hash
@@ -622,7 +664,15 @@ export const artifactRoutes = (ctx: AppContext) => {
         created_at: artifact.created_at,
         versions: [],
         sessions: [],
-        my_role: effectiveRole(actor, artifact.visibility),
+        // link_role threaded even on a tombstone: a removed public/commenter-link
+        // artifact must not silently under-report a link-reacher's role (see
+        // docs/plans/link-grant.md — this omission is exactly what round 4 closes).
+        my_role: effectiveRole(
+          actor,
+          artifact.visibility,
+          artifact.link_role,
+          artifact.link_audience,
+        ),
         tags: [],
         favorite: false,
         collections: [],
@@ -679,7 +729,12 @@ export const artifactRoutes = (ctx: AppContext) => {
         handle: v.author_gh_id ? (handleByGhId[v.author_gh_id] ?? null) : null,
       })),
       sessions: groupSessions(versions, versionWindowMs),
-      my_role: effectiveRole(actor, artifact.visibility, artifact.general_role),
+      my_role: effectiveRole(
+        actor,
+        artifact.visibility,
+        artifact.link_role,
+        artifact.link_audience,
+      ),
       // The artifact's current workspace — the move dialog needs this to exclude
       // it from the destination picker.
       org_id: artifact.org_id,
@@ -709,12 +764,15 @@ export const artifactRoutes = (ctx: AppContext) => {
     })
   })
 
-  // Change general access (visibility + the general-access role) after publish — the
-  // Share dialog's "general access" control. Editors+ (share), per the GDocs model.
-  // `generalRole` is the floor the link grants a reacher (viewer = view-only, commenter =
-  // authenticated reachers may comment; anonymous stays view-only regardless). Enabling
-  // `password` needs a password (or keeps the existing one); any other visibility clears
-  // the stored hash.
+  // Change where it's listed (visibility) and/or the link grant pair (round 4:
+  // linkAudience = who the URL works for, linkRole = what it confers) after
+  // publish — the Share dialog's two controls. Editors+ (share), per the GDocs
+  // model. The pair is independent of visibility: a private artifact can carry a
+  // live workspace-only or world link. Anonymous holders stay clamped to view and
+  // never enter an org audience. Omitting a field PRESERVES the artifact's current
+  // value (this is an update, not a create — resolving defaults belongs to
+  // publish() alone). Enabling `password` needs a password (or keeps the existing
+  // one); any other visibility clears the stored hash.
   app.patch("/v1/artifacts/:shortId/visibility", async (c) => {
     const artifact = await meta.getByShortId(c.req.param("shortId"))
     if (!artifact) return fail(c, 404, "not found")
@@ -724,19 +782,39 @@ export const artifactRoutes = (ctx: AppContext) => {
       z.object({
         visibility: z.string(),
         password: z.string().optional(),
+        linkRole: z.enum(["none", "viewer", "commenter", "editor"]).optional(),
+        linkAudience: z.enum(["org", "public"]).optional(),
+        // Legacy wire alias (pre-round-4 clients) — a strict subset of linkRole's
+        // range, so no remapping needed, just an old field name.
         generalRole: z.enum(["viewer", "commenter"]).optional(),
       }),
     )
     if (b instanceof Response) return b
     const visibility = visibilityOf(b.visibility)
     if (!visibility) return fail(c, 400, "invalid visibility")
-    const generalRole = b.generalRole ?? "viewer"
+    let linkRole = b.linkRole ?? b.generalRole ?? artifact.link_role
+    let linkAudience = b.linkAudience ?? artifact.link_audience
+    // Coherence: public listing means the link works for the world, full stop.
+    // An explicit contradiction is a 400; carried-over current values resolve to
+    // the nearest coherent state (matching what a legacy visibility=public or
+    // visibility=password change always meant: world-readable).
+    if (visibility === "public") {
+      if (b.linkAudience === "org")
+        return fail(
+          c,
+          400,
+          "a public artifact's link works for everyone — linkAudience must be public",
+        )
+      if (b.linkRole === "none")
+        return fail(c, 400, "a public artifact's link must grant at least viewer")
+      linkAudience = "public"
+      if (linkRole === "none") linkRole = "viewer"
+    }
     // The password is a lock on the public link. On `public`: a supplied
     // password (re)sets the hash; omitting it keeps the existing lock (so
-    // flipping view↔comment doesn't drop it); an explicit empty string clears
-    // it. Leaving `public` always clears — a lock on org/private is meaningless
-    // (both are already explicit-standing-only) and a stale hash must not
-    // resurrect if the doc later goes public again.
+    // changing the link grant doesn't drop it); an explicit empty string clears
+    // it. Leaving `public` always clears — a lock off public is meaningless and a
+    // stale hash must not resurrect if the doc later goes public again.
     let passwordHash: string | null = null
     if (visibility === "public") {
       if (b.password) passwordHash = hashPassword(b.password)
@@ -746,8 +824,13 @@ export const artifactRoutes = (ctx: AppContext) => {
     // carry a password (or already have one) or the lock would silently vanish.
     if (b.visibility === "password" && !passwordHash)
       return fail(c, 400, "a password is required for password visibility")
-    await meta.setVisibility(artifact.id, visibility, passwordHash, generalRole)
-    return c.json({ visibility, general_role: generalRole, locked: !!passwordHash })
+    await meta.setVisibility(artifact.id, visibility, passwordHash, linkRole, linkAudience)
+    return c.json({
+      visibility,
+      link_role: linkRole,
+      link_audience: linkAudience,
+      locked: !!passwordHash,
+    })
   })
 
   // Lock / unlock an artifact. Any editor (publish rights) can flip it. While

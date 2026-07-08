@@ -12,8 +12,28 @@ import type { Visibility } from "./ports"
  */
 export type Role = "viewer" | "commenter" | "editor" | "owner"
 
-/** The roles general access (a shared link) can grant a reacher: view-only or comment.
- *  A strict subset of Role — general access never hands out editor/owner. */
+/** The link grant (round 4, docs/plans/link-grant.md) is a PAIR on every artifact,
+ *  orthogonal to visibility (which is purely a listing ladder):
+ *
+ *    link_audience — WHO the URL works for:  `org` (signed-in members of the
+ *                    artifact's workspace) or `public` (any holder).
+ *    link_role     — WHAT it grants them:    `none` (inert, invite-only),
+ *                    `viewer`, `commenter`, or `editor`.
+ *
+ *  Together they express the three-stop dial: "the link works for no one /
+ *  people in my workspace / everyone", at a capability. A `private` (unlisted)
+ *  artifact with an `org`-audience link is the product default: invisible in
+ *  every feed and library, but a teammate who's handed the URL just opens it.
+ *  Anonymous holders are always clamped to `viewer` (and are never in an `org`
+ *  audience at all) — see effectiveRole. */
+export type LinkRole = "none" | "viewer" | "commenter" | "editor"
+/** Who a link works for: the artifact's workspace (signed-in members only) or
+ *  everyone. Meaningless while `link_role` is `none`. */
+export type LinkAudience = "org" | "public"
+/** @deprecated round 4 retired this in favor of `LinkRole` (a strict superset: adds
+ *  `none` and `editor`, and applies at every visibility, not just `public`). Kept
+ *  only to type the orphaned `general_role` DB column — expand/contract, not
+ *  dropped (CONTRIBUTING.md). No code reads or writes it anymore. */
 export type GeneralRole = "viewer" | "commenter"
 
 /** What an actor wants to do. Kept coarse on purpose; `can()` is the only gate. */
@@ -78,56 +98,67 @@ export interface Actor {
 
 /**
  * The actor's effective role on an artifact, the max of their explicit standing and
- * the general-access floor:
- *   per-artifact share  →  workspace membership  →  general-access floor (by reach).
+ * the link floor:
+ *
+ *   access = max( explicit standing , link floor )
+ *
  * null means no access at all. This function is the single source of truth for the
- * access matrix; SECURITY.md documents the same table for humans.
+ * access matrix; SECURITY.md documents the full 21-state table for humans.
  *
- *   Visibility                   Anonymous              Signed in via link    Member / share
- *   ───────────────────────────  ─────────────────────  ────────────────────  ────────────────
- *   public · view                view                   view                  their role (>= view)
- *   public · comment             view (sign in to cmt)  view + comment        their role (>= cmt)
- *   public + password            unlock, then as above  unlock, then above    their role (no pw)
- *   workspace (org)              no access              no access             their role (members)
- *   private (default)            no access              no access             explicit share only
+ * EXPLICIT STANDING — a per-artifact share / collection share (artifactRole)
+ * always counts; the workspace membership role (orgRole) counts at `org`/`public`
+ * visibility only. At `private`, membership grants NOTHING (round-3 draft
+ * privacy: a workspace OWNER still cannot open a teammate's private draft by
+ * role alone — only a share or the link).
  *
- * Three visibilities, one modifier: `public` means the link works for anyone
- * (at the doc's general role, view or comment); a password on a public doc
- * gates the reach floor until unlocked — members and explicit shares never
- * need the password. `org` is the team: membership alone grants access, at the
- * member's own role. `private` grants nothing by membership — only explicit
- * shares (per-artifact and collection shares both ride artifactRole), which is
- * what keeps an agent's draft out of teammates' reach until promoted.
+ * THE LINK FLOOR (round 4, docs/plans/link-grant.md) — what merely holding the
+ * URL confers, orthogonal to where the artifact is listed:
+ *   - linkRole `none` → no floor (the link is inert; audience irrelevant).
+ *   - the holder must be IN THE AUDIENCE: `public` admits every holder;
+ *     `org` admits only signed-in members of the ARTIFACT's workspace
+ *     (actor.orgRole != null) — anonymous is never in an `org` audience.
+ *   - an anonymous holder is always clamped to `viewer` — never elevated to a
+ *     writing role without an account.
+ *   - a password (the lock, `public` visibility only) suspends the floor until
+ *     unlocked; explicit standing is untouched, so members and shares never
+ *     need the password.
  *
- * Invariant: an anonymous caller is never more than `viewer`. Anything past view
- * (comment, propose, publish, share, manage) needs an authenticated identity — a
- * signed-in user or a `DERIVE_TOKEN`. There is deliberately no "trusted anonymous" path.
+ * The pair expresses the three-stop dial: the link works for no one (`none`) /
+ * people in my workspace (`org` audience) / everyone (`public` audience), at a
+ * capability. A `private` (unlisted) artifact with an org-audience link is the
+ * product default: invisible in every feed and library, but a teammate who is
+ * handed the URL just opens it.
+ *
+ * Invariant: an anonymous caller is never more than `viewer`, regardless of the
+ * grant. Anything past view (comment, propose, publish, share, manage) needs an
+ * authenticated identity — a signed-in user or a `DERIVE_TOKEN`. There is
+ * deliberately no "trusted anonymous" path.
  */
 export function effectiveRole(
   actor: Actor,
   visibility: Visibility,
-  generalRole: GeneralRole = "viewer",
+  linkRole: LinkRole = "none",
+  linkAudience: LinkAudience = "org",
 ): Role | null {
   if (actor.kind === "token") return "owner"
   // A per-artifact share or workspace membership — authenticated callers only.
   // `private` is the exception: workspace membership grants nothing there by
   // itself, so a team-workspace draft stays out of teammates' standing until
-  // explicitly shared.
+  // explicitly shared (or reached through the link floor below).
   const explicit =
     actor.kind === "user"
       ? visibility === "private"
         ? actor.artifactRole
         : (actor.artifactRole ?? actor.orgRole)
       : null
-  // The general-access floor for a reacher with no higher explicit grant. Only an
-  // authenticated reacher gets the configured general role; an anonymous reacher is
-  // clamped to `viewer` — never elevated to a writing role without an account. A
-  // password (the lock) suspends the floor until unlocked; explicit standing above
-  // is untouched, so members and shares never need the password.
-  const reach: Role = actor.kind === "user" ? generalRole : "viewer"
-  const floor: Role | null =
-    visibility === "public" ? (actor.locked && !actor.unlocked ? null : reach) : null
-  // org/private grant nothing by reach — only an explicit role opens them.
+  // Is this holder in the link's audience? `public` admits everyone; `org` admits
+  // only signed-in members of the artifact's workspace. Membership is the audience
+  // KEY here, not the grant — an org-audience link hands a member linkRole, never
+  // their workspace role (private stays private-by-role).
+  const inAudience = linkAudience === "public" || (actor.kind === "user" && actor.orgRole != null)
+  const reach: Role | null =
+    linkRole === "none" || !inAudience ? null : actor.kind === "user" ? linkRole : "viewer"
+  const floor: Role | null = actor.locked && !actor.unlocked ? null : reach
   return maxRole(explicit, floor)
 }
 
@@ -136,8 +167,9 @@ export function can(
   actor: Actor,
   action: Action,
   visibility: Visibility,
-  generalRole: GeneralRole = "viewer",
+  linkRole: LinkRole = "none",
+  linkAudience: LinkAudience = "org",
 ): boolean {
-  const role = effectiveRole(actor, visibility, generalRole)
+  const role = effectiveRole(actor, visibility, linkRole, linkAudience)
   return role !== null && roleAllows(role, action)
 }

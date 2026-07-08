@@ -17,6 +17,9 @@ describe("workspace integration settings", () => {
       githubPreviewLink: true,
       slackPost: true,
       defaultAgentVisibility: "private",
+      // Round 4: the link grant NEW publishes land with — Workspace · can comment.
+      defaultLinkRole: "commenter",
+      defaultLinkAudience: "org",
     })
   })
 

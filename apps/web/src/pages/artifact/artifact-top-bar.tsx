@@ -1,6 +1,6 @@
 import { Maximize2 } from "lucide-react"
 import { useState } from "react"
-import type { GeneralRole, Role } from "@/api"
+import type { LinkAudience, LinkRole, Role } from "@/api"
 import { Icon } from "@/components/icons"
 import { CollectionsDialog, TagsDialog } from "@/components/shared/organize-dialogs"
 import { Button } from "@/components/ui/button"
@@ -33,7 +33,9 @@ export function ArtifactTopBar(props: {
   orgId?: string
   myRole?: Role | null
   visibility: string
-  generalRole?: GeneralRole
+  /** The link grant pair (round 4): what the URL confers x who it works for. */
+  linkRole?: LinkRole
+  linkAudience?: LinkAudience
   passwordProtected?: boolean
   favorite: boolean
   tags: string[]
@@ -87,7 +89,8 @@ export function ArtifactTopBar(props: {
           shortId={shortId}
           myRole={props.myRole}
           visibility={props.visibility}
-          generalRole={props.generalRole}
+          linkRole={props.linkRole}
+          linkAudience={props.linkAudience}
           passwordProtected={props.passwordProtected}
         />
         <StarButton shortId={shortId} favorite={props.favorite} onChange={props.onFavorite} />

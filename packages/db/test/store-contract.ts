@@ -128,25 +128,67 @@ export function runStoreContract(
       expect(await store.listArtifacts({ ids: [] })).toEqual([])
     })
 
-    it("changes visibility + general-access role (sets/clears the password lock)", async () => {
+    it("changes visibility + the link grant pair (sets/clears the password lock)", async () => {
       const a = await store.createArtifact(newArtifact())
-      expect(a.general_role).toBe("viewer") // defaults to view-only
-      // A locked public doc: visibility public + a password hash.
-      await store.setVisibility(a.id, "public", "hash123", "viewer")
+      // The store-level defaults are fail-closed — `none` (inert) + `org`
+      // (narrowest audience) — a caller that never stamps the pair gets no reach.
+      // See docs/plans/link-grant.md and the general_role orphaning note in schema.ts.
+      expect(a.link_role).toBe("none")
+      expect(a.link_audience).toBe("org")
+      expect(a.general_role).toBe("viewer") // retired column, still defaults — unread by app code
+      // A locked public doc: visibility public + a password hash + a world link.
+      await store.setVisibility(a.id, "public", "hash123", "viewer", "public")
       expect(await store.getByShortId(a.short_id)).toMatchObject({
         visibility: "public",
         password_hash: "hash123",
+        link_role: "viewer",
+        link_audience: "public",
       })
-      // Unlock it and grant comment: hash cleared, general_role round-trips.
-      await store.setVisibility(a.id, "public", null, "commenter")
+      // Unlock it and grant comment: hash cleared, the pair round-trips.
+      await store.setVisibility(a.id, "public", null, "commenter", "public")
       expect(await store.getByShortId(a.short_id)).toMatchObject({
         visibility: "public",
         password_hash: null,
-        general_role: "commenter",
+        link_role: "commenter",
+        link_audience: "public",
       })
-      // And back to view-only.
-      await store.setVisibility(a.id, "public", null, "viewer")
-      expect((await store.getByShortId(a.short_id))?.general_role).toBe("viewer")
+      // Grant editor — the full round-4 range, including the value general_role
+      // never had.
+      await store.setVisibility(a.id, "public", null, "editor", "public")
+      expect((await store.getByShortId(a.short_id))?.link_role).toBe("editor")
+      // And back to inert.
+      await store.setVisibility(a.id, "public", null, "none", "org")
+      expect(await store.getByShortId(a.short_id)).toMatchObject({
+        link_role: "none",
+        link_audience: "org",
+      })
+    })
+
+    it("the link pair is independent of visibility — a private artifact carries live links", async () => {
+      const a = await store.createArtifact(newArtifact({ visibility: "private" }))
+      expect(a.link_role).toBe("none")
+      // Scenario 1's row: unlisted + workspace-audience comment link.
+      await store.setVisibility(a.id, "private", null, "commenter", "org")
+      expect(await store.getByShortId(a.short_id)).toMatchObject({
+        visibility: "private",
+        link_role: "commenter",
+        link_audience: "org",
+      })
+      // Scenario 2's row: unlisted + world-audience view link.
+      await store.setVisibility(a.id, "private", null, "viewer", "public")
+      expect(await store.getByShortId(a.short_id)).toMatchObject({
+        visibility: "private",
+        link_role: "viewer",
+        link_audience: "public",
+      })
+    })
+
+    it("createArtifact stamps an explicit link pair (the publish() path)", async () => {
+      const a = await store.createArtifact(
+        newArtifact({ visibility: "private", link_role: "commenter", link_audience: "org" }),
+      )
+      expect(a.link_role).toBe("commenter")
+      expect(a.link_audience).toBe("org")
     })
 
     it("counts storage bytes once per distinct blob (content-addressed)", async () => {

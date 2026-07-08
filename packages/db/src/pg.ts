@@ -17,12 +17,13 @@ import type {
   DomainStatus,
   FollowKind,
   FollowRecord,
-  GeneralRole,
   GitHubAppRecord,
   GitHubInstallationRecord,
   GithubAuthor,
   GithubUserMapping,
   InvitationRecord,
+  LinkAudience,
+  LinkRole,
   ListArtifactsOpts,
   MembershipRecord,
   MetaStore,
@@ -265,11 +266,17 @@ export class PgMetaStore implements MetaStore {
     artifactId: string,
     visibility: Visibility,
     passwordHash: string | null,
-    generalRole: GeneralRole,
+    linkRole: LinkRole,
+    linkAudience: LinkAudience,
   ): Promise<void> {
     await this.db
       .update(artifact)
-      .set({ visibility, password_hash: passwordHash, general_role: generalRole })
+      .set({
+        visibility,
+        password_hash: passwordHash,
+        link_role: linkRole,
+        link_audience: linkAudience,
+      })
       .where(eq(artifact.id, artifactId))
   }
 

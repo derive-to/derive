@@ -329,6 +329,11 @@ export const workspaceRoutes = (ctx: AppContext) => {
           // `public` is deliberately not offered: an agent default should never
           // make work world-readable without a human's per-doc decision.
           defaultAgentVisibility: z.enum(["private", "org"]),
+          // The link grant pair NEW publishes land with (round 4): who the URL
+          // works for x what it confers. Factory: org . commenter ("Workspace .
+          // can comment"). Changing these never touches existing artifacts.
+          defaultLinkRole: z.enum(["none", "viewer", "commenter", "editor"]),
+          defaultLinkAudience: z.enum(["org", "public"]),
         })
         .partial(),
     )

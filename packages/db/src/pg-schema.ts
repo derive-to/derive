@@ -9,6 +9,8 @@ import type {
   DomainStatus,
   FollowKind,
   GeneralRole,
+  LinkAudience,
+  LinkRole,
   NotificationKind,
   ProposalState,
   ReportState,
@@ -36,7 +38,11 @@ export const artifact = pgTable("artifact", {
   title: text("title"),
   visibility: text("visibility").$type<Visibility>().notNull().default("private"),
   password_hash: text("password_hash"),
+  // RETIRED — orphaned, not dropped. Mirrors schema.ts (see the comment there).
   general_role: text("general_role").$type<GeneralRole>().notNull().default("viewer"),
+  // Mirrors schema.ts: the link grant pair (round 4), fail-closed defaults.
+  link_role: text("link_role").$type<LinkRole>().notNull().default("none"),
+  link_audience: text("link_audience").$type<LinkAudience>().notNull().default("org"),
   kind: text("kind").$type<ArtifactKind>().notNull(),
   spa: integer("spa").$type<0 | 1>().notNull().default(0),
   locked: integer("locked").$type<0 | 1>().notNull().default(0),

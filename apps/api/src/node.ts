@@ -200,6 +200,26 @@ if (defaultOrg !== "local") {
   }
 }
 
+// One-time backfill of the round-4 link grant pair (see docs/plans/link-grant.md).
+// The ALTER ADD COLUMNs land every existing row at the fail-closed defaults
+// (`none` / `org`) — correct for org/private rows (their links were already dead,
+// and they stay dead: no retroactive widening). But a public artifact's link WAS
+// live for anyone at its legacy `general_role`, so this restores exactly that
+// reach onto the new pair: audience `public`, role from `general_role`. Byte-
+// identical behavior before and after. Idempotent — re-running re-applies the
+// same values to public rows, a no-op after the first boot.
+if (cfg.databaseUrl) {
+  const pool = authDb as Pool
+  await pool.query(
+    `UPDATE artifact SET link_role = general_role, link_audience = 'public' WHERE visibility = 'public'`,
+  )
+} else {
+  const db = authDb as Database.Database
+  db.prepare(
+    `UPDATE artifact SET link_role = general_role, link_audience = 'public' WHERE visibility = 'public'`,
+  ).run()
+}
+
 // Blobs: S3/R2 when OBJECT_STORE_URL is set, else local disk (zero-config).
 const blobs: BlobStore = cfg.objectStoreUrl
   ? s3FromUrl(cfg.objectStoreUrl)

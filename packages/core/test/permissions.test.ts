@@ -37,16 +37,23 @@ describe("effectiveRole resolution", () => {
   it("falls back to the workspace role when there's no share", () => {
     expect(effectiveRole(user({ orgRole: "commenter" }), "org")).toBe("commenter")
   })
-  it("a non-member gets viewer on public, nothing on org, nothing behind a lock", () => {
-    expect(effectiveRole(user({}), "public")).toBe("viewer")
+  it("a non-member gets nothing anywhere with no link grant, and never past viewer on a lock", () => {
+    // Round 4: the link pair defaults to none/org (fail closed) — a bare reacher
+    // needs an explicit public-audience grant, not an implicit `viewer`.
+    expect(effectiveRole(user({}), "public")).toBe(null)
+    expect(effectiveRole(user({}), "public", "viewer", "public")).toBe("viewer")
+    expect(effectiveRole(user({}), "public", "viewer", "org")).toBe(null) // not a member
     expect(effectiveRole(user({}), "org")).toBe(null)
-    expect(effectiveRole(user({ locked: true }), "public")).toBe(null)
+    expect(effectiveRole(user({ locked: true }), "public", "viewer", "public")).toBe(null)
   })
-  it("a static token is owner; an anonymous caller is always read-only", () => {
+  it("a static token is owner; an anonymous caller is always read-only, never above viewer", () => {
     expect(effectiveRole({ kind: "token" }, "org")).toBe("owner")
-    // No "open"/trusted-anonymous path exists: anon never gets a writing role.
+    // No "open"/trusted-anonymous path exists: anon never gets a writing role,
+    // even on an editor-grant public link — and never enters an org audience.
     expect(effectiveRole({ kind: "anon" }, "org")).toBe(null)
-    expect(effectiveRole({ kind: "anon" }, "public")).toBe("viewer")
+    expect(effectiveRole({ kind: "anon" }, "public", "viewer", "public")).toBe("viewer")
+    expect(effectiveRole({ kind: "anon" }, "private", "editor", "public")).toBe("viewer")
+    expect(effectiveRole({ kind: "anon" }, "private", "editor", "org")).toBe(null)
   })
 })
 
@@ -56,71 +63,99 @@ describe("can", () => {
     expect(can({ kind: "user", artifactRole: "commenter" }, "publish", "org")).toBe(false)
     expect(can({ kind: "user", artifactRole: "commenter" }, "comment", "org")).toBe(true)
   })
-  it("a public-link viewer reads but cannot comment", () => {
-    expect(can({ kind: "anon" }, "read", "public")).toBe(true)
-    expect(can({ kind: "anon" }, "comment", "public")).toBe(false)
+  it("a public-audience viewer link reads but cannot comment", () => {
+    expect(can({ kind: "anon" }, "read", "public", "viewer", "public")).toBe(true)
+    expect(can({ kind: "anon" }, "comment", "public", "viewer", "public")).toBe(false)
   })
 })
 
-// The general-access (the link) comment grant, every cell of the access matrix. The
-// invariant under test: an anonymous reacher is NEVER more than viewer; the comment grant
-// only lifts a signed-in reacher to commenter. Mirrors the table in SECURITY.md.
-describe("general access comment grant (access matrix)", () => {
+// The link grant (round 4: audience × capability, at ANY visibility), every cell
+// of the access matrix. The invariants under test: an anonymous reacher is NEVER
+// more than viewer and never enters an org audience; grants only lift signed-in
+// holders the audience admits. Mirrors SECURITY.md and docs/plans/link-grant.md.
+describe("the link grant (access matrix)", () => {
   const anon: Actor = { kind: "anon" }
   // A signed-in caller reaching purely via the link, with no explicit share/membership.
   const reacher: Actor = { kind: "user", userId: "u9" }
+  // A signed-in member of the artifact's workspace (the org-audience key).
+  const member: Actor = { kind: "user", userId: "u10", orgRole: "commenter" }
 
-  it("view link: everyone reaching is viewer, nobody can comment", () => {
-    expect(effectiveRole(anon, "public", "viewer")).toBe("viewer")
-    expect(effectiveRole(reacher, "public", "viewer")).toBe("viewer")
-    expect(can(anon, "comment", "public", "viewer")).toBe(false)
-    expect(can(reacher, "comment", "public", "viewer")).toBe(false)
+  it("public-audience view link: everyone reaching is viewer, nobody can comment", () => {
+    expect(effectiveRole(anon, "public", "viewer", "public")).toBe("viewer")
+    expect(effectiveRole(reacher, "public", "viewer", "public")).toBe("viewer")
+    expect(can(anon, "comment", "public", "viewer", "public")).toBe(false)
+    expect(can(reacher, "comment", "public", "viewer", "public")).toBe(false)
   })
 
-  it("comment link: anon stays viewer (forced auth), a signed-in reacher becomes commenter", () => {
-    expect(effectiveRole(anon, "public", "commenter")).toBe("viewer")
-    expect(can(anon, "comment", "public", "commenter")).toBe(false) // anon never elevated
-    expect(can(anon, "read", "public", "commenter")).toBe(true)
-    expect(effectiveRole(reacher, "public", "commenter")).toBe("commenter")
-    expect(can(reacher, "comment", "public", "commenter")).toBe(true)
+  it("public-audience comment link: anon stays viewer (forced auth), signed-in becomes commenter", () => {
+    expect(effectiveRole(anon, "public", "commenter", "public")).toBe("viewer")
+    expect(can(anon, "comment", "public", "commenter", "public")).toBe(false) // anon never elevated
+    expect(can(anon, "read", "public", "commenter", "public")).toBe(true)
+    expect(effectiveRole(reacher, "public", "commenter", "public")).toBe("commenter")
+    expect(can(reacher, "comment", "public", "commenter", "public")).toBe(true)
   })
 
-  it("the comment floor is a max with the explicit role, never a demotion", () => {
-    // A viewer-member is lifted to commenter by a comment link...
-    expect(effectiveRole({ kind: "user", orgRole: "viewer" }, "public", "commenter")).toBe(
-      "commenter",
-    )
-    // ...but a higher explicit role is untouched.
-    expect(effectiveRole({ kind: "user", orgRole: "editor" }, "public", "commenter")).toBe("editor")
-    expect(effectiveRole({ kind: "user", artifactRole: "owner" }, "public", "commenter")).toBe(
-      "owner",
-    )
+  it("org-audience link: members in, outsiders and anon out — at any visibility", () => {
+    // Private + workspace link (scenario 1): the member gets the grant...
+    expect(effectiveRole(member, "private", "commenter", "org")).toBe("commenter")
+    // ...an outsider and anon get nothing from the same URL.
+    expect(effectiveRole(reacher, "private", "commenter", "org")).toBeNull()
+    expect(effectiveRole(anon, "private", "commenter", "org")).toBeNull()
+    // Org visibility: the org-audience floor is a no-op below the membership role.
+    expect(effectiveRole(member, "org", "viewer", "org")).toBe("commenter")
+    expect(effectiveRole(member, "org", "editor", "org")).toBe("editor") // lift
   })
 
-  it("a lock: the comment grant follows unlock, and never elevates anon", () => {
-    expect(effectiveRole({ ...anon, locked: true }, "public", "commenter")).toBe(null) // locked
+  it("the floor is a max with the explicit role, never a demotion", () => {
     expect(
-      effectiveRole({ kind: "anon", locked: true, unlocked: true }, "public", "commenter"),
+      effectiveRole({ kind: "user", orgRole: "viewer" }, "public", "commenter", "public"),
+    ).toBe("commenter")
+    expect(
+      effectiveRole({ kind: "user", orgRole: "editor" }, "public", "commenter", "public"),
+    ).toBe("editor")
+    expect(
+      effectiveRole({ kind: "user", artifactRole: "owner" }, "public", "commenter", "public"),
+    ).toBe("owner")
+  })
+
+  it("a lock: the grant follows unlock, and never elevates anon", () => {
+    expect(effectiveRole({ ...anon, locked: true }, "public", "commenter", "public")).toBe(null)
+    expect(
+      effectiveRole(
+        { kind: "anon", locked: true, unlocked: true },
+        "public",
+        "commenter",
+        "public",
+      ),
     ).toBe("viewer")
     expect(
-      can({ kind: "anon", locked: true, unlocked: true }, "comment", "public", "commenter"),
+      can(
+        { kind: "anon", locked: true, unlocked: true },
+        "comment",
+        "public",
+        "commenter",
+        "public",
+      ),
     ).toBe(false)
     expect(
       effectiveRole(
         { kind: "user", userId: "u", locked: true, unlocked: true },
         "public",
         "commenter",
+        "public",
       ),
     ).toBe("commenter")
   })
 
-  it("workspace-only (org) grants nothing by reach, regardless of the comment grant", () => {
-    expect(effectiveRole(anon, "org", "commenter")).toBe(null)
-    expect(effectiveRole(reacher, "org", "commenter")).toBe(null)
+  it("the link floor is NOT public-visibility-only — org and private carry it too (round 4)", () => {
+    expect(effectiveRole(anon, "org", "commenter", "public")).toBe("viewer") // anon clamped
+    expect(effectiveRole(reacher, "org", "commenter", "public")).toBe("commenter")
+    expect(effectiveRole(reacher, "private", "editor", "public")).toBe("editor")
   })
 
-  it("defaults to view-only when no general role is given (back-compat)", () => {
-    expect(effectiveRole(reacher, "public")).toBe("viewer")
+  it("`none` / omitted defaults grant nothing, on any visibility — fail closed", () => {
+    expect(effectiveRole(reacher, "public")).toBe(null)
     expect(can(reacher, "comment", "public")).toBe(false)
+    expect(effectiveRole(reacher, "public", "none", "public")).toBe(null)
   })
 })

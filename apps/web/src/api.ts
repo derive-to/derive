@@ -76,8 +76,12 @@ export interface VersionSession {
   created_at: string
 }
 export type Role = "viewer" | "commenter" | "editor" | "owner"
-/** What general access (the link) grants a reacher: view-only or comment. */
-export type GeneralRole = "viewer" | "commenter"
+/** The link grant pair (round 4): what merely holding the URL grants a reacher the
+ *  audience admits (`none` = the link is inert, invite-only), and who the URL works
+ *  for (`org` = signed-in members of the artifact's workspace, `public` = anyone).
+ *  Anonymous holders are always clamped to view. */
+export type LinkRole = "none" | "viewer" | "commenter" | "editor"
+export type LinkAudience = "org" | "public"
 export interface Artifact {
   short_id: string
   url: string
@@ -87,9 +91,9 @@ export interface Artifact {
   /** Locked: direct publishes are rejected; even editors must propose changes. */
   locked?: boolean
   visibility: string
-  /** The role the general-access link grants (view vs comment). Anonymous reachers are
-   *  always clamped to view regardless; commenting requires signing in. */
-  general_role?: GeneralRole
+  /** The link grant pair: what the URL confers x who it works for. */
+  link_role?: LinkRole
+  link_audience?: LinkAudience
   /** The public link carries a password (the lock). Never the password itself. */
   password_protected?: boolean
   current_version: number
@@ -316,6 +320,9 @@ export interface OrgSettings {
   slackPost: boolean
   /** Where a NEW agent (MCP) publish lands when the agent doesn't say. */
   defaultAgentVisibility: "private" | "org"
+  /** The link grant pair NEW publishes land with (round 4). Factory: org . commenter. */
+  defaultLinkRole: LinkRole
+  defaultLinkAudience: LinkAudience
 }
 /** Slack connection status for the Settings UI. */
 export interface SlackStatus {
@@ -860,18 +867,24 @@ export const api = {
   // cookie and subsequent reads of this artifact succeed.
   unlock: (id: string, password: string): Promise<{ ok: true }> =>
     f(`/v1/artifacts/${id}/unlock`, opts({ password })).then(j),
-  // Change general access from the Share dialog: visibility + the general-access role
-  // (view vs comment). A password is required when enabling `password` visibility for
-  // the first time. Anonymous reachers stay view-only regardless of generalRole.
+  // Change access from the Share dialog: where it's listed (visibility) and the link
+  // grant pair (who the URL works for x what it confers). Omitted link fields keep
+  // the artifact's current values. Anonymous reachers stay view-only regardless.
   setVisibility: (
     id: string,
     visibility: string,
-    generalRole?: GeneralRole,
+    linkRole?: LinkRole,
+    linkAudience?: LinkAudience,
     // A string (re)sets the lock on a public link; "" clears it; undefined keeps it.
     password?: string,
-  ): Promise<{ visibility: string; general_role: GeneralRole; locked: boolean }> =>
+  ): Promise<{
+    visibility: string
+    link_role: LinkRole
+    link_audience: LinkAudience
+    locked: boolean
+  }> =>
     f(`/v1/artifacts/${id}/visibility`, {
-      ...opts({ visibility, generalRole, password }),
+      ...opts({ visibility, linkRole, linkAudience, password }),
       method: "PATCH",
     }).then(j),
   setLocked: (id: string, locked: boolean): Promise<{ locked: boolean }> =>

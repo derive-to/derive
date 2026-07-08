@@ -1,6 +1,7 @@
 import { unzipSync } from "fflate"
 import { newId, newShortId, refFor, slugify } from "./ids"
 import { mimeFor } from "./mime"
+import type { LinkAudience, LinkRole } from "./permissions"
 import {
   type ArtifactKind,
   type ArtifactRecord,
@@ -53,6 +54,15 @@ export interface PublishInput {
   visibility?: Visibility
   /** Salted unlock-password hash, set by the route for `password` visibility. */
   passwordHash?: string | null
+  /** The link grant pair (round 4) for a NEW artifact: what the URL confers ×
+   *  who it works for. Set-on-create like visibility — ignored on a republish
+   *  (shortId), which never re-stamps them. The route is responsible for
+   *  resolving the default chain (explicit request fields > the org's defaults >
+   *  the factory `org · commenter`) AND the public-coherence rule before calling
+   *  publish(); omitted values fall through to the store's fail-closed defaults
+   *  (`none` / `org`). */
+  linkRole?: LinkRole
+  linkAudience?: LinkAudience
   /** Names this publish a pinned checkpoint (Docs-style). */
   name?: string
 }
@@ -271,6 +281,8 @@ export async function publish(
     // act (the Share dialog, --visibility, or visibility in derive.json).
     visibility: input.visibility ?? "private",
     password_hash: input.passwordHash ?? null,
+    link_role: input.linkRole,
+    link_audience: input.linkAudience,
     kind,
     spa: input.spa ? 1 : 0,
   })
@@ -399,7 +411,8 @@ export const toJson = (baseUrl: string, a: ArtifactRecord, versions: VersionReco
   kind: a.kind,
   current_content_type: a.current_content_type,
   visibility: a.visibility,
-  general_role: a.general_role,
+  link_role: a.link_role,
+  link_audience: a.link_audience,
   // A password on the public link (never the hash itself). Distinct from
   // `locked`, which is the publish lock (changes must go through proposals).
   password_protected: !!a.password_hash,
