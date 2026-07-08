@@ -9,6 +9,13 @@ COPY . .
 # better-sqlite3 v11 ships prebuilt binaries; pg is pure JS — no compiler needed.
 RUN pnpm install --frozen-lockfile --prod=false
 
+# Install Playwright's Chromium + its OS libraries (apt) so DERIVE_PREVIEWS=true works
+# out of the box. --with-deps installs the system libraries that Chromium requires
+# (libnss3, libatk, etc.) via apt — fine here because the base image is Debian slim
+# and we're running as root. PLAYWRIGHT_BROWSERS_PATH stays at the default (~/.cache/ms-playwright)
+# which the runtime Node process (also root) resolves identically at startup.
+RUN corepack pnpm --filter @derive/api exec playwright install --with-deps chromium
+
 # Build the SPA into apps/web/dist/client. VITE_DERIVE_API is intentionally unset
 # so the bundle calls the API same-origin (no CORS, no cross-site cookies). The
 # Node entry auto-detects this build and serves it. ipv4first keeps TanStack

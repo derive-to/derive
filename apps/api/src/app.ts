@@ -1,6 +1,8 @@
 import { type ArtifactRecord, parseRef } from "@derive/core"
-import { type Context, Hono } from "hono"
+import { OpenAPIHono } from "@hono/zod-openapi"
+import type { Context, Hono } from "hono"
 import { compress } from "hono/compress"
+import type { BlankEnv } from "hono/types"
 import { OAUTH_ANON_CLIENT_TTL_MS } from "./auth-config"
 import { type AppDeps, buildContext } from "./context"
 import { cacheControlFor, corsFor, fail, TOMBSTONE } from "./lib/http"
@@ -54,7 +56,12 @@ export function createApp(deps: AppDeps): Hono {
   // in-process set (authoritative on one container).
   const rateLimiters = deps.rateLimiters ?? inMemoryRateLimiters(deps)
   const ctx = buildContext({ ...deps, rateLimiters })
-  const app = new Hono()
+  // OpenAPIHono is a drop-in extension of Hono: every existing route/middleware works
+  // unchanged, and routers that adopt createRoute() (contract-first) contribute their
+  // schemas to the generated spec below. Untouched routers mount exactly as before.
+  // Pinned to BlankEnv (what the bare `new Hono()` inferred) so the instance stays
+  // assignable to Hono everywhere createApp's result is used (node.ts, worker.ts, tests).
+  const app = new OpenAPIHono<BlankEnv>()
 
   // Outermost: a per-request id + one structured access-log line (method, path,
   // status, duration, actor, org), so a 500 is correlatable to who/what.
@@ -371,6 +378,16 @@ export function createApp(deps: AppDeps): Hono {
     systemRoutes,
   ])
     app.route("/", routes(ctx))
+
+  // The OpenAPI description of the contract-first routes, served for agents and used to
+  // generate the web client's response types (apps/web/src/api-types.ts). Only routers
+  // that adopt createRoute() appear here; the set grows as more migrate. Public + static
+  // (no auth, no per-request state), so it sits outside the /v1 context middleware above.
+  // Snapshot-locked at apps/api/openapi.json — a shape change fails the openapi test.
+  app.doc("/openapi.json", {
+    openapi: "3.0.3",
+    info: { title: "Derive API", version: "1.0.0" },
+  })
 
   // The remote MCP endpoint — Streamable HTTP, bearer-gated by the agent bridge.
   mountMcp(app, ctx)

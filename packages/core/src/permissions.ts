@@ -1,38 +1,9 @@
-/**
- * The role vocabulary, in increasing power. A higher role can do everything a
- * lower one can.
- *  - viewer:    read
- *  - commenter: + comment, and propose a candidate version for review
- *               (creates content to be reviewed; cannot publish/approve)
- *  - editor:    + publish versions directly, approve others' proposals, and
- *               share (invite collaborators, change general access)
- *  - owner:     + manage (transfer/settings, delete)
- */
-export type Role = "viewer" | "commenter" | "editor" | "owner"
+import type { LinkRole, Role, WorkspaceAccess } from "./roles"
 
-/** The WORLD link (docs/plans/access-model.md): what anyone merely holding the
- *  artifact's URL gets — a non-member, the public, an anonymous visitor. `none`
- *  = the link is inert (invite-/member-only). A teammate with the link is NOT
- *  this — that's `workspace_access` (they open at their seat role). Anonymous
- *  holders are always clamped to `viewer` regardless of the grant. */
-export type LinkRole = "none" | "viewer" | "commenter" | "editor"
-/** Whether the artifact's workspace gets access. `member` = every signed-in
- *  member of the artifact's workspace opens at their OWN seat role (owner →
- *  manage … commenter → comment); `none` = the workspace has no standing (only
- *  explicit shares and the world link apply). There is no per-doc workspace
- *  role: seats are the role. */
-export type WorkspaceAccess = "none" | "member"
-/** Discovery only — where the artifact surfaces in feeds. Carries NO access:
- *  `none` (nowhere), `workspace` (the workspace library), `public` (the public
- *  directory). Listing preconditions live at the write path, not here. */
-export type Listed = "none" | "workspace" | "public"
-/** @deprecated retired; kept only to type the orphaned `general_role` DB column
- *  (expand/contract — the column stays, backfilled once into `link_role`, read by
- *  nothing). No code references it. */
-export type GeneralRole = "viewer" | "commenter"
-/** @deprecated retired; kept only to type the orphaned `visibility` DB column
- *  (backfilled once into `workspace_access` + `listed`). No code references it. */
-export type Visibility = "public" | "org" | "private"
+// The access vocabulary lives in ./roles (a leaf) so ./ports and this module can
+// both use it without forming an import cycle. Re-exported here so the long-standing
+// `@derive/core` surface stays unchanged (roles is not itself in the index barrel).
+export type { GeneralRole, LinkRole, Listed, Role, WorkspaceAccess } from "./roles"
 
 /** What an actor wants to do. Kept coarse on purpose; `can()` is the only gate. */
 export type Action = "read" | "comment" | "propose" | "publish" | "approve" | "share" | "manage"

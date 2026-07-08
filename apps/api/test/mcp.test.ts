@@ -19,7 +19,11 @@ import { sha256 } from "../src/lib/crypto"
 const dir = mkdtempSync(join(tmpdir(), "derive-mcp-"))
 afterAll(() => rmSync(dir, { recursive: true, force: true }))
 
-function appWithGrant(name: string, scopes: string) {
+function appWithGrant(
+  name: string,
+  scopes: string,
+  extra: Partial<Parameters<typeof createApp>[0]> = {},
+) {
   const path = join(dir, `${name}.db`)
   const meta = new SqliteMetaStore(path)
   const db = new Database(path)
@@ -47,6 +51,7 @@ function appWithGrant(name: string, scopes: string) {
     blobs: new FsBlobStore(join(dir, `${name}-blobs`)),
     baseUrl: "http://derive.test",
     token: "tok",
+    ...extra,
   })
   return { app, token: `tok_${name}` }
 }
@@ -159,10 +164,11 @@ describe("remote MCP endpoint (/mcp)", () => {
     const listOut = JSON.parse(toolText(list))
     expect(listOut.artifacts.some((a: { short_id: string }) => a.short_id === shortId)).toBe(true)
 
-    const read = await call(app, token, "read", { short_id: shortId })
-    const readOut = JSON.parse(toolText(read))
-    expect(readOut.title).toBe("My Plan")
-    expect(readOut.content).toContain("My Plan")
+    // Content reads are a frontmatter header + the markdown body — NOT a JSON envelope.
+    const read = toolText(await call(app, token, "read", { short_id: shortId }))
+    expect(read).toContain("title: My Plan")
+    expect(read).toContain("# My Plan")
+    expect(read).not.toContain("\\n")
   })
 
   it("catch_up reports what changed, with the line diff folded in", async () => {
@@ -206,6 +212,49 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(cd.entry_diff).toContain("V2 Title")
   })
 
+  it("catch_up detailed diffs the markdown conversion, not raw HTML tag noise", async () => {
+    const { app, token } = appWithGrant("catchupmd", "openid derive:read derive:publish")
+    const v1 =
+      "<html><head><style>body{color:red}</style></head><body>" +
+      "<h1>Doc</h1><p>alpha bravo charlie</p></body></html>"
+    const v2 =
+      "<html><head><style>body{color:blue}</style></head><body>" +
+      "<h1>Doc</h1><p>alpha BRAVO charlie</p></body></html>"
+    const form1 = new FormData()
+    form1.append("file", new Blob([new TextEncoder().encode(v1)]), "index.html")
+    form1.append("title", "Semantic")
+    const shortId = (
+      await (
+        await app.request("/v1/artifacts", {
+          method: "POST",
+          body: form1,
+          headers: { authorization: `Bearer ${token}` },
+        })
+      ).json()
+    ).short_id
+    const form2 = new FormData()
+    form2.append("file", new Blob([new TextEncoder().encode(v2)]), "index.html")
+    await app.request(`/v1/artifacts/${shortId}/versions`, {
+      method: "POST",
+      body: form2,
+      headers: { authorization: `Bearer ${token}` },
+    })
+    const cd = JSON.parse(
+      toolText(
+        await call(app, token, "catch_up", {
+          short_id: shortId,
+          since_version: 1,
+          to_version: 2,
+          response_format: "detailed",
+        }),
+      ),
+    )
+    expect(cd.entry_diff).toContain("diff of markdown conversion")
+    expect(cd.entry_diff).toContain("BRAVO")
+    expect(cd.entry_diff).not.toContain("<p")
+    expect(cd.entry_diff).not.toContain("color:")
+  })
+
   it("read + catch_up handle multi-page bundles", async () => {
     const { app, token } = appWithGrant("bundle", "openid derive:read derive:publish")
     const enc = (s: string) => new TextEncoder().encode(s)
@@ -232,14 +281,17 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(pj.kind).toBe("bundle")
     const shortId = pj.short_id
 
-    // No section → outline (the bundle's pages).
+    // No section → outline (the bundle's pages, with per-page headings for text pages).
     const pages = JSON.parse(toolText(await call(app, token, "read", { short_id: shortId })))
-    expect(pages.pages).toEqual(expect.arrayContaining(["index.html", "page.html"]))
-    // A section → that page's content.
-    const page = JSON.parse(
-      toolText(await call(app, token, "read", { short_id: shortId, section: "page.html" })),
+    expect(pages.pages.map((p: { path: string }) => p.path)).toEqual(
+      expect.arrayContaining(["index.html", "page.html"]),
     )
-    expect(page.content).toContain("Page")
+    // A section → that page's content (frontmatter envelope, converted to markdown).
+    const page = toolText(
+      await call(app, token, "read", { short_id: shortId, section: "page.html" }),
+    )
+    expect(page).toContain("section: page.html")
+    expect(page).toContain("Page")
 
     // Republish with a new page; catch_up reports it under pages_changed.added.
     await postZip(
@@ -255,6 +307,221 @@ describe("remote MCP endpoint (/mcp)", () => {
       toolText(await call(app, token, "catch_up", { short_id: shortId, since_version: 1 })),
     )
     expect(cu.pages_changed.added).toContain("new.html")
+  })
+
+  it("read: formats, heading sections, and the outline-first threshold", async () => {
+    const { app, token } = appWithGrant("readfmt", "openid derive:read derive:publish")
+    const html =
+      "<!DOCTYPE html><html><head><style>body{color:red}</style></head><body>" +
+      "<h1>Doc</h1><p>intro &amp; more</p>" +
+      "<h2>Alpha</h2><p>alpha body</p><h2>Beta</h2><p>beta body</p></body></html>"
+    const form = new FormData()
+    form.append("file", new Blob([new TextEncoder().encode(html)]), "index.html")
+    form.append("title", "Fmt Doc")
+    const shortId = (
+      await (
+        await app.request("/v1/artifacts", {
+          method: "POST",
+          body: form,
+          headers: { authorization: `Bearer ${token}` },
+        })
+      ).json()
+    ).short_id
+
+    // Default read: markdown conversion, style noise gone, entities decoded.
+    const md = toolText(await call(app, token, "read", { short_id: shortId }))
+    expect(md).toContain("format: markdown (converted from text/html)")
+    expect(md).toContain("# Doc")
+    expect(md).toContain("intro & more")
+    expect(md).not.toContain("color:red")
+
+    // format:"html" is the exact stored source.
+    const raw = toolText(await call(app, token, "read", { short_id: shortId, format: "html" }))
+    expect(raw).toContain(html)
+
+    // format:"text" is the flat visible text (what comment quotes anchor against).
+    const flat = toolText(await call(app, token, "read", { short_id: shortId, format: "text" }))
+    expect(flat).toContain("alpha body")
+    expect(flat).not.toContain("# Doc")
+
+    // A heading slug reads just that section; an unknown slug names the real ones.
+    const alpha = toolText(await call(app, token, "read", { short_id: shortId, section: "alpha" }))
+    expect(alpha).toContain("## Alpha")
+    expect(alpha).toContain("alpha body")
+    expect(alpha).not.toContain("beta body")
+    const bad = toolText(await call(app, token, "read", { short_id: shortId, section: "nope" }))
+    expect(bad).toContain("doc, alpha, beta")
+
+    // page#slug works within a bundle page.
+    const bundleHtml = "<h1>Home</h1><h2>Part One</h2><p>one</p><h2>Part Two</h2><p>two</p>"
+    const bcreated = JSON.parse(
+      toolText(
+        await call(app, token, "publish", { title: "B", files: { "index.html": bundleHtml } }),
+      ),
+    )
+    const part = toolText(
+      await call(app, token, "read", {
+        short_id: bcreated.short_id,
+        section: "index.html#part-one",
+      }),
+    )
+    expect(part).toContain("## Part One")
+    expect(part).not.toContain("two")
+
+    // A big sectioned doc goes outline-first; section:"*" forces the clipped body.
+    const bigBody = Array.from(
+      { length: 40 },
+      (_, i) => `<h2>Sect ${i}</h2><p>${"lorem ipsum ".repeat(120)}</p>`,
+    ).join("")
+    const bigForm = new FormData()
+    bigForm.append(
+      "file",
+      new Blob([new TextEncoder().encode(`<html><body><h1>Big</h1>${bigBody}</body></html>`)]),
+      "index.html",
+    )
+    bigForm.append("title", "Big Doc")
+    const bigId = (
+      await (
+        await app.request("/v1/artifacts", {
+          method: "POST",
+          body: bigForm,
+          headers: { authorization: `Bearer ${token}` },
+        })
+      ).json()
+    ).short_id
+    const outline = JSON.parse(toolText(await call(app, token, "read", { short_id: bigId })))
+    expect(outline.sections.length).toBe(41)
+    expect(outline.sections[1]).toMatchObject({ slug: "sect-0", level: 2 })
+    expect(outline.doc_chars).toBeGreaterThan(30_000)
+    const starred = toolText(await call(app, token, "read", { short_id: bigId, section: "*" }))
+    expect(starred).toContain("# Big")
+    const one = toolText(await call(app, token, "read", { short_id: bigId, section: "sect-7" }))
+    expect(one).toContain("## Sect 7")
+    expect(one).toContain("section: sect-7 (9 of 41)")
+  })
+
+  it("read: a single section that's itself huge is clipped, not returned unbounded (regression)", async () => {
+    const { app, token } = appWithGrant("readhugesection", "openid derive:read derive:publish")
+    // One heading whose own content exceeds the 80k MAX_CHARS ceiling on its own —
+    // sectionOf runs it to </body>, so a naive return would ship it all unbounded.
+    const hugeSection = `<h1>Top</h1><h2>Huge</h2><p>${"lorem ipsum dolor sit amet ".repeat(4000)}</p>`
+    const form = new FormData()
+    form.append(
+      "file",
+      new Blob([new TextEncoder().encode(`<html><body>${hugeSection}</body></html>`)]),
+      "index.html",
+    )
+    form.append("title", "Huge Section Doc")
+    const shortId = (
+      await (
+        await app.request("/v1/artifacts", {
+          method: "POST",
+          body: form,
+          headers: { authorization: `Bearer ${token}` },
+        })
+      ).json()
+    ).short_id
+    const section = toolText(await call(app, token, "read", { short_id: shortId, section: "huge" }))
+    expect(section).toContain("…[truncated")
+  })
+
+  it("read: format:text on a deck artifact returns flat visible text, not raw markup (regression)", async () => {
+    const { app, token } = appWithGrant("readdeck", "openid derive:read derive:publish")
+    // Must NOT start with <html>/<!doctype html> (that sniffs as plain text/html) —
+    // real deck content declares the protocol name, which is enough to type-sniff it.
+    const deck = "derive-deck\n<h1>Slide</h1><p>hello there</p>"
+    const form = new FormData()
+    form.append("file", new Blob([new TextEncoder().encode(deck)]), "deck.html")
+    form.append("title", "Deck")
+    const shortId = (
+      await (
+        await app.request("/v1/artifacts", {
+          method: "POST",
+          body: form,
+          headers: { authorization: `Bearer ${token}` },
+        })
+      ).json()
+    ).short_id
+    const md = toolText(await call(app, token, "read", { short_id: shortId, section: "*" }))
+    expect(md).toContain("format: markdown (converted from text/x-derive-deck)")
+    expect(md).toContain("# Slide")
+    const flat = toolText(
+      await call(app, token, "read", { short_id: shortId, format: "text", section: "*" }),
+    )
+    expect(flat).not.toContain("<h1>")
+    expect(flat).toContain("hello there")
+  })
+
+  it("read: a bundle page over the outline threshold goes outline-first too, with a #* bypass", async () => {
+    const { app, token } = appWithGrant("readbundlebig", "openid derive:read derive:publish")
+    const bigPage = Array.from(
+      { length: 40 },
+      (_, i) => `<h2>Screen ${i}</h2><p>${"lorem ipsum ".repeat(120)}</p>`,
+    ).join("")
+    const created = JSON.parse(
+      toolText(
+        await call(app, token, "publish", {
+          title: "Big Bundle",
+          files: { "index.html": "<h1>Home</h1>", "big.html": `<h1>Big</h1>${bigPage}` },
+        }),
+      ),
+    )
+    const outline = JSON.parse(
+      toolText(await call(app, token, "read", { short_id: created.short_id, section: "big.html" })),
+    )
+    expect(Array.isArray(outline.sections)).toBe(true)
+    expect(outline.sections.length).toBeGreaterThan(30)
+    const forced = toolText(
+      await call(app, token, "read", { short_id: created.short_id, section: "big.html#*" }),
+    )
+    expect(forced).toContain("# Big")
+  })
+
+  it("read: an image page returns a real MCP image block, not bytes-as-text", async () => {
+    const { app, token } = appWithGrant("readimg", "openid derive:read derive:publish")
+    const png =
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
+    const created = JSON.parse(
+      toolText(
+        await call(app, token, "publish", {
+          title: "Mockups",
+          files: {
+            "index.html": '<h1>Screens</h1><img src="shot.png">',
+            "shot.png": `data:image/png;base64,${png}`,
+          },
+        }),
+      ),
+    )
+    const r = await call(app, token, "read", { short_id: created.short_id, section: "shot.png" })
+    const content = (
+      r.parsed?.result as {
+        content: { type: string; text?: string; data?: string; mimeType?: string }[]
+      }
+    ).content
+    expect(content[0]?.type).toBe("text")
+    expect(content[0]?.text).toContain("shot.png")
+    expect(content[0]?.text).toContain(`/raw/${created.short_id}/v/1/shot.png`)
+    expect(content[1]?.type).toBe("image")
+    expect(content[1]?.mimeType).toBe("image/png")
+    expect(content[1]?.data).toBe(png)
+  })
+
+  it("read: a markdown artifact returns its source untouched under the default format", async () => {
+    const { app, token } = appWithGrant("readmd", "openid derive:read derive:publish")
+    const md = "# Notes\n\nSome *markdown* here.\n\n## Sub\n\ntail\n"
+    const created = JSON.parse(
+      toolText(
+        await call(app, token, "publish", { title: "Notes", content: md, filename: "notes.md" }),
+      ),
+    )
+    const read = toolText(await call(app, token, "read", { short_id: created.short_id }))
+    expect(read).toContain("format: markdown (source)")
+    expect(read).toContain("Some *markdown* here.")
+    const sub = toolText(
+      await call(app, token, "read", { short_id: created.short_id, section: "sub" }),
+    )
+    expect(sub).toContain("## Sub")
+    expect(sub).not.toContain("*markdown*")
   })
 
   it("comment leaves anchored feedback, replies, and resolves — all via one tool", async () => {
@@ -348,10 +615,10 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(list.proposals[0].on_behalf_of).toMatchObject({ name: "Owner" })
 
     // The live version is untouched — a proposal is not a publish.
-    const read = JSON.parse(toolText(await call(app, token, "read", { short_id: shortId })))
-    expect(read.version).toBe(1)
-    expect(read.content).toContain("Draft")
-    expect(read.content).not.toContain("Revised")
+    const read = toolText(await call(app, token, "read", { short_id: shortId }))
+    expect(read).toContain("version: 1 (current)")
+    expect(read).toContain("Draft")
+    expect(read).not.toContain("Revised")
   })
 
   it("surfaces outdated feedback after a republish drops the quoted text", async () => {
@@ -572,10 +839,8 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(list.artifacts.some((a: { short_id: string }) => a.short_id === created.short_id)).toBe(
       true,
     )
-    const read = JSON.parse(
-      toolText(await call(app, token, "read", { short_id: created.short_id })),
-    )
-    expect(read.content).toContain("hello world")
+    const read = toolText(await call(app, token, "read", { short_id: created.short_id }))
+    expect(read).toContain("hello world")
 
     // Publishing again WITH the short_id pushes a new version (not a second artifact).
     const v2 = JSON.parse(
@@ -589,6 +854,132 @@ describe("remote MCP endpoint (/mcp)", () => {
     )
     expect(v2.short_id).toBe(created.short_id)
     expect(v2.version).toBe(2)
+  })
+
+  it("publish edits: exact-match search/replace instead of resending content", async () => {
+    const { app, token } = appWithGrant("pubedits", "openid derive:read derive:publish")
+    const created = JSON.parse(
+      toolText(
+        await call(app, token, "publish", {
+          title: "Edit Me",
+          content: "<h1>Title</h1><p>alpha beta gamma</p>",
+        }),
+      ),
+    )
+    const shortId = created.short_id
+
+    // Happy path: applies in order, second edit sees the first edit's result.
+    const edited = JSON.parse(
+      toolText(
+        await call(app, token, "publish", {
+          short_id: shortId,
+          edits: [
+            { old_str: "beta", new_str: "BETA" },
+            { old_str: "alpha BETA", new_str: "x y" },
+          ],
+        }),
+      ),
+    )
+    expect(edited.published).toBe(true)
+    expect(edited.version).toBe(2)
+    expect(edited.edits_applied).toBe(2)
+    const read = toolText(await call(app, token, "read", { short_id: shortId, format: "html" }))
+    expect(read).toContain("x y gamma")
+
+    // 0-match and multi-match are both rejected, naming the failing edit; nothing applies.
+    const zero = await call(app, token, "publish", {
+      short_id: shortId,
+      edits: [{ old_str: "nope-nowhere", new_str: "y" }],
+    })
+    expect(toolText(zero)).toMatch(/Edit 1 of 1 failed.*not found/)
+    const multi = await call(app, token, "publish", {
+      short_id: shortId,
+      edits: [
+        { old_str: "y gamma", new_str: "z" },
+        { old_str: "Title", new_str: "T" },
+        { old_str: "y gamma", new_str: "again" },
+      ],
+    })
+    expect(toolText(multi)).toMatch(/Edit \d of 3 failed/)
+    const afterFailed = toolText(
+      await call(app, token, "read", { short_id: shortId, format: "html" }),
+    )
+    expect(afterFailed).toContain("x y gamma") // unchanged — a failed batch applies nothing
+
+    // base_version conflict: the artifact is at v2, but the agent read v1.
+    const stale = await call(app, token, "publish", {
+      short_id: shortId,
+      base_version: 1,
+      edits: [{ old_str: "Title", new_str: "T2" }],
+    })
+    expect(toolText(stale)).toMatch(/moved to v2/)
+
+    // edits + content is rejected; edits with no short_id is rejected.
+    expect(
+      toolText(
+        await call(app, token, "publish", {
+          short_id: shortId,
+          edits: [{ old_str: "x", new_str: "y" }],
+          content: "<h1>nope</h1>",
+        }),
+      ),
+    ).toContain("not both")
+    expect(
+      toolText(await call(app, token, "publish", { edits: [{ old_str: "x", new_str: "y" }] })),
+    ).toContain("EXISTING artifact")
+
+    // edits on a bundle is rejected.
+    const bundle = JSON.parse(
+      toolText(
+        await call(app, token, "publish", { title: "B", files: { "index.html": "<h1>b</h1>" } }),
+      ),
+    )
+    expect(
+      toolText(
+        await call(app, token, "publish", {
+          short_id: bundle.short_id,
+          edits: [{ old_str: "b", new_str: "c" }],
+        }),
+      ),
+    ).toContain("multi-page bundle")
+
+    // edits + for_review files a proposal with the materialized text, not live.
+    const proposal = JSON.parse(
+      toolText(
+        await call(app, token, "publish", {
+          short_id: shortId,
+          for_review: true,
+          edits: [{ old_str: "gamma", new_str: "GAMMA" }],
+        }),
+      ),
+    )
+    expect(proposal.published).toBe(false)
+    expect(proposal.proposed).toBe(true)
+    expect(proposal.edits_applied).toBe(1)
+    const stillLive = toolText(
+      await call(app, token, "read", { short_id: shortId, format: "html" }),
+    )
+    expect(stillLive).not.toContain("GAMMA") // the proposal never touched the live version
+  })
+
+  it("publish edits: over the workspace storage quota is rejected, same as content/files (regression: the MCP edits path used to skip this check)", async () => {
+    const { app, token } = appWithGrant("editsquota", "openid derive:read derive:publish", {
+      maxBytes: 200,
+    })
+    const created = JSON.parse(
+      toolText(
+        await call(app, token, "publish", { title: "Small", content: "<h1>x</h1><p>y</p>" }),
+      ),
+    )
+    const rejected = await call(app, token, "publish", {
+      short_id: created.short_id,
+      edits: [{ old_str: "y", new_str: "y".repeat(500) }],
+    })
+    expect(toolText(rejected)).toMatch(/storage quota/i)
+    const stillOriginal = toolText(
+      await call(app, token, "read", { short_id: created.short_id, format: "html" }),
+    )
+    expect(stillOriginal).not.toContain("y".repeat(500))
   })
 
   it("publish needs a title to create, and routes a non-publisher to review", async () => {
@@ -627,11 +1018,13 @@ describe("remote MCP endpoint (/mcp)", () => {
     const shortId = created.short_id
 
     const outline = JSON.parse(toolText(await call(app, token, "read", { short_id: shortId })))
-    expect(outline.pages).toEqual(expect.arrayContaining(["index.html", "about.html", "nav.js"]))
-    const about = JSON.parse(
-      toolText(await call(app, token, "read", { short_id: shortId, section: "about.html" })),
+    expect(outline.pages.map((p: { path: string }) => p.path)).toEqual(
+      expect.arrayContaining(["index.html", "about.html", "nav.js"]),
     )
-    expect(about.content).toContain("About")
+    const about = toolText(
+      await call(app, token, "read", { short_id: shortId, section: "about.html" }),
+    )
+    expect(about).toContain("About")
 
     const v2 = JSON.parse(
       toolText(

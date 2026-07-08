@@ -93,6 +93,7 @@ const makeMeta = (): MetaStore => {
       if (p) Object.assign(p, f)
       return p ?? null
     },
+    setVersionPreview: async () => {},
   }
   return meta as unknown as MetaStore
 }

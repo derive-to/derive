@@ -23,6 +23,7 @@
 //   derive status [--id] [--json]          the review round state + open threads
 //   derive send-back [--id] [--note m]     (human) return your answers to the agent
 //   derive approve [--id] [--note m]       (human) approve — the build go-signal
+//   derive doctor [--server url] [--token t]  report which optional features are configured
 //   derive runner serve|doctor|install     run a context's answer daemon (npx-able anywhere)
 //   derive context push|dev                ship a context dir as its manifest / tune it live
 import { spawn } from "node:child_process"
@@ -658,6 +659,47 @@ if (cmd === "logout") {
   }
   await interactiveLogout(server)
   process.exit(0)
+}
+
+// ---- doctor: which optional features are configured on a running instance ----
+if (cmd === "doctor") {
+  const server = resolveServer(flags)
+  const accountId = flags.account
+    ? resolveAccountRef(server, flags.account)
+    : getDefault(server)?.account
+  const token =
+    flags.token ??
+    process.env.DERIVE_TOKEN ??
+    (accountId ? await freshToken(server, accountId) : null)
+  if (!token) {
+    console.error(
+      "error: derive doctor needs operator auth — run `derive login`, or pass --token / set DERIVE_TOKEN.",
+    )
+    process.exit(1)
+  }
+  const res = await fetch(`${server}/v1/system/capabilities`, {
+    headers: { authorization: `Bearer ${token}` },
+  })
+  if (!res.ok) {
+    const j = await res.json().catch(() => ({}))
+    console.error(`error (${res.status}): ${j.error ?? res.statusText}`)
+    process.exit(1)
+  }
+  const { capabilities } = await res.json()
+  const icon = { on: "✓", off: "·", partial: "⚠" }
+  console.log(`Derive @ ${server}\n`)
+  let partial = 0
+  for (const cap of capabilities) {
+    if (cap.status === "partial") partial++
+    const head = `${icon[cap.status] ?? "?"}  ${cap.label}`
+    console.log(cap.status === "partial" ? `${head} — missing ${cap.missing.join(", ")}` : head)
+  }
+  console.log(
+    partial
+      ? `\n${partial} feature(s) half-configured. Set the missing vars, or unset the rest.`
+      : "\nAll good — no half-configured features.",
+  )
+  process.exit(partial ? 1 : 0)
 }
 
 // ---- derive runner (serve / doctor / install) -------------------------------

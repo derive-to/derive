@@ -102,13 +102,27 @@ const server = new McpServer({ name: "derive", version: "1.0.0" })
 
 const text = (s: string) => ({ content: [{ type: "text" as const, text: s }] })
 const json = (v: unknown) => text(JSON.stringify(v, null, 2))
+const err = (s: string) => ({
+  content: [{ type: "text" as const, text: s }],
+  isError: true as const,
+})
+
+// A content-bearing response: a frontmatter-style header, a blank line, then the
+// RAW body — never JSON-escaped (parity with the remote server's envelope).
+const doc = (meta: Record<string, string | number | null | undefined>, body: string) => {
+  const head = Object.entries(meta)
+    .filter(([, v]) => v !== undefined && v !== null)
+    .map(([k, v]) => `${k}: ${v}`)
+    .join("\n")
+  return text(`---\n${head}\n---\n\n${body}`)
+}
 
 // FIND ------------------------------------------------------------------------
 server.registerTool(
   "list_artifacts",
   {
     description:
-      "List the artifacts in your workspace — short id, title, kind, current version, visibility. Start here to find what to work on, then catch_up or read it.",
+      "List the artifacts in your workspace — short id, title, kind, current version, access. Start here to find what to work on, then catch_up or read it.",
     inputSchema: { query: z.string().optional().describe("Optional title search filter.") },
   },
   async ({ query }) => {
@@ -122,17 +136,72 @@ server.registerTool(
   "read",
   {
     description:
-      "Read an artifact's CONTENT by short id (a past `version` defaults to current). For what CHANGED or the comment threads, use catch_up instead.",
+      "Read an artifact's CONTENT by short id, as Markdown by default (HTML is converted). Omit `section` to see the outline first (heading slugs for a single-file doc, page paths for a bundle) — call again with a `section` (or \"*\" for the full document) once you know what you want. Pass `format:'html'` for the exact source (needed before publish `edits`), or a past `version` for history. For what CHANGED or the comment threads, use catch_up instead. (Older self-hosted servers that predate these params return the whole artifact regardless of section/format — noted in the response when that happens.)",
     inputSchema: {
       short_id: z.string(),
+      section: z
+        .string()
+        .optional()
+        .describe(
+          'A heading slug (single-file) or page path (bundle, optionally page#slug). Pass "*" for the full document.',
+        ),
+      format: z
+        .enum(["markdown", "text"])
+        .optional()
+        .describe("markdown (default, HTML converted) or text (flat visible text)."),
       version: z.number().int().optional().describe("Defaults to the current version."),
     },
   },
-  async ({ short_id, version }) => {
+  async ({ short_id, section, format, version }) => {
     const a = await client.get(short_id)
-    const body = await client.getContent(short_id, version)
     const v = version ?? a.current_version
-    return json({ short_id, title: a.title, kind: a.kind, version: v, content: body })
+
+    // No section: show the outline first (mirrors the remote server's
+    // outline-before-blind-dump behavior). Falls back to full content when the
+    // artifact has no headings/pages, or the server predates `?outline=1`.
+    if (!section) {
+      const outline = await client.getOutline(short_id, version)
+      if (outline.sections.length || outline.pages) {
+        return json({
+          short_id,
+          title: a.title,
+          kind: a.kind,
+          version: v,
+          ...(outline.sections.length ? { sections: outline.sections } : {}),
+          ...(outline.pages ? { pages: outline.pages } : {}),
+          next:
+            outline.sections.length || outline.pages?.length
+              ? 'Call read again with a `section` (a slug/page above), or section:"*" for the full document.'
+              : undefined,
+        })
+      }
+    }
+
+    try {
+      const result = await client.getContent(short_id, {
+        version,
+        section,
+        format: format ?? "markdown",
+      })
+      if (!result.supportsParams)
+        return doc(
+          { short_id, title: a.title, kind: a.kind, version: v },
+          `${result.text}\n\n[note: this server predates section/format params — returning the full raw artifact.]`,
+        )
+      return doc(
+        {
+          short_id,
+          title: a.title,
+          kind: a.kind,
+          version: v,
+          ...(result.format ? { format: result.format } : {}),
+          ...(result.section ? { section: result.section } : {}),
+        },
+        result.text,
+      )
+    } catch (e) {
+      return err(e instanceof Error ? e.message : "read failed")
+    }
   },
 )
 
@@ -143,7 +212,7 @@ server.registerTool(
     description:
       "START HERE on an artifact. Its state in one call: a summary, the review round, the versions since `since_version`, the open (and outdated) comment threads, and the full version history. " +
       "Pass `comments` (open / addressed / resolved / outdated) to instead get that filtered thread list — your feedback queue. " +
-      "Pass `response_format='detailed'` (optionally with `since_version`/`to_version`) to fold in the exact line diff between two versions. " +
+      "Pass `response_format='detailed'` (optionally with `since_version`/`to_version`) to fold in a line diff between two versions — of their readable Markdown form, not raw HTML. " +
       "WAITING ON A REVIEW? Pass `wait` (seconds, max 50) to block until the human sends back or approves — chain these instead of sleeping between polls.",
     inputSchema: {
       short_id: z.string(),
@@ -270,7 +339,9 @@ server.registerTool(
       : ""
     let entryDiff: string | undefined
     if (response_format === "detailed" && since < to) {
-      const d = await client.diff(short_id, since, to)
+      // Diff the readable Markdown form, not raw HTML — kills tag noise and
+      // avoids a minified one-line document producing one useless del/add pair.
+      const d = await client.diff(short_id, since, to, "markdown")
       entryDiff = d.ops
         .map((o) => `${o.t === "add" ? "+" : o.t === "del" ? "-" : " "} ${o.line}`)
         .join("\n")
@@ -399,9 +470,33 @@ server.registerTool(
   "publish",
   {
     description:
-      "Publish a single-file artifact and get a permanent URL. OMIT short_id to create a NEW artifact (title recommended); PASS short_id to publish a new version (same URL). Pass for_review:true to file it as a PROPOSAL a human approves instead of going live. Pass `addresses` with the thread ids this revision resolves. (Multi-page bundles are published via the web app or the remote /mcp server.)",
+      "Publish a single-file artifact and get a permanent URL. OMIT short_id to create a NEW artifact (title recommended); PASS short_id to publish a new version (same URL). To CHANGE PART of an existing artifact, prefer `edits` (exact-match search/replace against the stored source — read format:'html' first) over resending everything via `content`. Pass for_review:true to file it as a PROPOSAL a human approves instead of going live. Pass `addresses` with the thread ids this revision resolves. (Multi-page bundles are published via the web app or the remote /mcp server.)",
     inputSchema: {
-      content: z.string().describe("The artifact's text content (HTML or Markdown)."),
+      content: z
+        .string()
+        .optional()
+        .describe("The artifact's full text content (HTML or Markdown). Use this OR `edits`."),
+      edits: z
+        .array(
+          z.object({
+            old_str: z
+              .string()
+              .describe(
+                "Exact text from the STORED SOURCE (read format:'html' first on an HTML artifact). Must occur exactly once.",
+              ),
+            new_str: z.string().describe("Replacement text. Empty string deletes."),
+          }),
+        )
+        .optional()
+        .describe(
+          "Surgical revision without resending the artifact: exact-match search/replace against the current stored source, applied in order. Errors (applying nothing) if any old_str matches zero or multiple times. Requires `short_id`; use INSTEAD of `content`.",
+        ),
+      base_version: z
+        .number()
+        .optional()
+        .describe(
+          "Safety check for `edits`: pass the version you read; errors instead of applying if the artifact moved past it.",
+        ),
       filename: z
         .string()
         .optional()
@@ -436,6 +531,8 @@ server.registerTool(
   },
   async ({
     content,
+    edits,
+    base_version,
     filename,
     short_id,
     title,
@@ -447,34 +544,49 @@ server.registerTool(
     addresses,
     request_review,
   }) => {
+    if (content !== undefined && edits) return text("Provide `content` OR `edits`, not both.")
     if (for_review) {
       if (!short_id) return text("A proposal revises an EXISTING artifact — pass its short_id.")
-      const p = await client.propose(short_id, {
-        content,
-        filename,
-        message: message ?? "Proposed revision",
-        addresses,
-      })
-      const note = p.addressed?.length ? ` · addressed ${p.addressed.length} thread(s)` : ""
-      return json({
-        proposed: true,
-        proposal_id: p.id,
-        base_version: p.base_version,
-        note: `Submitted for review (not live)${note}.`,
-      })
+      try {
+        const p = await client.propose(short_id, {
+          content,
+          edits,
+          baseVersion: base_version,
+          filename,
+          message: message ?? "Proposed revision",
+          addresses,
+        })
+        const note = p.addressed?.length ? ` · addressed ${p.addressed.length} thread(s)` : ""
+        return json({
+          proposed: true,
+          proposal_id: p.id,
+          base_version: p.base_version,
+          note: `Submitted for review (not live)${note}.`,
+        })
+      } catch (e) {
+        return err(e instanceof Error ? e.message : "propose failed")
+      }
     }
-    const a = await client.publish({
-      id: short_id,
-      content,
-      filename: filename ?? "index.html",
-      title,
-      workspaceAccess: workspace_access,
-      linkRole: link_role,
-      listed,
-      message,
-      resolves: addresses,
-      requestReview: request_review,
-    })
+    if (edits && !short_id) return text("`edits` revises an EXISTING artifact — pass its short_id.")
+    let a: Awaited<ReturnType<typeof client.publish>>
+    try {
+      a = await client.publish({
+        id: short_id,
+        content,
+        edits,
+        baseVersion: base_version,
+        filename: filename ?? (edits ? undefined : "index.html"),
+        title,
+        workspaceAccess: workspace_access,
+        linkRole: link_role,
+        listed,
+        message,
+        resolves: addresses,
+        requestReview: request_review,
+      })
+    } catch (e) {
+      return err(e instanceof Error ? e.message : "publish failed")
+    }
     const note = addresses?.length ? ` · resolved ${addresses.length} thread(s)` : ""
     const openNote =
       a.opened_in_tab === false

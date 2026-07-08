@@ -52,14 +52,18 @@
     "format": "biome format --write",
     "check": "biome check",
     "check:fix": "biome check --write",
-    "ci": "biome ci && pnpm lint:tokens && pnpm lint:frontend && pnpm lint:testids && pnpm lint:api && pnpm lint:schema && pnpm lint:hyperdrive && pnpm lint:filesize && pnpm lint:anchor-client && pnpm lint:deadcode",
-    "precommit": "biome check && pnpm lint:tokens && pnpm lint:frontend && pnpm lint:testids && pnpm lint:api && pnpm lint:schema && pnpm lint:hyperdrive && pnpm lint:filesize && pnpm lint:anchor-client",
+    "ci": "biome ci && pnpm lint:tokens && pnpm lint:frontend && pnpm lint:testids && pnpm lint:api && pnpm lint:schema && pnpm lint:hyperdrive && pnpm lint:filesize && pnpm lint:anchor-client && pnpm lint:deadcode && pnpm lint:boundaries && pnpm lint:env && pnpm lint:api-types",
+    "precommit": "biome check && pnpm lint:tokens && pnpm lint:frontend && pnpm lint:testids && pnpm lint:api && pnpm lint:schema && pnpm lint:hyperdrive && pnpm lint:filesize && pnpm lint:anchor-client && pnpm lint:boundaries && pnpm lint:env && pnpm lint:api-types",
     "prepare": "git config core.hooksPath .githooks || true",
-    "lint:hyperdrive": "node scripts/check-hyperdrive-no-pool.mjs"
+    "lint:hyperdrive": "node scripts/check-hyperdrive-no-pool.mjs",
+    "lint:boundaries": "depcruise --config .dependency-cruiser.mjs packages apps",
+    "lint:env": "node scripts/check-env.mjs",
+    "lint:api-types": "node scripts/check-api-types.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.0",
     "@vitest/coverage-v8": "^4.1.9",
+    "dependency-cruiser": "^18.0.0",
     "esbuild": "0.28.1",
     "knip": "^6.16.1",
     "typescript": "^6.0.3"

@@ -11,6 +11,7 @@ import { Pool } from "pg"
 import { createApp } from "./app"
 import { type AuthDb, makeAuth, migrateAuth, OAUTH_ANON_CLIENT_TTL_MS } from "./auth-config"
 import { loadConfig, resolveAuthSecret, resolveDefaultOrg } from "./config"
+import { configWarnings } from "./config-manifest"
 import { workspacesBlockingDeletion } from "./lib/account"
 import { customDomainsFromEnv } from "./lib/cloudflare-saas"
 import { buildAuthEmail, emailDeliverySender, logEmailSender, resendEmailSender } from "./lib/email"
@@ -20,6 +21,8 @@ import { makeSlackSender } from "./lib/slack-comments"
 import { makeShutdown } from "./lifecycle"
 import { log } from "./log"
 import { createNodeSyncRunner } from "./node-sync"
+import { playwrightRenderer } from "./preview-node"
+import { startPreviewWorker } from "./previews"
 import { type ChannelSenders, enqueueChannelDelivery, startWebhookWorker } from "./webhooks"
 import { nodeDnsGuard } from "./webhooks-node"
 
@@ -241,6 +244,20 @@ const channelSenders: ChannelSenders = {
 }
 const webhookWorker = startWebhookWorker(meta, nodeDnsGuard, channelSenders)
 
+// Preview render worker: an in-process interval + poke that renders screenshot jobs via
+// Playwright Chromium. Only started when DERIVE_PREVIEWS=true; when off the render queue
+// is never enqueued (renderPreviews stays false below) and no worker runs.
+const previewWorker = cfg.previews
+  ? startPreviewWorker({
+      meta,
+      blobs,
+      renderer: playwrightRenderer(),
+      baseUrl: cfg.baseUrl,
+      sandboxOrigin: cfg.sandboxOrigin,
+      secret: authSecret,
+    })
+  : undefined
+
 // GitHub-sync runner: drives a triggered sync to completion in-process (detached from
 // the request) so it survives the user navigating away — the self-host counterpart to
 // the edge `RepoSyncRunner` DO. Resumed below on boot + a short interval.
@@ -285,6 +302,9 @@ const app = createApp({
   commentRate: cfg.commentRate,
   // Deliver freshly enqueued events immediately instead of on the next interval.
   pokeWebhooks: webhookWorker.poke,
+  // Enqueue a render job on publish and drain on demand when previews are enabled.
+  renderPreviews: cfg.previews,
+  pokePreviews: previewWorker?.poke,
   // Run a triggered GitHub sync in the background so it survives a closed tab.
   startSync: syncRunner.start,
 })
@@ -358,6 +378,11 @@ if (!cfg.sandboxOrigin && (cfg.crossSite || cfg.webOrigins.length)) {
   )
 }
 
+// Half-configured optional features (an OAuth id without its secret, an email key without
+// a from-address) leave the feature silently OFF. Warn loudly — but never crash: an
+// operator shouldn't lose a running instance to a stray env var on upgrade.
+for (const w of configWarnings(process.env)) log.warn(w)
+
 const server = serve({ fetch: app.fetch, port: cfg.port }, () => {
   log.info("derive api listening", {
     port: cfg.port,
@@ -379,7 +404,10 @@ const shutdown = makeShutdown({
     closeIdleConnections:
       "closeIdleConnections" in server ? () => server.closeIdleConnections() : undefined,
   },
-  stopWorker: webhookWorker.stop,
+  stopWorker: () => {
+    webhookWorker.stop()
+    previewWorker?.stop()
+  },
   clearTimers: () => {
     if (pruneTimer) clearInterval(pruneTimer)
     clearInterval(syncResumeTimer)

@@ -1,8 +1,15 @@
 /** HTTP client for a Derive server. Shared by the MCP server and any tooling. */
 
+/** One exact-match search/replace edit (the Edit-tool contract). */
+export interface DocEdit {
+  old_str: string
+  new_str: string
+}
+
 export interface PublishArgs {
-  content: string | Uint8Array
-  filename: string
+  /** Full content for a fresh publish/republish. Omit when using `edits` instead. */
+  content?: string | Uint8Array
+  filename?: string
   title?: string
   slug?: string
   spa?: boolean
@@ -20,6 +27,11 @@ export interface PublishArgs {
   resolves?: string[]
   /** Open a review round for this version (the /derive loop's ask). */
   requestReview?: boolean
+  /** Exact-match search/replace against the current stored source, INSTEAD of
+   *  `content` — revises without resending the whole artifact. Requires `id`. */
+  edits?: DocEdit[]
+  /** Safety check for `edits`: reject if the artifact moved past this version. */
+  baseVersion?: number
 }
 
 export type CommentState = "open" | "addressed" | "resolved" | "outdated"
@@ -50,11 +62,16 @@ export interface ArtifactSummaryJson {
 
 /** A revision submitted for human review instead of published live. */
 export interface ProposeArgs {
-  content: string
+  /** Full content for the proposal. Omit when using `edits` instead. */
+  content?: string
   filename?: string
   message: string
   /** Thread ids this revision addresses (flip to `addressed`, resolve on approval). */
   addresses?: string[]
+  /** Exact-match search/replace against the current stored source, INSTEAD of
+   *  `content`. */
+  edits?: DocEdit[]
+  baseVersion?: number
 }
 export interface ProposalJson {
   id: string
@@ -133,6 +150,32 @@ export interface ViewStatsJson {
   recent: { viewer: string; kind: "user" | "anon"; at: string }[]
 }
 
+export interface ContentOpts {
+  version?: number
+  /** A heading slug (single-file) or page path (bundle, optionally page#slug). */
+  section?: string
+  format?: "markdown" | "text"
+}
+
+/** A content read: the body plus the server's X-Derive-* capability headers, so a
+ *  caller can tell an older self-hosted server (no headers at all) from a real
+ *  raw-format response and degrade gracefully instead of misreading intent. */
+export interface ContentResult {
+  text: string
+  /** Null when the server predates these params (no X-Derive-Format header). */
+  format: string | null
+  section: string | null
+  sectionCount: number | null
+  supportsParams: boolean
+}
+
+export interface OutlineSectionJson {
+  level: number
+  text: string
+  slug: string
+  chars: number
+}
+
 export interface DeriveClient {
   /** List the workspace's artifacts (optionally filtered by a title query). */
   list(query?: string): Promise<ArtifactSummaryJson[]>
@@ -140,13 +183,20 @@ export interface DeriveClient {
   /** Submit a single-file revision for human review (does not go live). */
   propose(shortId: string, args: ProposeArgs): Promise<ProposalJson>
   get(shortId: string): Promise<ArtifactJson>
-  getContent(shortId: string, version?: number): Promise<string>
+  getContent(shortId: string, opts?: ContentOpts): Promise<ContentResult>
+  /** The heading (single-file) or page (bundle) outline. Empty `sections` on an
+   *  older server that doesn't understand `?outline=1` (it 400s or ignores it). */
+  getOutline(
+    shortId: string,
+    version?: number,
+  ): Promise<{ sections: OutlineSectionJson[]; pages: { path: string; type?: string }[] | null }>
   listComments(shortId: string, state?: CommentState): Promise<CommentJson[]>
   createComment(shortId: string, args: NewCommentArgs): Promise<CommentJson>
   /** Resolve or reopen the thread a comment belongs to. */
   setThreadState(shortId: string, commentId: string, state: "resolved" | "open"): Promise<void>
-  /** Line diff between two versions (defaults: current-1 → current). */
-  diff(shortId: string, from?: number, to?: number): Promise<DiffJson>
+  /** Line diff between two versions (defaults: current-1 → current). `content:
+   *  "markdown"` diffs the readable Markdown form instead of raw source. */
+  diff(shortId: string, from?: number, to?: number, content?: "raw" | "markdown"): Promise<DiffJson>
   /** The artifact's review rounds (newest first) + the pending one, if any. */
   getReview(
     shortId: string,
@@ -195,10 +245,18 @@ export function createClient(opts: ClientOptions): DeriveClient {
     },
 
     async publish(args) {
-      const bytes =
-        typeof args.content === "string" ? new TextEncoder().encode(args.content) : args.content
       const form = new FormData()
-      form.append("file", new Blob([bytes as BlobPart]), args.filename)
+      if (args.edits) {
+        // Surgical revision: no file upload, the server materializes it from the
+        // current stored source. Requires an existing artifact (args.id).
+        form.append("edits", JSON.stringify(args.edits))
+        if (args.baseVersion != null) form.append("base_version", String(args.baseVersion))
+        if (args.filename) form.append("filename", args.filename)
+      } else {
+        const bytes =
+          typeof args.content === "string" ? new TextEncoder().encode(args.content) : args.content
+        form.append("file", new Blob([bytes as BlobPart]), args.filename ?? "index.html")
+      }
       if (args.title) form.append("title", args.title)
       if (args.slug) form.append("slug", args.slug)
       if (args.message) form.append("message", args.message)
@@ -217,11 +275,16 @@ export function createClient(opts: ClientOptions): DeriveClient {
 
     async propose(shortId, args) {
       const form = new FormData()
-      form.append(
-        "file",
-        new Blob([new TextEncoder().encode(args.content)]),
-        args.filename ?? "index.html",
-      )
+      if (args.edits) {
+        form.append("edits", JSON.stringify(args.edits))
+        if (args.baseVersion != null) form.append("base_version", String(args.baseVersion))
+      } else {
+        form.append(
+          "file",
+          new Blob([new TextEncoder().encode(args.content ?? "")]),
+          args.filename ?? "index.html",
+        )
+      }
       form.append("message", args.message)
       if (args.addresses?.length) form.append("addresses", args.addresses.join(","))
       return ok(
@@ -239,14 +302,44 @@ export function createClient(opts: ClientOptions): DeriveClient {
       ) as Promise<ArtifactJson>
     },
 
-    async getContent(shortId, version) {
-      const q = version ? `?v=${version}` : ""
-      const res = await f(`${base}/v1/artifacts/${shortId}/content${q}`, { headers: authHeaders })
+    async getContent(shortId, opts) {
+      const q = new URLSearchParams()
+      if (opts?.version) q.set("v", String(opts.version))
+      if (opts?.section) q.set("section", opts.section)
+      if (opts?.format) q.set("format", opts.format)
+      const qs = q.toString()
+      const res = await f(`${base}/v1/artifacts/${shortId}/content${qs ? `?${qs}` : ""}`, {
+        headers: authHeaders,
+      })
       if (!res.ok) {
         const body = (await res.json().catch(() => ({}))) as { error?: string }
         throw new Error(`derive ${res.status}: ${body.error ?? res.statusText}`)
       }
-      return res.text()
+      const format = res.headers.get("x-derive-format")
+      return {
+        text: await res.text(),
+        format,
+        section: res.headers.get("x-derive-section"),
+        sectionCount: res.headers.has("x-derive-sections")
+          ? Number(res.headers.get("x-derive-sections"))
+          : null,
+        // No X-Derive-Format header at all = a server that predates these params
+        // (an older self-hosted instance) — the caller should treat this as raw
+        // whole-artifact content and not assume format/section were honored.
+        supportsParams: format !== null,
+      }
+    },
+
+    async getOutline(shortId, version) {
+      const q = new URLSearchParams({ outline: "1" })
+      if (version) q.set("v", String(version))
+      const res = await f(`${base}/v1/artifacts/${shortId}/content?${q}`, { headers: authHeaders })
+      if (!res.ok) return { sections: [], pages: null }
+      const body = (await res.json()) as {
+        sections?: OutlineSectionJson[]
+        pages?: { path: string; type?: string }[]
+      }
+      return { sections: body.sections ?? [], pages: body.pages ?? null }
     },
 
     async listComments(shortId, state) {
@@ -277,10 +370,11 @@ export function createClient(opts: ClientOptions): DeriveClient {
       )
     },
 
-    async diff(shortId, from, to) {
+    async diff(shortId, from, to, content) {
       const q = new URLSearchParams({ format: "json" })
       if (from != null) q.set("from", String(from))
       if (to != null) q.set("to", String(to))
+      if (content === "markdown") q.set("content", "markdown")
       return ok(
         await f(`${base}/v1/artifacts/${shortId}/diff?${q}`, { headers: authHeaders }),
       ) as Promise<DiffJson>
