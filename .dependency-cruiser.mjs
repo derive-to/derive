@@ -43,9 +43,13 @@ export default {
     },
   ],
   options: {
-    // A resolution-only tsconfig with @derive/* path aliases (see the file) — so a
-    // forbidden cross-package import resolves and the rules below can actually fire,
-    // even though pnpm wouldn't symlink the package where it isn't a declared dep.
+    // A resolution-only tsconfig with @derive/* path aliases (see the file) so a forbidden
+    // cross-package import RESOLVES and the rules below fire — pnpm won't symlink a package
+    // where it isn't a declared dep, so without this such an import is unresolvable and
+    // dependency-cruiser silently drops it (a `not-to-unresolvable` rule can't help — there's
+    // no recorded edge to match). Add a new workspace package's alias there too. If one is
+    // missed, typecheck is the guaranteed backstop: a forbidden import to an unmapped package
+    // is a hard "cannot find module" error, so it can never silently escape enforcement.
     tsConfig: { fileName: ".dependency-cruiser.tsconfig.json" },
     tsPreCompilationDeps: true,
     doNotFollow: { path: "node_modules" },
