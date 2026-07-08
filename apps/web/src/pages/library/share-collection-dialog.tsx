@@ -13,9 +13,12 @@ import {
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { toast } from "@/components/ui/sonner"
+import { Switch } from "@/components/ui/switch"
 
-// Share a collection: add people by email at a role. A member's role applies to
-// every artifact in the collection (the headline of collection-level sharing).
+// Share a collection: add people by email at a role, or share it with the whole
+// workspace at once (a live binding — future teammates get it too, not just
+// whoever's on the roster today). Either way the role applies to every artifact
+// in the collection (the headline of collection-level sharing).
 export function ShareCollectionDialog({
   collection,
   onClose,
@@ -27,17 +30,49 @@ export function ShareCollectionDialog({
   const [email, setEmail] = useState("")
   const [role, setRole] = useState<Role>("editor")
   const [busy, setBusy] = useState(false)
+  const [workspace, setWorkspace] = useState<{ id: string; name: string } | null>(null)
+  const [workspaceRole, setWorkspaceRole] = useState<Role | null>(null)
+  const [wsBusy, setWsBusy] = useState(false)
 
   const load = () => {
     api
       .listCollectionMembers(collection.id)
-      .then((r) => setMembers(r.members))
+      .then((r) => {
+        setMembers(r.members)
+        setWorkspace(r.workspace)
+        setWorkspaceRole(r.workspace_share?.role ?? null)
+      })
       .catch(() => {})
   }
   // biome-ignore lint/correctness/useExhaustiveDependencies: re-fetch members when the shared collection changes; load reads collection.id.
   useEffect(() => {
     load()
   }, [collection.id])
+
+  const toggleWorkspaceShare = async (on: boolean) => {
+    const prev = workspaceRole
+    setWorkspaceRole(on ? (prev ?? "viewer") : null)
+    setWsBusy(true)
+    try {
+      if (on) await api.setCollectionWorkspaceShare(collection.id, prev ?? "viewer")
+      else await api.removeCollectionWorkspaceShare(collection.id)
+    } catch (x) {
+      setWorkspaceRole(prev)
+      toast.error(x instanceof Error ? x.message : "Couldn't update the workspace share")
+    } finally {
+      setWsBusy(false)
+    }
+  }
+  const changeWorkspaceRole = async (next: Role) => {
+    const prev = workspaceRole
+    setWorkspaceRole(next)
+    try {
+      await api.setCollectionWorkspaceShare(collection.id, next)
+    } catch (x) {
+      setWorkspaceRole(prev)
+      toast.error(x instanceof Error ? x.message : "Couldn't update the workspace share")
+    }
+  }
 
   const add = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -134,6 +169,32 @@ export function ShareCollectionDialog({
             ))}
           </div>
         )}
+
+        <div className="flex items-center gap-2 border-t border-border pt-3">
+          <Switch
+            id="collection-share-workspace"
+            data-testid="collection-share-workspace-toggle"
+            checked={workspaceRole !== null}
+            disabled={wsBusy || !workspace}
+            onCheckedChange={toggleWorkspaceShare}
+          />
+          <label htmlFor="collection-share-workspace" className="min-w-0 flex-1">
+            <div className="truncate text-sm font-medium text-foreground">
+              Share with everyone in {workspace?.name ?? "this workspace"}
+            </div>
+            <div className="truncate text-2xs text-muted-foreground">
+              Auto-includes new teammates too.
+            </div>
+          </label>
+          {workspaceRole !== null && (
+            <RoleSelect
+              value={workspaceRole}
+              onChange={changeWorkspaceRole}
+              data-testid="collection-share-workspace-role"
+              className="w-26 shrink-0"
+            />
+          )}
+        </div>
       </DialogContent>
     </Dialog>
   )

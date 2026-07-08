@@ -237,6 +237,15 @@ CREATE TABLE IF NOT EXISTS collection_member (
   FOREIGN KEY (collection_id) REFERENCES collection(id)
 );
 
+CREATE TABLE IF NOT EXISTS collection_workspace_share (
+  id TEXT PRIMARY KEY,
+  collection_id TEXT NOT NULL UNIQUE,
+  org_id TEXT NOT NULL,
+  role TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  FOREIGN KEY (collection_id) REFERENCES collection(id)
+);
+
 CREATE TABLE IF NOT EXISTS repo_source (
   id TEXT PRIMARY KEY,
   org_id TEXT NOT NULL DEFAULT 'local',

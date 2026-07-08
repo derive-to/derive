@@ -20,6 +20,7 @@ import type {
   AuditLogRecord,
   CollectionMemberRecord,
   CollectionRecord,
+  CollectionWorkspaceShareRecord,
   CommentRecord,
   ContextRecord,
   DeliveryRecord,
@@ -66,6 +67,7 @@ export interface TypedTables {
   sessionMessage: SessionMessageRecord
   collection: CollectionRecord
   collectionMember: CollectionMemberRecord
+  collectionWorkspaceShare: CollectionWorkspaceShareRecord
   repoSource: RepoSourceRecord
   githubApp: GitHubAppRecord
   githubInstallation: GitHubInstallationRecord

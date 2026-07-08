@@ -9,7 +9,7 @@ import {
 import { type Context, Hono } from "hono"
 import { z } from "zod"
 import type { AppContext } from "../context"
-import { fail, readJson } from "../lib/http"
+import { DEFAULT_WORKSPACE_NAME, fail, readJson } from "../lib/http"
 import { resolveUserRef } from "../lib/resolve-user"
 
 /** Collections: shareable groups of artifacts. A member's role on a collection
@@ -137,7 +137,11 @@ export const collectionRoutes = (ctx: AppContext) => {
   app.get("/v1/collections/:id/members", async (c) => {
     const col = await meta.getCollection(c.req.param("id"))
     if (!col || (await collectionRole(c, col)) === null) return fail(c, 404, "not found")
-    const rows = await meta.listCollectionMembers(col.id)
+    const [rows, workspaceShare, ws] = await Promise.all([
+      meta.listCollectionMembers(col.id),
+      meta.getCollectionWorkspaceShare(col.id),
+      meta.getWorkspace(col.org_id),
+    ])
     const users = await meta.getUsers(rows.map((r) => r.user_id))
     const byId = new Map(users.map((u) => [u.id, u]))
     return c.json({
@@ -148,7 +152,37 @@ export const collectionRoutes = (ctx: AppContext) => {
         name: byId.get(r.user_id)?.name ?? null,
         role: r.role,
       })),
+      // The collection's own workspace — the only target `workspace_share` can
+      // currently point at — plus the share itself, if one exists.
+      workspace: { id: col.org_id, name: ws?.name ?? DEFAULT_WORKSPACE_NAME },
+      workspace_share: workspaceShare ? { role: workspaceShare.role } : null,
     })
+  })
+  // Share (or re-role) a collection with every member of its own workspace — a
+  // live binding, not a member-list snapshot (see collectionRolesForArtifact).
+  app.put("/v1/collections/:id/workspace-share", async (c) => {
+    const col = await meta.getCollection(c.req.param("id"))
+    if (!col) return fail(c, 404, "not found")
+    if (!(await canManageCollection(c, col, "manage"))) return fail(c, 403, "forbidden")
+    const b = await readJson(
+      c,
+      z.object({ role: z.custom<Role>(isRole, "a valid role is required") }),
+    )
+    if (b instanceof Response) return b
+    const share = await meta.setCollectionWorkspaceShare({
+      id: newId("cws"),
+      collection_id: col.id,
+      org_id: col.org_id,
+      role: b.role,
+    })
+    return c.json({ role: share.role }, 201)
+  })
+  app.delete("/v1/collections/:id/workspace-share", async (c) => {
+    const col = await meta.getCollection(c.req.param("id"))
+    if (!col) return fail(c, 404, "not found")
+    if (!(await canManageCollection(c, col, "manage"))) return fail(c, 403, "forbidden")
+    await meta.removeCollectionWorkspaceShare(col.id, col.org_id)
+    return c.body(null, 204)
   })
   app.put("/v1/collections/:id/members", async (c) => {
     const col = await meta.getCollection(c.req.param("id"))

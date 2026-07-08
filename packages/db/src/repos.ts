@@ -6,6 +6,7 @@ import type {
   AuditLogRecord,
   CollectionMemberRecord,
   CollectionRecord,
+  CollectionWorkspaceShareRecord,
   CommentListOpts,
   CommentRecord,
   CommentSignals,
@@ -31,6 +32,7 @@ import type {
   NewAuditLog,
   NewCollection,
   NewCollectionMember,
+  NewCollectionWorkspaceShare,
   NewComment,
   NewContext,
   NewDelivery,
@@ -104,6 +106,7 @@ import {
   collection,
   collectionItem,
   collectionMember,
+  collectionWorkspaceShare,
   comment,
   context,
   contextSession,
@@ -201,6 +204,7 @@ export const schema = {
   collection,
   collectionItem,
   collectionMember,
+  collectionWorkspaceShare,
   repoSource,
   githubApp,
   githubInstallation,
@@ -234,6 +238,7 @@ const _schemaShapes: Shapes<typeof schema> = {
   sessionMessage: true,
   collection: true,
   collectionMember: true,
+  collectionWorkspaceShare: true,
   repoSource: true,
   githubApp: true,
   githubInstallation: true,
@@ -1317,17 +1322,68 @@ export function makeRepos(db: SqliteDb) {
       )
       .run()
   }
-  const collectionRolesForArtifact = async (artifactId: string, userId: string): Promise<Role[]> =>
-    (
-      await db
+  const collectionRolesForArtifact = async (
+    artifactId: string,
+    userId: string,
+  ): Promise<Role[]> => {
+    const [memberRows, workspaceRows] = await Promise.all([
+      db
         .select({ role: collectionMember.role })
         .from(collectionMember)
         .innerJoin(collectionItem, eq(collectionItem.collection_id, collectionMember.collection_id))
         .where(
           and(eq(collectionItem.artifact_id, artifactId), eq(collectionMember.user_id, userId)),
         )
-        .all()
-    ).map((r) => r.role)
+        .all(),
+      // A workspace share applies to anyone who's a member of its org, resolved at
+      // read time — no membership snapshot to keep in sync as people join/leave.
+      db
+        .select({ role: collectionWorkspaceShare.role })
+        .from(collectionWorkspaceShare)
+        .innerJoin(
+          collectionItem,
+          eq(collectionItem.collection_id, collectionWorkspaceShare.collection_id),
+        )
+        .innerJoin(membership, eq(membership.org_id, collectionWorkspaceShare.org_id))
+        .where(and(eq(collectionItem.artifact_id, artifactId), eq(membership.user_id, userId)))
+        .all(),
+    ])
+    return [...memberRows.map((r) => r.role), ...workspaceRows.map((r) => r.role)]
+  }
+  const getCollectionWorkspaceShare = async (
+    collectionId: string,
+  ): Promise<CollectionWorkspaceShareRecord | null> =>
+    (await db
+      .select()
+      .from(collectionWorkspaceShare)
+      .where(eq(collectionWorkspaceShare.collection_id, collectionId))
+      .get()) ?? null
+  const setCollectionWorkspaceShare = async (
+    s: NewCollectionWorkspaceShare,
+  ): Promise<CollectionWorkspaceShareRecord> =>
+    (await db
+      .insert(collectionWorkspaceShare)
+      .values(s)
+      .onConflictDoUpdate({
+        target: collectionWorkspaceShare.collection_id,
+        set: { org_id: s.org_id, role: s.role },
+      })
+      .returning()
+      .get()) as CollectionWorkspaceShareRecord
+  const removeCollectionWorkspaceShare = async (
+    collectionId: string,
+    orgId: string,
+  ): Promise<void> => {
+    await db
+      .delete(collectionWorkspaceShare)
+      .where(
+        and(
+          eq(collectionWorkspaceShare.collection_id, collectionId),
+          eq(collectionWorkspaceShare.org_id, orgId),
+        ),
+      )
+      .run()
+  }
 
   // ---- GitHub sync sources -----------------------------------------------
   const createRepoSource = async (s: NewRepoSource): Promise<RepoSourceRecord> =>
@@ -2208,6 +2264,9 @@ export function makeRepos(db: SqliteDb) {
     setCollectionMember,
     removeCollectionMember,
     collectionRolesForArtifact,
+    getCollectionWorkspaceShare,
+    setCollectionWorkspaceShare,
+    removeCollectionWorkspaceShare,
     createRepoSource,
     getRepoSource,
     listRepoSources,

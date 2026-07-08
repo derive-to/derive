@@ -393,8 +393,19 @@ export interface MetaStore {
   setCollectionMember(m: NewCollectionMember): Promise<CollectionMemberRecord>
   removeCollectionMember(collectionId: string, userId: string): Promise<void>
   /** This user's collection-member roles over collections containing the
-   *  artifact — folded into their effective artifact role (collection sharing). */
+   *  artifact — folded into their effective artifact role (collection sharing).
+   *  Includes both a direct per-user share (collectionMember) and a workspace
+   *  share the user qualifies for via org membership (collectionWorkspaceShare). */
   collectionRolesForArtifact(artifactId: string, userId: string): Promise<Role[]>
+  /** The one workspace-share on a collection, if any (a collection has at most
+   *  one — sharing again with the same org just updates its role). */
+  getCollectionWorkspaceShare(collectionId: string): Promise<CollectionWorkspaceShareRecord | null>
+  /** Share (or re-role) a collection with every member of a workspace. Manage
+   *  permission on the collection is the caller's responsibility. */
+  setCollectionWorkspaceShare(
+    s: NewCollectionWorkspaceShare,
+  ): Promise<CollectionWorkspaceShareRecord>
+  removeCollectionWorkspaceShare(collectionId: string, orgId: string): Promise<void>
 
   // ---- GitHub sync sources (a repo mirrored into a collection, one-way) ---
   createRepoSource(s: NewRepoSource): Promise<RepoSourceRecord>
@@ -1232,6 +1243,21 @@ export interface NewCollectionMember {
   id: string
   collection_id: string
   user_id: string
+  role: Role
+}
+/** A collection shared with every member of a workspace, present or future — the
+ *  workspace-level counterpart to CollectionMemberRecord's per-user share. */
+export interface CollectionWorkspaceShareRecord {
+  id: string
+  collection_id: string
+  org_id: string
+  role: Role
+  created_at: string
+}
+export interface NewCollectionWorkspaceShare {
+  id: string
+  collection_id: string
+  org_id: string
   role: Role
 }
 

@@ -357,6 +357,24 @@ export const collectionMember = sqliteTable(
   (t) => [uniqueIndex("collection_member_uniq").on(t.collection_id, t.user_id)],
 )
 
+// A collection shared with an entire workspace rather than one person — a live
+// binding: anyone who's currently, or later becomes, a member of `org_id` gets
+// `role` on every artifact in the collection (see collectionRolesForArtifact).
+// Sits alongside collectionMember (per-user). At most one per collection today
+// (the route always writes org_id = the collection's own org — a single "share
+// with my workspace" toggle); collection_id alone is the unique key so a re-share
+// updates the row instead of adding a second one.
+export const collectionWorkspaceShare = sqliteTable("collection_workspace_share", {
+  id: text("id").primaryKey(),
+  collection_id: text("collection_id")
+    .notNull()
+    .unique()
+    .references(() => collection.id),
+  org_id: text("org_id").notNull(),
+  role: text("role").$type<Role>().notNull(),
+  created_at: text("created_at").notNull().default(now),
+})
+
 // A GitHub repo mirrored into a collection, one-way. `files` is a JSON path→
 // {artifact_id, sha} map so a re-sync skips unchanged files and tombstones gone ones.
 export const repoSource = sqliteTable("repo_source", {
@@ -640,6 +658,7 @@ const TABLES = [
   collection,
   collectionItem,
   collectionMember,
+  collectionWorkspaceShare,
   repoSource,
   orgSettings,
   slackInstall,

@@ -1131,12 +1131,27 @@ export const api = {
       method: "DELETE",
       credentials: "include",
     }).then(() => undefined),
-  listCollectionMembers: (id: string): Promise<{ created_by: string; members: ArtifactMember[] }> =>
-    f(`/v1/collections/${id}/members`, opts()).then(j),
+  listCollectionMembers: (
+    id: string,
+  ): Promise<{
+    created_by: string
+    members: ArtifactMember[]
+    workspace: { id: string; name: string }
+    workspace_share: { role: Role } | null
+  }> => f(`/v1/collections/${id}/members`, opts()).then(j),
   setCollectionMember: (id: string, user: string, role: Role): Promise<ArtifactMember> =>
     f(`/v1/collections/${id}/members`, { ...opts({ user, role }), method: "PUT" }).then(j),
   removeCollectionMember: (id: string, userId: string): Promise<void> =>
     f(`/v1/collections/${id}/members/${userId}`, {
+      method: "DELETE",
+      credentials: "include",
+    }).then(() => undefined),
+  // Share (or re-role) a collection with every member of its own workspace — a
+  // live binding, not a one-time snapshot of who's currently on the team.
+  setCollectionWorkspaceShare: (id: string, role: Role): Promise<{ role: Role }> =>
+    f(`/v1/collections/${id}/workspace-share`, { ...opts({ role }), method: "PUT" }).then(j),
+  removeCollectionWorkspaceShare: (id: string): Promise<void> =>
+    f(`/v1/collections/${id}/workspace-share`, {
       method: "DELETE",
       credentials: "include",
     }).then(() => undefined),

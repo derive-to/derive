@@ -323,6 +323,19 @@ export const collectionMember = pgTable(
   },
   (t) => [uniqueIndex("collection_member_uniq").on(t.collection_id, t.user_id)],
 )
+// A collection shared with an entire workspace rather than one person — see the
+// sqlite dialect's schema.ts for the full comment. At most one per collection
+// (collection_id alone is unique).
+export const collectionWorkspaceShare = pgTable("collection_workspace_share", {
+  id: text("id").primaryKey(),
+  collection_id: text("collection_id")
+    .notNull()
+    .unique()
+    .references(() => collection.id),
+  org_id: text("org_id").notNull(),
+  role: text("role").$type<Role>().notNull(),
+  created_at: text("created_at").notNull().$defaultFn(isoNow),
+})
 export const repoSource = pgTable("repo_source", {
   id: text("id").primaryKey(),
   org_id: text("org_id").notNull().default("local"),
@@ -556,6 +569,7 @@ const TABLES = [
   collection,
   collectionItem,
   collectionMember,
+  collectionWorkspaceShare,
   repoSource,
   orgSettings,
   slackInstall,
