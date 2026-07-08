@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // derive — scaffold, publish, and run the review loop against a Derive server.
 //   derive init [dir] [--template md|html|slides|site|skill|context] [--title t]
-//   derive login [--local] [--server url]   OAuth sign-in (default https://derive.to); saves a token
+//   derive login [--local] [--server url] [--manage]   OAuth sign-in; --manage adds the agent/context admin grant
 //   derive publish [file|dir] [--id --title --slug --spa --message --name --visibility --server --token]
 //   derive comments [--id]                 list the artifact's comment threads
 //   derive pull [short_id] [--v N] [--out f]  print an artifact's source (bundles: entry file)
@@ -47,6 +47,7 @@ for (let i = 0; i < args.length; i++) {
   else if (a === "--local") flags.local = "true"
   else if (a === "--json") flags.json = "true"
   else if (a === "--mock") flags.mock = "true"
+  else if (a === "--manage") flags.manage = "true"
   // Repeatable: `--env-file a --env-file b` stacks (equivalent to --env-file a,b).
   else if (a === "--env-file")
     flags["env-file"] = flags["env-file"] ? `${flags["env-file"]},${args[++i]}` : args[++i]
@@ -87,9 +88,15 @@ if (cmd === "login") {
     b.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "")
   const server = resolveServer(flags)
   const redirect = `${server}/oauth/cli-callback`
+  // derive:manage (opt-in via --manage) lets `derive context push` mint the
+  // answering agent and create the context. Opt-in, not default: it raises a
+  // leaked token's blast radius from editor to your full workspace authority,
+  // so only sessions that actually manage contexts should carry it.
   const scope =
     flags.scope ??
-    "openid offline_access derive:read derive:comment derive:propose derive:publish derive:review"
+    `openid offline_access derive:read derive:comment derive:propose derive:publish derive:review${
+      flags.manage === "true" ? " derive:manage" : ""
+    }`
   const verifier = b64url(randomBytes(64))
   const challenge = b64url(createHash("sha256").update(verifier).digest())
   const state = b64url(randomBytes(16))
@@ -506,7 +513,7 @@ if (LOOP.includes(cmd)) {
 if (cmd !== "publish") {
   console.error(`usage:
   derive init [dir] [--template md|html|slides|site|skill|context] [--title t]
-  derive login [--local] [--server url]    OAuth sign-in (defaults to https://derive.to); saves a persistent token
+  derive login [--local] [--server url] [--manage]   OAuth sign-in; --manage adds the agent/context admin grant (context push wiring)
   derive publish [file|dir] [--id X] [--title t] [--slug s] [--spa] [--message m] [--name "x"] [--visibility v] [--password p] [--server url] [--token t] [--json]
   derive comments [--id X]                 list comment threads
   derive pull [short_id] [--v N] [--out f] print an artifact's source (bundles: entry file only)

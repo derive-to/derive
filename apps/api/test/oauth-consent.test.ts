@@ -16,6 +16,16 @@ describe("oauth consent screen", () => {
     expect(html).toContain("Propose new versions")
   })
 
+  it("labels the manage scope — a manage-grade grant must never render as an unknown blob", () => {
+    const managed = consentHTML({
+      clientName: "Derive CLI",
+      scopes: ["openid", "derive:manage"],
+      query: "",
+    })
+    expect(managed).toContain("Manage agents and contexts")
+    expect(managed).toContain("only as far as your workspace role allows")
+  })
+
   it("ships the branded post-approve confirmation card + the goConnected handoff", () => {
     expect(html).toContain("var CONNECTED =")
     expect(html).toContain("function goConnected(")

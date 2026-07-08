@@ -51,6 +51,17 @@ describe("oauth agent role capping + consent binding", () => {
     expect(o?.scopeRole).toBe("editor") // uncapped, for header re-homes to re-cap
   })
 
+  it("derive:manage proposes owner — and the membership ceiling still holds", async () => {
+    const manage = { ...grant, scopes: ["openid", "derive:read", "derive:manage"] }
+    const asOwner = await resolve(stub({ getOAuthGrant: async () => manage }))
+    expect(asOwner?.scopeRole).toBe("owner")
+    expect(asOwner?.rec.role).toBe("owner") // owner membership → the scope holds
+    const asViewer = await resolve(
+      stub({ getOAuthGrant: async () => manage, getOAuthClientWorkspace: async () => "ws_two" }),
+    )
+    expect(asViewer?.rec.role).toBe("viewer") // manage scope can't outrank the human
+  })
+
   it("ignores a binding to a workspace the user is no longer in", async () => {
     const o = await resolve(stub({ getOAuthClientWorkspace: async () => "ws_gone" }))
     expect(o?.rec.org_id).toBe("ws_one")
